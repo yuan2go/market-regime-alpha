@@ -123,6 +123,7 @@ CONTINUOUS_CHILD_ORDER = (
     ContinuousChildKind.CONTROLLED_OPERATION,
     ContinuousChildKind.CANONICAL_LIFECYCLE,
     ContinuousChildKind.DECISION_SYSTEM,
+    ContinuousChildKind.STRATEGY_RUNTIME,
 )
 
 
@@ -130,21 +131,21 @@ def _with_upstream_result(
     request: ChildExecutionRequest,
     result: ChildExecutionResult,
 ) -> ChildExecutionRequest:
-    references = [RuntimeArtifactReference(
-        reference_kind=f"{result.child_kind.value}_OUTPUT",
-        artifact_id=(
-            result.child_receipt_id
-            if result.child_kind is ContinuousChildKind.STATE_SYSTEM
-            or result.child_artifact_id is None
-            else result.child_artifact_id
-        ),
-        content_hash=(
-            result.child_receipt_hash
-            if result.child_kind is ContinuousChildKind.STATE_SYSTEM
-            or result.child_artifact_hash is None
-            else result.child_artifact_hash
-        ),
-    )]
+    references = [
+        RuntimeArtifactReference(
+            reference_kind=f"{result.child_kind.value}_OUTPUT",
+            artifact_id=(
+                result.child_receipt_id
+                if result.child_kind is ContinuousChildKind.STATE_SYSTEM or result.child_artifact_id is None
+                else result.child_artifact_id
+            ),
+            content_hash=(
+                result.child_receipt_hash
+                if result.child_kind is ContinuousChildKind.STATE_SYSTEM or result.child_artifact_hash is None
+                else result.child_artifact_hash
+            ),
+        )
+    ]
     if (
         result.child_kind is ContinuousChildKind.STATE_SYSTEM
         and result.child_artifact_id is not None

@@ -14,6 +14,7 @@ from market_regime_alpha.application.runtime_operations.query import (
     CanonicalDagNode,
     CanonicalDagNodeStatus,
     CanonicalDagNodeType,
+    _lineage_scoped_feedback_rows,
 )
 
 
@@ -72,3 +73,41 @@ def test_canonical_dag_node_is_a_read_only_identity_projection(tmp_path: Path) -
     assert node.node_id.startswith("runtime-dag-node-")
     assert node.to_canonical_dict()["owner"] == "DECISION_SYSTEM"
     assert node.read_only is True
+
+
+def test_feedback_projection_is_scoped_to_the_inspected_cycle_lineage() -> None:
+    current_attribution = (
+        "attribution-current",
+        "hash-current",
+        "ATTRIBUTION",
+        "swing-v1",
+        ["outcome-current"],
+    )
+    current_qualification = (
+        "qualification-current",
+        "hash-qualification",
+        "QUALIFICATION",
+        "swing-v1",
+        ["attribution-current"],
+    )
+    old_cycle_attribution = (
+        "attribution-old",
+        "hash-old",
+        "ATTRIBUTION",
+        "swing-v1",
+        ["outcome-old"],
+    )
+
+    visible = _lineage_scoped_feedback_rows(
+        (
+            current_qualification,
+            old_cycle_attribution,
+            current_attribution,
+        ),
+        seed_artifact_ids={"outcome-current"},
+    )
+
+    assert [row[0] for row in visible] == [
+        "attribution-current",
+        "qualification-current",
+    ]

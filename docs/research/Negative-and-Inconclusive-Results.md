@@ -43,5 +43,8 @@
 | Any Phase E3 executable T+1 checkpoint is net profitable | `NEGATIVE`: all six checkpoints are gross-positive but net-negative after the versioned engineering-assumption cost | 224,718 non-corporate-action economics records |
 | Phase E3 fixed-ridge challenger proves canonical Forecast, Formal OOS or economics | False: MSE 0.000502153 versus baseline 0.000518944 and RankIC 0.015405 cover one exploratory temporal split; canonical Forecast remains empty | 29,729 training / 7,646 later validation observations |
 | Phase E3 corporate-action exclusions are ordinary missing returns | False: 2,082 six-checkpoint labels are explicitly unavailable because they cross a known action or one persisted coverage gap | owner-resolved corporate-action facts |
+| Running Overnight and Swing through one platform establishes either strategy's Alpha | False: migration-085 proof establishes contracts, runtime, persistence, replay and isolation only; no new empirical return sample was produced | engineering only |
+| Multi-horizon Path Outcome support establishes Swing economic value | False: the kernel and PostgreSQL owner are executable, but automatic longitudinal path production and qualified evaluation remain pending | contract/PostgreSQL engineering only |
+| A strategy Challenger can automatically replace the active version | False: feedback is diagnostic and every current qualification is fail-closed; no Champion mutation path exists | engineering only |
 
 Negative evidence is first-class and immutable. A failed result may motivate a new separately frozen hypothesis; it may not be reworded into success.

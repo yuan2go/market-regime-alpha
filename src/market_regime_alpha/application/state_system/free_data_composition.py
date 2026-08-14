@@ -39,6 +39,7 @@ from market_regime_alpha.application.state_system.runtime import (
     StateSystemRuntimeDelegate,
 )
 from market_regime_alpha.core.identity import ArtifactId, DatasetId, ModelId
+from market_regime_alpha.core.time import DecisionTime
 from market_regime_alpha.data.contracts import DataEligibility
 from market_regime_alpha.evidence.canonical import canonical_datetime, canonical_hash
 from market_regime_alpha.evidence.envelope import ArtifactEnvelope, EvidenceAuthority
@@ -180,6 +181,7 @@ class CanonicalFreeDataStateCoordinator:
         self.work: _StateWork | None = None
         self._blocked_artifacts: dict[StateResearchStage, StateResearchStageArtifact] = {}
         self._blocked_completed_at: dict[StateResearchStage, datetime] = {}
+        self._blocked_candidates: CandidateSet | None = None
 
     @property
     def stage_artifacts(self) -> dict[StateResearchStage, StateResearchStageArtifact]:
@@ -195,7 +197,7 @@ class CanonicalFreeDataStateCoordinator:
 
     @property
     def final_candidates(self) -> CandidateSet | None:
-        return None if self.work is None else self.work.final_candidates
+        return self._blocked_candidates if self.work is None else self.work.final_candidates
 
     def record_model_blocked(
         self,
@@ -243,6 +245,17 @@ class CanonicalFreeDataStateCoordinator:
         self.child_result = delegate.execute(self._request)
         self._blocked_artifacts = artifacts
         self._blocked_completed_at = {stage: completed_at for stage in artifacts}
+        blocked = _model_blocked_candidate_set(
+            request=self._request,
+            reason_codes=reason_codes,
+            created_at=completed_at,
+        )
+        self._repository.append_runtime_candidate(
+            request=self._request,
+            candidate_set=blocked,
+            candidate_stage=artifacts[StateResearchStage.CANDIDATE],
+        )
+        self._blocked_candidates = blocked
 
     def __call__(
         self,
@@ -961,6 +974,73 @@ def _constrain_candidates(
         envelope=result_envelope,
         records=records,
         minimum_candidate_population=candidates.minimum_candidate_population,
+        reason_codes=reasons,
+    )
+
+
+def _model_blocked_candidate_set(
+    *,
+    request: ChildExecutionRequest,
+    reason_codes: tuple[str, ...],
+    created_at: datetime,
+) -> CandidateSet:
+    """Represent model rejection as an explicit empty Candidate fact."""
+
+    reasons = tuple(
+        sorted(
+            {
+                *reason_codes,
+                "CANDIDATE_NOT_EXECUTED",
+                "MODEL_NOT_QUALIFIED_FOR_MODE",
+            }
+        )
+    )
+    payload = {
+        "records": [],
+        "minimum_candidate_population": 1,
+        "reason_codes": list(reasons),
+    }
+    configuration_hash = canonical_hash(
+        {"configuration_references": [item.to_canonical_dict() for item in request.configuration_references]}
+    )
+    lineage = tuple(
+        sorted(
+            (
+                (request.source_manifest_id, request.source_manifest_hash),
+                (request.evidence_commit_id, request.evidence_commit_hash),
+            ),
+            key=lambda item: str(item[0]),
+        )
+    )
+    envelope = ArtifactEnvelope.create(
+        artifact_type="MODEL_BLOCKED_CANDIDATE_SET",
+        artifact_payload=payload,
+        decision_date=request.trading_date,
+        decision_time=DecisionTime(request.as_of_time),
+        created_at=created_at,
+        code_revision=request.run_hash or "CONTINUOUS_RUN_HASH_UNAVAILABLE",
+        configuration_id=ArtifactId(f"state-model-blocked-config:{configuration_hash[7:]}"),
+        configuration_hash=configuration_hash,
+        source_manifest_id=request.source_manifest_id,
+        source_manifest_hash=request.source_manifest_hash,
+        input_artifact_ids=tuple(item[0] for item in lineage),
+        input_content_hashes=tuple(item[1] for item in lineage),
+        model_id=None,
+        model_version=None,
+        data_eligibility=DataEligibility.EXPLORATORY,
+        evidence_authority=EvidenceAuthority.IMMUTABLE_CONTENT_ADDRESSED_ARTIFACT,
+        status="RESEARCH_BLOCKED",
+        reason_codes=reasons,
+        limitations=(
+            "FORMAL_OOS_FALSE",
+            "PIT_INCOMPLETE",
+            "PRODUCTION_AUTHORIZED_FALSE",
+        ),
+    )
+    return CandidateSet(
+        envelope=envelope,
+        records=(),
+        minimum_candidate_population=1,
         reason_codes=reasons,
     )
 

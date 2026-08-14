@@ -145,6 +145,13 @@ class RepositoryFactory:
             clock=clock or _utc_now,
         )
 
+    def multi_strategy(self):
+        from market_regime_alpha.strategies.postgres_repository import (
+            PostgresMultiStrategyRepository,
+        )
+
+        return PostgresMultiStrategyRepository(self._postgres)
+
     def decision(self):
         return PostgresDecisionLifecycleRepository(self._postgres)
 
@@ -444,9 +451,7 @@ def _postgres_binding_locator(
 
     parts = urlsplit(database_url)
     username = parts.username or ""
-    userinfo = f"{username}:***@" if parts.password is not None else (
-        f"{username}@" if username else ""
-    )
+    userinfo = f"{username}:***@" if parts.password is not None else (f"{username}@" if username else "")
     hostname = parts.hostname or ""
     rendered_host = f"[{hostname}]" if ":" in hostname else hostname
     hostinfo = f"{rendered_host}:{parts.port}" if parts.port is not None else rendered_host
@@ -479,13 +484,8 @@ def _assert_database_binding(
     stored_backend: str,
     stored_locator: str,
 ) -> None:
-    if (
-        stored_backend != "postgres"
-        or stored_locator != expected.locator
-    ):
-        raise DatabaseBindingError(
-            "runtime database authority does not match the stored binding"
-        )
+    if stored_backend != "postgres" or stored_locator != expected.locator:
+        raise DatabaseBindingError("runtime database authority does not match the stored binding")
 
 
 __all__ = [

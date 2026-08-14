@@ -110,10 +110,7 @@ class ContinuousResearchTickRunner:
     ) -> ContinuousTickExecutionResult:
         if tick_command.run_id != run_command.run_id:
             raise ValueError("tick command does not belong to run command")
-        if (
-            run_command.policy_id != self._policy.policy_id
-            or run_command.policy_hash != self._policy.content_hash
-        ):
+        if run_command.policy_id != self._policy.policy_id or run_command.policy_hash != self._policy.content_hash:
             raise ValueError("run command does not bind the selected Runtime policy")
         assessment = self._policy.assess(
             trading_date=run_command.trading_date,
@@ -121,22 +118,16 @@ class ContinuousResearchTickRunner:
         )
         session_phase = assessment.session_phase
         self._journal.create_or_get(run_command)
-        admitted = self._journal.admit_tick(
-            tick_command, session_phase=session_phase
-        )
+        admitted = self._journal.admit_tick(tick_command, session_phase=session_phase)
         if admitted.status is ContinuousTickStatus.COMPLETED:
             return self._completed_result(run_command, admitted)
         self._journal.resume(run_command.run_id)
-        claim = self._journal.claim_tick(
-            run_id=run_command.run_id, tick_id=tick_command.tick_id
-        )
+        claim = self._journal.claim_tick(run_id=run_command.run_id, tick_id=tick_command.tick_id)
         active_claim = claim
         tick_state = self._journal.get_tick(claim.run_id, claim.tick_id)
         evidence: EvidenceCommit
         if tick_state.evidence_commit_id is not None:
-            evidence = self._journal.get_evidence_commit(
-                tick_state.evidence_commit_id
-            )
+            evidence = self._journal.get_evidence_commit(tick_state.evidence_commit_id)
         else:
             previous_current = None
             started = self._journal.start_provider_attempt(
@@ -183,11 +174,7 @@ class ContinuousResearchTickRunner:
                 tick = self._journal.fail_tick(
                     claim=active_claim,
                     error=error,
-                    retryable=(
-                        acquired.retry_at is not None
-                        and acquired.status.value
-                        in {"FAILED", "TIMED_OUT", "RATE_LIMITED"}
-                    ),
+                    retryable=(acquired.retry_at is not None and acquired.status.value in {"FAILED", "TIMED_OUT", "RATE_LIMITED"}),
                     retry_at=acquired.retry_at,
                 )
                 run = self._journal.get_run(run_command.run_id)
@@ -197,21 +184,15 @@ class ContinuousResearchTickRunner:
                     evidence=None,
                     decision=None,
                     child_references=(),
-                    reason_codes=tuple(
-                        sorted({"ENTRY_BLOCKED", *acquired.reason_codes})
-                    ),
+                    reason_codes=tuple(sorted({"ENTRY_BLOCKED", *acquired.reason_codes})),
                 )
-            previous_current = self._journal.get_current_evidence(
-                run_command.run_id, acquired.evidence.evidence_scope
-            )
+            previous_current = self._journal.get_current_evidence(run_command.run_id, acquired.evidence.evidence_scope)
             evidence = acquired.build_evidence(
                 attempt=attempt,
                 trading_date=run_command.trading_date,
                 request_scope_hash=run_command.request_scope_hash,
                 provider_configuration_id=run_command.provider_configuration_id,
-                provider_configuration_hash=(
-                    run_command.provider_configuration_hash
-                ),
+                provider_configuration_hash=(run_command.provider_configuration_hash),
             )
             committed = self._journal.commit_evidence(
                 claim=active_claim,
@@ -221,9 +202,7 @@ class ContinuousResearchTickRunner:
             evidence = committed.evidence
             active_claim = committed.claim
             if previous_current is not None:
-                previous_evidence = self._journal.get_evidence_commit(
-                    previous_current.evidence_commit_id
-                )
+                previous_evidence = self._journal.get_evidence_commit(previous_current.evidence_commit_id)
             else:
                 previous_evidence = None
         if tick_state.evidence_commit_id is not None:
@@ -235,26 +214,21 @@ class ContinuousResearchTickRunner:
 
         tick_state = self._journal.get_tick(claim.run_id, claim.tick_id)
         if tick_state.change_decision_id is not None:
-            decision = self._journal.get_change_decision(
-                tick_state.change_decision_id
-            )
+            decision = self._journal.get_change_decision(tick_state.change_decision_id)
         else:
             decision = ChangeDecision.create(
                 evidence=evidence,
                 previous_evidence=previous_evidence,
-                downstream_contract_satisfied=_downstream_contract_satisfied(
-                    evidence
-                ),
+                downstream_contract_satisfied=_downstream_contract_satisfied(evidence),
                 created_at=self._now(),
             )
-            recorded = self._journal.record_change_decision(
-                claim=active_claim, decision=decision
-            )
+            recorded = self._journal.record_change_decision(claim=active_claim, decision=decision)
             decision = recorded.decision
             active_claim = recorded.claim
         try:
             child_references, active_claim = self._resolve_children(
                 run_command=run_command,
+                tick_command=tick_command,
                 claim=active_claim,
                 evidence=evidence,
                 decision=decision,
@@ -272,9 +246,7 @@ class ContinuousResearchTickRunner:
             claim=active_claim,
             input_references=_tick_input_references(evidence, decision),
             output_references=_tick_output_references(child_references),
-            reason_codes=tuple(
-                sorted({"ENTRY_BLOCKED", *decision.reason_codes})
-            ),
+            reason_codes=tuple(sorted({"ENTRY_BLOCKED", *decision.reason_codes})),
             created_at=self._now(),
         )
         final_state = _completed_run_state(session_phase)
@@ -375,6 +347,7 @@ class ContinuousResearchTickRunner:
         self,
         *,
         run_command: ContinuousResearchCommand,
+        tick_command: RuntimeTickCommand,
         claim: ClaimedRuntimeTick,
         evidence: EvidenceCommit,
         decision: ChangeDecision,
@@ -417,6 +390,7 @@ class ContinuousResearchTickRunner:
             claim = self._journal.heartbeat(claim)
             request = _child_request(
                 run_command=run_command,
+                tick_command=tick_command,
                 claim=claim,
                 evidence=evidence,
                 decision=decision,
@@ -456,9 +430,7 @@ class ContinuousResearchTickRunner:
         for reference in references:
             if reference.child_kind in existing_kinds:
                 continue
-            self._journal.record_child_reference(
-                claim=claim, reference=reference
-            )
+            self._journal.record_child_reference(claim=claim, reference=reference)
         return self._journal.get_child_references(claim.run_id, claim.tick_id), claim
 
     def _completed_result(
@@ -466,29 +438,15 @@ class ContinuousResearchTickRunner:
         run_command: ContinuousResearchCommand,
         tick: ContinuousTickSnapshot,
     ) -> ContinuousTickExecutionResult:
-        evidence = (
-            None
-            if tick.evidence_commit_id is None
-            else self._journal.get_evidence_commit(tick.evidence_commit_id)
-        )
-        decision = (
-            None
-            if tick.change_decision_id is None
-            else self._journal.get_change_decision(tick.change_decision_id)
-        )
+        evidence = None if tick.evidence_commit_id is None else self._journal.get_evidence_commit(tick.evidence_commit_id)
+        decision = None if tick.change_decision_id is None else self._journal.get_change_decision(tick.change_decision_id)
         return ContinuousTickExecutionResult(
             tick=tick,
             run_state=self._journal.get_run(run_command.run_id).status,
             evidence=evidence,
             decision=decision,
-            child_references=self._journal.get_child_references(
-                run_command.run_id, tick.command.tick_id
-            ),
-            reason_codes=(
-                ("ENTRY_BLOCKED",)
-                if tick.receipt is None
-                else tick.receipt.reason_codes
-            ),
+            child_references=self._journal.get_child_references(run_command.run_id, tick.command.tick_id),
+            reason_codes=(("ENTRY_BLOCKED",) if tick.receipt is None else tick.receipt.reason_codes),
         )
 
     def _now(self) -> datetime:
@@ -500,6 +458,7 @@ class ContinuousResearchTickRunner:
 def _child_request(
     *,
     run_command: ContinuousResearchCommand,
+    tick_command: RuntimeTickCommand,
     claim: ClaimedRuntimeTick,
     evidence: EvidenceCommit,
     decision: ChangeDecision,
@@ -558,6 +517,8 @@ def _child_request(
             )
         ),
         authority_mode=run_command.authority_mode,
+        run_hash=run_command.command_hash,
+        tick_hash=tick_command.tick_hash,
     )
 
 
@@ -605,23 +566,15 @@ def _require_complete_child_set(results: tuple[ChildExecutionResult, ...]) -> No
         # be represented by a synthetic Canonical receipt.
         ContinuousChildKind.CANONICAL_LIFECYCLE,
     }
-    if (
-        len(kinds) != len(set(kinds))
-        or not required.issubset(kinds)
-        or not set(kinds).issubset(set(ContinuousChildKind))
-    ):
+    if len(kinds) != len(set(kinds)) or not required.issubset(kinds) or not set(kinds).issubset(set(ContinuousChildKind)):
         raise ValueError("child port must return each executed research owner exactly once")
 
 
-def _tick_input_references(
-    evidence: EvidenceCommit, decision: ChangeDecision
-) -> tuple[RuntimeArtifactReference, ...]:
+def _tick_input_references(evidence: EvidenceCommit, decision: ChangeDecision) -> tuple[RuntimeArtifactReference, ...]:
     return tuple(
         sorted(
             (
-                RuntimeArtifactReference(
-                    "CHANGE_DECISION", decision.decision_id, decision.decision_hash
-                ),
+                RuntimeArtifactReference("CHANGE_DECISION", decision.decision_id, decision.decision_hash),
                 RuntimeArtifactReference(
                     "EVIDENCE_COMMIT",
                     evidence.evidence_commit_id,
@@ -677,9 +630,7 @@ def _downstream_contract_satisfied(evidence: EvidenceCommit) -> bool:
     satisfied = "DOWNSTREAM_CONTRACT_SATISFIED" in evidence.limitations
     blocked = "DOWNSTREAM_CONTRACT_NOT_SATISFIED" in evidence.limitations
     if satisfied == blocked:
-        raise ValueError(
-            "Runner Evidence must persist exactly one downstream contract marker"
-        )
+        raise ValueError("Runner Evidence must persist exactly one downstream contract marker")
     return satisfied
 
 
@@ -699,10 +650,7 @@ def _validate_evidence_time(
         raise ValueError("Evidence AsOfTime cannot exceed Runtime Tick observed_at")
     if evidence.available_at > tick_command.observed_at:
         raise ValueError("future Evidence is not consumable by the Runtime Tick")
-    if (
-        session_phase is ContinuousSessionPhase.DECISION_WINDOW
-        and "COMPLETE_DAILY_BAR" in evidence.limitations
-    ):
+    if session_phase is ContinuousSessionPhase.DECISION_WINDOW and "COMPLETE_DAILY_BAR" in evidence.limitations:
         raise ValueError("Decision Window cannot consume a complete daily bar")
 
 

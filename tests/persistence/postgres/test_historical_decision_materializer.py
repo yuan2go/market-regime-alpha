@@ -44,6 +44,12 @@ from market_regime_alpha.application.historical_corpus.postgres_repository impor
 from market_regime_alpha.application.historical_research.contracts import (
     HistoricalResearchCommand,
 )
+from market_regime_alpha.application.historical_research.multi_strategy import (
+    MultiStrategyHistoricalAdapter,
+)
+from market_regime_alpha.application.continuous_research.journal import (
+    RuntimeArtifactReference,
+)
 from market_regime_alpha.application.historical_research.postgres_journal import (
     HistoricalRunStatus,
     PostgresHistoricalResearchJournal,
@@ -84,6 +90,15 @@ from market_regime_alpha.application.research_validation.postgres_repository imp
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.evidence.canonical import canonical_hash
 from market_regime_alpha.market_data import Timeframe
+from market_regime_alpha.strategies.defaults import (
+    canonical_exploratory_strategy_registry,
+)
+from market_regime_alpha.strategies.portfolio import (
+    CrossStrategyPortfolioPolicy,
+)
+from market_regime_alpha.strategies.postgres_repository import (
+    PostgresMultiStrategyRepository,
+)
 from market_regime_alpha.universe.postgres_research import (
     PostgresFreeResearchUniverseRepository,
 )
@@ -158,9 +173,7 @@ def test_existing_historical_runner_actively_materializes_and_replays(
                 (DECISION_DATE, DECISION_DATE),
                 (DECISION_DATE + timedelta(days=1), DECISION_DATE),
             ),
-            cohorts=(
-                HistoricalConstituentCohort(DECISION_DATE, universe_reference),
-            ),
+            cohorts=(HistoricalConstituentCohort(DECISION_DATE, universe_reference),),
             scan_source_manifest_reference=ValidationArtifactReference(
                 "SOURCE_MANIFEST",
                 ArtifactId("phase-e-integration-timeline-source"),
@@ -171,9 +184,7 @@ def test_existing_historical_runner_actively_materializes_and_replays(
         )
     )
     facts_repository = PostgresHistoricalSecurityFactsRepository(postgres_factory)
-    facts = facts_repository.publish(
-        _historical_facts((universe_reference, timeline.reference))
-    )
+    facts = facts_repository.publish(_historical_facts((universe_reference, timeline.reference)))
     scope_repository = PostgresRuntimeScopeRepository(postgres_factory)
     policy = scope_repository.register_policy(_policy())
     target_repository = PostgresTargetOutcomeRepository(postgres_factory)
@@ -224,9 +235,7 @@ def test_existing_historical_runner_actively_materializes_and_replays(
         feature_owner,
         recorded_at=MATERIALIZED_AT,
     )
-    validation_repository.record_historical_strategy_economics_policy_set(
-        economics_owner
-    )
+    validation_repository.record_historical_strategy_economics_policy_set(economics_owner)
     experiment = create_phase_e3_historical_experiment(
         target_protocol,
         locked_at=MATERIALIZED_AT,
@@ -273,12 +282,31 @@ def test_existing_historical_runner_actively_materializes_and_replays(
         validation_repository=validation_repository,
         historical_facts_repository=facts_repository,
     )
+    strategy_repository = PostgresMultiStrategyRepository(postgres_factory)
+    strategy_repository.register(
+        canonical_exploratory_strategy_registry(),
+        created_at=MATERIALIZED_AT,
+    )
+    archive_materializer = MultiStrategyHistoricalAdapter(
+        delegate=materializer,
+        component_repository=component_repository,
+        strategy_repository=strategy_repository,
+        parent_run_reference=RuntimeArtifactReference(
+            "HISTORICAL_RESEARCH_RUN",
+            command.run_id,
+            command.command_hash,
+        ),
+        portfolio_policy=CrossStrategyPortfolioPolicy(
+            maximum_gross_weight=Decimal("0.50"),
+            maximum_symbol_weight=Decimal("0.20"),
+        ),
+    )
     runner = HistoricalResearchRunner(
         journal=journal,
         kernel=ResearchDecisionSessionKernel(
             PostgresHistoricalSessionOwner(
                 postgres_factory,
-                archive_materializer=materializer,
+                archive_materializer=archive_materializer,
             )
         ),
     )
@@ -355,6 +383,22 @@ def test_existing_historical_runner_actively_materializes_and_replays(
     assert resumed.status is HistoricalRunStatus.COMPLETE
     assert resumed.sessions[0].receipts[-1].stage is ResearchSessionStage.PERFORMANCE
     assert resumed.sessions[0].receipts[-1].status is SessionStageStatus.COMPLETE
+    strategy_receipt = resumed.sessions[0].receipts[ResearchSessionStage.STRATEGY.ordinal - 1]
+    assert {item.artifact_kind for item in strategy_receipt.output_references} >= {
+        "HISTORICAL_STRATEGY",
+        "MULTI_STRATEGY_CYCLE",
+    }
+    portfolio_receipt = resumed.sessions[0].receipts[ResearchSessionStage.PORTFOLIO.ordinal - 1]
+    assert {item.artifact_kind for item in portfolio_receipt.output_references} >= {
+        "HISTORICAL_PORTFOLIO",
+        "CROSS_STRATEGY_PORTFOLIO",
+    }
+    strategy_cycle = strategy_repository.get_cycle_for_tick(
+        run_id=command.run_id,
+        tick_id=resumed.sessions[0].request.session_id,
+    )
+    assert {item.origin.value for item in strategy_cycle.runs} == {"HISTORICAL"}
+    assert {strategy_repository.load_registry().family_for(item).value for item in strategy_cycle.runs} == {"OVERNIGHT", "SWING_STATE"}
     outcome_reference = next(
         item for item in resumed.sessions[0].receipts[-2].output_references if item.artifact_kind == "HISTORICAL_OUTCOME"
     )
@@ -374,8 +418,7 @@ def test_existing_historical_runner_actively_materializes_and_replays(
     }
     assert outcome.payload["selective_reads"]
     assert all(
-        item["query"]["symbol_count"] <= len(STOCKS)
-        and item["query"]["symbols_hash"].startswith("sha256:")
+        item["query"]["symbol_count"] <= len(STOCKS) and item["query"]["symbols_hash"].startswith("sha256:")
         for item in outcome.payload["selective_reads"]
     )
     for result in outcome.payload["strategy_economics"]:
@@ -387,22 +430,10 @@ def test_existing_historical_runner_actively_materializes_and_replays(
     assert panel.payload["missing_target_count"] == 1
     excluded = next(item for item in panel.payload["rows"] if item["symbol"] == STOCKS[0])
     assert excluded["target_status"] == "CORPORATE_ACTION_EXCLUDED"
-    assert outcome.payload["corporate_action_exclusions"][0]["reason_code"] == (
-        "CORPORATE_ACTION_COVERAGE_GAP_RAW_RETURN_NOT_ESTIMABLE"
-    )
-    action_labels = tuple(
-        TargetOutcomeLabel.from_canonical_dict(item)
-        for item in outcome.payload["labels"]
-        if item["symbol"] == STOCKS[0]
-    )
-    assert all(
-        item.availability_status is OutcomeAvailabilityStatus.UNAVAILABLE
-        for item in action_labels
-    )
-    assert all(
-        "CORPORATE_ACTION_POLICY_FAILED_CLOSED" in item.reason_codes
-        for item in action_labels
-    )
+    assert outcome.payload["corporate_action_exclusions"][0]["reason_code"] == ("CORPORATE_ACTION_COVERAGE_GAP_RAW_RETURN_NOT_ESTIMABLE")
+    action_labels = tuple(TargetOutcomeLabel.from_canonical_dict(item) for item in outcome.payload["labels"] if item["symbol"] == STOCKS[0])
+    assert all(item.availability_status is OutcomeAvailabilityStatus.UNAVAILABLE for item in action_labels)
+    assert all("CORPORATE_ACTION_POLICY_FAILED_CLOSED" in item.reason_codes for item in action_labels)
     assert excluded["industry"] == "TEST_INDUSTRY"
     assert excluded["market_cap_bucket"] != "NOT_ESTIMABLE"
     assert excluded["signal_diagnostic"]["state"]

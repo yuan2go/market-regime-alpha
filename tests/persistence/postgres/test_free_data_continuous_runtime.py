@@ -27,6 +27,7 @@ from market_regime_alpha.application.continuous_research.free_data_runtime impor
 from market_regime_alpha.application.continuous_research.journal import (
     ChangeDecisionType,
     ChildReferenceDisposition,
+    ContinuousChildKind,
     ContinuousTickStatus,
 )
 from market_regime_alpha.application.continuous_research.policy import (
@@ -183,10 +184,7 @@ def test_canonical_free_data_runtime_reaches_summary_and_replays(
         decision_time=DECISION,
         created_at=observed,
         code_revision="free-data-continuous-e2e",
-        instruments=tuple(
-            FreeDataInstrument(symbol=symbol, asset_type=AssetType.A_SHARE)
-            for symbol in policy.symbols
-        ),
+        instruments=tuple(FreeDataInstrument(symbol=symbol, asset_type=AssetType.A_SHARE) for symbol in policy.symbols),
         membership_source="CANONICAL_FREE_DATA_E2E",
         minimum_history_sessions=21,
         liquidity_lookback_sessions=21,
@@ -203,9 +201,7 @@ def test_canonical_free_data_runtime_reaches_summary_and_replays(
         policy_id=continuous_policy.policy_id,
         policy_hash=continuous_policy.content_hash,
         provider_configuration_id=ArtifactId("canonical-free-data-profile-v1"),
-        provider_configuration_hash=canonical_hash(
-            {"profile": TENCENT_FREE_OPERATIONAL_PROFILE_ID}
-        ),
+        provider_configuration_hash=canonical_hash({"profile": TENCENT_FREE_OPERATIONAL_PROFILE_ID}),
         research_configuration_id=configuration.configuration_id,
         research_configuration_hash=configuration.configuration_hash,
         code_revision="free-data-continuous-e2e",
@@ -249,15 +245,14 @@ def test_canonical_free_data_runtime_reaches_summary_and_replays(
             observed=observed,
             code_revision="free-data-continuous-e2e",
         )
-    selected_models = ControlledRuntimeModelSelector(
-        repositories.model_governance()
-    )
+    selected_models = ControlledRuntimeModelSelector(repositories.model_governance())
     composition = CanonicalFreeDataResearchComposition(
         service=service,
         invocation_builder=lambda _: invocation,
         model_selector=selected_models,
         summary_repository=repositories.decision_system(clock=lambda: observed),
         state_repository=repositories.state_system(clock=lambda: observed),
+        strategy_repository=repositories.multi_strategy(),
         clock=lambda: observed,
     )
     journal = repositories.continuous_research(clock=lambda: observed)
@@ -308,12 +303,17 @@ def test_canonical_free_data_runtime_reaches_summary_and_replays(
     assert summary.evidence_ceiling is PITSourceEvidenceLevel.FREE_DATA_EXPLORATORY
     assert summary.data_eligibility is DataEligibility.EXPLORATORY
     assert summary.provider_profile_id == TENCENT_FREE_OPERATIONAL_PROFILE_ID
-    assert all(
-        contract.product != "ifzq.gtimg.cn:minute"
-        for contract in summary.provider_contracts
-    )
+    assert all(contract.product != "ifzq.gtimg.cn:minute" for contract in summary.provider_contracts)
     assert summary.state_system_receipt.reference_kind == "STATE_SYSTEM_RECEIPT"
     assert summary.candidate_set is not None
+    strategy_repository = repositories.multi_strategy()
+    registry = strategy_repository.load_registry()
+    strategy_cycle = strategy_repository.get_cycle_for_tick(
+        run_id=command.run_id,
+        tick_id=first_tick.tick_id,
+    )
+    assert {item.strategy_version_reference.artifact_id for item in strategy_cycle.runs} == set(registry.active_version_ids)
+    assert {item.child_kind for item in first.child_references} >= {ContinuousChildKind.STRATEGY_RUNTIME}
     assert summary.no_order and summary.no_fill and summary.no_broker
     assert summary.no_position_mutation_from_shadow
     by_stage = {stage.stage: stage for stage in summary.stages}
@@ -322,10 +322,7 @@ def test_canonical_free_data_runtime_reaches_summary_and_replays(
     assert by_stage[StateResearchStage.CAPITAL_STATE].status is ResearchStageStatus.DATA_INSUFFICIENT
     assert len(summary.model_selection_receipts) == 6
     assert all(
-        repositories.model_governance()
-        .get_selection_receipt(reference.artifact_id)
-        .purpose
-        is authority_mode.runtime_purpose
+        repositories.model_governance().get_selection_receipt(reference.artifact_id).purpose is authority_mode.runtime_purpose
         for reference in summary.model_selection_receipts
     )
     assert replay_continuous_research(journal, command.run_id).integrity_status == "VERIFIED"
@@ -344,6 +341,7 @@ def test_canonical_free_data_runtime_reaches_summary_and_replays(
             model_selector=selected_models,
             summary_repository=repositories.decision_system(clock=lambda: observed),
             state_repository=repositories.state_system(clock=lambda: observed),
+            strategy_repository=repositories.multi_strategy(),
             clock=lambda: observed,
         ),
         policy=continuous_policy,
@@ -365,13 +363,8 @@ def test_canonical_free_data_runtime_reaches_summary_and_replays(
     )
     assert second.decision is not None
     assert second.decision.decision_type is ChangeDecisionType.NO_MATERIAL_CHANGE
-    assert all(
-        item.reference_disposition is ChildReferenceDisposition.REUSED
-        for item in second.child_references
-    )
-    assert {item.child_artifact_id for item in second.child_references} == {
-        item.child_artifact_id for item in first.child_references
-    }
+    assert all(item.reference_disposition is ChildReferenceDisposition.REUSED for item in second.child_references)
+    assert {item.child_artifact_id for item in second.child_references} == {item.child_artifact_id for item in first.child_references}
 
 
 @pytest.mark.parametrize(
@@ -414,10 +407,7 @@ def test_actual_selector_uses_mode_specific_slots_and_persists_rejections(
         decision_time=DECISION,
         created_at=observed,
         code_revision="selector-purpose-e2e",
-        instruments=tuple(
-            FreeDataInstrument(symbol=symbol, asset_type=AssetType.A_SHARE)
-            for symbol in policy.symbols
-        ),
+        instruments=tuple(FreeDataInstrument(symbol=symbol, asset_type=AssetType.A_SHARE) for symbol in policy.symbols),
         membership_source="SELECTOR_PURPOSE_E2E",
         minimum_history_sessions=21,
         liquidity_lookback_sessions=21,
@@ -438,42 +428,35 @@ def test_actual_selector_uses_mode_specific_slots_and_persists_rejections(
     journal = repositories.continuous_research(clock=lambda: observed)
     journal.create_or_get(command)
     tick = _tick(command, "selector")
-    journal.admit_tick(tick, session_phase=default_continuous_decision_window_policy().assess(
-        trading_date=command.trading_date,
-        observed_at=observed,
-    ).session_phase)
+    journal.admit_tick(
+        tick,
+        session_phase=default_continuous_decision_window_policy()
+        .assess(
+            trading_date=command.trading_date,
+            observed_at=observed,
+        )
+        .session_phase,
+    )
     claim = journal.claim_tick(run_id=command.run_id, tick_id=tick.tick_id)
     child_request = _child_request_from_claim(command, claim, observed)
 
-    governed = ControlledRuntimeModelSelector(
-        repositories.model_governance()
-    ).select(
+    governed = ControlledRuntimeModelSelector(repositories.model_governance()).select(
         request=child_request,
         preparation=preparation,
-        runtime_configuration_path=(
-            preparation.controlled_preparation.input_paths.runtime_configuration
-        ),
+        runtime_configuration_path=(preparation.controlled_preparation.input_paths.runtime_configuration),
     )
 
     assert len(governed.receipts) == 6
     assert not governed.all_selected
     assert {stage for stage, _ in governed.receipts} == set(FREE_DATA_MODEL_SLOTS)
     assert all(
-        receipt.purpose is authority_mode.runtime_purpose
-        and "CHAMPION_AUTHORITY_MISSING" in receipt.reason_codes
+        receipt.purpose is authority_mode.runtime_purpose and "CHAMPION_AUTHORITY_MISSING" in receipt.reason_codes
         for _, receipt in governed.receipts
     )
-    assert all(
-        repositories.model_governance().get_selection_receipt(receipt.receipt_id)
-        == receipt
-        for _, receipt in governed.receipts
-    )
+    assert all(repositories.model_governance().get_selection_receipt(receipt.receipt_id) == receipt for _, receipt in governed.receipts)
 
     if authority_mode is RuntimeAuthorityMode.PRODUCTION:
-        assert all(
-            receipt.production_authorized is False
-            for _, receipt in governed.receipts
-        )
+        assert all(receipt.production_authorized is False for _, receipt in governed.receipts)
         production_composition = CanonicalFreeDataResearchComposition(
             service=service,
             invocation_builder=lambda _: FreeDataPreparationInvocation(
@@ -481,11 +464,10 @@ def test_actual_selector_uses_mode_specific_slots_and_persists_rejections(
                 runtime_configuration_path=configuration_path,
                 idempotency_key="selector-purpose-e2e",
             ),
-            model_selector=ControlledRuntimeModelSelector(
-                repositories.model_governance()
-            ),
+            model_selector=ControlledRuntimeModelSelector(repositories.model_governance()),
             summary_repository=repositories.decision_system(clock=lambda: observed),
             state_repository=repositories.state_system(clock=lambda: observed),
+            strategy_repository=repositories.multi_strategy(),
             clock=lambda: observed,
         )
         with pytest.raises(
@@ -529,12 +511,8 @@ def test_formal_run_due_entry_executes_staged_research_summary(
     )
     command_path = tmp_path / "run-command.json"
     trading_day_path = tmp_path / "trading-day.json"
-    command_path.write_text(
-        json.dumps(command.to_canonical_dict()), encoding="utf-8"
-    )
-    trading_day_path.write_text(
-        json.dumps(trading_day.to_canonical_dict()), encoding="utf-8"
-    )
+    command_path.write_text(json.dumps(command.to_canonical_dict()), encoding="utf-8")
+    trading_day_path.write_text(json.dumps(trading_day.to_canonical_dict()), encoding="utf-8")
     monkeypatch.setattr(continuous_cli, "BaoStockHistoryClient", lambda **_: history)
     monkeypatch.setattr(
         continuous_cli,
@@ -689,12 +667,8 @@ class _HistoricalMinuteProvider:
 
 def _configuration(calendar) -> ControlledOperationRuntimeConfiguration:
     return ControlledOperationRuntimeConfiguration.create(
-        static_feature_set=static_technical_feature_set(
-            effective_from=(DECISION.value - timedelta(days=365)).astimezone(UTC)
-        ),
-        intraday_feature_set=intraday_overlay_feature_set(
-            effective_from=(DECISION.value - timedelta(days=365)).astimezone(UTC)
-        ),
+        static_feature_set=static_technical_feature_set(effective_from=(DECISION.value - timedelta(days=365)).astimezone(UTC)),
+        intraday_feature_set=intraday_overlay_feature_set(effective_from=(DECISION.value - timedelta(days=365)).astimezone(UTC)),
         research=ControlledResearchPipelineConfig.create(
             candidate_discovery=ControlledCandidateDiscoveryConfig.create(
                 top_n=5,
@@ -702,13 +676,9 @@ def _configuration(calendar) -> ControlledOperationRuntimeConfiguration:
             )
         ),
         signal_model=canonical_signal_model_configuration_v2(),
-        signal_mapping=canonical_signal_input_mapping_v2(
-            effective_from=(DECISION.value - timedelta(days=365)).astimezone(UTC)
-        ),
+        signal_mapping=canonical_signal_input_mapping_v2(effective_from=(DECISION.value - timedelta(days=365)).astimezone(UTC)),
         signal_requirement=canonical_all_factors_required_policy(),
-        signal_freshness=canonical_signal_freshness_policy(
-            trading_calendar=calendar
-        ),
+        signal_freshness=canonical_signal_freshness_policy(trading_calendar=calendar),
         path_forecast=_path_config(),
     )
 
@@ -932,13 +902,9 @@ def _child_request_from_claim(command, claim, observed):
         evidence_commit_hash=digest,
         decision_id=ArtifactId("selector-decision"),
         decision_hash=digest,
-        input_references=(
-            RuntimeArtifactReference("EVIDENCE", ArtifactId("selector-input"), digest),
-        ),
+        input_references=(RuntimeArtifactReference("EVIDENCE", ArtifactId("selector-input"), digest),),
         configuration_references=(
-            RuntimeArtifactReference(
-                "CONFIGURATION", configuration_id(command), command.research_configuration_hash
-            ),
+            RuntimeArtifactReference("CONFIGURATION", configuration_id(command), command.research_configuration_hash),
         ),
         authority_mode=command.authority_mode,
     )

@@ -22,6 +22,9 @@ from market_regime_alpha.application.continuous_research.ports import (
     ProviderAcquisitionResult,
     ValidatedEvidencePayload,
 )
+from market_regime_alpha.application.continuous_research.multi_strategy import (
+    MultiStrategyContinuousAdapter,
+)
 from market_regime_alpha.application.controlled_operation.input_artifacts import (
     load_controlled_runtime_configuration,
 )
@@ -77,6 +80,14 @@ from market_regime_alpha.data.providers.public_composite import (
     TENCENT_PUBLIC_PROVIDER_ID,
 )
 from market_regime_alpha.evidence.canonical import canonical_hash
+from market_regime_alpha.strategies.defaults import (
+    canonical_exploratory_strategy_registry,
+)
+from market_regime_alpha.strategies.portfolio import CrossStrategyPortfolioPolicy
+from market_regime_alpha.strategies.postgres_repository import (
+    PostgresMultiStrategyRepository,
+)
+from decimal import Decimal
 from market_regime_alpha.platform.postgres_runtime_governance import (
     ModelGovernanceIntegrityError,
 )
@@ -130,9 +141,7 @@ FREE_DATA_PROVIDER_CONTRACTS = (
 )
 
 
-ChildInvocationBuilder = Callable[
-    [ChildExecutionRequest], FreeDataPreparationInvocation
-]
+ChildInvocationBuilder = Callable[[ChildExecutionRequest], FreeDataPreparationInvocation]
 Clock = Callable[[], datetime]
 
 
@@ -146,9 +155,7 @@ class RuntimeModelGovernancePort(Protocol):
         as_of: datetime,
     ) -> ModelRuntimeAssignment: ...
 
-    def get_version_lineage_for_model(
-        self, model_id: ModelId
-    ) -> ModelVersionLineage: ...
+    def get_version_lineage_for_model(self, model_id: ModelId) -> ModelVersionLineage: ...
 
     def select(self, request: ModelSelectionRequest) -> ModelSelectionReceipt: ...
 
@@ -159,10 +166,7 @@ class GovernedControlledModels:
 
     @property
     def all_selected(self) -> bool:
-        return all(
-            receipt.status is SelectionStatus.SELECTED
-            for _, receipt in self.receipts
-        )
+        return all(receipt.status is SelectionStatus.SELECTED for _, receipt in self.receipts)
 
     def for_stage(self, stage: StateResearchStage) -> ModelSelectionReceipt | None:
         return dict(self.receipts).get(stage)
@@ -181,9 +185,7 @@ class ControlledRuntimeModelSelector:
         preparation: FreeDataOperationPreparation,
         runtime_configuration_path: Path,
     ) -> GovernedControlledModels:
-        configuration = load_controlled_runtime_configuration(
-            runtime_configuration_path.resolve()
-        )
+        configuration = load_controlled_runtime_configuration(runtime_configuration_path.resolve())
         configured = _configured_models(configuration)
         receipts = []
         for stage in FREE_DATA_MODEL_SLOTS:
@@ -202,9 +204,7 @@ class ControlledRuntimeModelSelector:
                 governed_model_id = model_id
                 rejections.add("CHAMPION_AUTHORITY_UNAVAILABLE")
             try:
-                lineage = self._repository.get_version_lineage_for_model(
-                    governed_model_id
-                )
+                lineage = self._repository.get_version_lineage_for_model(governed_model_id)
             except KeyError:
                 lineage = None
                 rejections.add("MODEL_VERSION_LINEAGE_MISSING")
@@ -213,10 +213,7 @@ class ControlledRuntimeModelSelector:
             if lineage is not None:
                 if lineage.model_version != model_version:
                     rejections.add("RUNTIME_CONFIGURATION_VERSION_MISMATCH")
-                if (
-                    lineage.configuration.artifact_id != config_id
-                    or lineage.configuration.content_hash != config_hash
-                ):
+                if lineage.configuration.artifact_id != config_id or lineage.configuration.content_hash != config_hash:
                     rejections.add("RUNTIME_CONFIGURATION_HASH_MISMATCH")
                 if lineage.code_revision != preparation.controlled_command.code_revision:
                     rejections.add("RUNTIME_CODE_REVISION_MISMATCH")
@@ -237,10 +234,7 @@ class ControlledRuntimeModelSelector:
                             purpose=request.authority_mode.runtime_purpose,
                             runtime_lineage=runtime_lineage,
                             selected_at=request.as_of_time,
-                            idempotency_key=(
-                                f"{request.run_id}:{request.tick_id}:"
-                                f"{request.authority_mode.value}:{slot}"
-                            ),
+                            idempotency_key=(f"{request.run_id}:{request.tick_id}:{request.authority_mode.value}:{slot}"),
                             preselection_rejection_codes=tuple(sorted(rejections)),
                         )
                     ),
@@ -256,9 +250,7 @@ class CanonicalFreeDataProvider:
         self,
         *,
         service: FreeDataOperationService,
-        invocation_builder: Callable[
-            [ProviderAcquisitionRequest], FreeDataPreparationInvocation
-        ],
+        invocation_builder: Callable[[ProviderAcquisitionRequest], FreeDataPreparationInvocation],
         clock: Clock,
     ) -> None:
         self._service = service
@@ -292,6 +284,7 @@ class CanonicalFreeDataResearchComposition:
         model_selector: ControlledRuntimeModelSelector,
         summary_repository: PostgresDecisionSystemRepository,
         state_repository: PostgresStateSystemRepository,
+        strategy_repository: PostgresMultiStrategyRepository,
         clock: Clock,
     ) -> None:
         self._service = service
@@ -299,12 +292,18 @@ class CanonicalFreeDataResearchComposition:
         self._model_selector = model_selector
         self._summary_repository = summary_repository
         self._state_repository = state_repository
+        self._strategy_repository = strategy_repository
         self._clock = clock
         self._summary_runtime = ResearchSummaryRuntimeService(summary_repository)
+        self._strategy_runtime = MultiStrategyContinuousAdapter(
+            repository=strategy_repository,
+            portfolio_policy=CrossStrategyPortfolioPolicy(
+                maximum_gross_weight=Decimal("0.50"),
+                maximum_symbol_weight=Decimal("0.20"),
+            ),
+        )
 
-    def lookup_children(
-        self, request: ChildExecutionRequest
-    ) -> tuple[ChildExecutionResult, ...] | None:
+    def lookup_children(self, request: ChildExecutionRequest) -> tuple[ChildExecutionResult, ...] | None:
         if request.authority_mode.requires_production_authorization:
             return None
         # A completed Continuous Tick is recovered by its own journal.  An
@@ -312,9 +311,7 @@ class CanonicalFreeDataResearchComposition:
         # their PostgreSQL receipts make that recovery idempotent.
         return None
 
-    def execute_children(
-        self, request: ChildExecutionRequest
-    ) -> tuple[ChildExecutionResult, ...]:
+    def execute_children(self, request: ChildExecutionRequest) -> tuple[ChildExecutionResult, ...]:
         invocation = self._invocation_builder(request)
         preparation = self._service.prepare(
             request=invocation.request,
@@ -322,15 +319,19 @@ class CanonicalFreeDataResearchComposition:
             idempotency_key=invocation.idempotency_key,
             supplemental_evidence_path=invocation.supplemental_evidence_path,
         )
+        if request.authority_mode.requires_production_authorization:
+            # Free public evidence remains below the Production data ceiling even
+            # if a governance operator accidentally assigns a Production model.
+            raise PermissionError("FREE_DATA_PRODUCTION_AUTHORITY_DENIED")
+        self._strategy_repository.register(
+            canonical_exploratory_strategy_registry(),
+            created_at=request.as_of_time,
+        )
         governed = self._model_selector.select(
             request=request,
             preparation=preparation,
             runtime_configuration_path=preparation.controlled_preparation.input_paths.runtime_configuration,
         )
-        if request.authority_mode.requires_production_authorization:
-            # Free public evidence remains below the Production data ceiling even
-            # if a governance operator accidentally assigns a Production model.
-            raise PermissionError("FREE_DATA_PRODUCTION_AUTHORITY_DENIED")
         dataset_result = _controlled_stage_child_result(
             kind=ContinuousChildKind.DAILY_DATASET,
             request=request,
@@ -361,18 +362,8 @@ class CanonicalFreeDataResearchComposition:
                 candidate_state_transform=state_coordinator,
             )
         else:
-            rejection_reasons = tuple(
-                sorted(
-                    {
-                        reason
-                        for _, receipt in governed.receipts
-                        for reason in receipt.reason_codes
-                    }
-                )
-            )
-            state_coordinator.record_model_blocked(
-                reason_codes=rejection_reasons
-            )
+            rejection_reasons = tuple(sorted({reason for _, receipt in governed.receipts for reason in receipt.reason_codes}))
+            state_coordinator.record_model_blocked(reason_codes=rejection_reasons)
             execution = self._service.record_model_not_qualified(
                 preparation=preparation,
                 reason_codes=rejection_reasons,
@@ -387,7 +378,7 @@ class CanonicalFreeDataResearchComposition:
             created_at=summary_created_at,
         )
         persisted = self._summary_runtime.execute(request=request, summary=summary)
-        return _owner_child_results(
+        owner_results = _owner_child_results(
             request=request,
             dataset_result=dataset_result,
             feature_result=feature_result,
@@ -395,6 +386,16 @@ class CanonicalFreeDataResearchComposition:
             execution=execution,
             summary=persisted,
         )
+        candidate_set = state_coordinator.final_candidates
+        if candidate_set is None:
+            raise ValueError("Strategy Runtime requires owner-resolved CandidateSet")
+        strategy_result = self._strategy_runtime.execute(
+            request=request,
+            candidate_set=candidate_set,
+            dataset_reference=persisted.dataset,
+            upstream=owner_results[-1],
+        )
+        return (*owner_results, strategy_result)
 
 
 def free_data_provider_result(
@@ -404,9 +405,7 @@ def free_data_provider_result(
 ) -> ProviderAcquisitionResult:
     source = preparation.source.acquired
     manifest = source.source_manifest
-    retrieved_at = max(
-        item.retrieved_at.value for item in manifest.source_artifacts
-    ).astimezone(UTC)
+    retrieved_at = max(item.retrieved_at.value for item in manifest.source_artifacts).astimezone(UTC)
     decision_time = manifest.decision_time.value.astimezone(UTC)
     return ProviderAcquisitionResult.succeeded(
         completed_at=completed_at.astimezone(UTC),
@@ -474,22 +473,15 @@ def _build_summary(
         )
         for stage in STATE_RESEARCH_STAGE_ORDER
     )
-    receipts = tuple(
-        _selection_reference(receipt)
-        for _, receipt in governed.receipts
-    )
-    active_configuration = load_controlled_runtime_configuration(
-        controlled.input_paths.runtime_configuration
-    )
+    receipts = tuple(_selection_reference(receipt) for _, receipt in governed.receipts)
+    active_configuration = load_controlled_runtime_configuration(controlled.input_paths.runtime_configuration)
     governed_configurations = tuple(
         RuntimeArtifactReference(
             "MODEL_CONFIGURATION",
             configuration_id,
             configuration_hash,
         )
-        for _, _, configuration_id, configuration_hash in _configured_models(
-            active_configuration
-        ).values()
+        for _, _, configuration_id, configuration_hash in _configured_models(active_configuration).values()
     )
     state_result = state_coordinator.child_result
     if state_result is None:
@@ -503,9 +495,7 @@ def _build_summary(
         decision_time=request.as_of_time,
         provider_profile_id=TENCENT_FREE_OPERATIONAL_PROFILE_ID,
         provider_contracts=_consumed_provider_contracts(preparation, execution),
-        provider_source_references=_consumed_provider_sources(
-            preparation, execution
-        ),
+        provider_source_references=_consumed_provider_sources(preparation, execution),
         source_manifest=RuntimeArtifactReference(
             "SOURCE_MANIFEST",
             request.source_manifest_id,
@@ -565,11 +555,7 @@ def _stage_evidence(
     receipt = governed.for_stage(stage)
     selection = None if receipt is None else _selection_reference(receipt)
     state_artifact = state_coordinator.stage_artifacts.get(stage)
-    output = (
-        state_artifact.to_reference()
-        if state_artifact is not None
-        else _execution_stage_output(stage, preparation, execution)
-    )
+    output = state_artifact.to_reference() if state_artifact is not None else _execution_stage_output(stage, preparation, execution)
     if receipt is not None and receipt.status is SelectionStatus.REJECTED:
         status = ResearchStageStatus.MODEL_NOT_QUALIFIED_FOR_MODE
         missing: tuple[str, ...] = ()
@@ -582,16 +568,8 @@ def _stage_evidence(
             )
         )
     elif state_artifact is not None:
-        status = (
-            ResearchStageStatus.COMPLETED
-            if state_artifact.status.value == "COMPLETED"
-            else ResearchStageStatus.DATA_INSUFFICIENT
-        )
-        missing = (
-            ()
-            if status is ResearchStageStatus.COMPLETED
-            else _missing_evidence(stage, execution)
-        )
+        status = ResearchStageStatus.COMPLETED if state_artifact.status.value == "COMPLETED" else ResearchStageStatus.DATA_INSUFFICIENT
+        missing = () if status is ResearchStageStatus.COMPLETED else _missing_evidence(stage, execution)
         reasons = state_artifact.reason_codes
     elif (
         stage in {StateResearchStage.SIGNAL, StateResearchStage.FORECAST}
@@ -604,10 +582,7 @@ def _stage_evidence(
         reasons = (f"{stage.value}_NOT_REQUIRED_WITHOUT_CANDIDATE",)
     elif (
         output is not None
-        and (
-            stage is StateResearchStage.OBSERVATION
-            or (execution is not None and execution.decision is not None)
-        )
+        and (stage is StateResearchStage.OBSERVATION or (execution is not None and execution.decision is not None))
         and stage
         not in {
             StateResearchStage.ETF_ROTATION,
@@ -635,13 +610,9 @@ def _stage_evidence(
         output_reference=output,
         selection_receipt=selection,
         evidence_available_at=(
-            state_artifact.available_at
-            if state_artifact is not None
-            else _canonical_stage_times(stage, request, execution)[0]
+            state_artifact.available_at if state_artifact is not None else _canonical_stage_times(stage, request, execution)[0]
         ),
-        stage_completed_at=state_coordinator.stage_completed_at.get(
-            stage, _canonical_stage_times(stage, request, execution)[1]
-        ),
+        stage_completed_at=state_coordinator.stage_completed_at.get(stage, _canonical_stage_times(stage, request, execution)[1]),
         result=_stage_result(
             stage,
             status,
@@ -662,11 +633,7 @@ def _canonical_stage_times(
 ) -> tuple[datetime, datetime]:
     if execution is None or execution.decision is None:
         package = None if execution is None else execution.terminal_package
-        completed = (
-            request.as_of_time
-            if package is None
-            else max(request.as_of_time, package.created_at)
-        )
+        completed = request.as_of_time if package is None else max(request.as_of_time, package.created_at)
         return request.as_of_time, completed
     decision = execution.decision
     if stage is StateResearchStage.SIGNAL:
@@ -693,18 +660,11 @@ def _stage_result(
     if stage is StateResearchStage.CANDIDATE:
         if state_candidates is None:
             return ResearchStageResult.EMPTY
-        return (
-            ResearchStageResult.RESEARCH_QUALIFIED
-            if state_candidates.selected
-            else ResearchStageResult.EMPTY
-        )
+        return ResearchStageResult.RESEARCH_QUALIFIED if state_candidates.selected else ResearchStageResult.EMPTY
     if stage is StateResearchStage.SIGNAL:
         if execution is None or execution.decision is None:
             return ResearchStageResult.EMPTY
-        states = {
-            item.signal_state.value
-            for item in execution.decision.signal.artifact.snapshots
-        }
+        states = {item.signal_state.value for item in execution.decision.signal.artifact.snapshots}
         if "CONFIRMED_FOR_RESEARCH" in states:
             return ResearchStageResult.RESEARCH_QUALIFIED
         if "WATCH" in states:
@@ -715,11 +675,7 @@ def _stage_result(
             return ResearchStageResult.EMPTY
         return (
             ResearchStageResult.RESEARCH_QUALIFIED
-            if any(
-                item.artifact.forecast.forecast_status.value
-                == "AVAILABLE_FOR_RESEARCH"
-                for item in execution.decision.forecasts
-            )
+            if any(item.artifact.forecast.forecast_status.value == "AVAILABLE_FOR_RESEARCH" for item in execution.decision.forecasts)
             else ResearchStageResult.EMPTY
         )
     return ResearchStageResult.AVAILABLE
@@ -732,9 +688,7 @@ def _execution_stage_output(
 ) -> RuntimeArtifactReference | None:
     if stage is StateResearchStage.OBSERVATION:
         manifest = preparation.prepared_inputs.manifest
-        return RuntimeArtifactReference(
-            "FREE_DATA_PREPARED_INPUTS", manifest.manifest_id, manifest.content_hash
-        )
+        return RuntimeArtifactReference("FREE_DATA_PREPARED_INPUTS", manifest.manifest_id, manifest.content_hash)
     if execution is not None and execution.decision is None:
         package = execution.terminal_package
         if package is not None:
@@ -752,11 +706,7 @@ def _execution_stage_output(
                     package.package_id,
                     package.content_hash,
                 )
-            matches = tuple(
-                item
-                for item in package.evidence_references
-                if item.reference_type == reference_type
-            )
+            matches = tuple(item for item in package.evidence_references if item.reference_type == reference_type)
             if len(matches) == 1:
                 terminal_reference = matches[0]
                 return RuntimeArtifactReference(
@@ -783,9 +733,7 @@ def _execution_stage_output(
         return RuntimeArtifactReference("CANDIDATE", item.artifact_id, item.content_hash)
     if stage is StateResearchStage.SIGNAL:
         signal = decision.signal.artifact
-        return RuntimeArtifactReference(
-            "SIGNAL", signal.artifact_id, signal.envelope.content_hash
-        )
+        return RuntimeArtifactReference("SIGNAL", signal.artifact_id, signal.envelope.content_hash)
     if stage is StateResearchStage.FORECAST:
         digest = canonical_hash(
             {
@@ -863,11 +811,7 @@ def _required_controlled_receipt(
     snapshot: DecisionTimeOperationRunSnapshot,
     stage: DecisionTimeOperationStageName,
 ) -> DecisionTimeOperationReceipt:
-    matches = tuple(
-        item.receipt
-        for item in snapshot.stages
-        if item.stage_name is stage and item.receipt is not None
-    )
+    matches = tuple(item.receipt for item in snapshot.stages if item.stage_name is stage and item.receipt is not None)
     if len(matches) != 1:
         raise ValueError(f"{stage.value} owner Receipt is unavailable")
     return matches[0]
@@ -888,25 +832,18 @@ def _owner_child_results(
         raise ValueError("Controlled Operation owner Receipt is unavailable")
     package = execution.terminal_package
     controlled_request = _with_upstream_result(
-        _with_upstream_result(
-            _with_upstream_result(request, dataset_result), feature_result
-        ),
+        _with_upstream_result(_with_upstream_result(request, dataset_result), feature_result),
         state_result,
     )
     package_receipts = tuple(
         item.receipt
         for item in execution.snapshot.stages
-        if item.stage_name is DecisionTimeOperationStageName.OPERATION_PACKAGE
-        and item.receipt is not None
+        if item.stage_name is DecisionTimeOperationStageName.OPERATION_PACKAGE and item.receipt is not None
     )
     if len(package_receipts) > 1:
         raise ValueError("Controlled Operation owner Receipt is ambiguous")
-    package_receipt_id = (
-        package_receipts[0].receipt_id if package_receipts else package.package_id
-    )
-    package_receipt_hash = (
-        package_receipts[0].content_hash if package_receipts else package.content_hash
-    )
+    package_receipt_id = package_receipts[0].receipt_id if package_receipts else package.package_id
+    package_receipt_hash = package_receipts[0].content_hash if package_receipts else package.content_hash
     controlled = ChildExecutionResult(
         child_kind=ContinuousChildKind.CONTROLLED_OPERATION,
         child_run_id=execution.snapshot.command.run_id,
@@ -918,11 +855,7 @@ def _owner_child_results(
         configuration_references=summary.configuration_references,
     )
     canonical_request = _with_upstream_result(controlled_request, controlled)
-    canonical_ref = tuple(
-        item
-        for item in package.evidence_references
-        if item.reference_type == "CANONICAL_LIFECYCLE_RUN"
-    )
+    canonical_ref = tuple(item for item in package.evidence_references if item.reference_type == "CANONICAL_LIFECYCLE_RUN")
     if len(canonical_ref) > 1:
         raise ValueError("Canonical Lifecycle owner Receipt is ambiguous")
     canonical = None
@@ -966,14 +899,8 @@ def _consumed_provider_contracts(
     preparation: FreeDataOperationPreparation,
     execution: FreeDataOperationExecution | None,
 ) -> tuple[ProviderContractLineage, ...]:
-    consumed_products = {
-        (str(item.provider_id), item.product)
-        for item in preparation.source.acquired.provider_result.raw_payloads
-    }
-    declared = {
-        (item.provider_id, item.product): item
-        for item in FREE_DATA_PROVIDER_CONTRACTS
-    }
+    consumed_products = {(str(item.provider_id), item.product) for item in preparation.source.acquired.provider_result.raw_payloads}
+    declared = {(item.provider_id, item.product): item for item in FREE_DATA_PROVIDER_CONTRACTS}
     contracts = {
         declared.get(
             key,
@@ -985,18 +912,8 @@ def _consumed_provider_contracts(
         )
         for key in consumed_products
     }
-    if (
-        execution is not None
-        and execution.decision is not None
-        and execution.decision.minute_coverage.accepted_source_references
-    ):
-        contracts.add(
-            next(
-                item
-                for item in FREE_DATA_PROVIDER_CONTRACTS
-                if item.product == "ifzq.gtimg.cn:minute"
-            )
-        )
+    if execution is not None and execution.decision is not None and execution.decision.minute_coverage.accepted_source_references:
+        contracts.add(next(item for item in FREE_DATA_PROVIDER_CONTRACTS if item.product == "ifzq.gtimg.cn:minute"))
     return tuple(
         sorted(
             contracts,
@@ -1051,10 +968,7 @@ def _consumed_provider_sources(
         for symbol in coverage.symbol_coverage:
             for attempt in symbol.attempt_references:
                 add("PROVIDER_ATTEMPT", attempt.attempt_id, attempt.attempt_hash)
-                if (
-                    attempt.source_artifact_id is not None
-                    and attempt.source_content_hash is not None
-                ):
+                if attempt.source_artifact_id is not None and attempt.source_content_hash is not None:
                     add(
                         "PROVIDER_SOURCE_ARTIFACT",
                         attempt.source_artifact_id,
@@ -1089,29 +1003,21 @@ def _runtime_lineage(
                 "runtime-feature-input:"
                 + canonical_hash(
                     {
-                        "static_bundle_id": str(
-                            controlled.static_feature_bundle.artifact.bundle_id
-                        ),
+                        "static_bundle_id": str(controlled.static_feature_bundle.artifact.bundle_id),
                         "feature_definition_id": str(feature_id),
                     }
                 )[7:]
             ),
             content_hash=canonical_hash(
                 {
-                    "static_bundle_hash": (
-                        controlled.static_feature_bundle.artifact.content_hash
-                    ),
+                    "static_bundle_hash": (controlled.static_feature_bundle.artifact.content_hash),
                     "feature_definition_id": str(feature_id),
                 }
             ),
         )
         for feature_id in feature_ids
     )
-    definition_hash = (
-        registered.definition_hash
-        if registered is not None
-        else canonical_hash({"unregistered_model_id": str(model_id)})[7:]
-    )
+    definition_hash = registered.definition_hash if registered is not None else canonical_hash({"unregistered_model_id": str(model_id)})[7:]
     code_revision = preparation.controlled_command.code_revision
     return RuntimeModelLineage.create(
         model_id=model_id,
@@ -1135,11 +1041,7 @@ def _runtime_lineage(
             if registered is not None and registered.code_revision == code_revision
             else canonical_hash({"code_revision": code_revision})
         ),
-        validation_protocol_refs=(
-            registered.validation_protocol_refs
-            if registered is not None
-            else ()
-        ),
+        validation_protocol_refs=(registered.validation_protocol_refs if registered is not None else ()),
         data_eligibility=DataEligibility.EXPLORATORY,
     )
 
@@ -1168,9 +1070,7 @@ def _configured_model(item: Any) -> tuple[ModelId, str, ArtifactId, str]:
 
 
 def _selection_reference(receipt: ModelSelectionReceipt) -> RuntimeArtifactReference:
-    return RuntimeArtifactReference(
-        "MODEL_SELECTION_RECEIPT", receipt.receipt_id, receipt.receipt_hash
-    )
+    return RuntimeArtifactReference("MODEL_SELECTION_RECEIPT", receipt.receipt_id, receipt.receipt_hash)
 
 
 def _reference_key(item: RuntimeArtifactReference) -> tuple[str, str, str]:

@@ -4,6 +4,7 @@
 > **Authority:** Consolidated overall design and implementation baseline  
 > **Owner:** Market Regime Alpha maintainers  
 > **Last Updated:** 2026-08-14  
+> **Code Evidence:** `src/market_regime_alpha`, `src/market_regime_alpha/persistence/postgres/migrations/*.sql`, `tests`
 > **Applies To:** Architecture, research, strategy, portfolio, runtime, evidence, qualification, operations, and future execution  
 > **Normative Boundary:** This document consolidates the current target design. It does not override `docs/constitution/00` through `09`; where a conflict exists, the repository documentation authority order applies. Current implementation facts remain authoritative only when proven by code, PostgreSQL schema, tests, and reproducible runtime evidence.
 
@@ -51,6 +52,30 @@ The platform must support materially different strategy families without duplica
 Future families may include ETF rotation, theme rotation, trend following, mean reversion, dividend/long-term allocation, policy/event strategies, and intraday overlays. They must reuse the same platform contracts rather than create parallel control planes.
 
 The principal architectural constraint for the next phase is **business and research convergence, not further governance expansion**. PostgreSQL Authority, PIT, replay, evidence identity, recovery, and qualification remain core. New authorities, receipts, protocol wrappers, orchestrators, or runtime planes require a concrete correctness or operational failure mode before they are added.
+
+### 1.1 Implementation convergence at migration 085
+
+The first executable convergence slice is now installed. One stable Strategy
+Registry contains `OVERNIGHT` and `SWING_STATE`; both run through the same
+`MultiStrategyRuntime`, PostgreSQL repository, Continuous child, historical
+adapter, replay kernel, cross-strategy Portfolio policy, and runtime inspection
+surface. Candidate remains an upstream attention artifact: every Strategy Run
+records its own eligibility, ranking, policy rejection, action, and proposal.
+
+Migration 085 persists Strategy Contract/Version/Run, gate attribution,
+proposals, cross-strategy Portfolio decisions, observed-Fill allocation,
+multi-horizon Path Outcomes, and strategy-version-scoped feedback. Physical
+Position is still derived only from the existing manual Fill owner. Historical
+and Replay use the existing Historical Session Journal and replace only origin,
+clock, and frozen input references; no second scheduler or business database was
+introduced.
+
+This is engineering closure, not empirical qualification. The deterministic
+Path Outcome and feedback operators are executable and PostgreSQL-backed, but
+longitudinal 3/5/10/20-session outcome production is not yet automatically
+scheduled over a qualified corpus. Formal PIT, Formal OOS, calibration, net
+economic support, prospective proof, Production Admission, and broker authority
+all remain false.
 
 ---
 
@@ -707,15 +732,14 @@ The following decisions supersede incompatible lower-level interpretations while
 
 ### Must Complete
 
-- Multi-Strategy Contract and canonical Strategy Version/Run identity where current code does not yet provide it.
-- Strategy-scoped Evidence and Qualification.
-- Unified Target/Path Label Authority supporting both Overnight and Swing research.
-- Candidate/Entry responsibility convergence and gate-attribution observability.
-- Strategy Sleeve + Fill Allocation semantics for real multi-strategy attribution.
-- Multi-horizon path dataset/evaluation support for Entry/Hold/Exit research.
-- Strategy-level economic evaluation rather than factor/model-only evidence.
+- Automatically materialize multi-session Strategy Path Outcomes from exact
+  historical owner windows and schedule the feedback closure after outcomes
+  become available.
+- Produce strategy-level statistical and economic evidence rather than only
+  deterministic contracts, kernels, and PostgreSQL engineering proof.
 - Sufficient PIT/reference coverage for each strategy before Formal PIT claims.
-- Simple cross-strategy portfolio/risk baseline.
+- Complete the consumer inventory before retiring the older T+1 Strategy Shadow
+  and Portfolio Shadow compatibility surfaces.
 
 ### Should Complete
 
@@ -834,11 +858,11 @@ Only after separate operational qualification, add broker order state, reconcili
 
 If only five workstreams are funded next, prioritize:
 
-1. **Multi-Strategy Contract / Strategy Registry convergence.**
-2. **Target / Path Label Authority and multi-horizon outcome datasets.**
-3. **Candidate / Entry decoupling with explicit gate attribution.**
-4. **Overnight + Swing reference strategy closures on the same runtime.**
-5. **Strategy Sleeve + simple cross-strategy Portfolio/Risk baseline.**
+1. **Exact historical 3/5/10/20-session Path Outcome materialization.**
+2. **Frozen Overnight/Swing comparative evaluation with gate-attribution diagnostics.**
+3. **Empirical cost, liquidity, fillability, and capacity inputs.**
+4. **Qualified Provider/PIT evidence required by the first two families.**
+5. **Prospective Shadow accumulation under the same Strategy Versions.**
 
 These maximize information gain and business closure. They are higher priority than another layer of Authority, Receipt, Protocol, or orchestration abstraction.
 

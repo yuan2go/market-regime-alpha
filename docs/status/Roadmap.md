@@ -3,8 +3,31 @@
 > **Status:** ROADMAP
 > **Authority:** Current forward engineering order
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-13
+> **Last Updated:** 2026-08-14
 > **Code Evidence:** `docs/status/Current-State.md`, `docs/status/Gap-Register.md`
+
+## Multi-Strategy convergence
+
+The migration-085 engineering slice is complete: stable Strategy
+Contract/Version/Run identities, shared Overnight/Swing execution, explicit
+Candidate gate attribution, simple cross-strategy Portfolio/Risk, observed-Fill
+strategy sleeves, multi-horizon Path Outcomes, version-scoped feedback,
+Continuous/Historical/Replay wiring and runtime inspection all use the existing
+PostgreSQL modular monolith and control planes.
+
+The next dependency order is empirical rather than another governance build:
+
+1. automatically materialize exact 3/5/10/20-session Path Outcomes over the
+   frozen longitudinal corpus;
+2. freeze and run version-scoped Overnight/Swing gate, ranking, path and
+   economic comparisons with purging/embargo and uncertainty;
+3. resolve real cost, liquidity, fillability and capacity inputs;
+4. acquire qualified Provider/PIT evidence before Formal OOS or calibration;
+5. accumulate prospective Shadow evidence before any Production consideration.
+
+The legacy T+1 Strategy/Portfolio Shadow path remains only while active
+settlement and qualification consumers depend on it. Retirement requires an
+explicit consumer inventory and differential replay proof.
 
 ## Phase C current order
 

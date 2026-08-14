@@ -102,6 +102,15 @@ class PostgresRuntimeObservability:
                     lease_expires_at=tick.lease_expires_at,
                 )
             )
+            observations.extend(
+                self._strategy_observations(
+                    run_id=run_id,
+                    tick_id=tick.command.tick_id,
+                    trace_id=trace_id,
+                    fencing_token=tick.fencing_token,
+                    lease_expires_at=tick.lease_expires_at,
+                )
+            )
             attempts = self._attempt_observations(run_id, tick.command.tick_id, tick.command.observed_at, trace_id)
             observations.extend(attempts)
             try:
@@ -222,7 +231,34 @@ class PostgresRuntimeObservability:
                 """,
                 (str(run_id),),
             ).fetchone()
-        if counts is None or candidate_count is None or minute_coverage is None:
+            strategy_counts = connection.execute(
+                """
+                SELECT
+                  (SELECT count(*) FROM multi_strategy_cycle
+                   WHERE parent_run_id = %s),
+                  (SELECT count(*) FROM strategy_run r
+                   JOIN multi_strategy_cycle c ON c.cycle_id = r.cycle_id
+                   WHERE c.parent_run_id = %s),
+                  (SELECT count(*) FROM strategy_gate_attribution g
+                   JOIN strategy_run r ON r.run_id = g.run_id
+                   JOIN multi_strategy_cycle c ON c.cycle_id = r.cycle_id
+                   WHERE c.parent_run_id = %s),
+                  (SELECT count(*) FROM strategy_gate_attribution g
+                   JOIN strategy_run r ON r.run_id = g.run_id
+                   JOIN multi_strategy_cycle c ON c.cycle_id = r.cycle_id
+                   WHERE c.parent_run_id = %s
+                     AND g.eligibility_status = 'ELIGIBLE'),
+                  (SELECT count(*) FROM strategy_proposal p
+                   JOIN strategy_run r ON r.run_id = p.run_id
+                   JOIN multi_strategy_cycle c ON c.cycle_id = r.cycle_id
+                   WHERE c.parent_run_id = %s),
+                  (SELECT count(*) FROM cross_strategy_portfolio_decision d
+                   JOIN multi_strategy_cycle c ON c.cycle_id = d.cycle_id
+                   WHERE c.parent_run_id = %s)
+                """,
+                (str(run_id),) * 6,
+            ).fetchone()
+        if counts is None or candidate_count is None or minute_coverage is None or strategy_counts is None:
             raise RuntimeError("Runtime metrics aggregate returned no row")
         minute_observed = int(minute_coverage[0]) > 0
         minute_successes = int(minute_coverage[1]) if minute_observed else None
@@ -249,6 +285,14 @@ class PostgresRuntimeObservability:
                 "total_count": minute_total,
                 "ratio": minute_ratio,
             },
+            "strategy_runtime": {
+                "cycle_count": int(strategy_counts[0]),
+                "run_count": int(strategy_counts[1]),
+                "gate_count": int(strategy_counts[2]),
+                "eligible_count": int(strategy_counts[3]),
+                "proposal_count": int(strategy_counts[4]),
+                "portfolio_decision_count": int(strategy_counts[5]),
+            },
             "recovery_count": int(counts[0]),
             "lease_expiration_count": int(counts[1]),
             "tick_failure_count": int(counts[2]),
@@ -262,6 +306,86 @@ class PostgresRuntimeObservability:
             "summary_outcomes": {str(row[0]): int(row[1]) for row in summary_rows},
             "decision_input": False,
         }
+
+    def _strategy_observations(
+        self,
+        *,
+        run_id: ArtifactId,
+        tick_id: ArtifactId,
+        trace_id: str,
+        fencing_token: int,
+        lease_expires_at: datetime | None,
+    ) -> tuple[RuntimeStageObservation, ...]:
+        with self._factory.connection(read_only=True) as connection:
+            rows = connection.execute(
+                """
+                SELECT r.created_at, r.status, v.family,
+                       count(g.gate_id),
+                       count(g.gate_id) FILTER (
+                           WHERE g.eligibility_status = 'ELIGIBLE'
+                       )
+                FROM multi_strategy_cycle c
+                JOIN strategy_run r ON r.cycle_id = c.cycle_id
+                JOIN strategy_version v
+                  ON v.version_id = r.strategy_version_id
+                 AND v.version_hash = r.strategy_version_hash
+                LEFT JOIN strategy_gate_attribution g ON g.run_id = r.run_id
+                WHERE c.parent_run_id = %s AND c.parent_tick_id = %s
+                GROUP BY r.run_id, r.created_at, r.status, v.family
+                ORDER BY v.family, r.run_id
+                """,
+                (str(run_id), str(tick_id)),
+            ).fetchall()
+            portfolio = connection.execute(
+                """
+                SELECT d.created_at, d.status
+                FROM cross_strategy_portfolio_decision d
+                JOIN multi_strategy_cycle c ON c.cycle_id = d.cycle_id
+                WHERE c.parent_run_id = %s AND c.parent_tick_id = %s
+                """,
+                (str(run_id), str(tick_id)),
+            ).fetchone()
+        observations = [
+            RuntimeStageObservation(
+                trace_id=trace_id,
+                run_id=run_id,
+                tick_id=tick_id,
+                stage=f"STRATEGY:{row[2]}",
+                provider=None,
+                started_at=row[0],
+                completed_at=row[0],
+                duration_seconds=0.0,
+                status=str(row[1]),
+                reason_codes=(() if str(row[1]) == "COMPLETED" else ("STRATEGY_INPUT_DATA_INSUFFICIENT",)),
+                retry_count=0,
+                coverage=(None if int(row[3]) == 0 else int(row[4]) / int(row[3])),
+                deadline_margin_seconds=None,
+                fencing_token=fencing_token,
+                lease_expires_at=lease_expires_at,
+            )
+            for row in rows
+        ]
+        if portfolio is not None:
+            observations.append(
+                RuntimeStageObservation(
+                    trace_id=trace_id,
+                    run_id=run_id,
+                    tick_id=tick_id,
+                    stage="CROSS_STRATEGY_PORTFOLIO",
+                    provider=None,
+                    started_at=portfolio[0],
+                    completed_at=portfolio[0],
+                    duration_seconds=0.0,
+                    status=str(portfolio[1]),
+                    reason_codes=(),
+                    retry_count=0,
+                    coverage=None,
+                    deadline_margin_seconds=None,
+                    fencing_token=fencing_token,
+                    lease_expires_at=lease_expires_at,
+                )
+            )
+        return tuple(observations)
 
     def _attempt_observations(
         self,
