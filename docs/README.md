@@ -26,6 +26,7 @@ Documentation describes the code; it does not create implementation or evidence 
 
 ## Current canonical documents
 
+- [Canonical Overall Design](architecture/Canonical-Overall-Design.md)
 - [System Architecture](architecture/System-Architecture.md)
 - [Authority Map](architecture/Authority-Map.md)
 - [Data and Evidence Architecture](architecture/Data-and-Evidence-Architecture.md)
