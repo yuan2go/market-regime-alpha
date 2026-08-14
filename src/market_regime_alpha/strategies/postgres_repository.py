@@ -19,9 +19,13 @@ from market_regime_alpha.persistence.postgres.connection import (
     PostgresConnectionFactory,
 )
 from market_regime_alpha.persistence.postgres.migrator import PostgresMigrator
+from market_regime_alpha.persistence.postgres.native_repository import (
+    acquire_scope_lock,
+)
 from market_regime_alpha.strategies.contracts import (
     MultiStrategyCycle,
     StrategyContract,
+    StrategyDecisionPrice,
     StrategyProposal,
     StrategyRegistry,
     StrategyVersion,
@@ -145,6 +149,11 @@ class PostgresMultiStrategyRepository:
         def operation(connection: Any) -> None:
             runtime_input = cycle.runtime_input
             payload = cycle.to_canonical_dict()
+            acquire_scope_lock(
+                connection,
+                namespace="multi-strategy-cycle",
+                identity=cycle.cycle_id,
+            )
             connection.execute(
                 """
                 INSERT INTO multi_strategy_cycle(
@@ -343,6 +352,34 @@ class PostgresMultiStrategyRepository:
             raise KeyError(str(proposal_id))
         return row[0]
 
+    def get_proposal_decision_price(
+        self, proposal_id: ArtifactId
+    ) -> StrategyDecisionPrice:
+        proposal = self.get_proposal(proposal_id)
+        with self._factory.connection(read_only=True) as connection:
+            row = connection.execute(
+                """
+                SELECT c.cycle_id
+                FROM strategy_proposal AS p
+                JOIN strategy_run AS r ON r.run_id = p.run_id
+                JOIN multi_strategy_cycle AS c ON c.cycle_id = r.cycle_id
+                WHERE p.proposal_id = %s
+                """,
+                (str(proposal_id),),
+            ).fetchone()
+        if row is None:
+            raise KeyError(str(proposal_id))
+        cycle = self.get_cycle(ArtifactId(str(row[0])))
+        prices = cycle.runtime_input.decision_prices
+        if prices is None:
+            raise ValueError(
+                "DATA_INSUFFICIENT: legacy Strategy cycle has no Price owner"
+            )
+        matches = tuple(item for item in prices if item.symbol == proposal.symbol)
+        if len(matches) != 1:
+            raise ValueError("DATA_INSUFFICIENT: Strategy Price owner is not exact")
+        return matches[0]
+
     def save_portfolio(
         self,
         decision: CrossStrategyPortfolioDecision,
@@ -442,6 +479,11 @@ class PostgresMultiStrategyRepository:
 
     def save_fill_allocation(self, batch: FillAllocationBatch) -> FillAllocationBatch:
         def operation(connection: Any) -> None:
+            acquire_scope_lock(
+                connection,
+                namespace="strategy-execution-account",
+                identity=batch.account_id,
+            )
             fill_row = connection.execute(
                 "SELECT fill_json FROM manual_fills WHERE fill_id = %s",
                 (str(batch.source_fill_id),),

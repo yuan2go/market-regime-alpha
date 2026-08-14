@@ -20,6 +20,7 @@ from market_regime_alpha.application.decision_system.contracts import (
     DecisionRiskConfiguration,
     IndependentRiskDecision,
     ManualAccountObservation,
+    ReconciliationStatus,
     ReconciliationTolerance,
     ResearchPortfolioProposal,
 )
@@ -786,6 +787,11 @@ class PostgresDecisionSystemRepository(NativePostgresRepository):
         def operation(connection: PostgresConnection) -> ManualAccountObservation:
             acquire_scope_lock(
                 connection,
+                namespace="strategy-execution-account",
+                identity=observation.account_id,
+            )
+            acquire_scope_lock(
+                connection,
                 namespace="manual-account-observation",
                 identity=f"{observation.account_id}:{observation.trading_date.isoformat()}",
             )
@@ -873,6 +879,64 @@ class PostgresDecisionSystemRepository(NativePostgresRepository):
         with self._connect() as connection:
             return self._load_observation(connection, observation_id)
 
+    def resolve_strategy_execution_account(
+        self,
+        *,
+        account_id: str,
+        decision_time: datetime,
+    ) -> tuple[ManualAccountObservation, AccountReconciliationReport]:
+        """Resolve the exact latest reconciled account fact eligible at DecisionTime."""
+
+        with self._connect() as connection:
+            observation_row = connection.execute(
+                """
+                SELECT observation_id
+                FROM manual_account_observation
+                WHERE account_id = %s AND as_of_time <= %s
+                ORDER BY as_of_time DESC, revision DESC
+                LIMIT 1
+                """,
+                (account_id, decision_time),
+            ).fetchone()
+            if observation_row is None:
+                raise ValueError("DATA_INSUFFICIENT: no eligible Account Observation")
+            observation = self._load_observation(
+                connection,
+                ArtifactId(str(observation_row["observation_id"])),
+            )
+            if observation.as_of_time != decision_time:
+                raise ValueError("DATA_INSUFFICIENT: Account Observation is stale")
+            reconciliation_row = connection.execute(
+                """
+                SELECT reconciliation_id
+                FROM account_reconciliation
+                WHERE account_id = %s
+                  AND trading_date = %s
+                  AND as_of_time <= %s
+                ORDER BY as_of_time DESC, revision DESC
+                LIMIT 1
+                """,
+                (account_id, observation.trading_date, decision_time),
+            ).fetchone()
+            if reconciliation_row is None:
+                raise ValueError(
+                    "RECONCILIATION_REQUIRED: Account Observation is unreconciled"
+                )
+            reconciliation = self._load_reconciliation(
+                connection,
+                ArtifactId(str(reconciliation_row["reconciliation_id"])),
+            )
+            if (
+                reconciliation.manual_observation_id != observation.observation_id
+                or reconciliation.as_of_time != observation.as_of_time
+                or reconciliation.status is not ReconciliationStatus.RECONCILED
+                or not reconciliation.fill_ledger_complete
+            ):
+                raise ValueError(
+                    "RECONCILIATION_REQUIRED: latest Account state is incomplete"
+                )
+            return observation, reconciliation
+
     def get_manual_observation_revision(self, *, account_id: str, trading_date: Any, revision: int) -> ManualAccountObservation:
         with self._connect() as connection:
             row = connection.execute(
@@ -896,6 +960,11 @@ class PostgresDecisionSystemRepository(NativePostgresRepository):
 
         def operation(connection: PostgresConnection) -> AccountReconciliationReport:
             self._assert_claim(connection, claim)
+            acquire_scope_lock(
+                connection,
+                namespace="strategy-execution-account",
+                identity=report.account_id,
+            )
             acquire_scope_lock(
                 connection,
                 namespace="account-reconciliation",

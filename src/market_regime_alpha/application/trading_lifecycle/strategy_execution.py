@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import datetime
-from decimal import Decimal
 
 from market_regime_alpha.application.continuous_research.journal import (
     RuntimeArtifactReference,
@@ -86,9 +85,7 @@ class StrategyExecutionApplicationService:
         *,
         portfolio_decision_id: ArtifactId,
         proposal_id: ArtifactId,
-        account_observation_id: ArtifactId,
         trading_calendar_reference: RuntimeArtifactReference,
-        reference_price: Decimal,
         lot_size: int,
         actor: str,
         reason: str,
@@ -108,11 +105,8 @@ class StrategyExecutionApplicationService:
                 or authorization.portfolio_decision_reference.artifact_id
                 != portfolio_decision_id
                 or authorization.proposal_reference.artifact_id != proposal_id
-                or authorization.account_observation_reference.artifact_id
-                != account_observation_id
                 or authorization.trading_calendar_reference
                 != trading_calendar_reference
-                or authorization.reference_price != reference_price
                 or authorization.lot_size != lot_size
                 or authorization.intended_quantity
                 != (
@@ -151,16 +145,17 @@ class StrategyExecutionApplicationService:
             raise ValueError("Portfolio line and Strategy Proposal mismatch")
         if proposal.action not in _BUY_ACTIONS | _SELL_ACTIONS:
             raise ValueError("Strategy Proposal is not executable")
-        observation = self._account.get_manual_observation(
-            account_observation_id
-        )
-        if observation.account_id != self._account_id:
-            raise ValueError("Account Observation does not match execution account")
         proposal_decision_time = self._strategy.get_proposal_decision_time(
             proposal_id
         )
-        if observation.as_of_time > proposal_decision_time:
-            raise ValueError("Account Observation is later than execution decision")
+        observation, reconciliation = (
+            self._account.resolve_strategy_execution_account(
+                account_id=self._account_id,
+                decision_time=proposal_decision_time,
+            )
+        )
+        decision_price = self._strategy.get_proposal_decision_price(proposal_id)
+        reference_price = decision_price.price
         positions = self._shadow.resolve_multi_strategy_positions(
             account_id=observation.account_id,
             decision_time=proposal_decision_time,
@@ -177,17 +172,26 @@ class StrategyExecutionApplicationService:
             None,
         )
         if proposal.action is CanonicalStrategyAction.ENTER:
-            if position is not None:
+            if (
+                position is not None
+                and self._execution_repository.proposal_effective_filled_quantity(
+                    proposal_id
+                )
+                == 0
+            ):
                 raise ValueError("ENTER cannot create a second open Strategy sleeve")
-            current_quantity = 0
-            available_quantity = 0
+            current_quantity = 0 if position is None else int(position.quantity)
+            available_quantity = (
+                0
+                if position is None or position.available_quantity is None
+                else int(position.available_quantity)
+            )
         else:
             if position is None:
                 raise ValueError("Strategy action requires an owner-resolved sleeve")
             if (
                 position.current_price is None
                 or position.price_freshness is not PriceFreshnessStatus.FRESH
-                or position.current_price != reference_price
             ):
                 raise ValueError("Strategy execution requires a fresh owner-resolved price")
             if position.available_quantity is None:
@@ -209,7 +213,16 @@ class StrategyExecutionApplicationService:
                 observation.observation_id,
                 observation.content_hash,
             ),
+            account_reconciliation_reference=RuntimeArtifactReference(
+                "ACCOUNT_RECONCILIATION",
+                reconciliation.reconciliation_id,
+                reconciliation.content_hash,
+            ),
             trading_calendar_reference=trading_calendar_reference,
+            price_reference=decision_price.price_owner_reference,
+            price_source_reference=decision_price.source_dataset_reference,
+            price_observed_at=decision_price.observed_at,
+            price_available_at=decision_price.available_at,
             account_id=observation.account_id,
             symbol=proposal.symbol,
             action=proposal.action.value,
@@ -314,6 +327,33 @@ class StrategyExecutionApplicationService:
         )
         return trade, fill, batches, outcomes
 
+    def mark_intent_state(
+        self,
+        trade_id: ManualTradeId,
+        *,
+        expected_version: int,
+        state: ManualOrderState,
+        actor: str,
+        reason: str,
+        changed_at: datetime,
+        idempotency_key: str,
+    ) -> ManualTradeRecord:
+        current = self._execution_repository.get_trade(trade_id)
+        if (
+            current.account_id != self._account_id
+            or current.strategy_execution_authorization is None
+        ):
+            raise ValueError("ManualTrade does not match Strategy execution authority")
+        return self._manual.mark_order_state(
+            trade_id,
+            expected_version=expected_version,
+            state=state,
+            actor=actor,
+            reason=reason,
+            changed_at=changed_at,
+            idempotency_key=idempotency_key,
+        )
+
     def recover_trade(
         self,
         trade_id: ManualTradeId,
@@ -356,6 +396,12 @@ class StrategyExecutionApplicationService:
             )
             batches.append(self._strategy.save_fill_allocation(batch))
         return tuple(batches)
+
+    def inspect_proposal_execution(self, proposal_id: ArtifactId) -> dict[str, object]:
+        return self._execution_repository.inspect_strategy_execution(
+            account_id=self._account_id,
+            proposal_id=proposal_id,
+        )
 
 
 __all__ = ["StrategyExecutionApplicationService"]

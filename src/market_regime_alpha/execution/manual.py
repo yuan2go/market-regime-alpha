@@ -820,16 +820,33 @@ def transition_manual_trade(
 
 
 def validate_manual_trade_transition(
-    before: ManualTradeRecord, after: ManualTradeRecord
+    before: ManualTradeRecord,
+    after: ManualTradeRecord,
+    *,
+    allow_terminal_fill_update: bool = False,
 ) -> None:
-    expected = transition_manual_trade(
-        before,
-        state=after.state,
-        filled_quantity=after.filled_quantity,
-        actor=after.last_actor,
-        reason=after.last_reason,
-        changed_at=after.updated_at,
-    )
+    if (
+        allow_terminal_fill_update
+        and before.state in {ManualOrderState.CANCELLED, ManualOrderState.REJECTED}
+        and after.state is before.state
+    ):
+        expected = replace(
+            before,
+            filled_quantity=after.filled_quantity,
+            version=before.version + 1,
+            updated_at=after.updated_at,
+            last_actor=after.last_actor,
+            last_reason=after.last_reason,
+        )
+    else:
+        expected = transition_manual_trade(
+            before,
+            state=after.state,
+            filled_quantity=after.filled_quantity,
+            actor=after.last_actor,
+            reason=after.last_reason,
+            changed_at=after.updated_at,
+        )
     if expected != after:
         raise ValueError("invalid ManualTradeRecord transition")
 

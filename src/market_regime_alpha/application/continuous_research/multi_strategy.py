@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import datetime
 
 from market_regime_alpha.application.continuous_research.composition import (
     _with_upstream_result,
@@ -20,9 +21,12 @@ from market_regime_alpha.application.strategy_shadow.postgres_repository import 
 )
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.evidence.canonical import canonical_hash
+from market_regime_alpha.market_data.contracts import Timeframe
+from market_regime_alpha.market_data.dataset import MarketDataDatasetArtifact
 from market_regime_alpha.research.candidate_discovery.contracts import CandidateSet
 from market_regime_alpha.strategies.contracts import (
     StrategyPositionState,
+    StrategyDecisionPrice,
     StrategyRunOrigin,
     StrategyRuntimeInput,
 )
@@ -63,6 +67,7 @@ class MultiStrategyContinuousAdapter:
         candidate_set: CandidateSet,
         dataset_reference: RuntimeArtifactReference,
         upstream: ChildExecutionResult,
+        decision_price_dataset: MarketDataDatasetArtifact | None = None,
     ) -> ChildExecutionResult:
         registry = self._repository.load_registry()
         strategy_request = _with_upstream_result(
@@ -117,6 +122,15 @@ class MultiStrategyContinuousAdapter:
                     )
                 ),
             ),
+            decision_prices=(
+                ()
+                if decision_price_dataset is None
+                else freeze_strategy_decision_prices(
+                    dataset=decision_price_dataset,
+                    symbols=tuple(item.symbol for item in candidate_set.records),
+                    decision_time=request.as_of_time,
+                )
+            ),
         )
         cycle = self._repository.save_cycle(MultiStrategyRuntime(registry).execute(runtime_input))
         portfolio = self._repository.save_portfolio(
@@ -162,6 +176,54 @@ class MultiStrategyContinuousAdapter:
         )
 
 
+def freeze_strategy_decision_prices(
+    *,
+    dataset: MarketDataDatasetArtifact,
+    symbols: tuple[str, ...],
+    decision_time: datetime,
+) -> tuple[StrategyDecisionPrice, ...]:
+    """Project exact latest eligible minute bars; the Dataset remains owner."""
+
+    prices: list[StrategyDecisionPrice] = []
+    dataset_reference = RuntimeArtifactReference(
+        "MARKET_DATA_DATASET",
+        ArtifactId(str(dataset.dataset_id)),
+        dataset.content_hash,
+    )
+    for symbol in sorted(set(symbols)):
+        eligible = tuple(
+            item
+            for item in dataset.iter_bars()
+            if item.symbol == symbol
+            and item.timeframe is Timeframe.MINUTE_1
+            if item.event_end <= decision_time and item.available_at <= decision_time
+        )
+        if not eligible:
+            continue
+        bar = max(eligible, key=lambda item: (item.event_end, str(item.bar_id)))
+        duration = bar.timeframe.duration
+        if duration is None or bar.event_end + duration < decision_time:
+            continue
+        prices.append(
+            StrategyDecisionPrice(
+                price_owner_reference=RuntimeArtifactReference(
+                    "CANONICAL_MARKET_BAR",
+                    bar.bar_id,
+                    bar.content_hash,
+                ),
+                source_dataset_reference=dataset_reference,
+                source_dataset_owner=dataset,
+                price_owner=bar,
+                symbol=bar.symbol,
+                price=bar.close,
+                observed_at=bar.event_end,
+                available_at=bar.available_at,
+                freshness_expires_at=bar.event_end + duration,
+            )
+        )
+    return tuple(prices)
+
+
 def _reference_set(
     reference_kind: str,
     references: tuple[RuntimeArtifactReference, ...],
@@ -175,4 +237,4 @@ def _reference_set(
     )
 
 
-__all__ = ["MultiStrategyContinuousAdapter"]
+__all__ = ["MultiStrategyContinuousAdapter", "freeze_strategy_decision_prices"]

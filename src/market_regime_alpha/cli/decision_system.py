@@ -44,6 +44,7 @@ from market_regime_alpha.application.decision_system.window import (
 )
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.core.identity import FillId, ManualTradeId
+from market_regime_alpha.execution.manual import ManualOrderState
 from market_regime_alpha.persistence.postgres.connection import (
     PostgresConnectionUnavailable,
 )
@@ -94,9 +95,14 @@ def build_parser() -> argparse.ArgumentParser:
     for name in ("create-strategy-intent", "record-strategy-fill"):
         command = commands.add_parser(name)
         command.add_argument("--input", type=Path, required=True)
+    update_strategy = commands.add_parser("update-strategy-intent")
+    update_strategy.add_argument("--input", type=Path, required=True)
     recover_strategy = commands.add_parser("recover-strategy-execution")
     recover_strategy.add_argument("--trade-id", required=True)
     recover_strategy.add_argument("--decision-time", required=True)
+    inspect_strategy = commands.add_parser("inspect-strategy-execution")
+    inspect_strategy.add_argument("--account-id", required=True)
+    inspect_strategy.add_argument("--proposal-id", required=True)
     return parser
 
 
@@ -271,29 +277,24 @@ def _dispatch(args: argparse.Namespace, repositories: RepositoryFactory) -> dict
         _fields(
             payload,
             {
-                "portfolio_decision_id", "proposal_id", "account_observation_id",
-                "trading_calendar_reference", "reference_price", "lot_size",
+                "portfolio_decision_id", "proposal_id", "account_id",
+                "trading_calendar_reference", "lot_size",
                 "actor", "reason", "created_at", "idempotency_key",
                 "operator_quantity", "override_reason",
             },
             "Strategy execution intent",
             optional={"operator_quantity", "override_reason"},
         )
-        observation = repository.get_manual_observation(
-            ArtifactId(_text(payload, "account_observation_id"))
-        )
         trade = repositories.strategy_execution(
-            account_id=observation.account_id
+            account_id=_text(payload, "account_id")
         ).create_intent(
             portfolio_decision_id=ArtifactId(
                 _text(payload, "portfolio_decision_id")
             ),
             proposal_id=ArtifactId(_text(payload, "proposal_id")),
-            account_observation_id=observation.observation_id,
             trading_calendar_reference=_reference(
                 _object(payload["trading_calendar_reference"])
             ),
-            reference_price=_decimal(payload["reference_price"]),
             lot_size=_integer(payload, "lot_size"),
             actor=_text(payload, "actor"),
             reason=_text(payload, "reason"),
@@ -307,6 +308,42 @@ def _dispatch(args: argparse.Namespace, repositories: RepositoryFactory) -> dict
             "status": trade.state.value,
             "manual_trade": trade.to_canonical_dict(),
             "manual_intent_created": True,
+        }
+    if operation == "inspect-strategy-execution":
+        return {
+            "operation": "INSPECT_STRATEGY_EXECUTION",
+            "status": "FOUND",
+            "execution_authority": repositories.strategy_execution(
+                account_id=args.account_id
+            ).inspect_proposal_execution(ArtifactId(args.proposal_id)),
+        }
+    if operation == "update-strategy-intent":
+        payload = _object(_read_json(args.input))
+        _fields(
+            payload,
+            {
+                "account_id", "trade_id", "expected_version", "state",
+                "actor", "reason", "changed_at", "idempotency_key",
+            },
+            "Strategy intent lifecycle update",
+        )
+        trade = repositories.strategy_execution(
+            account_id=_text(payload, "account_id")
+        ).mark_intent_state(
+            ManualTradeId(_text(payload, "trade_id")),
+            expected_version=_integer(payload, "expected_version"),
+            state=ManualOrderState(_text(payload, "state")),
+            actor=_text(payload, "actor"),
+            reason=_text(payload, "reason"),
+            changed_at=_instant(payload["changed_at"]),
+            idempotency_key=_text(payload, "idempotency_key"),
+        )
+        return {
+            "operation": "UPDATE_STRATEGY_INTENT",
+            "status": trade.state.value,
+            "manual_trade": trade.to_canonical_dict(),
+            "order_created": False,
+            "broker_called": False,
         }
     if operation == "record-strategy-fill":
         payload = _object(_read_json(args.input))

@@ -52,6 +52,7 @@ BaoStock/Tencent recorded provider evidence
 -> MultiStrategyRuntime child
    -> Overnight Strategy Run
    -> Swing State Strategy Run
+   -> owner-frozen one-minute decision prices
    -> Cross-strategy Portfolio Decision
 -> Continuous child receipts and terminal tick
 ```
@@ -62,6 +63,25 @@ funnel, and persists one Portfolio decision. It creates no Order, Fill, or
 physical Position. A model-blocked empty CandidateSet is itself a durable State
 owner fact, so both strategies record `DATA_INSUFFICIENT` instead of silently
 disappearing from the research sample.
+
+Accepted Portfolio lines enter the existing human-operated execution path:
+
+```text
+MultiStrategyRuntime / Cross-strategy Portfolio
+-> StrategyExecutionApplicationService owner reload
+-> account + Proposal PostgreSQL transaction locks
+-> existing ManualTrade Intent lifecycle
+-> observed partial/corrected Fill
+-> physical Position + Strategy Fill Allocation
+-> fill-derived Strategy Outcome revision
+```
+
+The transaction reconstructs account cash, available sell quantity, existing
+physical exposure, unobserved effective Fill deltas and active Strategy Intent
+reservations before authorizing an increase. Reduction/Exit does not borrow
+gross budget but still requires real available sell quantity. No runtime child,
+scheduler, execution database, reservation ledger, broker writer or Position
+owner is added by this path.
 
 Before the decision child, the Research/Shadow composition may retrospectively
 build exact-14:55 BaoStock decisions, T+1 multi-horizon outcomes and PathForecast

@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Any
+import json
+from typing import Any, cast
 
 from psycopg.types.json import Jsonb
 
@@ -41,6 +42,7 @@ from market_regime_alpha.application.strategy_shadow.postgres_observations impor
     PostgresShadowObservationRepository,
 )
 from market_regime_alpha.core.identity import ArtifactId
+from market_regime_alpha.execution.manual import Fill, FillKind
 from market_regime_alpha.data.postgres_trading_calendar import (
     PostgresPITTradingCalendarSnapshotRepository,
 )
@@ -54,7 +56,10 @@ from market_regime_alpha.strategies.contracts import (
     MultiStrategyCycle,
     StrategyPositionState,
 )
-from market_regime_alpha.strategies.sleeves import FillAllocationBatch
+from market_regime_alpha.strategies.sleeves import (
+    FillAllocationBatch,
+    effective_fill_allocation_batches,
+)
 
 
 class PostgresStrategyShadowRepository:
@@ -210,7 +215,12 @@ class PostgresStrategyShadowRepository:
         if trading_calendar.content_hash != trading_calendar_reference.content_hash:
             raise ValueError("Strategy Trading Calendar owner identity mismatch")
 
-        with self._factory.connection(read_only=True) as connection:
+        def operation(connection: Any) -> tuple[StrategyPositionState, ...]:
+            acquire_scope_lock(
+                connection,
+                namespace="strategy-execution-account",
+                identity=account_id,
+            )
             batch_rows = connection.execute(
                 """
                 SELECT payload_json
@@ -233,6 +243,12 @@ class PostgresStrategyShadowRepository:
                 FillAllocationBatch.from_canonical_dict(_dict_payload(row[0]))
                 for row in batch_rows
             )
+            _require_effective_fill_allocation_heads(
+                connection,
+                account_id=account_id,
+                decision_time=decision_time,
+                batches=batches,
+            )
             proposal_references = {
                 allocation.proposal_reference.artifact_id: allocation.proposal_reference
                 for batch in batches
@@ -250,27 +266,33 @@ class PostgresStrategyShadowRepository:
                     ([str(item) for item in proposal_references],),
                 ).fetchall()
             )
-        actions: dict[ArtifactId, CanonicalStrategyAction] = {}
-        for row in proposal_rows:
-            proposal_id = ArtifactId(str(row[0]))
-            expected = proposal_references.get(proposal_id)
-            if expected is None or str(row[1]) != expected.content_hash:
-                raise ValueError("Strategy Proposal owner identity mismatch")
-            actions[proposal_id] = CanonicalStrategyAction(str(row[2]))
-        if set(actions) != set(proposal_references):
-            raise ValueError("Strategy Fill lineage references a missing Proposal")
-        observations = tuple(
-            ManualAccountObservation.from_canonical_dict(_dict_payload(row[0]))
-            for row in observation_rows
-        )
-        return project_strategy_position_states(
-            account_id=account_id,
-            decision_time=decision_time,
-            batches=batches,
-            proposal_actions=actions,
-            observations=observations,
-            trading_calendar=trading_calendar,
-        )
+            actions: dict[ArtifactId, CanonicalStrategyAction] = {}
+            for row in proposal_rows:
+                proposal_id = ArtifactId(str(row[0]))
+                expected = proposal_references.get(proposal_id)
+                if expected is None or str(row[1]) != expected.content_hash:
+                    raise ValueError("Strategy Proposal owner identity mismatch")
+                actions[proposal_id] = CanonicalStrategyAction(str(row[2]))
+            if set(actions) != set(proposal_references):
+                raise ValueError(
+                    "Strategy Fill lineage references a missing Proposal"
+                )
+            observations = tuple(
+                ManualAccountObservation.from_canonical_dict(
+                    _dict_payload(row[0])
+                )
+                for row in observation_rows
+            )
+            return project_strategy_position_states(
+                account_id=account_id,
+                decision_time=decision_time,
+                batches=batches,
+                proposal_actions=actions,
+                observations=observations,
+                trading_calendar=trading_calendar,
+            )
+
+        return self._factory.run_transaction(operation)
 
     def settle_multi_strategy_outcomes(
         self,
@@ -280,7 +302,12 @@ class PostgresStrategyShadowRepository:
     ) -> tuple[FillDerivedStrategyOutcome, ...]:
         """Recover and persist every completed allocated-Fill lifecycle."""
 
-        with self._factory.connection(read_only=True) as connection:
+        def operation(connection: Any) -> tuple[FillDerivedStrategyOutcome, ...]:
+            acquire_scope_lock(
+                connection,
+                namespace="strategy-execution-account",
+                identity=account_id,
+            )
             batch_rows = connection.execute(
                 """
                 SELECT payload_json
@@ -314,45 +341,48 @@ class PostgresStrategyShadowRepository:
                     ([str(item) for item in proposal_references],),
                 ).fetchall()
             )
-        actions: dict[ArtifactId, CanonicalStrategyAction] = {}
-        pre_exit_states: dict[ArtifactId, StrategyPositionState] = {}
-        for row in proposal_rows:
-            proposal_id = ArtifactId(str(row[0]))
-            expected = proposal_references.get(proposal_id)
-            if expected is None or str(row[1]) != expected.content_hash:
-                raise ValueError("Strategy Proposal owner identity mismatch")
-            action = CanonicalStrategyAction(str(row[2]))
-            actions[proposal_id] = action
-            if action is not CanonicalStrategyAction.EXIT:
-                continue
-            cycle = MultiStrategyCycle.from_canonical_dict(_dict_payload(row[5]))
-            matched = tuple(
-                state
-                for state in cycle.runtime_input.positions
-                if str(state.strategy_version_id) == str(row[3])
-                and state.symbol == str(row[4])
-            )
-            if len(matched) != 1 or matched[0].state_reference is None:
-                raise ValueError("EXIT Proposal lacks owner-resolved pre-exit state")
-            pre_exit_states[proposal_id] = matched[0]
-        if set(actions) != set(proposal_references):
-            raise ValueError("Strategy Fill lineage references a missing Proposal")
-        outcomes = settle_fill_derived_strategy_outcomes(
-            account_id=account_id,
-            decision_time=decision_time,
-            batches=batches,
-            proposal_actions=actions,
-            pre_exit_states=pre_exit_states,
-        )
-        persisted = outcomes
-        if outcomes:
-            persisted = self._factory.run_transaction(
-                lambda connection: self._save_multi_strategy_outcomes(
-                    connection,
-                    outcomes,
+            actions: dict[ArtifactId, CanonicalStrategyAction] = {}
+            pre_exit_states: dict[ArtifactId, StrategyPositionState] = {}
+            for row in proposal_rows:
+                proposal_id = ArtifactId(str(row[0]))
+                expected = proposal_references.get(proposal_id)
+                if expected is None or str(row[1]) != expected.content_hash:
+                    raise ValueError("Strategy Proposal owner identity mismatch")
+                action = CanonicalStrategyAction(str(row[2]))
+                actions[proposal_id] = action
+                if action is not CanonicalStrategyAction.EXIT:
+                    continue
+                cycle = MultiStrategyCycle.from_canonical_dict(
+                    _dict_payload(row[5])
                 )
+                matched = tuple(
+                    state
+                    for state in cycle.runtime_input.positions
+                    if str(state.strategy_version_id) == str(row[3])
+                    and state.symbol == str(row[4])
+                )
+                if len(matched) != 1 or matched[0].state_reference is None:
+                    raise ValueError(
+                        "EXIT Proposal lacks owner-resolved pre-exit state"
+                    )
+                pre_exit_states[proposal_id] = matched[0]
+            if set(actions) != set(proposal_references):
+                raise ValueError(
+                    "Strategy Fill lineage references a missing Proposal"
+                )
+            outcomes = settle_fill_derived_strategy_outcomes(
+                account_id=account_id,
+                decision_time=decision_time,
+                batches=batches,
+                proposal_actions=actions,
+                pre_exit_states=pre_exit_states,
             )
-        return persisted
+            return self._save_multi_strategy_outcomes(
+                connection,
+                outcomes,
+            )
+
+        return self._factory.run_transaction(operation)
 
     def get_multi_strategy_outcome(
         self,
@@ -389,6 +419,10 @@ class PostgresStrategyShadowRepository:
                 namespace="strategy-realized-outcome",
                 identity=scope,
             )
+            PostgresStrategyShadowRepository._verify_outcome_fill_heads(
+                connection,
+                outcome,
+            )
             head_row = connection.execute(
                 """
                 SELECT payload_json
@@ -414,6 +448,18 @@ class PostgresStrategyShadowRepository:
                 ):
                     persisted.append(head)
                     continue
+                head_source_time = _outcome_source_head_time(connection, head)
+                candidate_source_time = _outcome_source_head_time(connection, outcome)
+                if head_source_time > candidate_source_time:
+                    # A correction-settlement won the lifecycle lock while this
+                    # candidate was computed from an older Fill view. Outcome
+                    # heads are monotonic; stale work cannot supersede it.
+                    persisted.append(head)
+                    continue
+                if head_source_time == candidate_source_time:
+                    raise ValueError(
+                        "Strategy Outcome has conflicting economics at one Fill head"
+                    )
                 outcome = _superseding_outcome(outcome, head)
             PostgresStrategyShadowRepository._verify_multi_strategy_outcome_lineage(
                 connection,
@@ -498,6 +544,45 @@ class PostgresStrategyShadowRepository:
                 raise ValueError("Strategy Outcome immutable identity conflict")
             persisted.append(outcome)
         return tuple(persisted)
+
+    @staticmethod
+    def _verify_outcome_fill_heads(
+        connection: Any,
+        outcome: FillDerivedStrategyOutcome,
+    ) -> None:
+        """Reject settlement computed before a committed Fill Correction."""
+
+        fill_ids = [
+            str(item.artifact_id) for item in outcome.source_fill_references
+        ]
+        rows = connection.execute(
+            """
+            SELECT fill_id, fill_kind
+            FROM manual_fills
+            WHERE fill_id = ANY(%s)
+            """,
+            (fill_ids,),
+        ).fetchall()
+        if {str(item[0]) for item in rows} != set(fill_ids):
+            raise ValueError("Strategy Outcome source Fill is missing")
+        execution_ids = [
+            str(item[0]) for item in rows if str(item[1]) == "EXECUTION"
+        ]
+        if execution_ids:
+            corrected = connection.execute(
+                """
+                SELECT correction_of_fill_id
+                FROM manual_fills
+                WHERE correction_of_fill_id = ANY(%s)
+                LIMIT 1
+                """,
+                (execution_ids,),
+            ).fetchone()
+            if corrected is not None:
+                raise ValueError(
+                    "RECONCILIATION_REQUIRED: Strategy Outcome source Fill "
+                    "is not the current correction head"
+                )
 
     @staticmethod
     def _verify_multi_strategy_outcome_lineage(
@@ -981,6 +1066,59 @@ class PostgresStrategyShadowRepository:
         return present == typed_markers
 
 
+def _require_effective_fill_allocation_heads(
+    connection: Any,
+    *,
+    account_id: str,
+    decision_time: datetime,
+    batches: tuple[FillAllocationBatch, ...],
+) -> None:
+    rows = connection.execute(
+        """
+        SELECT f.fill_json
+        FROM manual_fills AS f
+        JOIN manual_trade_records AS t
+          ON t.manual_trade_id = f.manual_trade_id
+        WHERE f.account_id = %s
+          AND f.recorded_at <= %s
+          AND t.authority_route = 'STRATEGY'
+        ORDER BY f.recorded_at, f.fill_id
+        """,
+        (account_id, decision_time),
+    ).fetchall()
+    fills = tuple(
+        Fill.from_canonical_dict(
+            _dict_payload(
+                item[0]
+                if isinstance(item[0], dict)
+                else json.loads(str(item[0]))
+            )
+        )
+        for item in rows
+    )
+    executions = {
+        item.fill_id: item for item in fills if item.fill_kind is FillKind.EXECUTION
+    }
+    corrections = {
+        item.correction_of_fill_id: item
+        for item in fills
+        if item.fill_kind is FillKind.CORRECTION
+    }
+    effective_fill_ids = {
+        str(corrections.get(fill_id, original).fill_id)
+        for fill_id, original in executions.items()
+    }
+    effective_allocation_ids = {
+        str(item.source_fill_id)
+        for item in effective_fill_allocation_batches(batches)
+    }
+    if effective_fill_ids != effective_allocation_ids:
+        raise ValueError(
+            "RECONCILIATION_REQUIRED: effective Strategy Fill allocation "
+            "is incomplete at Decision Time"
+        )
+
+
 def _outcome_economic_payload(
     outcome: FillDerivedStrategyOutcome,
 ) -> dict[str, object]:
@@ -993,6 +1131,24 @@ def _outcome_economic_payload(
     ):
         payload.pop(field, None)
     return payload
+
+
+def _outcome_source_head_time(
+    connection: Any,
+    outcome: FillDerivedStrategyOutcome,
+) -> datetime:
+    fill_ids = [str(item.artifact_id) for item in outcome.source_fill_references]
+    row = connection.execute(
+        """
+        SELECT max(recorded_at), count(*)
+        FROM manual_fills
+        WHERE fill_id = ANY(%s)
+        """,
+        (fill_ids,),
+    ).fetchone()
+    if row is None or row[0] is None or int(row[1]) != len(fill_ids):
+        raise ValueError("Strategy Outcome Fill head is not reloadable")
+    return cast(datetime, row[0])
 
 
 def _superseding_outcome(

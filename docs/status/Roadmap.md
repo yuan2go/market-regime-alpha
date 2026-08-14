@@ -8,7 +8,7 @@
 
 ## Multi-Strategy convergence
 
-The migration-085–087 engineering slices are complete: stable Strategy
+The migration-085–088 engineering slices are complete: stable Strategy
 Contract/Version/Run identities, shared Overnight/Swing execution, explicit
 Candidate gate attribution, simple cross-strategy Portfolio/Risk, observed-Fill
 strategy sleeves, multi-horizon Path Outcomes, version-scoped feedback,
@@ -23,6 +23,15 @@ Executable quantity is lot/T+1/budget aware, holding age uses the canonical PIT
 Calendar, and stale prices fail closed. The existing `decision-system` CLI is
 the operator surface for intent, Fill and recovery; there is no execution
 scheduler or broker path.
+
+Migration 088 makes execution authorization aggregate rather than command-local.
+Proposal quantity, account cash/available sell quantity and projected
+gross/symbol/Strategy exposure are rebuilt from physical positions, active
+Strategy intents and effective post-observation Fill/correction deltas under one
+PostgreSQL lock order. The exact latest reconciled account state and reloadable
+canonical minute-bar price are owner-resolved; a caller cannot select either.
+Cancel/reject releases unused reservations for a bounded replacement. This is
+business correctness only and does not change any qualification ceiling.
 
 Account-bound Continuous execution now restores owner-resolved Strategy sleeve
 state across sessions, settles fully closed observed-Fill lifecycles, and freezes

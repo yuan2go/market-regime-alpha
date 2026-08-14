@@ -179,6 +179,7 @@ class ManualExecutionApplicationService:
             ManualOrderState.RECORDED,
             ManualOrderState.PARTIALLY_FILLED,
             ManualOrderState.UNKNOWN,
+            ManualOrderState.RECONCILIATION_REQUIRED,
         }:
             raise ValueError("manual status command cannot replace fill-derived terminal state")
         updated = transition_manual_trade(

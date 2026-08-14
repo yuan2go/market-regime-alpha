@@ -396,6 +396,7 @@ class CanonicalFreeDataResearchComposition:
         candidate_set = state_coordinator.final_candidates
         if candidate_set is None:
             raise ValueError("Strategy Runtime requires owner-resolved CandidateSet")
+        decision = execution.decision
         strategy_request = replace(
             request,
             input_references=tuple(
@@ -421,6 +422,9 @@ class CanonicalFreeDataResearchComposition:
             candidate_set=candidate_set,
             dataset_reference=persisted.dataset,
             upstream=owner_results[-1],
+            decision_price_dataset=(
+                None if decision is None else decision.minute_dataset.artifact
+            ),
         )
         return (*owner_results, strategy_result)
 

@@ -19,7 +19,8 @@ from market_regime_alpha.evidence.canonical import (
 )
 
 
-STRATEGY_EXECUTION_AUTHORIZATION_SCHEMA = "strategy-execution-authorization/v1"
+LEGACY_STRATEGY_EXECUTION_AUTHORIZATION_SCHEMA = "strategy-execution-authorization/v1"
+STRATEGY_EXECUTION_AUTHORIZATION_SCHEMA = "strategy-execution-authorization/v2"
 _BUY_ACTIONS = frozenset({"ENTER", "ADD"})
 _SELL_ACTIONS = frozenset({"REDUCE", "EXIT"})
 
@@ -34,8 +35,12 @@ class StrategyExecutionAuthorization:
     strategy_version_reference: RuntimeArtifactReference
     proposal_reference: RuntimeArtifactReference
     account_observation_reference: RuntimeArtifactReference
+    account_reconciliation_reference: RuntimeArtifactReference | None
     trading_calendar_reference: RuntimeArtifactReference
     price_reference: RuntimeArtifactReference
+    price_source_reference: RuntimeArtifactReference | None
+    price_observed_at: datetime | None
+    price_available_at: datetime | None
     account_id: str
     symbol: str
     action: str
@@ -56,7 +61,10 @@ class StrategyExecutionAuthorization:
     schema_version: str = STRATEGY_EXECUTION_AUTHORIZATION_SCHEMA
 
     def __post_init__(self) -> None:
-        if self.schema_version != STRATEGY_EXECUTION_AUTHORIZATION_SCHEMA:
+        if self.schema_version not in {
+            LEGACY_STRATEGY_EXECUTION_AUTHORIZATION_SCHEMA,
+            STRATEGY_EXECUTION_AUTHORIZATION_SCHEMA,
+        }:
             raise ValueError("unsupported Strategy Execution Authorization schema")
         require_sha256("authorization_hash", self.authorization_hash)
         require_text("account_id", self.account_id)
@@ -83,8 +91,6 @@ class StrategyExecutionAuthorization:
             self.intended_quantity % self.lot_size
         ):
             raise ValueError("executable quantity must use the declared lot size")
-        if self.action == "EXIT" and self.intended_quantity != self.recommended_quantity:
-            raise ValueError("EXIT quantity must close all currently available shares")
         override = self.intended_quantity != self.recommended_quantity
         if override != (self.override_reason is not None):
             raise ValueError("operator override quantity and reason must be paired")
@@ -97,14 +103,41 @@ class StrategyExecutionAuthorization:
         expected_notional = abs(self.accepted_weight) * self.account_nav
         if self.authorized_notional != expected_notional:
             raise ValueError("authorized notional does not match accepted weight and NAV")
-        expected_price_reference = _price_reference(
-            proposal_reference=self.proposal_reference,
-            account_observation_reference=self.account_observation_reference,
-            reference_price=self.reference_price,
-            decision_time=self.decision_time,
-        )
-        if self.price_reference != expected_price_reference:
-            raise ValueError("Strategy reference price identity mismatch")
+        if self.schema_version == LEGACY_STRATEGY_EXECUTION_AUTHORIZATION_SCHEMA:
+            if (
+                self.account_reconciliation_reference is not None
+                or self.price_source_reference is not None
+                or self.price_observed_at is not None
+                or self.price_available_at is not None
+                or self.price_reference
+                != _legacy_price_reference(
+                    proposal_reference=self.proposal_reference,
+                    account_observation_reference=self.account_observation_reference,
+                    reference_price=self.reference_price,
+                    decision_time=self.decision_time,
+                )
+            ):
+                raise ValueError("legacy Strategy reference price identity mismatch")
+        else:
+            if (
+                self.account_reconciliation_reference is None
+                or self.account_reconciliation_reference.reference_kind != "ACCOUNT_RECONCILIATION"
+            ):
+                raise ValueError("Strategy execution requires Account Reconciliation owner")
+            if self.price_reference.reference_kind != "CANONICAL_MARKET_BAR":
+                raise ValueError("Strategy execution price must be owned by a Canonical Market Bar")
+            if self.price_source_reference is None:
+                raise ValueError("Strategy execution price Dataset lineage is required")
+            if self.price_observed_at is None or self.price_available_at is None:
+                raise ValueError("Strategy execution price owner times are required")
+            canonical_datetime(self.price_observed_at)
+            canonical_datetime(self.price_available_at)
+            if (
+                self.price_observed_at > self.decision_time
+                or self.price_available_at > self.decision_time
+                or self.price_available_at < self.price_observed_at
+            ):
+                raise ValueError("Strategy execution price is not decision-time eligible")
         executable_notional = (
             min(expected_notional, self.available_cash)
             if self.action in _BUY_ACTIONS
@@ -137,7 +170,12 @@ class StrategyExecutionAuthorization:
         strategy_version_reference: RuntimeArtifactReference,
         proposal_reference: RuntimeArtifactReference,
         account_observation_reference: RuntimeArtifactReference,
+        account_reconciliation_reference: RuntimeArtifactReference,
         trading_calendar_reference: RuntimeArtifactReference,
+        price_reference: RuntimeArtifactReference,
+        price_source_reference: RuntimeArtifactReference,
+        price_observed_at: datetime,
+        price_available_at: datetime,
         account_id: str,
         symbol: str,
         action: str,
@@ -178,19 +216,17 @@ class StrategyExecutionAuthorization:
             Decimal("0"),
             executable_notional - Decimal(intended) * reference_price,
         )
-        price_reference = _price_reference(
-            proposal_reference=proposal_reference,
-            account_observation_reference=account_observation_reference,
-            reference_price=reference_price,
-            decision_time=decision_time,
-        )
         values: dict[str, Any] = {
             "portfolio_decision_reference": portfolio_decision_reference,
             "strategy_version_reference": strategy_version_reference,
             "proposal_reference": proposal_reference,
             "account_observation_reference": account_observation_reference,
+            "account_reconciliation_reference": account_reconciliation_reference,
             "trading_calendar_reference": trading_calendar_reference,
             "price_reference": price_reference,
+            "price_source_reference": price_source_reference,
+            "price_observed_at": price_observed_at,
+            "price_available_at": price_available_at,
             "account_id": account_id,
             "symbol": symbol,
             "action": action,
@@ -225,8 +261,12 @@ class StrategyExecutionAuthorization:
             strategy_version_reference=self.strategy_version_reference,
             proposal_reference=self.proposal_reference,
             account_observation_reference=self.account_observation_reference,
+            account_reconciliation_reference=self.account_reconciliation_reference,
             trading_calendar_reference=self.trading_calendar_reference,
             price_reference=self.price_reference,
+            price_source_reference=self.price_source_reference,
+            price_observed_at=self.price_observed_at,
+            price_available_at=self.price_available_at,
             account_id=self.account_id,
             symbol=self.symbol,
             action=self.action,
@@ -272,10 +312,30 @@ class StrategyExecutionAuthorization:
             account_observation_reference=_reference(
                 payload["account_observation_reference"]
             ),
+            account_reconciliation_reference=(
+                None
+                if payload.get("account_reconciliation_reference") is None
+                else _reference(payload["account_reconciliation_reference"])
+            ),
             trading_calendar_reference=_reference(
                 payload["trading_calendar_reference"]
             ),
             price_reference=_reference(payload["price_reference"]),
+            price_source_reference=(
+                None
+                if payload.get("price_source_reference") is None
+                else _reference(payload["price_source_reference"])
+            ),
+            price_observed_at=(
+                None
+                if payload.get("price_observed_at") is None
+                else datetime.fromisoformat(str(payload["price_observed_at"]))
+            ),
+            price_available_at=(
+                None
+                if payload.get("price_available_at") is None
+                else datetime.fromisoformat(str(payload["price_available_at"]))
+            ),
             account_id=str(payload["account_id"]),
             symbol=str(payload["symbol"]),
             action=str(payload["action"]),
@@ -302,7 +362,7 @@ class StrategyExecutionAuthorization:
 
 
 def _authorization_payload(**values: Any) -> dict[str, Any]:
-    return {
+    payload = {
         "schema_version": values["schema_version"],
         "portfolio_decision_reference": values[
             "portfolio_decision_reference"
@@ -336,9 +396,21 @@ def _authorization_payload(**values: Any) -> dict[str, Any]:
         "decision_time": canonical_datetime(values["decision_time"]),
         "created_at": canonical_datetime(values["created_at"]),
     }
+    if values["schema_version"] != LEGACY_STRATEGY_EXECUTION_AUTHORIZATION_SCHEMA:
+        payload.update(
+            {
+                "account_reconciliation_reference": values[
+                    "account_reconciliation_reference"
+                ].to_canonical_dict(),
+                "price_source_reference": values["price_source_reference"].to_canonical_dict(),
+                "price_observed_at": canonical_datetime(values["price_observed_at"]),
+                "price_available_at": canonical_datetime(values["price_available_at"]),
+            }
+        )
+    return payload
 
 
-def _price_reference(
+def _legacy_price_reference(
     *,
     proposal_reference: RuntimeArtifactReference,
     account_observation_reference: RuntimeArtifactReference,

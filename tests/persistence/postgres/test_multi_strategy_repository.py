@@ -224,7 +224,7 @@ def test_migration_087_upgrades_086_without_a_parallel_ledger(
     migrations = load_packaged_migrations()
     PostgresMigrator(migrations=migrations[:86]).apply_all(postgres_factory)
 
-    applied = PostgresMigrator().apply_all(postgres_factory)
+    applied = PostgresMigrator(migrations=migrations[:87]).apply_all(postgres_factory)
 
     with postgres_factory.connection(read_only=True) as connection:
         strategy_columns = {
@@ -261,6 +261,50 @@ def test_migration_087_upgrades_086_without_a_parallel_ledger(
         "supersedes_outcome_id",
         "supersedes_outcome_hash",
     }
+
+
+def test_migration_088_extends_manual_trade_without_reservation_ledger(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    migrations = load_packaged_migrations()
+    PostgresMigrator(migrations=migrations[:87]).apply_all(postgres_factory)
+
+    applied = PostgresMigrator().apply_all(postgres_factory)
+
+    with postgres_factory.connection(read_only=True) as connection:
+        columns = {
+            str(row[0])
+            for row in connection.execute(
+                """
+                SELECT column_name FROM information_schema.columns
+                WHERE table_schema = current_schema()
+                  AND table_name = 'manual_trade_records'
+                  AND column_name IN (
+                    'strategy_execution_authority_version',
+                    'strategy_reconciliation_id',
+                    'strategy_price_owner_id',
+                    'strategy_price_source_id',
+                    'strategy_authorized_quantity'
+                  )
+                """
+            ).fetchall()
+        }
+        reservation_tables = connection.execute(
+            """
+            SELECT count(*) FROM information_schema.tables
+            WHERE table_schema = current_schema()
+              AND table_name LIKE '%execution%reservation%'
+            """
+        ).fetchone()
+    assert tuple((item.version, item.name) for item in applied) == ((88, "portfolio_execution_authority"),)
+    assert columns == {
+        "strategy_execution_authority_version",
+        "strategy_reconciliation_id",
+        "strategy_price_owner_id",
+        "strategy_price_source_id",
+        "strategy_authorized_quantity",
+    }
+    assert reservation_tables == (0,)
 
 
 def test_registry_cycle_portfolio_and_replay_are_transactional_and_idempotent(
