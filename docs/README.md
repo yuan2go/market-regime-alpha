@@ -41,10 +41,8 @@ Documentation describes the code; it does not create implementation or evidence 
 - [ADR-012: Phase E3 Longitudinal Historical Evidence Runtime](architecture/decisions/ADR-012-Phase-E3-Longitudinal-Historical-Evidence-Runtime.md)
 - [ADR-013: Multi-Strategy Platform Convergence](architecture/decisions/ADR-013-Multi-Strategy-Platform-Convergence.md)
 - [Phase E2 Historical Evidence Expansion Report](references/Phase-E2-Historical-Evidence-Expansion-Report.md)
-- [Phase E3 Longitudinal Historical Evidence Plan](references/Phase-E3-Longitudinal-Historical-Evidence-Plan.md)
 - [Phase E3 Longitudinal Historical Evidence Report](references/Phase-E3-Longitudinal-Historical-Evidence-Report.md)
-- [Multi-Strategy Platform Convergence Plan](references/Multi-Strategy-Platform-Convergence-Plan.md)
 
 The Constitution remains the normative source. [Negative and Inconclusive Results](research/Negative-and-Inconclusive-Results.md) is the sole current research-claim registry.
 
-Historical audits, plans, deliveries, superseded architectures, work packages and designed-only specifications were removed from the default tree during the 2026-08-10 convergence. Git history preserves them; [Archive](archive/README.md) explains the boundary.
+Historical audits, completed plans, deliveries, superseded architectures, work packages and designed-only specifications are excluded from the default tree. Git history preserves them; [Archive](archive/README.md) explains the boundary.

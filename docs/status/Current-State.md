@@ -333,7 +333,7 @@ This is a deliberate fail-closed state. It does not mean the missing qualificati
 | Current canonical docs | 11 | index, four architecture, four status, one runbook and one research registry |
 | Normative Constitution docs | 10 | unchanged `00` through `09` |
 | Current research registries | 1 | negative/inconclusive results |
-| Historical/superseded/archive docs | 2 | archive boundary index plus superseded Constitution implementation-status; detailed history lives in Git |
+| Historical/superseded/archive docs | 1 | archive boundary index only; detailed plans and superseded status snapshots live in Git |
 | Legacy `daily_research` | 10 files / about 1.6k lines | compatibility Readers and identities |
 | Legacy `dividend_t` | 49 files / about 23.5k lines | isolated characterization and legacy UI/research |
 | Explicit `legacy` and `migration/legacy` | 13 files / about 1.5k lines | adapters, migration and replay only |
