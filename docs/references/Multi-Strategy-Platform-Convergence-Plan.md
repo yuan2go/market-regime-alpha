@@ -14,6 +14,27 @@
 
 **Tech Stack:** Python 3.12, immutable dataclasses, psycopg/PostgreSQL 16, forward SQL migration 085, pytest, Ruff, mypy, setuptools build.
 
+## Completion record
+
+Tasks 1 through 8 were executed in dependency order on 2026-08-14. The
+checkboxes below preserve the original red/green execution plan; current
+capability status is authoritative in `docs/status/Capability-Matrix.md` and
+remaining work is authoritative in `docs/status/Gap-Register.md`.
+
+The implementation deliberately made three complexity-budget adjustments:
+
+- family policies remain private to the deep `strategies/runtime.py` module
+  instead of adding a public `policies.py` wrapper;
+- migration and test filenames follow the final business-closure vocabulary;
+- `inspect-strategy` includes the cross-strategy Portfolio projection instead
+  of adding a second overlapping `inspect-portfolio` operation.
+
+Attribution is deterministic, non-causal diagnosis through exact
+Run/Gate/Proposal/Portfolio/Path lineage. It does not claim statistical factor
+contribution. Automatic longitudinal Path Outcome production, scheduled
+feedback, and empirical strategy/economic qualification remain explicit P1 or
+external-evidence gaps.
+
 ## Global Constraints
 
 - PostgreSQL 16 remains the only persistent runtime and business database.
