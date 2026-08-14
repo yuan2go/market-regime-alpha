@@ -77,32 +77,33 @@ calibration, prospective performance or Production qualification.
 
 ## Phase E Historical Alpha Evidence Production
 
-The representative vertical slice and its Phase E2 expansion are complete.
+The representative vertical slice, Phase E2 expansion and Phase E3
+longitudinal engineering expansion are complete locally.
 Phase E2 freezes 300 real historical CSI 300 constituents plus `000300.SH` and
 `510300.SH`, keeps PostgreSQL owner/lineage Authority, and uses bounded
 timeframe/date/symbol-bucket Parquet reads for the same Canonical Decision-Time
 materialization, T+1 Outcome, Panel, cumulative ablation, Strategy Economics,
 Portfolio Performance, Research Evidence, interruption recovery and replay.
 
-This run establishes expanded exploratory coverage, not completion of the
-empirical program. ETF, Theme and price/volume-based Capital observations now
-reach the canonical chain; Candidate, Signal and Forecast observations exist
-on the frozen methodology. Current Industry and market cap remain deliberately
-unknown/not-estimable, and the one-month minute window cannot establish
-generalization, calibrated probability, Formal OOS or economic value.
+Phase E3 replaces the frozen cohort with 29 exact effective-date owners, runs
+126 Decision Sessions over 6.5 months and consumes owner-resolved Industry,
+published share and corporate-action facts. Decision and streaming Evidence
+memory are bounded by session/keyset batches. This establishes longitudinal
+engineering evidence, not completion of the empirical program: the frozen ETF
+returns no observations, so Capital, Candidate, Signal and Forecast remain
+not estimable; acquisition publication still has a 5.03 GiB peak; and no Formal
+PIT/OOS or empirically calibrated execution input exists.
 
 Phase E priority order is now:
 
-1. Freeze longitudinal constituent history instead of one effective-date index
-   cohort, without projecting current members into earlier periods.
-2. Obtain Decision-time published share, Industry and corporate-action owners;
-   keep absent facts unknown rather than backfilled or synthesized.
-3. Extend minute observations materially beyond 19 sessions and repeat the
-   already frozen chain without selecting the period or parameters from Phase
-   E2 outcomes.
-4. Empirically resolve costs, fillability, impact and capacity before making an
-   economic-value claim. Continue preserving negative, inconclusive and
-   not-estimable outcomes.
+1. Resolve a real, traceable intraday ETF source for the frozen context without
+   index substitution, Daily-only fill or current-state projection.
+2. Stream Provider acquisition and package publication so 1--3 year corpora do
+   not inherit the current 5.03 GiB publisher peak.
+3. Extend the same frozen methodology to 1--3 years and additional periods;
+   retain the current negative/not-estimable findings without tuning thresholds.
+4. Increase published-at-Decision share coverage and empirically resolve costs,
+   fillability, impact and capacity before making an economic-value claim.
 
 Engineering completion still does not supply qualified Provider history,
 Formal PIT, qualified Historical Samples, pristine Formal OOS observations,

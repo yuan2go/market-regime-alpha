@@ -3,7 +3,7 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Current capability and evidence-ceiling matrix
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-13
+> **Last Updated:** 2026-08-14
 > **Code Evidence:** `src/market_regime_alpha`, `src/market_regime_alpha/persistence/postgres/schema.py`, `tests`
 
 | Capability | Engineering state | Current Authority / ceiling |
@@ -11,9 +11,9 @@
 | Continuous scheduling, lease, fence, recovery | Implemented | one PostgreSQL Runtime; Research/Shadow only for free data |
 | BaoStock/Tencent acquisition and archive | Implemented | recorded exploratory evidence, not Formal PIT |
 | Historical Raw/Normalized Artifact Root | Operational engineering complete | PostgreSQL owns exact locator, logical/physical hash, schema, coverage, partition access index and lineage; bounded timeframe/date/symbol-bucket reads verify selected checksums, push predicates/projected columns into Parquet and preserve exact IDs/hashes; Raw partition v1 replay remains immutable |
-| Full A-share / historical Index Research Universe → Runtime Scope | Operational engineering complete | immutable Policy/receipt; Phase E2 uses exact `INDEX` membership from a real effective-dated CSI 300 owner and never labels it `FULL_A`; captured free inputs retain provenance, `UNKNOWN` is not runnable, and all free history is `PIT_INCOMPLETE` |
+| Full A-share / historical Index Research Universe → Runtime Scope | Longitudinal index engineering complete | immutable Policy/receipt; Phase E3 maps 127 queried sessions to 29 exact CSI 300 cohort owners, switches the active 300-member cohort at Decision, applies effective delisting, keeps inactive members out of context and never labels index membership `FULL_A`; captured free inputs retain provenance and remain `PIT_INCOMPLETE` |
 | Multi-session Historical Runner | Operational engineering complete | shared Decision Session Kernel plus PostgreSQL lease/fence/CAS Journal, typed blocked stages, resume/report and exact Experiment → Strategy → Portfolio → Outcome → Performance owner replay; exploratory only, not Formal OOS |
-| Historical Decision-Time materialization | Expanded corpus complete | 19 real sessions over 300 frozen equities plus real index/ETF context produce 5,700 Panel rows and exact Feature/State/Pool/Candidate/Signal/Forecast/Outcome owners with separate Decision and T+1 clocks; a bounded Daily projection plus minute LRU reuses canonical kernels; free history remains retrospective `PIT_INCOMPLETE` |
+| Historical Decision-Time materialization | Longitudinal corpus operational | 126 real Decision Sessions over effective-dated 300-stock cohorts produce 37,800 Panel rows and exact Feature/State/Pool/Candidate/Signal/Forecast/Outcome owners with separate Decision and T+1 clocks; 180-day/61-session Daily windows plus minute LRU reuse canonical kernels; free history remains retrospective `PIT_INCOMPLETE` |
 | ETF/Index/Industry/Theme Reference | Engineering complete | Declared/Derived/Proxy are distinct, versioned and lineage-bound; free mappings remain Proxy |
 | Dataset and Feature materialization | Implemented | canonical content-addressed artifacts |
 | Formal PIT mechanics | Implemented mechanics | real qualified Provider/fact coverage absent |
@@ -36,7 +36,7 @@
 | Prospective attestation | Implemented mechanics | owner-checked, always `prospective_proven=false` |
 | Evaluation Dataset / Panel V2 / Factor Extraction | Implemented | immutable engineering evidence |
 | Factor catalog / de-dup / ablation / liquidity-capacity | Implemented harness | versioned lineage and provenance; exploratory assumptions are not facts or calibration |
-| Historical Research Evidence registry | Operational on expanded corpus | exact Dataset/Experiment/Feature/Target/Model lineage and POSITIVE/NEGATIVE/INCONCLUSIVE/NOT_ESTIMABLE findings persist append-only; Phase E2 makes ETF/Capital/Candidate/Signal/Forecast observations queryable while retaining any insufficient incremental lift as `NOT_ESTIMABLE` |
+| Historical Research Evidence registry | Streaming on longitudinal corpus | exact Dataset/Experiment/Feature/Target/Model lineage and POSITIVE/NEGATIVE/INCONCLUSIVE/NOT_ESTIMABLE findings persist append-only; four-component keyset batches and one-session accumulators process 37,375 estimable observations without a whole-Panel graph; missing ETF/Capital/Candidate/Signal/Forecast lift remains `NOT_ESTIMABLE` |
 | Calibration | Qualification owner implemented, evidence absent | exact Forecast/Label/Target and FIT/VALIDATION/Locked-OOS bindings are replayed from PostgreSQL; no Formal OOS input exists and every current result remains `calibrated=false` |
 | Formal Evaluation / Locked OOS | Family owner writer and two-level consumption Authority implemented, evidence absent | one immutable Hypothesis Family contains all registered Targets and the metric/slice/sensitivity/fold catalog; each raw subject/session/outcome path unlocks once, Target observations consume within that first family, and correction spans the complete family including `NOT_ESTIMABLE` planned folds; revisions or Model/Forecast/Dataset/Protocol substitution cannot make raw OOS pristine; no current qualified PIT/sample observations |
 | Entry research / Holding / Exit qualification | Owner writer implemented, evidence absent | replays Locked-OOS Strategy Shadow Entry→Fill→Position→Exit→Outcome, economic/provenance floors and independent approval; no Canonical `ENTER` unlock |

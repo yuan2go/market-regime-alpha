@@ -11,7 +11,9 @@ from uuid import uuid4
 from psycopg.types.json import Jsonb
 
 from market_regime_alpha.application.historical_research.contracts import (
+    E3_HISTORICAL_RUNTIME_CONTRACT,
     HistoricalResearchCommand,
+    PRE_E3_HISTORICAL_RUNTIME_CONTRACT,
 )
 from market_regime_alpha.application.research_session.contracts import (
     ResearchDecisionSessionRequest,
@@ -30,6 +32,8 @@ from market_regime_alpha.persistence.postgres.migrator import PostgresMigrator
 
 
 DEFAULT_HISTORICAL_STAGE_LEASE = timedelta(minutes=10)
+PRE_E3_RUNTIME_CONTRACT = PRE_E3_HISTORICAL_RUNTIME_CONTRACT
+E3_LONGITUDINAL_RUNTIME_CONTRACT = E3_HISTORICAL_RUNTIME_CONTRACT
 Clock = Callable[[], datetime]
 
 
@@ -83,6 +87,7 @@ class HistoricalSessionSnapshot:
 @dataclass(frozen=True, slots=True)
 class HistoricalRunSnapshot:
     command: HistoricalResearchCommand
+    runtime_contract_version: str
     status: HistoricalRunStatus
     version: int
     sessions: tuple[HistoricalSessionSnapshot, ...]
@@ -127,11 +132,12 @@ class PostgresHistoricalResearchJournal:
                     runtime_scope_policy_id, runtime_scope_policy_hash,
                     target_protocol_id, target_protocol_hash,
                     experiment_definition_id, experiment_definition_hash,
-                    data_authority_mode, evidence_qualification, status, version,
+                    data_authority_mode, evidence_qualification,
+                    runtime_contract_version, status, version,
                     command_json, created_at, updated_at
                 ) VALUES (
                     %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s,
                     'PENDING', 1, %s, %s, %s
                 ) ON CONFLICT DO NOTHING
                 """,
@@ -151,6 +157,7 @@ class PostgresHistoricalResearchJournal:
                     command.experiment_definition_reference.content_hash,
                     command.data_authority_mode.value,
                     command.evidence_qualification.value,
+                    command.runtime_contract_version,
                     Jsonb(command.to_canonical_dict()),
                     command.created_at,
                     now,
@@ -459,7 +466,8 @@ class PostgresHistoricalResearchJournal:
     def get_run(self, run_id: ArtifactId) -> HistoricalRunSnapshot:
         with self._factory.connection(read_only=True) as connection:
             row = connection.execute(
-                "SELECT command_hash, status, version, command_json "
+                "SELECT command_hash, runtime_contract_version, status, "
+                "version, command_json "
                 "FROM historical_research_run WHERE run_id = %s",
                 (str(run_id),),
             ).fetchone()
@@ -481,11 +489,15 @@ class PostgresHistoricalResearchJournal:
                 """,
                 (str(run_id),),
             ).fetchall()
-        if row is None or not isinstance(row[3], dict):
+        if row is None or not isinstance(row[4], dict):
             raise KeyError(str(run_id))
-        command = HistoricalResearchCommand.from_canonical_dict(row[3])
+        command = HistoricalResearchCommand.from_canonical_dict(row[4])
         if str(row[0]) != command.command_hash or command.run_id != run_id:
             raise HistoricalResearchConflict("Historical run owner hash diverged")
+        if str(row[1]) != command.runtime_contract_version:
+            raise HistoricalResearchConflict(
+                "Historical run contract projection diverged from command identity"
+            )
         receipts_by_session: dict[
             ArtifactId, list[ResearchSessionStageReceipt]
         ] = {}
@@ -508,8 +520,9 @@ class PostgresHistoricalResearchJournal:
             raise HistoricalResearchConflict("Historical session projection diverged")
         return HistoricalRunSnapshot(
             command=command,
-            status=HistoricalRunStatus(str(row[1])),
-            version=int(row[2]),
+            runtime_contract_version=str(row[1]),
+            status=HistoricalRunStatus(str(row[2])),
+            version=int(row[3]),
             sessions=sessions,
         )
 
@@ -643,11 +656,13 @@ def _utc_now() -> datetime:
 
 __all__ = [
     "DEFAULT_HISTORICAL_STAGE_LEASE",
+    "E3_LONGITUDINAL_RUNTIME_CONTRACT",
     "HistoricalResearchConflict",
     "HistoricalRunSnapshot",
     "HistoricalRunStatus",
     "HistoricalSessionSnapshot",
     "HistoricalSessionStatus",
     "HistoricalStageClaim",
+    "PRE_E3_RUNTIME_CONTRACT",
     "PostgresHistoricalResearchJournal",
 ]

@@ -184,6 +184,55 @@ PostgreSQL execution produces identical ordered Session, Receipt, Component,
 source-binding, Evidence and metric hash sets. All Phase E2 facts remain
 `EXPLORATORY`, `PIT_INCOMPLETE`, `FORMAL_OOS=false` and `CALIBRATED=false`.
 
+Phase E3 now adds real longitudinal engineering evidence without rewriting E2.
+One exact-range Timeline maps 127 queried trading sessions to 29 distinct CSI
+300 constituent owners. Each Decision uses the active 300-member cohort; the
+308-stock union changes by one member on 2025-03-10 and seven members on
+2025-06-16. A delisted member is excluded at its lifecycle effective date even
+before the next Provider cohort removes it. Current membership and current
+classification are never projected backwards.
+
+The normalized corpus contains 1,954,644 real Daily/5-minute observations for
+309 of 310 expected instruments from 2024-06-03 through 2025-07-14. The sole
+unobserved instrument is the frozen `510300.SH` ETF: all BaoStock requests
+succeeded but returned no rows. The 126-session Decision run is complete with
+756 receipts and 1,638 exact components. Decision materialization peaks at
+1,412,218,880 bytes RSS with zero swap. Streaming Evidence processes four
+components and at most 299 observations at a time, completing in 66.40 seconds
+at 378,732,544 bytes peak RSS. Corpus acquisition still peaks at
+5,396,152,320 bytes and remains the most important scale-engineering gap.
+
+The consumed Historical Security Facts owner contains 8,909 Industry, 921
+published share-capital, 229 adjustment and 609 dividend/split/rights rows.
+Industry is present on all 37,800 Panel rows; Decision-time market-cap buckets
+cover 19,022 rows and remain `NOT_ESTIMABLE` on the rest. One conflicting
+dividend response is a durable interval gap. The frozen raw-return experiment
+excludes 2,082 six-checkpoint labels crossing a known action or that gap instead
+of calculating contaminated returns.
+
+The long-window result does not establish Alpha. ETF has zero observations,
+Capital is `DATA_INSUFFICIENT` in all sessions, all 37,800 Candidates are
+rejected, and Signal/canonical Forecast are never emitted. The unchanged
+Forecast sample floor is not reached because there is no upstream Signal, not
+because it was lowered. Price, Volume, Regime, Theme and Dynamic Pool are
+estimable, but Volume, Theme and Dynamic Pool have negative incremental lift;
+Regime has a small positive lift while the chain remains net negative. All six
+Strategy checkpoints are gross-positive but net-negative after the versioned
+engineering-assumption cost. The full ranking path is also negative, with net
+-0.003781 and maximum drawdown -0.39964.
+
+The owner-resolved fixed-ridge challenger is independently estimable on 29,729
+earlier training and 7,646 later validation observations. Its small MSE
+improvement and 0.015405 validation RankIC are exploratory temporal evidence,
+not canonical Forecast, Formal OOS, Calibration or model qualification. Exact
+owners, missingness, period/regime slices, economics and current recovery proof
+are recorded in the
+[Phase E3 report](../references/Phase-E3-Longitudinal-Historical-Evidence-Report.md).
+The interrupted/resumed and independently uninterrupted executions have
+identical ordered Run, Session, receipt, component, component-binding, Evidence,
+metric and Evidence-binding digests; exact replay independently recomputes all
+126 sessions with zero mismatch.
+
 Canonical source acquisition is exposed through `SourceFreezeService`; the
 DailyLoop is retained only as its identity-compatible adapter. Controlled
 package recovery and Feature recovery use exact PostgreSQL/receipt locators and

@@ -7,7 +7,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
 from statistics import median
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
 from market_regime_alpha.application.research_validation.common import (
     ENGINEERING_LIMITATIONS,
@@ -57,6 +57,27 @@ class LiquidityCapacityProtocol:
     adv_short_sessions: int
     adv_long_sessions: int
     created_at: datetime
+    schema_version: str = "liquidity-capacity-protocol/v1"
+
+    def __post_init__(self) -> None:
+        require_sha256("protocol_hash", self.protocol_hash)
+        require_text("protocol_version", self.protocol_version)
+        if self.schema_version != "liquidity-capacity-protocol/v1":
+            raise ValueError("unsupported Liquidity/Capacity Protocol schema")
+        if self.created_at.tzinfo is None or self.created_at.utcoffset() is None:
+            raise ValueError("Liquidity/Capacity Protocol time must be timezone-aware")
+        if self.parameters != tuple(sorted(self.parameters, key=lambda item: item.name)):
+            raise ValueError("Liquidity/Capacity Protocol parameters must be sorted")
+        if len({item.name for item in self.parameters}) != len(self.parameters):
+            raise ValueError("Liquidity/Capacity parameters must be unique")
+        if self.adv_short_sessions != 5 or self.adv_long_sessions != 20:
+            raise ValueError("Current Liquidity/Capacity contract requires ADV5 and ADV20")
+        if canonical_hash(self.identity_payload()) != self.protocol_hash:
+            raise ValueError("Liquidity/Capacity Protocol hash mismatch")
+        if self.protocol_id != ArtifactId(
+            f"liquidity-capacity-protocol:{self.protocol_hash[7:]}"
+        ):
+            raise ValueError("Liquidity/Capacity Protocol identity mismatch")
 
     @classmethod
     def create(
@@ -73,16 +94,65 @@ class LiquidityCapacityProtocol:
             raise ValueError("Liquidity/Capacity parameters must be unique")
         if adv_short_sessions != 5 or adv_long_sessions != 20:
             raise ValueError("Current Liquidity/Capacity contract requires ADV5 and ADV20")
-        payload = {
-            "schema": "liquidity-capacity-protocol/v1",
-            "protocol_version": protocol_version,
-            "parameters": [_parameter_payload(item) for item in ordered],
-            "adv_short_sessions": adv_short_sessions,
-            "adv_long_sessions": adv_long_sessions,
-            "created_at": timestamp(created_at),
-        }
+        payload = _protocol_payload(
+            protocol_version=protocol_version,
+            parameters=ordered,
+            adv_short_sessions=adv_short_sessions,
+            adv_long_sessions=adv_long_sessions,
+            created_at=created_at,
+        )
         artifact_id, digest = content_identity("liquidity-capacity-protocol", payload)
         return cls(artifact_id, digest, protocol_version, ordered, adv_short_sessions, adv_long_sessions, created_at)
+
+    def identity_payload(self) -> dict[str, Any]:
+        return _protocol_payload(
+            protocol_version=self.protocol_version,
+            parameters=self.parameters,
+            adv_short_sessions=self.adv_short_sessions,
+            adv_long_sessions=self.adv_long_sessions,
+            created_at=self.created_at,
+        )
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        return {
+            "protocol_id": str(self.protocol_id),
+            "protocol_hash": self.protocol_hash,
+            **self.identity_payload(),
+        }
+
+    @classmethod
+    def from_canonical_dict(
+        cls, value: Mapping[str, Any]
+    ) -> LiquidityCapacityProtocol:
+        raw_parameters = value.get("parameters")
+        if not isinstance(raw_parameters, (list, tuple)):
+            raise ValueError("Liquidity/Capacity parameters are malformed")
+        return cls(
+            protocol_id=ArtifactId(str(value["protocol_id"])),
+            protocol_hash=str(value["protocol_hash"]),
+            protocol_version=str(value["protocol_version"]),
+            parameters=tuple(
+                CapacityParameter(
+                    name=str(_mapping(item)["name"]),
+                    value=Decimal(str(_mapping(item)["value"])),
+                    provenance=CapacityValueProvenance(
+                        str(_mapping(item)["provenance"])
+                    ),
+                    evidence_reference=(
+                        None
+                        if _mapping(item).get("evidence_reference") is None
+                        else ValidationArtifactReference.from_canonical_dict(
+                            _mapping(_mapping(item)["evidence_reference"])
+                        )
+                    ),
+                )
+                for item in raw_parameters
+            ),
+            adv_short_sessions=int(value["adv_short_sessions"]),
+            adv_long_sessions=int(value["adv_long_sessions"]),
+            created_at=datetime.fromisoformat(str(value["created_at"])),
+            schema_version=str(value["schema"]),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -287,6 +357,30 @@ def _parameter_payload(item: CapacityParameter) -> dict[str, Any]:
         "provenance": item.provenance.value,
         "evidence_reference": None if item.evidence_reference is None else item.evidence_reference.to_canonical_dict(),
     }
+
+
+def _protocol_payload(
+    *,
+    protocol_version: str,
+    parameters: tuple[CapacityParameter, ...],
+    adv_short_sessions: int,
+    adv_long_sessions: int,
+    created_at: datetime,
+) -> dict[str, Any]:
+    return {
+        "schema": "liquidity-capacity-protocol/v1",
+        "protocol_version": protocol_version,
+        "parameters": [_parameter_payload(item) for item in parameters],
+        "adv_short_sessions": adv_short_sessions,
+        "adv_long_sessions": adv_long_sessions,
+        "created_at": timestamp(created_at),
+    }
+
+
+def _mapping(value: object) -> Mapping[str, Any]:
+    if not isinstance(value, Mapping):
+        raise ValueError("Liquidity/Capacity payload is not an object")
+    return value
 
 
 def _mean(values: Iterable[Decimal]) -> Decimal | None:

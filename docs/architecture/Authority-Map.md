@@ -3,7 +3,7 @@
 > **Status:** CURRENT_ARCHITECTURE
 > **Authority:** Canonical ownership and write map
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-12
+> **Last Updated:** 2026-08-13
 > **Code Evidence:** `src/market_regime_alpha/application/authority_boundary.py`, `src/market_regime_alpha/persistence/repository_factory.py`, `src/market_regime_alpha/persistence/postgres/schema.py`, `src/market_regime_alpha/persistence/postgres/migrations/*.sql`
 
 ## Terms
@@ -28,7 +28,7 @@
 | Research Shadow | Freezes research decisions and factual outcome lineage; it never simulates account execution. |
 | Strategy Shadow | Simulates Entry/Fill/Position/Holding/Exit in an isolated ledger; it never writes actual fills or positions. |
 | Production Admission | A blocked projection only. No final Production Admission Authority exists. |
-| PostgreSQL Authority-schema tables | 244 in `EXPECTED_AUTHORITY_TABLES`; this catalog includes owner state, journals and projections and is not a count of independent business Authorities. |
+| PostgreSQL Authority-schema tables | 257 in `EXPECTED_AUTHORITY_TABLES`; this catalog includes owner state, journals and projections and is not a count of independent business Authorities. |
 
 ## Complete capability ledger
 
@@ -165,6 +165,47 @@ Every entry separates ownership from storage and consumption. A missing writer o
 - **Replay mechanism:** exact owner-row ID/hash reconstruction, member-projection comparison and checksum/identity verification of the immutable raw archive supplied to `research-universe-replay`.
 - **Evidence ceiling:** `EXPLORATORY`, `PIT_INCOMPLETE`, `FORMAL_PIT_NOT_ESTABLISHED`; unknown listing facts remain `UNKNOWN` and are never silently included or discarded.
 - **Legacy replacement:** no listing-date or current-status heuristic may write Daily Eligibility or Formal PIT facts.
+
+### Longitudinal Historical data and materialization
+
+- **Domain / Capability:** Historical Data / effective-dated constituent
+  timeline, business facts, partitioned corpus and Decision/Outcome
+  projections.
+- **Classification:** exploratory Evidence Authority plus derived immutable
+  projections; none establishes Formal PIT.
+- **Owner:** Free Research Universe owns constituent cohorts and the exact
+  session timeline; Historical Security Facts owns Industry, published shares,
+  corporate actions, unresolved gaps and the exact acquisition symbol/date/
+  Universe scope; Historical Corpus owns raw/normalized packages and partition
+  locators; the Historical Context Instrument Set owns the frozen
+  `000300.SH` market-index and `510300.SH` theme-ETF roles; Historical
+  Experiment Definition freezes the unchanged methodology before Scope;
+  Historical Materialization owns session components and projected Outcome
+  labels.
+- **Canonical Writer:** `FreeResearchUniverseOperator`,
+  `HistoricalSecurityFactsOperator`, the longitudinal corpus CLI through
+  `PostgresResearchValidationRepository`,
+  `PostgresHistoricalCorpusRepository` and
+  `PostgresHistoricalMaterializationRepository` through the single Historical
+  Decision materializer. Context changes require a new frozen Experiment.
+- **PostgreSQL tables:** `free_data_historical_constituent_timeline`,
+  `free_data_historical_constituent_timeline_cohort`,
+  `free_data_historical_security_fact_set`,
+  `free_data_historical_security_fact`,
+  `free_data_historical_security_fact_coverage_gap`,
+  `research_validation_artifact` (`HISTORICAL_CONTEXT_INSTRUMENT_SET` and
+  `RESEARCH_EXPERIMENT_DEFINITION`),
+  `historical_corpus_owner`, `historical_corpus_partition`,
+  `historical_corpus_session_component`,
+  `historical_corpus_component_source_binding` and
+  `historical_corpus_outcome_label`.
+- **Replay mechanism:** exact owner ID/hash and immutable Artifact Root checksum
+  reload, exact session-to-cohort mapping, keyset component iteration and
+  deterministic projected-label reconstruction.
+- **Evidence ceiling:** `EXPLORATORY`, `PIT_INCOMPLETE`,
+  `FORMAL_OOS=false`, `CALIBRATED=false`; corporate-action absence is usable
+  only inside the persisted v4 acquisition scope and all gaps fail raw returns
+  closed.
 
 ### Formal PIT
 

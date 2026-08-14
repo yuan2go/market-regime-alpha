@@ -3,7 +3,7 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Current unresolved engineering and evidence gaps
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-13
+> **Last Updated:** 2026-08-14
 > **Code Evidence:** `src/market_regime_alpha`, `src/market_regime_alpha/persistence/postgres/schema.py`, `tests`
 
 ## P0 Authority and architecture correctness
@@ -23,7 +23,7 @@
 |---|---|---|
 | Exact-window sustained operation | mechanics pass locally; no sustained real 14:30-14:55 series | consecutive real runs replay with no duplicate Provider calls or fence violations |
 | Free-data operator deployment evidence | run/settle/scope/Historical/strategy/portfolio/performance/model/formal-assessment/report/recovery/replay mechanics exist locally | repeated real PostgreSQL day and multi-session archive cycles recover provider, partial-journal and missed-settlement scenarios under the operator runbook |
-| Longitudinal historical context and classification | Phase E2 runs one frozen 300-stock CSI 300 cohort with real index/ETF, listing age, ST/trading status and observable Candidate/Signal/Forecast; one effective-date cohort, current-classification exclusion, absent Decision-time share/Industry owners and a 19-session minute window remain | longitudinal constituent owners and materially longer Decision windows supply published-at-time share, Industry and corporate-action facts without substitution, leakage or post-result tuning |
+| Longitudinal historical evidence scale | Phase E3 runs 126 sessions over 29 exact CSI 300 cohorts and consumes Industry/share/corporate-action owners with bounded Decision/Evidence execution; `510300.SH` has no Provider observations, corpus publication peaks at 5.03 GiB, only 50.32% of Panel rows have Decision-time market cap, and costs/fills remain assumptions | acquire a real traceable intraday ETF series without substitution, stream acquisition/publication below the current full-graph peak, extend unchanged experiments to 1--3 years, and resolve execution inputs empirically before an Alpha/economics claim |
 | Durable prospective sample | qualification owner excludes pre-policy, Replay and Fixture sessions and currently proves zero real sessions | the frozen policy accumulates enough post-lock trusted-clock/live-origin sessions with exact replay and acceptable incident/drift/Provider failure rates |
 | State/Pool/Signal model validation preparation | mechanics and policies exist | frozen protocols and qualified inputs exist without parameter tuning in implementation code |
 | External authentication binding | Principal/RBAC/role-separated Approval/Audit owners exist; CLI principal identifiers are not authenticated subjects | a deployed authentication provider binds verified subjects to durable Principals without adding Production permission |

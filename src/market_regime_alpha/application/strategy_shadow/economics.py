@@ -265,6 +265,65 @@ class StrategyEconomicsPolicy:
             self.limitations,
         )
 
+    def to_canonical_dict(self) -> dict[str, Any]:
+        return {
+            "policy_id": str(self.policy_id),
+            "policy_hash": self.policy_hash,
+            **self.identity_payload(),
+        }
+
+    @classmethod
+    def from_canonical_dict(
+        cls, value: Mapping[str, Any]
+    ) -> StrategyEconomicsPolicy:
+        holding = value.get("holding_exit_policy")
+        parameters = value.get("parameters")
+        limitations = value.get("limitations")
+        if not isinstance(holding, Mapping):
+            raise ValueError("Strategy Economics holding/exit policy is malformed")
+        if not isinstance(parameters, (list, tuple)):
+            raise ValueError("Strategy Economics parameters are malformed")
+        if not isinstance(limitations, (list, tuple)):
+            raise ValueError("Strategy Economics limitations are malformed")
+        return cls(
+            policy_id=ArtifactId(str(value["policy_id"])),
+            policy_hash=str(value["policy_hash"]),
+            policy_version=str(value["policy_version"]),
+            prediction_target_reference=ValidationArtifactReference.from_canonical_dict(
+                _mapping(value["prediction_target_reference"])
+            ),
+            prediction_checkpoint=OutcomeCheckpoint(
+                str(value["prediction_checkpoint"])
+            ),
+            entry_kind=StrategyEntryKind(str(value["entry_kind"])),
+            exit_kind=StrategyExitKind(str(value["exit_kind"])),
+            fixed_exit_checkpoint=OutcomeCheckpoint(
+                str(holding["fixed_exit_checkpoint"])
+            ),
+            barrier_id=(
+                None if holding.get("barrier_id") is None else str(holding["barrier_id"])
+            ),
+            barrier_return=_optional_decimal(holding.get("barrier_return")),
+            forecast_raw_score_threshold=_optional_decimal(
+                holding.get("forecast_raw_score_threshold")
+            ),
+            lot_size=int(value["lot_size"]),
+            t_plus_one=bool(value["t_plus_one"]),
+            parameters=tuple(
+                ShadowPortfolioParameter(
+                    name=str(_mapping(item)["name"]),
+                    value=Decimal(str(_mapping(item)["value"])),
+                    provenance=ShadowParameterProvenance(
+                        str(_mapping(item)["provenance"])
+                    ),
+                )
+                for item in parameters
+            ),
+            created_at=datetime.fromisoformat(str(value["created_at"])),
+            limitations=tuple(str(item) for item in limitations),
+            schema_version=str(value["schema_version"]),
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class StrategyEconomicsResult:
@@ -687,6 +746,16 @@ def _policy_payload(
         "created_at": timestamp(created_at),
         "limitations": list(limitations),
     }
+
+
+def _mapping(value: object) -> Mapping[str, Any]:
+    if not isinstance(value, Mapping):
+        raise ValueError("Strategy Economics payload is not an object")
+    return value
+
+
+def _optional_decimal(value: object) -> Decimal | None:
+    return None if value is None else Decimal(str(value))
 
 
 def _result_payload(

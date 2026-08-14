@@ -9,6 +9,7 @@ from market_regime_alpha.application.research_validation.ablation import (
     AblationVariant,
     AblationVariantKind,
     run_alpha_ablation_suite,
+    run_incremental_alpha_ablation_suite,
 )
 from market_regime_alpha.application.research_validation.common import (
     ResearchEvidenceAuthority,
@@ -118,10 +119,52 @@ def test_ablation_suite_uses_cross_sectional_sessions_costs_and_frozen_sequence(
         "LIQUIDITY",
         "MARKET_CAP",
         "MARKET_REGIME",
+        "MONTH",
+        "QUARTER",
         "THEME",
         "VOLATILITY",
+        "YEAR",
     }
     assert "NOT_FORMAL_ALPHA_EVIDENCE" in suite.limitations
+
+
+def test_incremental_ablation_consumes_ordered_session_batches() -> None:
+    price = AblationVariant.standard(AblationVariantKind.PRICE_ONLY)
+    regime = AblationVariant.standard(
+        AblationVariantKind.PRICE_VOLUME_MARKET_REGIME
+    )
+    protocol = AblationProtocol.create(
+        protocol_version="incremental-alpha-proof-v1",
+        variants=(price, regime),
+        comparison_sequence=(price.variant_id, regime.variant_id),
+        top_k=2,
+        scoring_contract="WITHIN_SESSION_FACTOR_PERCENTILE_MEAN_V1",
+        created_at=NOW,
+    )
+    observations = _observations()
+    sessions = tuple(
+        tuple(item for item in observations if item.session_key == session_key)
+        for session_key in sorted({item.session_key for item in observations})
+    )
+
+    first = run_incremental_alpha_ablation_suite(
+        protocol=protocol,
+        panel_reference=_reference(),
+        observation_sessions=iter(sessions),
+        created_at=NOW,
+    )
+    second = run_incremental_alpha_ablation_suite(
+        protocol=protocol,
+        panel_reference=_reference(),
+        observation_sessions=iter(sessions),
+        created_at=NOW,
+    )
+
+    assert first == second
+    assert first.results[-1].metrics.sample_count == len(observations)
+    assert first.results[-1].metrics.session_count == len(sessions)
+    assert first.results[-1].metrics.incremental_lift is not None
+    assert len(first.slice_evaluations) > 0
 
 
 def test_ablation_protocol_rejects_unfrozen_or_duplicate_comparison_sequence() -> None:

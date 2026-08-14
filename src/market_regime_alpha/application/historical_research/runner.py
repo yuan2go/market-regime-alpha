@@ -9,7 +9,11 @@ from market_regime_alpha.application.historical_research.contracts import (
     HistoricalResearchCommand,
 )
 from market_regime_alpha.application.historical_research.postgres_journal import (
+    E3_LONGITUDINAL_RUNTIME_CONTRACT,
+    HistoricalResearchConflict,
     HistoricalRunSnapshot,
+    HistoricalRunStatus,
+    PRE_E3_RUNTIME_CONTRACT,
     PostgresHistoricalResearchJournal,
 )
 from market_regime_alpha.application.research_session.kernel import (
@@ -45,7 +49,8 @@ class HistoricalReplayReport:
     matched: bool
     replayed_session_count: int
     mismatches: tuple[HistoricalReplayMismatch, ...]
-    schema_version: str = "historical-replay-report/v1"
+    replay_mode: str = "RECOMPUTED_FROM_FROZEN_INPUTS"
+    schema_version: str = "historical-replay-report/v2"
 
     def __post_init__(self) -> None:
         if self.matched is bool(self.mismatches):
@@ -64,6 +69,7 @@ class HistoricalReplayReport:
             "matched": self.matched,
             "replayed_session_count": self.replayed_session_count,
             "mismatches": [item.to_canonical_dict() for item in self.mismatches],
+            "replay_mode": self.replay_mode,
         }
 
     def to_canonical_dict(self) -> dict[str, Any]:
@@ -109,53 +115,66 @@ class HistoricalResearchRunner:
     ) -> HistoricalRunSnapshot:
         if max_stage_commits is not None and max_stage_commits <= 0:
             raise ValueError("max_stage_commits must be positive")
-        self._journal.get_run(run_id)
         return self._drain(run_id, max_stage_commits=max_stage_commits)
 
     def replay(self, *, run_id: ArtifactId) -> HistoricalReplayReport:
         snapshot = self._journal.get_run(run_id)
         mismatches: list[HistoricalReplayMismatch] = []
-        for session in snapshot.sessions:
-            recomputed = self._kernel.run(request=session.request)
-            for expected, actual in zip(session.receipts, recomputed, strict=False):
-                if expected.receipt_hash != actual.receipt_hash:
-                    mismatches.append(
-                        HistoricalReplayMismatch(
-                            trading_date=session.request.trading_date.isoformat(),
-                            stage=expected.stage,
-                            expected_receipt_hash=expected.receipt_hash,
-                            actual_receipt_hash=actual.receipt_hash,
+        legacy = snapshot.runtime_contract_version == PRE_E3_RUNTIME_CONTRACT
+        if legacy and snapshot.status not in {
+            HistoricalRunStatus.COMPLETE,
+            HistoricalRunStatus.COMPLETE_WITH_BLOCKS,
+        }:
+            raise HistoricalResearchConflict(
+                "Pre-E3 immutable receipt verification requires a terminal run"
+            )
+        if not legacy:
+            for session in snapshot.sessions:
+                recomputed = self._kernel.run(request=session.request)
+                for expected, actual in zip(session.receipts, recomputed, strict=False):
+                    if expected.receipt_hash != actual.receipt_hash:
+                        mismatches.append(
+                            HistoricalReplayMismatch(
+                                trading_date=session.request.trading_date.isoformat(),
+                                stage=expected.stage,
+                                expected_receipt_hash=expected.receipt_hash,
+                                actual_receipt_hash=actual.receipt_hash,
+                            )
                         )
-                    )
-                    break
-            else:
-                if len(session.receipts) != len(recomputed):
-                    stage = tuple(ResearchSessionStage)[
-                        min(len(session.receipts), len(recomputed))
-                    ]
-                    mismatches.append(
-                        HistoricalReplayMismatch(
-                            trading_date=session.request.trading_date.isoformat(),
-                            stage=stage,
-                            expected_receipt_hash=(
-                                "MISSING"
-                                if len(session.receipts) <= stage.ordinal - 1
-                                else session.receipts[stage.ordinal - 1].receipt_hash
-                            ),
-                            actual_receipt_hash=(
-                                "MISSING"
-                                if len(recomputed) <= stage.ordinal - 1
-                                else recomputed[stage.ordinal - 1].receipt_hash
-                            ),
+                        break
+                else:
+                    if len(session.receipts) != len(recomputed):
+                        stage = tuple(ResearchSessionStage)[
+                            min(len(session.receipts), len(recomputed))
+                        ]
+                        mismatches.append(
+                            HistoricalReplayMismatch(
+                                trading_date=session.request.trading_date.isoformat(),
+                                stage=stage,
+                                expected_receipt_hash=(
+                                    "MISSING"
+                                    if len(session.receipts) <= stage.ordinal - 1
+                                    else session.receipts[stage.ordinal - 1].receipt_hash
+                                ),
+                                actual_receipt_hash=(
+                                    "MISSING"
+                                    if len(recomputed) <= stage.ordinal - 1
+                                    else recomputed[stage.ordinal - 1].receipt_hash
+                                ),
+                            )
                         )
-                    )
         values = {
-            "schema_version": "historical-replay-report/v1",
+            "schema_version": "historical-replay-report/v2",
             "run_id": str(run_id),
             "command_hash": snapshot.command.command_hash,
             "matched": not mismatches,
             "replayed_session_count": len(snapshot.sessions),
             "mismatches": [item.to_canonical_dict() for item in mismatches],
+            "replay_mode": (
+                "IMMUTABLE_PRE_E3_RECEIPT_VERIFICATION"
+                if legacy
+                else "RECOMPUTED_FROM_FROZEN_INPUTS"
+            ),
         }
         digest = canonical_hash(values)
         return HistoricalReplayReport(
@@ -166,6 +185,7 @@ class HistoricalResearchRunner:
             matched=not mismatches,
             replayed_session_count=len(snapshot.sessions),
             mismatches=tuple(mismatches),
+            replay_mode=str(values["replay_mode"]),
         )
 
     def _drain(
@@ -175,7 +195,22 @@ class HistoricalResearchRunner:
         max_stage_commits: int | None,
     ) -> HistoricalRunSnapshot:
         committed = 0
-        command = self._journal.get_run(run_id).command
+        snapshot = self._journal.get_run(run_id)
+        if snapshot.runtime_contract_version == PRE_E3_RUNTIME_CONTRACT:
+            if snapshot.status in {
+                HistoricalRunStatus.COMPLETE,
+                HistoricalRunStatus.COMPLETE_WITH_BLOCKS,
+            }:
+                return snapshot
+            raise HistoricalResearchConflict(
+                "Pre-E3 incomplete runs require their exact historical code revision; "
+                "current materialization is intentionally not substituted"
+            )
+        if snapshot.runtime_contract_version != E3_LONGITUDINAL_RUNTIME_CONTRACT:
+            raise HistoricalResearchConflict(
+                "Historical Runtime contract version is unsupported"
+            )
+        command = snapshot.command
         while max_stage_commits is None or committed < max_stage_commits:
             claim = self._journal.claim_next(run_id)
             if claim is None:

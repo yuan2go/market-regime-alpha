@@ -26,7 +26,9 @@ from market_regime_alpha.evidence.canonical import (
 )
 
 
-HISTORICAL_RESEARCH_COMMAND_SCHEMA = "historical-research-command/v1"
+HISTORICAL_RESEARCH_COMMAND_SCHEMA = "historical-research-command/v2"
+PRE_E3_HISTORICAL_RUNTIME_CONTRACT = "PRE_E3_IMMUTABLE_RECEIPTS_V1"
+E3_HISTORICAL_RUNTIME_CONTRACT = "E3_LONGITUDINAL_V1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,11 +55,24 @@ class HistoricalResearchCommand:
     code_revision: str
     created_at: datetime
     limitations: tuple[str, ...]
+    runtime_contract_version: str = E3_HISTORICAL_RUNTIME_CONTRACT
     schema_version: str = HISTORICAL_RESEARCH_COMMAND_SCHEMA
 
     def __post_init__(self) -> None:
-        if self.schema_version != HISTORICAL_RESEARCH_COMMAND_SCHEMA:
+        if self.schema_version not in {
+            "historical-research-command/v1",
+            HISTORICAL_RESEARCH_COMMAND_SCHEMA,
+        }:
             raise ValueError("unsupported Historical Research command schema")
+        if (self.schema_version == "historical-research-command/v1") != (
+            self.runtime_contract_version == PRE_E3_HISTORICAL_RUNTIME_CONTRACT
+        ):
+            raise ValueError("Historical Research schema/runtime contract mismatch")
+        if self.runtime_contract_version not in {
+            PRE_E3_HISTORICAL_RUNTIME_CONTRACT,
+            E3_HISTORICAL_RUNTIME_CONTRACT,
+        }:
+            raise ValueError("unsupported Historical Runtime contract")
         require_sha256("command_hash", self.command_hash)
         for label, value in (
             ("trading_calendar_hash", self.trading_calendar_hash),
@@ -146,7 +161,12 @@ class HistoricalResearchCommand:
         evidence_qualification: EvidenceQualification,
         code_revision: str,
         created_at: datetime,
+        runtime_contract_version: str = E3_HISTORICAL_RUNTIME_CONTRACT,
     ) -> HistoricalResearchCommand:
+        if runtime_contract_version != E3_HISTORICAL_RUNTIME_CONTRACT:
+            raise ValueError(
+                "new Historical commands require the E3 Longitudinal Runtime contract"
+            )
         ordered_sessions = tuple(trading_sessions)
         ordered_references = _references(configuration_references)
         limitations = (
@@ -181,6 +201,7 @@ class HistoricalResearchCommand:
             "code_revision": code_revision,
             "created_at": normalize_canonical_datetime(created_at),
             "limitations": limitations,
+            "runtime_contract_version": runtime_contract_version,
         }
         digest = canonical_hash(_command_payload(**values))
         return cls(
@@ -237,6 +258,7 @@ class HistoricalResearchCommand:
             "evidence_qualification": self.evidence_qualification,
             "code_revision": self.code_revision,
             "created_at": self.created_at,
+            "runtime_contract_version": self.runtime_contract_version,
         }
 
     def semantic_payload(self) -> dict[str, Any]:
@@ -297,6 +319,12 @@ class HistoricalResearchCommand:
                 str(payload["created_at"]).replace("Z", "+00:00")
             ),
             limitations=tuple(str(item) for item in payload["limitations"]),
+            runtime_contract_version=str(
+                payload.get(
+                    "runtime_contract_version",
+                    PRE_E3_HISTORICAL_RUNTIME_CONTRACT,
+                )
+            ),
             schema_version=str(payload["schema_version"]),
         )
 
@@ -323,9 +351,19 @@ def _command_payload(
     code_revision: str,
     created_at: datetime,
     limitations: tuple[str, ...],
+    runtime_contract_version: str = E3_HISTORICAL_RUNTIME_CONTRACT,
 ) -> dict[str, Any]:
     return {
-        "schema_version": HISTORICAL_RESEARCH_COMMAND_SCHEMA,
+        "schema_version": (
+            "historical-research-command/v1"
+            if runtime_contract_version == PRE_E3_HISTORICAL_RUNTIME_CONTRACT
+            else HISTORICAL_RESEARCH_COMMAND_SCHEMA
+        ),
+        **(
+            {}
+            if runtime_contract_version == PRE_E3_HISTORICAL_RUNTIME_CONTRACT
+            else {"runtime_contract_version": runtime_contract_version}
+        ),
         "idempotency_key": idempotency_key,
         "start_date": start_date.isoformat(),
         "end_date": end_date.isoformat(),
@@ -364,6 +402,8 @@ def _references(
 
 
 __all__ = [
+    "E3_HISTORICAL_RUNTIME_CONTRACT",
     "HISTORICAL_RESEARCH_COMMAND_SCHEMA",
     "HistoricalResearchCommand",
+    "PRE_E3_HISTORICAL_RUNTIME_CONTRACT",
 ]

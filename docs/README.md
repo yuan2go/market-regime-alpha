@@ -3,7 +3,7 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Canonical documentation index
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-13
+> **Last Updated:** 2026-08-14
 > **Code Evidence:** `src/market_regime_alpha`, `src/market_regime_alpha/persistence/postgres/migrations/*.sql`, `tests`
 
 Documentation describes the code; it does not create implementation or evidence authority.
@@ -37,7 +37,10 @@ Documentation describes the code; it does not create implementation or evidence 
 - [Runtime Runbook](operations/Runtime-Runbook.md)
 - [ADR-010: Phase E Historical Alpha Evidence Production](architecture/decisions/ADR-010-Phase-E-Historical-Alpha-Evidence-Production.md)
 - [ADR-011: Phase E2 Selective Historical Evidence Runtime](architecture/decisions/ADR-011-Phase-E2-Selective-Historical-Evidence-Runtime.md)
+- [ADR-012: Phase E3 Longitudinal Historical Evidence Runtime](architecture/decisions/ADR-012-Phase-E3-Longitudinal-Historical-Evidence-Runtime.md)
 - [Phase E2 Historical Evidence Expansion Report](references/Phase-E2-Historical-Evidence-Expansion-Report.md)
+- [Phase E3 Longitudinal Historical Evidence Plan](references/Phase-E3-Longitudinal-Historical-Evidence-Plan.md)
+- [Phase E3 Longitudinal Historical Evidence Report](references/Phase-E3-Longitudinal-Historical-Evidence-Report.md)
 
 The Constitution remains the normative source. [Negative and Inconclusive Results](research/Negative-and-Inconclusive-Results.md) is the sole current research-claim registry.
 

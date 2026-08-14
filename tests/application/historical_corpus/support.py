@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from calendar import monthrange
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
@@ -28,6 +29,7 @@ def raw_request(
     symbol: str = "600000.SH",
     timeframe: Timeframe = Timeframe.DAILY,
     year: int = 2023,
+    month: int = 1,
 ) -> HistoricalRawRequest:
     fields = (
         "date",
@@ -43,7 +45,7 @@ def raw_request(
         "isST",
     )
     row = (
-        f"{year}-01-03",
+        f"{year}-{month:02d}-03",
         "sh.600000",
         "10",
         "10.5",
@@ -60,8 +62,16 @@ def raw_request(
         product="query_history_k_data_plus",
         symbol=symbol,
         timeframe=timeframe,
-        start_date=date(year, 1, 1),
-        end_date=date(year, 12, 31),
+        start_date=(
+            date(year, 1, 1)
+            if timeframe is Timeframe.DAILY
+            else date(year, month, 1)
+        ),
+        end_date=(
+            date(year, 12, 31)
+            if timeframe is Timeframe.DAILY
+            else date(year, month, monthrange(year, month)[1])
+        ),
         request_parameters=(
             ("adjustflag", "3"),
             ("frequency", "d" if timeframe is Timeframe.DAILY else "5"),
