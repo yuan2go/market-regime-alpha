@@ -8,12 +8,18 @@
 
 ## Multi-Strategy convergence
 
-The migration-085 engineering slice is complete: stable Strategy
+The migration-085/086 engineering slices are complete: stable Strategy
 Contract/Version/Run identities, shared Overnight/Swing execution, explicit
 Candidate gate attribution, simple cross-strategy Portfolio/Risk, observed-Fill
 strategy sleeves, multi-horizon Path Outcomes, version-scoped feedback,
 Continuous/Historical/Replay wiring and runtime inspection all use the existing
 PostgreSQL modular monolith and control planes.
+
+Account-bound Continuous execution now restores owner-resolved Strategy sleeve
+state across sessions, settles fully closed observed-Fill lifecycles, and freezes
+the exact state in replay input. The retained T+1 Shadow Entry consumes the
+canonical Overnight Proposal when available. This closes the stateful Runtime
+seam; it does not establish empirical strategy value.
 
 The next dependency order is empirical rather than another governance build:
 
@@ -25,9 +31,10 @@ The next dependency order is empirical rather than another governance build:
 4. acquire qualified Provider/PIT evidence before Formal OOS or calibration;
 5. accumulate prospective Shadow evidence before any Production consideration.
 
-The legacy T+1 Strategy/Portfolio Shadow path remains only while active
-settlement and qualification consumers depend on it. Retirement requires an
-explicit consumer inventory and differential replay proof.
+Legacy T+1 Shadow artifact shapes and Portfolio Shadow remain only while active
+settlement and qualification consumers depend on them. Their Entry decision is
+already proposal-gated; further retirement requires consumer-specific replay
+proof rather than deleting immutable history.
 
 ## Phase C current order
 

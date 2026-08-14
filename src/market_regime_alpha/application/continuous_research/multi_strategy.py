@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from decimal import Decimal
+from datetime import datetime
 
 from market_regime_alpha.application.continuous_research.composition import (
     _with_upstream_result,
@@ -15,6 +15,9 @@ from market_regime_alpha.application.continuous_research.journal import (
 from market_regime_alpha.application.continuous_research.ports import (
     ChildExecutionRequest,
     ChildExecutionResult,
+)
+from market_regime_alpha.application.strategy_shadow.postgres_repository import (
+    PostgresStrategyShadowRepository,
 )
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.evidence.canonical import canonical_hash
@@ -32,7 +35,6 @@ from market_regime_alpha.strategies.postgres_repository import (
     PostgresMultiStrategyRepository,
 )
 from market_regime_alpha.strategies.runtime import MultiStrategyRuntime
-from market_regime_alpha.strategies.sleeves import project_strategy_sleeves
 
 
 class MultiStrategyContinuousAdapter:
@@ -43,11 +45,17 @@ class MultiStrategyContinuousAdapter:
         *,
         repository: PostgresMultiStrategyRepository,
         portfolio_policy: CrossStrategyPortfolioPolicy,
+        strategy_shadow_repository: PostgresStrategyShadowRepository | None = None,
         account_id: str | None = None,
     ) -> None:
         self._repository = repository
         self._portfolio_policy = portfolio_policy
+        self._strategy_shadow_repository = strategy_shadow_repository
         self._account_id = account_id
+        if (account_id is None) != (strategy_shadow_repository is None):
+            raise ValueError(
+                "stateful Strategy Runtime requires both account and Shadow owner"
+            )
 
     def execute(
         self,
@@ -82,7 +90,7 @@ class MultiStrategyContinuousAdapter:
             candidate_set=candidate_set,
             dataset_reference=dataset_reference,
             decision_time=request.as_of_time,
-            positions=self._positions(),
+            positions=self._positions(decision_time=request.as_of_time),
             code_reference=_reference_set(
                 "STRATEGY_CODE_SET",
                 (
@@ -130,22 +138,16 @@ class MultiStrategyContinuousAdapter:
             configuration_references=strategy_request.configuration_references,
         )
 
-    def _positions(self) -> tuple[StrategyPositionState, ...]:
-        if self._account_id is None:
+    def _positions(self, *, decision_time: datetime) -> tuple[StrategyPositionState, ...]:
+        if self._account_id is None or self._strategy_shadow_repository is None:
             return ()
-        sleeves = project_strategy_sleeves(self._repository.list_fill_allocations(account_id=self._account_id))
-        return tuple(
-            StrategyPositionState(
-                strategy_version_id=item.strategy_version_reference.artifact_id,
-                symbol=item.symbol,
-                quantity=Decimal(item.quantity),
-                average_cost=item.average_cost,
-                current_price=None,
-                peak_price=item.average_cost,
-                sessions_held=0,
-            )
-            for item in sleeves
-            if item.quantity > 0 and item.average_cost is not None
+        self._strategy_shadow_repository.settle_multi_strategy_outcomes(
+            account_id=self._account_id,
+            decision_time=decision_time,
+        )
+        return self._strategy_shadow_repository.resolve_multi_strategy_positions(
+            account_id=self._account_id,
+            decision_time=decision_time,
         )
 
 

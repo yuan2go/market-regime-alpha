@@ -146,6 +146,12 @@ from market_regime_alpha.application.shadow_research import (
 from market_regime_alpha.application.strategy_shadow.operator import (
     StrategyShadowDayOperator,
 )
+from market_regime_alpha.application.strategy_shadow.operations import (
+    StrategyShadowArtifactKind,
+)
+from market_regime_alpha.application.strategy_shadow.postgres_repository import (
+    PostgresStrategyShadowRepository,
+)
 from market_regime_alpha.application.strategy_shadow.observation_builder import (
     ShadowOwnerLineageRequest,
     ShadowObservationPolicy,
@@ -213,6 +219,10 @@ from market_regime_alpha.research.platform_v2.inputs import (
     ETFObservation,
     MarketObservation,
     SymbolResearchObservation,
+)
+from market_regime_alpha.strategies.contracts import (
+    CanonicalStrategyAction,
+    StrategyFamily,
 )
 from market_regime_alpha.strategies.entry.contracts import (
     EntryPathObservationStatus,
@@ -466,6 +476,8 @@ def test_real_stateful_positive_path_reaches_research_candidate(
             summary_repository=summary_repository,
             state_repository=state_repository,
             strategy_repository=repositories.multi_strategy(),
+            strategy_shadow_repository=repositories.strategy_shadow(),
+            strategy_account_id="free-data-stateful-account",
             clock=lambda: runtime_now[0],
         )
         return ContinuousResearchTickRunner(
@@ -586,6 +598,15 @@ def test_real_stateful_positive_path_reaches_research_candidate(
     assert (CanonicalDagNodeType.MINUTE in projected_types) is liquidity_eligible
     strategy_projection = runtime_query.inspect_strategy(command.run_id)
     assert strategy_projection["decision_recomputed"] is False
+    cycle_nodes = tuple(
+        item
+        for item in strategy_projection["nodes"]
+        if item["owner"] == "MULTI_STRATEGY_RUNTIME"
+        and item["details"].get("strategy_run_count") is not None
+    )
+    assert len(cycle_nodes) == 1
+    assert cycle_nodes[0]["details"]["position_state_count"] == 0
+    assert cycle_nodes[0]["details"]["position_states"] == []
     strategy_nodes = inspection.nodes_of_type(CanonicalDagNodeType.STRATEGY)
     assert {item.details.get("family") for item in strategy_nodes if item.details.get("family") is not None} == {"OVERNIGHT", "SWING_STATE"}
     observability = PostgresRuntimeObservability(
@@ -897,6 +918,36 @@ def test_real_stateful_positive_path_reaches_research_candidate(
         assert strategy_replay["event_count"] == 8
         assert strategy_replay["artifact_count"] == 7
         strategy_session = strategy_operator.list_sessions(command.trading_date)[0]
+        entry_artifact = PostgresStrategyShadowRepository(
+            postgres_factory,
+            apply_migrations=False,
+        ).get_artifact(
+            session_id=strategy_session.session_id,
+            artifact_kind=StrategyShadowArtifactKind.ENTRY,
+        )
+        assert entry_artifact is not None
+        multi_strategy_repository = repositories.multi_strategy()
+        canonical_cycle = multi_strategy_repository.get_cycle_for_tick(
+            run_id=command.run_id,
+            tick_id=tick.tick_id,
+        )
+        canonical_registry = multi_strategy_repository.load_registry()
+        overnight_run = next(
+            item
+            for item in canonical_cycle.runs
+            if canonical_registry.family_for(item) is StrategyFamily.OVERNIGHT
+        )
+        overnight_proposal = next(
+            item
+            for item in overnight_run.proposals
+            if item.symbol == entry_artifact.payload["symbol"]
+            and item.action is CanonicalStrategyAction.ENTER
+        )
+        assert ValidationArtifactReference(
+            "STRATEGY_PROPOSAL",
+            overnight_proposal.proposal_id,
+            overnight_proposal.proposal_hash,
+        ).to_canonical_dict() in entry_artifact.payload["source_references"]
         portfolio_policy = ShadowPortfolioPolicy.create(
             policy_version="free-data-stateful-e2e-v1",
             top_k=1,
@@ -1122,7 +1173,7 @@ def test_real_stateful_positive_path_reaches_research_candidate(
                 "theme_rotation_state",
             ),
         )
-        assert recovery.migration_head == 85
+        assert recovery.migration_head == 86
         assert recovery.continuous_replay_hashes == (
             (
                 str(command.run_id),

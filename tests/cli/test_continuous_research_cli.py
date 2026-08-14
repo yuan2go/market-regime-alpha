@@ -67,11 +67,14 @@ def test_cli_exposes_converged_free_data_day_operations() -> None:
             "runtime-output",
             "--at",
             "2025-02-03T14:54:00+08:00",
+            "--strategy-account-id",
+            "strategy-shadow-account",
         ]
     )
 
     assert args.operation == "run-due"
     assert args.runtime_clock_mode == "LIVE"
+    assert args.strategy_account_id == "strategy-shadow-account"
     assert _operator_resource(args).artifact_kind == (
         "CONTINUOUS_OPERATOR_OPERATION"
     )

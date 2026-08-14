@@ -64,6 +64,9 @@ from market_regime_alpha.application.state_system.free_data_composition import (
 from market_regime_alpha.application.state_system.postgres_repository import (
     PostgresStateSystemRepository,
 )
+from market_regime_alpha.application.strategy_shadow.postgres_repository import (
+    PostgresStrategyShadowRepository,
+)
 from market_regime_alpha.core.identity import (
     ArtifactId,
     FeatureDefinitionId,
@@ -285,6 +288,8 @@ class CanonicalFreeDataResearchComposition:
         summary_repository: PostgresDecisionSystemRepository,
         state_repository: PostgresStateSystemRepository,
         strategy_repository: PostgresMultiStrategyRepository,
+        strategy_shadow_repository: PostgresStrategyShadowRepository | None = None,
+        strategy_account_id: str | None = None,
         clock: Clock,
     ) -> None:
         self._service = service
@@ -301,6 +306,8 @@ class CanonicalFreeDataResearchComposition:
                 maximum_gross_weight=Decimal("0.50"),
                 maximum_symbol_weight=Decimal("0.20"),
             ),
+            strategy_shadow_repository=strategy_shadow_repository,
+            account_id=strategy_account_id,
         )
 
     def lookup_children(self, request: ChildExecutionRequest) -> tuple[ChildExecutionResult, ...] | None:

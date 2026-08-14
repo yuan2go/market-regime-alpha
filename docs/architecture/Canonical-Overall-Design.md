@@ -53,7 +53,7 @@ Future families may include ETF rotation, theme rotation, trend following, mean 
 
 The principal architectural constraint for the next phase is **business and research convergence, not further governance expansion**. PostgreSQL Authority, PIT, replay, evidence identity, recovery, and qualification remain core. New authorities, receipts, protocol wrappers, orchestrators, or runtime planes require a concrete correctness or operational failure mode before they are added.
 
-### 1.1 Implementation convergence at migration 085
+### 1.1 Implementation convergence through migration 086
 
 The first executable convergence slice is now installed. One stable Strategy
 Registry contains `OVERNIGHT` and `SWING_STATE`; both run through the same
@@ -69,6 +69,24 @@ Position is still derived only from the existing manual Fill owner. Historical
 and Replay use the existing Historical Session Journal and replace only origin,
 clock, and frozen input references; no second scheduler or business database was
 introduced.
+
+Migration 086 closes the stateful execution seam without adding another
+Position owner or Runtime. When an account is explicitly bound, the Continuous
+Strategy child resolves each open sleeve from immutable observed-Fill
+allocations and manual account price observations before invoking the same
+`MultiStrategyRuntime`. Quantity and average cost come from Fill facts;
+current/peak price and trading-session age come from available account
+observations; add/reduce counters and all lineage are rebuilt from exact
+Proposal/Fill allocations. The resulting owner-resolved states are frozen in
+the cycle input, so recovery and replay do not depend on caller-created state.
+
+The existing Strategy Shadow entry path now treats the canonical Overnight
+`StrategyProposal` as its decision input whenever the Multi-Strategy cycle
+exists. It no longer independently converts the same Candidate into Entry in
+that scope. The retained Shadow artifacts remain the one simulated lifecycle
+used by settlement/qualification consumers. Observed physical Fills use the
+same Shadow bounded owner for sleeve projection and immutable fill-derived
+realized Strategy Outcomes; market Path Outcome remains a separate fact family.
 
 This is engineering closure, not empirical qualification. The deterministic
 Path Outcome and feedback operators are executable and PostgreSQL-backed, but
@@ -738,8 +756,9 @@ The following decisions supersede incompatible lower-level interpretations while
 - Produce strategy-level statistical and economic evidence rather than only
   deterministic contracts, kernels, and PostgreSQL engineering proof.
 - Sufficient PIT/reference coverage for each strategy before Formal PIT claims.
-- Complete the consumer inventory before retiring the older T+1 Strategy Shadow
-  and Portfolio Shadow compatibility surfaces.
+- Complete the remaining consumer inventory before retiring the older T+1
+  Strategy Shadow artifact shapes and Portfolio Shadow compatibility surface;
+  canonical Entry authority has already converged on Strategy Proposal.
 
 ### Should Complete
 

@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, localcontext
 
+import pytest
+
 from market_regime_alpha.application.continuous_research.journal import (
     RuntimeArtifactReference,
 )
@@ -100,6 +102,125 @@ def test_same_observation_target_and_stop_is_not_ordered() -> None:
     assert outcome.mae == Decimal("-0.03")
     assert outcome.post_exit_opportunity_loss is None
     assert outcome.avoided_drawdown is None
+
+
+@pytest.mark.parametrize(
+    ("high", "low", "close", "expected_mfe", "expected_mae", "time_to_mfe"),
+    (
+        ("10.40", "10.10", "10.30", Decimal("0.04"), Decimal("0"), 24 * 60 * 60),
+        ("9.90", "9.50", "9.60", Decimal("0"), Decimal("-0.05"), 0),
+        ("10.00", "10.00", "10.00", Decimal("0"), Decimal("0"), 0),
+    ),
+)
+def test_path_excursions_are_clamped_to_the_decision_price(
+    high: str,
+    low: str,
+    close: str,
+    expected_mfe: Decimal,
+    expected_mae: Decimal,
+    time_to_mfe: int,
+) -> None:
+    outcome = measure_strategy_path(
+        strategy_version_reference=_reference("STRATEGY_VERSION", "swing-v1"),
+        strategy_run_reference=_reference("STRATEGY_RUN", f"run-{high}"),
+        dataset_reference=_reference("DATASET", "dataset-edge"),
+        target_reference=_reference("TARGET_DEFINITION", "swing-edge"),
+        symbol="000001.SZ",
+        decision_time=START,
+        reference_price=Decimal("10"),
+        target_return=Decimal("0.02"),
+        stop_return=Decimal("0.02"),
+        continuation_return=Decimal("0.01"),
+        failure_return=Decimal("-0.01"),
+        observations=(_point(1, high=high, low=low, close=close),),
+        exit_time=None,
+        exit_price=None,
+        measured_at=START + timedelta(days=2),
+    )
+
+    assert outcome.mfe == expected_mfe
+    assert outcome.mae == expected_mae
+    assert outcome.time_to_mfe_seconds == time_to_mfe
+
+
+def test_stop_before_target_and_post_exit_measures_are_distinct() -> None:
+    outcome = measure_strategy_path(
+        strategy_version_reference=_reference("STRATEGY_VERSION", "swing-v1"),
+        strategy_run_reference=_reference("STRATEGY_RUN", "run-stop-first"),
+        dataset_reference=_reference("DATASET", "dataset-stop-first"),
+        target_reference=_reference("TARGET_DEFINITION", "swing-stop-first"),
+        symbol="000001.SZ",
+        decision_time=START,
+        reference_price=Decimal("10"),
+        target_return=Decimal("0.05"),
+        stop_return=Decimal("0.03"),
+        continuation_return=Decimal("0.01"),
+        failure_return=Decimal("-0.01"),
+        observations=(
+            _point(1, high="10.10", low="9.60", close="9.80"),
+            _point(2, high="10.60", low="9.70", close="10.50"),
+        ),
+        exit_time=START + timedelta(days=1),
+        exit_price=Decimal("9.80"),
+        measured_at=START + timedelta(days=3),
+    )
+
+    assert outcome.barrier_ordering is BarrierOrderingOutcome.STOP_BEFORE_TARGET
+    assert outcome.post_exit_opportunity_loss == Decimal("0.081632653061224489795918367")
+    assert outcome.avoided_drawdown == Decimal("0.0102040816326530612244897959")
+    assert "MARKET_OUTCOME_NOT_STRATEGY_PNL" in outcome.limitations
+
+
+def test_partial_horizon_is_explicit_and_deterministic() -> None:
+    arguments = {
+        "strategy_version_reference": _reference("STRATEGY_VERSION", "swing-v1"),
+        "strategy_run_reference": _reference("STRATEGY_RUN", "run-partial"),
+        "dataset_reference": _reference("DATASET", "dataset-partial"),
+        "target_reference": _reference("TARGET_DEFINITION", "swing-five-session"),
+        "symbol": "000001.SZ",
+        "decision_time": START,
+        "reference_price": Decimal("10"),
+        "target_return": Decimal("0.05"),
+        "stop_return": Decimal("0.03"),
+        "continuation_return": Decimal("0.01"),
+        "failure_return": Decimal("-0.01"),
+        "observations": (
+            _point(1, high="10.10", low="9.90", close="10.00"),
+            _point(2, high="10.20", low="9.80", close="10.10"),
+        ),
+        "expected_horizon_sessions": 5,
+        "exit_time": None,
+        "exit_price": None,
+        "measured_at": START + timedelta(days=3),
+    }
+
+    first = measure_strategy_path(**arguments)
+    second = measure_strategy_path(**arguments)
+
+    assert first.horizon_sessions == 2
+    assert "PARTIAL_HORIZON" in first.limitations
+    assert first == second
+
+
+def test_missing_path_observations_fail_explicitly() -> None:
+    with pytest.raises(ValueError, match="requires observations"):
+        measure_strategy_path(
+            strategy_version_reference=_reference("STRATEGY_VERSION", "swing-v1"),
+            strategy_run_reference=_reference("STRATEGY_RUN", "run-missing"),
+            dataset_reference=_reference("DATASET", "dataset-missing"),
+            target_reference=_reference("TARGET_DEFINITION", "swing-missing"),
+            symbol="000001.SZ",
+            decision_time=START,
+            reference_price=Decimal("10"),
+            target_return=Decimal("0.05"),
+            stop_return=Decimal("0.03"),
+            continuation_return=Decimal("0.01"),
+            failure_return=Decimal("-0.01"),
+            observations=(),
+            exit_time=None,
+            exit_price=None,
+            measured_at=START + timedelta(days=1),
+        )
 
 
 def test_path_outcome_identity_does_not_depend_on_process_decimal_context() -> None:
