@@ -186,6 +186,7 @@ def measure_strategy_path(
     continuation_return: Decimal,
     failure_return: Decimal,
     observations: tuple[PathPriceObservation, ...],
+    expected_horizon_sessions: int | None = None,
     exit_time: datetime | None,
     exit_price: Decimal | None,
     measured_at: datetime,
@@ -204,6 +205,7 @@ def measure_strategy_path(
             continuation_return=continuation_return,
             failure_return=failure_return,
             observations=observations,
+            expected_horizon_sessions=expected_horizon_sessions,
             exit_time=exit_time,
             exit_price=exit_price,
             measured_at=measured_at,
@@ -224,6 +226,7 @@ def _measure_strategy_path(
     continuation_return: Decimal,
     failure_return: Decimal,
     observations: tuple[PathPriceObservation, ...],
+    expected_horizon_sessions: int | None,
     exit_time: datetime | None,
     exit_price: Decimal | None,
     measured_at: datetime,
@@ -248,9 +251,18 @@ def _measure_strategy_path(
         if exit_time <= decision_time or exit_price is None or exit_price <= 0:
             raise ValueError("Path exit semantics are invalid")
 
+    horizon_sessions = max(item.session_offset for item in ordered)
+    if expected_horizon_sessions is not None and (
+        expected_horizon_sessions <= 0 or expected_horizon_sessions < horizon_sessions
+    ):
+        raise ValueError("Expected path horizon must cover all observations")
     mfe_point = max(ordered, key=lambda item: (item.high, -item.observed_at.timestamp()))
-    mfe = mfe_point.high / reference_price - Decimal("1")
-    mae = min(item.low for item in ordered) / reference_price - Decimal("1")
+    raw_mfe = mfe_point.high / reference_price - Decimal("1")
+    mfe = max(Decimal("0"), raw_mfe)
+    mae = min(
+        Decimal("0"),
+        min(item.low for item in ordered) / reference_price - Decimal("1"),
+    )
     terminal_return = ordered[-1].close / reference_price - Decimal("1")
     target_price = reference_price * (Decimal("1") + target_return)
     stop_price = reference_price * (Decimal("1") - stop_return)
@@ -277,15 +289,21 @@ def _measure_strategy_path(
                 Decimal("1") - min(item.low for item in post_exit) / exit_price,
             )
         )
-    limitations = (
+    limitations = [
         "CALIBRATED_FALSE",
         "FORMAL_OOS_FALSE",
         "MARKET_OUTCOME_NOT_STRATEGY_PNL",
         "PIT_STATUS_INHERITED_FROM_DATASET",
         "PRODUCTION_AUTHORIZED_FALSE",
+    ]
+    if expected_horizon_sessions is not None and horizon_sessions < expected_horizon_sessions:
+        limitations.append("PARTIAL_HORIZON")
+    limitation_tuple = tuple(sorted(limitations))
+    time_to_mfe_seconds = (
+        0
+        if raw_mfe <= 0
+        else int((mfe_point.observed_at - decision_time).total_seconds())
     )
-    horizon_sessions = max(item.session_offset for item in ordered)
-    time_to_mfe_seconds = int((mfe_point.observed_at - decision_time).total_seconds())
     trend_continuation = terminal_return >= continuation_return
     failure = ordering is BarrierOrderingOutcome.STOP_BEFORE_TARGET or terminal_return <= failure_return
     digest = canonical_hash(
@@ -310,7 +328,7 @@ def _measure_strategy_path(
             post_exit_opportunity_loss=opportunity_loss,
             avoided_drawdown=avoided_drawdown,
             measured_at=measured_at,
-            limitations=limitations,
+            limitations=limitation_tuple,
             schema_version="strategy-path-outcome/v1",
         )
     )
@@ -337,7 +355,7 @@ def _measure_strategy_path(
         post_exit_opportunity_loss=opportunity_loss,
         avoided_drawdown=avoided_drawdown,
         measured_at=measured_at,
-        limitations=limitations,
+        limitations=limitation_tuple,
         schema_version="strategy-path-outcome/v1",
     )
 
