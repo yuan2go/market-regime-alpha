@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import timedelta
 from decimal import Decimal
 
@@ -8,8 +9,19 @@ import pytest
 from market_regime_alpha.application.continuous_research.journal import (
     RuntimeArtifactReference,
 )
-from market_regime_alpha.core.identity import FillId, ManualTradeId
+from market_regime_alpha.core.identity import ArtifactId, FillId, ManualTradeId, ModelId
+from market_regime_alpha.core.time import DecisionTime
+from market_regime_alpha.data.contracts import DataEligibility
+from market_regime_alpha.evidence.canonical import canonical_hash
+from market_regime_alpha.evidence.envelope import ArtifactEnvelope, EvidenceAuthority
 from market_regime_alpha.execution.manual import FILL_SCHEMA, Fill, FillKind, TradeSide
+from market_regime_alpha.research.candidate_discovery.contracts import (
+    CandidateSelectionStatus,
+    CandidateSet,
+)
+from market_regime_alpha.strategies.defaults import (
+    canonical_exploratory_strategy_registry,
+)
 from market_regime_alpha.strategies.portfolio import (
     CrossStrategyPortfolioPolicy,
     build_cross_strategy_portfolio,
@@ -19,7 +31,12 @@ from market_regime_alpha.strategies.sleeves import (
     allocate_observed_fill,
     project_strategy_sleeves,
 )
-from tests.strategies.test_multi_strategy_runtime import NOW, _registry, _runtime_input
+from tests.strategies.test_multi_strategy_runtime import (
+    NOW,
+    _candidate,
+    _registry,
+    _runtime_input,
+)
 
 
 def _fill(
@@ -79,6 +96,83 @@ def test_cross_strategy_portfolio_caps_symbol_and_prioritizes_reduction() -> Non
     assert addition.accepted_weight == 0
     assert "OPPOSING_REDUCTION_PRIORITY" in addition.reason_codes
     assert decision.production_authorized is False
+
+
+def test_portfolio_gross_is_the_exact_sum_of_accepted_fractional_lines() -> None:
+    registry = canonical_exploratory_strategy_registry()
+    rank_order = (
+        "001872.SZ",
+        "600018.SH",
+        "600028.SH",
+        "001965.SZ",
+        "002714.SZ",
+    )
+    rank_by_symbol = {
+        symbol: rank for rank, symbol in enumerate(rank_order, start=1)
+    }
+    records = tuple(
+        _candidate(
+            symbol,
+            CandidateSelectionStatus.SELECTED,
+            score=0.90 - rank_by_symbol[symbol] / 100,
+            rank=rank_by_symbol[symbol],
+        )
+        for symbol in sorted(rank_order)
+    )
+    payload = {
+        "records": [item.to_canonical_dict() for item in records],
+        "minimum_candidate_population": 2,
+        "reason_codes": ["COMPLETE_RECONCILIATION"],
+    }
+    envelope = ArtifactEnvelope.create(
+        artifact_type="CANDIDATE_SET",
+        artifact_payload=payload,
+        decision_date=NOW.date(),
+        decision_time=DecisionTime(NOW),
+        created_at=NOW,
+        code_revision="test-code",
+        configuration_id=ArtifactId("candidate-config-test"),
+        configuration_hash=canonical_hash({"candidate": "config"}),
+        source_manifest_id=ArtifactId("candidate-source-test"),
+        source_manifest_hash=canonical_hash({"candidate": "source"}),
+        input_artifact_ids=(),
+        input_content_hashes=(),
+        model_id=ModelId("candidate-model-test"),
+        model_version="1.0.0",
+        data_eligibility=DataEligibility.EXPLORATORY,
+        evidence_authority=EvidenceAuthority.IMMUTABLE_CONTENT_ADDRESSED_ARTIFACT,
+        status="RESEARCH_READY",
+        reason_codes=("COMPLETE_RECONCILIATION",),
+        limitations=("PIT_INCOMPLETE",),
+    )
+    candidates = CandidateSet(
+        envelope=envelope,
+        records=records,
+        minimum_candidate_population=2,
+        reason_codes=("COMPLETE_RECONCILIATION",),
+    )
+    runtime_input = replace(
+        _runtime_input(registry.active_versions),
+        candidate_set=candidates,
+        positions=(),
+    )
+    cycle = MultiStrategyRuntime(registry).execute(runtime_input)
+
+    decision = build_cross_strategy_portfolio(
+        cycle=cycle,
+        policy=CrossStrategyPortfolioPolicy(
+            maximum_gross_weight=Decimal("0.50"),
+            maximum_symbol_weight=Decimal("0.20"),
+        ),
+    )
+
+    assert decision.gross_accepted_weight == sum(
+        (
+            max(Decimal("0"), line.accepted_weight)
+            for line in decision.lines
+        ),
+        Decimal("0"),
+    )
 
 
 def test_strategy_sleeves_can_only_be_projected_from_fully_allocated_observed_fill() -> None:

@@ -219,7 +219,10 @@ def build_cross_strategy_portfolio(
     else:
         status = CrossStrategyPortfolioStatus.ACCEPTED
     cycle_reference = RuntimeArtifactReference("MULTI_STRATEGY_CYCLE", cycle.cycle_id, cycle.cycle_hash)
-    gross = policy.maximum_gross_weight - gross_remaining
+    gross = sum(
+        (max(Decimal("0"), item.accepted_weight) for item in lines),
+        Decimal("0"),
+    )
     limitations = (
         "ALPHA_NOT_ESTABLISHED",
         "ENGINEERING_BASELINE_ONLY",
