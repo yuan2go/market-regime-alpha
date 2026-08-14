@@ -220,6 +220,10 @@ from market_regime_alpha.research.platform_v2.inputs import (
     MarketObservation,
     SymbolResearchObservation,
 )
+from market_regime_alpha.strategies.contracts import (
+    CanonicalStrategyAction,
+    StrategyFamily,
+)
 from market_regime_alpha.strategies.entry.contracts import (
     EntryPathObservationStatus,
     EntryPathReasonCode,
@@ -922,10 +926,28 @@ def test_real_stateful_positive_path_reaches_research_candidate(
             artifact_kind=StrategyShadowArtifactKind.ENTRY,
         )
         assert entry_artifact is not None
-        assert any(
-            reference["artifact_kind"] == "STRATEGY_PROPOSAL"
-            for reference in entry_artifact.payload["source_references"]
+        multi_strategy_repository = repositories.multi_strategy()
+        canonical_cycle = multi_strategy_repository.get_cycle_for_tick(
+            run_id=command.run_id,
+            tick_id=tick.tick_id,
         )
+        canonical_registry = multi_strategy_repository.load_registry()
+        overnight_run = next(
+            item
+            for item in canonical_cycle.runs
+            if canonical_registry.family_for(item) is StrategyFamily.OVERNIGHT
+        )
+        overnight_proposal = next(
+            item
+            for item in overnight_run.proposals
+            if item.symbol == entry_artifact.payload["symbol"]
+            and item.action is CanonicalStrategyAction.ENTER
+        )
+        assert ValidationArtifactReference(
+            "STRATEGY_PROPOSAL",
+            overnight_proposal.proposal_id,
+            overnight_proposal.proposal_hash,
+        ).to_canonical_dict() in entry_artifact.payload["source_references"]
         portfolio_policy = ShadowPortfolioPolicy.create(
             policy_version="free-data-stateful-e2e-v1",
             top_k=1,

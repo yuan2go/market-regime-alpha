@@ -235,10 +235,11 @@ After a completed run, inspect the two families and the cross-strategy decision
 through the read-only projection:
 
 ```bash
-uv run continuous-research inspect-strategy \
+uv run continuous-research \
   --database-url "$MARKET_REGIME_ALPHA_DATABASE_URL" \
-  --schema "$MARKET_REGIME_ALPHA_DATABASE_SCHEMA" \
+  --application-schema "$MARKET_REGIME_ALPHA_DATABASE_SCHEMA" \
   --principal-id "$MARKET_REGIME_ALPHA_PRINCIPAL_ID" \
+  inspect-strategy \
   --run-id CONTINUOUS_RUN_ID
 ```
 
@@ -251,7 +252,11 @@ For a stateful account-bound Shadow tick, pass the same account identity to the
 canonical operation:
 
 ```bash
-uv run continuous-research run-due \
+uv run continuous-research \
+  --database-url "$MARKET_REGIME_ALPHA_DATABASE_URL" \
+  --application-schema "$MARKET_REGIME_ALPHA_DATABASE_SCHEMA" \
+  --principal-id "$MARKET_REGIME_ALPHA_PRINCIPAL_ID" \
+  run-due \
   --strategy-account-id "$MARKET_REGIME_ALPHA_STRATEGY_ACCOUNT_ID" \
   ...
 ```
