@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable, Protocol
@@ -396,8 +396,28 @@ class CanonicalFreeDataResearchComposition:
         candidate_set = state_coordinator.final_candidates
         if candidate_set is None:
             raise ValueError("Strategy Runtime requires owner-resolved CandidateSet")
+        strategy_request = replace(
+            request,
+            input_references=tuple(
+                sorted(
+                    {
+                        *request.input_references,
+                        RuntimeArtifactReference(
+                            "TRADING_CALENDAR",
+                            preparation.prepared_inputs.calendar.artifact_id,
+                            preparation.prepared_inputs.calendar.content_hash,
+                        ),
+                    },
+                    key=lambda item: (
+                        item.reference_kind,
+                        str(item.artifact_id),
+                        item.content_hash,
+                    ),
+                )
+            ),
+        )
         strategy_result = self._strategy_runtime.execute(
-            request=request,
+            request=strategy_request,
             candidate_set=candidate_set,
             dataset_reference=persisted.dataset,
             upstream=owner_results[-1],

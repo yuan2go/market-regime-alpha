@@ -27,7 +27,7 @@
 | Model Governance | One: `PostgresModelGovernanceRepository`; Model Registry lifecycle remains a subordinate registry history in the same governance schema. |
 | Research Shadow | Freezes research decisions and factual outcome lineage; it never simulates account execution. |
 | Strategy Shadow | Owns the isolated simulated lifecycle plus Strategy sleeve projection and fill-derived realized Strategy Outcomes. Simulated artifacts never write actual fills or physical positions; sleeve quantity is derived from manual Fill allocations. |
-| Multi-Strategy business facts | One `PostgresMultiStrategyRepository` owns stable Strategy registration, cycles/runs/gates/proposals, cross-strategy Portfolio decisions, observed-Fill allocations, Path Outcomes and version-scoped feedback. The existing Strategy Shadow owner resolves state/outcomes from those facts. It is a bounded child of the existing runtimes. |
+| Multi-Strategy business facts | One `PostgresMultiStrategyRepository` owns stable Strategy registration, cycles/runs/gates/proposals, cross-strategy Portfolio decisions, observed-Fill allocations, Path Outcomes and version-scoped feedback. The existing Strategy Shadow owner resolves state/outcomes from those facts. `StrategyExecutionApplicationService` bridges accepted lines into the existing ManualTrade/Fill owner; it is not another Authority. |
 | Production Admission | A blocked projection only. No final Production Admission Authority exists. |
 | PostgreSQL Authority-schema tables | 270 in `EXPECTED_AUTHORITY_TABLES`; this catalog includes owner state, journals and projections and is not a count of independent business Authorities. |
 
@@ -411,13 +411,13 @@ Every entry separates ownership from storage and consumption. A missing writer o
 - **Domain / Capability:** Execution and Position / observed manual records and fill-derived books.
 - **Classification:** Business Authority for actual execution facts and Position state.
 - **Owner:** Manual Execution and Position Book bounded contexts.
-- **Canonical Writer:** PostgreSQL manual execution, traceability and Position Book repositories.
+- **Canonical Writer:** PostgreSQL manual execution, traceability and Position Book repositories. `StrategyExecutionApplicationService` validates exact accepted Portfolio/Proposal authority before calling those writers.
 - **Reader:** manual record/fill, traceability and Position Book Readers.
 - **Repository:** `PostgresManualExecutionRepository`, `PostgresTraceableManualExecutionRepository` and Position Book repository.
 - **PostgreSQL tables:** `execution_commands`, `manual_trade_records`, `manual_trade_events`, `manual_fills`, `position_books`, `position_book_events`, `traceable_manual_trade_bindings`.
 - **Artifact / Receipt:** Manual Trade Record, observed Fill and fill-derived Position Book event/snapshot.
-- **Runtime caller:** explicit human record/import only.
-- **Downstream consumer:** reconciliation, complete-account Portfolio/Risk, Holding and Exit assessment.
+- **Runtime caller:** explicit human record/import, including bounded `decision-system` Strategy intent/observed-Fill/recovery commands; no automatic broker caller.
+- **Downstream consumer:** Strategy Fill allocation, reconciliation, complete-account Portfolio/Risk, Holding and Exit assessment.
 - **Replay mechanism:** append-only manual ledger and Position Book event replay.
 - **Evidence ceiling:** actual Position comes only from observed Fill; no broker writer exists.
 - **Legacy replacement:** legacy recommendation/Entry state cannot create a Position.

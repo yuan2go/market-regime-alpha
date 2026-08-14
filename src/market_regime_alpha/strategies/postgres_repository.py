@@ -11,6 +11,10 @@ from psycopg.types.json import Jsonb
 
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.evidence.canonical import canonical_hash
+from market_regime_alpha.execution.manual import (
+    ManualTradeAuthorityRoute,
+    ManualTradeRecord,
+)
 from market_regime_alpha.persistence.postgres.connection import (
     PostgresConnectionFactory,
 )
@@ -18,6 +22,7 @@ from market_regime_alpha.persistence.postgres.migrator import PostgresMigrator
 from market_regime_alpha.strategies.contracts import (
     MultiStrategyCycle,
     StrategyContract,
+    StrategyProposal,
     StrategyRegistry,
     StrategyVersion,
 )
@@ -30,7 +35,10 @@ from market_regime_alpha.strategies.path_outcomes import StrategyPathOutcome
 from market_regime_alpha.strategies.portfolio import (
     CrossStrategyPortfolioDecision,
 )
-from market_regime_alpha.strategies.sleeves import FillAllocationBatch
+from market_regime_alpha.strategies.sleeves import (
+    FillAllocation,
+    FillAllocationBatch,
+)
 
 
 class PostgresMultiStrategyRepository:
@@ -309,6 +317,32 @@ class PostgresMultiStrategyRepository:
             raise KeyError(f"{run_id}:{tick_id}")
         return self.get_cycle(ArtifactId(str(row[0])))
 
+    def get_proposal(self, proposal_id: ArtifactId) -> StrategyProposal:
+        with self._factory.connection(read_only=True) as connection:
+            row = connection.execute(
+                "SELECT payload_json FROM strategy_proposal WHERE proposal_id = %s",
+                (str(proposal_id),),
+            ).fetchone()
+        if row is None:
+            raise KeyError(str(proposal_id))
+        return StrategyProposal.from_canonical_dict(_payload(row[0]))
+
+    def get_proposal_decision_time(self, proposal_id: ArtifactId) -> datetime:
+        with self._factory.connection(read_only=True) as connection:
+            row = connection.execute(
+                """
+                SELECT c.decision_time
+                FROM strategy_proposal AS p
+                JOIN strategy_run AS r ON r.run_id = p.run_id
+                JOIN multi_strategy_cycle AS c ON c.cycle_id = r.cycle_id
+                WHERE p.proposal_id = %s
+                """,
+                (str(proposal_id),),
+            ).fetchone()
+        if row is None or not isinstance(row[0], datetime):
+            raise KeyError(str(proposal_id))
+        return row[0]
+
     def save_portfolio(
         self,
         decision: CrossStrategyPortfolioDecision,
@@ -464,10 +498,8 @@ class PostgresMultiStrategyRepository:
                 )
                 _require_executable_allocation(
                     connection,
-                    proposal_id=allocation.proposal_reference.artifact_id,
-                    proposal_hash=allocation.proposal_reference.content_hash,
-                    symbol=batch.symbol,
-                    side=batch.side.value,
+                    batch=batch,
+                    allocation=allocation,
                 )
                 allocation_payload = allocation.to_canonical_dict()
                 connection.execute(
@@ -745,10 +777,8 @@ def _require_proposal_version(
 def _require_executable_allocation(
     connection: Any,
     *,
-    proposal_id: ArtifactId,
-    proposal_hash: str,
-    symbol: str,
-    side: str,
+    batch: FillAllocationBatch,
+    allocation: FillAllocation,
 ) -> None:
     row = connection.execute(
         """
@@ -760,17 +790,82 @@ def _require_executable_allocation(
         WHERE p.proposal_id = %s AND p.proposal_hash = %s
         FOR SHARE OF p, l
         """,
-        (str(proposal_id), proposal_hash),
+        (
+            str(allocation.proposal_reference.artifact_id),
+            allocation.proposal_reference.content_hash,
+        ),
     ).fetchone()
     if row is None or Decimal(str(row[2])) == 0:
         raise ValueError("Fill allocation requires an accepted Portfolio line")
-    if str(row[1]) != symbol:
+    if str(row[1]) != batch.symbol:
         raise ValueError("Fill symbol does not match Strategy Proposal")
     action = str(row[0])
-    if (side == "BUY" and action not in {"ENTER", "ADD"}) or (
-        side == "SELL" and action not in {"REDUCE", "EXIT"}
+    if (batch.side.value == "BUY" and action not in {"ENTER", "ADD"}) or (
+        batch.side.value == "SELL" and action not in {"REDUCE", "EXIT"}
     ):
         raise ValueError("Fill side does not match Strategy action")
+    trade_row = connection.execute(
+        """
+        SELECT t.aggregate_json
+        FROM manual_fills AS f
+        JOIN manual_trade_records AS t
+          ON t.manual_trade_id = f.manual_trade_id
+        WHERE f.fill_id = %s
+        FOR SHARE OF f, t
+        """,
+        (str(batch.source_fill_id),),
+    ).fetchone()
+    if trade_row is None:
+        raise ValueError("Fill Allocation requires a Manual Execution owner")
+    raw_trade = trade_row[0]
+    if isinstance(raw_trade, str):
+        raw_trade = json.loads(raw_trade)
+    if not isinstance(raw_trade, dict):
+        raise ValueError("Manual Execution owner payload is invalid")
+    try:
+        trade = ManualTradeRecord.from_canonical_dict(raw_trade)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(
+            "Fill Allocation requires Strategy-authorized execution"
+        ) from exc
+    authorization = trade.strategy_execution_authorization
+    if (
+        trade.authority_route is not ManualTradeAuthorityRoute.STRATEGY
+        or authorization is None
+    ):
+        raise ValueError("Fill Allocation requires Strategy-authorized execution")
+    if (
+        trade.account_id != batch.account_id
+        or trade.symbol != batch.symbol
+        or trade.side is not batch.side
+        or authorization.proposal_reference != allocation.proposal_reference
+        or authorization.strategy_version_reference
+        != allocation.strategy_version_reference
+        or trade.filled_quantity > authorization.intended_quantity
+    ):
+        raise ValueError("Fill Allocation exceeds or mismatches Strategy authority")
+    if batch.correction_of_fill_id is not None:
+        original = connection.execute(
+            """
+            SELECT a.proposal_id, a.proposal_hash,
+                   a.strategy_version_id, a.strategy_version_hash
+            FROM strategy_fill_allocation_batch AS b
+            JOIN strategy_fill_allocation AS a ON a.batch_id = b.batch_id
+            WHERE b.source_fill_id = %s
+            FOR SHARE OF b, a
+            """,
+            (str(batch.correction_of_fill_id),),
+        ).fetchone()
+        if original is None or (
+            str(original[0])
+            != str(allocation.proposal_reference.artifact_id)
+            or str(original[1]) != allocation.proposal_reference.content_hash
+            or str(original[2])
+            != str(allocation.strategy_version_reference.artifact_id)
+            or str(original[3])
+            != allocation.strategy_version_reference.content_hash
+        ):
+            raise ValueError("Fill Correction allocation lineage mismatch")
 
 
 def _require_path_outcome_lineage(

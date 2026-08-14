@@ -47,7 +47,8 @@ are not yet part of the historical operator.
 Migration 086 completes the account-bound stateful lifecycle on the same
 Continuous Strategy child and existing Strategy Shadow owner. Before each
 decision, PostgreSQL rebuilds open Strategy sleeve state from effective Fill
-allocations, exact Proposal actions and available manual account observations;
+allocations, exact Proposal actions, the canonical PIT Trading Calendar and
+available manual account observations;
 it does not reset session age, peak price, add/reduce counters or lineage on
 composition restart. Overnight can therefore ENTER, restore and EXIT, while
 Swing can ENTER, HOLD, ADD, HOLD, REDUCE and EXIT across sessions. The final
@@ -55,6 +56,20 @@ observed EXIT settles one immutable fill-derived realized Strategy Outcome;
 retries and concurrent settlement reload the same identity. The older T+1
 Shadow Entry path consumes the canonical Overnight Proposal when present and
 no longer independently re-decides Entry from Candidate in that scope.
+
+Migration 087 extends the existing ManualTrade ledger with one immutable
+Strategy execution authorization. The bounded `decision-system` commands and
+the canonical composition root now turn only an accepted cross-strategy
+Portfolio line into a manual intent, derive A-share executable quantity from
+weight/NAV/reference price/current and T+1-available quantity, record one or
+many observed Fills, and recover missing allocations after interruption. Exact
+Portfolio, Proposal, Strategy Version, account, symbol and side mismatches fail
+closed. Fill corrections remain append-only and reproject physical Position and
+Strategy sleeves; a corrected realized Outcome appends a superseding revision,
+so inspection has one current economic truth while prior facts remain readable.
+Missing or stale Swing prices return explicit fail-closed actions. No broker,
+new scheduler, mutable Strategy Position table or parallel Shadow decision path
+was added.
 
 Phase C engineering adds an immutable Formal Research Protocol with exact
 canonical-owner bindings (including full Frozen Trading Calendar replay), OutcomeTarget-bound forecasts, frozen-calendar
@@ -301,7 +316,9 @@ Migrations 047–084 add free retrospective evidence, exploratory Research Unive
 Portfolio Shadow, exact Locked-OOS/PIT lineage, Phase C owners, Phase D research
 journals and the longitudinal Historical Corpus owners. Migration 085 adds the
 multi-strategy business closure; migration 086 adds its observed-Fill state and
-realized-Outcome closure. They do not alter migration
+realized-Outcome closure; migration 087 adds Strategy-authorized manual intent,
+partial/corrected Fill reconciliation and Outcome supersession to those existing
+owners. They do not alter migration
 046, which removes reference-only
 qualification paths from the current architecture:
 
@@ -318,11 +335,11 @@ This is a deliberate fail-closed state. It does not mean the missing qualificati
 
 | Measure | Current count | Interpretation |
 |---|---:|---|
-| Python source files | 658 | broad modular monolith; size alone is not a defect |
-| Python test files | 481 | strong contract/replay coverage, with some fixture-heavy history |
+| Python source files | 660 | broad modular monolith; size alone is not a defect |
+| Python test files | 482 | strong contract/replay coverage, with some fixture-heavy history |
 | Canonical all-day Runtime | 1 | `CONTINUOUS_RESEARCH` |
 | Installed CLI entry points | 6 | one scheduler/operator surface plus five bounded owner/admin tools |
-| PostgreSQL migrations | 86 | contiguous, checksummed, forward-only; 046 remains closed while later owner writers fail closed on missing evidence |
+| PostgreSQL migrations | 87 | contiguous, checksummed, forward-only; 046 remains closed while later owner writers fail closed on missing evidence |
 | PostgreSQL Authority-schema tables | 270 | exact `EXPECTED_AUTHORITY_TABLES` catalog; includes owners, journals and projections, not 270 independent business Authorities |
 | PostgreSQL owner/repository/journal classes | 34 | bounded owners; not competing global Authorities |
 | Repository/journal named classes | 49 | includes Protocols, in-memory research stores and compatibility types |
@@ -333,7 +350,7 @@ This is a deliberate fail-closed state. It does not mean the missing qualificati
 | Current canonical docs | 11 | index, four architecture, four status, one runbook and one research registry |
 | Normative Constitution docs | 10 | unchanged `00` through `09` |
 | Current research registries | 1 | negative/inconclusive results |
-| Historical/superseded/archive docs | 2 | archive boundary index plus superseded Constitution implementation-status; detailed history lives in Git |
+| Historical/superseded/archive docs | 1 | archive boundary index only; detailed plans and superseded status snapshots live in Git |
 | Legacy `daily_research` | 10 files / about 1.6k lines | compatibility Readers and identities |
 | Legacy `dividend_t` | 49 files / about 23.5k lines | isolated characterization and legacy UI/research |
 | Explicit `legacy` and `migration/legacy` | 13 files / about 1.5k lines | adapters, migration and replay only |

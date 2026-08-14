@@ -20,12 +20,18 @@ from market_regime_alpha.core.identity import (
     ThesisId,
 )
 from market_regime_alpha.evidence.canonical import require_sha256
+from market_regime_alpha.execution.strategy_intent import (
+    StrategyExecutionAuthorization,
+)
 
 
 MANUAL_TRADE_SCHEMA = "manual-trade-record-v1"
 TRACEABLE_MANUAL_TRADE_SCHEMA = "manual-trade-record-v2-traceable"
 ROUTE_AUTHORIZED_MANUAL_TRADE_SCHEMA = (
     "manual-trade-record-v3-route-authorized"
+)
+STRATEGY_AUTHORIZED_MANUAL_TRADE_SCHEMA = (
+    "manual-trade-record-v4-strategy-authorized"
 )
 FILL_SCHEMA = "manual-fill-v1"
 
@@ -38,6 +44,7 @@ class TradeSide(str, Enum):
 class ManualTradeAuthorityRoute(str, Enum):
     INCREASING = "INCREASING"
     REDUCING = "REDUCING"
+    STRATEGY = "STRATEGY"
 
 
 class ManualOrderState(str, Enum):
@@ -93,12 +100,14 @@ class ManualTradeRecord:
     source_position_snapshot_version: int | None = None
     target_quantity: int | None = None
     order_quantity: int | None = None
+    strategy_execution_authorization: StrategyExecutionAuthorization | None = None
 
     def __post_init__(self) -> None:
         if self.schema_version not in {
             MANUAL_TRADE_SCHEMA,
             TRACEABLE_MANUAL_TRADE_SCHEMA,
             ROUTE_AUTHORIZED_MANUAL_TRADE_SCHEMA,
+            STRATEGY_AUTHORIZED_MANUAL_TRADE_SCHEMA,
         }:
             raise ValueError("unsupported ManualTradeRecord schema")
         for label, text_value in (
@@ -165,6 +174,11 @@ class ManualTradeRecord:
             self.target_quantity,
             self.order_quantity,
         )
+        if (
+            self.schema_version != STRATEGY_AUTHORIZED_MANUAL_TRADE_SCHEMA
+            and self.strategy_execution_authorization is not None
+        ):
+            raise ValueError("legacy ManualTradeRecord cannot carry Strategy authority")
         if self.schema_version in {
             MANUAL_TRADE_SCHEMA,
             TRACEABLE_MANUAL_TRADE_SCHEMA,
@@ -199,6 +213,42 @@ class ManualTradeRecord:
                 increasing_authority=increasing_authority,
                 reducing_authority=reducing_authority,
             )
+        elif self.schema_version == STRATEGY_AUTHORIZED_MANUAL_TRADE_SCHEMA:
+            self._validate_strategy_route(
+                common_trace=common_trace,
+                increasing_authority=increasing_authority,
+                reducing_authority=reducing_authority,
+            )
+
+    def _validate_strategy_route(
+        self,
+        *,
+        common_trace: tuple[object | None, ...],
+        increasing_authority: tuple[object | None, ...],
+        reducing_authority: tuple[object | None, ...],
+    ) -> None:
+        if self.authority_route is not ManualTradeAuthorityRoute.STRATEGY:
+            raise ValueError("V4 ManualTradeRecord requires STRATEGY authority")
+        if any(
+            value is not None
+            for value in (*common_trace, *increasing_authority, *reducing_authority)
+        ):
+            raise ValueError("STRATEGY route cannot carry legacy authority")
+        authorization = self.strategy_execution_authorization
+        if authorization is None:
+            raise ValueError("STRATEGY route requires execution authorization")
+        expected_side = (
+            TradeSide.BUY
+            if authorization.action in {"ENTER", "ADD"}
+            else TradeSide.SELL
+        )
+        if (
+            authorization.account_id != self.account_id
+            or authorization.symbol != self.symbol
+            or authorization.intended_quantity != self.intended_quantity
+            or self.side is not expected_side
+        ):
+            raise ValueError("STRATEGY ManualTradeRecord authorization mismatch")
 
     def _validate_v3_route(
         self,
@@ -353,6 +403,17 @@ class ManualTradeRecord:
                     "order_quantity": self.order_quantity,
                 }
             )
+        elif self.schema_version == STRATEGY_AUTHORIZED_MANUAL_TRADE_SCHEMA:
+            assert self.authority_route is ManualTradeAuthorityRoute.STRATEGY
+            assert self.strategy_execution_authorization is not None
+            payload.update(
+                {
+                    "authority_route": self.authority_route.value,
+                    "strategy_execution_authorization": (
+                        self.strategy_execution_authorization.to_canonical_dict()
+                    ),
+                }
+            )
         return payload
 
     @classmethod
@@ -392,6 +453,11 @@ class ManualTradeRecord:
         }
         if schema == ROUTE_AUTHORIZED_MANUAL_TRADE_SCHEMA:
             expected |= route_expected
+        if schema == STRATEGY_AUTHORIZED_MANUAL_TRADE_SCHEMA:
+            expected |= {
+                "authority_route",
+                "strategy_execution_authorization",
+            }
         if set(payload) != expected:
             raise ValueError("ManualTradeRecord fields mismatch")
         return cls(
@@ -481,7 +547,11 @@ class ManualTradeRecord:
             ),
             authority_route=(
                 ManualTradeAuthorityRoute(str(payload["authority_route"]))
-                if schema == ROUTE_AUTHORIZED_MANUAL_TRADE_SCHEMA
+                if schema
+                in {
+                    ROUTE_AUTHORIZED_MANUAL_TRADE_SCHEMA,
+                    STRATEGY_AUTHORIZED_MANUAL_TRADE_SCHEMA,
+                }
                 else None
             ),
             risk_reducing_decision_id=_optional_artifact_id(
@@ -512,6 +582,13 @@ class ManualTradeRecord:
                 payload, "target_quantity", schema
             ),
             order_quantity=_optional_route_int(payload, "order_quantity", schema),
+            strategy_execution_authorization=(
+                StrategyExecutionAuthorization.from_canonical_dict(
+                    _mapping(payload["strategy_execution_authorization"])
+                )
+                if schema == STRATEGY_AUTHORIZED_MANUAL_TRADE_SCHEMA
+                else None
+            ),
         )
 
 
@@ -537,6 +614,12 @@ def _optional_route_int(
     if schema != ROUTE_AUTHORIZED_MANUAL_TRADE_SCHEMA or payload[key] is None:
         return None
     return int(payload[key])
+
+
+def _mapping(value: object) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError("expected object")
+    return value
 
 
 @dataclass(frozen=True, slots=True)

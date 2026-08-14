@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
@@ -15,9 +16,17 @@ from market_regime_alpha.application.continuous_research.journal import (
     RuntimeArtifactReference,
 )
 from market_regime_alpha.core.identity import ArtifactId, FillId, ManualTradeId
+from market_regime_alpha.core.identity import DatasetId
+from market_regime_alpha.data.trading_calendar import (
+    TradingSession,
+    build_trading_calendar_artifact,
+)
 from market_regime_alpha.evidence.canonical import canonical_hash
 from market_regime_alpha.execution.manual import FILL_SCHEMA, Fill, FillKind, TradeSide
-from market_regime_alpha.strategies.contracts import CanonicalStrategyAction
+from market_regime_alpha.strategies.contracts import (
+    CanonicalStrategyAction,
+    PriceFreshnessStatus,
+)
 from market_regime_alpha.strategies.sleeves import allocate_observed_fill
 
 
@@ -28,6 +37,21 @@ VERSION = RuntimeArtifactReference(
     "STRATEGY_VERSION",
     ArtifactId("strategy-version-swing-stateful"),
     canonical_hash({"version": "swing-stateful"}),
+)
+
+
+CALENDAR = build_trading_calendar_artifact(
+    source_dataset_id=DatasetId("strategy-state-calendar-source"),
+    market="CN_A_SHARE",
+    calendar_version="strategy-state-calendar-v1",
+    timezone_name="Asia/Shanghai",
+    sessions=tuple(
+        TradingSession(
+            trade_date=date(2026, 1, day),
+            session_close=datetime(2026, 1, day, 7, 0, tzinfo=UTC),
+        )
+        for day in (5, 6, 7, 8, 9, 12, 13)
+    ),
 )
 
 
@@ -119,6 +143,7 @@ def test_owner_projection_preserves_price_age_counters_and_fill_lineage() -> Non
     states = project_strategy_position_states(
         account_id=ACCOUNT,
         decision_time=START + timedelta(days=3),
+        trading_calendar=CALENDAR,
         batches=batches,
         proposal_actions={
             entry.artifact_id: CanonicalStrategyAction.ENTER,
@@ -135,10 +160,13 @@ def test_owner_projection_preserves_price_age_counters_and_fill_lineage() -> Non
     state = states[0]
     assert state.account_id == ACCOUNT
     assert state.quantity == Decimal("130")
+    assert state.available_quantity == Decimal("130")
     assert state.average_cost == Decimal("10.33333333333333333333333333")
     assert state.current_price == Decimal("10.50")
     assert state.peak_price == Decimal("11.20")
-    assert state.sessions_held == 2
+    assert state.sessions_held == 3
+    assert state.entry_time == START + timedelta(minutes=1)
+    assert state.price_freshness is PriceFreshnessStatus.STALE
     assert state.add_count == 1
     assert state.reduce_count == 1
     assert state.strategy_version_hash == VERSION.content_hash
@@ -166,6 +194,7 @@ def test_projection_uses_only_facts_available_at_decision_time() -> None:
     states = project_strategy_position_states(
         account_id=ACCOUNT,
         decision_time=START + timedelta(days=2),
+        trading_calendar=CALENDAR,
         batches=batches,
         proposal_actions={
             entry.artifact_id: CanonicalStrategyAction.ENTER,
@@ -180,7 +209,7 @@ def test_projection_uses_only_facts_available_at_decision_time() -> None:
     assert states[0].quantity == Decimal("100")
     assert states[0].current_price == Decimal("10.50")
     assert states[0].peak_price == Decimal("10.50")
-    assert states[0].sessions_held == 1
+    assert states[0].sessions_held == 2
     assert states[0].add_count == 0
 
 
@@ -194,6 +223,7 @@ def test_same_session_mark_updates_price_without_aging_position() -> None:
     state = project_strategy_position_states(
         account_id=ACCOUNT,
         decision_time=START + timedelta(hours=3),
+        trading_calendar=CALENDAR,
         batches=(batch,),
         proposal_actions={entry.artifact_id: CanonicalStrategyAction.ENTER},
         observations=(_observation(0, quantity=100, price="10.25"),),
@@ -202,6 +232,8 @@ def test_same_session_mark_updates_price_without_aging_position() -> None:
     assert state.current_price == Decimal("10.25")
     assert state.peak_price == Decimal("10.25")
     assert state.sessions_held == 0
+    assert state.available_quantity == Decimal("0")
+    assert state.price_freshness is PriceFreshnessStatus.FRESH
 
 
 def test_fill_side_must_match_strategy_action() -> None:
@@ -215,6 +247,7 @@ def test_fill_side_must_match_strategy_action() -> None:
         project_strategy_position_states(
             account_id=ACCOUNT,
             decision_time=START + timedelta(days=1),
+            trading_calendar=CALENDAR,
             batches=(batch,),
             proposal_actions={proposal.artifact_id: CanonicalStrategyAction.ENTER},
             observations=(),
@@ -253,6 +286,7 @@ def test_closed_multi_fill_lifecycle_settles_realized_strategy_outcome() -> None
     pre_exit_state = project_strategy_position_states(
         account_id=ACCOUNT,
         decision_time=START + timedelta(days=3),
+        trading_calendar=CALENDAR,
         batches=open_batches,
         proposal_actions=actions,
         observations=(
@@ -309,3 +343,102 @@ def test_open_lifecycle_does_not_fabricate_strategy_outcome() -> None:
         proposal_actions={entry.artifact_id: CanonicalStrategyAction.ENTER},
         pre_exit_states={},
     ) == ()
+
+
+def test_partial_enter_and_exit_fill_batches_settle_only_after_full_close() -> None:
+    entry = _reference("STRATEGY_PROPOSAL", "partial-enter")
+    exit_proposal = _reference("STRATEGY_PROPOSAL", "partial-exit")
+    actions = {
+        entry.artifact_id: CanonicalStrategyAction.ENTER,
+        exit_proposal.artifact_id: CanonicalStrategyAction.EXIT,
+    }
+    entries = tuple(
+        allocate_observed_fill(
+            fill=_fill(
+                f"partial-enter-{index}",
+                side=TradeSide.BUY,
+                quantity=quantity,
+                price=price,
+                day=0,
+            ),
+            allocations=((VERSION, entry, quantity),),
+        )
+        for index, (quantity, price) in enumerate(
+            ((30, 10.0), (40, 10.1), (30, 9.9)),
+            start=1,
+        )
+    )
+    pre_exit = project_strategy_position_states(
+        account_id=ACCOUNT,
+        decision_time=START + timedelta(days=1),
+        trading_calendar=CALENDAR,
+        batches=entries,
+        proposal_actions=actions,
+        observations=(_observation(1, quantity=100, price="10.20"),),
+    )[0]
+    exits = tuple(
+        allocate_observed_fill(
+            fill=_fill(
+                f"partial-exit-{index}",
+                side=TradeSide.SELL,
+                quantity=quantity,
+                price=11.0,
+                day=1,
+            ),
+            allocations=((VERSION, exit_proposal, quantity),),
+        )
+        for index, quantity in enumerate((20, 30, 50), start=1)
+    )
+
+    assert settle_fill_derived_strategy_outcomes(
+        account_id=ACCOUNT,
+        decision_time=START + timedelta(days=2),
+        batches=(*entries, *exits[:2]),
+        proposal_actions=actions,
+        pre_exit_states={exit_proposal.artifact_id: pre_exit},
+    ) == ()
+    outcomes = settle_fill_derived_strategy_outcomes(
+        account_id=ACCOUNT,
+        decision_time=START + timedelta(days=2),
+        batches=(*entries, *exits),
+        proposal_actions=actions,
+        pre_exit_states={exit_proposal.artifact_id: pre_exit},
+    )
+
+    assert len(outcomes) == 1
+    assert outcomes[0].invested_notional == Decimal("1001.0")
+    assert outcomes[0].gross_pnl == Decimal("99.0")
+    assert len(outcomes[0].source_fill_references) == 6
+
+
+def test_trading_session_age_skips_weekend_and_holiday_without_account_marks() -> None:
+    entry = _reference("STRATEGY_PROPOSAL", "calendar-enter")
+    friday = datetime(2026, 1, 9, 7, 0, tzinfo=UTC)
+    fill = replace(
+        _fill(
+            "calendar-enter",
+            side=TradeSide.BUY,
+            quantity=100,
+            price=10.0,
+            day=0,
+        ),
+        occurred_at=friday + timedelta(minutes=1),
+        recorded_at=friday + timedelta(minutes=2),
+    )
+    batch = allocate_observed_fill(
+        fill=fill,
+        allocations=((VERSION, entry, 100),),
+    )
+
+    monday = project_strategy_position_states(
+        account_id=ACCOUNT,
+        decision_time=datetime(2026, 1, 12, 7, 0, tzinfo=UTC),
+        trading_calendar=CALENDAR,
+        batches=(batch,),
+        proposal_actions={entry.artifact_id: CanonicalStrategyAction.ENTER},
+        observations=(),
+    )[0]
+
+    assert monday.sessions_held == 1
+    assert monday.available_quantity == Decimal("100")
+    assert monday.price_freshness is PriceFreshnessStatus.NOT_ESTIMABLE

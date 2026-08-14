@@ -347,20 +347,32 @@ def effective_fill_allocation_batches(
     executions: dict[FillId, FillAllocationBatch] = {}
     corrections: dict[FillId, FillAllocationBatch] = {}
     seen: set[FillId] = set()
-    for batch in sorted(batches, key=lambda item: (item.recorded_at, str(item.source_fill_id))):
+    ordered = sorted(
+        batches,
+        key=lambda item: (item.recorded_at, str(item.source_fill_id)),
+    )
+    for batch in ordered:
         if batch.source_fill_id in seen:
             raise ValueError("duplicate Fill Allocation Batch")
         seen.add(batch.source_fill_id)
         if batch.correction_of_fill_id is None:
             executions[batch.source_fill_id] = batch
+    for batch in ordered:
+        if batch.correction_of_fill_id is None:
             continue
         original = executions.get(batch.correction_of_fill_id)
         if original is None:
-            raise ValueError("Fill Allocation correction references unknown execution")
+            raise ValueError(
+                "Fill Allocation correction references unknown execution: "
+                f"{batch.correction_of_fill_id}; executions="
+                f"{tuple(sorted(str(item) for item in executions))}"
+            )
         if batch.correction_of_fill_id in corrections:
             raise ValueError("Fill Allocation execution has multiple corrections")
         if batch.account_id != original.account_id or batch.symbol != original.symbol or batch.side is not original.side:
             raise ValueError("Fill Allocation correction scope mismatch")
+        if batch.recorded_at < original.recorded_at:
+            raise ValueError("Fill Allocation correction predates execution")
         corrections[batch.correction_of_fill_id] = batch
     return tuple(
         sorted(

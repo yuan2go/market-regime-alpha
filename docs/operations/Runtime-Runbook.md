@@ -147,7 +147,7 @@ uv run python scripts/apply_postgres_migrations.py
 uv run python scripts/apply_postgres_migrations.py --verify-only
 ```
 
-Expected head: migration 086, `stateful_strategy_lifecycle`. Expected schema
+Expected head: migration 087, `strategy_execution_integrity`. Expected schema
 catalog: 270 tables. Migrations 052–067 add Formal Protocol bindings and
 owner-resolution receipts, Provider×Contract×Fact decisions,
 Historical/Locked-OOS/Calibration owners, the durable underlying Locked-OOS
@@ -178,8 +178,13 @@ create a scheduler, broker path, physical Position writer or Production
 authorization.
 Migration 086 adds one immutable fill-derived realized Strategy Outcome table.
 Open Strategy sleeve state remains reconstructed from existing Proposal, Fill
-allocation and manual account observation owners; no Position table, scheduler
-or execution Authority was added.
+allocation, exact PIT Trading Calendar and manual account observation owners;
+no Position table, scheduler or execution Authority was added.
+Migration 087 embeds exact accepted Portfolio/Proposal authorization in the
+existing ManualTrade ledger and adds append-only realized Outcome revisions.
+It adds no table: partial/corrected observed Fills still use `manual_fills`,
+physical Position still comes only from the Fill projector, and Strategy sleeves
+remain allocation projections.
 Migrations 060–062 add the Full-A Runtime Scope, restartable shared Historical
 Session journal, owner-resolved Shadow observations and multi-period Shadow
 performance evidence. They grant no trading or Formal research authority.
@@ -401,7 +406,22 @@ uv run model-governance access-request-approval --help
 uv run model-governance access-decide-approval --help
 ```
 
-`decision-system` is manual-account decision support. It requires current PostgreSQL model selection; Production qualification is currently forced closed. `research-shadow` freezes research decisions and outcomes, not simulated fills. Strategy Shadow is exposed only as subcommands of `continuous-research`; there is no duplicate installed CLI.
+`decision-system` is manual-account decision support. In addition to account and
+decision commands, `create-strategy-intent --input`,
+`record-strategy-fill --input` and `recover-strategy-execution` form the bounded
+operator path from an accepted Multi-Strategy Portfolio line to the existing
+manual Fill/allocation owners. The intent input must bind exact Portfolio,
+Proposal, account-observation and PIT Calendar references; a quantity override
+may only reduce the recommendation and requires a reason. Recovery is safe after
+a persisted Fill because it reconstructs missing allocations and Outcome heads
+from immutable facts. These commands do not create a broker Order or grant
+automatic execution authority.
+
+Current PostgreSQL model selection is still required for the broader manual
+decision workflow; Production qualification is currently forced closed. `research-shadow`
+freezes research decisions and outcomes, not simulated fills. Strategy Shadow
+is exposed only as subcommands of `continuous-research`; there is no duplicate
+installed CLI.
 
 Access Governance permits a one-time Admin bootstrap only while the Principal
 table is empty, then uses append-only Role grant/revoke and two-person

@@ -35,6 +35,14 @@ from market_regime_alpha.position.authority import PositionSnapshot
 
 
 class ManualExecutionRepository(Protocol):
+    def create_strategy_trade(
+        self,
+        record: ManualTradeRecord,
+        *,
+        idempotency_key: str,
+        command_hash: str,
+    ) -> ManualTradeRecord: ...
+
     def create_trade(
         self,
         record: ManualTradeRecord,

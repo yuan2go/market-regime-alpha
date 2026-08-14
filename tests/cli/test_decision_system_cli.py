@@ -153,6 +153,9 @@ def test_csv_import_preserves_decimal_strings(
         "inspect-daily-decision",
         "inspect-portfolio-proposal",
         "inspect-risk-decision",
+        "create-strategy-intent",
+        "record-strategy-fill",
+        "recover-strategy-execution",
     ),
 )
 def test_cli_exposes_required_bounded_operations(operation: str) -> None:

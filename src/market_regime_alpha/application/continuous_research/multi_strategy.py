@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import datetime
 
 from market_regime_alpha.application.continuous_research.composition import (
     _with_upstream_result,
@@ -90,7 +89,7 @@ class MultiStrategyContinuousAdapter:
             candidate_set=candidate_set,
             dataset_reference=dataset_reference,
             decision_time=request.as_of_time,
-            positions=self._positions(decision_time=request.as_of_time),
+            positions=self._positions(request=request),
             code_reference=_reference_set(
                 "STRATEGY_CODE_SET",
                 (
@@ -138,16 +137,28 @@ class MultiStrategyContinuousAdapter:
             configuration_references=strategy_request.configuration_references,
         )
 
-    def _positions(self, *, decision_time: datetime) -> tuple[StrategyPositionState, ...]:
+    def _positions(
+        self, *, request: ChildExecutionRequest
+    ) -> tuple[StrategyPositionState, ...]:
         if self._account_id is None or self._strategy_shadow_repository is None:
             return ()
+        calendar_references = tuple(
+            item
+            for item in request.input_references
+            if item.reference_kind == "TRADING_CALENDAR"
+        )
+        if len(calendar_references) != 1:
+            raise ValueError(
+                "stateful Strategy Runtime requires one exact Trading Calendar owner"
+            )
         self._strategy_shadow_repository.settle_multi_strategy_outcomes(
             account_id=self._account_id,
-            decision_time=decision_time,
+            decision_time=request.as_of_time,
         )
         return self._strategy_shadow_repository.resolve_multi_strategy_positions(
             account_id=self._account_id,
-            decision_time=decision_time,
+            decision_time=request.as_of_time,
+            trading_calendar_reference=calendar_references[0],
         )
 
 

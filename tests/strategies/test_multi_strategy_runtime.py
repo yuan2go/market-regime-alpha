@@ -29,6 +29,7 @@ from market_regime_alpha.research.theme_rotation.contracts import RotationState
 from market_regime_alpha.strategies.contracts import (
     CanonicalStrategyAction,
     PortfolioWeightingMethod,
+    PriceFreshnessStatus,
     StrategyContract,
     StrategyEligibilityStatus,
     StrategyFamily,
@@ -282,6 +283,44 @@ def test_empty_candidate_population_is_explicitly_data_insufficient() -> None:
         "STRATEGY_CANDIDATE_POPULATION_EMPTY" in run.reason_codes
         for run in cycle.runs
     )
+
+
+def test_swing_price_sensitive_actions_fail_closed_for_stale_owner_mark() -> None:
+    registry = _registry()
+    runtime_input = _runtime_input(registry.active_versions)
+    swing_version = next(
+        item
+        for item in registry.active_versions
+        if item.family is StrategyFamily.SWING_STATE
+    )
+    positions = tuple(
+        replace(
+            item,
+            available_quantity=item.quantity,
+            entry_time=NOW,
+            price_observed_at=NOW.replace(day=13),
+            price_freshness=PriceFreshnessStatus.STALE,
+            trading_calendar_reference=_reference("PIT_TRADING_CALENDAR", "calendar"),
+        )
+        if item.strategy_version_id == swing_version.version_id
+        else item
+        for item in runtime_input.positions
+    )
+
+    cycle = MultiStrategyRuntime(registry).execute(
+        replace(runtime_input, positions=positions)
+    )
+
+    swing_run = next(
+        item
+        for item in cycle.runs
+        if registry.family_for(item) is StrategyFamily.SWING_STATE
+    )
+    attribution = next(
+        item for item in swing_run.gate_attributions if item.symbol == "000002.SZ"
+    )
+    assert attribution.action is CanonicalStrategyAction.NO_ACTION
+    assert "SWING_CURRENT_PRICE_STALE" in attribution.reason_codes
 
 
 def test_strategy_policy_identity_does_not_depend_on_process_decimal_context() -> None:

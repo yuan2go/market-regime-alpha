@@ -3,16 +3,21 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from decimal import Decimal
 import json
-from typing import Any
+from typing import Any, Callable
+from zoneinfo import ZoneInfo
 
 from market_regime_alpha.core.identity import FillId, ManualTradeId
+from market_regime_alpha.data.trading_calendar import TradingCalendarArtifact
 from market_regime_alpha.evidence.canonical import canonical_hash
 from market_regime_alpha.execution.manual import (
     Fill,
     FillKind,
     ManualOrderState,
+    ManualTradeAuthorityRoute,
     ManualTradeRecord,
+    STRATEGY_AUTHORIZED_MANUAL_TRADE_SCHEMA,
     TradeSide,
     validate_manual_trade_transition,
 )
@@ -52,6 +57,41 @@ class PostgresManualExecutionRepository(NativePostgresRepository):
         command_hash: str,
     ) -> ManualTradeRecord:
         _validate_authority(record, risk_decision, portfolio_decision, target_position)
+        return self._create_record(
+            record,
+            idempotency_key=idempotency_key,
+            command_hash=command_hash,
+        )
+
+    def create_strategy_trade(
+        self,
+        record: ManualTradeRecord,
+        *,
+        idempotency_key: str,
+        command_hash: str,
+    ) -> ManualTradeRecord:
+        if (
+            record.schema_version != STRATEGY_AUTHORIZED_MANUAL_TRADE_SCHEMA
+            or record.authority_route is not ManualTradeAuthorityRoute.STRATEGY
+        ):
+            raise ValueError("Strategy trade requires V4 STRATEGY authority")
+        return self._create_record(
+            record,
+            idempotency_key=idempotency_key,
+            command_hash=command_hash,
+            authority_validator=lambda connection: _validate_strategy_authority(
+                connection, record
+            ),
+        )
+
+    def _create_record(
+        self,
+        record: ManualTradeRecord,
+        *,
+        idempotency_key: str,
+        command_hash: str,
+        authority_validator: Callable[[PostgresConnection], None] | None = None,
+    ) -> ManualTradeRecord:
         if record.state is not ManualOrderState.RECORDED or record.version != 0:
             raise ValueError("new ManualTradeRecord must be RECORDED version 0")
         with self._connect() as connection:
@@ -61,6 +101,8 @@ class PostgresManualExecutionRepository(NativePostgresRepository):
                 identity=record.manual_trade_id,
             )
             try:
+                if authority_validator is not None:
+                    authority_validator(connection)
                 command = _command(connection, idempotency_key)
                 if command is not None:
                     _validate_command(command, command_hash, record.manual_trade_id)
@@ -86,18 +128,24 @@ class PostgresManualExecutionRepository(NativePostgresRepository):
                         """
                         INSERT INTO manual_trade_records(
                             manual_trade_id, risk_decision_id, account_id, symbol,
-                            side, state, filled_quantity, aggregate_json, version
-                        ) VALUES (%s, %s, %s, %s, %s, %s, 0, %s, 0)
+                            side, state, filled_quantity, aggregate_json, version,
+                            authority_route, strategy_authorization_id,
+                            strategy_authorization_hash,
+                            strategy_portfolio_decision_id,
+                            strategy_portfolio_decision_hash,
+                            strategy_proposal_id, strategy_proposal_hash,
+                            strategy_version_id, strategy_version_hash,
+                            strategy_account_observation_id,
+                            strategy_account_observation_hash,
+                            strategy_calendar_id, strategy_calendar_hash
+                        ) VALUES (
+                            %s, %s, %s, %s, %s, %s, 0, %s, 0,
+                            %s, %s, %s,
+                            %s, %s, %s, %s, %s, %s,
+                            %s, %s, %s, %s
+                        )
                         """,
-                        (
-                            str(record.manual_trade_id),
-                            str(record.risk_decision_id),
-                            record.account_id,
-                            record.symbol,
-                            record.side.value,
-                            record.state.value,
-                            _json(record.to_canonical_dict()),
-                        ),
+                        _trade_projection_values(record),
                     )
                     _insert_trade_event(connection, record, idempotency_key)
                 _insert_command(
@@ -282,6 +330,21 @@ class PostgresManualExecutionRepository(NativePostgresRepository):
         with self._connect() as connection:
             return _load_trade(connection, trade_id)
 
+    def get_trade_for_idempotency_key(
+        self, idempotency_key: str
+    ) -> ManualTradeRecord | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT manual_trade_id FROM execution_commands
+                WHERE idempotency_key = %s AND fill_id IS NULL
+                """,
+                (idempotency_key,),
+            ).fetchone()
+            if row is None:
+                return None
+            return _load_trade(connection, ManualTradeId(str(row["manual_trade_id"])))
+
     def fills_for_trade(self, trade_id: ManualTradeId) -> tuple[Fill, ...]:
         with self._connect() as connection:
             return _fills_for_trade(connection, trade_id)
@@ -340,6 +403,205 @@ def _validate_authority(
         or record.intended_quantity != abs(target.trade_quantity)
     ):
         raise ValueError("ManualTradeRecord authority binding mismatch")
+
+
+def _validate_strategy_authority(
+    connection: PostgresConnection,
+    record: ManualTradeRecord,
+) -> None:
+    authorization = record.strategy_execution_authorization
+    if authorization is None:
+        raise ValueError("Strategy ManualTradeRecord authorization is missing")
+    expected_kinds = (
+        ("portfolio", authorization.portfolio_decision_reference, "CROSS_STRATEGY_PORTFOLIO"),
+        ("version", authorization.strategy_version_reference, "STRATEGY_VERSION"),
+        ("proposal", authorization.proposal_reference, "STRATEGY_PROPOSAL"),
+        ("account", authorization.account_observation_reference, "MANUAL_ACCOUNT_OBSERVATION"),
+        ("calendar", authorization.trading_calendar_reference, "TRADING_CALENDAR"),
+    )
+    for label, reference, expected_kind in expected_kinds:
+        if reference.reference_kind != expected_kind:
+            raise ValueError(f"Strategy {label} authority kind mismatch")
+    row = connection.execute(
+        """
+        SELECT d.decision_hash, l.accepted_weight,
+               p.proposal_hash, p.strategy_version_id,
+               p.strategy_version_hash, p.symbol, p.action,
+               v.version_hash, c.decision_time
+        FROM cross_strategy_portfolio_decision AS d
+        JOIN cross_strategy_portfolio_line AS l
+          ON l.decision_id = d.decision_id
+        JOIN strategy_proposal AS p
+          ON p.proposal_id = l.proposal_id
+         AND p.proposal_hash = l.proposal_hash
+        JOIN strategy_version AS v
+          ON v.version_id = p.strategy_version_id
+         AND v.version_hash = p.strategy_version_hash
+        JOIN strategy_run AS r ON r.run_id = p.run_id
+        JOIN multi_strategy_cycle AS c ON c.cycle_id = r.cycle_id
+        WHERE d.decision_id = %s AND l.proposal_id = %s
+        FOR SHARE OF d, l, p, v
+        """,
+        (
+            str(authorization.portfolio_decision_reference.artifact_id),
+            str(authorization.proposal_reference.artifact_id),
+        ),
+    ).fetchone()
+    if row is None:
+        raise ValueError("Strategy execution requires an accepted Portfolio line")
+    if (
+        str(row["decision_hash"])
+        != authorization.portfolio_decision_reference.content_hash
+        or Decimal(str(row["accepted_weight"])) == 0
+        or Decimal(str(row["accepted_weight"])) != authorization.accepted_weight
+        or str(row["proposal_hash"])
+        != authorization.proposal_reference.content_hash
+        or str(row["strategy_version_id"])
+        != str(authorization.strategy_version_reference.artifact_id)
+        or str(row["strategy_version_hash"])
+        != authorization.strategy_version_reference.content_hash
+        or str(row["version_hash"])
+        != authorization.strategy_version_reference.content_hash
+        or str(row["symbol"]) != authorization.symbol
+        or str(row["action"]) != authorization.action
+        or row["decision_time"] != authorization.decision_time
+    ):
+        raise ValueError("Strategy Portfolio/Proposal authorization mismatch")
+    observation = connection.execute(
+        """
+        SELECT content_hash, account_id, as_of_time, total_equity, available_cash
+        FROM manual_account_observation
+        WHERE observation_id = %s
+        FOR SHARE
+        """,
+        (str(authorization.account_observation_reference.artifact_id),),
+    ).fetchone()
+    if observation is None or (
+        str(observation["content_hash"])
+        != authorization.account_observation_reference.content_hash
+        or str(observation["account_id"]) != authorization.account_id
+        or observation["as_of_time"] > authorization.decision_time
+        or Decimal(str(observation["total_equity"])) != authorization.account_nav
+        or Decimal(str(observation["available_cash"]))
+        != authorization.available_cash
+    ):
+        raise ValueError("Strategy Account Observation authorization mismatch")
+    position = connection.execute(
+        """
+        SELECT total_quantity, available_quantity
+        FROM manual_position_observation
+        WHERE observation_id = %s AND symbol = %s
+        FOR SHARE
+        """,
+        (
+            str(authorization.account_observation_reference.artifact_id),
+            authorization.symbol,
+        ),
+    ).fetchone()
+    physical_quantity = 0 if position is None else int(position["total_quantity"])
+    physical_available = (
+        0 if position is None else int(position["available_quantity"])
+    )
+    if (
+        authorization.current_quantity > physical_quantity
+        or authorization.available_quantity > physical_available
+    ):
+        raise ValueError("Strategy quantity exceeds Physical Position authority")
+    calendar_row = connection.execute(
+        """
+        SELECT calendar_hash, payload_json
+        FROM pit_trading_calendar_canonical_snapshot
+        WHERE calendar_id = %s
+        FOR SHARE
+        """,
+        (str(authorization.trading_calendar_reference.artifact_id),),
+    ).fetchone()
+    if calendar_row is None or str(calendar_row["calendar_hash"]) != (
+        authorization.trading_calendar_reference.content_hash
+    ):
+        raise ValueError("Strategy Trading Calendar authorization mismatch")
+    calendar_payload = calendar_row["payload_json"]
+    if not isinstance(calendar_payload, dict):
+        raise ValueError("Strategy Trading Calendar payload is invalid")
+    calendar = TradingCalendarArtifact.from_canonical_dict(calendar_payload)
+    decision_date = authorization.decision_time.astimezone(
+        ZoneInfo(calendar.timezone_name)
+    ).date()
+    if not calendar.contains(decision_date):
+        raise ValueError("Strategy decision is outside the authorized Trading Calendar")
+    if not (
+        Decimal(str(record.expected_price_lower))
+        <= authorization.reference_price
+        <= Decimal(str(record.expected_price_upper))
+    ):
+        raise ValueError("Strategy reference price is outside the Manual Intent range")
+
+
+def _trade_projection_values(record: ManualTradeRecord) -> tuple[object, ...]:
+    authorization = record.strategy_execution_authorization
+    route = (
+        record.authority_route.value
+        if record.authority_route is not None
+        else ManualTradeAuthorityRoute.INCREASING.value
+    )
+    return (
+        str(record.manual_trade_id),
+        str(record.risk_decision_id) if record.risk_decision_id is not None else None,
+        record.account_id,
+        record.symbol,
+        record.side.value,
+        record.state.value,
+        _json(record.to_canonical_dict()),
+        route,
+        str(authorization.authorization_id) if authorization is not None else None,
+        authorization.authorization_hash if authorization is not None else None,
+        (
+            str(authorization.portfolio_decision_reference.artifact_id)
+            if authorization is not None
+            else None
+        ),
+        (
+            authorization.portfolio_decision_reference.content_hash
+            if authorization is not None
+            else None
+        ),
+        (
+            str(authorization.proposal_reference.artifact_id)
+            if authorization is not None
+            else None
+        ),
+        authorization.proposal_reference.content_hash if authorization is not None else None,
+        (
+            str(authorization.strategy_version_reference.artifact_id)
+            if authorization is not None
+            else None
+        ),
+        (
+            authorization.strategy_version_reference.content_hash
+            if authorization is not None
+            else None
+        ),
+        (
+            str(authorization.account_observation_reference.artifact_id)
+            if authorization is not None
+            else None
+        ),
+        (
+            authorization.account_observation_reference.content_hash
+            if authorization is not None
+            else None
+        ),
+        (
+            str(authorization.trading_calendar_reference.artifact_id)
+            if authorization is not None
+            else None
+        ),
+        (
+            authorization.trading_calendar_reference.content_hash
+            if authorization is not None
+            else None
+        ),
+    )
 
 
 def _effective_quantity(fills: tuple[Fill, ...]) -> int:
@@ -413,6 +675,83 @@ def _load_trade(
                     else None
                 )
             )
+        strategy_projection_valid = True
+        if "strategy_authorization_id" in row.keys():
+            authorization = result.strategy_execution_authorization
+            strategy_projection_valid = (
+                row["strategy_authorization_id"]
+                == (
+                    str(authorization.authorization_id)
+                    if authorization is not None
+                    else None
+                )
+                and row["strategy_authorization_hash"]
+                == (
+                    authorization.authorization_hash
+                    if authorization is not None
+                    else None
+                )
+                and row["strategy_portfolio_decision_id"]
+                == (
+                    str(authorization.portfolio_decision_reference.artifact_id)
+                    if authorization is not None
+                    else None
+                )
+                and row["strategy_portfolio_decision_hash"]
+                == (
+                    authorization.portfolio_decision_reference.content_hash
+                    if authorization is not None
+                    else None
+                )
+                and row["strategy_proposal_id"]
+                == (
+                    str(authorization.proposal_reference.artifact_id)
+                    if authorization is not None
+                    else None
+                )
+                and row["strategy_proposal_hash"]
+                == (
+                    authorization.proposal_reference.content_hash
+                    if authorization is not None
+                    else None
+                )
+                and row["strategy_version_id"]
+                == (
+                    str(authorization.strategy_version_reference.artifact_id)
+                    if authorization is not None
+                    else None
+                )
+                and row["strategy_version_hash"]
+                == (
+                    authorization.strategy_version_reference.content_hash
+                    if authorization is not None
+                    else None
+                )
+                and row["strategy_account_observation_id"]
+                == (
+                    str(authorization.account_observation_reference.artifact_id)
+                    if authorization is not None
+                    else None
+                )
+                and row["strategy_account_observation_hash"]
+                == (
+                    authorization.account_observation_reference.content_hash
+                    if authorization is not None
+                    else None
+                )
+                and row["strategy_calendar_id"]
+                == (
+                    str(authorization.trading_calendar_reference.artifact_id)
+                    if authorization is not None
+                    else None
+                )
+                and row["strategy_calendar_hash"]
+                == (
+                    authorization.trading_calendar_reference.content_hash
+                    if authorization is not None
+                    else None
+                )
+            )
         if (
             stored != result
             or row["manual_trade_id"] != str(result.manual_trade_id)
@@ -423,6 +762,7 @@ def _load_trade(
             or int(row["filled_quantity"]) != result.filled_quantity
             or int(row["version"]) != result.version
             or not route_projection_valid
+            or not strategy_projection_valid
         ):
             raise ValueError("ManualTradeRecord projection is not reconstructible")
     return result
