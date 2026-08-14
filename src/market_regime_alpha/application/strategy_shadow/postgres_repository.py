@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Any
+from typing import Any, cast
 
 from psycopg.types.json import Jsonb
 
@@ -414,6 +414,18 @@ class PostgresStrategyShadowRepository:
                 ):
                     persisted.append(head)
                     continue
+                head_source_time = _outcome_source_head_time(connection, head)
+                candidate_source_time = _outcome_source_head_time(connection, outcome)
+                if head_source_time > candidate_source_time:
+                    # A correction-settlement won the lifecycle lock while this
+                    # candidate was computed from an older Fill view. Outcome
+                    # heads are monotonic; stale work cannot supersede it.
+                    persisted.append(head)
+                    continue
+                if head_source_time == candidate_source_time:
+                    raise ValueError(
+                        "Strategy Outcome has conflicting economics at one Fill head"
+                    )
                 outcome = _superseding_outcome(outcome, head)
             PostgresStrategyShadowRepository._verify_multi_strategy_outcome_lineage(
                 connection,
@@ -993,6 +1005,24 @@ def _outcome_economic_payload(
     ):
         payload.pop(field, None)
     return payload
+
+
+def _outcome_source_head_time(
+    connection: Any,
+    outcome: FillDerivedStrategyOutcome,
+) -> datetime:
+    fill_ids = [str(item.artifact_id) for item in outcome.source_fill_references]
+    row = connection.execute(
+        """
+        SELECT max(recorded_at), count(*)
+        FROM manual_fills
+        WHERE fill_id = ANY(%s)
+        """,
+        (fill_ids,),
+    ).fetchone()
+    if row is None or row[0] is None or int(row[1]) != len(fill_ids):
+        raise ValueError("Strategy Outcome Fill head is not reloadable")
+    return cast(datetime, row[0])
 
 
 def _superseding_outcome(

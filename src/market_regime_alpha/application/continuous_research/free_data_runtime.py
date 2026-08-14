@@ -24,6 +24,7 @@ from market_regime_alpha.application.continuous_research.ports import (
 )
 from market_regime_alpha.application.continuous_research.multi_strategy import (
     MultiStrategyContinuousAdapter,
+    freeze_strategy_decision_prices,
 )
 from market_regime_alpha.application.controlled_operation.input_artifacts import (
     load_controlled_runtime_configuration,
@@ -396,6 +397,7 @@ class CanonicalFreeDataResearchComposition:
         candidate_set = state_coordinator.final_candidates
         if candidate_set is None:
             raise ValueError("Strategy Runtime requires owner-resolved CandidateSet")
+        decision = execution.decision
         strategy_request = replace(
             request,
             input_references=tuple(
@@ -421,6 +423,15 @@ class CanonicalFreeDataResearchComposition:
             candidate_set=candidate_set,
             dataset_reference=persisted.dataset,
             upstream=owner_results[-1],
+            decision_prices=(
+                ()
+                if decision is None
+                else freeze_strategy_decision_prices(
+                    dataset=decision.minute_dataset,
+                    symbols=tuple(item.symbol for item in candidate_set.records),
+                    decision_time=request.as_of_time,
+                )
+            ),
         )
         return (*owner_results, strategy_result)
 

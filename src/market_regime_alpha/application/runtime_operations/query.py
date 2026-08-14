@@ -25,6 +25,9 @@ from market_regime_alpha.evidence.canonical import (
     require_sha256,
     require_text,
 )
+from market_regime_alpha.execution.postgres_manual_repository import (
+    PostgresManualExecutionRepository,
+)
 from market_regime_alpha.persistence.postgres.connection import (
     PostgresConnectionFactory,
 )
@@ -626,6 +629,21 @@ class PostgresCanonicalRuntimeQuery:
                 """,
                 (str(cycle[0]),),
             ).fetchone()
+            execution_rows = connection.execute(
+                """
+                SELECT DISTINCT t.account_id, t.strategy_proposal_id
+                FROM manual_trade_records AS t
+                WHERE t.authority_route = 'STRATEGY'
+                  AND t.strategy_proposal_id IN (
+                      SELECT p.proposal_id
+                      FROM strategy_proposal AS p
+                      JOIN strategy_run AS r ON r.run_id = p.run_id
+                      WHERE r.cycle_id = %s
+                  )
+                ORDER BY t.account_id, t.strategy_proposal_id
+                """,
+                (str(cycle[0]),),
+            ).fetchall()
             outcomes = connection.execute(
                 """
                 SELECT outcome_id, outcome_hash, strategy_run_id,
@@ -681,11 +699,18 @@ class PostgresCanonicalRuntimeQuery:
 
         cycle_payload = cycle[4] if isinstance(cycle[4], dict) else {}
         runtime_input = cycle_payload.get("runtime_input", {})
-        position_states = (
-            runtime_input.get("positions", [])
-            if isinstance(runtime_input, dict)
-            else []
-        )
+        position_states = runtime_input.get("positions", []) if isinstance(runtime_input, dict) else []
+        decision_prices = runtime_input.get("decision_prices", []) if isinstance(runtime_input, dict) else []
+        execution_repository = PostgresManualExecutionRepository(self._factory)
+        execution_authorities = [
+            execution_repository.inspect_strategy_execution(
+                account_id=account_id,
+                proposal_id=ArtifactId(proposal_id),
+            )
+            for account_id, proposal_id in sorted(
+                {(str(row[0]), str(row[1])) for row in execution_rows}
+            )
+        ]
         cycle_node = CanonicalDagNode.create(
             node_type=CanonicalDagNodeType.STRATEGY,
             owner="MULTI_STRATEGY_RUNTIME",
@@ -700,6 +725,8 @@ class PostgresCanonicalRuntimeQuery:
                 "strategy_run_count": len(runs),
                 "position_state_count": len(position_states),
                 "position_states": position_states,
+                "decision_price_count": len(decision_prices),
+                "decision_prices": decision_prices,
             },
         )
         nodes = [cycle_node]
@@ -739,9 +766,7 @@ class PostgresCanonicalRuntimeQuery:
                 artifact_id=str(portfolio[0]),
                 content_hash=str(portfolio[1]),
                 status=(
-                    CanonicalDagNodeStatus.AVAILABLE
-                    if str(portfolio[2]) in {"ACCEPTED", "NO_ACTION"}
-                    else CanonicalDagNodeStatus.PARTIAL
+                    CanonicalDagNodeStatus.AVAILABLE if str(portfolio[2]) in {"ACCEPTED", "NO_ACTION"} else CanonicalDagNodeStatus.PARTIAL
                 ),
                 observed_at=portfolio[4],
                 parent_node_ids=tuple(item.node_id for item in run_nodes.values()),
@@ -750,6 +775,7 @@ class PostgresCanonicalRuntimeQuery:
                     "portfolio_status": str(portfolio[2]),
                     "gross_accepted_weight": str(portfolio[3]),
                     "production_authorized": False,
+                    "execution_authorities": execution_authorities,
                 },
             )
             nodes.append(portfolio_node)
@@ -796,12 +822,8 @@ class PostgresCanonicalRuntimeQuery:
                     "net_return": str(row[10]),
                     "pre_exit_state_id": str(row[12]),
                     "revision": int(row[13]),
-                    "supersedes_outcome_id": (
-                        None if row[14] is None else str(row[14])
-                    ),
-                    "supersedes_outcome_hash": (
-                        None if row[15] is None else str(row[15])
-                    ),
+                    "supersedes_outcome_id": (None if row[14] is None else str(row[14])),
+                    "supersedes_outcome_hash": (None if row[15] is None else str(row[15])),
                     "production_authorized": False,
                 },
             )
