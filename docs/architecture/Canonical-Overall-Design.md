@@ -4,6 +4,7 @@
 > **Authority:** Consolidated overall design and implementation baseline  
 > **Owner:** Market Regime Alpha maintainers  
 > **Last Updated:** 2026-08-14  
+> **Code Evidence:** `src/market_regime_alpha`, `src/market_regime_alpha/persistence/postgres/migrations/*.sql`, `tests`
 > **Applies To:** Architecture, research, strategy, portfolio, runtime, evidence, qualification, operations, and future execution  
 > **Normative Boundary:** This document consolidates the current target design. It does not override `docs/constitution/00` through `09`; where a conflict exists, the repository documentation authority order applies. Current implementation facts remain authoritative only when proven by code, PostgreSQL schema, tests, and reproducible runtime evidence.
 

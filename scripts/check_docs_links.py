@@ -10,6 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 ALLOWED_STATUSES = {
     "CONSTITUTION",
+    "CANONICAL_TARGET_ARCHITECTURE",
     "CURRENT_ARCHITECTURE",
     "CURRENT_RESEARCH_PROGRAM",
     "CURRENT_STATUS",
@@ -25,6 +26,7 @@ CODE_EVIDENCE_PATH_RE = re.compile(r"`([^`]+)`")
 CANONICAL_DOCS = frozenset(
     {
         "docs/README.md",
+        "docs/architecture/Canonical-Overall-Design.md",
         "docs/architecture/System-Architecture.md",
         "docs/architecture/Authority-Map.md",
         "docs/architecture/Data-and-Evidence-Architecture.md",
