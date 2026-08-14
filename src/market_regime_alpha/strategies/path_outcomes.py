@@ -183,11 +183,7 @@ def measure_strategy_path(
     target_hits = tuple(item for item in ordered if item.high >= target_price)
     stop_hits = tuple(item for item in ordered if item.low <= stop_price)
     ordering = _barrier_ordering(target_hits, stop_hits)
-    post_exit = (
-        ()
-        if exit_time is None
-        else tuple(item for item in ordered if item.observed_at > exit_time)
-    )
+    post_exit = () if exit_time is None else tuple(item for item in ordered if item.observed_at > exit_time)
     opportunity_loss = None
     avoided_drawdown = None
     if exit_price is not None:
@@ -214,35 +210,61 @@ def measure_strategy_path(
         "PIT_STATUS_INHERITED_FROM_DATASET",
         "PRODUCTION_AUTHORIZED_FALSE",
     )
-    values = {
-        "strategy_version_reference": strategy_version_reference,
-        "strategy_run_reference": strategy_run_reference,
-        "dataset_reference": dataset_reference,
-        "target_reference": target_reference,
-        "symbol": symbol,
-        "decision_time": decision_time,
-        "horizon_sessions": max(item.session_offset for item in ordered),
-        "reference_price": reference_price,
-        "terminal_return": terminal_return,
-        "mfe": mfe,
-        "mae": mae,
-        "barrier_ordering": ordering,
-        "time_to_mfe_seconds": int((mfe_point.observed_at - decision_time).total_seconds()),
-        "trend_continuation": terminal_return >= continuation_return,
-        "failure": ordering is BarrierOrderingOutcome.STOP_BEFORE_TARGET or terminal_return <= failure_return,
-        "exit_time": exit_time,
-        "exit_price": exit_price,
-        "post_exit_opportunity_loss": opportunity_loss,
-        "avoided_drawdown": avoided_drawdown,
-        "measured_at": measured_at,
-        "limitations": limitations,
-        "schema_version": "strategy-path-outcome/v1",
-    }
-    digest = canonical_hash(_outcome_payload(**values))
+    horizon_sessions = max(item.session_offset for item in ordered)
+    time_to_mfe_seconds = int((mfe_point.observed_at - decision_time).total_seconds())
+    trend_continuation = terminal_return >= continuation_return
+    failure = ordering is BarrierOrderingOutcome.STOP_BEFORE_TARGET or terminal_return <= failure_return
+    digest = canonical_hash(
+        _outcome_payload(
+            strategy_version_reference=strategy_version_reference,
+            strategy_run_reference=strategy_run_reference,
+            dataset_reference=dataset_reference,
+            target_reference=target_reference,
+            symbol=symbol,
+            decision_time=decision_time,
+            horizon_sessions=horizon_sessions,
+            reference_price=reference_price,
+            terminal_return=terminal_return,
+            mfe=mfe,
+            mae=mae,
+            barrier_ordering=ordering,
+            time_to_mfe_seconds=time_to_mfe_seconds,
+            trend_continuation=trend_continuation,
+            failure=failure,
+            exit_time=exit_time,
+            exit_price=exit_price,
+            post_exit_opportunity_loss=opportunity_loss,
+            avoided_drawdown=avoided_drawdown,
+            measured_at=measured_at,
+            limitations=limitations,
+            schema_version="strategy-path-outcome/v1",
+        )
+    )
     return StrategyPathOutcome(
         outcome_id=ArtifactId(f"strategy-path-outcome:{digest[7:]}"),
         outcome_hash=digest,
-        **values,
+        strategy_version_reference=strategy_version_reference,
+        strategy_run_reference=strategy_run_reference,
+        dataset_reference=dataset_reference,
+        target_reference=target_reference,
+        symbol=symbol,
+        decision_time=decision_time,
+        horizon_sessions=horizon_sessions,
+        reference_price=reference_price,
+        terminal_return=terminal_return,
+        mfe=mfe,
+        mae=mae,
+        barrier_ordering=ordering,
+        time_to_mfe_seconds=time_to_mfe_seconds,
+        trend_continuation=trend_continuation,
+        failure=failure,
+        exit_time=exit_time,
+        exit_price=exit_price,
+        post_exit_opportunity_loss=opportunity_loss,
+        avoided_drawdown=avoided_drawdown,
+        measured_at=measured_at,
+        limitations=limitations,
+        schema_version="strategy-path-outcome/v1",
     )
 
 
@@ -285,9 +307,7 @@ def _outcome_payload(**values: Any) -> dict[str, Any]:
         "failure": values["failure"],
         "exit_time": None if values["exit_time"] is None else canonical_datetime(values["exit_time"]),
         "exit_price": None if values["exit_price"] is None else str(values["exit_price"]),
-        "post_exit_opportunity_loss": (
-            None if values["post_exit_opportunity_loss"] is None else str(values["post_exit_opportunity_loss"])
-        ),
+        "post_exit_opportunity_loss": (None if values["post_exit_opportunity_loss"] is None else str(values["post_exit_opportunity_loss"])),
         "avoided_drawdown": None if values["avoided_drawdown"] is None else str(values["avoided_drawdown"]),
         "measured_at": canonical_datetime(values["measured_at"]),
         "limitations": list(values["limitations"]),

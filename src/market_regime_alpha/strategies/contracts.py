@@ -96,13 +96,13 @@ class StrategyContract:
         ):
             require_text(label, value)
         _require_references("target", self.target_references)
-        if not self.decision_times or self.decision_times != tuple(
-            sorted(set(self.decision_times))
-        ):
+        if not self.decision_times or self.decision_times != tuple(sorted(set(self.decision_times))):
             raise ValueError("Strategy decision times must be non-empty, unique, and sorted")
-        if not self.horizon_sessions or self.horizon_sessions != tuple(
-            sorted(set(self.horizon_sessions))
-        ) or any(value <= 0 for value in self.horizon_sessions):
+        if (
+            not self.horizon_sessions
+            or self.horizon_sessions != tuple(sorted(set(self.horizon_sessions)))
+            or any(value <= 0 for value in self.horizon_sessions)
+        ):
             raise ValueError("Strategy horizons must be positive, unique, and sorted")
         if self.top_k <= 0:
             raise ValueError("Strategy Top-K must be positive")
@@ -119,15 +119,9 @@ class StrategyContract:
     @classmethod
     def create(cls, **values: Any) -> StrategyContract:
         normalized = dict(values)
-        normalized["target_references"] = _references(
-            tuple(values["target_references"])
-        )
-        normalized["decision_times"] = tuple(
-            sorted(set(values["decision_times"]))
-        )
-        normalized["horizon_sessions"] = tuple(
-            sorted(set(values["horizon_sessions"]))
-        )
+        normalized["target_references"] = _references(tuple(values["target_references"]))
+        normalized["decision_times"] = tuple(sorted(set(values["decision_times"])))
+        normalized["horizon_sessions"] = tuple(sorted(set(values["horizon_sessions"])))
         normalized["parameters"] = tuple(sorted(set(values["parameters"])))
         normalized["limitations"] = tuple(sorted(set(values["limitations"])))
         normalized.setdefault("schema_version", "strategy-contract/v1")
@@ -164,15 +158,11 @@ class StrategyContract:
             horizon_sessions=_integers(payload["horizon_sessions"]),
             candidate_policy_version=str(payload["candidate_policy_version"]),
             action_policy_version=str(payload["action_policy_version"]),
-            portfolio_weighting=PortfolioWeightingMethod(
-                str(payload["portfolio_weighting"])
-            ),
+            portfolio_weighting=PortfolioWeightingMethod(str(payload["portfolio_weighting"])),
             top_k=int(payload["top_k"]),
             strategy_budget=Decimal(str(payload["strategy_budget"])),
             cost_model_reference=_reference(payload["cost_model_reference"]),
-            evaluation_protocol_reference=_reference(
-                payload["evaluation_protocol_reference"]
-            ),
+            evaluation_protocol_reference=_reference(payload["evaluation_protocol_reference"]),
             code_reference=_reference(payload["code_reference"]),
             configuration_reference=_reference(payload["configuration_reference"]),
             parameters=_pairs(payload["parameters"]),
@@ -210,23 +200,28 @@ class StrategyVersion:
 
     @classmethod
     def activate(cls, contract: StrategyContract) -> StrategyVersion:
-        contract_reference = RuntimeArtifactReference(
-            "STRATEGY_CONTRACT", contract.contract_id, contract.contract_hash
+        contract_reference = RuntimeArtifactReference("STRATEGY_CONTRACT", contract.contract_id, contract.contract_hash)
+        digest = canonical_hash(
+            _strategy_version_payload(
+                contract_reference=contract_reference,
+                family=contract.family,
+                semantic_version=contract.semantic_version,
+                lifecycle_status="ACTIVE",
+                research_status="EXPLORATORY",
+                limitations=contract.limitations,
+                schema_version="strategy-version/v1",
+            )
         )
-        values = {
-            "contract_reference": contract_reference,
-            "family": contract.family,
-            "semantic_version": contract.semantic_version,
-            "lifecycle_status": "ACTIVE",
-            "research_status": "EXPLORATORY",
-            "limitations": contract.limitations,
-            "schema_version": "strategy-version/v1",
-        }
-        digest = canonical_hash(_strategy_version_payload(**values))
         return cls(
             version_id=ArtifactId(f"strategy-version:{digest[7:]}"),
             version_hash=digest,
-            **values,
+            contract_reference=contract_reference,
+            family=contract.family,
+            semantic_version=contract.semantic_version,
+            lifecycle_status="ACTIVE",
+            research_status="EXPLORATORY",
+            limitations=contract.limitations,
+            schema_version="strategy-version/v1",
         )
 
     @property
@@ -264,6 +259,72 @@ class StrategyVersion:
             limitations=_strings(payload["limitations"]),
             schema_version=str(payload["schema_version"]),
         )
+
+
+@dataclass(frozen=True, slots=True)
+class StrategyRegistry:
+    """Validated active Strategy catalog; it owns no scheduling or qualification."""
+
+    contracts: tuple[StrategyContract, ...]
+    versions: tuple[StrategyVersion, ...]
+
+    def __post_init__(self) -> None:
+        contract_ids = tuple(str(item.contract_id) for item in self.contracts)
+        if contract_ids != tuple(sorted(set(contract_ids))) or not contract_ids:
+            raise ValueError("Strategy Registry contracts must be non-empty and unique")
+        version_ids = tuple(str(item.version_id) for item in self.versions)
+        if version_ids != tuple(sorted(set(version_ids))) or not version_ids:
+            raise ValueError("Strategy Registry versions must be non-empty and unique")
+        contracts_by_id = {str(item.contract_id): item for item in self.contracts}
+        active_strategy_ids: list[str] = []
+        for version in self.versions:
+            contract = contracts_by_id.get(str(version.contract_reference.artifact_id))
+            if contract is None or (contract.contract_hash != version.contract_reference.content_hash):
+                raise ValueError("Strategy Version references an unknown Strategy Contract")
+            if contract.family is not version.family:
+                raise ValueError("Strategy Version family differs from its contract")
+            if version.lifecycle_status == "ACTIVE":
+                active_strategy_ids.append(str(contract.strategy_id))
+        if len(active_strategy_ids) != len(set(active_strategy_ids)):
+            raise ValueError("Strategy Registry allows one active version per Strategy")
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        contracts: tuple[StrategyContract, ...],
+        versions: tuple[StrategyVersion, ...],
+    ) -> StrategyRegistry:
+        return cls(
+            contracts=tuple(sorted(contracts, key=lambda item: str(item.contract_id))),
+            versions=tuple(sorted(versions, key=lambda item: str(item.version_id))),
+        )
+
+    @property
+    def active_versions(self) -> tuple[StrategyVersion, ...]:
+        return tuple(item for item in self.versions if item.lifecycle_status == "ACTIVE")
+
+    @property
+    def active_version_ids(self) -> tuple[ArtifactId, ...]:
+        return tuple(item.version_id for item in self.active_versions)
+
+    def contract_for(self, version: StrategyVersion) -> StrategyContract:
+        for contract in self.contracts:
+            if (
+                contract.contract_id == version.contract_reference.artifact_id
+                and contract.contract_hash == version.contract_reference.content_hash
+            ):
+                return contract
+        raise KeyError(str(version.version_id))
+
+    def family_for(self, run: StrategyRun) -> StrategyFamily:
+        for version in self.versions:
+            if (
+                version.version_id == run.strategy_version_reference.artifact_id
+                and version.version_hash == run.strategy_version_reference.content_hash
+            ):
+                return version.family
+        raise KeyError(str(run.strategy_version_reference.artifact_id))
 
 
 @dataclass(frozen=True, slots=True)
@@ -316,9 +377,7 @@ class StrategyRuntimeInput:
 
     def __post_init__(self) -> None:
         canonical_datetime(self.decision_time)
-        position_keys = tuple(
-            (str(item.strategy_version_id), item.symbol) for item in self.positions
-        )
+        position_keys = tuple((str(item.strategy_version_id), item.symbol) for item in self.positions)
         if position_keys != tuple(sorted(set(position_keys))):
             raise ValueError("Strategy position input must be unique and sorted")
         self.candidate_set.envelope.verify_payload(self.candidate_set.artifact_payload())
@@ -473,20 +532,14 @@ class StrategyRun:
 
     @staticmethod
     def identity(cycle_id: ArtifactId, version: StrategyVersion) -> ArtifactId:
-        digest = canonical_hash(
-            {"cycle_id": str(cycle_id), "strategy_version_id": str(version.version_id)}
-        )
+        digest = canonical_hash({"cycle_id": str(cycle_id), "strategy_version_id": str(version.version_id)})
         return ArtifactId(f"strategy-run:{digest[7:]}")
 
     @classmethod
     def create(cls, **values: Any) -> StrategyRun:
         normalized = dict(values)
-        normalized["gate_attributions"] = tuple(
-            sorted(values["gate_attributions"], key=lambda item: item.symbol)
-        )
-        normalized["proposals"] = tuple(
-            sorted(values["proposals"], key=lambda item: str(item.proposal_id))
-        )
+        normalized["gate_attributions"] = tuple(sorted(values["gate_attributions"], key=lambda item: item.symbol))
+        normalized["proposals"] = tuple(sorted(values["proposals"], key=lambda item: str(item.proposal_id)))
         normalized["reason_codes"] = tuple(sorted(set(values["reason_codes"])))
         normalized.setdefault("schema_version", "strategy-run/v1")
         digest = canonical_hash(_run_payload(**normalized))
@@ -524,9 +577,7 @@ class MultiStrategyCycle:
     def __post_init__(self) -> None:
         require_sha256("cycle_hash", self.cycle_hash)
         canonical_datetime(self.created_at)
-        version_ids = tuple(
-            str(item.strategy_version_reference.artifact_id) for item in self.runs
-        )
+        version_ids = tuple(str(item.strategy_version_reference.artifact_id) for item in self.runs)
         if version_ids != tuple(sorted(set(version_ids))):
             raise ValueError("Multi-Strategy Cycle versions must be unique and sorted")
         if any(item.cycle_id != self.cycle_id for item in self.runs):
@@ -536,9 +587,7 @@ class MultiStrategyCycle:
 
     @staticmethod
     def identity(runtime_input: StrategyRuntimeInput) -> ArtifactId:
-        digest = canonical_hash(
-            {"schema_version": "multi-strategy-cycle-seed/v1", **runtime_input.to_canonical_dict()}
-        )
+        digest = canonical_hash({"schema_version": "multi-strategy-cycle-seed/v1", **runtime_input.to_canonical_dict()})
         return ArtifactId(f"multi-strategy-cycle:{digest[7:]}")
 
     @classmethod
@@ -550,18 +599,24 @@ class MultiStrategyCycle:
         runs: tuple[StrategyRun, ...],
         created_at: datetime,
     ) -> MultiStrategyCycle:
-        ordered = tuple(
-            sorted(runs, key=lambda item: str(item.strategy_version_reference.artifact_id))
+        ordered = tuple(sorted(runs, key=lambda item: str(item.strategy_version_reference.artifact_id)))
+        digest = canonical_hash(
+            _cycle_payload(
+                cycle_id=cycle_id,
+                runtime_input=runtime_input,
+                runs=ordered,
+                created_at=created_at,
+                schema_version="multi-strategy-cycle/v1",
+            )
         )
-        values = {
-            "cycle_id": cycle_id,
-            "runtime_input": runtime_input,
-            "runs": ordered,
-            "created_at": created_at,
-            "schema_version": "multi-strategy-cycle/v1",
-        }
-        digest = canonical_hash(_cycle_payload(**values))
-        return cls(cycle_hash=digest, **values)
+        return cls(
+            cycle_id=cycle_id,
+            cycle_hash=digest,
+            runtime_input=runtime_input,
+            runs=ordered,
+            created_at=created_at,
+            schema_version="multi-strategy-cycle/v1",
+        )
 
     def identity_payload(self) -> dict[str, Any]:
         return _cycle_payload(
@@ -577,19 +632,31 @@ class MultiStrategyCycle:
 
 
 def strategy_reference(version: StrategyVersion) -> RuntimeArtifactReference:
-    return RuntimeArtifactReference(
-        "STRATEGY_VERSION", version.version_id, version.version_hash
-    )
+    return RuntimeArtifactReference("STRATEGY_VERSION", version.version_id, version.version_hash)
 
 
 def _contract_fields() -> tuple[str, ...]:
     return (
-        "strategy_id", "family", "semantic_version", "objective",
-        "universe_reference", "target_references", "decision_times",
-        "horizon_sessions", "candidate_policy_version", "action_policy_version",
-        "portfolio_weighting", "top_k", "strategy_budget",
-        "cost_model_reference", "evaluation_protocol_reference", "code_reference",
-        "configuration_reference", "parameters", "limitations", "schema_version",
+        "strategy_id",
+        "family",
+        "semantic_version",
+        "objective",
+        "universe_reference",
+        "target_references",
+        "decision_times",
+        "horizon_sessions",
+        "candidate_policy_version",
+        "action_policy_version",
+        "portfolio_weighting",
+        "top_k",
+        "strategy_budget",
+        "cost_model_reference",
+        "evaluation_protocol_reference",
+        "code_reference",
+        "configuration_reference",
+        "parameters",
+        "limitations",
+        "schema_version",
     )
 
 
@@ -746,6 +813,7 @@ __all__ = [
     "StrategyFamily",
     "StrategyPositionState",
     "StrategyProposal",
+    "StrategyRegistry",
     "StrategyRun",
     "StrategyRunOrigin",
     "StrategyRunStatus",

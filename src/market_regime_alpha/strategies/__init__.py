@@ -10,12 +10,14 @@ from market_regime_alpha.strategies.contracts import (
     StrategyFamily,
     StrategyPositionState,
     StrategyProposal,
+    StrategyRegistry,
     StrategyRun,
     StrategyRunOrigin,
     StrategyRunStatus,
     StrategyRuntimeInput,
     StrategyVersion,
 )
+from market_regime_alpha.strategies.runtime import MultiStrategyRuntime
 
 __all__ = [
     "CanonicalStrategyAction",
@@ -27,9 +29,11 @@ __all__ = [
     "StrategyFamily",
     "StrategyPositionState",
     "StrategyProposal",
+    "StrategyRegistry",
     "StrategyRun",
     "StrategyRunOrigin",
     "StrategyRunStatus",
     "StrategyRuntimeInput",
     "StrategyVersion",
+    "MultiStrategyRuntime",
 ]
