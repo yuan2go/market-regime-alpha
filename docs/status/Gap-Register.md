@@ -1,47 +1,100 @@
 # Gap Register
 
-> **Status:** CURRENT_STATUS
-> **Authority:** Current unresolved engineering and evidence gaps
-> **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-14
-> **Code Evidence:** `src/market_regime_alpha`, `src/market_regime_alpha/persistence/postgres/schema.py`, `tests`
+> **Status:** CURRENT_STATUS  
+> **Authority:** Current unresolved gap inventory  
+> **Baseline:** `main@ab35a32ab857819153b665d5bf72301f7db46ede`  
+> **Last Updated:** 2026-08-19
 
-## P0 Authority and architecture correctness
+Gaps are classified so missing future/external evidence does not block engineering and research that can be completed now.
 
-| Gap | Current fact | Exit condition |
-|---|---|---|
-| Qualified Provider evidence | Provider×Contract×Fact writer exists; ten declared BaoStock/Tencent scopes resolve `REJECTED` because source qualification/evidence is absent | independently validated archive/version/revision/availability evidence satisfies the frozen V2 floor for each required Fact Kind |
-| Formal PIT evidence | PIT owner/as-of/validation mechanics exist, but the working Phase C schema has zero qualified source/fact/evidence rows | qualified Provider decisions and complete historical facts produce satisfied Formal PIT evidence without inventing `available_at` |
-| Qualified Historical Sample / Locked OOS | owner writers, owner-computed Forecast receipts, frozen Hypothesis Family, one-time raw unlock and Target-observation consumption replay exist; upstream Formal PIT/protocol observations are absent | exact qualified sample bindings and the first untouched raw OOS unlock meet frozen family-level statistical/economic floors |
-| Calibration / Entry / Holding / Exit evidence | owner writers replay exact partitions and Strategy outcomes; upstream OOS and qualified cost/provenance evidence are absent | frozen calibration and strategy protocols pass without OOS method selection or assumption-as-fact |
-| Production evidence floor resolution | persisted owner re-reads all current floors; authentication, Formal evidence, sustained Shadow, cost/capacity and Broker owners remain missing | every floor is independently satisfied and explicitly approved; no automatic promotion |
-| Controlled execution evidence | readiness gate exists and is persistently blocked | Broker contract, paper/read-only reconciliation, preview/risk/kill switch, authenticated human approval and separately authorized tiny-capital program exist |
+---
 
-## P1 remaining engineering completion
+## A. Build or simplify now
 
-| Gap | Current fact | Exit condition |
-|---|---|---|
-| Longitudinal Strategy Path Outcome production | deterministic multi-horizon kernel and PostgreSQL owner exist; the Historical adapter runs both strategies but does not yet schedule 3/5/10/20-session outcome windows | exact historical owner windows automatically materialize version-scoped outcomes with missing/ambiguous paths retained, then replay exact hashes |
-| Scheduled strategy feedback closure | Outcome→Attribution→Challenger→Qualification is executable and fail-closed, but invoked explicitly rather than by outcome availability | idempotent scheduled closure consumes only completed exact-version outcomes and exposes the same lineage through runtime inspection |
-| Legacy Strategy/Portfolio simulation convergence | canonical Overnight Proposal gates the older T+1 Shadow Entry, while accepted Multi-Strategy proposals now use the existing manual Fill/Position and Strategy Shadow outcome owners; no second observed-execution decision path remains. Legacy simulated Shadow artifact shapes and Portfolio Shadow still serve qualification consumers | migrate remaining qualification consumers and remove only compatibility shapes whose historical replay reads have differential proof |
-| Strategy risk depth | cross-strategy Top-K equal/score, budgets, name/gross caps and conflict reduction are implemented | empirical exposure/liquidity/cost evidence justifies additional constraints; no optimizer is added merely for completeness |
-| Manual execution external reconciliation | Strategy Proposal/cash/exposure reservations are transactionally reconstructed and corrections revise effective facts, but there is no Broker/order-status feed and UNKNOWN/reconciliation-required states still require an operator | a separately authorized Broker/read-only reconciliation owner proves external order/fill status; do not infer it from local intent state |
-| Exact-window sustained operation | mechanics pass locally; no sustained real 14:30-14:55 series | consecutive real runs replay with no duplicate Provider calls or fence violations |
-| Free-data operator deployment evidence | run/settle/scope/Historical/strategy/portfolio/performance/model/formal-assessment/report/recovery/replay mechanics exist locally | repeated real PostgreSQL day and multi-session archive cycles recover provider, partial-journal and missed-settlement scenarios under the operator runbook |
-| Longitudinal historical evidence scale | Phase E3 runs 126 sessions over 29 exact CSI 300 cohorts and consumes Industry/share/corporate-action owners with bounded Decision/Evidence execution; `510300.SH` has no Provider observations, corpus publication peaks at 5.03 GiB, only 50.32% of Panel rows have Decision-time market cap, and costs/fills remain assumptions | acquire a real traceable intraday ETF series without substitution, stream acquisition/publication below the current full-graph peak, extend unchanged experiments to 1--3 years, and resolve execution inputs empirically before an Alpha/economics claim |
-| Durable prospective sample | qualification owner excludes pre-policy, Replay and Fixture sessions and currently proves zero real sessions | the frozen policy accumulates enough post-lock trusted-clock/live-origin sessions with exact replay and acceptable incident/drift/Provider failure rates |
-| State/Pool/Signal model validation preparation | mechanics and policies exist | frozen protocols and qualified inputs exist without parameter tuning in implementation code |
-| External authentication binding | Principal/RBAC/role-separated Approval/Audit owners exist; CLI principal identifiers are not authenticated subjects | a deployed authentication provider binds verified subjects to durable Principals without adding Production permission |
-| Backup/restore and observability deployment evidence | local isolated restore verification, preflight, metrics and recovery-audit exist | repeated restore and alert drills meet declared RPO/RTO on the deployed environment |
-| Legacy retirement evidence | Canonical imports are clean, but legacy Readers/UI remain | consumer inventory proves which modules can be deleted without breaking replay/migration |
+These work items do not require waiting for future market sessions or a new external provider.
 
-## External/evidence blockers
+| Gap | Current problem | Exit condition | Priority |
+|---|---|---|---|
+| Golden Alpha Proof loop | Many components exist, but the next development cycle is not yet governed by one narrow end-to-end proof question | One frozen Strategy Version/decision protocol runs Data→Universe→Feature→Ranking→Strategy→Shadow Portfolio→Outcome→Attribution with exact lineage and replay | P0 |
+| Transparent quantitative baseline | Existing feature/factor/candidate machinery lacks one canonical simple benchmark for the next Alpha campaign | Frozen baseline reports RankIC, quantiles, Top-K, MFE/MAE, gross/net, turnover and missingness | P0 |
+| Candidate coverage / gate diagnosis | Longitudinal evidence showed downstream starvation and all-rejected populations under missing/failing context | Universe→eligibility→ranking→gate counts, reasons, distributions and threshold sensitivity make starvation diagnosable | P0 |
+| Factor/context incremental value | Regime/Theme/Capital/Dynamic Pool exist, but current evidence is mixed/negative/not-estimable | Versioned ablation/de-dup/sensitivity explicitly accepts or rejects incremental value versus baseline | P0 |
+| Candidate / Signal / Forecast responsibility test | Separate artifacts exist, but empirical distinctness is not established | Each layer proves distinct information/policy/consumer value or is simplified/merged | P0/P1 |
+| Forecast estimability diagnostics | Forecast correctly fails closed, but `NOT_ESTIMABLE` must direct research rather than trigger threshold relaxation | Diagnostics identify sample/coverage/conditioning/estimator/floor causes for every blocked Forecast cohort | P0 |
+| Strategy economic translation | Platform can simulate/record strategy actions, but prediction value is not yet proven as executable net value | Frozen Entry/Holding/Exit/Portfolio protocol reconciles gross→cost→net under applicable A-share constraints | P1 |
+| Cost / fillability / capacity research plumbing | Existing values remain partly engineering assumptions | Cost provenance and sensitivity are explicit; empirical sources can replace assumptions without changing strategy identity silently | P1 |
+| Attribution-driven diagnosis | Performance/attribution exists, but next-work selection is not yet centered on layered diagnosis | Data/Universe/Context/Ranking/Signal/Forecast/Entry/Portfolio/Holding/Exit/Cost failure categories are queryable and actionable | P1 |
+| Architecture compression | Legacy/compatibility surfaces remain because some replay/qualification consumers still exist | Consumer inventory + differential replay permits safe retirement/merge of unused paths; no parallel writer/runtime is introduced | P1 |
+| Documentation authority | Former Constitution and static site created duplicate/outdated architecture surfaces | One Canonical Overall Design plus subordinate current/supporting docs; obsolete active docs removed | P0 |
+| Business observability | Infrastructure metrics are mature, but research diagnostics must dominate the next phase | Operator can explain no-run/no-candidate/not-estimable/net-negative outcomes from one traceable chain | P1 |
 
-- qualified formal Provider and complete PIT fact history;
-- operational PIT Theme/ETF membership and security-status coverage;
-- formal locked OOS evidence and calibrated probabilities;
-- sustained Strategy Shadow evidence;
-- authenticated operator binding and broker readiness;
-- any separately authorized live broker architecture.
+---
 
-These are blockers, not implicit future permissions.
+## B. Engineering can be ready now, but proof requires future evidence
+
+| Gap | Current fact | Evidence required | Priority |
+|---|---|---|---|
+| Sustained prospective Shadow | Freeze/settle/attestation mechanics exist | Consecutive live-origin trusted-clock decisions and settled outcomes under frozen Model/Strategy versions | P0 |
+| Strategy stability | Historical behavior exists; prospective stability does not | Version-scoped future cohorts showing stable ranking/economic behavior and declared failure conditions | P0/P1 |
+| Provider/runtime reliability under market windows | Recovery mechanics have historical/local proof | Repeated real decision-window runs with availability, duplicate-call, fence, retry and incident metrics | P1 |
+| Model / Strategy drift | Diagnostic infrastructure can be built | Sufficient prospective sample to define and observe drift rather than infer it from fixtures | P1 |
+| Operational backup/restore / alert evidence | Mechanics exist locally | Repeated deployed drills meeting declared RPO/RTO and alert expectations | P2 |
+
+Prospective evidence cannot be backfilled after the fact. The system should begin the evidence clock early, even while the model is only a baseline, provided the version/evidence label is truthful.
+
+---
+
+## C. External capability or qualified evidence required
+
+| Gap | Current fact | External exit condition | Priority |
+|---|---|---|---|
+| Qualified Provider history | Public-provider research data exists but does not satisfy the formal source floor | Independently supportable archive/version/revision/availability evidence for required Fact Kinds | P2 |
+| Formal PIT evidence | Mechanics exist; qualified source/fact history does not | Complete decision-time-valid facts and qualified source decisions support the target/universe claim | P2 |
+| Qualified Historical Sample / untouched Locked OOS | Owners and protocols exist; upstream evidence absent | Frozen qualified sample lineage plus first valid untouched OOS consumption under predeclared family | P2 |
+| Calibration / formal strategy qualification | Owners exist; qualified OOS/economic inputs absent | Disjoint calibrated evidence and strategy economics meet frozen policies | P2 |
+| External authenticated identity | RBAC/principal engineering exists; caller identity is not externally authenticated | Trusted external subject binding to durable principals | P3 |
+| Broker read/reconciliation/trading | No broker authority exists by design | Separately approved broker contract, authentication, read/reconcile proof, risk/approval/kill-switch program | P3 / Future |
+
+---
+
+## Evidence-driven routing rules
+
+Use the observed failure to select the next work:
+
+```text
+Candidate count/coverage is too small
+→ Universe / gate / threshold / ranking diagnostics
+
+Forecast = NOT_ESTIMABLE
+→ sample / coverage / conditioning / estimator diagnostics
+
+Gross return is negative
+→ Factor / Candidate / Target / Horizon research
+
+Gross positive, Net negative
+→ Cost / turnover / liquidity / Entry / Portfolio research
+
+Historical positive, Prospective weak
+→ leakage / stability / drift / regime / availability diagnosis
+
+Architecture has no real consumer
+→ SIMPLIFY / MERGE / RETIRE / DELETE
+```
+
+Do not tune a gate, target, horizon or cost assumption merely to turn negative evidence positive. A changed research question creates a new frozen experiment/strategy identity.
+
+---
+
+## Explicitly not current blockers
+
+The following are not prerequisites for the Alpha Proof campaign:
+
+- microservices;
+- Kafka/event-bus redesign;
+- Kubernetes-first deployment;
+- generic autonomous agents;
+- complex Portfolio optimization;
+- automatic broker execution;
+- another Authority/Receipt/Qualification framework.
+
+They remain deferred until a demonstrated requirement exists.
