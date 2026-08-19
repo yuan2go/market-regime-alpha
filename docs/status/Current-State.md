@@ -3,7 +3,8 @@
 > **Status:** CURRENT_STATUS  
 > **Authority:** Current implementation/evidence summary  
 > **Baseline:** `main@ab35a32ab857819153b665d5bf72301f7db46ede`  
-> **Last Updated:** 2026-08-19
+> **Last Updated:** 2026-08-19  
+> **Code Evidence:** `src/market_regime_alpha`, `src/market_regime_alpha/persistence/postgres/migrations/*.sql`, `tests`
 
 This document records what the current `main` implements and what its evidence actually supports. It does not inherit stronger claims from the target architecture.
 
@@ -19,11 +20,11 @@ This document records what the current `main` implements and what its evidence a
 - **Current HEAD CI:** no GitHub workflow run/status was available for this exact merge commit at documentation-convergence time.
 - **Current HEAD validation caveat:** merged PR #65 explicitly reported tests `NOT_RUN`; therefore earlier passing suites are historical evidence and do not by themselves make the current merge HEAD `TEST_EXECUTED` in full.
 
-## 2. Engineering capability that exists today
+## 2. Implemented engineering boundary
 
-### Runtime and authority
+### Runtime and Authority
 
-The repository has one canonical all-day runtime with PostgreSQL schedule/journal ownership, bounded child execution, leases/fences/recovery semantics and read-only operational inspection. Historical Research is a bounded multi-session runner that reuses the same business/strategy semantics and PostgreSQL owners rather than a second daily architecture.
+The repository has one canonical all-day runtime with PostgreSQL schedule/journal ownership, bounded child execution, leases/fences/recovery semantics and operational inspection. Historical Research is a bounded multi-session runner that reuses the same business/strategy semantics and PostgreSQL owners rather than a second daily architecture.
 
 ### Data, PIT and research datasets
 
@@ -52,7 +53,7 @@ The current Strategy Registry/runtime has stable `OVERNIGHT` and `SWING_STATE` S
 
 Candidate is upstream of strategy action; the canonical multi-strategy path no longer treats Candidate itself as Entry.
 
-### Manual execution and position
+### Manual execution and Position
 
 Accepted cross-strategy Portfolio lines may enter the existing manual execution ledger through exact Strategy/Portfolio/account lineage. The current engineering path supports aggregate Proposal authority, account cash/available-sell checks, A-share lot/T+1 constraints, owner-resolved decision-time price/account facts, partial/corrected observed Fills, physical-position reprojection, strategy sleeves and realized Strategy Outcome supersession.
 
@@ -62,7 +63,7 @@ This is manual-execution correctness. It grants no broker authority and proves n
 
 The repository includes factual Shadow outcome settlement, Panel/Evaluation datasets, factor extraction, ablation/calibration/formal-evaluation mechanics, Strategy Shadow, Portfolio Shadow, multi-period performance/attribution, qualification owners, Model Governance, RBAC/approval/audit engineering and blocked Production Admission/Controlled Execution gates.
 
-Most of the formal qualification path is **engineering-ready but evidence-blocked**.
+Most formal qualification capability is **engineering-ready but evidence-blocked**.
 
 ## 3. Research evidence that exists today
 
@@ -72,9 +73,9 @@ Phase E / E2 / E3 established replayable real historical research runs, includin
 
 The durable findings do **not** establish general Alpha:
 
-- earlier pilot/full-chain T+1 economics remained net negative after the declared engineering-assumption cost model;
+- the pilot/full-chain T+1 economics remained net negative after the declared engineering-assumption cost model;
 - Phase E2 reported all six executable T+1 checkpoints gross- and net-negative;
-- the longitudinal Phase E3 campaign retained negative/inconclusive factor evidence and a severe downstream sample-starvation problem when the frozen ETF context had no observations;
+- the longitudinal Phase E3 campaign retained negative/inconclusive factor evidence and severe downstream sample starvation when the frozen ETF context had no observations;
 - Volume, Theme and Dynamic Pool evidence was negative in that campaign; Market Regime was inconclusive;
 - Candidate/Signal/Forecast were not demonstrated as economically useful by that evidence, and downstream Forecasts remained `NOT_ESTIMABLE` where sample/conditioning floors were not satisfied;
 - an exploratory ridge challenger produced limited positive validation diagnostics in the pilot, but it is not Formal OOS, calibrated, economically qualified or Production-admitted.
@@ -107,9 +108,9 @@ FORMAL_OOS=false
 CALIBRATED=false
 ```
 
-## 5. Current architectural assessment
+## 5. Architectural assessment
 
-### Healthy and should be preserved
+### Healthy and preserved
 
 - PostgreSQL-only canonical business authority.
 - Modular-monolith deployment model.
@@ -127,19 +128,17 @@ CALIBRATED=false
 - new qualification states;
 - new orchestration/control planes.
 
-The infrastructure/governance surface is already materially more mature than the empirical Alpha/Strategy evidence.
+The infrastructure/governance surface is materially more mature than the empirical Alpha/Strategy evidence.
 
 ### Still needs active simplification
 
 - legacy Strategy/Portfolio simulation shapes that still have qualification/replay consumers;
-- compatibility readers and old runtime/application seams that must be retired only after consumer inventory and differential replay proof;
+- compatibility readers and old runtime/application seams, retired only after consumer inventory and differential replay proof;
 - overlapping Candidate/Signal/Forecast concepts if empirical work shows no distinct information/policy/consumer value.
 
 ## 6. Current primary bottleneck
 
-The dominant bottleneck is no longer basic software architecture.
-
-It is:
+The dominant bottleneck is no longer basic software architecture. It is:
 
 ```text
 Data/PIT evidence quality
@@ -155,9 +154,7 @@ Engineering gaps remain, but they should be selected because they unblock this e
 
 ## 7. Current development posture
 
-The repository now moves into an **Alpha Proof Campaign**.
-
-The next organizing loop is:
+The repository now moves into an **Alpha Proof Campaign**:
 
 ```text
 Golden Strategy Question

@@ -1,6 +1,6 @@
 # Historical Documentation Boundary
 
-> **Status:** HISTORICAL_BOUNDARY  
+> **Status:** HISTORICAL  
 > **Authority:** Archive policy only  
 > **Owner:** Market Regime Alpha maintainers  
 > **Last Updated:** 2026-08-19
@@ -9,7 +9,7 @@ Historical audits, completed delivery reports, temporary work packages, supersed
 
 The former `docs/constitution/00` through `09` set was superseded during the 2026-08-19 Canonical Design convergence. Its useful principles were consolidated into `docs/architecture/Canonical-Overall-Design.md`; the original files remain recoverable from Git history for provenance or migration archaeology.
 
-The obsolete static `docs/index.html` “A 股买卖点识别模型” page and its documentation-only data payload were likewise removed from the current design tree because they described an older product identity and had no canonical runtime or architecture role.
+The obsolete static `docs/index.html` “A 股买卖点识别模型” page and its documentation-only data payload were likewise removed because they described an older product identity and had no canonical runtime or architecture role.
 
 Historical material:
 

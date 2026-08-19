@@ -1,31 +1,23 @@
 # Documentation Authority
 
-> **Status:** CANONICAL_DOCUMENTATION_INDEX  
+> **Status:** CURRENT_STATUS  
 > **Authority:** Documentation navigation and precedence only  
 > **Owner:** Market Regime Alpha maintainers  
-> **Last Updated:** 2026-08-19
+> **Last Updated:** 2026-08-19  
+> **Code Evidence:** `src/market_regime_alpha`, `src/market_regime_alpha/persistence/postgres/migrations/*.sql`, `tests`
 
 Documentation never creates implementation truth, research evidence, qualification, or trading authority.
 
-## Authority order
+## Normative authority order
 
-### Implementation truth
+1. latest explicit user decision not superseded;
+2. [Canonical Overall Design](architecture/Canonical-Overall-Design.md);
+3. supporting current architecture documents listed below;
+4. current status, Gap Register and Roadmap;
+5. accepted ADRs and evidence/reference reports as subordinate provenance;
+6. Git history for historical context only.
 
-When documentation conflicts with the repository, current truth is established in this order:
-
-1. executable code and the real runtime call chain;
-2. PostgreSQL schema, migrations, canonical writers and readers;
-3. tests and checks actually executed against that code;
-4. reproducible runtime, replay and research evidence;
-5. current status documents.
-
-### Normative design
-
-The single normative target-design source is:
-
-- [Canonical Overall Design](architecture/Canonical-Overall-Design.md)
-
-Supporting architecture documents refine that design but may not contradict it:
+The **single normative target-design source** is the Canonical Overall Design. Supporting architecture documents refine it but may not contradict it:
 
 - [System Architecture](architecture/System-Architecture.md)
 - [Authority Map](architecture/Authority-Map.md)
@@ -34,7 +26,19 @@ Supporting architecture documents refine that design but may not contradict it:
 
 If a supporting document conflicts with the Canonical Overall Design, the Canonical Overall Design wins and the supporting document must be corrected.
 
-### Current state and execution order
+## Implementation fact authority order
+
+When documentation conflicts with the repository, current implementation truth is established in this order:
+
+1. executable code and the real runtime call chain;
+2. PostgreSQL schema, migrations, canonical writers and readers;
+3. tests and checks actually executed against that code;
+4. reproducible runtime, replay and research evidence;
+5. current status documents.
+
+Target design does not turn an unimplemented or unproven capability into a current fact.
+
+## Current state and execution order
 
 - [Current State](status/Current-State.md) — what the current `main` actually implements and proves.
 - [Capability Matrix](status/Capability-Matrix.md) — capability-by-capability implementation/evidence status.
@@ -42,12 +46,12 @@ If a supporting document conflicts with the Canonical Overall Design, the Canoni
 - [Roadmap](status/Roadmap.md) — dependency-ordered work packages driven by current evidence.
 - [Runtime Runbook](operations/Runtime-Runbook.md) — operator procedures for the implemented runtime.
 
-### Research claims
+## Research claims
 
 - [Negative and Inconclusive Results](research/Negative-and-Inconclusive-Results.md) is the current durable research-claim registry for negative, inconclusive and not-estimable findings.
 - Reports under `docs/references/` are evidence/reference material. They are not normative architecture.
 
-### Architecture decisions
+## Architecture decisions
 
 ADRs under `docs/architecture/decisions/` record accepted decisions and their historical rationale. They remain useful provenance, but the Canonical Overall Design is the current consolidated design authority.
 
@@ -59,7 +63,7 @@ Historical audits, completed work packages, superseded roadmaps, temporary plans
 
 ## Required evidence language
 
-Documentation must not collapse these distinct states:
+Documentation must not collapse these distinct implementation/proof states:
 
 ```text
 CODE_IMPLEMENTED
@@ -92,9 +96,11 @@ For architecture or implementation work, read in this order:
 1. [Canonical Overall Design](architecture/Canonical-Overall-Design.md)
 2. [System Architecture](architecture/System-Architecture.md)
 3. [Authority Map](architecture/Authority-Map.md)
-4. [Current State](status/Current-State.md)
-5. [Gap Register](status/Gap-Register.md)
-6. [Roadmap](status/Roadmap.md)
-7. the code, schema, tests and runtime evidence relevant to the work package
+4. [Data and Evidence Architecture](architecture/Data-and-Evidence-Architecture.md)
+5. [Research and Strategy Lifecycle](architecture/Research-Strategy-Lifecycle.md)
+6. [Current State](status/Current-State.md)
+7. [Gap Register](status/Gap-Register.md)
+8. [Roadmap](status/Roadmap.md)
+9. the code, schema, tests and runtime evidence relevant to the work package
 
 The design defines where the system should converge. The repository and evidence define what is true today.

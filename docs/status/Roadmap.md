@@ -1,13 +1,14 @@
 # Roadmap
 
-> **Status:** CURRENT_ROADMAP  
+> **Status:** ROADMAP  
 > **Authority:** Dependency-ordered forward work  
 > **Baseline:** `main@ab35a32ab857819153b665d5bf72301f7db46ede`  
-> **Last Updated:** 2026-08-19
+> **Last Updated:** 2026-08-19  
+> **Code Evidence:** `docs/status/Current-State.md`, `docs/status/Gap-Register.md`
 
 The project has left the platform-first phase. The next program is an **Alpha Proof Campaign**: one vertical research/strategy loop drives the engineering backlog, while formal/prospective evidence remains independently gated.
 
-The roadmap is not a promise that every work package will be implemented unchanged. After each package, actual evidence may reorder or eliminate later work.
+This roadmap is evidence-conditioned. After each Work Package, actual results may reorder, simplify or eliminate later work.
 
 ---
 
@@ -29,7 +30,7 @@ Decision-Time Evidence
 → Research Decision
 ```
 
-The initial Golden Strategy Question should use the existing frozen decision/execution protocol where authoritative. Conceptually it is a late-session decision with T+1 morning realization, evaluated through MFE/MAE, gross/cost/net, fillability, turnover, capacity and drawdown.
+The initial Golden Strategy Question should reuse the existing frozen decision/execution protocol where authoritative. Conceptually it is a late-session decision with T+1 morning realization, evaluated through MFE/MAE, gross/cost/net, fillability, turnover, capacity and drawdown.
 
 ---
 
@@ -44,13 +45,13 @@ The repository contains most individual capabilities, but next-stage progress is
 Make one Strategy Version the reference vertical slice from decision-time evidence through immutable outcome and attribution.
 
 **Business value**  
-Exposes the real bottleneck: data, factor information, candidate policy, forecast, strategy economics, cost or architecture.
+Exposes the real bottleneck: data, factor information, Candidate policy, Forecast, Strategy economics, cost or architecture.
 
 **Technical scope**  
-Use existing canonical owners/runtime wherever possible. Close only real gaps in dataset/feature lineage, ranking, strategy/shadow decision freeze, outcome settlement, query and attribution. Do not create a parallel runtime.
+Use existing canonical owners/runtime wherever possible. Close only real gaps in dataset/feature lineage, ranking, strategy/shadow decision freeze, outcome settlement, query and attribution. Do not create a parallel Runtime.
 
 **Dependencies**  
-Existing PostgreSQL authority, Historical Research and Strategy runtime.
+Existing PostgreSQL Authority, Historical Research and Strategy Runtime.
 
 **Real market window required?**  
 No for engineering/historical proof. Yes later for prospective evidence.
@@ -61,10 +62,10 @@ No for engineering/historical proof. Yes later for prospective evidence.
 - one exact PIT-labelled historical research slice;
 - one replayable owner chain from input through outcome/attribution;
 - explicit blocked/missing states rather than fabricated values;
-- no second scheduler, business authority or fixture-only production path.
+- no second scheduler, business Authority or fixture-only production path.
 
 **System capability gained**  
-A single Golden Research Loop that can expose the next highest-information problem.
+A Golden Research Loop that exposes the next highest-information problem.
 
 ---
 
@@ -89,7 +90,7 @@ No.
 - RankIC/IC stability where applicable;
 - quantile monotonicity and Top-K diagnostics;
 - MFE/MAE and gross/cost/net connection to the Golden target;
-- results persisted as positive/negative/inconclusive/not-estimable without threshold tuning.
+- positive/negative/inconclusive/not-estimable results preserved without threshold tuning.
 
 **System capability gained**  
 A benchmark that complex Context/Forecast/ML must actually beat.
@@ -102,7 +103,7 @@ A benchmark that complex Context/Forecast/ML must actually beat.
 Current historical evidence contains negative, inconclusive and not-estimable results, but the architecture still contains many context/factor layers whose independent value is unclear.
 
 **Goal**  
-Systematically identify which features/context layers carry incremental information for the frozen target and which add only complexity.
+Identify which features/context layers carry incremental information for the frozen Target and which add only complexity.
 
 **Technical scope**
 
@@ -126,7 +127,7 @@ No.
 **Acceptance**
 
 - versioned factor catalog/coverage;
-- de-duplication/correlation or equivalent redundancy analysis;
+- de-duplication/redundancy analysis;
 - predeclared ablation and sensitivity results;
 - explicit reject/inconclusive decisions;
 - no `NOT_ESTIMABLE` converted to zero;
@@ -149,7 +150,7 @@ Begin immutable, version-scoped future decision cohorts as soon as the Golden ba
 Freeze decision-time evidence, dataset/feature identity, model/strategy version, code/config identity, Candidate/Signal/Forecast/Portfolio and later bind settled outcomes. Preserve historical predictions unchanged.
 
 **Real market window required?**  
-Yes for proof. Engineering, rehearsal and inspection can be completed without waiting.
+Yes for proof. Engineering, rehearsal and inspection can proceed without waiting.
 
 **Acceptance**
 
@@ -208,21 +209,19 @@ No for historical simulation; yes for prospective economic proof.
 - Strategy Version identity changes when result-affecting policy changes.
 
 **System capability gained**  
-A strategy research platform rather than a prediction-only platform.
+A Strategy Research Platform rather than a prediction-only platform.
 
 ---
 
 ## WP-ATTRIBUTION-COMPRESSION-01 — Attribution and Architecture Compression
 
 **Current problem**  
-Strong engineering foundations coexist with legacy/compatibility shapes and decision layers whose current business value may overlap.
+Strong engineering foundations coexist with legacy/compatibility shapes and decision layers whose business value may overlap.
 
 **Goal**  
 Use Golden Loop evidence to explain failure sources and safely reduce unnecessary architecture.
 
-**Technical scope**
-
-Attribution categories:
+**Attribution spine**
 
 ```text
 Data / PIT
@@ -238,17 +237,17 @@ Cost / Slippage
 Execution / Fill
 ```
 
-Architecture inventory:
+**Architecture inventory**
 
 ```text
-parallel runtime/writer
+parallel Runtime/writer
 unused interface/protocol
-repository wrapper
-receipt/evidence wrapper
-legacy candidate-to-entry path
+Repository wrapper
+Receipt/Evidence wrapper
+legacy Candidate-to-Entry path
 duplicate Shadow/Portfolio shape
 obsolete compatibility reader
-stale docs
+stale documentation
 ```
 
 **Real market window required?**  
@@ -256,9 +255,9 @@ No for most work.
 
 **Acceptance**
 
-- failure diagnosis query/report is usable by research/operator workflows;
+- failure diagnosis is usable by research/operator workflows;
 - each retained abstraction names its consumer/failure mode;
-- safe deletions have consumer inventory and replay/differential proof where historical compatibility matters;
+- safe deletion has consumer inventory and replay/differential proof where compatibility matters;
 - no Big Bang rewrite.
 
 **System capability gained**  
@@ -274,7 +273,7 @@ More research value with a smaller, clearer architecture surface.
 Formal engineering owners exist, but qualified source/PIT/OOS/calibration/economic evidence does not.
 
 **Goal**  
-Move only surviving exploratory hypotheses into formal qualification when the required independent evidence is available.
+Move only surviving exploratory hypotheses into formal qualification when required independent evidence is available.
 
 **Technical scope**  
 Qualified Provider facts, Formal PIT, frozen Dataset/Protocol, purge/embargo, untouched Locked OOS, multiplicity control, calibration where probability is claimed, economic/cost/capacity evidence and qualification decisions.
@@ -286,7 +285,7 @@ Yes — qualified historical/PIT evidence and untouched observations.
 
 - no reuse of exploratory/OOS observations outside frozen policy;
 - every result-affecting owner resolved by exact identity/hash;
-- formal statistical and economic floors independently evaluated;
+- statistical and economic floors independently evaluated;
 - failure remains rejected/blocked rather than relaxed.
 
 **System capability gained**  
@@ -302,32 +301,30 @@ Credible formal research claims rather than engineering-complete formal machiner
 Blueprint A has credible Alpha/Strategy/Prospective evidence and Manual production has a separately approved operational case for automation.
 
 **Scope**  
-Broker adapter, authenticated order authority, preview, reconciliation, duplicate-order prevention, cancellation semantics, capital/risk limits, approval and kill switch.
+Broker adapter, authenticated order Authority, preview, reconciliation, duplicate-order prevention, cancellation semantics, capital/risk limits, approval and kill switch.
 
 **Status**  
 `DEFERRED`. It is not required to complete the current Alpha Research OS.
 
 ---
 
-# Evidence gates between work packages
-
-The roadmap is conditional, not a conveyor belt.
+# Evidence gates between Work Packages
 
 ```text
 Baseline has no ranking information
-→ do not jump to complex ML; revisit target/data/features
+→ do not jump to complex ML; revisit Target/Data/Features
 
 Candidate sample is starved
-→ fix/diagnose gate and coverage before Forecast work
+→ diagnose gate/coverage before Forecast work
 
 Forecast remains NOT_ESTIMABLE
 → diagnose sample/estimator/conditioning; do not lower the floor just to obtain output
 
-Gross economics are negative
-→ return to factor/candidate/target/horizon
+Gross economics negative
+→ return to Factor/Candidate/Target/Horizon
 
 Gross positive but Net negative
-→ prioritize cost/turnover/liquidity/entry/portfolio
+→ prioritize Cost/Turnover/Liquidity/Entry/Portfolio
 
 Historical survives, prospective fails
 → investigate leakage/stability/drift/availability before qualification
@@ -337,15 +334,13 @@ Historical survives, prospective fails
 
 # Top 5 highest-value actions
 
-If only five things can be funded next:
-
-1. **WP-GOLDEN-LOOP-01** — make one complete decision-to-attribution path the project’s proof spine.
-2. **WP-BASELINE-ALPHA-01** — establish a transparent benchmark before additional model sophistication.
+1. **WP-GOLDEN-LOOP-01** — make one complete decision-to-attribution path the proof spine.
+2. **WP-BASELINE-ALPHA-01** — establish a transparent benchmark before more model sophistication.
 3. **WP-FACTOR-DISCOVERY-01** — use ablation/de-duplication to learn which existing Context/Factor layers actually add information.
 4. **WP-PROSPECTIVE-01** — start the future evidence clock early because lost prospective time cannot be reconstructed.
-5. **WP-STRATEGY-PROOF-01** — convert any surviving predictive information into executable net economics.
+5. **WP-STRATEGY-PROOF-01** — convert surviving predictive information into executable net economics.
 
-`WP-ATTRIBUTION-COMPRESSION-01` runs alongside these where the Golden Loop reveals redundant architecture.
+`WP-ATTRIBUTION-COMPRESSION-01` runs alongside these when the Golden Loop reveals redundant architecture.
 
 ---
 
@@ -355,9 +350,9 @@ If only five things can be funded next:
 - Do not introduce a new business Authority when an existing owner can preserve the invariant.
 - Do not treat engineering completion as Alpha proof.
 - Do not use Formal/OOS/Prospective labels without owner evidence.
-- Do not tune negative results until they become positive without creating a new frozen experiment.
+- Do not tune negative results until they become positive without creating a new frozen Experiment.
 - Do not build all Future Scope in one release.
 - Do not preserve an abstraction solely because it already exists.
 - Prefer one complete Work Package over many disconnected TODOs.
 
-After each Work Package, update `Current-State.md`, `Capability-Matrix.md`, `Gap-Register.md` and this roadmap from the new executable/evidence baseline.
+After each Work Package, update `Current-State.md`, `Capability-Matrix.md`, `Gap-Register.md` and this Roadmap from the new executable/evidence baseline.
