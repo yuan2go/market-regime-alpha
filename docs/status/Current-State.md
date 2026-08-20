@@ -23,6 +23,7 @@ target architecture.
 - **Golden Loop V2 execution:** one immutable 126-session historical campaign at evidence revision `bcee87a` completed in an isolated PostgreSQL schema migrated from 084 through 090; exact replay and aggregate Evidence are recorded below.
 - **WP-ALPHA-RESEARCH-01 execution:** one final immutable 126-session methodology-only owner replay at revision `0d1a5a8`; run `historical-research-run-0e150a21c7869adc84a57af5`, exact report/replay and five PostgreSQL Evidence artifacts are complete.
 - **Current main validation:** the full local `pytest` suite passes at `5a44174`; six existing pandas fragmentation warnings come only from legacy Top-1000 backtesting tests.
+- **WP-01 branch validation:** docs/platform/full pytest, ruff, mypy and build pass on a fresh PostgreSQL test database; a first full run against a heavily reused test database hit one `pg_catalog` autovacuum DDL lock timeout, while the exact node and the clean-database full suite both pass. This is retained as an environment failure, not hidden.
 - **Current CI:** GitHub Actions is disabled for the repository and `5a44174` has no check runs; this is `BLOCKED`, not CI proof.
 - **Database binding:** Runtime requires an explicit PostgreSQL URL and principal; a database name or stale schema does not establish current Authority. The replayable Golden V2 Evidence schema is at migration 090.
 

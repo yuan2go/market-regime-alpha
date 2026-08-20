@@ -238,6 +238,22 @@ PORTFOLIO_PERFORMANCE_ESTIMABLE     = false
 PRODUCTION_QUALIFIED                = false
 ```
 
+## Qualification record
+
+`uv sync --frozen --extra dev --extra postgres`, documentation inventory and
+link checks, documentation tests, platform tests, full pytest, full ruff, full
+mypy, package build and `git diff --check` pass. The final full suite used a
+fresh PostgreSQL database and retained the six pre-existing pandas
+fragmentation warnings from legacy Top-1000 tests.
+
+The first final-suite attempt on a heavily reused test database had one
+`LockNotAvailable` while an unchanged repository test reapplied migrations.
+Lock inspection showed only catalog autovacuum workers; the exact failing node
+passed immediately in isolation and the entire platform/full suite then passed
+on the fresh database without changing code, tests, timeouts or PostgreSQL
+settings. The first attempt remains recorded as an environment failure. GitHub
+Actions is disabled and supplies no CI qualification.
+
 The permitted next research step is a separately frozen
 `WP-ALPHA-RESEARCH-02 / External Validation` experiment for the exact surviving
 Price/Return challenger and its three intraday contributors. Time, Universe or
