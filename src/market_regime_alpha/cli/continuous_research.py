@@ -284,6 +284,9 @@ from market_regime_alpha.platform.runtime_governance import RuntimeAuthorityMode
 from market_regime_alpha.strategies.defaults import (
     canonical_exploratory_strategy_registry,
 )
+from market_regime_alpha.strategies.feedback_service import (
+    close_strategy_feedback_loop,
+)
 from market_regime_alpha.strategies.portfolio import (
     CrossStrategyPortfolioPolicy,
 )
@@ -524,6 +527,27 @@ def build_parser() -> argparse.ArgumentParser:
     historical_replay = subparsers.add_parser("historical-replay")
     historical_replay.add_argument("--run-id", required=True)
     historical_replay.add_argument("--artifact-root", type=Path)
+    strategy_feedback_close = subparsers.add_parser(
+        "strategy-feedback-close",
+        help="Close one Strategy feedback comparison and persist attribution/challenger artifacts.",
+    )
+    strategy_feedback_close.add_argument(
+        "--incumbent-version-id",
+        required=True,
+    )
+    strategy_feedback_close.add_argument(
+        "--incumbent-version-hash",
+        required=True,
+    )
+    strategy_feedback_close.add_argument(
+        "--challenger-version-id",
+        required=True,
+    )
+    strategy_feedback_close.add_argument(
+        "--challenger-version-hash",
+        required=True,
+    )
+    strategy_feedback_close.add_argument("--created-at", required=True)
     historical_acquire = subparsers.add_parser(
         "historical-corpus-acquire",
         help="Acquire, normalize, atomically publish and register frozen BaoStock data.",
@@ -1118,6 +1142,35 @@ def _dispatch(
         return {
             "operation": "MODEL_EXECUTE",
             **research_inference_receipt.to_canonical_dict(),
+        }
+    if args.operation == "strategy-feedback-close":
+        return {
+            "operation": "STRATEGY_FEEDBACK_CLOSE",
+            "feedback": tuple(
+                item.to_canonical_dict()
+                for item in close_strategy_feedback_loop(
+                    repository=PostgresMultiStrategyRepository(
+                        factory,
+                        apply_migrations=False,
+                    ),
+                    incumbent_version_reference=RuntimeArtifactReference(
+                        "STRATEGY_VERSION",
+                        ArtifactId(args.incumbent_version_id),
+                        str(args.incumbent_version_hash),
+                    ),
+                    challenger_version_reference=RuntimeArtifactReference(
+                        "STRATEGY_VERSION",
+                        ArtifactId(args.challenger_version_id),
+                        str(args.challenger_version_hash),
+                    ),
+                    formal_pit=False,
+                    formal_oos=False,
+                    calibrated=False,
+                    net_economics_established=False,
+                    prospective_evidence=False,
+                    created_at=_instant(args.created_at),
+                )
+            ),
         }
     if args.operation == "strategy-day":
         if args.auto is not None:
@@ -2387,6 +2440,7 @@ def _required_permission(args: argparse.Namespace) -> SecurityPermission:
         "qualification-shadow",
         "qualification-status",
         "historical-evidence",
+        "strategy-feedback-close",
     }:
         return SecurityPermission.RECORD_RESEARCH_EVIDENCE
     if operation in {"resume", "historical-resume"}:
