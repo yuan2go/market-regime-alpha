@@ -27,6 +27,10 @@ from market_regime_alpha.core.identity import (
 from market_regime_alpha.core.status import InputAvailabilityStatus
 from market_regime_alpha.core.time import DecisionTime
 from market_regime_alpha.research.experiment_identity import ExperimentIdentity
+from market_regime_alpha.research.cross_sectional_ranking import (
+    competition_ranks,
+    rank_percentiles,
+)
 
 
 class CompositeFeatureDirection(str, Enum):
@@ -79,7 +83,7 @@ class TransparentCompositeSpec:
     """
 
     components: tuple[CompositeFeatureComponent, ...]
-    normalization_version: str = "cross-sectional-average-rank-percentile-v1"
+    normalization_version: str = "cross-sectional-tie-aware-midrank-percentile-v2"
     missing_policy: str = "STRICT_COMPLETE_CASE_REJECT"
 
     def __post_init__(self) -> None:
@@ -161,10 +165,15 @@ class CompositeCandidateRankingRun:
         all_symbols = prediction_symbols + rejection_symbols
         if len(all_symbols) != len(set(all_symbols)):
             raise ValueError("ranking run symbols must be unique across predictions and rejections")
-        expected_ranks = tuple(range(1, len(self.predictions) + 1))
-        actual_ranks = tuple(prediction.rank for prediction in self.predictions)
+        scores = {
+            item.symbol: item.model_score
+            for item in self.predictions
+            if item.model_score is not None
+        }
+        expected_ranks = competition_ranks(scores, higher_is_better=True)
+        actual_ranks = {item.symbol: item.rank for item in self.predictions}
         if actual_ranks != expected_ranks:
-            raise ValueError("prediction ranks must be contiguous and ordered")
+            raise ValueError("prediction ranks must preserve equal-score ties")
 
     @property
     def ranking_coverage(self) -> float:
@@ -251,10 +260,15 @@ def rank_candidates_by_transparent_composite(
             symbol: values[component.feature_id]
             for symbol, values in complete_values.items()
         }
-        percentiles_by_feature[component.feature_id] = _directional_rank_percentiles(
+        ranked = rank_percentiles(
             raw_values,
-            direction=component.direction,
+            higher_is_better=(
+                component.direction is CompositeFeatureDirection.HIGHER_IS_BETTER
+            ),
         )
+        percentiles_by_feature[component.feature_id] = {
+            symbol: float(value) for symbol, value in ranked.percentiles.items()
+        }
 
     normalized_weights = dict(
         (component.feature_id, normalized_weight)
@@ -269,6 +283,7 @@ def rank_candidates_by_transparent_composite(
         for symbol in complete_values
     }
 
+    ranks = competition_ranks(scores, higher_is_better=True)
     ordered_scores = sorted(scores.items(), key=lambda item: (-item[1], item[0]))
     predictions = tuple(
         CandidatePrediction(
@@ -280,9 +295,9 @@ def rank_candidates_by_transparent_composite(
             experiment_id=experiment.experiment_id,
             population_size=len(dataset.population_symbols),
             model_score=score,
-            rank=rank,
+            rank=ranks[symbol],
         )
-        for rank, (symbol, score) in enumerate(ordered_scores, start=1)
+        for symbol, score in ordered_scores
     )
     rejections.sort(key=lambda item: item.symbol)
 
@@ -301,32 +316,3 @@ def rank_candidates_by_transparent_composite(
         predictions=predictions,
         rejections=tuple(rejections),
     )
-
-
-def _directional_rank_percentiles(
-    values_by_symbol: dict[str, float],
-    *,
-    direction: CompositeFeatureDirection,
-) -> dict[str, float]:
-    """Return average-rank percentiles on [0, 1], where 1 is always best."""
-
-    if not values_by_symbol:
-        return {}
-    reverse = direction is CompositeFeatureDirection.HIGHER_IS_BETTER
-    ordered = sorted(values_by_symbol.items(), key=lambda item: item[1], reverse=reverse)
-    count = len(ordered)
-    if count == 1:
-        return {ordered[0][0]: 1.0}
-
-    result: dict[str, float] = {}
-    position = 0
-    while position < count:
-        end = position + 1
-        while end < count and ordered[end][1] == ordered[position][1]:
-            end += 1
-        average_rank = (position + 1 + end) / 2.0
-        percentile = 1.0 - (average_rank - 1.0) / (count - 1.0)
-        for index in range(position, end):
-            result[ordered[index][0]] = percentile
-        position = end
-    return result

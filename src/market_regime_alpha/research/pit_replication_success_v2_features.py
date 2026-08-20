@@ -8,8 +8,11 @@ from datetime import datetime
 import math
 from typing import Any, Iterable, Mapping
 
-from market_regime_alpha.candidates.composite_baseline import _directional_rank_percentiles
 from market_regime_alpha.features.rehearsal_baselines import r5_baseline_feature_definitions
+from market_regime_alpha.research.cross_sectional_ranking import (
+    competition_ranks,
+    rank_percentiles,
+)
 from market_regime_alpha.research.pit_replication_success_v2_protocol import (
     PITCandidateReplicationProtocolV2,
 )
@@ -117,17 +120,20 @@ def reconstruct_b1e_scores(
         percentiles: dict[str, dict[str, float]] = {}
         for component in spec.ordered_components:
             feature_id = str(component.feature_id)
-            percentiles[feature_id] = _directional_rank_percentiles(
+            ranked_percentiles = rank_percentiles(
                 {symbol: values[feature_id] for symbol, values in complete.items()},
-                direction=component.direction,
+                higher_is_better=component.direction.value == "HIGHER_IS_BETTER",
             )
+            percentiles[feature_id] = {
+                symbol: float(value)
+                for symbol, value in ranked_percentiles.percentiles.items()
+            }
         weights = {str(component.feature_id): weight for component, weight in spec.normalized_components}
         scores = {
             symbol: sum(weights[feature_id] * percentiles[feature_id][symbol] for feature_id in required)
             for symbol in complete
         }
-        ranked = sorted(scores.items(), key=lambda item: (-item[1], item[0]))
-        rank_by_symbol = {symbol: index for index, (symbol, _) in enumerate(ranked, start=1)}
+        rank_by_symbol = competition_ranks(scores, higher_is_better=True)
         all_symbols = sorted(by_symbol)
         for symbol in all_symbols:
             eligible = symbol in complete

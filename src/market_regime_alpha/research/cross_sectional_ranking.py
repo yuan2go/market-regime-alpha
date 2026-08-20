@@ -202,6 +202,25 @@ def fractional_boundary_weights(
     )
 
 
+def competition_ranks(
+    scores: Mapping[EntityKey, Numeric],
+    *,
+    higher_is_better: bool,
+) -> Mapping[EntityKey, int]:
+    """Return 1-based competition ranks while preserving equal-score ties."""
+
+    normalized = {key: _finite_numeric(value) for key, value in scores.items()}
+    ordered_scores = sorted(set(normalized.values()), reverse=higher_is_better)
+    rank_by_score: dict[Decimal, int] = {}
+    position = 1
+    for score in ordered_scores:
+        rank_by_score[score] = position
+        position += sum(1 for value in normalized.values() if value == score)
+    return MappingProxyType(
+        {key: rank_by_score[value] for key, value in normalized.items()}
+    )
+
+
 def composite_percentile_scores(
     factors: tuple[FactorCrossSection[EntityKey], ...],
     *,
@@ -277,6 +296,7 @@ __all__ = [
     "FactorRankDiagnostic",
     "RankInformationStatus",
     "composite_percentile_scores",
+    "competition_ranks",
     "fractional_boundary_weights",
     "rank_percentiles",
 ]

@@ -9,6 +9,7 @@ from market_regime_alpha.research.cross_sectional_ranking import (
     FactorCrossSection,
     RankInformationStatus,
     composite_percentile_scores,
+    competition_ranks,
     fractional_boundary_weights,
     rank_percentiles,
 )
@@ -176,3 +177,17 @@ def test_positive_affine_transform_preserves_percentiles() -> None:
     )
 
     assert transformed.percentiles == original.percentiles
+
+
+def test_competition_ranks_preserve_ties_without_identity_winners() -> None:
+    ranks = competition_ranks(
+        {"a": Decimal("1"), "b": Decimal("0"), "c": Decimal("0")},
+        higher_is_better=True,
+    )
+    renamed = competition_ranks(
+        {"z": Decimal("1"), "x": Decimal("0"), "y": Decimal("0")},
+        higher_is_better=True,
+    )
+
+    assert ranks == {"a": 1, "b": 2, "c": 2}
+    assert renamed == {"z": 1, "x": 2, "y": 2}
