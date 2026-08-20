@@ -15,6 +15,9 @@ from market_regime_alpha.application.research_evaluation.targets import (
     OutcomeTargetProtocol,
     TargetDefinition,
 )
+from market_regime_alpha.application.historical_corpus.golden_loop import (
+    GoldenLoopScoringContract,
+)
 from market_regime_alpha.application.research_validation.common import (
     ENGINEERING_LIMITATIONS,
     ValidationArtifactReference,
@@ -144,6 +147,68 @@ def create_phase_e3_historical_experiment(
     )
 
 
+def create_golden_loop_v2_historical_experiment(
+    target_protocol: OutcomeTargetProtocol,
+    *,
+    locked_at: datetime,
+) -> ResearchExperimentDefinition:
+    """Freeze the V2 correctness change without tuning Phase E3 inputs."""
+
+    v1 = create_phase_e3_historical_experiment(
+        target_protocol,
+        locked_at=locked_at,
+    )
+    scoring = GoldenLoopScoringContract.create_v2()
+    return ResearchExperimentDefinition.create(
+        research_question=v1.research_question,
+        hypothesis=v1.hypothesis,
+        decision_time_policy=v1.decision_time_policy,
+        target_references=v1.target_references,
+        feature_reference=v1.feature_reference,
+        feature_version=v1.feature_version,
+        allowed_model_families=v1.allowed_model_families,
+        hyperparameter_space=(
+            *v1.hyperparameter_space,
+            HyperparameterDomain(
+                "canonical_evidence_wiring",
+                ("MULTI_STRATEGY_PORTFOLIO_OUTCOME_V2",),
+            ),
+            HyperparameterDomain(
+                "missing_policy",
+                (scoring.missing_policy,),
+            ),
+            HyperparameterDomain(
+                "scoring_contract_hash",
+                (scoring.contract_hash,),
+            ),
+            HyperparameterDomain(
+                "selection_policy",
+                (scoring.selection_policy,),
+            ),
+        ),
+        search_budget=v1.search_budget,
+        primary_hypothesis_ids=(
+            "GOLDEN_LOOP_V2:ABLATION_INCREMENTAL_LIFT",
+            "GOLDEN_LOOP_V2:CANONICAL_STRATEGY_NET_RETURN",
+        ),
+        secondary_hypothesis_ids=(
+            "GOLDEN_LOOP_V2:CONSTANT_FACTOR_NEUTRALITY",
+            "GOLDEN_LOOP_V2:FORECAST_ESTIMABILITY",
+            "GOLDEN_LOOP_V2:SIGNAL_ACTIVE_COVERAGE",
+            "GOLDEN_LOOP_V2:SYMBOL_EXCHANGE_BIAS",
+        ),
+        multiple_testing_family_id="WP_GOLDEN_LOOP_01_CORRECTNESS_V2",
+        stopping_rule=v1.stopping_rule,
+        train_validation_policy=v1.train_validation_policy,
+        purge_embargo_policy=v1.purge_embargo_policy,
+        oos_unlock_policy=v1.oos_unlock_policy,
+        randomness_algorithm=v1.randomness_algorithm,
+        random_seeds=v1.random_seeds,
+        cost_policy_reference=v1.cost_policy_reference,
+        schema_version=v1.schema_version,
+    )
+
+
 def verify_phase_e3_historical_experiment(
     definition: ResearchExperimentDefinition,
     *,
@@ -183,6 +248,48 @@ def verify_phase_e3_historical_experiment(
     if not required.issubset(set(configuration_references)):
         raise ValueError(
             "Longitudinal Historical command omits frozen feature or cost bindings"
+        )
+
+
+def verify_golden_loop_v2_historical_experiment(
+    definition: ResearchExperimentDefinition,
+    *,
+    target_protocol: OutcomeTargetProtocol,
+    feature_owner: FeatureSetConfiguration,
+    economics_owner: HistoricalStrategyEconomicsPolicySet,
+    decision_local_time: time,
+    timezone_name: str,
+    configuration_references: tuple[ValidationArtifactReference, ...],
+) -> None:
+    """Fail closed unless the exact Golden Loop V2 correction is bound."""
+
+    expected = create_golden_loop_v2_historical_experiment(
+        target_protocol,
+        locked_at=economics_owner.created_at,
+    )
+    if definition != expected:
+        raise ValueError(
+            "Historical Experiment diverges from the frozen Golden Loop V2 methodology"
+        )
+    if feature_owner != create_phase_e3_feature_configuration():
+        raise ValueError("Golden Loop V2 Historical Feature owner diverged")
+    if economics_owner != create_phase_e3_strategy_economics_policy_set(
+        target_protocol=target_protocol,
+        created_at=economics_owner.created_at,
+    ):
+        raise ValueError("Golden Loop V2 Historical Economics owner diverged")
+    if (
+        decision_local_time != PHASE_E3_DECISION_LOCAL_TIME
+        or timezone_name != PHASE_E3_TIMEZONE
+    ):
+        raise ValueError("Golden Loop V2 Historical DecisionTime policy diverged")
+    required = {
+        definition.feature_reference,
+        definition.cost_policy_reference,
+    }
+    if not required.issubset(set(configuration_references)):
+        raise ValueError(
+            "Golden Loop V2 command omits frozen feature or cost bindings"
         )
 
 
@@ -242,7 +349,9 @@ __all__ = [
     "PHASE_E3_DECISION_LOCAL_TIME",
     "PHASE_E3_TIMEZONE",
     "create_phase_e3_feature_configuration",
+    "create_golden_loop_v2_historical_experiment",
     "create_phase_e3_historical_experiment",
     "create_phase_e3_strategy_economics_policy_set",
     "verify_phase_e3_historical_experiment",
+    "verify_golden_loop_v2_historical_experiment",
 ]
