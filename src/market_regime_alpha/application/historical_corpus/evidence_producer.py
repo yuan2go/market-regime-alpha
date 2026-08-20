@@ -395,7 +395,13 @@ class HistoricalEvidenceProducer:
         superseded = tuple(
             item
             for item in snapshot.command.configuration_references
-            if item.artifact_kind.startswith("METHODOLOGY_INVALIDATED_")
+            if (
+                item.artifact_kind.startswith("METHODOLOGY_INVALIDATED_")
+                or (
+                    item.artifact_kind.startswith("HISTORICAL_")
+                    and item.artifact_kind.endswith("_EVIDENCE")
+                )
+            )
         )
         methodology_evidence = HistoricalResearchEvidence.create(
             run_id=run_id,
