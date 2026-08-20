@@ -48,6 +48,7 @@ Target design does not turn an unimplemented or unproven capability into a curre
 
 ## Research claims
 
+- [WP-ALPHA-RESEARCH-01 Frozen Discovery Protocol](research/protocols/WP-ALPHA-RESEARCH-01-Frozen-Discovery-Protocol.md) pre-registers the frozen Phase E3 dataset scope, Factor families, Gate/Candidate variants, metrics, multiple-testing policy and discovery evidence ceiling. The persisted Experiment Definition remains the executable owner.
 - [Golden Loop V2 Scoring and Research Correctness Contract](research/protocols/Golden-Loop-V2-Scoring-Contract.md) freezes the tie-aware scoring, missingness, boundary-selection, immutable-lineage and canonical-Evidence rules for the first V2 campaign.
 - [Golden Loop V2 Research Correctness Report](references/Golden-Loop-V2-Research-Correctness-Report.md) records the exact campaign, owner lineage, negative results, replay and evidence ceiling.
 - [Negative and Inconclusive Results](research/Negative-and-Inconclusive-Results.md) is the current durable research-claim registry for negative, inconclusive and not-estimable findings.

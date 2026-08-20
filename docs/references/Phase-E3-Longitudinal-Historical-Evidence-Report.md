@@ -1,11 +1,17 @@
 # Phase E3 Longitudinal Historical Evidence Report
 
-> **Status:** CURRENT_RESEARCH_PROGRAM
+> **Status:** SUPERSEDED
+> **Methodology Status:** `METHODOLOGY_INVALIDATED / SUPERSEDED`
 > **Evidence Date:** 2026-08-14
 > **Branch Base:** `origin/main@796b868c55bc9a3e58e427cbbfbba101a5936606`
 > **Computation Revision:** `c52e011f3b76636d77ad3e0d23376c4bec1607fc`
 > **Migration Head:** `084`
 > **Qualification Ceiling:** `EXPLORATORY`, `PIT_INCOMPLETE`, `FORMAL_OOS=false`, `CALIBRATED=false`
+> **Superseded By:** Golden Loop V2 exact-rational tie-aware methodology and `docs/references/Golden-Loop-V2-Research-Correctness-Report.md`
+
+> **Current-use restriction:** The Phase E3 dataset scope and owner identities
+> remain reusable provenance. Its V1 signed ranking/lift and pseudo-Portfolio
+> interpretations are `METHODOLOGY_INVALIDATED`; they are not an Alpha baseline.
 
 ## Outcome
 
@@ -38,7 +44,7 @@ qualification.
 | Experiment | `research-experiment-definition:c5235ae4ed7918878b1dd63aee7b4cb6e14d135b3c02b757923bbcc8350fa267` |
 | Feature Configuration | `feature-set-aaea2725245b1656b94dd89c` |
 | Economics Policy Set | `historical-strategy-economics-policy-set:5181e60fd842149a41c709fa7469b388b61aa68b02439f82b7d6cbfabf047042` |
-| Context Instruments | `historical-context-instrument-set:d515dd6c78c63fcc8dd9703822af85ee0e3b67529333616b391ba731f07b5acf` |
+| Context Instruments | `historical-context-instrument-set:d5151fdd88ba8949e173cd7e0533cdaf2e89b275b1e0663ee40518b59ba580d4` |
 | Resumed Run | `historical-research-run-b14ae344d2c3571d5ba842ce` / command `sha256:b14ae344d2c3571d5ba842ced7596e0a63e48495e4b8b24815ea8c3ed3baf6da` |
 
 The real corpus covers Daily observations from 2024-06-03 through 2025-07-14

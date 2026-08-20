@@ -2,7 +2,8 @@
 
 > **Status:** CURRENT_STATUS  
 > **Authority:** Current capability/evidence matrix  
-> **Baseline:** `agent/alpha-proof-campaign-01@bcee87a7d79f1028667a5874b7273a10fdcaacfa` (executable V2 evidence)
+> **Repository Baseline:** `main@5a441746ada08eb08310b12e34d9e0f56f56a952`
+> **Strongest Research Evidence Revision:** `bcee87a7d79f1028667a5874b7273a10fdcaacfa` (Golden Loop V2)
 > **Last Updated:** 2026-08-20
 > **Code Evidence:** `src/market_regime_alpha`, `src/market_regime_alpha/persistence/postgres/schema.py`, `tests`
 
@@ -37,10 +38,10 @@
 | Theme Context | `IMPLEMENTED_AND_WIRED` | State/context owner exists | V2 constant-factor diagnostics and boundary exposure show zero increment in the tested scope | Redesign/simplify only if new evidence supports it | P0 |
 | Capital State / Proxy | `IMPLEMENTED_AND_WIRED` | Derived state exists | Not a validated capital-flow fact; evidence thin/not estimable in key runs | Preserve Fact vs Proxy distinction; prove incremental value | P0 |
 | StateSeries / Dynamic Pool | `IMPLEMENTED_AND_WIRED` | Canonical state/pool owners | Only 3/126 sessions are non-constant; V2 changes RankIC slightly but not boundary exposure or economics | Gate/coverage/ablation before further abstraction | P0 |
-| Candidate Discovery | `IMPLEMENTED_AND_WIRED` | Strategy runtime records gates/rejections and Candidate lineage | V2 rejects 37,800/37,800 rows; no Candidate value is estimable | Diagnose gates against a transparent baseline without relaxing thresholds | P0 |
+| Candidate Discovery | `IMPLEMENTED_AND_WIRED` | Strategy runtime records gates/rejections and Candidate lineage | V2 rejects 37,800/37,800 rows; Candidate owners retain first-failure reasons but current Panel/Evidence drops them | Run pre-registered hard/soft/no-predictive Gate contrasts without weakening integrity gates | P0 |
 | Signal | `IMPLEMENTED_AND_WIRED` | Distinct artifact and consumers exist | V2 coverage is 0/37,800 because no Candidate is selected | Prove distinct lift/policy value or merge/simplify | P0/P1 |
 | Path Forecast | `IMPLEMENTED_AND_WIRED` | Research/Shadow path is fail-closed when unestimable | V2 coverage is 0/37,800; `NOT_ESTIMABLE`, not a probability or zero lift | Estimator/sample diagnostics; no probability claim without calibration | P0/P2 |
-| Transparent Quant Baseline | `IMPLEMENTED_NOT_PROVEN` | Golden V2 freezes a correct Top-10 Price/Volume comparison | Both variants have negative RankIC, spread, gross and net; Top-1/3/5 and quantile monotonicity remain absent | Complete the transparent benchmark before factor discovery | P0 |
+| Transparent Factor/Gate Baseline | `IMPLEMENTED_NOT_PROVEN` | Golden V2 freezes correct tie-aware ranking, but Panel consumes only `return_3` and `amount_ratio_5` from a much richer Feature owner | Both V2 variants are negative; multi-K, quantiles, registered Feature families and Gate contrasts remain absent | Complete `WP-ALPHA-RESEARCH-01` before downstream Forecast/Strategy work | P0 |
 | Cross-sectional Evaluation | `IMPLEMENTED_AND_WIRED` | One shared tie-aware kernel and precomputed canonical Evaluation owner feed Evidence | Real V2 RankIC/Top-10/MFE/MAE/economic evidence; symbol-renaming and constant-factor metamorphic proof | Add IC stability, quantiles and multi-K diagnostics in the baseline WP | P0 |
 | Statistical Validity / Multiple Testing | `ENGINEERING_ONLY` | Formal protocol/family mechanics exist | No qualified Locked-OOS result | Apply to surviving hypotheses after qualified data exists | P2 |
 | Calibration | `BLOCKED_BY_EVIDENCE` | Owner/mechanics exist | `CALIBRATED=false` | Qualified disjoint evidence required | P2 |

@@ -2,7 +2,8 @@
 
 > **Status:** ROADMAP  
 > **Authority:** Dependency-ordered forward work  
-> **Baseline:** `agent/alpha-proof-campaign-01@bcee87a7d79f1028667a5874b7273a10fdcaacfa` (executable V2 evidence)
+> **Repository Baseline:** `main@5a441746ada08eb08310b12e34d9e0f56f56a952`
+> **Strongest Research Evidence Revision:** `bcee87a7d79f1028667a5874b7273a10fdcaacfa` (Golden Loop V2)
 > **Last Updated:** 2026-08-20
 > **Code Evidence:** `docs/status/Current-State.md`, `docs/status/Gap-Register.md`
 
@@ -78,76 +79,69 @@ owners. It rejects the Alpha claim: Price and Price+Volume RankIC, spread, gross
 and net are negative; all 37,800 Candidates are rejected; Signal/Forecast
 coverage is zero; 126 Portfolio sessions are `NO_ACTION`; Strategy economics
 are `NOT_ESTIMABLE`. The next dependency-coherent Work Package is therefore
-`WP-BASELINE-ALPHA-01`, not Strategy optimization or ML.
+`WP-ALPHA-RESEARCH-01`, not Strategy optimization or ML.
 
 ---
 
-## WP-BASELINE-ALPHA-01 — Transparent Quantitative Baseline
+## WP-ALPHA-RESEARCH-01 — PIT-aware Factor → Gate → Candidate Discovery
 
-**Current problem**  
-Complex State/Candidate/Signal/Forecast machinery exists without one mandatory simple benchmark governing incremental-value claims.
+**Status:** `ACTIVE`, governed by
+`docs/research/protocols/WP-ALPHA-RESEARCH-01-Frozen-Discovery-Protocol.md`.
 
-**Goal**  
-Freeze a small interpretable cross-sectional baseline appropriate to the Golden Strategy and use it as the comparison floor.
+**Frozen scope**
+Reuse only the existing Phase E3 dataset scope: 126 CSI 300 Decision Sessions
+from 2025-01-02 through 2025-07-11, DecisionTime 14:55 Asia/Shanghai and T+1
+10:30 Target. Provider, Universe, Target/Horizon, cost assumptions and Golden
+V2 tie-aware correctness contract do not change.
 
-**Technical scope**  
-Reuse existing feature/factor/evaluation infrastructure. The exact factor list is chosen from valid current data; do not hard-code architecture around a particular formula.
+**Current problem**
+The canonical Feature owner materializes roughly 60 outputs, while the current
+Panel/Golden Evaluation consumes only `return_3` and `amount_ratio_5`.
+Candidate owners retain full status/rejection reasons, but Panel/Evidence loses
+them. The current sequential hard Gate chain therefore confounds predictive
+information with sample filtering and starves every downstream layer.
 
-**Real market window required?**  
-No.
-
-**Acceptance**
-
-- frozen feature/baseline identity;
-- coverage/missingness report;
-- RankIC/IC stability where applicable;
-- quantile monotonicity and Top-K diagnostics;
-- MFE/MAE and gross/cost/net connection to the Golden target;
-- positive/negative/inconclusive/not-estimable results preserved without threshold tuning.
-
-**System capability gained**  
-A benchmark that complex Context/Forecast/ML must actually beat.
-
----
-
-## WP-FACTOR-DISCOVERY-01 — Factor Discovery, De-duplication and Context Ablation
-
-**Current problem**  
-Current historical evidence contains negative, inconclusive and not-estimable results, but the architecture still contains many context/factor layers whose independent value is unclear.
-
-**Goal**  
-Identify which features/context layers carry incremental information for the frozen Target and which add only complexity.
+**Goal**
+Determine which registered Feature families carry stable forward information
+and whether Market Regime, Theme, Capital and Dynamic Pool should remain hard
+Gates, become soft factors, be retested or retire.
 
 **Technical scope**
 
 ```text
-Price / Trend
-Volume / Turnover
-Relative Strength
-Liquidity / Volatility
-Breadth / Industry
-ETF / Theme
-Capital or explicitly labelled Capital Proxy
-Market Regime
-technical structure where quantifiable
+persisted frozen Experiment Definition
+→ owner-resolved full Feature/Factor Panel
+→ hard-integrity population
+→ current-hard / soft-feature / no-predictive Gate contrasts
+→ transparent Candidate challengers
+→ tie-aware multi-K / quantile / stability / economics diagnostics
+→ multiple-testing adjustment
+→ immutable exploratory Evidence and Gate dispositions
 ```
 
-Evaluate baseline versus additions/combinations through existing research owners.
-
-**Real market window required?**  
-No.
+No Golden Runner, scheduler, backtest Authority, feature recomputation or
+Forecast/Portfolio/Governance expansion is admitted.
 
 **Acceptance**
 
-- versioned factor catalog/coverage;
-- de-duplication/redundancy analysis;
-- predeclared ablation and sensitivity results;
-- explicit reject/inconclusive decisions;
-- no `NOT_ESTIMABLE` converted to zero;
-- no layer retained as mandatory merely because code already exists.
+- exact Dataset/Universe/session/DecisionTime/Target/cost/factor/Gate/scoring/
+  metric/evidence-ceiling Experiment owner is persisted and reloaded before run;
+- all canonical Feature outputs enter lineage/coverage; only the pre-registered
+  factor registry enters hypotheses;
+- Panel retains Candidate status, score, rank and complete Gate reasons;
+- tradability/data-integrity Gates remain hard;
+- Market/Theme/Capital/Dynamic Pool each receive isolated hard/soft/none contrasts;
+- every registered hypothesis emits common coverage, RankIC/IC stability,
+  quintile, Top-1/3/5/10, MFE/MAE, turnover, gross/net and conditional diagnostics;
+- the existing multiple-testing kernel adjusts the complete discovery family;
+- each predictive Gate ends as `KEEP_AS_HARD_GATE`, `DEMOTE_TO_FACTOR`,
+  `RETEST` or `RETIRE`; negative and `NOT_ESTIMABLE` evidence remains durable;
+- Historical Runtime → canonical owners → Panel → Golden Evaluation/Evidence
+  remains the sole execution chain.
 
-**System capability gained**  
-An evidence-based factor/context spine and a list of architecture candidates for simplify/merge/retire.
+**System capability gained**
+A transparent Alpha discovery baseline and evidence-based Candidate policy,
+without pretending the Frozen Discovery Dataset is Formal OOS.
 
 ---
 
@@ -180,6 +174,21 @@ A prospective evidence asset that cannot be recreated after the fact.
 ---
 
 # P1 Work Packages
+
+## WP-ALPHA-RESEARCH-02 — External Validation
+
+**Status:** `NOT_ACTIVE`; design begins only after WP-ALPHA-RESEARCH-01 freezes
+its complete result.
+
+A separately content-addressed Experiment may test longer time ranges, CSI
+500/1000 or broader A-shares, distinct market states, another Provider and a
+longer prospective cohort. None of those changes may be backported into
+WP-ALPHA-RESEARCH-01 or used to rewrite its negative results.
+
+**Dependency:** at least one pre-registered WP-ALPHA-RESEARCH-01 factor or
+Candidate policy has estimable discovery evidence worth external validation.
+
+---
 
 ## WP-STRATEGY-PROOF-01 — Prediction to Executable Strategy
 
@@ -347,10 +356,10 @@ Historical survives, prospective fails
 
 # Top 5 highest-value actions
 
-1. **WP-BASELINE-ALPHA-01** — explain or reject the negative ranking with IC stability, quantiles and Top-1/3/5/10 diagnostics before more model sophistication.
+1. **WP-ALPHA-RESEARCH-01** — expand the owner-resolved Panel, run the complete pre-registered Factor/Gate/Candidate discovery family and preserve its negative/`NOT_ESTIMABLE` result.
 2. **WP-PROSPECTIVE-01** — prepare/freeze the honest baseline cohort and start the future evidence clock when a live-origin market window and required data are available; historical replay cannot fill it.
-3. **WP-FACTOR-DISCOVERY-01** — proceed only if a transparent baseline has credible information, then use ablation/de-duplication to test Context layers.
-4. **WP-ATTRIBUTION-COMPRESSION-01** — diagnose Candidate starvation and evaluate whether zero-value Context/Candidate/Signal/Forecast layers should simplify or retire.
+3. **WP-ATTRIBUTION-COMPRESSION-01** — apply WP-01 Gate dispositions and evaluate whether zero-value Context/Candidate/Signal/Forecast layers should simplify or retire.
+4. **WP-ALPHA-RESEARCH-02** — only after WP-01, freeze separate time/Universe/Provider validation for an estimable discovery result.
 5. **WP-STRATEGY-PROOF-01** — remain dependency-blocked until ranking or Candidate evidence supports an executable action; do not optimize costs around a negative predictor.
 
 `WP-ATTRIBUTION-COMPRESSION-01` runs alongside these when the Golden Loop reveals redundant architecture.
