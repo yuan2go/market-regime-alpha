@@ -318,11 +318,11 @@ def test_apply_all_is_idempotent(
     first = migrator.apply_all(postgres_factory)
     second = migrator.apply_all(postgres_factory)
 
-    assert tuple(item.version for item in first) == tuple(range(1, 90))
+    assert tuple(item.version for item in first) == tuple(range(1, 91))
     assert second == ()
     with postgres_factory.connection(read_only=True) as connection:
         rows = connection.execute("SELECT version, name, checksum FROM schema_migrations ORDER BY version").fetchall()
-    assert len(rows) == 89
+    assert len(rows) == 90
 
 
 def test_applied_checksum_drift_is_rejected(
@@ -526,7 +526,7 @@ def test_migration_026_preserves_prerelease_v1_decision_rows_forward_only(
         )
         + FREE_RUNTIME_MIGRATIONS
     )
-    assert applied == (88,)
+    assert applied == (90,)
     assert restored == account
 
 
@@ -1012,6 +1012,7 @@ def test_migration_060_preserves_v1_protocols_and_accepts_explicit_inference(
         (87, "strategy_execution_integrity"),
         (88, "portfolio_execution_authority"),
         (89, "golden_loop_v2_evidence"),
+        (90, "tie_aware_pool_ranks"),
     )
     with postgres_factory.connection(read_only=True) as connection:
         stored = connection.execute(
