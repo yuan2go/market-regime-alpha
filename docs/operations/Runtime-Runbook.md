@@ -147,7 +147,7 @@ uv run python scripts/apply_postgres_migrations.py
 uv run python scripts/apply_postgres_migrations.py --verify-only
 ```
 
-Expected head: migration 088, `portfolio_execution_authority`. Expected schema
+Expected head: migration 090, `tie_aware_pool_ranks`. Expected schema
 catalog: 270 tables. Migrations 052–067 add Formal Protocol bindings and
 owner-resolution receipts, Provider×Contract×Fact decisions,
 Historical/Locked-OOS/Calibration owners, the durable underlying Locked-OOS

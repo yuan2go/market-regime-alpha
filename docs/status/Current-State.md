@@ -12,7 +12,7 @@ This document records what the current `main` implements and what its evidence a
 
 - **Architecture:** Python 3.12+ PostgreSQL-centered modular monolith.
 - **Persistent business authority:** PostgreSQL 16; no canonical file/SQLite/memory fallback.
-- **Migration head:** 088.
+- **Migration head:** 090.
 - **Canonical all-day runtime:** one Continuous Research control plane.
 - **Installed operator scripts:** six — `continuous-research`, `state-system`, `decision-system`, `model-governance`, `pit-authority`, `research-shadow`.
 - **Execution boundary:** human-operated/manual; no broker writer or automatic live-trading authority.
@@ -96,6 +96,15 @@ SUSTAINED_PROSPECTIVE_SHADOW_PROVEN = false
 RESEARCH_QUALIFIED_ALPHA            = false
 PRODUCTION_QUALIFIED                = false
 BROKER_INTEGRATION_PROVEN           = false
+```
+
+Operational release declarations remain explicitly closed:
+
+```text
+automatic_order_execution = false
+broker_integration_proven = false
+entry_model_empirically_validated = false
+production_ready = false
 ```
 
 Free/public historical evidence remains, as applicable:
