@@ -185,7 +185,10 @@ def _components() -> tuple[HistoricalSessionComponent, HistoricalSessionComponen
 
 def _request(*, v2: bool) -> ResearchDecisionSessionRequest:
     configurations = (
-        (GoldenLoopScoringContract.create_v2().reference,)
+        (
+            GoldenLoopScoringContract.create_v2().reference,
+            _reference("HISTORICAL_STRATEGY_ECONOMICS_POLICY_SET", "cost"),
+        )
         if v2
         else (_reference("TEST_CONFIGURATION", "v1"),)
     )

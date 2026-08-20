@@ -265,6 +265,7 @@ def evaluate_golden_loop_session(
     portfolio_status: str,
     portfolio_line_count: int,
     attribution_references: tuple[ValidationArtifactReference, ...] = (),
+    additional_source_references: tuple[ValidationArtifactReference, ...] = (),
     scoring_contract: GoldenLoopScoringContract | None = None,
 ) -> GoldenLoopSessionEvaluation:
     """Score one owner-resolved session without creating Strategy or Portfolio."""
@@ -418,6 +419,7 @@ def evaluate_golden_loop_session(
             portfolio_reference,
             contract.reference,
             *attribution_references,
+            *additional_source_references,
         )
     )
     return GoldenLoopSessionEvaluation(

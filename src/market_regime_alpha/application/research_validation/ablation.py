@@ -7,7 +7,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
 from math import sqrt
-from statistics import fmean, pstdev
+from statistics import fmean
 from typing import Any, Callable, Iterable, Mapping
 
 from market_regime_alpha.application.research_validation.common import (
@@ -286,6 +286,31 @@ class AblationObservation:
             ("THEME", self.theme),
             ("VOLATILITY", self.volatility_bucket),
         )
+
+
+@dataclass(frozen=True, slots=True)
+class PrecomputedAblationObservation:
+    """One score and selection projection frozen by a canonical evaluator."""
+
+    observation: AblationObservation
+    score: Decimal
+    top_weight: Decimal
+    bottom_weight: Decimal
+
+    def __post_init__(self) -> None:
+        for label, value in (
+            ("score", self.score),
+            ("top_weight", self.top_weight),
+            ("bottom_weight", self.bottom_weight),
+        ):
+            if not value.is_finite():
+                raise ValueError(f"precomputed Ablation {label} must be finite")
+        if not Decimal("0") <= self.top_weight <= Decimal("1"):
+            raise ValueError("precomputed Ablation top weight must be within [0, 1]")
+        if not Decimal("0") <= self.bottom_weight <= Decimal("1"):
+            raise ValueError("precomputed Ablation bottom weight must be within [0, 1]")
+        if self.top_weight > 0 and self.bottom_weight > 0:
+            raise ValueError("precomputed Ablation top/bottom selections must be disjoint")
 
 
 @dataclass(frozen=True, slots=True)
@@ -642,6 +667,81 @@ def run_incremental_alpha_ablation_suite(
     )
 
 
+def run_precomputed_alpha_ablation_suite(
+    *,
+    protocol: AblationProtocol,
+    panel_reference: ValidationArtifactReference,
+    evaluation_sessions: Iterable[
+        Mapping[str, tuple[PrecomputedAblationObservation, ...]]
+    ],
+    created_at: datetime,
+) -> AlphaAblationSuite:
+    """Aggregate canonical session scores/weights without ranking or selection."""
+
+    if (
+        protocol.scoring_contract
+        != "WITHIN_SESSION_TIE_AWARE_FACTOR_PERCENTILE_MEAN_V2"
+    ):
+        raise ValueError("Precomputed Ablation requires the frozen V2 scorer")
+    accumulators = {
+        variant_id: _MetricAccumulator(protocol.top_k)
+        for variant_id in protocol.comparison_sequence
+    }
+    observed = False
+    for session in evaluation_sessions:
+        if set(session) != set(protocol.comparison_sequence):
+            raise ValueError(
+                "Precomputed Ablation session must cover the frozen sequence"
+            )
+        observed = True
+        for variant_id in protocol.comparison_sequence:
+            rows = session[variant_id]
+            accumulators[variant_id].add_precomputed_session(
+                tuple((item.observation, item.score) for item in rows),
+                top_weights={
+                    item.observation.symbol: item.top_weight for item in rows
+                },
+                bottom_weights={
+                    item.observation.symbol: item.bottom_weight for item in rows
+                },
+            )
+    if not observed:
+        raise ValueError("Precomputed Ablation requires evaluation sessions")
+    variant_by_id = {item.variant_id: item for item in protocol.variants}
+    results: list[FactorAblationResult] = []
+    baseline_metrics: AblationMetrics | None = None
+    baseline_reference: ValidationArtifactReference | None = None
+    protocol_reference = ValidationArtifactReference(
+        "ABLATION_PROTOCOL",
+        protocol.protocol_id,
+        protocol.protocol_hash,
+    )
+    for variant_id in protocol.comparison_sequence:
+        metrics = accumulators[variant_id].metrics(baseline_metrics)
+        result = FactorAblationResult.create(
+            protocol_reference=protocol_reference,
+            panel_reference=panel_reference,
+            variant=variant_by_id[variant_id],
+            metrics=metrics,
+            baseline_result=baseline_reference,
+            created_at=created_at,
+        )
+        results.append(result)
+        baseline_metrics = metrics
+        baseline_reference = ValidationArtifactReference(
+            "FACTOR_ABLATION_RESULT",
+            result.result_id,
+            result.result_hash,
+        )
+    return _build_alpha_suite(
+        protocol=protocol,
+        panel_reference=panel_reference,
+        results=tuple(results),
+        slices=(),
+        created_at=created_at,
+    )
+
+
 def _build_alpha_suite(
     *,
     protocol: AblationProtocol,
@@ -764,26 +864,9 @@ class _MetricAccumulator:
     ) -> None:
         if not scored:
             raise ValueError("Ablation session batch cannot be empty")
-        session_keys = {item.session_key for item, _score in scored}
-        trading_dates = {item.trading_date for item, _score in scored}
         symbols = [item.symbol for item, _score in scored]
-        if len(session_keys) != 1 or len(trading_dates) != 1:
-            raise ValueError("Ablation batch must contain one session")
         if len(symbols) != len(set(symbols)):
             raise ValueError("Ablation session/symbol observations must be unique")
-        trading_date = next(iter(trading_dates))
-        if trading_date is None:
-            raise ValueError("Ablation path metrics require a canonical trading date for every session")
-        session_key = next(iter(session_keys))
-        order = trading_date, session_key
-        if self._last_order is not None and order <= self._last_order:
-            raise ValueError("Ablation sessions must be added in canonical order")
-        if self._last_order is not None and trading_date == self._last_order[0]:
-            raise ValueError("Ablation path metrics require one session per trading date")
-        self._last_order = order
-        self._session_count += 1
-        self._sample_count += len(scored)
-        item_by_symbol = {item.symbol: item for item, _score in scored}
         score_by_symbol = {item.symbol: score for item, score in scored}
         top_selection = fractional_boundary_weights(
             score_by_symbol,
@@ -800,7 +883,61 @@ class _MetricAccumulator:
             slots=self._top_k,
             higher_is_better=False,
         )
-        session_top_weight = sum(top_selection.weights.values(), Decimal("0"))
+        self.add_precomputed_session(
+            scored,
+            top_weights=top_selection.weights,
+            bottom_weights={
+                symbol: bottom_selection.weights.get(symbol, Decimal("0"))
+                for symbol in symbols
+            },
+        )
+
+    def add_precomputed_session(
+        self,
+        scored: tuple[tuple[AblationObservation, Decimal], ...],
+        *,
+        top_weights: Mapping[str, Decimal],
+        bottom_weights: Mapping[str, Decimal],
+    ) -> None:
+        if not scored:
+            raise ValueError("Ablation session batch cannot be empty")
+        session_keys = {item.session_key for item, _score in scored}
+        trading_dates = {item.trading_date for item, _score in scored}
+        symbols = [item.symbol for item, _score in scored]
+        if len(session_keys) != 1 or len(trading_dates) != 1:
+            raise ValueError("Ablation batch must contain one session")
+        if len(symbols) != len(set(symbols)):
+            raise ValueError("Ablation session/symbol observations must be unique")
+        symbol_set = set(symbols)
+        if set(top_weights) != symbol_set or set(bottom_weights) != symbol_set:
+            raise ValueError("precomputed Ablation weights must cover the session")
+        if any(
+            not weight.is_finite() or not Decimal("0") <= weight <= Decimal("1")
+            for weight in (*top_weights.values(), *bottom_weights.values())
+        ):
+            raise ValueError("precomputed Ablation weights must be finite within [0, 1]")
+        if any(
+            top_weights[symbol] > 0 and bottom_weights[symbol] > 0
+            for symbol in symbol_set
+        ):
+            raise ValueError("precomputed Ablation top/bottom weights must be disjoint")
+        expected_top_weight = Decimal(min(self._top_k, len(scored)))
+        session_top_weight = sum(top_weights.values(), Decimal("0"))
+        if session_top_weight != expected_top_weight:
+            raise ValueError("precomputed Ablation top weights do not preserve K slots")
+        trading_date = next(iter(trading_dates))
+        if trading_date is None:
+            raise ValueError("Ablation path metrics require a canonical trading date for every session")
+        session_key = next(iter(session_keys))
+        order = trading_date, session_key
+        if self._last_order is not None and order <= self._last_order:
+            raise ValueError("Ablation sessions must be added in canonical order")
+        if self._last_order is not None and trading_date == self._last_order[0]:
+            raise ValueError("Ablation path metrics require one session per trading date")
+        self._last_order = order
+        self._session_count += 1
+        self._sample_count += len(scored)
+        item_by_symbol = {item.symbol: item for item, _score in scored}
         for item, _score in scored:
             self._all_return_sum += float(item.realized_return)
             if item.mfe is not None:
@@ -809,7 +946,7 @@ class _MetricAccumulator:
             if item.mae is not None:
                 self._mae_sum += float(item.mae)
                 self._mae_count += 1
-        for symbol, weight in top_selection.weights.items():
+        for symbol, weight in top_weights.items():
             if weight == 0:
                 continue
             item = item_by_symbol[symbol]
@@ -819,20 +956,20 @@ class _MetricAccumulator:
                 self._top_hit_weight += weight
             self._gross_sum += item.realized_return * weight
             self._cost_sum += item.cost_return * weight
-        for symbol, weight in bottom_selection.weights.items():
+        for symbol, weight in bottom_weights.items():
             if weight == 0:
                 continue
             self._bottom_return_sum += item_by_symbol[symbol].realized_return * weight
             self._bottom_return_weight += weight
         selected = {
-            symbol for symbol, weight in top_selection.weights.items() if weight > 0
+            symbol for symbol, weight in top_weights.items() if weight > 0
         }
         full_selected = {item.symbol for item, _score in scored if item.selected}
         self._overlap_sum += len(selected & full_selected) / max(1, len(selected | full_selected))
         self._overlap_count += 1
         current_weights = {
             symbol: weight / session_top_weight
-            for symbol, weight in top_selection.weights.items()
+            for symbol, weight in top_weights.items()
             if weight > 0
         }
         if self._previous_weights is not None:
@@ -851,7 +988,7 @@ class _MetricAccumulator:
                 (
                     (item_by_symbol[symbol].realized_return - item_by_symbol[symbol].cost_return)
                     * weight
-                    for symbol, weight in top_selection.weights.items()
+                    for symbol, weight in top_weights.items()
                 ),
                 Decimal("0"),
             )
@@ -998,13 +1135,6 @@ def _empty_metrics() -> AblationMetrics:
     )
 
 
-def _information_ratio(values: list[float]) -> Decimal | None:
-    if len(values) < 2:
-        return None
-    dispersion = pstdev(values)
-    return None if dispersion == 0 else _decimal(fmean(values) / dispersion)
-
-
 def _correlation(left: list[float], right: list[float]) -> float | None:
     if len(left) < 2 or len(left) != len(right):
         return None
@@ -1014,37 +1144,8 @@ def _correlation(left: list[float], right: list[float]) -> float | None:
     return None if denominator == 0 else numerator / denominator
 
 
-def _ranks(values: list[float]) -> list[float]:
-    ordered = sorted(enumerate(values), key=lambda item: (item[1], item[0]))
-    result = [0.0] * len(values)
-    index = 0
-    while index < len(ordered):
-        end = index + 1
-        while end < len(ordered) and ordered[end][1] == ordered[index][1]:
-            end += 1
-        rank = (index + 1 + end) / 2
-        for original, _value in ordered[index:end]:
-            result[original] = rank
-        index = end
-    return result
-
-
-def _max_drawdown(returns: Iterable[float]) -> float:
-    wealth = peak = 1.0
-    worst = 0.0
-    for value in returns:
-        wealth *= 1.0 + value
-        peak = max(peak, wealth)
-        worst = min(worst, wealth / peak - 1.0)
-    return worst
-
-
 def _decimal(value: float | None) -> Decimal | None:
     return None if value is None else Decimal(str(value))
-
-
-def _mean_decimal(values: list[float]) -> Decimal | None:
-    return None if not values else _decimal(fmean(values))
 
 
 def _result_payload(

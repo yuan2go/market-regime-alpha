@@ -8,8 +8,10 @@ from market_regime_alpha.application.research_validation.ablation import (
     AblationProtocol,
     AblationVariant,
     AblationVariantKind,
+    PrecomputedAblationObservation,
     run_alpha_ablation_suite,
     run_incremental_alpha_ablation_suite,
+    run_precomputed_alpha_ablation_suite,
 )
 from market_regime_alpha.application.research_validation.common import (
     ResearchEvidenceAuthority,
@@ -218,6 +220,44 @@ def test_v2_shared_constant_factor_is_neutral() -> None:
     assert augmented.net_return == baseline.net_return
     assert augmented.rank_ic == baseline.rank_ic
     assert augmented.incremental_lift == Decimal("0.0")
+
+
+def test_precomputed_ablation_aggregates_frozen_weights_without_reselecting() -> None:
+    price = AblationVariant.standard(AblationVariantKind.PRICE_ONLY)
+    protocol = AblationProtocol.create(
+        protocol_version="persisted-golden-loop-v2",
+        variants=(price,),
+        comparison_sequence=(price.variant_id,),
+        top_k=1,
+        scoring_contract="WITHIN_SESSION_TIE_AWARE_FACTOR_PERCENTILE_MEAN_V2",
+        created_at=NOW,
+    )
+    observations = tuple(
+        item for item in _observations() if item.session_key == "s-0"
+    )[:2]
+    # Deliberately freeze the lower-score row as selected. If aggregation
+    # re-ranks, gross return will instead use the first row.
+    frozen = {
+        price.variant_id: tuple(
+            PrecomputedAblationObservation(
+                observation=item,
+                score=Decimal("2") if index == 0 else Decimal("1"),
+                top_weight=Decimal(index),
+                bottom_weight=Decimal(1 - index),
+            )
+            for index, item in enumerate(observations)
+        )
+    }
+
+    suite = run_precomputed_alpha_ablation_suite(
+        protocol=protocol,
+        panel_reference=_reference(),
+        evaluation_sessions=(frozen,),
+        created_at=NOW,
+    )
+
+    assert suite.results[0].metrics.gross_return == observations[1].realized_return
+    assert suite.results[0].metrics.cost_return == observations[1].cost_return
 
 
 def test_ablation_protocol_rejects_unfrozen_or_duplicate_comparison_sequence() -> None:

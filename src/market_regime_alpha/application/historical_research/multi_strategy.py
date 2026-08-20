@@ -30,6 +30,9 @@ from market_regime_alpha.application.research_session.kernel import (
 from market_regime_alpha.application.research_validation.common import (
     ValidationArtifactReference,
 )
+from market_regime_alpha.application.research_validation.historical_economics import (
+    HISTORICAL_STRATEGY_ECONOMICS_POLICY_SET_KIND,
+)
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.evidence.canonical import canonical_hash
 from market_regime_alpha.platform.runtime_governance import RuntimeAuthorityMode
@@ -178,13 +181,16 @@ class MultiStrategyHistoricalAdapter:
         contract = GoldenLoopScoringContract.create_v2()
         if contract.reference not in request.configuration_references:
             return delegated
+        available = _validation_references(
+            (*inputs, *delegated.output_references)
+        )
         panel = self.component_repository.get(
-            _single(inputs, "HISTORICAL_RESEARCH_PANEL")
+            _single(available, "HISTORICAL_RESEARCH_PANEL")
         )
         outcome = self.component_repository.get(
-            _single(inputs, "HISTORICAL_OUTCOME")
+            _single(available, "HISTORICAL_OUTCOME")
         )
-        cycle_reference = _single(inputs, "MULTI_STRATEGY_CYCLE")
+        cycle_reference = _single(available, "MULTI_STRATEGY_CYCLE")
         cycle = self.strategy_repository.get_cycle(cycle_reference.artifact_id)
         if _validation_reference(cycle_reference) != ValidationArtifactReference(
             "MULTI_STRATEGY_CYCLE",
@@ -192,7 +198,7 @@ class MultiStrategyHistoricalAdapter:
             cycle.cycle_hash,
         ):
             raise ValueError("Historical Multi-Strategy Cycle owner hash mismatch")
-        portfolio_reference = _single(inputs, "CROSS_STRATEGY_PORTFOLIO")
+        portfolio_reference = _single(available, "CROSS_STRATEGY_PORTFOLIO")
         portfolio = self.strategy_repository.get_portfolio(
             portfolio_reference.artifact_id
         )
@@ -229,6 +235,12 @@ class MultiStrategyHistoricalAdapter:
                     item.reference.content_hash,
                 )
                 for item in attributions
+            ),
+            additional_source_references=(
+                _single(
+                    request.configuration_references,
+                    HISTORICAL_STRATEGY_ECONOMICS_POLICY_SET_KIND,
+                ),
             ),
             scoring_contract=contract,
         )
