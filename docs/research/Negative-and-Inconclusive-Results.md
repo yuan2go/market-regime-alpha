@@ -3,7 +3,7 @@
 > **Status:** CURRENT_RESEARCH_PROGRAM
 > **Authority:** Current registry of failed, blocked or insufficient research claims
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-14
+> **Last Updated:** 2026-08-20
 > **Code Evidence:** `src/market_regime_alpha/application/historical_corpus`, `src/market_regime_alpha/application/research_evaluation`
 
 | Claim | Current result | Evidence authority |
@@ -26,21 +26,26 @@
 | Any Phase E Pilot T+1 checkpoint is net profitable | `NEGATIVE`: all OPEN/09:45/10:00/10:30/11:30/CLOSE mean net returns are below zero | six-stock real free-data Pilot |
 | Phase E Pilot Market Cap or Industry slice explains returns | `NOT_ESTIMABLE`: required historical facts are absent | six-stock real free-data Pilot |
 | Positive Phase E Pilot fixed-ridge challenger proves Formal OOS or economics | False: the small MSE improvement and 0.05842 validation RankIC are exploratory temporal validation only | six-stock real free-data Pilot |
-| Phase E2 Volume adds value to Price | `NEGATIVE`: gross incremental lift -0.002688 and RankIC falls from 0.064539 to 0.040527 | 300-stock free-data exploratory corpus |
-| Phase E2 ETF establishes incremental Alpha | `INCONCLUSIVE`: real ETF coverage exists, but gross lift is only +0.000187 over 19 sessions | 300-stock free-data exploratory corpus |
-| Phase E2 Candidate ranking adds value | `NEGATIVE`: ten real selections become observable, but Candidate incremental lift is -0.000802 | 300-stock free-data exploratory corpus |
-| Phase E2 Signal adds value | No observed increment: ten Signal snapshots are all `INACTIVE` and incremental lift is exactly 0.000000; deprioritize until active-state coverage exists | 300-stock free-data exploratory corpus |
+| Phase E2 signed layer lifts remain admissible V2 evidence | False: the V1 scorer split equal Factor values with observation identity; Volume/ETF/Candidate/Signal ranking and lift claims below are retained only as methodology-invalidated historical records | immutable V1 Evidence + V2 Methodology Assessment |
+| Phase E2 Volume adds value to Price | `METHODOLOGY_INVALIDATED`: recorded V1 gross lift -0.002688 and RankIC change cannot support a current claim | 300-stock V1 exploratory corpus |
+| Phase E2 ETF establishes incremental Alpha | `METHODOLOGY_INVALIDATED`: recorded V1 gross lift +0.000187 cannot support a current claim | 300-stock V1 exploratory corpus |
+| Phase E2 Candidate ranking adds value | `METHODOLOGY_INVALIDATED`: recorded V1 Candidate lift -0.000802 cannot support a current claim | 300-stock V1 exploratory corpus |
+| Phase E2 Signal adds value | `METHODOLOGY_INVALIDATED`: recorded V1 zero increment cannot support a current claim; ten Signal snapshots were inactive | 300-stock V1 exploratory corpus |
 | Phase E2 Forecast adds value | `NOT_ESTIMABLE`: ten Forecast objects exist, but each has only 2--18 usable same-symbol path samples against the frozen minimum of 20 | 300-stock free-data exploratory corpus |
-| Phase E2 cumulative ablation proves economic value | `INCONCLUSIVE`: full ranking net is +0.012374 after assumed costs, but all six executable T+1 checkpoints are gross- and net-negative | 300-stock free-data exploratory corpus |
-| Phase E2 current Portfolio result proves general Alpha | False: gross +0.014474, assumed-cost net +0.012374 and drawdown -0.130944 cover only 19 retrospective sessions and conflict with negative checkpoint economics | 300-stock free-data exploratory corpus |
+| Phase E2 cumulative ablation proves economic value | `METHODOLOGY_INVALIDATED`: the V1 +0.012374 net ranking result is superseded; no exact-rational Phase E2 replacement was run in this campaign | immutable V1 Evidence + V2 Methodology Assessment |
+| Phase E2 current Portfolio result proves general Alpha | False: the V1 positive Portfolio interpretation is methodology-invalidated, not merely weakened; no replacement positive estimate exists | immutable V1 Evidence + V2 Methodology Assessment |
 | Phase E2 Market Cap or Industry is estimable | `NOT_ESTIMABLE`: no Decision-time share owner exists and current Industry is deliberately not backfilled | 300-stock free-data exploratory corpus |
 | Phase E2 exploratory challenger is estimable | `NOT_ESTIMABLE`: 19 temporal sessions do not meet the frozen temporal-session floor | 300-stock free-data exploratory corpus |
 | Phase E3 ETF establishes longitudinal Alpha context | `NOT_ESTIMABLE`: all 2,790 requests succeed, but every frozen `510300.SH` interval returns zero observations; no index or Daily-only substitution is allowed | 126-session longitudinal free-data corpus |
 | Phase E3 Capital, Candidate, Signal or canonical Forecast adds value | `NOT_ESTIMABLE`: ETF amount expansion is absent, Capital is insufficient in all sessions, all 37,800 Candidates are rejected and Signal/Forecast are never emitted; thresholds and Forecast floor are unchanged | 126-session longitudinal free-data corpus |
-| Phase E3 Volume, Theme or Dynamic Pool adds value | `NEGATIVE`: gross incremental lifts are -0.000156, -0.000336 and -0.000468 respectively | 37,375 owner-resolved T+1 observations |
-| Phase E3 Market Regime proves stable incremental Alpha | `INCONCLUSIVE`: gross lift is +0.000106 but the chain remains negative; the positive `RISK_ON` slice contains only two sessions | 37,375 owner-resolved T+1 observations |
-| Phase E3 full ranking chain has economic value | `NEGATIVE`: RankIC -0.032604, gross -0.001680, engineering-assumption cost 0.002100, net -0.003781 and maximum drawdown -0.39964 | 126-session longitudinal free-data corpus |
-| Any Phase E3 executable T+1 checkpoint is net profitable | `NEGATIVE`: all six checkpoints are gross-positive but net-negative after the versioned engineering-assumption cost | 224,718 non-corporate-action economics records |
+| Phase E3 V1 signed Context lifts remain admissible | False: Volume/Theme/Dynamic Pool negative lifts and Market Regime positive lift used identity-broken V1 ranking and are methodology-invalidated | immutable V1 Evidence + V2 Methodology Assessment |
+| Golden V2 Price-only baseline has information or economic value | `NEGATIVE`: RankIC -0.061618, spread -0.002222, Top-10 gross -0.000839, assumed cost 0.002100 and net -0.002939 | exact-rational V2 / 37,375 observations / 126 sessions |
+| Golden V2 adding Volume establishes a useful baseline | `NEGATIVE`: gross improves only +0.000041; RankIC -0.059226, spread -0.001937, gross -0.000798, net -0.002899 and drawdown -0.457415 remain negative | exact-rational V2 / 37,375 observations / 126 sessions |
+| Golden V2 Regime, Theme or Dynamic Pool adds executable ranking value | No Top/Bottom boundary or gross increment. Regime/Theme are neutral in this scope; Dynamic Pool is non-constant in only 3/126 sessions and slightly changes RankIC but not boundary exposure/economics | exact-rational V2 canonical Evaluation |
+| Golden V2 ETF, Capital, Candidate, Signal or Forecast lift is zero | False: ETF/Capital/Candidate/Signal/Forecast increments are `NOT_ESTIMABLE`; all Candidate rows are rejected and downstream coverage is zero | exact-rational V2 canonical Evaluation |
+| Golden V2 full ranking chain has economic value | `NEGATIVE`: RankIC -0.059283, Top-10 gross -0.000798, assumed cost 0.002100, net -0.002899 and maximum drawdown -0.457415 | exact-rational V2 / 37,375 observations / 126 sessions |
+| Golden V2 canonical Strategy or Portfolio economics are zero | False: 126/126 sessions are `NO_ACTION` with zero Portfolio lines, so gross/cost/net/turnover/drawdown are `NOT_ESTIMABLE` | canonical Cycle/Portfolio/Outcome/Attribution owners |
+| Phase E3 V1 six-checkpoint pseudo-portfolio economics remain Canonical Strategy Evidence | False: the 224,718 retrospective checkpoint diagnostics are retained historical research, but the old Evidence producer reconstructed a portfolio from `RESEARCH_PANEL`; V2 canonical Strategy/Portfolio economics are `NOT_ESTIMABLE` | immutable V1 Evidence + V2 canonical owner closure |
 | Phase E3 fixed-ridge challenger proves canonical Forecast, Formal OOS or economics | False: MSE 0.000502153 versus baseline 0.000518944 and RankIC 0.015405 cover one exploratory temporal split; canonical Forecast remains empty | 29,729 training / 7,646 later validation observations |
 | Phase E3 corporate-action exclusions are ordinary missing returns | False: 2,082 six-checkpoint labels are explicitly unavailable because they cross a known action or one persisted coverage gap | owner-resolved corporate-action facts |
 | Running Overnight and Swing through one platform establishes either strategy's Alpha | False: migration-085 proof establishes contracts, runtime, persistence, replay and isolation only; no new empirical return sample was produced | engineering only |

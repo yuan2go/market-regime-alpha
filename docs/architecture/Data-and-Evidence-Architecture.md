@@ -3,7 +3,7 @@
 > **Status:** CURRENT_ARCHITECTURE
 > **Authority:** Canonical data, time and evidence rules
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-14
+> **Last Updated:** 2026-08-20
 > **Code Evidence:** `src/market_regime_alpha/data`, `src/market_regime_alpha/market_data`, `src/market_regime_alpha/evidence`, `src/market_regime_alpha/data/postgres_pit_authority.py`, `src/market_regime_alpha/persistence/postgres/migrations/*.sql`
 
 ## Evidence is not a reference
@@ -42,7 +42,7 @@ A downstream artifact may retain or lower the minimum input eligibility. It may 
 
 ## PostgreSQL-only persistence
 
-- Packaged migrations are contiguous from 001 through 088 and checksummed.
+- Packaged migrations are contiguous from 001 through 090 and checksummed.
 - `schema_migrations` and the schema catalog are verified at startup/tests.
 - Runtime database bindings exclude credentials and fail closed on a different database/schema.
 - Journals use leases, fencing, CAS and append-only events.
@@ -74,7 +74,13 @@ the existing ManualTrade and Fill facts under PostgreSQL transaction locks, so
 088 adds no table or Authority. The migrations extend the existing
 Continuous child constraint with `STRATEGY_RUNTIME`; it creates neither another
 scheduler nor another Position owner. None weakens migration 046 or creates a
-second Calendar/PIT/Forecast/Evaluation owner.
+second Calendar/PIT/Forecast/Evaluation owner. Migration 089 admits immutable
+Golden Loop V2 `RESEARCH_EVALUATION` session components and
+`METHODOLOGY_ASSESSMENT` evidence under the existing Historical Research
+owners. Migration 090 removes the invalid uniqueness assumption that a
+tie-aware Dynamic Pool can have only one member at a rank. Neither migration
+creates another Runtime, Portfolio owner, Outcome owner, or physical Position
+path.
 
 Strategy evidence is keyed by exact Strategy Version and retains Dataset, PIT,
 Universe, Decision Time, Target/Horizon, cost, evaluation, code and configuration

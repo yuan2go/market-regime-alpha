@@ -2,8 +2,8 @@
 
 > **Status:** ROADMAP  
 > **Authority:** Dependency-ordered forward work  
-> **Baseline:** `main@ab35a32ab857819153b665d5bf72301f7db46ede`  
-> **Last Updated:** 2026-08-19  
+> **Baseline:** `agent/alpha-proof-campaign-01@bcee87a7d79f1028667a5874b7273a10fdcaacfa` (executable V2 evidence)
+> **Last Updated:** 2026-08-20
 > **Code Evidence:** `docs/status/Current-State.md`, `docs/status/Gap-Register.md`
 
 The project has left the platform-first phase. The next program is an **Alpha Proof Campaign**: one vertical research/strategy loop drives the engineering backlog, while formal/prospective evidence remains independently gated.
@@ -38,6 +38,10 @@ The initial Golden Strategy Question should reuse the existing frozen decision/e
 
 ## WP-GOLDEN-LOOP-01 — Golden Alpha Proof Vertical Slice
 
+**Status:** `COMPLETE` for research-correctness engineering and retrospective
+canonical Evidence closure at the executable V2 baseline. Empirical Alpha,
+Strategy economics and prospective proof remain outside this completion claim.
+
 **Current problem**  
 The repository contains most individual capabilities, but next-stage progress is still too easy to measure by platform feature completion instead of one complete economic proof chain.
 
@@ -66,6 +70,15 @@ No for engineering/historical proof. Yes later for prospective evidence.
 
 **System capability gained**  
 A Golden Research Loop that exposes the next highest-information problem.
+
+**Observed result**
+The 126-session exact-rational V2 campaign and replay bind Research Evaluation
+to the canonical Cycle, Cross-Strategy Portfolio, Outcome and Attribution
+owners. It rejects the Alpha claim: Price and Price+Volume RankIC, spread, gross
+and net are negative; all 37,800 Candidates are rejected; Signal/Forecast
+coverage is zero; 126 Portfolio sessions are `NO_ACTION`; Strategy economics
+are `NOT_ESTIMABLE`. The next dependency-coherent Work Package is therefore
+`WP-BASELINE-ALPHA-01`, not Strategy optimization or ML.
 
 ---
 
@@ -334,11 +347,11 @@ Historical survives, prospective fails
 
 # Top 5 highest-value actions
 
-1. **WP-GOLDEN-LOOP-01** — make one complete decision-to-attribution path the proof spine.
-2. **WP-BASELINE-ALPHA-01** — establish a transparent benchmark before more model sophistication.
-3. **WP-FACTOR-DISCOVERY-01** — use ablation/de-duplication to learn which existing Context/Factor layers actually add information.
-4. **WP-PROSPECTIVE-01** — start the future evidence clock early because lost prospective time cannot be reconstructed.
-5. **WP-STRATEGY-PROOF-01** — convert surviving predictive information into executable net economics.
+1. **WP-BASELINE-ALPHA-01** — explain or reject the negative ranking with IC stability, quantiles and Top-1/3/5/10 diagnostics before more model sophistication.
+2. **WP-PROSPECTIVE-01** — prepare/freeze the honest baseline cohort and start the future evidence clock when a live-origin market window and required data are available; historical replay cannot fill it.
+3. **WP-FACTOR-DISCOVERY-01** — proceed only if a transparent baseline has credible information, then use ablation/de-duplication to test Context layers.
+4. **WP-ATTRIBUTION-COMPRESSION-01** — diagnose Candidate starvation and evaluate whether zero-value Context/Candidate/Signal/Forecast layers should simplify or retire.
+5. **WP-STRATEGY-PROOF-01** — remain dependency-blocked until ranking or Candidate evidence supports an executable action; do not optimize costs around a negative predictor.
 
 `WP-ATTRIBUTION-COMPRESSION-01` runs alongside these when the Golden Loop reveals redundant architecture.
 
