@@ -2,7 +2,8 @@
 
 > **Status:** CURRENT_STATUS  
 > **Authority:** Current unresolved gap inventory  
-> **Baseline:** `agent/alpha-proof-campaign-01@bcee87a7d79f1028667a5874b7273a10fdcaacfa` (executable V2 evidence)
+> **Repository Baseline:** `main@5a441746ada08eb08310b12e34d9e0f56f56a952`
+> **Strongest Research Evidence Revision:** `bcee87a7d79f1028667a5874b7273a10fdcaacfa` (Golden Loop V2)
 > **Last Updated:** 2026-08-20
 > **Code Evidence:** `src/market_regime_alpha`, `docs/status/Current-State.md`
 
@@ -15,6 +16,7 @@ Gaps are classified so missing future/external evidence does not block engineeri
 | Gap | Closure evidence | Remaining evidence ceiling |
 |---|---|---|
 | Golden Alpha Proof loop research correctness | Frozen exact-rational scoring and fractional boundary identities; canonical Cycle/Portfolio/Outcome/Attribution binding; 126-session resume and exact replay; five immutable V2 Evidence owners | Historical `EXPLORATORY` / `PIT_INCOMPLETE`; ranking and Strategy value remain negative or `NOT_ESTIMABLE` |
+| Documentation authority convergence | Former Constitution/static site and duplicate roadmap hierarchy removed; one Canonical Overall Design plus current supporting documents | Current status still follows executable evidence and must be updated with each Work Package |
 
 ---
 
@@ -24,16 +26,13 @@ These work items do not require waiting for future market sessions or a new exte
 
 | Gap | Current problem | Exit condition | Priority |
 |---|---|---|---|
-| Transparent quantitative baseline | V2 makes Price/Volume Top-10 results trustworthy, but both are negative and quantile monotonicity plus Top-1/3/5 sensitivity are absent | Frozen baseline reports RankIC/IC stability, quantiles, Top-1/3/5/10, MFE/MAE, gross/net, turnover, drawdown, capacity and missingness | P0 |
-| Candidate coverage / gate diagnosis | V2 rejects 37,800/37,800 rows, primarily on Capital, Regime and Theme gates | Universe→eligibility→ranking→gate counts, reasons, distributions and predeclared sensitivity explain whether the policy is unusably selective; thresholds remain frozen in the current Experiment | P0 |
-| Factor/context incremental value | Exact V2 shows no boundary/economic lift beyond Price+Volume; ETF/Capital/Candidate/Signal/Forecast are not estimable and Dynamic Pool is non-constant in only 3/126 sessions | A new frozen Experiment applies de-dup/sensitivity only after the transparent baseline is complete | P0 |
+| WP-ALPHA-RESEARCH-01 Factor→Gate→Candidate discovery | V2 Panel projects only two Feature outputs and loses Candidate status/reasons; current hard-chain ordering cannot distinguish Gate information from sample filtering | Persist a frozen Experiment; expand the owner-resolved Panel; evaluate the complete registered factor family and hard/soft/no-predictive Gate/Candidate policies with multi-K, quantiles, stability, economics and multiple-testing diagnostics | P0 |
 | Candidate / Signal / Forecast responsibility test | Separate artifacts exist, but empirical distinctness is not established | Each layer proves distinct information/policy/consumer value or is simplified/merged | P0/P1 |
 | Forecast estimability diagnostics | Forecast fails closed correctly, but `NOT_ESTIMABLE` must direct research instead of threshold relaxation | Diagnostics identify sample/coverage/conditioning/estimator/floor causes for blocked cohorts | P0 |
 | Strategy economic translation | Platform can simulate/record actions, but prediction value is not proven as executable net value | Frozen Entry/Holding/Exit/Portfolio protocol reconciles gross→cost→net under applicable A-share constraints | P1 |
 | Cost / fillability / capacity research | Existing values remain partly engineering assumptions | Provenance/sensitivity explicit; empirical sources can replace assumptions without silent Strategy identity mutation | P1 |
 | Attribution-driven diagnosis | Canonical owner lineage is closed, but `NO_ACTION` means Entry through Execution economics have no observations | Data/Universe/Context/Ranking/Signal/Forecast/Entry/Portfolio/Holding/Exit/Cost categories become actionable without manufacturing actions | P1 |
 | Architecture compression | Legacy/compatibility surfaces remain because some replay/qualification consumers exist | Consumer inventory + differential replay permits safe retirement/merge; no parallel writer/runtime | P1 |
-| Documentation authority | Former Constitution/static site created duplicate/outdated architecture surfaces | One Canonical Overall Design plus subordinate current/supporting docs | P0 |
 | Business observability | Infrastructure metrics are mature; research diagnostics must dominate | Operator can explain no-run/no-candidate/not-estimable/net-negative from one traceable chain | P1 |
 
 ---

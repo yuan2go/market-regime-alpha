@@ -15,6 +15,9 @@ from market_regime_alpha.application.historical_corpus.golden_loop import (
     GoldenLoopScoringContract,
     evaluate_golden_loop_session,
 )
+from market_regime_alpha.application.historical_corpus.alpha_discovery import (
+    ALPHA_DISCOVERY_CONTRACT_KIND,
+)
 from market_regime_alpha.application.historical_corpus.materialization_contracts import (
     HistoricalComponentKind,
     HistoricalSessionComponent,
@@ -181,6 +184,20 @@ class MultiStrategyHistoricalAdapter:
         contract = GoldenLoopScoringContract.create_v2()
         if contract.reference not in request.configuration_references:
             return delegated
+        discovery_references = tuple(
+            item
+            for item in request.configuration_references
+            if item.artifact_kind == ALPHA_DISCOVERY_CONTRACT_KIND
+        )
+        if len(discovery_references) > 1:
+            raise ValueError("Historical command binds multiple Alpha Discovery contracts")
+        source_run_references = tuple(
+            item
+            for item in request.configuration_references
+            if item.artifact_kind == "HISTORICAL_RESEARCH_SOURCE_RUN"
+        )
+        if len(source_run_references) > 1:
+            raise ValueError("Historical command binds multiple source runs")
         available = _validation_references(
             (*inputs, *delegated.output_references)
         )
@@ -241,8 +258,11 @@ class MultiStrategyHistoricalAdapter:
                     request.configuration_references,
                     HISTORICAL_STRATEGY_ECONOMICS_POLICY_SET_KIND,
                 ),
+                *discovery_references,
+                *source_run_references,
             ),
             scoring_contract=contract,
+            enable_alpha_discovery=bool(discovery_references),
         )
         component = HistoricalSessionComponent.create(
             run_id=panel.run_id,

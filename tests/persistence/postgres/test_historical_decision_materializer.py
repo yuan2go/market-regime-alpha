@@ -454,8 +454,51 @@ def test_existing_historical_runner_actively_materializes_and_replays(
     assert evaluation.layer_diagnostics["candidate"]["observed_count"] == 0
     assert evaluation.layer_diagnostics["signal"]["observed_count"] == 0
     assert evaluation.layer_diagnostics["forecast"]["observed_count"] == 0
+    assert evaluation.alpha_discovery is None
     assert panel.payload["row_count"] == len(STOCKS)
     assert panel.payload["missing_target_count"] == 1
+    expected_feature_output_count = sum(
+        len(definition.output_schema)
+        for definition in feature_owner.definitions
+    )
+    assert panel.payload["schema_version"] == "historical-research-panel/v2"
+    assert panel.payload["projected_feature_output_count"] == (
+        len(STOCKS) * expected_feature_output_count
+    )
+    assert panel.payload["gate_diagnostic_row_count"] == len(STOCKS)
+    assert all(
+        len(row["research_features"]) == expected_feature_output_count
+        for row in panel.payload["rows"]
+    )
+    panel_candidate = {
+        row["symbol"]: row["candidate_diagnostic"]
+        for row in panel.payload["rows"]
+    }
+    assert panel_candidate == {
+        row["symbol"]: {
+            "selection_status": row["selection_status"],
+            "rank": row["rank"],
+            "score": (
+                None
+                if row["candidate_discovery_score"] is None
+                else str(Decimal(str(row["candidate_discovery_score"])))
+            ),
+            "reason_codes": row["reason_codes"],
+        }
+        for row in candidate.payload["records"]
+    }
+    assert all(
+        set(row["gate_diagnostics"]["predictive"])
+        == {"market_regime", "theme", "capital", "dynamic_pool"}
+        for row in panel.payload["rows"]
+    )
+    assert all(
+        row["gate_diagnostics"]["predictive"]["dynamic_pool"][
+            "confounded_with_hard_integrity"
+        ]
+        is True
+        for row in panel.payload["rows"]
+    )
     excluded = next(item for item in panel.payload["rows"] if item["symbol"] == STOCKS[0])
     assert excluded["target_status"] == "CORPORATE_ACTION_EXCLUDED"
     assert outcome.payload["corporate_action_exclusions"][0]["reason_code"] == ("CORPORATE_ACTION_COVERAGE_GAP_RAW_RETURN_NOT_ESTIMABLE")

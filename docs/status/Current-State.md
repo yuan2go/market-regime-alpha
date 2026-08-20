@@ -2,7 +2,8 @@
 
 > **Status:** CURRENT_STATUS  
 > **Authority:** Current implementation/evidence summary  
-> **Baseline:** `agent/alpha-proof-campaign-01@bcee87a7d79f1028667a5874b7273a10fdcaacfa` (executable V2 evidence)
+> **Repository Baseline:** `main@5a441746ada08eb08310b12e34d9e0f56f56a952`
+> **Strongest Research Evidence Revision:** `bcee87a7d79f1028667a5874b7273a10fdcaacfa` (Golden Loop V2)
 > **Last Updated:** 2026-08-20
 > **Code Evidence:** `src/market_regime_alpha`, `src/market_regime_alpha/persistence/postgres/migrations/*.sql`, `tests`
 
@@ -19,8 +20,10 @@ target architecture.
 - **Installed operator scripts:** six — `continuous-research`, `state-system`, `decision-system`, `model-governance`, `pit-authority`, `research-shadow`.
 - **Execution boundary:** human-operated/manual; no broker writer or automatic live-trading authority.
 - **Physical Position truth:** observed effective manual Fills.
-- **Golden Loop V2 execution:** one immutable 126-session historical campaign at the baseline SHA completed in an isolated PostgreSQL schema migrated from 084 through 090; exact replay and aggregate Evidence are recorded below.
-- **Current branch validation:** the full local quality gate is recorded at handoff; GitHub CI remains a separate Provider result.
+- **Golden Loop V2 execution:** one immutable 126-session historical campaign at evidence revision `bcee87a` completed in an isolated PostgreSQL schema migrated from 084 through 090; exact replay and aggregate Evidence are recorded below.
+- **Current main validation:** the full local `pytest` suite passes at `5a44174`; six existing pandas fragmentation warnings come only from legacy Top-1000 backtesting tests.
+- **Current CI:** GitHub Actions is disabled for the repository and `5a44174` has no check runs; this is `BLOCKED`, not CI proof.
+- **Database binding:** Runtime requires an explicit PostgreSQL URL and principal; a database name or stale schema does not establish current Authority. The replayable Golden V2 Evidence schema is at migration 090.
 
 ## 2. Implemented engineering boundary
 
@@ -92,6 +95,11 @@ The V2 result is negative rather than an Alpha proof:
 - Candidate rejects all 37,800 rows, so Signal and Forecast coverage are both
   0/37,800. Canonical Portfolio therefore records 126 `NO_ACTION` sessions and
   no lines; Strategy and Portfolio economics are `NOT_ESTIMABLE`, not zero.
+- Direct Candidate-owner audit attributes the first failing reason to Capital
+  for 15,595 rows, Market Regime for 14,978, Theme for 7,199, Dynamic Pool for
+  22 and base Liquidity for 6. These counts diagnose owner data only; the
+  current Panel/Evidence loses Candidate status/reasons and has not yet promoted
+  this breakdown into canonical research Evidence.
 - V1 Phase E2/E3 ranking conclusions and the first finite-Decimal V2 result are
   retained immutably but explicitly methodology-invalidated/superseded. The
   earlier Phase E2 positive Portfolio interpretation is no longer admissible;
@@ -196,7 +204,11 @@ Engineering gaps remain, but they should be selected because they unblock this e
 
 ## 7. Current development posture
 
-The repository now moves into an **Alpha Proof Campaign**:
+The active Work Package is `WP-ALPHA-RESEARCH-01`, a controlled
+Factor→Gate→Candidate discovery campaign over the frozen Phase E3 dataset
+scope. Reusing the dataset does not reuse Phase E3 V1 conclusions.
+
+The repository now moves through the **Alpha Proof Campaign**:
 
 ```text
 Golden Strategy Question

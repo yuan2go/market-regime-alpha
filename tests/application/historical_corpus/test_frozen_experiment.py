@@ -6,15 +6,21 @@ from datetime import UTC, datetime, time
 import pytest
 
 from market_regime_alpha.application.historical_corpus.frozen_experiment import (
+    WP_ALPHA_RESEARCH_01_MULTIPLE_TESTING_FAMILY,
     create_golden_loop_v2_historical_experiment,
     create_phase_e3_feature_configuration,
     create_phase_e3_historical_experiment,
     create_phase_e3_strategy_economics_policy_set,
+    create_wp_alpha_research_01_historical_experiment,
     verify_golden_loop_v2_historical_experiment,
     verify_phase_e3_historical_experiment,
+    verify_wp_alpha_research_01_historical_experiment,
 )
 from market_regime_alpha.application.historical_corpus.golden_loop import (
     GoldenLoopScoringContract,
+)
+from market_regime_alpha.application.historical_corpus.alpha_discovery import (
+    alpha_discovery_evaluation_contract_reference,
 )
 from market_regime_alpha.application.research_evaluation.targets import (
     exploratory_five_minute_multi_horizon_protocol,
@@ -22,9 +28,13 @@ from market_regime_alpha.application.research_evaluation.targets import (
 from market_regime_alpha.application.research_validation.formal_protocol import (
     ResearchExperimentDefinition,
 )
+from market_regime_alpha.application.research_validation.common import (
+    ValidationArtifactReference,
+)
 from market_regime_alpha.application.research_validation.historical_economics import (
     HistoricalStrategyEconomicsPolicySet,
 )
+from market_regime_alpha.core.identity import ArtifactId
 
 
 LOCKED_AT = datetime(2026, 8, 13, 8, 0, tzinfo=UTC)
@@ -136,5 +146,81 @@ def test_golden_loop_v2_changes_only_research_correctness_identity() -> None:
             v2.feature_reference,
             v2.cost_policy_reference,
             GoldenLoopScoringContract.create_v2().reference,
+        ),
+    )
+
+
+def test_wp_alpha_research_01_freezes_complete_discovery_design() -> None:
+    target = exploratory_five_minute_multi_horizon_protocol()
+    golden = create_golden_loop_v2_historical_experiment(
+        target,
+        locked_at=LOCKED_AT,
+    )
+    discovery = create_wp_alpha_research_01_historical_experiment(
+        target,
+        locked_at=LOCKED_AT,
+    )
+    domains = {
+        item.parameter_name: item.allowed_values
+        for item in discovery.hyperparameter_space
+    }
+
+    assert discovery.definition_hash != golden.definition_hash
+    assert discovery.feature_reference == golden.feature_reference
+    assert discovery.cost_policy_reference == golden.cost_policy_reference
+    assert discovery.target_references == golden.target_references
+    assert discovery.multiple_testing_family_id == (
+        WP_ALPHA_RESEARCH_01_MULTIPLE_TESTING_FAMILY
+    )
+    assert domains["dataset_owner"] == (
+        "NORMALIZED_DATASET|historical-data-owner-c4cc4f5fd5a39248c116b3e7|"
+        "sha256:c4cc4f5fd5a39248c116b3e72d83dac09cb7ee6466f8ef84f803e64b4c38ea77",
+    )
+    assert domains["session_range"] == ("2025-01-02|2025-07-11|126",)
+    assert domains["universe"] == ("CSI_300_EFFECTIVE_DATED|300_PER_SESSION",)
+    assert domains["gate_variants"] == (
+        "CURRENT_HARD_GATE",
+        "NO_PREDICTIVE_GATE",
+        "SOFT_FEATURE",
+    )
+    assert domains["candidate_policies"] == (
+        "CURRENT_HARD_CHAIN",
+        "HARD_INTEGRITY_PRICE_RETURN",
+        "HARD_INTEGRITY_PRICE_VOLUME_TREND",
+        "NO_PREDICTIVE_GATES",
+        "SOFT_CONTEXT_CANDIDATE",
+    )
+    assert domains["gate_incremental_effect_contract"] == (
+        "MATCHED_SESSION_ONLY_REQUIRE_WITHIN_SESSION_ACCEPTED_AND_REJECTED",
+    )
+    assert domains["evaluation_top_k"] == ("1", "10", "3", "5")
+    assert domains["multiple_testing_method"] == ("BENJAMINI_HOCHBERG_FDR",)
+    assert domains["discovery_evidence_ceiling"] == (
+        "EXPLORATORY|PIT_INCOMPLETE|IN_SAMPLE_DISCOVERY|UNQUALIFIED|"
+        "FORMAL_OOS_FALSE|CALIBRATED_FALSE|PRODUCTION_QUALIFIED_FALSE",
+    )
+
+    verify_wp_alpha_research_01_historical_experiment(
+        discovery,
+        target_protocol=target,
+        feature_owner=create_phase_e3_feature_configuration(),
+        economics_owner=create_phase_e3_strategy_economics_policy_set(
+            target_protocol=target,
+            created_at=LOCKED_AT,
+        ),
+        decision_local_time=time(14, 55),
+        timezone_name="Asia/Shanghai",
+        configuration_references=(
+            discovery.feature_reference,
+            discovery.cost_policy_reference,
+            GoldenLoopScoringContract.create_v2().reference,
+            alpha_discovery_evaluation_contract_reference(
+                create_phase_e3_feature_configuration()
+            ),
+            ValidationArtifactReference(
+                "HISTORICAL_RESEARCH_SOURCE_RUN",
+                ArtifactId("historical-research-run-12e8dd606b480380dc0df356"),
+                "sha256:12e8dd606b480380dc0df356ca5aa6c2fdc7b2abd6b215feca74195a50227029",
+            ),
         ),
     )

@@ -1,9 +1,16 @@
 # Phase E2 Historical Evidence Expansion Report
 
-> **Status:** CURRENT_RESEARCH_PROGRAM
+> **Status:** SUPERSEDED
+> **Methodology Status:** `METHODOLOGY_INVALIDATED / SUPERSEDED`
 > **Evidence Code Revision:** `92f63e99226fe1b697cf4307b737f53c5599f14b`
 > **Evidence Date:** 2026-08-13
 > **Authority Ceiling:** `EXPLORATORY / PIT_INCOMPLETE / FORMAL_OOS=false / CALIBRATED=false`
+> **Superseded By:** Golden Loop V2 exact-rational tie-aware methodology and `docs/references/Golden-Loop-V2-Research-Correctness-Report.md`
+
+> **Current-use restriction:** This report remains immutable provenance for corpus,
+> Runtime and negative-result audit. Its V1 signed ranking, layer-lift and
+> Portfolio interpretations are `METHODOLOGY_INVALIDATED` and must not re-enter
+> a current Alpha conclusion.
 
 ## Result
 

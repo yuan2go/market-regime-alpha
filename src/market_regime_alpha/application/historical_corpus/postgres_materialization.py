@@ -219,6 +219,61 @@ class PostgresHistoricalMaterializationRepository:
             for component in batch
         )
 
+    def get_for_run_date(
+        self,
+        *,
+        run_id: ArtifactId,
+        trading_date: date,
+        component_kinds: tuple[HistoricalComponentKind, ...],
+    ) -> tuple[HistoricalSessionComponent, ...]:
+        """Reload an exact bounded source-owner set for methodology-only replay."""
+
+        if not component_kinds or component_kinds != tuple(
+            sorted(set(component_kinds), key=lambda item: item.value)
+        ):
+            raise ValueError("Historical source component kinds must be unique and sorted")
+        with self._factory.connection(read_only=True) as connection:
+            rows = connection.execute(
+                """
+                SELECT component_id, component_hash, component_kind,
+                       ordinal, trading_date, payload_json
+                FROM historical_corpus_session_component
+                WHERE run_id = %s AND trading_date = %s
+                  AND component_kind = ANY(%s)
+                ORDER BY trading_date, ordinal, component_id
+                """,
+                (
+                    str(run_id),
+                    trading_date,
+                    [item.value for item in component_kinds],
+                ),
+            ).fetchall()
+            component_ids = [str(row[0]) for row in rows]
+            source_rows = (
+                []
+                if not component_ids
+                else connection.execute(
+                    """
+                    SELECT component_id, ordinal, artifact_kind, artifact_id,
+                           content_hash
+                    FROM historical_corpus_component_source_binding
+                    WHERE component_id = ANY(%s)
+                    ORDER BY component_id, ordinal
+                    """,
+                    (component_ids,),
+                ).fetchall()
+            )
+        components = self._restore_batch(
+            rows=rows,
+            source_rows=source_rows,
+            run_id=run_id,
+        )
+        if {item.component_kind for item in components} != set(component_kinds):
+            raise HistoricalMaterializationConflict(
+                "Historical methodology replay source component set is incomplete"
+            )
+        return components
+
     def iter_for_run(
         self,
         *,

@@ -3,7 +3,7 @@
 > **Status:** CURRENT_RESEARCH_PROGRAM
 > **Authority:** Current registry of failed, blocked or insufficient research claims
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-20
+> **Last Updated:** 2026-08-21
 > **Code Evidence:** `src/market_regime_alpha/application/historical_corpus`, `src/market_regime_alpha/application/research_evaluation`
 
 | Claim | Current result | Evidence authority |
@@ -43,6 +43,8 @@
 | Golden V2 adding Volume establishes a useful baseline | `NEGATIVE`: gross improves only +0.000041; RankIC -0.059226, spread -0.001937, gross -0.000798, net -0.002899 and drawdown -0.457415 remain negative | exact-rational V2 / 37,375 observations / 126 sessions |
 | Golden V2 Regime, Theme or Dynamic Pool adds executable ranking value | No Top/Bottom boundary or gross increment. Regime/Theme are neutral in this scope; Dynamic Pool is non-constant in only 3/126 sessions and slightly changes RankIC but not boundary exposure/economics | exact-rational V2 canonical Evaluation |
 | Golden V2 ETF, Capital, Candidate, Signal or Forecast lift is zero | False: ETF/Capital/Candidate/Signal/Forecast increments are `NOT_ESTIMABLE`; all Candidate rows are rejected and downstream coverage is zero | exact-rational V2 canonical Evaluation |
+| Golden V2 first-rejection counts prove an individual Gate is useful or harmful | False: Candidate owners record Capital 15,595, Market Regime 14,978, Theme 7,199, Dynamic Pool 22 and Liquidity 6 first failures, but sequential first-failure ordering is not an isolated Gate contrast; Golden V2 Panel/Evidence dropped those diagnostics and WP-01 Panel v2 now preserves them without promoting the counts into lift | direct Candidate-owner audit + WP-01 canonical Panel |
+| WP-ALPHA-RESEARCH-01 initial run `a09d…a8d` proves Market Regime or Theme should remain a hard Gate | `METHODOLOGY_INVALIDATED / SUPERSEDED`: the first evaluator compared different temporal subsets and therefore mislabeled conditional sample selection as incremental lift; its Candidate registry also omitted the implemented `NO_PREDICTIVE_GATES` control | immutable run + `historical-evidence-e2d71e…d7a1`; excluded before conclusion and explicitly superseded by the matched-session protocol |
 | Golden V2 full ranking chain has economic value | `NEGATIVE`: RankIC -0.059283, Top-10 gross -0.000798, assumed cost 0.002100, net -0.002899 and maximum drawdown -0.457415 | exact-rational V2 / 37,375 observations / 126 sessions |
 | Golden V2 canonical Strategy or Portfolio economics are zero | False: 126/126 sessions are `NO_ACTION` with zero Portfolio lines, so gross/cost/net/turnover/drawdown are `NOT_ESTIMABLE` | canonical Cycle/Portfolio/Outcome/Attribution owners |
 | Phase E3 V1 six-checkpoint pseudo-portfolio economics remain Canonical Strategy Evidence | False: the 224,718 retrospective checkpoint diagnostics are retained historical research, but the old Evidence producer reconstructed a portfolio from `RESEARCH_PANEL`; V2 canonical Strategy/Portfolio economics are `NOT_ESTIMABLE` | immutable V1 Evidence + V2 canonical owner closure |

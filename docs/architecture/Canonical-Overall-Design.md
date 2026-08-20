@@ -574,9 +574,9 @@ Never tune a negative result merely to make it positive without freezing a new E
 The next program is an **Alpha Proof Campaign** with these Work Packages:
 
 - **P0 WP-GOLDEN-LOOP-01** — one DecisionTime→Universe→Feature→Candidate→Strategy→Shadow Portfolio→Outcome→Attribution vertical slice.
-- **P0 WP-BASELINE-ALPHA-01** — transparent cross-sectional quantitative benchmark.
-- **P0 WP-FACTOR-DISCOVERY-01** — factor coverage, de-duplication, context ablation and explicit rejection.
+- **P0 WP-ALPHA-RESEARCH-01** — frozen PIT-aware Factor→Gate→Candidate discovery: owner-resolved Panel, transparent baseline, predictive-Gate ablation and explicit rejection.
 - **P0 WP-PROSPECTIVE-01** — immutable live-origin future decision/outcome cohorts.
+- **P1 WP-ALPHA-RESEARCH-02** — separately frozen time/Universe/Provider external validation after a discovery result survives WP-01.
 - **P1 WP-STRATEGY-PROOF-01** — Entry/Fillability/Sizing/Portfolio/Holding/Exit/Cost/Capacity/Risk economics.
 - **P1 WP-ATTRIBUTION-COMPRESSION-01** — layered diagnosis plus safe removal/merge of redundant architecture.
 - **P2 WP-FORMAL-RESEARCH-01** — qualified Provider/PIT, Locked OOS, calibration and formal qualification once external evidence exists.

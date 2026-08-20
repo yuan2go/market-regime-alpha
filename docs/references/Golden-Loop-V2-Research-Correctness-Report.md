@@ -126,7 +126,7 @@ Candidate, Signal and Forecast incremental lifts are `NOT_ESTIMABLE`.
 
 The current V2 owner reports only the frozen Top-10 diagnostic. Quantile
 monotonicity, Top-1/3/5 sensitivity, capacity and empirical cost calibration
-remain real gaps for WP-BASELINE-ALPHA-01; they are not inferred here.
+remain real gaps for WP-ALPHA-RESEARCH-01; they are not inferred here.
 
 ## Immutable correction lineage
 
@@ -166,6 +166,6 @@ Research-qualified and not Production-qualified.
 Prospective proof is `BLOCKED_BY_EVIDENCE`: the isolated historical campaign
 contains no live-origin future market window and Replay/Fixture/Backfill cannot
 start that clock. The next highest-information Work Package is
-WP-BASELINE-ALPHA-01. Factor discovery and Strategy/Cost/Portfolio optimization
-remain downstream of a baseline that currently has negative information and
-economics.
+WP-ALPHA-RESEARCH-01. Strategy/Cost/Portfolio optimization remains downstream
+of a Factor/Gate/Candidate baseline that currently has negative information
+and economics.
