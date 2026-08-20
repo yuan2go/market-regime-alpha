@@ -515,6 +515,13 @@ def test_existing_historical_runner_actively_materializes_and_replays(
         if item.evidence_kind is HistoricalEvidenceKind.METHODOLOGY_ASSESSMENT
     )
     assert methodology.payload["status"] == "METHODOLOGY_INVALIDATED"
+    assert [
+        item["defect"] for item in methodology.payload["invalidated_methodologies"]
+    ] == [
+        "TIE_SPLIT_BY_OBSERVATION_ID_V1",
+        "FINITE_DECIMAL_INTERMEDIATE_TIE_DRIFT_V2",
+    ]
+    assert methodology.payload["prior_evidence_mutated"] is False
     strategy_economics = next(
         item
         for item in produced.evidence

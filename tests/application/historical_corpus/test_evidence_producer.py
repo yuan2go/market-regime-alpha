@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from decimal import Decimal
 from unittest.mock import Mock
 
@@ -10,9 +11,11 @@ from market_regime_alpha.application.historical_corpus.decision_materializer imp
 )
 from market_regime_alpha.application.historical_corpus.evidence import (
     EvidenceMetricStatus,
+    ResearchFinding,
 )
 from market_regime_alpha.application.historical_corpus.evidence_producer import (
     HistoricalEvidenceProducer,
+    _ablation_finding,
     _incremental_is_estimable,
     _metrics_payload,
 )
@@ -58,6 +61,24 @@ def test_observed_layer_retains_computed_incremental_lift() -> None:
     payload = _metrics_payload(metrics, incremental_estimable=True)
     assert payload["incremental_lift"] == "0"
     assert payload["incremental_lift_status"] == EvidenceMetricStatus.AVAILABLE.value
+
+
+def test_negative_absolute_alpha_is_not_classified_positive_from_relative_lift() -> None:
+    first = replace(
+        _metrics(),
+        session_count=126,
+        rank_ic=Decimal("-0.061"),
+        net_return=Decimal("-0.0030"),
+    )
+    last = replace(
+        _metrics(),
+        session_count=126,
+        rank_ic=Decimal("-0.059"),
+        net_return=Decimal("-0.0029"),
+    )
+    suite = Mock(results=(Mock(metrics=first), Mock(metrics=last)))
+
+    assert _ablation_finding(suite) is ResearchFinding.NEGATIVE
 
 
 def test_evidence_opens_verified_index_without_loading_whole_package() -> None:

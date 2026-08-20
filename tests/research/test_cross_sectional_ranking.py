@@ -192,6 +192,41 @@ def test_missing_and_unobserved_factors_are_neutral_but_diagnosed() -> None:
     assert result.diagnostics["unobserved"].missing_count == 3
 
 
+def test_exactly_equal_rational_composites_do_not_split_at_decimal_precision() -> None:
+    entities = tuple(f"entity-{index:02d}" for index in range(23))
+    first_values = {
+        entities[0]: Decimal("0"),
+        entities[1]: Decimal("1"),
+        entities[2]: Decimal("2"),
+    }
+    occupied = {Decimal("1"), Decimal("12")}
+    available = iter(
+        Decimal(index) for index in range(23) if Decimal(index) not in occupied
+    )
+    second_values = {
+        entity: (
+            Decimal("12")
+            if entity == entities[0]
+            else Decimal("1")
+            if entity == entities[1]
+            else next(available)
+        )
+        for entity in entities
+    }
+
+    result = composite_percentile_scores(
+        (
+            FactorCrossSection("three_observations", first_values, True, 1),
+            FactorCrossSection("twenty_three_observations", second_values, True, 1),
+        ),
+        entities=entities,
+    )
+
+    # 0/2 + 12/22 and 1/2 + 1/22 are both exactly 6/11.  Finite
+    # intermediate Decimal rounding must not manufacture a winner.
+    assert result.scores[entities[0]] == result.scores[entities[1]]
+
+
 def test_positive_affine_transform_preserves_percentiles() -> None:
     original = rank_percentiles(
         {"a": Decimal("1"), "b": Decimal("2"), "c": Decimal("2")},

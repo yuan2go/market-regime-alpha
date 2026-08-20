@@ -54,7 +54,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         metavar="KIND|ID|SHA256",
-        help="Exact external V1 Evidence reference, repeatable.",
+        help="Exact external superseded Evidence reference, repeatable.",
     )
     return parser
 

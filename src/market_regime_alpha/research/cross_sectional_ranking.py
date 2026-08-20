@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Context, Decimal, ROUND_HALF_EVEN, localcontext
 from enum import Enum
+from fractions import Fraction
 from types import MappingProxyType
 from typing import Generic, Hashable, Mapping, TypeVar
 
@@ -13,6 +14,7 @@ EntityKey = TypeVar("EntityKey", bound=Hashable)
 Numeric = Decimal | int | float
 _RANK_DECIMAL_CONTEXT = Context(prec=64, rounding=ROUND_HALF_EVEN)
 _SLOT_EXPOSURE_TOLERANCE = Decimal("1e-55")
+_MAX_EXACT_SCORE_DECIMAL_PRECISION = 4096
 
 
 class RankInformationStatus(str, Enum):
@@ -114,43 +116,14 @@ def rank_percentiles(
     """Return arithmetic-midrank percentiles without identity tie-breaking."""
 
     normalized = {key: _finite_numeric(value) for key, value in values.items()}
-    ordered = sorted(normalized.items(), key=lambda item: item[1])
-    observed_count = len(ordered)
-    distinct_count = len(set(normalized.values()))
-    if not ordered:
-        return CrossSectionalRankResult(
-            percentiles=MappingProxyType({}),
-            status=RankInformationStatus.NOT_ESTIMABLE,
-            observed_count=0,
-            distinct_count=0,
-        )
-    if observed_count == 1 or distinct_count == 1:
-        return CrossSectionalRankResult(
-            percentiles=MappingProxyType(
-                {key: Decimal("0.5") for key, _value in ordered}
-            ),
-            status=RankInformationStatus.CONSTANT,
-            observed_count=observed_count,
-            distinct_count=distinct_count,
-        )
-
-    with localcontext(_RANK_DECIMAL_CONTEXT):
-        denominator = Decimal(observed_count - 1)
-        percentiles: dict[EntityKey, Decimal] = {}
-        position = 0
-        while position < observed_count:
-            end = position + 1
-            while end < observed_count and ordered[end][1] == ordered[position][1]:
-                end += 1
-            midrank = (Decimal(position) + Decimal(end - 1)) / Decimal(2)
-            ascending = midrank / denominator
-            percentile = ascending if higher_is_better else Decimal(1) - ascending
-            for index in range(position, end):
-                percentiles[ordered[index][0]] = percentile
-            position = end
+    fractions, status, distinct_count = _rank_fraction_values(
+        normalized,
+        higher_is_better=higher_is_better,
+    )
+    observed_count = len(normalized)
     return CrossSectionalRankResult(
-        percentiles=MappingProxyType(percentiles),
-        status=RankInformationStatus.AVAILABLE,
+        percentiles=MappingProxyType(_fractions_to_decimals(fractions)),
+        status=status,
         observed_count=observed_count,
         distinct_count=distinct_count,
     )
@@ -263,45 +236,99 @@ def composite_percentile_scores(
     if any(not set(item.values).issubset(entity_set) for item in factors):
         raise ValueError("composite Factor contains an entity outside its population")
 
-    weights = {item.factor_id: _finite_numeric(item.weight) for item in factors}
-    percentiles: dict[str, Mapping[EntityKey, Decimal]] = {}
+    weights = {
+        item.factor_id: Fraction(_finite_numeric(item.weight)) for item in factors
+    }
+    percentiles: dict[str, Mapping[EntityKey, Fraction]] = {}
     diagnostics: dict[str, FactorRankDiagnostic] = {}
     for factor in factors:
         observed = {
-            key: value
+            key: _finite_numeric(value)
             for key, value in factor.values.items()
             if value is not None
         }
-        ranked = rank_percentiles(
+        ranked, status, distinct_count = _rank_fraction_values(
             observed,
             higher_is_better=factor.higher_is_better,
         )
-        percentiles[factor.factor_id] = ranked.percentiles
+        percentiles[factor.factor_id] = ranked
         diagnostics[factor.factor_id] = FactorRankDiagnostic(
-            status=ranked.status,
-            observed_count=ranked.observed_count,
-            missing_count=len(entities) - ranked.observed_count,
-            distinct_count=ranked.distinct_count,
+            status=status,
+            observed_count=len(observed),
+            missing_count=len(entities) - len(observed),
+            distinct_count=distinct_count,
         )
 
-    with localcontext(_RANK_DECIMAL_CONTEXT):
-        denominator = sum(weights.values(), Decimal("0"))
-        scores = {
-            entity: sum(
-                (
-                    weights[factor.factor_id]
-                    * percentiles[factor.factor_id].get(entity, Decimal("0.5"))
-                    for factor in factors
-                ),
-                Decimal("0"),
-            )
-            / denominator
-            for entity in entities
-        }
+    denominator = sum(weights.values(), Fraction(0))
+    exact_scores = {
+        entity: sum(
+            (
+                weights[factor.factor_id]
+                * percentiles[factor.factor_id].get(entity, Fraction(1, 2))
+                for factor in factors
+            ),
+            Fraction(0),
+        )
+        / denominator
+        for entity in entities
+    }
     return CompositeRankResult(
-        scores=MappingProxyType(scores),
+        scores=MappingProxyType(_fractions_to_decimals(exact_scores)),
         diagnostics=MappingProxyType(diagnostics),
     )
+
+
+def _rank_fraction_values(
+    values: Mapping[EntityKey, Decimal],
+    *,
+    higher_is_better: bool,
+) -> tuple[dict[EntityKey, Fraction], RankInformationStatus, int]:
+    """Build exact arithmetic midranks before any Decimal projection."""
+
+    ordered = sorted(values.items(), key=lambda item: item[1])
+    observed_count = len(ordered)
+    distinct_count = len(set(values.values()))
+    if not ordered:
+        return {}, RankInformationStatus.NOT_ESTIMABLE, 0
+    if observed_count == 1 or distinct_count == 1:
+        return (
+            {key: Fraction(1, 2) for key, _value in ordered},
+            RankInformationStatus.CONSTANT,
+            distinct_count,
+        )
+    denominator = 2 * (observed_count - 1)
+    percentiles: dict[EntityKey, Fraction] = {}
+    position = 0
+    while position < observed_count:
+        end = position + 1
+        while end < observed_count and ordered[end][1] == ordered[position][1]:
+            end += 1
+        ascending = Fraction(position + end - 1, denominator)
+        percentile = ascending if higher_is_better else Fraction(1) - ascending
+        for index in range(position, end):
+            percentiles[ordered[index][0]] = percentile
+        position = end
+    return percentiles, RankInformationStatus.AVAILABLE, distinct_count
+
+
+def _fractions_to_decimals(
+    values: Mapping[EntityKey, Fraction],
+) -> dict[EntityKey, Decimal]:
+    """Project exact scores without merging or splitting mathematical ties."""
+
+    precision = _RANK_DECIMAL_CONTEXT.prec
+    ordered = sorted(set(values.values()))
+    while precision <= _MAX_EXACT_SCORE_DECIMAL_PRECISION:
+        with localcontext(Context(prec=precision, rounding=ROUND_HALF_EVEN)):
+            projected_by_value = {
+                value: Decimal(value.numerator) / Decimal(value.denominator)
+                for value in ordered
+            }
+        projected = [projected_by_value[value] for value in ordered]
+        if all(first < second for first, second in zip(projected, projected[1:])):
+            return {key: projected_by_value[value] for key, value in values.items()}
+        precision *= 2
+    raise ValueError("exact rank scores exceed the declared Decimal projection ceiling")
 
 
 def _finite_numeric(value: Numeric) -> Decimal:

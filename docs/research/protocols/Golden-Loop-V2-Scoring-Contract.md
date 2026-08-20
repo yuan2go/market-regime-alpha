@@ -19,7 +19,7 @@ Its evidence ceiling remains `EXPLORATORY`, `PIT_INCOMPLETE`, `UNQUALIFIED`,
 ## 1. Scoring identity
 
 The contract identity is
-`WITHIN_SESSION_TIE_AWARE_FACTOR_PERCENTILE_MEAN_V2`. Every V2 Experiment,
+`WITHIN_SESSION_TIE_AWARE_EXACT_RATIONAL_FACTOR_PERCENTILE_MEAN_V2`. Every V2 Experiment,
 session evaluation, and aggregate Evidence owner binds its exact identity and
 hash.
 
@@ -59,7 +59,9 @@ Malformed, boolean, or non-finite numeric inputs fail closed.
 
 Factor order is canonicalized by declared identity. Composite score is the
 frozen weighted mean of V2 percentiles using the fixed denominator and existing
-weights.
+weights. Arithmetic midranks and composite sums remain exact rational values
+until the final order-preserving Decimal projection; finite intermediate
+rounding cannot split a mathematical tie or merge distinct scores.
 
 The following invariants are required tests:
 
@@ -128,10 +130,14 @@ physical Fill or physical Position claim.
 
 ## 7. V1 lineage and anti-tuning boundary
 
-V1 owners are immutable and remain queryable. V2 writes a separate
+Prior owners are immutable and remain queryable. V2 writes a separate
 `METHODOLOGY_ASSESSMENT` Evidence owner that binds exact affected Phase E2/E3
-references, defect `TIE_SPLIT_BY_OBSERVATION_ID_V1`, correction identities, and
-relation `SUPERSEDED_FOR_METHODOLOGY`.
+references and first-pass V2 references. It records defects
+`TIE_SPLIT_BY_OBSERVATION_ID_V1` and
+`FINITE_DECIMAL_INTERMEDIATE_TIE_DRIFT_V2`, the replacement scoring identity,
+and immutable superseded lineage. The latter was discovered only by the real
+Phase E3 campaign: finite intermediate Decimal rounding changed four
+bottom-boundary weights after an entirely unobserved factor was added.
 
 The V2 Experiment changes only the hypothesis/correctness identity, scoring
 contract, boundary policy, canonical Evidence wiring, and exact code revision.

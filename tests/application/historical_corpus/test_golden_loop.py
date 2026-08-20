@@ -27,7 +27,7 @@ def test_golden_loop_v2_scoring_contract_is_content_addressed_and_frozen() -> No
     contract = GoldenLoopScoringContract.create_v2()
 
     assert contract.scoring_contract == (
-        "WITHIN_SESSION_TIE_AWARE_FACTOR_PERCENTILE_MEAN_V2"
+        "WITHIN_SESSION_TIE_AWARE_EXACT_RATIONAL_FACTOR_PERCENTILE_MEAN_V2"
     )
     assert contract.selection_policy == "FRACTIONAL_BOUNDARY_WEIGHT_V1"
     assert contract.missing_policy == "FIXED_DENOMINATOR_NEUTRAL_0_5_V1"

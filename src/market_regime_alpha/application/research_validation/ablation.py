@@ -586,7 +586,7 @@ def run_incremental_alpha_ablation_suite(
 
     if (
         protocol.scoring_contract
-        != "WITHIN_SESSION_TIE_AWARE_FACTOR_PERCENTILE_MEAN_V2"
+        != "WITHIN_SESSION_TIE_AWARE_EXACT_RATIONAL_FACTOR_PERCENTILE_MEAN_V2"
     ):
         raise ValueError("Incremental Ablation requires the frozen V2 percentile scorer")
     if maximum_slice_cells <= 0:
@@ -681,7 +681,7 @@ def run_precomputed_alpha_ablation_suite(
 
     if (
         protocol.scoring_contract
-        != "WITHIN_SESSION_TIE_AWARE_FACTOR_PERCENTILE_MEAN_V2"
+        != "WITHIN_SESSION_TIE_AWARE_EXACT_RATIONAL_FACTOR_PERCENTILE_MEAN_V2"
     ):
         raise ValueError("Precomputed Ablation requires the frozen V2 scorer")
     accumulators = {

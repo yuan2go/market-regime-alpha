@@ -140,7 +140,7 @@ def test_incremental_ablation_consumes_ordered_session_batches() -> None:
         variants=(price, regime),
         comparison_sequence=(price.variant_id, regime.variant_id),
         top_k=2,
-        scoring_contract="WITHIN_SESSION_TIE_AWARE_FACTOR_PERCENTILE_MEAN_V2",
+        scoring_contract="WITHIN_SESSION_TIE_AWARE_EXACT_RATIONAL_FACTOR_PERCENTILE_MEAN_V2",
         created_at=NOW,
     )
     observations = _observations()
@@ -179,7 +179,7 @@ def test_v2_shared_constant_factor_is_neutral() -> None:
         variants=(price, through_theme),
         comparison_sequence=(price.variant_id, through_theme.variant_id),
         top_k=1,
-        scoring_contract="WITHIN_SESSION_TIE_AWARE_FACTOR_PERCENTILE_MEAN_V2",
+        scoring_contract="WITHIN_SESSION_TIE_AWARE_EXACT_RATIONAL_FACTOR_PERCENTILE_MEAN_V2",
         created_at=NOW,
     )
     observations = tuple(
@@ -229,7 +229,7 @@ def test_precomputed_ablation_aggregates_frozen_weights_without_reselecting() ->
         variants=(price,),
         comparison_sequence=(price.variant_id,),
         top_k=1,
-        scoring_contract="WITHIN_SESSION_TIE_AWARE_FACTOR_PERCENTILE_MEAN_V2",
+        scoring_contract="WITHIN_SESSION_TIE_AWARE_EXACT_RATIONAL_FACTOR_PERCENTILE_MEAN_V2",
         created_at=NOW,
     )
     observations = tuple(

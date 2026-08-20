@@ -409,13 +409,16 @@ class HistoricalEvidenceProducer:
             experiment_reference=experiment,
             evidence_kind=HistoricalEvidenceKind.METHODOLOGY_ASSESSMENT,
             research_question=(
-                "Which V1 Phase E2/E3 findings are invalidated by identity-based tie handling?"
+                "Which prior Phase E2/E3 or Golden Loop findings are invalidated "
+                "by ranking-methodology defects?"
             ),
             classification=ResearchFinding.INCONCLUSIVE,
             rationale=(
-                "V1 factor ranks used observation identity inside equal-value ties; "
-                "affected ranking and incremental-lift claims are methodology-invalidated, "
-                "while immutable V1 Evidence is retained for audit."
+                "V1 factor ranks used observation identity inside equal-value ties, "
+                "and the first tie-aware V2 scorer rounded recurring percentiles before "
+                "composition, splitting or merging exact rational ties at the boundary. "
+                "Affected ranking, boundary, classification and incremental-lift claims "
+                "are methodology-invalidated while immutable prior Evidence is retained."
             ),
             source_references=tuple(
                 sorted({*sources, *superseded}, key=_reference_key)
@@ -433,21 +436,38 @@ class HistoricalEvidenceProducer:
             ),
             payload={
                 "status": "METHODOLOGY_INVALIDATED",
-                "invalidated_scoring_contract": "WITHIN_SESSION_FACTOR_PERCENTILE_MEAN_V1",
+                "invalidated_methodologies": [
+                    {
+                        "defect": "TIE_SPLIT_BY_OBSERVATION_ID_V1",
+                        "scoring_contract": "WITHIN_SESSION_FACTOR_PERCENTILE_MEAN_V1",
+                        "scope": "PHASE_E2_PHASE_E3_IDENTITY_BROKEN_RANKING",
+                    },
+                    {
+                        "defect": "FINITE_DECIMAL_INTERMEDIATE_TIE_DRIFT_V2",
+                        "scoring_contract": (
+                            "WITHIN_SESSION_TIE_AWARE_FACTOR_PERCENTILE_MEAN_V2"
+                        ),
+                        "contract_hash": (
+                            "sha256:831d973567a15d3d9a89431c39cd3c1c1bcc2eac7afcde878b1969756467bb2d"
+                        ),
+                        "scope": "FIRST_GOLDEN_LOOP_V2_BOUNDARY_AND_CLASSIFICATION",
+                    },
+                ],
                 "replacement_scoring_contract": GOLDEN_LOOP_SCORING_CONTRACT,
                 "superseded_references": [
                     item.to_canonical_dict() for item in superseded
                 ],
-                "v1_evidence_mutated": False,
+                "prior_evidence_mutated": False,
                 "scope": (
-                    "Only conclusions dependent on identity-broken ranking, top-k "
-                    "selection, or incremental lift are superseded."
+                    "Only conclusions dependent on defective ranking, tie-boundary "
+                    "selection, absolute finding classification, or incremental lift "
+                    "are superseded."
                 ),
             },
             created_at=created_at,
             limitations=(
                 "METHODOLOGY_INVALIDATION_IS_NOT_NEW_ALPHA_EVIDENCE",
-                "V1_EVIDENCE_RETAINED_IMMUTABLY",
+                "PRIOR_EVIDENCE_RETAINED_IMMUTABLY",
             ),
         )
         evidence = tuple(
@@ -943,10 +963,17 @@ def _ablation_finding(suite: AlphaAblationSuite) -> ResearchFinding:
         return ResearchFinding.NOT_ESTIMABLE
     lift = last.net_return - first.net_return
     rank_lift = None if first.rank_ic is None or last.rank_ic is None else last.rank_ic - first.rank_ic
-    if lift > 0 and rank_lift is not None and rank_lift > 0:
-        return ResearchFinding.POSITIVE
-    if lift <= 0 and (rank_lift is None or rank_lift <= 0):
+    if last.net_return <= 0 and (last.rank_ic is None or last.rank_ic <= 0):
         return ResearchFinding.NEGATIVE
+    if (
+        last.net_return > 0
+        and last.rank_ic is not None
+        and last.rank_ic > 0
+        and lift > 0
+        and rank_lift is not None
+        and rank_lift > 0
+    ):
+        return ResearchFinding.POSITIVE
     return ResearchFinding.INCONCLUSIVE
 
 
