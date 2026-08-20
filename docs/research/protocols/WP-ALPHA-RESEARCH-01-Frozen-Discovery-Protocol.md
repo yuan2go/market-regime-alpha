@@ -122,6 +122,15 @@ The existing full sequential policy is separately reported as `CURRENT_HARD_CHAI
 
 The comparison is causal-style diagnosis over one observational Frozen Discovery Dataset, not proof of causal intervention.
 
+Incremental Gate lift is matched within Decision Session. A hard Gate is eligible for
+`KEEP_AS_HARD_GATE`, `DEMOTE_TO_FACTOR` or `RETIRE` only when at least 20 sessions
+contain both accepted and rejected entities and at least 20 of those sessions have
+paired RankIC and Top-5 net contrasts against `NO_PREDICTIVE_GATE_G`. A Gate whose
+pass/fail state is constant across every entity in a session is a temporal sample
+selector: its pass-period versus fail-period result is reported as conditional
+diagnosis, never as incremental lift, and its disposition is `RETEST`. Dynamic Pool
+remains `RETEST` while its membership is confounded with hard integrity.
+
 ## Candidate research policies
 
 The complete pre-registered policy set is evaluated; no winner is selected and repackaged after seeing returns:
@@ -129,6 +138,7 @@ The complete pre-registered policy set is evaluated; no winner is selected and r
 - `CURRENT_HARD_CHAIN`: current Candidate policy, unchanged;
 - `HARD_INTEGRITY_PRICE_RETURN`: hard-integrity population ranked by the registered Price/Return family;
 - `HARD_INTEGRITY_PRICE_VOLUME_TREND`: hard-integrity population ranked by equal-weight family percentiles;
+- `NO_PREDICTIVE_GATES`: hard-integrity-only common control using the transparent technical ranking;
 - `SOFT_CONTEXT_CANDIDATE`: the preceding transparent technical ranking plus Market/Theme/Capital/Dynamic Pool as soft family scores.
 
 All policies preserve exact tie-aware ranks. Candidate selection uses the frozen Top-5 policy with boundary ties and minimum population 5; evaluation additionally reports Top-1/3/5/10 without turning those diagnostic K values into changed Candidate policy.
@@ -175,3 +185,15 @@ PRODUCTION_QUALIFIED=false
 ```
 
 Phase E2/E3 V1 positive ranking/lift results remain `METHODOLOGY_INVALIDATED / SUPERSEDED` and are excluded from current conclusions. WP-ALPHA-RESEARCH-02 must use a separately frozen Experiment for time, Universe or Provider validation.
+
+## Methodology correction record
+
+The first implementation run `historical-research-run-a09d88080459cf300673ca8d`
+and its `ALPHA_ABLATION` Evidence
+`historical-evidence-e2d71ea0eb80a8cab86ed654@sha256:e2d71ea0eb80a8cab86ed654e36d0024624122d43b8bd3aeff0ed93ff6a3d7a1`
+are `METHODOLOGY_INVALIDATED / SUPERSEDED`. Before any conclusion was accepted,
+the audit found that Gate disposition compared different temporal subsets and that
+the persisted Candidate policy registry omitted the implemented
+`NO_PREDICTIVE_GATES` control. The correction above was frozen before the
+superseding run. No Factor direction, outcome threshold, cost, session, Universe,
+Provider, target or Golden V2 ranking rule changed.

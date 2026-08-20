@@ -278,6 +278,7 @@ def create_wp_alpha_research_01_historical_experiment(
                 "CURRENT_HARD_CHAIN",
                 "HARD_INTEGRITY_PRICE_RETURN",
                 "HARD_INTEGRITY_PRICE_VOLUME_TREND",
+                "NO_PREDICTIVE_GATES",
                 "SOFT_CONTEXT_CANDIDATE",
             ),
         ),
@@ -348,6 +349,12 @@ def create_wp_alpha_research_01_historical_experiment(
                 "KEEP_AS_HARD_GATE",
                 "RETEST",
                 "RETIRE",
+            ),
+        ),
+        HyperparameterDomain(
+            "gate_incremental_effect_contract",
+            (
+                "MATCHED_SESSION_ONLY_REQUIRE_WITHIN_SESSION_ACCEPTED_AND_REJECTED",
             ),
         ),
         HyperparameterDomain(

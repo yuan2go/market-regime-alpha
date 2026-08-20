@@ -103,7 +103,31 @@ def test_discovery_session_keeps_integrity_hard_and_evaluates_registered_variant
     assert aggregate["evidence_ceiling"]["formal_oos"] is False
 
 
-def _panel() -> HistoricalSessionComponent:
+def test_session_constant_predictive_gate_cannot_claim_incremental_lift() -> None:
+    evaluation = evaluate_alpha_discovery_session(
+        panel=_panel(session_constant_market=True)
+    )
+
+    aggregate = aggregate_alpha_discovery_evaluations(
+        tuple(
+            (date(2025, 1, 2) + timedelta(days=index), evaluation)
+            for index in range(21)
+        )
+    )
+    market = next(
+        item
+        for item in aggregate["gate_dispositions"]
+        if item["gate_id"] == "MARKET_REGIME"
+    )
+
+    assert market["disposition"] == "RETEST"
+    assert market["reason"] == "GATE_EFFECT_NOT_WITHIN_SESSION_SEPARABLE"
+    assert market["mixed_population_session_count"] == 0
+    assert market["hard_vs_no_rank_ic_lift"] is None
+    assert market["hard_vs_no_top5_net_lift"] is None
+
+
+def _panel(*, session_constant_market: bool | None = None) -> HistoricalSessionComponent:
     rows = []
     for index in range(12):
         symbol = "REJECTED" if index == 0 else f"S{index:02d}"
@@ -141,7 +165,11 @@ def _panel() -> HistoricalSessionComponent:
                     },
                     "predictive": {
                         "market_regime": {
-                            "passed": candidate_passed,
+                            "passed": (
+                                candidate_passed
+                                if session_constant_market is None
+                                else session_constant_market
+                            ),
                             "score": str(index / 12),
                         },
                         "theme": {

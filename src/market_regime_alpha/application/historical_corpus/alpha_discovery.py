@@ -177,7 +177,7 @@ def alpha_discovery_evaluation_contract_reference(
     """Bind the pre-registered evaluator without creating another Runtime owner."""
 
     payload = {
-        "schema_version": "alpha-discovery-evaluation-contract/v1",
+        "schema_version": "alpha-discovery-evaluation-contract/v2",
         "feature_set_reference": {
             "artifact_id": str(owner.feature_set_id),
             "content_hash": owner.content_hash,
@@ -193,11 +193,15 @@ def alpha_discovery_evaluation_contract_reference(
             "CURRENT_HARD_CHAIN",
             "HARD_INTEGRITY_PRICE_RETURN",
             "HARD_INTEGRITY_PRICE_VOLUME_TREND",
+            "NO_PREDICTIVE_GATES",
             "SOFT_CONTEXT_CANDIDATE",
         ],
         "top_k": list(ALPHA_DISCOVERY_TOP_K),
         "ranking_contract": "GOLDEN_LOOP_V2_UNCHANGED",
         "multiple_testing": "BENJAMINI_HOCHBERG_FDR",
+        "gate_incremental_effect_contract": (
+            "MATCHED_SESSION_ONLY_REQUIRE_WITHIN_SESSION_ACCEPTED_AND_REJECTED"
+        ),
     }
     digest = canonical_hash(payload)
     return ValidationArtifactReference(
@@ -401,6 +405,7 @@ def aggregate_alpha_discovery_evaluations(
         result_name="policy_results",
         identity="variant_id",
     )
+    _attach_gate_paired_effects(gate_results, ordered)
     tested = tuple(
         item
         for item in (*factor_results, *gate_results, *policy_results)
@@ -421,7 +426,7 @@ def aggregate_alpha_discovery_evaluations(
             )
     gate_dispositions = _gate_dispositions(gate_results)
     return {
-        "schema_version": "alpha-discovery-aggregate/v1",
+        "schema_version": "alpha-discovery-aggregate/v2",
         "session_count": len(ordered),
         "target_observation_count": sum(
             item.target_observation_count for _day, item in ordered
@@ -670,6 +675,89 @@ def _max_drawdown(values: tuple[Decimal, ...]) -> Decimal | None:
     return drawdown
 
 
+def _attach_gate_paired_effects(
+    gate_results: list[dict[str, Any]],
+    evaluations: tuple[tuple[date, AlphaDiscoverySessionEvaluation], ...],
+) -> None:
+    """Attach only same-session Gate lift; temporal subsetting is not incremental evidence."""
+
+    aggregate_by_gate: dict[str, dict[str, dict[str, Any]]] = {}
+    for item in gate_results:
+        aggregate_by_gate.setdefault(str(item["gate_id"]), {})[
+            str(item["mode"])
+        ] = item
+    for gate_id, aggregate_modes in aggregate_by_gate.items():
+        population_counts = {
+            "pass_all_session_count": 0,
+            "reject_all_session_count": 0,
+            "mixed_population_session_count": 0,
+        }
+        paired: dict[str, dict[str, list[Decimal]]] = {
+            "CURRENT_HARD_GATE": {"rank_ic": [], "top5_net": []},
+            "SOFT_FEATURE": {"rank_ic": [], "top5_net": []},
+        }
+        for _trading_date, evaluation in evaluations:
+            modes = {
+                str(item["mode"]): item
+                for item in evaluation.gate_results
+                if str(item["gate_id"]) == gate_id
+            }
+            hard = modes["CURRENT_HARD_GATE"]
+            control = modes["NO_PREDICTIVE_GATE"]
+            before = int(hard["before_count"])
+            after = int(hard["after_count"])
+            if after == 0:
+                population_counts["reject_all_session_count"] += 1
+            elif after == before:
+                population_counts["pass_all_session_count"] += 1
+            else:
+                population_counts["mixed_population_session_count"] += 1
+            for mode in ("CURRENT_HARD_GATE", "SOFT_FEATURE"):
+                # A hard filter is only causally separable when the same session
+                # contains both accepted and rejected entities. Soft scores keep
+                # the full population, so every matched session is eligible.
+                if mode == "CURRENT_HARD_GATE" and not 0 < after < before:
+                    continue
+                variant = modes[mode]
+                variant_rank = _decimal(variant.get("rank_ic"))
+                control_rank = _decimal(control.get("rank_ic"))
+                if variant_rank is not None and control_rank is not None:
+                    paired[mode]["rank_ic"].append(variant_rank - control_rank)
+                variant_net = _session_top_metric(variant, "5", "net_return")
+                control_net = _session_top_metric(control, "5", "net_return")
+                if variant_net is not None and control_net is not None:
+                    paired[mode]["top5_net"].append(variant_net - control_net)
+        effect = {
+            **population_counts,
+            "hard_paired_rank_ic_session_count": len(
+                paired["CURRENT_HARD_GATE"]["rank_ic"]
+            ),
+            "hard_paired_top5_net_session_count": len(
+                paired["CURRENT_HARD_GATE"]["top5_net"]
+            ),
+            "hard_vs_no_rank_ic_lift": _text(
+                _mean(tuple(paired["CURRENT_HARD_GATE"]["rank_ic"]))
+            ),
+            "hard_vs_no_top5_net_lift": _text(
+                _mean(tuple(paired["CURRENT_HARD_GATE"]["top5_net"]))
+            ),
+            "soft_paired_rank_ic_session_count": len(
+                paired["SOFT_FEATURE"]["rank_ic"]
+            ),
+            "soft_paired_top5_net_session_count": len(
+                paired["SOFT_FEATURE"]["top5_net"]
+            ),
+            "soft_vs_no_rank_ic_lift": _text(
+                _mean(tuple(paired["SOFT_FEATURE"]["rank_ic"]))
+            ),
+            "soft_vs_no_top5_net_lift": _text(
+                _mean(tuple(paired["SOFT_FEATURE"]["top5_net"]))
+            ),
+        }
+        for item in aggregate_modes.values():
+            item["matched_session_incremental_effect"] = effect
+
+
 def _gate_dispositions(gate_results: list[dict[str, Any]]) -> list[dict[str, Any]]:
     by_gate: dict[str, dict[str, dict[str, Any]]] = {}
     for item in gate_results:
@@ -677,43 +765,44 @@ def _gate_dispositions(gate_results: list[dict[str, Any]]) -> list[dict[str, Any
     dispositions = []
     for gate_id, modes in sorted(by_gate.items()):
         hard = modes["CURRENT_HARD_GATE"]
-        soft = modes["SOFT_FEATURE"]
-        control = modes["NO_PREDICTIVE_GATE"]
-        hard_net = _top_metric(hard, "5", "net_return")
-        soft_net = _top_metric(soft, "5", "net_return")
-        control_net = _top_metric(control, "5", "net_return")
-        hard_rank = _decimal(hard.get("mean_rank_ic"))
-        soft_rank = _decimal(soft.get("mean_rank_ic"))
-        control_rank = _decimal(control.get("mean_rank_ic"))
-        rejection = _decimal(hard.get("rejection_rate"))
-        estimable = min(
-            int(hard["estimable_rank_ic_session_count"]),
-            int(soft["estimable_rank_ic_session_count"]),
-            int(control["estimable_rank_ic_session_count"]),
+        effect = _mapping(
+            hard.get("matched_session_incremental_effect"),
+            "matched Gate effect",
         )
-        if bool(hard.get("confounded_with_hard_integrity")) or estimable < 20:
+        hard_net_lift = _decimal(effect.get("hard_vs_no_top5_net_lift"))
+        soft_net_lift = _decimal(effect.get("soft_vs_no_top5_net_lift"))
+        hard_rank_lift = _decimal(effect.get("hard_vs_no_rank_ic_lift"))
+        soft_rank_lift = _decimal(effect.get("soft_vs_no_rank_ic_lift"))
+        rejection = _decimal(hard.get("rejection_rate"))
+        mixed_sessions = int(effect["mixed_population_session_count"])
+        paired_sessions = min(
+            int(effect["hard_paired_rank_ic_session_count"]),
+            int(effect["hard_paired_top5_net_session_count"]),
+        )
+        if bool(hard.get("confounded_with_hard_integrity")):
             disposition = "RETEST"
             reason = "PREDICTIVE_EFFECT_NOT_SEPARABLE_OR_UNDERPOWERED"
+        elif mixed_sessions < 20 or paired_sessions < 20:
+            disposition = "RETEST"
+            reason = "GATE_EFFECT_NOT_WITHIN_SESSION_SEPARABLE"
         elif None in {
-            hard_net,
-            soft_net,
-            control_net,
-            hard_rank,
-            soft_rank,
-            control_rank,
+            hard_net_lift,
+            soft_net_lift,
+            hard_rank_lift,
+            soft_rank_lift,
             rejection,
         }:
             disposition = "RETEST"
             reason = "REQUIRED_INCREMENTAL_METRIC_NOT_ESTIMABLE"
         else:
-            assert hard_net is not None and soft_net is not None and control_net is not None
-            assert hard_rank is not None and soft_rank is not None and control_rank is not None
+            assert hard_net_lift is not None and soft_net_lift is not None
+            assert hard_rank_lift is not None and soft_rank_lift is not None
             assert rejection is not None
-            hard_net_lift = hard_net - control_net
-            soft_net_lift = soft_net - control_net
-            hard_rank_lift = hard_rank - control_rank
-            soft_rank_lift = soft_rank - control_rank
-            if hard_net_lift > 0 and hard_rank_lift > 0 and hard_net >= soft_net:
+            if (
+                hard_net_lift > 0
+                and hard_rank_lift > 0
+                and hard_net_lift >= soft_net_lift
+            ):
                 disposition = "KEEP_AS_HARD_GATE"
                 reason = "HARD_GATE_POSITIVE_INFORMATION_AND_ECONOMIC_LIFT"
             elif rejection >= Decimal("0.05") and soft_net_lift >= hard_net_lift and soft_rank_lift >= hard_rank_lift:
@@ -730,36 +819,29 @@ def _gate_dispositions(gate_results: list[dict[str, Any]]) -> list[dict[str, Any
                 "gate_id": gate_id,
                 "disposition": disposition,
                 "reason": reason,
-                "hard_vs_no_top5_net_lift": _text(
-                    None
-                    if hard_net is None or control_net is None
-                    else hard_net - control_net
-                ),
-                "soft_vs_no_top5_net_lift": _text(
-                    None
-                    if soft_net is None or control_net is None
-                    else soft_net - control_net
-                ),
-                "hard_vs_no_rank_ic_lift": _text(
-                    None
-                    if hard_rank is None or control_rank is None
-                    else hard_rank - control_rank
-                ),
-                "soft_vs_no_rank_ic_lift": _text(
-                    None
-                    if soft_rank is None or control_rank is None
-                    else soft_rank - control_rank
-                ),
+                "hard_vs_no_top5_net_lift": _text(hard_net_lift),
+                "soft_vs_no_top5_net_lift": _text(soft_net_lift),
+                "hard_vs_no_rank_ic_lift": _text(hard_rank_lift),
+                "soft_vs_no_rank_ic_lift": _text(soft_rank_lift),
+                "mixed_population_session_count": mixed_sessions,
+                "matched_session_incremental_effect": effect,
             }
         )
     return dispositions
 
 
-def _top_metric(item: Mapping[str, Any], key: str, metric: str) -> Decimal | None:
+def _session_top_metric(
+    item: Mapping[str, Any],
+    key: str,
+    metric: str,
+) -> Decimal | None:
     top_k = item.get("top_k")
-    if not isinstance(top_k, Mapping) or not isinstance(top_k.get(key), Mapping):
+    if not isinstance(top_k, Mapping):
         return None
-    return _decimal(top_k[key].get(metric))
+    result = top_k.get(key)
+    if not isinstance(result, Mapping):
+        return None
+    return _decimal(result.get(metric))
 
 
 def _normal_mean_p_value(values: tuple[Decimal, ...]) -> Decimal | None:

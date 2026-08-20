@@ -187,7 +187,11 @@ def test_wp_alpha_research_01_freezes_complete_discovery_design() -> None:
         "CURRENT_HARD_CHAIN",
         "HARD_INTEGRITY_PRICE_RETURN",
         "HARD_INTEGRITY_PRICE_VOLUME_TREND",
+        "NO_PREDICTIVE_GATES",
         "SOFT_CONTEXT_CANDIDATE",
+    )
+    assert domains["gate_incremental_effect_contract"] == (
+        "MATCHED_SESSION_ONLY_REQUIRE_WITHIN_SESSION_ACCEPTED_AND_REJECTED",
     )
     assert domains["evaluation_top_k"] == ("1", "10", "3", "5")
     assert domains["multiple_testing_method"] == ("BENJAMINI_HOCHBERG_FDR",)
