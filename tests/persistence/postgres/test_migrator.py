@@ -151,7 +151,9 @@ def test_migration_089_admits_v2_evidence_without_mutating_v1_rows(
             "SELECT count(*) FROM historical_research_evidence"
         ).fetchone()
 
-    applied = PostgresMigrator().apply_all(postgres_factory)
+    applied = PostgresMigrator(migrations=migrations[:89]).apply_all(
+        postgres_factory
+    )
 
     with postgres_factory.connection(read_only=True) as connection:
         after = connection.execute(

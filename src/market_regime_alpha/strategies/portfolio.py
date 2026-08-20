@@ -25,7 +25,10 @@ class CrossStrategyPortfolioStatus(str, Enum):
     NO_ACTION = "NO_ACTION"
 
 
-_PORTFOLIO_DECIMAL_CONTEXT = Context(prec=28, rounding=ROUND_HALF_EVEN)
+# Strategy requested weights are already finite Decimals.  Portfolio allocation
+# must retain enough guard digits that re-summing accepted lines in immutable-ID
+# order cannot exceed the risk cap by one process-order-dependent ulp.
+_PORTFOLIO_DECIMAL_CONTEXT = Context(prec=64, rounding=ROUND_HALF_EVEN)
 
 
 @dataclass(frozen=True, slots=True)
