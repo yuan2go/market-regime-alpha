@@ -375,6 +375,21 @@ class PostgresManualExecutionRepository(NativePostgresRepository):
             ).fetchone()
             return 0 if row is None else int(row["quantity"])
 
+    def proposal_has_execution_history(self, proposal_id: ArtifactId) -> bool:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM manual_trade_records
+                    WHERE authority_route = 'STRATEGY'
+                      AND strategy_proposal_id = %s
+                ) AS present
+                """,
+                (str(proposal_id),),
+            ).fetchone()
+            return row is not None and bool(row["present"])
+
     def inspect_strategy_execution(
         self,
         *,
@@ -927,6 +942,10 @@ def _validate_strategy_aggregate_authority(
             raise ValueError("Proposal execution authority cannot be re-sized")
         authorized_quantity = proposal_authorized.recommended_quantity
     else:
+        if authorization.replacement_authority:
+            raise ValueError(
+                "Proposal replacement authority requires prior execution history"
+            )
         authorized_quantity = authorization.recommended_quantity
     filled_quantity = sum(item.filled_quantity for item in proposal_trades)
     reserved_quantity = sum(

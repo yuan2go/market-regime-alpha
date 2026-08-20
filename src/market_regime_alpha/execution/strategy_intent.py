@@ -56,6 +56,7 @@ class StrategyExecutionAuthorization:
     intended_quantity: int
     residual_cash: Decimal
     override_reason: str | None
+    replacement_authority: bool
     decision_time: datetime
     created_at: datetime
     schema_version: str = STRATEGY_EXECUTION_AUTHORIZATION_SCHEMA
@@ -91,6 +92,14 @@ class StrategyExecutionAuthorization:
             self.intended_quantity % self.lot_size
         ):
             raise ValueError("executable quantity must use the declared lot size")
+        if (
+            self.action == "EXIT"
+            and self.intended_quantity != self.recommended_quantity
+            and not self.replacement_authority
+        ):
+            raise ValueError(
+                "EXIT quantity requires existing replacement authority"
+            )
         override = self.intended_quantity != self.recommended_quantity
         if override != (self.override_reason is not None):
             raise ValueError("operator override quantity and reason must be paired")
@@ -188,6 +197,7 @@ class StrategyExecutionAuthorization:
         lot_size: int,
         operator_quantity: int | None,
         override_reason: str | None,
+        replacement_authority: bool = False,
         decision_time: datetime,
         created_at: datetime,
     ) -> StrategyExecutionAuthorization:
@@ -242,6 +252,7 @@ class StrategyExecutionAuthorization:
             "intended_quantity": intended,
             "residual_cash": residual_cash,
             "override_reason": override_reason,
+            "replacement_authority": replacement_authority,
             "decision_time": decision_time,
             "created_at": created_at,
             "schema_version": STRATEGY_EXECUTION_AUTHORIZATION_SCHEMA,
@@ -282,6 +293,7 @@ class StrategyExecutionAuthorization:
             intended_quantity=self.intended_quantity,
             residual_cash=self.residual_cash,
             override_reason=self.override_reason,
+            replacement_authority=self.replacement_authority,
             decision_time=self.decision_time,
             created_at=self.created_at,
             schema_version=self.schema_version,
@@ -355,6 +367,9 @@ class StrategyExecutionAuthorization:
                 if payload["override_reason"] is None
                 else str(payload["override_reason"])
             ),
+            replacement_authority=bool(
+                payload.get("replacement_authority", False)
+            ),
             decision_time=datetime.fromisoformat(str(payload["decision_time"])),
             created_at=datetime.fromisoformat(str(payload["created_at"])),
             schema_version=str(payload["schema_version"]),
@@ -405,6 +420,7 @@ def _authorization_payload(**values: Any) -> dict[str, Any]:
                 "price_source_reference": values["price_source_reference"].to_canonical_dict(),
                 "price_observed_at": canonical_datetime(values["price_observed_at"]),
                 "price_available_at": canonical_datetime(values["price_available_at"]),
+                "replacement_authority": values["replacement_authority"],
             }
         )
     return payload
