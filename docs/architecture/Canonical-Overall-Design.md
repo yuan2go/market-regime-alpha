@@ -1,971 +1,653 @@
 # Market Regime Alpha — Canonical Overall Design
 
 > **Status:** CANONICAL_TARGET_ARCHITECTURE  
-> **Authority:** Consolidated overall design and implementation baseline  
+> **Authority:** Single normative system-design baseline  
 > **Owner:** Market Regime Alpha maintainers  
-> **Last Updated:** 2026-08-14  
+> **Last Updated:** 2026-08-19  
 > **Code Evidence:** `src/market_regime_alpha`, `src/market_regime_alpha/persistence/postgres/migrations/*.sql`, `tests`
-> **Applies To:** Architecture, research, strategy, portfolio, runtime, evidence, qualification, operations, and future execution  
-> **Normative Boundary:** This document consolidates the current target design. It does not override `docs/constitution/00` through `09`; where a conflict exists, the repository documentation authority order applies. Current implementation facts remain authoritative only when proven by code, PostgreSQL schema, tests, and reproducible runtime evidence.
+
+This document defines how Market Regime Alpha should work. It is not an implementation-status report and does not upgrade any research or production claim. Current reality is recorded in `docs/status/` and remains authoritative only when supported by executable code, PostgreSQL owner state, tests actually run and reproducible evidence.
 
 ---
 
-## 1. Executive Summary
+## 1. Vision, Goals and Non-Goals
 
-Market Regime Alpha is a **Multi-Strategy Alpha Research, Decision & Portfolio Operating System for the China A-share market**.
+Market Regime Alpha is a:
 
-The platform is not one T+1 model, one buy/sell-point model, one factor library, or one automated trading bot. It provides shared market evidence, PIT-safe data, features, state intelligence, research infrastructure, strategy runtime, portfolio/risk, execution boundaries, outcome attribution, and qualification so that multiple strategy families can be researched, compared, shadowed, admitted, degraded, and retired under common contracts.
+> **Reliable A-share Alpha Research Operating System + Human-in-the-loop Trading Decision Support Platform.**
 
-The canonical end-to-end business loop is:
+Its purpose is to make research claims and trading decisions **reproducible, falsifiable, replayable, auditable and progressively qualifiable**.
+
+The canonical loop is:
 
 ```text
-Market / Reference Evidence
-        ↓
-Canonical PIT Data
-        ↓
-Features & Shared Market Intelligence
-        ↓
-Strategy-specific Opportunity Discovery
-        ↓
-Forecast / Decision Policy
-        ↓
-Strategy Proposal
-        ↓
-Portfolio & Risk
-        ↓
-Shadow / Manual / Future Broker Execution
-        ↓
-Fill-derived Position
-        ↓
-Outcome & Attribution
-        ↓
-Evidence & Qualification
-        ↓
-Research Feedback / Challenger
+Reliable Data / Evidence
+→ PIT-safe Research Dataset
+→ Feature / Factor
+→ Market / ETF / Theme / Capital Context
+→ Tradable Universe
+→ Candidate
+→ Signal
+→ Path Forecast
+→ Strategy
+→ Portfolio / Risk
+→ Prospective Shadow / Human Decision
+→ Outcome
+→ Attribution
+→ Research Feedback
+→ Model / Strategy Governance
 ```
 
-The platform must support materially different strategy families without duplicating the platform itself. The initial reference families are:
+The system shall preserve exact data/time/universe/code/model/strategy lineage; separate facts from inference and decisions; support historical, replay, Shadow and manual operation through convergent semantics; preserve negative and `NOT_ESTIMABLE` evidence; model material A-share execution constraints; and promote/degrade/retire only through explicit evidence.
 
-1. **Overnight / T+1** — late-session entry and next-session realization at explicit execution checkpoints.
-2. **Swing State** — Entry / Hold / Add / Reduce / Exit decisions evaluated against future path quality, not a single next-day return.
+It shall **not** promise deterministic returns, equate backtests with future Alpha, call raw scores probabilities, infer PIT from retrospective APIs/current membership, let feedback mutate a Champion without requalification, or treat broker automation as a prerequisite for a valuable research/decision system.
 
-Future families may include ETF rotation, theme rotation, trend following, mean reversion, dividend/long-term allocation, policy/event strategies, and intraday overlays. They must reuse the same platform contracts rather than create parallel control planes.
-
-The principal architectural constraint for the next phase is **business and research convergence, not further governance expansion**. PostgreSQL Authority, PIT, replay, evidence identity, recovery, and qualification remain core. New authorities, receipts, protocol wrappers, orchestrators, or runtime planes require a concrete correctness or operational failure mode before they are added.
-
-### 1.1 Implementation convergence through migration 088
-
-The first executable convergence slice is now installed. One stable Strategy
-Registry contains `OVERNIGHT` and `SWING_STATE`; both run through the same
-`MultiStrategyRuntime`, PostgreSQL repository, Continuous child, historical
-adapter, replay kernel, cross-strategy Portfolio policy, and runtime inspection
-surface. Candidate remains an upstream attention artifact: every Strategy Run
-records its own eligibility, ranking, policy rejection, action, and proposal.
-
-Migration 085 persists Strategy Contract/Version/Run, gate attribution,
-proposals, cross-strategy Portfolio decisions, observed-Fill allocation,
-multi-horizon Path Outcomes, and strategy-version-scoped feedback. Physical
-Position is still derived only from the existing manual Fill owner. Historical
-and Replay use the existing Historical Session Journal and replace only origin,
-clock, and frozen input references; no second scheduler or business database was
-introduced.
-
-Migration 086 closes the stateful execution seam without adding another
-Position owner or Runtime. When an account is explicitly bound, the Continuous
-Strategy child resolves each open sleeve from immutable observed-Fill
-allocations and manual account price observations before invoking the same
-`MultiStrategyRuntime`. Quantity and average cost come from Fill facts;
-current/peak price come from account observations, while holding age and T+1
-availability use the exact canonical PIT Trading Calendar and Fill occurrence.
-Add/reduce counters and all lineage are rebuilt from exact Proposal/Fill
-allocations. The resulting owner-resolved states are frozen in the cycle input,
-so recovery and replay do not depend on caller-created state.
-
-Migration 087 closes the accepted Portfolio line to observed execution seam by
-embedding an immutable Strategy execution authorization in the existing manual
-trade ledger. The application bridge validates exact Portfolio, Proposal,
-Strategy Version, account, symbol, side, Calendar and quantity lineage; converts
-weight to A-share lot-aware quantity; and routes every observed partial or
-corrected Fill through the existing Fill and physical Position authorities.
-Strategy allocations are recoverable from that authorization. Realized Strategy
-Outcome corrections append a new revision that supersedes exactly one earlier
-economic fact; historical revisions remain queryable while inspection returns
-only current heads. No second execution, Position, Outcome, scheduler or Runtime
-authority was introduced.
-
-Migration 088 closes aggregate execution authority on that same ledger. The
-Strategy cycle freezes the full reloadable canonical one-minute bar owner used
-for sizing, while the application resolves the exact latest decision-time
-Manual Account Observation and its latest complete `RECONCILED` report; callers
-no longer choose price or account snapshots. Under one PostgreSQL transaction,
-locks are acquired in account → Proposal → Intent order and the existing
-ManualTrade/Fill facts reconstruct Proposal filled/reserved/remaining quantity,
-account cash and available-sell reservations, and projected post-trade
-gross/symbol/Strategy exposure. Cancel/reject releases unused reservations,
-late Fill and correction facts remain append-only, and replacement intents may
-consume only the currently remaining Proposal authority. Migration 088 adds
-lineage/projection columns and indexes, not a reservation table or second
-execution/Price/Position Authority.
-
-The existing Strategy Shadow entry path now treats the canonical Overnight
-`StrategyProposal` as its decision input whenever the Multi-Strategy cycle
-exists. It no longer independently converts the same Candidate into Entry in
-that scope. The retained Shadow artifacts remain the one simulated lifecycle
-used by settlement/qualification consumers. Observed physical Fills use the
-same Shadow bounded owner for sleeve projection and immutable fill-derived
-realized Strategy Outcomes; market Path Outcome remains a separate fact family.
-
-This is engineering closure, not empirical qualification. The deterministic
-Path Outcome and feedback operators are executable and PostgreSQL-backed, but
-longitudinal 3/5/10/20-session outcome production is not yet automatically
-scheduled over a qualified corpus. Formal PIT, Formal OOS, calibration, net
-economic support, prospective proof, Production Admission, and broker authority
-all remain false.
+Microservices, Kafka, Kubernetes, generic agents, AutoML, reinforcement-learning execution and broker automation are Deferred unless a demonstrated requirement exists.
 
 ---
 
-## 2. Goals and Non-Goals
+## 2. Architecture Principles
 
-### 2.1 Goals
-
-The system shall:
-
-- support multiple independently versioned strategy families;
-- separate facts, inferred state, prediction, signal, decision, strategy, portfolio, execution, and outcome;
-- make historical and prospective decisions reproducible at the exact decision-time information boundary;
-- measure factor/model value only relative to an explicit target, horizon, universe, regime, and strategy context;
-- support buy-point, holding, reduction, and exit research as well as short-horizon strategies;
-- preserve real negative and inconclusive evidence instead of promoting unsupported Alpha claims;
-- provide deterministic recovery/replay for critical runtime state;
-- support Shadow and human-in-the-loop production before automatic broker execution;
-- attribute realized results to strategy, model, entry/exit policy, portfolio, cost, and execution where evidence permits;
-- allow Champion/Challenger evolution only through explicit re-evaluation and qualification.
-
-### 2.2 Non-Goals
-
-The system shall not:
-
-- promise deterministic returns or a fixed win rate;
-- treat one strategy as the identity of the platform;
-- treat a factor as globally useful or useless outside a target/context;
-- equate model score with a trade action;
-- infer a real position from a decision or order intent instead of fills;
-- allow online self-modification to bypass qualification;
-- require microservices, Kafka, Kubernetes, graph databases, autonomous multi-agent trading, reinforcement-learning execution, or other infrastructure without demonstrated need;
-- treat automatic broker execution as a prerequisite for a production-grade manual decision-support system.
+1. **Code and evidence outrank prose.** Executable call chain > PostgreSQL owner state > tests actually executed > reproducible evidence > status docs > historical docs.
+2. **One business fact, one Authority.** Projections, reports and receipts may exist, but cannot become hidden writers.
+3. **PostgreSQL-centered modular monolith.** Keep one Python modular monolith until independent deployment/scaling/failure/team boundaries justify a split.
+4. **One canonical all-day control plane.** Strategy families are bounded children; Historical Research is a bounded runner, not a second daily architecture.
+5. **Historical and prospective semantics converge.** Reuse business/strategy logic; vary clock, frozen evidence and execution adapter.
+6. **Evidence is scoped.** A claim is bound to Data/PIT × Universe × DecisionTime × Target/Horizon × Model × Strategy × Cost × Evaluation Protocol × Evidence Period.
+7. **Position is Fill-derived.** Prediction ≠ Decision ≠ Intent ≠ Fill ≠ Physical Position.
+8. **Fail closed for correctness; diagnose starvation.** Leakage, invalid lineage and unsafe execution fail closed; empty/rejected populations remain observable with reasons.
+9. **Production-grade, not maximum complexity.** Every abstraction must protect a real invariant/failure mode or serve a real consumer.
+10. **Architecture must earn its keep.** Regime/Theme/Capital/Candidate/Signal/Forecast layers remain only where they provide distinct semantic, policy or empirical value.
 
 ---
 
-## 3. Core Principles
+## 3. Business and Capability Architecture
 
-### P1. Strategy is not Model
-
-Canonical responsibility chain:
+Canonical business chain:
 
 ```text
-Feature / Factor
-    ↓
-Model / Forecast
-    ↓
-Signal / Assessment
-    ↓
-Decision Policy
-    ↓
-Strategy Proposal
-    ↓
-Portfolio
-    ↓
-Execution
+Market Data / Evidence
+→ Reference / PIT / Universe
+→ Dataset
+→ Feature / Factor
+→ Shared Context / State
+→ Dynamic / Tradable Universe
+→ Candidate
+→ Signal
+→ Path Forecast
+→ Opportunity / Thesis
+→ Strategy Decision
+→ Portfolio / Risk
+→ Shadow / Human Decision
+→ Manual Execution / Observed Fill
+→ Physical Position + Strategy Sleeve
+→ Holding / Exit
+→ Market Outcome + Strategy Outcome
+→ Attribution / Diagnosis
+→ Research Feedback
+→ Model / Strategy Governance
 ```
 
-A model estimates. A strategy owns a bounded decision policy. Portfolio owns cross-position/cross-strategy allocation. Execution owns side effects.
+Capability domains:
 
-### P2. Candidate is not Entry
-
-Canonical opportunity funnel:
-
-```text
-Base Tradable Universe
-        ↓
-Shared Eligibility
-        ↓
-Strategy-specific Ranking
-        ↓
-Candidate
-        ↓
-Entry / Action Decision
-```
-
-Candidate Discovery answers **what deserves attention**. Entry answers **whether action is justified now**. Candidate hard gates must not silently consume the role of the downstream decision model.
-
-### P3. Shared Intelligence is not a Shared Trade Decision
-
-Market Regime, Theme State, ETF State, Capital State, Trend State, Liquidity State, and related context may be shared. They are contextual evidence, not universal BUY/SELL authorities.
-
-### P4. Evidence is Scoped
-
-A factor/model/strategy conclusion is scoped by at least:
-
-```text
-Data / PIT Status × Universe × Decision Time × Target × Horizon
-× Strategy Version × Cost Assumption × Evaluation Protocol
-```
-
-Evidence for an Overnight strategy does not qualify a Swing strategy, and vice versa.
-
-### P5. Position is Fill-derived
-
-```text
-Decision ≠ Order ≠ Fill ≠ Position
-```
-
-Authoritative account position is derived from fills and reconciled execution facts. Strategy-level logical sleeves may allocate those fills for attribution, but they do not replace physical account truth.
-
-### P6. Historical and Prospective Semantics Converge
-
-Historical research, replay, Shadow, and production should share the same strategy/domain semantics. Replace clock, data source, and execution adapters rather than copy the business logic.
-
-### P7. One Business Fact, One Authority
-
-A business fact may have projections/read models, but only one canonical writer/authority. Storage duplication must not create authority duplication.
-
-### P8. Fail Closed for Correctness, Not for Research Starvation
-
-Fail closed for future leakage, unresolved PIT facts, corrupted data, unsafe corporate-action labels, unqualified production admission, and invalid execution semantics. Research selectivity itself must remain measurable: every material rejection requires explicit attribution.
-
-### P9. Governance Must Pay for Itself
-
-Every new Authority, Receipt, Protocol, Admission status, repository abstraction, or orchestration layer must identify the concrete failure mode it prevents and its real consumers.
-
-### P10. Prefer a Modular Monolith
-
-The target deployment remains a PostgreSQL-centered modular monolith until independent scaling, isolation, ownership, or availability requirements justify a split.
-
----
-
-## 4. Business Architecture
-
-### 4.1 Primary Roles
-
-- **Quant Researcher:** hypothesis, factors, targets, models, experiments, evaluation.
-- **Strategy Developer:** Strategy Contract, policies, strategy runtime behavior.
-- **Trader / Decision User:** review opportunities, execute or decline manual actions, record fills.
-- **Reviewer:** evidence, qualification, promotion/degradation decisions.
-- **Operator:** data readiness, runtime health, recovery, replay, inspection.
-- **System:** acquisition, materialization, inference, evaluation, decision lineage, outcome and attribution.
-
-### 4.2 Core Business Loop
-
-```text
-Observe
-  → Understand Market Context
-  → Discover Opportunities
-  → Estimate Future Path / Utility
-  → Decide
-  → Allocate Capital
-  → Apply Risk
-  → Execute / Record
-  → Observe Outcome
-  → Attribute
-  → Evaluate
-  → Qualify Challenger
-  → Promote / Degrade / Retire
-```
-
-The feedback loop produces research evidence and challengers. It never silently mutates the active Champion.
-
----
-
-## 5. Capability Architecture
-
-The platform is organized into nine capability domains:
-
-1. **Market & Reference Data** — market observations, security lifecycle, calendar, corporate actions, indices, ETF/theme/industry reference, trading rules.
-2. **Feature & State Intelligence** — observable features and versioned inferred market/theme/capital/trend/liquidity states.
-3. **Research & Evaluation** — dataset manifests, target labels, factor analysis, ablation, cross-sectional evaluation, walk-forward/OOS, calibration, cost sensitivity.
-4. **Strategy** — candidate policy, forecast/model consumption, Entry/Hold/Add/Reduce/Exit and strategy-specific state.
-5. **Portfolio & Risk** — strategy sleeves, capital allocation, exposure, concentration, liquidity, correlation, turnover and drawdown controls.
-6. **Decision & Execution** — authoritative decisions, execution mode, order intent, human/broker boundaries, fills and reconciliation.
-7. **Outcome & Attribution** — market outcomes, strategy outcomes, layered attribution and error taxonomy.
-8. **Evidence & Qualification** — immutable evidence lineage, Champion/Challenger, admission/degradation policy.
-9. **Runtime & Operations** — scheduling, retries, leases/fences, checkpoints, recovery, replay, trace, metrics and inspection.
-
-These are capability boundaries, not a requirement for nine services.
-
----
-
-## 6. System Architecture
-
-```text
-┌──────────────────── External Systems ────────────────────┐
-│ Market Data │ Reference Data │ Events │ Broker / Manual │
-└──────────────────────────┬───────────────────────────────┘
-                           ▼
-                  Market Evidence Layer
-                           ▼
-                  Canonical PIT Data
-                           ▼
-                 Feature Infrastructure
-                           ▼
-              Shared Market Intelligence
-         ┌─────────────┬─────────────┬─────────────┐
-         │ Regime      │ Theme / ETF │ Capital/etc │
-         └─────────────┴──────┬──────┴─────────────┘
-                              ▼
-                    Strategy Runtime Kernel
-          ┌───────────────────┼───────────────────┐
-          ▼                   ▼                   ▼
-     Overnight/T+1       Swing State        ETF Rotation ...
-          │                   │                   │
-          └───────────────────┼───────────────────┘
-                              ▼
-                    Strategy Proposals
-                              ▼
-                       Portfolio Engine
-                              ▼
-                          Risk Engine
-                              ▼
-                      Decision Authority
-                              ▼
-               Shadow / Manual / Future Broker
-                              ▼
-                             Fill
-                              ▼
-              Physical Position + Strategy Sleeves
-                              ▼
-                         Outcome
-                              ▼
-                       Attribution
-                              ▼
-                Evidence & Qualification
-```
-
-Cross-cutting concerns are PostgreSQL Authority, identity/versioning, PIT, audit, trace, recovery, replay, security, and observability.
-
----
-
-## 7. Canonical Runtime
-
-### 7.1 One Production Control Plane
-
-The platform has one canonical all-day production control plane. Strategy families are bounded children of that runtime; a new strategy must not introduce another top-level scheduler or authority plane.
-
-Canonical logical flow:
-
-```text
-Scheduler / Session Owner
-        ↓
-Acquire / Refresh Evidence
-        ↓
-Normalize / Validate / PIT
-        ↓
-Materialize Features
-        ↓
-Infer Shared State
-        ↓
-For each eligible Strategy Version:
-    Resolve Universe & Eligibility
-    Rank / Discover Candidates
-    Run Models / Path Forecast
-    Apply Strategy Policy
-    Emit Strategy Proposal
-        ↓
-Cross-strategy Portfolio
-        ↓
-Risk Overlay
-        ↓
-Authoritative Decision
-        ↓
-Execution Mode Adapter
-        ↓
-Fill / Position / Outcome
-        ↓
-Attribution / Evidence
-```
-
-### 7.2 Historical Runtime
-
-Historical research uses historical clock + frozen PIT evidence + frozen Strategy Version and reuses the same domain/strategy semantics. Historical materialization may be operationally separate but must not become a second implementation of strategy rules.
-
-### 7.3 Execution Modes
-
-Execution mode is independent of research qualification:
-
-- `BACKTEST`
-- `SHADOW`
-- `MANUAL`
-- `BROKER_AUTO` (future)
-
-A statistically/economically qualified strategy may remain in Shadow or Manual mode. Automatic broker side effects require a separate operational admission boundary.
-
----
-
-## 8. Domain and Authority Model
-
-Canonical identities include:
-
-- `DataSourceVersion`
-- `FeatureDefinitionVersion`
-- `StateModelVersion`
-- `DatasetManifest`
-- `TargetDefinitionVersion`
-- `ModelVersion`
-- `StrategyVersion`
-- `StrategyRun`
-- `PortfolioPolicyVersion`
-- `Decision`
-- `OrderIntent`
-- `Fill`
-- `PhysicalPosition`
-- `StrategySleevePosition`
-- `Outcome`
-- `Attribution`
-- `EvidenceArtifact`
-- `QualificationAssessment`
-- `RuntimeAttempt`
-
-Logical authority map:
-
-| Fact / Object | Canonical Authority |
+| Domain | Responsibility |
 |---|---|
-| Market observation | Market Evidence Authority |
-| Reference/effective-dated fact | PIT Reference Authority |
-| Materialized feature | Feature Materialization Authority |
-| Inferred shared state | State Authority |
-| Frozen dataset | Dataset Manifest Authority |
-| Model identity/status | Model Registry |
-| Strategy identity/status | Strategy Registry |
-| Portfolio decision | Portfolio/Decision Authority |
-| Order intent / execution request | Execution Authority |
-| Fill | Fill Authority |
-| Physical position | Fill-derived Position Authority |
-| Outcome | Outcome Authority |
-| Attribution | Attribution Authority |
-| Evidence artifact | Evidence Authority |
-| Qualification assessment | Qualification Authority |
-| Runtime attempt / recovery state | Runtime Authority |
+| Market & Reference Data | Provider evidence, market facts, calendar, security lifecycle, corporate actions, trading rules, index/ETF/industry/theme reference |
+| PIT & Universe | Decision-time knowability, historical membership/lifecycle, eligibility and tradable scope |
+| Dataset / Feature / Factor | Immutable datasets, feature materialization, factor definitions/evaluation |
+| Shared Context | Regime, ETF/Theme, Capital/Flow or explicit proxies, breadth/liquidity and related inferred state |
+| Candidate / Signal / Forecast | Ranking, setup assessment and target/horizon-specific path estimation |
+| Strategy | Versioned action policy: Entry/Hold/Add/Reduce/Exit and proposal semantics |
+| Portfolio / Risk | Selection, allocation, cash, exposure, concentration, turnover, liquidity, capacity and drawdown controls |
+| Decision / Execution | Authoritative decision lineage, Shadow/manual boundary, intent, observed Fill, reconciliation |
+| Outcome / Attribution | Market path facts, strategy economics and layered diagnosis |
+| Research / Evaluation | Experiment identity, cross-sectional evaluation, ablation, calibration, OOS, sensitivity, multiplicity |
+| Evidence / Governance | Evidence lineage, Champion/Challenger, qualification/admission/degradation |
+| Runtime / Operations | Schedule, recovery, replay, query, trace, metrics, backup/restore |
 
-A logical authority does not require a separate database/service/table family when one cohesive aggregate is sufficient.
+These are capability boundaries, not service boundaries.
 
 ---
 
-## 9. Data Architecture
+## 4. Domain, State and Authority Model
 
-### 9.1 Data Layers
+### Facts → Derived indicators → Inferred state → Decision artifacts
+
+**Facts** include price, volume, trading status, membership, published shares, corporate actions and observed Fill.  
+**Derived indicators** include momentum, relative strength, MACD, ATR, MA slope, VWAP distance and volume expansion.  
+**Inferred state** includes Market Regime, Theme State, Capital State, Trend/Liquidity State.  
+**Decision artifacts** include Candidate, Signal, Forecast, Strategy Proposal, Portfolio Decision and Execution Intent.
+
+A derived/proxy Capital signal is labelled as such; it is never promoted into raw capital-flow fact.
+
+Core governed identities include Dataset Manifest, Feature/Factor definition, State Model, Model Version, Strategy Contract/Version/Run, Portfolio Decision, Decision, Execution Intent, Fill, Physical Position, Strategy Sleeve, Outcome, Attribution, Experiment, Evidence Artifact, Qualification Assessment and Runtime Attempt.
+
+Authority rules:
+
+- market/reference facts → canonical evidence/PIT owner;
+- Dataset identity → Dataset Manifest owner;
+- features → Feature owner;
+- inferred state → State owner;
+- model lifecycle → Model Governance;
+- strategy lifecycle → Strategy Registry/Runtime;
+- allocation decision → Portfolio/Decision owner;
+- intent/Fill → execution/manual ledger owner;
+- Physical Position → effective observed Fill projection;
+- Market/Strategy Outcome → Outcome owner;
+- Attribution → diagnostic evidence owner;
+- qualification/admission → owner-resolved qualification policy;
+- runtime/recovery state → runtime journal.
+
+A logical Authority does not require a separate service/table hierarchy when an existing aggregate can preserve the invariant. Projection and Receipt are not Authority.
+
+---
+
+## 5. Data, Evidence, PIT and Dataset Architecture
+
+Data layers:
 
 ```text
-L0 Source Evidence
-L1 Canonical Market / Reference Data
+L0 Provider / Source Evidence
+L1 Canonical Market & Reference Facts
 L2 Features & Inferred State
 L3 Research Dataset / Target Views
 L4 Outcome / Evaluation / Attribution
 ```
 
-### 9.2 Temporal Semantics
-
-Data that can cause lookahead bias must preserve the necessary time semantics, commonly including:
-
-- event/effective time;
-- publication/knowledge time where applicable;
-- ingestion time;
-- decision time;
-- valid-from/valid-to for effective-dated reference facts.
-
-The research question is not merely whether a value existed historically, but whether it was knowable and usable at the declared decision time.
-
-### 9.3 Formal PIT Boundary
-
-Formal PIT engineering mechanisms and Formal PIT historical evidence are separate claims. Formal historical evidence requires qualified point-in-time treatment of the relevant universe, constituents, security lifecycle, suspensions, corporate actions, reference mappings, and decision-time availability for the strategy under test.
-
-### 9.4 Dataset Manifest
-
-Every formal evaluation dataset must freeze at least:
+Preserve relevant temporal semantics distinctly:
 
 ```text
-dataset_id
-universe_definition
-date_range
-decision_clock
-source_versions
-feature_versions
-target_version
-PIT_status
-exclusion_rules
-content_hash
-code_sha / implementation identity
+event_time / trading_time
+effective_from / effective_to
+available_at / retrieved_at
+materialized_at / recorded_at / system_imported_at
+settled_at
+decision_time / as_of_time
 ```
 
-Formal evaluation must not depend on an unversioned ad-hoc query.
+The PIT question is whether the value was legitimately knowable at `decision_time`, not whether it can be retrieved now for a historical date.
 
----
+Research must defend against look-ahead, survivorship, revision, universe/future-membership, adjustment/corporate-action, label, backfill and calendar leakage.
 
-## 10. Research, Target and Forecast Architecture
-
-### 10.1 Factor Research
-
-A Factor definition must declare formula, required data, availability boundary, lookback, normalization, missing-value policy, and version. Its value is evaluated against explicit targets using suitable diagnostics such as RankIC, IC decay, quantile spread, monotonicity, bootstrap uncertainty, regime stability, turnover, and cost sensitivity.
-
-A factor is never globally promoted because it worked on one horizon.
-
-### 10.2 Target / Label Authority
-
-The platform uses reusable market outcomes and strategy-specific target views.
-
-**Overnight examples:**
-
-- returns at explicit T+1 checkpoints;
-- morning MFE / MAE;
-- target-before-stop;
-- executable net return.
-
-**Swing examples:**
-
-- MFE/MAE at 3/5/10/20 sessions;
-- target-before-stop;
-- time-to-MFE;
-- trend continuation/failure;
-- post-exit MFE/MAE;
-- opportunity loss and avoided drawdown.
-
-The same raw future path may support several target definitions, but target identity/version must be explicit.
-
-### 10.3 Path Forecast
-
-Path Forecast is a reusable predictive capability, not a synonym for T+1 return. Depending on the Strategy Contract it may estimate:
+Two evidence tracks remain explicit:
 
 ```text
-Expected Return
-MFE / MAE Distribution
-P(Target Hit)
-P(Stop Hit)
-P(Target Before Stop)
-Time-to-MFE
-Trend Continuation / Failure
+Exploratory:
+FREE_DATA / UNQUALIFIED / PIT_INCOMPLETE
+→ rapid discovery/rejection
+→ never sufficient for Formal Alpha
+
+Formal:
+Qualified Source
+→ Formal PIT
+→ Locked Dataset
+→ Predeclared Evaluation
+→ Locked OOS
+→ Calibration/Economics where required
+→ Qualification
 ```
 
-Forecast output is not itself a trade action.
+A reusable/formal Dataset Manifest freezes dataset/hash, universe/membership evidence, date range, decision clock, source/reference versions, feature/target versions, PIT status, exclusions/missingness and code/config identity.
 
-### 10.4 Decision Error Taxonomy
-
-Buy/hold/exit quality must not be reduced to direction accuracy. Evaluation should distinguish, where applicable:
-
-- Entry false positive — action followed by poor path/risk outcome;
-- Entry false negative — skipped opportunity that subsequently met the strategy target;
-- Exit false positive — premature exit with material opportunity loss;
-- Exit false negative — failure to exit before material avoidable downside.
-
-Strategy optimization should target expected trading utility/economic value, not raw classification accuracy alone.
+Large immutable artifacts may live outside PostgreSQL, but PostgreSQL owns canonical identity, lineage, binding and business state. No file/SQLite/memory fallback becomes canonical business Authority.
 
 ---
 
-## 11. Strategy Architecture
+## 6. Quantitative Research Architecture
 
-### 11.1 Strategy Contract
+### Transparent baseline first
 
-Every Strategy Version must freeze the minimum contract required to reproduce and evaluate it:
+Every strategy research program begins with a small interpretable cross-sectional baseline using only valid decision-time features. Possible families include Relative Strength, Momentum, Volume/Turnover change, Price Position, Volatility, Liquidity and Industry Relative Strength. The exact formula is frozen by Experiment, not hard-coded into the architecture.
+
+Before optimizing a full strategy, evaluate ranking information using appropriate metrics such as:
 
 ```text
-strategy_id / family / version
-universe & eligibility contract
-decision clock / holding horizon
-target contract
-feature/model dependencies
-candidate policy
-entry / holding / add / reduce / exit policies
-portfolio proposal policy
-risk assumptions
-cost model
-execution constraints
-evaluation protocol
-qualification policy
-code/config identity
+RankIC / IC stability
+Quantile monotonicity
+Top-minus-Bottom spread
+Top1 / Top3 / Top5 / Top10
+MFE / MAE
+hit rate
+turnover
+gross / cost / net
+drawdown / capacity
 ```
 
-### 11.2 Reference Strategy A — Overnight / T+1
+A feature/factor definition declares formula, data source, availability boundary, lookback, normalization, missing-value policy, threshold/score semantics and version. MACD, moving averages, volume/price or Chan-style ideas enter only after conversion to measurable features/gates/scores.
 
-Owns a short-horizon policy such as late-session entry and explicit next-session realization checkpoints. Its existing negative/inconclusive results remain valid evidence for the tested Strategy Version and must not be generalized to the entire platform.
-
-### 11.3 Reference Strategy B — Swing State
-
-Owns stateful Entry / Hold / Add / Reduce / Exit decisions over multi-session horizons. Its research emphasizes path quality, trend persistence/failure, MFE/MAE, target-before-stop, opportunity loss, and avoided drawdown rather than a single T+1 direction label.
-
-### 11.4 Candidate Boundary
-
-Shared Eligibility should represent objective tradability/data eligibility. Strategy-specific Candidate Discovery should rank or select opportunities for that strategy. Rejection counts/reasons must be observable so that selectivity, coverage, and model starvation are distinguishable.
-
-### 11.5 Strategy Registry
-
-The platform needs a canonical Strategy identity/lifecycle alongside Model identity. This may reuse existing registry infrastructure rather than require a new service. Strategy qualification and promotion are strategy-version scoped.
-
----
-
-## 12. Portfolio, Position and Risk
-
-### 12.1 Two Position Views
-
-A multi-strategy account requires both:
-
-1. **Physical Account Position** — authoritative quantity/cost derived from actual fills.
-2. **Strategy Sleeve Position** — logical attribution of capital and fills to a Strategy Version.
-
-A documented Fill Allocation Policy must reconcile multiple strategy intents on the same security and support strategy-level PnL/exposure attribution without inventing physical holdings.
-
-### 12.2 Portfolio Layers
-
-- **Strategy Portfolio:** candidate selection, Top-K, score/equal weighting, strategy budget, rebalance semantics.
-- **Master Portfolio:** cross-strategy allocation, single-name/industry/theme exposure, correlation, liquidity, turnover, drawdown and aggregate risk.
-
-Complex optimization is not a prerequisite. Baselines such as Top-1/3/5/10 and equal/score weighting are preferred until Alpha and cost economics justify a more complex optimizer.
-
-### 12.3 A-share Risk/Execution Constraints
-
-Relevant rules must be effective-dated and strategy-aware, including T+1 restrictions, suspension, price limits, trading calendar, minimum order units, security lifecycle, corporate actions, and instrument-specific rules.
-
----
-
-## 13. Outcome, Attribution and Feedback
-
-### 13.1 Outcome Types
-
-**Market Outcome** records what objectively happened after a decision point: return, high/low, MFE/MAE, gap, target/stop timing, and related path facts.
-
-**Strategy Outcome** records what the strategy/account experienced: actual or simulated entry/exit, holding time, gross/net PnL, cost, slippage, drawdown and turnover.
-
-They must not be conflated.
-
-### 13.2 Attribution
-
-Where statistically meaningful, the system should distinguish contributions/failures from:
-
-- market regime/context;
-- theme/ETF/capital context;
-- candidate/eligibility gates;
-- factors/models/forecast;
-- entry/holding/exit policy;
-- portfolio/risk;
-- transaction cost/slippage;
-- execution/fill behavior.
-
-Gate attribution is mandatory for material candidate funnels: counts and explicit reject reasons must explain how the universe becomes the selected set.
-
-### 13.3 Research Feedback
+Model complexity escalates only when justified:
 
 ```text
-Outcome
-  → Attribution
-  → Research Finding
-  → Challenger
-  → Formal Evaluation
-  → Qualification
-  → Promotion / Rejection
+Rule/score baseline
+→ linear ranking/regression/logistic
+→ tree models
+→ LightGBM/XGBoost
+→ learning-to-rank
+→ ensemble
 ```
 
-No outcome directly mutates the active Champion.
+A more complex model must show repeatable incremental predictive **and** economic value.
+
+Research infrastructure supports immutable experiment identity, train/validation/OOS, purge/embargo when labels overlap, cross-sectional evaluation, bootstrap/clustered uncertainty, de-duplication, ablation, calibration on disjoint partitions, sensitivity, hypothesis-family/multiple-testing control and untouched Locked OOS.
+
+Changing target, universe, threshold, feature search or cost after seeing OOS creates a new Experiment identity; OOS is not repeatedly reopened.
 
 ---
 
-## 14. Reliability, Recovery and Replay
+## 7. Shared Context and Decision-Layer Boundaries
 
-Retain the reliability mechanisms that protect real failure modes:
+Market Regime, ETF, Theme and Capital are **Context**, not universal BUY/SELL authority. Each must have explicit inputs/state/version/time semantics and must prove incremental value versus the transparent baseline through ablation.
 
-- idempotency keys;
-- explicit attempts;
-- bounded retry for transient failures;
-- leases/fences where concurrent ownership exists;
-- checkpoints/resume;
-- deterministic replay;
-- immutable evidence/artifact identity.
-
-Do not retry deterministic invalid-data, PIT-violation, schema-incompatibility, or qualification failures as if they were transient infrastructure failures.
-
-Replay proof requires frozen input/evidence identity, frozen code/config/strategy identity, and deterministic comparison of the authoritative outputs relevant to the replay scope. A replay proof for one research campaign does not automatically prove all production workflows.
-
----
-
-## 15. Governance, Qualification and Production Admission
-
-Qualification should be modeled as separable evidence dimensions rather than an ever-growing single state machine:
-
-| Axis | Core Question |
-|---|---|
-| Engineering | Can the software/runtime operate correctly and recoverably? |
-| Data / PIT | Is the required data fit for this formal claim at decision time? |
-| Statistical | Has the hypothesis survived a predeclared formal/OOS protocol? |
-| Economic | Does the result survive costs, liquidity/capacity and relevant constraints? |
-| Prospective | Does the behavior survive future real-time Shadow observation? |
-| Operational | Is the strategy admitted for Research, Shadow, Manual, or Auto execution? |
-
-Production Admission is policy over evidence dimensions, not a magic boolean. Admission criteria may differ by strategy family and execution mode, but cannot silently downgrade required evidence.
-
-Evidence labels such as `EXPLORATORY`, `PIT_INCOMPLETE`, `FORMAL_OOS=false`, or `CALIBRATED=false` must never be upgraded by documentation wording or engineering test success.
-
----
-
-## 16. Observability and Operations
-
-Operational inspection must answer business questions, not only infrastructure health.
-
-Canonical correlation identities should allow navigation among runtime/session, strategy run, dataset, model, strategy version, decision, position, attempt and trace.
-
-Minimum business observability includes:
-
-- source freshness and coverage;
-- PIT/data eligibility failures;
-- eligible/candidate/selected counts and rejection distributions;
-- forecast estimability/calibration status;
-- factor/model/strategy drift where defined;
-- portfolio exposure, turnover and capacity;
-- gross/net strategy outcomes;
-- provider/runtime failures, retry/recovery counts and latency;
-- current qualification/admission status.
-
-An operator must be able to inspect why a strategy did not run, why no candidate was selected, why a forecast is not estimable, and which upstream evidence is missing.
-
----
-
-## 17. Testing and Qualification Ladder
-
-Separate software correctness from research validity:
-
-1. **Unit** — local algorithms and invariants.
-2. **Contract** — providers, repositories, strategy/model contracts.
-3. **Integration** — PostgreSQL, migrations and composed modules.
-4. **E2E Runtime** — canonical business flow with real composition.
-5. **Recovery / Replay** — deterministic failure/resume/replay semantics.
-6. **Research Qualification** — PIT, leakage controls, frozen datasets, statistical/OOS and economic evidence.
-7. **Prospective Proof** — future real-time Shadow behavior and data availability.
-8. **Production Admission** — explicit operational policy for Manual or future Broker Auto execution.
-
-Formal research protocols should use train/validation/OOS and walk-forward/purging/embargo when required by label overlap and horizon. Statistical significance alone is insufficient; stability, economic magnitude, cost, capacity and failure conditions matter.
-
----
-
-## 18. Security and External Boundaries
-
-Keep provider and broker details behind adapters. Credentials and permissions should be separated by capability, especially broker read versus broker trade authority.
-
-Shadow execution must never create broker side effects. Manual execution remains a valid production mode when fills are captured and reconciled.
-
-LLMs/Agents may support policy/event interpretation, research summarization, hypothesis generation and anomaly analysis, but an unversioned LLM response is not Market Fact or Trading Authority. If used as derived evidence, model/prompt/input provenance must be retained.
-
----
-
-## 19. Architecture Conflict Resolution
-
-The following decisions supersede incompatible lower-level interpretations while remaining subject to the Constitution:
-
-| Historical ambiguity | Canonical decision |
-|---|---|
-| T+1 versus buy/hold/exit focus | They are independent Strategy Families on one platform |
-| One platform-wide candidate gate | Shared objective Eligibility + strategy-specific Candidate Discovery |
-| Candidate equals buy decision | Candidate and Entry/Action are separate responsibilities |
-| Capital/Theme/Regime directly decide trades | They are shared/contextual intelligence consumed by strategies |
-| Forecast means next-day return | Path Forecast is target/horizon-specific and reusable |
-| Factor is globally valid/invalid | Evidence is scoped to target/horizon/universe/regime/strategy |
-| Model Registry represents full strategy lifecycle | Model and Strategy identities/lifecycles are distinct |
-| Multiple daily orchestration surfaces are acceptable | One canonical production control plane; other surfaces are bounded tools/children or retired |
-| Qualification is one giant enum | Qualification is multi-dimensional evidence plus admission policy |
-| Backtest and live own separate business logic | Reuse domain/strategy semantics; swap clock/data/execution adapters |
-| Decision creates Position | Fill-derived physical Position is authoritative |
-| Multi-strategy only needs account position | Physical position + strategy sleeves + fill allocation are required |
-| Outcome directly tunes production | Outcome creates evidence/challengers; promotion requires requalification |
-| Auto execution defines production readiness | Manual production and Auto execution are separate operational modes |
-
----
-
-## 20. Gap Analysis
-
-### Must Complete
-
-- Automatically materialize multi-session Strategy Path Outcomes from exact
-  historical owner windows and schedule the feedback closure after outcomes
-  become available.
-- Produce strategy-level statistical and economic evidence rather than only
-  deterministic contracts, kernels, and PostgreSQL engineering proof.
-- Sufficient PIT/reference coverage for each strategy before Formal PIT claims.
-- Complete the remaining consumer inventory before retiring the older T+1
-  Strategy Shadow artifact shapes and Portfolio Shadow compatibility surface;
-  canonical Entry authority has already converged on Strategy Proposal.
-
-### Should Complete
-
-- unified factor catalog/evaluation report;
-- calibration diagnostics where probabilistic forecasts are claimed;
-- regime-conditioned analysis and ablation;
-- cost/capacity sensitivity;
-- runtime inspection/query/reporting;
-- outcome/attribution and strategy comparison reporting;
-- prospective Shadow automation and longitudinal stability reports.
-
-### Future Enhancements
-
-- policy/event NLP and alternative data;
-- Level-2 microstructure where justified;
-- advanced ensembles/meta-models;
-- dynamic strategy capital allocation;
-- automated broker execution after operational admission.
-
-### Not Needed Now
-
-- microservice decomposition;
-- Kafka/event-bus redesign;
-- Kubernetes-first deployment;
-- graph database;
-- generic autonomous-agent trading plane;
-- online self-learning Champion mutation;
-- reinforcement-learning execution without prior evidence.
-
----
-
-## 21. Target Architecture Completion Criteria
-
-The target platform is materially achieved when:
-
-1. at least two materially different Strategy Families run through the same canonical platform contracts;
-2. each Strategy Version owns explicit target, candidate/decision policy, cost model, evidence and qualification lineage;
-3. shared PIT data/features/state are reusable without creating shared trade authority;
-4. historical research, replay, Shadow and production use convergent strategy semantics;
-5. portfolio/risk can combine simultaneous strategy proposals and reconcile them to fill-derived positions;
-6. outcomes and attribution support strategy-level learning without evidence contamination;
-7. Formal PIT, Formal OOS, economic support, Prospective Proof and Production Admission remain separately auditable claims;
-8. runtime failures are recoverable/replayable within clearly stated proof scope;
-9. operators can inspect the current runtime and explain missing or rejected decisions;
-10. adding a new strategy requires a Strategy implementation and evidence program, not a new platform or control plane.
-
----
-
-## 22. Dependency-Ordered Roadmap
-
-### Phase 0 — Architecture Convergence
-
-- Freeze `StrategyContract`, `StrategyVersion`, `StrategyRun`, `ExecutionMode`, and Strategy Registry semantics.
-- Classify current runtime/application surfaces as Canonical Runtime, bounded child, research/operator tool, compatibility path, or retired path.
-- Freeze further governance/authority proliferation unless justified by a concrete failure mode.
-
-### Phase 1 — Research Foundation
-
-- Build/finish unified Outcome/Target/Path Label Authority.
-- Close material PIT/reference gaps needed by the first strategy families.
-- Freeze formal dataset identities and decision-time semantics.
-
-### Phase 2 — Alpha and Candidate Diagnostics
-
-- Empirically evaluate existing factor families across explicit targets/horizons.
-- Separate objective Eligibility from strategy-specific Ranking/Candidate.
-- Add rejection/gate attribution, Recall@K/Top-K and downstream sample diagnostics.
-
-### Phase 3 — Two Reference Strategy Closures
-
-- Preserve and continue the Overnight/T+1 family with its real negative/inconclusive evidence.
-- Add the Swing State family with Entry/Hold/Add/Reduce/Exit path targets.
-- Prove both can share the same data/state/runtime/evidence infrastructure without new control planes.
-
-### Phase 4 — Portfolio and Position Closure
-
-- Implement/validate Strategy Sleeves, fill allocation, strategy PnL/exposure and physical-position reconciliation.
-- Establish simple portfolio baselines before sophisticated optimization.
-
-### Phase 5 — Reliability Convergence
-
-- Remove duplicate orchestration/compatibility paths where safe.
-- Re-prove migrations, PostgreSQL integration, retry/recovery/replay and canonical operator inspection.
-
-### Phase 6 — Formal Evaluation
-
-For each Strategy Version independently:
+Canonical questions:
 
 ```text
-Frozen Dataset
-  → Predeclared Evaluation Protocol
-  → Walk-forward / Locked OOS
-  → Cost / Capacity
-  → Economic Evidence
+Candidate = Which securities deserve further analysis?
+Signal    = Is there a trade setup now?
+Forecast  = What future path distribution is expected?
+Strategy  = Should this Strategy Version act?
+Portfolio = Which accepted proposals receive capital, and how much?
 ```
 
-### Phase 7 — Prospective Shadow
+If several layers reduce to the same score with no distinct policy/consumer, simplify or merge them.
 
-Run real decision-time data through the canonical strategy runtime without broker side effects; accumulate outcomes, calibration/stability, availability and operational evidence.
+Path Forecast is target/horizon-specific. It may estimate expected return/downside, MFE/MAE, barrier probabilities, target-before-stop, time-to-MFE or continuation/failure. It explicitly binds Forecast/Target/Trading/Outcome horizons.
 
-### Phase 8 — Manual Production Admission
-
-Admit qualified strategies to human-in-the-loop production. Capture actual decisions/fills/positions/outcomes and continue prospective attribution.
-
-### Phase 9 — Strategy Expansion
-
-Only after the first two families prove the platform contract, add ETF rotation, theme rotation, trend, dividend/long-term, mean-reversion or event strategy families.
-
-### Phase 10 — Future Broker Automation
-
-Only after separate operational qualification, add broker order state,
-broker-side reconciliation, duplicate-order prevention, cancellation handling,
-limits and kill switches. The manual observed-Fill ledger already supports
-partial and corrected Fills; that engineering fact grants no broker authority.
+Historical lookup, conditional statistics, heuristic mappings and raw ranks are named honestly. Uncalibrated output is not a probability. Insufficient evidence remains `NOT_ESTIMABLE` with diagnostics for sample count, coverage, conditioning and failing floor.
 
 ---
 
-## 23. Immediate Highest-Value Work
+## 8. Golden Alpha Proof Vertical Slice
 
-If only five workstreams are funded next, prioritize:
+The target platform is multi-strategy, but the next research-development program is driven by one narrow **Golden Strategy Question** rather than horizontal platform expansion.
 
-1. **Exact historical 3/5/10/20-session Path Outcome materialization.**
-2. **Frozen Overnight/Swing comparative evaluation with gate-attribution diagnostics.**
-3. **Empirical cost, liquidity, fillability, and capacity inputs.**
-4. **Qualified Provider/PIT evidence required by the first two families.**
-5. **Prospective Shadow accumulation under the same Strategy Versions.**
+Default proof shape:
 
-These maximize information gain and business closure. They are higher priority than another layer of Authority, Receipt, Protocol, or orchestration abstraction.
+```text
+T 14:50–14:55 decision boundary
+→ then-knowable / then-tradable A-share Universe
+→ Feature / Factor snapshot
+→ Cross-sectional Ranking / Candidate
+→ Signal / Forecast only if incremental
+→ Strategy Decision
+→ Top-K Shadow Portfolio
+→ T+1 morning realization (core 09:30–10:30 window)
+→ Market Outcome + executable Strategy Outcome
+→ MFE / MAE / Gross / Cost / Net / Fillability / Turnover / Capacity / Drawdown
+→ Attribution / Diagnosis
+```
+
+If the repository already owns a more precise frozen decision/execution protocol, reuse it rather than inventing a second one to match example times.
+
+The Golden Slice is a proof vehicle, not the permanent identity of the platform. After its contracts/evidence loop work, other Strategy Families reuse the platform.
 
 ---
 
-## 24. Canonical Architecture Baseline
+## 9. Strategy and Portfolio Architecture
 
-The project baseline is:
+Every Strategy Version freezes family/version, universe/eligibility, decision clock/horizon, Target, feature/model dependencies, candidate policy, Entry/Hold/Add/Reduce/Exit policy, Portfolio proposal policy, risk assumptions, cost/execution assumptions, evaluation protocol, qualification policy and code/config identity.
+
+A Model estimates; a Strategy owns an action policy.
+
+Reference families may include Overnight/T+1 and Swing State. ETF/theme rotation, trend, mean reversion, dividend/long-term and event strategies are Future until the Alpha Proof loop justifies expansion.
+
+Portfolio is a real strategy layer. Start simple:
 
 ```text
-Market Regime Alpha
-=
-Multi-Strategy Alpha Research
-+ Decision
-+ Portfolio
-+ Evidence Operating System
+Top-K
+Equal/Score Weight
+Cash / NAV
+Exposure
+Turnover / Cost
+Drawdown
 ```
 
-The platform shares:
+Add industry/theme concentration, correlation, liquidity, capacity, volatility targeting or risk budgets only when empirical risk/economic evidence requires them. Do not build an advanced optimizer before simple baselines establish value.
+
+Executable research models applicable A-share constraints: T+1, 100-share lots, suspension, price limits, listing lifecycle, auction versus continuous trading, fillability, liquidity, slippage/fees, impact and capacity. Ideal future min/max fills are not executable assumptions.
+
+---
+
+## 10. Canonical Runtime, Workflow and Agents
+
+One top-level all-day runtime owns:
 
 ```text
-Market / Reference Data
-PIT Semantics
-Feature Infrastructure
-Shared Market Intelligence
-Research Infrastructure
-Portfolio / Risk Infrastructure
-Runtime / Reliability Infrastructure
+Schedule / Session
+→ Evidence acquisition/refresh
+→ Normalize / validate / PIT eligibility
+→ Feature materialization
+→ Shared Context
+→ Strategy Versions
+→ Universe / Ranking / Candidate
+→ Signal / Forecast
+→ Strategy Proposal
+→ Cross-strategy Portfolio / Risk
+→ Frozen Decision
+→ Shadow / Manual execution boundary
+→ Fill / Position where observed
+→ Outcome when available
+→ Attribution / Evidence
 ```
 
-Each Strategy Version independently owns or freezes:
+Historical Research uses a historical clock/frozen evidence and the same business/strategy semantics. It may have a bounded journal/recovery/replay layer but cannot implement a second Strategy algorithm.
+
+Query, inspection, replay, recovery, qualification and administration are operator tools; they cannot bypass canonical owners.
+
+Agents/LLMs may assist hypothesis generation, summarization, diagnosis or operations. They are never Market Fact, business Authority, Qualification Authority or autonomous trading authority. If LLM-derived evidence affects a governed decision, preserve model/prompt/input provenance.
+
+---
+
+## 11. Prospective Shadow, Outcome, Attribution and Feedback
+
+Prospective evidence begins early because lost future decision time cannot be reconstructed later.
+
+Freeze each governed prospective decision with decision time, evidence/dataset identity, feature snapshot, model/strategy version, code/config identity and applicable Candidate/Signal/Forecast/Portfolio. Later append outcomes; never rewrite historical predictions. Model/Strategy versions form separate cohorts.
+
+Replay/Fixture/backfilled sessions do not count as live prospective proof.
+
+**Market Outcome** describes what objectively happened: return, high/low, MFE/MAE, gap, barrier order/timing.  
+**Strategy Outcome** describes what the strategy experienced: entry/exit/fills, holding time, gross PnL, cost, net PnL, turnover, drawdown and relevant fillability/capacity.
+
+Attribution should diagnose at least:
 
 ```text
-Target / Horizon
-Strategy-specific Candidate policy
-Model / Forecast dependencies
-Entry / Holding / Exit policy
-Cost / execution assumptions
-Evidence lineage
-Qualification status
+Data/PIT
+Universe/Eligibility
+Context
+Ranking/Candidate
+Signal
+Forecast
+Entry
+Sizing/Portfolio
+Holding Horizon
+Exit
+Cost/Slippage
+Execution/Fill
 ```
 
-All admitted strategy decisions converge through:
+Attribution is diagnostic unless a causal design supports causal claims.
+
+Feedback loop:
 
 ```text
-Portfolio
-→ Risk
-→ Decision
-→ Execution
-→ Fill
-→ Position
+Hypothesis
+→ Frozen Experiment
+→ Historical Evidence
+→ Strategy Simulation
+→ Prospective Evidence
 → Outcome
-→ Attribution
-→ Evidence / Qualification
+→ Attribution/Diagnosis
+→ Reject / Revise / Promote-to-next-gate
+→ New Frozen Experiment
 ```
 
-Future architecture and implementation work must preserve these boundaries unless a new explicit decision supersedes this design and is reflected through the repository's documentation authority process.
+Outcome never silently mutates the Champion.
+
+---
+
+## 12. Reliability, Recovery and Replay
+
+Implement reliability only for real failure modes:
+
+- idempotency for repeatable side effects;
+- transactions for atomic invariants;
+- bounded retry for transient failures;
+- leases/fences where concurrent ownership/stale workers exist;
+- checkpoints/resume for long work;
+- append-only correction/supersession where audit history matters;
+- versioning/migrations for durable contract change;
+- audit for privileged/economically material actions.
+
+Recovery resumes the same authoritative operation. Replay reloads exact frozen owners/inputs/code/config/strategy and re-executes real business semantics; it does not call a replacement Provider to manufacture missing historical evidence. Proof scope is explicit.
+
+---
+
+## 13. Governance, Qualification and Production Admission
+
+Qualification is multi-dimensional evidence:
+
+| Dimension | Question |
+|---|---|
+| Engineering | Is software/runtime correctly wired, tested, recoverable and replayable for the scope? |
+| Data/PIT | Are required facts genuinely decision-time valid? |
+| Statistical | Did the frozen hypothesis survive declared validation/OOS? |
+| Economic | Does the strategy survive costs, liquidity, capacity and constraints? |
+| Prospective | Does it remain stable on future live-origin Shadow evidence? |
+| Operational | Is it admitted for Research, Shadow, Manual or future broker execution? |
+
+Production Admission is explicit policy over independently owned evidence, not a magic boolean.
+
+Implementation proof labels:
+
+```text
+CODE_IMPLEMENTED
+CANONICAL_WIRED
+TEST_EXECUTED
+RUNTIME_PROVEN
+RESEARCH_QUALIFIED
+PRODUCTION_QUALIFIED
+```
+
+Research labels remain independent:
+
+```text
+EXPLORATORY
+PIT_INCOMPLETE
+IN_SAMPLE
+SHADOW
+NOT_ESTIMABLE
+UNQUALIFIED
+FORMAL_OOS
+CALIBRATED
+```
+
+Invalid upgrades include Mock/Fixture → Runtime Proven, backtest → Prospective Proven, protocol mechanics → Formal OOS, raw score → calibrated probability, or engineering PASS → Alpha Proven.
+
+Champion/Challenger promotion requires a new applicable frozen evidence path.
+
+Controlled broker execution is Blueprint B/Future and requires separate authentication, order/reconciliation, approval, limits and kill-switch admission after Blueprint A is empirically credible.
+
+---
+
+## 14. Observability, Security and Operations
+
+Correlate Run/Session/Attempt, Experiment/Dataset, Model/Strategy Version, Code/config, Decision Time, Portfolio/Decision, Outcome/Attribution and Trace.
+
+Business observability should expose provider freshness/coverage, PIT/eligibility rejections, universe/candidate/selected counts, factor coverage, Forecast estimability/calibration, Shadow/settled-outcome counts, RankIC/Top-K/MFE/MAE/Gross/Net, turnover/drawdown/capacity/exposure, drift where defined, runtime failures/recovery and qualification blockers.
+
+Operators must be able to explain **why no strategy ran, why no Candidate was selected, why Forecast was not estimable, and why gross/net economics failed**.
+
+Current security priorities: secret protection, least privilege, audit and safe configuration. External authenticated identity must bind to durable principals before production permission depends on identity. Broker-security controls are Deferred with broker execution.
+
+---
+
+## 15. Testing, Validation and Proof Ladder
+
+1. Unit — algorithms/invariants.
+2. Contract — provider/repository/model/strategy contracts.
+3. Integration — PostgreSQL, migrations, composition.
+4. Architecture — dependency, runtime and Authority boundaries.
+5. E2E Runtime — real canonical composition.
+6. Recovery/Replay — interruption/resume/idempotency/determinism.
+7. Research Validation — PIT/leakage/frozen dataset/statistical/economic method.
+8. Prospective Proof — future live-origin Shadow behavior.
+9. Production Admission — explicit operational authorization.
+
+Tests prove only what they execute. Results from a different commit do not make the current HEAD `TEST_EXECUTED`.
+
+---
+
+## 16. Target Architecture
+
+```text
+External Market / Reference Evidence
+              ↓
+       Data / Evidence / PIT
+              ↓
+     Dataset / Feature / Factor
+              ↓
+       Shared Context / State
+              ↓
+ Candidate / Signal / Path Forecast
+              ↓
+       Strategy Runtime Kernel
+      ┌───────┼────────┐
+   Overnight Swing   Future
+      └───────┼────────┘
+              ↓
+       Portfolio / Risk
+              ↓
+     Authoritative Decision
+              ↓
+  Shadow / Human Manual Execution
+              ↓
+      Observed Fill / Position
+              ↓
+      Outcome / Attribution
+              ↓
+    Evidence / Qualification
+              ↓
+       Research Feedback
+```
+
+Cross-cutting: PostgreSQL Authority, identity/versioning, PIT, audit, observability, recovery/replay and security.
+
+---
+
+## 17. Architecture Compression
+
+Default `DEFER` unless a real unresolved failure mode exists:
+
+```text
+new Authority
+new Receipt/Evidence hierarchy
+new generic Protocol/Policy layer
+new Repository wrapper
+new Approval/Qualification type
+new generic Workflow engine
+new Compatibility layer
+new parallel Runtime
+```
+
+Continuously inventory parallel writers, duplicate concepts, single-implementation interfaces without substitution need, repository wrappers without invariants, unused receipts, fixture-only production abstractions, legacy writers, obsolete compatibility and dead docs/code.
+
+Disposition:
+
+```text
+KEEP | SIMPLIFY | MERGE | REFACTOR | RETIRE | DELETE | DEFER
+```
+
+A successful iteration may increase business value while reducing concept count.
+
+---
+
+## 18. Evidence-driven Development
+
+Use the observed failure to select work:
+
+```text
+Candidate coverage too small
+→ Universe / gate / threshold / ranking diagnosis
+
+Forecast NOT_ESTIMABLE
+→ sample / coverage / conditioning / estimator diagnosis
+
+Gross < 0
+→ Factor / Candidate / Target / Horizon
+
+Gross > 0 but Net < 0
+→ Cost / turnover / liquidity / Entry / Portfolio
+
+Historical positive, Prospective weak
+→ leakage / stability / drift / availability
+
+Architecture has no real consumer
+→ SIMPLIFY / MERGE / RETIRE / DELETE
+```
+
+Never tune a negative result merely to make it positive without freezing a new Experiment/Strategy identity.
+
+---
+
+## 19. Canonical Roadmap
+
+The next program is an **Alpha Proof Campaign** with these Work Packages:
+
+- **P0 WP-GOLDEN-LOOP-01** — one DecisionTime→Universe→Feature→Candidate→Strategy→Shadow Portfolio→Outcome→Attribution vertical slice.
+- **P0 WP-BASELINE-ALPHA-01** — transparent cross-sectional quantitative benchmark.
+- **P0 WP-FACTOR-DISCOVERY-01** — factor coverage, de-duplication, context ablation and explicit rejection.
+- **P0 WP-PROSPECTIVE-01** — immutable live-origin future decision/outcome cohorts.
+- **P1 WP-STRATEGY-PROOF-01** — Entry/Fillability/Sizing/Portfolio/Holding/Exit/Cost/Capacity/Risk economics.
+- **P1 WP-ATTRIBUTION-COMPRESSION-01** — layered diagnosis plus safe removal/merge of redundant architecture.
+- **P2 WP-FORMAL-RESEARCH-01** — qualified Provider/PIT, Locked OOS, calibration and formal qualification once external evidence exists.
+- **P3 WP-CONTROLLED-EXECUTION-01** — optional broker automation only after separate empirical/operational admission.
+
+Gaps are classified as **A: build now**, **B: engineering-ready but prospective evidence must accumulate**, or **C: external capability/evidence dependent**. B/C never block A, and A never pretends to satisfy B/C.
+
+The roadmap is evidence-conditioned. Current details and acceptance criteria live in `docs/status/Roadmap.md`.
+
+---
+
+## 20. Superseded Designs
+
+Explicitly superseded:
+
+| Historical approach | Canonical decision |
+|---|---|
+| Build full platform before model research | Run vertical Alpha Proof; build only blockers exposed by the loop |
+| Stop platform work and jump to complex ML | Preserve data/method correctness; start with transparent baseline |
+| Governance-first roadmap | Freeze nonessential governance expansion |
+| Forecast-first architecture | Prove Universe/Feature/Ranking/Candidate information first |
+| Candidate equals Entry | Separate unless evidence/consumers justify deliberate merge |
+| Regime/Theme/Capital directly decide trades | Context consumed by Strategy and validated by ablation |
+| Multiple daily runtimes | One top-level control plane |
+| Qualification as giant state machine | Independent evidence dimensions + admission policy |
+| Separate backtest/live business logic | Shared domain/strategy semantics |
+| Decision creates Position | Fill-derived Physical Position |
+| Broker automation defines production | Human-in-loop production is valid; broker is Future |
+| More abstraction = more maturity | Correct simple design with real consumers wins |
+
+The former `docs/constitution/00` through `09` set is superseded by this Canonical Design and retained only in Git history.
+
+---
+
+## 21. Completion Criteria
+
+Blueprint A is materially achieved when:
+
+1. Strategy Versions run through one canonical platform without parallel authority planes;
+2. decisions are reproducible from then-knowable evidence and frozen Dataset/Model/Strategy/Code identity;
+3. transparent baselines and surviving factors show reproducible incremental information;
+4. prediction value translates into realistic gross/net Strategy economics;
+5. Portfolio owns allocation/risk rather than bookkeeping only;
+6. prospective Shadow accumulates immutable future cohorts;
+7. Outcome/Attribution diagnoses Data→Execution failures;
+8. negative and `NOT_ESTIMABLE` evidence can reject/simplify models and architecture;
+9. Formal PIT/OOS/calibration/economic/prospective claims are independently auditable;
+10. recovery/replay is proven for relevant runtime scopes;
+11. operators can explain missing/rejected decisions;
+12. adding a strategy requires a Strategy Version and evidence program, not a new platform.
+
+Controlled broker execution is not part of these completion criteria.
+
+---
+
+## 22. Canonical Summary
+
+Market Regime Alpha is neither primarily an infrastructure project nor primarily a model-training project. It is an **evidence-driven Alpha research and decision operating system**.
+
+Near-term operating principle:
+
+```text
+Freeze unnecessary infrastructure growth
+→ run one Golden Alpha Proof loop
+→ establish a transparent baseline
+→ measure factor/context/model incremental value
+→ translate prediction into executable Strategy/Portfolio economics
+→ accumulate immutable prospective evidence
+→ attribute failures and reject weak hypotheses
+→ build only the capability the evidence shows is missing
+→ continuously simplify redundant architecture
+```
+
+Progress is measured by evidence quality and closed research/decision loops, not by class/table/receipt count. Research conclusions require evidence, decisions require Authority, outcomes must be replayable, qualifications must be independently provable, and Production Admission cannot be obtained by assertion.

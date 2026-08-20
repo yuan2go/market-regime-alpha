@@ -1,48 +1,106 @@
 # Documentation Authority
 
-> **Status:** CURRENT_STATUS
-> **Authority:** Canonical documentation index
-> **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-14
+> **Status:** CURRENT_STATUS  
+> **Authority:** Documentation navigation and precedence only  
+> **Owner:** Market Regime Alpha maintainers  
+> **Last Updated:** 2026-08-19  
 > **Code Evidence:** `src/market_regime_alpha`, `src/market_regime_alpha/persistence/postgres/migrations/*.sql`, `tests`
 
-Documentation describes the code; it does not create implementation or evidence authority.
+Documentation never creates implementation truth, research evidence, qualification, or trading authority.
 
 ## Normative authority order
 
 1. latest explicit user decision not superseded;
-2. `docs/constitution/00` through `09`;
-3. the current architecture documents below;
-4. current status and roadmap;
-5. historical Git revisions as context only.
+2. [Canonical Overall Design](architecture/Canonical-Overall-Design.md);
+3. supporting current architecture documents listed below;
+4. current status, Gap Register and Roadmap;
+5. accepted ADRs and evidence/reference reports as subordinate provenance;
+6. Git history for historical context only.
 
-## Implementation fact authority order
+The **single normative target-design source** is the Canonical Overall Design. Supporting architecture documents refine it but may not contradict it:
 
-1. current executable code and actual call chains;
-2. PostgreSQL schema and current migration head;
-3. tests and static checks;
-4. reproducible runtime/evidence artifacts;
-5. current status documents.
-
-## Current canonical documents
-
-- [Canonical Overall Design](architecture/Canonical-Overall-Design.md)
 - [System Architecture](architecture/System-Architecture.md)
 - [Authority Map](architecture/Authority-Map.md)
 - [Data and Evidence Architecture](architecture/Data-and-Evidence-Architecture.md)
 - [Research and Strategy Lifecycle](architecture/Research-Strategy-Lifecycle.md)
-- [Current State](status/Current-State.md)
-- [Capability Matrix](status/Capability-Matrix.md)
-- [Gap Register](status/Gap-Register.md)
-- [Roadmap](status/Roadmap.md)
-- [Runtime Runbook](operations/Runtime-Runbook.md)
-- [ADR-010: Phase E Historical Alpha Evidence Production](architecture/decisions/ADR-010-Phase-E-Historical-Alpha-Evidence-Production.md)
-- [ADR-011: Phase E2 Selective Historical Evidence Runtime](architecture/decisions/ADR-011-Phase-E2-Selective-Historical-Evidence-Runtime.md)
-- [ADR-012: Phase E3 Longitudinal Historical Evidence Runtime](architecture/decisions/ADR-012-Phase-E3-Longitudinal-Historical-Evidence-Runtime.md)
-- [ADR-013: Multi-Strategy Platform Convergence](architecture/decisions/ADR-013-Multi-Strategy-Platform-Convergence.md)
-- [Phase E2 Historical Evidence Expansion Report](references/Phase-E2-Historical-Evidence-Expansion-Report.md)
-- [Phase E3 Longitudinal Historical Evidence Report](references/Phase-E3-Longitudinal-Historical-Evidence-Report.md)
 
-The Constitution remains the normative source. [Negative and Inconclusive Results](research/Negative-and-Inconclusive-Results.md) is the sole current research-claim registry.
+If a supporting document conflicts with the Canonical Overall Design, the Canonical Overall Design wins and the supporting document must be corrected.
 
-Historical audits, completed plans, deliveries, superseded architectures, work packages and designed-only specifications are excluded from the default tree. Git history preserves them; [Archive](archive/README.md) explains the boundary.
+## Implementation fact authority order
+
+When documentation conflicts with the repository, current implementation truth is established in this order:
+
+1. executable code and the real runtime call chain;
+2. PostgreSQL schema, migrations, canonical writers and readers;
+3. tests and checks actually executed against that code;
+4. reproducible runtime, replay and research evidence;
+5. current status documents.
+
+Target design does not turn an unimplemented or unproven capability into a current fact.
+
+## Current state and execution order
+
+- [Current State](status/Current-State.md) — what the current `main` actually implements and proves.
+- [Capability Matrix](status/Capability-Matrix.md) — capability-by-capability implementation/evidence status.
+- [Gap Register](status/Gap-Register.md) — unresolved engineering, prospective and external-evidence gaps.
+- [Roadmap](status/Roadmap.md) — dependency-ordered work packages driven by current evidence.
+- [Runtime Runbook](operations/Runtime-Runbook.md) — operator procedures for the implemented runtime.
+
+## Research claims
+
+- [Negative and Inconclusive Results](research/Negative-and-Inconclusive-Results.md) is the current durable research-claim registry for negative, inconclusive and not-estimable findings.
+- Reports under `docs/references/` are evidence/reference material. They are not normative architecture.
+
+## Architecture decisions
+
+ADRs under `docs/architecture/decisions/` record accepted decisions and their historical rationale. They remain useful provenance, but the Canonical Overall Design is the current consolidated design authority.
+
+## Documentation cleanup policy
+
+The former `docs/constitution/00` through `09` document set has been superseded by the Canonical Overall Design and removed from the active documentation tree. Git history preserves it for provenance. It must not be loaded as a second normative architecture.
+
+Historical audits, completed work packages, superseded roadmaps, temporary plans, delivery reports, designed-only specifications and obsolete static documentation are retained in Git history rather than the default documentation tree. See [Archive Boundary](archive/README.md).
+
+## Required evidence language
+
+Documentation must not collapse these distinct implementation/proof states:
+
+```text
+CODE_IMPLEMENTED
+CANONICAL_WIRED
+TEST_EXECUTED
+RUNTIME_PROVEN
+RESEARCH_QUALIFIED
+PRODUCTION_QUALIFIED
+```
+
+Research evidence must additionally retain its real limits, including where applicable:
+
+```text
+EXPLORATORY
+PIT_INCOMPLETE
+IN_SAMPLE
+SHADOW
+NOT_ESTIMABLE
+UNQUALIFIED
+FORMAL_OOS=false
+CALIBRATED=false
+```
+
+A class, table, protocol, receipt, passing fixture, or engineering qualification never upgrades an empirical claim by itself.
+
+## Start here
+
+For architecture or implementation work, read in this order:
+
+1. [Canonical Overall Design](architecture/Canonical-Overall-Design.md)
+2. [System Architecture](architecture/System-Architecture.md)
+3. [Authority Map](architecture/Authority-Map.md)
+4. [Data and Evidence Architecture](architecture/Data-and-Evidence-Architecture.md)
+5. [Research and Strategy Lifecycle](architecture/Research-Strategy-Lifecycle.md)
+6. [Current State](status/Current-State.md)
+7. [Gap Register](status/Gap-Register.md)
+8. [Roadmap](status/Roadmap.md)
+9. the code, schema, tests and runtime evidence relevant to the work package
+
+The design defines where the system should converge. The repository and evidence define what is true today.
