@@ -10,6 +10,9 @@ from typing import Any, Mapping
 from market_regime_alpha.application.historical_corpus.artifacts import (
     HistoricalPackageIndex,
 )
+from market_regime_alpha.application.historical_corpus.alpha_discovery import (
+    aggregate_alpha_discovery_evaluations,
+)
 from market_regime_alpha.application.historical_corpus.decision_materializer import (
     NORMALIZED_DATASET_KIND,
 )
@@ -246,6 +249,23 @@ class HistoricalEvidenceProducer:
             )
         ):
             raise ValueError("Historical Evaluation contract/source projection mismatch")
+        alpha_discovery = None
+        if any(item.alpha_discovery is not None for item in evaluations):
+            if any(item.alpha_discovery is None for item in evaluations):
+                raise ValueError(
+                    "Alpha Discovery evaluation coverage must include every session"
+                )
+            alpha_discovery = aggregate_alpha_discovery_evaluations(
+                tuple(
+                    (component.trading_date, evaluation.alpha_discovery)
+                    for component, evaluation in zip(
+                        evaluation_components,
+                        evaluations,
+                        strict=True,
+                    )
+                    if evaluation.alpha_discovery is not None
+                )
+            )
         evaluation_reference = _evaluation_set_reference(evaluation_references)
         suite = run_precomputed_alpha_ablation_suite(
             protocol=protocol,
@@ -278,11 +298,31 @@ class HistoricalEvidenceProducer:
             command_hash=snapshot.command.command_hash,
             experiment_reference=experiment,
             evidence_kind=HistoricalEvidenceKind.ALPHA_ABLATION,
-            research_question=("Under the frozen tie-aware V2 scorer, which research layers add incremental T+1 10:30 explanatory value?"),
-            classification=_ablation_finding(suite),
-            rationale=_ablation_rationale(suite),
+            research_question=(
+                "Which pre-registered DecisionTime Factors, predictive Gates and "
+                "Candidate policies add stable T+1 10:30 information?"
+                if alpha_discovery is not None
+                else "Under the frozen tie-aware V2 scorer, which research layers add incremental T+1 10:30 explanatory value?"
+            ),
+            classification=(
+                _alpha_discovery_finding(alpha_discovery)
+                if alpha_discovery is not None
+                else _ablation_finding(suite)
+            ),
+            rationale=(
+                _alpha_discovery_rationale(alpha_discovery)
+                if alpha_discovery is not None
+                else _ablation_rationale(suite)
+            ),
             source_references=sources,
-            metrics=_ablation_metrics(suite, factor_coverage),
+            metrics=(
+                (
+                    *_ablation_metrics(suite, factor_coverage),
+                    *_alpha_discovery_metrics(alpha_discovery),
+                )
+                if alpha_discovery is not None
+                else _ablation_metrics(suite, factor_coverage)
+            ),
             payload={
                 **_suite_payload(
                     suite,
@@ -298,12 +338,26 @@ class HistoricalEvidenceProducer:
                     "ranking_recomputed_by_evidence_producer": False,
                     "portfolio_recomputed_by_evidence_producer": False,
                 },
+                **(
+                    {
+                        "alpha_discovery": alpha_discovery,
+                        "phase_e3_result_used_as_alpha_baseline": False,
+                        "golden_v2_contract_changed": False,
+                    }
+                    if alpha_discovery is not None
+                    else {}
+                ),
             },
             created_at=created_at,
             limitations=(
                 "CUMULATIVE_SCORING_CONTRACT_FROZEN_NOT_TUNED",
                 "MARKET_CAP_AND_INDUSTRY_NOT_ESTIMABLE_WHEN_PROVIDER_OMITS_FACTS",
                 "UNOBSERVED_LAYER_LIFT_NOT_ESTIMABLE",
+                *(
+                    ("PHYSICAL_PACKAGE_NOT_REOPENED_CANONICAL_OWNER_COMPONENT_REUSE",)
+                    if alpha_discovery is not None
+                    else ()
+                ),
             ),
         )
         strategy_metrics = _canonical_strategy_metrics(evaluations)
@@ -494,8 +548,12 @@ class HistoricalEvidenceProducer:
         matches = tuple(item for item in references if item.artifact_kind == NORMALIZED_DATASET_KIND)
         if len(matches) != 1:
             raise ValueError("Historical Evidence requires one normalized Dataset owner")
+        if any(
+            item.artifact_kind == "HISTORICAL_RESEARCH_SOURCE_RUN"
+            for item in references
+        ):
+            return self._corpus.open_registered_index_projection(matches[0])
         return self._corpus.open_index(matches[0])
-
 
 def _precomputed_evaluation_session(
     component: HistoricalSessionComponent,
@@ -986,6 +1044,192 @@ def _ablation_rationale(suite: AlphaAblationSuite) -> str:
         f"Forecast-chain net={last.net_return}, Price RankIC={first.rank_ic}, "
         f"Forecast-chain RankIC={last.rank_ic}."
     )
+
+
+def _alpha_discovery_finding(payload: Mapping[str, Any]) -> ResearchFinding:
+    policies = _objects(
+        payload.get("candidate_policy_results"),
+        "Alpha Discovery Candidate policies",
+    )
+    if not policies:
+        return ResearchFinding.NOT_ESTIMABLE
+    estimable = tuple(
+        item
+        for item in policies
+        if int(item.get("estimable_rank_ic_session_count", 0)) >= 60
+        and _optional_decimal(item.get("mean_rank_ic")) is not None
+        and _alpha_top_metric(item, "5", "net_return") is not None
+    )
+    if not estimable:
+        return ResearchFinding.NOT_ESTIMABLE
+    stable_positive = tuple(
+        item
+        for item in estimable
+        if _alpha_policy_is_stable_positive(item)
+    )
+    if stable_positive:
+        return ResearchFinding.POSITIVE
+    if len(estimable) == len(policies) and all(
+        _alpha_policy_is_non_positive(item)
+        for item in estimable
+    ):
+        return ResearchFinding.NEGATIVE
+    return ResearchFinding.INCONCLUSIVE
+
+
+def _alpha_policy_is_stable_positive(item: Mapping[str, Any]) -> bool:
+    rank_ic = _optional_decimal(item.get("mean_rank_ic"))
+    net_return = _alpha_top_metric(item, "5", "net_return")
+    adjusted = _optional_decimal(item.get("rank_ic_bh_fdr_adjusted_p_value"))
+    return (
+        rank_ic is not None
+        and rank_ic > 0
+        and net_return is not None
+        and net_return > 0
+        and adjusted is not None
+        and adjusted <= Decimal("0.05")
+        and _positive_quarter_ratio(item) >= Decimal("0.6666666666666667")
+    )
+
+
+def _alpha_policy_is_non_positive(item: Mapping[str, Any]) -> bool:
+    rank_ic = _optional_decimal(item.get("mean_rank_ic"))
+    net_return = _alpha_top_metric(item, "5", "net_return")
+    return (
+        rank_ic is not None
+        and rank_ic <= 0
+        and net_return is not None
+        and net_return <= 0
+    )
+
+
+def _alpha_discovery_rationale(payload: Mapping[str, Any]) -> str:
+    policies = _objects(
+        payload.get("candidate_policy_results"),
+        "Alpha Discovery Candidate policies",
+    )
+    summaries = "; ".join(
+        f"{item['variant_id']}: RankIC={item.get('mean_rank_ic')}, "
+        f"Top5 assumed-cost net={_alpha_top_metric(item, '5', 'net_return')}, "
+        f"BH-FDR={item.get('rank_ic_bh_fdr_adjusted_p_value')}"
+        for item in policies
+    )
+    return (
+        f"Pre-registered Factor/Gate/Candidate evaluation covered "
+        f"{payload.get('target_observation_count')} Target observations across "
+        f"{payload.get('session_count')} frozen sessions. Candidate policies: "
+        f"{summaries}. Phase E3 results were not used as an Alpha baseline."
+    )
+
+
+def _alpha_discovery_metrics(
+    payload: Mapping[str, Any],
+) -> tuple[HistoricalEvidenceMetric, ...]:
+    result: list[HistoricalEvidenceMetric] = []
+    for group_name in (
+        "factor_results",
+        "gate_results",
+        "candidate_policy_results",
+    ):
+        for item in _objects(payload.get(group_name), group_name):
+            variant_id = str(item["variant_id"])
+            for name in (
+                "before_count",
+                "after_count",
+                "rejection_rate",
+                "mean_ic",
+                "mean_rank_ic",
+                "rank_ic_dispersion",
+                "rank_ic_ir",
+                "positive_rank_ic_ratio",
+                "rank_ic_p_value",
+                "rank_ic_bh_fdr_adjusted_p_value",
+                "bucket_monotonicity",
+            ):
+                value = _optional_decimal(item.get(name))
+                result.append(
+                    HistoricalEvidenceMetric(
+                        variant_id=f"alpha:{variant_id}",
+                        slice_kind="ALL",
+                        slice_value="ALL",
+                        metric_name=name,
+                        metric_value=value,
+                        metric_status=(
+                            EvidenceMetricStatus.AVAILABLE
+                            if value is not None
+                            else EvidenceMetricStatus.NOT_ESTIMABLE
+                        ),
+                        assumption_status=MetricAssumptionStatus.EMPIRICAL,
+                    )
+                )
+            top_k = _mapping(item.get("top_k"), "Alpha Discovery Top-K")
+            for k, metrics in sorted(top_k.items(), key=lambda value: int(value[0])):
+                metric_values = _mapping(metrics, f"Alpha Discovery Top-{k}")
+                for name in (
+                    "gross_return",
+                    "assumed_cost_return",
+                    "net_return",
+                    "hit_rate",
+                    "spread",
+                    "mfe",
+                    "mae",
+                    "capacity_ceiling",
+                    "turnover",
+                    "overlap",
+                    "max_drawdown",
+                ):
+                    value = _optional_decimal(metric_values.get(name))
+                    result.append(
+                        HistoricalEvidenceMetric(
+                            variant_id=f"alpha:{variant_id}",
+                            slice_kind="TOP_K",
+                            slice_value=str(k),
+                            metric_name=name,
+                            metric_value=value,
+                            metric_status=(
+                                EvidenceMetricStatus.AVAILABLE
+                                if value is not None
+                                else EvidenceMetricStatus.NOT_ESTIMABLE
+                            ),
+                            assumption_status=(
+                                MetricAssumptionStatus.ENGINEERING_ASSUMPTION
+                                if name in {"assumed_cost_return", "net_return"}
+                                else MetricAssumptionStatus.EMPIRICAL
+                            ),
+                        )
+                    )
+    return tuple(result)
+
+
+def _alpha_top_metric(
+    item: Mapping[str, Any],
+    top_k: str,
+    name: str,
+) -> Decimal | None:
+    values = item.get("top_k")
+    if not isinstance(values, Mapping):
+        return None
+    metrics = values.get(top_k)
+    if not isinstance(metrics, Mapping):
+        return None
+    return _optional_decimal(metrics.get(name))
+
+
+def _positive_quarter_ratio(item: Mapping[str, Any]) -> Decimal:
+    temporal = item.get("temporal_stability")
+    if not isinstance(temporal, Mapping):
+        return Decimal("0")
+    quarterly = temporal.get("quarterly")
+    if not isinstance(quarterly, Mapping) or not quarterly:
+        return Decimal("0")
+    positive = sum(
+        1
+        for value in quarterly.values()
+        if isinstance(value, Mapping)
+        and (mean := _optional_decimal(value.get("mean_rank_ic"))) is not None
+        and mean > 0
+    )
+    return Decimal(positive) / Decimal(len(quarterly))
 
 
 def _optional_decimal(value: object) -> Decimal | None:

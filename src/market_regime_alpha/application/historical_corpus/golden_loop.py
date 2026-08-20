@@ -11,6 +11,10 @@ from market_regime_alpha.application.historical_corpus.materialization_contracts
     HistoricalComponentKind,
     HistoricalSessionComponent,
 )
+from market_regime_alpha.application.historical_corpus.alpha_discovery import (
+    AlphaDiscoverySessionEvaluation,
+    evaluate_alpha_discovery_session,
+)
 from market_regime_alpha.application.research_validation.ablation import (
     AblationVariant,
     AblationVariantKind,
@@ -119,7 +123,13 @@ class GoldenLoopScoringContract:
         return cls(
             contract_id=ArtifactId(f"golden-loop-scoring-contract:{digest[7:]}"),
             contract_hash=digest,
-            **values,
+            scoring_contract=GOLDEN_LOOP_SCORING_CONTRACT,
+            selection_policy=GOLDEN_LOOP_SELECTION_POLICY,
+            missing_policy=GOLDEN_LOOP_MISSING_POLICY,
+            tie_policy=GOLDEN_LOOP_TIE_POLICY,
+            constant_policy=GOLDEN_LOOP_CONSTANT_POLICY,
+            top_k=GOLDEN_LOOP_TOP_K,
+            schema_version="golden-loop-scoring-contract/v1",
         )
 
     @property
@@ -178,6 +188,7 @@ class GoldenLoopSessionEvaluation:
     missing_target_count: int
     layer_diagnostics: Mapping[str, Mapping[str, Any]]
     variants: tuple[Mapping[str, Any], ...]
+    alpha_discovery: AlphaDiscoverySessionEvaluation | None = None
     schema_version: str = "golden-loop-session-evaluation/v1"
 
     def __post_init__(self) -> None:
@@ -209,7 +220,7 @@ class GoldenLoopSessionEvaluation:
             raise ValueError("unsupported Golden Loop session evaluation schema")
 
     def to_canonical_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "schema_version": self.schema_version,
             "scoring_contract": self.scoring_contract.to_canonical_dict(),
             "source_references": [
@@ -224,6 +235,9 @@ class GoldenLoopSessionEvaluation:
             },
             "variants": [dict(item) for item in self.variants],
         }
+        if self.alpha_discovery is not None:
+            payload["alpha_discovery"] = self.alpha_discovery.to_canonical_dict()
+        return payload
 
     @classmethod
     def from_canonical_dict(
@@ -251,6 +265,13 @@ class GoldenLoopSessionEvaluation:
                 }
             ),
             variants=tuple(MappingProxyType(dict(item)) for item in variants),
+            alpha_discovery=(
+                None
+                if payload.get("alpha_discovery") is None
+                else AlphaDiscoverySessionEvaluation.from_canonical_dict(
+                    _mapping(payload["alpha_discovery"], "alpha discovery")
+                )
+            ),
             schema_version=str(payload["schema_version"]),
         )
 
@@ -267,6 +288,7 @@ def evaluate_golden_loop_session(
     attribution_references: tuple[ValidationArtifactReference, ...] = (),
     additional_source_references: tuple[ValidationArtifactReference, ...] = (),
     scoring_contract: GoldenLoopScoringContract | None = None,
+    enable_alpha_discovery: bool = False,
 ) -> GoldenLoopSessionEvaluation:
     """Score one owner-resolved session without creating Strategy or Portfolio."""
 
@@ -278,6 +300,9 @@ def evaluate_golden_loop_session(
         outcome.run_id,
         outcome.session_id,
         outcome.trading_date,
+    ) and not (
+        panel.trading_date == outcome.trading_date
+        and outcome.reference in panel.source_references
     ):
         raise ValueError("Golden Loop Panel and Outcome owners must identify one session")
     for reference, expected in (
@@ -431,6 +456,15 @@ def evaluate_golden_loop_session(
         missing_target_count=len(rows) - len(observed_rows),
         layer_diagnostics=MappingProxyType(layer_diagnostics),
         variants=tuple(variants),
+        alpha_discovery=(
+            evaluate_alpha_discovery_session(panel=panel)
+            if enable_alpha_discovery
+            and all(
+                "research_features" in row and "gate_diagnostics" in row
+                for row in rows
+            )
+            else None
+        ),
     )
 
 

@@ -78,6 +78,24 @@ _QUALIFIED_CAPITAL = {
 }
 
 
+def candidate_market_gate_passed(market_regime: MarketRegimeSnapshot) -> bool:
+    """Return the canonical predictive Market Gate decision."""
+
+    return market_regime.trade_permission is not TradePermission.PROHIBIT
+
+
+def candidate_theme_gate_passed(state: RotationState) -> bool:
+    """Return the canonical predictive Theme Gate decision."""
+
+    return state in _QUALIFIED_ROTATION
+
+
+def candidate_capital_gate_passed(state: CapitalEvolutionState) -> bool:
+    """Return the canonical predictive public-Capital-proxy Gate decision."""
+
+    return state in _QUALIFIED_CAPITAL
+
+
 @dataclass(frozen=True, slots=True)
 class ResolvedCandidateFeature:
     """One typed Feature value resolved from an exact immutable owner."""
@@ -481,7 +499,7 @@ def discover_controlled_candidates_from_resolved_features(
         ):
             state = CandidateSelectionStatus.REJECTED
             reasons = ("DYNAMIC_POOL_EXCLUDED",)
-        elif market_regime.trade_permission is TradePermission.PROHIBIT:
+        elif not candidate_market_gate_passed(market_regime):
             state = CandidateSelectionStatus.REJECTED
             reasons = ("MARKET_REGIME_PROHIBITS_RISK",)
         elif membership is None:
@@ -497,10 +515,12 @@ def discover_controlled_candidates_from_resolved_features(
         elif not observation.status_known:
             state = CandidateSelectionStatus.REJECTED
             reasons = ("TRADING_STATUS_UNKNOWN",)
-        elif theme is None or theme.rotation_state not in _QUALIFIED_ROTATION:
+        elif theme is None or not candidate_theme_gate_passed(theme.rotation_state):
             state = CandidateSelectionStatus.REJECTED
             reasons = ("THEME_ROTATION_NOT_QUALIFIED",)
-        elif capital is None or capital.capital_evolution_state not in _QUALIFIED_CAPITAL:
+        elif capital is None or not candidate_capital_gate_passed(
+            capital.capital_evolution_state
+        ):
             state = CandidateSelectionStatus.REJECTED
             reasons = ("CAPITAL_EVOLUTION_NOT_QUALIFIED",)
         elif price is None or volume is None or theme.rotation_score is None or capital.capital_evolution_score is None:
@@ -827,6 +847,9 @@ def _fsync_directory(root: Path) -> None:
 
 
 __all__ = [
+    "candidate_capital_gate_passed",
+    "candidate_market_gate_passed",
+    "candidate_theme_gate_passed",
     "ControlledPlatformResearchRunner",
     "ControlledResearchArtifact",
     "ResolvedCandidateFeature",

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -13,6 +14,7 @@ from market_regime_alpha.application.controlled_operation.longitudinal_index imp
 )
 from market_regime_alpha.application.historical_corpus.artifacts import (
     HistoricalPackageIndex,
+    HistoricalPartitionDescriptor,
     load_historical_package_index,
     VerifiedHistoricalPackage,
     load_verified_historical_package,
@@ -21,9 +23,11 @@ from market_regime_alpha.application.historical_corpus.artifacts import (
 )
 from market_regime_alpha.application.historical_corpus.contracts import (
     HistoricalArtifactKind,
+    HistoricalCorpusCoverage,
     HistoricalDataOwner,
     historical_symbol_bucket,
 )
+from market_regime_alpha.market_data.contracts import parse_utc_second
 from market_regime_alpha.application.historical_corpus.selective_read import (
     HistoricalDataSlice,
     HistoricalReadMetrics,
@@ -363,6 +367,93 @@ class PostgresHistoricalCorpusRepository:
                 "Historical partition Authority projection diverged"
             )
         return index
+
+    def open_registered_index_projection(
+        self,
+        reference: ValidationArtifactReference,
+    ) -> HistoricalPackageIndex:
+        """Reload PostgreSQL identity/coverage when canonical components are reused.
+
+        This method does not claim physical package verification and must never be
+        used for bar reads.  It exists only for Evidence over already-materialized
+        canonical source owners.
+        """
+
+        self._validate_reference_kind(reference)
+        with self._factory.connection(read_only=True) as connection:
+            row = connection.execute(
+                """
+                SELECT content_hash, artifact_kind, package_locator, physical_hash,
+                       manifest_json
+                FROM historical_corpus_owner
+                WHERE owner_id = %s AND content_hash = %s
+                """,
+                (str(reference.artifact_id), reference.content_hash),
+            ).fetchone()
+            partition_rows = connection.execute(
+                """
+                SELECT ordinal, partition_json, physical_checksum
+                FROM historical_corpus_partition
+                WHERE owner_id = %s AND owner_hash = %s
+                ORDER BY ordinal
+                """,
+                (str(reference.artifact_id), reference.content_hash),
+            ).fetchall()
+        if row is None or not isinstance(row[4], Mapping):
+            raise HistoricalCorpusOwnerNotFound(str(reference.artifact_id))
+        manifest = dict(row[4])
+        partition_payloads = tuple(dict(item[1]) for item in partition_rows)
+        if (
+            str(row[0]) != reference.content_hash
+            or str(row[1]) != reference.artifact_kind
+            or str(manifest.get("owner_id")) != str(reference.artifact_id)
+            or str(manifest.get("content_hash")) != reference.content_hash
+            or tuple(manifest.get("partitions", ())) != partition_payloads
+        ):
+            raise HistoricalCorpusIntegrityError(
+                "Historical PostgreSQL owner projection diverged"
+            )
+        parent_value = manifest.get("parent_reference")
+        if parent_value is not None and not isinstance(parent_value, Mapping):
+            raise HistoricalCorpusIntegrityError(
+                "Historical PostgreSQL parent projection is invalid"
+            )
+        return HistoricalPackageIndex(
+            root=resolve_artifact_root_locator(
+                artifact_root=self._artifact_root,
+                locator=str(row[2]),
+            ),
+            reference=reference,
+            artifact_kind=HistoricalArtifactKind(str(row[1])),
+            provider_id=str(manifest["provider_id"]),
+            normalization_version=(
+                None
+                if manifest.get("normalization_version") is None
+                else str(manifest["normalization_version"])
+            ),
+            parent_reference=(
+                None
+                if parent_value is None
+                else ValidationArtifactReference.from_canonical_dict(parent_value)
+            ),
+            first_market_date=date.fromisoformat(str(manifest["first_market_date"])),
+            last_market_date=date.fromisoformat(str(manifest["last_market_date"])),
+            bucket_count=int(manifest["bucket_count"]),
+            retrieved_at=parse_utc_second("retrieved_at", manifest["retrieved_at"]),
+            created_at=parse_utc_second("created_at", manifest["created_at"]),
+            coverage=HistoricalCorpusCoverage.from_canonical_dict(manifest["coverage"]),
+            limitations=tuple(str(item) for item in manifest["limitations"]),
+            partitions=tuple(
+                HistoricalPartitionDescriptor.from_reference_dict(item)
+                for item in partition_payloads
+            ),
+            manifest=manifest,
+            physical_hash=str(row[3]),
+            checksums=tuple(
+                (str(item[1]["relative_path"]), str(item[2]))
+                for item in partition_rows
+            ),
+        )
 
     def read(self, query: HistoricalReadQuery) -> HistoricalDataSlice:
         """Execute one bounded, predicate-pushed exact-owner read."""

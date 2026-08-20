@@ -15,6 +15,9 @@ from market_regime_alpha.application.controlled_operation.research_config import
 )
 from market_regime_alpha.application.controlled_operation.research_runner import (
     ResolvedCandidateFeature,
+    candidate_capital_gate_passed,
+    candidate_market_gate_passed,
+    candidate_theme_gate_passed,
     discover_controlled_candidates_from_resolved_features,
 )
 from market_regime_alpha.application.historical_corpus.contracts import (
@@ -26,8 +29,10 @@ from market_regime_alpha.application.historical_corpus.historical_window import 
 )
 from market_regime_alpha.application.historical_corpus.frozen_experiment import (
     PHASE_E3_TIMEZONE,
+    WP_ALPHA_RESEARCH_01_MULTIPLE_TESTING_FAMILY,
     verify_golden_loop_v2_historical_experiment,
     verify_phase_e3_historical_experiment,
+    verify_wp_alpha_research_01_historical_experiment,
 )
 from market_regime_alpha.application.historical_corpus.artifacts import (
     HistoricalPackageIndex,
@@ -74,6 +79,9 @@ from market_regime_alpha.application.research_validation.common import (
 )
 from market_regime_alpha.application.research_validation.postgres_repository import (
     PostgresResearchValidationRepository,
+)
+from market_regime_alpha.application.research_validation.formal_protocol import (
+    ResearchExperimentDefinition,
 )
 from market_regime_alpha.application.research_validation.liquidity_capacity import (
     LiquidityCapacityAssessment,
@@ -130,6 +138,8 @@ from market_regime_alpha.market_data import (
     VolumeUnit,
 )
 from market_regime_alpha.research.capital_evolution.model import evaluate_capital_evolution_v0
+from market_regime_alpha.research.candidate_discovery.contracts import CandidateSet
+from market_regime_alpha.research.market_regime.contracts import MarketRegimeSnapshot
 from market_regime_alpha.research.market_regime.model import evaluate_market_regime_v0
 from market_regime_alpha.research.platform_v2.inputs import (
     ETFObservation,
@@ -168,6 +178,7 @@ from market_regime_alpha.universe.runtime_scope import (
     RuntimeEligibilityObservation,
     RuntimeScopeMembershipSnapshot,
     RuntimeScopeDecision,
+    RuntimeScopeReceipt,
     UniversePolicySelector,
     UniverseScopeKind,
     build_runtime_scope,
@@ -184,6 +195,7 @@ FREE_RESEARCH_UNIVERSE_KIND = "FREE_RESEARCH_UNIVERSE"
 HISTORICAL_SECURITY_FACTS_KIND = "HISTORICAL_SECURITY_FACTS"
 HISTORICAL_CONSTITUENT_TIMELINE_KIND = "HISTORICAL_CONSTITUENT_TIMELINE"
 HISTORICAL_CONTEXT_INSTRUMENT_SET_KIND = "HISTORICAL_CONTEXT_INSTRUMENT_SET"
+HISTORICAL_RESEARCH_SOURCE_RUN_KIND = "HISTORICAL_RESEARCH_SOURCE_RUN"
 _FROZEN_MARKET_INDEX_SYMBOL = "000300.SH"
 _FROZEN_THEME_ETF_SYMBOL = "510300.SH"
 GLOBAL_RESEARCH_THEME_ID = "PHASE_E_GLOBAL_RESEARCH_SCOPE"
@@ -423,6 +435,17 @@ class HistoricalDecisionMaterializer:
         self._windows.begin_stage()
         if request.data_authority_mode is not DataAuthorityMode.FREE_RESEARCH_ARCHIVE:
             raise ValueError("Historical materializer only accepts frozen free archives")
+        source_run = _optional_configuration_reference(
+            request,
+            HISTORICAL_RESEARCH_SOURCE_RUN_KIND,
+        )
+        if source_run is not None and stage is not ResearchSessionStage.PERFORMANCE:
+            return self._reuse_source_owner_stage(
+                request=request,
+                stage=stage,
+                input_references=input_references,
+                source_run=source_run,
+            )
         if stage is ResearchSessionStage.SCOPE:
             return self._scope_stage(request)
         if stage is ResearchSessionStage.DECISION:
@@ -443,60 +466,16 @@ class HistoricalDecisionMaterializer:
             item.artifact_kind == HISTORICAL_CONSTITUENT_TIMELINE_KIND
             for item in request.configuration_references
         )
-        if has_timeline:
-            if self._validation is None:
-                raise ValueError(
-                    "Longitudinal Historical execution requires Experiment Authority"
-                )
-            experiment = self._validation.get_historical_experiment_definition(
-                request.experiment_definition_reference.artifact_id
-            )
-            if (
-                experiment.definition_hash
-                != request.experiment_definition_reference.content_hash
-            ):
-                raise ValueError("Historical Experiment Definition hash mismatch")
-            target_protocol = self._load_target_protocol(request)
-            feature_owner = self._validation.get_feature_set_configuration(
-                experiment.feature_reference.artifact_id
-            )
-            economics_owner = (
-                self._validation.get_historical_strategy_economics_policy_set(
-                    experiment.cost_policy_reference.artifact_id
-                )
-            )
-            for reference in (
+        experiment = self._verify_methodology_binding(request) if has_timeline else None
+        frozen_methodology_references = (
+            ()
+            if experiment is None
+            else (
                 request.experiment_definition_reference,
                 experiment.feature_reference,
                 experiment.cost_policy_reference,
-            ):
-                if (
-                    self._validation.get_artifact_recorded_at(reference)
-                    > request.materialized_at
-                ):
-                    raise ValueError(
-                        "Historical frozen methodology was recorded after materialization"
-                    )
-            verifier = (
-                verify_golden_loop_v2_historical_experiment
-                if experiment.multiple_testing_family_id
-                == "WP_GOLDEN_LOOP_01_CORRECTNESS_V2"
-                else verify_phase_e3_historical_experiment
             )
-            verifier(
-                experiment,
-                target_protocol=target_protocol,
-                feature_owner=feature_owner,
-                economics_owner=economics_owner,
-                decision_local_time=request.decision_time.astimezone(
-                    ZoneInfo(PHASE_E3_TIMEZONE)
-                ).time(),
-                timezone_name=PHASE_E3_TIMEZONE,
-                configuration_references=request.configuration_references,
-            )
-            self._economics_policy_cache[
-                request.experiment_definition_reference
-            ] = economics_owner
+        )
         base_universe, universe_reference = self._active_universe(
             request.configuration_references,
             request.trading_date,
@@ -601,11 +580,7 @@ class HistoricalDecisionMaterializer:
                 universe_reference,
                 ValidationArtifactReference("RESEARCH_UNIVERSE_POLICY", policy.policy_id, policy.policy_hash),
                 ValidationArtifactReference("RUNTIME_SCOPE", scope.scope_id, scope.scope_hash),
-                *((
-                    request.experiment_definition_reference,
-                    experiment.feature_reference,
-                    experiment.cost_policy_reference,
-                ) if has_timeline else ()),
+                *frozen_methodology_references,
                 *((facts_reference,) if facts_reference is not None else ()),
             ),
             payload={
@@ -654,15 +629,150 @@ class HistoricalDecisionMaterializer:
                 (
                     normalized_reference,
                     universe_reference,
-                    *((
-                        request.experiment_definition_reference,
-                        experiment.feature_reference,
-                        experiment.cost_policy_reference,
-                    ) if has_timeline else ()),
+                    *frozen_methodology_references,
                 )
             ),
             completed_at=request.materialized_at,
             reason_codes=("HISTORICAL_DECISION_SCOPE_MATERIALIZED",),
+        )
+
+    def _verify_methodology_binding(
+        self,
+        request: ResearchDecisionSessionRequest,
+    ) -> ResearchExperimentDefinition:
+        if self._validation is None:
+            raise ValueError(
+                "Longitudinal Historical execution requires Experiment Authority"
+            )
+        experiment = self._validation.get_historical_experiment_definition(
+            request.experiment_definition_reference.artifact_id
+        )
+        if (
+            experiment.definition_hash
+            != request.experiment_definition_reference.content_hash
+        ):
+            raise ValueError("Historical Experiment Definition hash mismatch")
+        target_protocol = self._load_target_protocol(request)
+        feature_owner = self._validation.get_feature_set_configuration(
+            experiment.feature_reference.artifact_id
+        )
+        economics_owner = (
+            self._validation.get_historical_strategy_economics_policy_set(
+                experiment.cost_policy_reference.artifact_id
+            )
+        )
+        for reference in (
+            request.experiment_definition_reference,
+            experiment.feature_reference,
+            experiment.cost_policy_reference,
+        ):
+            if (
+                self._validation.get_artifact_recorded_at(reference)
+                > request.materialized_at
+            ):
+                raise ValueError(
+                    "Historical frozen methodology was recorded after materialization"
+                )
+        if (
+            experiment.multiple_testing_family_id
+            == WP_ALPHA_RESEARCH_01_MULTIPLE_TESTING_FAMILY
+        ):
+            verifier = verify_wp_alpha_research_01_historical_experiment
+        elif (
+            experiment.multiple_testing_family_id
+            == "WP_GOLDEN_LOOP_01_CORRECTNESS_V2"
+        ):
+            verifier = verify_golden_loop_v2_historical_experiment
+        else:
+            verifier = verify_phase_e3_historical_experiment
+        verifier(
+            experiment,
+            target_protocol=target_protocol,
+            feature_owner=feature_owner,
+            economics_owner=economics_owner,
+            decision_local_time=request.decision_time.astimezone(
+                ZoneInfo(PHASE_E3_TIMEZONE)
+            ).time(),
+            timezone_name=PHASE_E3_TIMEZONE,
+            configuration_references=request.configuration_references,
+        )
+        self._economics_policy_cache[
+            request.experiment_definition_reference
+        ] = economics_owner
+        return experiment
+
+    def _reuse_source_owner_stage(
+        self,
+        *,
+        request: ResearchDecisionSessionRequest,
+        stage: ResearchSessionStage,
+        input_references: tuple[ValidationArtifactReference, ...],
+        source_run: ValidationArtifactReference,
+    ) -> SessionStageComputation:
+        """Replay canonical owners when only Panel/Evaluation methodology changes."""
+
+        if source_run.artifact_id == self._run_id:
+            raise ValueError("Historical methodology replay cannot source itself")
+        if stage is ResearchSessionStage.SCOPE:
+            experiment = self._verify_methodology_binding(request)
+            if (
+                experiment.multiple_testing_family_id
+                != WP_ALPHA_RESEARCH_01_MULTIPLE_TESTING_FAMILY
+            ):
+                raise ValueError(
+                    "Canonical source-owner replay is restricted to WP-ALPHA-RESEARCH-01"
+                )
+        kinds_by_stage = {
+            ResearchSessionStage.SCOPE: (HistoricalComponentKind.DYNAMIC_POOL,),
+            ResearchSessionStage.DECISION: tuple(
+                sorted(
+                    (
+                        HistoricalComponentKind.FEATURE,
+                        HistoricalComponentKind.MARKET_REGIME,
+                        HistoricalComponentKind.ETF,
+                        HistoricalComponentKind.THEME,
+                        HistoricalComponentKind.CAPITAL,
+                        HistoricalComponentKind.CANDIDATE,
+                        HistoricalComponentKind.SIGNAL,
+                        HistoricalComponentKind.FORECAST,
+                    ),
+                    key=lambda item: item.value,
+                )
+            ),
+            ResearchSessionStage.STRATEGY: (HistoricalComponentKind.STRATEGY,),
+            ResearchSessionStage.PORTFOLIO: (HistoricalComponentKind.PORTFOLIO,),
+            ResearchSessionStage.OUTCOME: (HistoricalComponentKind.OUTCOME,),
+        }
+        kinds = kinds_by_stage.get(stage)
+        if kinds is None:
+            raise ValueError("Historical source-owner replay stage is unsupported")
+        components = self._components.get_for_run_date(
+            run_id=source_run.artifact_id,
+            trading_date=request.trading_date,
+            component_kinds=kinds,
+        )
+        outputs = tuple(item.reference for item in components)
+        if stage is ResearchSessionStage.SCOPE:
+            pool = components[0]
+            scope = RuntimeScopeReceipt.from_canonical_dict(
+                _mapping(pool.payload.get("scope"), "runtime scope")
+            )
+            outputs = (
+                *outputs,
+                ValidationArtifactReference(
+                    "RUNTIME_SCOPE",
+                    scope.scope_id,
+                    scope.scope_hash,
+                ),
+            )
+        return SessionStageComputation(
+            status=SessionStageStatus.COMPLETE,
+            output_references=_references(outputs),
+            input_references=_references(
+                (*input_references, source_run, *tuple(item.reference for item in components))
+            ),
+            completed_at=request.materialized_at,
+            reason_codes=("CANONICAL_SOURCE_OWNERS_REUSED_METHODOLOGY_ONLY",),
         )
 
     def _decision_stage(
@@ -1488,8 +1598,15 @@ class HistoricalDecisionMaterializer:
                 outcome.reference,
             ),
             payload={
+                "schema_version": "historical-research-panel/v2",
                 "rows": list(rows),
                 "row_count": len(rows),
+                "projected_feature_output_count": sum(
+                    len(item["research_features"]) for item in rows
+                ),
+                "gate_diagnostic_row_count": sum(
+                    "gate_diagnostics" in item for item in rows
+                ),
                 "missing_target_count": sum(item["target_return"] is None for item in rows),
                 "gross_return": _mean_decimal_text(item["gross_return"] for item in rows),
                 "cost_return": _mean_decimal_text(item["cost_return"] for item in rows),
@@ -1565,6 +1682,20 @@ def _required_reference(
     if len(matches) != 1:
         raise ValueError(f"Historical session requires one {artifact_kind} owner")
     return matches[0]
+
+
+def _optional_configuration_reference(
+    request: ResearchDecisionSessionRequest,
+    artifact_kind: str,
+) -> ValidationArtifactReference | None:
+    matches = tuple(
+        item
+        for item in request.configuration_references
+        if item.artifact_kind == artifact_kind
+    )
+    if len(matches) > 1:
+        raise ValueError(f"Historical command binds multiple {artifact_kind} owners")
+    return None if not matches else matches[0]
 
 
 def _optional_reference(
@@ -2752,6 +2883,7 @@ def _research_panel_rows(
     outcome: HistoricalSessionComponent,
 ) -> tuple[dict[str, Any], ...]:
     feature_values = _panel_feature_values(feature)
+    research_features = _panel_research_features(feature)
     signal_by_symbol = {str(item["symbol"]): item for item in _objects(signal.payload.get("snapshots"), "signal snapshots")}
     forecast_by_symbol = {
         str(_mapping(item.get("forecast"), "forecast")["symbol"]): _mapping(item.get("forecast"), "forecast")
@@ -2780,6 +2912,10 @@ def _research_panel_rows(
         / Decimal("2")
     )
     pool_membership = {str(item["symbol"]): bool(item["included"]) for item in _objects(pool.payload.get("membership"), "pool membership")}
+    scope = RuntimeScopeReceipt.from_canonical_dict(
+        _mapping(pool.payload.get("scope"), "runtime scope")
+    )
+    scope_by_symbol = {item.symbol: item for item in scope.records}
     business_facts = {
         str(item["symbol"]): item
         for item in _objects(
@@ -2794,38 +2930,99 @@ def _research_panel_rows(
             "corporate action exclusions",
         )
     }
-    records = _objects(candidate.payload.get("records"), "candidate records")
+    candidate_set = CandidateSet.from_canonical_dict(dict(candidate.payload))
+    records = {item.symbol: item for item in candidate_set.records}
+    market_snapshot = MarketRegimeSnapshot.from_canonical_dict(dict(market.payload))
     rows: list[dict[str, Any]] = []
-    for record in records:
-        symbol = str(record["symbol"])
+    for symbol in sorted(records):
+        record = records[symbol]
         label = labels.get(symbol)
         result = economics.get(symbol)
         values = feature_values.get(symbol, {})
+        projected_features = research_features.get(symbol, ())
         forecast_payload = forecast_by_symbol.get(symbol)
         median_forecast = _forecast_median(forecast_payload)
         signal_payload = signal_by_symbol.get(symbol)
         capacity = None if result is None else _optional_decimal(result.get("capacity_ceiling"))
         business = business_facts.get(symbol, {})
         market_cap = _optional_decimal(business.get("market_cap"))
+        scope_record = scope_by_symbol[symbol]
+        required_features_complete = all(
+            values.get(output_id) is not None
+            for output_id in ("return_3", "amount_ratio_5")
+        )
+        hard_integrity_passed = (
+            scope_record.decision is RuntimeScopeDecision.INCLUDED
+            and required_features_complete
+        )
+        hard_reasons = set(scope_record.reason_codes)
+        if not required_features_complete:
+            hard_reasons.add("REQUIRED_CANDIDATE_FEATURES_INCOMPLETE")
+        market_passed = candidate_market_gate_passed(market_snapshot)
+        theme_passed = candidate_theme_gate_passed(record.theme_rotation_state)
+        capital_passed = candidate_capital_gate_passed(
+            record.capital_evolution_state
+        )
+        dynamic_pool_passed = pool_membership.get(symbol, False)
         rows.append(
             {
                 "session_key": trading_date.isoformat(),
                 "trading_date": trading_date.isoformat(),
                 "symbol": symbol,
-                "selected": record.get("selection_status") == "SELECTED",
-                "candidate_rank": record.get("rank"),
-                "score": _decimal_string(record.get("candidate_discovery_score")),
+                "selected": record.selection_status.value == "SELECTED",
+                "candidate_rank": record.rank,
+                "score": _decimal_string(record.candidate_discovery_score),
                 "factor_values": {
                     "price": _decimal_string(values.get("return_3")),
                     "volume": _decimal_string(values.get("amount_ratio_5")),
-                    "market_regime": _decimal_string(record.get("market_regime_score")),
+                    "market_regime": _decimal_string(record.market_regime_score),
                     "etf": _decimal_string(etf_score),
-                    "theme": _decimal_string(record.get("theme_score")),
-                    "capital": _decimal_string(record.get("capital_evolution_score")),
+                    "theme": _decimal_string(record.theme_score),
+                    "capital": _decimal_string(record.capital_evolution_score),
                     "dynamic_pool": ("1" if pool_membership.get(symbol, False) else "0"),
-                    "candidate": _decimal_string(record.get("candidate_discovery_score")),
+                    "candidate": _decimal_string(record.candidate_discovery_score),
                     "signal": _decimal_string(None if signal_payload is None else signal_payload.get("signal_score")),
                     "forecast": _decimal_string(median_forecast),
+                },
+                "research_features": [dict(item) for item in projected_features],
+                "candidate_diagnostic": {
+                    "selection_status": record.selection_status.value,
+                    "rank": record.rank,
+                    "score": _decimal_string(record.candidate_discovery_score),
+                    "reason_codes": list(record.reason_codes),
+                },
+                "gate_diagnostics": {
+                    "hard_integrity": {
+                        "passed": hard_integrity_passed,
+                        "decision": scope_record.decision.value,
+                        "reason_codes": sorted(hard_reasons),
+                        "required_candidate_features_complete": (
+                            required_features_complete
+                        ),
+                    },
+                    "predictive": {
+                        "market_regime": {
+                            "passed": market_passed,
+                            "score": _decimal_string(record.market_regime_score),
+                            "state": record.market_regime_status.value,
+                        },
+                        "theme": {
+                            "passed": theme_passed,
+                            "score": _decimal_string(record.theme_score),
+                            "state": record.theme_rotation_state.value,
+                        },
+                        "capital": {
+                            "passed": capital_passed,
+                            "score": _decimal_string(record.capital_evolution_score),
+                            "state": record.capital_evolution_state.value,
+                            "public_proxy_not_hidden_intent": True,
+                        },
+                        "dynamic_pool": {
+                            "passed": dynamic_pool_passed,
+                            "score": "1" if dynamic_pool_passed else "0",
+                            "confounded_with_hard_integrity": True,
+                        },
+                    },
                 },
                 "signal_diagnostic": (
                     {
@@ -2883,7 +3080,7 @@ def _research_panel_rows(
                 "liquidity_bucket": _liquidity_bucket(capacity),
                 "market_cap_bucket": _market_cap_bucket(market_cap),
                 "volatility_bucket": volatility,
-                "theme": str(record.get("primary_theme_id") or "NOT_ESTIMABLE"),
+                "theme": str(record.primary_theme_id or "NOT_ESTIMABLE"),
                 "industry": str(business.get("industry") or "NOT_ESTIMABLE"),
                 "evidence_ceiling": "EXPLORATORY_PIT_INCOMPLETE",
                 "theme_owner_status": str(theme.payload.get("rotation_state", "UNKNOWN")),
@@ -2903,6 +3100,50 @@ def _panel_feature_values(
             if value.get("state") == "AVAILABLE":
                 symbol_values[str(value["output_id"])] = value.get("value")
     return result
+
+
+def _panel_research_features(
+    feature: HistoricalSessionComponent,
+) -> dict[str, tuple[Mapping[str, Any], ...]]:
+    """Project every owner Feature output without recomputing its value."""
+
+    result: dict[str, list[Mapping[str, Any]]] = {}
+    for computation in _objects(feature.payload.get("features"), "features"):
+        common = {
+            "feature_id": str(computation["feature_id"]),
+            "timeframe": str(computation["timeframe"]),
+            "feature_available_at": str(computation["available_at"]),
+            "configuration_id": str(computation["configuration_id"]),
+            "configuration_hash": str(computation["configuration_hash"]),
+            "limitations": list(computation.get("limitations", [])),
+        }
+        projected = result.setdefault(str(computation["symbol"]), [])
+        for value in _objects(computation.get("values"), "feature values"):
+            projected.append(
+                {
+                    **common,
+                    "output_id": str(value["output_id"]),
+                    "state": str(value["state"]),
+                    "value": value.get("value"),
+                    "available_at": str(value["available_at"]),
+                    "source_bar_count": int(value["source_bar_count"]),
+                    "source_bar_lineage_hash": str(
+                        value["source_bar_lineage_hash"]
+                    ),
+                    "missing_reason_codes": list(
+                        value.get("missing_reason_codes", [])
+                    ),
+                }
+            )
+    return {
+        symbol: tuple(
+            sorted(
+                values,
+                key=lambda item: (str(item["feature_id"]), str(item["output_id"])),
+            )
+        )
+        for symbol, values in result.items()
+    }
 
 
 def _forecast_median(payload: Mapping[str, Any] | None) -> object:
@@ -2977,6 +3218,7 @@ __all__ = [
     "FREE_RESEARCH_UNIVERSE_KIND",
     "GLOBAL_RESEARCH_THEME_ID",
     "HISTORICAL_SECURITY_FACTS_KIND",
+    "HISTORICAL_RESEARCH_SOURCE_RUN_KIND",
     "NORMALIZED_DATASET_KIND",
     "HistoricalDecisionMaterializer",
 ]

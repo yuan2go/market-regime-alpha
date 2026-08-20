@@ -12,8 +12,15 @@ from datetime import UTC, datetime, time
 from decimal import Decimal
 
 from market_regime_alpha.application.research_evaluation.targets import (
+    OutcomeCheckpoint,
     OutcomeTargetProtocol,
     TargetDefinition,
+)
+from market_regime_alpha.application.historical_corpus.alpha_discovery import (
+    ALPHA_DISCOVERY_GATE_IDS,
+    ALPHA_DISCOVERY_TOP_K,
+    alpha_discovery_evaluation_contract_reference,
+    canonical_alpha_factor_registry,
 )
 from market_regime_alpha.application.historical_corpus.golden_loop import (
     GoldenLoopScoringContract,
@@ -45,11 +52,41 @@ from market_regime_alpha.application.strategy_shadow.portfolio import (
 )
 from market_regime_alpha.features.technical.catalog import canonical_technical_feature_set
 from market_regime_alpha.features.spine import FeatureSetConfiguration
+from market_regime_alpha.evidence.canonical import canonical_hash
+from market_regime_alpha.core.identity import ArtifactId
 
 
 PHASE_E3_DECISION_LOCAL_TIME = time(14, 55)
 PHASE_E3_TIMEZONE = "Asia/Shanghai"
 _FEATURE_EFFECTIVE_FROM = datetime(1990, 1, 1, tzinfo=UTC)
+WP_ALPHA_RESEARCH_01_MULTIPLE_TESTING_FAMILY = (
+    "WP_ALPHA_RESEARCH_01_DISCOVERY_V1"
+)
+
+_WP_ALPHA_DATASET_OWNER = (
+    "NORMALIZED_DATASET|historical-data-owner-c4cc4f5fd5a39248c116b3e7|"
+    "sha256:c4cc4f5fd5a39248c116b3e72d83dac09cb7ee6466f8ef84f803e64b4c38ea77"
+)
+_WP_ALPHA_CONSTITUENT_TIMELINE = (
+    "HISTORICAL_CONSTITUENT_TIMELINE|"
+    "historical-constituent-timeline:af987d1d42d9137abaab010ca6047b8a09ea27cb6d2936480566ec2fc8bb9b58|"
+    "sha256:af987d1d42d9137abaab010ca6047b8a09ea27cb6d2936480566ec2fc8bb9b58"
+)
+_WP_ALPHA_SECURITY_FACTS = (
+    "HISTORICAL_SECURITY_FACTS|"
+    "historical-security-facts:4fc1085c2579c2fae6028636d8c506b30f1f39884440a3ebf0dad57546aa28df|"
+    "sha256:4fc1085c2579c2fae6028636d8c506b30f1f39884440a3ebf0dad57546aa28df"
+)
+_WP_ALPHA_CONTEXT_OWNER = (
+    "HISTORICAL_CONTEXT_INSTRUMENT_SET|"
+    "historical-context-instrument-set:d5151fdd88ba8949e173cd7e0533cdaf2e89b275b1e0663ee40518b59ba580d4|"
+    "sha256:d5151fdd88ba8949e173cd7e0533cdaf2e89b275b1e0663ee40518b59ba580d4"
+)
+_WP_ALPHA_SOURCE_RUN = (
+    "HISTORICAL_RESEARCH_SOURCE_RUN|"
+    "historical-research-run-12e8dd606b480380dc0df356|"
+    "sha256:12e8dd606b480380dc0df356ca5aa6c2fdc7b2abd6b215feca74195a50227029"
+)
 
 
 def create_phase_e3_feature_configuration() -> FeatureSetConfiguration:
@@ -173,18 +210,12 @@ def create_golden_loop_v2_historical_experiment(
                 "canonical_evidence_wiring",
                 ("MULTI_STRATEGY_PORTFOLIO_OUTCOME_V2",),
             ),
-            HyperparameterDomain(
-                "missing_policy",
-                (scoring.missing_policy,),
-            ),
+            HyperparameterDomain("missing_policy", (scoring.missing_policy,)),
             HyperparameterDomain(
                 "scoring_contract_hash",
                 (scoring.contract_hash,),
             ),
-            HyperparameterDomain(
-                "selection_policy",
-                (scoring.selection_policy,),
-            ),
+            HyperparameterDomain("selection_policy", (scoring.selection_policy,)),
         ),
         search_budget=v1.search_budget,
         primary_hypothesis_ids=(
@@ -209,6 +240,202 @@ def create_golden_loop_v2_historical_experiment(
     )
 
 
+def create_wp_alpha_research_01_historical_experiment(
+    target_protocol: OutcomeTargetProtocol,
+    *,
+    locked_at: datetime,
+) -> ResearchExperimentDefinition:
+    """Freeze the controlled Factor → Gate → Candidate discovery campaign."""
+
+    golden = create_golden_loop_v2_historical_experiment(
+        target_protocol,
+        locked_at=locked_at,
+    )
+    feature_owner = create_phase_e3_feature_configuration()
+    registry = canonical_alpha_factor_registry(feature_owner)
+    target = next(
+        item
+        for item in target_protocol.targets
+        if item.checkpoint is OutcomeCheckpoint.TIME_1030
+    )
+    factor_values = tuple(
+        sorted(
+            f"{item.family}|{item.feature_id}|{item.output_id}|"
+            f"{item.role.value}|HIGHER_RAW_VALUE"
+            for item in registry
+        )
+    )
+    factor_registry_hash = canonical_hash(
+        {"factor_registry": [item.to_canonical_dict() for item in registry]}
+    )
+    discovery_contract = alpha_discovery_evaluation_contract_reference(feature_owner)
+    frozen_domains = (
+        HyperparameterDomain("candidate_minimum_population", ("5",)),
+        HyperparameterDomain("canonical_source_run", (_WP_ALPHA_SOURCE_RUN,)),
+        HyperparameterDomain(
+            "candidate_policies",
+            (
+                "CURRENT_HARD_CHAIN",
+                "HARD_INTEGRITY_PRICE_RETURN",
+                "HARD_INTEGRITY_PRICE_VOLUME_TREND",
+                "SOFT_CONTEXT_CANDIDATE",
+            ),
+        ),
+        HyperparameterDomain("candidate_selection_top_k", ("5_WITH_BOUNDARY_TIES",)),
+        HyperparameterDomain("constituent_timeline", (_WP_ALPHA_CONSTITUENT_TIMELINE,)),
+        HyperparameterDomain("context_instrument_owner", (_WP_ALPHA_CONTEXT_OWNER,)),
+        HyperparameterDomain("context_instruments", ("000300.SH", "510300.SH")),
+        HyperparameterDomain("dataset_owner", (_WP_ALPHA_DATASET_OWNER,)),
+        HyperparameterDomain("data_authority_mode", ("FREE_RESEARCH_ARCHIVE",)),
+        HyperparameterDomain(
+            "decision_policy",
+            (
+                "phase-e3-decision-policy:290d0639913fe993c6b5b6db5b21b98d513e20a4cef2e6230c3a30f98dc6c894|"
+                "sha256:290d0639913fe993c6b5b6db5b21b98d513e20a4cef2e6230c3a30f98dc6c894",
+            ),
+        ),
+        HyperparameterDomain("discovery_target", (f"OUTCOME_TARGET|{target.target_id}|{target.target_hash}",)),
+        HyperparameterDomain(
+            "discovery_evidence_ceiling",
+            (
+                "EXPLORATORY|PIT_INCOMPLETE|IN_SAMPLE_DISCOVERY|UNQUALIFIED|"
+                "FORMAL_OOS_FALSE|CALIBRATED_FALSE|PRODUCTION_QUALIFIED_FALSE",
+            ),
+        ),
+        HyperparameterDomain("evaluation_bucket_count", ("5",)),
+        HyperparameterDomain(
+            "evaluation_metrics",
+            tuple(
+                sorted(
+                    (
+                        "ASSUMED_COST_NET",
+                        "BEFORE_AFTER_SAMPLE_SIZE",
+                        "BUCKET_MONOTONICITY",
+                        "CAPACITY_FILLABILITY",
+                        "CONDITIONAL_EFFECT",
+                        "DRAWDOWN",
+                        "FORWARD_IC",
+                        "FORWARD_RANK_IC",
+                        "HIT_RATE",
+                        "INCREMENTAL_LIFT",
+                        "MAE",
+                        "MFE",
+                        "REJECTION_RATE",
+                        "TEMPORAL_STABILITY",
+                        "TOP_K_GROSS",
+                        "TURNOVER_OVERLAP",
+                    )
+                )
+            ),
+        ),
+        HyperparameterDomain(
+            "evaluation_top_k",
+            tuple(sorted(str(item) for item in ALPHA_DISCOVERY_TOP_K)),
+        ),
+        HyperparameterDomain("factor_registry", factor_values),
+        HyperparameterDomain("factor_registry_hash", (factor_registry_hash,)),
+        HyperparameterDomain(
+            "alpha_discovery_evaluation_contract",
+            (
+                f"{discovery_contract.artifact_kind}|"
+                f"{discovery_contract.artifact_id}|{discovery_contract.content_hash}",
+            ),
+        ),
+        HyperparameterDomain(
+            "gate_disposition_policy",
+            (
+                "DEMOTE_TO_FACTOR",
+                "KEEP_AS_HARD_GATE",
+                "RETEST",
+                "RETIRE",
+            ),
+        ),
+        HyperparameterDomain(
+            "gate_ids",
+            tuple(sorted(ALPHA_DISCOVERY_GATE_IDS)),
+        ),
+        HyperparameterDomain(
+            "gate_variants",
+            ("CURRENT_HARD_GATE", "NO_PREDICTIVE_GATE", "SOFT_FEATURE"),
+        ),
+        HyperparameterDomain(
+            "hard_integrity_gates",
+            tuple(
+                sorted(
+                    (
+                        "BASE_LIQUIDITY",
+                        "CANONICAL_UNIVERSE_MEMBERSHIP",
+                        "DATA_COMPLETENESS",
+                        "DECISION_TIME_PIT_CORRECTNESS",
+                        "REQUIRED_HISTORY",
+                        "SUSPENSION_TRADABILITY",
+                    )
+                )
+            ),
+        ),
+        HyperparameterDomain(
+            "multiple_testing_method",
+            ("BENJAMINI_HOCHBERG_FDR",),
+        ),
+        HyperparameterDomain(
+            "ranking_contract",
+            (GoldenLoopScoringContract.create_v2().contract_hash,),
+        ),
+        HyperparameterDomain("security_facts_owner", (_WP_ALPHA_SECURITY_FACTS,)),
+        HyperparameterDomain("session_range", ("2025-01-02|2025-07-11|126",)),
+        HyperparameterDomain(
+            "runtime_scope_policy",
+            (
+                "research-universe-policy-b8f7171e930c35e52292dc49|"
+                "sha256:b8f7171e930c35e52292dc492215973fca55321aa5ae0443345619cf9f680e4a",
+            ),
+        ),
+        HyperparameterDomain(
+            "target_protocol",
+            (f"OUTCOME_TARGET_PROTOCOL|{target_protocol.protocol_id}|{target_protocol.protocol_hash}",),
+        ),
+        HyperparameterDomain("universe", ("CSI_300_EFFECTIVE_DATED|300_PER_SESSION",)),
+    )
+    return ResearchExperimentDefinition.create(
+        research_question=(
+            "Which DecisionTime-observable Factors and predictive Gates add stable, "
+            "reproducible and economically meaningful T+1 10:30 information?"
+        ),
+        hypothesis=(
+            "No current Factor, Gate or Candidate policy is presumed useful; all "
+            "pre-registered results, including negative and not-estimable results, remain."
+        ),
+        decision_time_policy=golden.decision_time_policy,
+        target_references=golden.target_references,
+        feature_reference=golden.feature_reference,
+        feature_version=golden.feature_version,
+        allowed_model_families=("OWNER_RESOLVED_TIE_AWARE_FACTOR_RESEARCH",),
+        hyperparameter_space=frozen_domains,
+        search_budget=SearchBudget(1, 1),
+        primary_hypothesis_ids=tuple(
+            sorted(
+                {
+                    *(f"FACTOR:RANK_IC:{item.factor_id}" for item in registry if item.role.value == "NUMERIC_RANKED"),
+                    *(f"GATE:INCREMENTAL_LIFT:{item}" for item in ALPHA_DISCOVERY_GATE_IDS),
+                    "CANDIDATE_POLICY:INCREMENTAL_LIFT",
+                }
+            )
+        ),
+        secondary_hypothesis_ids=(
+            "DISCOVERY:BUCKET_MONOTONICITY",
+            "DISCOVERY:TEMPORAL_STABILITY",
+            "DISCOVERY:TOP_K_ASSUMED_COST_NET",
+        ),
+        multiple_testing_family_id=WP_ALPHA_RESEARCH_01_MULTIPLE_TESTING_FAMILY,
+        stopping_rule="EXHAUST_EXACTLY_126_FROZEN_DECISION_SESSIONS_NO_RESULT_DEPENDENT_CHANGE",
+        train_validation_policy="FROZEN_IN_SAMPLE_DISCOVERY_ONLY_NO_SELECTION_CLAIM",
+        purge_embargo_policy=golden.purge_embargo_policy,
+        oos_unlock_policy="FORMAL_OOS_LOCKED_CLOSED_EXTERNAL_VALIDATION_IS_WP_ALPHA_RESEARCH_02",
+        randomness_algorithm=golden.randomness_algorithm,
+        random_seeds=golden.random_seeds,
+        cost_policy_reference=golden.cost_policy_reference,
+        schema_version=golden.schema_version,
+    )
 def verify_phase_e3_historical_experiment(
     definition: ResearchExperimentDefinition,
     *,
@@ -294,6 +521,51 @@ def verify_golden_loop_v2_historical_experiment(
         )
 
 
+def verify_wp_alpha_research_01_historical_experiment(
+    definition: ResearchExperimentDefinition,
+    *,
+    target_protocol: OutcomeTargetProtocol,
+    feature_owner: FeatureSetConfiguration,
+    economics_owner: HistoricalStrategyEconomicsPolicySet,
+    decision_local_time: time,
+    timezone_name: str,
+    configuration_references: tuple[ValidationArtifactReference, ...],
+) -> None:
+    """Fail closed on any post-registration campaign methodology drift."""
+
+    expected = create_wp_alpha_research_01_historical_experiment(
+        target_protocol,
+        locked_at=economics_owner.created_at,
+    )
+    if definition != expected:
+        raise ValueError("WP-ALPHA-RESEARCH-01 Experiment Definition drifted")
+    if feature_owner != create_phase_e3_feature_configuration():
+        raise ValueError("WP-ALPHA-RESEARCH-01 Feature owner drifted")
+    if economics_owner != create_phase_e3_strategy_economics_policy_set(
+        target_protocol=target_protocol,
+        created_at=economics_owner.created_at,
+    ):
+        raise ValueError("WP-ALPHA-RESEARCH-01 Economics owner drifted")
+    if (
+        decision_local_time != PHASE_E3_DECISION_LOCAL_TIME
+        or timezone_name != PHASE_E3_TIMEZONE
+    ):
+        raise ValueError("WP-ALPHA-RESEARCH-01 DecisionTime drifted")
+    required = {
+        definition.feature_reference,
+        definition.cost_policy_reference,
+        GoldenLoopScoringContract.create_v2().reference,
+        alpha_discovery_evaluation_contract_reference(feature_owner),
+        ValidationArtifactReference(
+            "HISTORICAL_RESEARCH_SOURCE_RUN",
+            ArtifactId("historical-research-run-12e8dd606b480380dc0df356"),
+            "sha256:12e8dd606b480380dc0df356ca5aa6c2fdc7b2abd6b215feca74195a50227029",
+        ),
+    }
+    if not required.issubset(set(configuration_references)):
+        raise ValueError("WP-ALPHA-RESEARCH-01 command omits a frozen binding")
+
+
 def _strategy_policy(
     target: TargetDefinition,
     created_at: datetime,
@@ -349,10 +621,13 @@ __all__ = [
     "HistoricalStrategyEconomicsPolicySet",
     "PHASE_E3_DECISION_LOCAL_TIME",
     "PHASE_E3_TIMEZONE",
+    "WP_ALPHA_RESEARCH_01_MULTIPLE_TESTING_FAMILY",
     "create_phase_e3_feature_configuration",
     "create_golden_loop_v2_historical_experiment",
     "create_phase_e3_historical_experiment",
     "create_phase_e3_strategy_economics_policy_set",
+    "create_wp_alpha_research_01_historical_experiment",
     "verify_phase_e3_historical_experiment",
     "verify_golden_loop_v2_historical_experiment",
+    "verify_wp_alpha_research_01_historical_experiment",
 ]
