@@ -153,7 +153,9 @@ def test_outcome_append_preserves_t_artifact_and_reconstructs_review(
         item.status is OutcomeStatus.UNRESOLVED
         for item in settlement.recommendation_outcomes
     )
-    assert settlement.review.recommendation_count == 10
+    assert settlement.review.recommendation_count == len(
+        daily_bundle.recommendations
+    )
     assert settlement.review.unresolved_outcome_count >= 1
     assert 0.0 <= settlement.review.outcome_coverage < 1.0
     assert settlement.review.b0_b1_top_k_overlap_count >= 0

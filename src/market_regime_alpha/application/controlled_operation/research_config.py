@@ -15,7 +15,7 @@ from market_regime_alpha.research.platform_v2.configs import (
 )
 
 
-CONTROLLED_CANDIDATE_CONFIG_SCHEMA = "controlled-candidate-discovery-config-v1"
+CONTROLLED_CANDIDATE_CONFIG_SCHEMA = "controlled-candidate-discovery-config-v2"
 CONTROLLED_RESEARCH_CONFIG_SCHEMA = "controlled-research-pipeline-config-v1"
 
 
@@ -35,6 +35,7 @@ class ControlledCandidateDiscoveryConfig:
     volume_ratio_scale: float
     top_n: int
     minimum_candidate_population: int
+    boundary_selection_policy: str
     assumptions: tuple[str, ...]
 
     def __post_init__(self) -> None:
@@ -54,6 +55,8 @@ class ControlledCandidateDiscoveryConfig:
             raise ValueError("Controlled Candidate scales must be positive")
         if self.top_n <= 0 or self.minimum_candidate_population <= 0:
             raise ValueError("Controlled Candidate population bounds must be positive")
+        if self.boundary_selection_policy != "INCLUDE_ALL_BOUNDARY_TIES_V1":
+            raise ValueError("Controlled Candidate requires the frozen boundary policy")
         if self.assumptions != ASSUMPTIONS:
             raise ValueError("Controlled Candidate assumptions are frozen")
         self.verify_identity()
@@ -63,7 +66,7 @@ class ControlledCandidateDiscoveryConfig:
         cls,
         *,
         model_id: ModelId = ModelId("controlled-candidate-discovery-v1"),
-        model_version: str = "1.0.0-exploratory",
+        model_version: str = "1.1.0-exploratory",
         market_regime_weight: float = 0.15,
         theme_rotation_weight: float = 0.25,
         capital_evolution_weight: float = 0.30,
@@ -73,6 +76,7 @@ class ControlledCandidateDiscoveryConfig:
         volume_ratio_scale: float = 2.0,
         top_n: int = 5,
         minimum_candidate_population: int = 5,
+        boundary_selection_policy: str = "INCLUDE_ALL_BOUNDARY_TIES_V1",
         assumptions: tuple[str, ...] = ASSUMPTIONS,
     ) -> ControlledCandidateDiscoveryConfig:
         values = {
@@ -87,6 +91,7 @@ class ControlledCandidateDiscoveryConfig:
             "volume_ratio_scale": volume_ratio_scale,
             "top_n": top_n,
             "minimum_candidate_population": minimum_candidate_population,
+            "boundary_selection_policy": boundary_selection_policy,
             "assumptions": assumptions,
         }
         digest = canonical_hash(_candidate_payload(**values))
@@ -136,6 +141,7 @@ class ControlledCandidateDiscoveryConfig:
             volume_ratio_scale=float(payload["volume_ratio_scale"]),
             top_n=int(payload["top_n"]),
             minimum_candidate_population=int(payload["minimum_candidate_population"]),
+            boundary_selection_policy=str(payload["boundary_selection_policy"]),
             assumptions=_strings(payload["assumptions"], "assumptions"),
         )
 
@@ -253,6 +259,7 @@ def _candidate_values(item: ControlledCandidateDiscoveryConfig) -> dict[str, Any
         "volume_ratio_scale": item.volume_ratio_scale,
         "top_n": item.top_n,
         "minimum_candidate_population": item.minimum_candidate_population,
+        "boundary_selection_policy": item.boundary_selection_policy,
         "assumptions": item.assumptions,
     }
 
@@ -266,7 +273,8 @@ def _candidate_values_names() -> tuple[str, ...]:
         "model_id", "model_version", "market_regime_weight",
         "theme_rotation_weight", "capital_evolution_weight",
         "price_action_weight", "volume_structure_weight", "price_action_scale",
-        "volume_ratio_scale", "top_n", "minimum_candidate_population", "assumptions",
+        "volume_ratio_scale", "top_n", "minimum_candidate_population",
+        "boundary_selection_policy", "assumptions",
     )
 
 

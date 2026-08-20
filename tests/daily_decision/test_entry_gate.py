@@ -34,7 +34,7 @@ def test_qualified_candidates_can_only_wait_for_a_validated_entry_model(
         eligibility_snapshot=fixture.reconciliation.eligibility_snapshot,
     )
 
-    assert len(assessments) == 10
+    assert len(assessments) == len(recommendations)
     assert {item.entry_state for item in assessments} == {
         EntryAssessmentState.WAIT_CONFIRMATION
     }

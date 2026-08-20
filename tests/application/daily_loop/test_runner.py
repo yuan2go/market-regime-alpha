@@ -268,7 +268,12 @@ def test_replay_run_publishes_one_verified_daily_decision(
     assert result.record.status is DailyRunStatus.OUTCOME_PENDING
     assert result.record.daily_run_id is not None
     assert result.decision_artifact.bundle.prediction_runs
-    assert len(result.decision_artifact.bundle.recommendations) == 10
+    assert len(result.decision_artifact.bundle.recommendations) == sum(
+        1
+        for run in result.decision_artifact.bundle.prediction_runs
+        for item in run.predictions
+        if item.rank is not None and item.rank <= 5
+    )
     assert {
         item.entry_state
         for item in result.decision_artifact.bundle.entry_assessments
@@ -420,7 +425,12 @@ def test_staged_live_fixture_reaches_outcome_pending_from_provider_status(
 
     assert result.record.status is DailyRunStatus.OUTCOME_PENDING
     assert len(result.decision_artifact.bundle.prediction_runs) == 2
-    assert len(result.decision_artifact.bundle.recommendations) == 10
+    assert len(result.decision_artifact.bundle.recommendations) == sum(
+        1
+        for run in result.decision_artifact.bundle.prediction_runs
+        for item in run.predictions
+        if item.rank is not None and item.rank <= 5
+    )
     assert {
         item.entry_state
         for item in result.decision_artifact.bundle.entry_assessments

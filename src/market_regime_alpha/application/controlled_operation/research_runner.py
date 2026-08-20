@@ -35,6 +35,7 @@ from market_regime_alpha.research.candidate_discovery.contracts import (
     CandidateSelectionStatus,
     CandidateSet,
 )
+from market_regime_alpha.research.cross_sectional_ranking import competition_ranks
 from market_regime_alpha.research.capital_evolution.contracts import (
     CapitalEvolutionSnapshot,
     CapitalEvolutionState,
@@ -540,24 +541,42 @@ def discover_controlled_candidates_from_resolved_features(
                 input_artifact_ids=input_ids,
             )
         )
+    viable_by_symbol = {
+        item.symbol: item
+        for item in records
+        if item.selection_status is CandidateSelectionStatus.WATCHLIST
+        and item.candidate_discovery_score is not None
+    }
+    viable_scores = {
+        symbol: item.candidate_discovery_score
+        for symbol, item in viable_by_symbol.items()
+        if item.candidate_discovery_score is not None
+    }
+    ranks = competition_ranks(viable_scores, higher_is_better=True)
     viable = sorted(
-        (item for item in records if item.selection_status is CandidateSelectionStatus.WATCHLIST),
-        key=lambda item: (-float(item.candidate_discovery_score or 0), item.symbol),
+        viable_by_symbol.values(),
+        key=lambda item: (ranks[item.symbol], item.symbol),
     )
     enough = len(viable) >= configuration.minimum_candidate_population
+    selected_count = sum(
+        1 for item in viable if ranks[item.symbol] <= configuration.top_n
+    )
+    boundary_tie_expanded = selected_count > min(configuration.top_n, len(viable))
     ranked = {
         item.symbol: replace(
             item,
-            rank=rank,
+            rank=ranks[item.symbol],
             selection_status=(
-                CandidateSelectionStatus.SELECTED if enough and rank <= configuration.top_n else CandidateSelectionStatus.WATCHLIST
+                CandidateSelectionStatus.SELECTED
+                if enough and ranks[item.symbol] <= configuration.top_n
+                else CandidateSelectionStatus.WATCHLIST
             ),
             reason_codes=tuple(
                 dict.fromkeys(
                     (
                         *item.reason_codes,
                         "CANDIDATE_SELECTED"
-                        if enough and rank <= configuration.top_n
+                        if enough and ranks[item.symbol] <= configuration.top_n
                         else "CANDIDATE_WATCHLIST"
                         if enough
                         else "CANDIDATE_POPULATION_INSUFFICIENT",
@@ -565,7 +584,7 @@ def discover_controlled_candidates_from_resolved_features(
                 )
             ),
         )
-        for rank, item in enumerate(viable, 1)
+        for item in viable
     }
     finalized = tuple(ranked.get(item.symbol, item) for item in sorted(records, key=lambda item: item.symbol))
     reasons = tuple(
@@ -574,6 +593,7 @@ def discover_controlled_candidates_from_resolved_features(
                 "CANDIDATE_SET_IS_NOT_RECOMMENDATION",
                 "CONTROLLED_CANDIDATE_DISCOVERY_WITHOUT_B0_B1",
                 *(("CANDIDATE_POPULATION_INSUFFICIENT",) if not enough else ()),
+                *(("CANDIDATE_BOUNDARY_TIE_EXPANDED",) if boundary_tie_expanded and enough else ()),
             }
         )
     )

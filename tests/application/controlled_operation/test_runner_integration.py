@@ -659,8 +659,9 @@ def test_controlled_runner_uses_real_canonical_chain_and_is_idempotent(
     replayed_run = runner.run_decision_window(command=command, policy=policy, inputs=inputs)
 
     assert len(universe.symbols) == 100
-    assert len(result.candidate_set.selected) == 5
-    assert result.minute_coverage.succeeded_count == 5
+    assert len(result.candidate_set.selected) == len(universe.symbols)
+    assert "CANDIDATE_BOUNDARY_TIE_EXPANDED" in result.candidate_set.reason_codes
+    assert result.minute_coverage.succeeded_count == len(universe.symbols)
     assert result.minute_coverage.failed_count == 0
     assert wait_calls == [30.0]
     assert calls_after_first == calls_after_crash
@@ -698,7 +699,7 @@ def test_controlled_runner_uses_real_canonical_chain_and_is_idempotent(
 
     assert settlement.package.status.value == "SETTLED"
     assert settlement.snapshot.status is DecisionTimeOperationRunStatus.SETTLED
-    assert len(settlement.outcome.observations) == 5
+    assert len(settlement.outcome.observations) == len(universe.symbols)
     assert settlement.package == replayed_settlement.package
     assert settlement.longitudinal_record.outcome_status == "SETTLED"
     canonical_reference = next(
@@ -919,7 +920,7 @@ def test_controlled_runner_publishes_deadline_missed_when_wait_overshoots(
 def test_controlled_runner_archives_all_provider_failure_as_data_blocked(
     tmp_path: Path, daily_decision_fixture: DailyDecisionFixture
 ) -> None:
-    inputs, calendar, _, configuration, decision = _input_paths(tmp_path, daily_decision_fixture)
+    inputs, calendar, universe, configuration, decision = _input_paths(tmp_path, daily_decision_fixture)
     policy = default_decision_time_operation_policy()
     command = ControlledOperationCommand.create(
         idempotency_key="controlled-runner-all-provider-failure",
@@ -964,4 +965,8 @@ def test_controlled_runner_archives_all_provider_failure_as_data_blocked(
     assert len(packages) == 1
     assert packages[0].status.value == "DATA_BLOCKED"
     assert packages[0].minute_success_count == 0
-    assert packages[0].minute_failure_count == packages[0].candidate_count == 5
+    assert (
+        packages[0].minute_failure_count
+        == packages[0].candidate_count
+        == len(universe.symbols)
+    )
