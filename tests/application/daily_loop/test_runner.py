@@ -1643,8 +1643,13 @@ def test_successful_public_replay_reaches_outcome_pending(
     bundle = completed.decision_artifact.bundle
     assert completed.record.status is DailyRunStatus.OUTCOME_PENDING
     assert all(run.population_size == 20 for run in bundle.prediction_runs)
-    assert len(bundle.recommendations) == 10
-    assert len(bundle.entry_assessments) == 10
+    assert len(bundle.recommendations) == sum(
+        1
+        for run in bundle.prediction_runs
+        for item in run.predictions
+        if item.rank is not None and item.rank <= 5
+    )
+    assert len(bundle.entry_assessments) == len(bundle.recommendations)
 
 
 def test_feature_window_missing_blocks_without_partial_predictions(

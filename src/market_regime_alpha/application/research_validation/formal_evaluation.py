@@ -23,6 +23,7 @@ from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.data.pit_authority import FormalPITEvidenceArtifact
 from market_regime_alpha.data.pit_contracts import PITValidationOutcome
 from market_regime_alpha.evidence.canonical import canonical_hash, require_sha256, require_text
+from market_regime_alpha.research.cross_sectional_ranking import rank_percentiles
 
 
 class EvaluationPartition(str, Enum):
@@ -1315,21 +1316,6 @@ def _correlation(left: list[float], right: list[float]) -> Decimal | None:
     return Decimal(str(sum((x - lm) * (y - rm) for x, y in zip(left, right, strict=True)) / denominator))
 
 
-def _ranks(values: list[float]) -> list[float]:
-    ordered = sorted(enumerate(values), key=lambda item: (item[1], item[0]))
-    result = [0.0] * len(values)
-    index = 0
-    while index < len(ordered):
-        end = index + 1
-        while end < len(ordered) and ordered[end][1] == ordered[index][1]:
-            end += 1
-        rank = (index + 1 + end) / 2
-        for original, _value in ordered[index:end]:
-            result[original] = rank
-        index = end
-    return result
-
-
 def _group_by_session(
     values: tuple[EvaluationObservation, ...],
 ) -> dict[date, tuple[EvaluationObservation, ...]]:
@@ -1365,8 +1351,22 @@ def _daily_correlations(
         scores = [float(item.score) for item in observations]
         returns = [float(item.realized_return) for item in observations]
         if ranked:
-            scores = _ranks(scores)
-            returns = _ranks(returns)
+            score_ranks = rank_percentiles(
+                dict(enumerate(scores)),
+                higher_is_better=True,
+            )
+            return_ranks = rank_percentiles(
+                dict(enumerate(returns)),
+                higher_is_better=True,
+            )
+            scores = [
+                float(score_ranks.percentiles[index])
+                for index in range(len(scores))
+            ]
+            returns = [
+                float(return_ranks.percentiles[index])
+                for index in range(len(returns))
+            ]
         correlation = _correlation(scores, returns)
         if correlation is not None:
             correlations.append(correlation)
