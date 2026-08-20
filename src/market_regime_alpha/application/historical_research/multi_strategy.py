@@ -11,6 +11,14 @@ from market_regime_alpha.application.continuous_research.journal import (
 from market_regime_alpha.application.historical_corpus.postgres_materialization import (
     PostgresHistoricalMaterializationRepository,
 )
+from market_regime_alpha.application.historical_corpus.golden_loop import (
+    GoldenLoopScoringContract,
+    evaluate_golden_loop_session,
+)
+from market_regime_alpha.application.historical_corpus.materialization_contracts import (
+    HistoricalComponentKind,
+    HistoricalSessionComponent,
+)
 from market_regime_alpha.application.research_session.contracts import (
     ResearchDecisionSessionRequest,
 )
@@ -30,6 +38,7 @@ from market_regime_alpha.strategies.contracts import (
     StrategyRunOrigin,
     StrategyRuntimeInput,
 )
+from market_regime_alpha.strategies.feedback import attribute_path_outcomes
 from market_regime_alpha.strategies.portfolio import (
     CrossStrategyPortfolioPolicy,
     build_cross_strategy_portfolio,
@@ -78,6 +87,8 @@ class MultiStrategyHistoricalAdapter:
             return self._strategy_stage(request, input_references, delegated)
         if stage is ResearchSessionStage.PORTFOLIO:
             return self._portfolio_stage(request, delegated)
+        if stage is ResearchSessionStage.PERFORMANCE:
+            return self._performance_stage(request, input_references, delegated)
         return delegated
 
     def _strategy_stage(
@@ -158,6 +169,99 @@ class MultiStrategyHistoricalAdapter:
             "CROSS_STRATEGY_PORTFOLIO_SHARED_SEMANTICS",
         )
 
+    def _performance_stage(
+        self,
+        request: ResearchDecisionSessionRequest,
+        inputs: tuple[ValidationArtifactReference, ...],
+        delegated: SessionStageComputation,
+    ) -> SessionStageComputation:
+        contract = GoldenLoopScoringContract.create_v2()
+        if contract.reference not in request.configuration_references:
+            return delegated
+        panel = self.component_repository.get(
+            _single(inputs, "HISTORICAL_RESEARCH_PANEL")
+        )
+        outcome = self.component_repository.get(
+            _single(inputs, "HISTORICAL_OUTCOME")
+        )
+        cycle_reference = _single(inputs, "MULTI_STRATEGY_CYCLE")
+        cycle = self.strategy_repository.get_cycle(cycle_reference.artifact_id)
+        if _validation_reference(cycle_reference) != ValidationArtifactReference(
+            "MULTI_STRATEGY_CYCLE",
+            cycle.cycle_id,
+            cycle.cycle_hash,
+        ):
+            raise ValueError("Historical Multi-Strategy Cycle owner hash mismatch")
+        portfolio_reference = _single(inputs, "CROSS_STRATEGY_PORTFOLIO")
+        portfolio = self.strategy_repository.get_portfolio(
+            portfolio_reference.artifact_id
+        )
+        if _validation_reference(portfolio_reference) != ValidationArtifactReference(
+            "CROSS_STRATEGY_PORTFOLIO",
+            portfolio.decision_id,
+            portfolio.decision_hash,
+        ):
+            raise ValueError("Historical Cross-Strategy Portfolio owner hash mismatch")
+        if portfolio.cycle_reference != _runtime_reference(cycle_reference):
+            raise ValueError("Historical Portfolio does not source the canonical Cycle")
+        attributions = tuple(
+            self.strategy_repository.save_feedback(
+                attribute_path_outcomes(
+                    strategy_version_reference=run.strategy_version_reference,
+                    outcomes=(),
+                    created_at=request.materialized_at,
+                )
+            )
+            for run in cycle.runs
+        )
+        evaluation = evaluate_golden_loop_session(
+            panel=panel,
+            outcome=outcome,
+            experiment_reference=request.experiment_definition_reference,
+            cycle_reference=cycle_reference,
+            portfolio_reference=portfolio_reference,
+            portfolio_status=portfolio.status.value,
+            portfolio_line_count=len(portfolio.lines),
+            attribution_references=tuple(
+                ValidationArtifactReference(
+                    item.reference.reference_kind,
+                    item.reference.artifact_id,
+                    item.reference.content_hash,
+                )
+                for item in attributions
+            ),
+            scoring_contract=contract,
+        )
+        component = HistoricalSessionComponent.create(
+            run_id=panel.run_id,
+            session_id=request.session_id,
+            trading_date=request.trading_date,
+            component_kind=HistoricalComponentKind.RESEARCH_EVALUATION,
+            source_max_event_time=max(
+                panel.source_max_event_time,
+                outcome.source_max_event_time,
+            ),
+            materialized_at=request.materialized_at,
+            source_references=evaluation.source_references,
+            payload=evaluation.to_canonical_dict(),
+            limitations=(
+                "HISTORICAL_SHADOW_SIMULATION_NOT_OBSERVED_FILL",
+                "NO_PHYSICAL_POSITION_AUTHORITY",
+            ),
+        )
+        stored = self.component_repository.put(
+            component=component,
+            ordinal=tuple(HistoricalComponentKind).index(
+                HistoricalComponentKind.RESEARCH_EVALUATION
+            )
+            + 1,
+        )
+        return _extend(
+            delegated,
+            stored.reference,
+            "GOLDEN_LOOP_V2_CANONICAL_EVALUATION_MATERIALIZED",
+        )
+
 
 def _extend(
     computation: SessionStageComputation,
@@ -194,6 +298,16 @@ def _runtime_reference(
     reference: ValidationArtifactReference,
 ) -> RuntimeArtifactReference:
     return RuntimeArtifactReference(
+        reference.artifact_kind,
+        reference.artifact_id,
+        reference.content_hash,
+    )
+
+
+def _validation_reference(
+    reference: ValidationArtifactReference,
+) -> ValidationArtifactReference:
+    return ValidationArtifactReference(
         reference.artifact_kind,
         reference.artifact_id,
         reference.content_hash,

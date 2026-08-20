@@ -26,6 +26,7 @@ from market_regime_alpha.application.historical_corpus.historical_window import 
 )
 from market_regime_alpha.application.historical_corpus.frozen_experiment import (
     PHASE_E3_TIMEZONE,
+    verify_golden_loop_v2_historical_experiment,
     verify_phase_e3_historical_experiment,
 )
 from market_regime_alpha.application.historical_corpus.artifacts import (
@@ -476,7 +477,13 @@ class HistoricalDecisionMaterializer:
                     raise ValueError(
                         "Historical frozen methodology was recorded after materialization"
                     )
-            verify_phase_e3_historical_experiment(
+            verifier = (
+                verify_golden_loop_v2_historical_experiment
+                if experiment.multiple_testing_family_id
+                == "WP_GOLDEN_LOOP_01_CORRECTNESS_V2"
+                else verify_phase_e3_historical_experiment
+            )
+            verifier(
                 experiment,
                 target_protocol=target_protocol,
                 feature_owner=feature_owner,

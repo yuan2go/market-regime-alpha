@@ -286,6 +286,7 @@ def verify_golden_loop_v2_historical_experiment(
     required = {
         definition.feature_reference,
         definition.cost_policy_reference,
+        GoldenLoopScoringContract.create_v2().reference,
     }
     if not required.issubset(set(configuration_references)):
         raise ValueError(

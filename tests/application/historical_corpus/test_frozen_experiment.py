@@ -135,5 +135,6 @@ def test_golden_loop_v2_changes_only_research_correctness_identity() -> None:
         configuration_references=(
             v2.feature_reference,
             v2.cost_policy_reference,
+            GoldenLoopScoringContract.create_v2().reference,
         ),
     )
