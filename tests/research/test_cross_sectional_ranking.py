@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from decimal import Decimal
+from decimal import Decimal, localcontext
 from itertools import permutations
 
 import pytest
@@ -11,6 +11,7 @@ from market_regime_alpha.research.cross_sectional_ranking import (
     composite_percentile_scores,
     competition_ranks,
     fractional_boundary_weights,
+    fractional_slot_weight_total,
     rank_percentiles,
 )
 
@@ -89,6 +90,31 @@ def test_fractional_boundary_never_uses_entity_identity() -> None:
         "x": Decimal("0.5"),
         "y": Decimal("0.5"),
     }
+
+
+def test_large_fractional_boundary_is_process_context_invariant() -> None:
+    scores = {f"entity-{index:03d}": Decimal("1") for index in range(300)}
+
+    with localcontext() as context:
+        context.prec = 8
+        low_precision = fractional_boundary_weights(
+            scores,
+            slots=10,
+            higher_is_better=True,
+        )
+    with localcontext() as context:
+        context.prec = 50
+        high_precision = fractional_boundary_weights(
+            dict(reversed(tuple(scores.items()))),
+            slots=10,
+            higher_is_better=True,
+        )
+
+    assert low_precision == high_precision
+    assert low_precision.boundary_group_size == 300
+    assert len(set(low_precision.weights.values())) == 1
+    total = fractional_slot_weight_total(low_precision.weights, slots=10)
+    assert abs(total - Decimal("10")) <= Decimal("1e-55")
 
 
 @pytest.mark.parametrize(

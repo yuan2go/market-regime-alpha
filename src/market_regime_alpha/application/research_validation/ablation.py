@@ -25,6 +25,7 @@ from market_regime_alpha.research.cross_sectional_ranking import (
     FactorCrossSection,
     composite_percentile_scores,
     fractional_boundary_weights,
+    fractional_slot_weight_total,
     rank_percentiles,
 )
 
@@ -921,10 +922,11 @@ class _MetricAccumulator:
             for symbol in symbol_set
         ):
             raise ValueError("precomputed Ablation top/bottom weights must be disjoint")
-        expected_top_weight = Decimal(min(self._top_k, len(scored)))
-        session_top_weight = sum(top_weights.values(), Decimal("0"))
-        if session_top_weight != expected_top_weight:
-            raise ValueError("precomputed Ablation top weights do not preserve K slots")
+        expected_top_slots = min(self._top_k, len(scored))
+        session_top_weight = fractional_slot_weight_total(
+            top_weights,
+            slots=expected_top_slots,
+        )
         trading_date = next(iter(trading_dates))
         if trading_date is None:
             raise ValueError("Ablation path metrics require a canonical trading date for every session")

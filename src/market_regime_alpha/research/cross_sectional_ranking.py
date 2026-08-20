@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import Context, Decimal, ROUND_HALF_EVEN, localcontext
 from enum import Enum
 from types import MappingProxyType
 from typing import Generic, Hashable, Mapping, TypeVar
@@ -11,6 +11,8 @@ from typing import Generic, Hashable, Mapping, TypeVar
 
 EntityKey = TypeVar("EntityKey", bound=Hashable)
 Numeric = Decimal | int | float
+_RANK_DECIMAL_CONTEXT = Context(prec=64, rounding=ROUND_HALF_EVEN)
+_SLOT_EXPOSURE_TOLERANCE = Decimal("1e-55")
 
 
 class RankInformationStatus(str, Enum):
@@ -132,19 +134,20 @@ def rank_percentiles(
             distinct_count=distinct_count,
         )
 
-    denominator = Decimal(observed_count - 1)
-    percentiles: dict[EntityKey, Decimal] = {}
-    position = 0
-    while position < observed_count:
-        end = position + 1
-        while end < observed_count and ordered[end][1] == ordered[position][1]:
-            end += 1
-        midrank = (Decimal(position) + Decimal(end - 1)) / Decimal(2)
-        ascending = midrank / denominator
-        percentile = ascending if higher_is_better else Decimal(1) - ascending
-        for index in range(position, end):
-            percentiles[ordered[index][0]] = percentile
-        position = end
+    with localcontext(_RANK_DECIMAL_CONTEXT):
+        denominator = Decimal(observed_count - 1)
+        percentiles: dict[EntityKey, Decimal] = {}
+        position = 0
+        while position < observed_count:
+            end = position + 1
+            while end < observed_count and ordered[end][1] == ordered[position][1]:
+                end += 1
+            midrank = (Decimal(position) + Decimal(end - 1)) / Decimal(2)
+            ascending = midrank / denominator
+            percentile = ascending if higher_is_better else Decimal(1) - ascending
+            for index in range(position, end):
+                percentiles[ordered[index][0]] = percentile
+            position = end
     return CrossSectionalRankResult(
         percentiles=MappingProxyType(percentiles),
         status=RankInformationStatus.AVAILABLE,
@@ -172,27 +175,27 @@ def fractional_boundary_weights(
             boundary_group_size=0,
             boundary_weight=Decimal("0"),
         )
-    selected_slots = min(slots, len(normalized))
-    ordered_scores = sorted(normalized.values(), reverse=higher_is_better)
-    boundary_score = ordered_scores[selected_slots - 1]
-    if higher_is_better:
-        strict = {key for key, value in normalized.items() if value > boundary_score}
-    else:
-        strict = {key for key, value in normalized.items() if value < boundary_score}
-    boundary = {key for key, value in normalized.items() if value == boundary_score}
-    boundary_weight = Decimal(selected_slots - len(strict)) / Decimal(len(boundary))
-    weights = {
-        key: (
-            Decimal("1")
-            if key in strict
-            else boundary_weight
-            if key in boundary
-            else Decimal("0")
-        )
-        for key in normalized
-    }
-    if sum(weights.values(), Decimal("0")) != Decimal(selected_slots):
-        raise ValueError("fractional boundary weights do not preserve K-slot exposure")
+    with localcontext(_RANK_DECIMAL_CONTEXT):
+        selected_slots = min(slots, len(normalized))
+        ordered_scores = sorted(normalized.values(), reverse=higher_is_better)
+        boundary_score = ordered_scores[selected_slots - 1]
+        if higher_is_better:
+            strict = {key for key, value in normalized.items() if value > boundary_score}
+        else:
+            strict = {key for key, value in normalized.items() if value < boundary_score}
+        boundary = {key for key, value in normalized.items() if value == boundary_score}
+        boundary_weight = Decimal(selected_slots - len(strict)) / Decimal(len(boundary))
+        weights = {
+            key: (
+                Decimal("1")
+                if key in strict
+                else boundary_weight
+                if key in boundary
+                else Decimal("0")
+            )
+            for key in normalized
+        }
+        fractional_slot_weight_total(weights, slots=selected_slots)
     return BoundarySelection(
         weights=MappingProxyType(weights),
         boundary_score=boundary_score,
@@ -200,6 +203,27 @@ def fractional_boundary_weights(
         boundary_group_size=len(boundary),
         boundary_weight=boundary_weight,
     )
+
+
+def fractional_slot_weight_total(
+    weights: Mapping[EntityKey, Numeric],
+    *,
+    slots: int,
+) -> Decimal:
+    """Validate identity-neutral fractional exposure within fixed Decimal error."""
+
+    if isinstance(slots, bool) or not isinstance(slots, int) or slots <= 0:
+        raise ValueError("fractional exposure slots must be a positive integer")
+    normalized = tuple(_finite_numeric(value) for value in weights.values())
+    if any(not Decimal("0") <= value <= Decimal("1") for value in normalized):
+        raise ValueError("fractional exposure weights must be within [0, 1]")
+    with localcontext(_RANK_DECIMAL_CONTEXT):
+        total = sum(normalized, Decimal("0"))
+        if abs(total - Decimal(slots)) > _SLOT_EXPOSURE_TOLERANCE:
+            raise ValueError(
+                "fractional boundary weights do not preserve K-slot exposure"
+            )
+        return total
 
 
 def competition_ranks(
@@ -240,7 +264,6 @@ def composite_percentile_scores(
         raise ValueError("composite Factor contains an entity outside its population")
 
     weights = {item.factor_id: _finite_numeric(item.weight) for item in factors}
-    denominator = sum(weights.values(), Decimal("0"))
     percentiles: dict[str, Mapping[EntityKey, Decimal]] = {}
     diagnostics: dict[str, FactorRankDiagnostic] = {}
     for factor in factors:
@@ -261,18 +284,20 @@ def composite_percentile_scores(
             distinct_count=ranked.distinct_count,
         )
 
-    scores = {
-        entity: sum(
-            (
-                weights[factor.factor_id]
-                * percentiles[factor.factor_id].get(entity, Decimal("0.5"))
-                for factor in factors
-            ),
-            Decimal("0"),
-        )
-        / denominator
-        for entity in entities
-    }
+    with localcontext(_RANK_DECIMAL_CONTEXT):
+        denominator = sum(weights.values(), Decimal("0"))
+        scores = {
+            entity: sum(
+                (
+                    weights[factor.factor_id]
+                    * percentiles[factor.factor_id].get(entity, Decimal("0.5"))
+                    for factor in factors
+                ),
+                Decimal("0"),
+            )
+            / denominator
+            for entity in entities
+        }
     return CompositeRankResult(
         scores=MappingProxyType(scores),
         diagnostics=MappingProxyType(diagnostics),
@@ -298,5 +323,6 @@ __all__ = [
     "composite_percentile_scores",
     "competition_ranks",
     "fractional_boundary_weights",
+    "fractional_slot_weight_total",
     "rank_percentiles",
 ]
