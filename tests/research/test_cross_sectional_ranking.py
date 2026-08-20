@@ -240,6 +240,63 @@ def test_positive_affine_transform_preserves_percentiles() -> None:
     assert transformed.percentiles == original.percentiles
 
 
+def test_expanding_a_symmetric_tie_group_preserves_its_midrank() -> None:
+    original = rank_percentiles(
+        {
+            "low": Decimal("1"),
+            "tie-a": Decimal("2"),
+            "tie-b": Decimal("2"),
+            "high": Decimal("3"),
+        },
+        higher_is_better=True,
+    )
+    expanded = rank_percentiles(
+        {
+            "low": Decimal("1"),
+            "tie-a": Decimal("2"),
+            "tie-b": Decimal("2"),
+            "tie-c": Decimal("2"),
+            "tie-d": Decimal("2"),
+            "high": Decimal("3"),
+        },
+        higher_is_better=True,
+    )
+
+    assert original.percentiles["tie-a"] == Decimal("0.5")
+    expanded_tie_percentiles = {
+        expanded.percentiles[key]
+        for key in ("tie-a", "tie-b", "tie-c", "tie-d")
+    }
+    assert len(expanded_tie_percentiles) == 1
+    assert expanded.percentiles["tie-a"] == Decimal("0.5")
+
+
+def test_factor_order_permutation_is_invariant() -> None:
+    factors = (
+        FactorCrossSection(
+            "price",
+            {"a": Decimal("3"), "b": Decimal("1"), "c": Decimal("2")},
+            True,
+            2,
+        ),
+        FactorCrossSection(
+            "volume",
+            {"a": Decimal("1"), "b": Decimal("2"), "c": Decimal("3")},
+            True,
+            1,
+        ),
+    )
+
+    expected = composite_percentile_scores(factors, entities=("a", "b", "c"))
+    permuted = composite_percentile_scores(
+        tuple(reversed(factors)),
+        entities=("a", "b", "c"),
+    )
+
+    assert permuted.scores == expected.scores
+    assert permuted.diagnostics == expected.diagnostics
+
+
 def test_competition_ranks_preserve_ties_without_identity_winners() -> None:
     ranks = competition_ranks(
         {"a": Decimal("1"), "b": Decimal("0"), "c": Decimal("0")},

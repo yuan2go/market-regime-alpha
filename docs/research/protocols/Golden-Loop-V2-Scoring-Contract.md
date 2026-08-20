@@ -57,11 +57,12 @@ Malformed, boolean, or non-finite numeric inputs fail closed.
 
 ## 4. Composite and metamorphic invariants
 
-Factor order is canonicalized by declared identity. Composite score is the
-frozen weighted mean of V2 percentiles using the fixed denominator and existing
-weights. Arithmetic midranks and composite sums remain exact rational values
-until the final order-preserving Decimal projection; finite intermediate
-rounding cannot split a mathematical tie or merge distinct scores.
+Factor identity must be unique, and exact arithmetic makes factor-order
+permutation invariant. Composite score is the frozen weighted mean of V2
+percentiles using the fixed denominator and existing weights. Arithmetic
+midranks and composite sums remain exact rational values until the final
+order-preserving Decimal projection; finite intermediate rounding cannot split
+a mathematical tie or merge distinct scores.
 
 The following invariants are required tests:
 
