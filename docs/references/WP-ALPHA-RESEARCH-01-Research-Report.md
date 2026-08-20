@@ -1,9 +1,9 @@
 # WP-ALPHA-RESEARCH-01 Research Report
 
-> **Status:** CURRENT_RESEARCH_PROGRAM  
-> **Evidence ceiling:** `EXPLORATORY / PIT_INCOMPLETE / IN_SAMPLE_DISCOVERY / UNQUALIFIED`  
-> **Run:** `historical-research-run-0e150a21c7869adc84a57af5`  
-> **Primary Evidence:** `historical-evidence-f9326f869186419a89e450b9@sha256:f9326f869186419a89e450b9b64923046a30677d4c3c0003f1f12060388c1fe6`  
+> **Status:** CURRENT_RESEARCH_PROGRAM
+> **Evidence ceiling:** `EXPLORATORY / PIT_INCOMPLETE / IN_SAMPLE_DISCOVERY / UNQUALIFIED`
+> **Run:** `historical-research-run-0e150a21c7869adc84a57af5`
+> **Primary Evidence:** `historical-evidence-f9326f869186419a89e450b9@sha256:f9326f869186419a89e450b9b64923046a30677d4c3c0003f1f12060388c1fe6`
 > **Last Updated:** 2026-08-21
 
 ## Conclusion
