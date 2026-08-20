@@ -269,7 +269,7 @@ def test_migration_088_extends_manual_trade_without_reservation_ledger(
     migrations = load_packaged_migrations()
     PostgresMigrator(migrations=migrations[:87]).apply_all(postgres_factory)
 
-    applied = PostgresMigrator().apply_all(postgres_factory)
+    applied = PostgresMigrator(migrations=migrations[:88]).apply_all(postgres_factory)
 
     with postgres_factory.connection(read_only=True) as connection:
         columns = {
