@@ -567,7 +567,15 @@ def test_real_stateful_positive_path_reaches_research_candidate(
         assert minute_calls == []
     assert by_stage[StateResearchStage.OBSERVATION].stage_completed_at < decision
     assert any(item.product == "ifzq.gtimg.cn:minute" for item in summary.provider_contracts) is liquidity_eligible
-    assert len({symbol for symbol, _, _ in minute_calls}) <= 5
+    selected_symbols = (
+        set()
+        if not liquidity_eligible
+        else {
+            item.symbol
+            for item in captured_executions[-1].decision.candidate_set.selected
+        }
+    )
+    assert {symbol for symbol, _, _ in minute_calls} == selected_symbols
     with postgres_factory.connection(read_only=True) as connection:
         pool_member_count = connection.execute("SELECT count(*) FROM dynamic_stock_pool_member").fetchone()
     assert pool_member_count == (len(policy.symbols),)
@@ -1173,7 +1181,7 @@ def test_real_stateful_positive_path_reaches_research_candidate(
                 "theme_rotation_state",
             ),
         )
-        assert recovery.migration_head == 89
+        assert recovery.migration_head == 90
         assert recovery.continuous_replay_hashes == (
             (
                 str(command.run_id),

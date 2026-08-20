@@ -129,14 +129,15 @@ FREE_RUNTIME_MIGRATIONS = (
     (87, "strategy_execution_integrity"),
     (88, "portfolio_execution_authority"),
     (89, "golden_loop_v2_evidence"),
+    (90, "tie_aware_pool_ranks"),
 )
 
 
 def test_packaged_migrations_are_contiguous_and_checksummed() -> None:
     migrations = load_packaged_migrations()
 
-    assert tuple(item.version for item in migrations) == tuple(range(1, 90))
-    assert len({item.name for item in migrations}) == 89
+    assert tuple(item.version for item in migrations) == tuple(range(1, 91))
+    assert len({item.name for item in migrations}) == 90
     assert all(item.checksum == sha256(item.sql.encode("utf-8")).hexdigest() for item in migrations)
 
 
@@ -176,6 +177,50 @@ def test_migration_089_admits_v2_evidence_without_mutating_v1_rows(
     assert after == before
     assert "RESEARCH_EVALUATION" in constraints
     assert "METHODOLOGY_ASSESSMENT" in constraints
+
+
+def test_migration_090_removes_rank_as_dynamic_pool_member_identity(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    migrations = load_packaged_migrations()
+    PostgresMigrator(migrations=migrations[:89]).apply_all(postgres_factory)
+
+    with postgres_factory.connection(read_only=True) as connection:
+        before = connection.execute(
+            """
+            SELECT count(*)
+            FROM pg_constraint
+            WHERE conrelid = 'dynamic_stock_pool_member'::regclass
+              AND conname = 'dynamic_stock_pool_member_pool_id_rank_key'
+            """
+        ).fetchone()
+
+    applied = PostgresMigrator().apply_all(postgres_factory)
+
+    with postgres_factory.connection(read_only=True) as connection:
+        after = connection.execute(
+            """
+            SELECT count(*)
+            FROM pg_constraint
+            WHERE conrelid = 'dynamic_stock_pool_member'::regclass
+              AND conname = 'dynamic_stock_pool_member_pool_id_rank_key'
+            """
+        ).fetchone()
+        primary_key = connection.execute(
+            """
+            SELECT pg_get_constraintdef(oid)
+            FROM pg_constraint
+            WHERE conrelid = 'dynamic_stock_pool_member'::regclass
+              AND contype = 'p'
+            """
+        ).fetchone()
+
+    assert before == (1,)
+    assert tuple((item.version, item.name) for item in applied) == (
+        (90, "tie_aware_pool_ranks"),
+    )
+    assert after == (0,)
+    assert primary_key == ("PRIMARY KEY (pool_id, symbol)",)
 
 
 def test_migration_075_enforces_exact_owner_hash_pairs(
