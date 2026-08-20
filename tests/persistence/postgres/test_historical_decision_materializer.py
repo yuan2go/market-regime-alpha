@@ -29,8 +29,12 @@ from market_regime_alpha.application.historical_corpus.evidence_producer import 
 )
 from market_regime_alpha.application.historical_corpus.frozen_experiment import (
     create_phase_e3_feature_configuration,
-    create_phase_e3_historical_experiment,
+    create_golden_loop_v2_historical_experiment,
     create_phase_e3_strategy_economics_policy_set,
+)
+from market_regime_alpha.application.historical_corpus.golden_loop import (
+    GoldenLoopScoringContract,
+    GoldenLoopSessionEvaluation,
 )
 from market_regime_alpha.application.historical_corpus.postgres_evidence import (
     PostgresHistoricalEvidenceRepository,
@@ -236,7 +240,7 @@ def test_existing_historical_runner_actively_materializes_and_replays(
         recorded_at=MATERIALIZED_AT,
     )
     validation_repository.record_historical_strategy_economics_policy_set(economics_owner)
-    experiment = create_phase_e3_historical_experiment(
+    experiment = create_golden_loop_v2_historical_experiment(
         target_protocol,
         locked_at=MATERIALIZED_AT,
     )
@@ -265,6 +269,7 @@ def test_existing_historical_runner_actively_materializes_and_replays(
         (
             experiment.feature_reference,
             experiment.cost_policy_reference,
+            GoldenLoopScoringContract.create_v2().reference,
         ),
     )
     journal = PostgresHistoricalResearchJournal(
@@ -383,6 +388,13 @@ def test_existing_historical_runner_actively_materializes_and_replays(
     assert resumed.status is HistoricalRunStatus.COMPLETE
     assert resumed.sessions[0].receipts[-1].stage is ResearchSessionStage.PERFORMANCE
     assert resumed.sessions[0].receipts[-1].status is SessionStageStatus.COMPLETE
+    assert {
+        item.artifact_kind
+        for item in resumed.sessions[0].receipts[-1].output_references
+    } >= {
+        "HISTORICAL_RESEARCH_PANEL",
+        "HISTORICAL_RESEARCH_EVALUATION",
+    }
     strategy_receipt = resumed.sessions[0].receipts[ResearchSessionStage.STRATEGY.ordinal - 1]
     assert {item.artifact_kind for item in strategy_receipt.output_references} >= {
         "HISTORICAL_STRATEGY",
@@ -424,8 +436,24 @@ def test_existing_historical_runner_actively_materializes_and_replays(
     for result in outcome.payload["strategy_economics"]:
         if result["net_return"] is not None:
             assert Decimal(result["net_return"]) == (Decimal(result["gross_return"]) - Decimal(result["cost_return"]))
-    panel_reference = resumed.sessions[0].receipts[-1].output_references[0]
+    panel_reference = next(
+        item
+        for item in resumed.sessions[0].receipts[-1].output_references
+        if item.artifact_kind == "HISTORICAL_RESEARCH_PANEL"
+    )
     panel = component_repository.get(panel_reference)
+    evaluation_reference = next(
+        item
+        for item in resumed.sessions[0].receipts[-1].output_references
+        if item.artifact_kind == "HISTORICAL_RESEARCH_EVALUATION"
+    )
+    evaluation = GoldenLoopSessionEvaluation.from_canonical_dict(
+        component_repository.get(evaluation_reference).payload
+    )
+    assert evaluation.portfolio_status == "NO_ACTION"
+    assert evaluation.layer_diagnostics["candidate"]["observed_count"] == 0
+    assert evaluation.layer_diagnostics["signal"]["observed_count"] == 0
+    assert evaluation.layer_diagnostics["forecast"]["observed_count"] == 0
     assert panel.payload["row_count"] == len(STOCKS)
     assert panel.payload["missing_target_count"] == 1
     excluded = next(item for item in panel.payload["rows"] if item["symbol"] == STOCKS[0])
@@ -467,7 +495,7 @@ def test_existing_historical_runner_actively_materializes_and_replays(
         HistoricalEvidenceKind.ALPHA_ABLATION,
         HistoricalEvidenceKind.STRATEGY_ECONOMICS,
         HistoricalEvidenceKind.PORTFOLIO_PERFORMANCE,
-        HistoricalEvidenceKind.EXPLORATORY_MODEL,
+        HistoricalEvidenceKind.METHODOLOGY_ASSESSMENT,
     }
     ablation = next(item for item in produced.evidence if item.evidence_kind is HistoricalEvidenceKind.ALPHA_ABLATION)
     assert ablation.classification is ResearchFinding.INCONCLUSIVE
@@ -481,9 +509,26 @@ def test_existing_historical_runner_actively_materializes_and_replays(
         "SIGNAL_STATE",
         "TARGET_STATUS",
     }
-    model = next(item for item in produced.evidence if item.evidence_kind is HistoricalEvidenceKind.EXPLORATORY_MODEL)
-    assert model.classification is ResearchFinding.NOT_ESTIMABLE
-    assert model.payload["owner_resolved_training_matrix"] is True
+    methodology = next(
+        item
+        for item in produced.evidence
+        if item.evidence_kind is HistoricalEvidenceKind.METHODOLOGY_ASSESSMENT
+    )
+    assert methodology.payload["status"] == "METHODOLOGY_INVALIDATED"
+    assert [
+        item["defect"] for item in methodology.payload["invalidated_methodologies"]
+    ] == [
+        "TIE_SPLIT_BY_OBSERVATION_ID_V1",
+        "FINITE_DECIMAL_INTERMEDIATE_TIE_DRIFT_V2",
+    ]
+    assert methodology.payload["prior_evidence_mutated"] is False
+    strategy_economics = next(
+        item
+        for item in produced.evidence
+        if item.evidence_kind is HistoricalEvidenceKind.STRATEGY_ECONOMICS
+    )
+    assert strategy_economics.classification is ResearchFinding.NOT_ESTIMABLE
+    assert strategy_economics.payload["canonical_cycle_portfolio_outcome_bound"] is True
     repeated = HistoricalEvidenceProducer(
         journal=journal,
         corpus_repository=corpus,

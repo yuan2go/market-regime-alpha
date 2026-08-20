@@ -17,6 +17,7 @@ from market_regime_alpha.candidates.dataset import CandidateResearchDataset, Tar
 from market_regime_alpha.candidates.panel import CandidateResearchPanel
 from market_regime_alpha.core.identity import DatasetId, ExperimentId, ModelId, TargetId, UniverseId
 from market_regime_alpha.core.time import DecisionTime
+from market_regime_alpha.research.cross_sectional_ranking import rank_percentiles
 
 
 class CandidateRankingLike(Protocol):
@@ -231,8 +232,16 @@ def _spearman(pairs: list[tuple[float, float]]) -> float | None:
         return None
     x_values = [pair[0] for pair in pairs]
     y_values = [pair[1] for pair in pairs]
-    x_ranks = _average_ranks(x_values)
-    y_ranks = _average_ranks(y_values)
+    x_rank_result = rank_percentiles(
+        dict(enumerate(x_values)),
+        higher_is_better=True,
+    )
+    y_rank_result = rank_percentiles(
+        dict(enumerate(y_values)),
+        higher_is_better=True,
+    )
+    x_ranks = [float(x_rank_result.percentiles[index]) for index in range(len(x_values))]
+    y_ranks = [float(y_rank_result.percentiles[index]) for index in range(len(y_values))]
     x_mean = mean(x_ranks)
     y_mean = mean(y_ranks)
     numerator = sum((x - x_mean) * (y - y_mean) for x, y in zip(x_ranks, y_ranks, strict=True))
@@ -242,19 +251,3 @@ def _spearman(pairs: list[tuple[float, float]]) -> float | None:
     if denominator == 0.0:
         return None
     return numerator / denominator
-
-
-def _average_ranks(values: list[float]) -> list[float]:
-    indexed = sorted(enumerate(values), key=lambda item: item[1])
-    ranks = [0.0] * len(values)
-    position = 0
-    while position < len(indexed):
-        end = position + 1
-        while end < len(indexed) and indexed[end][1] == indexed[position][1]:
-            end += 1
-        average_rank = (position + 1 + end) / 2.0
-        for index in range(position, end):
-            original_index = indexed[index][0]
-            ranks[original_index] = average_rank
-        position = end
-    return ranks

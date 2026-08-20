@@ -128,15 +128,101 @@ FREE_RUNTIME_MIGRATIONS = (
     (86, "stateful_strategy_lifecycle"),
     (87, "strategy_execution_integrity"),
     (88, "portfolio_execution_authority"),
+    (89, "golden_loop_v2_evidence"),
+    (90, "tie_aware_pool_ranks"),
 )
 
 
 def test_packaged_migrations_are_contiguous_and_checksummed() -> None:
     migrations = load_packaged_migrations()
 
-    assert tuple(item.version for item in migrations) == tuple(range(1, 89))
-    assert len({item.name for item in migrations}) == 88
+    assert tuple(item.version for item in migrations) == tuple(range(1, 91))
+    assert len({item.name for item in migrations}) == 90
     assert all(item.checksum == sha256(item.sql.encode("utf-8")).hexdigest() for item in migrations)
+
+
+def test_migration_089_admits_v2_evidence_without_mutating_v1_rows(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    migrations = load_packaged_migrations()
+    PostgresMigrator(migrations=migrations[:88]).apply_all(postgres_factory)
+    with postgres_factory.connection(read_only=True) as connection:
+        before = connection.execute(
+            "SELECT count(*) FROM historical_research_evidence"
+        ).fetchone()
+
+    applied = PostgresMigrator(migrations=migrations[:89]).apply_all(
+        postgres_factory
+    )
+
+    with postgres_factory.connection(read_only=True) as connection:
+        after = connection.execute(
+            "SELECT count(*) FROM historical_research_evidence"
+        ).fetchone()
+        constraints = " ".join(
+            str(row[0])
+            for row in connection.execute(
+                """
+                SELECT pg_get_constraintdef(oid)
+                FROM pg_constraint
+                WHERE conname IN (
+                    'historical_corpus_session_component_component_kind_check',
+                    'historical_research_evidence_evidence_kind_check'
+                )
+                ORDER BY conname
+                """
+            ).fetchall()
+        )
+    assert tuple((item.version, item.name) for item in applied) == (
+        (89, "golden_loop_v2_evidence"),
+    )
+    assert after == before
+    assert "RESEARCH_EVALUATION" in constraints
+    assert "METHODOLOGY_ASSESSMENT" in constraints
+
+
+def test_migration_090_removes_rank_as_dynamic_pool_member_identity(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    migrations = load_packaged_migrations()
+    PostgresMigrator(migrations=migrations[:89]).apply_all(postgres_factory)
+
+    with postgres_factory.connection(read_only=True) as connection:
+        before = connection.execute(
+            """
+            SELECT count(*)
+            FROM pg_constraint
+            WHERE conrelid = 'dynamic_stock_pool_member'::regclass
+              AND conname = 'dynamic_stock_pool_member_pool_id_rank_key'
+            """
+        ).fetchone()
+
+    applied = PostgresMigrator().apply_all(postgres_factory)
+
+    with postgres_factory.connection(read_only=True) as connection:
+        after = connection.execute(
+            """
+            SELECT count(*)
+            FROM pg_constraint
+            WHERE conrelid = 'dynamic_stock_pool_member'::regclass
+              AND conname = 'dynamic_stock_pool_member_pool_id_rank_key'
+            """
+        ).fetchone()
+        primary_key = connection.execute(
+            """
+            SELECT pg_get_constraintdef(oid)
+            FROM pg_constraint
+            WHERE conrelid = 'dynamic_stock_pool_member'::regclass
+              AND contype = 'p'
+            """
+        ).fetchone()
+
+    assert before == (1,)
+    assert tuple((item.version, item.name) for item in applied) == (
+        (90, "tie_aware_pool_ranks"),
+    )
+    assert after == (0,)
+    assert primary_key == ("PRIMARY KEY (pool_id, symbol)",)
 
 
 def test_migration_075_enforces_exact_owner_hash_pairs(
@@ -232,11 +318,11 @@ def test_apply_all_is_idempotent(
     first = migrator.apply_all(postgres_factory)
     second = migrator.apply_all(postgres_factory)
 
-    assert tuple(item.version for item in first) == tuple(range(1, 89))
+    assert tuple(item.version for item in first) == tuple(range(1, 91))
     assert second == ()
     with postgres_factory.connection(read_only=True) as connection:
         rows = connection.execute("SELECT version, name, checksum FROM schema_migrations ORDER BY version").fetchall()
-    assert len(rows) == 88
+    assert len(rows) == 90
 
 
 def test_applied_checksum_drift_is_rejected(
@@ -440,7 +526,7 @@ def test_migration_026_preserves_prerelease_v1_decision_rows_forward_only(
         )
         + FREE_RUNTIME_MIGRATIONS
     )
-    assert applied == (88,)
+    assert applied == (90,)
     assert restored == account
 
 
@@ -925,6 +1011,8 @@ def test_migration_060_preserves_v1_protocols_and_accepts_explicit_inference(
         (86, "stateful_strategy_lifecycle"),
         (87, "strategy_execution_integrity"),
         (88, "portfolio_execution_authority"),
+        (89, "golden_loop_v2_evidence"),
+        (90, "tie_aware_pool_ranks"),
     )
     with postgres_factory.connection(read_only=True) as connection:
         stored = connection.execute(

@@ -100,24 +100,36 @@ def test_cross_strategy_portfolio_caps_symbol_and_prioritizes_reduction() -> Non
 
 def test_portfolio_gross_is_the_exact_sum_of_accepted_fractional_lines() -> None:
     registry = canonical_exploratory_strategy_registry()
-    rank_order = (
+    symbols = (
         "001872.SZ",
-        "600018.SH",
-        "600028.SH",
         "001965.SZ",
         "002714.SZ",
+        "600018.SH",
+        "600028.SH",
+        "600036.SH",
+        "600050.SH",
+        "600377.SH",
+        "600886.SH",
+        "600900.SH",
+        "600941.SH",
+        "601006.SH",
+        "601088.SH",
+        "601225.SH",
+        "601288.SH",
+        "601398.SH",
+        "601728.SH",
+        "601857.SH",
+        "601919.SH",
+        "601939.SH",
     )
-    rank_by_symbol = {
-        symbol: rank for rank, symbol in enumerate(rank_order, start=1)
-    }
     records = tuple(
         _candidate(
             symbol,
             CandidateSelectionStatus.SELECTED,
-            score=0.90 - rank_by_symbol[symbol] / 100,
-            rank=rank_by_symbol[symbol],
+            score=0.90,
+            rank=1,
         )
-        for symbol in sorted(rank_order)
+        for symbol in sorted(symbols)
     )
     payload = {
         "records": [item.to_canonical_dict() for item in records],
@@ -166,13 +178,17 @@ def test_portfolio_gross_is_the_exact_sum_of_accepted_fractional_lines() -> None
         ),
     )
 
-    assert decision.gross_accepted_weight == sum(
-        (
-            max(Decimal("0"), line.accepted_weight)
-            for line in decision.lines
-        ),
-        Decimal("0"),
-    )
+    with localcontext() as context:
+        context.prec = 64
+        accepted_sum = sum(
+            (
+                max(Decimal("0"), line.accepted_weight)
+                for line in decision.lines
+            ),
+            Decimal("0"),
+        )
+    assert decision.gross_accepted_weight == accepted_sum
+    assert decision.gross_accepted_weight == Decimal("0.50")
 
 
 def test_portfolio_identity_does_not_depend_on_process_decimal_context() -> None:

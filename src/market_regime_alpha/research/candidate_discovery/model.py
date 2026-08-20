@@ -36,6 +36,7 @@ from market_regime_alpha.research.platform_v2.inputs import (
     SymbolResearchObservation,
     ThemeMembership,
 )
+from market_regime_alpha.research.cross_sectional_ranking import competition_ranks
 from market_regime_alpha.research.theme_rotation.contracts import (
     RotationState,
     ThemeRotationItem,
@@ -87,21 +88,33 @@ def discover_candidates_v2(
         )
         for symbol in inputs.universe_snapshot.member_symbols
     )
+    viable_by_symbol = {
+        item.symbol: item
+        for item in records
+        if item.selection_status is CandidateSelectionStatus.WATCHLIST
+        and item.candidate_discovery_score is not None
+    }
+    viable_scores = {
+        symbol: item.candidate_discovery_score
+        for symbol, item in viable_by_symbol.items()
+        if item.candidate_discovery_score is not None
+    }
+    ranks = competition_ranks(viable_scores, higher_is_better=True)
     viable = sorted(
-        (
-            item
-            for item in records
-            if item.selection_status is CandidateSelectionStatus.WATCHLIST
-            and item.candidate_discovery_score is not None
-        ),
+        viable_by_symbol.values(),
         key=lambda item: (
-            -float(item.candidate_discovery_score or 0.0),
+            ranks[item.symbol],
             item.symbol,
         ),
     )
     insufficient_population = len(viable) < config.minimum_candidate_population
     ranked_by_symbol: dict[str, CandidateRecord] = {}
-    for rank, item in enumerate(viable, start=1):
+    selected_count = sum(
+        1 for item in viable if ranks[item.symbol] <= config.top_n
+    )
+    boundary_tie_expanded = selected_count > min(config.top_n, len(viable))
+    for item in viable:
+        rank = ranks[item.symbol]
         selected = (
             not insufficient_population and rank <= config.top_n
         )
@@ -144,6 +157,11 @@ def discover_candidates_v2(
                 *(
                     ("CANDIDATE_POPULATION_INSUFFICIENT",)
                     if insufficient_population
+                    else ()
+                ),
+                *(
+                    ("CANDIDATE_BOUNDARY_TIE_EXPANDED",)
+                    if boundary_tie_expanded and not insufficient_population
                     else ()
                 ),
                 "CANDIDATE_SET_IS_NOT_RECOMMENDATION",

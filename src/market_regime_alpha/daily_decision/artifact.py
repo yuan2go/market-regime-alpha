@@ -185,7 +185,7 @@ class PhaseDDailyDecisionBundle:
             item.prediction_run_id: item for item in self.prediction_runs
         }
         recommendation_ids: set[ArtifactId] = set()
-        last_order: tuple[int, int] | None = None
+        last_order: tuple[int, int, str] | None = None
         run_order = {
             item.prediction_run_id: index
             for index, item in enumerate(self.prediction_runs)
@@ -200,9 +200,11 @@ class PhaseDDailyDecisionBundle:
                 != self.decision_price_snapshot.decision_snapshot_id
             ):
                 raise ValueError("Recommendation lineage mismatch")
-            order = (run_order[item.prediction_run_id], item.rank)
+            order = (run_order[item.prediction_run_id], item.rank, item.symbol)
             if last_order is not None and order <= last_order:
-                raise ValueError("Recommendations are not in canonical model/rank order")
+                raise ValueError(
+                    "Recommendations are not in canonical model/rank/symbol order"
+                )
             last_order = order
             recommendation_ids.add(item.recommendation_id)
         if len(recommendation_ids) != len(self.recommendations):

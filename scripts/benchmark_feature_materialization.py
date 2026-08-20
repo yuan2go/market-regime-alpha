@@ -64,6 +64,7 @@ from market_regime_alpha.research.capital_evolution.contracts import (
     CapitalEvolutionState,
 )
 from market_regime_alpha.research.market_regime.contracts import MarketState
+from market_regime_alpha.research.cross_sectional_ranking import competition_ranks
 from market_regime_alpha.research.theme_rotation.contracts import RotationState
 from market_regime_alpha.signals import (
     CandidateFeatureView,
@@ -597,6 +598,10 @@ def _signal_hash(
     symbols: tuple[str, ...],
 ) -> str:
     selected_symbols = symbols[: min(5, len(symbols))]
+    ranks = competition_ranks(
+        {symbol: 0.5 for symbol in selected_symbols},
+        higher_is_better=True,
+    )
     records = tuple(
         CandidateRecord(
             symbol=symbol,
@@ -609,13 +614,13 @@ def _signal_hash(
             theme_score=None,
             capital_evolution_score=None,
             candidate_discovery_score=0.5,
-            rank=index,
+            rank=ranks[symbol],
             selection_status=CandidateSelectionStatus.SELECTED,
             reason_codes=("BENCHMARK_CONTROLLED_SUBSET",),
             source_feature_ids=(),
             input_artifact_ids=(),
         )
-        for index, symbol in enumerate(selected_symbols, start=1)
+        for symbol in selected_symbols
     )
     candidate_payload = {
         "records": [item.to_canonical_dict() for item in records],

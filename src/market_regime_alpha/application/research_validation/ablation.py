@@ -7,7 +7,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
 from math import sqrt
-from statistics import fmean, pstdev
+from statistics import fmean
 from typing import Any, Callable, Iterable, Mapping
 
 from market_regime_alpha.application.research_validation.common import (
@@ -21,6 +21,13 @@ from market_regime_alpha.application.research_validation.common import (
 from market_regime_alpha.application.research_validation.factor_extraction import FactorFamily
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.evidence.canonical import canonical_hash, require_sha256, require_text
+from market_regime_alpha.research.cross_sectional_ranking import (
+    FactorCrossSection,
+    composite_percentile_scores,
+    fractional_boundary_weights,
+    fractional_slot_weight_total,
+    rank_percentiles,
+)
 
 
 class AblationVariantKind(str, Enum):
@@ -280,6 +287,31 @@ class AblationObservation:
             ("THEME", self.theme),
             ("VOLATILITY", self.volatility_bucket),
         )
+
+
+@dataclass(frozen=True, slots=True)
+class PrecomputedAblationObservation:
+    """One score and selection projection frozen by a canonical evaluator."""
+
+    observation: AblationObservation
+    score: Decimal
+    top_weight: Decimal
+    bottom_weight: Decimal
+
+    def __post_init__(self) -> None:
+        for label, value in (
+            ("score", self.score),
+            ("top_weight", self.top_weight),
+            ("bottom_weight", self.bottom_weight),
+        ):
+            if not value.is_finite():
+                raise ValueError(f"precomputed Ablation {label} must be finite")
+        if not Decimal("0") <= self.top_weight <= Decimal("1"):
+            raise ValueError("precomputed Ablation top weight must be within [0, 1]")
+        if not Decimal("0") <= self.bottom_weight <= Decimal("1"):
+            raise ValueError("precomputed Ablation bottom weight must be within [0, 1]")
+        if self.top_weight > 0 and self.bottom_weight > 0:
+            raise ValueError("precomputed Ablation top/bottom selections must be disjoint")
 
 
 @dataclass(frozen=True, slots=True)
@@ -552,8 +584,11 @@ def run_incremental_alpha_ablation_suite(
 ) -> AlphaAblationSuite:
     """Stream one cross-section at a time under the frozen percentile scorer."""
 
-    if protocol.scoring_contract != "WITHIN_SESSION_FACTOR_PERCENTILE_MEAN_V1":
-        raise ValueError("Incremental Ablation requires the frozen percentile scorer")
+    if (
+        protocol.scoring_contract
+        != "WITHIN_SESSION_TIE_AWARE_EXACT_RATIONAL_FACTOR_PERCENTILE_MEAN_V2"
+    ):
+        raise ValueError("Incremental Ablation requires the frozen V2 percentile scorer")
     if maximum_slice_cells <= 0:
         raise ValueError("Incremental Ablation slice ceiling must be positive")
     variant_by_id = {item.variant_id: item for item in protocol.variants}
@@ -576,7 +611,7 @@ def run_incremental_alpha_ablation_suite(
         if last_order is not None and order <= last_order:
             raise ValueError("Incremental Ablation sessions must be strictly ordered")
         last_order = order
-        scores = _within_session_percentile_scores(
+        scores = _v2_within_session_scores(
             session,
             tuple(variant_by_id[item] for item in protocol.comparison_sequence),
         )
@@ -629,6 +664,81 @@ def run_incremental_alpha_ablation_suite(
         panel_reference=panel_reference,
         results=tuple(results),
         slices=tuple(slices),
+        created_at=created_at,
+    )
+
+
+def run_precomputed_alpha_ablation_suite(
+    *,
+    protocol: AblationProtocol,
+    panel_reference: ValidationArtifactReference,
+    evaluation_sessions: Iterable[
+        Mapping[str, tuple[PrecomputedAblationObservation, ...]]
+    ],
+    created_at: datetime,
+) -> AlphaAblationSuite:
+    """Aggregate canonical session scores/weights without ranking or selection."""
+
+    if (
+        protocol.scoring_contract
+        != "WITHIN_SESSION_TIE_AWARE_EXACT_RATIONAL_FACTOR_PERCENTILE_MEAN_V2"
+    ):
+        raise ValueError("Precomputed Ablation requires the frozen V2 scorer")
+    accumulators = {
+        variant_id: _MetricAccumulator(protocol.top_k)
+        for variant_id in protocol.comparison_sequence
+    }
+    observed = False
+    for session in evaluation_sessions:
+        if set(session) != set(protocol.comparison_sequence):
+            raise ValueError(
+                "Precomputed Ablation session must cover the frozen sequence"
+            )
+        observed = True
+        for variant_id in protocol.comparison_sequence:
+            rows = session[variant_id]
+            accumulators[variant_id].add_precomputed_session(
+                tuple((item.observation, item.score) for item in rows),
+                top_weights={
+                    item.observation.symbol: item.top_weight for item in rows
+                },
+                bottom_weights={
+                    item.observation.symbol: item.bottom_weight for item in rows
+                },
+            )
+    if not observed:
+        raise ValueError("Precomputed Ablation requires evaluation sessions")
+    variant_by_id = {item.variant_id: item for item in protocol.variants}
+    results: list[FactorAblationResult] = []
+    baseline_metrics: AblationMetrics | None = None
+    baseline_reference: ValidationArtifactReference | None = None
+    protocol_reference = ValidationArtifactReference(
+        "ABLATION_PROTOCOL",
+        protocol.protocol_id,
+        protocol.protocol_hash,
+    )
+    for variant_id in protocol.comparison_sequence:
+        metrics = accumulators[variant_id].metrics(baseline_metrics)
+        result = FactorAblationResult.create(
+            protocol_reference=protocol_reference,
+            panel_reference=panel_reference,
+            variant=variant_by_id[variant_id],
+            metrics=metrics,
+            baseline_result=baseline_reference,
+            created_at=created_at,
+        )
+        results.append(result)
+        baseline_metrics = metrics
+        baseline_reference = ValidationArtifactReference(
+            "FACTOR_ABLATION_RESULT",
+            result.result_id,
+            result.result_hash,
+        )
+    return _build_alpha_suite(
+        protocol=protocol,
+        panel_reference=panel_reference,
+        results=tuple(results),
+        slices=(),
         created_at=created_at,
     )
 
@@ -727,11 +837,11 @@ class _MetricAccumulator:
         self._session_count = 0
         self._last_order: tuple[date, str] | None = None
         self._all_return_sum = 0.0
-        self._top_return_sum = 0.0
-        self._top_return_count = 0
-        self._top_hit_count = 0
-        self._bottom_return_sum = 0.0
-        self._bottom_return_count = 0
+        self._top_return_sum = Decimal("0")
+        self._top_return_weight = Decimal("0")
+        self._top_hit_weight = Decimal("0")
+        self._bottom_return_sum = Decimal("0")
+        self._bottom_return_weight = Decimal("0")
         self._mfe_sum = 0.0
         self._mfe_count = 0
         self._mae_sum = 0.0
@@ -755,6 +865,43 @@ class _MetricAccumulator:
     ) -> None:
         if not scored:
             raise ValueError("Ablation session batch cannot be empty")
+        symbols = [item.symbol for item, _score in scored]
+        if len(symbols) != len(set(symbols)):
+            raise ValueError("Ablation session/symbol observations must be unique")
+        score_by_symbol = {item.symbol: score for item, score in scored}
+        top_selection = fractional_boundary_weights(
+            score_by_symbol,
+            slots=self._top_k,
+            higher_is_better=True,
+        )
+        bottom_candidates = {
+            symbol: score
+            for symbol, score in score_by_symbol.items()
+            if top_selection.weights[symbol] == 0
+        }
+        bottom_selection = fractional_boundary_weights(
+            bottom_candidates,
+            slots=self._top_k,
+            higher_is_better=False,
+        )
+        self.add_precomputed_session(
+            scored,
+            top_weights=top_selection.weights,
+            bottom_weights={
+                symbol: bottom_selection.weights.get(symbol, Decimal("0"))
+                for symbol in symbols
+            },
+        )
+
+    def add_precomputed_session(
+        self,
+        scored: tuple[tuple[AblationObservation, Decimal], ...],
+        *,
+        top_weights: Mapping[str, Decimal],
+        bottom_weights: Mapping[str, Decimal],
+    ) -> None:
+        if not scored:
+            raise ValueError("Ablation session batch cannot be empty")
         session_keys = {item.session_key for item, _score in scored}
         trading_dates = {item.trading_date for item, _score in scored}
         symbols = [item.symbol for item, _score in scored]
@@ -762,6 +909,24 @@ class _MetricAccumulator:
             raise ValueError("Ablation batch must contain one session")
         if len(symbols) != len(set(symbols)):
             raise ValueError("Ablation session/symbol observations must be unique")
+        symbol_set = set(symbols)
+        if set(top_weights) != symbol_set or set(bottom_weights) != symbol_set:
+            raise ValueError("precomputed Ablation weights must cover the session")
+        if any(
+            not weight.is_finite() or not Decimal("0") <= weight <= Decimal("1")
+            for weight in (*top_weights.values(), *bottom_weights.values())
+        ):
+            raise ValueError("precomputed Ablation weights must be finite within [0, 1]")
+        if any(
+            top_weights[symbol] > 0 and bottom_weights[symbol] > 0
+            for symbol in symbol_set
+        ):
+            raise ValueError("precomputed Ablation top/bottom weights must be disjoint")
+        expected_top_slots = min(self._top_k, len(scored))
+        session_top_weight = fractional_slot_weight_total(
+            top_weights,
+            slots=expected_top_slots,
+        )
         trading_date = next(iter(trading_dates))
         if trading_date is None:
             raise ValueError("Ablation path metrics require a canonical trading date for every session")
@@ -774,10 +939,7 @@ class _MetricAccumulator:
         self._last_order = order
         self._session_count += 1
         self._sample_count += len(scored)
-        ordered = sorted(scored, key=lambda pair: (-pair[1], pair[0].symbol))
-        top = ordered[: min(self._top_k, len(ordered))]
-        remaining = ordered[len(top) :]
-        bottom = remaining[-min(self._top_k, len(remaining)) :]
+        item_by_symbol = {item.symbol: item for item, _score in scored}
         for item, _score in scored:
             self._all_return_sum += float(item.realized_return)
             if item.mfe is not None:
@@ -786,22 +948,32 @@ class _MetricAccumulator:
             if item.mae is not None:
                 self._mae_sum += float(item.mae)
                 self._mae_count += 1
-        for item, _score in top:
-            value = float(item.realized_return)
-            self._top_return_sum += value
-            self._top_return_count += 1
-            self._top_hit_count += value > 0
-            self._gross_sum += item.realized_return
-            self._cost_sum += item.cost_return
-        for item, _score in bottom:
-            self._bottom_return_sum += float(item.realized_return)
-            self._bottom_return_count += 1
-        selected = {item.symbol for item, _score in top}
+        for symbol, weight in top_weights.items():
+            if weight == 0:
+                continue
+            item = item_by_symbol[symbol]
+            self._top_return_sum += item.realized_return * weight
+            self._top_return_weight += weight
+            if item.realized_return > 0:
+                self._top_hit_weight += weight
+            self._gross_sum += item.realized_return * weight
+            self._cost_sum += item.cost_return * weight
+        for symbol, weight in bottom_weights.items():
+            if weight == 0:
+                continue
+            self._bottom_return_sum += item_by_symbol[symbol].realized_return * weight
+            self._bottom_return_weight += weight
+        selected = {
+            symbol for symbol, weight in top_weights.items() if weight > 0
+        }
         full_selected = {item.symbol for item, _score in scored if item.selected}
         self._overlap_sum += len(selected & full_selected) / max(1, len(selected | full_selected))
         self._overlap_count += 1
-        current_weight = Decimal("1") / Decimal(len(top))
-        current_weights = {item.symbol: current_weight for item, _score in top}
+        current_weights = {
+            symbol: weight / session_top_weight
+            for symbol, weight in top_weights.items()
+            if weight > 0
+        }
         if self._previous_weights is not None:
             weight_symbols = set(self._previous_weights) | set(current_weights)
             self._turnover_sum += float(
@@ -813,7 +985,17 @@ class _MetricAccumulator:
             )
             self._turnover_count += 1
         self._previous_weights = current_weights
-        session_net_return = fmean(float(item.realized_return - item.cost_return) for item, _score in top)
+        session_net_return = float(
+            sum(
+                (
+                    (item_by_symbol[symbol].realized_return - item_by_symbol[symbol].cost_return)
+                    * weight
+                    for symbol, weight in top_weights.items()
+                ),
+                Decimal("0"),
+            )
+            / session_top_weight
+        )
         self._wealth *= 1.0 + session_net_return
         self._peak_wealth = max(self._peak_wealth, self._wealth)
         self._maximum_drawdown = min(
@@ -823,7 +1005,18 @@ class _MetricAccumulator:
         session_scores = [float(score) for _item, score in scored]
         session_returns = [float(item.realized_return) for item, _score in scored]
         session_ic = _correlation(session_scores, session_returns)
-        session_rank_ic = _correlation(_ranks(session_scores), _ranks(session_returns))
+        score_ranks = rank_percentiles(
+            dict(enumerate(session_scores)),
+            higher_is_better=True,
+        )
+        return_ranks = rank_percentiles(
+            dict(enumerate(session_returns)),
+            higher_is_better=True,
+        )
+        session_rank_ic = _correlation(
+            [float(score_ranks.percentiles[index]) for index in range(len(session_scores))],
+            [float(return_ranks.percentiles[index]) for index in range(len(session_returns))],
+        )
         if session_ic is not None:
             self._session_ics.add(session_ic)
         if session_rank_ic is not None:
@@ -832,26 +1025,26 @@ class _MetricAccumulator:
     def metrics(self, baseline: AblationMetrics | None) -> AblationMetrics:
         if self._sample_count == 0:
             return _empty_metrics()
-        top_mean = self._top_return_sum / self._top_return_count
-        gross = self._gross_sum / Decimal(self._top_return_count)
-        cost = self._cost_sum / Decimal(self._top_return_count)
-        baseline_return = None if baseline is None or baseline.top_k_return is None else float(baseline.top_k_return)
+        top_mean = self._top_return_sum / self._top_return_weight
+        gross = self._gross_sum / self._top_return_weight
+        cost = self._cost_sum / self._top_return_weight
+        baseline_return = None if baseline is None else baseline.top_k_return
         return AblationMetrics(
             sample_count=self._sample_count,
             session_count=self._session_count,
             ic=self._session_ics.mean_decimal(),
             rank_ic=self._session_rank_ics.mean_decimal(),
             icir=self._session_ics.information_ratio(),
-            top_k_return=_decimal(top_mean),
-            spread=(None if not self._bottom_return_count else _decimal(top_mean - self._bottom_return_sum / self._bottom_return_count)),
-            hit_rate=_decimal(self._top_hit_count / self._top_return_count),
+            top_k_return=top_mean,
+            spread=(None if not self._bottom_return_weight else top_mean - self._bottom_return_sum / self._bottom_return_weight),
+            hit_rate=self._top_hit_weight / self._top_return_weight,
             mean_return=_decimal(self._all_return_sum / self._sample_count),
             mean_mfe=(None if not self._mfe_count else _decimal(self._mfe_sum / self._mfe_count)),
             mean_mae=(None if not self._mae_count else _decimal(self._mae_sum / self._mae_count)),
             turnover=(None if not self._turnover_count else _decimal(self._turnover_sum / self._turnover_count)),
             max_drawdown=_decimal(self._maximum_drawdown),
             overlap=_decimal(self._overlap_sum / self._overlap_count),
-            incremental_lift=(None if baseline_return is None else _decimal(top_mean - baseline_return)),
+            incremental_lift=(None if baseline_return is None else top_mean - baseline_return),
             gross_return=gross,
             cost_return=cost,
             net_return=gross - cost,
@@ -882,33 +1075,42 @@ class _RunningMoments:
         return None if dispersion == 0 else _decimal(self._mean / dispersion)
 
 
-def _within_session_percentile_scores(
+def _v2_within_session_scores(
     observations: tuple[AblationObservation, ...],
     variants: tuple[AblationVariant, ...],
 ) -> Mapping[tuple[str, str], Decimal]:
     if len({item.observation_id for item in observations}) != len(observations):
         raise ValueError("Ablation observation identities must be unique")
-    rank_values: dict[tuple[str, FactorFamily, str], Decimal] = {}
-    grouped: dict[tuple[FactorFamily, str], list[tuple[str, Decimal]]] = {}
+    grouped: dict[tuple[FactorFamily, str], dict[str, Decimal]] = {}
     for item in observations:
         for family, factor_id, value in item.factor_values:
-            grouped.setdefault((family, factor_id), []).append((item.observation_id, value))
-    for (family, factor_id), values in grouped.items():
-        ordered = sorted(values, key=lambda item: (item[1], item[0]))
-        denominator = Decimal(max(1, len(ordered) - 1))
-        for index, (observation_id, _value) in enumerate(ordered):
-            rank_values[(observation_id, family, factor_id)] = Decimal(index) / denominator
+            values = grouped.setdefault((family, factor_id), {})
+            if item.observation_id in values:
+                raise ValueError("Ablation observation repeats one Factor identity")
+            values[item.observation_id] = value
+    entities = tuple(item.observation_id for item in observations)
     result: dict[tuple[str, str], Decimal] = {}
     for variant in variants:
-        for item in observations:
-            percentile_values = tuple(
-                rank_values[(item.observation_id, family, factor_id)]
-                for family, factor_id, _raw in item.factor_values
-                if variant.includes(family, factor_id)
+        factors = tuple(
+            FactorCrossSection(
+                factor_id=f"{family.value}:{factor_id}",
+                values=values,
+                higher_is_better=True,
+                weight=Decimal("1"),
             )
-            result[(variant.variant_id, item.observation_id)] = (
-                Decimal("0") if not percentile_values else sum(percentile_values, Decimal("0")) / Decimal(len(percentile_values))
+            for (family, factor_id), values in sorted(
+                grouped.items(),
+                key=lambda item: (item[0][0].value, item[0][1]),
             )
+            if variant.includes(family, factor_id)
+        )
+        scores = (
+            {entity: Decimal("0.5") for entity in entities}
+            if not factors
+            else composite_percentile_scores(factors, entities=entities).scores
+        )
+        for observation_id, score in scores.items():
+            result[(variant.variant_id, observation_id)] = score
     return result
 
 
@@ -935,13 +1137,6 @@ def _empty_metrics() -> AblationMetrics:
     )
 
 
-def _information_ratio(values: list[float]) -> Decimal | None:
-    if len(values) < 2:
-        return None
-    dispersion = pstdev(values)
-    return None if dispersion == 0 else _decimal(fmean(values) / dispersion)
-
-
 def _correlation(left: list[float], right: list[float]) -> float | None:
     if len(left) < 2 or len(left) != len(right):
         return None
@@ -951,37 +1146,8 @@ def _correlation(left: list[float], right: list[float]) -> float | None:
     return None if denominator == 0 else numerator / denominator
 
 
-def _ranks(values: list[float]) -> list[float]:
-    ordered = sorted(enumerate(values), key=lambda item: (item[1], item[0]))
-    result = [0.0] * len(values)
-    index = 0
-    while index < len(ordered):
-        end = index + 1
-        while end < len(ordered) and ordered[end][1] == ordered[index][1]:
-            end += 1
-        rank = (index + 1 + end) / 2
-        for original, _value in ordered[index:end]:
-            result[original] = rank
-        index = end
-    return result
-
-
-def _max_drawdown(returns: Iterable[float]) -> float:
-    wealth = peak = 1.0
-    worst = 0.0
-    for value in returns:
-        wealth *= 1.0 + value
-        peak = max(peak, wealth)
-        worst = min(worst, wealth / peak - 1.0)
-    return worst
-
-
 def _decimal(value: float | None) -> Decimal | None:
     return None if value is None else Decimal(str(value))
-
-
-def _mean_decimal(values: list[float]) -> Decimal | None:
-    return None if not values else _decimal(fmean(values))
 
 
 def _result_payload(

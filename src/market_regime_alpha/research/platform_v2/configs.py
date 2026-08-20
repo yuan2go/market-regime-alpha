@@ -299,11 +299,11 @@ class CapitalEvolutionModelConfig(_IdentifiedConfig):
 
 @dataclass(frozen=True, slots=True)
 class CandidateDiscoveryModelConfig(_IdentifiedConfig):
-    SCHEMA_VERSION: ClassVar[str] = "candidate-discovery-model-config-v2"
+    SCHEMA_VERSION: ClassVar[str] = "candidate-discovery-model-config-v3"
     ID_PREFIX: ClassVar[str] = "candidate-discovery-config"
 
     model_id: ModelId = ModelId("candidate-discovery-v2")
-    model_version: str = "2.0.0"
+    model_version: str = "2.1.0"
     market_regime_weight: float = 0.10
     theme_rotation_weight: float = 0.25
     capital_evolution_weight: float = 0.35
@@ -311,6 +311,7 @@ class CandidateDiscoveryModelConfig(_IdentifiedConfig):
     b1_balanced_weight: float = 0.15
     top_n: int = 5
     minimum_candidate_population: int = 5
+    boundary_selection_policy: str = "INCLUDE_ALL_BOUNDARY_TIES_V1"
     assumptions: tuple[str, ...] = ASSUMPTIONS
     configuration_hash: str = field(init=False)
     configuration_id: ArtifactId = field(init=False)
@@ -328,6 +329,8 @@ class CandidateDiscoveryModelConfig(_IdentifiedConfig):
         )
         if self.top_n <= 0 or self.minimum_candidate_population <= 0:
             raise ValueError("Candidate Discovery population bounds must be positive")
+        if self.boundary_selection_policy != "INCLUDE_ALL_BOUNDARY_TIES_V1":
+            raise ValueError("Candidate Discovery requires the frozen boundary policy")
         self._bind_identity()
 
     def semantic_payload(self) -> dict[str, Any]:

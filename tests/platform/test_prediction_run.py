@@ -259,17 +259,28 @@ def test_b0_b1_adapter_preserves_complete_legacy_ranking_semantics() -> None:
         )
         assert projected.data_eligibility is DataEligibility.EXPLORATORY
         assert projected.evidence_level is EvidenceLevel.EXPLORATORY
+        assert projected.ranking_contract == "TIE_AWARE_COMPETITION_RANK_V2"
+        assert projected.SCHEMA_VERSION == "candidate-prediction-run/v2"
+
+        rank_by_score: dict[float | None, set[int | None]] = {}
+        for prediction in projected.predictions:
+            rank_by_score.setdefault(prediction.model_score, set()).add(
+                prediction.rank
+            )
+        assert all(len(ranks) == 1 for ranks in rank_by_score.values())
 
     assert tuple(item.symbol for item in direct_b0.predictions[:2]) == (
         "000001.SZ",
         "000002.SZ",
     )
     assert direct_b0.predictions[0].model_score == direct_b0.predictions[1].model_score
+    assert direct_b0.predictions[0].rank == direct_b0.predictions[1].rank
     assert tuple(item.symbol for item in direct_b1.predictions[:2]) == (
         "000001.SZ",
         "000002.SZ",
     )
     assert direct_b1.predictions[0].model_score == direct_b1.predictions[1].model_score
+    assert direct_b1.predictions[0].rank == direct_b1.predictions[1].rank
 
 
 def test_b0_b1_adapter_rejects_authority_inflation() -> None:
@@ -374,7 +385,7 @@ def test_prediction_reader_rejects_semantic_tamper_after_checksum_rewrite(
         encoding="utf-8",
     )
 
-    with pytest.raises(ValueError, match="content hash"):
+    with pytest.raises(ValueError, match="content hash|equal-score ties"):
         load_verified_prediction_run_artifact(output)
 
 

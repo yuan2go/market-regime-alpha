@@ -10,6 +10,7 @@ from typing import Any, Mapping
 
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.evidence.canonical import canonical_datetime, canonical_hash, require_text
+from market_regime_alpha.research.cross_sectional_ranking import competition_ranks
 from market_regime_alpha.research.state_system.common import (
     StateLineage,
     parse_canonical_datetime,
@@ -409,11 +410,10 @@ def _members(
             exclusions.add("ELIGIBILITY_COVERAGE_INSUFFICIENT")
         score = (value.liquidity + value.data_coverage) / Decimal("2")
         prepared.append((value, not exclusions, tuple(sorted(exclusions)), score))
-    ranked = sorted(
-        (item for item in prepared if item[1]),
-        key=lambda item: (-item[3], item[0].symbol),
+    ranks = competition_ranks(
+        {item[0].symbol: item[3] for item in prepared if item[1]},
+        higher_is_better=True,
     )
-    ranks = {item[0].symbol: index for index, item in enumerate(ranked, start=1)}
     return tuple(
         DynamicPoolMember(
             symbol=value.symbol,

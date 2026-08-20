@@ -3,7 +3,7 @@
 > **Status:** CURRENT_STATUS  
 > **Authority:** Documentation navigation and precedence only  
 > **Owner:** Market Regime Alpha maintainers  
-> **Last Updated:** 2026-08-19  
+> **Last Updated:** 2026-08-20
 > **Code Evidence:** `src/market_regime_alpha`, `src/market_regime_alpha/persistence/postgres/migrations/*.sql`, `tests`
 
 Documentation never creates implementation truth, research evidence, qualification, or trading authority.
@@ -48,6 +48,8 @@ Target design does not turn an unimplemented or unproven capability into a curre
 
 ## Research claims
 
+- [Golden Loop V2 Scoring and Research Correctness Contract](research/protocols/Golden-Loop-V2-Scoring-Contract.md) freezes the tie-aware scoring, missingness, boundary-selection, immutable-lineage and canonical-Evidence rules for the first V2 campaign.
+- [Golden Loop V2 Research Correctness Report](references/Golden-Loop-V2-Research-Correctness-Report.md) records the exact campaign, owner lineage, negative results, replay and evidence ceiling.
 - [Negative and Inconclusive Results](research/Negative-and-Inconclusive-Results.md) is the current durable research-claim registry for negative, inconclusive and not-estimable findings.
 - Reports under `docs/references/` are evidence/reference material. They are not normative architecture.
 

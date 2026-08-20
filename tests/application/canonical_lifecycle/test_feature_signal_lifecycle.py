@@ -181,7 +181,10 @@ def test_verified_feature_bundle_drives_signal_forecast_and_blocked_entry(
     )
     research = load_verified_research_artifact(Path(research_reference.locator or ""))
     symbols = tuple(sorted(item.symbol for item in research.artifact.candidate_set.selected))
-    assert len(symbols) == 5
+    assert len(symbols) >= 5
+    assert "CANDIDATE_BOUNDARY_TIE_EXPANDED" in (
+        research.artifact.candidate_set.reason_codes
+    )
     assert set(symbols).issubset(universe_symbols)
     mapping = canonical_signal_input_mapping_v2(effective_from=fixture.as_of_time - timedelta(days=30))
     requirement_policy = canonical_all_factors_required_policy()

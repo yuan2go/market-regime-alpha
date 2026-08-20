@@ -8,8 +8,10 @@ from market_regime_alpha.application.research_validation.ablation import (
     AblationProtocol,
     AblationVariant,
     AblationVariantKind,
+    PrecomputedAblationObservation,
     run_alpha_ablation_suite,
     run_incremental_alpha_ablation_suite,
+    run_precomputed_alpha_ablation_suite,
 )
 from market_regime_alpha.application.research_validation.common import (
     ResearchEvidenceAuthority,
@@ -138,7 +140,7 @@ def test_incremental_ablation_consumes_ordered_session_batches() -> None:
         variants=(price, regime),
         comparison_sequence=(price.variant_id, regime.variant_id),
         top_k=2,
-        scoring_contract="WITHIN_SESSION_FACTOR_PERCENTILE_MEAN_V1",
+        scoring_contract="WITHIN_SESSION_TIE_AWARE_EXACT_RATIONAL_FACTOR_PERCENTILE_MEAN_V2",
         created_at=NOW,
     )
     observations = _observations()
@@ -165,6 +167,97 @@ def test_incremental_ablation_consumes_ordered_session_batches() -> None:
     assert first.results[-1].metrics.session_count == len(sessions)
     assert first.results[-1].metrics.incremental_lift is not None
     assert len(first.slice_evaluations) > 0
+
+
+def test_v2_shared_constant_factor_is_neutral() -> None:
+    price = AblationVariant.standard(AblationVariantKind.PRICE_ONLY)
+    through_theme = AblationVariant.standard(
+        AblationVariantKind.PRICE_VOLUME_MARKET_REGIME_ETF_THEME
+    )
+    protocol = AblationProtocol.create(
+        protocol_version="tie-aware-alpha-proof-v2",
+        variants=(price, through_theme),
+        comparison_sequence=(price.variant_id, through_theme.variant_id),
+        top_k=1,
+        scoring_contract="WITHIN_SESSION_TIE_AWARE_EXACT_RATIONAL_FACTOR_PERCENTILE_MEAN_V2",
+        created_at=NOW,
+    )
+    observations = tuple(
+        AblationObservation(
+            observation_id=observation_id,
+            session_key="constant-factor-session",
+            symbol=symbol,
+            score=raw_price,
+            realized_return=realized,
+            mfe=max(realized, Decimal("0")),
+            mae=min(realized, Decimal("0")),
+            selected=False,
+            previous_selected=False,
+            factor_values=(
+                (FactorFamily.PRICE, "price", raw_price),
+                (FactorFamily.THEME, "theme", Decimal("7")),
+            ),
+            cost_return=Decimal("0.001"),
+            trading_date=date(2026, 8, 12),
+        )
+        for symbol, observation_id, raw_price, realized in (
+            ("A", "z", Decimal("1"), Decimal("-0.01")),
+            ("B", "y", Decimal("2"), Decimal("0.01")),
+            ("C", "x", Decimal("3"), Decimal("0.03")),
+        )
+    )
+
+    suite = run_incremental_alpha_ablation_suite(
+        protocol=protocol,
+        panel_reference=_reference(),
+        observation_sessions=(observations,),
+        created_at=NOW,
+    )
+
+    baseline, augmented = (item.metrics for item in suite.results)
+    assert augmented.top_k_return == baseline.top_k_return
+    assert augmented.gross_return == baseline.gross_return
+    assert augmented.net_return == baseline.net_return
+    assert augmented.rank_ic == baseline.rank_ic
+    assert augmented.incremental_lift == Decimal("0.0")
+
+
+def test_precomputed_ablation_aggregates_frozen_weights_without_reselecting() -> None:
+    price = AblationVariant.standard(AblationVariantKind.PRICE_ONLY)
+    protocol = AblationProtocol.create(
+        protocol_version="persisted-golden-loop-v2",
+        variants=(price,),
+        comparison_sequence=(price.variant_id,),
+        top_k=1,
+        scoring_contract="WITHIN_SESSION_TIE_AWARE_EXACT_RATIONAL_FACTOR_PERCENTILE_MEAN_V2",
+        created_at=NOW,
+    )
+    observations = tuple(
+        item for item in _observations() if item.session_key == "s-0"
+    )[:2]
+    # Deliberately freeze the lower-score row as selected. If aggregation
+    # re-ranks, gross return will instead use the first row.
+    frozen = {
+        price.variant_id: tuple(
+            PrecomputedAblationObservation(
+                observation=item,
+                score=Decimal("2") if index == 0 else Decimal("1"),
+                top_weight=Decimal(index),
+                bottom_weight=Decimal(1 - index),
+            )
+            for index, item in enumerate(observations)
+        )
+    }
+
+    suite = run_precomputed_alpha_ablation_suite(
+        protocol=protocol,
+        panel_reference=_reference(),
+        evaluation_sessions=(frozen,),
+        created_at=NOW,
+    )
+
+    assert suite.results[0].metrics.gross_return == observations[1].realized_return
+    assert suite.results[0].metrics.cost_return == observations[1].cost_return
 
 
 def test_ablation_protocol_rejects_unfrozen_or_duplicate_comparison_sequence() -> None:
@@ -251,7 +344,7 @@ def test_variant_selection_drives_hit_rate_turnover_and_canonical_path_order() -
 
     stable_metrics, rotating_metrics = (item.metrics for item in ordered.results)
     assert stable_metrics.hit_rate == Decimal("1.0")
-    assert rotating_metrics.hit_rate == Decimal(str(2 / 3))
+    assert rotating_metrics.hit_rate == Decimal("2") / Decimal("3")
     assert stable_metrics.turnover == Decimal("0.0")
     assert rotating_metrics.turnover == Decimal("1.0")
     assert [item.metrics for item in shuffled.results] == [

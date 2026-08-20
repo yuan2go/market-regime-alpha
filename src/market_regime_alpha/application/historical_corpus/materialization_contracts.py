@@ -36,6 +36,7 @@ class HistoricalComponentKind(str, Enum):
     PORTFOLIO = "PORTFOLIO"
     OUTCOME = "OUTCOME"
     RESEARCH_PANEL = "RESEARCH_PANEL"
+    RESEARCH_EVALUATION = "RESEARCH_EVALUATION"
 
 
 @dataclass(frozen=True, slots=True)

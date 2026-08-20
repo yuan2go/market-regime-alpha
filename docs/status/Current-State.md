@@ -2,23 +2,25 @@
 
 > **Status:** CURRENT_STATUS  
 > **Authority:** Current implementation/evidence summary  
-> **Baseline:** `main@ab35a32ab857819153b665d5bf72301f7db46ede`  
-> **Last Updated:** 2026-08-19  
+> **Baseline:** `agent/alpha-proof-campaign-01@bcee87a7d79f1028667a5874b7273a10fdcaacfa` (executable V2 evidence)
+> **Last Updated:** 2026-08-20
 > **Code Evidence:** `src/market_regime_alpha`, `src/market_regime_alpha/persistence/postgres/migrations/*.sql`, `tests`
 
-This document records what the current `main` implements and what its evidence actually supports. It does not inherit stronger claims from the target architecture.
+This document records what the named executable baseline implements and what
+its evidence actually supports. It does not inherit stronger claims from the
+target architecture.
 
 ## 1. Repository baseline
 
 - **Architecture:** Python 3.12+ PostgreSQL-centered modular monolith.
 - **Persistent business authority:** PostgreSQL 16; no canonical file/SQLite/memory fallback.
-- **Migration head:** 088.
+- **Migration head:** 090.
 - **Canonical all-day runtime:** one Continuous Research control plane.
 - **Installed operator scripts:** six — `continuous-research`, `state-system`, `decision-system`, `model-governance`, `pit-authority`, `research-shadow`.
 - **Execution boundary:** human-operated/manual; no broker writer or automatic live-trading authority.
 - **Physical Position truth:** observed effective manual Fills.
-- **Current HEAD CI:** no GitHub workflow run/status was available for this exact merge commit at documentation-convergence time.
-- **Current HEAD validation caveat:** merged PR #65 explicitly reported tests `NOT_RUN`; therefore earlier passing suites are historical evidence and do not by themselves make the current merge HEAD `TEST_EXECUTED` in full.
+- **Golden Loop V2 execution:** one immutable 126-session historical campaign at the baseline SHA completed in an isolated PostgreSQL schema migrated from 084 through 090; exact replay and aggregate Evidence are recorded below.
+- **Current branch validation:** the full local quality gate is recorded at handoff; GitHub CI remains a separate Provider result.
 
 ## 2. Implemented engineering boundary
 
@@ -69,14 +71,45 @@ Most formal qualification capability is **engineering-ready but evidence-blocked
 
 The strongest real historical work remains exploratory and PIT-incomplete.
 
+Golden Loop V2 now has an immutable 126-session campaign over the existing
+Phase E3 dataset and unchanged Target, Horizon, Factors, gates, Forecast floor,
+cost assumptions and canonical Portfolio policy. The shared exact-rational
+midrank kernel removes symbol/observation identity from ranking, uses a separate
+fractional boundary policy, and persists session evaluation from the canonical
+Multi-Strategy Cycle, Cross-Strategy Portfolio, Outcome and Attribution owners.
+The bounded run completed after resume with 756 receipts and 1,764 components;
+its exact replay is recorded in the V2 campaign report.
+
+The V2 result is negative rather than an Alpha proof:
+
+- Price-only RankIC is -0.061618, Top-10 gross -0.000839, assumed cost
+  0.002100 and net -0.002939.
+- Adding Volume improves Top-10 gross by only +0.000041; the resulting RankIC
+  remains -0.059226, spread -0.001937, net -0.002899 and drawdown -0.457415.
+- Market Regime and Theme are ranking-neutral in this corpus; ETF and Capital
+  are `NOT_ESTIMABLE`; Dynamic Pool changes RankIC in three non-constant
+  sessions but changes neither Top/Bottom boundary exposure nor gross return.
+- Candidate rejects all 37,800 rows, so Signal and Forecast coverage are both
+  0/37,800. Canonical Portfolio therefore records 126 `NO_ACTION` sessions and
+  no lines; Strategy and Portfolio economics are `NOT_ESTIMABLE`, not zero.
+- V1 Phase E2/E3 ranking conclusions and the first finite-Decimal V2 result are
+  retained immutably but explicitly methodology-invalidated/superseded. The
+  earlier Phase E2 positive Portfolio interpretation is no longer admissible;
+  no replacement V2 Phase E2 estimate was manufactured.
+
 Phase E / E2 / E3 established replayable real historical research runs, including a 300-stock CSI 300 cross-section and a 126-decision-session longitudinal campaign with effective-dated cohort owners and real historical market/reference evidence.
 
 The durable findings do **not** establish general Alpha:
 
 - the pilot/full-chain T+1 economics remained net negative after the declared engineering-assumption cost model;
-- Phase E2 reported all six executable T+1 checkpoints gross- and net-negative;
-- the longitudinal Phase E3 campaign retained negative/inconclusive factor evidence and severe downstream sample starvation when the frozen ETF context had no observations;
-- Volume, Theme and Dynamic Pool evidence was negative in that campaign; Market Regime was inconclusive;
+- Phase E2's six T+1 checkpoint diagnostics remain historical V1 research, not
+  Canonical Strategy/Portfolio Evidence;
+- the exact-rational Phase E3 rerun remains negative and retains severe
+  downstream sample starvation when the frozen ETF context has no observations;
+- prior Phase E2/E3 layer-by-layer lifts computed with identity-broken ranking
+  are superseded; current V2 evidence supports zero boundary/economic increment
+  for Market Regime, Theme and Dynamic Pool in this scope, not the old signed
+  layer claims;
 - Candidate/Signal/Forecast were not demonstrated as economically useful by that evidence, and downstream Forecasts remained `NOT_ESTIMABLE` where sample/conditioning floors were not satisfied;
 - an exploratory ridge challenger produced limited positive validation diagnostics in the pilot, but it is not Formal OOS, calibrated, economically qualified or Production-admitted.
 
@@ -96,6 +129,15 @@ SUSTAINED_PROSPECTIVE_SHADOW_PROVEN = false
 RESEARCH_QUALIFIED_ALPHA            = false
 PRODUCTION_QUALIFIED                = false
 BROKER_INTEGRATION_PROVEN           = false
+```
+
+Operational release declarations remain explicitly closed:
+
+```text
+automatic_order_execution = false
+broker_integration_proven = false
+entry_model_empirically_validated = false
+production_ready = false
 ```
 
 Free/public historical evidence remains, as applicable:

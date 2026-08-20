@@ -52,6 +52,7 @@ from market_regime_alpha.research.candidate_discovery.contracts import (
     CandidateSelectionStatus,
     CandidateSet,
 )
+from market_regime_alpha.research.cross_sectional_ranking import competition_ranks
 from market_regime_alpha.research.state_system.capital import (
     CapitalObservation,
     CapitalState,
@@ -918,11 +919,12 @@ def _constrain_candidates(
                     ),
                 )
             )
-    ranked = sorted(
-        (item for item in prepared if item.rank is not None),
-        key=lambda item: item.rank or 0,
-    )
-    ranks = {item.symbol: index for index, item in enumerate(ranked, start=1)}
+    scores = {
+        item.symbol: item.candidate_discovery_score
+        for item in prepared
+        if item.rank is not None and item.candidate_discovery_score is not None
+    }
+    ranks = competition_ranks(scores, higher_is_better=True)
     records = tuple(
         sorted(
             (replace(item, rank=ranks[item.symbol]) if item.symbol in ranks else item for item in prepared),

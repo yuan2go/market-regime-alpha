@@ -51,7 +51,7 @@ class RecommendationScoreComponent:
 
 @dataclass(frozen=True, slots=True)
 class CandidateRecommendation:
-    SCHEMA_VERSION = "phase-d-candidate-recommendation-v1"
+    SCHEMA_VERSION = "phase-d-candidate-recommendation-v2"
 
     decision_snapshot_id: ArtifactId
     prediction_run_id: ArtifactId
@@ -67,6 +67,7 @@ class CandidateRecommendation:
     expected_horizon: str
     invalidation_conditions: tuple[str, ...]
     data_eligibility: DataEligibility
+    selection_policy: str = "INCLUDE_ALL_BOUNDARY_TIES_V1"
     content_hash: str = field(init=False)
     recommendation_id: ArtifactId = field(init=False)
 
@@ -107,6 +108,8 @@ class CandidateRecommendation:
             raise ValueError("daily Recommendation requires the frozen MR1 10:30 Target")
         if self.data_eligibility is not DataEligibility.EXPLORATORY:
             raise ValueError("daily Recommendation is EXPLORATORY-only")
+        if self.selection_policy != "INCLUDE_ALL_BOUNDARY_TIES_V1":
+            raise ValueError("daily Recommendation requires the frozen boundary policy")
         content_hash = canonical_hash(self.semantic_payload())
         object.__setattr__(self, "content_hash", content_hash)
         object.__setattr__(
@@ -134,6 +137,7 @@ class CandidateRecommendation:
             "expected_horizon": self.expected_horizon,
             "invalidation_conditions": list(self.invalidation_conditions),
             "data_eligibility": self.data_eligibility.value,
+            "selection_policy": self.selection_policy,
         }
 
     def to_canonical_dict(self) -> dict[str, Any]:
@@ -164,6 +168,7 @@ class CandidateRecommendation:
             "expected_horizon",
             "invalidation_conditions",
             "data_eligibility",
+            "selection_policy",
             "content_hash",
             "recommendation_id",
         }
@@ -191,6 +196,7 @@ class CandidateRecommendation:
                 str(item) for item in payload["invalidation_conditions"]
             ),
             data_eligibility=DataEligibility(str(payload["data_eligibility"])),
+            selection_policy=str(payload["selection_policy"]),
         )
         if (
             recommendation.content_hash != payload["content_hash"]
@@ -230,7 +236,12 @@ def project_candidate_recommendations(
             or run.data_eligibility is not DataEligibility.EXPLORATORY
         ):
             raise ValueError("PredictionRun is outside daily Recommendation scope")
-        for prediction in run.predictions[:top_k]:
+        selected_predictions = tuple(
+            prediction
+            for prediction in run.predictions
+            if prediction.rank is not None and prediction.rank <= top_k
+        )
+        for prediction in selected_predictions:
             if prediction.model_score is None or prediction.rank is None:
                 raise ValueError("ranked Candidate must carry score and rank")
             observation = decision_snapshot.observation_for(prediction.symbol)
@@ -262,7 +273,7 @@ def project_candidate_recommendations(
                         ),
                     ),
                     selection_reasons=(
-                        "FROZEN_MODEL_RANK_WITHIN_TOP_K",
+                        "FROZEN_MODEL_RANK_WITHIN_TOP_K_OR_BOUNDARY_TIE",
                         "SCORE_IS_NOT_A_PROBABILITY",
                     ),
                     risk_reasons=(

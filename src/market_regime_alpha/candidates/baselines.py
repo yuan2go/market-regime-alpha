@@ -23,6 +23,7 @@ from market_regime_alpha.core.identity import (
 from market_regime_alpha.core.status import InputAvailabilityStatus
 from market_regime_alpha.core.time import DecisionTime
 from market_regime_alpha.research.experiment_identity import ExperimentIdentity
+from market_regime_alpha.research.cross_sectional_ranking import competition_ranks
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,10 +71,15 @@ class CandidateRankingRun:
         all_symbols = prediction_symbols + rejection_symbols
         if len(all_symbols) != len(set(all_symbols)):
             raise ValueError("ranking run symbols must be unique across predictions and rejections")
-        expected_ranks = tuple(range(1, len(self.predictions) + 1))
-        actual_ranks = tuple(prediction.rank for prediction in self.predictions)
+        scores = {
+            item.symbol: item.model_score
+            for item in self.predictions
+            if item.model_score is not None
+        }
+        expected_ranks = competition_ranks(scores, higher_is_better=True)
+        actual_ranks = {item.symbol: item.rank for item in self.predictions}
         if actual_ranks != expected_ranks:
-            raise ValueError("prediction ranks must be contiguous and ordered")
+            raise ValueError("prediction ranks must preserve equal-score ties")
 
     @property
     def ranking_coverage(self) -> float:
@@ -107,7 +113,11 @@ def rank_candidates_by_feature(
         feature_definition_ids=(feature_id,),
         feature_materialization_ids=(feature_materialization_id,),
         model_id=model_id,
-        semantic_refs=(("baseline_kind", "single_feature_descending_rank"),),
+        semantic_refs=(
+            ("baseline_kind", "single_feature_descending_rank"),
+            ("ranking_contract", "TIE_AWARE_COMPETITION_RANK_V2"),
+            ("boundary_policy", "INCLUDE_ALL_BOUNDARY_TIES_V1"),
+        ),
     )
 
     rankable: list[tuple[str, float]] = []
@@ -144,6 +154,7 @@ def rank_candidates_by_feature(
             continue
         rankable.append((row.symbol, score))
 
+    ranks = competition_ranks(dict(rankable), higher_is_better=True)
     rankable.sort(key=lambda item: (-item[1], item[0]))
     predictions = tuple(
         CandidatePrediction(
@@ -155,9 +166,9 @@ def rank_candidates_by_feature(
             experiment_id=experiment.experiment_id,
             population_size=len(dataset.population_symbols),
             model_score=score,
-            rank=rank,
+            rank=ranks[symbol],
         )
-        for rank, (symbol, score) in enumerate(rankable, start=1)
+        for symbol, score in rankable
     )
     rejections.sort(key=lambda item: item.symbol)
     return CandidateRankingRun(
