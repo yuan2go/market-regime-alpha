@@ -3,8 +3,8 @@
 > **Status:** ROADMAP  
 > **Authority:** Dependency-ordered forward work  
 > **Repository Baseline:** `main@5a441746ada08eb08310b12e34d9e0f56f56a952`
-> **Strongest Research Evidence Revision:** `bcee87a7d79f1028667a5874b7273a10fdcaacfa` (Golden Loop V2)
-> **Last Updated:** 2026-08-20
+> **Strongest Research Evidence Revision:** `0d1a5a8` (WP-ALPHA-RESEARCH-01)
+> **Last Updated:** 2026-08-21
 > **Code Evidence:** `docs/status/Current-State.md`, `docs/status/Gap-Register.md`
 
 The project has left the platform-first phase. The next program is an **Alpha Proof Campaign**: one vertical research/strategy loop drives the engineering backlog, while formal/prospective evidence remains independently gated.
@@ -78,14 +78,14 @@ to the canonical Cycle, Cross-Strategy Portfolio, Outcome and Attribution
 owners. It rejects the Alpha claim: Price and Price+Volume RankIC, spread, gross
 and net are negative; all 37,800 Candidates are rejected; Signal/Forecast
 coverage is zero; 126 Portfolio sessions are `NO_ACTION`; Strategy economics
-are `NOT_ESTIMABLE`. The next dependency-coherent Work Package is therefore
-`WP-ALPHA-RESEARCH-01`, not Strategy optimization or ML.
+are `NOT_ESTIMABLE`. WP-ALPHA-RESEARCH-01 has now completed the next controlled
+Factor/Gate/Candidate discovery step without changing that dataset.
 
 ---
 
 ## WP-ALPHA-RESEARCH-01 — PIT-aware Factor → Gate → Candidate Discovery
 
-**Status:** `ACTIVE`, governed by
+**Status:** `COMPLETE`, governed by
 `docs/research/protocols/WP-ALPHA-RESEARCH-01-Frozen-Discovery-Protocol.md`.
 
 **Frozen scope**
@@ -94,12 +94,11 @@ from 2025-01-02 through 2025-07-11, DecisionTime 14:55 Asia/Shanghai and T+1
 10:30 Target. Provider, Universe, Target/Horizon, cost assumptions and Golden
 V2 tie-aware correctness contract do not change.
 
-**Current problem**
-The canonical Feature owner materializes roughly 60 outputs, while the current
-Panel/Golden Evaluation consumes only `return_3` and `amount_ratio_5`.
-Candidate owners retain full status/rejection reasons, but Panel/Evidence loses
-them. The current sequential hard Gate chain therefore confounds predictive
-information with sample filtering and starves every downstream layer.
+**Resolved implementation gap**
+The canonical Feature owner currently materializes 70 outputs. Panel v2 now
+projects all of them with PIT/lineage/coverage state and retains Candidate plus
+Gate diagnostics. The existing two-factor Golden V2 projection remains
+compatible; no Feature computation was copied.
 
 **Goal**
 Determine which registered Feature families carry stable forward information
@@ -143,6 +142,23 @@ Forecast/Portfolio/Governance expansion is admitted.
 A transparent Alpha discovery baseline and evidence-based Candidate policy,
 without pretending the Frozen Discovery Dataset is Formal OOS.
 
+**Observed result**
+
+- final run `historical-research-run-0e150a21c7869adc84a57af5` completed
+  126/126 sessions and exact replay;
+- 49 numeric Factors, 12 Gate variants and five Candidate policies enter one
+  62-hypothesis BH-FDR family;
+- hard-integrity Price/Return is exploratory `POSITIVE` with RankIC 0.090809,
+  Top-5 assumed-cost net 0.014807 and positive quarterly RankIC;
+- all current predictive Gates are `RETEST`; Market/Theme/Capital have no
+  within-session mixed population and Dynamic Pool is integrity-confounded;
+- Current Hard Chain, Strategy economics and Portfolio performance remain
+  `NOT_ESTIMABLE`;
+- Evidence remains `EXPLORATORY / PIT_INCOMPLETE / IN_SAMPLE_DISCOVERY /
+  UNQUALIFIED`; no Forecast/Strategy/Portfolio/Governance expansion followed.
+
+See `docs/references/WP-ALPHA-RESEARCH-01-Research-Report.md`.
+
 ---
 
 ## WP-PROSPECTIVE-01 — Prospective Evidence Clock
@@ -177,8 +193,8 @@ A prospective evidence asset that cannot be recreated after the fact.
 
 ## WP-ALPHA-RESEARCH-02 — External Validation
 
-**Status:** `NOT_ACTIVE`; design begins only after WP-ALPHA-RESEARCH-01 freezes
-its complete result.
+**Status:** `NEXT_RESEARCH_DESIGN_NOT_YET_FROZEN`; WP-ALPHA-RESEARCH-01 has
+frozen its complete result, but no external-validation Experiment is yet active.
 
 A separately content-addressed Experiment may test longer time ranges, CSI
 500/1000 or broader A-shares, distinct market states, another Provider and a
@@ -348,6 +364,9 @@ Gross economics negative
 Gross positive but Net negative
 → prioritize Cost/Turnover/Liquidity/Entry/Portfolio
 
+In-sample discovery Gross and Net positive
+→ freeze disjoint external validation before Forecast/Strategy promotion
+
 Historical survives, prospective fails
 → investigate leakage/stability/drift/availability before qualification
 ```
@@ -356,11 +375,11 @@ Historical survives, prospective fails
 
 # Top 5 highest-value actions
 
-1. **WP-ALPHA-RESEARCH-01** — expand the owner-resolved Panel, run the complete pre-registered Factor/Gate/Candidate discovery family and preserve its negative/`NOT_ESTIMABLE` result.
-2. **WP-PROSPECTIVE-01** — prepare/freeze the honest baseline cohort and start the future evidence clock when a live-origin market window and required data are available; historical replay cannot fill it.
-3. **WP-ATTRIBUTION-COMPRESSION-01** — apply WP-01 Gate dispositions and evaluate whether zero-value Context/Candidate/Signal/Forecast layers should simplify or retire.
-4. **WP-ALPHA-RESEARCH-02** — only after WP-01, freeze separate time/Universe/Provider validation for an estimable discovery result.
-5. **WP-STRATEGY-PROOF-01** — remain dependency-blocked until ranking or Candidate evidence supports an executable action; do not optimize costs around a negative predictor.
+1. **WP-ALPHA-RESEARCH-02** — separately freeze time/Universe/Provider validation for the exact Price/Return challenger and its three intraday contributors; do not retune WP-01.
+2. **WP-PROSPECTIVE-01** — prepare/freeze the honest challenger cohort and start the future evidence clock when a live-origin market window and required data are available; historical replay cannot fill it.
+3. **WP-ATTRIBUTION-COMPRESSION-01** — preserve the four `RETEST` Gate dispositions and investigate whether session-constant Context owners express valid policy or redundant filtering; do not retire from non-estimability alone.
+4. **WP-STRATEGY-PROOF-01** — remain dependency-blocked until external Candidate evidence supports an executable action; do not promote in-sample discovery into Strategy economics.
+5. **WP-ALPHA-RESEARCH-01 maintenance** — keep its Experiment, supersession chain, Panel/Evaluation replay and full negative/`NOT_ESTIMABLE` output immutable.
 
 `WP-ATTRIBUTION-COMPRESSION-01` runs alongside these when the Golden Loop reveals redundant architecture.
 

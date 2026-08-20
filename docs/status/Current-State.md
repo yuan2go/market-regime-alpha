@@ -3,8 +3,8 @@
 > **Status:** CURRENT_STATUS  
 > **Authority:** Current implementation/evidence summary  
 > **Repository Baseline:** `main@5a441746ada08eb08310b12e34d9e0f56f56a952`
-> **Strongest Research Evidence Revision:** `bcee87a7d79f1028667a5874b7273a10fdcaacfa` (Golden Loop V2)
-> **Last Updated:** 2026-08-20
+> **Strongest Research Evidence Revision:** `0d1a5a8` (WP-ALPHA-RESEARCH-01)
+> **Last Updated:** 2026-08-21
 > **Code Evidence:** `src/market_regime_alpha`, `src/market_regime_alpha/persistence/postgres/migrations/*.sql`, `tests`
 
 This document records what the named executable baseline implements and what
@@ -21,6 +21,7 @@ target architecture.
 - **Execution boundary:** human-operated/manual; no broker writer or automatic live-trading authority.
 - **Physical Position truth:** observed effective manual Fills.
 - **Golden Loop V2 execution:** one immutable 126-session historical campaign at evidence revision `bcee87a` completed in an isolated PostgreSQL schema migrated from 084 through 090; exact replay and aggregate Evidence are recorded below.
+- **WP-ALPHA-RESEARCH-01 execution:** one final immutable 126-session methodology-only owner replay at revision `0d1a5a8`; run `historical-research-run-0e150a21c7869adc84a57af5`, exact report/replay and five PostgreSQL Evidence artifacts are complete.
 - **Current main validation:** the full local `pytest` suite passes at `5a44174`; six existing pandas fragmentation warnings come only from legacy Top-1000 backtesting tests.
 - **Current CI:** GitHub Actions is disabled for the repository and `5a44174` has no check runs; this is `BLOCKED`, not CI proof.
 - **Database binding:** Runtime requires an explicit PostgreSQL URL and principal; a database name or stale schema does not establish current Authority. The replayable Golden V2 Evidence schema is at migration 090.
@@ -74,6 +75,38 @@ Most formal qualification capability is **engineering-ready but evidence-blocked
 
 The strongest real historical work remains exploratory and PIT-incomplete.
 
+WP-ALPHA-RESEARCH-01 reused the Golden V2 dataset scope without using its
+result as an Alpha baseline. Panel v2 now preserves all 70 canonical Feature
+outputs, Candidate state/rank/score/rejection reasons and hard/predictive Gate
+diagnostics. Forty-nine numeric factors, 12 Gate variants and five Candidate
+policies were evaluated under one 62-hypothesis BH-FDR family.
+
+The frozen discovery result is positive but not qualified Alpha:
+
+- `HARD_INTEGRITY_PRICE_RETURN` has mean RankIC 0.090809, BH-FDR 3.77e-7,
+  Top-5 gross 0.016907, frozen assumed-cost net 0.014807, turnover 0.8368 and
+  positive Q1/Q2/nine-session-Q3 RankIC. It is the only Candidate policy that
+  passes the frozen exploratory discovery rule.
+- The individual positive results are intraday return-to-DecisionTime, VWAP
+  slope and price-versus-VWAP. Their effects are large, related, high-turnover,
+  retrospective-event-time and not externally validated.
+- Current Hard Chain still rejects 37,319/37,319 post-integrity rows and is
+  `NOT_ESTIMABLE`; Signal, Forecast, Strategy economics and Portfolio
+  performance therefore remain unproven/`NOT_ESTIMABLE`.
+- Market Regime, Theme and Capital have zero within-session mixed populations;
+  Dynamic Pool passes every integrity row and is integrity-confounded. All four
+  Gate dispositions are `RETEST`, not `KEEP_AS_HARD_GATE`.
+- The final Alpha Evidence is
+  `historical-evidence-f9326f869186419a89e450b9@sha256:f9326f869186419a89e450b9b64923046a30677d4c3c0003f1f12060388c1fe6`
+  and remains `EXPLORATORY / PIT_INCOMPLETE / IN_SAMPLE_DISCOVERY /
+  UNQUALIFIED`.
+
+The initial WP-01 run `a09d…a8d` and its Alpha Evidence are retained as
+`METHODOLOGY_INVALIDATED / SUPERSEDED`: temporal Gate subsetting had been
+misread as incremental lift and the persisted Candidate registry omitted the
+implemented no-Gate control. The final protocol requires matched-session Gate
+contrasts and explicitly supersedes that Evidence.
+
 Golden Loop V2 now has an immutable 126-session campaign over the existing
 Phase E3 dataset and unchanged Target, Horizon, Factors, gates, Forecast floor,
 cost assumptions and canonical Portfolio policy. The shared exact-rational
@@ -97,9 +130,9 @@ The V2 result is negative rather than an Alpha proof:
   no lines; Strategy and Portfolio economics are `NOT_ESTIMABLE`, not zero.
 - Direct Candidate-owner audit attributes the first failing reason to Capital
   for 15,595 rows, Market Regime for 14,978, Theme for 7,199, Dynamic Pool for
-  22 and base Liquidity for 6. These counts diagnose owner data only; the
-  current Panel/Evidence loses Candidate status/reasons and has not yet promoted
-  this breakdown into canonical research Evidence.
+  22 and base Liquidity for 6. These counts diagnose owner data only; WP-01
+  Panel/Evidence now preserves them without treating sequential first failure
+  as isolated Gate lift.
 - V1 Phase E2/E3 ranking conclusions and the first finite-Decimal V2 result are
   retained immutably but explicitly methodology-invalidated/superseded. The
   earlier Phase E2 positive Portfolio interpretation is no longer admissible;
@@ -123,7 +156,7 @@ The durable findings do **not** establish general Alpha:
 
 The correct current conclusion is:
 
-> The platform can produce and replay serious quantitative research evidence, including negative evidence. It has not yet demonstrated a trustworthy Alpha or executable strategy edge.
+> The platform can produce and replay serious quantitative research evidence, including negative evidence. It has one exploratory Candidate challenger worth separately frozen external validation, but has not established trustworthy Formal OOS Alpha or an executable strategy edge.
 
 ## 4. Evidence ceiling
 
@@ -204,9 +237,11 @@ Engineering gaps remain, but they should be selected because they unblock this e
 
 ## 7. Current development posture
 
-The active Work Package is `WP-ALPHA-RESEARCH-01`, a controlled
-Factor→Gate→Candidate discovery campaign over the frozen Phase E3 dataset
-scope. Reusing the dataset does not reuse Phase E3 V1 conclusions.
+`WP-ALPHA-RESEARCH-01` is complete. Its surviving Price/Return challenger makes
+`WP-ALPHA-RESEARCH-02 / External Validation` the next research design, but no
+time/Universe/Provider expansion has been mixed into WP-01. Conditional
+Forecast, Strategy and Portfolio expansion remain dependency-blocked until
+external Candidate evidence exists.
 
 The repository now moves through the **Alpha Proof Campaign**:
 

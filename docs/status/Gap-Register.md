@@ -3,8 +3,8 @@
 > **Status:** CURRENT_STATUS  
 > **Authority:** Current unresolved gap inventory  
 > **Repository Baseline:** `main@5a441746ada08eb08310b12e34d9e0f56f56a952`
-> **Strongest Research Evidence Revision:** `bcee87a7d79f1028667a5874b7273a10fdcaacfa` (Golden Loop V2)
-> **Last Updated:** 2026-08-20
+> **Strongest Research Evidence Revision:** `0d1a5a8` (WP-ALPHA-RESEARCH-01)
+> **Last Updated:** 2026-08-21
 > **Code Evidence:** `src/market_regime_alpha`, `docs/status/Current-State.md`
 
 Gaps are classified so missing future/external evidence does not block engineering and research that can be completed now.
@@ -16,6 +16,7 @@ Gaps are classified so missing future/external evidence does not block engineeri
 | Gap | Closure evidence | Remaining evidence ceiling |
 |---|---|---|
 | Golden Alpha Proof loop research correctness | Frozen exact-rational scoring and fractional boundary identities; canonical Cycle/Portfolio/Outcome/Attribution binding; 126-session resume and exact replay; five immutable V2 Evidence owners | Historical `EXPLORATORY` / `PIT_INCOMPLETE`; ranking and Strategy value remain negative or `NOT_ESTIMABLE` |
+| WP-ALPHA-RESEARCH-01 Factor→Gate→Candidate discovery | Persisted final Experiment `ab6820…c02e`; Panel v2 preserves all 70 Feature outputs and Candidate/Gate diagnostics; 49 Factors, 12 Gate variants and five policies share common diagnostics/BH-FDR; 126-session run/report/replay and Evidence complete | Price/Return challenger is exploratory positive only; all Gates `RETEST`; Formal PIT/OOS, Strategy and Production claims remain closed |
 | Documentation authority convergence | Former Constitution/static site and duplicate roadmap hierarchy removed; one Canonical Overall Design plus current supporting documents | Current status still follows executable evidence and must be updated with each Work Package |
 
 ---
@@ -26,7 +27,7 @@ These work items do not require waiting for future market sessions or a new exte
 
 | Gap | Current problem | Exit condition | Priority |
 |---|---|---|---|
-| WP-ALPHA-RESEARCH-01 Factor→Gate→Candidate discovery | V2 Panel projects only two Feature outputs and loses Candidate status/reasons; current hard-chain ordering cannot distinguish Gate information from sample filtering | Persist a frozen Experiment; expand the owner-resolved Panel; evaluate the complete registered factor family and hard/soft/no-predictive Gate/Candidate policies with multi-K, quantiles, stability, economics and multiple-testing diagnostics | P0 |
+| WP-ALPHA-RESEARCH-02 external-validation design | WP-01 Price/Return and three related intraday Factors are positive only inside one PIT-incomplete discovery period; generalization and source robustness are unknown | Separately freeze exact survivor identity, disjoint time/Universe/Provider scopes, metrics, multiplicity and failure rules before acquiring/consuming new outcomes | P0/P1 |
 | Candidate / Signal / Forecast responsibility test | Separate artifacts exist, but empirical distinctness is not established | Each layer proves distinct information/policy/consumer value or is simplified/merged | P0/P1 |
 | Forecast estimability diagnostics | Forecast fails closed correctly, but `NOT_ESTIMABLE` must direct research instead of threshold relaxation | Diagnostics identify sample/coverage/conditioning/estimator/floor causes for blocked cohorts | P0 |
 | Strategy economic translation | Platform can simulate/record actions, but prediction value is not proven as executable net value | Frozen Entry/Holding/Exit/Portfolio protocol reconciles gross→cost→net under applicable A-share constraints | P1 |
@@ -78,6 +79,9 @@ Gross return negative
 
 Gross positive, Net negative
 → Cost / turnover / liquidity / Entry / Portfolio research
+
+In-sample discovery Gross and Net positive
+→ separately frozen external validation before Forecast / Strategy promotion
 
 Historical positive, Prospective weak
 → leakage / stability / drift / regime / availability diagnosis
