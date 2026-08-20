@@ -231,6 +231,23 @@ def test_cli_exposes_converged_free_data_day_operations() -> None:
             "historical-artifacts",
         ]
     )
+    strategy_feedback_close = build_parser().parse_args(
+        [
+            "--database-url",
+            "postgresql://runtime-authority",
+            "strategy-feedback-close",
+            "--incumbent-version-id",
+            "version-incumbent",
+            "--incumbent-version-hash",
+            "hash-incumbent",
+            "--challenger-version-id",
+            "version-challenger",
+            "--challenger-version-hash",
+            "hash-challenger",
+            "--created-at",
+            "2026-08-17T10:00:00+08:00",
+        ]
+    )
     performance_build = build_parser().parse_args(
         [
             "--database-url",
@@ -413,6 +430,11 @@ def test_cli_exposes_converged_free_data_day_operations() -> None:
     assert historical_run.operation == "historical-run"
     assert historical_acquire.operation == "historical-corpus-acquire"
     assert historical_evidence.operation == "historical-evidence"
+    assert strategy_feedback_close.operation == "strategy-feedback-close"
+    assert (
+        strategy_feedback_close.incumbent_version_id
+        == "version-incumbent"
+    )
     assert performance_build.operation == "performance-build"
     assert model_train.operation == "model-train"
     assert model_execute.operation == "model-execute"
