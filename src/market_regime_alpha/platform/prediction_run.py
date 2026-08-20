@@ -31,6 +31,7 @@ from market_regime_alpha.platform.contracts import (
     EvidenceLevel,
     EvaluationProtocolId,
 )
+from market_regime_alpha.research.cross_sectional_ranking import competition_ranks
 
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -66,7 +67,7 @@ class PredictionRun:
     adds protocol and materialization lineage without changing their score or rank.
     """
 
-    SCHEMA_VERSION = "candidate-prediction-run-v1"
+    SCHEMA_VERSION = "candidate-prediction-run/v2"
 
     model_id: ModelId
     model_definition_hash: str
@@ -86,6 +87,7 @@ class PredictionRun:
     ranking_coverage: float
     data_eligibility: DataEligibility
     evidence_level: EvidenceLevel
+    ranking_contract: str = "TIE_AWARE_COMPETITION_RANK_V2"
     content_hash: str = field(init=False)
     prediction_run_id: ArtifactId = field(init=False)
 
@@ -99,6 +101,8 @@ class PredictionRun:
             raise TypeError("data_eligibility must be a DataEligibility")
         if not isinstance(self.evidence_level, EvidenceLevel):
             raise TypeError("evidence_level must be an EvidenceLevel")
+        if self.ranking_contract != "TIE_AWARE_COMPETITION_RANK_V2":
+            raise ValueError("PredictionRun requires the V2 tie-aware ranking contract")
         if not self.feature_definition_ids:
             raise ValueError("feature_definition_ids must not be empty")
         if len(self.feature_definition_ids) != len(set(self.feature_definition_ids)):
@@ -131,9 +135,22 @@ class PredictionRun:
         )
         if float(self.ranking_coverage) != expected_coverage:
             raise ValueError("ranking_coverage does not match full population accounting")
-        expected_ranks = tuple(range(1, len(self.predictions) + 1))
-        if tuple(item.rank for item in self.predictions) != expected_ranks:
-            raise ValueError("PredictionRun ranks must be contiguous and ordered")
+        if any(
+            item.model_score is None or item.rank is None
+            for item in self.predictions
+        ):
+            raise ValueError("ranked PredictionRun entries require score and rank")
+        scores = {
+            item.symbol: item.model_score
+            for item in self.predictions
+            if item.model_score is not None
+        }
+        if tuple(scores.values()) != tuple(sorted(scores.values(), reverse=True)):
+            raise ValueError("PredictionRun scores must be descending")
+        expected_ranks = competition_ranks(scores, higher_is_better=True)
+        actual_ranks = {item.symbol: item.rank for item in self.predictions}
+        if actual_ranks != expected_ranks:
+            raise ValueError("PredictionRun ranks must preserve equal-score ties")
         prediction_symbols: list[str] = []
         for prediction in self.predictions:
             if (
@@ -202,6 +219,7 @@ class PredictionRun:
             "ranking_coverage": float(self.ranking_coverage),
             "data_eligibility": self.data_eligibility.value,
             "evidence_level": self.evidence_level.value,
+            "ranking_contract": self.ranking_contract,
         }
 
     def to_canonical_dict(self) -> dict[str, Any]:
@@ -237,6 +255,7 @@ class PredictionRun:
             "ranking_coverage",
             "data_eligibility",
             "evidence_level",
+            "ranking_contract",
             "content_hash",
             "prediction_run_id",
         }
@@ -306,6 +325,10 @@ class PredictionRun:
             ),
             evidence_level=EvidenceLevel(
                 _string(payload.get("evidence_level"), "evidence_level")
+            ),
+            ranking_contract=_string(
+                payload.get("ranking_contract"),
+                "ranking_contract",
             ),
         )
         supplied_hash = _string(payload.get("content_hash"), "content_hash")

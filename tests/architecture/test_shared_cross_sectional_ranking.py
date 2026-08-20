@@ -9,6 +9,9 @@ ACTIVE_CONSUMERS = (
     ROOT / "src/market_regime_alpha/candidates/baselines.py",
     ROOT / "src/market_regime_alpha/candidates/composite_baseline.py",
     ROOT / "src/market_regime_alpha/candidates/evaluation.py",
+    ROOT / "src/market_regime_alpha/platform/prediction_run.py",
+    ROOT / "src/market_regime_alpha/research/candidate_discovery/contracts.py",
+    ROOT / "src/market_regime_alpha/research/candidate_discovery/model.py",
     ROOT / "src/market_regime_alpha/research/pit_replication_success_v2_features.py",
     ROOT / "src/market_regime_alpha/application/research_validation/ablation.py",
 )

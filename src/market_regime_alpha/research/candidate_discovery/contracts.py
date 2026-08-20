@@ -13,6 +13,7 @@ from market_regime_alpha.research.capital_evolution.contracts import (
     CapitalEvolutionState,
 )
 from market_regime_alpha.research.market_regime.contracts import MarketState
+from market_regime_alpha.research.cross_sectional_ranking import competition_ranks
 from market_regime_alpha.research.theme_rotation.contracts import RotationState
 
 
@@ -174,18 +175,19 @@ class CandidateSet:
         symbols = tuple(item.symbol for item in self.records)
         if symbols != tuple(sorted(symbols)) or len(symbols) != len(set(symbols)):
             raise ValueError("CandidateSet records must be symbol-sorted and unique")
-        ranked = sorted(
-            (
-                item
-                for item in self.records
-                if item.rank is not None
-            ),
-            key=lambda item: item.rank or 0,
-        )
-        if tuple(item.rank for item in ranked) != tuple(
-            range(1, len(ranked) + 1)
+        ranked = tuple(item for item in self.records if item.rank is not None)
+        if any(item.candidate_discovery_score is None for item in ranked):
+            raise ValueError("ranked Candidate requires a discovery score")
+        scores = {
+            item.symbol: item.candidate_discovery_score
+            for item in ranked
+            if item.candidate_discovery_score is not None
+        }
+        if {item.symbol: item.rank for item in ranked} != competition_ranks(
+            scores,
+            higher_is_better=True,
         ):
-            raise ValueError("CandidateSet ranks must be contiguous")
+            raise ValueError("CandidateSet ranks must preserve equal-score ties")
         if self.minimum_candidate_population <= 0:
             raise ValueError("minimum Candidate population must be positive")
         self.envelope.verify_payload(self.artifact_payload())

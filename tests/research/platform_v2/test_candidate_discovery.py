@@ -91,9 +91,9 @@ def _prediction_runs(
                 experiment_id=ExperimentId(experiment),
                 population_size=len(symbols),
                 model_score=(1.0 if tied else float(len(symbols) - rank)),
-                rank=rank,
+                rank=(1 if tied else rank),
                 percentile=(
-                    0.80
+                    0.50
                     if tied
                     else 1.0 - (rank - 1) / (len(symbols) - 1)
                 ),
@@ -209,18 +209,17 @@ def test_candidate_discovery_ranks_top_n_and_preserves_every_symbol(
     candidates.envelope.verify_payload(candidates.artifact_payload())
 
 
-def test_candidate_tie_break_is_symbol(
+def test_candidate_boundary_tie_is_not_split_by_symbol(
     research_input_bundle: ResearchInputBundle,
 ) -> None:
     inputs = _qualified(research_input_bundle, tied=True)
     _, _, _, candidates = _run(inputs)
-    ranked = sorted(
-        (item for item in candidates.records if item.rank is not None),
-        key=lambda item: item.rank or 0,
+    ranked = tuple(item for item in candidates.records if item.rank is not None)
+    assert {item.rank for item in ranked} == {1}
+    assert {item.symbol for item in candidates.selected} == set(
+        inputs.universe_snapshot.member_symbols
     )
-    assert tuple(item.symbol for item in ranked) == tuple(
-        sorted(inputs.universe_snapshot.member_symbols)
-    )
+    assert "CANDIDATE_BOUNDARY_TIE_EXPANDED" in candidates.reason_codes
 
 
 def test_market_prohibit_rejects_complete_population(
