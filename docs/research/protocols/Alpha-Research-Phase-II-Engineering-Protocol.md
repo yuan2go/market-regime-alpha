@@ -42,7 +42,7 @@ Overnight/Swing policies.
 | WP-ALPHA-RESEARCH-02 | `FrozenExternalValidationExperiment` is owned by the existing `ResearchExperimentDefinition`, changes exactly one of Temporal/Universe/Provider, freezes thresholds and emits the requested evaluation diagnostics | `NOT_RUN`; `EMPIRICALLY_EXECUTED=false`; `EXTERNALLY_VALIDATED=false` |
 | WP-ALPHA-CONTEXT-01 | typed session-level versus cross-sectional evaluation, interaction/incremental-information boundary and five research interpretation states | synthetic/unit evidence only; no Context promoted to trading authority |
 | WP-CANDIDATE-POLICY-02 | content-addressed Incumbent/Challenger definitions, Universal Integrity → validated Alpha → supported Context layers, full explanation and same-dataset comparison | Challenger is dormant because no real correctness/external evidence has passed |
-| WP-PREDICTION-01 | empirical baseline plus frozen regularized model comparison, availability-time sample admission, uncertainty and raw barrier scores; Strategy consumes explicit Signal/Forecast/Context/Risk/Model lineage when required | `ENGINEERING_WIRED / RESEARCH_READY`; no calibration, Formal OOS, Strategy qualification or Production proof |
+| WP-PREDICTION-01 | empirical median baseline plus frozen regularized model comparison, per-fold Target-availability admission, uncertainty and raw barrier scores; Strategy contract requires explicit Signal/Forecast/Context/Risk/Model lineage and owner-authority reload | `IMPLEMENTED_NOT_WIRED / RESEARCH_READY_KERNEL`; the current post-Portfolio RiskDecision is not reused circularly, so no conditional action path is active; no calibration, Formal OOS, Strategy qualification or Production proof |
 
 Migrations 091–092 extend the existing immutable Historical Evidence and Strategy
 owners and constrain Forecast semantics without rewriting V1. They add no table
@@ -52,7 +52,7 @@ or Authority. Phase II Evidence V2 carries typed
 inconclusive and not-estimable classifications.
 
 The Historical Phase II application service reloads exact prerequisite Evidence
-from the existing PostgreSQL owner and persists typed correctness, external,
+and materialization/data owners from PostgreSQL and persists typed correctness, external,
 Context, Candidate and conditional-prediction artifacts through that same owner.
 External/Context results bind the exact input set and Research Panel lineage;
 External and Candidate Top-K boundaries reuse the canonical fractional tie
@@ -62,15 +62,19 @@ kernel rather than symbol identity.
 
 1. `WP-ALPHA-CORRECTNESS-01` independently checks source bars, persisted
    features, T+1 target semantics, placebo behavior, execution-time semantics,
-   factor redundancy and dependence-aware inference.
+   factor redundancy and dependence-aware inference. Entry diagnostics are
+   rebuilt from bar order (first post-cutoff close, strict-next bar open and
+   decision-session last close), not admitted by price existence alone.
 2. `WP-ALPHA-RESEARCH-02` freezes a single-dimension external-validation
    Experiment for only a correctness-supported hypothesis.
 3. `WP-ALPHA-CONTEXT-01` distinguishes session-level conditioning from genuine
    cross-sectional interactions.
 4. `WP-CANDIDATE-POLICY-02` keeps Incumbent and Challenger identities separate
    and splits integrity, Alpha ranking and Context conditioning.
-5. `WP-PREDICTION-01` binds Candidate, Signal, Forecast, Context, Risk,
-   DecisionTime and model/version lineage into Strategy semantics.
+5. `WP-PREDICTION-01` freezes Candidate, Signal, Forecast, Context, Risk,
+   DecisionTime and model/version lineage in Strategy semantics; canonical
+   consumption remains fail-closed until the missing pre-Strategy Risk owner
+   resolver exists.
 
 The implementation reuses Historical Research, Research Panel, Target/Outcome,
 Research Validation statistics, existing Experiment Definition, existing
@@ -88,7 +92,9 @@ engine, Evidence authority or qualification framework.
   target time shift, factor lag and deterministic random ranking.
 - External validation changes exactly one of time, Universe or Provider. Target,
   DecisionTime, factor definitions/directions, Candidate score, Top-K, costs and
-  evaluation protocol remain frozen.
+  evaluation protocol remain frozen. An economic observation is admissible only
+  after the exact Panel-linked Outcome and its hash-valid Strategy Economics
+  result are reloaded and semantically matched.
 - `FREE_DATA / PIT_INCOMPLETE` imposes `FORMAL_OOS=false` even for an independently
   frozen validation dataset.
 - Market/Theme/Capital session constants are conditional session selectors, not

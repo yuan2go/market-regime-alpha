@@ -47,11 +47,12 @@ strong exploratory discoveries. Their shared retrospective source family,
 physical-package gap and absent external validation make correctness—not model
 promotion—the next dependency.
 
-## Phase II engineering completed
+## Phase II engineering state
 
-The following five Work Packages are complete as engineering capabilities on
-the Phase II branch. Their empirical dependencies remain in the same order;
-completion does not mean the hypothesis passed that dependency.
+The five Work Package kernels/contracts are implemented on the Phase II branch.
+Their empirical dependencies remain in the same order. Conditional Strategy
+owner composition remains an explicit fail-closed gap; implementation does not
+mean the hypothesis passed any dependency.
 
 ### P0 — WP-ALPHA-CORRECTNESS-01
 
@@ -144,7 +145,8 @@ External Validation result.
 
 ### P2 — WP-PREDICTION-01
 
-**Engineering status:** `ENGINEERING_WIRED / RESEARCH_READY / UNIT_TESTED`.
+**Engineering status:** `IMPLEMENTED / UNIT_TESTED /
+CANONICAL_OWNER_RESOLVER_NOT_WIRED`.
 
 **Dependency:** engineering can be wired now; a real Challenger remains dormant
 until upstream evidence survives.
@@ -162,7 +164,13 @@ conditional challenger with minimum-sample, frozen split/search/randomness,
 uncertainty, comparison and calibration-boundary semantics. Raw logits are not
 probabilities.
 
-**Maximum state:** `ENGINEERING_WIRED / RESEARCH_READY`.
+Runtime now requires an owner-authority reload for every Forecast-required
+opportunity. There is no safe concrete PostgreSQL resolver because the current
+complete-account RiskDecision is post-Portfolio and would be circular as a
+pre-Strategy input. The circular builder was retired. Caller projections
+therefore fail closed; the conditional family is not activated.
+
+**Maximum current state:** `IMPLEMENTED_NOT_WIRED / RESEARCH_READY_KERNEL`.
 
 ## Active evidence-dependent work
 

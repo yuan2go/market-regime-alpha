@@ -28,10 +28,13 @@ target architecture.
   qualification for this exact merge baseline.
 - **WP-01 branch validation:** docs/platform/full pytest, ruff, mypy and build pass on a fresh PostgreSQL test database; a first full run against a heavily reused test database hit one `pg_catalog` autovacuum DDL lock timeout, while the exact node and the clean-database full suite both pass. This is retained as an environment failure, not hidden.
 - **Current CI:** exact-merge CI is `NOT_RUN`, not CI proof.
-- **Alpha Research Phase II engineering:** all five Work Packages are
-  implemented with focused unit/boundary tests and targeted PostgreSQL
-  migration, Strategy Registry and Historical Evidence owner proof. This is code/wiring evidence, not a new
-  historical research result.
+- **Alpha Research Phase II engineering:** all five Work Package kernels and
+  contracts are implemented with focused unit/boundary tests and targeted
+  PostgreSQL migration, Strategy Registry and Historical Evidence owner proof.
+  Correctness, External, Context and Candidate have canonical owner reload
+  seams. Conditional Strategy remains deliberately fail-closed until one real
+  PostgreSQL Signal/Forecast/Context/pre-Strategy-Risk resolver exists; this is
+  not reported as canonical wiring or as a historical research result.
 - **Database binding:** Runtime requires an explicit PostgreSQL URL and principal; a database name or stale schema does not establish current Authority. The replayable Golden V2 Evidence schema is at migration 090.
 - **Local implementation baseline:** Python 3.12.13, uv 0.11.7 and PostgreSQL
   16.14. The packaged migration head is 092. A Golden V2 evidence database is
@@ -89,20 +92,27 @@ fallback remains for a Forecast-required Strategy.
   Decision reference plus next-session 10:30 Target. Value, event interval,
   source-bar identity/hash and Feature/Target lineage discrepancies fail closed.
   A content-addressed aggregate proof can emit `CORRECTNESS_SUPPORTED` only when
-  every frozen Factor and Target result is complete and physical lineage exists;
-  the status still does not mean Alpha.
+  the application service reloads the exact Historical Feature/Outcome and
+  normalized-data owners, reopens the physical package, reproduces the full
+  population and independently rebuilds placebo, redundancy and block-inference
+  results. The status still does not mean Alpha.
 - Physical bytes are not currently reopenable. Deterministic owner replay is
   therefore retained as owner evidence only and the real status remains
   `PHYSICAL_REPRODUCTION_NOT_ESTABLISHED`.
 - Five content-addressed placebo kinds, explicit research/execution entry
-  proxies, factor correlation/rank/leave-one-out/incremental/residual diagnostics
+  proxies independently selected as the first post-cutoff close, strict-next
+  bar open and decision-session last close, factor
+  correlation/rank/leave-one-out/incremental/residual diagnostics
   and moving-block/block-length/stability inference use the Research Validation
   framework.
 - External Validation reuses canonical `ResearchExperimentDefinition`; the
   definition freezes the exact hypothesis and permits exactly one Temporal,
   Universe or Provider change. Scores, Target returns, entry-proxy economics and
-  fractional Top-K boundaries are recomputed from frozen inputs; input-set hash
-  and Research Panel lineage are part of the result identity. No external
+  fractional Top-K boundaries are recomputed from frozen inputs; Feature
+  configuration, DecisionTime and PIT/free-data ceiling are owner-derived. Each
+  economic row must also reload the exact Panel-linked Historical Outcome and
+  hash-valid Strategy Economics result, then match its frozen policy, Target
+  label, entry lineage, symbol, entry/exit prices and capacity. No external
   dataset was executed.
 - Context evaluation enforces session-constant versus within-session
   cross-sectional semantics. Market Regime and current Global Theme are
@@ -117,8 +127,14 @@ fallback remains for a Forecast-required Strategy.
   owner reload and embedded artifact hashes fail closed.
 - Conditional Forecast keeps the empirical distribution baseline and compares
   a frozen regularized-linear model under chronological sample admission,
-  minimum sample, search budget and uncertainty rules. Barrier outputs remain
-  raw scores; `CALIBRATED=false`.
+  per-fold Target-availability embargo, minimum sample, search budget and
+  uncertainty rules. The median estimator is consistent between validation and
+  the empirical PathForecast baseline. Barrier outputs remain raw scores;
+  `CALIBRATED=false`. Forecast-required Strategy input cannot execute from a
+  caller projection: Runtime requires an owner-authority reload and fails closed
+  because no canonical pre-Strategy Risk resolver is currently configured. The
+  former helper that treated a post-Portfolio complete-account RiskDecision as
+  pre-Strategy state was retired as semantically circular.
 
 Migration 091 extends the existing append-only Historical Evidence and Strategy
 owners. Migration 092 constrains V1/V2 Forecast semantics without mutating V1
@@ -302,7 +318,9 @@ Engineering gaps remain, but they should be selected because they unblock this e
 
 ## 7. Current development posture
 
-The engineering implementation for all five Phase II Work Packages is complete.
+The five Phase II kernels/contracts are implemented. The conditional Strategy
+consumer is not declared canonically wired: no valid pre-Strategy Risk owner
+resolver exists, and the Runtime rejects caller-only opportunity projections.
 Its three unusually strong intraday discovery results have not been reclassified
 as Alpha because the physical package cannot currently be reopened and no new
 external dataset was run.
