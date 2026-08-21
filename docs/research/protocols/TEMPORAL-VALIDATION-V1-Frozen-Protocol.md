@@ -13,7 +13,8 @@ or create Alpha, Strategy, Formal OOS, prospective or Production authority.
 The persisted `ResearchExperimentDefinition` remains the executable Experiment
 owner.
 
-Protocol execution state: `FROZEN_NOT_EXECUTED`.
+Protocol execution state: `WINDOW_OWNER_PERSISTED`; campaign
+`FROZEN_NOT_EXECUTED`.
 
 ## 1. Contamination gate
 
@@ -55,6 +56,29 @@ Weekdays, estimated holiday lists or an implementation-local end date are not
 calendar authority. The calendar must cover all 126 Decision sessions plus the
 last T+1 Target session. Insufficient coverage is `INCONCLUSIVE`/blocked input,
 not permission to infer a date.
+
+The owner-resolved freeze executed on 2026-08-21 with these immutable
+identities:
+
+| Identity | Frozen value |
+|---|---|
+| Calendar owner | `trading-calendar-9fc7d108a062caf59596580f` |
+| Calendar hash | `sha256:9fc7d108a062caf59596580fcb47313e1d0e20dbdbd41e81a677d986191f7927` |
+| Calendar source dataset | `baostock-trading-calendar-d70fe246504a0c42dc7f6b40` |
+| Provider response canonical hash | `sha256:d70fe246504a0c42dc7f6b404d5ac71906ebfa1d1054abb6872e9c5456fcfba7` |
+| Frozen window owner | `frozen-temporal-validation-window:b9e0dfaf85e5ed006f217b1e4b309347a6e5d296d2a8c09beba4296c0800278e` |
+| Frozen window hash | `sha256:b9e0dfaf85e5ed006f217b1e4b309347a6e5d296d2a8c09beba4296c0800278e` |
+| Decision-session hash | `sha256:bbb3ed937306c34a98156d6af1810ea801b9d00a4f74eee267a58d53696069ea` |
+| First Decision | `2025-07-15` |
+| Last Decision | `2026-01-16` |
+| Final T+1 Target session | `2026-01-19` |
+
+The exact ordered 126-date array is stored inside the PostgreSQL window owner.
+The External `ResearchExperimentDefinition` constructor copies the full array,
+Calendar reference/hash, session hash and final Target session into its
+identity. That constructor remains correctness-gated, so persisting this
+pre-result window does not manufacture a runnable External experiment or read
+External outcomes.
 
 The temporal separation rationale is frozen:
 

@@ -15,7 +15,7 @@ target architecture.
 
 - **Architecture:** Python 3.12+ PostgreSQL-centered modular monolith.
 - **Persistent business authority:** PostgreSQL 16; no canonical file/SQLite/memory fallback.
-- **Packaged migration head:** 092 (`strategy_forecast_contract_semantics`).
+- **Packaged migration head:** 093 (`frozen_temporal_validation_window`).
 - **Canonical all-day runtime:** one Continuous Research control plane.
 - **Installed operator scripts:** six — `continuous-research`, `state-system`, `decision-system`, `model-governance`, `pit-authority`, `research-shadow`.
 - **Execution boundary:** human-operated/manual; no broker writer or automatic live-trading authority.
@@ -36,7 +36,7 @@ target architecture.
   not reported as canonical wiring or as a historical research result.
 - **Database binding:** Runtime requires an explicit PostgreSQL URL and principal; a database name or stale schema does not establish current Authority. The replayable Golden V2 Evidence schema is at migration 090.
 - **Local implementation baseline:** Python 3.12.13, uv 0.11.7 and PostgreSQL
-  16.14. The packaged migration head is 092. A Golden V2 evidence database is
+  16.14. The packaged migration head is 093. A Golden V2 evidence database is
   at migration 090; the default local application database is only at 055 and
   is not evidence for the current schema.
 

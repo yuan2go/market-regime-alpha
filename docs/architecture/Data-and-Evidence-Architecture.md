@@ -42,7 +42,7 @@ A downstream artifact may retain or lower the minimum input eligibility. It may 
 
 ## PostgreSQL-only persistence
 
-- Packaged migrations are contiguous from 001 through 092 and checksummed.
+- Packaged migrations are contiguous from 001 through 093 and checksummed.
 - `schema_migrations` and the schema catalog are verified at startup/tests.
 - Runtime database bindings exclude credentials and fail closed on a different database/schema.
 - Journals use leases, fencing, CAS and append-only events.
