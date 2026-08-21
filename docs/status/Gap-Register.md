@@ -2,7 +2,7 @@
 
 > **Status:** CURRENT_STATUS  
 > **Authority:** Current unresolved gap inventory  
-> **Repository Baseline:** `main@5a441746ada08eb08310b12e34d9e0f56f56a952`
+> **Repository Baseline:** `main@fc373696990ccdffe5e46a39778fdfedac3e0308`
 > **Strongest Research Evidence Revision:** `0d1a5a8` (WP-ALPHA-RESEARCH-01)
 > **Last Updated:** 2026-08-21
 > **Code Evidence:** `src/market_regime_alpha`, `docs/status/Current-State.md`
@@ -27,7 +27,11 @@ These work items do not require waiting for future market sessions or a new exte
 
 | Gap | Current problem | Exit condition | Priority |
 |---|---|---|---|
-| WP-ALPHA-RESEARCH-02 external-validation design | WP-01 Price/Return and three related intraday Factors are positive only inside one PIT-incomplete discovery period; generalization and source robustness are unknown | Separately freeze exact survivor identity, disjoint time/Universe/Provider scopes, metrics, multiplicity and failure rules before acquiring/consuming new outcomes | P0/P1 |
+| WP-ALPHA-CORRECTNESS-01 | Three intraday Factors are anomalously strong in one retrospective in-sample dataset; independent Feature/Target/physical correctness is absent | Independent source-bar recomputation, temporal invariants, frozen placebos, execution timing, redundancy and robust inference produce a non-Alpha correctness state | P0 |
+| WP-ALPHA-RESEARCH-02 external validation | Generalization and source robustness remain unknown | Only a correctness-supported exact survivor enters a content-addressed one-dimension validation Experiment; empirical state remains false until separately run | P1 |
+| WP-ALPHA-CONTEXT-01 | WP-01 session selectors can be misread as stock-level Gate evidence | Typed session/cross-sectional conditional evaluation and honest `NOT_ESTIMABLE` classification | P1 |
+| WP-CANDIDATE-POLICY-02 | Universal integrity is coupled to incumbent factor availability; no Incumbent/Challenger owner comparison | Three-layer explainable policy with dormant evidence-gated Challenger and frozen same-dataset comparison | P1 |
+| WP-PREDICTION-01 | StrategyRuntimeInput consumes Candidate without explicit Signal/Forecast/Context/Risk/model requirement semantics | Forecast-required strategies fail closed; forecast-independent strategies declare `FORECAST_NOT_REQUIRED`; baseline/challenger Forecasts remain distinct | P2 |
 | Candidate / Signal / Forecast responsibility test | Separate artifacts exist, but empirical distinctness is not established | Each layer proves distinct information/policy/consumer value or is simplified/merged | P0/P1 |
 | Forecast estimability diagnostics | Forecast fails closed correctly, but `NOT_ESTIMABLE` must direct research instead of threshold relaxation | Diagnostics identify sample/coverage/conditioning/estimator/floor causes for blocked cohorts | P0 |
 | Strategy economic translation | Platform can simulate/record actions, but prediction value is not proven as executable net value | Frozen Entry/Holding/Exit/Portfolio protocol reconciles gross→cost→net under applicable A-share constraints | P1 |

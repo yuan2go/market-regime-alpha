@@ -1,399 +1,183 @@
 # Roadmap
 
-> **Status:** ROADMAP  
-> **Authority:** Dependency-ordered forward work  
-> **Repository Baseline:** `main@5a441746ada08eb08310b12e34d9e0f56f56a952`
+> **Status:** ROADMAP
+> **Authority:** Dependency-ordered forward work
+> **Repository Baseline:** `main@fc373696990ccdffe5e46a39778fdfedac3e0308`
 > **Strongest Research Evidence Revision:** `0d1a5a8` (WP-ALPHA-RESEARCH-01)
 > **Last Updated:** 2026-08-21
 > **Code Evidence:** `docs/status/Current-State.md`, `docs/status/Gap-Register.md`
 
-The project has left the platform-first phase. The next program is an **Alpha Proof Campaign**: one vertical research/strategy loop drives the engineering backlog, while formal/prospective evidence remains independently gated.
-
-This roadmap is evidence-conditioned. After each Work Package, actual results may reorder, simplify or eliminate later work.
-
----
-
-## Program objective
-
-Prove or reject one complete, realistic A-share Alpha chain:
+The project is in an Alpha Research program, not another platform-completeness
+program. Work advances only through the following dependency order:
 
 ```text
-Decision-Time Evidence
-→ PIT Tradable Universe
-→ Transparent Feature/Factor Baseline
-→ Cross-sectional Ranking / Candidate
-→ Signal / Forecast only where incremental
-→ Strategy
-→ Portfolio / Risk
-→ Shadow / Manual execution semantics
-→ Outcome
-→ Attribution
-→ Research Decision
+Alpha Discovery
+→ Alpha Correctness
+→ External Validation
+→ Context Conditional Research
+→ Candidate Policy
+→ Conditional Prediction
+→ Strategy Economics
+→ Formal PIT / Formal OOS
+→ Prospective Proof
+→ Production Qualification
 ```
 
-The initial Golden Strategy Question should reuse the existing frozen decision/execution protocol where authoritative. Conceptually it is a late-session decision with T+1 morning realization, evaluated through MFE/MAE, gross/cost/net, fillability, turnover, capacity and drawdown.
+Engineering completion never upgrades an empirical state. The current public
+historical evidence remains `EXPLORATORY / PIT_INCOMPLETE / UNQUALIFIED`.
 
----
+## Completed foundation
 
-# P0 Work Packages
+### WP-GOLDEN-LOOP-01 — Golden Alpha Proof Vertical Slice
 
-## WP-GOLDEN-LOOP-01 — Golden Alpha Proof Vertical Slice
+**Status:** `COMPLETE` for engineering correctness and retrospective canonical
+Evidence. The exact-rational tie-aware V2 loop binds Historical Runtime, Panel,
+Evaluation, Strategy/Portfolio Outcome and immutable Evidence. It found negative
+or `NOT_ESTIMABLE` Strategy results and did not prove Alpha.
 
-**Status:** `COMPLETE` for research-correctness engineering and retrospective
-canonical Evidence closure at the executable V2 baseline. Empirical Alpha,
-Strategy economics and prospective proof remain outside this completion claim.
+### WP-ALPHA-RESEARCH-01 — PIT-aware Factor → Gate → Candidate Discovery
 
-**Current problem**  
-The repository contains most individual capabilities, but next-stage progress is still too easy to measure by platform feature completion instead of one complete economic proof chain.
+**Status:** `COMPLETE` under the frozen discovery protocol. The 126-session
+in-sample campaign preserved all 70 Feature outputs, evaluated 49 numeric
+Factors, 12 Gate variants and five Candidate policies, and retained complete
+negative/`NOT_ESTIMABLE` evidence.
 
-**Goal**  
-Make one Strategy Version the reference vertical slice from decision-time evidence through immutable outcome and attribution.
+The Price/Return challenger and three intraday contributors are unusually
+strong exploratory discoveries. Their shared retrospective source family,
+physical-package gap and absent external validation make correctness—not model
+promotion—the next dependency.
 
-**Business value**  
-Exposes the real bottleneck: data, factor information, Candidate policy, Forecast, Strategy economics, cost or architecture.
+## Active Work Packages
 
-**Technical scope**  
-Use existing canonical owners/runtime wherever possible. Close only real gaps in dataset/feature lineage, ranking, strategy/shadow decision freeze, outcome settlement, query and attribution. Do not create a parallel Runtime.
+### P0 — WP-ALPHA-CORRECTNESS-01
 
-**Dependencies**  
-Existing PostgreSQL Authority, Historical Research and Strategy Runtime.
+**Goal:** determine whether the intraday discovery survives independent source
+bar/target reproduction, temporal checks, placebo controls, execution-reference
+separation, redundancy diagnostics and dependence-aware inference.
 
-**Real market window required?**  
-No for engineering/historical proof. Yes later for prospective evidence.
+**Required engineering:**
 
-**Acceptance**
+- canonical persisted value versus independently recomputed value by
+  session/symbol/factor, including source bars, event interval, DecisionTime,
+  lineage and discrepancy;
+- independent T+1 10:30 Decision reference/target reconstruction;
+- explicit `PHYSICAL_REPRODUCTION_NOT_ESTABLISHED` when physical bytes cannot be
+  reopened;
+- frozen deterministic symbol/target permutations, target shift, factor lag and
+  random ranking;
+- Information Cutoff, Decision Reference, Executable Entry Proxy and Target
+  Reference as distinct semantics;
+- pairwise/rank/leave-one-out/incremental/residual factor diagnostics;
+- moving-block bootstrap, block-length sensitivity, confidence interval,
+  temporal stability and multiple-testing adjustment through Research
+  Validation;
+- universal integrity separated from factor-specific availability.
 
-- one frozen Strategy/Experiment/Target/Decision-Time identity;
-- one exact PIT-labelled historical research slice;
-- one replayable owner chain from input through outcome/attribution;
-- explicit blocked/missing states rather than fabricated values;
-- no second scheduler, business Authority or fixture-only production path.
+**Evidence ceiling:** correctness state only; never `ALPHA_PROVEN`.
 
-**System capability gained**  
-A Golden Research Loop that exposes the next highest-information problem.
+### P1 — WP-ALPHA-RESEARCH-02
 
-**Observed result**
-The 126-session exact-rational V2 campaign and replay bind Research Evaluation
-to the canonical Cycle, Cross-Strategy Portfolio, Outcome and Attribution
-owners. It rejects the Alpha claim: Price and Price+Volume RankIC, spread, gross
-and net are negative; all 37,800 Candidates are rejected; Signal/Forecast
-coverage is zero; 126 Portfolio sessions are `NO_ACTION`; Strategy economics
-are `NOT_ESTIMABLE`. WP-ALPHA-RESEARCH-01 has now completed the next controlled
-Factor/Gate/Candidate discovery step without changing that dataset.
+**Dependency:** only a `CORRECTNESS_SUPPORTED` frozen hypothesis may be admitted.
 
----
+**Goal:** provide content-addressed, single-dimension Temporal, Universe or
+Provider external-validation Experiments without rescanning factors or retuning
+the frozen discovery question.
 
-## WP-ALPHA-RESEARCH-01 — PIT-aware Factor → Gate → Candidate Discovery
+**Required outputs:** coverage, RankIC and confidence interval, positive-IC
+ratio, ICIR, bucket monotonicity, Top-K gross/cost/net, turnover, drawdown,
+temporal stability, capacity and discovery-effect retention/degradation.
 
-**Status:** `COMPLETE`, governed by
-`docs/research/protocols/WP-ALPHA-RESEARCH-01-Frozen-Discovery-Protocol.md`.
+**Current execution state:** capability implementation only. No new External
+Dataset is run in this phase; `EMPIRICALLY_EXECUTED=false` and
+`EXTERNALLY_VALIDATED=false`.
 
-**Frozen scope**
-Reuse only the existing Phase E3 dataset scope: 126 CSI 300 Decision Sessions
-from 2025-01-02 through 2025-07-11, DecisionTime 14:55 Asia/Shanghai and T+1
-10:30 Target. Provider, Universe, Target/Horizon, cost assumptions and Golden
-V2 tie-aware correctness contract do not change.
+### P1 — WP-ALPHA-CONTEXT-01
 
-**Resolved implementation gap**
-The canonical Feature owner currently materializes 70 outputs. Panel v2 now
-projects all of them with PIT/lineage/coverage state and retains Candidate plus
-Gate diagnostics. The existing two-factor Golden V2 projection remains
-compatible; no Feature computation was copied.
+**Goal:** test whether Context changes a correctness/external-supported Alpha,
+without giving Context automatic stock-level hard-Gate authority.
 
-**Goal**
-Determine which registered Feature families carry stable forward information
-and whether Market Regime, Theme, Capital and Dynamic Pool should remain hard
-Gates, become soft factors, be retested or retire.
+Session-level Context supports across-session conditional behavior only.
+Cross-sectional Context supports within-session interaction only when symbol
+values genuinely differ. Market Regime and the current Global Theme projection
+are session-level in the WP-01 dataset. Capital is a public proxy and has no
+hidden-intent interpretation.
 
-**Technical scope**
+Research interpretations are `AMPLIFIER`, `SUPPRESSOR`, `NEUTRAL`, `UNSTABLE`
+or `NOT_ESTIMABLE`; they grant no trading authority.
+
+### P1 — WP-CANDIDATE-POLICY-02
+
+**Dependency:** Challenger activation requires supported Correctness and External
+Validation evidence. Implementation and synthetic tests do not activate it.
+
+**Goal:** preserve explicit `INCUMBENT` and `CHALLENGER` policies while separating:
 
 ```text
-persisted frozen Experiment Definition
-→ owner-resolved full Feature/Factor Panel
-→ hard-integrity population
-→ current-hard / soft-feature / no-predictive Gate contrasts
-→ transparent Candidate challengers
-→ tie-aware multi-K / quantile / stability / economics diagnostics
-→ multiple-testing adjustment
-→ immutable exploratory Evidence and Gate dispositions
+Universal Hard Integrity
+→ validated Alpha Ranking
+→ evidence-supported Context Conditioning
 ```
 
-No Golden Runner, scheduler, backtest Authority, feature recomputation or
-Forecast/Portfolio/Governance expansion is admitted.
+Every Candidate explains eligibility, hard failures, factor values and
+contributions, Context adjustment, final rank and selection status. Incumbent
+and Challenger comparison uses one frozen dataset and never retunes from the
+External Validation result.
 
-**Acceptance**
+### P2 — WP-PREDICTION-01
 
-- exact Dataset/Universe/session/DecisionTime/Target/cost/factor/Gate/scoring/
-  metric/evidence-ceiling Experiment owner is persisted and reloaded before run;
-- all canonical Feature outputs enter lineage/coverage; only the pre-registered
-  factor registry enters hypotheses;
-- Panel retains Candidate status, score, rank and complete Gate reasons;
-- tradability/data-integrity Gates remain hard;
-- Market/Theme/Capital/Dynamic Pool each receive isolated hard/soft/none contrasts;
-- every registered hypothesis emits common coverage, RankIC/IC stability,
-  quintile, Top-1/3/5/10, MFE/MAE, turnover, gross/net and conditional diagnostics;
-- the existing multiple-testing kernel adjusts the complete discovery family;
-- each predictive Gate ends as `KEEP_AS_HARD_GATE`, `DEMOTE_TO_FACTOR`,
-  `RETEST` or `RETIRE`; negative and `NOT_ESTIMABLE` evidence remains durable;
-- Historical Runtime → canonical owners → Panel → Golden Evaluation/Evidence
-  remains the sole execution chain.
+**Dependency:** engineering can be wired now; a real Challenger remains dormant
+until upstream evidence survives.
 
-**System capability gained**
-A transparent Alpha discovery baseline and evidence-based Candidate policy,
-without pretending the Frozen Discovery Dataset is Formal OOS.
+**Goal:** make Candidate → Signal → Forecast → Strategy an explicit
+contract. Forecast-required Strategies fail closed without exact Candidate,
+Signal, Forecast, Context, Risk, DecisionTime and Model/version lineage.
+Forecast-optional Strategies declare `FORECAST_NOT_REQUIRED` explicitly.
 
-**Observed result**
+The existing empirical historical path Forecast remains the baseline. The
+existing deterministic regularized-linear primitives may provide a simple
+conditional challenger with minimum-sample, frozen split/search/randomness,
+uncertainty, comparison and calibration-boundary semantics. Raw logits are not
+probabilities.
 
-- final run `historical-research-run-0e150a21c7869adc84a57af5` completed
-  126/126 sessions and exact replay;
-- 49 numeric Factors, 12 Gate variants and five Candidate policies enter one
-  62-hypothesis BH-FDR family;
-- hard-integrity Price/Return is exploratory `POSITIVE` with RankIC 0.090809,
-  Top-5 assumed-cost net 0.014807 and positive quarterly RankIC;
-- all current predictive Gates are `RETEST`; Market/Theme/Capital have no
-  within-session mixed population and Dynamic Pool is integrity-confounded;
-- Current Hard Chain, Strategy economics and Portfolio performance remain
-  `NOT_ESTIMABLE`;
-- Evidence remains `EXPLORATORY / PIT_INCOMPLETE / IN_SAMPLE_DISCOVERY /
-  UNQUALIFIED`; no Forecast/Strategy/Portfolio/Governance expansion followed.
+**Maximum state:** `ENGINEERING_WIRED / RESEARCH_READY`.
 
-See `docs/references/WP-ALPHA-RESEARCH-01-Research-Report.md`.
+## Subsequent evidence-dependent work
 
----
+### Strategy Economics
 
-## WP-PROSPECTIVE-01 — Prospective Evidence Clock
+Translate a surviving prediction into explicit Entry proxy, fillability,
+A-share restrictions, holding/exit, turnover, cost, liquidity, capacity and
+drawdown. Reference-price RankIC economics remain distinct from executable
+Strategy economics.
 
-**Current problem**  
-The platform has Shadow/prospective mechanics but no sustained future-time evidence proving model/strategy stability.
+### Formal PIT / Formal OOS
 
-**Goal**  
-Begin immutable, version-scoped future decision cohorts as soon as the Golden baseline can run honestly.
+Requires qualified Provider facts, Frozen Dataset/Protocol, purge/embargo,
+untouched Locked OOS, disjoint calibration evidence and owner-resolved economic
+floors. Existing mechanics do not supply the missing evidence.
 
-**Technical scope**  
-Freeze decision-time evidence, dataset/feature identity, model/strategy version, code/config identity, Candidate/Signal/Forecast/Portfolio and later bind settled outcomes. Preserve historical predictions unchanged.
+### Prospective Proof
 
-**Real market window required?**  
-Yes for proof. Engineering, rehearsal and inspection can proceed without waiting.
+Requires immutable future-time, live-origin trusted-clock cohorts under frozen
+Model/Strategy versions. Historical replay cannot backfill this proof.
 
-**Acceptance**
+### Production Qualification
 
-- live-origin/trusted-clock session qualification rules;
-- immutable frozen decisions;
-- later settlement of required outcomes;
-- separate version cohorts;
-- replay of exact owner lineage;
-- Replay/Fixture/backfill sessions excluded from prospective sample counts.
-
-**System capability gained**  
-A prospective evidence asset that cannot be recreated after the fact.
-
----
-
-# P1 Work Packages
-
-## WP-ALPHA-RESEARCH-02 — External Validation
-
-**Status:** `NEXT_RESEARCH_DESIGN_NOT_YET_FROZEN`; WP-ALPHA-RESEARCH-01 has
-frozen its complete result, but no external-validation Experiment is yet active.
-
-A separately content-addressed Experiment may test longer time ranges, CSI
-500/1000 or broader A-shares, distinct market states, another Provider and a
-longer prospective cohort. None of those changes may be backported into
-WP-ALPHA-RESEARCH-01 or used to rewrite its negative results.
-
-**Dependency:** at least one pre-registered WP-ALPHA-RESEARCH-01 factor or
-Candidate policy has estimable discovery evidence worth external validation.
+Remains blocked until independent PIT, OOS, calibration/economics, prospective,
+risk and operational floors pass. Broker integration remains Future/Deferred.
 
----
+## Guardrails
 
-## WP-STRATEGY-PROOF-01 — Prediction to Executable Strategy
+- no new all-day Runtime, scheduler or backtest plane;
+- no second Feature, Candidate, Outcome, Evidence or qualification Authority;
+- no post-result retuning under an existing Experiment identity;
+- no score-to-probability conversion without calibration;
+- no Candidate recommendation creates a Position;
+- no unit/local fixture result becomes Provider, OOS, prospective, Strategy or
+  Production proof;
+- negative, inconclusive and `NOT_ESTIMABLE` evidence remains immutable;
+- architecture compression is allowed only with consumer inventory and replay
+  safety for directly affected paths.
 
-**Current problem**  
-Predictive/ranking evidence is not the same as executable net trading value.
-
-**Goal**  
-Translate surviving Alpha information into Strategy economics under realistic A-share constraints.
-
-**Technical scope**
-
-```text
-Entry / execution checkpoint
-Fillability
-Position sizing
-Top-K / weighting / cash
-T+1 and lot constraints
-Holding / Exit
-Turnover
-Cost / slippage
-Liquidity / impact / capacity
-Drawdown / exposure
-```
-
-Keep Portfolio simple until evidence requires more sophistication.
-
-**Dependencies**  
-A baseline or factor combination with credible predictive information.
-
-**Real market window required?**  
-No for historical simulation; yes for prospective economic proof.
-
-**Acceptance**
-
-- prediction metric and Strategy metric reported separately;
-- exact gross→cost→net reconciliation;
-- all assumptions carry provenance;
-- impossible fills/ambiguous path cases fail closed;
-- cost/turnover/capacity sensitivity reported;
-- Strategy Version identity changes when result-affecting policy changes.
-
-**System capability gained**  
-A Strategy Research Platform rather than a prediction-only platform.
-
----
-
-## WP-ATTRIBUTION-COMPRESSION-01 — Attribution and Architecture Compression
-
-**Current problem**  
-Strong engineering foundations coexist with legacy/compatibility shapes and decision layers whose business value may overlap.
-
-**Goal**  
-Use Golden Loop evidence to explain failure sources and safely reduce unnecessary architecture.
-
-**Attribution spine**
-
-```text
-Data / PIT
-Universe / Eligibility
-Context
-Ranking / Candidate
-Signal
-Forecast
-Entry
-Portfolio / Sizing
-Holding / Exit
-Cost / Slippage
-Execution / Fill
-```
-
-**Architecture inventory**
-
-```text
-parallel Runtime/writer
-unused interface/protocol
-Repository wrapper
-Receipt/Evidence wrapper
-legacy Candidate-to-Entry path
-duplicate Shadow/Portfolio shape
-obsolete compatibility reader
-stale documentation
-```
-
-**Real market window required?**  
-No for most work.
-
-**Acceptance**
-
-- failure diagnosis is usable by research/operator workflows;
-- each retained abstraction names its consumer/failure mode;
-- safe deletion has consumer inventory and replay/differential proof where compatibility matters;
-- no Big Bang rewrite.
-
-**System capability gained**  
-More research value with a smaller, clearer architecture surface.
-
----
-
-# P2 Work Package
-
-## WP-FORMAL-RESEARCH-01 — Formal PIT / Locked OOS / Calibration / Qualification
-
-**Current problem**  
-Formal engineering owners exist, but qualified source/PIT/OOS/calibration/economic evidence does not.
-
-**Goal**  
-Move only surviving exploratory hypotheses into formal qualification when required independent evidence is available.
-
-**Technical scope**  
-Qualified Provider facts, Formal PIT, frozen Dataset/Protocol, purge/embargo, untouched Locked OOS, multiplicity control, calibration where probability is claimed, economic/cost/capacity evidence and qualification decisions.
-
-**External dependency**  
-Yes — qualified historical/PIT evidence and untouched observations.
-
-**Acceptance**
-
-- no reuse of exploratory/OOS observations outside frozen policy;
-- every result-affecting owner resolved by exact identity/hash;
-- statistical and economic floors independently evaluated;
-- failure remains rejected/blocked rather than relaxed.
-
-**System capability gained**  
-Credible formal research claims rather than engineering-complete formal machinery.
-
----
-
-# P3 / Future Work Package
-
-## WP-CONTROLLED-EXECUTION-01 — Optional Controlled Broker Execution
-
-**Precondition**  
-Blueprint A has credible Alpha/Strategy/Prospective evidence and Manual production has a separately approved operational case for automation.
-
-**Scope**  
-Broker adapter, authenticated order Authority, preview, reconciliation, duplicate-order prevention, cancellation semantics, capital/risk limits, approval and kill switch.
-
-**Status**  
-`DEFERRED`. It is not required to complete the current Alpha Research OS.
-
----
-
-# Evidence gates between Work Packages
-
-```text
-Baseline has no ranking information
-→ do not jump to complex ML; revisit Target/Data/Features
-
-Candidate sample is starved
-→ diagnose gate/coverage before Forecast work
-
-Forecast remains NOT_ESTIMABLE
-→ diagnose sample/estimator/conditioning; do not lower the floor just to obtain output
-
-Gross economics negative
-→ return to Factor/Candidate/Target/Horizon
-
-Gross positive but Net negative
-→ prioritize Cost/Turnover/Liquidity/Entry/Portfolio
-
-In-sample discovery Gross and Net positive
-→ freeze disjoint external validation before Forecast/Strategy promotion
-
-Historical survives, prospective fails
-→ investigate leakage/stability/drift/availability before qualification
-```
-
----
-
-# Top 5 highest-value actions
-
-1. **WP-ALPHA-RESEARCH-02** — separately freeze time/Universe/Provider validation for the exact Price/Return challenger and its three intraday contributors; do not retune WP-01.
-2. **WP-PROSPECTIVE-01** — prepare/freeze the honest challenger cohort and start the future evidence clock when a live-origin market window and required data are available; historical replay cannot fill it.
-3. **WP-ATTRIBUTION-COMPRESSION-01** — preserve the four `RETEST` Gate dispositions and investigate whether session-constant Context owners express valid policy or redundant filtering; do not retire from non-estimability alone.
-4. **WP-STRATEGY-PROOF-01** — remain dependency-blocked until external Candidate evidence supports an executable action; do not promote in-sample discovery into Strategy economics.
-5. **WP-ALPHA-RESEARCH-01 maintenance** — keep its Experiment, supersession chain, Panel/Evaluation replay and full negative/`NOT_ESTIMABLE` output immutable.
-
-`WP-ATTRIBUTION-COMPRESSION-01` runs alongside these when the Golden Loop reveals redundant architecture.
-
----
-
-# Roadmap guardrails
-
-- Do not add a new top-level Runtime.
-- Do not introduce a new business Authority when an existing owner can preserve the invariant.
-- Do not treat engineering completion as Alpha proof.
-- Do not use Formal/OOS/Prospective labels without owner evidence.
-- Do not tune negative results until they become positive without creating a new frozen Experiment.
-- Do not build all Future Scope in one release.
-- Do not preserve an abstraction solely because it already exists.
-- Prefer one complete Work Package over many disconnected TODOs.
-
-After each Work Package, update `Current-State.md`, `Capability-Matrix.md`, `Gap-Register.md` and this Roadmap from the new executable/evidence baseline.
+After every Work Package, update Current State, Capability Matrix, Gap Register
+and this Roadmap from executable evidence rather than intended design.

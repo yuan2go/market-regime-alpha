@@ -2,7 +2,7 @@
 
 > **Status:** CURRENT_STATUS  
 > **Authority:** Current implementation/evidence summary  
-> **Repository Baseline:** `main@5a441746ada08eb08310b12e34d9e0f56f56a952`
+> **Repository Baseline:** `main@fc373696990ccdffe5e46a39778fdfedac3e0308`
 > **Strongest Research Evidence Revision:** `0d1a5a8` (WP-ALPHA-RESEARCH-01)
 > **Last Updated:** 2026-08-21
 > **Code Evidence:** `src/market_regime_alpha`, `src/market_regime_alpha/persistence/postgres/migrations/*.sql`, `tests`
@@ -22,10 +22,17 @@ target architecture.
 - **Physical Position truth:** observed effective manual Fills.
 - **Golden Loop V2 execution:** one immutable 126-session historical campaign at evidence revision `bcee87a` completed in an isolated PostgreSQL schema migrated from 084 through 090; exact replay and aggregate Evidence are recorded below.
 - **WP-ALPHA-RESEARCH-01 execution:** one final immutable 126-session methodology-only owner replay at revision `0d1a5a8`; run `historical-research-run-0e150a21c7869adc84a57af5`, exact report/replay and five PostgreSQL Evidence artifacts are complete.
-- **Current main validation:** the full local `pytest` suite passes at `5a44174`; six existing pandas fragmentation warnings come only from legacy Top-1000 backtesting tests.
+- **Current main validation:** PR #72 records local full-suite, documentation,
+  platform, ruff, mypy and build success for the merged WP-ALPHA-RESEARCH-01
+  tree. No GitHub Actions run exists for merge commit `fc37369`; CI supplies no
+  qualification for this exact merge baseline.
 - **WP-01 branch validation:** docs/platform/full pytest, ruff, mypy and build pass on a fresh PostgreSQL test database; a first full run against a heavily reused test database hit one `pg_catalog` autovacuum DDL lock timeout, while the exact node and the clean-database full suite both pass. This is retained as an environment failure, not hidden.
-- **Current CI:** GitHub Actions is disabled for the repository and `5a44174` has no check runs; this is `BLOCKED`, not CI proof.
+- **Current CI:** exact-merge CI is `NOT_RUN`, not CI proof.
 - **Database binding:** Runtime requires an explicit PostgreSQL URL and principal; a database name or stale schema does not establish current Authority. The replayable Golden V2 Evidence schema is at migration 090.
+- **Local implementation baseline:** Python 3.12.13, uv 0.11.7 and PostgreSQL
+  16.14. The packaged migration head is 090. A Golden V2 evidence database is
+  at migration 090; the default local application database is only at 055 and
+  is not evidence for the current schema.
 
 ## 2. Implemented engineering boundary
 
@@ -238,11 +245,27 @@ Engineering gaps remain, but they should be selected because they unblock this e
 
 ## 7. Current development posture
 
-`WP-ALPHA-RESEARCH-01` is complete. Its surviving Price/Return challenger makes
-`WP-ALPHA-RESEARCH-02 / External Validation` the next research design, but no
-time/Universe/Provider expansion has been mixed into WP-01. Conditional
-Forecast, Strategy and Portfolio expansion remain dependency-blocked until
-external Candidate evidence exists.
+`WP-ALPHA-RESEARCH-01` is complete. Its three unusually strong intraday results
+make independent correctness the next dependency, before External Validation.
+The registered physical normalized-data package is unavailable locally, so the
+current physical reproduction status is
+`PHYSICAL_REPRODUCTION_NOT_ESTABLISHED`; PostgreSQL owner reuse does not upgrade
+that status.
+
+The active engineering order is:
+
+```text
+WP-ALPHA-CORRECTNESS-01
+→ WP-ALPHA-RESEARCH-02
+→ WP-ALPHA-CONTEXT-01
+→ WP-CANDIDATE-POLICY-02
+→ WP-PREDICTION-01
+```
+
+No new External Dataset, large historical Campaign or prospective cohort is in
+scope for this implementation phase. Until separately executed evidence exists,
+external validation, Formal OOS, prospective proof, Strategy qualification and
+Production qualification remain false.
 
 The repository now moves through the **Alpha Proof Campaign**:
 
