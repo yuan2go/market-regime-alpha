@@ -17,6 +17,9 @@ from typing import Any, Mapping
 from market_regime_alpha.application.research_validation.common import (
     ValidationArtifactReference,
 )
+from market_regime_alpha.application.research_validation.formal_evaluation import (
+    moving_block_mean_interval,
+)
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.evidence.canonical import canonical_hash
 
@@ -438,28 +441,21 @@ def evaluate_robust_inference(
     if len(ordered) < max(protocol.block_lengths):
         raise ValueError("moving-block sample is shorter than the frozen block length")
     values = tuple(item.value for item in ordered)
-    estimate = _mean(values)
-    alpha = (Decimal("1") - protocol.confidence_level) / Decimal("2")
     sensitivity: list[BlockSensitivityEstimate] = []
     for block_length in protocol.block_lengths:
-        random = _random(protocol.seed, "MOVING_BLOCK", str(block_length))
-        draws: list[Decimal] = []
-        for _ in range(protocol.iterations):
-            sample: list[Decimal] = []
-            while len(sample) < len(values):
-                start = random.randrange(len(values))
-                sample.extend(
-                    values[(start + offset) % len(values)]
-                    for offset in range(block_length)
-                )
-            draws.append(_mean(tuple(sample[: len(values)])))
-        draws.sort()
+        estimate, lower, upper = moving_block_mean_interval(
+            values,
+            iterations=protocol.iterations,
+            block_sessions=block_length,
+            confidence_level=protocol.confidence_level,
+            seed=f"{protocol.seed}|ALPHA_CORRECTNESS|{block_length}",
+        )
         sensitivity.append(
             BlockSensitivityEstimate(
                 block_length,
                 estimate,
-                _quantile(draws, alpha),
-                _quantile(draws, Decimal("1") - alpha),
+                lower,
+                upper,
             )
         )
     midpoint = len(values) // 2
@@ -572,16 +568,6 @@ def _correlation(xs: tuple[Decimal, ...], ys: tuple[Decimal, ...]) -> Decimal | 
 
 def _mean(values: tuple[Decimal, ...]) -> Decimal:
     return sum(values, Decimal("0")) / Decimal(len(values))
-
-
-def _quantile(values: list[Decimal], probability: Decimal) -> Decimal:
-    if len(values) == 1:
-        return values[0]
-    position = probability * Decimal(len(values) - 1)
-    lower = int(position)
-    upper = min(lower + 1, len(values) - 1)
-    fraction = position - Decimal(lower)
-    return values[lower] * (Decimal("1") - fraction) + values[upper] * fraction
 
 
 def _random(seed: int, *parts: str) -> Random:

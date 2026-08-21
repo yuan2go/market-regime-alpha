@@ -21,6 +21,11 @@ from market_regime_alpha.application.historical_corpus.alpha_diagnostics import 
 from market_regime_alpha.application.research_validation.common import (
     ValidationArtifactReference,
 )
+from market_regime_alpha.application.research_validation.formal_protocol import (
+    HyperparameterDomain,
+    ResearchExperimentDefinition,
+    SearchBudget,
+)
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.evidence.canonical import canonical_hash
 
@@ -57,6 +62,9 @@ class FrozenAlphaHypothesis:
     candidate_scoring: str
     decision_time_policy: str
     target_reference: ValidationArtifactReference
+    feature_reference: ValidationArtifactReference
+    feature_version: str
+    cost_policy_reference: ValidationArtifactReference
     top_k: int
     cost_assumption: Decimal
     minimum_effect_retention: Decimal
@@ -97,6 +105,9 @@ class FrozenAlphaHypothesis:
         cost_assumption: Decimal,
         minimum_effect_retention: Decimal,
         minimum_coverage: Decimal,
+        feature_reference: ValidationArtifactReference,
+        feature_version: str,
+        cost_policy_reference: ValidationArtifactReference,
         bootstrap_iterations: int = 500,
         block_lengths: tuple[int, ...] = (1, 5, 10),
     ) -> FrozenAlphaHypothesis:
@@ -108,6 +119,9 @@ class FrozenAlphaHypothesis:
             "candidate_scoring": candidate_scoring,
             "decision_time_policy": decision_time_policy,
             "target_reference": target_reference.to_canonical_dict(),
+            "feature_reference": feature_reference.to_canonical_dict(),
+            "feature_version": feature_version,
+            "cost_policy_reference": cost_policy_reference.to_canonical_dict(),
             "top_k": top_k,
             "cost_assumption": str(cost_assumption),
             "minimum_effect_retention": str(minimum_effect_retention),
@@ -123,6 +137,9 @@ class FrozenAlphaHypothesis:
             candidate_scoring,
             decision_time_policy,
             target_reference,
+            feature_reference,
+            feature_version,
+            cost_policy_reference,
             top_k,
             cost_assumption,
             minimum_effect_retention,
@@ -144,6 +161,9 @@ class FrozenAlphaHypothesis:
             "candidate_scoring": self.candidate_scoring,
             "decision_time_policy": self.decision_time_policy,
             "target_reference": self.target_reference.to_canonical_dict(),
+            "feature_reference": self.feature_reference.to_canonical_dict(),
+            "feature_version": self.feature_version,
+            "cost_policy_reference": self.cost_policy_reference.to_canonical_dict(),
             "top_k": self.top_k,
             "cost_assumption": str(self.cost_assumption),
             "minimum_effect_retention": str(self.minimum_effect_retention),
@@ -164,6 +184,7 @@ class FrozenExternalValidationExperiment:
     validation_scope: ValidationScope
     dimension: ValidationDimension
     random_seed: int
+    experiment_definition: ResearchExperimentDefinition
     schema_version: str = "external-validation-experiment/v1"
 
     def __post_init__(self) -> None:
@@ -172,10 +193,11 @@ class FrozenExternalValidationExperiment:
         )
         if self.correctness_status is not AlphaCorrectnessStatus.CORRECTNESS_SUPPORTED:
             raise ValueError("external validation requires a correctness-supported hypothesis")
-        if canonical_hash(self.identity_payload()) != self.experiment_hash:
-            raise ValueError("external validation Experiment hash mismatch")
-        if str(self.experiment_id) != f"external-validation-experiment:{self.experiment_hash[7:]}":
-            raise ValueError("external validation Experiment identity mismatch")
+        if (
+            self.experiment_id != self.experiment_definition.definition_id
+            or self.experiment_hash != self.experiment_definition.definition_hash
+        ):
+            raise ValueError("external validation must use Research Experiment Definition authority")
 
     @classmethod
     def create(
@@ -189,21 +211,50 @@ class FrozenExternalValidationExperiment:
         dimension: ValidationDimension,
         random_seed: int,
     ) -> FrozenExternalValidationExperiment:
-        values = {
-            "schema_version": "external-validation-experiment/v1",
-            "hypothesis_reference": hypothesis.reference.to_canonical_dict(),
-            "hypothesis_definition": hypothesis.identity_payload(),
-            "correctness_evidence_reference": correctness_evidence_reference.to_canonical_dict(),
-            "correctness_status": correctness_status.value,
-            "discovery_scope": discovery_scope.to_canonical_dict(),
-            "validation_scope": validation_scope.to_canonical_dict(),
-            "dimension": dimension.value,
-            "random_seed": random_seed,
-        }
-        digest = canonical_hash(values)
+        definition = ResearchExperimentDefinition.create(
+            research_question=(
+                "Does the correctness-supported frozen Alpha retain its effect when "
+                f"only {dimension.value} changes?"
+            ),
+            hypothesis=(
+                "Factor definitions, direction, Candidate scoring, DecisionTime, Target, "
+                "Top-K, costs, thresholds and evaluation remain frozen."
+            ),
+            decision_time_policy=hypothesis.decision_time_policy,
+            target_references=(hypothesis.target_reference,),
+            feature_reference=hypothesis.feature_reference,
+            feature_version=hypothesis.feature_version,
+            allowed_model_families=("FROZEN_EXTERNAL_ALPHA_EVALUATOR",),
+            hyperparameter_space=_external_domains(
+                hypothesis=hypothesis,
+                correctness_evidence_reference=correctness_evidence_reference,
+                discovery_scope=discovery_scope,
+                validation_scope=validation_scope,
+                dimension=dimension,
+            ),
+            search_budget=SearchBudget(1, 300),
+            primary_hypothesis_ids=(
+                "EXTERNAL_VALIDATION:RANK_IC:V1",
+                "EXTERNAL_VALIDATION:TOP_K_NET:V1",
+            ),
+            secondary_hypothesis_ids=(
+                "EXTERNAL_VALIDATION:CAPACITY:V1",
+                "EXTERNAL_VALIDATION:EFFECT_RETENTION:V1",
+                "EXTERNAL_VALIDATION:TEMPORAL_STABILITY:V1",
+            ),
+            multiple_testing_family_id="WP_ALPHA_RESEARCH_02_FROZEN_V1",
+            stopping_rule="EXHAUST_FROZEN_VALIDATION_SCOPE_ONCE",
+            train_validation_policy="DISCOVERY_NEVER_REUSED_FOR_RETUNING",
+            purge_embargo_policy="TARGET_LINEAGE_MUST_PREDATE_EVALUATION_AVAILABILITY",
+            oos_unlock_policy="FORMAL_OOS_LOCKED_CLOSED",
+            randomness_algorithm="DETERMINISTIC_FROZEN_SEED",
+            random_seeds=(random_seed,),
+            cost_policy_reference=hypothesis.cost_policy_reference,
+            schema_version="research-experiment-definition/v2",
+        )
         return cls(
-            ArtifactId(f"external-validation-experiment:{digest[7:]}"),
-            digest,
+            definition.definition_id,
+            definition.definition_hash,
             hypothesis,
             correctness_evidence_reference,
             correctness_status,
@@ -211,26 +262,17 @@ class FrozenExternalValidationExperiment:
             validation_scope,
             dimension,
             random_seed,
+            definition,
         )
 
     @property
     def reference(self) -> ValidationArtifactReference:
         return ValidationArtifactReference(
-            "EXTERNAL_VALIDATION_EXPERIMENT", self.experiment_id, self.experiment_hash
+            "RESEARCH_EXPERIMENT_DEFINITION", self.experiment_id, self.experiment_hash
         )
 
     def identity_payload(self) -> dict[str, Any]:
-        return {
-            "schema_version": self.schema_version,
-            "hypothesis_reference": self.hypothesis.reference.to_canonical_dict(),
-            "hypothesis_definition": self.hypothesis.identity_payload(),
-            "correctness_evidence_reference": self.correctness_evidence_reference.to_canonical_dict(),
-            "correctness_status": self.correctness_status.value,
-            "discovery_scope": self.discovery_scope.to_canonical_dict(),
-            "validation_scope": self.validation_scope.to_canonical_dict(),
-            "dimension": self.dimension.value,
-            "random_seed": self.random_seed,
-        }
+        return self.experiment_definition.identity_payload()
 
 
 @dataclass(frozen=True, slots=True)
@@ -389,6 +431,51 @@ def evaluate_external_validation(
         False,
         limitations,
     )
+
+
+def _external_domains(
+    *,
+    hypothesis: FrozenAlphaHypothesis,
+    correctness_evidence_reference: ValidationArtifactReference,
+    discovery_scope: ValidationScope,
+    validation_scope: ValidationScope,
+    dimension: ValidationDimension,
+) -> tuple[HyperparameterDomain, ...]:
+    domains = (
+        HyperparameterDomain(
+            "candidate_scoring", (hypothesis.candidate_scoring,)
+        ),
+        HyperparameterDomain(
+            "correctness_evidence",
+            (
+                f"{correctness_evidence_reference.artifact_kind}|"
+                f"{correctness_evidence_reference.artifact_id}|"
+                f"{correctness_evidence_reference.content_hash}",
+            ),
+        ),
+        HyperparameterDomain(
+            "discovery_scope_hash", (canonical_hash(discovery_scope.to_canonical_dict()),)
+        ),
+        HyperparameterDomain(
+            "factor_directions",
+            tuple(
+                sorted(f"{factor}|{direction}" for factor, direction in hypothesis.factor_directions)
+            ),
+        ),
+        HyperparameterDomain(
+            "minimum_coverage", (str(hypothesis.minimum_coverage),)
+        ),
+        HyperparameterDomain(
+            "minimum_effect_retention",
+            (str(hypothesis.minimum_effect_retention),),
+        ),
+        HyperparameterDomain("top_k", (str(hypothesis.top_k),)),
+        HyperparameterDomain("validation_dimension", (dimension.value,)),
+        HyperparameterDomain(
+            "validation_scope_hash", (canonical_hash(validation_scope.to_canonical_dict()),)
+        ),
+    )
+    return tuple(sorted(domains, key=lambda item: item.parameter_name))
 
 
 def _require_isolated_dimension(

@@ -194,6 +194,40 @@ def test_t_plus_one_target_rejects_same_session_and_future_feature_lineage() -> 
         )
 
 
+def test_t_plus_one_target_requires_complete_open_to_checkpoint_window() -> None:
+    decision_bar = _bar(
+        SESSION,
+        time(14, 50),
+        open_price="11.9",
+        close="12",
+        volume="100",
+    )
+    incomplete = tuple(
+        _bar(
+            NEXT_SESSION,
+            (
+                datetime.combine(NEXT_SESSION, time(9, 35))
+                + timedelta(minutes=5 * index)
+            ).time(),
+            open_price="13",
+            close="13",
+            volume="100",
+            row=200 + index,
+        )
+        for index in range(11)
+    )
+
+    with pytest.raises(ValueError, match="checkpoint is incomplete"):
+        reproduce_t_plus_one_1030_target(
+            symbol="600000.SH",
+            decision_time=DECISION_TIME,
+            next_session=NEXT_SESSION,
+            source_bars=(decision_bar, *incomplete),
+            persisted=None,
+            physical_source_available=True,
+        )
+
+
 def _bar(
     market_date: date,
     start_time: time,

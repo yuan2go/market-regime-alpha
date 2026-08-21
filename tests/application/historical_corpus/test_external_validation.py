@@ -44,6 +44,11 @@ def _hypothesis() -> FrozenAlphaHypothesis:
         cost_assumption=Decimal("0.001"),
         minimum_effect_retention=Decimal("0.5"),
         minimum_coverage=Decimal("0.8"),
+        feature_reference=_ref("FEATURE_SET_CONFIGURATION", "feature-a"),
+        feature_version="intraday-alpha-v1",
+        cost_policy_reference=_ref(
+            "HISTORICAL_STRATEGY_ECONOMICS_POLICY_SET", "cost-a"
+        ),
     )
 
 
@@ -67,6 +72,7 @@ def test_external_experiment_freezes_hypothesis_and_one_dimension() -> None:
     )
 
     assert experiment.experiment_hash.startswith("sha256:")
+    assert experiment.reference.artifact_kind == "RESEARCH_EXPERIMENT_DEFINITION"
     assert experiment.hypothesis.minimum_effect_retention == Decimal("0.5")
 
 

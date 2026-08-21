@@ -281,6 +281,8 @@ def reproduce_t_plus_one_1030_target(
     )
     if not decision_bars:
         raise ValueError("Decision reference bar is unavailable")
+    if decision_bars[-1].event_end != decision_time:
+        raise ValueError("Decision reference checkpoint is incomplete")
     checkpoint = datetime.combine(next_session, time(10, 30), _SHANGHAI).astimezone(
         decision_time.tzinfo
     )
@@ -296,7 +298,14 @@ def reproduce_t_plus_one_1030_target(
             and item.event_end <= checkpoint
         )
     )
-    if not target_bars or target_bars[-1].event_end != checkpoint:
+    target_start = datetime.combine(
+        next_session, time(9, 30), _SHANGHAI
+    ).astimezone(decision_time.tzinfo)
+    if (
+        not target_bars
+        or target_bars[0].event_start != target_start
+        or target_bars[-1].event_end != checkpoint
+    ):
         raise ValueError("T+1 10:30 checkpoint is incomplete")
     if any(left.event_end != right.event_start for left, right in zip(target_bars, target_bars[1:], strict=False)):
         raise ValueError("T+1 checkpoint bars are not contiguous")
