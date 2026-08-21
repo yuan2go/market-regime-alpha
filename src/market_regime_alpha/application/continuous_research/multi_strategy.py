@@ -25,6 +25,7 @@ from market_regime_alpha.market_data.contracts import Timeframe
 from market_regime_alpha.market_data.dataset import MarketDataDatasetArtifact
 from market_regime_alpha.research.candidate_discovery.contracts import CandidateSet
 from market_regime_alpha.strategies.contracts import (
+    StrategyOpportunityInput,
     StrategyPositionState,
     StrategyDecisionPrice,
     StrategyRunOrigin,
@@ -68,6 +69,7 @@ class MultiStrategyContinuousAdapter:
         dataset_reference: RuntimeArtifactReference,
         upstream: ChildExecutionResult,
         decision_price_dataset: MarketDataDatasetArtifact | None = None,
+        opportunities: tuple[StrategyOpportunityInput, ...] = (),
     ) -> ChildExecutionResult:
         registry = self._repository.load_registry()
         strategy_request = _with_upstream_result(
@@ -131,6 +133,7 @@ class MultiStrategyContinuousAdapter:
                     decision_time=request.as_of_time,
                 )
             ),
+            opportunities=opportunities,
         )
         cycle = self._repository.save_cycle(MultiStrategyRuntime(registry).execute(runtime_input))
         portfolio = self._repository.save_portfolio(

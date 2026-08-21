@@ -17,6 +17,7 @@ from market_regime_alpha.strategies.contracts import (
     PortfolioWeightingMethod,
     StrategyContract,
     StrategyFamily,
+    StrategyForecastRequirement,
     StrategyRegistry,
     StrategyVersion,
 )
@@ -101,6 +102,7 @@ def canonical_exploratory_strategy_registry() -> StrategyRegistry:
         configuration_reference=configuration_reference,
         parameters=(("minimum_entry_score", "0"),),
         limitations=limitations,
+        forecast_requirement=StrategyForecastRequirement.FORECAST_NOT_REQUIRED,
     )
     swing = StrategyContract.create(
         strategy_id=StrategyId("swing-state-canonical"),
@@ -141,6 +143,7 @@ def canonical_exploratory_strategy_registry() -> StrategyRegistry:
             ("stop_loss", "0.08"),
         ),
         limitations=limitations,
+        forecast_requirement=StrategyForecastRequirement.FORECAST_NOT_REQUIRED,
     )
     contracts = (overnight, swing)
     return StrategyRegistry.create(

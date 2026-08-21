@@ -22,6 +22,8 @@ from market_regime_alpha.strategies.contracts import (
     StrategyContract,
     StrategyEligibilityStatus,
     StrategyFamily,
+    StrategyForecastRequirement,
+    StrategyOpportunityInput,
     StrategyPositionState,
     StrategyProposal,
     StrategyRegistry,
@@ -57,6 +59,7 @@ class _StrategyPolicy:
         candidate: CandidateRecord | None,
         position: StrategyPositionState | None,
         eligibility: _Eligibility,
+        opportunity: StrategyOpportunityInput | None,
     ) -> _PolicyDecision:
         raise NotImplementedError
 
@@ -69,8 +72,9 @@ class _OvernightPolicy(_StrategyPolicy):
         candidate: CandidateRecord | None,
         position: StrategyPositionState | None,
         eligibility: _Eligibility,
+        opportunity: StrategyOpportunityInput | None,
     ) -> _PolicyDecision:
-        del candidate
+        del candidate, opportunity
         unit_weight = contract.strategy_budget / Decimal(contract.top_k)
         if position is not None and position.sessions_held >= max(contract.horizon_sessions):
             return _PolicyDecision(
@@ -105,8 +109,9 @@ class _SwingStatePolicy(_StrategyPolicy):
         candidate: CandidateRecord | None,
         position: StrategyPositionState | None,
         eligibility: _Eligibility,
+        opportunity: StrategyOpportunityInput | None,
     ) -> _PolicyDecision:
-        del candidate
+        del candidate, opportunity
         parameters = dict(contract.parameters)
         unit_weight = contract.strategy_budget / Decimal(contract.top_k)
         if position is None:
@@ -180,6 +185,60 @@ class _SwingStatePolicy(_StrategyPolicy):
         )
 
 
+class _ConditionalPredictionPolicy(_StrategyPolicy):
+    def decide(
+        self,
+        *,
+        contract: StrategyContract,
+        candidate: CandidateRecord | None,
+        position: StrategyPositionState | None,
+        eligibility: _Eligibility,
+        opportunity: StrategyOpportunityInput | None,
+    ) -> _PolicyDecision:
+        del candidate
+        if position is not None:
+            return _PolicyDecision(
+                CanonicalStrategyAction.HOLD,
+                Decimal("0"),
+                ("CONDITIONAL_POSITION_MANAGED_BY_EXPLICIT_EXIT_POLICY",),
+            )
+        if eligibility.status is not StrategyEligibilityStatus.ELIGIBLE:
+            return _PolicyDecision(
+                CanonicalStrategyAction.NO_ACTION,
+                Decimal("0"),
+                ("CONDITIONAL_ENTRY_NOT_ELIGIBLE",),
+            )
+        if opportunity is None or opportunity.expected_return is None:
+            return _PolicyDecision(
+                CanonicalStrategyAction.NO_ACTION,
+                Decimal("0"),
+                ("CONDITIONAL_FORECAST_NOT_ESTIMABLE",),
+            )
+        parameters = dict(contract.parameters)
+        minimum_return = Decimal(parameters.get("minimum_expected_return", "0"))
+        maximum_uncertainty = Decimal(parameters.get("maximum_uncertainty", "1"))
+        if opportunity.expected_return < minimum_return:
+            return _PolicyDecision(
+                CanonicalStrategyAction.NO_ACTION,
+                Decimal("0"),
+                ("CONDITIONAL_EXPECTED_RETURN_BELOW_THRESHOLD",),
+            )
+        if (
+            opportunity.prediction_uncertainty is None
+            or opportunity.prediction_uncertainty > maximum_uncertainty
+        ):
+            return _PolicyDecision(
+                CanonicalStrategyAction.NO_ACTION,
+                Decimal("0"),
+                ("CONDITIONAL_PREDICTION_UNCERTAINTY_EXCEEDED",),
+            )
+        return _PolicyDecision(
+            CanonicalStrategyAction.ENTER,
+            contract.strategy_budget / Decimal(contract.top_k),
+            ("CONDITIONAL_PREDICTION_ENTRY_ELIGIBLE",),
+        )
+
+
 class MultiStrategyRuntime:
     """Runs every active Strategy Version without owning the control plane."""
 
@@ -188,6 +247,7 @@ class MultiStrategyRuntime:
         self._policies: dict[StrategyFamily, _StrategyPolicy] = {
             StrategyFamily.OVERNIGHT: _OvernightPolicy(),
             StrategyFamily.SWING_STATE: _SwingStatePolicy(),
+            StrategyFamily.CONDITIONAL_PREDICTION: _ConditionalPredictionPolicy(),
         }
 
     def execute(self, runtime_input: StrategyRuntimeInput) -> MultiStrategyCycle:
@@ -229,17 +289,34 @@ class MultiStrategyRuntime:
         contract = self._registry.contract_for(version)
         run_id = StrategyRun.identity(cycle_id, version)
         positions = {item.symbol: item for item in runtime_input.positions if item.strategy_version_id == version.version_id}
+        opportunities = {
+            item.symbol: item for item in (runtime_input.opportunities or ())
+        }
+        if contract.forecast_requirement is StrategyForecastRequirement.FORECAST_REQUIRED:
+            missing = tuple(
+                item.symbol
+                for item in runtime_input.candidate_set.records
+                if item.selection_status is CandidateSelectionStatus.SELECTED
+                and item.symbol not in opportunities
+            )
+            if missing:
+                raise ValueError(
+                    "FORECAST_REQUIRED Strategy input is missing Signal/Forecast lineage: "
+                    + ",".join(sorted(missing))
+                )
         symbols = tuple(sorted(set(candidates) | set(positions)))
         gates: list[GateAttribution] = []
         proposals: list[StrategyProposal] = []
         for symbol in symbols:
             candidate = candidates.get(symbol)
-            eligibility = _eligibility(candidate, contract)
+            opportunity = opportunities.get(symbol)
+            eligibility = _eligibility(candidate, contract, opportunity)
             decision = self._policies[version.family].decide(
                 contract=contract,
                 candidate=candidate,
                 position=positions.get(symbol),
                 eligibility=eligibility,
+                opportunity=opportunity,
             )
             reason_codes = tuple(sorted(set(eligibility.reason_codes + decision.reason_codes)))
             gates.append(
@@ -268,7 +345,10 @@ class MultiStrategyRuntime:
                         action=decision.action,
                         desired_weight=decision.desired_weight,
                         utility_score=(
-                            None
+                            opportunity.expected_return
+                            if opportunity is not None
+                            and opportunity.expected_return is not None
+                            else None
                             if candidate is None or candidate.candidate_discovery_score is None
                             else Decimal(str(candidate.candidate_discovery_score))
                         ),
@@ -312,6 +392,7 @@ class MultiStrategyRuntime:
 def _eligibility(
     candidate: CandidateRecord | None,
     contract: StrategyContract,
+    opportunity: StrategyOpportunityInput | None,
 ) -> _Eligibility:
     if candidate is None:
         return _Eligibility(
@@ -338,6 +419,22 @@ def _eligibility(
             StrategyEligibilityStatus.INELIGIBLE,
             ("STRATEGY_TOP_K_EXCLUDED",),
         )
+    if contract.forecast_requirement is StrategyForecastRequirement.FORECAST_REQUIRED:
+        if opportunity is None:
+            return _Eligibility(
+                StrategyEligibilityStatus.NOT_ESTIMABLE,
+                ("SIGNAL_FORECAST_CONTEXT_RISK_MODEL_LINEAGE_REQUIRED",),
+            )
+        if not opportunity.signal_active:
+            return _Eligibility(
+                StrategyEligibilityStatus.INELIGIBLE,
+                ("SIGNAL_NOT_ACTIVE",),
+            )
+        if opportunity.expected_return is None:
+            return _Eligibility(
+                StrategyEligibilityStatus.NOT_ESTIMABLE,
+                ("FORECAST_DATA_INSUFFICIENT",),
+            )
     minimum_score = Decimal(dict(contract.parameters).get("minimum_entry_score", "0"))
     if Decimal(str(candidate.candidate_discovery_score)) < minimum_score:
         return _Eligibility(

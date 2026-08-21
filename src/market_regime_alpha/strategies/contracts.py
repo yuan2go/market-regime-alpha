@@ -31,6 +31,12 @@ from market_regime_alpha.research.candidate_discovery.contracts import Candidate
 class StrategyFamily(str, Enum):
     OVERNIGHT = "OVERNIGHT"
     SWING_STATE = "SWING_STATE"
+    CONDITIONAL_PREDICTION = "CONDITIONAL_PREDICTION"
+
+
+class StrategyForecastRequirement(str, Enum):
+    FORECAST_REQUIRED = "FORECAST_REQUIRED"
+    FORECAST_NOT_REQUIRED = "FORECAST_NOT_REQUIRED"
 
 
 class CanonicalStrategyAction(str, Enum):
@@ -94,11 +100,20 @@ class StrategyContract:
     configuration_reference: RuntimeArtifactReference
     parameters: tuple[tuple[str, str], ...]
     limitations: tuple[str, ...]
-    schema_version: str = "strategy-contract/v1"
+    forecast_requirement: StrategyForecastRequirement = (
+        StrategyForecastRequirement.FORECAST_NOT_REQUIRED
+    )
+    schema_version: str = "strategy-contract/v2"
 
     def __post_init__(self) -> None:
-        if self.schema_version != "strategy-contract/v1":
+        if self.schema_version not in {"strategy-contract/v1", "strategy-contract/v2"}:
             raise ValueError("unsupported Strategy Contract schema")
+        if (
+            self.schema_version == "strategy-contract/v1"
+            and self.forecast_requirement
+            is not StrategyForecastRequirement.FORECAST_NOT_REQUIRED
+        ):
+            raise ValueError("legacy Strategy Contract cannot require Forecast")
         require_sha256("contract_hash", self.contract_hash)
         for label, value in (
             ("semantic_version", self.semantic_version),
@@ -136,7 +151,11 @@ class StrategyContract:
         normalized["horizon_sessions"] = tuple(sorted(set(values["horizon_sessions"])))
         normalized["parameters"] = tuple(sorted(set(values["parameters"])))
         normalized["limitations"] = tuple(sorted(set(values["limitations"])))
-        normalized.setdefault("schema_version", "strategy-contract/v1")
+        normalized.setdefault(
+            "forecast_requirement",
+            StrategyForecastRequirement.FORECAST_NOT_REQUIRED,
+        )
+        normalized.setdefault("schema_version", "strategy-contract/v2")
         payload = _contract_payload(**normalized)
         digest = canonical_hash(payload)
         return cls(
@@ -179,6 +198,14 @@ class StrategyContract:
             configuration_reference=_reference(payload["configuration_reference"]),
             parameters=_pairs(payload["parameters"]),
             limitations=_strings(payload["limitations"]),
+            forecast_requirement=StrategyForecastRequirement(
+                str(
+                    payload.get(
+                        "forecast_requirement",
+                        StrategyForecastRequirement.FORECAST_NOT_REQUIRED.value,
+                    )
+                )
+            ),
             schema_version=str(payload["schema_version"]),
         )
 
@@ -718,6 +745,78 @@ class StrategyDecisionPrice:
 
 
 @dataclass(frozen=True, slots=True)
+class StrategyOpportunityInput:
+    """Symbol-level Signal/Forecast/Context/Risk/Model lineage consumed by Strategy."""
+
+    symbol: str
+    signal_reference: RuntimeArtifactReference
+    forecast_reference: RuntimeArtifactReference
+    context_reference: RuntimeArtifactReference
+    risk_state_reference: RuntimeArtifactReference
+    model_reference: RuntimeArtifactReference
+    signal_active: bool
+    expected_return: Decimal | None
+    prediction_uncertainty: Decimal | None
+    calibration_status: str
+
+    def __post_init__(self) -> None:
+        require_text("symbol", self.symbol)
+        if self.calibration_status not in {
+            "NOT_CALIBRATED",
+            "CALIBRATED_EXPLORATORY",
+            "DATA_INSUFFICIENT",
+        }:
+            raise ValueError("unsupported Strategy Forecast calibration status")
+        if self.prediction_uncertainty is not None and self.prediction_uncertainty < 0:
+            raise ValueError("Strategy prediction uncertainty cannot be negative")
+        if self.expected_return is None and self.calibration_status != "DATA_INSUFFICIENT":
+            raise ValueError("available Strategy Forecast requires expected return")
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        return {
+            "symbol": self.symbol,
+            "signal_reference": self.signal_reference.to_canonical_dict(),
+            "forecast_reference": self.forecast_reference.to_canonical_dict(),
+            "context_reference": self.context_reference.to_canonical_dict(),
+            "risk_state_reference": self.risk_state_reference.to_canonical_dict(),
+            "model_reference": self.model_reference.to_canonical_dict(),
+            "signal_active": self.signal_active,
+            "expected_return": (
+                None if self.expected_return is None else str(self.expected_return)
+            ),
+            "prediction_uncertainty": (
+                None
+                if self.prediction_uncertainty is None
+                else str(self.prediction_uncertainty)
+            ),
+            "calibration_status": self.calibration_status,
+        }
+
+    @classmethod
+    def from_canonical_dict(
+        cls, payload: Mapping[str, Any]
+    ) -> StrategyOpportunityInput:
+        expected_return = payload["expected_return"]
+        uncertainty = payload["prediction_uncertainty"]
+        return cls(
+            symbol=str(payload["symbol"]),
+            signal_reference=_reference(payload["signal_reference"]),
+            forecast_reference=_reference(payload["forecast_reference"]),
+            context_reference=_reference(payload["context_reference"]),
+            risk_state_reference=_reference(payload["risk_state_reference"]),
+            model_reference=_reference(payload["model_reference"]),
+            signal_active=bool(payload["signal_active"]),
+            expected_return=(
+                None if expected_return is None else Decimal(str(expected_return))
+            ),
+            prediction_uncertainty=(
+                None if uncertainty is None else Decimal(str(uncertainty))
+            ),
+            calibration_status=str(payload["calibration_status"]),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class StrategyRuntimeInput:
     origin: StrategyRunOrigin
     authority_mode: RuntimeAuthorityMode
@@ -730,6 +829,7 @@ class StrategyRuntimeInput:
     code_reference: RuntimeArtifactReference
     configuration_reference: RuntimeArtifactReference
     decision_prices: tuple[StrategyDecisionPrice, ...] | None = ()
+    opportunities: tuple[StrategyOpportunityInput, ...] | None = ()
 
     def __post_init__(self) -> None:
         canonical_datetime(self.decision_time)
@@ -748,6 +848,13 @@ class StrategyRuntimeInput:
             for item in prices
         ):
             raise ValueError("Strategy decision price must be available and fresh at decision time")
+        opportunities = self.opportunities or ()
+        opportunity_symbols = tuple(item.symbol for item in opportunities)
+        if opportunity_symbols != tuple(sorted(set(opportunity_symbols))):
+            raise ValueError("Strategy opportunities must be unique and sorted")
+        candidate_symbols = {item.symbol for item in self.candidate_set.records}
+        if any(item.symbol not in candidate_symbols for item in opportunities):
+            raise ValueError("Strategy opportunity must belong to the Candidate set")
         self.candidate_set.envelope.verify_payload(self.candidate_set.artifact_payload())
 
     @property
@@ -769,6 +876,10 @@ class StrategyRuntimeInput:
         }
         if self.decision_prices is not None:
             payload["decision_prices"] = [item.to_canonical_dict() for item in self.decision_prices]
+        if self.opportunities is not None:
+            payload["opportunities"] = [
+                item.to_canonical_dict() for item in self.opportunities
+            ]
         return payload
 
     @classmethod
@@ -789,6 +900,14 @@ class StrategyRuntimeInput:
                 None
                 if "decision_prices" not in payload
                 else tuple(StrategyDecisionPrice.from_canonical_dict(_mapping(item)) for item in _sequence(payload["decision_prices"]))
+            ),
+            opportunities=(
+                None
+                if "opportunities" not in payload
+                else tuple(
+                    StrategyOpportunityInput.from_canonical_dict(_mapping(item))
+                    for item in _sequence(payload["opportunities"])
+                )
             ),
         )
 
@@ -1124,12 +1243,13 @@ def _contract_fields() -> tuple[str, ...]:
         "configuration_reference",
         "parameters",
         "limitations",
+        "forecast_requirement",
         "schema_version",
     )
 
 
 def _contract_payload(**values: Any) -> dict[str, Any]:
-    return {
+    payload = {
         "schema_version": values["schema_version"],
         "strategy_id": str(values["strategy_id"]),
         "family": values["family"].value,
@@ -1151,6 +1271,9 @@ def _contract_payload(**values: Any) -> dict[str, Any]:
         "parameters": [list(item) for item in values["parameters"]],
         "limitations": list(values["limitations"]),
     }
+    if values["schema_version"] == "strategy-contract/v2":
+        payload["forecast_requirement"] = values["forecast_requirement"].value
+    return payload
 
 
 def _strategy_version_payload(**values: Any) -> dict[str, Any]:
@@ -1293,6 +1416,8 @@ __all__ = [
     "StrategyDecisionPrice",
     "StrategyEligibilityStatus",
     "StrategyFamily",
+    "StrategyForecastRequirement",
+    "StrategyOpportunityInput",
     "StrategyPositionState",
     "StrategyProposal",
     "StrategyRegistry",
