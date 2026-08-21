@@ -31,6 +31,12 @@ from market_regime_alpha.research.candidate_discovery.contracts import Candidate
 class StrategyFamily(str, Enum):
     OVERNIGHT = "OVERNIGHT"
     SWING_STATE = "SWING_STATE"
+    CONDITIONAL_PREDICTION = "CONDITIONAL_PREDICTION"
+
+
+class StrategyForecastRequirement(str, Enum):
+    FORECAST_REQUIRED = "FORECAST_REQUIRED"
+    FORECAST_NOT_REQUIRED = "FORECAST_NOT_REQUIRED"
 
 
 class CanonicalStrategyAction(str, Enum):
@@ -94,11 +100,34 @@ class StrategyContract:
     configuration_reference: RuntimeArtifactReference
     parameters: tuple[tuple[str, str], ...]
     limitations: tuple[str, ...]
-    schema_version: str = "strategy-contract/v1"
+    forecast_requirement: StrategyForecastRequirement = (
+        StrategyForecastRequirement.FORECAST_NOT_REQUIRED
+    )
+    schema_version: str = "strategy-contract/v2"
 
     def __post_init__(self) -> None:
-        if self.schema_version != "strategy-contract/v1":
+        if self.schema_version not in {"strategy-contract/v1", "strategy-contract/v2"}:
             raise ValueError("unsupported Strategy Contract schema")
+        if (
+            self.schema_version == "strategy-contract/v1"
+            and self.forecast_requirement
+            is not StrategyForecastRequirement.FORECAST_NOT_REQUIRED
+        ):
+            raise ValueError("legacy Strategy Contract cannot require Forecast")
+        if (
+            self.family is StrategyFamily.CONDITIONAL_PREDICTION
+            and self.forecast_requirement
+            is not StrategyForecastRequirement.FORECAST_REQUIRED
+        ):
+            raise ValueError("Conditional Prediction Strategy requires Forecast")
+        if (
+            self.family is not StrategyFamily.CONDITIONAL_PREDICTION
+            and self.forecast_requirement
+            is not StrategyForecastRequirement.FORECAST_NOT_REQUIRED
+        ):
+            raise ValueError(
+                "non-conditional Strategy must declare FORECAST_NOT_REQUIRED"
+            )
         require_sha256("contract_hash", self.contract_hash)
         for label, value in (
             ("semantic_version", self.semantic_version),
@@ -136,7 +165,19 @@ class StrategyContract:
         normalized["horizon_sessions"] = tuple(sorted(set(values["horizon_sessions"])))
         normalized["parameters"] = tuple(sorted(set(values["parameters"])))
         normalized["limitations"] = tuple(sorted(set(values["limitations"])))
-        normalized.setdefault("schema_version", "strategy-contract/v1")
+        forecast_requirement_was_explicit = "forecast_requirement" in normalized
+        normalized.setdefault(
+            "forecast_requirement",
+            StrategyForecastRequirement.FORECAST_NOT_REQUIRED,
+        )
+        # Preserve the content-addressed identities of already registered incumbent
+        # contracts.  V2 is selected only by an explicit Forecast declaration.
+        normalized.setdefault(
+            "schema_version",
+            "strategy-contract/v2"
+            if forecast_requirement_was_explicit
+            else "strategy-contract/v1",
+        )
         payload = _contract_payload(**normalized)
         digest = canonical_hash(payload)
         return cls(
@@ -179,6 +220,14 @@ class StrategyContract:
             configuration_reference=_reference(payload["configuration_reference"]),
             parameters=_pairs(payload["parameters"]),
             limitations=_strings(payload["limitations"]),
+            forecast_requirement=StrategyForecastRequirement(
+                str(
+                    payload.get(
+                        "forecast_requirement",
+                        StrategyForecastRequirement.FORECAST_NOT_REQUIRED.value,
+                    )
+                )
+            ),
             schema_version=str(payload["schema_version"]),
         )
 
@@ -597,6 +646,35 @@ def _strategy_position_payload(**values: Any) -> dict[str, Any]:
     return payload
 
 
+def _strategy_opportunity_payload(**values: Any) -> dict[str, Any]:
+    expected_return = values["expected_return"]
+    prediction_uncertainty = values["prediction_uncertainty"]
+    return {
+        "symbol": values["symbol"],
+        "strategy_version_reference": values[
+            "strategy_version_reference"
+        ].to_canonical_dict(),
+        "candidate_reference": values["candidate_reference"].to_canonical_dict(),
+        "decision_time": canonical_datetime(values["decision_time"]),
+        "signal_reference": values["signal_reference"].to_canonical_dict(),
+        "forecast_reference": values["forecast_reference"].to_canonical_dict(),
+        "context_reference": values["context_reference"].to_canonical_dict(),
+        "risk_state_reference": values["risk_state_reference"].to_canonical_dict(),
+        "model_reference": values["model_reference"].to_canonical_dict(),
+        "signal_active": values["signal_active"],
+        "risk_allows_action": values["risk_allows_action"],
+        "risk_reason_codes": list(values["risk_reason_codes"]),
+        "expected_return": (
+            None if expected_return is None else str(expected_return)
+        ),
+        "prediction_uncertainty": (
+            None if prediction_uncertainty is None else str(prediction_uncertainty)
+        ),
+        "calibration_status": values["calibration_status"],
+        "available_at": canonical_datetime(values["available_at"]),
+    }
+
+
 @dataclass(frozen=True, slots=True)
 class StrategyDecisionPrice:
     """Frozen decision-time projection with its reloadable Dataset owner."""
@@ -718,6 +796,153 @@ class StrategyDecisionPrice:
 
 
 @dataclass(frozen=True, slots=True)
+class StrategyOpportunityInput:
+    """Symbol-level Signal/Forecast/Context/Risk/Model lineage consumed by Strategy."""
+
+    symbol: str
+    strategy_version_reference: RuntimeArtifactReference
+    candidate_reference: RuntimeArtifactReference
+    decision_time: datetime
+    signal_reference: RuntimeArtifactReference
+    forecast_reference: RuntimeArtifactReference
+    context_reference: RuntimeArtifactReference
+    risk_state_reference: RuntimeArtifactReference
+    model_reference: RuntimeArtifactReference
+    signal_active: bool
+    risk_allows_action: bool
+    risk_reason_codes: tuple[str, ...]
+    expected_return: Decimal | None
+    prediction_uncertainty: Decimal | None
+    calibration_status: str
+    available_at: datetime
+    binding_hash: str
+
+    def __post_init__(self) -> None:
+        require_text("symbol", self.symbol)
+        canonical_datetime(self.decision_time)
+        canonical_datetime(self.available_at)
+        if self.available_at > self.decision_time:
+            raise ValueError("Strategy opportunity lineage is unavailable at DecisionTime")
+        expected_kinds = {
+            "strategy_version_reference": {"STRATEGY_VERSION"},
+            "candidate_reference": {"CANDIDATE_SET"},
+            "signal_reference": {
+                "SIGNAL_SNAPSHOT",
+                "CANONICAL_SIGNAL_SNAPSHOT",
+                "HISTORICAL_SIGNAL",
+            },
+            "forecast_reference": {
+                "PATH_FORECAST",
+                "CONDITIONAL_FORECAST_RESULT",
+                "HISTORICAL_FORECAST",
+            },
+            "context_reference": {
+                "CONTEXT_CONDITIONAL_EVALUATION",
+                "HISTORICAL_CONTEXT_CONDITIONAL_EVIDENCE",
+                "HISTORICAL_CONTEXT",
+            },
+            "risk_state_reference": {
+                "RISK_STATE",
+                "HISTORICAL_RISK_STATE",
+                "COMPLETE_ACCOUNT_RISK_DECISION",
+            },
+            "model_reference": {
+                "CONDITIONAL_FORECAST_MODEL",
+                "MODEL_VERSION",
+                "PATH_FORECAST",
+                "RESEARCH_MODEL_ARTIFACT",
+            },
+        }
+        for field_name, kinds in expected_kinds.items():
+            reference = getattr(self, field_name)
+            if reference.reference_kind not in kinds:
+                raise ValueError(f"Strategy opportunity {field_name} kind is invalid")
+        if self.calibration_status not in {
+            "NOT_CALIBRATED",
+            "CALIBRATED_EXPLORATORY",
+            "DATA_INSUFFICIENT",
+        }:
+            raise ValueError("unsupported Strategy Forecast calibration status")
+        if self.prediction_uncertainty is not None and self.prediction_uncertainty < 0:
+            raise ValueError("Strategy prediction uncertainty cannot be negative")
+        if self.risk_reason_codes != tuple(sorted(set(self.risk_reason_codes))):
+            raise ValueError("Strategy Risk reason codes must be unique and sorted")
+        if self.risk_allows_action == bool(self.risk_reason_codes):
+            raise ValueError("Strategy Risk state and reason codes disagree")
+        if self.expected_return is None and self.calibration_status != "DATA_INSUFFICIENT":
+            raise ValueError("available Strategy Forecast requires expected return")
+        if canonical_hash(self.identity_payload()) != self.binding_hash:
+            raise ValueError("Strategy opportunity binding hash mismatch")
+
+    @classmethod
+    def create(cls, **values: Any) -> StrategyOpportunityInput:
+        payload = _strategy_opportunity_payload(**values)
+        return cls(**values, binding_hash=canonical_hash(payload))
+
+    def identity_payload(self) -> dict[str, Any]:
+        return _strategy_opportunity_payload(
+            **{
+                field_name: getattr(self, field_name)
+                for field_name in (
+                    "symbol",
+                    "strategy_version_reference",
+                    "candidate_reference",
+                    "decision_time",
+                    "signal_reference",
+                    "forecast_reference",
+                    "context_reference",
+                    "risk_state_reference",
+                    "model_reference",
+                    "signal_active",
+                    "risk_allows_action",
+                    "risk_reason_codes",
+                    "expected_return",
+                    "prediction_uncertainty",
+                    "calibration_status",
+                    "available_at",
+                )
+            }
+        )
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        return {**self.identity_payload(), "binding_hash": self.binding_hash}
+
+    @classmethod
+    def from_canonical_dict(
+        cls, payload: Mapping[str, Any]
+    ) -> StrategyOpportunityInput:
+        expected_return = payload["expected_return"]
+        uncertainty = payload["prediction_uncertainty"]
+        return cls(
+            symbol=str(payload["symbol"]),
+            strategy_version_reference=_reference(
+                payload["strategy_version_reference"]
+            ),
+            candidate_reference=_reference(payload["candidate_reference"]),
+            decision_time=datetime.fromisoformat(str(payload["decision_time"])),
+            signal_reference=_reference(payload["signal_reference"]),
+            forecast_reference=_reference(payload["forecast_reference"]),
+            context_reference=_reference(payload["context_reference"]),
+            risk_state_reference=_reference(payload["risk_state_reference"]),
+            model_reference=_reference(payload["model_reference"]),
+            signal_active=bool(payload["signal_active"]),
+            risk_allows_action=bool(payload["risk_allows_action"]),
+            risk_reason_codes=tuple(
+                str(item) for item in _sequence(payload["risk_reason_codes"])
+            ),
+            expected_return=(
+                None if expected_return is None else Decimal(str(expected_return))
+            ),
+            prediction_uncertainty=(
+                None if uncertainty is None else Decimal(str(uncertainty))
+            ),
+            calibration_status=str(payload["calibration_status"]),
+            available_at=datetime.fromisoformat(str(payload["available_at"])),
+            binding_hash=str(payload["binding_hash"]),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class StrategyRuntimeInput:
     origin: StrategyRunOrigin
     authority_mode: RuntimeAuthorityMode
@@ -730,6 +955,7 @@ class StrategyRuntimeInput:
     code_reference: RuntimeArtifactReference
     configuration_reference: RuntimeArtifactReference
     decision_prices: tuple[StrategyDecisionPrice, ...] | None = ()
+    opportunities: tuple[StrategyOpportunityInput, ...] | None = ()
 
     def __post_init__(self) -> None:
         canonical_datetime(self.decision_time)
@@ -748,6 +974,33 @@ class StrategyRuntimeInput:
             for item in prices
         ):
             raise ValueError("Strategy decision price must be available and fresh at decision time")
+        opportunities = self.opportunities or ()
+        opportunity_keys = tuple(
+            (str(item.strategy_version_reference.artifact_id), item.symbol)
+            for item in opportunities
+        )
+        if opportunity_keys != tuple(sorted(set(opportunity_keys))):
+            raise ValueError("Strategy opportunities must be unique and sorted")
+        candidate_reference = RuntimeArtifactReference(
+            "CANDIDATE_SET",
+            self.candidate_set.envelope.artifact_id,
+            self.candidate_set.envelope.content_hash,
+        )
+        if any(
+            item.candidate_reference != candidate_reference
+            or item.decision_time != self.decision_time
+            for item in opportunities
+        ):
+            raise ValueError(
+                "Strategy opportunity must bind the Candidate owner and DecisionTime"
+            )
+        admitted_symbols = {
+            item.symbol for item in self.candidate_set.records
+        } | {item.symbol for item in self.positions}
+        if any(item.symbol not in admitted_symbols for item in opportunities):
+            raise ValueError(
+                "Strategy opportunity must belong to a Candidate or existing Position"
+            )
         self.candidate_set.envelope.verify_payload(self.candidate_set.artifact_payload())
 
     @property
@@ -769,6 +1022,10 @@ class StrategyRuntimeInput:
         }
         if self.decision_prices is not None:
             payload["decision_prices"] = [item.to_canonical_dict() for item in self.decision_prices]
+        if self.opportunities is not None:
+            payload["opportunities"] = [
+                item.to_canonical_dict() for item in self.opportunities
+            ]
         return payload
 
     @classmethod
@@ -789,6 +1046,14 @@ class StrategyRuntimeInput:
                 None
                 if "decision_prices" not in payload
                 else tuple(StrategyDecisionPrice.from_canonical_dict(_mapping(item)) for item in _sequence(payload["decision_prices"]))
+            ),
+            opportunities=(
+                None
+                if "opportunities" not in payload
+                else tuple(
+                    StrategyOpportunityInput.from_canonical_dict(_mapping(item))
+                    for item in _sequence(payload["opportunities"])
+                )
             ),
         )
 
@@ -1124,12 +1389,13 @@ def _contract_fields() -> tuple[str, ...]:
         "configuration_reference",
         "parameters",
         "limitations",
+        "forecast_requirement",
         "schema_version",
     )
 
 
 def _contract_payload(**values: Any) -> dict[str, Any]:
-    return {
+    payload = {
         "schema_version": values["schema_version"],
         "strategy_id": str(values["strategy_id"]),
         "family": values["family"].value,
@@ -1151,6 +1417,9 @@ def _contract_payload(**values: Any) -> dict[str, Any]:
         "parameters": [list(item) for item in values["parameters"]],
         "limitations": list(values["limitations"]),
     }
+    if values["schema_version"] == "strategy-contract/v2":
+        payload["forecast_requirement"] = values["forecast_requirement"].value
+    return payload
 
 
 def _strategy_version_payload(**values: Any) -> dict[str, Any]:
@@ -1293,6 +1562,8 @@ __all__ = [
     "StrategyDecisionPrice",
     "StrategyEligibilityStatus",
     "StrategyFamily",
+    "StrategyForecastRequirement",
+    "StrategyOpportunityInput",
     "StrategyPositionState",
     "StrategyProposal",
     "StrategyRegistry",

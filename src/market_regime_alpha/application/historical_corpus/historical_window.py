@@ -204,6 +204,18 @@ class HistoricalWindowReader:
         )
         self._record_lineage(next_daily.read_lineage)
         result = [item for item in daily if item.event_end <= decision_time]
+        decision_session = decision_time.astimezone(
+            ZoneInfo("Asia/Shanghai")
+        ).date()
+        result.extend(
+            item
+            for item in self._minute_session(
+                reference,
+                decision_session,
+                requested_symbols,
+            )
+            if item.event_end <= decision_time
+        )
         result.extend(item for item in next_daily.records if item.market_date == next_session and item.symbol in symbols)
         result.extend(
             self._minute_session(reference, next_session, requested_symbols)

@@ -354,6 +354,8 @@ class StrategyEconomicsResult:
     schema_version: str = "strategy-economics-result/v1"
 
     def __post_init__(self) -> None:
+        if self.schema_version != "strategy-economics-result/v1":
+            raise ValueError("unsupported Strategy Economics Result schema")
         require_sha256("result_hash", self.result_hash)
         if self.authority is not ResearchEvidenceAuthority.EXPLORATORY:
             raise ValueError("Strategy Economics result is exploratory only")
@@ -373,7 +375,11 @@ class StrategyEconomicsResult:
             for item in (self.gross_return, self.cost_return, self.net_return)
         ):
             raise ValueError("Unavailable Strategy Economics cannot contain returns")
-        if canonical_hash(self.identity_payload()) != self.result_hash:
+        if (
+            canonical_hash(self.identity_payload()) != self.result_hash
+            or self.result_id
+            != ArtifactId(f"strategy-economics-result:{self.result_hash[7:]}")
+        ):
             raise ValueError("Strategy Economics Result hash mismatch")
 
     def identity_payload(self) -> dict[str, Any]:
@@ -399,6 +405,61 @@ class StrategyEconomicsResult:
             self.reason_codes,
             self.evaluated_at,
             self.limitations,
+        )
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        return {
+            "result_id": str(self.result_id),
+            "result_hash": self.result_hash,
+            **self.identity_payload(),
+        }
+
+    @classmethod
+    def from_canonical_dict(
+        cls, value: Mapping[str, Any]
+    ) -> StrategyEconomicsResult:
+        reasons = value.get("reason_codes")
+        limitations = value.get("limitations")
+        if not isinstance(reasons, (list, tuple)) or not isinstance(
+            limitations, (list, tuple)
+        ):
+            raise ValueError("Strategy Economics Result collections are malformed")
+        return cls(
+            result_id=ArtifactId(str(value["result_id"])),
+            result_hash=str(value["result_hash"]),
+            policy_reference=ValidationArtifactReference.from_canonical_dict(
+                _mapping(value["policy_reference"])
+            ),
+            target_label_reference=ValidationArtifactReference.from_canonical_dict(
+                _mapping(value["target_label_reference"])
+            ),
+            liquidity_reference=ValidationArtifactReference.from_canonical_dict(
+                _mapping(value["liquidity_reference"])
+            ),
+            entry_execution_reference=ValidationArtifactReference.from_canonical_dict(
+                _mapping(value["entry_execution_reference"])
+            ),
+            exit_execution_reference=ValidationArtifactReference.from_canonical_dict(
+                _mapping(value["exit_execution_reference"])
+            ),
+            symbol=str(value["symbol"]),
+            status=StrategyEconomicsStatus(str(value["status"])),
+            requested_notional=Decimal(str(value["requested_notional"])),
+            capacity_ceiling=_optional_decimal(value.get("capacity_ceiling")),
+            filled_quantity=Decimal(str(value["filled_quantity"])),
+            entry_price=_optional_decimal(value.get("entry_price")),
+            exit_price=_optional_decimal(value.get("exit_price")),
+            gross_return=_optional_decimal(value.get("gross_return")),
+            cost_return=_optional_decimal(value.get("cost_return")),
+            net_return=_optional_decimal(value.get("net_return")),
+            turnover=Decimal(str(value["turnover"])),
+            mfe=_optional_decimal(value.get("mfe")),
+            mae=_optional_decimal(value.get("mae")),
+            reason_codes=tuple(str(item) for item in reasons),
+            evaluated_at=datetime.fromisoformat(str(value["evaluated_at"])),
+            authority=ResearchEvidenceAuthority(str(value["authority"])),
+            limitations=tuple(str(item) for item in limitations),
+            schema_version=str(value["schema_version"]),
         )
 
 

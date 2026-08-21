@@ -42,7 +42,7 @@ A downstream artifact may retain or lower the minimum input eligibility. It may 
 
 ## PostgreSQL-only persistence
 
-- Packaged migrations are contiguous from 001 through 090 and checksummed.
+- Packaged migrations are contiguous from 001 through 092 and checksummed.
 - `schema_migrations` and the schema catalog are verified at startup/tests.
 - Runtime database bindings exclude credentials and fail closed on a different database/schema.
 - Journals use leases, fencing, CAS and append-only events.
@@ -81,6 +81,21 @@ owners. Migration 090 removes the invalid uniqueness assumption that a
 tie-aware Dynamic Pool can have only one member at a rank. Neither migration
 creates another Runtime, Portfolio owner, Outcome owner, or physical Position
 path.
+
+Migration 091 admits the five Alpha Research Phase II kinds into the existing
+append-only Historical Evidence owner and admits Strategy Contract V2 plus the
+`CONDITIONAL_PREDICTION` family into the existing Strategy Registry. Contract
+V2 freezes `FORECAST_REQUIRED` versus `FORECAST_NOT_REQUIRED`; required
+Strategies fail closed unless their Runtime input binds symbol-level Signal,
+Forecast, Context, Risk state and Model/version lineage. No new table,
+Evidence authority, Runtime or qualification owner is introduced.
+
+Migration 092 adds the database-level semantic constraint omitted by 091:
+existing Overnight/Swing V1 payloads remain unchanged and contain no Forecast
+field; V2 Conditional Prediction must declare `FORECAST_REQUIRED`, and every
+other V2 family must declare `FORECAST_NOT_REQUIRED`. This prevents an existing
+PostgreSQL Registry from gaining duplicate active versions through an incumbent
+identity rewrite.
 
 Strategy evidence is keyed by exact Strategy Version and retains Dataset, PIT,
 Universe, Decision Time, Target/Horizon, cost, evaluation, code and configuration

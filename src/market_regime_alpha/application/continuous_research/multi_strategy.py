@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import datetime
+from typing import Protocol
 
 from market_regime_alpha.application.continuous_research.composition import (
     _with_upstream_result,
@@ -25,6 +26,8 @@ from market_regime_alpha.market_data.contracts import Timeframe
 from market_regime_alpha.market_data.dataset import MarketDataDatasetArtifact
 from market_regime_alpha.research.candidate_discovery.contracts import CandidateSet
 from market_regime_alpha.strategies.contracts import (
+    StrategyOpportunityInput,
+    StrategyRegistry,
     StrategyPositionState,
     StrategyDecisionPrice,
     StrategyRunOrigin,
@@ -37,7 +40,22 @@ from market_regime_alpha.strategies.portfolio import (
 from market_regime_alpha.strategies.postgres_repository import (
     PostgresMultiStrategyRepository,
 )
-from market_regime_alpha.strategies.runtime import MultiStrategyRuntime
+from market_regime_alpha.strategies.runtime import (
+    MultiStrategyRuntime,
+    StrategyOpportunityAuthority,
+)
+
+
+class ContinuousStrategyOpportunityResolver(Protocol):
+    """Reload Candidate/Signal/Forecast/Context/Risk owners for one tick."""
+
+    def resolve(
+        self,
+        *,
+        request: ChildExecutionRequest,
+        candidates: CandidateSet,
+        registry: StrategyRegistry,
+    ) -> tuple[StrategyOpportunityInput, ...]: ...
 
 
 class MultiStrategyContinuousAdapter:
@@ -50,11 +68,15 @@ class MultiStrategyContinuousAdapter:
         portfolio_policy: CrossStrategyPortfolioPolicy,
         strategy_shadow_repository: PostgresStrategyShadowRepository | None = None,
         account_id: str | None = None,
+        opportunity_resolver: ContinuousStrategyOpportunityResolver | None = None,
+        opportunity_authority: StrategyOpportunityAuthority | None = None,
     ) -> None:
         self._repository = repository
         self._portfolio_policy = portfolio_policy
         self._strategy_shadow_repository = strategy_shadow_repository
         self._account_id = account_id
+        self._opportunity_resolver = opportunity_resolver
+        self._opportunity_authority = opportunity_authority
         if (account_id is None) != (strategy_shadow_repository is None):
             raise ValueError(
                 "stateful Strategy Runtime requires both account and Shadow owner"
@@ -70,6 +92,15 @@ class MultiStrategyContinuousAdapter:
         decision_price_dataset: MarketDataDatasetArtifact | None = None,
     ) -> ChildExecutionResult:
         registry = self._repository.load_registry()
+        opportunities = (
+            ()
+            if self._opportunity_resolver is None
+            else self._opportunity_resolver.resolve(
+                request=request,
+                candidates=candidate_set,
+                registry=registry,
+            )
+        )
         strategy_request = _with_upstream_result(
             replace(
                 request,
@@ -131,8 +162,14 @@ class MultiStrategyContinuousAdapter:
                     decision_time=request.as_of_time,
                 )
             ),
+            opportunities=opportunities,
         )
-        cycle = self._repository.save_cycle(MultiStrategyRuntime(registry).execute(runtime_input))
+        cycle = self._repository.save_cycle(
+            MultiStrategyRuntime(
+                registry,
+                opportunity_authority=self._opportunity_authority,
+            ).execute(runtime_input)
+        )
         portfolio = self._repository.save_portfolio(
             build_cross_strategy_portfolio(
                 cycle=cycle,
@@ -237,4 +274,8 @@ def _reference_set(
     )
 
 
-__all__ = ["MultiStrategyContinuousAdapter", "freeze_strategy_decision_prices"]
+__all__ = [
+    "ContinuousStrategyOpportunityResolver",
+    "MultiStrategyContinuousAdapter",
+    "freeze_strategy_decision_prices",
+]

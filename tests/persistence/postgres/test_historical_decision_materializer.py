@@ -15,6 +15,10 @@ from market_regime_alpha.application.historical_corpus.contracts import (
     HistoricalTradingStatus,
     build_partitions,
 )
+from market_regime_alpha.application.historical_corpus.alpha_correctness import (
+    AlphaCorrectnessStatus,
+    HistoricalAlphaCorrectnessChecker,
+)
 from market_regime_alpha.application.historical_corpus.decision_materializer import (
     FREE_RESEARCH_UNIVERSE_KIND,
     HistoricalDecisionMaterializer,
@@ -92,6 +96,11 @@ from market_regime_alpha.application.research_validation.postgres_repository imp
     PostgresResearchValidationRepository,
 )
 from market_regime_alpha.core.identity import ArtifactId
+from market_regime_alpha.core.identity import DatasetId
+from market_regime_alpha.data.trading_calendar import (
+    TradingSession,
+    build_trading_calendar_artifact,
+)
 from market_regime_alpha.evidence.canonical import canonical_hash
 from market_regime_alpha.market_data import Timeframe
 from market_regime_alpha.strategies.defaults import (
@@ -388,6 +397,42 @@ def test_existing_historical_runner_actively_materializes_and_replays(
     assert resumed.status is HistoricalRunStatus.COMPLETE
     assert resumed.sessions[0].receipts[-1].stage is ResearchSessionStage.PERFORMANCE
     assert resumed.sessions[0].receipts[-1].status is SessionStageStatus.COMPLETE
+    correctness = HistoricalAlphaCorrectnessChecker(
+        components=component_repository,
+        corpus=corpus,
+    ).reproduce_run(
+        run_id=command.run_id,
+        trading_calendar=build_trading_calendar_artifact(
+            source_dataset_id=DatasetId("phase-ii-correctness-calendar"),
+            market="A_SHARE",
+            calendar_version="phase-ii-correctness-test/v1",
+            timezone_name="Asia/Shanghai",
+            sessions=(
+                TradingSession(
+                    DECISION_DATE,
+                    datetime.combine(DECISION_DATE, time(15), tzinfo=UTC),
+                ),
+                TradingSession(
+                    DECISION_DATE + timedelta(days=1),
+                    datetime.combine(
+                        DECISION_DATE + timedelta(days=1), time(15), tzinfo=UTC
+                    ),
+                ),
+            ),
+        ),
+    )
+    assert correctness.feature_results
+    assert correctness.target_results
+    assert correctness.physical_verifications == ()
+    assert {item.status for item in correctness.feature_results} == {
+        AlphaCorrectnessStatus.PHYSICAL_REPRODUCTION_NOT_ESTABLISHED
+    }
+    assert {item.status for item in correctness.target_results}.issubset(
+        {
+            AlphaCorrectnessStatus.PARTIALLY_REPRODUCED,
+            AlphaCorrectnessStatus.PHYSICAL_REPRODUCTION_NOT_ESTABLISHED,
+        }
+    ), [(item.symbol, item.discrepancies) for item in correctness.target_results]
     assert {
         item.artifact_kind
         for item in resumed.sessions[0].receipts[-1].output_references
@@ -497,6 +542,29 @@ def test_existing_historical_runner_actively_materializes_and_replays(
             "confounded_with_hard_integrity"
         ]
         is True
+        for row in panel.payload["rows"]
+    )
+    universal_check_names = {
+        "universe_eligible",
+        "tradable",
+        "suspension_known",
+        "not_suspended",
+        "data_integrity",
+        "required_history",
+        "pit_boundary_satisfied",
+        "minimum_liquidity",
+        "a_share_restrictions",
+    }
+    assert all(
+        set(row["gate_diagnostics"]["hard_integrity"]["checks"])
+        == universal_check_names
+        for row in panel.payload["rows"]
+    )
+    assert all(
+        not {
+            "RETURN_3_UNAVAILABLE",
+            "AMOUNT_RATIO_5_UNAVAILABLE",
+        }.intersection(row["gate_diagnostics"]["hard_integrity"]["reason_codes"])
         for row in panel.payload["rows"]
     )
     excluded = next(item for item in panel.payload["rows"] if item["symbol"] == STOCKS[0])
@@ -810,12 +878,16 @@ def _normalized_owner(
                     limitations=("PIT_INCOMPLETE",),
                 )
             )
-        for minute_index in range(66):
-            event_start = datetime.combine(
-                DECISION_DATE,
-                time(1, 30),
-                tzinfo=UTC,
-            ) + timedelta(minutes=5 * minute_index)
+        decision_intraday_starts = tuple(
+            datetime.combine(DECISION_DATE, time(1, 30), tzinfo=UTC)
+            + timedelta(minutes=5 * index)
+            for index in range(24)
+        ) + tuple(
+            datetime.combine(DECISION_DATE, time(5, 0), tzinfo=UTC)
+            + timedelta(minutes=5 * index)
+            for index in range(23)
+        )
+        for minute_index, event_start in enumerate(decision_intraday_starts):
             close = prior_close * (Decimal("1") + Decimal(minute_index + 1) / Decimal("10000"))
             volume = Decimal(25_000 + symbol_index * 1_000 + minute_index * 100)
             records.append(

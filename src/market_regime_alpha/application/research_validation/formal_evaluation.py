@@ -248,6 +248,38 @@ def adjust_multiple_testing(
     return tuple(_adjust_p_values(list(p_values), method))
 
 
+def moving_block_mean_interval(
+    values: tuple[Decimal, ...],
+    *,
+    iterations: int,
+    block_sessions: int,
+    confidence_level: Decimal,
+    seed: str,
+) -> tuple[Decimal, Decimal, Decimal]:
+    """Public mean diagnostic using Formal Evaluation's moving-block semantics."""
+
+    if not values or iterations <= 0 or block_sessions <= 0:
+        raise ValueError("moving-block mean diagnostic dimensions are invalid")
+    if block_sessions > len(values):
+        raise ValueError("moving-block length exceeds the observation count")
+    if not Decimal("0") < confidence_level < Decimal("1"):
+        raise ValueError("moving-block confidence level must be within (0, 1)")
+    random = Random(seed)
+    draws: list[Decimal] = []
+    for _iteration in range(iterations):
+        sampled: list[Decimal] = []
+        while len(sampled) < len(values):
+            start = random.randrange(len(values))
+            sampled.extend(
+                values[(start + offset) % len(values)]
+                for offset in range(block_sessions)
+            )
+        draws.append(_mean(tuple(sampled[: len(values)])))
+    estimate = _mean(values)
+    lower, upper = _percentile_interval(tuple(draws), confidence_level)
+    return estimate, lower, upper
+
+
 class EvaluationMetricStatus(str, Enum):
     ESTIMATED = "ESTIMATED"
     NOT_ESTIMABLE = "NOT_ESTIMABLE"

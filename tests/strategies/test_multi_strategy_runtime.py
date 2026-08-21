@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal, localcontext
 from zoneinfo import ZoneInfo
 
@@ -33,12 +33,15 @@ from market_regime_alpha.strategies.contracts import (
     StrategyContract,
     StrategyEligibilityStatus,
     StrategyFamily,
+    StrategyForecastRequirement,
+    StrategyOpportunityInput,
     StrategyPositionState,
     StrategyRegistry,
     StrategyRunStatus,
     StrategyRunOrigin,
     StrategyRuntimeInput,
     StrategyVersion,
+    strategy_reference,
 )
 from market_regime_alpha.strategies.defaults import (
     canonical_exploratory_strategy_registry,
@@ -223,6 +226,121 @@ def _registry() -> StrategyRegistry:
     return StrategyRegistry.create(contracts=contracts, versions=versions)
 
 
+def _conditional_contract() -> StrategyContract:
+    base = _contract(StrategyFamily.OVERNIGHT)
+    return StrategyContract.create(
+        strategy_id=StrategyId("conditional-alpha"),
+        family=StrategyFamily.CONDITIONAL_PREDICTION,
+        semantic_version="1.0.0-research",
+        objective="Consume explicit Signal and conditional Forecast lineage.",
+        universe_reference=base.universe_reference,
+        target_references=base.target_references,
+        decision_times=base.decision_times,
+        horizon_sessions=base.horizon_sessions,
+        candidate_policy_version="challenger-v1",
+        action_policy_version="conditional-prediction-v1",
+        portfolio_weighting=base.portfolio_weighting,
+        top_k=2,
+        strategy_budget=base.strategy_budget,
+        cost_model_reference=base.cost_model_reference,
+        evaluation_protocol_reference=base.evaluation_protocol_reference,
+        code_reference=base.code_reference,
+        configuration_reference=base.configuration_reference,
+        parameters=(
+            ("maximum_uncertainty", "0.02"),
+            ("minimum_entry_score", "0.50"),
+            ("minimum_expected_return", "0.01"),
+        ),
+        limitations=base.limitations,
+        forecast_requirement=StrategyForecastRequirement.FORECAST_REQUIRED,
+    )
+
+
+def _opportunity(
+    symbol: str,
+    *,
+    version: StrategyVersion,
+    candidate_set: CandidateSet,
+    signal_active: bool = True,
+    risk_allows_action: bool = True,
+) -> StrategyOpportunityInput:
+    return StrategyOpportunityInput.create(
+        symbol=symbol,
+        strategy_version_reference=strategy_reference(version),
+        candidate_reference=RuntimeArtifactReference(
+            "CANDIDATE_SET",
+            candidate_set.envelope.artifact_id,
+            candidate_set.envelope.content_hash,
+        ),
+        decision_time=NOW,
+        signal_reference=_reference("SIGNAL_SNAPSHOT", f"signal-{symbol}"),
+        forecast_reference=_reference("CONDITIONAL_FORECAST_RESULT", f"forecast-{symbol}"),
+        context_reference=_reference("CONTEXT_CONDITIONAL_EVALUATION", f"context-{symbol}"),
+        risk_state_reference=_reference("RISK_STATE", f"risk-{symbol}"),
+        model_reference=_reference("MODEL_VERSION", "conditional-model-v1"),
+        signal_active=signal_active,
+        risk_allows_action=risk_allows_action,
+        risk_reason_codes=() if risk_allows_action else ("ACCOUNT_RISK_LIMIT",),
+        expected_return=Decimal("0.02"),
+        prediction_uncertainty=Decimal("0.01"),
+        calibration_status="NOT_CALIBRATED",
+        available_at=NOW,
+    )
+
+
+class _ExactOpportunityAuthority:
+    def reload(
+        self, opportunity: StrategyOpportunityInput
+    ) -> StrategyOpportunityInput:
+        return opportunity
+
+
+def _conditional_runtime(registry: StrategyRegistry) -> MultiStrategyRuntime:
+    return MultiStrategyRuntime(
+        registry,
+        opportunity_authority=_ExactOpportunityAuthority(),
+    )
+
+
+def test_strategy_opportunity_is_content_addressed_and_available_by_decision_time() -> None:
+    version = StrategyVersion.activate(_conditional_contract())
+    candidate_set = _candidate_set()
+    opportunity = _opportunity(
+        "000001.SZ", version=version, candidate_set=candidate_set
+    )
+    payload = opportunity.to_canonical_dict()
+
+    assert StrategyOpportunityInput.from_canonical_dict(payload) == opportunity
+    payload["expected_return"] = "0.99"
+    with pytest.raises(ValueError, match="binding hash mismatch"):
+        StrategyOpportunityInput.from_canonical_dict(payload)
+
+    with pytest.raises(ValueError, match="unavailable at DecisionTime"):
+        StrategyOpportunityInput.create(
+            **{
+                field_name: getattr(opportunity, field_name)
+                for field_name in (
+                    "symbol",
+                    "strategy_version_reference",
+                    "candidate_reference",
+                    "decision_time",
+                    "signal_reference",
+                    "forecast_reference",
+                    "context_reference",
+                    "risk_state_reference",
+                    "model_reference",
+                    "signal_active",
+                    "risk_allows_action",
+                    "risk_reason_codes",
+                    "expected_return",
+                    "prediction_uncertainty",
+                    "calibration_status",
+                )
+            },
+            available_at=NOW + timedelta(seconds=1),
+        )
+
+
 def test_one_runtime_executes_overnight_and_swing_with_complete_gate_attribution() -> None:
     registry = _registry()
     cycle = MultiStrategyRuntime(registry).execute(_runtime_input(registry.active_versions))
@@ -249,6 +367,182 @@ def test_one_runtime_executes_overnight_and_swing_with_complete_gate_attribution
     insufficient = next(item for item in by_family[StrategyFamily.SWING_STATE].gate_attributions if item.symbol == "000004.SZ")
     assert insufficient.eligibility_status is StrategyEligibilityStatus.NOT_ESTIMABLE
     assert "CANDIDATE_DATA_INSUFFICIENT" in insufficient.reason_codes
+
+
+def test_forecast_required_strategy_fails_closed_without_opportunity_lineage() -> None:
+    contracts = (*_registry().contracts, _conditional_contract())
+    registry = StrategyRegistry.create(
+        contracts=contracts,
+        versions=tuple(StrategyVersion.activate(item) for item in contracts),
+    )
+
+    with pytest.raises(ValueError, match="FORECAST_REQUIRED"):
+        MultiStrategyRuntime(registry).execute(_runtime_input(registry.active_versions))
+
+
+def test_conditional_strategy_consumes_signal_forecast_context_risk_and_model() -> None:
+    contracts = (*_registry().contracts, _conditional_contract())
+    registry = StrategyRegistry.create(
+        contracts=contracts,
+        versions=tuple(StrategyVersion.activate(item) for item in contracts),
+    )
+    base_input = _runtime_input(registry.active_versions)
+    conditional_version = next(
+        item
+        for item in registry.active_versions
+        if item.family is StrategyFamily.CONDITIONAL_PREDICTION
+    )
+    runtime_input = replace(
+        base_input,
+        opportunities=(
+            _opportunity(
+                "000001.SZ",
+                version=conditional_version,
+                candidate_set=base_input.candidate_set,
+            ),
+            _opportunity(
+                "000002.SZ",
+                version=conditional_version,
+                candidate_set=base_input.candidate_set,
+                signal_active=False,
+            ),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="PostgreSQL owner reload"):
+        MultiStrategyRuntime(registry).execute(runtime_input)
+    cycle = _conditional_runtime(registry).execute(runtime_input)
+    conditional = next(
+        run
+        for run in cycle.runs
+        if registry.family_for(run) is StrategyFamily.CONDITIONAL_PREDICTION
+    )
+
+    assert len(conditional.proposals) == 1
+    assert conditional.proposals[0].symbol == "000001.SZ"
+    assert conditional.proposals[0].utility_score == Decimal("0.02")
+    assert next(
+        item for item in conditional.gate_attributions if item.symbol == "000002.SZ"
+    ).eligibility_status is StrategyEligibilityStatus.INELIGIBLE
+
+
+def test_conditional_strategy_cannot_bypass_rejected_risk_state() -> None:
+    contracts = (*_registry().contracts, _conditional_contract())
+    registry = StrategyRegistry.create(
+        contracts=contracts,
+        versions=tuple(StrategyVersion.activate(item) for item in contracts),
+    )
+    base_input = _runtime_input(registry.active_versions)
+    conditional_version = next(
+        item
+        for item in registry.active_versions
+        if item.family is StrategyFamily.CONDITIONAL_PREDICTION
+    )
+    opportunities = (
+        _opportunity(
+            "000001.SZ",
+            version=conditional_version,
+            candidate_set=base_input.candidate_set,
+            risk_allows_action=False,
+        ),
+        _opportunity(
+            "000002.SZ",
+            version=conditional_version,
+            candidate_set=base_input.candidate_set,
+        ),
+    )
+    cycle = _conditional_runtime(registry).execute(
+        replace(base_input, opportunities=opportunities)
+    )
+    conditional = next(
+        run
+        for run in cycle.runs
+        if registry.family_for(run) is StrategyFamily.CONDITIONAL_PREDICTION
+    )
+    attribution = next(
+        item for item in conditional.gate_attributions if item.symbol == "000001.SZ"
+    )
+    assert attribution.action is CanonicalStrategyAction.NO_ACTION
+    assert "RISK_STATE_REJECTED" in attribution.reason_codes
+
+
+def test_forecast_lineage_is_bound_to_exact_strategy_version() -> None:
+    contracts = (*_registry().contracts, _conditional_contract())
+    registry = StrategyRegistry.create(
+        contracts=contracts,
+        versions=tuple(StrategyVersion.activate(item) for item in contracts),
+    )
+    base_input = _runtime_input(registry.active_versions)
+    wrong_version = next(
+        item
+        for item in registry.active_versions
+        if item.family is StrategyFamily.OVERNIGHT
+    )
+    runtime_input = replace(
+        base_input,
+        opportunities=tuple(
+            sorted(
+                (
+                    _opportunity(
+                        symbol,
+                        version=wrong_version,
+                        candidate_set=base_input.candidate_set,
+                    )
+                    for symbol in ("000001.SZ", "000002.SZ")
+                ),
+                key=lambda item: (
+                    str(item.strategy_version_reference.artifact_id), item.symbol
+                ),
+            )
+        ),
+    )
+
+    with pytest.raises(ValueError, match="FORECAST_NOT_REQUIRED"):
+        _conditional_runtime(registry).execute(runtime_input)
+
+
+def test_forecast_required_position_only_symbol_cannot_bypass_contract() -> None:
+    contracts = (*_registry().contracts, _conditional_contract())
+    registry = StrategyRegistry.create(
+        contracts=contracts,
+        versions=tuple(StrategyVersion.activate(item) for item in contracts),
+    )
+    base_input = _runtime_input(registry.active_versions)
+    conditional_version = next(
+        item
+        for item in registry.active_versions
+        if item.family is StrategyFamily.CONDITIONAL_PREDICTION
+    )
+    position = StrategyPositionState(
+        strategy_version_id=conditional_version.version_id,
+        symbol="000003.SZ",
+        quantity=Decimal("100"),
+        average_cost=Decimal("10"),
+        current_price=Decimal("10"),
+        peak_price=Decimal("10"),
+        sessions_held=1,
+    )
+    opportunities = tuple(
+        _opportunity(
+            symbol,
+            version=conditional_version,
+            candidate_set=base_input.candidate_set,
+        )
+        for symbol in ("000001.SZ", "000002.SZ")
+    )
+    runtime_input = replace(
+        base_input,
+        positions=tuple(
+            sorted(
+                (*base_input.positions, position),
+                key=lambda item: (str(item.strategy_version_id), item.symbol),
+            )
+        ),
+        opportunities=opportunities,
+    )
+
+    with pytest.raises(ValueError, match="000003.SZ"):
+        _conditional_runtime(registry).execute(runtime_input)
 
 
 def test_historical_replay_uses_identical_strategy_semantics() -> None:

@@ -2,7 +2,7 @@
 
 > **Status:** CURRENT_STATUS  
 > **Authority:** Current implementation/evidence summary  
-> **Repository Baseline:** `main@5a441746ada08eb08310b12e34d9e0f56f56a952`
+> **Repository Baseline:** `main@fc373696990ccdffe5e46a39778fdfedac3e0308`
 > **Strongest Research Evidence Revision:** `0d1a5a8` (WP-ALPHA-RESEARCH-01)
 > **Last Updated:** 2026-08-21
 > **Code Evidence:** `src/market_regime_alpha`, `src/market_regime_alpha/persistence/postgres/migrations/*.sql`, `tests`
@@ -15,17 +15,31 @@ target architecture.
 
 - **Architecture:** Python 3.12+ PostgreSQL-centered modular monolith.
 - **Persistent business authority:** PostgreSQL 16; no canonical file/SQLite/memory fallback.
-- **Migration head:** 090.
+- **Packaged migration head:** 092 (`strategy_forecast_contract_semantics`).
 - **Canonical all-day runtime:** one Continuous Research control plane.
 - **Installed operator scripts:** six — `continuous-research`, `state-system`, `decision-system`, `model-governance`, `pit-authority`, `research-shadow`.
 - **Execution boundary:** human-operated/manual; no broker writer or automatic live-trading authority.
 - **Physical Position truth:** observed effective manual Fills.
 - **Golden Loop V2 execution:** one immutable 126-session historical campaign at evidence revision `bcee87a` completed in an isolated PostgreSQL schema migrated from 084 through 090; exact replay and aggregate Evidence are recorded below.
 - **WP-ALPHA-RESEARCH-01 execution:** one final immutable 126-session methodology-only owner replay at revision `0d1a5a8`; run `historical-research-run-0e150a21c7869adc84a57af5`, exact report/replay and five PostgreSQL Evidence artifacts are complete.
-- **Current main validation:** the full local `pytest` suite passes at `5a44174`; six existing pandas fragmentation warnings come only from legacy Top-1000 backtesting tests.
+- **Current main validation:** PR #72 records local full-suite, documentation,
+  platform, ruff, mypy and build success for the merged WP-ALPHA-RESEARCH-01
+  tree. No GitHub Actions run exists for merge commit `fc37369`; CI supplies no
+  qualification for this exact merge baseline.
 - **WP-01 branch validation:** docs/platform/full pytest, ruff, mypy and build pass on a fresh PostgreSQL test database; a first full run against a heavily reused test database hit one `pg_catalog` autovacuum DDL lock timeout, while the exact node and the clean-database full suite both pass. This is retained as an environment failure, not hidden.
-- **Current CI:** GitHub Actions is disabled for the repository and `5a44174` has no check runs; this is `BLOCKED`, not CI proof.
+- **Current CI:** exact-merge CI is `NOT_RUN`, not CI proof.
+- **Alpha Research Phase II engineering:** all five Work Package kernels and
+  contracts are implemented with focused unit/boundary tests and targeted
+  PostgreSQL migration, Strategy Registry and Historical Evidence owner proof.
+  Correctness, External, Context and Candidate have canonical owner reload
+  seams. Conditional Strategy remains deliberately fail-closed until one real
+  PostgreSQL Signal/Forecast/Context/pre-Strategy-Risk resolver exists; this is
+  not reported as canonical wiring or as a historical research result.
 - **Database binding:** Runtime requires an explicit PostgreSQL URL and principal; a database name or stale schema does not establish current Authority. The replayable Golden V2 Evidence schema is at migration 090.
+- **Local implementation baseline:** Python 3.12.13, uv 0.11.7 and PostgreSQL
+  16.14. The packaged migration head is 092. A Golden V2 evidence database is
+  at migration 090; the default local application database is only at 055 and
+  is not evidence for the current schema.
 
 ## 2. Implemented engineering boundary
 
@@ -59,6 +73,72 @@ These artifacts are wired and persisted. Their empirical value is not assumed fr
 The current Strategy Registry/runtime has stable `OVERNIGHT` and `SWING_STATE` Strategy Versions under one shared Strategy runtime. It records gate/rejection attribution, actions/proposals, simple cross-strategy Portfolio decisions, strategy Fill allocations, Path Outcomes and version-scoped feedback.
 
 Candidate is upstream of strategy action; the canonical multi-strategy path no longer treats Candidate itself as Entry.
+
+Existing Overnight/Swing Contract V1 identities are preserved and have explicit
+runtime semantics `FORECAST_NOT_REQUIRED` without rewriting their stored payloads.
+Contract V2 freezes the declaration: `CONDITIONAL_PREDICTION` must be
+`FORECAST_REQUIRED`, while any other V2 family must be
+`FORECAST_NOT_REQUIRED`. The conditional family consumes a content-addressed,
+DecisionTime-available symbol binding containing the exact Strategy Version,
+Candidate, Signal, Forecast, Context, Risk state and Model/version references,
+active Signal state, expected return and uncertainty. Missing, inactive,
+wrong-version or silently ignored lineage fails closed; no Candidate-only
+fallback remains for a Forecast-required Strategy.
+
+### Alpha Research Phase II capability
+
+- Independent correctness recomputes the three discovered intraday Factors
+  directly from normalized bars and independently reconstructs the exact
+  Decision reference plus next-session 10:30 Target. Value, event interval,
+  source-bar identity/hash and Feature/Target lineage discrepancies fail closed.
+  A content-addressed aggregate proof can emit `CORRECTNESS_SUPPORTED` only when
+  the application service reloads the exact Historical Feature/Outcome and
+  normalized-data owners, reopens the physical package, reproduces the full
+  population and independently rebuilds placebo, redundancy and block-inference
+  results. The status still does not mean Alpha.
+- Physical bytes are not currently reopenable. Deterministic owner replay is
+  therefore retained as owner evidence only and the real status remains
+  `PHYSICAL_REPRODUCTION_NOT_ESTABLISHED`.
+- Five content-addressed placebo kinds, explicit research/execution entry
+  proxies independently selected as the first post-cutoff close, strict-next
+  bar open and decision-session last close, factor
+  correlation/rank/leave-one-out/incremental/residual diagnostics
+  and moving-block/block-length/stability inference use the Research Validation
+  framework.
+- External Validation reuses canonical `ResearchExperimentDefinition`; the
+  definition freezes the exact hypothesis and permits exactly one Temporal,
+  Universe or Provider change. Scores, Target returns, entry-proxy economics and
+  fractional Top-K boundaries are recomputed from frozen inputs; Feature
+  configuration, DecisionTime and PIT/free-data ceiling are owner-derived. Each
+  economic row must also reload the exact Panel-linked Historical Outcome and
+  hash-valid Strategy Economics result, then match its frozen policy, Target
+  label, entry lineage, symbol, entry/exit prices and capacity. No external
+  dataset was executed.
+- Context evaluation enforces session-constant versus within-session
+  cross-sectional semantics. Market Regime and current Global Theme are
+  session-level roles in the observed WP-01 panel; Capital remains a public
+  proxy and is not hidden-intent evidence. Cross-sectional Capital interaction
+  remains `NOT_ESTIMABLE` without genuine symbol-level variation.
+- Candidate Policy V2 keeps Incumbent and dormant Challenger identities
+  separate, with Universal Integrity, factor-specific availability, validated
+  Alpha contributions and evidence-supported Context adjustment. External,
+  Context, Candidate and conditional-prediction results are persisted by typed
+  application methods through the existing PostgreSQL Historical Evidence owner;
+  owner reload and embedded artifact hashes fail closed.
+- Conditional Forecast keeps the empirical distribution baseline and compares
+  a frozen regularized-linear model under chronological sample admission,
+  per-fold Target-availability embargo, minimum sample, search budget and
+  uncertainty rules. The median estimator is consistent between validation and
+  the empirical PathForecast baseline. Barrier outputs remain raw scores;
+  `CALIBRATED=false`. Forecast-required Strategy input cannot execute from a
+  caller projection: Runtime requires an owner-authority reload and fails closed
+  because no canonical pre-Strategy Risk resolver is currently configured. The
+  former helper that treated a post-Portfolio complete-account RiskDecision as
+  pre-Strategy state was retired as semantically circular.
+
+Migration 091 extends the existing append-only Historical Evidence and Strategy
+owners. Migration 092 constrains V1/V2 Forecast semantics without mutating V1
+identities. Neither creates a new table or parallel Authority.
 
 ### Manual execution and Position
 
@@ -238,11 +318,31 @@ Engineering gaps remain, but they should be selected because they unblock this e
 
 ## 7. Current development posture
 
-`WP-ALPHA-RESEARCH-01` is complete. Its surviving Price/Return challenger makes
-`WP-ALPHA-RESEARCH-02 / External Validation` the next research design, but no
-time/Universe/Provider expansion has been mixed into WP-01. Conditional
-Forecast, Strategy and Portfolio expansion remain dependency-blocked until
-external Candidate evidence exists.
+The five Phase II kernels/contracts are implemented. The conditional Strategy
+consumer is not declared canonically wired: no valid pre-Strategy Risk owner
+resolver exists, and the Runtime rejects caller-only opportunity projections.
+Its three unusually strong intraday discovery results have not been reclassified
+as Alpha because the physical package cannot currently be reopened and no new
+external dataset was run.
+The registered physical normalized-data package is unavailable locally, so the
+current physical reproduction status is
+`PHYSICAL_REPRODUCTION_NOT_ESTABLISHED`; PostgreSQL owner reuse does not upgrade
+that status.
+
+The next empirical dependency order remains:
+
+```text
+WP-ALPHA-CORRECTNESS-01
+→ WP-ALPHA-RESEARCH-02
+→ WP-ALPHA-CONTEXT-01
+→ WP-CANDIDATE-POLICY-02
+→ WP-PREDICTION-01
+```
+
+No new External Dataset, large historical Campaign or prospective cohort was
+run in this implementation phase. Until separately executed evidence exists,
+external validation, Formal OOS, prospective proof, Strategy qualification and
+Production qualification remain false.
 
 The repository now moves through the **Alpha Proof Campaign**:
 

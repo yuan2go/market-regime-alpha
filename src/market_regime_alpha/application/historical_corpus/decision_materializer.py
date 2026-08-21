@@ -117,6 +117,7 @@ from market_regime_alpha.features.technical.catalog import (
 from market_regime_alpha.features.technical.observables import (
     FeatureValueState,
     TechnicalFeatureComputation,
+    TechnicalFeatureValue,
     compute_retrospective_technical_feature,
     missing_technical_feature_computation,
 )
@@ -179,6 +180,7 @@ from market_regime_alpha.universe.runtime_scope import (
     RuntimeScopeMembershipSnapshot,
     RuntimeScopeDecision,
     RuntimeScopeReceipt,
+    ResearchUniversePolicy,
     UniversePolicySelector,
     UniverseScopeKind,
     build_runtime_scope,
@@ -246,6 +248,10 @@ class _HistoricalFeatureValue:
     available_at: datetime
     source_bar_count: int
     source_bar_lineage_hash: str
+    normalized_source_bar_ids: tuple[str, ...]
+    normalized_source_bar_hashes: tuple[str, ...]
+    source_event_start: datetime | None
+    source_event_end: datetime | None
     missing_reason_codes: tuple[str, ...]
 
 
@@ -585,6 +591,14 @@ class HistoricalDecisionMaterializer:
             ),
             payload={
                 "scope": scope.to_canonical_dict(),
+                "universal_integrity": [
+                    _universal_integrity_projection(
+                        observation=item,
+                        policy=policy,
+                        scope=scope,
+                    )
+                    for item in observations
+                ],
                 "membership": [{"symbol": symbol, "included": membership[symbol]} for symbol in sorted(membership)],
                 "coverage": {
                     "requested": len(membership),
@@ -1813,6 +1827,78 @@ def _eligibility_observation(
     )
 
 
+def _universal_integrity_projection(
+    *,
+    observation: RuntimeEligibilityObservation,
+    policy: ResearchUniversePolicy,
+    scope: RuntimeScopeReceipt,
+) -> dict[str, Any]:
+    checks = {
+        "universe_eligible": observation.included is True,
+        "tradable": (
+            True
+            if not policy.require_tradable
+            else observation.suspended is False
+        ),
+        "suspension_known": observation.suspended is not None,
+        "not_suspended": observation.suspended is False,
+        "data_integrity": all(
+            value is not None
+            for value in (
+                observation.included,
+                observation.listing_status,
+                observation.is_st,
+                observation.suspended,
+                observation.history_sessions,
+                observation.median_daily_amount,
+            )
+        ),
+        "required_history": (
+            observation.history_sessions is not None
+            and observation.history_sessions >= policy.minimum_history_sessions
+        ),
+        "pit_boundary_satisfied": (
+            observation.observed_at <= scope.as_of
+            and observation.known_at <= scope.built_at
+        ),
+        "minimum_liquidity": (
+            observation.median_daily_amount is not None
+            and observation.median_daily_amount
+            >= policy.minimum_median_daily_amount
+        ),
+        "a_share_restrictions": (
+            observation.listing_status == "LISTED"
+            and policy.lot_size == 100
+            and (
+                policy.include_st
+                or observation.is_st is False
+            )
+        ),
+    }
+    reasons = tuple(
+        sorted(
+            f"UNIVERSAL_{name.upper()}_FAILED"
+            for name, passed in checks.items()
+            if not passed
+        )
+    )
+    return {
+        "symbol": observation.symbol,
+        "observation_id": str(observation.observation_id),
+        "observation_hash": observation.observation_hash,
+        "checks": checks,
+        "median_daily_amount": (
+            None
+            if observation.median_daily_amount is None
+            else str(observation.median_daily_amount)
+        ),
+        "eligible": not reasons,
+        "reason_codes": list(reasons),
+        "formal_pit": scope.formal_pit,
+        "evidence_ceiling": scope.evidence_ceiling,
+    }
+
+
 def _security_fact_coverage(
     *,
     universe: Any,
@@ -1958,34 +2044,28 @@ def _compute_features(
                     output_ids=tuple(item.output_id for item in definition.output_schema),
                     reason_code="HISTORICAL_SOURCE_BARS_MISSING_AT_DECISION_TIME",
                 )
-            results.append(_compact_feature_computation(computation))
+            results.append(
+                _compact_feature_computation(
+                    computation,
+                    canonical_bars=selected_bars,
+                    normalized_bars=(daily_rows if selected == Timeframe.DAILY.value else minute_rows),
+                )
+            )
     return tuple(sorted(results, key=lambda item: (item.symbol, item.feature_id)))
 
 
 def _compact_feature_computation(
     item: TechnicalFeatureComputation,
+    *,
+    canonical_bars: tuple[CanonicalMarketBar, ...],
+    normalized_bars: tuple[HistoricalNormalizedBar, ...],
 ) -> _HistoricalFeatureComputation:
+    normalized_by_canonical_id = {
+        str(canonical.bar_id): normalized
+        for canonical, normalized in zip(canonical_bars, normalized_bars, strict=True)
+    }
     values = tuple(
-        _HistoricalFeatureValue(
-            output_id=value.output_id,
-            state=value.state,
-            value=value.value,
-            available_at=value.available_at,
-            source_bar_count=len(value.source_bar_ids),
-            source_bar_lineage_hash=canonical_hash(
-                {
-                    "source_bars": [
-                        {"bar_id": str(bar_id), "bar_hash": bar_hash}
-                        for bar_id, bar_hash in zip(
-                            value.source_bar_ids,
-                            value.source_bar_hashes,
-                            strict=True,
-                        )
-                    ]
-                }
-            ),
-            missing_reason_codes=value.missing_reason_codes,
-        )
+        _compact_feature_value(value, normalized_by_canonical_id)
         for value in item.values
     )
     return _HistoricalFeatureComputation(
@@ -1997,6 +2077,39 @@ def _compact_feature_computation(
         configuration_hash=item.configuration_hash,
         values=values,
         limitations=item.limitations,
+    )
+
+
+def _compact_feature_value(
+    value: TechnicalFeatureValue,
+    normalized_by_canonical_id: Mapping[str, HistoricalNormalizedBar],
+) -> _HistoricalFeatureValue:
+    normalized = tuple(
+        normalized_by_canonical_id[str(bar_id)] for bar_id in value.source_bar_ids
+    )
+    return _HistoricalFeatureValue(
+        output_id=value.output_id,
+        state=value.state,
+        value=value.value,
+        available_at=value.available_at,
+        source_bar_count=len(value.source_bar_ids),
+        source_bar_lineage_hash=canonical_hash(
+            {
+                "source_bars": [
+                    {"bar_id": str(bar_id), "bar_hash": bar_hash}
+                    for bar_id, bar_hash in zip(
+                        value.source_bar_ids,
+                        value.source_bar_hashes,
+                        strict=True,
+                    )
+                ]
+            }
+        ),
+        normalized_source_bar_ids=tuple(str(item.bar_id) for item in normalized),
+        normalized_source_bar_hashes=tuple(item.content_hash for item in normalized),
+        source_event_start=(None if not normalized else normalized[0].event_start),
+        source_event_end=(None if not normalized else normalized[-1].event_end),
+        missing_reason_codes=value.missing_reason_codes,
     )
 
 
@@ -2069,6 +2182,14 @@ def _feature_dict(item: _HistoricalFeatureComputation) -> dict[str, Any]:
                 "available_at": value.available_at.isoformat(),
                 "source_bar_count": value.source_bar_count,
                 "source_bar_lineage_hash": value.source_bar_lineage_hash,
+                "normalized_source_bar_ids": list(value.normalized_source_bar_ids),
+                "normalized_source_bar_hashes": list(value.normalized_source_bar_hashes),
+                "source_event_start": (
+                    None if value.source_event_start is None else value.source_event_start.isoformat()
+                ),
+                "source_event_end": (
+                    None if value.source_event_end is None else value.source_event_end.isoformat()
+                ),
                 "missing_reason_codes": list(value.missing_reason_codes),
             }
             for value in item.values
@@ -2779,20 +2900,33 @@ def _decision_reference_price(
     decision_time: datetime,
 ) -> Decimal | None:
     intraday = tuple(
-        item
-        for item in bars
-        if item.symbol == symbol
-        and item.market_date == trading_date
-        and item.timeframe is Timeframe.MINUTE_5
-        and item.event_end <= decision_time
-        and item.close is not None
+        sorted(
+            (
+                item
+                for item in bars
+                if item.symbol == symbol
+                and item.market_date == trading_date
+                and item.timeframe is Timeframe.MINUTE_5
+                and item.event_end <= decision_time
+                and item.close is not None
+            ),
+            key=_historical_bar_key,
+        )
     )
     if intraday:
         return intraday[-1].close
     daily = tuple(
-        item
-        for item in bars
-        if item.symbol == symbol and item.timeframe is Timeframe.DAILY and item.event_end <= decision_time and item.close is not None
+        sorted(
+            (
+                item
+                for item in bars
+                if item.symbol == symbol
+                and item.timeframe is Timeframe.DAILY
+                and item.event_end <= decision_time
+                and item.close is not None
+            ),
+            key=_historical_bar_key,
+        )
     )
     return None if not daily else daily[-1].close
 
@@ -2923,6 +3057,13 @@ def _research_panel_rows(
             "historical business facts",
         )
     }
+    universal_integrity = {
+        str(item["symbol"]): item
+        for item in _objects(
+            pool.payload.get("universal_integrity", []),
+            "universal integrity",
+        )
+    }
     action_exclusions = {
         str(item["symbol"])
         for item in _objects(
@@ -2947,17 +3088,16 @@ def _research_panel_rows(
         business = business_facts.get(symbol, {})
         market_cap = _optional_decimal(business.get("market_cap"))
         scope_record = scope_by_symbol[symbol]
+        universal = universal_integrity.get(symbol)
+        if universal is None:
+            raise ValueError("Research Panel lacks universal-integrity owner projection")
         required_features_complete = all(
             values.get(output_id) is not None
             for output_id in ("return_3", "amount_ratio_5")
         )
-        hard_integrity_passed = (
-            scope_record.decision is RuntimeScopeDecision.INCLUDED
-            and required_features_complete
-        )
-        hard_reasons = set(scope_record.reason_codes)
-        if not required_features_complete:
-            hard_reasons.add("REQUIRED_CANDIDATE_FEATURES_INCOMPLETE")
+        # Universal legality is independent from the incumbent Candidate's two
+        # preferred inputs.  Factor availability remains explicit below so a
+        # different frozen hypothesis is not excluded by return_3/amount_ratio_5.
         market_passed = candidate_market_gate_passed(market_snapshot)
         theme_passed = candidate_theme_gate_passed(record.theme_rotation_state)
         capital_passed = candidate_capital_gate_passed(
@@ -2993,12 +3133,22 @@ def _research_panel_rows(
                 },
                 "gate_diagnostics": {
                     "hard_integrity": {
-                        "passed": hard_integrity_passed,
+                        "passed": bool(universal["eligible"]),
                         "decision": scope_record.decision.value,
-                        "reason_codes": sorted(hard_reasons),
-                        "required_candidate_features_complete": (
-                            required_features_complete
-                        ),
+                        "reason_codes": list(universal["reason_codes"]),
+                        "owner_reason_codes": list(scope_record.reason_codes),
+                        "checks": dict(universal["checks"]),
+                        "liquidity": universal["median_daily_amount"],
+                    },
+                    "factor_availability": {
+                        "INCUMBENT_PRICE_VOLUME": {
+                            "available": required_features_complete,
+                            "missing_factor_ids": sorted(
+                                output_id
+                                for output_id in ("return_3", "amount_ratio_5")
+                                if values.get(output_id) is None
+                            ),
+                        },
                     },
                     "predictive": {
                         "market_regime": {
@@ -3062,6 +3212,24 @@ def _research_panel_rows(
                     }
                 ),
                 "target_return": (None if label is None else _decimal_string(label.checkpoint_return)),
+                "target_reference": (
+                    None if label is None else label.target.to_canonical_dict()
+                ),
+                "target_label_reference": (
+                    None
+                    if label is None
+                    else ValidationArtifactReference(
+                        "TARGET_OUTCOME_LABEL", label.label_id, label.label_hash
+                    ).to_canonical_dict()
+                ),
+                "decision_reference_price": (
+                    None
+                    if label is None
+                    else _decimal_string(label.decision_reference_price)
+                ),
+                "target_reference_price": (
+                    None if label is None else _decimal_string(label.checkpoint_price)
+                ),
                 "target_status": (
                     "CORPORATE_ACTION_EXCLUDED"
                     if symbol in action_exclusions
@@ -3072,6 +3240,24 @@ def _research_panel_rows(
                 "mfe": None if label is None else _decimal_string(label.mfe),
                 "mae": None if label is None else _decimal_string(label.mae),
                 "gross_return": (None if result is None else result.get("gross_return")),
+                "executable_entry_price": (
+                    None if result is None else result.get("entry_price")
+                ),
+                "economics_result_reference": (
+                    None
+                    if result is None
+                    else ValidationArtifactReference(
+                        "STRATEGY_ECONOMICS_RESULT",
+                        ArtifactId(str(result["result_id"])),
+                        str(result["result_hash"]),
+                    ).to_canonical_dict()
+                ),
+                "economics_policy_reference": (
+                    None if result is None else result.get("policy_reference")
+                ),
+                "entry_execution_reference": (
+                    None if result is None else result.get("entry_execution_reference")
+                ),
                 "cost_return": (None if result is None else result.get("cost_return")),
                 "net_return": (None if result is None else result.get("net_return")),
                 "economics_status": ("NOT_ESTIMABLE" if result is None else str(result["status"])),
@@ -3130,6 +3316,14 @@ def _panel_research_features(
                     "source_bar_lineage_hash": str(
                         value["source_bar_lineage_hash"]
                     ),
+                    "normalized_source_bar_ids": list(
+                        value.get("normalized_source_bar_ids", [])
+                    ),
+                    "normalized_source_bar_hashes": list(
+                        value.get("normalized_source_bar_hashes", [])
+                    ),
+                    "source_event_start": value.get("source_event_start"),
+                    "source_event_end": value.get("source_event_end"),
                     "missing_reason_codes": list(
                         value.get("missing_reason_codes", [])
                     ),

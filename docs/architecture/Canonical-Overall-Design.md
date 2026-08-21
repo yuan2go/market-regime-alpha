@@ -24,7 +24,9 @@ The canonical loop is:
 Reliable Data / Evidence
 → PIT-safe Research Dataset
 → Feature / Factor
-→ Market / ETF / Theme / Capital Context
+→ Alpha Correctness / Independent Reproduction
+→ Frozen External Validation
+→ Market / ETF / Theme / Capital Context Conditional Research
 → Tradable Universe
 → Candidate
 → Signal
@@ -195,6 +197,31 @@ Large immutable artifacts may live outside PostgreSQL, but PostgreSQL owns canon
 
 ## 6. Quantitative Research Architecture
 
+### Discovery-to-prediction dependency order
+
+An unusually strong discovery result does not advance directly into Candidate,
+Forecast or Strategy. The canonical research dependency is:
+
+```text
+Alpha Discovery
+→ independent feature/target reproduction and temporal correctness
+→ separately frozen external validation
+→ context-conditional evaluation
+→ incumbent/challenger Candidate policy
+→ conditional Forecast
+→ Strategy economics
+```
+
+Correctness compares canonical persisted values with independently recomputed
+values from decision-bounded source bars. Owner replay is deterministic evidence,
+but is not physical-package reproduction. A missing physical package therefore
+remains `PHYSICAL_REPRODUCTION_NOT_ESTABLISHED` even when owner replay passes.
+
+External validation changes one declared dimension at a time: time, Universe or
+Provider. Free/PIT-incomplete validation is external validation only; it is not
+Formal OOS. Frozen validation outcomes cannot be used to retune factor direction,
+Candidate thresholds, target, DecisionTime, Top-K or cost assumptions.
+
 ### Transparent baseline first
 
 Every strategy research program begins with a small interpretable cross-sectional baseline using only valid decision-time features. Possible families include Relative Strength, Momentum, Volume/Turnover change, Price Position, Volatility, Liquidity and Industry Relative Strength. The exact formula is frozen by Experiment, not hard-coded into the architecture.
@@ -236,7 +263,7 @@ Changing target, universe, threshold, feature search or cost after seeing OOS cr
 
 ## 7. Shared Context and Decision-Layer Boundaries
 
-Market Regime, ETF, Theme and Capital are **Context**, not universal BUY/SELL authority. Each must have explicit inputs/state/version/time semantics and must prove incremental value versus the transparent baseline through ablation.
+Market Regime, ETF, Theme and Capital are **Context**, not universal BUY/SELL authority. Each must have explicit inputs/state/version/time semantics and must prove incremental value versus the transparent baseline through ablation. Session-level Context is evaluated across sessions; it cannot be represented as within-session stock-level lift. Cross-sectional Context may support interactions only when symbols in the same session genuinely carry different values.
 
 Canonical questions:
 
@@ -249,6 +276,11 @@ Portfolio = Which accepted proposals receive capital, and how much?
 ```
 
 If several layers reduce to the same score with no distinct policy/consumer, simplify or merge them.
+
+Candidate policy has three explicit layers: universal tradability/data integrity,
+validated Alpha ranking, and evidence-supported Context conditioning. Missing an
+unrelated incumbent factor is not a universal integrity failure. Incumbent and
+Challenger identities coexist until evidence and Governance authorize a change.
 
 Path Forecast is target/horizon-specific. It may estimate expected return/downside, MFE/MAE, barrier probabilities, target-before-stop, time-to-MFE or continuation/failure. It explicitly binds Forecast/Target/Trading/Outcome horizons.
 
@@ -575,11 +607,14 @@ The next program is an **Alpha Proof Campaign** with these Work Packages:
 
 - **P0 WP-GOLDEN-LOOP-01** — one DecisionTime→Universe→Feature→Candidate→Strategy→Shadow Portfolio→Outcome→Attribution vertical slice.
 - **P0 WP-ALPHA-RESEARCH-01** — frozen PIT-aware Factor→Gate→Candidate discovery: owner-resolved Panel, transparent baseline, predictive-Gate ablation and explicit rejection.
-- **P0 WP-PROSPECTIVE-01** — immutable live-origin future decision/outcome cohorts.
-- **P1 WP-ALPHA-RESEARCH-02** — separately frozen time/Universe/Provider external validation after a discovery result survives WP-01.
-- **P1 WP-STRATEGY-PROOF-01** — Entry/Fillability/Sizing/Portfolio/Holding/Exit/Cost/Capacity/Risk economics.
-- **P1 WP-ATTRIBUTION-COMPRESSION-01** — layered diagnosis plus safe removal/merge of redundant architecture.
-- **P2 WP-FORMAL-RESEARCH-01** — qualified Provider/PIT, Locked OOS, calibration and formal qualification once external evidence exists.
+- **P0 WP-ALPHA-CORRECTNESS-01 — ENGINEERING COMPLETE** — independent source-bar/target reproduction, temporal/placebo/bar-order-derived execution/redundancy/robust-inference checks; current physical state remains `PHYSICAL_REPRODUCTION_NOT_ESTABLISHED`.
+- **P1 WP-ALPHA-RESEARCH-02 — CAPABILITY COMPLETE / NOT RUN** — canonical Experiment Definition freezes single-dimension time/Universe/Provider external validation after a discovery result survives correctness; Panel-linked Outcome/Strategy Economics owners gate entry economics.
+- **P1 WP-ALPHA-CONTEXT-01 — CAPABILITY COMPLETE / NOT RUN** — session-level and cross-sectional Context conditional evaluation without default hard-Gate authority.
+- **P1 WP-CANDIDATE-POLICY-02 — ENGINEERING COMPLETE / CHALLENGER DORMANT** — explicit Incumbent/Challenger policies with integrity, Alpha and Context layers.
+- **P2 WP-PREDICTION-01 — KERNEL IMPLEMENTED / OWNER WIRING FAIL-CLOSED** — Candidate→Signal→conditional Forecast→Strategy contract has explicit requirement and lineage semantics; caller projections and the circular post-Portfolio RiskDecision path are rejected, and activation waits for one non-circular PostgreSQL pre-Strategy Risk resolver.
+- **Next Strategy Economics** — Entry/Fillability/Sizing/Portfolio/Holding/Exit/Cost/Capacity/Risk economics.
+- **Then Formal PIT / Formal OOS** — qualified Provider/PIT, Locked OOS and calibration once external evidence exists.
+- **Then Prospective Proof** — immutable live-origin future decision/outcome cohorts.
 - **P3 WP-CONTROLLED-EXECUTION-01** — optional broker automation only after separate empirical/operational admission.
 
 Gaps are classified as **A: build now**, **B: engineering-ready but prospective evidence must accumulate**, or **C: external capability/evidence dependent**. B/C never block A, and A never pretends to satisfy B/C.

@@ -28,6 +28,39 @@ class HistoricalEvidenceKind(str, Enum):
     PORTFOLIO_PERFORMANCE = "PORTFOLIO_PERFORMANCE"
     EXPLORATORY_MODEL = "EXPLORATORY_MODEL"
     METHODOLOGY_ASSESSMENT = "METHODOLOGY_ASSESSMENT"
+    ALPHA_CORRECTNESS = "ALPHA_CORRECTNESS"
+    EXTERNAL_VALIDATION = "EXTERNAL_VALIDATION"
+    CONTEXT_CONDITIONAL = "CONTEXT_CONDITIONAL"
+    CANDIDATE_POLICY = "CANDIDATE_POLICY"
+    CONDITIONAL_PREDICTION = "CONDITIONAL_PREDICTION"
+
+
+class ResearchStatementKind(str, Enum):
+    FACT = "FACT"
+    MODEL_ASSUMPTION = "MODEL_ASSUMPTION"
+    RESEARCH_RESULT = "RESEARCH_RESULT"
+    INFERENCE = "INFERENCE"
+    LIMITATION = "LIMITATION"
+    INVALIDATION_CONDITION = "INVALIDATION_CONDITION"
+
+
+@dataclass(frozen=True, slots=True)
+class ResearchStatement:
+    statement_kind: ResearchStatementKind
+    text: str
+
+    def __post_init__(self) -> None:
+        require_text("Research statement", self.text)
+
+    def to_canonical_dict(self) -> dict[str, str]:
+        return {"statement_kind": self.statement_kind.value, "text": self.text}
+
+    @classmethod
+    def from_canonical_dict(cls, payload: Mapping[str, Any]) -> ResearchStatement:
+        return cls(
+            ResearchStatementKind(str(payload["statement_kind"])),
+            str(payload["text"]),
+        )
 
 
 class ResearchFinding(str, Enum):
@@ -123,7 +156,8 @@ class HistoricalResearchEvidence:
     payload: Mapping[str, Any]
     created_at: datetime
     limitations: tuple[str, ...]
-    schema_version: str = "historical-research-evidence/v1"
+    statements: tuple[ResearchStatement, ...] = ()
+    schema_version: str = "historical-research-evidence/v2"
 
     def __post_init__(self) -> None:
         require_sha256("evidence_hash", self.evidence_hash)
@@ -151,6 +185,18 @@ class HistoricalResearchEvidence:
         }
         if not required.issubset(self.limitations):
             raise ValueError("Historical Evidence ceiling is incomplete")
+        if self.schema_version not in {
+            "historical-research-evidence/v1",
+            "historical-research-evidence/v2",
+        }:
+            raise ValueError("unsupported Historical Evidence schema")
+        statement_keys = tuple(
+            (item.statement_kind.value, item.text) for item in self.statements
+        )
+        if statement_keys != tuple(sorted(set(statement_keys))):
+            raise ValueError("Historical Evidence statements must be unique and sorted")
+        if self.schema_version == "historical-research-evidence/v2" and not self.statements:
+            raise ValueError("Historical Evidence V2 requires typed statements")
         self.verify_identity()
 
     @classmethod
@@ -169,6 +215,7 @@ class HistoricalResearchEvidence:
         payload: Mapping[str, Any],
         created_at: datetime,
         limitations: tuple[str, ...] = (),
+        statements: tuple[ResearchStatement, ...] = (),
     ) -> HistoricalResearchEvidence:
         ordered_metrics = tuple(sorted(metrics, key=_metric_key))
         ordered_limitations = tuple(
@@ -184,6 +231,19 @@ class HistoricalResearchEvidence:
             )
         )
         ordered_sources = _references(source_references)
+        ordered_statements = tuple(
+            sorted(
+                {
+                    *statements,
+                    ResearchStatement(ResearchStatementKind.RESEARCH_RESULT, rationale),
+                    *(
+                        ResearchStatement(ResearchStatementKind.LIMITATION, item)
+                        for item in ordered_limitations
+                    ),
+                },
+                key=lambda item: (item.statement_kind.value, item.text),
+            )
+        )
         canonical_payload = dict(payload)
         values = {
             "run_id": run_id,
@@ -198,6 +258,8 @@ class HistoricalResearchEvidence:
             "payload": canonical_payload,
             "created_at": created_at,
             "limitations": ordered_limitations,
+            "statements": ordered_statements,
+            "schema_version": "historical-research-evidence/v2",
         }
         digest = canonical_hash(_payload(**values))
         return cls(
@@ -215,6 +277,7 @@ class HistoricalResearchEvidence:
             payload=canonical_payload,
             created_at=created_at,
             limitations=ordered_limitations,
+            statements=ordered_statements,
         )
 
     @property
@@ -239,6 +302,8 @@ class HistoricalResearchEvidence:
             payload=self.payload,
             created_at=self.created_at,
             limitations=self.limitations,
+            statements=self.statements,
+            schema_version=self.schema_version,
         )
 
     def verify_identity(self) -> None:
@@ -285,13 +350,20 @@ class HistoricalResearchEvidence:
             payload=dict(raw_payload),
             created_at=parse_utc_second("created_at", payload["created_at"]),
             limitations=_strings(payload["limitations"]),
+            statements=tuple(
+                ResearchStatement.from_canonical_dict(item)
+                for item in _objects(payload.get("statements", []))
+            ),
             schema_version=str(payload["schema_version"]),
         )
 
 
 def _payload(**values: Any) -> dict[str, Any]:
-    return {
-        "schema_version": "historical-research-evidence/v1",
+    schema_version = str(
+        values.get("schema_version", "historical-research-evidence/v2")
+    )
+    payload = {
+        "schema_version": schema_version,
         "run_id": str(values["run_id"]),
         "command_hash": values["command_hash"],
         "experiment_reference": values["experiment_reference"].to_canonical_dict(),
@@ -307,6 +379,11 @@ def _payload(**values: Any) -> dict[str, Any]:
         "created_at": canonical_datetime(values["created_at"]),
         "limitations": list(values["limitations"]),
     }
+    if schema_version == "historical-research-evidence/v2":
+        payload["statements"] = [
+            item.to_canonical_dict() for item in values["statements"]
+        ]
+    return payload
 
 
 def _metric_key(item: HistoricalEvidenceMetric) -> tuple[str, str, str, str]:
@@ -353,4 +430,6 @@ __all__ = [
     "HistoricalResearchEvidence",
     "MetricAssumptionStatus",
     "ResearchFinding",
+    "ResearchStatement",
+    "ResearchStatementKind",
 ]
