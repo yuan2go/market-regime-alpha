@@ -32,6 +32,9 @@ from market_regime_alpha.application.historical_corpus.materialization_contracts
     HistoricalComponentKind,
     HistoricalSessionComponent,
 )
+from market_regime_alpha.application.historical_corpus.temporal_validation_window import (
+    FrozenTemporalValidationWindow,
+)
 from market_regime_alpha.application.strategy_shadow.economics import (
     StrategyEconomicsResult,
     StrategyEconomicsStatus,
@@ -264,6 +267,7 @@ class FrozenExternalValidationExperiment:
     correctness_evidence: HistoricalResearchEvidence
     discovery_scope: ValidationScope
     validation_scope: ValidationScope
+    temporal_window: FrozenTemporalValidationWindow | None
     validation_panel_references: tuple[ValidationArtifactReference, ...]
     dimension: ValidationDimension
     expected_population: int
@@ -275,6 +279,24 @@ class FrozenExternalValidationExperiment:
         _require_isolated_dimension(
             self.discovery_scope, self.validation_scope, self.dimension
         )
+        if self.dimension is ValidationDimension.TEMPORAL_VALIDATION:
+            if self.temporal_window is None:
+                raise ValueError(
+                    "Temporal validation requires an owner-derived frozen window"
+                )
+            if (
+                self.validation_scope.first_session
+                != self.temporal_window.start_decision_session
+                or self.validation_scope.last_session
+                != self.temporal_window.last_decision_session
+            ):
+                raise ValueError(
+                    "Temporal validation scope differs from frozen Calendar sessions"
+                )
+        elif self.temporal_window is not None:
+            raise ValueError(
+                "Temporal window cannot be attached to another validation dimension"
+            )
         if self.expected_population <= 0:
             raise ValueError("External validation expected population must be positive")
         if (
@@ -319,6 +341,7 @@ class FrozenExternalValidationExperiment:
         correctness_evidence: HistoricalResearchEvidence,
         discovery_scope: ValidationScope,
         validation_scope: ValidationScope,
+        temporal_window: FrozenTemporalValidationWindow | None,
         validation_panel_references: tuple[ValidationArtifactReference, ...],
         dimension: ValidationDimension,
         expected_population: int,
@@ -343,6 +366,7 @@ class FrozenExternalValidationExperiment:
                 correctness_evidence_reference=correctness_evidence.reference,
                 discovery_scope=discovery_scope,
                 validation_scope=validation_scope,
+                temporal_window=temporal_window,
                 validation_panel_references=validation_panel_references,
                 dimension=dimension,
                 expected_population=expected_population,
@@ -374,6 +398,7 @@ class FrozenExternalValidationExperiment:
             correctness_evidence,
             discovery_scope,
             validation_scope,
+            temporal_window,
             tuple(
                 sorted(
                     validation_panel_references,
@@ -407,6 +432,11 @@ class FrozenExternalValidationExperiment:
             "correctness_evidence_reference": self.correctness_evidence.reference.to_canonical_dict(),
             "discovery_scope": self.discovery_scope.to_canonical_dict(),
             "validation_scope": self.validation_scope.to_canonical_dict(),
+            "temporal_window": (
+                None
+                if self.temporal_window is None
+                else self.temporal_window.to_canonical_dict()
+            ),
             "validation_panel_references": [
                 item.to_canonical_dict()
                 for item in self.validation_panel_references
@@ -615,6 +645,13 @@ def evaluate_external_validation(
         for item in ordered
     ):
         raise ValueError("external validation observation is outside frozen sessions")
+    if experiment.temporal_window is not None and any(
+        item.session not in experiment.temporal_window.decision_sessions
+        for item in ordered
+    ):
+        raise ValueError(
+            "external validation observation is outside frozen Calendar identities"
+        )
     if any(
         item.source_reference not in experiment.validation_panel_references
         for item in ordered
@@ -662,12 +699,27 @@ def evaluate_external_validation(
         conservative = inference.sensitivity[-1]
         confidence = (conservative.lower, conservative.upper)
         stability = inference.temporal_stability
-    qualified = (
+    estimable = (
         coverage >= experiment.hypothesis.minimum_coverage
+        and rank_ic is not None
+        and confidence is not None
         and retention is not None
-        and retention >= experiment.hypothesis.minimum_effect_retention
         and top_net is not None
+        and stability != "NOT_ESTIMABLE"
+    )
+    qualified = bool(
+        estimable
+        and retention is not None
+        and top_net is not None
+        and retention >= experiment.hypothesis.minimum_effect_retention
         and top_net >= experiment.hypothesis.minimum_top_k_net
+    )
+    qualification_status = (
+        "INCONCLUSIVE"
+        if not estimable
+        else "SUPPORTED"
+        if qualified
+        else "NOT_SUPPORTED"
     )
     limitations = tuple(
         sorted(
@@ -714,7 +766,7 @@ def evaluate_external_validation(
         "capacity_diagnostic": _text(capacity),
         "effect_retention": _text(retention),
         "degradation": _text(degradation),
-        "qualification_status": "SUPPORTED" if qualified else "NOT_SUPPORTED",
+        "qualification_status": qualification_status,
         "external_validation_classification": "EXTERNAL_VALIDATION",
         "formal_oos": False,
         "limitations": list(limitations),
@@ -749,7 +801,7 @@ def evaluate_external_validation(
         capacity,
         retention,
         degradation,
-        "SUPPORTED" if qualified else "NOT_SUPPORTED",
+        qualification_status,
         "EXTERNAL_VALIDATION",
         False,
         limitations,
@@ -1013,6 +1065,7 @@ def _external_domains(
     correctness_evidence_reference: ValidationArtifactReference,
     discovery_scope: ValidationScope,
     validation_scope: ValidationScope,
+    temporal_window: FrozenTemporalValidationWindow | None,
     validation_panel_references: tuple[ValidationArtifactReference, ...],
     dimension: ValidationDimension,
     expected_population: int,
@@ -1062,6 +1115,40 @@ def _external_domains(
         HyperparameterDomain("validation_dimension", (dimension.value,)),
         HyperparameterDomain(
             "validation_scope_hash", (canonical_hash(validation_scope.to_canonical_dict()),)
+        ),
+        *(
+            (
+                HyperparameterDomain(
+                    "temporal_window",
+                    (
+                        f"{temporal_window.reference.artifact_kind}|"
+                        f"{temporal_window.reference.artifact_id}|"
+                        f"{temporal_window.reference.content_hash}",
+                    ),
+                ),
+                HyperparameterDomain(
+                    "temporal_calendar_owner",
+                    (
+                        f"{temporal_window.calendar_reference.artifact_kind}|"
+                        f"{temporal_window.calendar_reference.artifact_id}|"
+                        f"{temporal_window.calendar_reference.content_hash}",
+                    ),
+                ),
+                HyperparameterDomain(
+                    "temporal_decision_sessions",
+                    tuple(item.isoformat() for item in temporal_window.decision_sessions),
+                ),
+                HyperparameterDomain(
+                    "temporal_decision_session_hash",
+                    (temporal_window.decision_session_hash,),
+                ),
+                HyperparameterDomain(
+                    "temporal_final_target_session",
+                    (temporal_window.final_target_session.isoformat(),),
+                ),
+            )
+            if temporal_window is not None
+            else ()
         ),
         HyperparameterDomain(
             "validation_panel_owner",

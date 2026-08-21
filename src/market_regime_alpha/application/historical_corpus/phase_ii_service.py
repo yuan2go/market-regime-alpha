@@ -71,6 +71,9 @@ from market_regime_alpha.application.historical_corpus.postgres_repository impor
 from market_regime_alpha.application.historical_corpus.raw_normalization_correctness import (
     verify_independent_baostock_normalization,
 )
+from market_regime_alpha.application.historical_corpus.temporal_validation_window import (
+    FrozenTemporalValidationWindow,
+)
 from market_regime_alpha.application.research_validation.common import (
     ValidationArtifactReference,
 )
@@ -163,6 +166,7 @@ class HistoricalPhaseIIResearchService:
         correctness_evidence_id: ArtifactId,
         discovery_scope: ValidationScope,
         validation_scope: ValidationScope,
+        temporal_window: FrozenTemporalValidationWindow | None,
         validation_panel_references: tuple[ValidationArtifactReference, ...],
         dimension: ValidationDimension,
         expected_population: int,
@@ -199,6 +203,7 @@ class HistoricalPhaseIIResearchService:
             panel_references=validation_panel_references,
             discovery_scope=discovery_scope,
             validation_scope=validation_scope,
+            temporal_window=temporal_window,
             dimension=dimension,
             discovery=discovery,
             expected_population=expected_population,
@@ -208,6 +213,7 @@ class HistoricalPhaseIIResearchService:
             correctness_evidence=correctness,
             discovery_scope=discovery_scope,
             validation_scope=validation_scope,
+            temporal_window=temporal_window,
             validation_panel_references=validation_panel_references,
             dimension=dimension,
             expected_population=expected_population,
@@ -536,6 +542,11 @@ class HistoricalPhaseIIResearchService:
             experiment.hypothesis.feature_reference,
             experiment.hypothesis.target_reference,
             experiment.hypothesis.cost_policy_reference,
+            *(
+                (experiment.temporal_window.calendar_reference,)
+                if experiment.temporal_window is not None
+                else ()
+            ),
             *experiment.validation_panel_references,
         )
         return self._persist(
@@ -1118,6 +1129,7 @@ def _verify_external_panel_owners(
     panel_references: tuple[ValidationArtifactReference, ...],
     discovery_scope: ValidationScope,
     validation_scope: ValidationScope,
+    temporal_window: FrozenTemporalValidationWindow | None,
     dimension: ValidationDimension,
     discovery: HistoricalResearchEvidence,
     expected_population: int,
@@ -1139,6 +1151,16 @@ def _verify_external_panel_owners(
         or validation_scope.first_session > discovery_scope.last_session
     ):
         raise ValueError("Temporal validation sessions overlap Discovery sessions")
+    if dimension is ValidationDimension.TEMPORAL_VALIDATION:
+        if temporal_window is None:
+            raise ValueError("Temporal validation requires a frozen Calendar window")
+        panel_sessions = tuple(sorted(panel.trading_date for panel in panels))
+        if panel_sessions != temporal_window.decision_sessions:
+            raise ValueError(
+                "Validation Panel owners do not match all frozen Calendar sessions"
+            )
+    elif temporal_window is not None:
+        raise ValueError("Temporal window cannot qualify another validation dimension")
     row_count = 0
     for panel in panels:
         if not (
