@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from market_regime_alpha.application.historical_corpus.temporal_validation_window import (
+    FrozenTemporalValidationWindow,
     TEMPORAL_VALIDATION_V1,
     freeze_temporal_validation_window,
 )
@@ -38,6 +39,12 @@ def test_window_freezes_126_calendar_sessions_and_final_target() -> None:
     assert window.session_count == 126
     assert window.last_decision_session == calendar.trading_dates[125]
     assert window.reference.content_hash == window.window_hash
+    assert (
+        FrozenTemporalValidationWindow.from_canonical_dict(
+            window.to_canonical_dict()
+        )
+        == window
+    )
 
 
 def test_window_rejects_missing_start_and_insufficient_target_coverage() -> None:

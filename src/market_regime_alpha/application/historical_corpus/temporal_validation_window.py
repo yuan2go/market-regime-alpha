@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
-from typing import Final
+from typing import Any, Final, Mapping
 
 from market_regime_alpha.application.research_validation.common import (
     ValidationArtifactReference,
@@ -88,6 +88,52 @@ class FrozenTemporalValidationWindow:
             "window_hash": self.window_hash,
             **self.identity_payload(),
         }
+
+    @classmethod
+    def from_canonical_dict(
+        cls,
+        payload: Mapping[str, Any],
+    ) -> FrozenTemporalValidationWindow:
+        expected = {
+            "window_id",
+            "window_hash",
+            "schema_version",
+            "protocol_id",
+            "start_decision_session",
+            "session_count",
+            "decision_sessions",
+            "final_target_session",
+            "calendar_reference",
+            "decision_session_hash",
+        }
+        if set(payload) != expected:
+            raise ValueError("Frozen Temporal Validation window fields mismatch")
+        raw_sessions = payload["decision_sessions"]
+        raw_calendar = payload["calendar_reference"]
+        if not isinstance(raw_sessions, list) or not isinstance(raw_calendar, Mapping):
+            raise ValueError("Frozen Temporal Validation owner payload is malformed")
+        return cls(
+            window_id=ArtifactId(str(payload["window_id"])),
+            window_hash=str(payload["window_hash"]),
+            protocol_id=str(payload["protocol_id"]),
+            start_decision_session=date.fromisoformat(
+                str(payload["start_decision_session"])
+            ),
+            session_count=int(payload["session_count"]),
+            decision_sessions=tuple(
+                date.fromisoformat(str(item)) for item in raw_sessions
+            ),
+            final_target_session=date.fromisoformat(
+                str(payload["final_target_session"])
+            ),
+            calendar_reference=ValidationArtifactReference(
+                artifact_kind=str(raw_calendar["artifact_kind"]),
+                artifact_id=ArtifactId(str(raw_calendar["artifact_id"])),
+                content_hash=str(raw_calendar["content_hash"]),
+            ),
+            decision_session_hash=str(payload["decision_session_hash"]),
+            schema_version=str(payload["schema_version"]),
+        )
 
 
 def freeze_temporal_validation_window(
