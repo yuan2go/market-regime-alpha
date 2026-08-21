@@ -1,12 +1,17 @@
 from __future__ import annotations
 
-from datetime import date
+from dataclasses import replace
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 import pytest
 
-from market_regime_alpha.application.historical_corpus.alpha_correctness import (
-    AlphaCorrectnessStatus,
+from market_regime_alpha.application.historical_corpus.evidence import (
+    HistoricalEvidenceKind,
+    HistoricalResearchEvidence,
+    ResearchFinding,
+    ResearchStatement,
+    ResearchStatementKind,
 )
 from market_regime_alpha.application.historical_corpus.external_validation import (
     ExternalValidationObservation,
@@ -20,17 +25,18 @@ from market_regime_alpha.application.research_validation.common import (
     ValidationArtifactReference,
 )
 from market_regime_alpha.core.identity import ArtifactId
+from market_regime_alpha.evidence.canonical import canonical_hash
 
 
 def _ref(kind: str, value: str) -> ValidationArtifactReference:
     return ValidationArtifactReference(
         kind,
         ArtifactId(value),
-        "sha256:" + value[-1] * 64,
+        canonical_hash({"kind": kind, "value": value}),
     )
 
 
-def _hypothesis() -> FrozenAlphaHypothesis:
+def _hypothesis(top_k: int = 3) -> FrozenAlphaHypothesis:
     return FrozenAlphaHypothesis.create(
         factor_directions=(
             ("intraday_return_to_decision_time", "HIGHER_IS_BETTER"),
@@ -40,7 +46,7 @@ def _hypothesis() -> FrozenAlphaHypothesis:
         candidate_scoring="EQUAL_WEIGHT_RANK_PERCENTILE",
         decision_time_policy="14:55_ASIA_SHANGHAI",
         target_reference=_ref("OUTCOME_TARGET", "target-a"),
-        top_k=3,
+        top_k=top_k,
         cost_assumption=Decimal("0.001"),
         minimum_effect_retention=Decimal("0.5"),
         minimum_coverage=Decimal("0.8"),
@@ -49,6 +55,10 @@ def _hypothesis() -> FrozenAlphaHypothesis:
         cost_policy_reference=_ref(
             "HISTORICAL_STRATEGY_ECONOMICS_POLICY_SET", "cost-a"
         ),
+        discovery_evidence_reference=_ref(
+            "HISTORICAL_ALPHA_ABLATION_EVIDENCE", "discovery-a"
+        ),
+        discovery_rank_ic=Decimal("1"),
     )
 
 
@@ -60,11 +70,35 @@ def _scope(period: str, universe: str, provider: str) -> ValidationScope:
     )
 
 
+def _correctness(status: str = "CORRECTNESS_SUPPORTED") -> HistoricalResearchEvidence:
+    return HistoricalResearchEvidence.create(
+        run_id=ArtifactId("correctness-run"),
+        command_hash="sha256:" + "c" * 64,
+        experiment_reference=_ref(
+            "RESEARCH_EXPERIMENT_DEFINITION", "correctness-experiment"
+        ),
+        evidence_kind=HistoricalEvidenceKind.ALPHA_CORRECTNESS,
+        research_question="Is the frozen intraday hypothesis correct?",
+        classification=(
+            ResearchFinding.POSITIVE
+            if status == "CORRECTNESS_SUPPORTED"
+            else ResearchFinding.INCONCLUSIVE
+        ),
+        rationale=status,
+        source_references=(_ref("NORMALIZED_DATASET", "physical-a"),),
+        metrics=(),
+        payload={"status": status},
+        created_at=datetime(2026, 8, 21, tzinfo=UTC),
+        statements=(
+            ResearchStatement(ResearchStatementKind.FACT, "Synthetic owner test."),
+        ),
+    )
+
+
 def test_external_experiment_freezes_hypothesis_and_one_dimension() -> None:
     experiment = FrozenExternalValidationExperiment.create(
         hypothesis=_hypothesis(),
-        correctness_evidence_reference=_ref("ALPHA_CORRECTNESS", "proof-a"),
-        correctness_status=AlphaCorrectnessStatus.CORRECTNESS_SUPPORTED,
+        correctness_evidence=_correctness(),
         discovery_scope=_scope("2025-H1", "universe-a", "provider-a"),
         validation_scope=_scope("2025-H2", "universe-a", "provider-a"),
         dimension=ValidationDimension.TEMPORAL_VALIDATION,
@@ -80,8 +114,7 @@ def test_external_experiment_rejects_dimension_confounding() -> None:
     with pytest.raises(ValueError, match="exactly the declared validation dimension"):
         FrozenExternalValidationExperiment.create(
             hypothesis=_hypothesis(),
-            correctness_evidence_reference=_ref("ALPHA_CORRECTNESS", "proof-a"),
-            correctness_status=AlphaCorrectnessStatus.CORRECTNESS_SUPPORTED,
+            correctness_evidence=_correctness(),
             discovery_scope=_scope("2025-H1", "universe-a", "provider-a"),
             validation_scope=_scope("2025-H2", "universe-b", "provider-a"),
             dimension=ValidationDimension.TEMPORAL_VALIDATION,
@@ -93,8 +126,7 @@ def test_external_experiment_rejects_uncorrected_hypothesis() -> None:
     with pytest.raises(ValueError, match="correctness-supported"):
         FrozenExternalValidationExperiment.create(
             hypothesis=_hypothesis(),
-            correctness_evidence_reference=_ref("ALPHA_CORRECTNESS", "proof-a"),
-            correctness_status=AlphaCorrectnessStatus.PARTIALLY_REPRODUCED,
+            correctness_evidence=_correctness("PARTIALLY_REPRODUCED"),
             discovery_scope=_scope("2025-H1", "universe-a", "provider-a"),
             validation_scope=_scope("2025-H2", "universe-a", "provider-a"),
             dimension=ValidationDimension.TEMPORAL_VALIDATION,
@@ -105,8 +137,7 @@ def test_external_experiment_rejects_uncorrected_hypothesis() -> None:
 def test_external_evaluation_preserves_pit_oos_ceiling_and_frozen_thresholds() -> None:
     experiment = FrozenExternalValidationExperiment.create(
         hypothesis=_hypothesis(),
-        correctness_evidence_reference=_ref("ALPHA_CORRECTNESS", "proof-a"),
-        correctness_status=AlphaCorrectnessStatus.CORRECTNESS_SUPPORTED,
+        correctness_evidence=_correctness(),
         discovery_scope=_scope("2025-H1", "universe-a", "provider-a"),
         validation_scope=_scope("2025-H2", "universe-a", "provider-a"),
         dimension=ValidationDimension.TEMPORAL_VALIDATION,
@@ -116,10 +147,16 @@ def test_external_evaluation_preserves_pit_oos_ceiling_and_frozen_thresholds() -
         ExternalValidationObservation(
             session=date(2026, 1, day),
             symbol=f"S{index}",
-            score=Decimal(index),
-            target_return=Decimal(index - 2) / Decimal("100"),
-            gross_return=Decimal(index - 2) / Decimal("100"),
-            cost_return=Decimal("0.001"),
+            factor_values={
+                "intraday_return_to_decision_time": Decimal(index),
+                "price_vs_vwap_return": Decimal(index),
+                "vwap_slope": Decimal(index),
+            },
+            decision_reference_price=Decimal("100"),
+            executable_entry_price=Decimal("100"),
+            target_reference_price=Decimal("100")
+            * (Decimal("1") + Decimal(index - 2) / Decimal("100")),
+            source_reference=_ref("RESEARCH_PANEL", f"panel-{day}-{index}"),
             capacity=Decimal("1000000"),
         )
         for day in range(2, 10)
@@ -130,7 +167,6 @@ def test_external_evaluation_preserves_pit_oos_ceiling_and_frozen_thresholds() -
         experiment,
         observations=observations,
         expected_population=40,
-        discovery_rank_ic=Decimal("1"),
         pit_complete=False,
         free_data=True,
     )
@@ -142,3 +178,93 @@ def test_external_evaluation_preserves_pit_oos_ceiling_and_frozen_thresholds() -
     assert result.formal_oos is False
     assert "PIT_INCOMPLETE" in result.limitations
     assert result.thresholds_reference == experiment.hypothesis.reference
+    assert result.cost_diagnostic == Decimal("0.001")
+
+
+def test_external_top_k_ties_use_fractional_boundary_not_symbol_identity() -> None:
+    experiment = FrozenExternalValidationExperiment.create(
+        hypothesis=_hypothesis(top_k=1),
+        correctness_evidence=_correctness(),
+        discovery_scope=_scope("2025-H1", "universe-a", "provider-a"),
+        validation_scope=_scope("2025-H2", "universe-a", "provider-a"),
+        dimension=ValidationDimension.TEMPORAL_VALIDATION,
+        random_seed=20260819,
+    )
+    observations = tuple(
+        ExternalValidationObservation(
+            session=date(2026, 2, 2),
+            symbol=symbol,
+            factor_values={
+                "intraday_return_to_decision_time": Decimal("1"),
+                "price_vs_vwap_return": Decimal("1"),
+                "vwap_slope": Decimal("1"),
+            },
+            decision_reference_price=Decimal("100"),
+            executable_entry_price=Decimal("100"),
+            target_reference_price=target,
+            source_reference=_ref("RESEARCH_PANEL", f"tie-{symbol}"),
+            capacity=None,
+        )
+        for symbol, target in (("A", Decimal("110")), ("B", Decimal("90")))
+    )
+
+    result = evaluate_external_validation(
+        experiment,
+        observations=observations,
+        expected_population=2,
+        pit_complete=False,
+        free_data=True,
+    )
+
+    assert result.top_k_gross == Decimal("0")
+    assert result.top_k_net == Decimal("-0.001")
+
+
+def test_external_validation_binds_input_set_and_frozen_population() -> None:
+    experiment = FrozenExternalValidationExperiment.create(
+        hypothesis=_hypothesis(top_k=1),
+        correctness_evidence=_correctness(),
+        discovery_scope=_scope("2025-H1", "universe-a", "provider-a"),
+        validation_scope=_scope("2025-H2", "universe-a", "provider-a"),
+        dimension=ValidationDimension.TEMPORAL_VALIDATION,
+        random_seed=20260819,
+    )
+    observation = ExternalValidationObservation(
+        session=date(2026, 2, 2),
+        symbol="A",
+        factor_values={
+            "intraday_return_to_decision_time": Decimal("1"),
+            "price_vs_vwap_return": Decimal("1"),
+            "vwap_slope": Decimal("1"),
+        },
+        decision_reference_price=Decimal("100"),
+        executable_entry_price=Decimal("101"),
+        target_reference_price=Decimal("102"),
+        source_reference=_ref("RESEARCH_PANEL", "panel-bound"),
+        capacity=None,
+    )
+
+    result = evaluate_external_validation(
+        experiment,
+        observations=(observation,),
+        expected_population=1,
+        pit_complete=False,
+        free_data=True,
+    )
+    assert result.evaluation_hash == canonical_hash(result.identity_payload())
+
+    with pytest.raises(ValueError, match="exceed frozen population"):
+        evaluate_external_validation(
+            experiment,
+            observations=(
+                observation,
+                replace(
+                    observation,
+                    symbol="B",
+                    source_reference=_ref("RESEARCH_PANEL", "panel-bound-b"),
+                ),
+            ),
+            expected_population=1,
+            pit_complete=False,
+            free_data=True,
+        )

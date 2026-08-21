@@ -12,13 +12,19 @@ from market_regime_alpha.application.research_validation.common import (
     ValidationArtifactReference,
 )
 from market_regime_alpha.core.identity import ArtifactId
-from market_regime_alpha.evidence.canonical import canonical_datetime, canonical_hash
+from market_regime_alpha.evidence.canonical import (
+    canonical_datetime,
+    canonical_hash,
+    require_sha256,
+)
 from market_regime_alpha.forecasting.regularized_linear import (
     RegularizedMultiTargetModel,
     RegularizedPrediction,
     TrainingMatrix,
     fit_regularized_multi_target,
 )
+from market_regime_alpha.forecasting.path import PathForecastArtifact
+from market_regime_alpha.forecasting.contracts import PathForecastStatus
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,6 +142,10 @@ class ConditionalForecastSample:
     features: Mapping[str, Decimal | None]
     continuous_targets: Mapping[str, Decimal]
     barrier_targets: Mapping[str, bool]
+    candidate_reference: ValidationArtifactReference
+    signal_reference: ValidationArtifactReference
+    context_reference: ValidationArtifactReference
+    target_reference: ValidationArtifactReference
 
     def __post_init__(self) -> None:
         if not self.sample_id.strip():
@@ -144,10 +154,57 @@ class ConditionalForecastSample:
         canonical_datetime(self.target_available_at)
         if self.target_available_at <= self.sample_decision_time:
             raise ValueError("Forecast target availability must follow its DecisionTime")
+        if self.candidate_reference.artifact_kind != "CANDIDATE_SET":
+            raise ValueError("Conditional Forecast sample requires Candidate owner lineage")
+        if self.signal_reference.artifact_kind not in {
+            "SIGNAL_SNAPSHOT",
+            "CANONICAL_SIGNAL_SNAPSHOT",
+            "HISTORICAL_SIGNAL",
+        }:
+            raise ValueError("Conditional Forecast sample requires Signal owner lineage")
+        if self.context_reference.artifact_kind not in {
+            "CONTEXT_CONDITIONAL_EVALUATION",
+            "HISTORICAL_CONTEXT",
+        }:
+            raise ValueError("Conditional Forecast sample requires Context owner lineage")
+        if self.target_reference.artifact_kind not in {
+            "OUTCOME_TARGET",
+            "HISTORICAL_OUTCOME_TARGET",
+        }:
+            raise ValueError("Conditional Forecast sample requires Target owner lineage")
+        if any(
+            value is not None and not value.is_finite()
+            for value in self.features.values()
+        ) or any(not value.is_finite() for value in self.continuous_targets.values()):
+            raise ValueError("Conditional Forecast sample values must be finite")
+
+    @property
+    def sample_hash(self) -> str:
+        return canonical_hash(
+            {
+                "sample_id": self.sample_id,
+                "sample_decision_time": canonical_datetime(self.sample_decision_time),
+                "target_available_at": canonical_datetime(self.target_available_at),
+                "features": {
+                    key: None if value is None else str(value)
+                    for key, value in sorted(self.features.items())
+                },
+                "continuous_targets": {
+                    key: str(value)
+                    for key, value in sorted(self.continuous_targets.items())
+                },
+                "barrier_targets": dict(sorted(self.barrier_targets.items())),
+                "candidate_reference": self.candidate_reference.to_canonical_dict(),
+                "signal_reference": self.signal_reference.to_canonical_dict(),
+                "context_reference": self.context_reference.to_canonical_dict(),
+                "target_reference": self.target_reference.to_canonical_dict(),
+            }
+        )
 
 
 @dataclass(frozen=True, slots=True)
 class BaselineConditionalPrediction:
+    forecast_reference: ValidationArtifactReference
     continuous: Mapping[str, Decimal]
     raw_barrier_frequencies: Mapping[str, Decimal]
     barrier_scores_are_probabilities: bool = False
@@ -167,6 +224,14 @@ class ConditionalForecastResult:
     result_hash: str
     configuration_reference: ValidationArtifactReference
     model_reference: ValidationArtifactReference | None
+    regularized_model_reference: ValidationArtifactReference | None
+    baseline_reference: ValidationArtifactReference
+    regularized_model: RegularizedMultiTargetModel | None
+    training_sample_ids: tuple[str, ...]
+    validation_sample_ids: tuple[str, ...]
+    training_sample_bindings: tuple[tuple[str, str], ...]
+    validation_sample_bindings: tuple[tuple[str, str], ...]
+    fit_available_at: datetime | None
     status: str
     admitted_sample_count: int
     future_excluded_sample_count: int
@@ -179,6 +244,173 @@ class ConditionalForecastResult:
     calibration_status: str
     limitations: tuple[str, ...]
 
+    def __post_init__(self) -> None:
+        require_sha256("result_hash", self.result_hash)
+        if self.training_sample_ids != tuple(item[0] for item in self.training_sample_bindings):
+            raise ValueError("Conditional Forecast training lineage projection mismatch")
+        if self.validation_sample_ids != tuple(item[0] for item in self.validation_sample_bindings):
+            raise ValueError("Conditional Forecast validation lineage projection mismatch")
+        all_ids = (*self.training_sample_ids, *self.validation_sample_ids)
+        if len(all_ids) != len(set(all_ids)):
+            raise ValueError("Conditional Forecast sample lineage must be disjoint")
+        for _sample_id, sample_hash in (
+            *self.training_sample_bindings,
+            *self.validation_sample_bindings,
+        ):
+            require_sha256("Conditional Forecast sample hash", sample_hash)
+        if canonical_hash(self.identity_payload()) != self.result_hash:
+            raise ValueError("Conditional Forecast result hash mismatch")
+        if str(self.result_id) != f"conditional-forecast-result:{self.result_hash[7:]}":
+            raise ValueError("Conditional Forecast result identity mismatch")
+        if self.regularized_model is not None:
+            if (
+                self.regularized_model_reference is None
+                or self.model_comparison is None
+                or self.fit_available_at is None
+            ):
+                raise ValueError("Conditional Forecast model lineage is incomplete")
+            if canonical_hash(self.regularized_model_payload()) != self.regularized_model_reference.content_hash:
+                raise ValueError("Conditional Forecast model reference is not reconstructible")
+        if self.status == "AVAILABLE_FOR_RESEARCH" and (
+            self.model_reference is None
+            or self.baseline_prediction is None
+            or self.regularized_prediction is None
+        ):
+            raise ValueError("available Conditional Forecast result is incomplete")
+        if self.status == "DATA_INSUFFICIENT" and (
+            self.model_reference is not None
+            or self.training_sample_bindings
+            or self.validation_sample_bindings
+            or self.fit_available_at is not None
+        ):
+            raise ValueError("insufficient Conditional Forecast cannot expose fitted lineage")
+
+    @property
+    def reference(self) -> ValidationArtifactReference:
+        return ValidationArtifactReference(
+            "CONDITIONAL_FORECAST_RESULT", self.result_id, self.result_hash
+        )
+
+    def regularized_model_payload(self) -> dict[str, Any]:
+        if self.regularized_model is None or self.model_comparison is None or self.fit_available_at is None:
+            raise ValueError("Conditional Forecast regularized model is unavailable")
+        return {
+            "configuration_reference": self.configuration_reference.to_canonical_dict(),
+            "selected_penalty": str(self.model_comparison.selected_penalty),
+            "model": self.regularized_model.to_canonical_dict(),
+            "training_sample_bindings": [list(item) for item in self.training_sample_bindings],
+            "validation_sample_bindings": [list(item) for item in self.validation_sample_bindings],
+            "fit_available_at": canonical_datetime(self.fit_available_at),
+        }
+
+    def identity_payload(self) -> dict[str, Any]:
+        return {
+            "configuration_reference": self.configuration_reference.to_canonical_dict(),
+            "model_reference": (
+                None if self.model_reference is None else self.model_reference.to_canonical_dict()
+            ),
+            "regularized_model_reference": (
+                None
+                if self.regularized_model_reference is None
+                else self.regularized_model_reference.to_canonical_dict()
+            ),
+            "baseline_reference": self.baseline_reference.to_canonical_dict(),
+            "regularized_model": (
+                None if self.regularized_model is None else self.regularized_model.to_canonical_dict()
+            ),
+            "training_sample_ids": list(self.training_sample_ids),
+            "validation_sample_ids": list(self.validation_sample_ids),
+            "training_sample_bindings": [
+                list(item) for item in self.training_sample_bindings
+            ],
+            "validation_sample_bindings": [
+                list(item) for item in self.validation_sample_bindings
+            ],
+            "fit_available_at": (
+                None
+                if self.fit_available_at is None
+                else canonical_datetime(self.fit_available_at)
+            ),
+            "status": self.status,
+            "admitted_sample_count": self.admitted_sample_count,
+            "future_excluded_sample_count": self.future_excluded_sample_count,
+            "training_sample_count": self.training_sample_count,
+            "validation_sample_count": self.validation_sample_count,
+            "baseline_prediction": (
+                None if self.baseline_prediction is None else _baseline_payload(self.baseline_prediction)
+            ),
+            "regularized_prediction": (
+                None if self.regularized_prediction is None else _regularized_payload(self.regularized_prediction)
+            ),
+            "model_comparison": (
+                None if self.model_comparison is None else _comparison_payload(self.model_comparison)
+            ),
+            "prediction_uncertainty": (
+                None if self.prediction_uncertainty is None else str(self.prediction_uncertainty)
+            ),
+            "calibration_status": self.calibration_status,
+            "limitations": list(self.limitations),
+        }
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        return {
+            "result_id": str(self.result_id),
+            "result_hash": self.result_hash,
+            "configuration_reference": self.configuration_reference.to_canonical_dict(),
+            "model_reference": (
+                None
+                if self.model_reference is None
+                else self.model_reference.to_canonical_dict()
+            ),
+            "regularized_model_reference": (
+                None
+                if self.regularized_model_reference is None
+                else self.regularized_model_reference.to_canonical_dict()
+            ),
+            "baseline_reference": self.baseline_reference.to_canonical_dict(),
+            "regularized_model": (
+                None
+                if self.regularized_model is None
+                else self.regularized_model.to_canonical_dict()
+            ),
+            "training_sample_ids": list(self.training_sample_ids),
+            "validation_sample_ids": list(self.validation_sample_ids),
+            "training_sample_bindings": [list(item) for item in self.training_sample_bindings],
+            "validation_sample_bindings": [list(item) for item in self.validation_sample_bindings],
+            "fit_available_at": (
+                None
+                if self.fit_available_at is None
+                else canonical_datetime(self.fit_available_at)
+            ),
+            "status": self.status,
+            "admitted_sample_count": self.admitted_sample_count,
+            "future_excluded_sample_count": self.future_excluded_sample_count,
+            "training_sample_count": self.training_sample_count,
+            "validation_sample_count": self.validation_sample_count,
+            "baseline_prediction": (
+                None
+                if self.baseline_prediction is None
+                else _baseline_payload(self.baseline_prediction)
+            ),
+            "regularized_prediction": (
+                None
+                if self.regularized_prediction is None
+                else _regularized_payload(self.regularized_prediction)
+            ),
+            "model_comparison": (
+                None
+                if self.model_comparison is None
+                else _comparison_payload(self.model_comparison)
+            ),
+            "prediction_uncertainty": (
+                None
+                if self.prediction_uncertainty is None
+                else str(self.prediction_uncertainty)
+            ),
+            "calibration_status": self.calibration_status,
+            "limitations": list(self.limitations),
+        }
+
 
 def fit_conditional_forecast(
     config: ConditionalForecastConfig,
@@ -186,10 +418,25 @@ def fit_conditional_forecast(
     samples: tuple[ConditionalForecastSample, ...],
     prediction_time: datetime,
     inference_features: Mapping[str, Decimal | None],
+    baseline_forecast: PathForecastArtifact,
 ) -> ConditionalForecastResult:
     """Fit only samples whose realized targets were available at prediction time."""
 
     canonical_datetime(prediction_time)
+    baseline_forecast.forecast.envelope.verify_payload(
+        baseline_forecast.forecast.artifact_payload()
+    )
+    if (
+        baseline_forecast.forecast.forecast_status
+        is not PathForecastStatus.AVAILABLE_FOR_RESEARCH
+        or baseline_forecast.forecast.envelope.decision_time.value > prediction_time
+    ):
+        raise ValueError("Conditional Forecast requires an available empirical PathForecast baseline")
+    baseline_reference = ValidationArtifactReference(
+        "PATH_FORECAST",
+        baseline_forecast.artifact_id,
+        baseline_forecast.forecast.envelope.content_hash,
+    )
     if set(inference_features) != set(config.feature_names):
         raise ValueError("Conditional Forecast inference features drifted")
     ordered = tuple(sorted(samples, key=lambda item: (item.sample_decision_time, item.sample_id)))
@@ -218,16 +465,30 @@ def fit_conditional_forecast(
         "RESEARCH_ONLY",
     )
     if len(admitted) < config.minimum_training_samples:
-        return _insufficient(config, len(admitted), excluded_count, limitations)
+        return _insufficient(
+            config, baseline_reference, len(admitted), excluded_count, limitations
+        )
 
-    split = max(1, int(Decimal(len(admitted)) * Decimal("0.75")))
-    split = min(split, len(admitted) - 1)
-    training = admitted[:split]
-    validation = admitted[split:]
-    if len(training) < 2 or not validation:
-        return _insufficient(config, len(admitted), excluded_count, limitations)
+    decision_times = tuple(sorted({item.sample_decision_time for item in admitted}))
+    if len(decision_times) < 2:
+        return _insufficient(
+            config, baseline_reference, len(admitted), excluded_count, limitations
+        )
+    time_split = max(1, int(Decimal(len(decision_times)) * Decimal("0.75")))
+    time_split = min(time_split, len(decision_times) - 1)
+    validation_start = decision_times[time_split]
+    training = tuple(
+        item for item in admitted if item.sample_decision_time < validation_start
+    )
+    validation = tuple(
+        item for item in admitted if item.sample_decision_time >= validation_start
+    )
+    if len(training) < config.minimum_training_samples or not validation:
+        return _insufficient(
+            config, baseline_reference, len(admitted), excluded_count, limitations
+        )
     matrix = _matrix(config, training)
-    baseline = _baseline(config, training)
+    baseline = _baseline_from_path_forecast(config, baseline_forecast)
     baseline_mae = _baseline_mae(baseline, validation)
     candidates: list[tuple[Decimal, Decimal, RegularizedMultiTargetModel]] = []
     for penalty in config.penalties:
@@ -238,7 +499,9 @@ def fit_conditional_forecast(
         error = _regularized_mae(model, validation)
         candidates.append((error, penalty, model))
     if not candidates:
-        return _insufficient(config, len(admitted), excluded_count, limitations)
+        return _insufficient(
+            config, baseline_reference, len(admitted), excluded_count, limitations
+        )
     regularized_mae, selected_penalty, model = min(candidates, key=lambda item: (item[0], item[1]))
     prediction = model.predict(inference_features)
     comparison = ConditionalModelComparison(
@@ -253,23 +516,38 @@ def fit_conditional_forecast(
         for item in validation
     )
     uncertainty = Decimal(str(pstdev(float(item) for item in residuals))) if len(residuals) > 1 else abs(residuals[0])
+    training_bindings = tuple((item.sample_id, item.sample_hash) for item in training)
+    validation_bindings = tuple((item.sample_id, item.sample_hash) for item in validation)
     model_payload = {
         "configuration_reference": config.reference.to_canonical_dict(),
         "selected_penalty": str(selected_penalty),
         "model": model.to_canonical_dict(),
-        "training_sample_ids": [item.sample_id for item in training],
-        "validation_sample_ids": [item.sample_id for item in validation],
+        "training_sample_bindings": [list(item) for item in training_bindings],
+        "validation_sample_bindings": [list(item) for item in validation_bindings],
         "fit_available_at": canonical_datetime(prediction_time),
     }
     model_hash = canonical_hash(model_payload)
-    model_reference = ValidationArtifactReference(
+    regularized_model_reference = ValidationArtifactReference(
         "CONDITIONAL_FORECAST_MODEL",
         ArtifactId(f"conditional-forecast-model:{model_hash[7:]}"),
         model_hash,
     )
+    selected_model_reference = (
+        regularized_model_reference
+        if comparison.selected_model == "REGULARIZED_LINEAR"
+        else baseline_reference
+    )
     values = {
         "configuration_reference": config.reference.to_canonical_dict(),
-        "model_reference": model_reference.to_canonical_dict(),
+        "model_reference": selected_model_reference.to_canonical_dict(),
+        "regularized_model_reference": regularized_model_reference.to_canonical_dict(),
+        "baseline_reference": baseline_reference.to_canonical_dict(),
+        "regularized_model": model.to_canonical_dict(),
+        "training_sample_ids": [item.sample_id for item in training],
+        "validation_sample_ids": [item.sample_id for item in validation],
+        "training_sample_bindings": [list(item) for item in training_bindings],
+        "validation_sample_bindings": [list(item) for item in validation_bindings],
+        "fit_available_at": canonical_datetime(prediction_time),
         "status": "AVAILABLE_FOR_RESEARCH",
         "admitted_sample_count": len(admitted),
         "future_excluded_sample_count": excluded_count,
@@ -287,7 +565,15 @@ def fit_conditional_forecast(
         ArtifactId(f"conditional-forecast-result:{digest[7:]}"),
         digest,
         config.reference,
-        model_reference,
+        selected_model_reference,
+        regularized_model_reference,
+        baseline_reference,
+        model,
+        tuple(item.sample_id for item in training),
+        tuple(item.sample_id for item in validation),
+        training_bindings,
+        validation_bindings,
+        prediction_time,
         "AVAILABLE_FOR_RESEARCH",
         len(admitted),
         excluded_count,
@@ -304,6 +590,7 @@ def fit_conditional_forecast(
 
 def _insufficient(
     config: ConditionalForecastConfig,
+    baseline_reference: ValidationArtifactReference,
     admitted: int,
     excluded: int,
     limitations: tuple[str, ...],
@@ -311,6 +598,14 @@ def _insufficient(
     values = {
         "configuration_reference": config.reference.to_canonical_dict(),
         "model_reference": None,
+        "regularized_model_reference": None,
+        "baseline_reference": baseline_reference.to_canonical_dict(),
+        "regularized_model": None,
+        "training_sample_ids": [],
+        "validation_sample_ids": [],
+        "training_sample_bindings": [],
+        "validation_sample_bindings": [],
+        "fit_available_at": None,
         "status": "DATA_INSUFFICIENT",
         "admitted_sample_count": admitted,
         "future_excluded_sample_count": excluded,
@@ -328,6 +623,14 @@ def _insufficient(
         ArtifactId(f"conditional-forecast-result:{digest[7:]}"),
         digest,
         config.reference,
+        None,
+        None,
+        baseline_reference,
+        None,
+        (),
+        (),
+        (),
+        (),
         None,
         "DATA_INSUFFICIENT",
         admitted,
@@ -361,18 +664,56 @@ def _matrix(
     )
 
 
-def _baseline(
+def _baseline_from_path_forecast(
     config: ConditionalForecastConfig,
-    samples: tuple[ConditionalForecastSample, ...],
+    artifact: PathForecastArtifact,
 ) -> BaselineConditionalPrediction:
+    forecast = artifact.forecast
+    median = next(
+        (
+            item.return_value
+            for item in forecast.return_quantiles
+            if item.probability == 0.5
+        ),
+        None,
+    )
+    if median is None or forecast.expected_mfe is None or forecast.expected_mae is None:
+        raise ValueError("empirical PathForecast baseline lacks required path estimates")
+    available_samples = tuple(
+        item
+        for item in artifact.samples
+        if item.realized_mfe is not None and item.realized_mae is not None
+    )
+    if not available_samples:
+        raise ValueError("empirical PathForecast baseline lacks resolved path samples")
     return BaselineConditionalPrediction(
+        forecast_reference=ValidationArtifactReference(
+            "PATH_FORECAST",
+            artifact.artifact_id,
+            forecast.envelope.content_hash,
+        ),
         continuous={
-            target: sum((item.continuous_targets[target] for item in samples), Decimal("0")) / Decimal(len(samples))
-            for target in config.continuous_targets
+            "mae": Decimal(str(forecast.expected_mae)),
+            "mfe": Decimal(str(forecast.expected_mfe)),
+            "t_plus_1_return": Decimal(str(median)),
         },
         raw_barrier_frequencies={
-            target: Decimal(sum(item.barrier_targets[target] for item in samples)) / Decimal(len(samples))
-            for target in config.barrier_targets
+            "lower_barrier": Decimal(
+                sum(
+                    item.realized_mae <= forecast.lower_barrier_return
+                    for item in available_samples
+                    if item.realized_mae is not None
+                )
+            )
+            / Decimal(len(available_samples)),
+            "upper_barrier": Decimal(
+                sum(
+                    item.realized_mfe >= forecast.upper_barrier_return
+                    for item in available_samples
+                    if item.realized_mfe is not None
+                )
+            )
+            / Decimal(len(available_samples)),
         },
     )
 
@@ -404,6 +745,7 @@ def _regularized_mae(
 
 def _baseline_payload(value: BaselineConditionalPrediction) -> dict[str, Any]:
     return {
+        "forecast_reference": value.forecast_reference.to_canonical_dict(),
         "continuous": {key: str(item) for key, item in sorted(value.continuous.items())},
         "raw_barrier_frequencies": {
             key: str(item) for key, item in sorted(value.raw_barrier_frequencies.items())

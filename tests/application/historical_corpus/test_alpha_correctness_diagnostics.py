@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -14,11 +14,33 @@ from market_regime_alpha.application.historical_corpus.alpha_diagnostics import 
     MovingBlockInferenceProtocol,
     PlaceboKind,
     SessionEstimate,
+    TimedPriceObservation,
     apply_placebo,
     diagnose_execution_price,
     evaluate_factor_redundancy,
     evaluate_robust_inference,
+    evaluate_robust_inference_family,
 )
+from market_regime_alpha.application.research_validation.common import ValidationArtifactReference
+from market_regime_alpha.core.identity import ArtifactId
+from market_regime_alpha.evidence.canonical import canonical_hash
+
+
+DECISION = datetime(2026, 1, 2, 6, 55, tzinfo=UTC)
+
+
+def _price(value: str, minutes: int, kind: str) -> TimedPriceObservation:
+    observed = DECISION + timedelta(minutes=minutes)
+    return TimedPriceObservation(
+        Decimal(value),
+        observed,
+        observed,
+        ValidationArtifactReference(
+            kind,
+            ArtifactId(f"price-{kind.lower()}-{minutes}"),
+            canonical_hash({"kind": kind, "minutes": minutes, "value": value}),
+        ),
+    )
 
 
 def _alpha_observations() -> tuple[AlphaObservation, ...]:
@@ -53,11 +75,12 @@ def test_frozen_placebos_are_deterministic_and_content_addressed(kind: PlaceboKi
 
 def test_execution_reference_is_not_silently_treated_as_executable() -> None:
     inputs = ExecutionPriceInputs(
-        decision_reference=Decimal("10"),
-        next_observable_price=Decimal("10.1"),
-        next_bar_open=Decimal("10.2"),
-        session_close=Decimal("10.3"),
-        target_price=Decimal("11"),
+        information_cutoff=DECISION,
+        decision_reference=_price("10", 0, "DECISION_REFERENCE"),
+        next_observable_price=_price("10.1", 1, "NEXT_OBSERVABLE_PRICE"),
+        next_bar_open=_price("10.2", 5, "NEXT_BAR_OPEN"),
+        session_close=_price("10.3", 65, "SESSION_CLOSE"),
+        target_reference=_price("11", 24 * 60, "TARGET_REFERENCE"),
     )
 
     research = diagnose_execution_price(inputs, ExecutionPriceProxy.DECISION_REFERENCE_ONLY)
@@ -73,11 +96,12 @@ def test_missing_execution_proxy_fails_closed() -> None:
     with pytest.raises(ValueError, match="unavailable"):
         diagnose_execution_price(
             ExecutionPriceInputs(
-                decision_reference=Decimal("10"),
+                information_cutoff=DECISION,
+                decision_reference=_price("10", 0, "DECISION_REFERENCE"),
                 next_observable_price=None,
                 next_bar_open=None,
-                session_close=Decimal("10.3"),
-                target_price=Decimal("11"),
+                session_close=_price("10.3", 65, "SESSION_CLOSE"),
+                target_reference=_price("11", 24 * 60, "TARGET_REFERENCE"),
             ),
             ExecutionPriceProxy.NEXT_BAR_OPEN,
         )
@@ -136,3 +160,30 @@ def test_moving_block_inference_is_deterministic_and_block_sensitive() -> None:
     assert tuple(item.block_length for item in first.sensitivity) == (1, 3, 5)
     assert all(item.lower <= item.estimate <= item.upper for item in first.sensitivity)
     assert first.temporal_stability in {"STABLE", "UNSTABLE"}
+
+
+def test_robust_inference_adjusts_one_frozen_multiple_testing_family() -> None:
+    protocol = MovingBlockInferenceProtocol.create(
+        iterations=100,
+        block_lengths=(1, 3),
+        confidence_level=Decimal("0.9"),
+        seed=20260819,
+    )
+    family = evaluate_robust_inference_family(
+        protocol,
+        {
+            "factor-a": tuple(
+                SessionEstimate(date(2026, 2, day), Decimal(day) / Decimal("100"))
+                for day in range(1, 11)
+            ),
+            "factor-b": tuple(
+                SessionEstimate(date(2026, 2, day), Decimal(day - 6) / Decimal("100"))
+                for day in range(1, 11)
+            ),
+        },
+    )
+
+    assert tuple(family) == ("factor-a", "factor-b")
+    assert all(
+        item.adjusted_p_value >= item.raw_p_value for item in family.values()
+    )

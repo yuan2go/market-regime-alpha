@@ -12,8 +12,15 @@ from typing import Any
 from market_regime_alpha.application.research_validation.common import (
     ValidationArtifactReference,
 )
+from market_regime_alpha.application.historical_corpus.evidence import (
+    HistoricalEvidenceKind,
+    HistoricalResearchEvidence,
+)
 from market_regime_alpha.core.identity import ArtifactId
-from market_regime_alpha.evidence.canonical import canonical_hash
+from market_regime_alpha.evidence.canonical import canonical_hash, require_sha256
+from market_regime_alpha.research.cross_sectional_ranking import (
+    fractional_boundary_weights,
+)
 
 
 class ContextKind(str, Enum):
@@ -34,6 +41,7 @@ class ContextDefinition:
     kind: ContextKind
     role: ContextResearchRole
     public_observable_proxy: bool
+    alpha_evidence: HistoricalResearchEvidence
     schema_version: str = "alpha-context-definition/v1"
 
     def __post_init__(self) -> None:
@@ -44,6 +52,13 @@ class ContextDefinition:
             and self.role is not ContextResearchRole.CONDITIONAL_PERFORMANCE
         ):
             raise ValueError("session Context can only own conditional performance")
+        self.alpha_evidence.verify_identity()
+        if (
+            self.alpha_evidence.evidence_kind
+            is not HistoricalEvidenceKind.EXTERNAL_VALIDATION
+            or self.alpha_evidence.payload.get("qualification_status") != "SUPPORTED"
+        ):
+            raise ValueError("Context research requires supported External Validation Evidence")
         if canonical_hash(self.identity_payload()) != self.definition_hash:
             raise ValueError("Context definition hash mismatch")
 
@@ -55,6 +70,7 @@ class ContextDefinition:
         kind: ContextKind,
         role: ContextResearchRole,
         public_observable_proxy: bool,
+        alpha_evidence: HistoricalResearchEvidence,
     ) -> ContextDefinition:
         payload = {
             "schema_version": "alpha-context-definition/v1",
@@ -62,6 +78,7 @@ class ContextDefinition:
             "kind": kind.value,
             "role": role.value,
             "public_observable_proxy": public_observable_proxy,
+            "alpha_evidence_reference": alpha_evidence.reference.to_canonical_dict(),
         }
         digest = canonical_hash(payload)
         return cls(
@@ -71,6 +88,7 @@ class ContextDefinition:
             kind,
             role,
             public_observable_proxy,
+            alpha_evidence,
         )
 
     @property
@@ -86,6 +104,7 @@ class ContextDefinition:
             "kind": self.kind.value,
             "role": self.role.value,
             "public_observable_proxy": self.public_observable_proxy,
+            "alpha_evidence_reference": self.alpha_evidence.reference.to_canonical_dict(),
         }
 
 
@@ -97,6 +116,33 @@ class ContextObservation:
     target_return: Decimal
     context_label: str
     context_value: Decimal | None
+    source_reference: ValidationArtifactReference
+
+    def __post_init__(self) -> None:
+        if not self.symbol.strip() or not self.context_label.strip():
+            raise ValueError("Context observation identity is incomplete")
+        if not self.alpha_score.is_finite() or not self.target_return.is_finite():
+            raise ValueError("Context observation values must be finite")
+        if self.context_value is not None and not self.context_value.is_finite():
+            raise ValueError("Context value must be finite")
+        if self.source_reference.artifact_kind not in {
+            "RESEARCH_PANEL",
+            "HISTORICAL_RESEARCH_PANEL",
+        }:
+            raise ValueError("Context observation requires Research Panel lineage")
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        return {
+            "session": self.session.isoformat(),
+            "symbol": self.symbol,
+            "alpha_score": str(self.alpha_score),
+            "target_return": str(self.target_return),
+            "context_label": self.context_label,
+            "context_value": (
+                None if self.context_value is None else str(self.context_value)
+            ),
+            "source_reference": self.source_reference.to_canonical_dict(),
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,6 +161,7 @@ class ContextConditionalEvaluation:
     evaluation_id: ArtifactId
     evaluation_hash: str
     definition_reference: ValidationArtifactReference
+    observation_set_hash: str
     sample_count: int
     coverage: Decimal
     unconditional_rank_ic: Decimal | None
@@ -126,14 +173,59 @@ class ContextConditionalEvaluation:
     status: str
     limitations: tuple[str, ...]
 
+    def __post_init__(self) -> None:
+        require_sha256("evaluation_hash", self.evaluation_hash)
+        require_sha256("observation_set_hash", self.observation_set_hash)
+        if self.sample_count < 0 or not Decimal("0") <= self.coverage <= Decimal("1"):
+            raise ValueError("Context evaluation coverage is invalid")
+        if self.limitations != tuple(sorted(set(self.limitations))):
+            raise ValueError("Context evaluation limitations must be unique and sorted")
+        digest = canonical_hash(self.identity_payload())
+        if digest != self.evaluation_hash or self.evaluation_id != ArtifactId(
+            f"context-conditional-evaluation:{digest[7:]}"
+        ):
+            raise ValueError("Context evaluation identity mismatch")
+
+    def identity_payload(self) -> dict[str, Any]:
+        return {
+            "definition_reference": self.definition_reference.to_canonical_dict(),
+            "observation_set_hash": self.observation_set_hash,
+            "sample_count": self.sample_count,
+            "coverage": str(self.coverage),
+            "unconditional_rank_ic": _text(self.unconditional_rank_ic),
+            "slices": [_slice_payload(item) for item in self.slices],
+            "interaction_effect": _text(self.interaction_effect),
+            "incremental_information": _text(self.incremental_information),
+            "temporal_stability": self.temporal_stability,
+            "confidence": self.confidence,
+            "status": self.status,
+            "limitations": list(self.limitations),
+        }
+
+    @property
+    def reference(self) -> ValidationArtifactReference:
+        return ValidationArtifactReference(
+            "CONTEXT_CONDITIONAL_EVALUATION",
+            self.evaluation_id,
+            self.evaluation_hash,
+        )
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        return {
+            "evaluation_id": str(self.evaluation_id),
+            "evaluation_hash": self.evaluation_hash,
+            **self.identity_payload(),
+        }
+
 
 def evaluate_context_conditioning(
     definition: ContextDefinition,
     *,
     observations: tuple[ContextObservation, ...],
     top_k: int,
+    expected_population: int,
 ) -> ContextConditionalEvaluation:
-    if top_k <= 0:
+    if top_k <= 0 or expected_population <= 0:
         raise ValueError("Context Top-K must be positive")
     ordered = tuple(sorted(observations, key=lambda item: (item.session, item.symbol)))
     keys = tuple((item.session, item.symbol) for item in ordered)
@@ -153,7 +245,7 @@ def evaluate_context_conditioning(
         definition.kind is ContextKind.CROSS_SECTIONAL_CONTEXT
         and not has_cross_sectional_variation
     ):
-        return _not_estimable(definition, ordered)
+        return _not_estimable(definition, ordered, expected_population=expected_population)
 
     daily = _daily_rank_ic(ordered)
     unconditional = _mean(tuple(value for _session, value in daily))
@@ -161,7 +253,7 @@ def evaluate_context_conditioning(
     for item in ordered:
         by_label.setdefault(item.context_label, []).append(item)
     slices = tuple(
-        _slice(label, tuple(values), total=len(ordered), top_k=top_k)
+        _slice(label, tuple(values), total=expected_population, top_k=top_k)
         for label, values in sorted(by_label.items())
     )
 
@@ -186,6 +278,14 @@ def evaluate_context_conditioning(
             interaction = _mean(tuple(interaction_daily))
             if interaction is not None and unconditional is not None:
                 incremental = interaction - unconditional
+    elif len(slices) >= 2:
+        estimates = tuple(
+            item.conditional_rank_ic
+            for item in slices
+            if item.conditional_rank_ic is not None
+        )
+        if len(estimates) >= 2:
+            interaction = max(estimates) - min(estimates)
 
     stability = _stability(tuple(value for _session, value in daily))
     confidence = _confidence(len(daily), stability)
@@ -193,6 +293,7 @@ def evaluate_context_conditioning(
         definition.kind,
         slices=slices,
         incremental=incremental,
+        unconditional=unconditional,
         stability=stability,
     )
     limitations = tuple(
@@ -214,9 +315,15 @@ def evaluate_context_conditioning(
             }
         )
     )
-    coverage = Decimal(len(ordered)) / Decimal(len(ordered)) if ordered else Decimal("0")
+    coverage = Decimal(len(ordered)) / Decimal(expected_population)
+    if coverage > Decimal("1"):
+        raise ValueError("Context observations exceed the frozen expected population")
+    observation_set_hash = canonical_hash(
+        {"observations": [item.to_canonical_dict() for item in ordered]}
+    )
     payload = {
         "definition_reference": definition.reference.to_canonical_dict(),
+        "observation_set_hash": observation_set_hash,
         "sample_count": len(ordered),
         "coverage": str(coverage),
         "unconditional_rank_ic": _text(unconditional),
@@ -233,6 +340,7 @@ def evaluate_context_conditioning(
         ArtifactId(f"context-conditional-evaluation:{digest[7:]}"),
         digest,
         definition.reference,
+        observation_set_hash,
         len(ordered),
         coverage,
         unconditional,
@@ -249,16 +357,25 @@ def evaluate_context_conditioning(
 def _not_estimable(
     definition: ContextDefinition,
     observations: tuple[ContextObservation, ...],
+    *,
+    expected_population: int,
 ) -> ContextConditionalEvaluation:
     limitations = (
         "CONTEXT_HAS_NO_TRADING_AUTHORITY",
         "FORMAL_OOS_FALSE",
         "WITHIN_SESSION_CONTEXT_VARIATION_REQUIRED",
     )
+    coverage = Decimal(len(observations)) / Decimal(expected_population)
+    if coverage > Decimal("1"):
+        raise ValueError("Context observations exceed the frozen expected population")
+    observation_set_hash = canonical_hash(
+        {"observations": [item.to_canonical_dict() for item in observations]}
+    )
     payload = {
         "definition_reference": definition.reference.to_canonical_dict(),
+        "observation_set_hash": observation_set_hash,
         "sample_count": len(observations),
-        "coverage": "0",
+        "coverage": str(coverage),
         "unconditional_rank_ic": None,
         "slices": [],
         "interaction_effect": None,
@@ -273,8 +390,9 @@ def _not_estimable(
         ArtifactId(f"context-conditional-evaluation:{digest[7:]}"),
         digest,
         definition.reference,
+        observation_set_hash,
         len(observations),
-        Decimal("0"),
+        coverage,
         None,
         (),
         None,
@@ -295,18 +413,33 @@ def _slice(
 ) -> ConditionalContextSlice:
     daily = _daily_rank_ic(observations)
     values = tuple(value for _session, value in daily)
-    top_returns = tuple(
-        _mean(tuple(item.target_return for item in rows[:top_k]))
-        for rows in _groups(observations).values()
-        if rows
-    )
+    top_returns: list[Decimal] = []
+    for rows in _groups(observations).values():
+        if not rows:
+            continue
+        selection = fractional_boundary_weights(
+            {item.symbol: item.alpha_score for item in rows},
+            slots=min(top_k, len(rows)),
+            higher_is_better=True,
+        )
+        denominator = sum(selection.weights.values(), Decimal("0"))
+        top_returns.append(
+            sum(
+                (
+                    item.target_return * selection.weights[item.symbol]
+                    for item in rows
+                ),
+                Decimal("0"),
+            )
+            / denominator
+        )
     stability = _stability(values)
     return ConditionalContextSlice(
         label,
         len(observations),
         Decimal(len(observations)) / Decimal(total),
         _mean(values),
-        _mean(tuple(item for item in top_returns if item is not None)),
+        _mean(tuple(top_returns)),
         stability,
         _confidence(len(daily), stability),
     )
@@ -317,6 +450,7 @@ def _classify(
     *,
     slices: tuple[ConditionalContextSlice, ...],
     incremental: Decimal | None,
+    unconditional: Decimal | None,
     stability: str,
 ) -> str:
     if stability == "UNSTABLE":
@@ -334,17 +468,19 @@ def _classify(
         for item in slices
         if item.conditional_rank_ic is not None
     )
-    if not estimates:
+    if len(estimates) < 2 or unconditional is None:
         return "NOT_ESTIMABLE"
+    spread = max(estimates) - min(estimates)
+    if spread <= Decimal("0.02"):
+        return "NEUTRAL"
+    deltas = tuple(item - unconditional for item in estimates)
     if any(item > 0 for item in estimates) and any(item < 0 for item in estimates):
         return "UNSTABLE"
-    mean = _mean(estimates)
-    assert mean is not None
-    if mean > Decimal("0.02"):
+    if max(deltas) > Decimal("0.02") and min(deltas) >= Decimal("-0.02"):
         return "AMPLIFIER"
-    if mean < Decimal("-0.02"):
+    if min(deltas) < Decimal("-0.02") and max(deltas) <= Decimal("0.02"):
         return "SUPPRESSOR"
-    return "NEUTRAL"
+    return "UNSTABLE"
 
 
 def _groups(
@@ -354,7 +490,7 @@ def _groups(
     for item in observations:
         result.setdefault(item.session, []).append(item)
     return {
-        key: tuple(sorted(values, key=lambda item: (-item.alpha_score, item.symbol)))
+        key: tuple(sorted(values, key=lambda item: item.symbol))
         for key, values in sorted(result.items())
     }
 

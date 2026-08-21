@@ -13,8 +13,10 @@ from market_regime_alpha.strategies.contracts import (
     PortfolioWeightingMethod,
     StrategyContract,
     StrategyFamily,
+    StrategyForecastRequirement,
     StrategyVersion,
 )
+from market_regime_alpha.strategies.defaults import canonical_exploratory_strategy_registry
 
 
 def _reference(kind: str, name: str) -> RuntimeArtifactReference:
@@ -103,3 +105,14 @@ def test_strategy_contract_and_version_do_not_own_physical_position() -> None:
 
     assert prohibited.isdisjoint({item.name for item in fields(StrategyContract)})
     assert prohibited.isdisjoint({item.name for item in fields(StrategyVersion)})
+
+
+def test_incumbent_registry_preserves_v1_identity_and_explicit_no_forecast_semantics() -> None:
+    registry = canonical_exploratory_strategy_registry()
+
+    assert {item.schema_version for item in registry.contracts} == {
+        "strategy-contract/v1"
+    }
+    assert {item.forecast_requirement for item in registry.contracts} == {
+        StrategyForecastRequirement.FORECAST_NOT_REQUIRED
+    }

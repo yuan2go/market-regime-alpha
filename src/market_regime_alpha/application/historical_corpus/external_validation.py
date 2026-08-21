@@ -8,11 +8,8 @@ from decimal import Decimal, localcontext
 from enum import Enum
 from math import sqrt
 from statistics import pstdev
-from typing import Any
+from typing import Any, Mapping
 
-from market_regime_alpha.application.historical_corpus.alpha_correctness import (
-    AlphaCorrectnessStatus,
-)
 from market_regime_alpha.application.historical_corpus.alpha_diagnostics import (
     MovingBlockInferenceProtocol,
     SessionEstimate,
@@ -26,8 +23,17 @@ from market_regime_alpha.application.research_validation.formal_protocol import 
     ResearchExperimentDefinition,
     SearchBudget,
 )
+from market_regime_alpha.application.historical_corpus.evidence import (
+    HistoricalEvidenceKind,
+    HistoricalResearchEvidence,
+)
 from market_regime_alpha.core.identity import ArtifactId
-from market_regime_alpha.evidence.canonical import canonical_hash
+from market_regime_alpha.evidence.canonical import canonical_hash, require_sha256
+from market_regime_alpha.research.cross_sectional_ranking import (
+    FactorCrossSection,
+    composite_percentile_scores,
+    fractional_boundary_weights,
+)
 
 
 class ValidationDimension(str, Enum):
@@ -65,10 +71,13 @@ class FrozenAlphaHypothesis:
     feature_reference: ValidationArtifactReference
     feature_version: str
     cost_policy_reference: ValidationArtifactReference
+    discovery_evidence_reference: ValidationArtifactReference
+    discovery_rank_ic: Decimal
     top_k: int
     cost_assumption: Decimal
     minimum_effect_retention: Decimal
     minimum_coverage: Decimal
+    minimum_top_k_net: Decimal
     bootstrap_iterations: int
     block_lengths: tuple[int, ...]
     schema_version: str = "frozen-alpha-hypothesis/v1"
@@ -87,6 +96,12 @@ class FrozenAlphaHypothesis:
             raise ValueError("frozen block lengths must be positive")
         if not Decimal("0") <= self.cost_assumption < Decimal("1"):
             raise ValueError("cost assumption is invalid")
+        if not self.minimum_top_k_net.is_finite():
+            raise ValueError("minimum Top-K net threshold must be finite")
+        if self.candidate_scoring != "EQUAL_WEIGHT_RANK_PERCENTILE":
+            raise ValueError("unsupported frozen Candidate scoring")
+        if self.discovery_evidence_reference.artifact_kind != "HISTORICAL_ALPHA_ABLATION_EVIDENCE":
+            raise ValueError("frozen hypothesis requires Alpha Discovery Evidence")
         for value in (self.minimum_effect_retention, self.minimum_coverage):
             if not Decimal("0") <= value <= Decimal("1"):
                 raise ValueError("qualification threshold is invalid")
@@ -108,6 +123,9 @@ class FrozenAlphaHypothesis:
         feature_reference: ValidationArtifactReference,
         feature_version: str,
         cost_policy_reference: ValidationArtifactReference,
+        discovery_evidence_reference: ValidationArtifactReference,
+        discovery_rank_ic: Decimal,
+        minimum_top_k_net: Decimal = Decimal("0"),
         bootstrap_iterations: int = 500,
         block_lengths: tuple[int, ...] = (1, 5, 10),
     ) -> FrozenAlphaHypothesis:
@@ -122,10 +140,13 @@ class FrozenAlphaHypothesis:
             "feature_reference": feature_reference.to_canonical_dict(),
             "feature_version": feature_version,
             "cost_policy_reference": cost_policy_reference.to_canonical_dict(),
+            "discovery_evidence_reference": discovery_evidence_reference.to_canonical_dict(),
+            "discovery_rank_ic": str(discovery_rank_ic),
             "top_k": top_k,
             "cost_assumption": str(cost_assumption),
             "minimum_effect_retention": str(minimum_effect_retention),
             "minimum_coverage": str(minimum_coverage),
+            "minimum_top_k_net": str(minimum_top_k_net),
             "bootstrap_iterations": bootstrap_iterations,
             "block_lengths": list(ordered_blocks),
         }
@@ -140,10 +161,13 @@ class FrozenAlphaHypothesis:
             feature_reference,
             feature_version,
             cost_policy_reference,
+            discovery_evidence_reference,
+            discovery_rank_ic,
             top_k,
             cost_assumption,
             minimum_effect_retention,
             minimum_coverage,
+            minimum_top_k_net,
             bootstrap_iterations,
             ordered_blocks,
         )
@@ -164,10 +188,13 @@ class FrozenAlphaHypothesis:
             "feature_reference": self.feature_reference.to_canonical_dict(),
             "feature_version": self.feature_version,
             "cost_policy_reference": self.cost_policy_reference.to_canonical_dict(),
+            "discovery_evidence_reference": self.discovery_evidence_reference.to_canonical_dict(),
+            "discovery_rank_ic": str(self.discovery_rank_ic),
             "top_k": self.top_k,
             "cost_assumption": str(self.cost_assumption),
             "minimum_effect_retention": str(self.minimum_effect_retention),
             "minimum_coverage": str(self.minimum_coverage),
+            "minimum_top_k_net": str(self.minimum_top_k_net),
             "bootstrap_iterations": self.bootstrap_iterations,
             "block_lengths": list(self.block_lengths),
         }
@@ -178,8 +205,7 @@ class FrozenExternalValidationExperiment:
     experiment_id: ArtifactId
     experiment_hash: str
     hypothesis: FrozenAlphaHypothesis
-    correctness_evidence_reference: ValidationArtifactReference
-    correctness_status: AlphaCorrectnessStatus
+    correctness_evidence: HistoricalResearchEvidence
     discovery_scope: ValidationScope
     validation_scope: ValidationScope
     dimension: ValidationDimension
@@ -191,7 +217,13 @@ class FrozenExternalValidationExperiment:
         _require_isolated_dimension(
             self.discovery_scope, self.validation_scope, self.dimension
         )
-        if self.correctness_status is not AlphaCorrectnessStatus.CORRECTNESS_SUPPORTED:
+        self.correctness_evidence.verify_identity()
+        if (
+            self.correctness_evidence.evidence_kind
+            is not HistoricalEvidenceKind.ALPHA_CORRECTNESS
+            or self.correctness_evidence.payload.get("status")
+            != "CORRECTNESS_SUPPORTED"
+        ):
             raise ValueError("external validation requires a correctness-supported hypothesis")
         if (
             self.experiment_id != self.experiment_definition.definition_id
@@ -204,8 +236,7 @@ class FrozenExternalValidationExperiment:
         cls,
         *,
         hypothesis: FrozenAlphaHypothesis,
-        correctness_evidence_reference: ValidationArtifactReference,
-        correctness_status: AlphaCorrectnessStatus,
+        correctness_evidence: HistoricalResearchEvidence,
         discovery_scope: ValidationScope,
         validation_scope: ValidationScope,
         dimension: ValidationDimension,
@@ -227,7 +258,7 @@ class FrozenExternalValidationExperiment:
             allowed_model_families=("FROZEN_EXTERNAL_ALPHA_EVALUATOR",),
             hyperparameter_space=_external_domains(
                 hypothesis=hypothesis,
-                correctness_evidence_reference=correctness_evidence_reference,
+                correctness_evidence_reference=correctness_evidence.reference,
                 discovery_scope=discovery_scope,
                 validation_scope=validation_scope,
                 dimension=dimension,
@@ -256,8 +287,7 @@ class FrozenExternalValidationExperiment:
             definition.definition_id,
             definition.definition_hash,
             hypothesis,
-            correctness_evidence_reference,
-            correctness_status,
+            correctness_evidence,
             discovery_scope,
             validation_scope,
             dimension,
@@ -279,10 +309,64 @@ class FrozenExternalValidationExperiment:
 class ExternalValidationObservation:
     session: date
     symbol: str
+    factor_values: Mapping[str, Decimal]
+    decision_reference_price: Decimal
+    executable_entry_price: Decimal
+    target_reference_price: Decimal
+    source_reference: ValidationArtifactReference
+    capacity: Decimal | None
+
+    def __post_init__(self) -> None:
+        if not self.symbol.strip() or not self.factor_values:
+            raise ValueError("External validation observation is incomplete")
+        if any(not value.is_finite() for value in self.factor_values.values()):
+            raise ValueError("External validation Factor values must be finite")
+        if min(
+            self.decision_reference_price,
+            self.executable_entry_price,
+            self.target_reference_price,
+        ) <= 0:
+            raise ValueError("External validation prices must be positive")
+        if self.source_reference.artifact_kind not in {
+            "RESEARCH_PANEL",
+            "HISTORICAL_RESEARCH_PANEL",
+        }:
+            raise ValueError("External validation requires Research Panel lineage")
+        if self.capacity is not None and (
+            not self.capacity.is_finite() or self.capacity < 0
+        ):
+            raise ValueError("External validation capacity must be finite and non-negative")
+
+    @property
+    def target_return(self) -> Decimal:
+        return self.target_reference_price / self.decision_reference_price - Decimal("1")
+
+    @property
+    def gross_return(self) -> Decimal:
+        return self.target_reference_price / self.executable_entry_price - Decimal("1")
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        return {
+            "session": self.session.isoformat(),
+            "symbol": self.symbol,
+            "factor_values": {
+                key: str(value) for key, value in sorted(self.factor_values.items())
+            },
+            "decision_reference_price": str(self.decision_reference_price),
+            "executable_entry_price": str(self.executable_entry_price),
+            "target_reference_price": str(self.target_reference_price),
+            "source_reference": self.source_reference.to_canonical_dict(),
+            "capacity": None if self.capacity is None else str(self.capacity),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class _ScoredObservation:
+    session: date
+    symbol: str
     score: Decimal
     target_return: Decimal
     gross_return: Decimal
-    cost_return: Decimal
     capacity: Decimal | None
 
 
@@ -292,6 +376,8 @@ class ExternalValidationEvaluation:
     evaluation_hash: str
     experiment_reference: ValidationArtifactReference
     thresholds_reference: ValidationArtifactReference
+    factor_directions: tuple[tuple[str, str], ...]
+    observation_set_hash: str
     observation_count: int
     coverage: Decimal
     rank_ic: Decimal | None
@@ -313,13 +399,76 @@ class ExternalValidationEvaluation:
     formal_oos: bool
     limitations: tuple[str, ...]
 
+    def __post_init__(self) -> None:
+        require_sha256("evaluation_hash", self.evaluation_hash)
+        require_sha256("observation_set_hash", self.observation_set_hash)
+        if self.observation_count < 0 or not Decimal("0") <= self.coverage <= Decimal("1"):
+            raise ValueError("External validation coverage is invalid")
+        if self.formal_oos:
+            raise ValueError("External validation cannot grant Formal OOS")
+        if self.factor_directions != tuple(sorted(set(self.factor_directions))):
+            raise ValueError("External validation Factor directions must be unique and sorted")
+        if self.limitations != tuple(sorted(set(self.limitations))):
+            raise ValueError("External validation limitations must be unique and sorted")
+        digest = canonical_hash(self.identity_payload())
+        if digest != self.evaluation_hash or self.evaluation_id != ArtifactId(
+            f"external-validation-evaluation:{digest[7:]}"
+        ):
+            raise ValueError("External validation Evaluation identity mismatch")
+
+    def identity_payload(self) -> dict[str, Any]:
+        return {
+            "experiment_reference": self.experiment_reference.to_canonical_dict(),
+            "thresholds_reference": self.thresholds_reference.to_canonical_dict(),
+            "factor_directions": [list(item) for item in self.factor_directions],
+            "observation_set_hash": self.observation_set_hash,
+            "observation_count": self.observation_count,
+            "coverage": str(self.coverage),
+            "rank_ic": _text(self.rank_ic),
+            "confidence_interval": (
+                None
+                if self.confidence_interval is None
+                else [str(item) for item in self.confidence_interval]
+            ),
+            "positive_ic_ratio": _text(self.positive_ic_ratio),
+            "icir": _text(self.icir),
+            "bucket_monotonicity": _text(self.bucket_monotonicity),
+            "top_k_gross": _text(self.top_k_gross),
+            "cost_diagnostic": _text(self.cost_diagnostic),
+            "top_k_net": _text(self.top_k_net),
+            "turnover": _text(self.turnover),
+            "drawdown": _text(self.drawdown),
+            "temporal_stability": self.temporal_stability,
+            "capacity_diagnostic": _text(self.capacity_diagnostic),
+            "effect_retention": _text(self.effect_retention),
+            "degradation": _text(self.degradation),
+            "qualification_status": self.qualification_status,
+            "external_validation_classification": self.external_validation_classification,
+            "formal_oos": self.formal_oos,
+            "limitations": list(self.limitations),
+        }
+
+    @property
+    def reference(self) -> ValidationArtifactReference:
+        return ValidationArtifactReference(
+            "EXTERNAL_VALIDATION_EVALUATION",
+            self.evaluation_id,
+            self.evaluation_hash,
+        )
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        return {
+            "evaluation_id": str(self.evaluation_id),
+            "evaluation_hash": self.evaluation_hash,
+            **self.identity_payload(),
+        }
+
 
 def evaluate_external_validation(
     experiment: FrozenExternalValidationExperiment,
     *,
     observations: tuple[ExternalValidationObservation, ...],
     expected_population: int,
-    discovery_rank_ic: Decimal | None,
     pit_complete: bool,
     free_data: bool,
 ) -> ExternalValidationEvaluation:
@@ -329,12 +478,21 @@ def evaluate_external_validation(
     keys = tuple((item.session, item.symbol) for item in ordered)
     if len(keys) != len(set(keys)) or expected_population <= 0:
         raise ValueError("external validation population is invalid")
+    if len(ordered) > expected_population:
+        raise ValueError("external validation observations exceed frozen population")
+    expected_factors = {item[0] for item in experiment.hypothesis.factor_directions}
+    if any(set(item.factor_values) != expected_factors for item in ordered):
+        raise ValueError("External validation Factor set drifted from frozen hypothesis")
     coverage = Decimal(len(ordered)) / Decimal(expected_population)
-    daily = _daily_rank_ic(ordered)
+    scored = _score_observations(experiment.hypothesis, ordered)
+    daily = _daily_rank_ic(scored)
     rank_ic = _mean(daily)
     top_sets, top_gross, top_cost, top_net, capacity = _top_k_metrics(
-        ordered, experiment.hypothesis.top_k
+        scored,
+        experiment.hypothesis.top_k,
+        experiment.hypothesis.cost_assumption,
     )
+    discovery_rank_ic = experiment.hypothesis.discovery_rank_ic
     retention = (
         None
         if rank_ic is None or discovery_rank_ic in {None, Decimal("0")}
@@ -358,7 +516,7 @@ def evaluate_external_validation(
             ),
             tuple(
                 SessionEstimate(session, value)
-                for session, value in _daily_rank_ic_with_dates(ordered)
+                for session, value in _daily_rank_ic_with_dates(scored)
             ),
         )
         conservative = inference.sensitivity[-1]
@@ -368,6 +526,8 @@ def evaluate_external_validation(
         coverage >= experiment.hypothesis.minimum_coverage
         and retention is not None
         and retention >= experiment.hypothesis.minimum_effect_retention
+        and top_net is not None
+        and top_net >= experiment.hypothesis.minimum_top_k_net
     )
     limitations = tuple(
         sorted(
@@ -380,21 +540,36 @@ def evaluate_external_validation(
             - {""}
         )
     )
+    observation_set_hash = canonical_hash(
+        {"observations": [item.to_canonical_dict() for item in ordered]}
+    )
     values = {
         "experiment_reference": experiment.reference.to_canonical_dict(),
         "thresholds_reference": experiment.hypothesis.reference.to_canonical_dict(),
+        "factor_directions": [
+            list(item) for item in experiment.hypothesis.factor_directions
+        ],
+        "observation_set_hash": observation_set_hash,
         "observation_count": len(ordered),
         "coverage": str(coverage),
         "rank_ic": _text(rank_ic),
         "confidence_interval": None if confidence is None else [str(item) for item in confidence],
         "positive_ic_ratio": _text(_positive_ratio(daily)),
         "icir": _text(_icir(daily)),
-        "bucket_monotonicity": _text(_bucket_monotonicity(ordered)),
+        "bucket_monotonicity": _text(_bucket_monotonicity(scored)),
         "top_k_gross": _text(top_gross),
         "cost_diagnostic": _text(top_cost),
         "top_k_net": _text(top_net),
         "turnover": _text(_turnover(top_sets)),
-        "drawdown": _text(_drawdown(_daily_top_returns(ordered, experiment.hypothesis.top_k))),
+        "drawdown": _text(
+            _drawdown(
+                _daily_top_returns(
+                    scored,
+                    experiment.hypothesis.top_k,
+                    experiment.hypothesis.cost_assumption,
+                )
+            )
+        ),
         "temporal_stability": stability,
         "capacity_diagnostic": _text(capacity),
         "effect_retention": _text(retention),
@@ -410,18 +585,26 @@ def evaluate_external_validation(
         digest,
         experiment.reference,
         experiment.hypothesis.reference,
+        experiment.hypothesis.factor_directions,
+        observation_set_hash,
         len(ordered),
         coverage,
         rank_ic,
         confidence,
         _positive_ratio(daily),
         _icir(daily),
-        _bucket_monotonicity(ordered),
+        _bucket_monotonicity(scored),
         top_gross,
         top_cost,
         top_net,
         _turnover(top_sets),
-        _drawdown(_daily_top_returns(ordered, experiment.hypothesis.top_k)),
+        _drawdown(
+            _daily_top_returns(
+                scored,
+                experiment.hypothesis.top_k,
+                experiment.hypothesis.cost_assumption,
+            )
+        ),
         stability,
         capacity,
         retention,
@@ -457,6 +640,15 @@ def _external_domains(
             "discovery_scope_hash", (canonical_hash(discovery_scope.to_canonical_dict()),)
         ),
         HyperparameterDomain(
+            "discovery_evidence",
+            (
+                f"{hypothesis.discovery_evidence_reference.artifact_kind}|"
+                f"{hypothesis.discovery_evidence_reference.artifact_id}|"
+                f"{hypothesis.discovery_evidence_reference.content_hash}",
+            ),
+        ),
+        HyperparameterDomain("discovery_rank_ic", (str(hypothesis.discovery_rank_ic),)),
+        HyperparameterDomain(
             "factor_directions",
             tuple(
                 sorted(f"{factor}|{direction}" for factor, direction in hypothesis.factor_directions)
@@ -469,6 +661,8 @@ def _external_domains(
             "minimum_effect_retention",
             (str(hypothesis.minimum_effect_retention),),
         ),
+        HyperparameterDomain("minimum_top_k_net", (str(hypothesis.minimum_top_k_net),)),
+        HyperparameterDomain("cost_assumption", (str(hypothesis.cost_assumption),)),
         HyperparameterDomain("top_k", (str(hypothesis.top_k),)),
         HyperparameterDomain("validation_dimension", (dimension.value,)),
         HyperparameterDomain(
@@ -493,19 +687,57 @@ def _require_isolated_dimension(
 
 
 def _groups(
-    observations: tuple[ExternalValidationObservation, ...],
-) -> dict[date, tuple[ExternalValidationObservation, ...]]:
-    result: dict[date, list[ExternalValidationObservation]] = {}
+    observations: tuple[_ScoredObservation, ...],
+) -> dict[date, tuple[_ScoredObservation, ...]]:
+    result: dict[date, list[_ScoredObservation]] = {}
     for item in observations:
         result.setdefault(item.session, []).append(item)
     return {
-        key: tuple(sorted(values, key=lambda item: (-item.score, item.symbol)))
+        key: tuple(sorted(values, key=lambda item: item.symbol))
         for key, values in sorted(result.items())
     }
 
 
-def _daily_rank_ic_with_dates(
+def _score_observations(
+    hypothesis: FrozenAlphaHypothesis,
     observations: tuple[ExternalValidationObservation, ...],
+) -> tuple[_ScoredObservation, ...]:
+    result: list[_ScoredObservation] = []
+    by_session: dict[date, list[ExternalValidationObservation]] = {}
+    for item in observations:
+        by_session.setdefault(item.session, []).append(item)
+    for session, rows in sorted(by_session.items()):
+        ordered = tuple(sorted(rows, key=lambda item: item.symbol))
+        scores = composite_percentile_scores(
+            tuple(
+                FactorCrossSection(
+                    factor_id=factor_id,
+                    values={
+                        item.symbol: item.factor_values[factor_id] for item in ordered
+                    },
+                    higher_is_better=direction == "HIGHER_IS_BETTER",
+                    weight=Decimal("1"),
+                )
+                for factor_id, direction in hypothesis.factor_directions
+            ),
+            entities=tuple(item.symbol for item in ordered),
+        ).scores
+        result.extend(
+            _ScoredObservation(
+                session,
+                item.symbol,
+                scores[item.symbol],
+                item.target_return,
+                item.gross_return,
+                item.capacity,
+            )
+            for item in ordered
+        )
+    return tuple(sorted(result, key=lambda item: (item.session, item.symbol)))
+
+
+def _daily_rank_ic_with_dates(
+    observations: tuple[_ScoredObservation, ...],
 ) -> tuple[tuple[date, Decimal], ...]:
     result: list[tuple[date, Decimal]] = []
     for session, values in _groups(observations).items():
@@ -519,28 +751,47 @@ def _daily_rank_ic_with_dates(
 
 
 def _daily_rank_ic(
-    observations: tuple[ExternalValidationObservation, ...],
+    observations: tuple[_ScoredObservation, ...],
 ) -> tuple[Decimal, ...]:
     return tuple(value for _session, value in _daily_rank_ic_with_dates(observations))
 
 
 def _top_k_metrics(
-    observations: tuple[ExternalValidationObservation, ...], top_k: int
-) -> tuple[tuple[frozenset[str], ...], Decimal | None, Decimal | None, Decimal | None, Decimal | None]:
-    selections: list[frozenset[str]] = []
+    observations: tuple[_ScoredObservation, ...],
+    top_k: int,
+    frozen_cost: Decimal,
+) -> tuple[tuple[Mapping[str, Decimal], ...], Decimal | None, Decimal | None, Decimal | None, Decimal | None]:
+    selections: list[Mapping[str, Decimal]] = []
     gross: list[Decimal] = []
     costs: list[Decimal] = []
     net: list[Decimal] = []
     capacities: list[Decimal] = []
     for values in _groups(observations).values():
-        selected = values[: min(top_k, len(values))]
+        boundary = fractional_boundary_weights(
+            {item.symbol: item.score for item in values},
+            slots=min(top_k, len(values)),
+            higher_is_better=True,
+        )
+        selected = tuple(
+            (item, boundary.weights[item.symbol])
+            for item in values
+            if boundary.weights[item.symbol] > 0
+        )
         if not selected:
             continue
-        selections.append(frozenset(item.symbol for item in selected))
-        gross.append(_mean(tuple(item.gross_return for item in selected)) or Decimal("0"))
-        costs.append(_mean(tuple(item.cost_return for item in selected)) or Decimal("0"))
-        net.append(_mean(tuple(item.gross_return - item.cost_return for item in selected)) or Decimal("0"))
-        capacities.extend(item.capacity for item in selected if item.capacity is not None)
+        denominator = sum((weight for _item, weight in selected), Decimal("0"))
+        selections.append(boundary.weights)
+        session_gross = sum(
+            (item.gross_return * weight for item, weight in selected), Decimal("0")
+        ) / denominator
+        gross.append(session_gross)
+        costs.append(frozen_cost)
+        net.append(session_gross - frozen_cost)
+        capacities.extend(
+            item.capacity * weight
+            for item, weight in selected
+            if item.capacity is not None
+        )
     return (
         tuple(selections),
         _mean(tuple(gross)),
@@ -551,7 +802,7 @@ def _top_k_metrics(
 
 
 def _bucket_monotonicity(
-    observations: tuple[ExternalValidationObservation, ...],
+    observations: tuple[_ScoredObservation, ...],
 ) -> Decimal | None:
     bucket_scores: list[Decimal] = []
     bucket_returns: list[Decimal] = []
@@ -559,29 +810,54 @@ def _bucket_monotonicity(
         count = len(values)
         if count < 3:
             continue
-        for index, item in enumerate(values):
-            bucket_scores.append(Decimal(count - index))
+        for item in values:
+            bucket_scores.append(item.score)
             bucket_returns.append(item.target_return)
     return _correlation(_ranks(tuple(bucket_scores)), _ranks(tuple(bucket_returns)))
 
 
 def _daily_top_returns(
-    observations: tuple[ExternalValidationObservation, ...], top_k: int
+    observations: tuple[_ScoredObservation, ...],
+    top_k: int,
+    frozen_cost: Decimal,
 ) -> tuple[Decimal, ...]:
-    return tuple(
-        _mean(tuple(item.gross_return - item.cost_return for item in values[:top_k])) or Decimal("0")
-        for values in _groups(observations).values()
-        if values
-    )
+    values: list[Decimal] = []
+    for rows in _groups(observations).values():
+        if not rows:
+            continue
+        selection = fractional_boundary_weights(
+            {item.symbol: item.score for item in rows},
+            slots=min(top_k, len(rows)),
+            higher_is_better=True,
+        )
+        denominator = sum(selection.weights.values(), Decimal("0"))
+        values.append(
+            sum(
+                (
+                    item.gross_return * selection.weights[item.symbol]
+                    for item in rows
+                ),
+                Decimal("0"),
+            )
+            / denominator
+            - frozen_cost
+        )
+    return tuple(values)
 
 
-def _turnover(selections: tuple[frozenset[str], ...]) -> Decimal | None:
+def _turnover(selections: tuple[Mapping[str, Decimal], ...]) -> Decimal | None:
     if len(selections) < 2:
         return None
     return _mean(
         tuple(
-            Decimal(len(current.symmetric_difference(previous)))
-            / Decimal(max(1, len(current | previous)))
+            sum(
+                (
+                    abs(current.get(symbol, Decimal("0")) - previous.get(symbol, Decimal("0")))
+                    for symbol in current.keys() | previous.keys()
+                ),
+                Decimal("0"),
+            )
+            / Decimal("2")
             for previous, current in zip(selections, selections[1:], strict=False)
         )
     )

@@ -257,6 +257,21 @@ class MultiStrategyRuntime:
     def _execute(self, runtime_input: StrategyRuntimeInput) -> MultiStrategyCycle:
         if runtime_input.authority_mode is RuntimeAuthorityMode.PRODUCTION:
             raise RuntimeError("PRODUCTION_AUTHORIZED_FALSE")
+        active = {
+            strategy_reference(item): self._registry.contract_for(item)
+            for item in self._registry.active_versions
+        }
+        for opportunity in runtime_input.opportunities or ():
+            contract = active.get(opportunity.strategy_version_reference)
+            if contract is None:
+                raise ValueError("Strategy opportunity references an inactive Strategy Version")
+            if (
+                contract.forecast_requirement
+                is not StrategyForecastRequirement.FORECAST_REQUIRED
+            ):
+                raise ValueError(
+                    "FORECAST_NOT_REQUIRED Strategy cannot silently ignore opportunity lineage"
+                )
         cycle_id = MultiStrategyCycle.identity(
             runtime_input,
             tuple(strategy_reference(item) for item in self._registry.active_versions),
@@ -289,15 +304,20 @@ class MultiStrategyRuntime:
         contract = self._registry.contract_for(version)
         run_id = StrategyRun.identity(cycle_id, version)
         positions = {item.symbol: item for item in runtime_input.positions if item.strategy_version_id == version.version_id}
+        version_reference = strategy_reference(version)
         opportunities = {
-            item.symbol: item for item in (runtime_input.opportunities or ())
+            item.symbol: item
+            for item in (runtime_input.opportunities or ())
+            if item.strategy_version_reference == version_reference
         }
         if contract.forecast_requirement is StrategyForecastRequirement.FORECAST_REQUIRED:
-            missing = tuple(
+            required_symbols = {
                 item.symbol
                 for item in runtime_input.candidate_set.records
                 if item.selection_status is CandidateSelectionStatus.SELECTED
-                and item.symbol not in opportunities
+            } | set(positions)
+            missing = tuple(
+                symbol for symbol in sorted(required_symbols) if symbol not in opportunities
             )
             if missing:
                 raise ValueError(

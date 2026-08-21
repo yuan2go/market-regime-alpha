@@ -7,7 +7,7 @@ diagnostics.  They do not select a model, mutate a Candidate policy, or grant Al
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal, localcontext
 from enum import Enum
 from math import sqrt
@@ -18,8 +18,11 @@ from market_regime_alpha.application.research_validation.common import (
     ValidationArtifactReference,
 )
 from market_regime_alpha.application.research_validation.formal_evaluation import (
+    MultipleTestingMethod,
+    adjust_multiple_testing,
     moving_block_mean_interval,
 )
+from market_regime_alpha.evidence.canonical import canonical_datetime
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.evidence.canonical import canonical_hash
 
@@ -217,12 +220,50 @@ class ExecutionPriceProxy(str, Enum):
 
 
 @dataclass(frozen=True, slots=True)
+class TimedPriceObservation:
+    price: Decimal
+    observed_at: datetime
+    available_at: datetime
+    source_reference: ValidationArtifactReference
+
+    def __post_init__(self) -> None:
+        if self.price <= 0:
+            raise ValueError("execution observation price must be positive")
+        canonical_datetime(self.observed_at)
+        canonical_datetime(self.available_at)
+        if self.available_at < self.observed_at:
+            raise ValueError("execution observation cannot be available before observation")
+
+
+@dataclass(frozen=True, slots=True)
 class ExecutionPriceInputs:
-    decision_reference: Decimal
-    next_observable_price: Decimal | None
-    next_bar_open: Decimal | None
-    session_close: Decimal | None
-    target_price: Decimal
+    information_cutoff: datetime
+    decision_reference: TimedPriceObservation
+    next_observable_price: TimedPriceObservation | None
+    next_bar_open: TimedPriceObservation | None
+    session_close: TimedPriceObservation | None
+    target_reference: TimedPriceObservation
+
+    def __post_init__(self) -> None:
+        canonical_datetime(self.information_cutoff)
+        if (
+            self.decision_reference.observed_at > self.information_cutoff
+            or self.decision_reference.available_at > self.information_cutoff
+        ):
+            raise ValueError("Decision reference exceeds Information Cutoff")
+        for value in (
+            self.next_observable_price,
+            self.next_bar_open,
+            self.session_close,
+        ):
+            if value is not None and (
+                value.observed_at <= self.information_cutoff
+                or value.available_at <= self.information_cutoff
+                or value.available_at > self.target_reference.available_at
+            ):
+                raise ValueError("executable proxy timing is outside its observable window")
+        if self.target_reference.observed_at <= self.information_cutoff:
+            raise ValueError("Target reference must follow Information Cutoff")
 
 
 @dataclass(frozen=True, slots=True)
@@ -233,6 +274,9 @@ class ExecutionTimingDiagnostic:
     target_reference_price: Decimal
     gross_return: Decimal
     executable: bool
+    entry_observed_at: datetime
+    entry_available_at: datetime
+    source_reference: ValidationArtifactReference
     limitations: tuple[str, ...]
 
 
@@ -249,16 +293,17 @@ def diagnose_execution_price(
     entry = prices[proxy]
     if entry is None:
         raise ValueError(f"execution proxy unavailable: {proxy.value}")
-    if min(inputs.decision_reference, entry, inputs.target_price) <= 0:
-        raise ValueError("execution prices must be positive")
     executable = proxy is not ExecutionPriceProxy.DECISION_REFERENCE_ONLY
     return ExecutionTimingDiagnostic(
         proxy=proxy,
-        information_cutoff_price=inputs.decision_reference,
-        entry_price=entry,
-        target_reference_price=inputs.target_price,
-        gross_return=inputs.target_price / entry - Decimal("1"),
+        information_cutoff_price=inputs.decision_reference.price,
+        entry_price=entry.price,
+        target_reference_price=inputs.target_reference.price,
+        gross_return=inputs.target_reference.price / entry.price - Decimal("1"),
         executable=executable,
+        entry_observed_at=entry.observed_at,
+        entry_available_at=entry.available_at,
+        source_reference=entry.source_reference,
         limitations=(
             ("RESEARCH_REFERENCE_PRICE_NOT_EXECUTABLE",)
             if not executable
@@ -311,14 +356,27 @@ def evaluate_factor_redundancy(
     pairs: list[FactorPairDiagnostic] = []
     for left_index, left in enumerate(factor_ids):
         for right in factor_ids[left_index + 1 :]:
-            left_values = tuple(item.factors[left] for item in observations)
-            right_values = tuple(item.factors[right] for item in observations)
+            daily_linear: list[Decimal] = []
+            daily_rank: list[Decimal] = []
+            for values in _factor_by_session(observations).values():
+                linear = _correlation(
+                    tuple(item.factors[left] for item in values),
+                    tuple(item.factors[right] for item in values),
+                )
+                ranked = _correlation(
+                    _ranks(tuple(item.factors[left] for item in values)),
+                    _ranks(tuple(item.factors[right] for item in values)),
+                )
+                if linear is not None:
+                    daily_linear.append(linear)
+                if ranked is not None:
+                    daily_rank.append(ranked)
             pairs.append(
                 FactorPairDiagnostic(
                     left,
                     right,
-                    _correlation(left_values, right_values),
-                    _correlation(_ranks(left_values), _ranks(right_values)),
+                    None if not daily_linear else _mean(tuple(daily_linear)),
+                    None if not daily_rank else _mean(tuple(daily_rank)),
                 )
             )
     full = _daily_composite_rank_ic(observations, factor_ids)
@@ -326,18 +384,24 @@ def evaluate_factor_redundancy(
     for factor_id in factor_ids:
         others = tuple(item for item in factor_ids if item != factor_id)
         leave_one_out = _daily_composite_rank_ic(observations, others)
-        residuals: list[Decimal] = []
-        targets: list[Decimal] = []
+        residual_daily: list[Decimal] = []
         for values in _factor_by_session(observations).values():
+            if len(values) < 3:
+                continue
             factor_rank = _ranks(tuple(item.factors[factor_id] for item in values))
             other_ranks = tuple(
                 _ranks(tuple(item.factors[other] for item in values)) for other in others
             )
-            for index, item in enumerate(values):
-                expected = sum((rank[index] for rank in other_ranks), Decimal("0")) / Decimal(len(other_ranks))
-                residuals.append(factor_rank[index] - expected)
-                targets.append(item.target_return)
-        residual_ic = _correlation(_ranks(tuple(residuals)), _ranks(tuple(targets)))
+            residuals = _orthogonal_residual(factor_rank, other_ranks)
+            residual_ic = _correlation(
+                _ranks(residuals),
+                _ranks(tuple(item.target_return for item in values)),
+            )
+            if residual_ic is not None:
+                residual_daily.append(residual_ic)
+        residual_ic = (
+            None if not residual_daily else _mean(tuple(residual_daily))
+        )
         incremental.append(
             FactorIncrementalDiagnostic(
                 factor_id,
@@ -351,11 +415,30 @@ def evaluate_factor_redundancy(
         for item in pairs
         if item.rank_correlation is not None
     )
-    if not estimable_pairs or full is None:
+    residual_strength = tuple(
+        abs(item.residual_rank_ic)
+        for item in incremental
+        if item.residual_rank_ic is not None
+    )
+    incremental_strength = tuple(
+        abs(item.incremental_rank_ic)
+        for item in incremental
+        if item.incremental_rank_ic is not None
+    )
+    if (
+        not estimable_pairs
+        or full is None
+        or not residual_strength
+        or not incremental_strength
+    ):
         status = "NOT_ESTIMABLE"
-    elif all(item >= Decimal("0.9") for item in estimable_pairs):
+    elif all(item >= Decimal("0.9") for item in estimable_pairs) and all(
+        item < Decimal("0.02") for item in residual_strength
+    ):
         status = "LATENT_FACTOR_MULTIPLE_EXPRESSIONS"
-    elif any(item >= Decimal("0.9") for item in estimable_pairs):
+    elif any(item >= Decimal("0.9") for item in estimable_pairs) or any(
+        item < Decimal("0.02") for item in residual_strength
+    ) or any(item < Decimal("0.005") for item in incremental_strength):
         status = "PARTIALLY_REDUNDANT"
     else:
         status = "DISTINCT_INFORMATION_SUPPORTED"
@@ -366,6 +449,52 @@ def evaluate_factor_redundancy(
         tuple(incremental),
         status,
     )
+
+
+def _orthogonal_residual(
+    dependent: tuple[Decimal, ...],
+    regressors: tuple[tuple[Decimal, ...], ...],
+) -> tuple[Decimal, ...]:
+    """Residualize ranks against an intercept and the full regressor span."""
+
+    mean_dependent = _mean(dependent)
+    residual = tuple(item - mean_dependent for item in dependent)
+    basis: list[tuple[Decimal, ...]] = []
+    for regressor in regressors:
+        centered = tuple(item - _mean(regressor) for item in regressor)
+        candidate = list(centered)
+        for vector in basis:
+            denominator = sum((item * item for item in vector), Decimal("0"))
+            if denominator == 0:
+                continue
+            coefficient = (
+                sum(
+                    (left * right for left, right in zip(candidate, vector, strict=True)),
+                    Decimal("0"),
+                )
+                / denominator
+            )
+            candidate = [
+                left - coefficient * right
+                for left, right in zip(candidate, vector, strict=True)
+            ]
+        vector = tuple(candidate)
+        if sum((item * item for item in vector), Decimal("0")) > 0:
+            basis.append(vector)
+    for vector in basis:
+        denominator = sum((item * item for item in vector), Decimal("0"))
+        coefficient = (
+            sum(
+                (left * right for left, right in zip(residual, vector, strict=True)),
+                Decimal("0"),
+            )
+            / denominator
+        )
+        residual = tuple(
+            left - coefficient * right
+            for left, right in zip(residual, vector, strict=True)
+        )
+    return residual
 
 
 @dataclass(frozen=True, slots=True)
@@ -382,6 +511,7 @@ class MovingBlockInferenceProtocol:
     block_lengths: tuple[int, ...]
     confidence_level: Decimal
     seed: int
+    multiple_testing_method: MultipleTestingMethod
 
     @classmethod
     def create(
@@ -391,6 +521,9 @@ class MovingBlockInferenceProtocol:
         block_lengths: tuple[int, ...],
         confidence_level: Decimal,
         seed: int,
+        multiple_testing_method: MultipleTestingMethod = (
+            MultipleTestingMethod.BENJAMINI_HOCHBERG
+        ),
     ) -> MovingBlockInferenceProtocol:
         ordered = tuple(sorted(set(block_lengths)))
         if iterations <= 0 or not ordered or any(item <= 0 for item in ordered):
@@ -403,6 +536,7 @@ class MovingBlockInferenceProtocol:
             "block_lengths": list(ordered),
             "confidence_level": str(confidence_level),
             "seed": seed,
+            "multiple_testing_method": multiple_testing_method.value,
         }
         digest = canonical_hash(payload)
         return cls(
@@ -412,6 +546,7 @@ class MovingBlockInferenceProtocol:
             ordered,
             confidence_level,
             seed,
+            multiple_testing_method,
         )
 
 
@@ -429,9 +564,52 @@ class RobustInferenceResult:
     observation_count: int
     sensitivity: tuple[BlockSensitivityEstimate, ...]
     temporal_stability: str
+    raw_p_value: Decimal
+    adjusted_p_value: Decimal
+    multiple_testing_method: MultipleTestingMethod
 
 
 def evaluate_robust_inference(
+    protocol: MovingBlockInferenceProtocol,
+    observations: tuple[SessionEstimate, ...],
+) -> RobustInferenceResult:
+    return evaluate_robust_inference_family(
+        protocol, {"PRIMARY": observations}
+    )["PRIMARY"]
+
+
+def evaluate_robust_inference_family(
+    protocol: MovingBlockInferenceProtocol,
+    families: Mapping[str, tuple[SessionEstimate, ...]],
+) -> Mapping[str, RobustInferenceResult]:
+    if not families:
+        raise ValueError("robust inference family must be non-empty")
+    ordered_names = tuple(sorted(families))
+    provisional = tuple(
+        _evaluate_robust_inference_unadjusted(protocol, families[name])
+        for name in ordered_names
+    )
+    adjusted = adjust_multiple_testing(
+        tuple(item.raw_p_value for item in provisional),
+        protocol.multiple_testing_method,
+    )
+    return {
+        name: RobustInferenceResult(
+            item.protocol_reference,
+            item.observation_count,
+            item.sensitivity,
+            item.temporal_stability,
+            item.raw_p_value,
+            adjusted_p_value,
+            protocol.multiple_testing_method,
+        )
+        for name, item, adjusted_p_value in zip(
+            ordered_names, provisional, adjusted, strict=True
+        )
+    }
+
+
+def _evaluate_robust_inference_unadjusted(
     protocol: MovingBlockInferenceProtocol,
     observations: tuple[SessionEstimate, ...],
 ) -> RobustInferenceResult:
@@ -462,6 +640,9 @@ def evaluate_robust_inference(
     first = _mean(values[:midpoint])
     second = _mean(values[midpoint:])
     stable = first == 0 or second == 0 or (first > 0) == (second > 0)
+    non_positive = Decimal(sum(item <= 0 for item in values)) / Decimal(len(values))
+    non_negative = Decimal(sum(item >= 0 for item in values)) / Decimal(len(values))
+    raw_p_value = min(Decimal("1"), Decimal("2") * min(non_positive, non_negative))
     return RobustInferenceResult(
         ValidationArtifactReference(
             "ALPHA_INFERENCE_PROTOCOL", protocol.protocol_id, protocol.protocol_hash
@@ -469,6 +650,9 @@ def evaluate_robust_inference(
         len(values),
         tuple(sensitivity),
         "STABLE" if stable else "UNSTABLE",
+        raw_p_value,
+        raw_p_value,
+        protocol.multiple_testing_method,
     )
 
 
@@ -581,6 +765,7 @@ __all__ = [
     "ExecutionPriceInputs",
     "ExecutionPriceProxy",
     "ExecutionTimingDiagnostic",
+    "TimedPriceObservation",
     "FactorIncrementalDiagnostic",
     "FactorObservation",
     "FactorPairDiagnostic",
@@ -595,4 +780,5 @@ __all__ = [
     "diagnose_execution_price",
     "evaluate_factor_redundancy",
     "evaluate_robust_inference",
+    "evaluate_robust_inference_family",
 ]

@@ -41,6 +41,8 @@ from market_regime_alpha.evidence.canonical import canonical_hash
 from market_regime_alpha.platform.runtime_governance import RuntimeAuthorityMode
 from market_regime_alpha.research.candidate_discovery.contracts import CandidateSet
 from market_regime_alpha.strategies.contracts import (
+    StrategyOpportunityInput,
+    StrategyRegistry,
     StrategyRunOrigin,
     StrategyRuntimeInput,
 )
@@ -65,6 +67,18 @@ class HistoricalStageDelegate(Protocol):
     ) -> SessionStageComputation: ...
 
 
+class HistoricalStrategyOpportunityResolver(Protocol):
+    """Resolve persisted Candidate/Signal/Forecast/Context/Risk owners for Strategy."""
+
+    def resolve(
+        self,
+        *,
+        request: ResearchDecisionSessionRequest,
+        candidates: CandidateSet,
+        registry: StrategyRegistry,
+    ) -> tuple[StrategyOpportunityInput, ...]: ...
+
+
 @dataclass(slots=True)
 class MultiStrategyHistoricalAdapter:
     """Decorate existing historical owners; never create another scheduler."""
@@ -74,6 +88,7 @@ class MultiStrategyHistoricalAdapter:
     strategy_repository: PostgresMultiStrategyRepository
     parent_run_reference: RuntimeArtifactReference
     portfolio_policy: CrossStrategyPortfolioPolicy
+    opportunity_resolver: HistoricalStrategyOpportunityResolver | None = None
 
     def compute_stage(
         self,
@@ -108,6 +123,15 @@ class MultiStrategyHistoricalAdapter:
         candidates = CandidateSet.from_canonical_dict(dict(candidate_component.payload))
         dataset = _single_configuration(request, "NORMALIZED_DATASET")
         registry = self.strategy_repository.load_registry()
+        opportunities = (
+            ()
+            if self.opportunity_resolver is None
+            else self.opportunity_resolver.resolve(
+                request=request,
+                candidates=candidates,
+                registry=registry,
+            )
+        )
         runtime_input = StrategyRuntimeInput(
             origin=StrategyRunOrigin.HISTORICAL,
             authority_mode=RuntimeAuthorityMode.RESEARCH,
@@ -136,6 +160,7 @@ class MultiStrategyHistoricalAdapter:
                 "HISTORICAL_STRATEGY_CONFIGURATION_SET",
                 tuple(_runtime_reference(item) for item in request.configuration_references),
             ),
+            opportunities=opportunities,
         )
         cycle = self.strategy_repository.save_cycle(MultiStrategyRuntime(registry).execute(runtime_input))
         return _extend(
