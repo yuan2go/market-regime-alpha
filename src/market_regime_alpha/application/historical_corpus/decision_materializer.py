@@ -117,6 +117,7 @@ from market_regime_alpha.features.technical.catalog import (
 from market_regime_alpha.features.technical.observables import (
     FeatureValueState,
     TechnicalFeatureComputation,
+    TechnicalFeatureValue,
     compute_retrospective_technical_feature,
     missing_technical_feature_computation,
 )
@@ -246,6 +247,10 @@ class _HistoricalFeatureValue:
     available_at: datetime
     source_bar_count: int
     source_bar_lineage_hash: str
+    normalized_source_bar_ids: tuple[str, ...]
+    normalized_source_bar_hashes: tuple[str, ...]
+    source_event_start: datetime | None
+    source_event_end: datetime | None
     missing_reason_codes: tuple[str, ...]
 
 
@@ -1958,34 +1963,28 @@ def _compute_features(
                     output_ids=tuple(item.output_id for item in definition.output_schema),
                     reason_code="HISTORICAL_SOURCE_BARS_MISSING_AT_DECISION_TIME",
                 )
-            results.append(_compact_feature_computation(computation))
+            results.append(
+                _compact_feature_computation(
+                    computation,
+                    canonical_bars=selected_bars,
+                    normalized_bars=(daily_rows if selected == Timeframe.DAILY.value else minute_rows),
+                )
+            )
     return tuple(sorted(results, key=lambda item: (item.symbol, item.feature_id)))
 
 
 def _compact_feature_computation(
     item: TechnicalFeatureComputation,
+    *,
+    canonical_bars: tuple[CanonicalMarketBar, ...],
+    normalized_bars: tuple[HistoricalNormalizedBar, ...],
 ) -> _HistoricalFeatureComputation:
+    normalized_by_canonical_id = {
+        str(canonical.bar_id): normalized
+        for canonical, normalized in zip(canonical_bars, normalized_bars, strict=True)
+    }
     values = tuple(
-        _HistoricalFeatureValue(
-            output_id=value.output_id,
-            state=value.state,
-            value=value.value,
-            available_at=value.available_at,
-            source_bar_count=len(value.source_bar_ids),
-            source_bar_lineage_hash=canonical_hash(
-                {
-                    "source_bars": [
-                        {"bar_id": str(bar_id), "bar_hash": bar_hash}
-                        for bar_id, bar_hash in zip(
-                            value.source_bar_ids,
-                            value.source_bar_hashes,
-                            strict=True,
-                        )
-                    ]
-                }
-            ),
-            missing_reason_codes=value.missing_reason_codes,
-        )
+        _compact_feature_value(value, normalized_by_canonical_id)
         for value in item.values
     )
     return _HistoricalFeatureComputation(
@@ -1997,6 +1996,39 @@ def _compact_feature_computation(
         configuration_hash=item.configuration_hash,
         values=values,
         limitations=item.limitations,
+    )
+
+
+def _compact_feature_value(
+    value: TechnicalFeatureValue,
+    normalized_by_canonical_id: Mapping[str, HistoricalNormalizedBar],
+) -> _HistoricalFeatureValue:
+    normalized = tuple(
+        normalized_by_canonical_id[str(bar_id)] for bar_id in value.source_bar_ids
+    )
+    return _HistoricalFeatureValue(
+        output_id=value.output_id,
+        state=value.state,
+        value=value.value,
+        available_at=value.available_at,
+        source_bar_count=len(value.source_bar_ids),
+        source_bar_lineage_hash=canonical_hash(
+            {
+                "source_bars": [
+                    {"bar_id": str(bar_id), "bar_hash": bar_hash}
+                    for bar_id, bar_hash in zip(
+                        value.source_bar_ids,
+                        value.source_bar_hashes,
+                        strict=True,
+                    )
+                ]
+            }
+        ),
+        normalized_source_bar_ids=tuple(str(item.bar_id) for item in normalized),
+        normalized_source_bar_hashes=tuple(item.content_hash for item in normalized),
+        source_event_start=(None if not normalized else normalized[0].event_start),
+        source_event_end=(None if not normalized else normalized[-1].event_end),
+        missing_reason_codes=value.missing_reason_codes,
     )
 
 
@@ -2069,6 +2101,14 @@ def _feature_dict(item: _HistoricalFeatureComputation) -> dict[str, Any]:
                 "available_at": value.available_at.isoformat(),
                 "source_bar_count": value.source_bar_count,
                 "source_bar_lineage_hash": value.source_bar_lineage_hash,
+                "normalized_source_bar_ids": list(value.normalized_source_bar_ids),
+                "normalized_source_bar_hashes": list(value.normalized_source_bar_hashes),
+                "source_event_start": (
+                    None if value.source_event_start is None else value.source_event_start.isoformat()
+                ),
+                "source_event_end": (
+                    None if value.source_event_end is None else value.source_event_end.isoformat()
+                ),
                 "missing_reason_codes": list(value.missing_reason_codes),
             }
             for value in item.values
@@ -2951,13 +2991,13 @@ def _research_panel_rows(
             values.get(output_id) is not None
             for output_id in ("return_3", "amount_ratio_5")
         )
+        # Universal legality is independent from the incumbent Candidate's two
+        # preferred inputs.  Factor availability remains explicit below so a
+        # different frozen hypothesis is not excluded by return_3/amount_ratio_5.
         hard_integrity_passed = (
             scope_record.decision is RuntimeScopeDecision.INCLUDED
-            and required_features_complete
         )
         hard_reasons = set(scope_record.reason_codes)
-        if not required_features_complete:
-            hard_reasons.add("REQUIRED_CANDIDATE_FEATURES_INCOMPLETE")
         market_passed = candidate_market_gate_passed(market_snapshot)
         theme_passed = candidate_theme_gate_passed(record.theme_rotation_state)
         capital_passed = candidate_capital_gate_passed(
@@ -2996,9 +3036,16 @@ def _research_panel_rows(
                         "passed": hard_integrity_passed,
                         "decision": scope_record.decision.value,
                         "reason_codes": sorted(hard_reasons),
-                        "required_candidate_features_complete": (
-                            required_features_complete
-                        ),
+                    },
+                    "factor_availability": {
+                        "INCUMBENT_PRICE_VOLUME": {
+                            "available": required_features_complete,
+                            "missing_factor_ids": sorted(
+                                output_id
+                                for output_id in ("return_3", "amount_ratio_5")
+                                if values.get(output_id) is None
+                            ),
+                        },
                     },
                     "predictive": {
                         "market_regime": {
@@ -3130,6 +3177,14 @@ def _panel_research_features(
                     "source_bar_lineage_hash": str(
                         value["source_bar_lineage_hash"]
                     ),
+                    "normalized_source_bar_ids": list(
+                        value.get("normalized_source_bar_ids", [])
+                    ),
+                    "normalized_source_bar_hashes": list(
+                        value.get("normalized_source_bar_hashes", [])
+                    ),
+                    "source_event_start": value.get("source_event_start"),
+                    "source_event_end": value.get("source_event_end"),
                     "missing_reason_codes": list(
                         value.get("missing_reason_codes", [])
                     ),
