@@ -135,3 +135,6 @@ PROSPECTIVE_PROVEN=false
 STRATEGY_QUALIFIED=false
 PRODUCTION_QUALIFIED=false
 ```
+
+The approved closure work is decomposed in the subordinate
+[Alpha Daily Architecture Convergence Implementation Plan](../../references/Alpha-Daily-Architecture-Convergence-Implementation-Plan.md).
