@@ -98,6 +98,11 @@ engine, Evidence authority or qualification framework.
 - Placebo kind, algorithm, seed and protocol are content-addressed before
   evaluation. Supported kinds are symbol permutation, target permutation,
   target time shift, factor lag and deterministic random ranking.
+- The closure campaign reuses the Discovery Experiment seed `20260813` for
+  every per-Factor placebo protocol. Robust inference is frozen at 2,000
+  moving-block draws, block lengths `(1, 5, 10)`, confidence `0.95` and seed
+  `20260813`. These values were frozen before the reacquired campaign result
+  and may not be changed after inspection.
 - External validation changes exactly one of time, Universe or Provider. Target,
   DecisionTime, factor definitions/directions, Candidate score, Top-K, costs and
   evaluation protocol remain frozen. An economic observation is admissible only
