@@ -24,12 +24,10 @@ from market_regime_alpha.application.continuous_research.free_data_runtime impor
     CanonicalFreeDataResearchComposition,
     ControlledRuntimeModelSelector,
 )
-from market_regime_alpha.application.continuous_research.daily_alpha import (
-    PostgresDailyAlphaEvidenceGateResolver,
-    PostgresDailyAlphaPredictionAuthority,
-)
 from market_regime_alpha.application.continuous_research.postgres_daily_alpha import (
+    PostgresDailyAlphaEvidenceGateResolver,
     PostgresDailyAlphaOwnerResolver,
+    PostgresDailyAlphaPredictionAuthority,
 )
 from market_regime_alpha.application.continuous_research.multi_strategy import (
     PostgresContinuousStrategyOpportunityResolver,

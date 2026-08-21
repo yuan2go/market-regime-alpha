@@ -8,6 +8,8 @@ import pytest
 from market_regime_alpha.application.continuous_research.daily_alpha import (
     DailyAlphaEvidenceGate,
     DailyAlphaPredictionSnapshot,
+)
+from market_regime_alpha.application.continuous_research.postgres_daily_alpha import (
     PostgresDailyAlphaPredictionAuthority,
 )
 from market_regime_alpha.application.continuous_research.journal import (

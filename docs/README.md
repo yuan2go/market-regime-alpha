@@ -23,6 +23,7 @@ The **single normative target-design source** is the Canonical Overall Design. S
 - [Authority Map](architecture/Authority-Map.md)
 - [Data and Evidence Architecture](architecture/Data-and-Evidence-Architecture.md)
 - [Research and Strategy Lifecycle](architecture/Research-Strategy-Lifecycle.md)
+- [Repository Convergence Inventory](architecture/Repository-Convergence-Inventory.md) — actual consumers, replacements and Legacy dispositions; subordinate to the four current architecture documents.
 
 If a supporting document conflicts with the Canonical Overall Design, the Canonical Overall Design wins and the supporting document must be corrected.
 

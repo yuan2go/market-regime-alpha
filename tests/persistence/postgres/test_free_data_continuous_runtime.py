@@ -14,10 +14,6 @@ import pytest
 from market_regime_alpha.application.continuous_research.composition import (
     FreeDataPreparationInvocation,
 )
-from market_regime_alpha.application.continuous_research.daily_alpha import (
-    PostgresDailyAlphaEvidenceGateResolver,
-    PostgresDailyAlphaPredictionAuthority,
-)
 from market_regime_alpha.application.continuous_research.contracts import (
     ContinuousResearchCommand,
     RuntimeTickCommand,
@@ -47,7 +43,9 @@ from market_regime_alpha.application.continuous_research.runner import (
     ContinuousResearchTickRunner,
 )
 from market_regime_alpha.application.continuous_research.postgres_daily_alpha import (
+    PostgresDailyAlphaEvidenceGateResolver,
     PostgresDailyAlphaOwnerResolver,
+    PostgresDailyAlphaPredictionAuthority,
 )
 from market_regime_alpha.application.continuous_research.scheduler import (
     TradingDayAssessment,

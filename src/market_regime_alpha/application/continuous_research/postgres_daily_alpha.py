@@ -5,13 +5,133 @@ from __future__ import annotations
 from typing import Any
 
 from market_regime_alpha.application.continuous_research.daily_alpha import (
+    DAILY_ALPHA_PREDICTION_KIND,
+    DailyAlphaEvidenceGate,
+    DailyAlphaOwnerResolver,
     DailyAlphaPredictionSnapshot,
+    assess_daily_alpha_evidence_gate,
 )
 from market_regime_alpha.application.continuous_research.journal import (
     RuntimeArtifactReference,
 )
+from market_regime_alpha.application.historical_corpus.evidence import (
+    HistoricalEvidenceKind,
+)
+from market_regime_alpha.application.historical_corpus.postgres_evidence import (
+    PostgresHistoricalEvidenceRepository,
+)
+from market_regime_alpha.application.research_validation.common import (
+    ValidationArtifactReference,
+)
+from market_regime_alpha.application.research_validation.postgres_repository import (
+    PostgresResearchValidationRepository,
+)
+from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.persistence.postgres.connection import PostgresConnectionFactory
 from market_regime_alpha.universe.operational import OperationalUniverseArtifact
+
+
+class PostgresDailyAlphaPredictionAuthority:
+    """Persist a snapshot after reloading every exact PostgreSQL source owner."""
+
+    def __init__(
+        self,
+        factory: PostgresConnectionFactory,
+        *,
+        resolver: DailyAlphaOwnerResolver,
+    ) -> None:
+        self._factory = factory
+        self._repository = PostgresResearchValidationRepository(factory)
+        self._resolver = resolver
+
+    def put(
+        self,
+        snapshot: DailyAlphaPredictionSnapshot,
+        *,
+        universe: OperationalUniverseArtifact | None = None,
+    ) -> DailyAlphaPredictionSnapshot:
+        snapshot.verify_identity()
+        if universe is not None:
+            universe.verify_identity()
+            if (
+                str(universe.universe_id)
+                != str(snapshot.universe_reference.artifact_id)
+                or universe.content_hash
+                != snapshot.universe_reference.content_hash
+            ):
+                raise ValueError("Daily Alpha snapshot does not bind supplied Universe")
+            self._repository.record(
+                artifact_id=ArtifactId(str(universe.universe_id)),
+                artifact_hash=universe.content_hash,
+                artifact_kind="OPERATIONAL_UNIVERSE",
+                evidence_authority="ENGINEERING_ONLY",
+                payload=universe.semantic_payload(),
+                created_at=universe.available_at,
+            )
+        self._resolver.verify_snapshot_sources(snapshot)
+        self._repository.record(
+            artifact_id=snapshot.snapshot_id,
+            artifact_hash=snapshot.snapshot_hash,
+            artifact_kind=DAILY_ALPHA_PREDICTION_KIND,
+            evidence_authority="ENGINEERING_ONLY",
+            payload=snapshot.identity_payload(),
+            created_at=snapshot.available_at,
+        )
+        return self.get(snapshot.snapshot_id)
+
+    def get(self, snapshot_id: ArtifactId) -> DailyAlphaPredictionSnapshot:
+        reference = self._reference(snapshot_id)
+        payload = self._repository.get_artifact_payload(reference)
+        snapshot = DailyAlphaPredictionSnapshot.from_canonical_dict(
+            {
+                "snapshot_id": str(snapshot_id),
+                "snapshot_hash": reference.content_hash,
+                **payload,
+            }
+        )
+        self._resolver.verify_snapshot_sources(snapshot)
+        return snapshot
+
+    def _reference(self, snapshot_id: ArtifactId) -> ValidationArtifactReference:
+        with self._factory.connection(read_only=True) as connection:
+            row = connection.execute(
+                "SELECT artifact_hash, artifact_kind FROM research_validation_artifact "
+                "WHERE artifact_id = %s",
+                (str(snapshot_id),),
+            ).fetchone()
+        if row is None or str(row[1]) != DAILY_ALPHA_PREDICTION_KIND:
+            raise KeyError(str(snapshot_id))
+        return ValidationArtifactReference(
+            DAILY_ALPHA_PREDICTION_KIND, snapshot_id, str(row[0])
+        )
+
+
+class PostgresDailyAlphaEvidenceGateResolver:
+    """Resolve the latest immutable Phase-II dependency chain from PostgreSQL."""
+
+    def __init__(self, factory: PostgresConnectionFactory) -> None:
+        self._factory = factory
+        self._evidence = PostgresHistoricalEvidenceRepository(factory)
+
+    def assess(self) -> DailyAlphaEvidenceGate:
+        kinds = (
+            HistoricalEvidenceKind.ALPHA_CORRECTNESS,
+            HistoricalEvidenceKind.EXTERNAL_VALIDATION,
+            HistoricalEvidenceKind.CANDIDATE_POLICY,
+        )
+        with self._factory.connection(read_only=True) as connection:
+            rows = connection.execute(
+                """
+                SELECT DISTINCT ON (evidence_kind) evidence_id
+                FROM historical_research_evidence
+                WHERE evidence_kind = ANY(%s)
+                ORDER BY evidence_kind, created_at DESC, evidence_id DESC
+                """,
+                ([item.value for item in kinds],),
+            ).fetchall()
+        return assess_daily_alpha_evidence_gate(
+            tuple(self._evidence.get(ArtifactId(str(row[0]))) for row in rows)
+        )
 
 
 class DailyAlphaSourceIntegrityError(ValueError):
@@ -247,5 +367,7 @@ class PostgresDailyAlphaOwnerResolver:
 
 __all__ = [
     "DailyAlphaSourceIntegrityError",
+    "PostgresDailyAlphaEvidenceGateResolver",
     "PostgresDailyAlphaOwnerResolver",
+    "PostgresDailyAlphaPredictionAuthority",
 ]
