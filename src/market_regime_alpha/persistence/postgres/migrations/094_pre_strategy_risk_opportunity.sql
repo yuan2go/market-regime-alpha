@@ -42,6 +42,9 @@ CREATE TABLE pre_strategy_risk_source_binding (
 CREATE INDEX pre_strategy_risk_candidate_time_idx
 ON pre_strategy_risk_state(candidate_id, candidate_hash, decision_time);
 
+CREATE INDEX pre_strategy_risk_source_owner_idx
+ON pre_strategy_risk_source_binding(risk_state_id, risk_state_hash);
+
 CREATE TABLE strategy_opportunity (
     opportunity_id text PRIMARY KEY,
     opportunity_hash text NOT NULL UNIQUE CHECK (
@@ -96,6 +99,12 @@ ON strategy_opportunity(candidate_id, candidate_hash, decision_time);
 
 CREATE INDEX strategy_opportunity_version_time_idx
 ON strategy_opportunity(strategy_version_id, strategy_version_hash, decision_time);
+
+CREATE INDEX strategy_opportunity_risk_state_idx
+ON strategy_opportunity(risk_state_id, risk_state_hash);
+
+CREATE INDEX strategy_opportunity_source_owner_idx
+ON strategy_opportunity_source_binding(opportunity_id, opportunity_hash);
 
 CREATE TRIGGER pre_strategy_risk_state_no_update
 BEFORE UPDATE OR DELETE ON pre_strategy_risk_state
