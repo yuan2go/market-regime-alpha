@@ -7,7 +7,7 @@ the T+1 10:30 target without reading their persisted numerical outputs.
 
 from __future__ import annotations
 
-from collections import Counter
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime, time
 from decimal import Decimal, ROUND_HALF_EVEN
@@ -221,11 +221,18 @@ class HistoricalAlphaCorrectnessChecker:
             session: _shared_normalized_owner(features[session], outcomes[session])
             for session in sorted(features)
         }
-        bars_by_owner: dict[
-            ValidationArtifactReference, tuple[HistoricalNormalizedBar, ...]
+        bars_by_id_by_owner: dict[
+            ValidationArtifactReference, Mapping[str, HistoricalNormalizedBar]
+        ] = {}
+        minute_bars_by_owner: dict[
+            ValidationArtifactReference,
+            Mapping[tuple[date, str], tuple[HistoricalNormalizedBar, ...]],
         ] = {}
         physical_by_owner: dict[
             ValidationArtifactReference, PhysicalSourceVerification
+        ] = {}
+        physical_bindings_by_owner: dict[
+            ValidationArtifactReference, frozenset[tuple[str, str]]
         ] = {}
         for normalized_reference in sorted(
             set(normalized_by_session.values()),
@@ -237,12 +244,24 @@ class HistoricalAlphaCorrectnessChecker:
         ):
             package = self._corpus.load(normalized_reference)
             package.owner.verify_identity()
-            bars_by_owner[normalized_reference] = tuple(
+            bars = tuple(
                 record
                 for partition in package.owner.partitions
                 for record in partition.records
                 if isinstance(record, HistoricalNormalizedBar)
             )
+            bars_by_id_by_owner[normalized_reference] = {
+                str(item.bar_id): item for item in bars
+            }
+            grouped: defaultdict[
+                tuple[date, str], list[HistoricalNormalizedBar]
+            ] = defaultdict(list)
+            for item in bars:
+                if item.timeframe is Timeframe.MINUTE_5:
+                    grouped[(item.market_date, item.symbol)].append(item)
+            minute_bars_by_owner[normalized_reference] = {
+                key: _ordered_bars(tuple(values)) for key, values in grouped.items()
+            }
             if physical_package_paths is not None:
                 path = physical_package_paths.get(normalized_reference)
                 if path is not None:
@@ -252,15 +271,20 @@ class HistoricalAlphaCorrectnessChecker:
                             corpus_repository=self._corpus,
                         )
                     )
+                    physical_bindings_by_owner[normalized_reference] = frozenset(
+                        physical_by_owner[
+                            normalized_reference
+                        ].normalized_bar_bindings
+                    )
         for session in sorted(features):
             feature_component = features[session]
             outcome_component = outcomes[session]
             normalized_reference = normalized_by_session[session]
-            bars = bars_by_owner[normalized_reference]
             active_verification = physical_by_owner.get(normalized_reference)
+            active_bindings = physical_bindings_by_owner.get(normalized_reference)
             decision_time = _component_decision_time(feature_component)
             persisted_by_symbol = _persisted_feature_projection(
-                feature_component, bars
+                feature_component, bars_by_id_by_owner[normalized_reference]
             )
             labels = _target_labels(outcome_component)
             if set(persisted_by_symbol) != set(labels):
@@ -269,35 +293,32 @@ class HistoricalAlphaCorrectnessChecker:
                 str(outcome_component.payload["next_session_date"])
             )
             for symbol in sorted(persisted_by_symbol):
+                decision_bars = minute_bars_by_owner[normalized_reference].get(
+                    (session, symbol), ()
+                )
+                next_session_bars = minute_bars_by_owner[normalized_reference].get(
+                    (next_session, symbol), ()
+                )
+                decision_source_bars = tuple(
+                    item for item in decision_bars if item.event_end <= decision_time
+                )
                 feature_results.append(
                     reproduce_intraday_features(
                         session=session,
                         symbol=symbol,
                         decision_time=decision_time,
-                        source_bars=bars,
+                        source_bars=decision_bars,
                         persisted=persisted_by_symbol[symbol],
                         physical_verification=active_verification,
+                        verified_physical_bindings=active_bindings,
                     )
                 )
                 label = labels[symbol]
-                decision_bars = _ordered_bars(
-                    tuple(
-                        item
-                        for item in bars
-                        if item.symbol == symbol
-                        and item.market_date == session
-                        and item.timeframe is Timeframe.MINUTE_5
-                        and item.event_end <= decision_time
-                    )
-                )
                 target_bars = _ordered_bars(
                     tuple(
                         item
-                        for item in bars
-                        if item.symbol == symbol
-                        and item.market_date == next_session
-                        and item.timeframe is Timeframe.MINUTE_5
-                        and item.event_start >= label.label_interval_start
+                        for item in next_session_bars
+                        if item.event_start >= label.label_interval_start
                         and item.event_end <= label.label_interval_end
                     )
                 )
@@ -308,9 +329,10 @@ class HistoricalAlphaCorrectnessChecker:
                             decision_time=decision_time,
                             next_session=next_session,
                             trading_calendar=trading_calendar,
-                            source_bars=bars,
+                            source_bars=(*decision_bars, *next_session_bars),
                             persisted=None,
                             physical_verification=active_verification,
+                            verified_physical_bindings=active_bindings,
                         )
                     )
                     continue
@@ -318,7 +340,7 @@ class HistoricalAlphaCorrectnessChecker:
                     decision_reference_price=label.decision_reference_price,
                     target_price=label.checkpoint_price,
                     target_return=label.checkpoint_return,
-                    decision_source_bars=(decision_bars[-1],),
+                    decision_source_bars=(decision_source_bars[-1],),
                     target_source_bars=target_bars,
                     target_session=next_session,
                 )
@@ -328,9 +350,10 @@ class HistoricalAlphaCorrectnessChecker:
                         decision_time=decision_time,
                         next_session=next_session,
                         trading_calendar=trading_calendar,
-                        source_bars=bars,
+                        source_bars=(*decision_bars, *next_session_bars),
                         persisted=persisted_target,
                         physical_verification=active_verification,
+                        verified_physical_bindings=active_bindings,
                     )
                 )
         return HistoricalCorrectnessReproduction(
@@ -1307,6 +1330,7 @@ def reproduce_intraday_features(
     source_bars: tuple[HistoricalNormalizedBar, ...],
     persisted: tuple[PersistedFeatureObservation, ...],
     physical_verification: PhysicalSourceVerification | None,
+    verified_physical_bindings: frozenset[tuple[str, str]] | None = None,
 ) -> FeatureReproductionResult:
     """Recompute frozen intraday factors directly from bounded normalized bars."""
 
@@ -1346,7 +1370,11 @@ def reproduce_intraday_features(
             discrepancies=("DECISION_TIME_SOURCE_BARS_MISSING",),
         )
     if physical_verification is not None:
-        physical_bindings = set(physical_verification.normalized_bar_bindings)
+        physical_bindings = (
+            verified_physical_bindings
+            if verified_physical_bindings is not None
+            else frozenset(physical_verification.normalized_bar_bindings)
+        )
         selected_bindings = {
             (str(item.bar_id), item.content_hash) for item in selected
         }
@@ -1422,6 +1450,7 @@ def reproduce_t_plus_one_1030_target(
     source_bars: tuple[HistoricalNormalizedBar, ...],
     persisted: PersistedTargetObservation | None,
     physical_verification: PhysicalSourceVerification | None,
+    verified_physical_bindings: frozenset[tuple[str, str]] | None = None,
 ) -> TargetReproductionResult:
     """Independently reconstruct the frozen Decision reference and T+1 10:30 return."""
 
@@ -1471,7 +1500,11 @@ def reproduce_t_plus_one_1030_target(
     ):
         raise ValueError("T+1 10:30 checkpoint is incomplete")
     if physical_verification is not None:
-        physical_bindings = set(physical_verification.normalized_bar_bindings)
+        physical_bindings = (
+            verified_physical_bindings
+            if verified_physical_bindings is not None
+            else frozenset(physical_verification.normalized_bar_bindings)
+        )
         required_bindings = {
             (str(item.bar_id), item.content_hash)
             for item in (*decision_bars, *target_bars)
@@ -1658,12 +1691,11 @@ def _component_decision_time(component: HistoricalSessionComponent) -> datetime:
 
 def _persisted_feature_projection(
     component: HistoricalSessionComponent,
-    bars: tuple[HistoricalNormalizedBar, ...],
+    bars_by_id: Mapping[str, HistoricalNormalizedBar],
 ) -> dict[str, tuple[PersistedFeatureObservation, ...]]:
     raw_features = component.payload.get("features")
     if not isinstance(raw_features, list):
         raise ValueError("Historical Feature owner payload is missing")
-    bars_by_id = {str(item.bar_id): item for item in bars}
     projected: dict[str, list[PersistedFeatureObservation]] = {}
     for raw_feature in raw_features:
         feature = _mapping(raw_feature, "Historical Feature computation")
