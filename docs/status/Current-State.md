@@ -15,7 +15,7 @@ target architecture.
 
 - **Architecture:** Python 3.12+ PostgreSQL-centered modular monolith.
 - **Persistent business authority:** PostgreSQL 16; no canonical file/SQLite/memory fallback.
-- **Migration head:** 090.
+- **Packaged migration head:** 091 (`alpha_research_phase_ii`).
 - **Canonical all-day runtime:** one Continuous Research control plane.
 - **Installed operator scripts:** six — `continuous-research`, `state-system`, `decision-system`, `model-governance`, `pit-authority`, `research-shadow`.
 - **Execution boundary:** human-operated/manual; no broker writer or automatic live-trading authority.
@@ -28,9 +28,13 @@ target architecture.
   qualification for this exact merge baseline.
 - **WP-01 branch validation:** docs/platform/full pytest, ruff, mypy and build pass on a fresh PostgreSQL test database; a first full run against a heavily reused test database hit one `pg_catalog` autovacuum DDL lock timeout, while the exact node and the clean-database full suite both pass. This is retained as an environment failure, not hidden.
 - **Current CI:** exact-merge CI is `NOT_RUN`, not CI proof.
+- **Alpha Research Phase II engineering:** all five Work Packages are
+  implemented with focused unit/boundary tests and targeted PostgreSQL
+  migration/materializer proof. This is code/wiring evidence, not a new
+  historical research result.
 - **Database binding:** Runtime requires an explicit PostgreSQL URL and principal; a database name or stale schema does not establish current Authority. The replayable Golden V2 Evidence schema is at migration 090.
 - **Local implementation baseline:** Python 3.12.13, uv 0.11.7 and PostgreSQL
-  16.14. The packaged migration head is 090. A Golden V2 evidence database is
+  16.14. The packaged migration head is 091. A Golden V2 evidence database is
   at migration 090; the default local application database is only at 055 and
   is not evidence for the current schema.
 
@@ -66,6 +70,45 @@ These artifacts are wired and persisted. Their empirical value is not assumed fr
 The current Strategy Registry/runtime has stable `OVERNIGHT` and `SWING_STATE` Strategy Versions under one shared Strategy runtime. It records gate/rejection attribution, actions/proposals, simple cross-strategy Portfolio decisions, strategy Fill allocations, Path Outcomes and version-scoped feedback.
 
 Candidate is upstream of strategy action; the canonical multi-strategy path no longer treats Candidate itself as Entry.
+
+Strategy Contract V2 now explicitly declares `FORECAST_REQUIRED` or
+`FORECAST_NOT_REQUIRED`. Existing Overnight/Swing Strategies declare the latter.
+The new conditional-prediction family consumes a symbol-level binding containing
+Signal, Forecast, Context, Risk state and Model/version references, active
+Signal state, expected return and uncertainty. Missing required lineage fails
+closed; no Candidate-only fallback remains for a Forecast-required Strategy.
+
+### Alpha Research Phase II capability
+
+- Independent correctness recomputes the three discovered intraday Factors
+  directly from normalized bars and independently reconstructs the exact
+  Decision reference plus next-session 10:30 Target. Value, event interval,
+  source-bar identity/hash and Feature/Target lineage discrepancies fail closed.
+- Physical bytes are not currently reopenable. Deterministic owner replay is
+  therefore retained as owner evidence only and the real status remains
+  `PHYSICAL_REPRODUCTION_NOT_ESTABLISHED`.
+- Five content-addressed placebo kinds, explicit research/execution entry
+  proxies, factor correlation/rank/leave-one-out/incremental/residual diagnostics
+  and moving-block/block-length/stability inference use the Research Validation
+  framework.
+- External Validation reuses canonical `ResearchExperimentDefinition`; the
+  definition freezes the exact hypothesis and permits exactly one Temporal,
+  Universe or Provider change. No external dataset was executed.
+- Context evaluation enforces session-constant versus within-session
+  cross-sectional semantics. Market Regime and current Global Theme are
+  session-level roles in the observed WP-01 panel; Capital remains a public
+  proxy and is not hidden-intent evidence. Cross-sectional Capital interaction
+  remains `NOT_ESTIMABLE` without genuine symbol-level variation.
+- Candidate Policy V2 keeps Incumbent and dormant Challenger identities
+  separate, with Universal Integrity, factor-specific availability, validated
+  Alpha contributions and evidence-supported Context adjustment.
+- Conditional Forecast keeps the empirical distribution baseline and compares
+  a frozen regularized-linear model under chronological sample admission,
+  minimum sample, search budget and uncertainty rules. Barrier outputs remain
+  raw scores; `CALIBRATED=false`.
+
+Migration 091 extends the existing append-only Historical Evidence and Strategy
+owners. It creates no new table or parallel Authority.
 
 ### Manual execution and Position
 
@@ -245,14 +288,16 @@ Engineering gaps remain, but they should be selected because they unblock this e
 
 ## 7. Current development posture
 
-`WP-ALPHA-RESEARCH-01` is complete. Its three unusually strong intraday results
-make independent correctness the next dependency, before External Validation.
+The engineering implementation for all five Phase II Work Packages is complete.
+Its three unusually strong intraday discovery results have not been reclassified
+as Alpha because the physical package cannot currently be reopened and no new
+external dataset was run.
 The registered physical normalized-data package is unavailable locally, so the
 current physical reproduction status is
 `PHYSICAL_REPRODUCTION_NOT_ESTABLISHED`; PostgreSQL owner reuse does not upgrade
 that status.
 
-The active engineering order is:
+The next empirical dependency order remains:
 
 ```text
 WP-ALPHA-CORRECTNESS-01
@@ -262,8 +307,8 @@ WP-ALPHA-CORRECTNESS-01
 → WP-PREDICTION-01
 ```
 
-No new External Dataset, large historical Campaign or prospective cohort is in
-scope for this implementation phase. Until separately executed evidence exists,
+No new External Dataset, large historical Campaign or prospective cohort was
+run in this implementation phase. Until separately executed evidence exists,
 external validation, Formal OOS, prospective proof, Strategy qualification and
 Production qualification remain false.
 

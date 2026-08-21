@@ -18,7 +18,7 @@ remain authoritative.
 | Branch / worktree | isolated `agent/alpha-research-phase-ii`; original worktree preserved |
 | HEAD | `fc373696990ccdffe5e46a39778fdfedac3e0308` |
 | Source workspace | existing branch with protected `.idea/modules.xml` modification; untouched |
-| Packaged migration head | `090_tie_aware_pool_ranks` |
+| Packaged migration head | baseline `090_tie_aware_pool_ranks`; Phase II branch `091_alpha_research_phase_ii` |
 | Python / uv | Python 3.12.13 / uv 0.11.7 |
 | PostgreSQL | PostgreSQL 16.14; sole persistent business Authority |
 | Runtime | `CONTINUOUS_RESEARCH` sole all-day Runtime; Historical Research remains bounded |
@@ -28,9 +28,26 @@ remain authoritative.
 The audited call chain is Historical Research Runtime → bounded Dataset Window
 → canonical Feature/Context/Candidate/Signal/Forecast materialization →
 Target/Outcome → Research Panel → Golden Evaluation/Alpha Discovery →
-append-only PostgreSQL Evidence. Candidate is currently consumed directly by
-`StrategyRuntimeInput`; Signal, Forecast, Context and Risk are not explicit
-Strategy input bindings at this baseline.
+append-only PostgreSQL Evidence. At the audited baseline Candidate was consumed
+directly by `StrategyRuntimeInput`; Phase II closes that contract gap for any
+`FORECAST_REQUIRED` Strategy while preserving explicit `FORECAST_NOT_REQUIRED`
+semantics for the incumbent Overnight/Swing policies.
+
+## Implemented engineering state
+
+| Work Package | Implementation state | Empirical state |
+|---|---|---|
+| WP-ALPHA-CORRECTNESS-01 | independent normalized-bar Feature/T+1 Target reproduction, exact temporal/lineage comparison, five frozen placebo kinds, four entry proxies, three-factor redundancy diagnostics and Research Validation moving-block inference are implemented; the Research Panel now separates universal integrity from incumbent factor availability | focused synthetic/unit evidence only; current real physical package remains unavailable, so `PHYSICAL_REPRODUCTION_NOT_ESTABLISHED`; `ALPHA_PROVEN=false` |
+| WP-ALPHA-RESEARCH-02 | `FrozenExternalValidationExperiment` is owned by the existing `ResearchExperimentDefinition`, changes exactly one of Temporal/Universe/Provider, freezes thresholds and emits the requested evaluation diagnostics | `NOT_RUN`; `EMPIRICALLY_EXECUTED=false`; `EXTERNALLY_VALIDATED=false` |
+| WP-ALPHA-CONTEXT-01 | typed session-level versus cross-sectional evaluation, interaction/incremental-information boundary and five research interpretation states | synthetic/unit evidence only; no Context promoted to trading authority |
+| WP-CANDIDATE-POLICY-02 | content-addressed Incumbent/Challenger definitions, Universal Integrity → validated Alpha → supported Context layers, full explanation and same-dataset comparison | Challenger is dormant because no real correctness/external evidence has passed |
+| WP-PREDICTION-01 | empirical baseline plus frozen regularized model comparison, availability-time sample admission, uncertainty and raw barrier scores; Strategy consumes explicit Signal/Forecast/Context/Risk/Model lineage when required | `ENGINEERING_WIRED / RESEARCH_READY`; no calibration, Formal OOS, Strategy qualification or Production proof |
+
+Migration 091 extends the existing immutable Historical Evidence and Strategy
+owners. It adds no table or Authority. Phase II Evidence V2 carries typed
+`FACT`, `MODEL_ASSUMPTION`, `RESEARCH_RESULT`, `INFERENCE`, `LIMITATION` and
+`INVALIDATION_CONDITION` statements while retaining positive, negative,
+inconclusive and not-estimable classifications.
 
 ## Dependency order and boundaries
 

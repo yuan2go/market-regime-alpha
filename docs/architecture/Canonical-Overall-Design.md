@@ -607,11 +607,11 @@ The next program is an **Alpha Proof Campaign** with these Work Packages:
 
 - **P0 WP-GOLDEN-LOOP-01** — one DecisionTime→Universe→Feature→Candidate→Strategy→Shadow Portfolio→Outcome→Attribution vertical slice.
 - **P0 WP-ALPHA-RESEARCH-01** — frozen PIT-aware Factor→Gate→Candidate discovery: owner-resolved Panel, transparent baseline, predictive-Gate ablation and explicit rejection.
-- **P0 WP-ALPHA-CORRECTNESS-01** — independent source-bar/target reproduction, temporal/placebo/execution/redundancy/robust-inference checks for the unusually strong intraday discovery.
-- **P1 WP-ALPHA-RESEARCH-02** — separately frozen single-dimension time/Universe/Provider external validation after a discovery result survives correctness.
-- **P1 WP-ALPHA-CONTEXT-01** — session-level and cross-sectional Context conditional evaluation without default hard-Gate authority.
-- **P1 WP-CANDIDATE-POLICY-02** — explicit Incumbent/Challenger policies with integrity, Alpha and Context layers.
-- **P2 WP-PREDICTION-01** — Candidate→Signal→conditional Forecast→Strategy contract with explicit requirement and lineage semantics.
+- **P0 WP-ALPHA-CORRECTNESS-01 — ENGINEERING COMPLETE** — independent source-bar/target reproduction, temporal/placebo/execution/redundancy/robust-inference checks; current physical state remains `PHYSICAL_REPRODUCTION_NOT_ESTABLISHED`.
+- **P1 WP-ALPHA-RESEARCH-02 — CAPABILITY COMPLETE / NOT RUN** — canonical Experiment Definition freezes single-dimension time/Universe/Provider external validation after a discovery result survives correctness.
+- **P1 WP-ALPHA-CONTEXT-01 — CAPABILITY COMPLETE / NOT RUN** — session-level and cross-sectional Context conditional evaluation without default hard-Gate authority.
+- **P1 WP-CANDIDATE-POLICY-02 — ENGINEERING COMPLETE / CHALLENGER DORMANT** — explicit Incumbent/Challenger policies with integrity, Alpha and Context layers.
+- **P2 WP-PREDICTION-01 — ENGINEERING WIRED / RESEARCH READY** — Candidate→Signal→conditional Forecast→Strategy contract with explicit requirement and lineage semantics.
 - **Next Strategy Economics** — Entry/Fillability/Sizing/Portfolio/Holding/Exit/Cost/Capacity/Risk economics.
 - **Then Formal PIT / Formal OOS** — qualified Provider/PIT, Locked OOS and calibration once external evidence exists.
 - **Then Prospective Proof** — immutable live-origin future decision/outcome cohorts.

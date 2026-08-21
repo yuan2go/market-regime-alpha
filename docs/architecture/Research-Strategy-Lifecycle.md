@@ -82,6 +82,12 @@ qualification or empirical validation.
 ## Responsibility split
 
 - Factor Extraction reads verified canonical Dataset, FeatureBundle, State, Pool, Candidate, Signal and Forecast values. It records missingness; it does not recompute those owners.
+- Strategy Contract V2 makes Forecast consumption explicit. Existing
+  Overnight/Swing contracts declare `FORECAST_NOT_REQUIRED`. A
+  `FORECAST_REQUIRED` contract receives one symbol-level opportunity binding
+  Candidate membership to Signal, Forecast, Context, Risk state, DecisionTime
+  and Model/version lineage; missing binding fails closed. This is a real
+  consumer contract, not an adapter that grants Forecast or trading Authority.
 - Runtime Scope owns the session symbol decision. It combines overlapping free
   Operational Universe facts conservatively, preserves every Provider artifact
   reference and retains `EXCLUDED`/`UNKNOWN`; downstream owners receive the

@@ -47,9 +47,19 @@ strong exploratory discoveries. Their shared retrospective source family,
 physical-package gap and absent external validation make correctness—not model
 promotion—the next dependency.
 
-## Active Work Packages
+## Phase II engineering completed
+
+The following five Work Packages are complete as engineering capabilities on
+the Phase II branch. Their empirical dependencies remain in the same order;
+completion does not mean the hypothesis passed that dependency.
 
 ### P0 — WP-ALPHA-CORRECTNESS-01
+
+**Engineering status:** `IMPLEMENTED / WIRED / UNIT_TESTED /
+TARGETED_POSTGRES_VERIFIED`.
+
+**Research status:** `PHYSICAL_REPRODUCTION_NOT_ESTABLISHED`. No complete real
+correctness proof was run because the physical package is unavailable.
 
 **Goal:** determine whether the intraday discovery survives independent source
 bar/target reproduction, temporal checks, placebo controls, execution-reference
@@ -77,6 +87,10 @@ separation, redundancy diagnostics and dependence-aware inference.
 
 ### P1 — WP-ALPHA-RESEARCH-02
 
+**Engineering status:** `IMPLEMENTED / WIRED / UNIT_TESTED`. The content owner
+is the existing canonical `ResearchExperimentDefinition`, not a parallel
+Experiment authority.
+
 **Dependency:** only a `CORRECTNESS_SUPPORTED` frozen hypothesis may be admitted.
 
 **Goal:** provide content-addressed, single-dimension Temporal, Universe or
@@ -93,6 +107,8 @@ Dataset is run in this phase; `EMPIRICALLY_EXECUTED=false` and
 
 ### P1 — WP-ALPHA-CONTEXT-01
 
+**Engineering status:** `IMPLEMENTED / WIRED / UNIT_TESTED`.
+
 **Goal:** test whether Context changes a correctness/external-supported Alpha,
 without giving Context automatic stock-level hard-Gate authority.
 
@@ -106,6 +122,9 @@ Research interpretations are `AMPLIFIER`, `SUPPRESSOR`, `NEUTRAL`, `UNSTABLE`
 or `NOT_ESTIMABLE`; they grant no trading authority.
 
 ### P1 — WP-CANDIDATE-POLICY-02
+
+**Engineering status:** `IMPLEMENTED / WIRED / UNIT_TESTED`. Incumbent remains
+unchanged and the real Challenger is inactive.
 
 **Dependency:** Challenger activation requires supported Correctness and External
 Validation evidence. Implementation and synthetic tests do not activate it.
@@ -125,6 +144,8 @@ External Validation result.
 
 ### P2 — WP-PREDICTION-01
 
+**Engineering status:** `ENGINEERING_WIRED / RESEARCH_READY / UNIT_TESTED`.
+
 **Dependency:** engineering can be wired now; a real Challenger remains dormant
 until upstream evidence survives.
 
@@ -141,7 +162,13 @@ probabilities.
 
 **Maximum state:** `ENGINEERING_WIRED / RESEARCH_READY`.
 
-## Subsequent evidence-dependent work
+## Active evidence-dependent work
+
+The next admissible action is to restore/open the physical package and execute
+the frozen correctness proof. Only a real `CORRECTNESS_SUPPORTED` survivor may
+start one separately frozen external validation dimension. Context, Challenger
+activation and conditional Strategy economics remain downstream of those real
+results.
 
 ### Strategy Economics
 
