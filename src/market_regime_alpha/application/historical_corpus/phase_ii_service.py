@@ -25,11 +25,16 @@ from market_regime_alpha.application.historical_corpus.alpha_correctness import 
     AlphaCorrectnessProof,
     HistoricalAlphaCorrectnessChecker,
     HistoricalCorrectnessReproduction,
+    build_alpha_correctness_proof,
     reproduce_execution_timing_diagnostics,
 )
 from market_regime_alpha.application.historical_corpus.alpha_diagnostics import (
     AlphaObservation,
+    ExecutionTimingDiagnostic,
     FactorObservation,
+    FrozenPlaceboProtocol,
+    MovingBlockInferenceProtocol,
+    PlaceboKind,
     apply_placebo,
     evaluate_factor_redundancy,
     evaluate_robust_inference_family,
@@ -69,6 +74,7 @@ from market_regime_alpha.application.historical_corpus.postgres_repository impor
     PostgresHistoricalCorpusRepository,
 )
 from market_regime_alpha.application.historical_corpus.raw_normalization_correctness import (
+    PhysicalAcquisitionProvenance,
     verify_independent_baostock_normalization,
 )
 from market_regime_alpha.application.historical_corpus.temporal_validation_window import (
@@ -158,6 +164,108 @@ class HistoricalPhaseIIResearchService:
             )
         _verify_phase_ii_payload(evidence)
         return evidence
+
+    def evaluate_correctness_campaign(
+        self,
+        *,
+        run_id: ArtifactId,
+        trading_calendar: TradingCalendarArtifact,
+        physical_package_paths: Mapping[ValidationArtifactReference, Path],
+        physical_provenance: PhysicalAcquisitionProvenance,
+        target_id: str,
+        placebo_seed: int,
+        inference_protocol: MovingBlockInferenceProtocol,
+    ) -> AlphaCorrectnessProof:
+        """Execute the frozen suite from exact PostgreSQL and physical owners.
+
+        This is an application operation of Historical Research. It neither
+        creates another Runtime nor admits External Validation; persistence
+        still replays the complete suite through ``persist_correctness_proof``.
+        """
+
+        components = self._components
+        corpus = self._corpus
+        if components is None or corpus is None:
+            raise ValueError(
+                "Alpha Correctness campaign requires Historical owner reload"
+            )
+        reproduction = HistoricalAlphaCorrectnessChecker(
+            components=components,
+            corpus=corpus,
+        ).reproduce_run(
+            run_id=run_id,
+            trading_calendar=trading_calendar,
+            physical_package_paths=physical_package_paths,
+        )
+        normalization = []
+        for physical in reproduction.physical_verifications:
+            normalized = corpus.load(physical.normalized_owner_reference).owner
+            raw_reference = normalized.parent_reference
+            if raw_reference is None:
+                raise ValueError("Normalized owner lacks Raw acquisition lineage")
+            normalization.append(
+                verify_independent_baostock_normalization(
+                    raw_owner=corpus.load(raw_reference).owner,
+                    canonical_normalized_owner=normalized,
+                    provenance=physical_provenance,
+                )
+            )
+        factor_observations = _correctness_factor_observations(reproduction)
+        factor_ids = (
+            "intraday_return_to_decision_time",
+            "price_vs_vwap_return",
+            "vwap_slope",
+        )
+        alpha_by_factor = {
+            factor_id: tuple(
+                AlphaObservation(
+                    item.session,
+                    item.symbol,
+                    item.factors[factor_id],
+                    item.target_return,
+                )
+                for item in factor_observations
+            )
+            for factor_id in factor_ids
+        }
+        placebos = tuple(
+            apply_placebo(
+                FrozenPlaceboProtocol.create(
+                    factor_id=factor_id,
+                    target_id=target_id,
+                    seed=placebo_seed,
+                    kinds=tuple(PlaceboKind),
+                ),
+                kind=kind,
+                observations=alpha_by_factor[factor_id],
+            )
+            for factor_id in factor_ids
+            for kind in PlaceboKind
+        )
+        inference = evaluate_robust_inference_family(
+            inference_protocol,
+            {
+                factor_id: factor_rank_ic_session_estimates(
+                    factor_observations,
+                    factor_id=factor_id,
+                )
+                for factor_id in factor_ids
+            },
+        )
+        execution = _first_complete_execution_diagnostic(
+            reproduction=reproduction,
+            corpus=corpus,
+        )
+        return build_alpha_correctness_proof(
+            feature_results=reproduction.feature_results,
+            target_results=reproduction.target_results,
+            physical_verifications=reproduction.physical_verifications,
+            normalization_verifications=tuple(normalization),
+            placebo_results=placebos,
+            execution_diagnostics=execution,
+            factor_redundancy=evaluate_factor_redundancy(factor_observations),
+            robust_inference=tuple(inference.items()),
+        )
 
     def create_external_experiment(
         self,
@@ -905,22 +1013,7 @@ def _verify_correctness_proof_against_owners(
         raise ValueError(
             "Alpha Correctness independent normalization drifted from owners"
         )
-    target_by_key = {
-        (item.decision_time, item.symbol): item
-        for item in reproduction.target_results
-    }
-    factor_observations = tuple(
-        FactorObservation(
-            item.session,
-            item.symbol,
-            {
-                comparison.factor_id: comparison.recomputed_value
-                for comparison in item.comparisons
-            },
-            target_by_key[(item.decision_time, item.symbol)].target_return,
-        )
-        for item in reproduction.feature_results
-    )
+    factor_observations = _correctness_factor_observations(reproduction)
     alpha_by_factor = {
         factor_id: tuple(
             AlphaObservation(
@@ -980,6 +1073,56 @@ def _verify_correctness_proof_against_owners(
         reproduction=reproduction,
         corpus=corpus,
     )
+
+
+def _correctness_factor_observations(
+    reproduction: HistoricalCorrectnessReproduction,
+) -> tuple[FactorObservation, ...]:
+    target_by_key = {
+        (item.decision_time, item.symbol): item
+        for item in reproduction.target_results
+    }
+    return tuple(
+        FactorObservation(
+            item.session,
+            item.symbol,
+            {
+                comparison.factor_id: comparison.recomputed_value
+                for comparison in item.comparisons
+            },
+            target_by_key[(item.decision_time, item.symbol)].target_return,
+        )
+        for item in reproduction.feature_results
+    )
+
+
+def _first_complete_execution_diagnostic(
+    *,
+    reproduction: HistoricalCorrectnessReproduction,
+    corpus: PostgresHistoricalCorpusRepository,
+) -> tuple[ExecutionTimingDiagnostic, ...]:
+    bars_by_owner = {
+        item.normalized_owner_reference: tuple(
+            record
+            for partition in corpus.load(item.normalized_owner_reference).owner.partitions
+            for record in partition.records
+            if isinstance(record, HistoricalNormalizedBar)
+        )
+        for item in reproduction.physical_verifications
+    }
+    for target in reproduction.target_results:
+        owner_reference = target.physical_source_reference
+        if target.persisted_observation is None or owner_reference not in bars_by_owner:
+            continue
+        try:
+            return reproduce_execution_timing_diagnostics(
+                target=target,
+                source_bars=bars_by_owner[owner_reference],
+            )
+        except ValueError as exc:
+            if str(exc) != "execution proxy is not estimable from frozen source bars":
+                raise
+    return ()
 
 
 def _verify_execution_diagnostics_against_corpus(

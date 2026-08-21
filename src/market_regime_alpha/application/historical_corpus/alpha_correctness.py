@@ -216,18 +216,27 @@ class HistoricalAlphaCorrectnessChecker:
             raise ValueError("Historical correctness requires aligned Feature/Outcome owners")
         feature_results: list[FeatureReproductionResult] = []
         target_results: list[TargetReproductionResult] = []
+        normalized_by_session = {
+            session: _shared_normalized_owner(features[session], outcomes[session])
+            for session in sorted(features)
+        }
+        bars_by_owner: dict[
+            ValidationArtifactReference, tuple[HistoricalNormalizedBar, ...]
+        ] = {}
         physical_by_owner: dict[
             ValidationArtifactReference, PhysicalSourceVerification
         ] = {}
-        for session in sorted(features):
-            feature_component = features[session]
-            outcome_component = outcomes[session]
-            normalized_reference = _shared_normalized_owner(
-                feature_component, outcome_component
-            )
+        for normalized_reference in sorted(
+            set(normalized_by_session.values()),
+            key=lambda item: (
+                item.artifact_kind,
+                str(item.artifact_id),
+                item.content_hash,
+            ),
+        ):
             package = self._corpus.load(normalized_reference)
             package.owner.verify_identity()
-            bars = tuple(
+            bars_by_owner[normalized_reference] = tuple(
                 record
                 for partition in package.owner.partitions
                 for record in partition.records
@@ -236,11 +245,17 @@ class HistoricalAlphaCorrectnessChecker:
             if physical_package_paths is not None:
                 path = physical_package_paths.get(normalized_reference)
                 if path is not None:
-                    established = establish_physical_reproduction(
-                        package_path=path,
-                        corpus_repository=self._corpus,
+                    physical_by_owner[normalized_reference] = (
+                        establish_physical_reproduction(
+                            package_path=path,
+                            corpus_repository=self._corpus,
+                        )
                     )
-                    physical_by_owner[normalized_reference] = established
+        for session in sorted(features):
+            feature_component = features[session]
+            outcome_component = outcomes[session]
+            normalized_reference = normalized_by_session[session]
+            bars = bars_by_owner[normalized_reference]
             active_verification = physical_by_owner.get(normalized_reference)
             decision_time = _component_decision_time(feature_component)
             persisted_by_symbol = _persisted_feature_projection(
