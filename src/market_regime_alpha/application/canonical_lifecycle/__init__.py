@@ -1,5 +1,9 @@
 """Recoverable, human-in-the-loop canonical lifecycle orchestration contracts."""
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+
 from market_regime_alpha.application.canonical_lifecycle.commands import (
     CanonicalLifecycleCommand,
 )
@@ -66,10 +70,26 @@ from market_regime_alpha.application.canonical_lifecycle.states import (
 from market_regime_alpha.application.canonical_lifecycle.postgres_repository import (
     PostgresLifecycleRunRepository,
 )
-from market_regime_alpha.application.canonical_lifecycle.postgres_composition import (
-    build_postgres_lifecycle_runner,
-    postgres_lifecycle_stage_handlers,
-)
+if TYPE_CHECKING:
+    from market_regime_alpha.application.canonical_lifecycle.postgres_composition import (
+        build_postgres_lifecycle_runner,
+        postgres_lifecycle_stage_handlers,
+    )
+
+
+def __getattr__(name: str) -> Any:
+    """Load the PostgreSQL composition only when its public facade is requested."""
+
+    if name in {
+        "build_postgres_lifecycle_runner",
+        "postgres_lifecycle_stage_handlers",
+    }:
+        from market_regime_alpha.application.canonical_lifecycle import (
+            postgres_composition,
+        )
+
+        return getattr(postgres_composition, name)
+    raise AttributeError(name)
 
 
 __all__ = [
