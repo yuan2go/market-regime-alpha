@@ -152,7 +152,9 @@ until upstream evidence survives.
 **Goal:** make Candidate → Signal → Forecast → Strategy an explicit
 contract. Forecast-required Strategies fail closed without exact Candidate,
 Signal, Forecast, Context, Risk, DecisionTime and Model/version lineage.
-Forecast-optional Strategies declare `FORECAST_NOT_REQUIRED` explicitly.
+Incumbent V1 Strategies retain their existing payload identity and have
+`FORECAST_NOT_REQUIRED` runtime semantics; any new non-conditional V2 contract
+must declare that value explicitly.
 
 The existing empirical historical path Forecast remains the baseline. The
 existing deterministic regularized-linear primitives may provide a simple

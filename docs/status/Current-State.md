@@ -15,7 +15,7 @@ target architecture.
 
 - **Architecture:** Python 3.12+ PostgreSQL-centered modular monolith.
 - **Persistent business authority:** PostgreSQL 16; no canonical file/SQLite/memory fallback.
-- **Packaged migration head:** 091 (`alpha_research_phase_ii`).
+- **Packaged migration head:** 092 (`strategy_forecast_contract_semantics`).
 - **Canonical all-day runtime:** one Continuous Research control plane.
 - **Installed operator scripts:** six — `continuous-research`, `state-system`, `decision-system`, `model-governance`, `pit-authority`, `research-shadow`.
 - **Execution boundary:** human-operated/manual; no broker writer or automatic live-trading authority.
@@ -30,11 +30,11 @@ target architecture.
 - **Current CI:** exact-merge CI is `NOT_RUN`, not CI proof.
 - **Alpha Research Phase II engineering:** all five Work Packages are
   implemented with focused unit/boundary tests and targeted PostgreSQL
-  migration/materializer proof. This is code/wiring evidence, not a new
+  migration, Strategy Registry and Historical Evidence owner proof. This is code/wiring evidence, not a new
   historical research result.
 - **Database binding:** Runtime requires an explicit PostgreSQL URL and principal; a database name or stale schema does not establish current Authority. The replayable Golden V2 Evidence schema is at migration 090.
 - **Local implementation baseline:** Python 3.12.13, uv 0.11.7 and PostgreSQL
-  16.14. The packaged migration head is 091. A Golden V2 evidence database is
+  16.14. The packaged migration head is 092. A Golden V2 evidence database is
   at migration 090; the default local application database is only at 055 and
   is not evidence for the current schema.
 
@@ -71,12 +71,16 @@ The current Strategy Registry/runtime has stable `OVERNIGHT` and `SWING_STATE` S
 
 Candidate is upstream of strategy action; the canonical multi-strategy path no longer treats Candidate itself as Entry.
 
-Strategy Contract V2 now explicitly declares `FORECAST_REQUIRED` or
-`FORECAST_NOT_REQUIRED`. Existing Overnight/Swing Strategies declare the latter.
-The new conditional-prediction family consumes a symbol-level binding containing
-Signal, Forecast, Context, Risk state and Model/version references, active
-Signal state, expected return and uncertainty. Missing required lineage fails
-closed; no Candidate-only fallback remains for a Forecast-required Strategy.
+Existing Overnight/Swing Contract V1 identities are preserved and have explicit
+runtime semantics `FORECAST_NOT_REQUIRED` without rewriting their stored payloads.
+Contract V2 freezes the declaration: `CONDITIONAL_PREDICTION` must be
+`FORECAST_REQUIRED`, while any other V2 family must be
+`FORECAST_NOT_REQUIRED`. The conditional family consumes a content-addressed,
+DecisionTime-available symbol binding containing the exact Strategy Version,
+Candidate, Signal, Forecast, Context, Risk state and Model/version references,
+active Signal state, expected return and uncertainty. Missing, inactive,
+wrong-version or silently ignored lineage fails closed; no Candidate-only
+fallback remains for a Forecast-required Strategy.
 
 ### Alpha Research Phase II capability
 
@@ -84,6 +88,9 @@ closed; no Candidate-only fallback remains for a Forecast-required Strategy.
   directly from normalized bars and independently reconstructs the exact
   Decision reference plus next-session 10:30 Target. Value, event interval,
   source-bar identity/hash and Feature/Target lineage discrepancies fail closed.
+  A content-addressed aggregate proof can emit `CORRECTNESS_SUPPORTED` only when
+  every frozen Factor and Target result is complete and physical lineage exists;
+  the status still does not mean Alpha.
 - Physical bytes are not currently reopenable. Deterministic owner replay is
   therefore retained as owner evidence only and the real status remains
   `PHYSICAL_REPRODUCTION_NOT_ESTABLISHED`.
@@ -93,7 +100,10 @@ closed; no Candidate-only fallback remains for a Forecast-required Strategy.
   framework.
 - External Validation reuses canonical `ResearchExperimentDefinition`; the
   definition freezes the exact hypothesis and permits exactly one Temporal,
-  Universe or Provider change. No external dataset was executed.
+  Universe or Provider change. Scores, Target returns, entry-proxy economics and
+  fractional Top-K boundaries are recomputed from frozen inputs; input-set hash
+  and Research Panel lineage are part of the result identity. No external
+  dataset was executed.
 - Context evaluation enforces session-constant versus within-session
   cross-sectional semantics. Market Regime and current Global Theme are
   session-level roles in the observed WP-01 panel; Capital remains a public
@@ -101,14 +111,18 @@ closed; no Candidate-only fallback remains for a Forecast-required Strategy.
   remains `NOT_ESTIMABLE` without genuine symbol-level variation.
 - Candidate Policy V2 keeps Incumbent and dormant Challenger identities
   separate, with Universal Integrity, factor-specific availability, validated
-  Alpha contributions and evidence-supported Context adjustment.
+  Alpha contributions and evidence-supported Context adjustment. External,
+  Context, Candidate and conditional-prediction results are persisted by typed
+  application methods through the existing PostgreSQL Historical Evidence owner;
+  owner reload and embedded artifact hashes fail closed.
 - Conditional Forecast keeps the empirical distribution baseline and compares
   a frozen regularized-linear model under chronological sample admission,
   minimum sample, search budget and uncertainty rules. Barrier outputs remain
   raw scores; `CALIBRATED=false`.
 
 Migration 091 extends the existing append-only Historical Evidence and Strategy
-owners. It creates no new table or parallel Authority.
+owners. Migration 092 constrains V1/V2 Forecast semantics without mutating V1
+identities. Neither creates a new table or parallel Authority.
 
 ### Manual execution and Position
 
