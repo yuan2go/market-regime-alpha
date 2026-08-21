@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from market_regime_alpha.cli.continuous_research import (
     ARGUMENT_ERROR,
     DATABASE_ERROR,
     SUCCESS,
     _operator_resource,
+    _settle_previous_prediction_if_due,
     build_parser,
     main,
 )
@@ -49,6 +53,61 @@ def _authority_args(postgres_factory: PostgresConnectionFactory) -> list[str]:
         "--principal-id",
         str(admin.principal_id),
     ]
+
+
+def test_automatic_settlement_uses_exact_previous_canonical_session() -> None:
+    calls: list[tuple[date, date]] = []
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            return None
+
+        def execute(self, *_: object):
+            return self
+
+        def fetchone(self) -> tuple[int, int]:
+            return (1, 0)
+
+    class Factory:
+        def connection(self, *, read_only: bool = False) -> Connection:
+            assert read_only is True
+            return Connection()
+
+    class Settlement:
+        def settle_day(
+            self,
+            *,
+            trading_date: date,
+            next_session_date: date,
+            artifact_root: Path,
+        ) -> dict[str, str]:
+            assert artifact_root == Path("/tmp/daily-alpha-test")
+            calls.append((trading_date, next_session_date))
+            return {
+                "factual_outcome_id": "factual-outcome",
+                "targeted_outcome_id": "targeted-outcome",
+            }
+
+    sessions = (date(2026, 1, 16), date(2026, 1, 19), date(2026, 1, 20))
+    with patch(
+        "market_regime_alpha.cli.continuous_research.FreeDataSettlementOperator",
+        return_value=Settlement(),
+    ):
+        result = _settle_previous_prediction_if_due(
+            factory=Factory(),  # type: ignore[arg-type]
+            calendar=SimpleNamespace(trading_dates=sessions),
+            current_session=sessions[1],
+            artifact_root=Path("/tmp/daily-alpha-test"),
+            clock=lambda: datetime(2026, 1, 19, 7, 1, tzinfo=UTC),
+            authority_mode=RuntimeAuthorityMode.SHADOW,
+        )
+
+    assert calls == [(date(2026, 1, 16), date(2026, 1, 19))]
+    assert result["status"] == "SETTLED"
+    assert result["settlement_id"] == "factual-outcome"
 
 
 def test_cli_exposes_converged_free_data_day_operations() -> None:

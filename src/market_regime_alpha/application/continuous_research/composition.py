@@ -124,6 +124,7 @@ CONTINUOUS_CHILD_ORDER = (
     ContinuousChildKind.CANONICAL_LIFECYCLE,
     ContinuousChildKind.DECISION_SYSTEM,
     ContinuousChildKind.STRATEGY_RUNTIME,
+    ContinuousChildKind.DAILY_ALPHA_SNAPSHOT,
 )
 
 

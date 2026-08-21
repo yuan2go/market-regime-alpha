@@ -131,14 +131,18 @@ FREE_RUNTIME_MIGRATIONS = (
     (89, "golden_loop_v2_evidence"),
     (90, "tie_aware_pool_ranks"),
     (91, "alpha_research_phase_ii"),
+    (92, "strategy_forecast_contract_semantics"),
+    (93, "frozen_temporal_validation_window"),
+    (94, "pre_strategy_risk_opportunity"),
+    (95, "daily_alpha_continuous_projection"),
 )
 
 
 def test_packaged_migrations_are_contiguous_and_checksummed() -> None:
     migrations = load_packaged_migrations()
 
-    assert tuple(item.version for item in migrations) == tuple(range(1, 92))
-    assert len({item.name for item in migrations}) == 91
+    assert tuple(item.version for item in migrations) == tuple(range(1, 96))
+    assert len({item.name for item in migrations}) == 95
     assert all(item.checksum == sha256(item.sql.encode("utf-8")).hexdigest() for item in migrations)
 
 
@@ -319,11 +323,11 @@ def test_apply_all_is_idempotent(
     first = migrator.apply_all(postgres_factory)
     second = migrator.apply_all(postgres_factory)
 
-    assert tuple(item.version for item in first) == tuple(range(1, 92))
+    assert tuple(item.version for item in first) == tuple(range(1, 96))
     assert second == ()
     with postgres_factory.connection(read_only=True) as connection:
         rows = connection.execute("SELECT version, name, checksum FROM schema_migrations ORDER BY version").fetchall()
-    assert len(rows) == 91
+    assert len(rows) == 95
 
 
 def test_applied_checksum_drift_is_rejected(
@@ -527,7 +531,7 @@ def test_migration_026_preserves_prerelease_v1_decision_rows_forward_only(
         )
         + FREE_RUNTIME_MIGRATIONS
     )
-    assert applied == (91,)
+    assert applied == (95,)
     assert restored == account
 
 
@@ -1015,6 +1019,10 @@ def test_migration_060_preserves_v1_protocols_and_accepts_explicit_inference(
         (89, "golden_loop_v2_evidence"),
         (90, "tie_aware_pool_ranks"),
         (91, "alpha_research_phase_ii"),
+        (92, "strategy_forecast_contract_semantics"),
+        (93, "frozen_temporal_validation_window"),
+        (94, "pre_strategy_risk_opportunity"),
+        (95, "daily_alpha_continuous_projection"),
     )
     with postgres_factory.connection(read_only=True) as connection:
         stored = connection.execute(
