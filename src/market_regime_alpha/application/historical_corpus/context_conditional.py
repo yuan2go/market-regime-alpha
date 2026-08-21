@@ -7,7 +7,7 @@ from datetime import date
 from decimal import Decimal, localcontext
 from enum import Enum
 from math import sqrt
-from typing import Any
+from typing import Any, Mapping
 
 from market_regime_alpha.application.research_validation.common import (
     ValidationArtifactReference,
@@ -19,7 +19,13 @@ from market_regime_alpha.application.historical_corpus.evidence import (
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.evidence.canonical import canonical_hash, require_sha256
 from market_regime_alpha.research.cross_sectional_ranking import (
+    FactorCrossSection,
+    composite_percentile_scores,
     fractional_boundary_weights,
+)
+from market_regime_alpha.application.historical_corpus.materialization_contracts import (
+    HistoricalComponentKind,
+    HistoricalSessionComponent,
 )
 
 
@@ -41,12 +47,61 @@ class ContextDefinition:
     kind: ContextKind
     role: ContextResearchRole
     public_observable_proxy: bool
+    research_panel_references: tuple[ValidationArtifactReference, ...]
+    factor_directions: tuple[tuple[str, str], ...]
+    target_reference: ValidationArtifactReference
+    top_k: int
+    expected_population: int
+    effect_threshold: Decimal
     alpha_evidence: HistoricalResearchEvidence
     schema_version: str = "alpha-context-definition/v1"
 
     def __post_init__(self) -> None:
         if not self.context_id.strip():
             raise ValueError("Context identity must be non-empty")
+        expected_kind = (
+            ContextKind.CROSS_SECTIONAL_CONTEXT
+            if self.context_id.upper() == "LIQUIDITY"
+            else ContextKind.SESSION_LEVEL_CONTEXT
+            if self.context_id.upper()
+            in {
+                "CAPITAL",
+                "CAPITAL_PUBLIC_PROXY",
+                "MARKET_REGIME",
+                "THEME",
+                "VOLATILITY",
+                "VOLATILITY_REGIME",
+            }
+            else None
+        )
+        if expected_kind is None or self.kind is not expected_kind:
+            raise ValueError("current canonical Context owner role is fixed")
+        if (
+            not self.research_panel_references
+            or self.research_panel_references
+            != tuple(
+                sorted(
+                    set(self.research_panel_references),
+                    key=lambda item: (
+                        item.artifact_kind,
+                        str(item.artifact_id),
+                        item.content_hash,
+                    ),
+                )
+            )
+            or any(
+                item.artifact_kind
+                not in {"RESEARCH_PANEL", "HISTORICAL_RESEARCH_PANEL"}
+                for item in self.research_panel_references
+            )
+        ):
+            raise ValueError("Context definition requires a frozen Research Panel owner")
+        if self.factor_directions != tuple(sorted(set(self.factor_directions))):
+            raise ValueError("Context Alpha factors must be unique and sorted")
+        if self.top_k <= 0 or self.expected_population <= 0:
+            raise ValueError("Context frozen population dimensions must be positive")
+        if not self.effect_threshold.is_finite() or self.effect_threshold <= 0:
+            raise ValueError("Context effect threshold must be positive and finite")
         if (
             self.kind is ContextKind.SESSION_LEVEL_CONTEXT
             and self.role is not ContextResearchRole.CONDITIONAL_PERFORMANCE
@@ -70,14 +125,55 @@ class ContextDefinition:
         kind: ContextKind,
         role: ContextResearchRole,
         public_observable_proxy: bool,
+        research_panel_references: tuple[ValidationArtifactReference, ...],
+        top_k: int,
+        expected_population: int,
+        effect_threshold: Decimal,
         alpha_evidence: HistoricalResearchEvidence,
     ) -> ContextDefinition:
+        factor_directions = tuple(
+            sorted(
+                (str(item[0]), str(item[1]))
+                for item in alpha_evidence.payload.get("validated_factors", ())
+                if isinstance(item, (list, tuple)) and len(item) == 2
+            )
+        )
+        if not factor_directions:
+            raise ValueError("Context definition requires externally validated Factors")
+        experiment = alpha_evidence.payload.get("experiment")
+        if not isinstance(experiment, Mapping):
+            raise ValueError("Context definition requires frozen External Experiment")
+        hypothesis = experiment.get("hypothesis")
+        if not isinstance(hypothesis, Mapping):
+            raise ValueError("Context definition lacks frozen Alpha hypothesis")
+        raw_target = hypothesis.get("target_reference")
+        if not isinstance(raw_target, Mapping):
+            raise ValueError("Context definition lacks frozen Target owner")
+        target_reference = ValidationArtifactReference.from_canonical_dict(raw_target)
+        panels = tuple(
+            sorted(
+                research_panel_references,
+                key=lambda item: (
+                    item.artifact_kind,
+                    str(item.artifact_id),
+                    item.content_hash,
+                ),
+            )
+        )
         payload = {
             "schema_version": "alpha-context-definition/v1",
             "context_id": context_id,
             "kind": kind.value,
             "role": role.value,
             "public_observable_proxy": public_observable_proxy,
+            "research_panel_references": [
+                item.to_canonical_dict() for item in panels
+            ],
+            "factor_directions": [list(item) for item in factor_directions],
+            "target_reference": target_reference.to_canonical_dict(),
+            "top_k": top_k,
+            "expected_population": expected_population,
+            "effect_threshold": str(effect_threshold),
             "alpha_evidence_reference": alpha_evidence.reference.to_canonical_dict(),
         }
         digest = canonical_hash(payload)
@@ -88,6 +184,12 @@ class ContextDefinition:
             kind,
             role,
             public_observable_proxy,
+            panels,
+            factor_directions,
+            target_reference,
+            top_k,
+            expected_population,
+            effect_threshold,
             alpha_evidence,
         )
 
@@ -104,6 +206,14 @@ class ContextDefinition:
             "kind": self.kind.value,
             "role": self.role.value,
             "public_observable_proxy": self.public_observable_proxy,
+            "research_panel_references": [
+                item.to_canonical_dict() for item in self.research_panel_references
+            ],
+            "factor_directions": [list(item) for item in self.factor_directions],
+            "target_reference": self.target_reference.to_canonical_dict(),
+            "top_k": self.top_k,
+            "expected_population": self.expected_population,
+            "effect_threshold": str(self.effect_threshold),
             "alpha_evidence_reference": self.alpha_evidence.reference.to_canonical_dict(),
         }
 
@@ -117,6 +227,7 @@ class ContextObservation:
     context_label: str
     context_value: Decimal | None
     source_reference: ValidationArtifactReference
+    target_reference: ValidationArtifactReference
 
     def __post_init__(self) -> None:
         if not self.symbol.strip() or not self.context_label.strip():
@@ -142,6 +253,7 @@ class ContextObservation:
                 None if self.context_value is None else str(self.context_value)
             ),
             "source_reference": self.source_reference.to_canonical_dict(),
+            "target_reference": self.target_reference.to_canonical_dict(),
         }
 
 
@@ -222,15 +334,17 @@ def evaluate_context_conditioning(
     definition: ContextDefinition,
     *,
     observations: tuple[ContextObservation, ...],
-    top_k: int,
-    expected_population: int,
 ) -> ContextConditionalEvaluation:
-    if top_k <= 0 or expected_population <= 0:
-        raise ValueError("Context Top-K must be positive")
     ordered = tuple(sorted(observations, key=lambda item: (item.session, item.symbol)))
     keys = tuple((item.session, item.symbol) for item in ordered)
     if len(keys) != len(set(keys)):
         raise ValueError("Context observations must be unique")
+    if any(
+        item.source_reference not in definition.research_panel_references
+        or item.target_reference != definition.target_reference
+        for item in ordered
+    ):
+        raise ValueError("Context observation is outside the frozen Research Panel owner")
     sessions = _groups(ordered)
     if definition.kind is ContextKind.SESSION_LEVEL_CONTEXT and any(
         len({item.context_label for item in values}) != 1
@@ -245,7 +359,9 @@ def evaluate_context_conditioning(
         definition.kind is ContextKind.CROSS_SECTIONAL_CONTEXT
         and not has_cross_sectional_variation
     ):
-        return _not_estimable(definition, ordered, expected_population=expected_population)
+        return _not_estimable(
+            definition, ordered, expected_population=definition.expected_population
+        )
 
     daily = _daily_rank_ic(ordered)
     unconditional = _mean(tuple(value for _session, value in daily))
@@ -253,7 +369,12 @@ def evaluate_context_conditioning(
     for item in ordered:
         by_label.setdefault(item.context_label, []).append(item)
     slices = tuple(
-        _slice(label, tuple(values), total=expected_population, top_k=top_k)
+        _slice(
+            label,
+            tuple(values),
+            total=definition.expected_population,
+            top_k=definition.top_k,
+        )
         for label, values in sorted(by_label.items())
     )
 
@@ -295,6 +416,7 @@ def evaluate_context_conditioning(
         incremental=incremental,
         unconditional=unconditional,
         stability=stability,
+        threshold=definition.effect_threshold,
     )
     limitations = tuple(
         sorted(
@@ -315,7 +437,7 @@ def evaluate_context_conditioning(
             }
         )
     )
-    coverage = Decimal(len(ordered)) / Decimal(expected_population)
+    coverage = Decimal(len(ordered)) / Decimal(definition.expected_population)
     if coverage > Decimal("1"):
         raise ValueError("Context observations exceed the frozen expected population")
     observation_set_hash = canonical_hash(
@@ -352,6 +474,137 @@ def evaluate_context_conditioning(
         status,
         limitations,
     )
+
+
+def project_context_observations(
+    definition: ContextDefinition,
+    panels: tuple[HistoricalSessionComponent, ...],
+) -> tuple[ContextObservation, ...]:
+    """Derive Alpha and Context values from exact Research Panel owners."""
+
+    by_reference = {panel.reference: panel for panel in panels}
+    if set(by_reference) != set(definition.research_panel_references):
+        raise ValueError("Context Research Panel owner set drifted")
+    if len(by_reference) != len(panels) or any(
+        panel.component_kind is not HistoricalComponentKind.RESEARCH_PANEL
+        for panel in panels
+    ):
+        raise ValueError("Context requires unique canonical Research Panel owners")
+    expected_role = (
+        ContextKind.CROSS_SECTIONAL_CONTEXT
+        if definition.context_id.upper() == "LIQUIDITY"
+        else ContextKind.SESSION_LEVEL_CONTEXT
+    )
+    if definition.kind is not expected_role:
+        raise ValueError(
+            "current canonical Context owner role does not match the definition"
+        )
+    observations: list[ContextObservation] = []
+    for panel in sorted(panels, key=lambda item: item.trading_date):
+        rows = panel.payload.get("rows")
+        if not isinstance(rows, list):
+            raise ValueError("Context Research Panel rows are unavailable")
+        typed_rows = tuple(_panel_row(item) for item in rows)
+        eligible = tuple(
+            row
+            for row in typed_rows
+            if row.get("target_return") is not None
+            and _context_factor_values(row, definition.factor_directions) is not None
+        )
+        if not eligible:
+            continue
+        symbols = tuple(str(row["symbol"]) for row in eligible)
+        factor_values: dict[str, dict[str, Decimal]] = {}
+        for row in eligible:
+            values = _context_factor_values(row, definition.factor_directions)
+            if values is None:  # guarded by the eligible projection above
+                raise ValueError("Context factor projection changed during evaluation")
+            factor_values[str(row["symbol"])] = values
+        scores = composite_percentile_scores(
+            tuple(
+                FactorCrossSection(
+                    factor_id,
+                    {
+                        symbol: factor_values[symbol][factor_id]
+                        for symbol in symbols
+                    },
+                    direction == "HIGHER_IS_BETTER",
+                    Decimal("1"),
+                )
+                for factor_id, direction in definition.factor_directions
+            ),
+            entities=symbols,
+        ).scores
+        for row in eligible:
+            symbol = str(row["symbol"])
+            label, value = _context_projection(definition.context_id, row)
+            raw_target = row.get("target_reference")
+            if not isinstance(raw_target, Mapping):
+                raise ValueError("Context Research Panel Target owner is unavailable")
+            target_reference = ValidationArtifactReference.from_canonical_dict(
+                raw_target
+            )
+            if target_reference != definition.target_reference:
+                raise ValueError("Context Research Panel Target owner drifted")
+            observations.append(
+                ContextObservation(
+                    panel.trading_date,
+                    symbol,
+                    scores[symbol],
+                    Decimal(str(row["target_return"])),
+                    label,
+                    value,
+                    panel.reference,
+                    target_reference,
+                )
+            )
+    return tuple(sorted(observations, key=lambda item: (item.session, item.symbol)))
+
+
+def _panel_row(value: object) -> Mapping[str, Any]:
+    if not isinstance(value, Mapping):
+        raise ValueError("Context Research Panel row is malformed")
+    return value
+
+
+def _context_factor_values(
+    row: Mapping[str, Any],
+    factor_directions: tuple[tuple[str, str], ...],
+) -> dict[str, Decimal] | None:
+    raw_features = row.get("research_features")
+    if not isinstance(raw_features, list):
+        raise ValueError("Context Research Panel Feature projection is malformed")
+    values = {
+        str(item.get("output_id")): Decimal(str(item["value"]))
+        for item in raw_features
+        if isinstance(item, Mapping)
+        and item.get("state") == "AVAILABLE"
+        and item.get("value") is not None
+    }
+    required = {factor_id for factor_id, _direction in factor_directions}
+    return {factor_id: values[factor_id] for factor_id in required} if required.issubset(values) else None
+
+
+def _context_projection(
+    context_id: str,
+    row: Mapping[str, Any],
+) -> tuple[str, Decimal | None]:
+    normalized = context_id.upper()
+    if normalized == "MARKET_REGIME":
+        return str(row.get("market_regime", "NOT_ESTIMABLE")), None
+    if normalized == "THEME":
+        return str(row.get("theme_owner_status", "NOT_ESTIMABLE")), None
+    if normalized in {"CAPITAL", "CAPITAL_PUBLIC_PROXY"}:
+        return str(row.get("capital_owner_status", "NOT_ESTIMABLE")), None
+    if normalized in {"VOLATILITY", "VOLATILITY_REGIME"}:
+        return str(row.get("volatility_bucket", "NOT_ESTIMABLE")), None
+    if normalized == "LIQUIDITY":
+        value = row.get("capacity_ceiling")
+        return (
+            str(row.get("liquidity_bucket", "NOT_ESTIMABLE")),
+            None if value is None else Decimal(str(value)),
+        )
+    raise ValueError("unsupported canonical Context projection")
 
 
 def _not_estimable(
@@ -452,15 +705,16 @@ def _classify(
     incremental: Decimal | None,
     unconditional: Decimal | None,
     stability: str,
+    threshold: Decimal,
 ) -> str:
     if stability == "UNSTABLE":
         return "UNSTABLE"
     if kind is ContextKind.CROSS_SECTIONAL_CONTEXT:
         if incremental is None:
             return "NOT_ESTIMABLE"
-        if incremental > Decimal("0.02"):
+        if incremental > threshold:
             return "AMPLIFIER"
-        if incremental < Decimal("-0.02"):
+        if incremental < -threshold:
             return "SUPPRESSOR"
         return "NEUTRAL"
     estimates = tuple(
@@ -471,14 +725,14 @@ def _classify(
     if len(estimates) < 2 or unconditional is None:
         return "NOT_ESTIMABLE"
     spread = max(estimates) - min(estimates)
-    if spread <= Decimal("0.02"):
+    if spread <= threshold:
         return "NEUTRAL"
     deltas = tuple(item - unconditional for item in estimates)
     if any(item > 0 for item in estimates) and any(item < 0 for item in estimates):
         return "UNSTABLE"
-    if max(deltas) > Decimal("0.02") and min(deltas) >= Decimal("-0.02"):
+    if max(deltas) > threshold and min(deltas) >= -threshold:
         return "AMPLIFIER"
-    if min(deltas) < Decimal("-0.02") and max(deltas) <= Decimal("0.02"):
+    if min(deltas) < -threshold and max(deltas) <= threshold:
         return "SUPPRESSOR"
     return "UNSTABLE"
 
@@ -587,4 +841,5 @@ __all__ = [
     "ContextObservation",
     "ContextResearchRole",
     "evaluate_context_conditioning",
+    "project_context_observations",
 ]

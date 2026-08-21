@@ -262,6 +262,7 @@ def _opportunity(
     version: StrategyVersion,
     candidate_set: CandidateSet,
     signal_active: bool = True,
+    risk_allows_action: bool = True,
 ) -> StrategyOpportunityInput:
     return StrategyOpportunityInput.create(
         symbol=symbol,
@@ -278,10 +279,26 @@ def _opportunity(
         risk_state_reference=_reference("RISK_STATE", f"risk-{symbol}"),
         model_reference=_reference("MODEL_VERSION", "conditional-model-v1"),
         signal_active=signal_active,
+        risk_allows_action=risk_allows_action,
+        risk_reason_codes=() if risk_allows_action else ("ACCOUNT_RISK_LIMIT",),
         expected_return=Decimal("0.02"),
         prediction_uncertainty=Decimal("0.01"),
         calibration_status="NOT_CALIBRATED",
         available_at=NOW,
+    )
+
+
+class _ExactOpportunityAuthority:
+    def reload(
+        self, opportunity: StrategyOpportunityInput
+    ) -> StrategyOpportunityInput:
+        return opportunity
+
+
+def _conditional_runtime(registry: StrategyRegistry) -> MultiStrategyRuntime:
+    return MultiStrategyRuntime(
+        registry,
+        opportunity_authority=_ExactOpportunityAuthority(),
     )
 
 
@@ -313,6 +330,8 @@ def test_strategy_opportunity_is_content_addressed_and_available_by_decision_tim
                     "risk_state_reference",
                     "model_reference",
                     "signal_active",
+                    "risk_allows_action",
+                    "risk_reason_codes",
                     "expected_return",
                     "prediction_uncertainty",
                     "calibration_status",
@@ -390,7 +409,9 @@ def test_conditional_strategy_consumes_signal_forecast_context_risk_and_model() 
         ),
     )
 
-    cycle = MultiStrategyRuntime(registry).execute(runtime_input)
+    with pytest.raises(ValueError, match="PostgreSQL owner reload"):
+        MultiStrategyRuntime(registry).execute(runtime_input)
+    cycle = _conditional_runtime(registry).execute(runtime_input)
     conditional = next(
         run
         for run in cycle.runs
@@ -403,6 +424,46 @@ def test_conditional_strategy_consumes_signal_forecast_context_risk_and_model() 
     assert next(
         item for item in conditional.gate_attributions if item.symbol == "000002.SZ"
     ).eligibility_status is StrategyEligibilityStatus.INELIGIBLE
+
+
+def test_conditional_strategy_cannot_bypass_rejected_risk_state() -> None:
+    contracts = (*_registry().contracts, _conditional_contract())
+    registry = StrategyRegistry.create(
+        contracts=contracts,
+        versions=tuple(StrategyVersion.activate(item) for item in contracts),
+    )
+    base_input = _runtime_input(registry.active_versions)
+    conditional_version = next(
+        item
+        for item in registry.active_versions
+        if item.family is StrategyFamily.CONDITIONAL_PREDICTION
+    )
+    opportunities = (
+        _opportunity(
+            "000001.SZ",
+            version=conditional_version,
+            candidate_set=base_input.candidate_set,
+            risk_allows_action=False,
+        ),
+        _opportunity(
+            "000002.SZ",
+            version=conditional_version,
+            candidate_set=base_input.candidate_set,
+        ),
+    )
+    cycle = _conditional_runtime(registry).execute(
+        replace(base_input, opportunities=opportunities)
+    )
+    conditional = next(
+        run
+        for run in cycle.runs
+        if registry.family_for(run) is StrategyFamily.CONDITIONAL_PREDICTION
+    )
+    attribution = next(
+        item for item in conditional.gate_attributions if item.symbol == "000001.SZ"
+    )
+    assert attribution.action is CanonicalStrategyAction.NO_ACTION
+    assert "RISK_STATE_REJECTED" in attribution.reason_codes
 
 
 def test_forecast_lineage_is_bound_to_exact_strategy_version() -> None:
@@ -437,7 +498,7 @@ def test_forecast_lineage_is_bound_to_exact_strategy_version() -> None:
     )
 
     with pytest.raises(ValueError, match="FORECAST_NOT_REQUIRED"):
-        MultiStrategyRuntime(registry).execute(runtime_input)
+        _conditional_runtime(registry).execute(runtime_input)
 
 
 def test_forecast_required_position_only_symbol_cannot_bypass_contract() -> None:
@@ -481,7 +542,7 @@ def test_forecast_required_position_only_symbol_cannot_bypass_contract() -> None
     )
 
     with pytest.raises(ValueError, match="000003.SZ"):
-        MultiStrategyRuntime(registry).execute(runtime_input)
+        _conditional_runtime(registry).execute(runtime_input)
 
 
 def test_historical_replay_uses_identical_strategy_semantics() -> None:

@@ -107,6 +107,24 @@ def test_missing_execution_proxy_fails_closed() -> None:
         )
 
 
+def test_executable_proxy_must_be_observed_before_target_event() -> None:
+    delayed_target = TimedPriceObservation(
+        Decimal("11"),
+        DECISION + timedelta(minutes=10),
+        DECISION + timedelta(minutes=30),
+        _price("11", 10, "TARGET_REFERENCE").source_reference,
+    )
+    with pytest.raises(ValueError, match="observable window"):
+        ExecutionPriceInputs(
+            information_cutoff=DECISION,
+            decision_reference=_price("10", 0, "DECISION_REFERENCE"),
+            next_observable_price=_price("10.1", 20, "NEXT_OBSERVABLE_PRICE"),
+            next_bar_open=None,
+            session_close=None,
+            target_reference=delayed_target,
+        )
+
+
 def test_factor_redundancy_reports_pairwise_rank_and_incremental_information() -> None:
     observations = tuple(
         FactorObservation(

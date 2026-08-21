@@ -662,6 +662,8 @@ def _strategy_opportunity_payload(**values: Any) -> dict[str, Any]:
         "risk_state_reference": values["risk_state_reference"].to_canonical_dict(),
         "model_reference": values["model_reference"].to_canonical_dict(),
         "signal_active": values["signal_active"],
+        "risk_allows_action": values["risk_allows_action"],
+        "risk_reason_codes": list(values["risk_reason_codes"]),
         "expected_return": (
             None if expected_return is None else str(expected_return)
         ),
@@ -807,6 +809,8 @@ class StrategyOpportunityInput:
     risk_state_reference: RuntimeArtifactReference
     model_reference: RuntimeArtifactReference
     signal_active: bool
+    risk_allows_action: bool
+    risk_reason_codes: tuple[str, ...]
     expected_return: Decimal | None
     prediction_uncertainty: Decimal | None
     calibration_status: str
@@ -834,13 +838,19 @@ class StrategyOpportunityInput:
             },
             "context_reference": {
                 "CONTEXT_CONDITIONAL_EVALUATION",
+                "HISTORICAL_CONTEXT_CONDITIONAL_EVIDENCE",
                 "HISTORICAL_CONTEXT",
             },
-            "risk_state_reference": {"RISK_STATE", "HISTORICAL_RISK_STATE"},
+            "risk_state_reference": {
+                "RISK_STATE",
+                "HISTORICAL_RISK_STATE",
+                "COMPLETE_ACCOUNT_RISK_DECISION",
+            },
             "model_reference": {
                 "CONDITIONAL_FORECAST_MODEL",
                 "MODEL_VERSION",
                 "PATH_FORECAST",
+                "RESEARCH_MODEL_ARTIFACT",
             },
         }
         for field_name, kinds in expected_kinds.items():
@@ -855,6 +865,10 @@ class StrategyOpportunityInput:
             raise ValueError("unsupported Strategy Forecast calibration status")
         if self.prediction_uncertainty is not None and self.prediction_uncertainty < 0:
             raise ValueError("Strategy prediction uncertainty cannot be negative")
+        if self.risk_reason_codes != tuple(sorted(set(self.risk_reason_codes))):
+            raise ValueError("Strategy Risk reason codes must be unique and sorted")
+        if self.risk_allows_action == bool(self.risk_reason_codes):
+            raise ValueError("Strategy Risk state and reason codes disagree")
         if self.expected_return is None and self.calibration_status != "DATA_INSUFFICIENT":
             raise ValueError("available Strategy Forecast requires expected return")
         if canonical_hash(self.identity_payload()) != self.binding_hash:
@@ -880,6 +894,8 @@ class StrategyOpportunityInput:
                     "risk_state_reference",
                     "model_reference",
                     "signal_active",
+                    "risk_allows_action",
+                    "risk_reason_codes",
                     "expected_return",
                     "prediction_uncertainty",
                     "calibration_status",
@@ -910,6 +926,10 @@ class StrategyOpportunityInput:
             risk_state_reference=_reference(payload["risk_state_reference"]),
             model_reference=_reference(payload["model_reference"]),
             signal_active=bool(payload["signal_active"]),
+            risk_allows_action=bool(payload["risk_allows_action"]),
+            risk_reason_codes=tuple(
+                str(item) for item in _sequence(payload["risk_reason_codes"])
+            ),
             expected_return=(
                 None if expected_return is None else Decimal(str(expected_return))
             ),

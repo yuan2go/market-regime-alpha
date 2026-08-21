@@ -237,6 +237,7 @@ def evaluate_alpha_discovery_session(
     numeric_by_family: dict[str, list[FactorCrossSection[str]]] = {
         family: [] for family in ALPHA_DISCOVERY_FACTOR_FAMILIES
     }
+    numeric_by_id: dict[str, FactorCrossSection[str]] = {}
     entities = tuple(str(row["symbol"]) for row in integrity)
     for factor in registry:
         if factor.role is not AlphaFactorRole.NUMERIC_RANKED:
@@ -245,14 +246,14 @@ def evaluate_alpha_discovery_session(
             symbol: _decimal(feature_values[symbol].get((factor.feature_id, factor.output_id)))
             for symbol in entities
         }
-        numeric_by_family.setdefault(factor.family, []).append(
-            FactorCrossSection(
-                factor_id=factor.factor_id,
-                values=values,
-                higher_is_better=factor.higher_is_better,
-                weight=Decimal("1"),
-            )
+        section = FactorCrossSection(
+            factor_id=factor.factor_id,
+            values=values,
+            higher_is_better=factor.higher_is_better,
+            weight=Decimal("1"),
         )
+        numeric_by_family.setdefault(factor.family, []).append(section)
+        numeric_by_id[factor.output_id] = section
         factor_results.append(
             _evaluate_variant(
                 variant_id=factor.factor_id,
@@ -260,6 +261,14 @@ def evaluate_alpha_discovery_session(
                 rows=integrity,
                 raw_scores=values,
                 before_count=len(integrity),
+                factor_directions=(
+                    (
+                        factor.factor_id,
+                        "HIGHER_IS_BETTER"
+                        if factor.higher_is_better
+                        else "LOWER_IS_BETTER",
+                    ),
+                ),
             )
         )
 
@@ -279,6 +288,41 @@ def evaluate_alpha_discovery_session(
         },
     )
     price_scores = family_scores.get("PRICE_RETURN", {})
+    price_directions = _factor_directions(
+        tuple(numeric_by_family.get("PRICE_RETURN", ()))
+    )
+    technical_sections = tuple(
+        section
+        for family in ("PRICE_RETURN", "VOLUME_AMOUNT_TURNOVER", "TREND")
+        for section in numeric_by_family.get(family, ())
+    )
+    technical_directions = _factor_directions(technical_sections)
+    intraday_factor_ids = (
+        "intraday_return_to_decision_time",
+        "price_vs_vwap_return",
+        "vwap_slope",
+    )
+    intraday_sections = tuple(
+        numeric_by_id[factor_id]
+        for factor_id in intraday_factor_ids
+        if factor_id in numeric_by_id
+    )
+    intraday_scores = (
+        _composite_scores(intraday_sections, entities)
+        if len(intraday_sections) == len(intraday_factor_ids)
+        else {}
+    )
+    intraday_directions = tuple(
+        sorted(
+            (
+                item.factor_id.rsplit(":", 1)[-1],
+                "HIGHER_IS_BETTER"
+                if item.higher_is_better
+                else "LOWER_IS_BETTER",
+            )
+            for item in intraday_sections
+        )
+    )
     context_scores = {
         "MARKET_REGIME": _gate_scores(integrity, "market_regime"),
         "THEME": _gate_scores(integrity, "theme"),
@@ -303,6 +347,7 @@ def evaluate_alpha_discovery_session(
                     gate_id=gate_id,
                     mode="CURRENT_HARD_GATE",
                     confounded=(gate_id == "DYNAMIC_POOL"),
+                    factor_directions=technical_directions,
                 ),
                 _evaluate_variant(
                     variant_id=f"{gate_id}:NO_PREDICTIVE_GATE",
@@ -313,6 +358,7 @@ def evaluate_alpha_discovery_session(
                     gate_id=gate_id,
                     mode="NO_PREDICTIVE_GATE",
                     confounded=(gate_id == "DYNAMIC_POOL"),
+                    factor_directions=technical_directions,
                 ),
                 _evaluate_variant(
                     variant_id=f"{gate_id}:SOFT_FEATURE",
@@ -343,11 +389,22 @@ def evaluate_alpha_discovery_session(
         },
     )
     policy_specs = (
-        ("CURRENT_HARD_CHAIN", candidate_rows, candidate_scores),
-        ("HARD_INTEGRITY_PRICE_RETURN", integrity, price_scores),
-        ("HARD_INTEGRITY_PRICE_VOLUME_TREND", integrity, technical_scores),
-        ("NO_PREDICTIVE_GATES", integrity, technical_scores),
-        ("SOFT_CONTEXT_CANDIDATE", integrity, soft_context),
+        ("CURRENT_HARD_CHAIN", candidate_rows, candidate_scores, ()),
+        (
+            "INTRADAY_CORRECTNESS_CHALLENGER",
+            integrity,
+            intraday_scores,
+            intraday_directions,
+        ),
+        ("HARD_INTEGRITY_PRICE_RETURN", integrity, price_scores, price_directions),
+        (
+            "HARD_INTEGRITY_PRICE_VOLUME_TREND",
+            integrity,
+            technical_scores,
+            technical_directions,
+        ),
+        ("NO_PREDICTIVE_GATES", integrity, technical_scores, technical_directions),
+        ("SOFT_CONTEXT_CANDIDATE", integrity, soft_context, ()),
     )
     policy_results = tuple(
         _evaluate_variant(
@@ -356,8 +413,9 @@ def evaluate_alpha_discovery_session(
             rows=variant_rows,
             raw_scores=scores,
             before_count=len(integrity),
+            factor_directions=factor_directions,
         )
-        for variant_id, variant_rows, scores in policy_specs
+        for variant_id, variant_rows, scores, factor_directions in policy_specs
     )
     return AlphaDiscoverySessionEvaluation(
         integrity_population_count=len(integrity),
@@ -477,6 +535,9 @@ def _aggregate_variant(
     sessions: tuple[tuple[date, Mapping[str, Any], Mapping[str, str]], ...],
 ) -> dict[str, Any]:
     first = sessions[0][1]
+    factor_directions = first.get("factor_directions", [])
+    if any(item.get("factor_directions", []) != factor_directions for _day, item, _slice in sessions):
+        raise ValueError("Alpha Discovery Factor definitions drifted across sessions")
     rank_ics = tuple(
         value
         for _day, item, _slices in sessions
@@ -551,6 +612,7 @@ def _aggregate_variant(
     return {
         "variant_id": variant_id,
         "family": str(first.get("family", "NOT_ESTIMABLE")),
+        "factor_directions": factor_directions,
         **(
             {
                 "gate_id": str(first["gate_id"]),
@@ -873,6 +935,7 @@ def _evaluate_variant(
     gate_id: str | None = None,
     mode: str | None = None,
     confounded: bool = False,
+    factor_directions: tuple[tuple[str, str], ...] = (),
 ) -> Mapping[str, Any]:
     rows_by_symbol = {str(row["symbol"]): row for row in rows}
     scores = {
@@ -926,6 +989,7 @@ def _evaluate_variant(
         "buckets": _bucket_payload(rows_by_symbol, ranked.percentiles),
         "top_k": top_k,
         "symbols": list(sorted(rows_by_symbol)),
+        "factor_directions": [list(item) for item in factor_directions],
     }
     if gate_id is not None and mode is not None:
         payload.update(
@@ -1037,6 +1101,22 @@ def _composite_scores(
     if not factors or not entities:
         return MappingProxyType({})
     return composite_percentile_scores(factors, entities=entities).scores
+
+
+def _factor_directions(
+    factors: tuple[FactorCrossSection[str], ...],
+) -> tuple[tuple[str, str], ...]:
+    return tuple(
+        sorted(
+            (
+                item.factor_id,
+                "HIGHER_IS_BETTER"
+                if item.higher_is_better
+                else "LOWER_IS_BETTER",
+            )
+            for item in factors
+        )
+    )
 
 
 def _combine_named_scores(

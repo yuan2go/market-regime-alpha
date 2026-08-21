@@ -20,6 +20,7 @@ from market_regime_alpha.candidates.policy import (
     CandidatePolicyDefinition,
     CandidatePolicyInput,
     CandidatePolicyRole,
+    CandidateRealizedReturn,
     ContextAdjustmentDefinition,
     ValidatedFactorDefinition,
     compare_candidate_policies,
@@ -33,6 +34,7 @@ def _ref(kind: str, value: str) -> ValidationArtifactReference:
 
 
 DATASET = _ref("RESEARCH_PANEL_DATASET", "dataset-a")
+TARGET = _ref("OUTCOME_TARGET", "target-a")
 
 
 def _evidence(
@@ -116,6 +118,7 @@ def _input(symbol: str, factor: Decimal | None, *, liquidity: Decimal = Decimal(
     return CandidatePolicyInput(
         session=date(2026, 1, 2),
         symbol=symbol,
+        dataset_reference=DATASET,
         universe_eligible=True,
         tradable=True,
         suspended=False,
@@ -131,6 +134,8 @@ def _input(symbol: str, factor: Decimal | None, *, liquidity: Decimal = Decimal(
         incumbent_factor_contributions={"legacy": Decimal("0.5")},
         incumbent_hard_integrity_eligible=True,
         incumbent_hard_gate_failure_reasons=(),
+        universal_hard_integrity_eligible=True,
+        universal_hard_gate_failure_reasons=(),
     )
 
 
@@ -187,24 +192,50 @@ def test_incumbent_and_challenger_coexist_with_distinct_frozen_identity() -> Non
     inputs = (_input("A", Decimal("2")), _input("B", Decimal("1")))
     incumbent_result = evaluate_candidate_policy(incumbent, inputs)
     challenger_result = evaluate_candidate_policy(_challenger(), inputs)
+    realized_returns = (
+        CandidateRealizedReturn(
+            date(2026, 1, 2), "A", Decimal(".02"), DATASET, TARGET
+        ),
+        CandidateRealizedReturn(
+            date(2026, 1, 2), "B", Decimal(".01"), DATASET, TARGET
+        ),
+    )
     comparison = compare_candidate_policies(
         incumbent_result,
         challenger_result,
         protocol=CandidateComparisonProtocol.create(
             dataset_reference=DATASET,
-            target_reference=_ref("OUTCOME_TARGET", "target-a"),
+            target_reference=TARGET,
             cost_assumption=Decimal("0.001"),
         ),
-        realized_returns={
-            (date(2026, 1, 2), "A"): Decimal(".02"),
-            (date(2026, 1, 2), "B"): Decimal(".01"),
-        },
+        realized_returns=realized_returns,
     )
 
     assert incumbent.policy_id != _challenger().policy_id
     assert incumbent_result.policy_reference != challenger_result.policy_reference
     assert comparison.incumbent_coverage == Decimal("1")
     assert comparison.challenger_selection_count == 1
+
+    with pytest.raises(ValueError, match="Target owner lineage drifted"):
+        compare_candidate_policies(
+            incumbent_result,
+            challenger_result,
+            protocol=CandidateComparisonProtocol.create(
+                dataset_reference=DATASET,
+                target_reference=TARGET,
+                cost_assumption=Decimal("0.001"),
+            ),
+            realized_returns=(
+                CandidateRealizedReturn(
+                    date(2026, 1, 2),
+                    "A",
+                    Decimal(".02"),
+                    DATASET,
+                    _ref("OUTCOME_TARGET", "target-b"),
+                ),
+                realized_returns[1],
+            ),
+        )
 
 
 def test_challenger_top_k_boundary_is_identity_neutral() -> None:

@@ -69,10 +69,21 @@ def test_discovery_session_keeps_integrity_hard_and_evaluates_registered_variant
         "HARD_INTEGRITY_PRICE_VOLUME_TREND",
         "SOFT_CONTEXT_CANDIDATE",
         "NO_PREDICTIVE_GATES",
+        "INTRADAY_CORRECTNESS_CHALLENGER",
     }.issubset(variants)
     assert variants["NO_PREDICTIVE_GATES"]["before_count"] == 11
     assert variants["NO_PREDICTIVE_GATES"]["after_count"] == 11
     assert variants["CURRENT_HARD_CHAIN"]["after_count"] == 6
+    assert {
+        item[0]
+        for item in variants["INTRADAY_CORRECTNESS_CHALLENGER"][
+            "factor_directions"
+        ]
+    } == {
+        "intraday_return_to_decision_time",
+        "price_vs_vwap_return",
+        "vwap_slope",
+    }
     assert "REJECTED" not in variants["NO_PREDICTIVE_GATES"]["symbols"]
     assert {
         (item["gate_id"], item["mode"])

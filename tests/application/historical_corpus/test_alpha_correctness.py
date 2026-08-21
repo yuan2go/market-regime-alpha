@@ -10,10 +10,26 @@ from market_regime_alpha.application.historical_corpus.alpha_correctness import 
     AlphaCorrectnessStatus,
     PersistedFeatureObservation,
     PersistedTargetObservation,
-    PhysicalSourceVerification,
+    _physical_verification_from_reloaded_packages,
     build_alpha_correctness_proof,
+    reproduce_execution_timing_diagnostics,
     reproduce_intraday_features,
     reproduce_t_plus_one_1030_target,
+)
+from market_regime_alpha.application.historical_corpus.alpha_diagnostics import (
+    AlphaObservation,
+    ExecutionPriceInputs,
+    ExecutionPriceProxy,
+    FactorObservation,
+    FrozenPlaceboProtocol,
+    MovingBlockInferenceProtocol,
+    PlaceboKind,
+    SessionEstimate,
+    TimedPriceObservation,
+    apply_placebo,
+    diagnose_execution_price,
+    evaluate_factor_redundancy,
+    evaluate_robust_inference_family,
 )
 from market_regime_alpha.application.historical_corpus.artifacts import (
     load_verified_historical_package,
@@ -192,6 +208,80 @@ def test_t_plus_one_target_is_recomputed_from_a_later_session_checkpoint(tmp_pat
     assert set(result.decision_source_ids).isdisjoint(result.target_source_ids)
 
 
+def test_execution_proxies_are_selected_by_frozen_bar_semantics(tmp_path) -> None:
+    decision = _bar(
+        SESSION,
+        time(14, 50),
+        open_price="11.9",
+        close="12",
+        volume="100",
+    )
+    session_close = _bar(
+        SESSION,
+        time(14, 55),
+        open_price="12.05",
+        close="12.1",
+        volume="100",
+        row=2,
+    )
+    target_bars = tuple(
+        _bar(
+            NEXT_SESSION,
+            (
+                datetime.combine(NEXT_SESSION, time(9, 30))
+                + timedelta(minutes=5 * index)
+            ).time(),
+            open_price=("12.2" if index == 0 else "12.3"),
+            close=("12.4" if index == 11 else "12.3"),
+            volume="100",
+            row=100 + index,
+        )
+        for index in range(12)
+    )
+    physical = _physical_verification(
+        tmp_path,
+        (decision, session_close, *target_bars),
+    )
+    persisted = PersistedTargetObservation.create(
+        decision_reference_price=Decimal("12"),
+        target_price=Decimal("12.4"),
+        target_return=(Decimal("12.4") - Decimal("12")) / Decimal("12"),
+        decision_source_bars=(decision,),
+        target_source_bars=target_bars,
+        target_session=NEXT_SESSION,
+    )
+    target = reproduce_t_plus_one_1030_target(
+        symbol="600000.SH",
+        decision_time=DECISION_TIME,
+        next_session=NEXT_SESSION,
+        trading_calendar=_calendar(),
+        source_bars=(decision, session_close, *target_bars),
+        persisted=persisted,
+        physical_verification=physical,
+    )
+
+    by_proxy = {
+        item.proxy: item
+        for item in reproduce_execution_timing_diagnostics(
+            target=target,
+            source_bars=(decision, session_close, *target_bars),
+        )
+    }
+
+    assert by_proxy[ExecutionPriceProxy.NEXT_OBSERVABLE_PRICE].entry_price == Decimal(
+        "12.1"
+    )
+    assert by_proxy[ExecutionPriceProxy.NEXT_BAR_OPEN].entry_price == Decimal(
+        "12.2"
+    )
+    assert by_proxy[ExecutionPriceProxy.SESSION_CLOSE].entry_price == Decimal(
+        "12.1"
+    )
+    assert (
+        by_proxy[ExecutionPriceProxy.DECISION_REFERENCE_ONLY].executable is False
+    )
+
+
 def test_correctness_proof_requires_all_factors_target_and_physical_lineage(
     tmp_path,
 ) -> None:
@@ -250,12 +340,140 @@ def test_correctness_proof_requires_all_factors_target_and_physical_lineage(
     )
 
     proof = build_alpha_correctness_proof(
-        feature_results=(features,), target_results=(target,)
+        feature_results=(features,),
+        target_results=(target,),
+        physical_verifications=(physical,),
+        placebo_results=_complete_placebos(),
+        execution_diagnostics=_execution_diagnostics(),
+        factor_redundancy=_redundancy(),
+        robust_inference=_robust_inference(),
     )
 
     assert proof.status is AlphaCorrectnessStatus.CORRECTNESS_SUPPORTED
     assert proof.reference.content_hash == proof.proof_hash
     assert "ALPHA_PROVEN_FALSE" in proof.limitations
+
+    incomplete = build_alpha_correctness_proof(
+        feature_results=(features,),
+        target_results=(target,),
+        physical_verifications=(physical,),
+        placebo_results=(),
+        execution_diagnostics=_execution_diagnostics(),
+        factor_redundancy=_redundancy(),
+        robust_inference=_robust_inference(),
+    )
+    assert incomplete.status is AlphaCorrectnessStatus.PARTIALLY_REPRODUCED
+
+
+def _complete_placebos():
+    observations = tuple(
+        AlphaObservation(
+            session,
+            symbol,
+            Decimal(index + 1),
+            Decimal(index + (1 if session == SESSION else 2)) / Decimal("100"),
+        )
+        for session in (SESSION, NEXT_SESSION)
+        for index, symbol in enumerate(("600000.SH", "600001.SH", "600002.SH"))
+    )
+    return tuple(
+        apply_placebo(protocol, kind=kind, observations=observations)
+        for factor_id in (
+            "intraday_return_to_decision_time",
+            "price_vs_vwap_return",
+            "vwap_slope",
+        )
+        for protocol in (
+            FrozenPlaceboProtocol.create(
+                factor_id=factor_id,
+                target_id="t-plus-one-1030",
+                seed=7,
+                kinds=tuple(PlaceboKind),
+            ),
+        )
+        for kind in PlaceboKind
+    )
+
+
+def _execution_diagnostics():
+    target_time = datetime.combine(NEXT_SESSION, time(10, 30), SHANGHAI).astimezone(UTC)
+    source = ValidationArtifactReference(
+        "NORMALIZED_DATASET",
+        ArtifactId("execution-owner"),
+        canonical_hash({"execution": "owner"}),
+    )
+
+    def observed(minutes: int, price: str) -> TimedPriceObservation:
+        at = DECISION_TIME + timedelta(minutes=minutes)
+        return TimedPriceObservation(Decimal(price), at, at, source)
+
+    inputs = ExecutionPriceInputs(
+        information_cutoff=DECISION_TIME,
+        decision_reference=TimedPriceObservation(
+            Decimal("12"), DECISION_TIME, DECISION_TIME, source
+        ),
+        next_observable_price=observed(1, "12.01"),
+        next_bar_open=observed(5, "12.02"),
+        session_close=observed(10, "12.03"),
+        target_reference=TimedPriceObservation(
+            Decimal("12.2"), target_time, target_time, source
+        ),
+    )
+    return tuple(diagnose_execution_price(inputs, proxy) for proxy in ExecutionPriceProxy)
+
+
+def _redundancy():
+    factor_values = (
+        (1, 2, 5, 1),
+        (2, 5, 1, 3),
+        (3, 1, 4, 5),
+        (4, 4, 2, 2),
+        (5, 3, 3, 4),
+    )
+    observations = tuple(
+        FactorObservation(
+            session,
+            symbol,
+            {
+                "intraday_return_to_decision_time": Decimal(values[0]),
+                "price_vs_vwap_return": Decimal(values[1]),
+                "vwap_slope": Decimal(values[2]),
+            },
+            Decimal(values[3]) / Decimal("100"),
+        )
+        for session in (SESSION, NEXT_SESSION)
+        for symbol, values in zip(
+            ("600000.SH", "600001.SH", "600002.SH", "600003.SH", "600004.SH"),
+            factor_values,
+            strict=True,
+        )
+    )
+    return evaluate_factor_redundancy(observations)
+
+
+def _robust_inference():
+    protocol = MovingBlockInferenceProtocol.create(
+        iterations=20,
+        block_lengths=(1,),
+        confidence_level=Decimal("0.9"),
+        seed=11,
+    )
+    observations = tuple(
+        SessionEstimate(SESSION + timedelta(days=index), Decimal(index + 1) / Decimal("100"))
+        for index in range(4)
+    )
+    results = evaluate_robust_inference_family(
+        protocol,
+        {
+            factor_id: observations
+            for factor_id in (
+                "intraday_return_to_decision_time",
+                "price_vs_vwap_return",
+                "vwap_slope",
+            )
+        },
+    )
+    return tuple(sorted(results.items()))
 
 
 def test_t_plus_one_target_rejects_same_session_and_future_feature_lineage() -> None:
@@ -368,7 +586,7 @@ def _physical_verification(tmp_path, bars):
         limitations=("PIT_INCOMPLETE",),
     )
     path = publish_historical_package(artifact_root=tmp_path, owner=owner)
-    return PhysicalSourceVerification.establish(
+    return _physical_verification_from_reloaded_packages(
         physical_package=load_verified_historical_package(path),
         postgres_owner_package=load_verified_historical_package(path),
     )

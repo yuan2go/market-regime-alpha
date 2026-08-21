@@ -106,6 +106,13 @@ class FrozenPlaceboProtocol:
             "kinds": [item.value for item in self.kinds],
         }
 
+    def to_canonical_dict(self) -> dict[str, Any]:
+        return {
+            "protocol_id": str(self.protocol_id),
+            "protocol_hash": self.protocol_hash,
+            **self.identity_payload(),
+        }
+
 
 @dataclass(frozen=True, slots=True)
 class AlphaObservation:
@@ -117,10 +124,50 @@ class AlphaObservation:
 
 @dataclass(frozen=True, slots=True)
 class PlaceboResult:
-    protocol_reference: ValidationArtifactReference
+    protocol: FrozenPlaceboProtocol
+    factor_id: str
+    target_id: str
     kind: PlaceboKind
     observations: tuple[AlphaObservation, ...]
     result_hash: str
+
+    def __post_init__(self) -> None:
+        if (
+            self.factor_id != self.protocol.factor_id
+            or self.target_id != self.protocol.target_id
+            or self.kind not in self.protocol.kinds
+        ):
+            raise ValueError("placebo result drifted from its frozen protocol")
+        ordered = _ordered_alpha(self.observations)
+        if ordered != self.observations or not ordered:
+            raise ValueError("placebo result observations must be non-empty and sorted")
+        if (
+            canonical_hash(_placebo_result_payload(self.protocol, self.kind, ordered))
+            != self.result_hash
+        ):
+            raise ValueError("placebo result hash mismatch")
+
+    @property
+    def protocol_reference(self) -> ValidationArtifactReference:
+        return self.protocol.reference
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        return {
+            "protocol": self.protocol.to_canonical_dict(),
+            "factor_id": self.factor_id,
+            "target_id": self.target_id,
+            "kind": self.kind.value,
+            "observations": [
+                {
+                    "session": item.session.isoformat(),
+                    "symbol": item.symbol,
+                    "factor_value": str(item.factor_value),
+                    "target_return": str(item.target_return),
+                }
+                for item in self.observations
+            ],
+            "result_hash": self.result_hash,
+        }
 
 
 def apply_placebo(
@@ -194,22 +241,15 @@ def apply_placebo(
                     )
                 )
     result = _ordered_alpha(tuple(transformed))
-    digest = canonical_hash(
-        {
-            "protocol": protocol.reference.to_canonical_dict(),
-            "kind": kind.value,
-            "observations": [
-                {
-                    "session": item.session.isoformat(),
-                    "symbol": item.symbol,
-                    "factor_value": str(item.factor_value),
-                    "target_return": str(item.target_return),
-                }
-                for item in result
-            ],
-        }
+    digest = canonical_hash(_placebo_result_payload(protocol, kind, result))
+    return PlaceboResult(
+        protocol,
+        protocol.factor_id,
+        protocol.target_id,
+        kind,
+        result,
+        digest,
     )
-    return PlaceboResult(protocol.reference, kind, result, digest)
 
 
 class ExecutionPriceProxy(str, Enum):
@@ -259,6 +299,7 @@ class ExecutionPriceInputs:
             if value is not None and (
                 value.observed_at <= self.information_cutoff
                 or value.available_at <= self.information_cutoff
+                or value.observed_at >= self.target_reference.observed_at
                 or value.available_at > self.target_reference.available_at
             ):
                 raise ValueError("executable proxy timing is outside its observable window")
@@ -274,10 +315,74 @@ class ExecutionTimingDiagnostic:
     target_reference_price: Decimal
     gross_return: Decimal
     executable: bool
+    information_cutoff: datetime
     entry_observed_at: datetime
     entry_available_at: datetime
+    target_observed_at: datetime
+    target_available_at: datetime
+    information_cutoff_reference: ValidationArtifactReference
     source_reference: ValidationArtifactReference
+    target_source_reference: ValidationArtifactReference
     limitations: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        for price_value in (
+            self.information_cutoff_price,
+            self.entry_price,
+            self.target_reference_price,
+        ):
+            if price_value <= 0:
+                raise ValueError("execution diagnostic prices must be positive")
+        for timestamp_value in (
+            self.information_cutoff,
+            self.entry_observed_at,
+            self.entry_available_at,
+            self.target_observed_at,
+            self.target_available_at,
+        ):
+            canonical_datetime(timestamp_value)
+        if self.entry_observed_at > self.entry_available_at:
+            raise ValueError("execution entry availability precedes observation")
+        if self.target_observed_at > self.target_available_at:
+            raise ValueError("execution Target availability precedes observation")
+        if self.proxy is ExecutionPriceProxy.DECISION_REFERENCE_ONLY:
+            if self.executable or self.entry_observed_at > self.information_cutoff:
+                raise ValueError("Decision reference is research-only, not executable")
+        elif (
+            not self.executable
+            or self.entry_observed_at <= self.information_cutoff
+            or self.entry_available_at <= self.information_cutoff
+        ):
+            raise ValueError("executable proxy is outside its observable window")
+        if (
+            self.entry_observed_at >= self.target_observed_at
+            or self.entry_available_at > self.target_available_at
+        ):
+            raise ValueError("execution proxy does not precede Target observation")
+        if (
+            self.gross_return
+            != self.target_reference_price / self.entry_price - Decimal("1")
+        ):
+            raise ValueError("execution diagnostic return disagrees with prices")
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        return {
+            "proxy": self.proxy.value,
+            "information_cutoff_price": str(self.information_cutoff_price),
+            "entry_price": str(self.entry_price),
+            "target_reference_price": str(self.target_reference_price),
+            "gross_return": str(self.gross_return),
+            "executable": self.executable,
+            "information_cutoff": canonical_datetime(self.information_cutoff),
+            "entry_observed_at": canonical_datetime(self.entry_observed_at),
+            "entry_available_at": canonical_datetime(self.entry_available_at),
+            "target_observed_at": canonical_datetime(self.target_observed_at),
+            "target_available_at": canonical_datetime(self.target_available_at),
+            "information_cutoff_reference": self.information_cutoff_reference.to_canonical_dict(),
+            "source_reference": self.source_reference.to_canonical_dict(),
+            "target_source_reference": self.target_source_reference.to_canonical_dict(),
+            "limitations": list(self.limitations),
+        }
 
 
 def diagnose_execution_price(
@@ -301,9 +406,14 @@ def diagnose_execution_price(
         target_reference_price=inputs.target_reference.price,
         gross_return=inputs.target_reference.price / entry.price - Decimal("1"),
         executable=executable,
+        information_cutoff=inputs.information_cutoff,
         entry_observed_at=entry.observed_at,
         entry_available_at=entry.available_at,
+        target_observed_at=inputs.target_reference.observed_at,
+        target_available_at=inputs.target_reference.available_at,
+        information_cutoff_reference=inputs.decision_reference.source_reference,
         source_reference=entry.source_reference,
+        target_source_reference=inputs.target_reference.source_reference,
         limitations=(
             ("RESEARCH_REFERENCE_PRICE_NOT_EXECUTABLE",)
             if not executable
@@ -327,6 +437,14 @@ class FactorPairDiagnostic:
     correlation: Decimal | None
     rank_correlation: Decimal | None
 
+    def to_canonical_dict(self) -> dict[str, Any]:
+        return {
+            "left": self.left,
+            "right": self.right,
+            "correlation": _decimal_text(self.correlation),
+            "rank_correlation": _decimal_text(self.rank_correlation),
+        }
+
 
 @dataclass(frozen=True, slots=True)
 class FactorIncrementalDiagnostic:
@@ -334,6 +452,14 @@ class FactorIncrementalDiagnostic:
     leave_one_out_rank_ic: Decimal | None
     incremental_rank_ic: Decimal | None
     residual_rank_ic: Decimal | None
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        return {
+            "factor_id": self.factor_id,
+            "leave_one_out_rank_ic": _decimal_text(self.leave_one_out_rank_ic),
+            "incremental_rank_ic": _decimal_text(self.incremental_rank_ic),
+            "residual_rank_ic": _decimal_text(self.residual_rank_ic),
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -343,6 +469,31 @@ class FactorRedundancyResult:
     pairs: tuple[FactorPairDiagnostic, ...]
     incremental: tuple[FactorIncrementalDiagnostic, ...]
     status: str
+
+    def __post_init__(self) -> None:
+        if self.factor_ids != tuple(sorted(set(self.factor_ids))):
+            raise ValueError("redundancy Factor identities must be unique and sorted")
+        if self.status not in {
+            "DISTINCT_INFORMATION_SUPPORTED",
+            "LATENT_FACTOR_MULTIPLE_EXPRESSIONS",
+            "PARTIALLY_REDUNDANT",
+            "NOT_ESTIMABLE",
+        }:
+            raise ValueError("unsupported redundancy interpretation")
+        if self.status != "NOT_ESTIMABLE" and (
+            len(self.incremental) != len(self.factor_ids)
+            or {item.factor_id for item in self.incremental} != set(self.factor_ids)
+        ):
+            raise ValueError("redundancy incremental suite is incomplete")
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        return {
+            "factor_ids": list(self.factor_ids),
+            "full_composite_rank_ic": _decimal_text(self.full_composite_rank_ic),
+            "pairs": [item.to_canonical_dict() for item in self.pairs],
+            "incremental": [item.to_canonical_dict() for item in self.incremental],
+            "status": self.status,
+        }
 
 
 def evaluate_factor_redundancy(
@@ -513,6 +664,39 @@ class MovingBlockInferenceProtocol:
     seed: int
     multiple_testing_method: MultipleTestingMethod
 
+    def __post_init__(self) -> None:
+        if (
+            self.iterations <= 0
+            or self.block_lengths != tuple(sorted(set(self.block_lengths)))
+            or not self.block_lengths
+            or any(item <= 0 for item in self.block_lengths)
+            or not Decimal("0") < self.confidence_level < Decimal("1")
+        ):
+            raise ValueError("moving-block protocol dimensions are invalid")
+        digest = canonical_hash(_moving_block_protocol_payload(self))
+        if (
+            digest != self.protocol_hash
+            or self.protocol_id != ArtifactId(f"alpha-inference-protocol:{digest[7:]}")
+        ):
+            raise ValueError("moving-block protocol identity mismatch")
+
+    @property
+    def reference(self) -> ValidationArtifactReference:
+        return ValidationArtifactReference(
+            "ALPHA_INFERENCE_PROTOCOL", self.protocol_id, self.protocol_hash
+        )
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        return {
+            "protocol_id": str(self.protocol_id),
+            "protocol_hash": self.protocol_hash,
+            "iterations": self.iterations,
+            "block_lengths": list(self.block_lengths),
+            "confidence_level": str(self.confidence_level),
+            "seed": self.seed,
+            "multiple_testing_method": self.multiple_testing_method.value,
+        }
+
     @classmethod
     def create(
         cls,
@@ -530,14 +714,13 @@ class MovingBlockInferenceProtocol:
             raise ValueError("moving-block protocol dimensions must be positive")
         if not Decimal("0") < confidence_level < Decimal("1"):
             raise ValueError("confidence level must be within (0, 1)")
-        payload = {
-            "schema_version": "alpha-moving-block-inference/v1",
-            "iterations": iterations,
-            "block_lengths": list(ordered),
-            "confidence_level": str(confidence_level),
-            "seed": seed,
-            "multiple_testing_method": multiple_testing_method.value,
-        }
+        payload = _moving_block_protocol_payload_values(
+            iterations=iterations,
+            block_lengths=ordered,
+            confidence_level=confidence_level,
+            seed=seed,
+            multiple_testing_method=multiple_testing_method,
+        )
         digest = canonical_hash(payload)
         return cls(
             ArtifactId(f"alpha-inference-protocol:{digest[7:]}"),
@@ -557,16 +740,80 @@ class BlockSensitivityEstimate:
     lower: Decimal
     upper: Decimal
 
+    def to_canonical_dict(self) -> dict[str, Any]:
+        return {
+            "block_length": self.block_length,
+            "estimate": str(self.estimate),
+            "lower": str(self.lower),
+            "upper": str(self.upper),
+        }
+
+
+def _moving_block_protocol_payload(
+    value: MovingBlockInferenceProtocol,
+) -> dict[str, Any]:
+    return _moving_block_protocol_payload_values(
+        iterations=value.iterations,
+        block_lengths=value.block_lengths,
+        confidence_level=value.confidence_level,
+        seed=value.seed,
+        multiple_testing_method=value.multiple_testing_method,
+    )
+
+
+def _moving_block_protocol_payload_values(
+    *,
+    iterations: int,
+    block_lengths: tuple[int, ...],
+    confidence_level: Decimal,
+    seed: int,
+    multiple_testing_method: MultipleTestingMethod,
+) -> dict[str, Any]:
+    return {
+        "schema_version": "alpha-moving-block-inference/v1",
+        "iterations": iterations,
+        "block_lengths": list(block_lengths),
+        "confidence_level": str(confidence_level),
+        "seed": seed,
+        "multiple_testing_method": multiple_testing_method.value,
+    }
+
 
 @dataclass(frozen=True, slots=True)
 class RobustInferenceResult:
-    protocol_reference: ValidationArtifactReference
+    protocol: MovingBlockInferenceProtocol
     observation_count: int
     sensitivity: tuple[BlockSensitivityEstimate, ...]
     temporal_stability: str
     raw_p_value: Decimal
     adjusted_p_value: Decimal
     multiple_testing_method: MultipleTestingMethod
+
+    def __post_init__(self) -> None:
+        if (
+            self.multiple_testing_method is not self.protocol.multiple_testing_method
+            or tuple(item.block_length for item in self.sensitivity)
+            != self.protocol.block_lengths
+            or self.observation_count < max(self.protocol.block_lengths)
+            or not Decimal("0") <= self.raw_p_value <= Decimal("1")
+            or not Decimal("0") <= self.adjusted_p_value <= Decimal("1")
+        ):
+            raise ValueError("robust inference result drifted from frozen protocol")
+
+    @property
+    def protocol_reference(self) -> ValidationArtifactReference:
+        return self.protocol.reference
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        return {
+            "protocol": self.protocol.to_canonical_dict(),
+            "observation_count": self.observation_count,
+            "sensitivity": [item.to_canonical_dict() for item in self.sensitivity],
+            "temporal_stability": self.temporal_stability,
+            "raw_p_value": str(self.raw_p_value),
+            "adjusted_p_value": str(self.adjusted_p_value),
+            "multiple_testing_method": self.multiple_testing_method.value,
+        }
 
 
 def evaluate_robust_inference(
@@ -595,7 +842,7 @@ def evaluate_robust_inference_family(
     )
     return {
         name: RobustInferenceResult(
-            item.protocol_reference,
+            protocol,
             item.observation_count,
             item.sensitivity,
             item.temporal_stability,
@@ -607,6 +854,28 @@ def evaluate_robust_inference_family(
             ordered_names, provisional, adjusted, strict=True
         )
     }
+
+
+def factor_rank_ic_session_estimates(
+    observations: tuple[FactorObservation, ...],
+    *,
+    factor_id: str,
+) -> tuple[SessionEstimate, ...]:
+    """Derive the exact per-session RankIC series used by block inference."""
+
+    if factor_id not in _INTRADAY_FACTORS:
+        raise ValueError("session RankIC Factor is outside the frozen intraday family")
+    estimates: list[SessionEstimate] = []
+    for session, values in _factor_by_session(observations).items():
+        if len(values) < 3:
+            continue
+        estimate = _correlation(
+            _ranks(tuple(item.factors[factor_id] for item in values)),
+            _ranks(tuple(item.target_return for item in values)),
+        )
+        if estimate is not None:
+            estimates.append(SessionEstimate(session, estimate))
+    return tuple(estimates)
 
 
 def _evaluate_robust_inference_unadjusted(
@@ -644,9 +913,7 @@ def _evaluate_robust_inference_unadjusted(
     non_negative = Decimal(sum(item >= 0 for item in values)) / Decimal(len(values))
     raw_p_value = min(Decimal("1"), Decimal("2") * min(non_positive, non_negative))
     return RobustInferenceResult(
-        ValidationArtifactReference(
-            "ALPHA_INFERENCE_PROTOCOL", protocol.protocol_id, protocol.protocol_hash
-        ),
+        protocol,
         len(values),
         tuple(sensitivity),
         "STABLE" if stable else "UNSTABLE",
@@ -712,6 +979,26 @@ def _ordered_alpha(
     return ordered
 
 
+def _placebo_result_payload(
+    protocol: FrozenPlaceboProtocol,
+    kind: PlaceboKind,
+    observations: tuple[AlphaObservation, ...],
+) -> dict[str, Any]:
+    return {
+        "protocol": protocol.reference.to_canonical_dict(),
+        "kind": kind.value,
+        "observations": [
+            {
+                "session": item.session.isoformat(),
+                "symbol": item.symbol,
+                "factor_value": str(item.factor_value),
+                "target_return": str(item.target_return),
+            }
+            for item in observations
+        ],
+    }
+
+
 def _ranks(values: tuple[Decimal, ...]) -> tuple[Decimal, ...]:
     indexed = sorted(enumerate(values), key=lambda item: (item[1], item[0]))
     result = [Decimal("0")] * len(values)
@@ -757,6 +1044,10 @@ def _mean(values: tuple[Decimal, ...]) -> Decimal:
 def _random(seed: int, *parts: str) -> Random:
     digest = canonical_hash({"seed": seed, "parts": list(parts)})
     return Random(int(digest[7:23], 16))
+
+
+def _decimal_text(value: Decimal | None) -> str | None:
+    return None if value is None else str(value)
 
 
 __all__ = [

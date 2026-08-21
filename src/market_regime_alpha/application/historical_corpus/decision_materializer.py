@@ -180,6 +180,7 @@ from market_regime_alpha.universe.runtime_scope import (
     RuntimeScopeMembershipSnapshot,
     RuntimeScopeDecision,
     RuntimeScopeReceipt,
+    ResearchUniversePolicy,
     UniversePolicySelector,
     UniverseScopeKind,
     build_runtime_scope,
@@ -590,6 +591,14 @@ class HistoricalDecisionMaterializer:
             ),
             payload={
                 "scope": scope.to_canonical_dict(),
+                "universal_integrity": [
+                    _universal_integrity_projection(
+                        observation=item,
+                        policy=policy,
+                        scope=scope,
+                    )
+                    for item in observations
+                ],
                 "membership": [{"symbol": symbol, "included": membership[symbol]} for symbol in sorted(membership)],
                 "coverage": {
                     "requested": len(membership),
@@ -1818,6 +1827,78 @@ def _eligibility_observation(
     )
 
 
+def _universal_integrity_projection(
+    *,
+    observation: RuntimeEligibilityObservation,
+    policy: ResearchUniversePolicy,
+    scope: RuntimeScopeReceipt,
+) -> dict[str, Any]:
+    checks = {
+        "universe_eligible": observation.included is True,
+        "tradable": (
+            True
+            if not policy.require_tradable
+            else observation.suspended is False
+        ),
+        "suspension_known": observation.suspended is not None,
+        "not_suspended": observation.suspended is False,
+        "data_integrity": all(
+            value is not None
+            for value in (
+                observation.included,
+                observation.listing_status,
+                observation.is_st,
+                observation.suspended,
+                observation.history_sessions,
+                observation.median_daily_amount,
+            )
+        ),
+        "required_history": (
+            observation.history_sessions is not None
+            and observation.history_sessions >= policy.minimum_history_sessions
+        ),
+        "pit_boundary_satisfied": (
+            observation.observed_at <= scope.as_of
+            and observation.known_at <= scope.built_at
+        ),
+        "minimum_liquidity": (
+            observation.median_daily_amount is not None
+            and observation.median_daily_amount
+            >= policy.minimum_median_daily_amount
+        ),
+        "a_share_restrictions": (
+            observation.listing_status == "LISTED"
+            and policy.lot_size == 100
+            and (
+                policy.include_st
+                or observation.is_st is False
+            )
+        ),
+    }
+    reasons = tuple(
+        sorted(
+            f"UNIVERSAL_{name.upper()}_FAILED"
+            for name, passed in checks.items()
+            if not passed
+        )
+    )
+    return {
+        "symbol": observation.symbol,
+        "observation_id": str(observation.observation_id),
+        "observation_hash": observation.observation_hash,
+        "checks": checks,
+        "median_daily_amount": (
+            None
+            if observation.median_daily_amount is None
+            else str(observation.median_daily_amount)
+        ),
+        "eligible": not reasons,
+        "reason_codes": list(reasons),
+        "formal_pit": scope.formal_pit,
+        "evidence_ceiling": scope.evidence_ceiling,
+    }
+
+
 def _security_fact_coverage(
     *,
     universe: Any,
@@ -2819,20 +2900,33 @@ def _decision_reference_price(
     decision_time: datetime,
 ) -> Decimal | None:
     intraday = tuple(
-        item
-        for item in bars
-        if item.symbol == symbol
-        and item.market_date == trading_date
-        and item.timeframe is Timeframe.MINUTE_5
-        and item.event_end <= decision_time
-        and item.close is not None
+        sorted(
+            (
+                item
+                for item in bars
+                if item.symbol == symbol
+                and item.market_date == trading_date
+                and item.timeframe is Timeframe.MINUTE_5
+                and item.event_end <= decision_time
+                and item.close is not None
+            ),
+            key=_historical_bar_key,
+        )
     )
     if intraday:
         return intraday[-1].close
     daily = tuple(
-        item
-        for item in bars
-        if item.symbol == symbol and item.timeframe is Timeframe.DAILY and item.event_end <= decision_time and item.close is not None
+        sorted(
+            (
+                item
+                for item in bars
+                if item.symbol == symbol
+                and item.timeframe is Timeframe.DAILY
+                and item.event_end <= decision_time
+                and item.close is not None
+            ),
+            key=_historical_bar_key,
+        )
     )
     return None if not daily else daily[-1].close
 
@@ -2963,6 +3057,13 @@ def _research_panel_rows(
             "historical business facts",
         )
     }
+    universal_integrity = {
+        str(item["symbol"]): item
+        for item in _objects(
+            pool.payload.get("universal_integrity", []),
+            "universal integrity",
+        )
+    }
     action_exclusions = {
         str(item["symbol"])
         for item in _objects(
@@ -2987,6 +3088,9 @@ def _research_panel_rows(
         business = business_facts.get(symbol, {})
         market_cap = _optional_decimal(business.get("market_cap"))
         scope_record = scope_by_symbol[symbol]
+        universal = universal_integrity.get(symbol)
+        if universal is None:
+            raise ValueError("Research Panel lacks universal-integrity owner projection")
         required_features_complete = all(
             values.get(output_id) is not None
             for output_id in ("return_3", "amount_ratio_5")
@@ -2994,10 +3098,6 @@ def _research_panel_rows(
         # Universal legality is independent from the incumbent Candidate's two
         # preferred inputs.  Factor availability remains explicit below so a
         # different frozen hypothesis is not excluded by return_3/amount_ratio_5.
-        hard_integrity_passed = (
-            scope_record.decision is RuntimeScopeDecision.INCLUDED
-        )
-        hard_reasons = set(scope_record.reason_codes)
         market_passed = candidate_market_gate_passed(market_snapshot)
         theme_passed = candidate_theme_gate_passed(record.theme_rotation_state)
         capital_passed = candidate_capital_gate_passed(
@@ -3033,9 +3133,12 @@ def _research_panel_rows(
                 },
                 "gate_diagnostics": {
                     "hard_integrity": {
-                        "passed": hard_integrity_passed,
+                        "passed": bool(universal["eligible"]),
                         "decision": scope_record.decision.value,
-                        "reason_codes": sorted(hard_reasons),
+                        "reason_codes": list(universal["reason_codes"]),
+                        "owner_reason_codes": list(scope_record.reason_codes),
+                        "checks": dict(universal["checks"]),
+                        "liquidity": universal["median_daily_amount"],
                     },
                     "factor_availability": {
                         "INCUMBENT_PRICE_VOLUME": {
@@ -3109,6 +3212,24 @@ def _research_panel_rows(
                     }
                 ),
                 "target_return": (None if label is None else _decimal_string(label.checkpoint_return)),
+                "target_reference": (
+                    None if label is None else label.target.to_canonical_dict()
+                ),
+                "target_label_reference": (
+                    None
+                    if label is None
+                    else ValidationArtifactReference(
+                        "TARGET_OUTCOME_LABEL", label.label_id, label.label_hash
+                    ).to_canonical_dict()
+                ),
+                "decision_reference_price": (
+                    None
+                    if label is None
+                    else _decimal_string(label.decision_reference_price)
+                ),
+                "target_reference_price": (
+                    None if label is None else _decimal_string(label.checkpoint_price)
+                ),
                 "target_status": (
                     "CORPORATE_ACTION_EXCLUDED"
                     if symbol in action_exclusions
@@ -3119,6 +3240,24 @@ def _research_panel_rows(
                 "mfe": None if label is None else _decimal_string(label.mfe),
                 "mae": None if label is None else _decimal_string(label.mae),
                 "gross_return": (None if result is None else result.get("gross_return")),
+                "executable_entry_price": (
+                    None if result is None else result.get("entry_price")
+                ),
+                "economics_result_reference": (
+                    None
+                    if result is None
+                    else ValidationArtifactReference(
+                        "STRATEGY_ECONOMICS_RESULT",
+                        ArtifactId(str(result["result_id"])),
+                        str(result["result_hash"]),
+                    ).to_canonical_dict()
+                ),
+                "economics_policy_reference": (
+                    None if result is None else result.get("policy_reference")
+                ),
+                "entry_execution_reference": (
+                    None if result is None else result.get("entry_execution_reference")
+                ),
                 "cost_return": (None if result is None else result.get("cost_return")),
                 "net_return": (None if result is None else result.get("net_return")),
                 "economics_status": ("NOT_ESTIMABLE" if result is None else str(result["status"])),

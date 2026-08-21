@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Context, Decimal, ROUND_HALF_EVEN, localcontext
+from typing import Protocol
 
 from market_regime_alpha.application.continuous_research.journal import (
     RuntimeArtifactReference,
@@ -42,6 +43,12 @@ _STRATEGY_DECIMAL_CONTEXT = Context(prec=28, rounding=ROUND_HALF_EVEN)
 class _Eligibility:
     status: StrategyEligibilityStatus
     reason_codes: tuple[str, ...]
+
+
+class StrategyOpportunityAuthority(Protocol):
+    """Reload the exact Signal/Forecast/Context/Risk owners for one projection."""
+
+    def reload(self, opportunity: StrategyOpportunityInput) -> StrategyOpportunityInput: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -242,8 +249,14 @@ class _ConditionalPredictionPolicy(_StrategyPolicy):
 class MultiStrategyRuntime:
     """Runs every active Strategy Version without owning the control plane."""
 
-    def __init__(self, registry: StrategyRegistry) -> None:
+    def __init__(
+        self,
+        registry: StrategyRegistry,
+        *,
+        opportunity_authority: StrategyOpportunityAuthority | None = None,
+    ) -> None:
         self._registry = registry
+        self._opportunity_authority = opportunity_authority
         self._policies: dict[StrategyFamily, _StrategyPolicy] = {
             StrategyFamily.OVERNIGHT: _OvernightPolicy(),
             StrategyFamily.SWING_STATE: _SwingStatePolicy(),
@@ -261,6 +274,14 @@ class MultiStrategyRuntime:
             strategy_reference(item): self._registry.contract_for(item)
             for item in self._registry.active_versions
         }
+        if runtime_input.opportunities:
+            if self._opportunity_authority is None:
+                raise ValueError(
+                    "Strategy opportunities require canonical PostgreSQL owner reload"
+                )
+            for opportunity in runtime_input.opportunities:
+                if self._opportunity_authority.reload(opportunity) != opportunity:
+                    raise ValueError("Strategy opportunity owner projection drifted")
         for opportunity in runtime_input.opportunities or ():
             contract = active.get(opportunity.strategy_version_reference)
             if contract is None:
@@ -450,6 +471,11 @@ def _eligibility(
                 StrategyEligibilityStatus.INELIGIBLE,
                 ("SIGNAL_NOT_ACTIVE",),
             )
+        if not opportunity.risk_allows_action:
+            return _Eligibility(
+                StrategyEligibilityStatus.INELIGIBLE,
+                tuple(sorted({"RISK_STATE_REJECTED", *opportunity.risk_reason_codes})),
+            )
         if opportunity.expected_return is None:
             return _Eligibility(
                 StrategyEligibilityStatus.NOT_ESTIMABLE,
@@ -474,4 +500,4 @@ def _candidate_reference(
     return RuntimeArtifactReference("CANDIDATE_SET", envelope.artifact_id, envelope.content_hash)
 
 
-__all__ = ["MultiStrategyRuntime"]
+__all__ = ["MultiStrategyRuntime", "StrategyOpportunityAuthority"]

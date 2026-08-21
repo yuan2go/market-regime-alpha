@@ -54,7 +54,10 @@ from market_regime_alpha.strategies.portfolio import (
 from market_regime_alpha.strategies.postgres_repository import (
     PostgresMultiStrategyRepository,
 )
-from market_regime_alpha.strategies.runtime import MultiStrategyRuntime
+from market_regime_alpha.strategies.runtime import (
+    MultiStrategyRuntime,
+    StrategyOpportunityAuthority,
+)
 
 
 class HistoricalStageDelegate(Protocol):
@@ -89,6 +92,7 @@ class MultiStrategyHistoricalAdapter:
     parent_run_reference: RuntimeArtifactReference
     portfolio_policy: CrossStrategyPortfolioPolicy
     opportunity_resolver: HistoricalStrategyOpportunityResolver | None = None
+    opportunity_authority: StrategyOpportunityAuthority | None = None
 
     def compute_stage(
         self,
@@ -162,7 +166,12 @@ class MultiStrategyHistoricalAdapter:
             ),
             opportunities=opportunities,
         )
-        cycle = self.strategy_repository.save_cycle(MultiStrategyRuntime(registry).execute(runtime_input))
+        cycle = self.strategy_repository.save_cycle(
+            MultiStrategyRuntime(
+                registry,
+                opportunity_authority=self.opportunity_authority,
+            ).execute(runtime_input)
+        )
         return _extend(
             delegated,
             ValidationArtifactReference(

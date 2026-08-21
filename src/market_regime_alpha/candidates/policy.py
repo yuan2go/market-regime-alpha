@@ -36,6 +36,34 @@ class CandidatePolicyRole(str, Enum):
     CHALLENGER = "CHALLENGER"
 
 
+def research_panel_dataset_reference(
+    panel_references: tuple[ValidationArtifactReference, ...],
+) -> ValidationArtifactReference:
+    ordered = tuple(
+        sorted(
+            set(panel_references),
+            key=lambda item: (
+                item.artifact_kind,
+                str(item.artifact_id),
+                item.content_hash,
+            ),
+        )
+    )
+    if not ordered or any(
+        item.artifact_kind not in {"RESEARCH_PANEL", "HISTORICAL_RESEARCH_PANEL"}
+        for item in ordered
+    ):
+        raise ValueError("Candidate dataset requires Research Panel owners")
+    digest = canonical_hash(
+        {"research_panel_references": [item.to_canonical_dict() for item in ordered]}
+    )
+    return ValidationArtifactReference(
+        "RESEARCH_PANEL_DATASET",
+        ArtifactId(f"research-panel-dataset:{digest[7:]}"),
+        digest,
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class ValidatedFactorDefinition:
     factor_id: str
@@ -51,6 +79,8 @@ class ValidatedFactorDefinition:
             raise ValueError("validated Candidate factor definition is invalid")
         if self.weight <= 0:
             raise ValueError("validated Candidate factor weight must be positive")
+        if self.weight != Decimal("1"):
+            raise ValueError("equal-weight External Alpha cannot be reweighted post-validation")
         self.external_validation_evidence.verify_identity()
         if (
             self.external_validation_evidence.evidence_kind
@@ -209,6 +239,7 @@ class CandidatePolicyDefinition:
 class CandidatePolicyInput:
     session: date
     symbol: str
+    dataset_reference: ValidationArtifactReference
     universe_eligible: bool
     tradable: bool
     suspended: bool
@@ -224,6 +255,8 @@ class CandidatePolicyInput:
     incumbent_factor_contributions: Mapping[str, Decimal]
     incumbent_hard_integrity_eligible: bool
     incumbent_hard_gate_failure_reasons: tuple[str, ...]
+    universal_hard_integrity_eligible: bool
+    universal_hard_gate_failure_reasons: tuple[str, ...]
 
     def __post_init__(self) -> None:
         if not self.symbol.strip() or not self.liquidity.is_finite() or self.liquidity < 0:
@@ -249,6 +282,23 @@ class CandidatePolicyInput:
             not self.incumbent_hard_integrity_eligible or self.incumbent_score is None
         ):
             raise ValueError("Candidate incumbent selection requires eligible scored input")
+        if self.universal_hard_gate_failure_reasons != tuple(
+            sorted(set(self.universal_hard_gate_failure_reasons))
+        ) or self.universal_hard_integrity_eligible == bool(
+            self.universal_hard_gate_failure_reasons
+        ):
+            raise ValueError("Candidate universal Hard Integrity owner projection drifted")
+        projected_eligible = (
+            self.universe_eligible
+            and self.tradable
+            and not self.suspended
+            and self.data_integrity
+            and self.required_history
+            and self.pit_correct
+            and self.trading_restrictions_satisfied
+        )
+        if projected_eligible != self.universal_hard_integrity_eligible:
+            raise ValueError("Candidate universal Hard Integrity checks disagree")
 
 
 @dataclass(frozen=True, slots=True)
@@ -429,6 +479,28 @@ class CandidatePolicyComparison:
 
 
 @dataclass(frozen=True, slots=True)
+class CandidateRealizedReturn:
+    session: date
+    symbol: str
+    value: Decimal
+    dataset_reference: ValidationArtifactReference
+    target_reference: ValidationArtifactReference
+
+    def __post_init__(self) -> None:
+        if not self.symbol.strip() or not self.value.is_finite():
+            raise ValueError("Candidate realized Target is invalid")
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        return {
+            "session": self.session.isoformat(),
+            "symbol": self.symbol,
+            "return": str(self.value),
+            "dataset_reference": self.dataset_reference.to_canonical_dict(),
+            "target_reference": self.target_reference.to_canonical_dict(),
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class CandidateComparisonProtocol:
     protocol_id: ArtifactId
     protocol_hash: str
@@ -491,6 +563,8 @@ def evaluate_candidate_policy(
     inputs: tuple[CandidatePolicyInput, ...],
 ) -> CandidatePolicyEvaluation:
     ordered = tuple(sorted(inputs, key=lambda item: (item.session, item.symbol)))
+    if any(item.dataset_reference != policy.dataset_reference for item in ordered):
+        raise ValueError("Candidate input is outside the frozen dataset owner")
     keys = tuple((item.session, item.symbol) for item in ordered)
     if len(keys) != len(set(keys)):
         raise ValueError("Candidate Policy inputs must be unique")
@@ -683,7 +757,7 @@ def compare_candidate_policies(
     challenger: CandidatePolicyEvaluation,
     *,
     protocol: CandidateComparisonProtocol,
-    realized_returns: Mapping[tuple[date, str], Decimal],
+    realized_returns: tuple[CandidateRealizedReturn, ...],
 ) -> CandidatePolicyComparison:
     if incumbent.policy_reference.artifact_kind != "INCUMBENT_CANDIDATE_POLICY":
         raise ValueError("Candidate comparison requires incumbent first")
@@ -698,28 +772,28 @@ def compare_candidate_policies(
     challenger_keys = {(item.session, item.symbol) for item in challenger.records}
     if incumbent_keys != challenger_keys or not incumbent_keys:
         raise ValueError("Candidate comparison requires the same frozen dataset")
-    if set(realized_returns) != incumbent_keys:
+    targets = tuple(sorted(realized_returns, key=lambda item: (item.session, item.symbol)))
+    target_keys = tuple((item.session, item.symbol) for item in targets)
+    if len(target_keys) != len(set(target_keys)) or set(target_keys) != incumbent_keys:
         raise ValueError("Candidate comparison target population drifted")
-    if any(not value.is_finite() for value in realized_returns.values()):
-        raise ValueError("Candidate comparison realized returns must be finite")
+    if any(
+        item.dataset_reference != protocol.dataset_reference
+        or item.target_reference != protocol.target_reference
+        for item in targets
+    ):
+        raise ValueError("Candidate comparison Target owner lineage drifted")
+    realized = {(item.session, item.symbol): item.value for item in targets}
     realized_return_set_hash = canonical_hash(
         {
-            "realized_returns": [
-                {
-                    "session": session.isoformat(),
-                    "symbol": symbol,
-                    "return": str(realized_returns[(session, symbol)]),
-                }
-                for session, symbol in sorted(incumbent_keys)
-            ]
+            "realized_returns": [item.to_canonical_dict() for item in targets]
         }
     )
     incumbent_coverage = _coverage(incumbent.records)
     challenger_coverage = _coverage(challenger.records)
-    incumbent_ic = _rank_ic(incumbent.records, realized_returns)
-    challenger_ic = _rank_ic(challenger.records, realized_returns)
-    incumbent_top = _selected_return(incumbent.records, realized_returns)
-    challenger_top = _selected_return(challenger.records, realized_returns)
+    incumbent_ic = _rank_ic(incumbent.records, realized)
+    challenger_ic = _rank_ic(challenger.records, realized)
+    incumbent_top = _selected_return(incumbent.records, realized)
+    challenger_top = _selected_return(challenger.records, realized)
     incumbent_selected = _selected_weights(incumbent.records)
     challenger_selected = _selected_weights(challenger.records)
     shared_sessions = tuple(sorted(incumbent_selected.keys() & challenger_selected.keys()))
@@ -740,8 +814,8 @@ def compare_candidate_policies(
         / Decimal("2")
         for session in shared_sessions
     )
-    incumbent_daily = _selected_daily_returns(incumbent.records, realized_returns)
-    challenger_daily = _selected_daily_returns(challenger.records, realized_returns)
+    incumbent_daily = _selected_daily_returns(incumbent.records, realized)
+    challenger_daily = _selected_daily_returns(challenger.records, realized)
     incumbent_net = (
         None if incumbent_top is None else incumbent_top - protocol.cost_assumption
     )
@@ -754,7 +828,7 @@ def compare_candidate_policies(
     challenger_drawdown = _drawdown(
         tuple(item - protocol.cost_assumption for item in challenger_daily)
     )
-    stability = _comparison_stability(challenger.records, realized_returns)
+    stability = _comparison_stability(challenger.records, realized)
     values = {
         "incumbent_reference": incumbent.policy_reference.to_canonical_dict(),
         "challenger_reference": challenger.policy_reference.to_canonical_dict(),
@@ -805,23 +879,9 @@ def compare_candidate_policies(
 def _hard_integrity(
     policy: CandidatePolicyDefinition, item: CandidatePolicyInput
 ) -> tuple[str, ...]:
-    reasons = set()
-    if not item.universe_eligible:
-        reasons.add("UNIVERSE_INELIGIBLE")
-    if not item.tradable:
-        reasons.add("NOT_TRADABLE")
-    if item.suspended:
-        reasons.add("SUSPENDED")
-    if not item.data_integrity:
-        reasons.add("DATA_INTEGRITY_FAILED")
-    if not item.required_history:
-        reasons.add("REQUIRED_HISTORY_MISSING")
-    if not item.pit_correct:
-        reasons.add("PIT_CORRECTNESS_FAILED")
+    reasons = set(item.universal_hard_gate_failure_reasons)
     if item.liquidity < policy.minimum_liquidity:
         reasons.add("MINIMUM_LIQUIDITY_FAILED")
-    if not item.trading_restrictions_satisfied:
-        reasons.add("A_SHARE_TRADING_RESTRICTION_FAILED")
     return tuple(sorted(reasons))
 
 
@@ -1046,8 +1106,10 @@ __all__ = [
     "CandidatePolicyInput",
     "CandidatePolicyRecord",
     "CandidatePolicyRole",
+    "CandidateRealizedReturn",
     "ContextAdjustmentDefinition",
     "ValidatedFactorDefinition",
     "compare_candidate_policies",
     "evaluate_candidate_policy",
+    "research_panel_dataset_reference",
 ]
