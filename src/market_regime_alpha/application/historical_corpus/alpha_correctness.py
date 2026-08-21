@@ -7,6 +7,7 @@ the T+1 10:30 target without reading their persisted numerical outputs.
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 from datetime import date, datetime, time
 from decimal import Decimal, ROUND_HALF_EVEN
@@ -754,6 +755,93 @@ class AlphaCorrectnessProof:
             **self.identity_payload(),
         }
 
+    def to_evidence_dict(self) -> dict[str, object]:
+        """Return a bounded projection while retaining the full proof Merkle root.
+
+        The in-memory proof is owner-rebuilt before admission. PostgreSQL Evidence
+        stores its exact root and diagnostic summaries instead of duplicating
+        millions of source-bar bindings and placebo observations in one JSONB
+        value. The immutable source owners make the full proof reproducible.
+        """
+
+        factor_ids = tuple(
+            sorted(
+                {
+                    comparison.factor_id
+                    for result in self.feature_results
+                    for comparison in result.comparisons
+                }
+            )
+        )
+        projection: dict[str, object] = {
+            "schema_version": "alpha-correctness-evidence-projection/v1",
+            "status": self.status.value,
+            "conclusion": self.conclusion.value,
+            "factor_ids": list(factor_ids),
+            "feature_results": _result_population_summary(self.feature_results),
+            "target_results": _result_population_summary(self.target_results),
+            "physical_verifications": [
+                {
+                    "normalized_owner_reference": (
+                        item.normalized_owner_reference.to_canonical_dict()
+                    ),
+                    "physical_hash": item.physical_hash,
+                    "checksums_hash": item.checksums_hash,
+                    "checksum_count": len(item.checksums),
+                    "normalized_bar_binding_count": len(
+                        item.normalized_bar_bindings
+                    ),
+                }
+                for item in self.physical_verifications
+            ],
+            "normalization_verifications": [
+                {
+                    "verification_id": str(item.verification_id),
+                    "verification_hash": item.verification_hash,
+                    "provenance": item.provenance.value,
+                    "raw_owner_reference": item.raw_owner_reference.to_canonical_dict(),
+                    "normalized_owner_reference": (
+                        item.normalized_owner_reference.to_canonical_dict()
+                    ),
+                    "comparison_count": item.comparison_count,
+                    "independent_value_hash": item.independent_value_hash,
+                    "canonical_value_hash": item.canonical_value_hash,
+                    "status": item.status.value,
+                    "discrepancy_count": len(item.discrepancies),
+                    "reason_codes": list(item.reason_codes),
+                }
+                for item in self.normalization_verifications
+            ],
+            "placebo_results": [
+                {
+                    "protocol_reference": item.protocol_reference.to_canonical_dict(),
+                    "factor_id": item.factor_id,
+                    "target_id": item.target_id,
+                    "kind": item.kind.value,
+                    "observation_count": len(item.observations),
+                    "result_hash": item.result_hash,
+                }
+                for item in self.placebo_results
+            ],
+            "execution_diagnostics": [
+                item.to_canonical_dict() for item in self.execution_diagnostics
+            ],
+            "factor_redundancy": self.factor_redundancy.to_canonical_dict(),
+            "robust_inference": [
+                {"factor_id": factor_id, "result": result.to_canonical_dict()}
+                for factor_id, result in self.robust_inference
+            ],
+            "limitations": list(self.limitations),
+            "full_proof_owner_reload_required": True,
+        }
+        projection_hash = canonical_hash(projection)
+        return {
+            "proof_id": str(self.proof_id),
+            "proof_hash": self.proof_hash,
+            "projection_hash": projection_hash,
+            **projection,
+        }
+
 
 def build_alpha_correctness_proof(
     *,
@@ -868,6 +956,21 @@ def build_alpha_correctness_proof(
         inference,
         limitations,
     )
+
+
+def _result_population_summary(
+    results: tuple[FeatureReproductionResult, ...]
+    | tuple[TargetReproductionResult, ...],
+) -> dict[str, object]:
+    statuses = Counter(item.status.value for item in results)
+    discrepancies = Counter(
+        discrepancy for item in results for discrepancy in item.discrepancies
+    )
+    return {
+        "count": len(results),
+        "status_counts": dict(sorted(statuses.items())),
+        "discrepancy_counts": dict(sorted(discrepancies.items())),
+    }
 
 
 def _derive_proof_status(

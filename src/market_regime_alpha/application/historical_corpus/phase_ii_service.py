@@ -106,7 +106,7 @@ from market_regime_alpha.candidates.policy import (
     research_panel_dataset_reference,
 )
 from market_regime_alpha.core.identity import ArtifactId
-from market_regime_alpha.evidence.canonical import canonical_hash
+from market_regime_alpha.evidence.canonical import canonical_hash, require_sha256
 from market_regime_alpha.forecasting.conditional import (
     ConditionalForecastConfig,
     ConditionalForecastResult,
@@ -623,7 +623,7 @@ class HistoricalPhaseIIResearchService:
                 write,
                 payload={
                     "status": proof.conclusion.value,
-                    "proof": proof.to_canonical_dict(),
+                    "proof": proof.to_evidence_dict(),
                 },
             )
         )
@@ -835,6 +835,7 @@ class HistoricalPhaseIIResearchService:
     def _persist(self, write: PhaseIIEvidenceWrite) -> HistoricalResearchEvidence:
         if not write.source_references:
             raise ValueError("Phase II Evidence requires immutable owner sources")
+        _verify_phase_ii_payload_values(write.evidence_kind, write.payload)
         evidence = HistoricalResearchEvidence.create(
             run_id=write.run_id,
             command_hash=write.command_hash,
@@ -877,8 +878,17 @@ def _verify_phase_ii_payload_values(
             "INCONCLUSIVE",
         }:
             raise ValueError("Alpha Correctness Evidence status is invalid")
+        raw_proof = payload.get("proof")
+        proof = (
+            _correctness_proof_projection(raw_proof)
+            if isinstance(raw_proof, Mapping)
+            else None
+        )
+        if proof is not None and proof.get("conclusion") != payload.get("status"):
+            raise ValueError("Alpha Correctness status projection drifted")
         if payload.get("status") == "CORRECTNESS_SUPPORTED":
-            proof = _embedded_artifact(payload, "proof", "proof_id", "proof_hash")
+            if proof is None:
+                raise ValueError("supported Alpha Correctness lacks typed proof")
             if proof.get("conclusion") != "CORRECTNESS_SUPPORTED":
                 raise ValueError("Alpha Correctness status projection drifted")
             required_suite = {
@@ -948,6 +958,41 @@ def _verify_phase_ii_payload_values(
             raise ValueError("Conditional Forecast configuration projection drifted")
         if _path_forecast_reference(baseline) != result.baseline_reference:
             raise ValueError("Conditional Forecast baseline projection drifted")
+
+
+def _correctness_proof_projection(
+    value: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    proof_id = value.get("proof_id")
+    proof_hash = value.get("proof_hash")
+    projection_hash = value.get("projection_hash")
+    if not isinstance(proof_id, str) or not isinstance(proof_hash, str):
+        raise ValueError("Alpha Correctness proof projection identity is incomplete")
+    require_sha256("Alpha Correctness proof hash", proof_hash)
+    if proof_id != f"alpha-correctness-proof:{proof_hash[7:]}":
+        raise ValueError("Alpha Correctness full proof root identity mismatch")
+    if projection_hash is None:
+        legacy_payload = dict(value)
+        del legacy_payload["proof_id"]
+        del legacy_payload["proof_hash"]
+        if canonical_hash(legacy_payload) != proof_hash:
+            raise ValueError("Alpha Correctness legacy proof hash mismatch")
+        return value
+    if not isinstance(projection_hash, str):
+        raise ValueError("Alpha Correctness proof projection identity is incomplete")
+    require_sha256("Alpha Correctness proof projection hash", projection_hash)
+    projection = dict(value)
+    del projection["proof_id"]
+    del projection["proof_hash"]
+    del projection["projection_hash"]
+    if (
+        canonical_hash(projection) != projection_hash
+        or projection.get("schema_version")
+        != "alpha-correctness-evidence-projection/v1"
+        or projection.get("full_proof_owner_reload_required") is not True
+    ):
+        raise ValueError("Alpha Correctness proof projection hash mismatch")
+    return value
 
 
 def _embedded_artifact(
@@ -1207,16 +1252,20 @@ def _verify_hypothesis_against_owner_evidence(
     proof = correctness.payload.get("proof")
     if not isinstance(proof, Mapping):
         raise ValueError("frozen hypothesis requires a typed Alpha Correctness proof")
-    feature_results = proof.get("feature_results")
-    if not isinstance(feature_results, list):
-        raise ValueError("Alpha Correctness proof lacks Feature results")
-    correctness_factors = {
-        str(comparison.get("factor_id"))
-        for result in feature_results
-        if isinstance(result, Mapping)
-        for comparison in result.get("comparisons", [])
-        if isinstance(comparison, Mapping)
-    }
+    factor_projection = proof.get("factor_ids")
+    if isinstance(factor_projection, list):
+        correctness_factors = {str(item) for item in factor_projection}
+    else:
+        feature_results = proof.get("feature_results")
+        if not isinstance(feature_results, list):
+            raise ValueError("Alpha Correctness proof lacks Feature results")
+        correctness_factors = {
+            str(comparison.get("factor_id"))
+            for result in feature_results
+            if isinstance(result, Mapping)
+            for comparison in result.get("comparisons", [])
+            if isinstance(comparison, Mapping)
+        }
     hypothesis_factors = {factor_id for factor_id, _direction in hypothesis.factor_directions}
     if correctness_factors != hypothesis_factors:
         raise ValueError("frozen hypothesis Factors drifted from Alpha Correctness proof")

@@ -361,6 +361,21 @@ def test_correctness_proof_requires_all_factors_target_and_physical_lineage(
     assert proof.conclusion is AlphaCorrectnessConclusion.CORRECTNESS_SUPPORTED
     assert proof.reference.content_hash == proof.proof_hash
     assert "ALPHA_PROVEN_FALSE" in proof.limitations
+    evidence_projection = proof.to_evidence_dict()
+    assert evidence_projection["proof_hash"] == proof.proof_hash
+    assert evidence_projection["full_proof_owner_reload_required"] is True
+    assert evidence_projection["feature_results"] == {
+        "count": 1,
+        "status_counts": {"CORRECTNESS_SUPPORTED": 1},
+        "discrepancy_counts": {},
+    }
+    assert evidence_projection["physical_verifications"][0][
+        "normalized_bar_binding_count"
+    ] > 0
+    assert all(
+        "observations" not in item
+        for item in evidence_projection["placebo_results"]
+    )
 
     incomplete = build_alpha_correctness_proof(
         feature_results=(features,),
