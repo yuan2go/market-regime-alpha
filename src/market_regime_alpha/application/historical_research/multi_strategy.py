@@ -54,6 +54,9 @@ from market_regime_alpha.strategies.portfolio import (
 from market_regime_alpha.strategies.postgres_repository import (
     PostgresMultiStrategyRepository,
 )
+from market_regime_alpha.strategies.postgres_opportunity import (
+    StrategyOpportunityResolverAuthority,
+)
 from market_regime_alpha.strategies.runtime import (
     MultiStrategyRuntime,
     StrategyOpportunityAuthority,
@@ -80,6 +83,30 @@ class HistoricalStrategyOpportunityResolver(Protocol):
         candidates: CandidateSet,
         registry: StrategyRegistry,
     ) -> tuple[StrategyOpportunityInput, ...]: ...
+
+
+@dataclass(frozen=True, slots=True)
+class PostgresHistoricalStrategyOpportunityResolver:
+    """Resolve the same persisted Opportunity owners for Historical Strategy."""
+
+    authority: StrategyOpportunityResolverAuthority
+
+    def resolve(
+        self,
+        *,
+        request: ResearchDecisionSessionRequest,
+        candidates: CandidateSet,
+        registry: StrategyRegistry,
+    ) -> tuple[StrategyOpportunityInput, ...]:
+        return self.authority.resolve(
+            candidate_reference=RuntimeArtifactReference(
+                "CANDIDATE_SET",
+                candidates.envelope.artifact_id,
+                candidates.envelope.content_hash,
+            ),
+            decision_time=request.decision_time,
+            registry=registry,
+        )
 
 
 @dataclass(slots=True)
@@ -409,4 +436,7 @@ def _validation_references(
     return tuple(values[key] for key in sorted(values))
 
 
-__all__ = ["MultiStrategyHistoricalAdapter"]
+__all__ = [
+    "MultiStrategyHistoricalAdapter",
+    "PostgresHistoricalStrategyOpportunityResolver",
+]

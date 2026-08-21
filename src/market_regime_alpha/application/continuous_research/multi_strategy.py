@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Protocol
 
@@ -40,6 +40,9 @@ from market_regime_alpha.strategies.portfolio import (
 from market_regime_alpha.strategies.postgres_repository import (
     PostgresMultiStrategyRepository,
 )
+from market_regime_alpha.strategies.postgres_opportunity import (
+    StrategyOpportunityResolverAuthority,
+)
 from market_regime_alpha.strategies.runtime import (
     MultiStrategyRuntime,
     StrategyOpportunityAuthority,
@@ -56,6 +59,30 @@ class ContinuousStrategyOpportunityResolver(Protocol):
         candidates: CandidateSet,
         registry: StrategyRegistry,
     ) -> tuple[StrategyOpportunityInput, ...]: ...
+
+
+@dataclass(frozen=True, slots=True)
+class PostgresContinuousStrategyOpportunityResolver:
+    """Resolve exact persisted opportunities for one Continuous Candidate owner."""
+
+    authority: StrategyOpportunityResolverAuthority
+
+    def resolve(
+        self,
+        *,
+        request: ChildExecutionRequest,
+        candidates: CandidateSet,
+        registry: StrategyRegistry,
+    ) -> tuple[StrategyOpportunityInput, ...]:
+        return self.authority.resolve(
+            candidate_reference=RuntimeArtifactReference(
+                "CANDIDATE_SET",
+                candidates.envelope.artifact_id,
+                candidates.envelope.content_hash,
+            ),
+            decision_time=request.as_of_time,
+            registry=registry,
+        )
 
 
 class MultiStrategyContinuousAdapter:
@@ -277,5 +304,6 @@ def _reference_set(
 __all__ = [
     "ContinuousStrategyOpportunityResolver",
     "MultiStrategyContinuousAdapter",
+    "PostgresContinuousStrategyOpportunityResolver",
     "freeze_strategy_decision_prices",
 ]

@@ -650,6 +650,7 @@ def _strategy_opportunity_payload(**values: Any) -> dict[str, Any]:
     expected_return = values["expected_return"]
     prediction_uncertainty = values["prediction_uncertainty"]
     return {
+        "schema_version": "strategy-opportunity/v1",
         "symbol": values["symbol"],
         "strategy_version_reference": values[
             "strategy_version_reference"
@@ -842,9 +843,7 @@ class StrategyOpportunityInput:
                 "HISTORICAL_CONTEXT",
             },
             "risk_state_reference": {
-                "RISK_STATE",
-                "HISTORICAL_RISK_STATE",
-                "COMPLETE_ACCOUNT_RISK_DECISION",
+                "PRE_STRATEGY_RISK_STATE",
             },
             "model_reference": {
                 "CONDITIONAL_FORECAST_MODEL",
@@ -906,6 +905,18 @@ class StrategyOpportunityInput:
 
     def to_canonical_dict(self) -> dict[str, Any]:
         return {**self.identity_payload(), "binding_hash": self.binding_hash}
+
+    @property
+    def opportunity_id(self) -> ArtifactId:
+        return ArtifactId(f"strategy-opportunity:{self.binding_hash[7:]}")
+
+    @property
+    def reference(self) -> RuntimeArtifactReference:
+        return RuntimeArtifactReference(
+            "STRATEGY_OPPORTUNITY",
+            self.opportunity_id,
+            self.binding_hash,
+        )
 
     @classmethod
     def from_canonical_dict(
