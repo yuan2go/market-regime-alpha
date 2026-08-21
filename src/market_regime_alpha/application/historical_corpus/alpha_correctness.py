@@ -32,6 +32,10 @@ from market_regime_alpha.application.historical_corpus.materialization_contracts
 from market_regime_alpha.application.historical_corpus.postgres_materialization import (
     PostgresHistoricalMaterializationRepository,
 )
+from market_regime_alpha.application.historical_corpus.raw_normalization_correctness import (
+    IndependentNormalizationStatus,
+    IndependentNormalizationVerification,
+)
 from market_regime_alpha.application.research_evaluation.targeted_outcome import (
     TargetOutcomeLabel,
 )
@@ -74,6 +78,12 @@ class AlphaCorrectnessStatus(str, Enum):
     PHYSICAL_REPRODUCTION_NOT_ESTABLISHED = (
         "PHYSICAL_REPRODUCTION_NOT_ESTABLISHED"
     )
+
+
+class AlphaCorrectnessConclusion(str, Enum):
+    CORRECTNESS_SUPPORTED = "CORRECTNESS_SUPPORTED"
+    CORRECTNESS_FAILED = "CORRECTNESS_FAILED"
+    INCONCLUSIVE = "INCONCLUSIVE"
 
 
 @dataclass(frozen=True, slots=True)
@@ -643,6 +653,7 @@ class AlphaCorrectnessProof:
     feature_results: tuple[FeatureReproductionResult, ...]
     target_results: tuple[TargetReproductionResult, ...]
     physical_verifications: tuple[PhysicalSourceVerification, ...]
+    normalization_verifications: tuple[IndependentNormalizationVerification, ...]
     placebo_results: tuple[PlaceboResult, ...]
     execution_diagnostics: tuple[ExecutionTimingDiagnostic, ...]
     factor_redundancy: FactorRedundancyResult
@@ -655,6 +666,7 @@ class AlphaCorrectnessProof:
             self.feature_results,
             self.target_results,
             self.physical_verifications,
+            self.normalization_verifications,
             self.placebo_results,
             self.execution_diagnostics,
             self.robust_inference,
@@ -663,6 +675,7 @@ class AlphaCorrectnessProof:
             feature_results=self.feature_results,
             target_results=self.target_results,
             physical_verifications=self.physical_verifications,
+            normalization_verifications=self.normalization_verifications,
             placebo_results=self.placebo_results,
             execution_diagnostics=self.execution_diagnostics,
             factor_redundancy=self.factor_redundancy,
@@ -682,15 +695,28 @@ class AlphaCorrectnessProof:
             "ALPHA_CORRECTNESS_PROOF", self.proof_id, self.proof_hash
         )
 
+    @property
+    def conclusion(self) -> AlphaCorrectnessConclusion:
+        if self.status is AlphaCorrectnessStatus.CORRECTNESS_SUPPORTED:
+            return AlphaCorrectnessConclusion.CORRECTNESS_SUPPORTED
+        if self.status is AlphaCorrectnessStatus.CORRECTNESS_FAILED:
+            return AlphaCorrectnessConclusion.CORRECTNESS_FAILED
+        return AlphaCorrectnessConclusion.INCONCLUSIVE
+
     def identity_payload(self) -> dict[str, object]:
         return {
             "status": self.status.value,
+            "conclusion": self.conclusion.value,
             "feature_results": [
                 item.to_canonical_dict() for item in self.feature_results
             ],
             "target_results": [item.to_canonical_dict() for item in self.target_results],
             "physical_verifications": [
                 item.to_canonical_dict() for item in self.physical_verifications
+            ],
+            "normalization_verifications": [
+                item.to_canonical_dict()
+                for item in self.normalization_verifications
             ],
             "placebo_results": [
                 item.to_canonical_dict() for item in self.placebo_results
@@ -723,6 +749,7 @@ def build_alpha_correctness_proof(
     execution_diagnostics: tuple[ExecutionTimingDiagnostic, ...],
     factor_redundancy: FactorRedundancyResult,
     robust_inference: tuple[tuple[str, RobustInferenceResult], ...],
+    normalization_verifications: tuple[IndependentNormalizationVerification, ...] = (),
 ) -> AlphaCorrectnessProof:
     features = tuple(
         sorted(feature_results, key=lambda item: (item.session, item.symbol))
@@ -736,6 +763,12 @@ def build_alpha_correctness_proof(
             key=lambda item: str(item.normalized_owner_reference.artifact_id),
         )
     )
+    normalization = tuple(
+        sorted(
+            normalization_verifications,
+            key=lambda item: str(item.normalized_owner_reference.artifact_id),
+        )
+    )
     placebos = tuple(
         sorted(placebo_results, key=lambda item: (item.factor_id, item.kind.value))
     )
@@ -745,6 +778,7 @@ def build_alpha_correctness_proof(
         features,
         targets,
         physical,
+        normalization,
         placebos,
         execution,
         inference,
@@ -753,10 +787,18 @@ def build_alpha_correctness_proof(
         feature_results=features,
         target_results=targets,
         physical_verifications=physical,
+        normalization_verifications=normalization,
         placebo_results=placebos,
         execution_diagnostics=execution,
         factor_redundancy=factor_redundancy,
         robust_inference=inference,
+    )
+    conclusion = (
+        AlphaCorrectnessConclusion.CORRECTNESS_SUPPORTED
+        if status is AlphaCorrectnessStatus.CORRECTNESS_SUPPORTED
+        else AlphaCorrectnessConclusion.CORRECTNESS_FAILED
+        if status is AlphaCorrectnessStatus.CORRECTNESS_FAILED
+        else AlphaCorrectnessConclusion.INCONCLUSIVE
     )
     limitations = tuple(
         sorted(
@@ -764,6 +806,11 @@ def build_alpha_correctness_proof(
                 "ALPHA_PROVEN_FALSE",
                 "FORMAL_OOS_FALSE",
                 "NO_TRADING_AUTHORITY",
+                *(
+                    ("INCONCLUSIVE",)
+                    if conclusion is AlphaCorrectnessConclusion.INCONCLUSIVE
+                    else ()
+                ),
                 *(
                     ("PHYSICAL_REPRODUCTION_NOT_ESTABLISHED",)
                     if status
@@ -775,9 +822,13 @@ def build_alpha_correctness_proof(
     )
     payload: dict[str, object] = {
         "status": status.value,
+        "conclusion": conclusion.value,
         "feature_results": [item.to_canonical_dict() for item in features],
         "target_results": [item.to_canonical_dict() for item in targets],
         "physical_verifications": [item.to_canonical_dict() for item in physical],
+        "normalization_verifications": [
+            item.to_canonical_dict() for item in normalization
+        ],
         "placebo_results": [item.to_canonical_dict() for item in placebos],
         "execution_diagnostics": [item.to_canonical_dict() for item in execution],
         "factor_redundancy": factor_redundancy.to_canonical_dict(),
@@ -795,6 +846,7 @@ def build_alpha_correctness_proof(
         features,
         targets,
         physical,
+        normalization,
         placebos,
         execution,
         factor_redundancy,
@@ -808,6 +860,7 @@ def _derive_proof_status(
     feature_results: tuple[FeatureReproductionResult, ...],
     target_results: tuple[TargetReproductionResult, ...],
     physical_verifications: tuple[PhysicalSourceVerification, ...],
+    normalization_verifications: tuple[IndependentNormalizationVerification, ...],
     placebo_results: tuple[PlaceboResult, ...],
     execution_diagnostics: tuple[ExecutionTimingDiagnostic, ...],
     factor_redundancy: FactorRedundancyResult,
@@ -817,6 +870,11 @@ def _derive_proof_status(
         item.status for item in target_results
     )
     if AlphaCorrectnessStatus.CORRECTNESS_FAILED in statuses:
+        return AlphaCorrectnessStatus.CORRECTNESS_FAILED
+    if any(
+        item.status is IndependentNormalizationStatus.MISMATCH
+        for item in normalization_verifications
+    ):
         return AlphaCorrectnessStatus.CORRECTNESS_FAILED
     factor_complete = bool(feature_results) and all(
         {item.factor_id for item in result.comparisons} == _SUPPORTED_FACTORS
@@ -834,6 +892,20 @@ def _derive_proof_status(
         and all(
             item.physical_source_reference in physical_by_reference
             for item in target_results
+        )
+    )
+    normalization_by_reference = {
+        item.normalized_owner_reference: item
+        for item in normalization_verifications
+    }
+    normalization_complete = (
+        bool(normalization_by_reference)
+        and set(normalization_by_reference) == set(physical_by_reference)
+        and len(normalization_by_reference) == len(normalization_verifications)
+        and all(
+            item.status is IndependentNormalizationStatus.MATCHED
+            and item.comparison_count > 0
+            for item in normalization_verifications
         )
     )
     expected_placebos = {
@@ -895,6 +967,7 @@ def _derive_proof_status(
         return AlphaCorrectnessStatus.PHYSICAL_REPRODUCTION_NOT_ESTABLISHED
     if (
         not factor_complete
+        or not normalization_complete
         or not placebo_complete
         or not execution_complete
         or not redundancy_complete
@@ -1037,6 +1110,7 @@ def _validate_proof_population(
     features: tuple[FeatureReproductionResult, ...],
     targets: tuple[TargetReproductionResult, ...],
     physical: tuple[PhysicalSourceVerification, ...],
+    normalization: tuple[IndependentNormalizationVerification, ...],
     placebos: tuple[PlaceboResult, ...],
     execution: tuple[ExecutionTimingDiagnostic, ...],
     inference: tuple[tuple[str, RobustInferenceResult], ...],
@@ -1084,6 +1158,17 @@ def _validate_proof_population(
         )
     ) or len({item.normalized_owner_reference for item in physical}) != len(physical):
         raise ValueError("Alpha Correctness physical owners must be unique and sorted")
+    if normalization != tuple(
+        sorted(
+            normalization,
+            key=lambda item: str(item.normalized_owner_reference.artifact_id),
+        )
+    ) or len({item.normalized_owner_reference for item in normalization}) != len(
+        normalization
+    ):
+        raise ValueError(
+            "Alpha Correctness normalization verifications must be unique and sorted"
+        )
     if placebos != tuple(
         sorted(placebos, key=lambda item: (item.factor_id, item.kind.value))
     ):
@@ -1588,6 +1673,7 @@ def _require_aware(label: str, value: datetime) -> None:
 
 
 __all__ = [
+    "AlphaCorrectnessConclusion",
     "AlphaCorrectnessProof",
     "AlphaCorrectnessStatus",
     "FeatureCorrectnessComparison",

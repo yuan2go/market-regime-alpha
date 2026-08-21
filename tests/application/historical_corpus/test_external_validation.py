@@ -157,7 +157,7 @@ def test_external_experiment_rejects_uncorrected_hypothesis() -> None:
     with pytest.raises(ValueError, match="correctness-supported"):
         FrozenExternalValidationExperiment.create(
             hypothesis=_hypothesis(),
-            correctness_evidence=_correctness("PARTIALLY_REPRODUCED"),
+            correctness_evidence=_correctness("INCONCLUSIVE"),
             discovery_scope=_scope("2025-H1", "universe-a", "provider-a"),
             validation_scope=_scope("2025-H2", "universe-a", "provider-a"),
             validation_panel_references=(VALIDATION_PANEL,),

@@ -68,6 +68,9 @@ from market_regime_alpha.application.historical_corpus.postgres_materialization 
 from market_regime_alpha.application.historical_corpus.postgres_repository import (
     PostgresHistoricalCorpusRepository,
 )
+from market_regime_alpha.application.historical_corpus.raw_normalization_correctness import (
+    verify_independent_baostock_normalization,
+)
 from market_regime_alpha.application.research_validation.common import (
     ValidationArtifactReference,
 )
@@ -495,12 +498,17 @@ class HistoricalPhaseIIResearchService:
             ),
             *owner_sources,
             *(item.normalized_owner_reference for item in reproduction.physical_verifications),
+            *(item.raw_owner_reference for item in proof.normalization_verifications),
+            *(
+                item.normalized_owner_reference
+                for item in proof.normalization_verifications
+            ),
         )
         return self._persist(
             replace(
                 write,
                 payload={
-                    "status": proof.status.value,
+                    "status": proof.conclusion.value,
                     "proof": proof.to_canonical_dict(),
                 },
             )
@@ -747,18 +755,18 @@ def _verify_phase_ii_payload_values(
         if payload.get("status") not in {
             "CORRECTNESS_SUPPORTED",
             "CORRECTNESS_FAILED",
-            "PARTIALLY_REPRODUCED",
-            "PHYSICAL_REPRODUCTION_NOT_ESTABLISHED",
+            "INCONCLUSIVE",
         }:
             raise ValueError("Alpha Correctness Evidence status is invalid")
         if payload.get("status") == "CORRECTNESS_SUPPORTED":
             proof = _embedded_artifact(payload, "proof", "proof_id", "proof_hash")
-            if proof.get("status") != "CORRECTNESS_SUPPORTED":
+            if proof.get("conclusion") != "CORRECTNESS_SUPPORTED":
                 raise ValueError("Alpha Correctness status projection drifted")
             required_suite = {
                 "feature_results",
                 "target_results",
                 "physical_verifications",
+                "normalization_verifications",
                 "placebo_results",
                 "execution_diagnostics",
                 "factor_redundancy",
@@ -867,6 +875,25 @@ def _verify_correctness_proof_against_owners(
         or proof.physical_verifications != reproduction.physical_verifications
     ):
         raise ValueError("Alpha Correctness proof drifted from Historical owner replay")
+    expected_normalization = tuple(
+        sorted(
+            (
+                verify_independent_baostock_normalization(
+                    raw_owner=corpus.load(item.raw_owner_reference).owner,
+                    canonical_normalized_owner=corpus.load(
+                        item.normalized_owner_reference
+                    ).owner,
+                    provenance=item.provenance,
+                )
+                for item in proof.normalization_verifications
+            ),
+            key=lambda item: str(item.normalized_owner_reference.artifact_id),
+        )
+    )
+    if expected_normalization != proof.normalization_verifications:
+        raise ValueError(
+            "Alpha Correctness independent normalization drifted from owners"
+        )
     target_by_key = {
         (item.decision_time, item.symbol): item
         for item in reproduction.target_results

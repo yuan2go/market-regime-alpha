@@ -30,7 +30,7 @@ def test_phase_ii_evidence_keeps_typed_claims_and_engineering_ceiling() -> None:
         rationale="Physical package is unavailable.",
         source_references=(_ref("NORMALIZED_DATASET", "dataset-a"),),
         metrics=(),
-        payload={"status": "PHYSICAL_REPRODUCTION_NOT_ESTABLISHED"},
+        payload={"status": "INCONCLUSIVE"},
         created_at=datetime(2026, 8, 21, tzinfo=UTC),
         statements=(
             ResearchStatement(

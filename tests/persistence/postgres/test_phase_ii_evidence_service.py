@@ -131,7 +131,7 @@ def test_phase_ii_service_persists_and_reloads_through_existing_evidence_owner(
         rationale="Physical package is not available in this targeted PG test.",
         source_references=command.configuration_references,
         metrics=(),
-        payload={"status": "PHYSICAL_REPRODUCTION_NOT_ESTABLISHED"},
+        payload={"status": "INCONCLUSIVE"},
         created_at=NOW,
         statements=(
             ResearchStatement(
