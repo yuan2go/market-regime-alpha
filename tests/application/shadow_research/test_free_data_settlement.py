@@ -264,7 +264,7 @@ def test_controlled_package_resolution_uses_frozen_package_identity(
         tmp_path,
         ArtifactId("controlled-package-id"),
         locator=SimpleNamespace(
-            get_by_package_id=lambda _package_id: SimpleNamespace(
+            get_package_locator=lambda _package_id: SimpleNamespace(
                 package_locator=(
                     "artifact-root-v1/run/operation-packages/package"
                 ),
