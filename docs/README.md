@@ -3,7 +3,7 @@
 > **Status:** CURRENT_STATUS  
 > **Authority:** Documentation navigation and precedence only  
 > **Owner:** Market Regime Alpha maintainers  
-> **Last Updated:** 2026-08-21
+> **Last Updated:** 2026-08-24
 > **Code Evidence:** `src/market_regime_alpha`, `src/market_regime_alpha/persistence/postgres/migrations/*.sql`, `tests`
 
 Documentation never creates implementation truth, research evidence, qualification, or trading authority.

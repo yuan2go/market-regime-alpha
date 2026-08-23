@@ -2,10 +2,10 @@
 
 > **Status:** CURRENT_RESEARCH_PROGRAM
 > **Authority:** Subordinate frozen research protocol
-> **Repository Baseline:** `main@091324c7e28a2b6a3b89f894d18afc7380486d13`
+> **Repository Baseline:** `main@b617844d338523d7dfea72642cfce8213121786e`
 > **Frozen By:** explicit user decision on 2026-08-21
 > **Evidence Ceiling:** `EXTERNAL_VALIDATION`; `FORMAL_OOS=false`
-> **Last Updated:** 2026-08-21
+> **Last Updated:** 2026-08-24
 
 This protocol freezes the first Temporal External Validation before Alpha
 Correctness is known. It does not unlock outcome access, execute the campaign,

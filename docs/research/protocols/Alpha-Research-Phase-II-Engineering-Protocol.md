@@ -2,9 +2,9 @@
 
 > **Status:** CURRENT_RESEARCH_PROGRAM
 > **Authority:** Subordinate implementation and research protocol
-> **Repository Baseline:** `main@091324c7e28a2b6a3b89f894d18afc7380486d13`
+> **Repository Baseline:** `main@b617844d338523d7dfea72642cfce8213121786e`
 > **Evidence Ceiling:** `ENGINEERING_ONLY / EXPLORATORY / PIT_INCOMPLETE / NOT_PROVEN`
-> **Last Updated:** 2026-08-21
+> **Last Updated:** 2026-08-24
 
 This protocol records the dependency-coherent implementation scope following
 WP-ALPHA-RESEARCH-01. It does not create runtime, data, Evidence, qualification
@@ -16,13 +16,14 @@ remain authoritative.
 | Item | Observed baseline |
 |---|---|
 | Branch / worktree | isolated `agent/alpha-daily-arch-convergence-01`; original worktree preserved |
-| HEAD | `091324c7e28a2b6a3b89f894d18afc7380486d13` |
+| Historical Phase II audit HEAD | `091324c7e28a2b6a3b89f894d18afc7380486d13` |
+| Current implementation HEAD | `b617844d338523d7dfea72642cfce8213121786e` |
 | Source workspace | existing branch with protected `.idea/modules.xml` modification; untouched |
-| Packaged migration head | `092_strategy_forecast_contract_semantics` (after `091_alpha_research_phase_ii`) |
-| Python / uv | Python 3.12.13 / uv 0.11.7 |
+| Packaged migration head | `095_daily_alpha_continuous_projection` |
+| Python / uv | Python 3.12.2 / uv 0.11.7 |
 | PostgreSQL | PostgreSQL 16.14; sole persistent business Authority |
 | Runtime | `CONTINUOUS_RESEARCH` sole all-day Runtime; Historical Research remains bounded |
-| CI | no GitHub check run for merge commit `091324c`; exact-merge CI status `NOT_RUN` |
+| CI | no GitHub check run for merge commit `b617844`; PR #74 pytest/PostgreSQL validation and exact-merge CI are `NOT_RUN` |
 | Physical Raw/Normalized packages | owner rows/checksums exist, but locators cannot be reopened locally; `ORIGINAL_PHYSICAL_REOPENED=false` |
 
 The audited call chain is Historical Research Runtime → bounded Dataset Window
@@ -45,8 +46,9 @@ Overnight/Swing policies.
 | WP-PREDICTION-01 | empirical median baseline plus frozen regularized model comparison, per-fold Target-availability admission, uncertainty and raw barrier scores; Strategy contract requires explicit Signal/Forecast/Context/Risk/Model lineage and owner-authority reload | `IMPLEMENTED_NOT_WIRED / RESEARCH_READY_KERNEL`; the current post-Portfolio RiskDecision is not reused circularly, so no conditional action path is active; no calibration, Formal OOS, Strategy qualification or Production proof |
 
 Migrations 091–092 extend the existing immutable Historical Evidence and Strategy
-owners and constrain Forecast semantics without rewriting V1. They add no table
-or Authority. Phase II Evidence V2 carries typed
+owners and constrain Forecast semantics without rewriting V1. Migration 093
+persists the frozen Temporal window; 094 adds pre-Strategy Risk/Opportunity
+owners; 095 admits the Daily Alpha snapshot. Phase II Evidence V2 carries typed
 `FACT`, `MODEL_ASSUMPTION`, `RESEARCH_RESULT`, `INFERENCE`, `LIMITATION` and
 `INVALIDATION_CONDITION` statements while retaining positive, negative,
 inconclusive and not-estimable classifications.
@@ -124,11 +126,11 @@ engine, Evidence authority or qualification framework.
 
 ## Test and execution ceiling
 
-The active closure program runs focused tests plus the explicitly required real
-126-session correctness campaign. It executes `TEMPORAL_VALIDATION_V1` only if
-Correctness is supported. Context and Candidate campaigns remain gated by an
-executed supported External result. No engineering completion creates Formal
-OOS, prospective proof, Strategy qualification or Production qualification.
+The current engineering-closure program runs focused tests only. The real
+126-session correctness, Temporal External Validation, Context and Candidate
+campaigns are explicitly `NOT_RUN`; any later execution remains gated by the
+frozen dependency order. No engineering completion creates Formal OOS,
+prospective proof, Strategy qualification or Production qualification.
 
 Until separately recorded otherwise:
 
@@ -141,5 +143,6 @@ STRATEGY_QUALIFIED=false
 PRODUCTION_QUALIFIED=false
 ```
 
-The approved closure work is decomposed in the subordinate
-[Alpha Daily Architecture Convergence Implementation Plan](../../references/Alpha-Daily-Architecture-Convergence-Implementation-Plan.md).
+The completed PR #74 implementation plan is retained in Git history and is
+`HISTORICAL / SUPERSEDED`; this current protocol and the status/Roadmap documents
+are the only live planning surfaces.

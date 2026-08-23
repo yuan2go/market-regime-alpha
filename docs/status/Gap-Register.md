@@ -2,9 +2,9 @@
 
 > **Status:** CURRENT_STATUS  
 > **Authority:** Current unresolved gap inventory  
-> **Repository Baseline:** `main@091324c7e28a2b6a3b89f894d18afc7380486d13`
+> **Repository Baseline:** `main@b617844d338523d7dfea72642cfce8213121786e`
 > **Strongest Research Evidence Revision:** `0d1a5a8` (WP-ALPHA-RESEARCH-01)
-> **Last Updated:** 2026-08-21
+> **Last Updated:** 2026-08-24
 > **Code Evidence:** `src/market_regime_alpha`, `docs/status/Current-State.md`
 
 Gaps are classified so missing future/external evidence does not block engineering and research that can be completed now.
@@ -17,13 +17,13 @@ Gaps are classified so missing future/external evidence does not block engineeri
 |---|---|---|
 | Golden Alpha Proof loop research correctness | Frozen exact-rational scoring and fractional boundary identities; canonical Cycle/Portfolio/Outcome/Attribution binding; 126-session resume and exact replay; five immutable V2 Evidence owners | Historical `EXPLORATORY` / `PIT_INCOMPLETE`; ranking and Strategy value remain negative or `NOT_ESTIMABLE` |
 | WP-ALPHA-RESEARCH-01 Factor→Gate→Candidate discovery | Persisted final Experiment `ab6820…c02e`; Panel v2 preserves all 70 Feature outputs and Candidate/Gate diagnostics; 49 Factors, 12 Gate variants and five policies share common diagnostics/BH-FDR; 126-session run/report/replay and Evidence complete | Price/Return challenger is exploratory positive only; all Gates `RETEST`; Formal PIT/OOS, Strategy and Production claims remain closed |
-| WP-ALPHA-CORRECTNESS-01 engineering | Independent normalized-bar Feature/T+1 Target recomputation, exact temporal/lineage comparison, five frozen placebos, bar-order-derived entry proxies, three-factor redundancy and Research Validation block inference; Universal Integrity separated from factor availability | Raw→independent-normalization is still missing; original physical packages cannot be reopened, so top-level status is `INCONCLUSIVE`; no Alpha claim |
+| WP-ALPHA-CORRECTNESS-01 implementation | Independent Raw normalization plus Feature/T+1 Target recomputation, temporal/lineage comparison, five frozen placebos, entry proxies, factor redundancy and block inference are present at PR #74 | PR #74 targeted tests were not run; original physical packages cannot be reopened, so the empirical top-level status remains `INCONCLUSIVE`; no Alpha claim |
 | WP-ALPHA-RESEARCH-02 capability | External Experiment reuses canonical `ResearchExperimentDefinition`, freezes the complete hypothesis/thresholds and permits exactly one Temporal/Universe/Provider change; Panel-linked Outcome/Strategy Economics owner admission and full evaluation diagnostics implemented | No external dataset run; `EMPIRICALLY_EXECUTED=false`, `EXTERNALLY_VALIDATED=false` |
 | WP-ALPHA-CONTEXT-01 capability | Typed session-level/cross-sectional boundary, conditional metrics, interaction/incremental semantics and five research interpretation states | Synthetic/unit proof only; no Context trading authority and several current roles remain `NOT_ESTIMABLE` |
 | WP-CANDIDATE-POLICY-02 engineering | Content-addressed Incumbent/Challenger policies, three explicit layers, complete explanations and frozen same-dataset comparison | Challenger dormant until real correctness/external support; no threshold tuned from validation |
-| WP-PREDICTION-01 engineering | Existing PathForecast median baseline plus regularized comparison with per-fold Target-availability embargo, exact lineage/minimum/uncertainty; incumbent V1 identities remain stable and Runtime rejects conditional inputs without owner-authority reload; the circular complete-account RiskDecision builder was retired | `IMPLEMENTED_NOT_WIRED`: no non-circular PostgreSQL pre-Strategy Risk resolver; calibration, economics, Formal OOS and qualification remain false |
+| WP-PREDICTION-01 implementation | Existing PathForecast baseline plus regularized comparison, exact immutable pre-Strategy Risk/Opportunity types and PostgreSQL owner/reload; incumbent V1 identities remain stable and the circular complete-account RiskDecision builder is retired | `IMPLEMENTED_NOT_WIRED`: no canonical producer derives Risk/Opportunity from typed owner facts; calibration, economics, Formal OOS and qualification remain false |
 | Documentation authority convergence | Former Constitution/static site and duplicate roadmap hierarchy removed; one Canonical Overall Design plus current supporting documents | Current status still follows executable evidence and must be updated with each Work Package |
-| `TEMPORAL_VALIDATION_V1` contamination/freeze | Audit found no real post-2025-07-14 population used for the frozen hypothesis; start `2025-07-15`, 126 owner-derived sessions and single temporal change are frozen before result access | Exact Calendar owner/session list is not yet persisted; campaign is `BLOCKED_BY_CORRECTNESS` until supported |
+| `TEMPORAL_VALIDATION_V1` contamination/freeze | Audit found no real post-2025-07-14 population used for the frozen hypothesis; migration 093 persists start `2025-07-15`, 126 owner-derived sessions, final Target session and Calendar/window hashes | PR #74 owner tests are `NOT_RUN`; campaign remains `BLOCKED_BY_CORRECTNESS` and unexecuted |
 
 ---
 
@@ -33,6 +33,13 @@ These work items do not require waiting for future market sessions or a new exte
 
 | Gap | Current problem | Exit condition | Priority |
 |---|---|---|---|
+| PR #74 verification | Merge commit `b617844` has no GitHub check run and did not execute its declared pytest/PostgreSQL suite | Run the smallest directly relevant unit, architecture and PostgreSQL migration/owner tests; record failures without empirical promotion | P0 |
+| Daily Alpha Evidence admission | Correctness, External and Candidate rows are selected independently as latest-by-kind and can cross-mix run/Experiment/hypothesis/dataset/policy lineage | Bind one explicit root Evidence/policy reference and verify every immutable upstream owner/hash/status/semantic edge; missing, drifted, superseded, negative or inconclusive input stays inactive | P0 |
+| Pre-Strategy Risk/Opportunity production | Immutable owner and resolvers exist, but production code never records Risk State or Opportunity | Continuous and Historical paths derive the same business semantics from existing account/Position/Risk/liquidity/restriction owners, record once and typed-reload before Strategy | P0 |
+| Runtime schema mutation | Repository/Authority constructors and runtime factory paths still call `apply_all` by default or unconditionally | Migration is explicit operator/preflight work; construction only verifies required schema and fails closed | P0 |
+| Daily Forecast semantics | Snapshot stores a Path Forecast reference but hides owned distribution fields and labels Context diagnostics as Factor contribution | Distinguish Path vs Conditional Forecast, project only owner-reloaded facts and show Conditional as unavailable/data-insufficient when no owner exists | P0 |
+| Prediction→Outcome exact lineage | Automatic settlement guesses the prior owner by trading date/Shadow-session uniqueness | Bind exact immutable Daily snapshot ID/hash, run/tick and upstream Candidate/Signal/Forecast/Strategy diagnostic to targeted/factual Outcome; ambiguous/missing input fails closed | P0 |
+| Repository convergence execution | Inventory classifies Legacy paths, but classified retired code still exists and some compatibility claims are not proven by current imports | Delete zero-consumer producers, migrate unique kernels only when needed, and retain the thinnest replay/migration compatibility with explicit deletion conditions | P1 |
 | Physical Alpha reproduction | The exact historical physical package locator cannot be reopened; PostgreSQL owner replay is not physical reproduction | Persist `REACQUIRED_EQUIVALENT_SOURCE`, independently normalize Raw bytes, compare canonical Normalized owner and execute the frozen proof | P0 / external data |
 | Frozen external execution | Capability exists but there is no admissible correctness-supported survivor or newly frozen external dataset run | Execute one dimension at a time without factor/threshold retuning; retain negative/inconclusive outcomes | P1 / evidence |
 | Candidate / Signal / Forecast responsibility test | Separate artifacts exist, but empirical distinctness is not established | Each layer proves distinct information/policy/consumer value or is simplified/merged | P0/P1 |

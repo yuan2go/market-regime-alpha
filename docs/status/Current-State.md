@@ -2,9 +2,9 @@
 
 > **Status:** CURRENT_STATUS  
 > **Authority:** Current implementation/evidence summary  
-> **Repository Baseline:** `main@091324c7e28a2b6a3b89f894d18afc7380486d13`
+> **Repository Baseline:** `main@b617844d338523d7dfea72642cfce8213121786e`
 > **Strongest Research Evidence Revision:** `0d1a5a8` (WP-ALPHA-RESEARCH-01)
-> **Last Updated:** 2026-08-21
+> **Last Updated:** 2026-08-24
 > **Code Evidence:** `src/market_regime_alpha`, `src/market_regime_alpha/persistence/postgres/migrations/*.sql`, `tests`
 
 This document records what the named executable baseline implements and what
@@ -15,30 +15,55 @@ target architecture.
 
 - **Architecture:** Python 3.12+ PostgreSQL-centered modular monolith.
 - **Persistent business authority:** PostgreSQL 16; no canonical file/SQLite/memory fallback.
-- **Packaged migration head:** 093 (`frozen_temporal_validation_window`).
+- **Packaged migration head:** 095 (`daily_alpha_continuous_projection`).
 - **Canonical all-day runtime:** one Continuous Research control plane.
 - **Installed operator scripts:** six — `continuous-research`, `state-system`, `decision-system`, `model-governance`, `pit-authority`, `research-shadow`.
 - **Execution boundary:** human-operated/manual; no broker writer or automatic live-trading authority.
 - **Physical Position truth:** observed effective manual Fills.
 - **Golden Loop V2 execution:** one immutable 126-session historical campaign at evidence revision `bcee87a` completed in an isolated PostgreSQL schema migrated from 084 through 090; exact replay and aggregate Evidence are recorded below.
 - **WP-ALPHA-RESEARCH-01 execution:** one final immutable 126-session methodology-only owner replay at revision `0d1a5a8`; run `historical-research-run-0e150a21c7869adc84a57af5`, exact report/replay and five PostgreSQL Evidence artifacts are complete.
-- **Current main validation:** PR #73 merged Alpha Research Phase II. No GitHub
-  check run exists for merge commit `091324c`; CI supplies no qualification for
-  this exact merge baseline.
+- **Current main validation:** PR #74 merged the Alpha/Daily engineering changes
+  at `b617844`. GitHub exposes no check run for that merge commit, and PR #74 did
+  not run its declared pytest/PostgreSQL validation. The exact baseline is
+  therefore `NOT_RUN`, not CI or test proof.
 - **WP-01 branch validation:** docs/platform/full pytest, ruff, mypy and build pass on a fresh PostgreSQL test database; a first full run against a heavily reused test database hit one `pg_catalog` autovacuum DDL lock timeout, while the exact node and the clean-database full suite both pass. This is retained as an environment failure, not hidden.
 - **Current CI:** exact-merge CI is `NOT_RUN`, not CI proof.
-- **Alpha Research Phase II engineering:** all five Work Package kernels and
-  contracts are implemented with focused unit/boundary tests and targeted
-  PostgreSQL migration, Strategy Registry and Historical Evidence owner proof.
-  Correctness, External, Context and Candidate have canonical owner reload
-  seams. Conditional Strategy remains deliberately fail-closed until one real
-  PostgreSQL Signal/Forecast/Context/pre-Strategy-Risk resolver exists; this is
-  not reported as canonical wiring or as a historical research result.
+- **Alpha/Daily engineering implementation:** PR #74 added independent Raw
+  normalization, the frozen Temporal window owner, pre-Strategy Risk and
+  Strategy Opportunity domain/repository types, a Daily Alpha snapshot and
+  post-close settlement orchestration. This is implementation evidence only;
+  the merge baseline remains unverified until the targeted closure suite runs.
 - **Database binding:** Runtime requires an explicit PostgreSQL URL and principal; a database name or stale schema does not establish current Authority. The replayable Golden V2 Evidence schema is at migration 090.
-- **Local implementation baseline:** Python 3.12.13, uv 0.11.7 and PostgreSQL
-  16.14. The packaged migration head is 093. A Golden V2 evidence database is
+- **Local implementation baseline:** Python 3.12.2, uv 0.11.7 and PostgreSQL
+  16.14. The packaged migration head is 095. A Golden V2 evidence database is
   at migration 090; the default local application database is only at 055 and
   is not evidence for the current schema.
+
+### PR #74 architecture audit before closure
+
+The current code has four important distinctions between an implemented type
+and a closed canonical chain:
+
+- Daily Alpha admission selects the latest row independently for each Evidence
+  kind. It does not yet prove that Correctness, External Validation and
+  Candidate Policy belong to one immutable Experiment/hypothesis/dataset/policy
+  lineage. Cross-experiment mixing is therefore an open P0 defect.
+- Migration 094 and `PostgresStrategyOpportunityAuthority` own immutable
+  `PRE_STRATEGY_RISK_STATE` and `STRATEGY_OPPORTUNITY` records, but no Continuous
+  or Historical producer calls `record_risk_state`/`record_opportunity`.
+  Opportunity is owner-shaped but caller-only and not runtime-wired.
+- Daily Alpha projects a real Path Forecast reference but omits its owned MFE,
+  MAE, quantiles, sample counts and calibration state; it also mixes Context
+  diagnostics into a field named Factor contributions. Conditional Forecast has
+  no Daily owner and must remain explicitly unavailable.
+- Automatic T+1 settlement stays inside the one Continuous control plane, but
+  it currently resolves the prior prediction by `trading_date` and uniqueness
+  of a Shadow session rather than by an exact immutable Daily Alpha snapshot
+  reference/hash. Multiple run/tick cases are ambiguous.
+
+Repository/Authority construction also still contains default and unconditional
+`PostgresMigrator.apply_all(...)` paths. Runtime schema mutation is not a
+canonical responsibility and is an open engineering-closure item.
 
 ## 2. Implemented engineering boundary
 
@@ -66,6 +91,20 @@ Dataset / Feature
 ```
 
 These artifacts are wired and persisted. Their empirical value is not assumed from their engineering existence.
+
+Migration 094 defines the next two owner facts, but at this baseline the
+production chain stops before them:
+
+```text
+Candidate / Signal / Path Forecast / Context
+→ [missing canonical pre-Strategy producer]
+→ PRE_STRATEGY_RISK_STATE
+→ STRATEGY_OPPORTUNITY
+→ Strategy Runtime
+```
+
+The PostgreSQL reload/resolver is not equivalent to a producer. Conditional
+Strategy therefore remains `RESEARCH/SHADOW`, inactive and fail-closed.
 
 ### Multi-strategy runtime
 
@@ -138,9 +177,13 @@ fallback remains for a Forecast-required Strategy.
   former helper that treated a post-Portfolio complete-account RiskDecision as
   pre-Strategy state was retired as semantically circular.
 
-Migration 091 extends the existing append-only Historical Evidence and Strategy
-owners. Migration 092 constrains V1/V2 Forecast semantics without mutating V1
-identities. Neither creates a new table or parallel Authority.
+Migrations 091–092 extend the existing append-only Historical Evidence and
+Strategy owners and constrain V1/V2 Forecast semantics without mutating V1
+identities. Migration 093 persists the exact frozen Temporal Validation window.
+Migration 094 adds immutable pre-Strategy Risk and Opportunity owner tables;
+migration 095 admits the Daily Alpha snapshot into the existing Continuous
+child and Research Validation authorities. These migrations grant no Alpha,
+External, OOS, prospective, Strategy or Production qualification.
 
 ### Manual execution and Position
 
@@ -320,9 +363,12 @@ Engineering gaps remain, but they should be selected because they unblock this e
 
 ## 7. Current development posture
 
-The five Phase II kernels/contracts are implemented. The conditional Strategy
-consumer is not declared canonically wired: no valid pre-Strategy Risk owner
-resolver exists, and the Runtime rejects caller-only opportunity projections.
+The Phase II and Daily Alpha kernels/contracts are implemented. The conditional
+Strategy consumer is not declared canonically wired: an immutable pre-Strategy
+Risk owner/reloader exists, but no valid producer derives it from account,
+Position, restriction, liquidity and configured Risk owner facts. The Runtime
+therefore sees only previously recorded/caller-produced Opportunity rows and
+must keep the conditional path inactive.
 Its three unusually strong intraday discovery results have not been reclassified
 as Alpha because the physical package cannot currently be reopened and no new
 external dataset was run.

@@ -31,6 +31,7 @@ CANONICAL_DOCS = frozenset(
         "docs/architecture/Authority-Map.md",
         "docs/architecture/Data-and-Evidence-Architecture.md",
         "docs/architecture/Research-Strategy-Lifecycle.md",
+        "docs/architecture/Repository-Convergence-Inventory.md",
         "docs/status/Current-State.md",
         "docs/status/Capability-Matrix.md",
         "docs/status/Gap-Register.md",

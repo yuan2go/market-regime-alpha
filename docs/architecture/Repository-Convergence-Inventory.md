@@ -3,12 +3,19 @@
 > **Status:** CURRENT_ARCHITECTURE
 > **Authority:** Consumer/import inventory and Legacy disposition
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-21
+> **Last Updated:** 2026-08-24
 > **Executable guards:** `tests/architecture/`
+> **Code Evidence:** `src/market_regime_alpha`, `pyproject.toml`, `tests/architecture`
 
 This inventory follows actual imports, installed entry points, composition
 roots and PostgreSQL writers. A directory name is not treated as Authority.
 Historical files remain immutable even when their producing code is retired.
+
+The disposition column is an audited target, not proof that physical code was
+already removed. At `main@b617844`, several `RETIRED` paths still exist. Closure
+requires a current import/consumer graph, deletion of zero-consumer producers
+and an explicit replay/migration consumer plus deletion condition for every
+retained compatibility layer.
 
 ## Canonical package inventory
 
@@ -18,7 +25,7 @@ Historical files remain immutable even when their producing code is retired.
 | `application/historical_research` | `continuous-research historical-*`, Phase-II owner services | sole Historical Runtime | Historical PostgreSQL journal; delegates business facts | standalone backtests | **KEEP** |
 | `features` | Continuous and Historical Decision materialization | both canonical runtimes | Feature artifacts and PostgreSQL owner bindings | `dividend_t` indicator execution | **KEEP**; MACD, Chan, Volume/Price and trend kernels already have canonical implementations |
 | `candidates` and `research/candidate_discovery` | State System, Historical Panels, Strategy Runtime | shared business semantics | CandidateSet PostgreSQL owner | legacy Candidate scripts | **KEEP** |
-| `signals`, `forecasting` | State System and Strategy Opportunity resolver | shared business semantics | State Signal/Forecast owners and model lineage | caller-only prediction DTOs | **KEEP** |
+| `signals`, `forecasting` | State System and Strategy Opportunity resolver | shared business semantics | State Signal/Forecast owners and model lineage | caller-only prediction DTOs | **KEEP**; Opportunity reload must use typed owner loaders, not recursive JSON inference |
 | `strategies` | Continuous/Historical adapters and Strategy Shadow | shared Strategy kernel | Multi-Strategy, pre-Strategy Risk and Opportunity PostgreSQL owners | `dividend_t.strategy` | **KEEP / REFACTORED** |
 | `application/shadow_research` | existing `settle-day`, Continuous post-close settlement | Continuous control plane | immutable factual and targeted prospective Outcome owners | ad-hoc next-day review | **KEEP / MERGE** into the sole scheduling path |
 | `application/research_validation` | Model Governance, Historical Evidence and qualification reload | bounded child/tool | PostgreSQL Research Validation owners | scattered qualification flags | **KEEP / SIMPLIFY**; no new qualification layer introduced |

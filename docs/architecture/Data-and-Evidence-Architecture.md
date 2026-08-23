@@ -3,7 +3,7 @@
 > **Status:** CURRENT_ARCHITECTURE
 > **Authority:** Canonical data, time and evidence rules
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-20
+> **Last Updated:** 2026-08-24
 > **Code Evidence:** `src/market_regime_alpha/data`, `src/market_regime_alpha/market_data`, `src/market_regime_alpha/evidence`, `src/market_regime_alpha/data/postgres_pit_authority.py`, `src/market_regime_alpha/persistence/postgres/migrations/*.sql`
 
 ## Evidence is not a reference
@@ -42,7 +42,7 @@ A downstream artifact may retain or lower the minimum input eligibility. It may 
 
 ## PostgreSQL-only persistence
 
-- Packaged migrations are contiguous from 001 through 093 and checksummed.
+- Packaged migrations are contiguous from 001 through 095 and checksummed.
 - `schema_migrations` and the schema catalog are verified at startup/tests.
 - Runtime database bindings exclude credentials and fail closed on a different database/schema.
 - Journals use leases, fencing, CAS and append-only events.
@@ -96,6 +96,20 @@ field; V2 Conditional Prediction must declare `FORECAST_REQUIRED`, and every
 other V2 family must declare `FORECAST_NOT_REQUIRED`. This prevents an existing
 PostgreSQL Registry from gaining duplicate active versions through an incumbent
 identity rewrite.
+
+Migration 093 persists the content-addressed Calendar-owned
+`TEMPORAL_VALIDATION_V1` window in the existing Research Validation authority;
+the campaign remains unexecuted. Migration 094 adds append-only
+`PRE_STRATEGY_RISK_STATE` and `STRATEGY_OPPORTUNITY` owner records that bind,
+rather than copy, existing account/Position/Risk/liquidity/restriction and
+Candidate/Signal/Forecast/Context/Model/Strategy facts. At `main@b617844`, those
+owners have reload/resolver code but no canonical producer. Migration 095
+admits an immutable Daily Alpha snapshot as a terminal child of the existing
+Continuous Runtime. None grants empirical or Production authority.
+
+Schema migration is an explicit operator/preflight responsibility. Runtime and
+Repository construction must verify the required migration registry and fail
+closed; it must not mutate schema implicitly.
 
 Strategy evidence is keyed by exact Strategy Version and retains Dataset, PIT,
 Universe, Decision Time, Target/Horizon, cost, evaluation, code and configuration
