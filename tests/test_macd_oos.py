@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 import json
 from pathlib import Path
-import subprocess
-import sys
 
 import pandas as pd
 import pytest
@@ -33,8 +31,16 @@ from market_regime_alpha.dividend_t.macd_oos import (
     verify_artifact_checksums,
     write_immutable_run_artifact,
 )
-from market_regime_alpha.dividend_t.backtest import DividendTBacktestConfig
 from market_regime_alpha.dividend_t.signal_intent import MACDPolicyConfig
+
+
+@dataclass(frozen=True)
+class LegacyExecutionConfigFixture:
+    """Frozen identity input; this test owns no Backtest Runtime."""
+
+    price_field: str = "NEXT_BAR_OPEN"
+    slippage_bps: float = 5.0
+    signal_cache_dir: Path | None = None
 
 
 def test_dataset_manifest_is_content_addressed_over_bars_and_point_in_time_sidecars(tmp_path: Path) -> None:
@@ -276,19 +282,6 @@ def test_run_manifest_records_reproducibility_and_all_four_config_hashes() -> No
     assert manifest.dependency_lock_source == "installed-distributions-v1"
 
 
-def test_runner_exposes_no_force_overwrite_option() -> None:
-    script = Path(__file__).resolve().parents[1] / "backtesting" / "run_macd_ablation.py"
-    completed = subprocess.run(
-        [sys.executable, str(script), "--help"],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-
-    assert "--final-test" in completed.stdout
-    assert "--force" not in completed.stdout
-
-
 def _manifest_for(bars: Path, root: Path):
     return build_dataset_manifest(
         (bars,),
@@ -324,7 +317,7 @@ def _four_arm_fixtures(
     *,
     dataset: str = "dataset-fixture-v1",
 ) -> tuple[dict[str, object], dict[str, AblationArmContext]]:
-    execution = DividendTBacktestConfig(signal_cache_dir=None)
+    execution = LegacyExecutionConfigFixture(signal_cache_dir=None)
     identities = {
         name: build_experiment_identity(
             git_commit="71b7880",

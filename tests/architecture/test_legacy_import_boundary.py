@@ -14,7 +14,7 @@ ALLOWED_DIRECT_IMPORT_PREFIXES = (
     "market_regime_alpha.legacy",
     "market_regime_alpha.migration.legacy",
 )
-ALLOWED_DIRECT_IMPORT_MODULES = {"market_regime_alpha.web.dividend_t_app"}
+ALLOWED_DIRECT_IMPORT_MODULES: set[str] = set()
 
 
 def _module_name(path: Path) -> str:

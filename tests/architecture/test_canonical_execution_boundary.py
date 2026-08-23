@@ -23,7 +23,6 @@ SOURCE = ROOT / "src" / "market_regime_alpha"
 LEGACY_EXECUTABLE_PREFIXES = (
     "market_regime_alpha.daily_research",
     "market_regime_alpha.dividend_t",
-    "market_regime_alpha.web.dividend_t_app",
 )
 
 

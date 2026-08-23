@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 import pytest
 
-from market_regime_alpha.dividend_t.backtest import DividendTBacktestConfig
 from market_regime_alpha.dividend_t.macd import BarInterval, MACDConfig
 from market_regime_alpha.dividend_t.macd_experiments import build_experiment_identity, experiment_config_hash
 from market_regime_alpha.dividend_t.signal_intent import MACDPolicyConfig
@@ -19,6 +19,15 @@ class FakeLegacyMACDIdentity:
     pipeline_id: str = "macd-pipeline-v1"
     execution_config_hash: str = "execution-hash"
     sizing_owner: str = "legacy-strategy"
+
+
+@dataclass(frozen=True)
+class LegacyExecutionConfigFixture:
+    """Frozen identity input; this test owns no Backtest Runtime."""
+
+    price_field: str = "NEXT_BAR_OPEN"
+    slippage_bps: float = 5.0
+    signal_cache_dir: Path | None = None
 
 
 def test_legacy_macd_adapter_preserves_identity_anchors_without_inventing_scope() -> None:
@@ -47,7 +56,7 @@ def test_real_legacy_macd_identity_maps_to_v2_without_inventing_target_or_univer
         pipeline_id="dividend-t-5m",
         macd_config=MACDConfig(bar_interval=BarInterval.MINUTE_5),
         policy_config=MACDPolicyConfig(),
-        execution_config=DividendTBacktestConfig(signal_cache_dir=None),
+        execution_config=LegacyExecutionConfigFixture(signal_cache_dir=None),
         sizing_owner="dividend_t_backtest_execution",
     )
     legacy_hash = experiment_config_hash(legacy)

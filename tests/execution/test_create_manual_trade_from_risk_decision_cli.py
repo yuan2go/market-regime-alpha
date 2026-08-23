@@ -15,11 +15,6 @@ from market_regime_alpha.cli.create_manual_trade_from_risk_decision import (
     build_parser,
     main,
 )
-from market_regime_alpha.dividend_t.brokers import (
-    PTradeAdapter,
-    PaperBrokerAdapter,
-    QMTAdapter,
-)
 from tests.execution.risk_reduction_confirmation_support import (
     build_confirmation_fixture,
 )
@@ -119,18 +114,9 @@ def _safety_declarations(payload: dict[str, object]) -> None:
 
 
 def test_module_cli_creates_only_one_manual_trade_and_invokes_no_broker(
-    tmp_path, daily_decision_fixture, capsys, monkeypatch
+    tmp_path, daily_decision_fixture, capsys
 ) -> None:
     fixture = build_confirmation_fixture(tmp_path, daily_decision_fixture)
-    broker_calls = 0
-
-    def unexpected_broker_call(*_args, **_kwargs):
-        nonlocal broker_calls
-        broker_calls += 1
-        raise AssertionError("H4.5 must not call a broker adapter")
-
-    for adapter in (PaperBrokerAdapter, QMTAdapter, PTradeAdapter):
-        monkeypatch.setattr(adapter, "place_order", unexpected_broker_call)
     with postgres_connection(fixture.repository.path) as connection:
         fill_count_before = connection.execute(
             "SELECT COUNT(*) FROM manual_fills"
@@ -143,7 +129,6 @@ def test_module_cli_creates_only_one_manual_trade_and_invokes_no_broker(
     assert payload["state"] == "CONFIRMED_INTENT"
     assert payload["MANUAL_INTENT_CREATED"] is True
     assert payload["manual_trade_id"]
-    assert broker_calls == 0
     with postgres_connection(fixture.repository.path) as connection:
         assert connection.execute(
             "SELECT COUNT(*) FROM manual_fills"

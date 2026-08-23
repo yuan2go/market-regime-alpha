@@ -11,7 +11,6 @@ from market_regime_alpha.application.trading_lifecycle import (
     ManualExecutionApplicationService,
     OperationalPositionAssessmentServiceV2,
 )
-from market_regime_alpha.dividend_t.brokers import PaperBrokerAdapter
 from market_regime_alpha.position import (
     PositionLifecycleAction,
     ThesisHealth,
@@ -305,11 +304,6 @@ def test_v2_adapter_rejects_canonical_tamper_and_creates_no_execution(
         lambda *_args, **_kwargs: pytest.fail(
             "V2 adapter must not create ManualTrade"
         ),
-    )
-    monkeypatch.setattr(
-        PaperBrokerAdapter,
-        "place_order",
-        lambda *_args, **_kwargs: pytest.fail("V2 adapter must not call Broker"),
     )
     result = service.assess(
         thesis=fixture.thesis,
