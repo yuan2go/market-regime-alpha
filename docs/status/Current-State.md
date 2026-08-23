@@ -2,7 +2,7 @@
 
 > **Status:** CURRENT_STATUS  
 > **Authority:** Current implementation/evidence summary  
-> **Implementation Checkpoint:** `agent/engineering-closure-architecture-convergence-01@f8c97ed62ac60f6e0da5dcc1319b5586a2493d41`, based on `main@b617844d338523d7dfea72642cfce8213121786e`; the final documentation commit is its documentation-only successor
+> **Implementation Checkpoint:** `agent/engineering-closure-architecture-convergence-01@b853297bcfb08b9ab6e21e7a7f7d22866a7cf6d2`, based on `main@b617844d338523d7dfea72642cfce8213121786e`; the final documentation commit is its documentation-only successor
 > **Strongest Research Evidence Revision:** `0d1a5a8` (WP-ALPHA-RESEARCH-01)
 > **Last Updated:** 2026-08-24
 > **Code Evidence:** `src/market_regime_alpha`, `src/market_regime_alpha/persistence/postgres/migrations/*.sql`, `tests`
@@ -58,9 +58,10 @@ target architecture.
   `VALIDATED_CHALLENGER_INACTIVE`; no latest/best-row selection remains.
 - Continuous and Historical Opportunity adapters share the same material,
   Risk and Opportunity producer semantics. Each composition root supplies
-  explicitly bound owner-derived Account/Reconciliation/Risk configuration;
-  Historical resolves its exact Candidate and Dynamic Pool owners and fails
-  closed when those bindings or required liquidity/restriction facts are absent.
+  explicitly bound owner-derived Account/Reconciliation/Risk configuration.
+  Historical PIT-resolves the exact frozen Account/Reconciliation pair for each
+  session, resolves its exact Candidate and Dynamic Pool owners, and fails closed
+  when those bindings or required liquidity/restriction facts are absent.
   The producer derives `PRE_STRATEGY_RISK_STATE` from typed account, Position/exposure,
   liquidity, restriction, available-quantity, symbol/theme exposure and
   configured Risk-limit facts,
@@ -127,8 +128,9 @@ Candidate / Signal / Forecast / Context
 
 The producer semantics and typed material resolver are wired in Continuous and
 Historical adapters; PostgreSQL typed reload remains mandatory. Historical
-execution produces the same owner facts when exact DecisionTime
-Account/Reconciliation/Risk references are supplied and otherwise fails closed;
+execution PIT-selects and produces the same owner facts from the run's frozen
+per-session Account/Reconciliation references and exact Risk reference, and
+otherwise fails closed;
 unknown historical liquidity, ST, suspension or theme facts never receive a
 synthetic safe value.
 Conditional Strategy

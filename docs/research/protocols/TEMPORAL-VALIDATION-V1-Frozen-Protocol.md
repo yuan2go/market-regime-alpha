@@ -2,7 +2,7 @@
 
 > **Status:** CURRENT_RESEARCH_PROGRAM
 > **Authority:** Subordinate frozen research protocol
-> **Implementation Checkpoint:** `agent/engineering-closure-architecture-convergence-01@f8c97ed62ac60f6e0da5dcc1319b5586a2493d41`; frozen values unchanged from the `main@b617844d338523d7dfea72642cfce8213121786e` freeze baseline
+> **Implementation Checkpoint:** `agent/engineering-closure-architecture-convergence-01@b853297bcfb08b9ab6e21e7a7f7d22866a7cf6d2`; frozen values unchanged from the `main@b617844d338523d7dfea72642cfce8213121786e` freeze baseline
 > **Frozen By:** explicit user decision on 2026-08-21
 > **Evidence Ceiling:** `EXTERNAL_VALIDATION`; `FORMAL_OOS=false`
 > **Last Updated:** 2026-08-24

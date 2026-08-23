@@ -106,9 +106,10 @@ Candidate/Signal/Forecast/Context/Model/Strategy facts. Continuous and
 Historical adapters share one typed material/Risk/Opportunity producer
 semantics. Continuous derives those facts from the exact account,
 Position/exposure, liquidity, restriction, quantity and Risk-limit owners when
-configured; Historical produces the same owner facts only when exact
-DecisionTime Account/Reconciliation/Risk references are supplied and otherwise
-fails closed. Unknown liquidity, restriction or theme facts remain explicit
+configured; Historical PIT-selects each DecisionTime Account/Reconciliation
+pair from the run's exact frozen references and binds one exact Risk reference,
+then produces the same owner facts or fails closed. Unknown liquidity,
+restriction or theme facts remain explicit
 blocking reasons. Both paths typed-reload before
 Strategy. Migration
 095 admits an immutable Daily Alpha snapshot as a terminal child of the
