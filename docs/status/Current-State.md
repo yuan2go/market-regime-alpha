@@ -2,7 +2,7 @@
 
 > **Status:** CURRENT_STATUS  
 > **Authority:** Current implementation/evidence summary  
-> **Repository Baseline:** `main@b617844d338523d7dfea72642cfce8213121786e`
+> **Implementation Checkpoint:** `agent/engineering-closure-architecture-convergence-01@9a7a6191329fb487f59040606cc7ab01d291a47b`, based on `main@b617844d338523d7dfea72642cfce8213121786e`
 > **Strongest Research Evidence Revision:** `0d1a5a8` (WP-ALPHA-RESEARCH-01)
 > **Last Updated:** 2026-08-24
 > **Code Evidence:** `src/market_regime_alpha`, `src/market_regime_alpha/persistence/postgres/migrations/*.sql`, `tests`
@@ -15,55 +15,64 @@ target architecture.
 
 - **Architecture:** Python 3.12+ PostgreSQL-centered modular monolith.
 - **Persistent business authority:** PostgreSQL 16; no canonical file/SQLite/memory fallback.
-- **Packaged migration head:** 095 (`daily_alpha_continuous_projection`).
+- **Packaged migration head:** 096 (`daily_alpha_outcome_lineage`).
 - **Canonical all-day runtime:** one Continuous Research control plane.
 - **Installed operator scripts:** six — `continuous-research`, `state-system`, `decision-system`, `model-governance`, `pit-authority`, `research-shadow`.
 - **Execution boundary:** human-operated/manual; no broker writer or automatic live-trading authority.
 - **Physical Position truth:** observed effective manual Fills.
 - **Golden Loop V2 execution:** one immutable 126-session historical campaign at evidence revision `bcee87a` completed in an isolated PostgreSQL schema migrated from 084 through 090; exact replay and aggregate Evidence are recorded below.
 - **WP-ALPHA-RESEARCH-01 execution:** one final immutable 126-session methodology-only owner replay at revision `0d1a5a8`; run `historical-research-run-0e150a21c7869adc84a57af5`, exact report/replay and five PostgreSQL Evidence artifacts are complete.
-- **Current main validation:** PR #74 merged the Alpha/Daily engineering changes
-  at `b617844`. GitHub exposes no check run for that merge commit, and PR #74 did
-  not run its declared pytest/PostgreSQL validation. The exact baseline is
-  therefore `NOT_RUN`, not CI or test proof.
+- **PR #74 closure validation:** the closure branch ran the directly relevant
+  Raw/Alpha correctness, Temporal window, Strategy Opportunity, typed resolver,
+  Daily Alpha, Continuous FreeData, automatic settlement, migration and
+  architecture tests. Focused application/unit/owner groups pass. PostgreSQL
+  stateful Continuous and Daily Alpha suites pass. The migration suite applied
+  001–096 and passed all 24 test bodies; its final host-schema teardown reported
+  one PostgreSQL `max_locks_per_transaction` environment error. This is
+  `TARGETED_TESTED`, not campaign or Alpha evidence.
 - **WP-01 branch validation:** docs/platform/full pytest, ruff, mypy and build pass on a fresh PostgreSQL test database; a first full run against a heavily reused test database hit one `pg_catalog` autovacuum DDL lock timeout, while the exact node and the clean-database full suite both pass. This is retained as an environment failure, not hidden.
-- **Current CI:** exact-merge CI is `NOT_RUN`, not CI proof.
-- **Alpha/Daily engineering implementation:** PR #74 added independent Raw
-  normalization, the frozen Temporal window owner, pre-Strategy Risk and
-  Strategy Opportunity domain/repository types, a Daily Alpha snapshot and
-  post-close settlement orchestration. This is implementation evidence only;
-  the merge baseline remains unverified until the targeted closure suite runs.
+- **Current CI:** GitHub has no run for `b617844` or the unpushed closure
+  checkpoint. Local targeted validation is not CI proof.
+- **Alpha/Daily engineering closure:** the branch binds one explicit Candidate
+  admission root to Discovery→Correctness→External→Candidate lineage, produces
+  pre-Strategy Risk/Opportunity from owner-derived facts, projects typed
+  Forecast semantics, binds Outcome to an exact immutable Daily snapshot and
+  retains settlement inside the one Continuous control plane.
 - **Database binding:** Runtime requires an explicit PostgreSQL URL and principal; a database name or stale schema does not establish current Authority. The replayable Golden V2 Evidence schema is at migration 090.
-- **Local implementation baseline:** Python 3.12.2, uv 0.11.7 and PostgreSQL
-  16.14. The packaged migration head is 095. A Golden V2 evidence database is
+- **Local implementation baseline:** Python 3.12.13, uv 0.11.7 and PostgreSQL
+  16.14. The packaged migration head is 096. A Golden V2 evidence database is
   at migration 090; the default local application database is only at 055 and
   is not evidence for the current schema.
 
-### PR #74 architecture audit before closure
+### Engineering closure facts
 
-The current code has four important distinctions between an implemented type
-and a closed canonical chain:
-
-- Daily Alpha admission selects the latest row independently for each Evidence
-  kind. It does not yet prove that Correctness, External Validation and
-  Candidate Policy belong to one immutable Experiment/hypothesis/dataset/policy
-  lineage. Cross-experiment mixing is therefore an open P0 defect.
-- Migration 094 and `PostgresStrategyOpportunityAuthority` own immutable
-  `PRE_STRATEGY_RISK_STATE` and `STRATEGY_OPPORTUNITY` records, but no Continuous
-  or Historical producer calls `record_risk_state`/`record_opportunity`.
-  Opportunity is owner-shaped but caller-only and not runtime-wired.
-- Daily Alpha projects a real Path Forecast reference but omits its owned MFE,
-  MAE, quantiles, sample counts and calibration state; it also mixes Context
-  diagnostics into a field named Factor contributions. Conditional Forecast has
-  no Daily owner and must remain explicitly unavailable.
-- Automatic T+1 settlement stays inside the one Continuous control plane, but
-  it currently resolves the prior prediction by `trading_date` and uniqueness
-  of a Shadow session rather than by an exact immutable Daily Alpha snapshot
-  reference/hash. Multiple run/tick cases are ambiguous.
-
-Repository/Authority construction also still contains default and unconditional
-`PostgresMigrator.apply_all(...)` paths. Runtime schema mutation is not a
-canonical responsibility and is an open engineering-closure item.
+- Daily Alpha accepts one explicit Candidate Policy admission root. PostgreSQL
+  reload follows immutable source references through Discovery, Correctness,
+  External Experiment/Hypothesis/Dataset and Candidate Policy. Missing,
+  superseded, negative, inconclusive, mismatched or hash-drifted owners return
+  `VALIDATED_CHALLENGER_INACTIVE`; no latest/best-row selection remains.
+- Continuous and Historical Opportunity adapters call the same producer. It
+  derives `PRE_STRATEGY_RISK_STATE` from typed account, Position/exposure,
+  liquidity, restriction, available-quantity and configured Risk-limit facts,
+  records `STRATEGY_OPPORTUNITY`, then typed-reloads both before Strategy.
+  `COMPLETE_ACCOUNT_RISK_DECISION` remains forbidden as a Strategy input.
+- Runtime/Repository construction no longer applies migrations. Explicit
+  migrate/bootstrap surfaces own schema change; runtime schema mismatch fails
+  closed.
+- Daily Alpha distinguishes `PATH_FORECAST` from `CONDITIONAL_FORECAST`.
+  Path output projects status, MFE, MAE, quantiles, sample count and calibration
+  state from its owner. Conditional output is shown only after exact owner
+  reload; absence is `NOT_AVAILABLE`/`DATA_INSUFFICIENT`, never fabrication.
+- Migration 096 freezes exact aggregate Candidate/Signal/Forecast and Strategy
+  diagnostic references plus snapshot ID/hash/run/tick. T+1 settlement resolves
+  that unique immutable prediction, enforces DecisionTime before Outcome
+  availability, appends Outcome without rewriting prediction, and fails closed
+  on missing/ambiguous scope. CLI delegates orchestration to
+  `ContinuousOutcomeSettlementService`.
+- `continuous-research historical-phase-ii` is the single resumable operator
+  adapter for Correctness, External, Context and Candidate Phase-II operations.
+  It delegates to the existing application service and PostgreSQL Evidence
+  owner; it is not another Research Runner.
 
 ## 2. Implemented engineering boundary
 
@@ -92,19 +101,22 @@ Dataset / Feature
 
 These artifacts are wired and persisted. Their empirical value is not assumed from their engineering existence.
 
-Migration 094 defines the next two owner facts, but at this baseline the
-production chain stops before them:
+Migration 094 defines and the shared runtime now produces the next two owner
+facts:
 
 ```text
-Candidate / Signal / Path Forecast / Context
-→ [missing canonical pre-Strategy producer]
+Candidate / Signal / Forecast / Context
+→ owner-derived Account / Position / Risk / Liquidity / Restriction facts
 → PRE_STRATEGY_RISK_STATE
 → STRATEGY_OPPORTUNITY
 → Strategy Runtime
 ```
 
-The PostgreSQL reload/resolver is not equivalent to a producer. Conditional
-Strategy therefore remains `RESEARCH/SHADOW`, inactive and fail-closed.
+The producer is wired in Continuous and Historical adapters with shared
+semantics, and PostgreSQL typed reload remains mandatory. Conditional Strategy
+still remains `RESEARCH/SHADOW`, inactive and fail-closed because no real
+correctness/external Candidate admission or qualified conditional Forecast
+evidence exists.
 
 ### Multi-strategy runtime
 
@@ -172,18 +184,21 @@ fallback remains for a Forecast-required Strategy.
   uncertainty rules. The median estimator is consistent between validation and
   the empirical PathForecast baseline. Barrier outputs remain raw scores;
   `CALIBRATED=false`. Forecast-required Strategy input cannot execute from a
-  caller projection: Runtime requires an owner-authority reload and fails closed
-  because no canonical pre-Strategy Risk resolver is currently configured. The
-  former helper that treated a post-Portfolio complete-account RiskDecision as
-  pre-Strategy state was retired as semantically circular.
+  caller projection: Runtime requires typed owner-authority reload for Signal,
+  Forecast, Context, Model, Risk and Opportunity. The former helper that treated
+  a post-Portfolio complete-account RiskDecision as pre-Strategy state remains
+  retired as semantically circular. Producer wiring does not activate the
+  evidence-blocked conditional family.
 
 Migrations 091–092 extend the existing append-only Historical Evidence and
 Strategy owners and constrain V1/V2 Forecast semantics without mutating V1
 identities. Migration 093 persists the exact frozen Temporal Validation window.
 Migration 094 adds immutable pre-Strategy Risk and Opportunity owner tables;
 migration 095 admits the Daily Alpha snapshot into the existing Continuous
-child and Research Validation authorities. These migrations grant no Alpha,
-External, OOS, prospective, Strategy or Production qualification.
+child and Research Validation authorities. Migration 096 adds the exact
+Prediction Snapshot→Outcome locator and lineage bindings without creating a
+second Outcome engine. These migrations grant no Alpha, External, OOS,
+prospective, Strategy or Production qualification.
 
 ### Manual execution and Position
 
@@ -363,12 +378,10 @@ Engineering gaps remain, but they should be selected because they unblock this e
 
 ## 7. Current development posture
 
-The Phase II and Daily Alpha kernels/contracts are implemented. The conditional
-Strategy consumer is not declared canonically wired: an immutable pre-Strategy
-Risk owner/reloader exists, but no valid producer derives it from account,
-Position, restriction, liquidity and configured Risk owner facts. The Runtime
-therefore sees only previously recorded/caller-produced Opportunity rows and
-must keep the conditional path inactive.
+The Phase II and Daily Alpha engineering chain is owner/runtime wired and
+target-tested. The conditional Strategy remains inactive because its empirical
+admission chain is absent, not because a caller-only Risk/Opportunity seam is
+missing. Engineering closure does not change any research conclusion.
 Its three unusually strong intraday discovery results have not been reclassified
 as Alpha because the physical package cannot currently be reopened and no new
 external dataset was run.

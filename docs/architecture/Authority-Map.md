@@ -3,7 +3,7 @@
 > **Status:** CURRENT_ARCHITECTURE
 > **Authority:** Canonical ownership and write map
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-14
+> **Last Updated:** 2026-08-24
 > **Code Evidence:** `src/market_regime_alpha/application/authority_boundary.py`, `src/market_regime_alpha/persistence/repository_factory.py`, `src/market_regime_alpha/persistence/postgres/schema.py`, `src/market_regime_alpha/persistence/postgres/migrations/*.sql`
 
 ## Terms
@@ -27,9 +27,10 @@
 | Model Governance | One: `PostgresModelGovernanceRepository`; Model Registry lifecycle remains a subordinate registry history in the same governance schema. |
 | Research Shadow | Freezes research decisions and factual outcome lineage; it never simulates account execution. |
 | Strategy Shadow | Owns the isolated simulated lifecycle plus Strategy sleeve projection and fill-derived realized Strategy Outcomes. Simulated artifacts never write actual fills or physical positions; sleeve quantity is derived from manual Fill allocations. |
+| Pre-Strategy Risk / Opportunity | One `PostgresStrategyOpportunityAuthority` owns immutable owner-derived Risk State and Strategy Opportunity bindings. Continuous/Historical adapters share one producer and typed source resolver; post-Portfolio Complete Account Risk never feeds Strategy. |
 | Multi-Strategy business facts | One `PostgresMultiStrategyRepository` owns stable Strategy registration, cycles/runs/gates/proposals, cross-strategy Portfolio decisions, observed-Fill allocations, Path Outcomes and version-scoped feedback. The existing Strategy Shadow owner resolves state/outcomes from those facts. `StrategyExecutionApplicationService` bridges accepted lines into the existing ManualTrade/Fill owner; it is not another Authority. |
 | Production Admission | A blocked projection only. No final Production Admission Authority exists. |
-| PostgreSQL Authority-schema tables | 270 in `EXPECTED_AUTHORITY_TABLES`; this catalog includes owner state, journals and projections and is not a count of independent business Authorities. |
+| PostgreSQL Authority-schema tables | 275 in `EXPECTED_AUTHORITY_TABLES`; this catalog includes owner state, journals and projections and is not a count of independent business Authorities. |
 
 ## Complete capability ledger
 
@@ -154,6 +155,29 @@ Every entry separates ownership from storage and consumption. A missing writer o
   Strategy Shadow/Portfolio Shadow ledgers remain active compatibility and
   specialized simulation consumers until their consumer inventory permits
   deletion; they are not a second all-day runtime.
+
+### Pre-Strategy Risk and Strategy Opportunity
+
+- **Domain / Capability:** Decision-time Strategy input / non-circular Risk and
+  exact Opportunity binding.
+- **Classification:** immutable Business Fact owner subordinate to the shared
+  Strategy Runtime; not post-Portfolio Risk Authority.
+- **Owner / Repository:** `PostgresStrategyOpportunityAuthority` with
+  `PostgresStrategySourceAuthority` typed reload.
+- **Canonical producer:** shared Continuous/Historical Opportunity producer
+  derives account state, Position/symbol exposure, liquidity, restrictions,
+  available quantity and configured limits from their existing owners, then
+  records `PRE_STRATEGY_RISK_STATE` and `STRATEGY_OPPORTUNITY` once.
+- **PostgreSQL tables:** `pre_strategy_risk_state`,
+  `pre_strategy_risk_source_binding`, `strategy_opportunity` and
+  `strategy_opportunity_source_binding`.
+- **Consumer:** Forecast-required Strategy contracts only after exact typed
+  Candidate, Signal, Forecast, Context, Model/version and DecisionTime reload.
+- **Replay / parity:** Historical and Continuous adapters call the same
+  business producer; ID/hash/version/time/source mismatch fails closed.
+- **Evidence ceiling:** engineering wiring does not activate the conditional
+  Strategy. The Registry remains Research/Shadow inactive until supported
+  upstream and economic evidence exists.
 
 ### Source freeze and Dataset
 
@@ -446,11 +470,17 @@ Every entry separates ownership from storage and consumption. A missing writer o
 - **Canonical Writer:** PostgreSQL target/outcome/attestation repositories.
 - **Reader:** target, targeted outcome, settlement and attestation Readers.
 - **Repository:** target/outcome repositories used by `application/research_evaluation` and Shadow Research.
-- **PostgreSQL tables:** `outcome_target_protocol`, `outcome_target_definition`, `targeted_shadow_outcome`, `targeted_shadow_outcome_label`, `prospective_outcome_settlement`, `prospective_evidence_attestation`.
-- **Artifact / Receipt:** Target Protocol/Definition, Targeted Shadow Outcome, Prospective Settlement and Attestation.
-- **Runtime caller:** later checkpoint acquisition and settlement workflows.
+- **PostgreSQL tables:** `outcome_target_protocol`, `outcome_target_definition`, `targeted_shadow_outcome`, `targeted_shadow_outcome_label`, `prospective_outcome_settlement`, `prospective_evidence_attestation` and `controlled_operation_package_locator`.
+- **Artifact / Receipt:** Target Protocol/Definition, immutable Daily Alpha
+  Prediction Snapshot, Targeted Shadow Outcome, Prospective Settlement and
+  Attestation.
+- **Runtime caller:** `ContinuousOutcomeSettlementService` in the sole
+  Continuous post-close path; the CLI is an operator adapter.
 - **Downstream consumer:** Evaluation Dataset, Panel, calibration/evaluation harnesses and Strategy Shadow qualification assessment.
-- **Replay mechanism:** immutable target/outcome/settlement/attestation reload.
+- **Replay mechanism:** immutable target/outcome/settlement/attestation reload;
+  Outcome V2 verifies exact Prediction Snapshot ID/hash, run/tick,
+  Candidate/Signal/Forecast and Strategy diagnostic. Missing or ambiguous
+  prediction scope fails closed and settlement is idempotent.
 - **Evidence ceiling:** factual outcome mechanics exist; current attestation remains `prospective_proven=false`.
 - **Legacy replacement:** legacy diagnostic outcome files are research inputs only, not this factual owner.
 

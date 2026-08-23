@@ -2,7 +2,7 @@
 
 > **Status:** ROADMAP
 > **Authority:** Dependency-ordered forward work
-> **Repository Baseline:** `main@b617844d338523d7dfea72642cfce8213121786e`
+> **Implementation Checkpoint:** `agent/engineering-closure-architecture-convergence-01@9a7a6191329fb487f59040606cc7ab01d291a47b`, based on `main@b617844d338523d7dfea72642cfce8213121786e`
 > **Strongest Research Evidence Revision:** `0d1a5a8` (WP-ALPHA-RESEARCH-01)
 > **Last Updated:** 2026-08-24
 > **Code Evidence:** `docs/status/Current-State.md`, `docs/status/Gap-Register.md`
@@ -47,36 +47,36 @@ strong exploratory discoveries. Their shared retrospective source family,
 physical-package gap and absent external validation make correctness—not model
 promotion—the next dependency.
 
-## Active engineering closure before campaigns
+## Completed engineering closure before campaigns
 
-PR #74 supplies substantial implementation but no exact-merge pytest,
-PostgreSQL or CI proof. Before any new historical/external/prospective campaign,
-the current priority order is:
+The closure branch completed and target-tested the dependency-ready engineering
+work discovered after PR #74:
 
 ```text
-targeted PR #74 verification
-→ single-lineage Daily Alpha Evidence admission
-→ typed PRE_STRATEGY_RISK_STATE / STRATEGY_OPPORTUNITY production
+single-lineage Daily Alpha Evidence admission
+→ typed PRE_STRATEGY_RISK_STATE / STRATEGY_OPPORTUNITY production/reload
 → truthful Path/Conditional Forecast projection
 → exact immutable Prediction Snapshot → T+1 Outcome lineage
-→ explicit schema preflight and Legacy retirement
+→ explicit schema migration/preflight boundary
+→ one Phase-II operator and physical retirement of duplicate Legacy execution planes
 ```
 
-This closure may reach `ENGINEERING_CLOSED / OWNER_WIRED / RUNTIME_WIRED /
-TARGETED_TESTED`. It cannot change the frozen research protocol or set any
-empirical, External, prospective, Formal OOS or Production state to true.
+This closure reaches `ENGINEERING_CLOSED / OWNER_WIRED / RUNTIME_WIRED /
+TARGETED_TESTED` for the named chain. It does not change the frozen research
+protocol or set any empirical, External, prospective, Formal OOS or Production
+state to true. Full repository pytest and all real campaigns remain `NOT_RUN`.
 
 ## Phase II engineering state
 
-The five Work Package kernels/contracts are present on current `main` after
-PR #74, but that merge's targeted test claims are unverified.
-Their empirical dependencies remain in the same order. Conditional Strategy
-owner composition remains an explicit fail-closed gap; implementation does not
-mean the hypothesis passed any dependency.
+The five Work Package kernels/contracts and one recoverable operator surface
+are present and focused-tested on the closure branch. Their empirical
+dependencies remain in the same order. Conditional Strategy owner composition
+is wired but inactive; implementation does not mean the hypothesis passed any
+dependency.
 
 ### P0 — WP-ALPHA-CORRECTNESS-CLOSURE-01
 
-**Engineering status:** `IMPLEMENTED / BASELINE_TESTS_NOT_RUN`.
+**Engineering status:** `IMPLEMENTED / OWNER_WIRED / TARGETED_TESTED`.
 
 **Research status:** top-level `INCONCLUSIVE`; internal diagnostic
 `PHYSICAL_REPRODUCTION_NOT_ESTABLISHED`. No complete real correctness proof was
@@ -112,8 +112,8 @@ separation, redundancy diagnostics and dependence-aware inference.
 
 ### P0 — Frozen Temporal External Validation Execution
 
-**Engineering status:** `IMPLEMENTED / OWNER_PERSISTED /
-BASELINE_TESTS_NOT_RUN`. The content owner
+**Engineering status:** `IMPLEMENTED / OWNER_PERSISTED / TARGETED_TESTED`.
+The content owner
 is the existing canonical `ResearchExperimentDefinition`, not a parallel
 Experiment authority.
 
@@ -173,8 +173,8 @@ External Validation result.
 
 ### P2 — WP-PREDICTION-01
 
-**Engineering status:** `OWNER_TYPES_IMPLEMENTED /
-CANONICAL_PRODUCER_NOT_WIRED / BASELINE_TESTS_NOT_RUN`.
+**Engineering status:** `ENGINEERING_CLOSED / OWNER_WIRED /
+RUNTIME_WIRED / TARGETED_TESTED`.
 
 **Dependency:** engineering can be wired now; a real Challenger remains dormant
 until upstream evidence survives.
@@ -192,15 +192,16 @@ conditional challenger with minimum-sample, frozen split/search/randomness,
 uncertainty, comparison and calibration-boundary semantics. Raw logits are not
 probabilities.
 
-Runtime now requires an owner-authority reload for every Forecast-required
-opportunity. Migration 094 supplies an immutable pre-Strategy Risk/Opportunity
-repository, but no canonical producer derives or records those facts from
-existing account, Position, Risk, liquidity and restriction owners. Generic
-JSON source traversal is not typed owner reload. The complete-account
-RiskDecision remains forbidden because it is post-Portfolio and circular. The
-conditional family stays Research/Shadow inactive.
+Runtime now requires typed owner-authority reload for every Forecast-required
+opportunity. The shared producer derives and records Migration-094 Risk and
+Opportunity facts from existing account, Position/exposure, Risk-limit,
+liquidity, restriction and available-quantity owners in both Continuous and
+Historical paths. Generic JSON traversal is not used for typed
+Signal/Forecast/Context/Model authority. The complete-account RiskDecision
+remains forbidden because it is post-Portfolio and circular. The conditional
+family stays Research/Shadow inactive because its evidence gates have not run.
 
-**Maximum current state:** `IMPLEMENTED_NOT_WIRED / RESEARCH_READY_KERNEL`.
+**Maximum current state:** `ENGINEERING_CLOSED / EVIDENCE_INACTIVE`.
 
 ## Active evidence-dependent work
 

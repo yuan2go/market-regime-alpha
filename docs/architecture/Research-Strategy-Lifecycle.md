@@ -90,6 +90,11 @@ qualification or empirical validation.
   Risk state, DecisionTime/availability and Model/version lineage; missing,
   wrong-version or inactive binding fails closed. This is a real
   consumer contract, not an adapter that grants Forecast or trading Authority.
+- The shared Continuous/Historical Opportunity producer derives
+  `PRE_STRATEGY_RISK_STATE` from typed account, Position/exposure, liquidity,
+  restriction, available-quantity and configured-limit owners, records the
+  exact `STRATEGY_OPPORTUNITY`, and typed-reloads every source before Strategy.
+  Post-Portfolio `COMPLETE_ACCOUNT_RISK_DECISION` is never a Strategy input.
 - Runtime Scope owns the session symbol decision. It combines overlapping free
   Operational Universe facts conservatively, preserves every Provider artifact
   reference and retains `EXCLUDED`/`UNKNOWN`; downstream owners receive the
@@ -102,6 +107,10 @@ qualification or empirical validation.
   independently frozen policy; current evidence does not.
 - Entry research evaluates Candidate-only, Candidate+Signal, Candidate+Forecast and Candidate+Intraday variants. Its strongest output is `SHADOW_ENTER`; Canonical Entry still has no `ENTER` state.
 - Research Shadow freezes what the research system knew and later binds factual outcomes. It has no simulated account or execution ledger.
+- Daily Alpha freezes the exact Candidate/Signal/Forecast and Strategy
+  diagnostic together with run/tick and snapshot hash. T+1 settlement appends
+  Outcome V2 through the one Continuous control plane; it never rewrites the
+  prediction or guesses ownership from trading date alone.
 - Strategy Shadow owns the isolated simulated Entry/Fill/Position/Holding/Exit
   session and the observed-Fill Strategy sleeve projection. When a canonical
   Multi-Strategy cycle exists, the free-data Shadow Entry is downstream of the
