@@ -2,7 +2,7 @@
 
 > **Status:** CURRENT_STATUS  
 > **Authority:** Current implementation/evidence summary  
-> **Implementation Checkpoint:** `agent/engineering-closure-architecture-convergence-01@9a7a6191329fb487f59040606cc7ab01d291a47b`, based on `main@b617844d338523d7dfea72642cfce8213121786e`
+> **Implementation Checkpoint:** `agent/engineering-closure-architecture-convergence-01@879849b6b899944dd51961fee1e719f661c96833`, based on `main@b617844d338523d7dfea72642cfce8213121786e`
 > **Strongest Research Evidence Revision:** `0d1a5a8` (WP-ALPHA-RESEARCH-01)
 > **Last Updated:** 2026-08-24
 > **Code Evidence:** `src/market_regime_alpha`, `src/market_regime_alpha/persistence/postgres/migrations/*.sql`, `tests`
@@ -34,7 +34,8 @@ target architecture.
 - **Current CI:** GitHub has no run for `b617844` or the unpushed closure
   checkpoint. Local targeted validation is not CI proof.
 - **Alpha/Daily engineering closure:** the branch binds one explicit Candidate
-  admission root to Discovery→Correctness→External→Candidate lineage, produces
+  admission root to Discovery→Correctness→External→supported Context→Candidate
+  lineage, produces
   pre-Strategy Risk/Opportunity from owner-derived facts, projects typed
   Forecast semantics, binds Outcome to an exact immutable Daily snapshot and
   retains settlement inside the one Continuous control plane.
@@ -48,11 +49,16 @@ target architecture.
 
 - Daily Alpha accepts one explicit Candidate Policy admission root. PostgreSQL
   reload follows immutable source references through Discovery, Correctness,
-  External Experiment/Hypothesis/Dataset and Candidate Policy. Missing,
+  External Experiment/Hypothesis/Dataset, every declared Context Evidence and
+  Candidate Policy. Context must bind the same Experiment, External owner,
+  typed definition and research-panel Dataset. Missing,
   superseded, negative, inconclusive, mismatched or hash-drifted owners return
   `VALIDATED_CHALLENGER_INACTIVE`; no latest/best-row selection remains.
-- Continuous and Historical Opportunity adapters call the same producer. It
-  derives `PRE_STRATEGY_RISK_STATE` from typed account, Position/exposure,
+- Continuous and Historical Opportunity adapters share the same material,
+  Risk and Opportunity producer semantics. The Continuous composition root
+  supplies owner-derived account/Risk configuration when explicitly configured;
+  Historical fails closed when equivalent DecisionTime account facts are absent.
+  The producer derives `PRE_STRATEGY_RISK_STATE` from typed account, Position/exposure,
   liquidity, restriction, available-quantity and configured Risk-limit facts,
   records `STRATEGY_OPPORTUNITY`, then typed-reloads both before Strategy.
   `COMPLETE_ACCOUNT_RISK_DECISION` remains forbidden as a Strategy input.
@@ -62,7 +68,8 @@ target architecture.
 - Daily Alpha distinguishes `PATH_FORECAST` from `CONDITIONAL_FORECAST`.
   Path output projects status, MFE, MAE, quantiles, sample count and calibration
   state from its owner. Conditional output is shown only after exact owner
-  reload; absence is `NOT_AVAILABLE`/`DATA_INSUFFICIENT`, never fabrication.
+  reload; an exact insufficient owner retains only its baseline/calibration
+  lineage and limitations, while absence is `NOT_AVAILABLE`, never fabrication.
 - Migration 096 freezes exact aggregate Candidate/Signal/Forecast and Strategy
   diagnostic references plus snapshot ID/hash/run/tick. T+1 settlement resolves
   that unique immutable prediction, enforces DecisionTime before Outcome
@@ -112,8 +119,10 @@ Candidate / Signal / Forecast / Context
 → Strategy Runtime
 ```
 
-The producer is wired in Continuous and Historical adapters with shared
-semantics, and PostgreSQL typed reload remains mandatory. Conditional Strategy
+The producer semantics and typed material resolver are wired in Continuous and
+Historical adapters; PostgreSQL typed reload remains mandatory, and Historical
+execution fails closed unless exact DecisionTime account/Risk facts are supplied.
+Conditional Strategy
 still remains `RESEARCH/SHADOW`, inactive and fail-closed because no real
 correctness/external Candidate admission or qualified conditional Forecast
 evidence exists.
@@ -176,7 +185,11 @@ fallback remains for a Forecast-required Strategy.
   separate, with Universal Integrity, factor-specific availability, validated
   Alpha contributions and evidence-supported Context adjustment. External,
   Context, Candidate and conditional-prediction results are persisted by typed
-  application methods through the existing PostgreSQL Historical Evidence owner;
+  application methods through the existing PostgreSQL Historical Evidence owner.
+  Candidate admission V2 binds every supported Context record to the same
+  Experiment, External Evidence and research-panel Dataset; malformed Factor
+  rows are rejected rather than silently filtered. The conditional Forecast
+  owner additionally binds one supported same-Experiment Context record;
   owner reload and embedded artifact hashes fail closed.
 - Conditional Forecast keeps the empirical distribution baseline and compares
   a frozen regularized-linear model under chronological sample admission,

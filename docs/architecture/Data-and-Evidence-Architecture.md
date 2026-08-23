@@ -103,14 +103,25 @@ the campaign remains unexecuted. Migration 094 adds append-only
 `PRE_STRATEGY_RISK_STATE` and `STRATEGY_OPPORTUNITY` owner records that bind,
 rather than copy, existing account/Position/Risk/liquidity/restriction and
 Candidate/Signal/Forecast/Context/Model/Strategy facts. Continuous and
-Historical adapters now derive those Risk/Opportunity facts from the same
-typed account, Position/exposure, liquidity, restriction, quantity and Risk
-limit owners, persist them once, and typed-reload before Strategy. Migration
+Historical adapters share one typed material/Risk/Opportunity producer
+semantics. Continuous derives those facts from the exact account,
+Position/exposure, liquidity, restriction, quantity and Risk-limit owners when
+configured; Historical rejects Opportunity material unless equivalent
+DecisionTime account facts are supplied. Both paths typed-reload before
+Strategy. Migration
 095 admits an immutable Daily Alpha snapshot as a terminal child of the
 existing Continuous Runtime. Migration 096 adds an append-only Controlled
 package locator and exact Prediction Snapshot/Strategy diagnostic foreign-key
 bindings to Prospective Outcome V2. Legacy Outcome V1 remains immutable and
 replayable. None grants empirical or Production authority.
+
+Daily Alpha Evidence admission is rooted at one explicitly configured immutable
+Candidate Policy Evidence reference. Admission schema v2 reloads Discovery,
+Correctness, External Experiment/Hypothesis/Dataset and every declared Context
+Evidence edge. A Context edge must bind that same Experiment, External owner,
+typed Context definition and research-panel Dataset. Supersession, negative or
+inconclusive classification, malformed Factor rows, missing edges and hash drift
+all fail closed; recency and metric ordering are never selection mechanisms.
 
 Schema migration is an explicit operator/preflight responsibility. Runtime and
 Repository construction must verify the required migration registry and fail

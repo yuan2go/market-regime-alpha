@@ -164,17 +164,19 @@ Every entry separates ownership from storage and consumption. A missing writer o
   Strategy Runtime; not post-Portfolio Risk Authority.
 - **Owner / Repository:** `PostgresStrategyOpportunityAuthority` with
   `PostgresStrategySourceAuthority` typed reload.
-- **Canonical producer:** shared Continuous/Historical Opportunity producer
-  derives account state, Position/symbol exposure, liquidity, restrictions,
-  available quantity and configured limits from their existing owners, then
-  records `PRE_STRATEGY_RISK_STATE` and `STRATEGY_OPPORTUNITY` once.
+- **Canonical producer:** Continuous/Historical adapters share one Opportunity
+  material/Risk producer semantics. With exact DecisionTime Account facts and
+  configured limits it derives account state, Position/symbol exposure,
+  liquidity, restrictions and available quantity from their existing owners,
+  then records `PRE_STRATEGY_RISK_STATE` and `STRATEGY_OPPORTUNITY` once.
 - **PostgreSQL tables:** `pre_strategy_risk_state`,
   `pre_strategy_risk_source_binding`, `strategy_opportunity` and
   `strategy_opportunity_source_binding`.
 - **Consumer:** Forecast-required Strategy contracts only after exact typed
   Candidate, Signal, Forecast, Context, Model/version and DecisionTime reload.
 - **Replay / parity:** Historical and Continuous adapters call the same
-  business producer; ID/hash/version/time/source mismatch fails closed.
+  business producer semantics; Historical input without equivalent Account
+  facts and every ID/hash/version/time/source mismatch fail closed.
 - **Evidence ceiling:** engineering wiring does not activate the conditional
   Strategy. The Registry remains Research/Shadow inactive until supported
   upstream and economic evidence exists.
