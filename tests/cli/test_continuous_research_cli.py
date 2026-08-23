@@ -11,6 +11,7 @@ from market_regime_alpha.cli.continuous_research import (
     ARGUMENT_ERROR,
     DATABASE_ERROR,
     SUCCESS,
+    _daily_alpha_evidence_root,
     _operator_resource,
     _settle_previous_prediction_if_due,
     build_parser,
@@ -128,12 +129,17 @@ def test_cli_exposes_converged_free_data_day_operations() -> None:
             "2025-02-03T14:54:00+08:00",
             "--strategy-account-id",
             "strategy-shadow-account",
+            "--daily-alpha-candidate-evidence-id",
+            "historical-evidence-candidate",
+            "--daily-alpha-candidate-evidence-hash",
+            f"sha256:{'a' * 64}",
         ]
     )
 
     assert args.operation == "run-due"
     assert args.runtime_clock_mode == "LIVE"
     assert args.strategy_account_id == "strategy-shadow-account"
+    assert _daily_alpha_evidence_root(args) is not None
     assert _operator_resource(args).artifact_kind == (
         "CONTINUOUS_OPERATOR_OPERATION"
     )

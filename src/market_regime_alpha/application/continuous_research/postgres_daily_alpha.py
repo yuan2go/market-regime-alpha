@@ -10,12 +10,10 @@ from market_regime_alpha.application.continuous_research.daily_alpha import (
     DailyAlphaOwnerResolver,
     DailyAlphaPredictionSnapshot,
     assess_daily_alpha_evidence_gate,
+    daily_alpha_admission_evidence_references,
 )
 from market_regime_alpha.application.continuous_research.journal import (
     RuntimeArtifactReference,
-)
-from market_regime_alpha.application.historical_corpus.evidence import (
-    HistoricalEvidenceKind,
 )
 from market_regime_alpha.application.historical_corpus.postgres_evidence import (
     PostgresHistoricalEvidenceRepository,
@@ -107,31 +105,90 @@ class PostgresDailyAlphaPredictionAuthority:
 
 
 class PostgresDailyAlphaEvidenceGateResolver:
-    """Resolve the latest immutable Phase-II dependency chain from PostgreSQL."""
+    """Reload one explicitly configured immutable Phase-II Evidence chain."""
 
-    def __init__(self, factory: PostgresConnectionFactory) -> None:
+    def __init__(
+        self,
+        factory: PostgresConnectionFactory,
+        *,
+        root_candidate_policy_reference: ValidationArtifactReference | None = None,
+    ) -> None:
         self._factory = factory
-        self._evidence = PostgresHistoricalEvidenceRepository(factory)
+        self._root = root_candidate_policy_reference
+        self._evidence = PostgresHistoricalEvidenceRepository(
+            factory, apply_migrations=False
+        )
 
     def assess(self) -> DailyAlphaEvidenceGate:
-        kinds = (
-            HistoricalEvidenceKind.ALPHA_CORRECTNESS,
-            HistoricalEvidenceKind.EXTERNAL_VALIDATION,
-            HistoricalEvidenceKind.CANDIDATE_POLICY,
+        if self._root is None:
+            return assess_daily_alpha_evidence_gate(
+                (), root_candidate_policy_reference=None
+            )
+        loaded = []
+        try:
+            candidate = self._evidence.get(self._root.artifact_id)
+            loaded.append(candidate)
+            if candidate.reference != self._root:
+                return DailyAlphaEvidenceGate.inactive(
+                    candidate_policy_reference=self._root,
+                    reason_codes=("EVIDENCE_HASH_DRIFT",),
+                )
+            upstream_references = daily_alpha_admission_evidence_references(
+                candidate
+            )
+            for reference in upstream_references:
+                owner = self._evidence.get(reference.artifact_id)
+                loaded.append(owner)
+                if owner.reference != reference:
+                    return DailyAlphaEvidenceGate.inactive(
+                        candidate_policy_reference=self._root,
+                        reason_codes=("EVIDENCE_HASH_DRIFT",),
+                    )
+        except (KeyError, ValueError):
+            return assess_daily_alpha_evidence_gate(
+                tuple(loaded),
+                root_candidate_policy_reference=self._root,
+            )
+        superseded = self._superseded_references(
+            tuple(item.reference for item in loaded)
         )
-        with self._factory.connection(read_only=True) as connection:
-            rows = connection.execute(
-                """
-                SELECT DISTINCT ON (evidence_kind) evidence_id
-                FROM historical_research_evidence
-                WHERE evidence_kind = ANY(%s)
-                ORDER BY evidence_kind, created_at DESC, evidence_id DESC
-                """,
-                ([item.value for item in kinds],),
-            ).fetchall()
         return assess_daily_alpha_evidence_gate(
-            tuple(self._evidence.get(ArtifactId(str(row[0]))) for row in rows)
+            tuple(loaded),
+            root_candidate_policy_reference=self._root,
+            superseded_references=superseded,
         )
+
+    def _superseded_references(
+        self,
+        references: tuple[ValidationArtifactReference, ...],
+    ) -> tuple[ValidationArtifactReference, ...]:
+        superseded: list[ValidationArtifactReference] = []
+        with self._factory.connection(read_only=True) as connection:
+            for reference in references:
+                row = connection.execute(
+                    """
+                    SELECT 1
+                    FROM historical_research_evidence invalidation
+                    JOIN historical_research_evidence_source_binding source
+                      ON source.evidence_id = invalidation.evidence_id
+                     AND source.evidence_hash = invalidation.evidence_hash
+                    WHERE invalidation.evidence_kind = 'METHODOLOGY_ASSESSMENT'
+                      AND invalidation.payload_json->'payload'->>'status'
+                          = 'METHODOLOGY_INVALIDATED'
+                      AND source.artifact_kind = %s
+                      AND source.artifact_id = %s
+                      AND source.content_hash = %s
+                    LIMIT 1
+                    """,
+                    (
+                        reference.artifact_kind,
+                        str(reference.artifact_id),
+                        reference.content_hash,
+                    ),
+                ).fetchone()
+                if row is not None:
+                    superseded.append(reference)
+        return tuple(superseded)
 
 
 class DailyAlphaSourceIntegrityError(ValueError):

@@ -18,11 +18,13 @@ from market_regime_alpha.application.continuous_research.journal import (
 from market_regime_alpha.application.historical_corpus.evidence import (
     HistoricalEvidenceKind,
     HistoricalResearchEvidence,
+    ResearchFinding,
 )
 from market_regime_alpha.application.research_validation.common import (
     ValidationArtifactReference,
 )
 from market_regime_alpha.core.identity import ArtifactId
+from market_regime_alpha.candidates.policy import research_panel_dataset_reference
 from market_regime_alpha.evidence.canonical import (
     canonical_datetime,
     canonical_hash,
@@ -128,58 +130,308 @@ class HistoricalEvidenceReader(Protocol):
 
 def assess_daily_alpha_evidence_gate(
     evidence: tuple[HistoricalResearchEvidence, ...],
+    *,
+    root_candidate_policy_reference: ValidationArtifactReference | None = None,
+    superseded_references: tuple[ValidationArtifactReference, ...] = (),
 ) -> DailyAlphaEvidenceGate:
-    """Admit only an explicitly supported dependency chain.
+    """Admit one explicitly configured immutable Evidence lineage.
 
-    Evidence is selected by immutable creation time and identity.  Missing,
-    negative, inconclusive, or merely engineering-ready facts all remain
-    inactive.  Candidate activation is deliberately explicit rather than
-    inferred from one favourable comparison metric.
+    No database recency, metric ordering, or implicit policy selection is used.
+    The Candidate Policy Evidence root must bind the exact External,
+    Correctness and Discovery owners plus their Experiment, hypothesis, dataset,
+    factor-family and run/command lineage.
     """
 
-    latest: dict[HistoricalEvidenceKind, HistoricalResearchEvidence] = {}
-    for item in sorted(evidence, key=lambda value: (value.created_at, str(value.evidence_id))):
-        latest[item.evidence_kind] = item
-    correctness = latest.get(HistoricalEvidenceKind.ALPHA_CORRECTNESS)
-    external = latest.get(HistoricalEvidenceKind.EXTERNAL_VALIDATION)
-    candidate = latest.get(HistoricalEvidenceKind.CANDIDATE_POLICY)
-    correctness_supported = (
-        correctness is not None
-        and correctness.payload.get("status") == "CORRECTNESS_SUPPORTED"
-    )
-    external_supported = (
-        external is not None
-        and external.payload.get("qualification_status") == "SUPPORTED"
-    )
-    candidate_active = (
-        candidate is not None
-        and candidate.payload.get("activation_status") == "CHALLENGER_ACTIVE"
-        and candidate.payload.get("stability") == "STABLE"
-    )
-    references = (
-        None if correctness is None else correctness.reference,
-        None if external is None else external.reference,
-        None if candidate is None else candidate.reference,
-    )
-    if correctness_supported and external_supported and candidate_active:
-        return DailyAlphaEvidenceGate(
-            DailyAlphaActivationStatus.VALIDATED_CHALLENGER_ACTIVE,
-            *references,
-            reason_codes=("EVIDENCE_DEPENDENCIES_SUPPORTED",),
+    if root_candidate_policy_reference is None:
+        return DailyAlphaEvidenceGate.inactive(
+            reason_codes=("EVIDENCE_ROOT_NOT_CONFIGURED",)
         )
-    reasons = []
-    if not correctness_supported:
+    by_reference: dict[ValidationArtifactReference, HistoricalResearchEvidence] = {}
+    try:
+        for item in evidence:
+            item.verify_identity()
+            by_reference[item.reference] = item
+    except ValueError:
+        return DailyAlphaEvidenceGate.inactive(
+            candidate_policy_reference=root_candidate_policy_reference,
+            reason_codes=("EVIDENCE_HASH_DRIFT",),
+        )
+    candidate = by_reference.get(root_candidate_policy_reference)
+    if candidate is None:
+        return DailyAlphaEvidenceGate.inactive(
+            candidate_policy_reference=root_candidate_policy_reference,
+            reason_codes=("EVIDENCE_LINEAGE_INCOMPLETE",),
+        )
+    try:
+        correctness, external, discovery = _daily_alpha_lineage(
+            candidate=candidate,
+            by_reference=by_reference,
+        )
+    except _DailyAlphaLineageError as exc:
+        return DailyAlphaEvidenceGate.inactive(
+            correctness_reference=exc.correctness_reference,
+            external_validation_reference=exc.external_reference,
+            candidate_policy_reference=root_candidate_policy_reference,
+            reason_codes=(exc.reason_code,),
+        )
+    chain_references = {
+        candidate.reference,
+        external.reference,
+        correctness.reference,
+        discovery.reference,
+    }
+    if chain_references.intersection(superseded_references):
+        return DailyAlphaEvidenceGate.inactive(
+            correctness_reference=correctness.reference,
+            external_validation_reference=external.reference,
+            candidate_policy_reference=candidate.reference,
+            reason_codes=("EVIDENCE_SUPERSEDED",),
+        )
+    reasons: list[str] = []
+    if (
+        correctness.classification is not ResearchFinding.POSITIVE
+        or correctness.payload.get("status") != "CORRECTNESS_SUPPORTED"
+    ):
         reasons.append("CORRECTNESS_NOT_SUPPORTED")
-    if not external_supported:
+    if (
+        external.classification is not ResearchFinding.POSITIVE
+        or external.payload.get("qualification_status") != "SUPPORTED"
+    ):
         reasons.append("EXTERNAL_VALIDATION_NOT_SUPPORTED")
-    if not candidate_active:
+    if discovery.classification is not ResearchFinding.POSITIVE:
+        reasons.append("DISCOVERY_NOT_SUPPORTED")
+    if (
+        candidate.classification is not ResearchFinding.POSITIVE
+        or candidate.payload.get("activation_status") != "CHALLENGER_ACTIVE"
+        or candidate.payload.get("stability") != "STABLE"
+    ):
         reasons.append("CANDIDATE_CHALLENGER_NOT_ACTIVE")
-    return DailyAlphaEvidenceGate.inactive(
-        correctness_reference=references[0],
-        external_validation_reference=references[1],
-        candidate_policy_reference=references[2],
-        reason_codes=tuple(reasons),
+    if reasons:
+        return DailyAlphaEvidenceGate.inactive(
+            correctness_reference=correctness.reference,
+            external_validation_reference=external.reference,
+            candidate_policy_reference=candidate.reference,
+            reason_codes=tuple(reasons),
+        )
+    return DailyAlphaEvidenceGate(
+        DailyAlphaActivationStatus.VALIDATED_CHALLENGER_ACTIVE,
+        correctness.reference,
+        external.reference,
+        candidate.reference,
+        reason_codes=("EVIDENCE_DEPENDENCIES_SUPPORTED",),
     )
+
+
+class _DailyAlphaLineageError(ValueError):
+    def __init__(
+        self,
+        reason_code: str,
+        *,
+        correctness_reference: ValidationArtifactReference | None = None,
+        external_reference: ValidationArtifactReference | None = None,
+    ) -> None:
+        super().__init__(reason_code)
+        self.reason_code = reason_code
+        self.correctness_reference = correctness_reference
+        self.external_reference = external_reference
+
+
+def daily_alpha_admission_evidence_references(
+    candidate: HistoricalResearchEvidence,
+) -> tuple[ValidationArtifactReference, ...]:
+    """Return the exact upstream Evidence references declared by one root."""
+
+    try:
+        admission = _mapping(candidate.payload.get("daily_alpha_admission"))
+        return (
+            _required_validation_reference(
+                admission, "discovery_evidence_reference"
+            ),
+            _required_validation_reference(
+                admission, "correctness_evidence_reference"
+            ),
+            _required_validation_reference(
+                admission, "external_validation_evidence_reference"
+            ),
+        )
+    except (KeyError, ValueError) as exc:
+        raise _DailyAlphaLineageError("EVIDENCE_LINEAGE_INVALID") from exc
+
+
+def _daily_alpha_lineage(
+    *,
+    candidate: HistoricalResearchEvidence,
+    by_reference: Mapping[
+        ValidationArtifactReference, HistoricalResearchEvidence
+    ],
+) -> tuple[
+    HistoricalResearchEvidence,
+    HistoricalResearchEvidence,
+    HistoricalResearchEvidence,
+]:
+    correctness_reference: ValidationArtifactReference | None = None
+    external_reference: ValidationArtifactReference | None = None
+    try:
+        if candidate.evidence_kind is not HistoricalEvidenceKind.CANDIDATE_POLICY:
+            raise ValueError("root is not Candidate Policy Evidence")
+        admission = _mapping(candidate.payload.get("daily_alpha_admission"))
+        if admission.get("schema_version") != "daily-alpha-evidence-admission/v1":
+            raise ValueError("unsupported Daily Alpha admission schema")
+        discovery_reference = _required_validation_reference(
+            admission, "discovery_evidence_reference"
+        )
+        correctness_reference = _required_validation_reference(
+            admission, "correctness_evidence_reference"
+        )
+        external_reference = _required_validation_reference(
+            admission, "external_validation_evidence_reference"
+        )
+        candidate_policy_reference = _required_validation_reference(
+            admission, "candidate_policy_reference"
+        )
+        dataset_reference = _required_validation_reference(
+            admission, "candidate_dataset_reference"
+        )
+        external_experiment_reference = _required_validation_reference(
+            admission, "external_experiment_reference"
+        )
+        hypothesis_reference = _required_validation_reference(
+            admission, "frozen_hypothesis_reference"
+        )
+        required_candidate_sources = {
+            discovery_reference,
+            correctness_reference,
+            external_reference,
+            candidate_policy_reference,
+            dataset_reference,
+            external_experiment_reference,
+            hypothesis_reference,
+        }
+        if not required_candidate_sources.issubset(candidate.source_references):
+            raise ValueError("Candidate Evidence source lineage is incomplete")
+        discovery = by_reference[discovery_reference]
+        correctness = by_reference[correctness_reference]
+        external = by_reference[external_reference]
+        if (
+            discovery.evidence_kind is not HistoricalEvidenceKind.ALPHA_ABLATION
+            or correctness.evidence_kind
+            is not HistoricalEvidenceKind.ALPHA_CORRECTNESS
+            or external.evidence_kind
+            is not HistoricalEvidenceKind.EXTERNAL_VALIDATION
+        ):
+            raise ValueError("Evidence kind drifted")
+        if not {discovery.reference, correctness.reference}.issubset(
+            external.source_references
+        ):
+            raise ValueError("External Evidence does not bind upstream Evidence")
+        external_experiment = _mapping(external.payload.get("experiment"))
+        embedded_experiment_reference = ValidationArtifactReference(
+            "RESEARCH_EXPERIMENT_DEFINITION",
+            ArtifactId(str(external_experiment["experiment_id"])),
+            str(external_experiment["experiment_hash"]),
+        )
+        if (
+            embedded_experiment_reference != external.experiment_reference
+            or embedded_experiment_reference != external_experiment_reference
+        ):
+            raise ValueError("External Experiment identity drifted")
+        if (
+            ValidationArtifactReference.from_canonical_dict(
+                _mapping(external_experiment["correctness_evidence_reference"])
+            )
+            != correctness.reference
+        ):
+            raise ValueError("External Correctness lineage drifted")
+        hypothesis = _mapping(external_experiment["hypothesis"])
+        embedded_hypothesis_reference = ValidationArtifactReference(
+            "FROZEN_ALPHA_HYPOTHESIS",
+            ArtifactId(str(hypothesis["hypothesis_id"])),
+            str(hypothesis["hypothesis_hash"]),
+        )
+        if embedded_hypothesis_reference != hypothesis_reference:
+            raise ValueError("frozen hypothesis identity drifted")
+        if (
+            ValidationArtifactReference.from_canonical_dict(
+                _mapping(hypothesis["discovery_evidence_reference"])
+            )
+            != discovery.reference
+        ):
+            raise ValueError("Discovery lineage drifted")
+        factor_directions = _factor_directions(admission.get("factor_directions"))
+        if (
+            factor_directions
+            != _factor_directions(hypothesis.get("factor_directions"))
+            or factor_directions
+            != _factor_directions(external.payload.get("validated_factors"))
+        ):
+            raise ValueError("Factor family/direction drifted")
+        panels = tuple(
+            ValidationArtifactReference.from_canonical_dict(_mapping(item))
+            for item in _sequence(
+                external_experiment.get("validation_panel_references")
+            )
+        )
+        if research_panel_dataset_reference(panels) != dataset_reference:
+            raise ValueError("Candidate/External dataset drifted")
+        _verify_lineage_stages(
+            admission.get("lineage_stages"),
+            ("DISCOVERY", discovery),
+            ("CORRECTNESS", correctness),
+            ("EXTERNAL_VALIDATION", external),
+        )
+        return correctness, external, discovery
+    except (KeyError, TypeError, ValueError) as exc:
+        raise _DailyAlphaLineageError(
+            "EVIDENCE_LINEAGE_INCOMPLETE",
+            correctness_reference=correctness_reference,
+            external_reference=external_reference,
+        ) from exc
+
+
+def _required_validation_reference(
+    payload: Mapping[str, Any], name: str
+) -> ValidationArtifactReference:
+    return ValidationArtifactReference.from_canonical_dict(_mapping(payload[name]))
+
+
+def _factor_directions(value: object) -> tuple[tuple[str, str], ...]:
+    result = tuple(
+        (str(item[0]), str(item[1]))
+        for item in _sequence(value)
+        if isinstance(item, (list, tuple)) and len(item) == 2
+    )
+    if not result or result != tuple(sorted(set(result))):
+        raise ValueError("Factor directions must be non-empty, unique and sorted")
+    return result
+
+
+def _verify_lineage_stages(
+    value: object,
+    *expected: tuple[str, HistoricalResearchEvidence],
+) -> None:
+    stages = tuple(_mapping(item) for item in _sequence(value))
+    projected = tuple(
+        (
+            str(item["stage"]),
+            str(item["run_id"]),
+            str(item["command_hash"]),
+            str(item["experiment_id"]),
+            str(item["experiment_hash"]),
+        )
+        for item in stages
+    )
+    actual = tuple(
+        (
+            stage,
+            str(evidence.run_id),
+            evidence.command_hash,
+            str(evidence.experiment_reference.artifact_id),
+            evidence.experiment_reference.content_hash,
+        )
+        for stage, evidence in expected
+    )
+    if projected != actual:
+        raise ValueError("Evidence run/command/Experiment lineage drifted")
 
 
 @dataclass(frozen=True, slots=True)
@@ -686,4 +938,5 @@ __all__ = [
     "DailyAlphaSymbolProjection",
     "EVIDENCE_DEPENDENCY_NOT_SATISFIED",
     "assess_daily_alpha_evidence_gate",
+    "daily_alpha_admission_evidence_references",
 ]

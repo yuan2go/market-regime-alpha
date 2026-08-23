@@ -742,6 +742,157 @@ class HistoricalPhaseIIResearchService:
             )
         )
 
+    def persist_candidate_admission(
+        self,
+        write: PhaseIIEvidenceWrite,
+        *,
+        comparison: CandidatePolicyComparison,
+        challenger_policy: CandidatePolicyDefinition,
+        activation_status: str,
+    ) -> HistoricalResearchEvidence:
+        """Persist the single explicit root consumed by Daily Alpha.
+
+        The method reuses Historical Evidence and Candidate Policy owners.  It
+        does not select a comparison or policy by recency or metric value.
+        """
+
+        if write.evidence_kind is not HistoricalEvidenceKind.CANDIDATE_POLICY:
+            raise ValueError("Candidate admission Evidence kind mismatch")
+        if activation_status not in {
+            "CHALLENGER_ACTIVE",
+            "CHALLENGER_DORMANT",
+        }:
+            raise ValueError("Candidate admission status must be explicit")
+        if (
+            comparison.challenger_reference != challenger_policy.reference
+            or comparison.dataset_reference != challenger_policy.dataset_reference
+        ):
+            raise ValueError("Candidate admission Policy/Dataset owner drifted")
+        self._verify_candidate_policy_evidence(challenger_policy)
+        external_references = {
+            item.external_validation_evidence.reference
+            for item in challenger_policy.validated_factors
+        }
+        if len(external_references) != 1:
+            raise ValueError(
+                "Candidate admission requires one External Evidence chain"
+            )
+        external_reference = next(iter(external_references))
+        external = self.load_evidence(
+            external_reference.artifact_id,
+            expected_kind=HistoricalEvidenceKind.EXTERNAL_VALIDATION,
+        )
+        if external.reference != external_reference:
+            raise ValueError("Candidate External Evidence owner drifted")
+        experiment = _mapping_value(external.payload.get("experiment"))
+        external_experiment_reference = ValidationArtifactReference(
+            "RESEARCH_EXPERIMENT_DEFINITION",
+            ArtifactId(str(experiment["experiment_id"])),
+            str(experiment["experiment_hash"]),
+        )
+        if external_experiment_reference != external.experiment_reference:
+            raise ValueError("Candidate External Experiment owner drifted")
+        correctness_reference = ValidationArtifactReference.from_canonical_dict(
+            _mapping_value(experiment["correctness_evidence_reference"])
+        )
+        hypothesis = _mapping_value(experiment["hypothesis"])
+        hypothesis_reference = ValidationArtifactReference(
+            "FROZEN_ALPHA_HYPOTHESIS",
+            ArtifactId(str(hypothesis["hypothesis_id"])),
+            str(hypothesis["hypothesis_hash"]),
+        )
+        discovery_reference = ValidationArtifactReference.from_canonical_dict(
+            _mapping_value(hypothesis["discovery_evidence_reference"])
+        )
+        correctness = self.load_evidence(
+            correctness_reference.artifact_id,
+            expected_kind=HistoricalEvidenceKind.ALPHA_CORRECTNESS,
+        )
+        discovery = self.load_evidence(
+            discovery_reference.artifact_id,
+            expected_kind=HistoricalEvidenceKind.ALPHA_ABLATION,
+        )
+        if (
+            correctness.reference != correctness_reference
+            or discovery.reference != discovery_reference
+            or not {correctness.reference, discovery.reference}.issubset(
+                external.source_references
+            )
+        ):
+            raise ValueError("Candidate upstream Evidence lineage drifted")
+        panels = tuple(
+            ValidationArtifactReference.from_canonical_dict(_mapping_value(item))
+            for item in experiment.get("validation_panel_references", ())
+        )
+        if research_panel_dataset_reference(panels) != comparison.dataset_reference:
+            raise ValueError("Candidate/External dataset owner drifted")
+        factor_directions = tuple(
+            sorted(
+                (item.factor_id, item.direction)
+                for item in challenger_policy.validated_factors
+            )
+        )
+        if factor_directions != tuple(
+            sorted(
+                (str(item[0]), str(item[1]))
+                for item in external.payload.get("validated_factors", ())
+                if isinstance(item, (list, tuple)) and len(item) == 2
+            )
+        ):
+            raise ValueError("Candidate validated Factor family drifted")
+        if activation_status == "CHALLENGER_ACTIVE" and (
+            write.classification is not ResearchFinding.POSITIVE
+            or comparison.stability != "STABLE"
+            or external.classification is not ResearchFinding.POSITIVE
+            or external.payload.get("qualification_status") != "SUPPORTED"
+            or correctness.classification is not ResearchFinding.POSITIVE
+            or correctness.payload.get("status") != "CORRECTNESS_SUPPORTED"
+            or discovery.classification is not ResearchFinding.POSITIVE
+        ):
+            raise ValueError(
+                "Candidate Challenger activation lacks supported stable Evidence"
+            )
+        _require_sources(
+            write,
+            comparison.incumbent_reference,
+            comparison.challenger_reference,
+            comparison.dataset_reference,
+            comparison.protocol_reference,
+            challenger_policy.reference,
+            external.reference,
+            correctness.reference,
+            discovery.reference,
+            external_experiment_reference,
+            hypothesis_reference,
+        )
+        admission = {
+            "schema_version": "daily-alpha-evidence-admission/v1",
+            "candidate_policy_reference": challenger_policy.reference.to_canonical_dict(),
+            "candidate_dataset_reference": comparison.dataset_reference.to_canonical_dict(),
+            "external_validation_evidence_reference": external.reference.to_canonical_dict(),
+            "correctness_evidence_reference": correctness.reference.to_canonical_dict(),
+            "discovery_evidence_reference": discovery.reference.to_canonical_dict(),
+            "external_experiment_reference": external_experiment_reference.to_canonical_dict(),
+            "frozen_hypothesis_reference": hypothesis_reference.to_canonical_dict(),
+            "factor_directions": [list(item) for item in factor_directions],
+            "lineage_stages": [
+                _phase_ii_lineage_stage("DISCOVERY", discovery),
+                _phase_ii_lineage_stage("CORRECTNESS", correctness),
+                _phase_ii_lineage_stage("EXTERNAL_VALIDATION", external),
+            ],
+        }
+        return self._persist(
+            replace(
+                write,
+                payload={
+                    "comparison": comparison.to_canonical_dict(),
+                    "activation_status": activation_status,
+                    "stability": comparison.stability,
+                    "daily_alpha_admission": admission,
+                },
+            )
+        )
+
     def persist_conditional_forecast(
         self,
         write: PhaseIIEvidenceWrite,
@@ -1710,6 +1861,19 @@ def _mapping_value(value: object) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
         raise ValueError("Phase II owner payload must be an object")
     return value
+
+
+def _phase_ii_lineage_stage(
+    stage: str,
+    evidence: HistoricalResearchEvidence,
+) -> dict[str, str]:
+    return {
+        "stage": stage,
+        "run_id": str(evidence.run_id),
+        "command_hash": evidence.command_hash,
+        "experiment_id": str(evidence.experiment_reference.artifact_id),
+        "experiment_hash": evidence.experiment_reference.content_hash,
+    }
 
 
 __all__ = [

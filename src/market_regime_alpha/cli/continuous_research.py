@@ -398,6 +398,17 @@ def _add_run_arguments(command: argparse.ArgumentParser) -> None:
     )
     command.add_argument("--historical-sample-lookback-calendar-days", type=int, default=180)
     command.add_argument("--historical-sample-maximum-per-symbol", type=int, default=60)
+    command.add_argument(
+        "--daily-alpha-candidate-evidence-id",
+        help=(
+            "Explicit HISTORICAL_CANDIDATE_POLICY_EVIDENCE root; omitted keeps "
+            "the validated Challenger inactive."
+        ),
+    )
+    command.add_argument(
+        "--daily-alpha-candidate-evidence-hash",
+        help="Exact SHA-256 for --daily-alpha-candidate-evidence-id.",
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1734,6 +1745,24 @@ def _dispatch(
     raise ValueError("unsupported Continuous Research operation")
 
 
+def _daily_alpha_evidence_root(
+    args: argparse.Namespace,
+) -> ValidationArtifactReference | None:
+    evidence_id = args.daily_alpha_candidate_evidence_id
+    evidence_hash = args.daily_alpha_candidate_evidence_hash
+    if (evidence_id is None) != (evidence_hash is None):
+        raise ValueError(
+            "Daily Alpha Evidence root requires both exact ID and hash"
+        )
+    if evidence_id is None:
+        return None
+    return ValidationArtifactReference(
+        "HISTORICAL_CANDIDATE_POLICY_EVIDENCE",
+        ArtifactId(str(evidence_id)),
+        str(evidence_hash),
+    )
+
+
 def _run_due(
     args: argparse.Namespace,
     settings: DatabaseSettings,
@@ -1919,6 +1948,7 @@ def _run_due(
         clock=runtime_clock,
     )
     opportunity_authority = PostgresStrategyOpportunityAuthority(factory)
+    daily_alpha_evidence_root = _daily_alpha_evidence_root(args)
     children = CanonicalFreeDataResearchComposition(
         service=service,
         invocation_builder=lambda _: invocation(),
@@ -1941,7 +1971,8 @@ def _run_due(
             resolver=PostgresDailyAlphaOwnerResolver(factory),
         ),
         daily_alpha_evidence_gate=PostgresDailyAlphaEvidenceGateResolver(
-            factory
+            factory,
+            root_candidate_policy_reference=daily_alpha_evidence_root,
         ).assess,
         clock=runtime_clock,
     )
