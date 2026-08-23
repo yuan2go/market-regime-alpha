@@ -14,18 +14,22 @@ def test_phase_ii_migration_is_forward_only_idempotent_and_extends_existing_evid
     first = migrator.apply_all(postgres_factory)
     second = migrator.apply_all(postgres_factory)
 
-    assert first[-1].version == 92
-    assert first[-1].name == "strategy_forecast_contract_semantics"
+    assert first[-1].version == 95
+    assert first[-1].name == "daily_alpha_continuous_projection"
     assert second == ()
     with postgres_factory.connection(read_only=True) as connection:
         latest = connection.execute(
-            "SELECT max(version), max(name) FILTER (WHERE version = 92) FROM schema_migrations"
+            "SELECT version, name FROM schema_migrations ORDER BY version DESC LIMIT 1"
         ).fetchone()
+        phase_ii_and_closure = connection.execute(
+            "SELECT version, name FROM schema_migrations WHERE version >= 91 ORDER BY version"
+        ).fetchall()
         constraint = connection.execute(
             """
             SELECT pg_get_constraintdef(oid)
             FROM pg_constraint
             WHERE conname = 'historical_research_evidence_evidence_kind_check'
+              AND conrelid = 'historical_research_evidence'::regclass
             """
         ).fetchone()
 
@@ -34,10 +38,18 @@ def test_phase_ii_migration_is_forward_only_idempotent_and_extends_existing_evid
             SELECT pg_get_constraintdef(oid)
             FROM pg_constraint
             WHERE conname = 'strategy_contract_forecast_semantics_check'
+              AND conrelid = 'strategy_contract'::regclass
             """
         ).fetchone()
 
-    assert latest == (92, "strategy_forecast_contract_semantics")
+    assert latest == (95, "daily_alpha_continuous_projection")
+    assert phase_ii_and_closure == [
+        (91, "alpha_research_phase_ii"),
+        (92, "strategy_forecast_contract_semantics"),
+        (93, "frozen_temporal_validation_window"),
+        (94, "pre_strategy_risk_opportunity"),
+        (95, "daily_alpha_continuous_projection"),
+    ]
     assert constraint is not None
     definition = str(constraint[0])
     for value in (
