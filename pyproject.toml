@@ -168,6 +168,7 @@ files = [
     "src/market_regime_alpha/application/historical_corpus/external_validation.py",
     "src/market_regime_alpha/application/historical_corpus/context_conditional.py",
     "src/market_regime_alpha/application/historical_corpus/phase_ii_service.py",
+    "src/market_regime_alpha/application/historical_corpus/phase_ii_operator.py",
     "src/market_regime_alpha/application/runtime_operations/observability.py",
     "src/market_regime_alpha/application/runtime_operations/query.py",
     "src/market_regime_alpha/application/state_system",

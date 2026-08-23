@@ -118,6 +118,9 @@ from market_regime_alpha.application.historical_corpus.postgres_materialization 
 from market_regime_alpha.application.historical_corpus.postgres_repository import (
     PostgresHistoricalCorpusRepository,
 )
+from market_regime_alpha.application.historical_corpus.phase_ii_operator import (
+    build_postgres_phase_ii_operator,
+)
 from market_regime_alpha.application.historical_research.postgres_journal import (
     DEFAULT_HISTORICAL_STAGE_LEASE,
     HistoricalRunSnapshot,
@@ -599,6 +602,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     historical_evidence.add_argument("--run-id", required=True)
     historical_evidence.add_argument("--artifact-root", type=Path, required=True)
+    historical_phase_ii = subparsers.add_parser(
+        "historical-phase-ii",
+        help=(
+            "Execute one owner-resolved Correctness, External, Context or "
+            "Candidate Phase-II operation through Historical Research."
+        ),
+    )
+    historical_phase_ii.add_argument("--input", type=Path, required=True)
+    historical_phase_ii.add_argument("--artifact-root", type=Path, required=True)
     performance_build = subparsers.add_parser(
         "performance-build",
         help="Build immutable multi-period Performance/Attribution from Portfolio Shadow.",
@@ -801,6 +813,16 @@ def _dispatch(
     journal: PostgresContinuousResearchJournal,
     factory: PostgresConnectionFactory,
 ) -> dict[str, Any]:
+    if args.operation == "historical-phase-ii":
+        evidence = build_postgres_phase_ii_operator(
+            factory,
+            artifact_root=args.artifact_root.resolve(),
+        ).execute(_load_json_object(args.input))
+        return {
+            "operation": "HISTORICAL_PHASE_II",
+            "evidence": evidence.to_canonical_dict(),
+            **_authority_ceiling(),
+        }
     if args.operation == "historical-corpus-acquire":
         payload = _load_json_object(args.input)
         required = {"start_date", "end_date", "bucket_count"}
@@ -2587,6 +2609,7 @@ def _required_permission(args: argparse.Namespace) -> SecurityPermission:
         "qualification-shadow",
         "qualification-status",
         "historical-evidence",
+        "historical-phase-ii",
         "strategy-feedback-close",
     }:
         return SecurityPermission.RECORD_RESEARCH_EVIDENCE

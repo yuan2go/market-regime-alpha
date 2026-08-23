@@ -350,6 +350,17 @@ def test_cli_exposes_converged_free_data_day_operations() -> None:
             "historical-artifacts",
         ]
     )
+    historical_phase_ii = build_parser().parse_args(
+        [
+            "--database-url",
+            "postgresql://runtime-authority",
+            "historical-phase-ii",
+            "--input",
+            "phase-ii.json",
+            "--artifact-root",
+            "historical-artifacts",
+        ]
+    )
     strategy_feedback_close = build_parser().parse_args(
         [
             "--database-url",
@@ -549,6 +560,7 @@ def test_cli_exposes_converged_free_data_day_operations() -> None:
     assert historical_run.operation == "historical-run"
     assert historical_acquire.operation == "historical-corpus-acquire"
     assert historical_evidence.operation == "historical-evidence"
+    assert historical_phase_ii.operation == "historical-phase-ii"
     assert strategy_feedback_close.operation == "strategy-feedback-close"
     assert (
         strategy_feedback_close.incumbent_version_id

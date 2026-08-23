@@ -615,7 +615,7 @@ class HistoricalPhaseIIResearchService:
             )
             for item in batch
         )
-        _require_sources(
+        write = _with_required_sources(
             write,
             proof.reference,
             ValidationArtifactReference(
@@ -654,7 +654,7 @@ class HistoricalPhaseIIResearchService:
             or experiment.reference != evaluation.experiment_reference
         ):
             raise ValueError("External Evaluation Experiment owner drifted")
-        _require_sources(
+        write = _with_required_sources(
             write,
             evaluation.experiment_reference,
             evaluation.thresholds_reference,
@@ -691,7 +691,7 @@ class HistoricalPhaseIIResearchService:
     ) -> HistoricalResearchEvidence:
         if write.evidence_kind is not HistoricalEvidenceKind.CONTEXT_CONDITIONAL:
             raise ValueError("Context Evaluation Evidence kind mismatch")
-        _require_sources(write, evaluation.definition_reference)
+        write = _with_required_sources(write, evaluation.definition_reference)
         return self._persist(
             replace(
                 write,
@@ -709,7 +709,7 @@ class HistoricalPhaseIIResearchService:
     ) -> HistoricalResearchEvidence:
         if write.evidence_kind is not HistoricalEvidenceKind.CANDIDATE_POLICY:
             raise ValueError("Candidate Evaluation Evidence kind mismatch")
-        _require_sources(
+        write = _with_required_sources(
             write,
             evaluation.policy_reference,
             evaluation.dataset_reference,
@@ -728,7 +728,7 @@ class HistoricalPhaseIIResearchService:
     ) -> HistoricalResearchEvidence:
         if write.evidence_kind is not HistoricalEvidenceKind.CANDIDATE_POLICY:
             raise ValueError("Candidate Comparison Evidence kind mismatch")
-        _require_sources(
+        write = _with_required_sources(
             write,
             comparison.incumbent_reference,
             comparison.challenger_reference,
@@ -852,7 +852,7 @@ class HistoricalPhaseIIResearchService:
             raise ValueError(
                 "Candidate Challenger activation lacks supported stable Evidence"
             )
-        _require_sources(
+        write = _with_required_sources(
             write,
             comparison.incumbent_reference,
             comparison.challenger_reference,
@@ -914,7 +914,7 @@ class HistoricalPhaseIIResearchService:
             configuration=configuration,
             baseline_forecast=baseline_forecast,
         )
-        _require_sources(
+        write = _with_required_sources(
             write,
             forecast.configuration_reference,
             forecast.training_request_reference,
@@ -1180,13 +1180,23 @@ def _embedded_artifact(
     return artifact
 
 
-def _require_sources(
+def _with_required_sources(
     write: PhaseIIEvidenceWrite,
     *required: ValidationArtifactReference,
-) -> None:
-    missing = set(required).difference(write.source_references)
-    if missing:
-        raise ValueError("Phase II Evidence is missing required artifact owner lineage")
+) -> PhaseIIEvidenceWrite:
+    """Freeze typed owner-derived lineage; callers cannot omit authoritative refs."""
+
+    references = tuple(
+        sorted(
+            {*write.source_references, *required},
+            key=lambda item: (
+                item.artifact_kind,
+                str(item.artifact_id),
+                item.content_hash,
+            ),
+        )
+    )
+    return replace(write, source_references=references)
 
 
 def _verify_correctness_proof_against_owners(
