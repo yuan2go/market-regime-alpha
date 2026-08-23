@@ -13,6 +13,7 @@ from market_regime_alpha.application.controlled_operation.evidence_package impor
     load_controlled_operation_package,
 )
 from market_regime_alpha.application.controlled_operation.longitudinal_index import (
+    ControlledPackageLocatorRecord,
     LongitudinalOperationalRecord,
 )
 from market_regime_alpha.core.identity import ArtifactId
@@ -101,6 +102,71 @@ class PostgresLongitudinalOperationalIndex(NativePostgresRepository):
                 _record_row(record),
             )
         return record
+
+    def record_package_locator(
+        self,
+        *,
+        package: ControlledOperationalEvidencePackage,
+        package_locator: str,
+    ) -> ControlledPackageLocatorRecord:
+        if package.status not in {
+            ControlledOperationalEvidenceStatus.OUTCOME_PENDING,
+            ControlledOperationalEvidenceStatus.SETTLED,
+        }:
+            raise ValueError("only immutable pending/settled packages have locators")
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO controlled_operation_package_locator(
+                    package_id, package_hash, operation_run_id,
+                    package_status, package_locator, created_at
+                ) VALUES (%s, %s, %s, %s, %s, %s)
+                ON CONFLICT (package_id) DO NOTHING
+                """,
+                (
+                    str(package.package_id),
+                    package.content_hash,
+                    str(package.command.run_id),
+                    package.status.value,
+                    package_locator,
+                    self._now(),
+                ),
+            )
+        restored = self.get_package_locator(package.package_id)
+        if (
+            restored.package_hash != package.content_hash
+            or restored.operation_run_id != package.command.run_id
+            or restored.package_status != package.status.value
+            or restored.package_locator != package_locator
+        ):
+            raise ValueError("Controlled package locator identity conflict")
+        return restored
+
+    def get_package_locator(
+        self,
+        package_id: ArtifactId,
+    ) -> ControlledPackageLocatorRecord:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT package_id, package_hash, operation_run_id,
+                       package_status, package_locator, created_at
+                FROM controlled_operation_package_locator
+                WHERE package_id = %s
+                """,
+                (str(package_id),),
+            ).fetchall()
+        if len(rows) != 1:
+            raise KeyError(str(package_id))
+        row = rows[0]
+        return ControlledPackageLocatorRecord(
+            package_id=ArtifactId(str(row["package_id"])),
+            package_hash=str(row["package_hash"]),
+            operation_run_id=ArtifactId(str(row["operation_run_id"])),
+            package_status=str(row["package_status"]),
+            package_locator=str(row["package_locator"]),
+            created_at=aware_datetime(row["created_at"], label="created_at"),
+        )
 
     def get(self, run_id: ArtifactId) -> LongitudinalOperationalRecord:
         with self._connect() as connection:
@@ -300,4 +366,7 @@ def _record_from_row(row: dict[str, object]) -> LongitudinalOperationalRecord:
     )
 
 
-__all__ = ["PostgresLongitudinalOperationalIndex"]
+__all__ = [
+    "ControlledPackageLocatorRecord",
+    "PostgresLongitudinalOperationalIndex",
+]

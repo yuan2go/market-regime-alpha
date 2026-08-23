@@ -494,6 +494,8 @@ def _build_daily_alpha_snapshot(
     candidate_set = state_coordinator.final_candidates
     if candidate_set is None:
         raise ValueError("Daily Alpha snapshot requires Candidate owner")
+    if summary.candidate_set is None:
+        raise ValueError("Daily Alpha snapshot requires Summary Candidate lineage")
     controlled = preparation.controlled_preparation
     feature_references = [
         RuntimeArtifactReference(
@@ -502,12 +504,12 @@ def _build_daily_alpha_snapshot(
             controlled.static_feature_bundle.artifact.content_hash,
         )
     ]
-    signal_reference = _state_stage_reference(
-        state_coordinator, StateResearchStage.SIGNAL
-    )
-    forecast_stage_reference = _state_stage_reference(
-        state_coordinator, StateResearchStage.FORECAST
-    )
+    stage_outputs = {item.stage: item.output_reference for item in summary.stages}
+    # The Summary freezes the aggregate Signal and Forecast owners consumed by
+    # Shadow Decision.  Per-symbol snapshots below supplement these references;
+    # they do not replace the aggregate lineage.
+    signal_reference = stage_outputs[StateResearchStage.SIGNAL]
+    forecast_stage_reference = stage_outputs[StateResearchStage.FORECAST]
     signals: dict[str, Any] = {}
     forecasts: dict[str, Any] = {}
     raw_forecast_references: list[RuntimeArtifactReference] = []
@@ -682,11 +684,7 @@ def _build_daily_alpha_snapshot(
         ),
         feature_references=tuple(feature_references),
         context_references=tuple(context_references),
-        candidate_reference=RuntimeArtifactReference(
-            "CANDIDATE_SET",
-            candidate_set.envelope.artifact_id,
-            candidate_set.envelope.content_hash,
-        ),
+        candidate_reference=summary.candidate_set,
         signal_reference=signal_reference,
         forecast_references=tuple(
             item

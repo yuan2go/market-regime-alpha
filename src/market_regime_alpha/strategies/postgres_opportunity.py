@@ -38,6 +38,7 @@ from market_regime_alpha.application.state_system.postgres_repository import (
     PostgresStateSystemRepository,
 )
 from market_regime_alpha.core.identity import ArtifactId
+from market_regime_alpha.evidence.canonical import canonical_hash
 from market_regime_alpha.forecasting.artifact import load_verified_path_forecast
 from market_regime_alpha.forecasting.conditional import ConditionalForecastResult
 from market_regime_alpha.forecasting.path import PathForecastArtifact
@@ -134,7 +135,12 @@ class PostgresStrategySourceAuthority:
             return self._strategy_version(reference)
         if reference.reference_kind == "RESEARCH_MODEL_ARTIFACT":
             return self._research_model(reference)
-        if reference.reference_kind in {"SIGNAL_SNAPSHOT", "PATH_FORECAST"}:
+        if reference.reference_kind in {
+            "SIGNAL",
+            "SIGNAL_SNAPSHOT",
+            "FORECAST_SET",
+            "PATH_FORECAST",
+        }:
             return self._controlled_artifact(reference)
         if reference.reference_kind in {
             "CONDITIONAL_FORECAST_RESULT",
@@ -465,7 +471,8 @@ class PostgresStrategySourceAuthority:
             locators = tuple(
                 str(row[0])
                 for row in connection.execute(
-                    "SELECT package_locator FROM longitudinal_operational_index"
+                    "SELECT package_locator "
+                    "FROM controlled_operation_package_locator"
                 ).fetchall()
             )
         matches: dict[
@@ -479,7 +486,71 @@ class PostgresStrategySourceAuthority:
             )
             package = load_controlled_operation_package(package_path)
             run_root = package_path.parent.parent
-            if reference.reference_kind == "PATH_FORECAST":
+            if reference.reference_kind == "FORECAST_SET":
+                path_items = tuple(
+                    item
+                    for item in package.evidence_references
+                    if item.reference_type == "PATH_FORECAST"
+                )
+                verified_forecasts = tuple(
+                    load_verified_path_forecast(run_root / item.locator)
+                    for item in path_items
+                )
+                digest = canonical_hash(
+                    {
+                        "forecasts": [
+                            {
+                                "artifact_id": str(item.artifact.artifact_id),
+                                "content_hash": (
+                                    item.artifact.forecast.envelope.content_hash
+                                ),
+                            }
+                            for item in verified_forecasts
+                        ]
+                    }
+                )
+                actual = RuntimeArtifactReference(
+                    "FORECAST_SET",
+                    ArtifactId(f"forecast-set:{digest[7:]}"),
+                    digest,
+                )
+                if actual == reference and verified_forecasts:
+                    matches[
+                        (
+                            reference.reference_kind,
+                            str(reference.artifact_id),
+                            reference.content_hash,
+                        )
+                    ] = ResolvedStrategySource(
+                        reference,
+                        max(
+                            item.artifact.forecast.envelope.decision_time.value
+                            for item in verified_forecasts
+                        ),
+                        tuple(
+                            sorted(
+                                item.artifact.forecast.symbol
+                                for item in verified_forecasts
+                            )
+                        ),
+                        _references(
+                            tuple(
+                                RuntimeArtifactReference(
+                                    "SIGNAL_SNAPSHOT",
+                                    item.artifact.signal_snapshot.envelope.artifact_id,
+                                    item.artifact.signal_snapshot.envelope.content_hash,
+                                )
+                                for item in verified_forecasts
+                            )
+                        ),
+                        {
+                            "forecasts": [
+                                item.artifact.to_canonical_dict()
+                                for item in verified_forecasts
+                            ]
+                        },
+                    )
+            elif reference.reference_kind == "PATH_FORECAST":
                 evidence = tuple(
                     item
                     for item in package.evidence_references
@@ -495,7 +566,7 @@ class PostgresStrategySourceAuthority:
                     signal = verified_path.artifact.signal_snapshot
                     resolved = ResolvedStrategySource(
                         reference,
-                        forecast.envelope.created_at,
+                        forecast.envelope.decision_time.value,
                         (forecast.symbol,),
                         (
                             RuntimeArtifactReference(
@@ -515,6 +586,40 @@ class PostgresStrategySourceAuthority:
                 )
                 for item in signal_runs:
                     signal_run = load_verified_signal_run_v3(run_root / item.locator)
+                    if reference.reference_kind == "SIGNAL":
+                        signal_run_artifact = signal_run.artifact
+                        actual = RuntimeArtifactReference(
+                            "SIGNAL",
+                            signal_run_artifact.artifact_id,
+                            signal_run_artifact.envelope.content_hash,
+                        )
+                        if actual == reference:
+                            candidate = signal_run_artifact.candidate_set
+                            matches[
+                                (
+                                    reference.reference_kind,
+                                    str(reference.artifact_id),
+                                    reference.content_hash,
+                                )
+                            ] = ResolvedStrategySource(
+                                reference,
+                                signal_run_artifact.envelope.decision_time.value,
+                                tuple(
+                                    sorted(
+                                        snapshot.symbol
+                                        for snapshot in signal_run_artifact.snapshots
+                                    )
+                                ),
+                                (
+                                    RuntimeArtifactReference(
+                                        "CANDIDATE_SET",
+                                        candidate.envelope.artifact_id,
+                                        candidate.envelope.content_hash,
+                                    ),
+                                ),
+                                signal_run_artifact.to_canonical_dict(),
+                            )
+                        continue
                     snapshots = tuple(
                         snapshot
                         for snapshot in signal_run.artifact.snapshots
@@ -525,7 +630,7 @@ class PostgresStrategySourceAuthority:
                         candidate = signal_run.artifact.candidate_set
                         resolved = ResolvedStrategySource(
                             reference,
-                            snapshot.envelope.created_at,
+                            snapshot.envelope.decision_time.value,
                             (snapshot.symbol,),
                             (
                                 RuntimeArtifactReference(

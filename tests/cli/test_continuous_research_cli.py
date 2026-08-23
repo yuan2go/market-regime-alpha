@@ -14,9 +14,11 @@ from market_regime_alpha.cli.continuous_research import (
     _daily_alpha_evidence_root,
     _operator_resource,
     _pre_strategy_risk_configuration,
-    _settle_previous_prediction_if_due,
     build_parser,
     main,
+)
+from market_regime_alpha.application.continuous_research.outcome_settlement import (
+    ContinuousOutcomeSettlementService,
 )
 from market_regime_alpha.application.continuous_research.scheduler import (
     TradingDayAssessment,
@@ -70,8 +72,8 @@ def test_automatic_settlement_uses_exact_previous_canonical_session() -> None:
         def execute(self, *_: object):
             return self
 
-        def fetchone(self) -> tuple[int, int]:
-            return (1, 0)
+        def fetchall(self) -> list[tuple[str, str, str]]:
+            return [("shadow-session", "shadow-decision", "OUTCOME_PENDING")]
 
     class Factory:
         def connection(self, *, read_only: bool = False) -> Connection:
@@ -85,31 +87,77 @@ def test_automatic_settlement_uses_exact_previous_canonical_session() -> None:
             trading_date: date,
             next_session_date: date,
             artifact_root: Path,
+            decision_id: ArtifactId,
         ) -> dict[str, str]:
             assert artifact_root == Path("/tmp/daily-alpha-test")
+            assert decision_id == ArtifactId("shadow-decision")
             calls.append((trading_date, next_session_date))
             return {
                 "factual_outcome_id": "factual-outcome",
                 "targeted_outcome_id": "targeted-outcome",
+                "prediction_snapshot_id": "daily-prediction",
+                "prediction_snapshot_hash": "sha256:" + "1" * 64,
             }
 
     sessions = (date(2026, 1, 16), date(2026, 1, 19), date(2026, 1, 20))
     with patch(
-        "market_regime_alpha.cli.continuous_research.FreeDataSettlementOperator",
+        "market_regime_alpha.application.continuous_research.outcome_settlement.FreeDataSettlementOperator",
         return_value=Settlement(),
     ):
-        result = _settle_previous_prediction_if_due(
-            factory=Factory(),  # type: ignore[arg-type]
+        result = ContinuousOutcomeSettlementService(
+            Factory(),  # type: ignore[arg-type]
+            clock=lambda: datetime(2026, 1, 19, 7, 1, tzinfo=UTC),
+        ).settle_previous_if_due(
             calendar=SimpleNamespace(trading_dates=sessions),
             current_session=sessions[1],
             artifact_root=Path("/tmp/daily-alpha-test"),
-            clock=lambda: datetime(2026, 1, 19, 7, 1, tzinfo=UTC),
             authority_mode=RuntimeAuthorityMode.SHADOW,
         )
 
     assert calls == [(date(2026, 1, 16), date(2026, 1, 19))]
     assert result["status"] == "SETTLED"
     assert result["settlement_id"] == "factual-outcome"
+
+
+def test_automatic_settlement_fails_closed_for_ambiguous_decision_scope() -> None:
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            return None
+
+        def execute(self, *_: object):
+            return self
+
+        def fetchall(self) -> list[tuple[str, str, str]]:
+            return [
+                ("shadow-session-a", "shadow-decision-a", "OUTCOME_PENDING"),
+                ("shadow-session-b", "shadow-decision-b", "OUTCOME_PENDING"),
+            ]
+
+    class Factory:
+        def connection(self, *, read_only: bool = False) -> Connection:
+            assert read_only is True
+            return Connection()
+
+    sessions = (date(2026, 1, 16), date(2026, 1, 19))
+    with patch(
+        "market_regime_alpha.application.continuous_research.outcome_settlement.FreeDataSettlementOperator"
+    ) as settlement:
+        result = ContinuousOutcomeSettlementService(
+            Factory(),  # type: ignore[arg-type]
+            clock=lambda: datetime(2026, 1, 19, 7, 1, tzinfo=UTC),
+        ).settle_previous_if_due(
+            calendar=SimpleNamespace(trading_dates=sessions),
+            current_session=sessions[1],
+            artifact_root=Path("/tmp/daily-alpha-test"),
+            authority_mode=RuntimeAuthorityMode.SHADOW,
+        )
+
+    settlement.assert_not_called()
+    assert result["status"] == "LINEAGE_AMBIGUOUS"
+    assert result["reason_codes"] == ["SHADOW_DECISION_SCOPE_AMBIGUOUS"]
 
 
 def test_cli_exposes_converged_free_data_day_operations() -> None:

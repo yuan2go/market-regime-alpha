@@ -26,6 +26,11 @@ from market_regime_alpha.application.continuous_research.journal import (
     ContinuousChildKind,
     ContinuousTickStatus,
 )
+from market_regime_alpha.application.continuous_research.postgres_daily_alpha import (
+    PostgresDailyAlphaEvidenceGateResolver,
+    PostgresDailyAlphaOwnerResolver,
+    PostgresDailyAlphaPredictionAuthority,
+)
 from market_regime_alpha.application.continuous_research.policy import (
     default_continuous_decision_window_policy,
 )
@@ -467,6 +472,13 @@ def test_real_stateful_positive_path_reaches_research_candidate(
     journal = repositories.continuous_research(clock=lambda: runtime_now[0])
     summary_repository = repositories.decision_system(clock=lambda: runtime_now[0])
     state_repository = repositories.state_system(clock=lambda: runtime_now[0])
+    daily_alpha_authority = PostgresDailyAlphaPredictionAuthority(
+        postgres_factory,
+        resolver=PostgresDailyAlphaOwnerResolver(
+            postgres_factory,
+            artifact_root=tmp_path / "stateful-runtime",
+        ),
+    )
 
     def build_runner() -> ContinuousResearchTickRunner:
         composition = CanonicalFreeDataResearchComposition(
@@ -478,6 +490,10 @@ def test_real_stateful_positive_path_reaches_research_candidate(
             strategy_repository=repositories.multi_strategy(),
             strategy_shadow_repository=repositories.strategy_shadow(),
             strategy_account_id="free-data-stateful-account",
+            daily_alpha_authority=daily_alpha_authority,
+            daily_alpha_evidence_gate=PostgresDailyAlphaEvidenceGateResolver(
+                postgres_factory
+            ).assess,
             clock=lambda: runtime_now[0],
         )
         return ContinuousResearchTickRunner(
@@ -546,6 +562,13 @@ def test_real_stateful_positive_path_reaches_research_candidate(
     assert summary.state_system_receipt.content_hash == state_child.child_receipt_hash
     assert summary.candidate_set is not None
     assert summary.created_at >= decision
+    daily_child = next(
+        item
+        for item in result.child_references
+        if item.child_kind is ContinuousChildKind.DAILY_ALPHA_SNAPSHOT
+    )
+    assert daily_child.child_artifact_id is not None
+    prediction_snapshot = daily_alpha_authority.get(daily_child.child_artifact_id)
     by_stage = {item.stage: item for item in summary.stages}
     assert all(item.status is ResearchStageStatus.COMPLETED for item in summary.stages)
     if liquidity_eligible:
@@ -671,6 +694,7 @@ def test_real_stateful_positive_path_reaches_research_candidate(
         outcome_repository = PostgresProspectiveOutcomeRepository(postgres_factory, clock=lambda: source_archive.created_at)
         outcome = outcome_repository.build(
             decision_id=frozen.decision_id,
+            prediction_snapshot=prediction_snapshot,
             source_archive=source_archive,
             settlement_dataset=settlement_dataset,
             factual_evidence=factual_outcome,
@@ -688,6 +712,12 @@ def test_real_stateful_positive_path_reaches_research_candidate(
             )
         settled = outcome_repository.settle(outcome, expected_shadow_version=pending.version)
         assert settled == outcome
+        assert settled.prediction_snapshot == prediction_snapshot.reference
+        assert (
+            settled.strategy_diagnostic
+            == prediction_snapshot.strategy_diagnostic_reference
+        )
+        assert prediction_snapshot.available_at < settled.outcome_available_at
         assert settled.availability_status is OutcomeAvailabilityStatus.COMPLETE
         assert all(item.price_1000 is not None for item in settled.observations)
         assert outcome_repository.settle(outcome, expected_shadow_version=pending.version) == outcome
@@ -713,6 +743,7 @@ def test_real_stateful_positive_path_reaches_research_candidate(
         with pytest.raises(ValueError, match="code revision"):
             shadow_operations.settle(
                 decision_id=frozen.decision_id,
+                prediction_snapshot=prediction_snapshot,
                 source_archive=source_archive,
                 settlement_dataset=settlement_dataset,
                 factual_evidence=factual_outcome,
@@ -727,6 +758,7 @@ def test_real_stateful_positive_path_reaches_research_candidate(
             )
         operational_settlement = shadow_operations.settle(
             decision_id=frozen.decision_id,
+            prediction_snapshot=prediction_snapshot,
             source_archive=source_archive,
             settlement_dataset=settlement_dataset,
             factual_evidence=factual_outcome,
@@ -1181,7 +1213,7 @@ def test_real_stateful_positive_path_reaches_research_candidate(
                 "theme_rotation_state",
             ),
         )
-        assert recovery.migration_head == 91
+        assert recovery.migration_head == 96
         assert recovery.continuous_replay_hashes == (
             (
                 str(command.run_id),

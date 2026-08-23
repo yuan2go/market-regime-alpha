@@ -40,6 +40,10 @@ from market_regime_alpha.application.controlled_operation.postgres_longitudinal_
 from market_regime_alpha.application.controlled_operation.prospective_outcome import (
     SettlementSessionStatus,
 )
+from market_regime_alpha.application.continuous_research.postgres_daily_alpha import (
+    PostgresDailyAlphaOwnerResolver,
+    PostgresDailyAlphaPredictionAuthority,
+)
 from market_regime_alpha.application.research_evaluation.targets import (
     engineering_multi_horizon_protocol,
 )
@@ -408,8 +412,12 @@ class FreeDataSettlementOperator:
         trading_date: date,
         next_session_date: date,
         artifact_root: Path,
+        decision_id: ArtifactId | None = None,
     ) -> dict[str, Any]:
-        session, decision = self._pending_decision(trading_date)
+        session, decision = self._pending_decision(
+            trading_date,
+            decision_id=decision_id,
+        )
         package, run_root = _resolve_operation_package(
             artifact_root,
             decision.controlled_operation.artifact_id,
@@ -428,6 +436,18 @@ class FreeDataSettlementOperator:
         except KeyError:
             existing_factual = None
         recovered = existing_factual is not None
+        prediction_snapshot = (
+            None
+            if existing_factual is not None
+            and existing_factual.schema_version == "prospective-shadow-outcome/v1"
+            else PostgresDailyAlphaPredictionAuthority(
+                self._factory,
+                resolver=PostgresDailyAlphaOwnerResolver(
+                    self._factory,
+                    artifact_root=artifact_root,
+                ),
+            ).get_for_tick(run_id=decision.run_id, tick_id=decision.tick_id)
+        )
         if existing_factual is None:
             acquisition = self._acquisition.acquire(
                 symbols=symbols,
@@ -474,6 +494,7 @@ class FreeDataSettlementOperator:
         target_protocol = engineering_multi_horizon_protocol()
         settled = self._operations.settle(
             decision_id=decision.decision_id,
+            prediction_snapshot=prediction_snapshot,
             source_archive=acquisition.source_archive,
             settlement_dataset=acquisition.dataset,
             factual_evidence=factual_evidence,
@@ -566,6 +587,18 @@ class FreeDataSettlementOperator:
             "status": settled.session.status.value,
             "research_shadow_session_id": str(settled.session.command.session_id),
             "research_shadow_decision_id": str(decision.decision_id),
+            "prediction_snapshot_id": (
+                None
+                if settled.factual_outcome_v1.prediction_snapshot is None
+                else str(
+                    settled.factual_outcome_v1.prediction_snapshot.artifact_id
+                )
+            ),
+            "prediction_snapshot_hash": (
+                None
+                if settled.factual_outcome_v1.prediction_snapshot is None
+                else settled.factual_outcome_v1.prediction_snapshot.content_hash
+            ),
             "factual_outcome_id": str(settled.factual_outcome_v1.settlement_id),
             "targeted_outcome_id": str(settled.targeted_outcome_v2.settlement_id),
             "target_protocol_id": str(settled.targeted_outcome_v2.target_protocol_id),
@@ -596,18 +629,34 @@ class FreeDataSettlementOperator:
             "real_fill_created": False,
         }
 
-    def _pending_decision(self, trading_date: date) -> tuple[Any, Any]:
+    def _pending_decision(
+        self,
+        trading_date: date,
+        *,
+        decision_id: ArtifactId | None,
+    ) -> tuple[Any, Any]:
         with self._factory.connection(read_only=True) as connection:
-            rows = connection.execute(
-                """
-                SELECT session_id, decision_id
-                FROM shadow_research_session
-                WHERE trading_date = %s
-                  AND status IN ('OUTCOME_PENDING', 'SETTLED')
-                ORDER BY created_at DESC, session_id DESC
-                """,
-                (trading_date,),
-            ).fetchall()
+            if decision_id is None:
+                rows = connection.execute(
+                    """
+                    SELECT session_id, decision_id
+                    FROM shadow_research_session
+                    WHERE trading_date = %s
+                      AND status IN ('OUTCOME_PENDING', 'SETTLED')
+                    ORDER BY created_at DESC, session_id DESC
+                    """,
+                    (trading_date,),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    """
+                    SELECT session_id, decision_id
+                    FROM shadow_research_session
+                    WHERE trading_date = %s AND decision_id = %s
+                      AND status IN ('OUTCOME_PENDING', 'SETTLED')
+                    """,
+                    (trading_date, str(decision_id)),
+                ).fetchall()
         if len(rows) != 1 or rows[0][1] is None:
             raise ValueError("settle-day requires exactly one pending/settled Research Shadow Decision")
         return (
@@ -731,7 +780,7 @@ def _bar(**values: Any) -> CanonicalMarketBar:
 
 
 class _PackageLocator(Protocol):
-    def get_by_package_id(self, package_id: ArtifactId) -> Any: ...
+    def get_package_locator(self, package_id: ArtifactId) -> Any: ...
 
 
 def _resolve_operation_package(
@@ -741,7 +790,7 @@ def _resolve_operation_package(
     locator: _PackageLocator,
 ) -> tuple[ControlledOperationalEvidencePackage, Path]:
     try:
-        record = locator.get_by_package_id(controlled_operation_id)
+        record = locator.get_package_locator(controlled_operation_id)
     except KeyError as exc:
         raise ValueError(
             "settle-day PostgreSQL locator has no Controlled package"

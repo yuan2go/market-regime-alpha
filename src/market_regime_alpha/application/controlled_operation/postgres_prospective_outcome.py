@@ -20,6 +20,10 @@ from market_regime_alpha.application.controlled_operation.prospective_outcome im
     SettlementSessionStatus,
     build_prospective_shadow_outcome,
 )
+from market_regime_alpha.application.continuous_research.daily_alpha import (
+    DAILY_ALPHA_PREDICTION_KIND,
+    DailyAlphaPredictionSnapshot,
+)
 from market_regime_alpha.application.shadow_research.contracts import ShadowSessionStatus
 from market_regime_alpha.application.shadow_research.postgres_repository import (
     PostgresShadowResearchRepository,
@@ -71,6 +75,7 @@ class PostgresProspectiveOutcomeRepository:
         self,
         *,
         decision_id: ArtifactId,
+        prediction_snapshot: DailyAlphaPredictionSnapshot,
         source_archive: OutcomeSettlementSourceArchive,
         settlement_dataset: VerifiedMarketDataDataset,
         factual_evidence: TradeHorizonOutcomeEvidence,
@@ -81,6 +86,7 @@ class PostgresProspectiveOutcomeRepository:
         decision = self._shadow.replay(decision_id)
         return build_prospective_shadow_outcome(
             decision=decision,
+            prediction_snapshot=prediction_snapshot,
             source_archive=source_archive,
             settlement_dataset=settlement_dataset,
             factual_evidence=factual_evidence,
@@ -98,6 +104,7 @@ class PostgresProspectiveOutcomeRepository:
         if not isinstance(settlement, ProspectiveShadowOutcome):
             raise TypeError("settlement must be ProspectiveShadowOutcome")
         decision = self._shadow.replay(settlement.shadow_decision.artifact_id)
+        prediction = self._verify_prediction_lineage(settlement)
         if (
             settlement.shadow_decision.content_hash != decision.decision_hash
             or settlement.shadow_session_id != decision.session_id
@@ -108,6 +115,18 @@ class PostgresProspectiveOutcomeRepository:
             or settlement.signal != decision.signal
             or settlement.forecast != decision.forecast
             or settlement.model_selection_receipts != decision.model_selection_receipts
+            or (
+                prediction is not None
+                and (
+                    prediction.run_reference.artifact_id != decision.run_id
+                    or prediction.tick_reference.artifact_id != decision.tick_id
+                    or prediction.candidate_reference != decision.candidate_set
+                    or prediction.signal_reference != decision.signal
+                    or decision.forecast not in prediction.forecast_references
+                    or prediction.strategy_diagnostic_reference
+                    != settlement.strategy_diagnostic
+                )
+            )
         ):
             raise ProspectiveOutcomeConflict("Outcome frozen-decision lineage mismatch")
         if settlement.outcome_available_at <= decision.decision_frozen_at:
@@ -148,6 +167,13 @@ class PostgresProspectiveOutcomeRepository:
             ):
                 raise ProspectiveOutcomeConflict("Outcome settlement rejected by Shadow status/version CAS")
             if existing is None:
+                if (
+                    settlement.prediction_snapshot is None
+                    or settlement.strategy_diagnostic is None
+                ):
+                    raise ProspectiveOutcomeConflict(
+                        "new Outcome requires exact Daily prediction lineage"
+                    )
                 connection.execute(
                     """
                     INSERT INTO prospective_outcome_settlement(
@@ -157,10 +183,13 @@ class PostgresProspectiveOutcomeRepository:
                         source_archive_hash, source_dataset_id,
                         source_dataset_hash, factual_evidence_id,
                         factual_evidence_hash, availability_status,
-                        outcome_available_at, payload_json, created_at
+                        outcome_available_at, prediction_snapshot_id,
+                        prediction_snapshot_hash, strategy_diagnostic_id,
+                        strategy_diagnostic_hash, payload_json, created_at
                     ) VALUES (
                         %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s
                     )
                     """,
                     (
@@ -180,6 +209,10 @@ class PostgresProspectiveOutcomeRepository:
                         settlement.factual_evidence.content_hash,
                         settlement.availability_status.value,
                         settlement.outcome_available_at,
+                        str(settlement.prediction_snapshot.artifact_id),
+                        settlement.prediction_snapshot.content_hash,
+                        str(settlement.strategy_diagnostic.artifact_id),
+                        settlement.strategy_diagnostic.content_hash,
                         Jsonb(settlement.to_canonical_dict()),
                         settlement.created_at,
                     ),
@@ -243,7 +276,9 @@ class PostgresProspectiveOutcomeRepository:
                 SELECT payload_json, settlement_hash, shadow_decision_id,
                        source_archive_id, source_archive_hash,
                        source_dataset_id, source_dataset_hash,
-                       factual_evidence_id, factual_evidence_hash
+                       factual_evidence_id, factual_evidence_hash,
+                       prediction_snapshot_id, prediction_snapshot_hash,
+                       strategy_diagnostic_id, strategy_diagnostic_hash
                 FROM prospective_outcome_settlement
                 WHERE settlement_id = %s
                 """,
@@ -264,8 +299,28 @@ class PostgresProspectiveOutcomeRepository:
             settlement.source_dataset.content_hash,
             str(settlement.factual_evidence.artifact_id),
             settlement.factual_evidence.content_hash,
+            (
+                None
+                if settlement.prediction_snapshot is None
+                else str(settlement.prediction_snapshot.artifact_id)
+            ),
+            (
+                None
+                if settlement.prediction_snapshot is None
+                else settlement.prediction_snapshot.content_hash
+            ),
+            (
+                None
+                if settlement.strategy_diagnostic is None
+                else str(settlement.strategy_diagnostic.artifact_id)
+            ),
+            (
+                None
+                if settlement.strategy_diagnostic is None
+                else settlement.strategy_diagnostic.content_hash
+            ),
         )
-        actual = tuple(str(item) for item in row[1:])
+        actual = tuple(None if item is None else str(item) for item in row[1:])
         if expected != actual:
             raise ProspectiveOutcomeIntegrityError("Outcome owner lineage drift")
         return settlement
@@ -294,18 +349,80 @@ class PostgresProspectiveOutcomeRepository:
         factual_evidence: TradeHorizonOutcomeEvidence,
     ) -> ProspectiveShadowOutcome:
         stored = self.get(settlement_id)
-        rebuilt = self.build(
-            decision_id=stored.shadow_decision.artifact_id,
-            source_archive=source_archive,
-            settlement_dataset=settlement_dataset,
-            factual_evidence=factual_evidence,
-            next_session_date=stored.next_session_date,
-            session_status=stored.session_status,
-            created_at=stored.created_at,
-        )
+        prediction = self._verify_prediction_lineage(stored)
+        if prediction is None:
+            decision = self._shadow.replay(stored.shadow_decision.artifact_id)
+            rebuilt = build_prospective_shadow_outcome(
+                decision=decision,
+                prediction_snapshot=None,
+                source_archive=source_archive,
+                settlement_dataset=settlement_dataset,
+                factual_evidence=factual_evidence,
+                next_session_date=stored.next_session_date,
+                session_status=stored.session_status,
+                created_at=stored.created_at,
+                schema_version="prospective-shadow-outcome/v1",
+            )
+        else:
+            rebuilt = self.build(
+                decision_id=stored.shadow_decision.artifact_id,
+                prediction_snapshot=prediction,
+                source_archive=source_archive,
+                settlement_dataset=settlement_dataset,
+                factual_evidence=factual_evidence,
+                next_session_date=stored.next_session_date,
+                session_status=stored.session_status,
+                created_at=stored.created_at,
+            )
         if rebuilt != stored:
             raise ProspectiveOutcomeIntegrityError("Outcome settlement did not replay deterministically")
         return rebuilt
+
+    def _verify_prediction_lineage(
+        self,
+        settlement: ProspectiveShadowOutcome,
+    ) -> DailyAlphaPredictionSnapshot | None:
+        reference = settlement.prediction_snapshot
+        if reference is None:
+            if settlement.schema_version != "prospective-shadow-outcome/v1":
+                raise ProspectiveOutcomeIntegrityError(
+                    "Outcome prediction lineage is missing"
+                )
+            return None
+        if reference.reference_kind != DAILY_ALPHA_PREDICTION_KIND:
+            raise ProspectiveOutcomeIntegrityError(
+                "Outcome prediction owner kind drifted"
+            )
+        with self._factory.connection(read_only=True) as connection:
+            row = connection.execute(
+                """
+                SELECT artifact_hash, payload_json
+                FROM research_validation_artifact
+                WHERE artifact_id = %s AND artifact_kind = %s
+                """,
+                (str(reference.artifact_id), DAILY_ALPHA_PREDICTION_KIND),
+            ).fetchone()
+        if row is None or str(row[0]) != reference.content_hash:
+            raise ProspectiveOutcomeIntegrityError(
+                "Outcome prediction owner hash drifted"
+            )
+        prediction = DailyAlphaPredictionSnapshot.from_canonical_dict(
+            {
+                "snapshot_id": str(reference.artifact_id),
+                "snapshot_hash": reference.content_hash,
+                **_json_object(row[1]),
+            }
+        )
+        if (
+            prediction.reference != reference
+            or settlement.strategy_diagnostic
+            != prediction.strategy_diagnostic_reference
+            or settlement.outcome_available_at <= prediction.available_at
+        ):
+            raise ProspectiveOutcomeIntegrityError(
+                "Outcome exact prediction lineage drifted"
+            )
+        return prediction
 
 
 def _json_object(value: object) -> dict[str, Any]:

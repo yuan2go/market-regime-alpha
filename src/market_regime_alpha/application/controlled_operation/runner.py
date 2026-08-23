@@ -1025,6 +1025,13 @@ class ControlledDecisionTimeOperationRunner:
             package_path = publish_controlled_operation_package(root=package_root, artifact=package)
         else:
             package_path = package_root / str(package.package_id)
+        self._longitudinal_index.record_package_locator(
+            package=package,
+            package_locator=encode_artifact_root_locator(
+                artifact_root=self._artifact_locator_root,
+                path=package_path,
+            ),
+        )
         self._execute_stage(
             command=command,
             stage=DecisionTimeOperationStageName.OPERATION_PACKAGE,
@@ -1176,12 +1183,17 @@ class ControlledDecisionTimeOperationRunner:
             settled_path = run_root / "operation-packages" / str(settled.package_id)
             outcome_path = _evidence_path(run_root, settled, "OUTCOME_OBSERVATION")
             outcome = load_trade_horizon_outcome_evidence(outcome_path)
+            locator = encode_artifact_root_locator(
+                artifact_root=self._artifact_locator_root,
+                path=settled_path,
+            )
+            self._longitudinal_index.record_package_locator(
+                package=settled,
+                package_locator=locator,
+            )
             longitudinal_record = self._longitudinal_index.append(
                 package=settled,
-                package_locator=encode_artifact_root_locator(
-                    artifact_root=self._artifact_locator_root,
-                    path=settled_path,
-                ),
+                package_locator=locator,
             )
             return ControlledOperationSettlementResult(
                 snapshot=self._journal.get(command.run_id),
@@ -1333,6 +1345,10 @@ class ControlledDecisionTimeOperationRunner:
         locator = encode_artifact_root_locator(
             artifact_root=self._artifact_locator_root,
             path=settled_path,
+        )
+        self._longitudinal_index.record_package_locator(
+            package=settled,
+            package_locator=locator,
         )
         longitudinal_record = self._longitudinal_index.append(
             package=settled,

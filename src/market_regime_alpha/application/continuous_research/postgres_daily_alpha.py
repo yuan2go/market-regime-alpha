@@ -95,6 +95,42 @@ class PostgresDailyAlphaPredictionAuthority:
         self._resolver.verify_snapshot_sources(snapshot)
         return snapshot
 
+    def get_for_tick(
+        self,
+        *,
+        run_id: ArtifactId,
+        tick_id: ArtifactId,
+    ) -> DailyAlphaPredictionSnapshot:
+        """Resolve one immutable prediction by its exact Continuous scope."""
+
+        with self._factory.connection(read_only=True) as connection:
+            rows = connection.execute(
+                """
+                SELECT artifact_id
+                FROM research_validation_artifact
+                WHERE artifact_kind = %s
+                  AND payload_json->'run_reference'->>'artifact_id' = %s
+                  AND payload_json->'tick_reference'->>'artifact_id' = %s
+                ORDER BY artifact_id
+                """,
+                (DAILY_ALPHA_PREDICTION_KIND, str(run_id), str(tick_id)),
+            ).fetchall()
+        if not rows:
+            raise KeyError(f"{run_id}:{tick_id}")
+        if len(rows) != 1:
+            raise DailyAlphaSourceIntegrityError(
+                "Daily Alpha prediction scope is ambiguous"
+            )
+        snapshot = self.get(ArtifactId(str(rows[0][0])))
+        if (
+            snapshot.run_reference.artifact_id != run_id
+            or snapshot.tick_reference.artifact_id != tick_id
+        ):
+            raise DailyAlphaSourceIntegrityError(
+                "Daily Alpha prediction exact scope drifted"
+            )
+        return snapshot
+
     def _reference(self, snapshot_id: ArtifactId) -> ValidationArtifactReference:
         with self._factory.connection(read_only=True) as connection:
             row = connection.execute(
@@ -200,6 +236,38 @@ class DailyAlphaSourceIntegrityError(ValueError):
     """A Daily Alpha projection no longer resolves to its exact source owners."""
 
 
+class DailyAlphaRelationalSourceIntegrityError(DailyAlphaSourceIntegrityError):
+    """A PostgreSQL run/stage/strategy owner failed exact reload."""
+
+
+class DailyAlphaTypedSourceIntegrityError(DailyAlphaSourceIntegrityError):
+    """A typed Signal/Forecast owner failed exact reload."""
+
+
+class DailyAlphaTypedReloadIntegrityError(DailyAlphaTypedSourceIntegrityError):
+    """A typed owner could not be reloaded by exact id/hash."""
+
+
+class DailyAlphaSignalReloadIntegrityError(DailyAlphaTypedReloadIntegrityError):
+    """An exact Signal Snapshot could not be reloaded."""
+
+
+class DailyAlphaForecastReloadIntegrityError(DailyAlphaTypedReloadIntegrityError):
+    """An exact Forecast could not be reloaded."""
+
+
+class DailyAlphaTypedAvailabilityIntegrityError(DailyAlphaTypedSourceIntegrityError):
+    """A typed owner exceeded the DecisionTime boundary."""
+
+
+class DailyAlphaTypedSymbolIntegrityError(DailyAlphaTypedSourceIntegrityError):
+    """A typed owner did not contain the projected symbol."""
+
+
+class DailyAlphaForecastSetIntegrityError(DailyAlphaTypedSourceIntegrityError):
+    """The snapshot Forecast index and per-symbol projections diverged."""
+
+
 class PostgresDailyAlphaOwnerResolver:
     """Reload the canonical Continuous/State/Decision/Strategy owner chain."""
 
@@ -216,17 +284,50 @@ class PostgresDailyAlphaOwnerResolver:
         )
 
     def verify_snapshot_sources(self, snapshot: DailyAlphaPredictionSnapshot) -> None:
-        with self._factory.connection(read_only=True) as connection:
-            self._verify_run_tick(connection, snapshot)
-            self._verify_evidence(connection, snapshot)
-            self._verify_summary(connection, snapshot)
-            self._verify_universe(connection, snapshot.universe_reference)
-            self._verify_candidate(connection, snapshot)
-            self._verify_state_stages(connection, snapshot)
-            self._verify_strategy(connection, snapshot)
+        try:
+            with self._factory.connection(read_only=True) as connection:
+                self._verify_run_tick(connection, snapshot)
+                self._verify_evidence(connection, snapshot)
+                self._verify_summary(connection, snapshot)
+                self._verify_universe(connection, snapshot.universe_reference)
+                self._verify_candidate(connection, snapshot)
+                self._verify_state_stages(connection, snapshot)
+                self._verify_strategy(connection, snapshot)
+        except DailyAlphaSourceIntegrityError as exc:
+            raise DailyAlphaRelationalSourceIntegrityError(str(exc)) from exc
         self._verify_symbol_sources(snapshot)
 
     def _verify_symbol_sources(self, snapshot: DailyAlphaPredictionSnapshot) -> None:
+        aggregate_references = tuple(
+            item
+            for item in (
+                snapshot.signal_reference,
+                *snapshot.forecast_references,
+            )
+            if item is not None
+            and item.reference_kind in {"SIGNAL", "FORECAST_SET"}
+        )
+        projected_symbols = {item.symbol for item in snapshot.symbols}
+        for reference in aggregate_references:
+            try:
+                owner = self._sources.reload(reference)
+            except (KeyError, ValueError) as exc:
+                error = (
+                    DailyAlphaSignalReloadIntegrityError
+                    if reference.reference_kind == "SIGNAL"
+                    else DailyAlphaForecastReloadIntegrityError
+                )
+                raise error(
+                    f"Daily Alpha aggregate {reference.reference_kind} owner drift"
+                ) from exc
+            if owner.available_at > snapshot.decision_time:
+                raise DailyAlphaTypedAvailabilityIntegrityError(
+                    f"Daily Alpha {reference.reference_kind} owner is post-DecisionTime"
+                )
+            if owner.symbols and not projected_symbols.issubset(owner.symbols):
+                raise DailyAlphaTypedSymbolIntegrityError(
+                    f"Daily Alpha {reference.reference_kind} symbol drift"
+                )
         raw_forecasts = {
             item
             for item in snapshot.forecast_references
@@ -253,19 +354,24 @@ class PostgresDailyAlphaOwnerResolver:
                 try:
                     owner = self._sources.reload(reference)
                 except (KeyError, ValueError) as exc:
-                    raise DailyAlphaSourceIntegrityError(
+                    error = (
+                        DailyAlphaSignalReloadIntegrityError
+                        if reference.reference_kind == "SIGNAL_SNAPSHOT"
+                        else DailyAlphaForecastReloadIntegrityError
+                    )
+                    raise error(
                         f"Daily Alpha typed {reference.reference_kind} owner drift"
                     ) from exc
                 if owner.available_at > snapshot.decision_time:
-                    raise DailyAlphaSourceIntegrityError(
+                    raise DailyAlphaTypedAvailabilityIntegrityError(
                         f"Daily Alpha {reference.reference_kind} owner is post-DecisionTime"
                     )
                 if owner.symbols and item.symbol not in owner.symbols:
-                    raise DailyAlphaSourceIntegrityError(
+                    raise DailyAlphaTypedSymbolIntegrityError(
                         f"Daily Alpha {reference.reference_kind} symbol drift"
                     )
         if projected_forecasts != raw_forecasts:
-            raise DailyAlphaSourceIntegrityError(
+            raise DailyAlphaForecastSetIntegrityError(
                 "Daily Alpha raw Forecast projection/reference set drifted"
             )
 
@@ -362,6 +468,38 @@ class PostgresDailyAlphaOwnerResolver:
             or row[7] != snapshot.decision_time
         ):
             raise DailyAlphaSourceIntegrityError("Daily Alpha Research Summary owner drift")
+        stage_rows = connection.execute(
+            """
+            SELECT stage, output_artifact_id, output_artifact_hash
+            FROM research_summary_stage WHERE summary_id = %s
+            """,
+            (str(summary.artifact_id),),
+        ).fetchall()
+        outputs = {
+            str(item[0]): (str(item[1]), str(item[2]))
+            for item in stage_rows
+            if item[1] is not None and item[2] is not None
+        }
+        expected_outputs = {
+            **(
+                {}
+                if snapshot.signal_reference is None
+                else {"SIGNAL": snapshot.signal_reference}
+            ),
+            **{
+                "FORECAST": item
+                for item in snapshot.forecast_references
+                if item.reference_kind == "FORECAST_SET"
+            },
+        }
+        if any(
+            outputs.get(stage)
+            != (str(reference.artifact_id), reference.content_hash)
+            for stage, reference in expected_outputs.items()
+        ):
+            raise DailyAlphaSourceIntegrityError(
+                "Daily Alpha Summary stage owner drift"
+            )
 
     @staticmethod
     def _verify_universe(connection: Any, reference: RuntimeArtifactReference) -> None:
@@ -435,7 +573,10 @@ class PostgresDailyAlphaOwnerResolver:
             for item in snapshot.context_references
             if item.reference_kind.startswith("STATE_STAGE_")
         )
-        if snapshot.signal_reference is not None:
+        if (
+            snapshot.signal_reference is not None
+            and snapshot.signal_reference.reference_kind == "STATE_STAGE_SIGNAL"
+        ):
             required.append(("SIGNAL", snapshot.signal_reference))
         required.extend(
             ("FORECAST", item)
@@ -481,7 +622,10 @@ class PostgresDailyAlphaOwnerResolver:
 
 
 __all__ = [
+    "DailyAlphaForecastSetIntegrityError",
+    "DailyAlphaRelationalSourceIntegrityError",
     "DailyAlphaSourceIntegrityError",
+    "DailyAlphaTypedSourceIntegrityError",
     "PostgresDailyAlphaEvidenceGateResolver",
     "PostgresDailyAlphaOwnerResolver",
     "PostgresDailyAlphaPredictionAuthority",

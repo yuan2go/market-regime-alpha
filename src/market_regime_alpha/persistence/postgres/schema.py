@@ -79,6 +79,7 @@ EXPECTED_AUTHORITY_TABLES: Final[frozenset[str]] = frozenset(
         "controlled_operation_receipt",
         "controlled_operation_child_run",
         "controlled_operation_event",
+        "controlled_operation_package_locator",
         "longitudinal_operational_index",
         "daily_runs",
         "acquisition_stage_receipts",
@@ -852,6 +853,10 @@ EXPECTED_AUTHORITY_TRIGGERS: Final[frozenset[tuple[str, str]]] = frozenset(
         ("lifecycle_stage_receipts", "lifecycle_stage_receipts_no_update"),
         ("lifecycle_stages", "lifecycle_stages_no_delete"),
         ("lifecycle_stages", "lifecycle_terminal_stages_immutable"),
+        (
+            "controlled_operation_package_locator",
+            "controlled_operation_package_locator_no_update",
+        ),
         ("longitudinal_operational_index", "longitudinal_operational_no_delete"),
         ("longitudinal_operational_index", "longitudinal_operational_no_update"),
         ("manual_fills", "manual_fills_no_delete"),

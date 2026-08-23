@@ -32,6 +32,9 @@ from market_regime_alpha.application.continuous_research.postgres_daily_alpha im
 from market_regime_alpha.application.continuous_research.multi_strategy import (
     PostgresContinuousStrategyOpportunityResolver,
 )
+from market_regime_alpha.application.continuous_research.outcome_settlement import (
+    ContinuousOutcomeSettlementService,
+)
 from market_regime_alpha.application.continuous_research.policy import (
     ContinuousSessionPhase,
     default_continuous_decision_window_policy,
@@ -2100,12 +2103,13 @@ def _run_due(
                 idempotency_key=f"{run_command.run_id}:free-data",
                 supplemental_evidence_path=args.supplemental_evidence,
             )
-            automatic_settlement = _settle_previous_prediction_if_due(
-                factory=factory,
+            automatic_settlement = ContinuousOutcomeSettlementService(
+                factory,
+                clock=runtime_clock,
+            ).settle_previous_if_due(
                 calendar=prepared.prepared_inputs.calendar,
                 current_session=run_command.trading_date,
                 artifact_root=args.output_root.resolve(),
-                clock=runtime_clock,
                 authority_mode=run_command.authority_mode,
             )
     return {
@@ -2124,82 +2128,6 @@ def _run_due(
         "historical_sample_build": (None if historical_sample_build is None else historical_sample_build.to_canonical_dict()),
         "path_forecast_registry_wired": forecast_sample_provider is not None,
         "automatic_outcome_settlement": automatic_settlement,
-    }
-
-
-def _settle_previous_prediction_if_due(
-    *,
-    factory: PostgresConnectionFactory,
-    calendar: Any,
-    current_session: date,
-    artifact_root: Path,
-    clock: Any,
-    authority_mode: RuntimeAuthorityMode,
-) -> dict[str, Any]:
-    """Settle the prior canonical session without creating another scheduler."""
-
-    if authority_mode is not RuntimeAuthorityMode.SHADOW:
-        return {
-            "status": "NOT_APPLICABLE",
-            "reason_codes": ["SHADOW_OUTCOME_AUTHORITY_NOT_ACTIVE"],
-        }
-    sessions = calendar.trading_dates
-    if current_session not in sessions:
-        return {
-            "status": "CALENDAR_BLOCKED",
-            "reason_codes": ["CURRENT_SESSION_NOT_IN_CANONICAL_CALENDAR"],
-        }
-    index = sessions.index(current_session)
-    if index == 0:
-        return {
-            "status": "NO_DUE_PREDICTION",
-            "reason_codes": ["NO_PREVIOUS_CANONICAL_SESSION"],
-        }
-    previous_session = sessions[index - 1]
-    with factory.connection(read_only=True) as connection:
-        row = connection.execute(
-            """
-            SELECT count(*), count(*) FILTER (WHERE status = 'SETTLED')
-            FROM shadow_research_session
-            WHERE trading_date = %s
-              AND status IN ('OUTCOME_PENDING', 'SETTLED')
-            """,
-            (previous_session,),
-        ).fetchone()
-    if row is None or int(row[0]) == 0:
-        return {
-            "status": "NO_DUE_PREDICTION",
-            "decision_session": previous_session.isoformat(),
-            "target_session": current_session.isoformat(),
-            "reason_codes": ["NO_PENDING_SHADOW_PREDICTION"],
-        }
-    if int(row[0]) != 1:
-        raise ValueError("automatic settlement requires one exact prior-session owner")
-    try:
-        settled = FreeDataSettlementOperator(factory, clock=clock).settle_day(
-            trading_date=previous_session,
-            next_session_date=current_session,
-            artifact_root=artifact_root,
-        )
-    except ValueError as exc:
-        if str(exc) == "settle-day requires selected Candidates":
-            return {
-                "status": "NO_SELECTED_CANDIDATES",
-                "decision_session": previous_session.isoformat(),
-                "target_session": current_session.isoformat(),
-                "reason_codes": ["NO_SELECTED_CANDIDATES"],
-            }
-        raise
-    return {
-        "status": "SETTLED" if int(row[1]) == 0 else "REPLAY_VERIFIED",
-        "decision_session": previous_session.isoformat(),
-        "target_session": current_session.isoformat(),
-        "settlement_id": settled["factual_outcome_id"],
-        "targeted_outcome_id": settled["targeted_outcome_id"],
-        "reason_codes": [
-            "T_PLUS_1_OUTCOME_SETTLED_IDEMPOTENTLY",
-            "PREDICTION_SNAPSHOT_IMMUTABLE",
-        ],
     }
 
 
