@@ -232,7 +232,7 @@ class PostgresStrategyOpportunityAuthority:
         factory: PostgresConnectionFactory,
         *,
         source_authority: StrategySourceAuthority | None = None,
-        apply_migrations: bool = True,
+        apply_migrations: bool = False,
     ) -> None:
         self._factory = factory
         self._sources = source_authority or PostgresStrategySourceAuthority(factory)

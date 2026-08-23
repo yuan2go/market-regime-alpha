@@ -95,7 +95,7 @@ class PostgresContinuousResearchJournal:
         clock: Clock = _utc_now,
         lease_duration: timedelta = DEFAULT_CONTINUOUS_TICK_LEASE,
         claim_id_factory: ClaimIdFactory | None = None,
-        apply_migrations: bool = True,
+        apply_migrations: bool = False,
     ) -> None:
         if not isinstance(factory, PostgresConnectionFactory):
             raise TypeError("factory must be a PostgresConnectionFactory")

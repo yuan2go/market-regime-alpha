@@ -43,7 +43,7 @@ class PostgresResearchEvaluationDatasetRepository:
         factory: PostgresConnectionFactory,
         *,
         clock: Clock = _now,
-        apply_migrations: bool = True,
+        apply_migrations: bool = False,
     ) -> None:
         if not isinstance(factory, PostgresConnectionFactory):
             raise TypeError("factory must be PostgresConnectionFactory")

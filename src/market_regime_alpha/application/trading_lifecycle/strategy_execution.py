@@ -66,7 +66,7 @@ class StrategyExecutionApplicationService:
     def __init__(self, factory: PostgresConnectionFactory, *, account_id: str) -> None:
         if not account_id or account_id != account_id.strip():
             raise ValueError("Strategy execution account must be explicit")
-        PostgresMigrator().apply_all(factory)
+        PostgresMigrator().verify_current(factory)
         self._account_id = account_id
         self._strategy = PostgresMultiStrategyRepository(
             factory, apply_migrations=False

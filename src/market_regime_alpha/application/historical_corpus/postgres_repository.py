@@ -56,7 +56,7 @@ class PostgresHistoricalCorpusRepository:
         factory: PostgresConnectionFactory,
         *,
         artifact_root: Path,
-        apply_migrations: bool = True,
+        apply_migrations: bool = False,
     ) -> None:
         self._factory = factory
         self._artifact_root = artifact_root.resolve()

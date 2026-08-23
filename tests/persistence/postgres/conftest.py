@@ -12,6 +12,7 @@ import pytest
 from market_regime_alpha.persistence.postgres.connection import (
     PostgresConnectionFactory,
 )
+from market_regime_alpha.persistence.postgres.migrator import PostgresMigrator
 from market_regime_alpha.persistence.settings import DatabaseSettings
 
 
@@ -20,7 +21,7 @@ _TEST_SCHEMA = re.compile(r"^test_mra_[0-9a-f]{32}$")
 
 
 @pytest.fixture
-def postgres_factory() -> Iterator[PostgresConnectionFactory]:
+def postgres_factory(request: pytest.FixtureRequest) -> Iterator[PostgresConnectionFactory]:
     database_url = os.getenv(TEST_DATABASE_URL_ENV)
     if not database_url:
         raise RuntimeError(
@@ -43,6 +44,8 @@ def postgres_factory() -> Iterator[PostgresConnectionFactory]:
         application_schema=schema,
     )
     try:
+        if request.node.get_closest_marker("unmigrated_postgres") is None:
+            PostgresMigrator().apply_all(factory)
         yield factory
     finally:
         factory.close()

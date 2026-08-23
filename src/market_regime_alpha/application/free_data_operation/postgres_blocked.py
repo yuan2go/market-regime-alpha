@@ -32,7 +32,7 @@ class PostgresFreeDataBlockedRepository:
 
     def __init__(self, factory: PostgresConnectionFactory) -> None:
         self._factory = factory
-        PostgresMigrator().apply_all(factory)
+        PostgresMigrator().verify_current(factory)
         with factory.connection(read_only=True) as connection:
             verify_postgres_authority_schema(connection)
 

@@ -149,6 +149,30 @@ class PostgresMigrator:
                 connection.commit()
         return tuple(newly_applied)
 
+    def verify_current(
+        self,
+        factory: PostgresConnectionFactory,
+    ) -> tuple[AppliedMigration, ...]:
+        """Verify the immutable registry without creating or changing schema."""
+
+        with factory.connection(read_only=True) as connection:
+            registry = connection.execute(
+                "SELECT to_regclass('schema_migrations')"
+            ).fetchone()
+            if registry is None or registry[0] is None:
+                raise PostgresMigrationSequenceError(
+                    "PostgreSQL schema_migrations registry is missing; "
+                    "run the explicit migration operator"
+                )
+            applied = _load_registry(connection)
+        _verify_applied(applied, self.migrations)
+        missing = sorted({item.version for item in self.migrations} - set(applied))
+        if missing:
+            raise PostgresMigrationSequenceError(
+                f"database is behind packaged migration head; missing versions: {missing}"
+            )
+        return tuple(applied[version] for version in sorted(applied))
+
 
 def _ensure_registry(connection: psycopg.Connection[Any]) -> None:
     with connection.transaction():

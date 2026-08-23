@@ -44,7 +44,7 @@ class PostgresHistoricalSecurityFactsRepository:
         self,
         factory: PostgresConnectionFactory,
         *,
-        apply_migrations: bool = True,
+        apply_migrations: bool = False,
     ) -> None:
         self._factory = factory
         self._verified_record_sets: set[tuple[ArtifactId, str]] = set()

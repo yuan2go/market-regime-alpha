@@ -14,6 +14,7 @@ from market_regime_alpha.application.decision_system.postgres_repository import 
     PostgresDecisionSystemRepository,
 )
 from market_regime_alpha.application.continuous_research.journal import (
+    ClaimedRuntimeTick,
     ContinuousChildKind,
 )
 from market_regime_alpha.application.continuous_research.ports import (
@@ -57,7 +58,6 @@ from market_regime_alpha.platform.governance_serialization import (
 from market_regime_alpha.platform.model_registry import ModelRegistry
 from tests.platform.test_platform_kernel import _model_definition
 from tests.application.decision_system.support import observation
-from tests.application.state_system.test_repositories import _active_claim
 from tests.application.state_system.test_runtime import (
     _pipeline as _state_pipeline,
     _request as _state_request,
@@ -65,7 +65,12 @@ from tests.application.state_system.test_runtime import (
 from tests.persistence.postgres.test_continuous_research_journal import (
     NOW,
     MutableClock,
+    _command,
+    _tick,
 )
+
+
+pytestmark = pytest.mark.unmigrated_postgres
 
 
 FREE_RUNTIME_MIGRATIONS = (
@@ -328,6 +333,35 @@ def test_apply_all_is_idempotent(
     with postgres_factory.connection(read_only=True) as connection:
         rows = connection.execute("SELECT version, name, checksum FROM schema_migrations ORDER BY version").fetchall()
     assert len(rows) == 95
+
+
+def test_verify_current_is_read_only_and_requires_complete_head(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    migrations = load_packaged_migrations()
+    PostgresMigrator(migrations=migrations[:-1]).apply_all(postgres_factory)
+
+    with pytest.raises(PostgresMigrationSequenceError, match="missing versions: \\[95\\]"):
+        PostgresMigrator().verify_current(postgres_factory)
+
+    with postgres_factory.connection(read_only=True) as connection:
+        stored = connection.execute(
+            "SELECT max(version) FROM schema_migrations"
+        ).fetchone()
+    assert stored == (94,)
+
+
+def test_verify_current_rejects_missing_registry_without_creating_it(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    with pytest.raises(PostgresMigrationSequenceError, match="registry is missing"):
+        PostgresMigrator().verify_current(postgres_factory)
+
+    with postgres_factory.connection(read_only=True) as connection:
+        registry = connection.execute(
+            "SELECT to_regclass('schema_migrations')"
+        ).fetchone()
+    assert registry == (None,)
 
 
 def test_applied_checksum_drift_is_rejected(
@@ -636,7 +670,77 @@ def test_migration_027_preserves_legacy_state_receipt_as_unqualified(
     migrations = load_packaged_migrations()
     PostgresMigrator(migrations=migrations[:26]).apply_all(postgres_factory)
     clock = MutableClock(NOW)
-    _, claim = _active_claim(postgres_factory, clock)
+    command = _command()
+    tick = _tick(command)
+    lease_expires_at = NOW.replace(minute=NOW.minute + 10)
+    with postgres_factory.connection() as connection:
+        connection.execute(
+            """
+            INSERT INTO continuous_research_run(
+                run_id, idempotency_key, command_hash, command_json,
+                trading_date, request_scope_hash, policy_id, policy_hash,
+                provider_configuration_id, provider_configuration_hash,
+                research_configuration_id, research_configuration_hash,
+                status, current_tick_sequence, version, created_at, updated_at
+            ) VALUES (
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                'DECISION_WINDOW_OPEN', 1, 2, %s, %s
+            )
+            """,
+            (
+                str(command.run_id),
+                command.idempotency_key,
+                command.command_hash,
+                json.dumps(command.to_canonical_dict(), sort_keys=True),
+                command.trading_date,
+                command.request_scope_hash,
+                str(command.policy_id),
+                command.policy_hash,
+                str(command.provider_configuration_id),
+                command.provider_configuration_hash,
+                str(command.research_configuration_id),
+                command.research_configuration_hash,
+                NOW,
+                NOW,
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO continuous_runtime_tick(
+                run_id, tick_id, idempotency_key, tick_hash, tick_json,
+                tick_sequence, observed_at, session_phase, status, version,
+                claim_id, fencing_token, lease_acquired_at, lease_expires_at,
+                heartbeat_at, created_at, updated_at
+            ) VALUES (
+                %s, %s, %s, %s, %s, 1, %s, 'DECISION_WINDOW',
+                'IN_PROGRESS', 2, 'legacy-migration-claim', 1, %s, %s, %s, %s, %s
+            )
+            """,
+            (
+                str(command.run_id),
+                str(tick.tick_id),
+                tick.idempotency_key,
+                tick.tick_hash,
+                json.dumps(tick.to_canonical_dict(), sort_keys=True),
+                tick.observed_at,
+                NOW,
+                lease_expires_at,
+                NOW,
+                NOW,
+                NOW,
+            ),
+        )
+    claim = ClaimedRuntimeTick(
+        run_id=command.run_id,
+        tick_id=tick.tick_id,
+        tick_sequence=1,
+        claim_id="legacy-migration-claim",
+        fencing_token=1,
+        tick_version=2,
+        lease_acquired_at=NOW,
+        lease_expires_at=lease_expires_at,
+        heartbeat_at=NOW,
+    )
     request = _state_request(claim)
     pipeline, _ = _state_pipeline()
     pipeline_result = pipeline.execute(request)

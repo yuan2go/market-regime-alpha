@@ -108,7 +108,7 @@ class PostgresHistoricalResearchJournal:
         *,
         clock: Clock | None = None,
         lease_duration: timedelta = DEFAULT_HISTORICAL_STAGE_LEASE,
-        apply_migrations: bool = True,
+        apply_migrations: bool = False,
     ) -> None:
         if lease_duration <= timedelta(0):
             raise ValueError("Historical stage lease must be positive")

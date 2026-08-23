@@ -101,7 +101,7 @@ class PostgresLifecycleRunRepository(NativePostgresRepository):
             raise TypeError("read_only must be a bool")
         self._fault_injector = fault_injector
         try:
-            super().__init__(factory, migrate=not read_only, read_only=read_only)
+            super().__init__(factory, migrate=False, read_only=read_only)
             with factory.connection(read_only=True) as connection:
                 verify_postgres_lifecycle_schema(connection)
         except Exception as exc:

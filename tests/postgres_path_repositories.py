@@ -62,6 +62,7 @@ from market_regime_alpha.features.postgres_materialization_run import (
 from market_regime_alpha.persistence.postgres.connection import (
     PostgresConnectionFactory,
 )
+from market_regime_alpha.persistence.postgres.migrator import PostgresMigrator
 from market_regime_alpha.persistence.repository_factory import RepositoryFactory
 from market_regime_alpha.persistence.settings import DatabaseSettings
 from market_regime_alpha.platform.postgres_governance import (
@@ -117,6 +118,7 @@ def _factory(path: str | Path) -> PostgresConnectionFactory:
             max_size=4,
             application_schema=schema,
         )
+        PostgresMigrator().apply_all(factory)
         _FACTORIES[key] = factory
         if len(_FACTORIES) > _MAX_CACHED_FACTORIES:
             _, expired = _FACTORIES.popitem(last=False)

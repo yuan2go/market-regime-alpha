@@ -362,7 +362,7 @@ class RepositoryFactory:
 
         _validate_runtime_binding_key(scope_type, scope_id)
         binding = self.binding
-        PostgresMigrator().apply_all(self._postgres)
+        PostgresMigrator().verify_current(self._postgres)
         with self._postgres.connection() as connection:
             connection.execute(
                 """
@@ -395,7 +395,7 @@ class RepositoryFactory:
 
         _validate_runtime_binding_key(scope_type, scope_id)
         binding = self.binding
-        PostgresMigrator().apply_all(self._postgres)
+        PostgresMigrator().verify_current(self._postgres)
         with self._postgres.connection(read_only=True) as connection:
             row = connection.execute(
                 """

@@ -290,6 +290,7 @@ from market_regime_alpha.market_data import AssetType, Timeframe
 from market_regime_alpha.persistence.postgres.connection import (
     PostgresConnectionFactory,
 )
+from market_regime_alpha.persistence.postgres.migrator import PostgresMigrator
 from market_regime_alpha.persistence.settings import DatabaseSettings
 from market_regime_alpha.persistence.repository_factory import RepositoryFactory
 from market_regime_alpha.platform.runtime_governance import RuntimeAuthorityMode
@@ -720,7 +721,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             environ={},
         )
         factory = PostgresConnectionFactory(settings, application_schema=args.application_schema)
-        read_only = args.operation in _READ_OPERATIONS
+        PostgresMigrator().verify_current(factory)
         governance = PostgresAccessGovernance(
             factory,
             apply_migrations=False,
@@ -750,7 +751,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 f"{resource_reference.content_hash}; "
                 f"reasons={','.join(decision.reason_codes)}"
             )
-        journal = PostgresContinuousResearchJournal(factory, apply_migrations=not read_only)
+        journal = PostgresContinuousResearchJournal(factory, apply_migrations=False)
         output = (
             _run_due(args, settings, factory, journal)
             if args.operation == "run-due"
