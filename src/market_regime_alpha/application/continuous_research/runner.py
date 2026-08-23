@@ -565,6 +565,9 @@ def _require_complete_child_set(results: tuple[ChildExecutionResult, ...]) -> No
         # Summary remains the terminal Decision owner; absent work must never
         # be represented by a synthetic Canonical receipt.
         ContinuousChildKind.CANONICAL_LIFECYCLE,
+        # Compatibility compositions may omit the new projection, but the
+        # canonical FreeData composition wires it unconditionally.
+        ContinuousChildKind.DAILY_ALPHA_SNAPSHOT,
     }
     if len(kinds) != len(set(kinds)) or not required.issubset(kinds) or not set(kinds).issubset(set(ContinuousChildKind)):
         raise ValueError("child port must return each executed research owner exactly once")

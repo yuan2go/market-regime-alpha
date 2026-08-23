@@ -276,7 +276,9 @@ def _opportunity(
         signal_reference=_reference("SIGNAL_SNAPSHOT", f"signal-{symbol}"),
         forecast_reference=_reference("CONDITIONAL_FORECAST_RESULT", f"forecast-{symbol}"),
         context_reference=_reference("CONTEXT_CONDITIONAL_EVALUATION", f"context-{symbol}"),
-        risk_state_reference=_reference("RISK_STATE", f"risk-{symbol}"),
+        risk_state_reference=_reference(
+            "PRE_STRATEGY_RISK_STATE", f"risk-{symbol}"
+        ),
         model_reference=_reference("MODEL_VERSION", "conditional-model-v1"),
         signal_active=signal_active,
         risk_allows_action=risk_allows_action,
@@ -311,6 +313,7 @@ def test_strategy_opportunity_is_content_addressed_and_available_by_decision_tim
     payload = opportunity.to_canonical_dict()
 
     assert StrategyOpportunityInput.from_canonical_dict(payload) == opportunity
+    assert opportunity.reference.reference_kind == "STRATEGY_OPPORTUNITY"
     payload["expected_return"] = "0.99"
     with pytest.raises(ValueError, match="binding hash mismatch"):
         StrategyOpportunityInput.from_canonical_dict(payload)
@@ -338,6 +341,41 @@ def test_strategy_opportunity_is_content_addressed_and_available_by_decision_tim
                 )
             },
             available_at=NOW + timedelta(seconds=1),
+        )
+
+
+def test_complete_account_risk_cannot_be_used_before_strategy() -> None:
+    version = StrategyVersion.activate(_conditional_contract())
+    candidate_set = _candidate_set()
+    opportunity = _opportunity(
+        "000001.SZ", version=version, candidate_set=candidate_set
+    )
+
+    with pytest.raises(ValueError, match="risk_state_reference kind is invalid"):
+        StrategyOpportunityInput.create(
+            **{
+                field_name: getattr(opportunity, field_name)
+                for field_name in (
+                    "symbol",
+                    "strategy_version_reference",
+                    "candidate_reference",
+                    "decision_time",
+                    "signal_reference",
+                    "forecast_reference",
+                    "context_reference",
+                    "model_reference",
+                    "signal_active",
+                    "risk_allows_action",
+                    "risk_reason_codes",
+                    "expected_return",
+                    "prediction_uncertainty",
+                    "calibration_status",
+                    "available_at",
+                )
+            },
+            risk_state_reference=_reference(
+                "COMPLETE_ACCOUNT_RISK_DECISION", "post-portfolio-risk"
+            ),
         )
 
 

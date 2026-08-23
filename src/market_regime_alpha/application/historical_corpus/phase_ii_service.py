@@ -25,11 +25,16 @@ from market_regime_alpha.application.historical_corpus.alpha_correctness import 
     AlphaCorrectnessProof,
     HistoricalAlphaCorrectnessChecker,
     HistoricalCorrectnessReproduction,
+    build_alpha_correctness_proof,
     reproduce_execution_timing_diagnostics,
 )
 from market_regime_alpha.application.historical_corpus.alpha_diagnostics import (
     AlphaObservation,
+    ExecutionTimingDiagnostic,
     FactorObservation,
+    FrozenPlaceboProtocol,
+    MovingBlockInferenceProtocol,
+    PlaceboKind,
     apply_placebo,
     evaluate_factor_redundancy,
     evaluate_robust_inference_family,
@@ -68,6 +73,16 @@ from market_regime_alpha.application.historical_corpus.postgres_materialization 
 from market_regime_alpha.application.historical_corpus.postgres_repository import (
     PostgresHistoricalCorpusRepository,
 )
+from market_regime_alpha.application.historical_corpus.selective_read import (
+    HistoricalReadQuery,
+)
+from market_regime_alpha.application.historical_corpus.raw_normalization_correctness import (
+    PhysicalAcquisitionProvenance,
+    verify_independent_baostock_package_normalization,
+)
+from market_regime_alpha.application.historical_corpus.temporal_validation_window import (
+    FrozenTemporalValidationWindow,
+)
 from market_regime_alpha.application.research_validation.common import (
     ValidationArtifactReference,
 )
@@ -94,13 +109,14 @@ from market_regime_alpha.candidates.policy import (
     research_panel_dataset_reference,
 )
 from market_regime_alpha.core.identity import ArtifactId
-from market_regime_alpha.evidence.canonical import canonical_hash
+from market_regime_alpha.evidence.canonical import canonical_hash, require_sha256
 from market_regime_alpha.forecasting.conditional import (
     ConditionalForecastConfig,
     ConditionalForecastResult,
 )
 from market_regime_alpha.forecasting.path import PathForecastArtifact
 from market_regime_alpha.data.trading_calendar import TradingCalendarArtifact
+from market_regime_alpha.market_data.contracts import Timeframe
 
 
 @dataclass(frozen=True, slots=True)
@@ -153,6 +169,111 @@ class HistoricalPhaseIIResearchService:
         _verify_phase_ii_payload(evidence)
         return evidence
 
+    def evaluate_correctness_campaign(
+        self,
+        *,
+        run_id: ArtifactId,
+        trading_calendar: TradingCalendarArtifact,
+        physical_package_paths: Mapping[ValidationArtifactReference, Path],
+        physical_provenance: PhysicalAcquisitionProvenance,
+        target_id: str,
+        placebo_seed: int,
+        inference_protocol: MovingBlockInferenceProtocol,
+    ) -> AlphaCorrectnessProof:
+        """Execute the frozen suite from exact PostgreSQL and physical owners.
+
+        This is an application operation of Historical Research. It neither
+        creates another Runtime nor admits External Validation; persistence
+        still replays the complete suite through ``persist_correctness_proof``.
+        """
+
+        components = self._components
+        corpus = self._corpus
+        if components is None or corpus is None:
+            raise ValueError(
+                "Alpha Correctness campaign requires Historical owner reload"
+            )
+        reproduction = HistoricalAlphaCorrectnessChecker(
+            components=components,
+            corpus=corpus,
+        ).reproduce_run(
+            run_id=run_id,
+            trading_calendar=trading_calendar,
+            physical_package_paths=physical_package_paths,
+        )
+        normalization = []
+        for physical in reproduction.physical_verifications:
+            normalized_index = corpus.open_index(
+                physical.normalized_owner_reference
+            )
+            raw_reference = normalized_index.parent_reference
+            if raw_reference is None:
+                raise ValueError("Normalized owner lacks Raw acquisition lineage")
+            normalization.append(
+                verify_independent_baostock_package_normalization(
+                    corpus=corpus,
+                    raw_owner_reference=raw_reference,
+                    normalized_owner_reference=physical.normalized_owner_reference,
+                    provenance=physical_provenance,
+                )
+            )
+        factor_observations = _correctness_factor_observations(reproduction)
+        factor_ids = (
+            "intraday_return_to_decision_time",
+            "price_vs_vwap_return",
+            "vwap_slope",
+        )
+        alpha_by_factor = {
+            factor_id: tuple(
+                AlphaObservation(
+                    item.session,
+                    item.symbol,
+                    item.factors[factor_id],
+                    item.target_return,
+                )
+                for item in factor_observations
+            )
+            for factor_id in factor_ids
+        }
+        placebos = tuple(
+            apply_placebo(
+                FrozenPlaceboProtocol.create(
+                    factor_id=factor_id,
+                    target_id=target_id,
+                    seed=placebo_seed,
+                    kinds=tuple(PlaceboKind),
+                ),
+                kind=kind,
+                observations=alpha_by_factor[factor_id],
+            )
+            for factor_id in factor_ids
+            for kind in PlaceboKind
+        )
+        inference = evaluate_robust_inference_family(
+            inference_protocol,
+            {
+                factor_id: factor_rank_ic_session_estimates(
+                    factor_observations,
+                    factor_id=factor_id,
+                )
+                for factor_id in factor_ids
+            },
+        )
+        execution = _first_complete_execution_diagnostic(
+            reproduction=reproduction,
+            corpus=corpus,
+        )
+        return build_alpha_correctness_proof(
+            feature_results=reproduction.feature_results,
+            target_results=reproduction.target_results,
+            physical_verifications=reproduction.physical_verifications,
+            normalization_verifications=tuple(normalization),
+            placebo_results=placebos,
+            execution_diagnostics=execution,
+            factor_redundancy=evaluate_factor_redundancy(factor_observations),
+            robust_inference=tuple(inference.items()),
+        )
+
     def create_external_experiment(
         self,
         *,
@@ -160,6 +281,7 @@ class HistoricalPhaseIIResearchService:
         correctness_evidence_id: ArtifactId,
         discovery_scope: ValidationScope,
         validation_scope: ValidationScope,
+        temporal_window: FrozenTemporalValidationWindow | None,
         validation_panel_references: tuple[ValidationArtifactReference, ...],
         dimension: ValidationDimension,
         expected_population: int,
@@ -196,6 +318,7 @@ class HistoricalPhaseIIResearchService:
             panel_references=validation_panel_references,
             discovery_scope=discovery_scope,
             validation_scope=validation_scope,
+            temporal_window=temporal_window,
             dimension=dimension,
             discovery=discovery,
             expected_population=expected_population,
@@ -205,6 +328,7 @@ class HistoricalPhaseIIResearchService:
             correctness_evidence=correctness,
             discovery_scope=discovery_scope,
             validation_scope=validation_scope,
+            temporal_window=temporal_window,
             validation_panel_references=validation_panel_references,
             dimension=dimension,
             expected_population=expected_population,
@@ -478,12 +602,18 @@ class HistoricalPhaseIIResearchService:
             reproduction=reproduction,
             corpus=self._corpus,
         )
-        run_components = self._components.list_for_run(run_id=run_id)
         owner_sources = tuple(
             item.reference
-            for item in run_components
-            if item.component_kind
-            in {HistoricalComponentKind.FEATURE, HistoricalComponentKind.OUTCOME}
+            for component_kind in (
+                HistoricalComponentKind.FEATURE,
+                HistoricalComponentKind.OUTCOME,
+            )
+            for batch in self._components.iter_for_run(
+                run_id=run_id,
+                component_kind=component_kind,
+                batch_size=1,
+            )
+            for item in batch
         )
         _require_sources(
             write,
@@ -495,13 +625,18 @@ class HistoricalPhaseIIResearchService:
             ),
             *owner_sources,
             *(item.normalized_owner_reference for item in reproduction.physical_verifications),
+            *(item.raw_owner_reference for item in proof.normalization_verifications),
+            *(
+                item.normalized_owner_reference
+                for item in proof.normalization_verifications
+            ),
         )
         return self._persist(
             replace(
                 write,
                 payload={
-                    "status": proof.status.value,
-                    "proof": proof.to_canonical_dict(),
+                    "status": proof.conclusion.value,
+                    "proof": proof.to_evidence_dict(),
                 },
             )
         )
@@ -528,6 +663,11 @@ class HistoricalPhaseIIResearchService:
             experiment.hypothesis.feature_reference,
             experiment.hypothesis.target_reference,
             experiment.hypothesis.cost_policy_reference,
+            *(
+                (experiment.temporal_window.calendar_reference,)
+                if experiment.temporal_window is not None
+                else ()
+            ),
             *experiment.validation_panel_references,
         )
         return self._persist(
@@ -708,6 +848,7 @@ class HistoricalPhaseIIResearchService:
     def _persist(self, write: PhaseIIEvidenceWrite) -> HistoricalResearchEvidence:
         if not write.source_references:
             raise ValueError("Phase II Evidence requires immutable owner sources")
+        _verify_phase_ii_payload_values(write.evidence_kind, write.payload)
         evidence = HistoricalResearchEvidence.create(
             run_id=write.run_id,
             command_hash=write.command_hash,
@@ -747,18 +888,27 @@ def _verify_phase_ii_payload_values(
         if payload.get("status") not in {
             "CORRECTNESS_SUPPORTED",
             "CORRECTNESS_FAILED",
-            "PARTIALLY_REPRODUCED",
-            "PHYSICAL_REPRODUCTION_NOT_ESTABLISHED",
+            "INCONCLUSIVE",
         }:
             raise ValueError("Alpha Correctness Evidence status is invalid")
+        raw_proof = payload.get("proof")
+        proof = (
+            _correctness_proof_projection(raw_proof)
+            if isinstance(raw_proof, Mapping)
+            else None
+        )
+        if proof is not None and proof.get("conclusion") != payload.get("status"):
+            raise ValueError("Alpha Correctness status projection drifted")
         if payload.get("status") == "CORRECTNESS_SUPPORTED":
-            proof = _embedded_artifact(payload, "proof", "proof_id", "proof_hash")
-            if proof.get("status") != "CORRECTNESS_SUPPORTED":
+            if proof is None:
+                raise ValueError("supported Alpha Correctness lacks typed proof")
+            if proof.get("conclusion") != "CORRECTNESS_SUPPORTED":
                 raise ValueError("Alpha Correctness status projection drifted")
             required_suite = {
                 "feature_results",
                 "target_results",
                 "physical_verifications",
+                "normalization_verifications",
                 "placebo_results",
                 "execution_diagnostics",
                 "factor_redundancy",
@@ -823,6 +973,41 @@ def _verify_phase_ii_payload_values(
             raise ValueError("Conditional Forecast baseline projection drifted")
 
 
+def _correctness_proof_projection(
+    value: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    proof_id = value.get("proof_id")
+    proof_hash = value.get("proof_hash")
+    projection_hash = value.get("projection_hash")
+    if not isinstance(proof_id, str) or not isinstance(proof_hash, str):
+        raise ValueError("Alpha Correctness proof projection identity is incomplete")
+    require_sha256("Alpha Correctness proof hash", proof_hash)
+    if proof_id != f"alpha-correctness-proof:{proof_hash[7:]}":
+        raise ValueError("Alpha Correctness full proof root identity mismatch")
+    if projection_hash is None:
+        legacy_payload = dict(value)
+        del legacy_payload["proof_id"]
+        del legacy_payload["proof_hash"]
+        if canonical_hash(legacy_payload) != proof_hash:
+            raise ValueError("Alpha Correctness legacy proof hash mismatch")
+        return value
+    if not isinstance(projection_hash, str):
+        raise ValueError("Alpha Correctness proof projection identity is incomplete")
+    require_sha256("Alpha Correctness proof projection hash", projection_hash)
+    projection = dict(value)
+    del projection["proof_id"]
+    del projection["proof_hash"]
+    del projection["projection_hash"]
+    if (
+        canonical_hash(projection) != projection_hash
+        or projection.get("schema_version")
+        != "alpha-correctness-evidence-projection/v1"
+        or projection.get("full_proof_owner_reload_required") is not True
+    ):
+        raise ValueError("Alpha Correctness proof projection hash mismatch")
+    return value
+
+
 def _embedded_artifact(
     payload: Mapping[str, Any],
     field_name: str,
@@ -867,22 +1052,25 @@ def _verify_correctness_proof_against_owners(
         or proof.physical_verifications != reproduction.physical_verifications
     ):
         raise ValueError("Alpha Correctness proof drifted from Historical owner replay")
-    target_by_key = {
-        (item.decision_time, item.symbol): item
-        for item in reproduction.target_results
-    }
-    factor_observations = tuple(
-        FactorObservation(
-            item.session,
-            item.symbol,
-            {
-                comparison.factor_id: comparison.recomputed_value
-                for comparison in item.comparisons
-            },
-            target_by_key[(item.decision_time, item.symbol)].target_return,
+    expected_normalization = tuple(
+        sorted(
+            (
+                verify_independent_baostock_package_normalization(
+                    corpus=corpus,
+                    raw_owner_reference=item.raw_owner_reference,
+                    normalized_owner_reference=item.normalized_owner_reference,
+                    provenance=item.provenance,
+                )
+                for item in proof.normalization_verifications
+            ),
+            key=lambda item: str(item.normalized_owner_reference.artifact_id),
         )
-        for item in reproduction.feature_results
     )
+    if expected_normalization != proof.normalization_verifications:
+        raise ValueError(
+            "Alpha Correctness independent normalization drifted from owners"
+        )
+    factor_observations = _correctness_factor_observations(reproduction)
     alpha_by_factor = {
         factor_id: tuple(
             AlphaObservation(
@@ -944,6 +1132,75 @@ def _verify_correctness_proof_against_owners(
     )
 
 
+def _correctness_factor_observations(
+    reproduction: HistoricalCorrectnessReproduction,
+) -> tuple[FactorObservation, ...]:
+    target_return_by_key = {
+        (item.decision_time, item.symbol): item.target_return
+        for item in reproduction.target_results
+        if item.target_return is not None
+    }
+    return tuple(
+        FactorObservation(
+            item.session,
+            item.symbol,
+            {
+                comparison.factor_id: comparison.recomputed_value
+                for comparison in item.comparisons
+            },
+            target_return_by_key[(item.decision_time, item.symbol)],
+        )
+        for item in reproduction.feature_results
+        if {comparison.factor_id for comparison in item.comparisons}
+        == {
+            "intraday_return_to_decision_time",
+            "price_vs_vwap_return",
+            "vwap_slope",
+        }
+        and (item.decision_time, item.symbol) in target_return_by_key
+    )
+
+
+def _first_complete_execution_diagnostic(
+    *,
+    reproduction: HistoricalCorrectnessReproduction,
+    corpus: PostgresHistoricalCorpusRepository,
+) -> tuple[ExecutionTimingDiagnostic, ...]:
+    physical_owners = {
+        item.normalized_owner_reference
+        for item in reproduction.physical_verifications
+    }
+    for target in reproduction.target_results:
+        owner_reference = target.physical_source_reference
+        if target.persisted_observation is None or owner_reference not in physical_owners:
+            continue
+        source_slice = corpus.read(
+            HistoricalReadQuery.create(
+                reference=owner_reference,
+                timeframes=(Timeframe.MINUTE_5,),
+                first_market_date=target.decision_time.date(),
+                last_market_date=target.target_session,
+                symbols=(target.symbol,),
+                max_rows=200,
+                batch_size=200,
+            )
+        )
+        source_bars = tuple(
+            item
+            for item in source_slice.records
+            if isinstance(item, HistoricalNormalizedBar)
+        )
+        try:
+            return reproduce_execution_timing_diagnostics(
+                target=target,
+                source_bars=source_bars,
+            )
+        except ValueError as exc:
+            if str(exc) != "execution proxy is not estimable from frozen source bars":
+                raise
+    return ()
+
+
 def _verify_execution_diagnostics_against_corpus(
     *,
     proof: AlphaCorrectnessProof,
@@ -952,24 +1209,14 @@ def _verify_execution_diagnostics_against_corpus(
 ) -> None:
     if not proof.execution_diagnostics:
         return
-    owners = {
-        item.normalized_owner_reference: corpus.load(item.normalized_owner_reference)
+    physical_owners = {
+        item.normalized_owner_reference
         for item in reproduction.physical_verifications
     }
-    if not owners:
+    if not physical_owners:
         if proof.status.value == "CORRECTNESS_SUPPORTED":
             raise ValueError("supported Alpha Correctness lacks physical execution owners")
         return
-    bars_by_owner: dict[
-        ValidationArtifactReference, tuple[HistoricalNormalizedBar, ...]
-    ] = {}
-    for reference, package in owners.items():
-        bars_by_owner[reference] = tuple(
-            record
-            for partition in package.owner.partitions
-            for record in partition.records
-            if isinstance(record, HistoricalNormalizedBar)
-        )
     targets = tuple(reproduction.target_results)
     populations = {
         (
@@ -998,11 +1245,27 @@ def _verify_execution_diagnostics_against_corpus(
         raise ValueError("Execution diagnostics are outside correctness Target owners")
     target = matching[0]
     owner_reference = target.physical_source_reference
-    if owner_reference is None:
+    if owner_reference not in physical_owners:
         raise ValueError("Execution diagnostics lack physical owner lineage")
+    source_slice = corpus.read(
+        HistoricalReadQuery.create(
+            reference=owner_reference,
+            timeframes=(Timeframe.MINUTE_5,),
+            first_market_date=target.decision_time.date(),
+            last_market_date=target.target_session,
+            symbols=(target.symbol,),
+            max_rows=200,
+            batch_size=200,
+        )
+    )
+    source_bars = tuple(
+        item
+        for item in source_slice.records
+        if isinstance(item, HistoricalNormalizedBar)
+    )
     expected = reproduce_execution_timing_diagnostics(
         target=target,
-        source_bars=bars_by_owner[owner_reference],
+        source_bars=source_bars,
     )
     if expected != proof.execution_diagnostics:
         raise ValueError("Execution proxy semantics drifted from physical owner bars")
@@ -1026,16 +1289,20 @@ def _verify_hypothesis_against_owner_evidence(
     proof = correctness.payload.get("proof")
     if not isinstance(proof, Mapping):
         raise ValueError("frozen hypothesis requires a typed Alpha Correctness proof")
-    feature_results = proof.get("feature_results")
-    if not isinstance(feature_results, list):
-        raise ValueError("Alpha Correctness proof lacks Feature results")
-    correctness_factors = {
-        str(comparison.get("factor_id"))
-        for result in feature_results
-        if isinstance(result, Mapping)
-        for comparison in result.get("comparisons", [])
-        if isinstance(comparison, Mapping)
-    }
+    factor_projection = proof.get("factor_ids")
+    if isinstance(factor_projection, list):
+        correctness_factors = {str(item) for item in factor_projection}
+    else:
+        feature_results = proof.get("feature_results")
+        if not isinstance(feature_results, list):
+            raise ValueError("Alpha Correctness proof lacks Feature results")
+        correctness_factors = {
+            str(comparison.get("factor_id"))
+            for result in feature_results
+            if isinstance(result, Mapping)
+            for comparison in result.get("comparisons", [])
+            if isinstance(comparison, Mapping)
+        }
     hypothesis_factors = {factor_id for factor_id, _direction in hypothesis.factor_directions}
     if correctness_factors != hypothesis_factors:
         raise ValueError("frozen hypothesis Factors drifted from Alpha Correctness proof")
@@ -1091,6 +1358,7 @@ def _verify_external_panel_owners(
     panel_references: tuple[ValidationArtifactReference, ...],
     discovery_scope: ValidationScope,
     validation_scope: ValidationScope,
+    temporal_window: FrozenTemporalValidationWindow | None,
     dimension: ValidationDimension,
     discovery: HistoricalResearchEvidence,
     expected_population: int,
@@ -1112,6 +1380,16 @@ def _verify_external_panel_owners(
         or validation_scope.first_session > discovery_scope.last_session
     ):
         raise ValueError("Temporal validation sessions overlap Discovery sessions")
+    if dimension is ValidationDimension.TEMPORAL_VALIDATION:
+        if temporal_window is None:
+            raise ValueError("Temporal validation requires a frozen Calendar window")
+        panel_sessions = tuple(sorted(panel.trading_date for panel in panels))
+        if panel_sessions != temporal_window.decision_sessions:
+            raise ValueError(
+                "Validation Panel owners do not match all frozen Calendar sessions"
+            )
+    elif temporal_window is not None:
+        raise ValueError("Temporal window cannot qualify another validation dimension")
     row_count = 0
     for panel in panels:
         if not (

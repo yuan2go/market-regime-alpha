@@ -63,6 +63,7 @@ class ContinuousChildKind(str, Enum):
     CANONICAL_LIFECYCLE = "CANONICAL_LIFECYCLE"
     DECISION_SYSTEM = "DECISION_SYSTEM"
     STRATEGY_RUNTIME = "STRATEGY_RUNTIME"
+    DAILY_ALPHA_SNAPSHOT = "DAILY_ALPHA_SNAPSHOT"
 
 
 class ChildReferenceDisposition(str, Enum):

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -26,6 +27,9 @@ from market_regime_alpha.application.historical_corpus.materialization_contracts
     HistoricalComponentKind,
     HistoricalSessionComponent,
 )
+from market_regime_alpha.application.historical_corpus.temporal_validation_window import (
+    freeze_temporal_validation_window,
+)
 from market_regime_alpha.application.research_validation.common import (
     ResearchEvidenceAuthority,
     ValidationArtifactReference,
@@ -34,7 +38,11 @@ from market_regime_alpha.application.strategy_shadow.economics import (
     StrategyEconomicsResult,
     StrategyEconomicsStatus,
 )
-from market_regime_alpha.core.identity import ArtifactId
+from market_regime_alpha.core.identity import ArtifactId, DatasetId
+from market_regime_alpha.data.trading_calendar import (
+    TradingSession,
+    build_trading_calendar_artifact,
+)
 from market_regime_alpha.evidence.canonical import canonical_hash
 
 
@@ -78,17 +86,41 @@ def _hypothesis(top_k: int = 3) -> FrozenAlphaHypothesis:
 
 
 def _scope(period: str, universe: str, provider: str) -> ValidationScope:
-    first_session, last_session = (
-        (date(2025, 1, 1), date(2025, 12, 31))
-        if period == "2025-H1"
-        else (date(2026, 1, 1), date(2026, 12, 31))
-    )
+    if period == "2025-H1":
+        first_session, last_session = date(2025, 1, 1), date(2025, 12, 31)
+    else:
+        window = _temporal_window()
+        first_session = window.start_decision_session
+        last_session = window.last_decision_session
     return ValidationScope(
         temporal_partition=period,
         first_session=first_session,
         last_session=last_session,
         universe_reference=_ref("UNIVERSE", universe),
         provider_reference=_ref("PROVIDER", provider),
+    )
+
+
+def _temporal_window():
+    first = date(2026, 1, 1)
+    dates = tuple(first + timedelta(days=index) for index in range(127))
+    calendar = build_trading_calendar_artifact(
+        source_dataset_id=DatasetId("external-calendar-source"),
+        market="A_SHARE",
+        calendar_version="external-test/v1",
+        timezone_name="Asia/Shanghai",
+        sessions=tuple(
+            TradingSession(
+                item,
+                datetime.combine(item, time(15), ZoneInfo("Asia/Shanghai")),
+            )
+            for item in dates
+        ),
+    )
+    return freeze_temporal_validation_window(
+        calendar=calendar,
+        start_decision_session=first,
+        session_count=126,
     )
 
 
@@ -128,6 +160,7 @@ def test_external_experiment_freezes_hypothesis_and_one_dimension() -> None:
         correctness_evidence=_correctness(),
         discovery_scope=_scope("2025-H1", "universe-a", "provider-a"),
         validation_scope=_scope("2025-H2", "universe-a", "provider-a"),
+        temporal_window=_temporal_window(),
         validation_panel_references=(VALIDATION_PANEL,),
         dimension=ValidationDimension.TEMPORAL_VALIDATION,
         expected_population=1,
@@ -137,6 +170,23 @@ def test_external_experiment_freezes_hypothesis_and_one_dimension() -> None:
     assert experiment.experiment_hash.startswith("sha256:")
     assert experiment.reference.artifact_kind == "RESEARCH_EXPERIMENT_DEFINITION"
     assert experiment.hypothesis.minimum_effect_retention == Decimal("0.5")
+    assert experiment.temporal_window == _temporal_window()
+    domains = {
+        item.parameter_name: item.allowed_values
+        for item in experiment.experiment_definition.hyperparameter_space
+    }
+    assert domains["temporal_decision_sessions"] == tuple(
+        item.isoformat() for item in _temporal_window().decision_sessions
+    )
+    assert domains["temporal_calendar_owner"] == (
+        "|".join(
+            (
+                _temporal_window().calendar_reference.artifact_kind,
+                str(_temporal_window().calendar_reference.artifact_id),
+                _temporal_window().calendar_reference.content_hash,
+            )
+        ),
+    )
 
 
 def test_external_experiment_rejects_dimension_confounding() -> None:
@@ -146,6 +196,7 @@ def test_external_experiment_rejects_dimension_confounding() -> None:
             correctness_evidence=_correctness(),
             discovery_scope=_scope("2025-H1", "universe-a", "provider-a"),
             validation_scope=_scope("2025-H2", "universe-b", "provider-a"),
+            temporal_window=_temporal_window(),
             validation_panel_references=(VALIDATION_PANEL,),
             dimension=ValidationDimension.TEMPORAL_VALIDATION,
             expected_population=1,
@@ -157,9 +208,10 @@ def test_external_experiment_rejects_uncorrected_hypothesis() -> None:
     with pytest.raises(ValueError, match="correctness-supported"):
         FrozenExternalValidationExperiment.create(
             hypothesis=_hypothesis(),
-            correctness_evidence=_correctness("PARTIALLY_REPRODUCED"),
+            correctness_evidence=_correctness("INCONCLUSIVE"),
             discovery_scope=_scope("2025-H1", "universe-a", "provider-a"),
             validation_scope=_scope("2025-H2", "universe-a", "provider-a"),
+            temporal_window=_temporal_window(),
             validation_panel_references=(VALIDATION_PANEL,),
             dimension=ValidationDimension.TEMPORAL_VALIDATION,
             expected_population=1,
@@ -173,6 +225,7 @@ def test_external_evaluation_preserves_pit_oos_ceiling_and_frozen_thresholds() -
         correctness_evidence=_correctness(),
         discovery_scope=_scope("2025-H1", "universe-a", "provider-a"),
         validation_scope=_scope("2025-H2", "universe-a", "provider-a"),
+        temporal_window=_temporal_window(),
         validation_panel_references=(VALIDATION_PANEL,),
         dimension=ValidationDimension.TEMPORAL_VALIDATION,
         expected_population=40,
@@ -218,12 +271,38 @@ def test_external_evaluation_preserves_pit_oos_ceiling_and_frozen_thresholds() -
     assert result.cost_diagnostic == Decimal("0.001")
 
 
+def test_external_evaluation_is_inconclusive_when_frozen_population_is_not_estimable() -> None:
+    experiment = FrozenExternalValidationExperiment.create(
+        hypothesis=_hypothesis(),
+        correctness_evidence=_correctness(),
+        discovery_scope=_scope("2025-H1", "universe-a", "provider-a"),
+        validation_scope=_scope("2025-H2", "universe-a", "provider-a"),
+        temporal_window=_temporal_window(),
+        validation_panel_references=(VALIDATION_PANEL,),
+        dimension=ValidationDimension.TEMPORAL_VALIDATION,
+        expected_population=10,
+        random_seed=20260819,
+    )
+
+    result = evaluate_external_validation(
+        experiment,
+        observations=(),
+        pit_complete=False,
+        free_data=True,
+    )
+
+    assert result.qualification_status == "INCONCLUSIVE"
+    assert result.rank_ic is None
+    assert result.formal_oos is False
+
+
 def test_external_top_k_ties_use_fractional_boundary_not_symbol_identity() -> None:
     experiment = FrozenExternalValidationExperiment.create(
         hypothesis=_hypothesis(top_k=1),
         correctness_evidence=_correctness(),
         discovery_scope=_scope("2025-H1", "universe-a", "provider-a"),
         validation_scope=_scope("2025-H2", "universe-a", "provider-a"),
+        temporal_window=_temporal_window(),
         validation_panel_references=(VALIDATION_PANEL,),
         dimension=ValidationDimension.TEMPORAL_VALIDATION,
         expected_population=2,
@@ -267,6 +346,7 @@ def test_external_validation_binds_input_set_and_frozen_population() -> None:
         correctness_evidence=_correctness(),
         discovery_scope=_scope("2025-H1", "universe-a", "provider-a"),
         validation_scope=_scope("2025-H2", "universe-a", "provider-a"),
+        temporal_window=_temporal_window(),
         validation_panel_references=(VALIDATION_PANEL,),
         dimension=ValidationDimension.TEMPORAL_VALIDATION,
         expected_population=1,
@@ -403,6 +483,7 @@ def test_external_projection_binds_feature_decision_and_entry_owners() -> None:
         correctness_evidence=_correctness(),
         discovery_scope=_scope("2025-H1", "universe-a", "provider-a"),
         validation_scope=_scope("2025-H2", "universe-a", "provider-a"),
+        temporal_window=_temporal_window(),
         validation_panel_references=(panel.reference,),
         dimension=ValidationDimension.TEMPORAL_VALIDATION,
         expected_population=1,
@@ -437,6 +518,7 @@ def test_external_projection_binds_feature_decision_and_entry_owners() -> None:
         correctness_evidence=_correctness(),
         discovery_scope=_scope("2025-H1", "universe-a", "provider-a"),
         validation_scope=_scope("2025-H2", "universe-a", "provider-a"),
+        temporal_window=_temporal_window(),
         validation_panel_references=(drifted_panel.reference,),
         dimension=ValidationDimension.TEMPORAL_VALIDATION,
         expected_population=1,

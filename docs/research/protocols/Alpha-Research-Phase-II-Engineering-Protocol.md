@@ -2,7 +2,7 @@
 
 > **Status:** CURRENT_RESEARCH_PROGRAM
 > **Authority:** Subordinate implementation and research protocol
-> **Repository Baseline:** `main@fc373696990ccdffe5e46a39778fdfedac3e0308`
+> **Repository Baseline:** `main@091324c7e28a2b6a3b89f894d18afc7380486d13`
 > **Evidence Ceiling:** `ENGINEERING_ONLY / EXPLORATORY / PIT_INCOMPLETE / NOT_PROVEN`
 > **Last Updated:** 2026-08-21
 
@@ -15,15 +15,15 @@ remain authoritative.
 
 | Item | Observed baseline |
 |---|---|
-| Branch / worktree | isolated `agent/alpha-research-phase-ii`; original worktree preserved |
-| HEAD | `fc373696990ccdffe5e46a39778fdfedac3e0308` |
+| Branch / worktree | isolated `agent/alpha-daily-arch-convergence-01`; original worktree preserved |
+| HEAD | `091324c7e28a2b6a3b89f894d18afc7380486d13` |
 | Source workspace | existing branch with protected `.idea/modules.xml` modification; untouched |
-| Packaged migration head | baseline `090_tie_aware_pool_ranks`; Phase II branch `092_strategy_forecast_contract_semantics` (after `091_alpha_research_phase_ii`) |
+| Packaged migration head | `092_strategy_forecast_contract_semantics` (after `091_alpha_research_phase_ii`) |
 | Python / uv | Python 3.12.13 / uv 0.11.7 |
 | PostgreSQL | PostgreSQL 16.14; sole persistent business Authority |
 | Runtime | `CONTINUOUS_RESEARCH` sole all-day Runtime; Historical Research remains bounded |
-| CI | no GitHub Actions run for merge commit `fc37369`; exact-merge CI status `NOT_RUN` |
-| Physical normalized package | locator cannot be reopened locally; `PHYSICAL_REPRODUCTION_NOT_ESTABLISHED` |
+| CI | no GitHub check run for merge commit `091324c`; exact-merge CI status `NOT_RUN` |
+| Physical Raw/Normalized packages | owner rows/checksums exist, but locators cannot be reopened locally; `ORIGINAL_PHYSICAL_REOPENED=false` |
 
 The audited call chain is Historical Research Runtime → bounded Dataset Window
 → canonical Feature/Context/Candidate/Signal/Forecast materialization →
@@ -60,13 +60,18 @@ kernel rather than symbol identity.
 
 ## Dependency order and boundaries
 
-1. `WP-ALPHA-CORRECTNESS-01` independently checks source bars, persisted
+1. `WP-ALPHA-CORRECTNESS-CLOSURE-01` first establishes a distinct
+   `REACQUIRED_EQUIVALENT_SOURCE` lineage when the original physical bytes are
+   unavailable, independently parses and normalizes Raw provider records, then
+   checks canonical normalized bars, persisted
    features, T+1 target semantics, placebo behavior, execution-time semantics,
    factor redundancy and dependence-aware inference. Entry diagnostics are
    rebuilt from bar order (first post-cutoff close, strict-next bar open and
    decision-session last close), not admitted by price existence alone.
-2. `WP-ALPHA-RESEARCH-02` freezes a single-dimension external-validation
-   Experiment for only a correctness-supported hypothesis.
+2. `TEMPORAL_VALIDATION_V1` is frozen before correctness results using the
+   canonical Calendar owner: start `2025-07-15`, exactly 126 Decision sessions,
+   plus the last T+1 Target session. Outcome access and execution remain gated
+   by a correctness-supported hypothesis.
 3. `WP-ALPHA-CONTEXT-01` distinguishes session-level conditioning from genuine
    cross-sectional interactions.
 4. `WP-CANDIDATE-POLICY-02` keeps Incumbent and Challenger identities separate
@@ -84,12 +89,20 @@ engine, Evidence authority or qualification framework.
 
 ## Frozen research and evidence rules
 
-- Correctness states are `CORRECTNESS_SUPPORTED`, `CORRECTNESS_FAILED`,
-  `PARTIALLY_REPRODUCED` or `PHYSICAL_REPRODUCTION_NOT_ESTABLISHED`; never
-  `ALPHA_PROVEN`.
+- Top-level Correctness states are `CORRECTNESS_SUPPORTED`,
+  `CORRECTNESS_FAILED` or `INCONCLUSIVE`; internal physical/reproduction
+  classifications remain diagnostic only. Correctness is never `ALPHA_PROVEN`.
+- Original physical packages are unavailable at this baseline. Reacquisition
+  must use a new `REACQUIRED_EQUIVALENT_SOURCE` owner and can never claim
+  `ORIGINAL_PHYSICAL_REOPENED`.
 - Placebo kind, algorithm, seed and protocol are content-addressed before
   evaluation. Supported kinds are symbol permutation, target permutation,
   target time shift, factor lag and deterministic random ranking.
+- The closure campaign reuses the Discovery Experiment seed `20260813` for
+  every per-Factor placebo protocol. Robust inference is frozen at 2,000
+  moving-block draws, block lengths `(1, 5, 10)`, confidence `0.95` and seed
+  `20260813`. These values were frozen before the reacquired campaign result
+  and may not be changed after inspection.
 - External validation changes exactly one of time, Universe or Provider. Target,
   DecisionTime, factor definitions/directions, Candidate score, Top-K, costs and
   evaluation protocol remain frozen. An economic observation is admissible only
@@ -111,11 +124,11 @@ engine, Evidence authority or qualification framework.
 
 ## Test and execution ceiling
 
-This phase runs focused unit tests, failure/boundary tests, documentation checks,
-`git diff --check` and only the targeted PostgreSQL tests required to prove
-persistence, idempotency and replay. It does not run a 126-session campaign,
-CSI300/full-A-share campaign, Provider-scale external validation, prospective
-campaign or Production qualification.
+The active closure program runs focused tests plus the explicitly required real
+126-session correctness campaign. It executes `TEMPORAL_VALIDATION_V1` only if
+Correctness is supported. Context and Candidate campaigns remain gated by an
+executed supported External result. No engineering completion creates Formal
+OOS, prospective proof, Strategy qualification or Production qualification.
 
 Until separately recorded otherwise:
 
@@ -127,3 +140,6 @@ PROSPECTIVE_PROVEN=false
 STRATEGY_QUALIFIED=false
 PRODUCTION_QUALIFIED=false
 ```
+
+The approved closure work is decomposed in the subordinate
+[Alpha Daily Architecture Convergence Implementation Plan](../../references/Alpha-Daily-Architecture-Convergence-Implementation-Plan.md).

@@ -42,6 +42,11 @@ from market_regime_alpha.application.continuous_research.replay import (
 from market_regime_alpha.application.continuous_research.runner import (
     ContinuousResearchTickRunner,
 )
+from market_regime_alpha.application.continuous_research.postgres_daily_alpha import (
+    PostgresDailyAlphaEvidenceGateResolver,
+    PostgresDailyAlphaOwnerResolver,
+    PostgresDailyAlphaPredictionAuthority,
+)
 from market_regime_alpha.application.continuous_research.scheduler import (
     TradingDayAssessment,
 )
@@ -246,6 +251,13 @@ def test_canonical_free_data_runtime_reaches_summary_and_replays(
             code_revision="free-data-continuous-e2e",
         )
     selected_models = ControlledRuntimeModelSelector(repositories.model_governance())
+    daily_alpha_authority = PostgresDailyAlphaPredictionAuthority(
+        postgres_factory,
+        resolver=PostgresDailyAlphaOwnerResolver(postgres_factory),
+    )
+    daily_alpha_gate = PostgresDailyAlphaEvidenceGateResolver(
+        postgres_factory
+    ).assess
     composition = CanonicalFreeDataResearchComposition(
         service=service,
         invocation_builder=lambda _: invocation,
@@ -253,6 +265,8 @@ def test_canonical_free_data_runtime_reaches_summary_and_replays(
         summary_repository=repositories.decision_system(clock=lambda: observed),
         state_repository=repositories.state_system(clock=lambda: observed),
         strategy_repository=repositories.multi_strategy(),
+        daily_alpha_authority=daily_alpha_authority,
+        daily_alpha_evidence_gate=daily_alpha_gate,
         clock=lambda: observed,
     )
     journal = repositories.continuous_research(clock=lambda: observed)
@@ -313,7 +327,18 @@ def test_canonical_free_data_runtime_reaches_summary_and_replays(
         tick_id=first_tick.tick_id,
     )
     assert {item.strategy_version_reference.artifact_id for item in strategy_cycle.runs} == set(registry.active_version_ids)
-    assert {item.child_kind for item in first.child_references} >= {ContinuousChildKind.STRATEGY_RUNTIME}
+    assert {item.child_kind for item in first.child_references} >= {
+        ContinuousChildKind.STRATEGY_RUNTIME,
+        ContinuousChildKind.DAILY_ALPHA_SNAPSHOT,
+    }
+    daily_child = next(
+        item
+        for item in first.child_references
+        if item.child_kind is ContinuousChildKind.DAILY_ALPHA_SNAPSHOT
+    )
+    assert daily_child.child_artifact_id is not None
+    daily_snapshot = daily_alpha_authority.get(daily_child.child_artifact_id)
+    assert "EVIDENCE_DEPENDENCY_NOT_SATISFIED" in daily_snapshot.reason_codes
     assert summary.no_order and summary.no_fill and summary.no_broker
     assert summary.no_position_mutation_from_shadow
     by_stage = {stage.stage: stage for stage in summary.stages}
@@ -342,6 +367,8 @@ def test_canonical_free_data_runtime_reaches_summary_and_replays(
             summary_repository=repositories.decision_system(clock=lambda: observed),
             state_repository=repositories.state_system(clock=lambda: observed),
             strategy_repository=repositories.multi_strategy(),
+            daily_alpha_authority=daily_alpha_authority,
+            daily_alpha_evidence_gate=daily_alpha_gate,
             clock=lambda: observed,
         ),
         policy=continuous_policy,

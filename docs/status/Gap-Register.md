@@ -2,7 +2,7 @@
 
 > **Status:** CURRENT_STATUS  
 > **Authority:** Current unresolved gap inventory  
-> **Repository Baseline:** `main@fc373696990ccdffe5e46a39778fdfedac3e0308`
+> **Repository Baseline:** `main@091324c7e28a2b6a3b89f894d18afc7380486d13`
 > **Strongest Research Evidence Revision:** `0d1a5a8` (WP-ALPHA-RESEARCH-01)
 > **Last Updated:** 2026-08-21
 > **Code Evidence:** `src/market_regime_alpha`, `docs/status/Current-State.md`
@@ -17,12 +17,13 @@ Gaps are classified so missing future/external evidence does not block engineeri
 |---|---|---|
 | Golden Alpha Proof loop research correctness | Frozen exact-rational scoring and fractional boundary identities; canonical Cycle/Portfolio/Outcome/Attribution binding; 126-session resume and exact replay; five immutable V2 Evidence owners | Historical `EXPLORATORY` / `PIT_INCOMPLETE`; ranking and Strategy value remain negative or `NOT_ESTIMABLE` |
 | WP-ALPHA-RESEARCH-01 Factor→Gate→Candidate discovery | Persisted final Experiment `ab6820…c02e`; Panel v2 preserves all 70 Feature outputs and Candidate/Gate diagnostics; 49 Factors, 12 Gate variants and five policies share common diagnostics/BH-FDR; 126-session run/report/replay and Evidence complete | Price/Return challenger is exploratory positive only; all Gates `RETEST`; Formal PIT/OOS, Strategy and Production claims remain closed |
-| WP-ALPHA-CORRECTNESS-01 engineering | Independent normalized-bar Feature/T+1 Target recomputation, exact temporal/lineage comparison, five frozen placebos, bar-order-derived entry proxies, three-factor redundancy and Research Validation block inference; Universal Integrity separated from factor availability | Physical package cannot currently be reopened, so status is `PHYSICAL_REPRODUCTION_NOT_ESTABLISHED`; no real correctness survivor and no Alpha claim |
+| WP-ALPHA-CORRECTNESS-01 engineering | Independent normalized-bar Feature/T+1 Target recomputation, exact temporal/lineage comparison, five frozen placebos, bar-order-derived entry proxies, three-factor redundancy and Research Validation block inference; Universal Integrity separated from factor availability | Raw→independent-normalization is still missing; original physical packages cannot be reopened, so top-level status is `INCONCLUSIVE`; no Alpha claim |
 | WP-ALPHA-RESEARCH-02 capability | External Experiment reuses canonical `ResearchExperimentDefinition`, freezes the complete hypothesis/thresholds and permits exactly one Temporal/Universe/Provider change; Panel-linked Outcome/Strategy Economics owner admission and full evaluation diagnostics implemented | No external dataset run; `EMPIRICALLY_EXECUTED=false`, `EXTERNALLY_VALIDATED=false` |
 | WP-ALPHA-CONTEXT-01 capability | Typed session-level/cross-sectional boundary, conditional metrics, interaction/incremental semantics and five research interpretation states | Synthetic/unit proof only; no Context trading authority and several current roles remain `NOT_ESTIMABLE` |
 | WP-CANDIDATE-POLICY-02 engineering | Content-addressed Incumbent/Challenger policies, three explicit layers, complete explanations and frozen same-dataset comparison | Challenger dormant until real correctness/external support; no threshold tuned from validation |
 | WP-PREDICTION-01 engineering | Existing PathForecast median baseline plus regularized comparison with per-fold Target-availability embargo, exact lineage/minimum/uncertainty; incumbent V1 identities remain stable and Runtime rejects conditional inputs without owner-authority reload; the circular complete-account RiskDecision builder was retired | `IMPLEMENTED_NOT_WIRED`: no non-circular PostgreSQL pre-Strategy Risk resolver; calibration, economics, Formal OOS and qualification remain false |
 | Documentation authority convergence | Former Constitution/static site and duplicate roadmap hierarchy removed; one Canonical Overall Design plus current supporting documents | Current status still follows executable evidence and must be updated with each Work Package |
+| `TEMPORAL_VALIDATION_V1` contamination/freeze | Audit found no real post-2025-07-14 population used for the frozen hypothesis; start `2025-07-15`, 126 owner-derived sessions and single temporal change are frozen before result access | Exact Calendar owner/session list is not yet persisted; campaign is `BLOCKED_BY_CORRECTNESS` until supported |
 
 ---
 
@@ -32,7 +33,7 @@ These work items do not require waiting for future market sessions or a new exte
 
 | Gap | Current problem | Exit condition | Priority |
 |---|---|---|---|
-| Physical Alpha reproduction | The exact historical physical package locator cannot be reopened; PostgreSQL owner replay is not physical reproduction | Reacquire/open the immutable package, verify PostgreSQL owner identity and execute the frozen independent proof | P0 / external data |
+| Physical Alpha reproduction | The exact historical physical package locator cannot be reopened; PostgreSQL owner replay is not physical reproduction | Persist `REACQUIRED_EQUIVALENT_SOURCE`, independently normalize Raw bytes, compare canonical Normalized owner and execute the frozen proof | P0 / external data |
 | Frozen external execution | Capability exists but there is no admissible correctness-supported survivor or newly frozen external dataset run | Execute one dimension at a time without factor/threshold retuning; retain negative/inconclusive outcomes | P1 / evidence |
 | Candidate / Signal / Forecast responsibility test | Separate artifacts exist, but empirical distinctness is not established | Each layer proves distinct information/policy/consumer value or is simplified/merged | P0/P1 |
 | Forecast estimability diagnostics | Forecast fails closed correctly, but `NOT_ESTIMABLE` must direct research instead of threshold relaxation | Diagnostics identify sample/coverage/conditioning/estimator/floor causes for blocked cohorts | P0 |

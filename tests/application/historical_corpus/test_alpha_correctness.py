@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from market_regime_alpha.application.historical_corpus.alpha_correctness import (
+    AlphaCorrectnessConclusion,
     AlphaCorrectnessStatus,
     PersistedFeatureObservation,
     PersistedTargetObservation,
@@ -34,6 +35,11 @@ from market_regime_alpha.application.historical_corpus.alpha_diagnostics import 
 from market_regime_alpha.application.historical_corpus.artifacts import (
     load_verified_historical_package,
     publish_historical_package,
+)
+from market_regime_alpha.application.historical_corpus.raw_normalization_correctness import (
+    IndependentNormalizationStatus,
+    IndependentNormalizationVerification,
+    PhysicalAcquisitionProvenance,
 )
 from market_regime_alpha.application.historical_corpus.contracts import (
     HistoricalArtifactKind,
@@ -321,6 +327,7 @@ def test_correctness_proof_requires_all_factors_target_and_physical_lineage(
         target_session=NEXT_SESSION,
     )
     physical = _physical_verification(tmp_path, (*decision_bars, *target_bars))
+    normalization = _matched_normalization_verification(physical)
     features = reproduce_intraday_features(
         session=SESSION,
         symbol="600000.SH",
@@ -343,6 +350,7 @@ def test_correctness_proof_requires_all_factors_target_and_physical_lineage(
         feature_results=(features,),
         target_results=(target,),
         physical_verifications=(physical,),
+        normalization_verifications=(normalization,),
         placebo_results=_complete_placebos(),
         execution_diagnostics=_execution_diagnostics(),
         factor_redundancy=_redundancy(),
@@ -350,19 +358,48 @@ def test_correctness_proof_requires_all_factors_target_and_physical_lineage(
     )
 
     assert proof.status is AlphaCorrectnessStatus.CORRECTNESS_SUPPORTED
+    assert proof.conclusion is AlphaCorrectnessConclusion.CORRECTNESS_SUPPORTED
     assert proof.reference.content_hash == proof.proof_hash
     assert "ALPHA_PROVEN_FALSE" in proof.limitations
+    evidence_projection = proof.to_evidence_dict()
+    assert evidence_projection["proof_hash"] == proof.proof_hash
+    assert evidence_projection["full_proof_owner_reload_required"] is True
+    assert evidence_projection["feature_results"] == {
+        "count": 1,
+        "status_counts": {"CORRECTNESS_SUPPORTED": 1},
+        "discrepancy_counts": {},
+        "availability_reason_counts": {},
+    }
+    assert evidence_projection["physical_verifications"][0]["normalized_bar_count"] > 0
+    assert all(
+        "observations" not in item
+        for item in evidence_projection["placebo_results"]
+    )
 
     incomplete = build_alpha_correctness_proof(
         feature_results=(features,),
         target_results=(target,),
         physical_verifications=(physical,),
+        normalization_verifications=(normalization,),
         placebo_results=(),
         execution_diagnostics=_execution_diagnostics(),
         factor_redundancy=_redundancy(),
         robust_inference=_robust_inference(),
     )
     assert incomplete.status is AlphaCorrectnessStatus.PARTIALLY_REPRODUCED
+    assert incomplete.conclusion is AlphaCorrectnessConclusion.INCONCLUSIVE
+
+    raw_layer_missing = build_alpha_correctness_proof(
+        feature_results=(features,),
+        target_results=(target,),
+        physical_verifications=(physical,),
+        placebo_results=_complete_placebos(),
+        execution_diagnostics=_execution_diagnostics(),
+        factor_redundancy=_redundancy(),
+        robust_inference=_robust_inference(),
+    )
+    assert raw_layer_missing.status is AlphaCorrectnessStatus.PARTIALLY_REPRODUCED
+    assert raw_layer_missing.conclusion is AlphaCorrectnessConclusion.INCONCLUSIVE
 
 
 def _complete_placebos():
@@ -589,6 +626,27 @@ def _physical_verification(tmp_path, bars):
     return _physical_verification_from_reloaded_packages(
         physical_package=load_verified_historical_package(path),
         postgres_owner_package=load_verified_historical_package(path),
+    )
+
+
+def _matched_normalization_verification(
+    physical,
+) -> IndependentNormalizationVerification:
+    value_hash = canonical_hash({"test": "independent-normalization"})
+    return IndependentNormalizationVerification.create(
+        provenance=PhysicalAcquisitionProvenance.REACQUIRED_EQUIVALENT_SOURCE,
+        raw_owner_reference=ValidationArtifactReference(
+            "RAW_PROVIDER_ARCHIVE",
+            ArtifactId("raw-physical-owner"),
+            canonical_hash({"raw": "physical-owner"}),
+        ),
+        normalized_owner_reference=physical.normalized_owner_reference,
+        comparison_count=physical.normalized_bar_count,
+        independent_value_hash=value_hash,
+        canonical_value_hash=value_hash,
+        status=IndependentNormalizationStatus.MATCHED,
+        discrepancies=(),
+        reason_codes=("RAW_NORMALIZATION_MATCHED",),
     )
 
 

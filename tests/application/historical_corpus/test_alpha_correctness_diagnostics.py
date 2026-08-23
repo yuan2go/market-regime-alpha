@@ -18,6 +18,7 @@ from market_regime_alpha.application.historical_corpus.alpha_diagnostics import 
     apply_placebo,
     diagnose_execution_price,
     evaluate_factor_redundancy,
+    evaluate_placebo_rank_ic,
     evaluate_robust_inference,
     evaluate_robust_inference_family,
 )
@@ -71,6 +72,13 @@ def test_frozen_placebos_are_deterministic_and_content_addressed(kind: PlaceboKi
     assert first == second
     assert protocol.protocol_hash.startswith("sha256:")
     assert first.protocol_reference.content_hash == protocol.protocol_hash
+    diagnostic = evaluate_placebo_rank_ic(first)
+    assert diagnostic.observation_count == len(first.observations)
+    assert diagnostic.session_count > 0
+    assert Decimal("0") <= diagnostic.positive_ic_ratio <= Decimal("1")
+    assert first.to_canonical_dict()["rank_ic_diagnostic"] == (
+        diagnostic.to_canonical_dict()
+    )
 
 
 def test_execution_reference_is_not_silently_treated_as_executable() -> None:

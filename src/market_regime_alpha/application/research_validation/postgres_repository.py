@@ -192,6 +192,30 @@ class PostgresResearchValidationRepository:
             raise ValueError("Research Validation owner time is malformed")
         return row[2]
 
+    def get_artifact_payload(
+        self,
+        reference: ValidationArtifactReference,
+    ) -> Mapping[str, Any]:
+        """Reload one exact immutable owner record with kind and hash verification."""
+
+        with self._factory.connection(read_only=True) as connection:
+            row = connection.execute(
+                "SELECT artifact_hash, artifact_kind, payload_json "
+                "FROM research_validation_artifact WHERE artifact_id = %s",
+                (str(reference.artifact_id),),
+            ).fetchone()
+        if (
+            row is None
+            or str(row[0]) != reference.content_hash
+            or str(row[1]) != reference.artifact_kind
+            or not isinstance(row[2], Mapping)
+        ):
+            raise KeyError(str(reference.artifact_id))
+        payload = dict(row[2])
+        if canonical_hash(payload) != reference.content_hash:
+            raise ValueError("Research Validation artifact payload hash drift")
+        return payload
+
     def _get_typed_artifact(
         self,
         *,

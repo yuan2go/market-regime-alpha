@@ -24,6 +24,14 @@ from market_regime_alpha.application.continuous_research.free_data_runtime impor
     CanonicalFreeDataResearchComposition,
     ControlledRuntimeModelSelector,
 )
+from market_regime_alpha.application.continuous_research.postgres_daily_alpha import (
+    PostgresDailyAlphaEvidenceGateResolver,
+    PostgresDailyAlphaOwnerResolver,
+    PostgresDailyAlphaPredictionAuthority,
+)
+from market_regime_alpha.application.continuous_research.multi_strategy import (
+    PostgresContinuousStrategyOpportunityResolver,
+)
 from market_regime_alpha.application.continuous_research.policy import (
     ContinuousSessionPhase,
     default_continuous_decision_window_policy,
@@ -46,6 +54,9 @@ from market_regime_alpha.application.continuous_research.scheduler import (
 )
 from market_regime_alpha.application.continuous_research.runner import (
     ContinuousResearchTickRunner,
+)
+from market_regime_alpha.strategies.postgres_opportunity import (
+    PostgresStrategyOpportunityAuthority,
 )
 from market_regime_alpha.application.continuous_research.runtime_authority_evidence import (
     PostgresRuntimeAuthorityEvidenceRepository,
@@ -110,6 +121,7 @@ from market_regime_alpha.application.historical_research.postgres_journal import
 )
 from market_regime_alpha.application.historical_research.multi_strategy import (
     MultiStrategyHistoricalAdapter,
+    PostgresHistoricalStrategyOpportunityResolver,
 )
 from market_regime_alpha.application.historical_research.postgres_session_owner import (
     PostgresHistoricalSessionOwner,
@@ -1906,6 +1918,7 @@ def _run_due(
         invocation_builder=lambda _: invocation(),
         clock=runtime_clock,
     )
+    opportunity_authority = PostgresStrategyOpportunityAuthority(factory)
     children = CanonicalFreeDataResearchComposition(
         service=service,
         invocation_builder=lambda _: invocation(),
@@ -1919,6 +1932,17 @@ def _run_due(
             else repositories.strategy_shadow()
         ),
         strategy_account_id=args.strategy_account_id,
+        strategy_opportunity_resolver=PostgresContinuousStrategyOpportunityResolver(
+            opportunity_authority
+        ),
+        strategy_opportunity_authority=opportunity_authority,
+        daily_alpha_authority=PostgresDailyAlphaPredictionAuthority(
+            factory,
+            resolver=PostgresDailyAlphaOwnerResolver(factory),
+        ),
+        daily_alpha_evidence_gate=PostgresDailyAlphaEvidenceGateResolver(
+            factory
+        ).assess,
         clock=runtime_clock,
     )
     tick_runner = ContinuousResearchTickRunner(
@@ -1950,6 +1974,10 @@ def _run_due(
     )
     summary_id = None
     summary_outcome = None
+    automatic_settlement: dict[str, Any] = {
+        "status": "WAITING_FOR_T_PLUS_1_CLOSE",
+        "reason_codes": ["T_PLUS_1_CLOSE_NOT_YET_OBSERVABLE"],
+    }
     if result.tick_result is not None:
         tick_id = result.tick_result.tick.command.tick_id
         PostgresRuntimeAuthorityEvidenceRepository(factory).record(
@@ -1978,6 +2006,21 @@ def _run_due(
         if summary is not None:
             summary_id = str(summary.summary_id)
             summary_outcome = summary.outcome.value
+        if local_now.timetz().replace(tzinfo=None) >= time(15):
+            prepared = service.prepare(
+                request=free_request,
+                runtime_configuration_path=configuration_path,
+                idempotency_key=f"{run_command.run_id}:free-data",
+                supplemental_evidence_path=args.supplemental_evidence,
+            )
+            automatic_settlement = _settle_previous_prediction_if_due(
+                factory=factory,
+                calendar=prepared.prepared_inputs.calendar,
+                current_session=run_command.trading_date,
+                artifact_root=args.output_root.resolve(),
+                clock=runtime_clock,
+                authority_mode=run_command.authority_mode,
+            )
     return {
         "operation": "RUN_DUE",
         "status": result.status,
@@ -1993,6 +2036,83 @@ def _run_due(
         "daily_decision_window_summary_delivered": summary_id is not None,
         "historical_sample_build": (None if historical_sample_build is None else historical_sample_build.to_canonical_dict()),
         "path_forecast_registry_wired": forecast_sample_provider is not None,
+        "automatic_outcome_settlement": automatic_settlement,
+    }
+
+
+def _settle_previous_prediction_if_due(
+    *,
+    factory: PostgresConnectionFactory,
+    calendar: Any,
+    current_session: date,
+    artifact_root: Path,
+    clock: Any,
+    authority_mode: RuntimeAuthorityMode,
+) -> dict[str, Any]:
+    """Settle the prior canonical session without creating another scheduler."""
+
+    if authority_mode is not RuntimeAuthorityMode.SHADOW:
+        return {
+            "status": "NOT_APPLICABLE",
+            "reason_codes": ["SHADOW_OUTCOME_AUTHORITY_NOT_ACTIVE"],
+        }
+    sessions = calendar.trading_dates
+    if current_session not in sessions:
+        return {
+            "status": "CALENDAR_BLOCKED",
+            "reason_codes": ["CURRENT_SESSION_NOT_IN_CANONICAL_CALENDAR"],
+        }
+    index = sessions.index(current_session)
+    if index == 0:
+        return {
+            "status": "NO_DUE_PREDICTION",
+            "reason_codes": ["NO_PREVIOUS_CANONICAL_SESSION"],
+        }
+    previous_session = sessions[index - 1]
+    with factory.connection(read_only=True) as connection:
+        row = connection.execute(
+            """
+            SELECT count(*), count(*) FILTER (WHERE status = 'SETTLED')
+            FROM shadow_research_session
+            WHERE trading_date = %s
+              AND status IN ('OUTCOME_PENDING', 'SETTLED')
+            """,
+            (previous_session,),
+        ).fetchone()
+    if row is None or int(row[0]) == 0:
+        return {
+            "status": "NO_DUE_PREDICTION",
+            "decision_session": previous_session.isoformat(),
+            "target_session": current_session.isoformat(),
+            "reason_codes": ["NO_PENDING_SHADOW_PREDICTION"],
+        }
+    if int(row[0]) != 1:
+        raise ValueError("automatic settlement requires one exact prior-session owner")
+    try:
+        settled = FreeDataSettlementOperator(factory, clock=clock).settle_day(
+            trading_date=previous_session,
+            next_session_date=current_session,
+            artifact_root=artifact_root,
+        )
+    except ValueError as exc:
+        if str(exc) == "settle-day requires selected Candidates":
+            return {
+                "status": "NO_SELECTED_CANDIDATES",
+                "decision_session": previous_session.isoformat(),
+                "target_session": current_session.isoformat(),
+                "reason_codes": ["NO_SELECTED_CANDIDATES"],
+            }
+        raise
+    return {
+        "status": "SETTLED" if int(row[1]) == 0 else "REPLAY_VERIFIED",
+        "decision_session": previous_session.isoformat(),
+        "target_session": current_session.isoformat(),
+        "settlement_id": settled["factual_outcome_id"],
+        "targeted_outcome_id": settled["targeted_outcome_id"],
+        "reason_codes": [
+            "T_PLUS_1_OUTCOME_SETTLED_IDEMPOTENTLY",
+            "PREDICTION_SNAPSHOT_IMMUTABLE",
+        ],
     }
 
 
@@ -2366,6 +2486,10 @@ def _historical_runner(
             canonical_exploratory_strategy_registry(),
             created_at=command.created_at,
         )
+        opportunity_authority = PostgresStrategyOpportunityAuthority(
+            factory,
+            apply_migrations=False,
+        )
         archive_materializer = MultiStrategyHistoricalAdapter(
             delegate=base_materializer,
             component_repository=component_repository,
@@ -2379,6 +2503,10 @@ def _historical_runner(
                 maximum_gross_weight=Decimal("0.50"),
                 maximum_symbol_weight=Decimal("0.20"),
             ),
+            opportunity_resolver=PostgresHistoricalStrategyOpportunityResolver(
+                opportunity_authority
+            ),
+            opportunity_authority=opportunity_authority,
         )
     return HistoricalResearchRunner(
         journal=journal,
