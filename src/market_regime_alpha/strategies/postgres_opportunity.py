@@ -50,6 +50,9 @@ from market_regime_alpha.research.candidate_discovery.contracts import Candidate
 from market_regime_alpha.application.research_validation.research_model import (
     ResearchModelArtifact,
 )
+from market_regime_alpha.application.research_validation.common import (
+    ValidationArtifactReference,
+)
 from market_regime_alpha.research.state_system.pool import DynamicStockPoolVersion
 from market_regime_alpha.signals.decimal_model import CanonicalSignalSnapshotV3
 from market_regime_alpha.signals.v3 import load_verified_signal_run_v3
@@ -437,8 +440,47 @@ class PostgresStrategySourceAuthority:
                 baseline.forecast.envelope.content_hash,
             ):
                 raise ValueError("Conditional Forecast baseline owner drifted")
+            context_evidence_references = tuple(
+                item
+                for item in evidence.source_references
+                if item.artifact_kind
+                == "HISTORICAL_CONTEXT_CONDITIONAL_EVIDENCE"
+            )
+            if len(context_evidence_references) != 1:
+                raise ValueError(
+                    "Conditional Forecast requires one Context Evidence owner"
+                )
+            context_evidence = PostgresHistoricalEvidenceRepository(
+                self._factory,
+                apply_migrations=False,
+            ).get(context_evidence_references[0].artifact_id)
+            if (
+                context_evidence.reference != context_evidence_references[0]
+                or context_evidence.experiment_reference
+                != evidence.experiment_reference
+                or context_evidence.evidence_kind
+                is not HistoricalEvidenceKind.CONTEXT_CONDITIONAL
+            ):
+                raise ValueError("Conditional Forecast Context lineage drifted")
+            context_payload = context_evidence.payload.get("evaluation")
+            if not isinstance(context_payload, Mapping):
+                raise ValueError("Conditional Forecast Context owner is malformed")
+            context = ContextConditionalEvaluation.from_canonical_dict(
+                context_payload
+            )
+            signal = baseline.signal_snapshot
+            signal_reference = ValidationArtifactReference(
+                "SIGNAL_SNAPSHOT",
+                signal.envelope.artifact_id,
+                signal.envelope.content_hash,
+            )
             symbols: tuple[str, ...] = (baseline.forecast.symbol,)
             available_at = forecast.fit_available_at or evidence.created_at
+            sources = (
+                *sources,
+                signal_reference,
+                context.reference,
+            )
             owner_payload = forecast.to_canonical_dict()
         else:
             if evidence.evidence_kind is not HistoricalEvidenceKind.CONTEXT_CONDITIONAL:

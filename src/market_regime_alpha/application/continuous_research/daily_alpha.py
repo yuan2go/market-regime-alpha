@@ -164,7 +164,7 @@ def assess_daily_alpha_evidence_gate(
             reason_codes=("EVIDENCE_LINEAGE_INCOMPLETE",),
         )
     try:
-        correctness, external, discovery = _daily_alpha_lineage(
+        correctness, external, discovery, contexts = _daily_alpha_lineage(
             candidate=candidate,
             by_reference=by_reference,
         )
@@ -180,6 +180,7 @@ def assess_daily_alpha_evidence_gate(
         external.reference,
         correctness.reference,
         discovery.reference,
+        *(item.reference for item in contexts),
     }
     if chain_references.intersection(superseded_references):
         return DailyAlphaEvidenceGate.inactive(
@@ -201,6 +202,12 @@ def assess_daily_alpha_evidence_gate(
         reasons.append("EXTERNAL_VALIDATION_NOT_SUPPORTED")
     if discovery.classification is not ResearchFinding.POSITIVE:
         reasons.append("DISCOVERY_NOT_SUPPORTED")
+    if any(
+        item.classification is not ResearchFinding.POSITIVE
+        or item.payload.get("status") not in {"AMPLIFIER", "SUPPRESSOR"}
+        for item in contexts
+    ):
+        reasons.append("CONTEXT_NOT_SUPPORTED")
     if (
         candidate.classification is not ResearchFinding.POSITIVE
         or candidate.payload.get("activation_status") != "CHALLENGER_ACTIVE"
@@ -244,7 +251,9 @@ def daily_alpha_admission_evidence_references(
 
     try:
         admission = _mapping(candidate.payload.get("daily_alpha_admission"))
-        return (
+        if admission.get("schema_version") != "daily-alpha-evidence-admission/v2":
+            raise ValueError("unsupported Daily Alpha admission schema")
+        core = (
             _required_validation_reference(
                 admission, "discovery_evidence_reference"
             ),
@@ -255,6 +264,7 @@ def daily_alpha_admission_evidence_references(
                 admission, "external_validation_evidence_reference"
             ),
         )
+        return (*core, *_context_evidence_references(admission))
     except (KeyError, ValueError) as exc:
         raise _DailyAlphaLineageError("EVIDENCE_LINEAGE_INVALID") from exc
 
@@ -269,6 +279,7 @@ def _daily_alpha_lineage(
     HistoricalResearchEvidence,
     HistoricalResearchEvidence,
     HistoricalResearchEvidence,
+    tuple[HistoricalResearchEvidence, ...],
 ]:
     correctness_reference: ValidationArtifactReference | None = None
     external_reference: ValidationArtifactReference | None = None
@@ -276,7 +287,7 @@ def _daily_alpha_lineage(
         if candidate.evidence_kind is not HistoricalEvidenceKind.CANDIDATE_POLICY:
             raise ValueError("root is not Candidate Policy Evidence")
         admission = _mapping(candidate.payload.get("daily_alpha_admission"))
-        if admission.get("schema_version") != "daily-alpha-evidence-admission/v1":
+        if admission.get("schema_version") != "daily-alpha-evidence-admission/v2":
             raise ValueError("unsupported Daily Alpha admission schema")
         discovery_reference = _required_validation_reference(
             admission, "discovery_evidence_reference"
@@ -299,6 +310,7 @@ def _daily_alpha_lineage(
         hypothesis_reference = _required_validation_reference(
             admission, "frozen_hypothesis_reference"
         )
+        context_references = _context_evidence_references(admission)
         required_candidate_sources = {
             discovery_reference,
             correctness_reference,
@@ -307,18 +319,24 @@ def _daily_alpha_lineage(
             dataset_reference,
             external_experiment_reference,
             hypothesis_reference,
+            *context_references,
         }
         if not required_candidate_sources.issubset(candidate.source_references):
             raise ValueError("Candidate Evidence source lineage is incomplete")
         discovery = by_reference[discovery_reference]
         correctness = by_reference[correctness_reference]
         external = by_reference[external_reference]
+        contexts = tuple(by_reference[item] for item in context_references)
         if (
             discovery.evidence_kind is not HistoricalEvidenceKind.ALPHA_ABLATION
             or correctness.evidence_kind
             is not HistoricalEvidenceKind.ALPHA_CORRECTNESS
             or external.evidence_kind
             is not HistoricalEvidenceKind.EXTERNAL_VALIDATION
+            or any(
+                item.evidence_kind is not HistoricalEvidenceKind.CONTEXT_CONDITIONAL
+                for item in contexts
+            )
         ):
             raise ValueError("Evidence kind drifted")
         if not {discovery.reference, correctness.reference}.issubset(
@@ -334,6 +352,7 @@ def _daily_alpha_lineage(
         if (
             embedded_experiment_reference != external.experiment_reference
             or embedded_experiment_reference != external_experiment_reference
+            or candidate.experiment_reference != external_experiment_reference
         ):
             raise ValueError("External Experiment identity drifted")
         if (
@@ -374,13 +393,37 @@ def _daily_alpha_lineage(
         )
         if research_panel_dataset_reference(panels) != dataset_reference:
             raise ValueError("Candidate/External dataset drifted")
+        for context in contexts:
+            if (
+                context.experiment_reference != external_experiment_reference
+                or external.reference not in context.source_references
+            ):
+                raise ValueError("Context/External Experiment lineage drifted")
+            evaluation = _mapping(context.payload.get("evaluation"))
+            definition_reference = ValidationArtifactReference.from_canonical_dict(
+                _mapping(evaluation["definition_reference"])
+            )
+            context_panels = tuple(
+                item
+                for item in context.source_references
+                if item.artifact_kind
+                in {"RESEARCH_PANEL", "HISTORICAL_RESEARCH_PANEL"}
+            )
+            if (
+                definition_reference not in context.source_references
+                or not context_panels
+                or research_panel_dataset_reference(context_panels)
+                != dataset_reference
+            ):
+                raise ValueError("Context owner/Dataset lineage drifted")
         _verify_lineage_stages(
             admission.get("lineage_stages"),
             ("DISCOVERY", discovery),
             ("CORRECTNESS", correctness),
             ("EXTERNAL_VALIDATION", external),
+            *(("CONTEXT_CONDITIONAL", item) for item in contexts),
         )
-        return correctness, external, discovery
+        return correctness, external, discovery, contexts
     except (KeyError, TypeError, ValueError) as exc:
         raise _DailyAlphaLineageError(
             "EVIDENCE_LINEAGE_INCOMPLETE",
@@ -396,14 +439,43 @@ def _required_validation_reference(
 
 
 def _factor_directions(value: object) -> tuple[tuple[str, str], ...]:
-    result = tuple(
-        (str(item[0]), str(item[1]))
-        for item in _sequence(value)
-        if isinstance(item, (list, tuple)) and len(item) == 2
-    )
-    if not result or result != tuple(sorted(set(result))):
+    result: list[tuple[str, str]] = []
+    for item in _sequence(value):
+        if (
+            not isinstance(item, (list, tuple))
+            or len(item) != 2
+            or not isinstance(item[0], str)
+            or not item[0].strip()
+            or not isinstance(item[1], str)
+            or not item[1].strip()
+        ):
+            raise ValueError("Factor direction lineage is malformed")
+        result.append((item[0], item[1]))
+    parsed = tuple(result)
+    if not parsed or parsed != tuple(sorted(set(parsed))):
         raise ValueError("Factor directions must be non-empty, unique and sorted")
-    return result
+    return parsed
+
+
+def _context_evidence_references(
+    admission: Mapping[str, Any],
+) -> tuple[ValidationArtifactReference, ...]:
+    references = tuple(
+        ValidationArtifactReference.from_canonical_dict(_mapping(item))
+        for item in _sequence(admission.get("context_evidence_references"))
+    )
+    if references != tuple(
+        sorted(
+            set(references),
+            key=lambda item: (
+                item.artifact_kind,
+                str(item.artifact_id),
+                item.content_hash,
+            ),
+        )
+    ):
+        raise ValueError("Context Evidence references must be unique and sorted")
+    return references
 
 
 def _verify_lineage_stages(
@@ -540,11 +612,28 @@ class DailyAlphaConditionalForecastProjection:
                 raise ValueError("available Conditional Forecast owner is incomplete")
             if self.model_reference is None or self.baseline_reference is None:
                 raise ValueError("available Conditional Forecast lineage is incomplete")
+        elif self.availability_status == "DATA_INSUFFICIENT":
+            if self.reference is None or self.baseline_reference is None:
+                raise ValueError("insufficient Conditional Forecast owner is incomplete")
+            if any(
+                item is not None
+                for item in (
+                    self.selected_expected_return,
+                    self.prediction_uncertainty,
+                    self.model_reference,
+                )
+            ):
+                raise ValueError(
+                    "insufficient Conditional Forecast cannot carry estimates"
+                )
         elif any(item is not None for item in values):
             raise ValueError("unavailable Conditional Forecast cannot carry estimates")
 
     @classmethod
-    def not_available(cls) -> DailyAlphaConditionalForecastProjection:
+    def not_available(
+        cls,
+        *reason_codes: str,
+    ) -> DailyAlphaConditionalForecastProjection:
         return cls(
             availability_status="NOT_AVAILABLE",
             reference=None,
@@ -553,7 +642,14 @@ class DailyAlphaConditionalForecastProjection:
             model_reference=None,
             baseline_reference=None,
             calibration_status="NOT_AVAILABLE",
-            reason_codes=("CONDITIONAL_FORECAST_OWNER_NOT_AVAILABLE",),
+            reason_codes=tuple(
+                sorted(
+                    set(
+                        reason_codes
+                        or ("CONDITIONAL_FORECAST_OWNER_NOT_AVAILABLE",)
+                    )
+                )
+            ),
         )
 
     def to_canonical_dict(self) -> dict[str, Any]:

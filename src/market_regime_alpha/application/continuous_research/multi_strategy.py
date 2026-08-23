@@ -24,9 +24,11 @@ from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.evidence.canonical import canonical_hash
 from market_regime_alpha.market_data.contracts import Timeframe
 from market_regime_alpha.market_data.dataset import MarketDataDatasetArtifact
+from market_regime_alpha.forecasting.path import PathForecastArtifact
 from market_regime_alpha.research.candidate_discovery.contracts import CandidateSet
 from market_regime_alpha.strategies.contracts import (
     StrategyOpportunityInput,
+    StrategyForecastRequirement,
     StrategyRegistry,
     StrategyPositionState,
     StrategyDecisionPrice,
@@ -63,6 +65,7 @@ class ContinuousStrategyOpportunityResolver(Protocol):
         request: ChildExecutionRequest,
         candidates: CandidateSet,
         registry: StrategyRegistry,
+        path_forecasts: tuple[PathForecastArtifact, ...] = (),
     ) -> tuple[StrategyOpportunityInput, ...]: ...
 
 
@@ -84,6 +87,7 @@ class ContinuousOpportunityMaterialResolver(Protocol):
         candidates: CandidateSet,
         decision_time: datetime,
         registry: StrategyRegistry,
+        path_forecasts: tuple[PathForecastArtifact, ...],
     ) -> tuple[StrategyOpportunityMaterial, ...]: ...
 
 
@@ -103,16 +107,39 @@ class PostgresContinuousStrategyOpportunityResolver:
         request: ChildExecutionRequest,
         candidates: CandidateSet,
         registry: StrategyRegistry,
+        path_forecasts: tuple[PathForecastArtifact, ...] = (),
     ) -> tuple[StrategyOpportunityInput, ...]:
         production_configuration = (
             self.risk_fact_resolver,
             self.account_scope,
             self.risk_limit_reference,
         )
+        materials = (
+            ()
+            if self.material_resolver is None
+            else self.material_resolver.resolve(
+                candidates=candidates,
+                decision_time=request.as_of_time,
+                registry=registry,
+                path_forecasts=path_forecasts,
+            )
+        )
+        if self.material_resolver is None and any(
+            registry.contract_for(item).forecast_requirement
+            is StrategyForecastRequirement.FORECAST_REQUIRED
+            for item in registry.active_versions
+        ):
+            raise ValueError(
+                "FORECAST_REQUIRED Strategy lacks an Opportunity material resolver"
+            )
         if any(item is not None for item in production_configuration) and not all(
             item is not None for item in production_configuration
         ):
             raise ValueError("pre-Strategy Risk producer configuration is incomplete")
+        if materials and not all(item is not None for item in production_configuration):
+            raise ValueError(
+                "Strategy Opportunity material requires owner-derived Risk facts"
+            )
         if all(item is not None for item in production_configuration):
             assert self.risk_fact_resolver is not None
             assert self.account_scope is not None
@@ -123,15 +150,6 @@ class PostgresContinuousStrategyOpportunityResolver:
                 decision_time=request.as_of_time,
                 risk_limit_reference=self.risk_limit_reference,
             )
-            materials = (
-                ()
-                if self.material_resolver is None
-                else self.material_resolver.resolve(
-                    candidates=candidates,
-                    decision_time=request.as_of_time,
-                    registry=registry,
-                )
-            )
             StrategyOpportunityProducer(self.authority).produce(
                 candidates=candidates,
                 facts=facts,
@@ -139,15 +157,16 @@ class PostgresContinuousStrategyOpportunityResolver:
                 materials=materials,
                 created_at=request.as_of_time,
             )
-        return self.authority.resolve(
-            candidate_reference=RuntimeArtifactReference(
-                "CANDIDATE_SET",
-                candidates.envelope.artifact_id,
-                candidates.envelope.content_hash,
-            ),
-            decision_time=request.as_of_time,
-            registry=registry,
-        )
+            return self.authority.resolve(
+                candidate_reference=RuntimeArtifactReference(
+                    "CANDIDATE_SET",
+                    candidates.envelope.artifact_id,
+                    candidates.envelope.content_hash,
+                ),
+                decision_time=request.as_of_time,
+                registry=registry,
+            )
+        return ()
 
 
 class MultiStrategyContinuousAdapter:
@@ -182,6 +201,7 @@ class MultiStrategyContinuousAdapter:
         dataset_reference: RuntimeArtifactReference,
         upstream: ChildExecutionResult,
         decision_price_dataset: MarketDataDatasetArtifact | None = None,
+        path_forecasts: tuple[PathForecastArtifact, ...] = (),
     ) -> ChildExecutionResult:
         registry = self._repository.load_registry()
         opportunities = (
@@ -191,6 +211,7 @@ class MultiStrategyContinuousAdapter:
                 request=request,
                 candidates=candidate_set,
                 registry=registry,
+                path_forecasts=path_forecasts,
             )
         )
         strategy_request = _with_upstream_result(

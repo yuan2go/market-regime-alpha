@@ -826,18 +826,50 @@ class HistoricalPhaseIIResearchService:
         )
         if research_panel_dataset_reference(panels) != comparison.dataset_reference:
             raise ValueError("Candidate/External dataset owner drifted")
+        context_evidence = tuple(
+            sorted(
+                (
+                    item.context_evidence
+                    for item in challenger_policy.context_adjustments
+                ),
+                key=lambda item: (
+                    item.reference.artifact_kind,
+                    str(item.reference.artifact_id),
+                    item.reference.content_hash,
+                ),
+            )
+        )
+        for context in context_evidence:
+            if context.experiment_reference != external_experiment_reference:
+                raise ValueError("Candidate Context Experiment owner drifted")
+            if external.reference not in context.source_references:
+                raise ValueError("Candidate Context lacks External Evidence lineage")
+            evaluation = _mapping_value(context.payload.get("evaluation"))
+            definition_reference = ValidationArtifactReference.from_canonical_dict(
+                _mapping_value(evaluation["definition_reference"])
+            )
+            if definition_reference not in context.source_references:
+                raise ValueError("Candidate Context definition owner drifted")
+            context_panels = tuple(
+                item
+                for item in context.source_references
+                if item.artifact_kind
+                in {"RESEARCH_PANEL", "HISTORICAL_RESEARCH_PANEL"}
+            )
+            if (
+                not context_panels
+                or research_panel_dataset_reference(context_panels)
+                != comparison.dataset_reference
+            ):
+                raise ValueError("Candidate Context dataset owner drifted")
         factor_directions = tuple(
             sorted(
                 (item.factor_id, item.direction)
                 for item in challenger_policy.validated_factors
             )
         )
-        if factor_directions != tuple(
-            sorted(
-                (str(item[0]), str(item[1]))
-                for item in external.payload.get("validated_factors", ())
-                if isinstance(item, (list, tuple)) and len(item) == 2
-            )
+        if factor_directions != _strict_factor_directions(
+            external.payload.get("validated_factors")
         ):
             raise ValueError("Candidate validated Factor family drifted")
         if activation_status == "CHALLENGER_ACTIVE" and (
@@ -864,9 +896,10 @@ class HistoricalPhaseIIResearchService:
             discovery.reference,
             external_experiment_reference,
             hypothesis_reference,
+            *(item.reference for item in context_evidence),
         )
         admission = {
-            "schema_version": "daily-alpha-evidence-admission/v1",
+            "schema_version": "daily-alpha-evidence-admission/v2",
             "candidate_policy_reference": challenger_policy.reference.to_canonical_dict(),
             "candidate_dataset_reference": comparison.dataset_reference.to_canonical_dict(),
             "external_validation_evidence_reference": external.reference.to_canonical_dict(),
@@ -875,10 +908,17 @@ class HistoricalPhaseIIResearchService:
             "external_experiment_reference": external_experiment_reference.to_canonical_dict(),
             "frozen_hypothesis_reference": hypothesis_reference.to_canonical_dict(),
             "factor_directions": [list(item) for item in factor_directions],
+            "context_evidence_references": [
+                item.reference.to_canonical_dict() for item in context_evidence
+            ],
             "lineage_stages": [
                 _phase_ii_lineage_stage("DISCOVERY", discovery),
                 _phase_ii_lineage_stage("CORRECTNESS", correctness),
                 _phase_ii_lineage_stage("EXTERNAL_VALIDATION", external),
+                *(
+                    _phase_ii_lineage_stage("CONTEXT_CONDITIONAL", item)
+                    for item in context_evidence
+                ),
             ],
         }
         return self._persist(
@@ -899,6 +939,7 @@ class HistoricalPhaseIIResearchService:
         configuration: ConditionalForecastConfig,
         forecast: ConditionalForecastResult,
         baseline_forecast: PathForecastArtifact,
+        context_evidence: HistoricalResearchEvidence,
     ) -> HistoricalResearchEvidence:
         if write.evidence_kind is not HistoricalEvidenceKind.CONDITIONAL_PREDICTION:
             raise ValueError("Conditional Forecast Evidence kind mismatch")
@@ -909,6 +950,23 @@ class HistoricalPhaseIIResearchService:
             raise ValueError("Conditional Forecast configuration owner drifted")
         if _path_forecast_reference(baseline_forecast) != forecast.baseline_reference:
             raise ValueError("Conditional Forecast baseline owner drifted")
+        if (
+            context_evidence.evidence_kind
+            is not HistoricalEvidenceKind.CONTEXT_CONDITIONAL
+            or context_evidence.experiment_reference != write.experiment_reference
+            or context_evidence.classification is not ResearchFinding.POSITIVE
+            or context_evidence.payload.get("status")
+            not in {"AMPLIFIER", "SUPPRESSOR"}
+        ):
+            raise ValueError(
+                "Conditional Forecast requires supported Context from its Experiment"
+            )
+        context_payload = _mapping_value(context_evidence.payload.get("evaluation"))
+        context_reference = ValidationArtifactReference.from_canonical_dict(
+            _mapping_value(context_payload["definition_reference"])
+        )
+        if context_reference not in context_evidence.source_references:
+            raise ValueError("Conditional Forecast Context definition owner drifted")
         self._verify_conditional_model_owners(
             forecast,
             configuration=configuration,
@@ -919,6 +977,7 @@ class HistoricalPhaseIIResearchService:
             forecast.configuration_reference,
             forecast.training_request_reference,
             forecast.baseline_reference,
+            context_evidence.reference,
             *((forecast.model_reference,) if forecast.model_reference is not None else ()),
             *((forecast.inference_reference,) if forecast.inference_reference is not None else ()),
         )
@@ -1871,6 +1930,29 @@ def _mapping_value(value: object) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
         raise ValueError("Phase II owner payload must be an object")
     return value
+
+
+def _strict_factor_directions(value: object) -> tuple[tuple[str, str], ...]:
+    if not isinstance(value, (list, tuple)):
+        raise ValueError("External Validation Factors must be an array")
+    parsed: list[tuple[str, str]] = []
+    for item in value:
+        if (
+            not isinstance(item, (list, tuple))
+            or len(item) != 2
+            or not isinstance(item[0], str)
+            or not item[0].strip()
+            or not isinstance(item[1], str)
+            or not item[1].strip()
+        ):
+            raise ValueError("External Validation Factor lineage is malformed")
+        parsed.append((item[0], item[1]))
+    result = tuple(parsed)
+    if not result or result != tuple(sorted(set(result))):
+        raise ValueError(
+            "External Validation Factors must be non-empty, unique and sorted"
+        )
+    return result
 
 
 def _phase_ii_lineage_stage(

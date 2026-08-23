@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from market_regime_alpha.application.continuous_research.daily_alpha import (
     DAILY_ALPHA_PREDICTION_KIND,
     DailyAlphaEvidenceGate,
+    DailyAlphaConditionalForecastProjection,
     DailyAlphaOwnerResolver,
     DailyAlphaPredictionSnapshot,
     DailyAlphaLegacySymbolProjection,
+    DailyAlphaPathForecastProjection,
     assess_daily_alpha_evidence_gate,
     daily_alpha_admission_evidence_references,
 )
@@ -20,6 +23,9 @@ from market_regime_alpha.application.continuous_research.journal import (
 from market_regime_alpha.application.historical_corpus.postgres_evidence import (
     PostgresHistoricalEvidenceRepository,
 )
+from market_regime_alpha.application.historical_corpus.evidence import (
+    HistoricalEvidenceKind,
+)
 from market_regime_alpha.application.research_validation.common import (
     ValidationArtifactReference,
 )
@@ -27,9 +33,14 @@ from market_regime_alpha.application.research_validation.postgres_repository imp
     PostgresResearchValidationRepository,
 )
 from market_regime_alpha.core.identity import ArtifactId
+from market_regime_alpha.forecasting.conditional import ConditionalForecastResult
+from market_regime_alpha.forecasting.path import PathForecastArtifact
 from market_regime_alpha.persistence.postgres.connection import PostgresConnectionFactory
 from market_regime_alpha.strategies.postgres_opportunity import (
     PostgresStrategySourceAuthority,
+)
+from market_regime_alpha.strategies.postgres_opportunity_material import (
+    PostgresConditionalForecastOwnerResolver,
 )
 from market_regime_alpha.universe.operational import OperationalUniverseArtifact
 
@@ -232,6 +243,137 @@ class PostgresDailyAlphaEvidenceGateResolver:
         return tuple(superseded)
 
 
+class PostgresDailyAlphaConditionalForecastResolver:
+    """Project one uniquely owner-resolved Conditional Forecast for a Path owner."""
+
+    def __init__(
+        self,
+        factory: PostgresConnectionFactory,
+        *,
+        root_candidate_policy_reference: ValidationArtifactReference | None,
+        artifact_root: Path | None = None,
+    ) -> None:
+        self._root = root_candidate_policy_reference
+        self._evidence = PostgresHistoricalEvidenceRepository(
+            factory,
+            apply_migrations=False,
+        )
+        self._conditional = PostgresConditionalForecastOwnerResolver(factory)
+        self._sources = PostgresStrategySourceAuthority(
+            factory,
+            artifact_root=artifact_root,
+        )
+
+    def resolve(
+        self,
+        *,
+        path_forecast: PathForecastArtifact,
+        decision_time: datetime,
+    ) -> DailyAlphaConditionalForecastProjection:
+        if self._root is None:
+            return DailyAlphaConditionalForecastProjection.not_available(
+                "CONDITIONAL_FORECAST_EVIDENCE_ROOT_NOT_CONFIGURED"
+            )
+        try:
+            candidate = self._evidence.get(self._root.artifact_id)
+            if (
+                candidate.reference != self._root
+                or candidate.evidence_kind
+                is not HistoricalEvidenceKind.CANDIDATE_POLICY
+            ):
+                raise ValueError("Conditional Forecast Candidate root drifted")
+            admission = candidate.payload.get("daily_alpha_admission")
+            if (
+                not isinstance(admission, Mapping)
+                or admission.get("schema_version")
+                != "daily-alpha-evidence-admission/v2"
+            ):
+                raise ValueError("Conditional Forecast Candidate lineage is invalid")
+            path_reference = ValidationArtifactReference(
+                "PATH_FORECAST",
+                path_forecast.artifact_id,
+                path_forecast.forecast.envelope.content_hash,
+            )
+            _evidence, result = self._conditional.resolve(
+                path_reference=path_reference,
+                experiment_reference=candidate.experiment_reference,
+            )
+            reference = RuntimeArtifactReference(
+                result.reference.artifact_kind,
+                result.reference.artifact_id,
+                result.reference.content_hash,
+            )
+            owner = self._sources.reload(reference)
+            if owner.available_at > decision_time:
+                raise ValueError("Conditional Forecast is unavailable at DecisionTime")
+            if result.status == "DATA_INSUFFICIENT":
+                baseline_reference = RuntimeArtifactReference(
+                    result.baseline_reference.artifact_kind,
+                    result.baseline_reference.artifact_id,
+                    result.baseline_reference.content_hash,
+                )
+                if self._sources.reload(baseline_reference).available_at > decision_time:
+                    raise ValueError(
+                        "Conditional Forecast baseline is unavailable at DecisionTime"
+                    )
+                return DailyAlphaConditionalForecastProjection(
+                    availability_status="DATA_INSUFFICIENT",
+                    reference=reference,
+                    selected_expected_return=None,
+                    prediction_uncertainty=None,
+                    model_reference=None,
+                    baseline_reference=baseline_reference,
+                    calibration_status=result.calibration_status,
+                    reason_codes=tuple(
+                        sorted(
+                            set(
+                                result.limitations
+                                or ("CONDITIONAL_FORECAST_DATA_INSUFFICIENT",)
+                            )
+                        )
+                    ),
+                )
+            if (
+                result.status != "AVAILABLE_FOR_RESEARCH"
+                or result.model_reference is None
+                or result.selected_expected_return is None
+            ):
+                raise ValueError("Conditional Forecast owner status is unsupported")
+            model_reference = RuntimeArtifactReference(
+                result.model_reference.artifact_kind,
+                result.model_reference.artifact_id,
+                result.model_reference.content_hash,
+            )
+            baseline_reference = RuntimeArtifactReference(
+                result.baseline_reference.artifact_kind,
+                result.baseline_reference.artifact_id,
+                result.baseline_reference.content_hash,
+            )
+            for source in (model_reference, baseline_reference):
+                if self._sources.reload(source).available_at > decision_time:
+                    raise ValueError(
+                        "Conditional Forecast lineage is unavailable at DecisionTime"
+                    )
+            return DailyAlphaConditionalForecastProjection(
+                availability_status="AVAILABLE_FOR_RESEARCH",
+                reference=reference,
+                selected_expected_return=str(result.selected_expected_return),
+                prediction_uncertainty=(
+                    None
+                    if result.prediction_uncertainty is None
+                    else str(result.prediction_uncertainty)
+                ),
+                model_reference=model_reference,
+                baseline_reference=baseline_reference,
+                calibration_status=result.calibration_status,
+                reason_codes=("CONDITIONAL_FORECAST_OWNER_RELOADED",),
+            )
+        except (KeyError, TypeError, ValueError):
+            return DailyAlphaConditionalForecastProjection.not_available(
+                "CONDITIONAL_FORECAST_OWNER_MISSING_OR_AMBIGUOUS"
+            )
+
+
 class DailyAlphaSourceIntegrityError(ValueError):
     """A Daily Alpha projection no longer resolves to its exact source owners."""
 
@@ -370,9 +512,133 @@ class PostgresDailyAlphaOwnerResolver:
                     raise DailyAlphaTypedSymbolIntegrityError(
                         f"Daily Alpha {reference.reference_kind} symbol drift"
                     )
+                if (
+                    not isinstance(item, DailyAlphaLegacySymbolProjection)
+                    and item.conditional_forecast.reference == reference
+                ):
+                    self._verify_conditional_projection(
+                        item.conditional_forecast,
+                        owner.payload,
+                    )
+                if (
+                    not isinstance(item, DailyAlphaLegacySymbolProjection)
+                    and item.path_forecast is not None
+                    and item.path_forecast.reference == reference
+                ):
+                    self._verify_path_projection(item.path_forecast, owner.payload)
         if projected_forecasts != raw_forecasts:
             raise DailyAlphaForecastSetIntegrityError(
                 "Daily Alpha raw Forecast projection/reference set drifted"
+            )
+
+    @staticmethod
+    def _verify_path_projection(
+        projection: DailyAlphaPathForecastProjection,
+        payload: Mapping[str, Any],
+    ) -> None:
+        path = PathForecastArtifact.from_canonical_dict(dict(payload))
+        forecast = path.forecast
+        expected_quantiles = tuple(
+            (
+                str(item.probability),
+                None if item.return_value is None else str(item.return_value),
+            )
+            for item in forecast.return_quantiles
+        )
+        if (
+            projection.forecast_status != forecast.forecast_status.value
+            or projection.expected_mfe
+            != (None if forecast.expected_mfe is None else str(forecast.expected_mfe))
+            or projection.expected_mae
+            != (None if forecast.expected_mae is None else str(forecast.expected_mae))
+            or projection.return_quantiles != expected_quantiles
+            or projection.usable_sample_count != forecast.usable_sample_count
+            or projection.excluded_sample_count != forecast.excluded_sample_count
+            or projection.calibration_status != forecast.calibration_status.value
+            or projection.reason_codes
+            != tuple(sorted(forecast.reason_codes or ("NO_PATH_FORECAST_REASON",)))
+        ):
+            raise DailyAlphaForecastReloadIntegrityError(
+                "Daily Alpha Path Forecast semantic projection drift"
+            )
+
+    @staticmethod
+    def _verify_conditional_projection(
+        projection: DailyAlphaConditionalForecastProjection,
+        payload: Mapping[str, Any],
+    ) -> None:
+        result = ConditionalForecastResult.from_canonical_dict(payload)
+        reference = RuntimeArtifactReference(
+            result.reference.artifact_kind,
+            result.reference.artifact_id,
+            result.reference.content_hash,
+        )
+        if projection.reference != reference:
+            raise DailyAlphaForecastReloadIntegrityError(
+                "Daily Alpha Conditional Forecast identity drift"
+            )
+        if result.status == "DATA_INSUFFICIENT":
+            expected_baseline = RuntimeArtifactReference(
+                result.baseline_reference.artifact_kind,
+                result.baseline_reference.artifact_id,
+                result.baseline_reference.content_hash,
+            )
+            if (
+                projection.availability_status != "DATA_INSUFFICIENT"
+                or projection.selected_expected_return is not None
+                or projection.prediction_uncertainty is not None
+                or projection.model_reference is not None
+                or projection.baseline_reference != expected_baseline
+                or projection.calibration_status != result.calibration_status
+                or projection.reason_codes
+                != tuple(
+                    sorted(
+                        set(
+                            result.limitations
+                            or ("CONDITIONAL_FORECAST_DATA_INSUFFICIENT",)
+                        )
+                    )
+                )
+            ):
+                raise DailyAlphaForecastReloadIntegrityError(
+                    "Daily Alpha insufficient Conditional Forecast drift"
+                )
+            return
+        expected_model = (
+            None
+            if result.model_reference is None
+            else RuntimeArtifactReference(
+                result.model_reference.artifact_kind,
+                result.model_reference.artifact_id,
+                result.model_reference.content_hash,
+            )
+        )
+        expected_baseline = RuntimeArtifactReference(
+            result.baseline_reference.artifact_kind,
+            result.baseline_reference.artifact_id,
+            result.baseline_reference.content_hash,
+        )
+        if (
+            result.status != "AVAILABLE_FOR_RESEARCH"
+            or projection.availability_status != result.status
+            or projection.selected_expected_return
+            != (
+                None
+                if result.selected_expected_return is None
+                else str(result.selected_expected_return)
+            )
+            or projection.prediction_uncertainty
+            != (
+                None
+                if result.prediction_uncertainty is None
+                else str(result.prediction_uncertainty)
+            )
+            or projection.model_reference != expected_model
+            or projection.baseline_reference != expected_baseline
+            or projection.calibration_status != result.calibration_status
+        ):
+            raise DailyAlphaForecastReloadIntegrityError(
+                "Daily Alpha Conditional Forecast semantic projection drift"
             )
 
     @staticmethod

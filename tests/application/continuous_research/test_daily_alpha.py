@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from datetime import UTC, date, datetime
 
 import pytest
@@ -150,16 +151,13 @@ def _supported_chain() -> tuple[
     candidate_policy = _validation_reference(
         "CHALLENGER_CANDIDATE_POLICY", "challenger-policy"
     )
-    candidate_experiment = _validation_reference(
-        "RESEARCH_EXPERIMENT_DEFINITION", "candidate-experiment"
-    )
     candidate = _historical(
         HistoricalEvidenceKind.CANDIDATE_POLICY,
         {
             "activation_status": "CHALLENGER_ACTIVE",
             "stability": "STABLE",
             "daily_alpha_admission": {
-                "schema_version": "daily-alpha-evidence-admission/v1",
+                "schema_version": "daily-alpha-evidence-admission/v2",
                 "candidate_policy_reference": candidate_policy.to_canonical_dict(),
                 "candidate_dataset_reference": dataset.to_canonical_dict(),
                 "external_validation_evidence_reference": external.reference.to_canonical_dict(),
@@ -168,6 +166,7 @@ def _supported_chain() -> tuple[
                 "external_experiment_reference": external_experiment.to_canonical_dict(),
                 "frozen_hypothesis_reference": hypothesis.to_canonical_dict(),
                 "factor_directions": [list(item) for item in factor_directions],
+                "context_evidence_references": [],
                 "lineage_stages": [
                     _lineage_stage("DISCOVERY", discovery),
                     _lineage_stage("CORRECTNESS", correctness),
@@ -176,7 +175,7 @@ def _supported_chain() -> tuple[
             },
         },
         name="candidate",
-        experiment_reference=candidate_experiment,
+        experiment_reference=external_experiment,
         source_references=(
             candidate_policy,
             dataset,
@@ -359,6 +358,98 @@ def test_gate_rejects_cross_experiment_or_dataset_mixing() -> None:
 
     assert mixed.status is DailyAlphaActivationStatus.VALIDATED_CHALLENGER_INACTIVE
     assert "EVIDENCE_LINEAGE_INCOMPLETE" in mixed.reason_codes
+
+
+def test_gate_rejects_context_from_another_experiment() -> None:
+    discovery, correctness, external, candidate = _supported_chain()
+    external_experiment = external.experiment_reference
+    panels = tuple(
+        ValidationArtifactReference.from_canonical_dict(item)
+        for item in external.payload["experiment"]["validation_panel_references"]
+    )
+    definition = _validation_reference("CONTEXT_DEFINITION", "mixed-context")
+    context = _historical(
+        HistoricalEvidenceKind.CONTEXT_CONDITIONAL,
+        {
+            "status": "AMPLIFIER",
+            "evaluation": {
+                "definition_reference": definition.to_canonical_dict(),
+            },
+        },
+        name="mixed-context",
+        experiment_reference=_validation_reference(
+            "RESEARCH_EXPERIMENT_DEFINITION", "unrelated-context-experiment"
+        ),
+        source_references=(external.reference, definition, *panels),
+    )
+    payload = deepcopy(candidate.payload)
+    admission = payload["daily_alpha_admission"]
+    admission["context_evidence_references"] = [
+        context.reference.to_canonical_dict()
+    ]
+    admission["lineage_stages"].append(
+        _lineage_stage("CONTEXT_CONDITIONAL", context)
+    )
+    mixed_candidate = _historical(
+        HistoricalEvidenceKind.CANDIDATE_POLICY,
+        payload,
+        name="mixed-context-candidate",
+        experiment_reference=external_experiment,
+        source_references=(*candidate.source_references, context.reference),
+    )
+
+    mixed = assess_daily_alpha_evidence_gate(
+        (discovery, correctness, external, context, mixed_candidate),
+        root_candidate_policy_reference=mixed_candidate.reference,
+    )
+
+    assert mixed.status is DailyAlphaActivationStatus.VALIDATED_CHALLENGER_INACTIVE
+    assert "EVIDENCE_LINEAGE_INCOMPLETE" in mixed.reason_codes
+
+
+def test_gate_rejects_malformed_factor_lineage_instead_of_filtering_it() -> None:
+    discovery, correctness, external, candidate = _supported_chain()
+    payload = deepcopy(candidate.payload)
+    payload["daily_alpha_admission"]["factor_directions"].append("malformed")
+    malformed = _historical(
+        HistoricalEvidenceKind.CANDIDATE_POLICY,
+        payload,
+        name="malformed-factor-candidate",
+        experiment_reference=candidate.experiment_reference,
+        source_references=candidate.source_references,
+    )
+
+    gate = assess_daily_alpha_evidence_gate(
+        (discovery, correctness, external, malformed),
+        root_candidate_policy_reference=malformed.reference,
+    )
+
+    assert gate.status is DailyAlphaActivationStatus.VALIDATED_CHALLENGER_INACTIVE
+    assert "EVIDENCE_LINEAGE_INCOMPLETE" in gate.reason_codes
+
+
+def test_gate_rejects_legacy_admission_without_explicit_context_lineage() -> None:
+    discovery, correctness, external, candidate = _supported_chain()
+    payload = deepcopy(candidate.payload)
+    payload["daily_alpha_admission"]["schema_version"] = (
+        "daily-alpha-evidence-admission/v1"
+    )
+    payload["daily_alpha_admission"].pop("context_evidence_references")
+    legacy = _historical(
+        HistoricalEvidenceKind.CANDIDATE_POLICY,
+        payload,
+        name="legacy-admission",
+        experiment_reference=candidate.experiment_reference,
+        source_references=candidate.source_references,
+    )
+
+    gate = assess_daily_alpha_evidence_gate(
+        (discovery, correctness, external, legacy),
+        root_candidate_policy_reference=legacy.reference,
+    )
+
+    assert gate.status is DailyAlphaActivationStatus.VALIDATED_CHALLENGER_INACTIVE
+    assert "EVIDENCE_LINEAGE_INCOMPLETE" in gate.reason_codes
 
 
 def test_gate_uses_only_the_explicit_root_and_rejects_superseded_chain() -> None:

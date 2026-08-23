@@ -25,6 +25,7 @@ from market_regime_alpha.application.continuous_research.free_data_runtime impor
     ControlledRuntimeModelSelector,
 )
 from market_regime_alpha.application.continuous_research.postgres_daily_alpha import (
+    PostgresDailyAlphaConditionalForecastResolver,
     PostgresDailyAlphaEvidenceGateResolver,
     PostgresDailyAlphaOwnerResolver,
     PostgresDailyAlphaPredictionAuthority,
@@ -61,6 +62,9 @@ from market_regime_alpha.application.continuous_research.runner import (
 from market_regime_alpha.strategies.postgres_opportunity import (
     PostgresStrategyOpportunityAuthority,
     PostgresStrategySourceAuthority,
+)
+from market_regime_alpha.strategies.postgres_opportunity_material import (
+    PostgresStrategyOpportunityMaterialResolver,
 )
 from market_regime_alpha.application.continuous_research.runtime_authority_evidence import (
     PostgresRuntimeAuthorityEvidenceRepository,
@@ -2015,6 +2019,10 @@ def _run_due(
         ),
     )
     daily_alpha_evidence_root = _daily_alpha_evidence_root(args)
+    daily_alpha_evidence_gate_resolver = PostgresDailyAlphaEvidenceGateResolver(
+        factory,
+        root_candidate_policy_reference=daily_alpha_evidence_root,
+    )
     pre_strategy_risk_configuration = _pre_strategy_risk_configuration(args)
     children = CanonicalFreeDataResearchComposition(
         service=service,
@@ -2042,6 +2050,12 @@ def _run_due(
                 else args.strategy_account_id
             ),
             risk_limit_reference=pre_strategy_risk_configuration,
+            material_resolver=PostgresStrategyOpportunityMaterialResolver(
+                factory,
+                root_candidate_policy_reference=daily_alpha_evidence_root,
+                evidence_gate=daily_alpha_evidence_gate_resolver.assess,
+                artifact_root=args.output_root,
+            ),
         ),
         strategy_opportunity_authority=opportunity_authority,
         daily_alpha_authority=PostgresDailyAlphaPredictionAuthority(
@@ -2051,10 +2065,14 @@ def _run_due(
                 artifact_root=args.output_root,
             ),
         ),
-        daily_alpha_evidence_gate=PostgresDailyAlphaEvidenceGateResolver(
-            factory,
-            root_candidate_policy_reference=daily_alpha_evidence_root,
-        ).assess,
+        daily_alpha_evidence_gate=daily_alpha_evidence_gate_resolver.assess,
+        daily_alpha_conditional_forecast_resolver=(
+            PostgresDailyAlphaConditionalForecastResolver(
+                factory,
+                root_candidate_policy_reference=daily_alpha_evidence_root,
+                artifact_root=args.output_root,
+            )
+        ),
         clock=runtime_clock,
     )
     tick_runner = ContinuousResearchTickRunner(
@@ -2531,6 +2549,22 @@ def _historical_runner(
             ),
             apply_migrations=False,
         )
+        candidate_roots = tuple(
+            item
+            for item in command.configuration_references
+            if item.artifact_kind == "HISTORICAL_CANDIDATE_POLICY_EVIDENCE"
+        )
+        if len(candidate_roots) > 1:
+            raise ValueError(
+                "Historical Strategy binds multiple Candidate Evidence roots"
+            )
+        historical_evidence_root = (
+            None if not candidate_roots else candidate_roots[0]
+        )
+        historical_evidence_gate_resolver = PostgresDailyAlphaEvidenceGateResolver(
+            factory,
+            root_candidate_policy_reference=historical_evidence_root,
+        )
         archive_materializer = MultiStrategyHistoricalAdapter(
             delegate=base_materializer,
             component_repository=component_repository,
@@ -2545,7 +2579,13 @@ def _historical_runner(
                 maximum_symbol_weight=Decimal("0.20"),
             ),
             opportunity_resolver=PostgresHistoricalStrategyOpportunityResolver(
-                opportunity_authority
+                opportunity_authority,
+                material_resolver=PostgresStrategyOpportunityMaterialResolver(
+                    factory,
+                    root_candidate_policy_reference=historical_evidence_root,
+                    evidence_gate=historical_evidence_gate_resolver.assess,
+                    artifact_root=artifact_root,
+                ),
             ),
             opportunity_authority=opportunity_authority,
         )
