@@ -5,8 +5,12 @@ from datetime import UTC, date, datetime
 import pytest
 
 from market_regime_alpha.application.continuous_research.daily_alpha import (
+    DAILY_ALPHA_PREDICTION_SCHEMA_V1,
     DailyAlphaActivationStatus,
+    DailyAlphaConditionalForecastProjection,
     DailyAlphaEvidenceGate,
+    DailyAlphaLegacySymbolProjection,
+    DailyAlphaPathForecastProjection,
     DailyAlphaPredictionSnapshot,
     DailyAlphaSymbolProjection,
     EVIDENCE_DEPENDENCY_NOT_SATISFIED,
@@ -191,21 +195,31 @@ def _symbol() -> DailyAlphaSymbolProjection:
         symbol="600000.SH",
         selection_status="SELECTED",
         candidate_rank=1,
-        factor_score="0.75",
-        factor_values=(("price_vs_vwap_return:value", "0.01"),),
-        factor_contributions=(("price_vs_vwap_return", "0.75"),),
-        context=(("market_regime", "RISK_ON"),),
+        incumbent_diagnostics=(
+            ("candidate_discovery_score", "0.75"),
+            ("feature:price_vs_vwap_return:value", "0.01"),
+        ),
+        validated_alpha_contributions=(),
+        conditional_context=(("market_regime", "RISK_ON"),),
         signal_reference=_reference("SIGNAL_SNAPSHOT", "signal"),
         signal_state="ACTIVE",
         signal_score="0.8",
-        forecast_reference=_reference("PATH_FORECAST", "forecast"),
-        forecast_expected_return=None,
-        forecast_uncertainty=None,
-        calibration_status="NOT_CALIBRATED",
+        path_forecast=DailyAlphaPathForecastProjection(
+            reference=_reference("PATH_FORECAST", "forecast"),
+            forecast_status="AVAILABLE_FOR_RESEARCH",
+            expected_mfe="0.03",
+            expected_mae="-0.02",
+            return_quantiles=(("0.5", "0.01"),),
+            usable_sample_count=30,
+            excluded_sample_count=2,
+            calibration_status="NOT_CALIBRATED",
+            reason_codes=("PATH_STATISTICS_ONLY",),
+        ),
+        conditional_forecast=DailyAlphaConditionalForecastProjection.not_available(),
         strategy_diagnostic_reference=_reference(
             "MULTI_STRATEGY_CYCLE", "strategy-cycle"
         ),
-        reason_codes=("PATH_FORECAST_EXPECTED_RETURN_NOT_IMPLEMENTED",),
+        reason_codes=("CONDITIONAL_FORECAST_OWNER_NOT_AVAILABLE",),
     )
 
 
@@ -247,6 +261,59 @@ def test_daily_snapshot_is_content_addressed_and_replay_stable() -> None:
         first.to_canonical_dict()
     ) == first
     assert EVIDENCE_DEPENDENCY_NOT_SATISFIED in first.reason_codes
+
+
+def test_daily_snapshot_keeps_v1_identity_replay_compatible() -> None:
+    legacy = DailyAlphaLegacySymbolProjection(
+        symbol="600000.SH",
+        selection_status="SELECTED",
+        candidate_rank=1,
+        factor_score="0.75",
+        factor_values=(("price_vs_vwap_return:value", "0.01"),),
+        factor_contributions=(("price_vs_vwap_return", "0.75"),),
+        context=(("market_regime", "RISK_ON"),),
+        signal_reference=_reference("SIGNAL_SNAPSHOT", "signal"),
+        signal_state="ACTIVE",
+        signal_score="0.8",
+        forecast_reference=_reference("PATH_FORECAST", "forecast"),
+        forecast_expected_return=None,
+        forecast_uncertainty=None,
+        calibration_status="NOT_CALIBRATED",
+        strategy_diagnostic_reference=_reference(
+            "MULTI_STRATEGY_CYCLE", "strategy-cycle"
+        ),
+        reason_codes=("PATH_FORECAST_EXPECTED_RETURN_NOT_IMPLEMENTED",),
+    )
+    current = _snapshot(DailyAlphaEvidenceGate.inactive())
+    old = DailyAlphaPredictionSnapshot.create(
+        run_reference=current.run_reference,
+        tick_reference=current.tick_reference,
+        code_reference=current.code_reference,
+        configuration_references=current.configuration_references,
+        provider_evidence_reference=current.provider_evidence_reference,
+        dataset_reference=current.dataset_reference,
+        universe_reference=current.universe_reference,
+        feature_references=current.feature_references,
+        context_references=current.context_references,
+        candidate_reference=current.candidate_reference,
+        signal_reference=current.signal_reference,
+        forecast_references=current.forecast_references,
+        strategy_diagnostic_reference=current.strategy_diagnostic_reference,
+        evidence_gate=current.evidence_gate,
+        trading_date=current.trading_date,
+        decision_time=current.decision_time,
+        available_at=current.available_at,
+        symbols=(legacy,),
+        reason_codes=("DAILY_PREDICTION_FROZEN_BEFORE_OUTCOME",),
+        schema_version=DAILY_ALPHA_PREDICTION_SCHEMA_V1,
+    )
+
+    restored = DailyAlphaPredictionSnapshot.from_canonical_dict(
+        old.to_canonical_dict()
+    )
+
+    assert restored == old
+    assert restored.snapshot_hash == old.snapshot_hash
 
 
 def test_inactive_gate_cannot_silently_look_successful() -> None:

@@ -36,7 +36,8 @@ from market_regime_alpha.universe.operational import OperationalUniverseArtifact
 
 
 DAILY_ALPHA_PREDICTION_KIND = "DAILY_ALPHA_PREDICTION_SNAPSHOT"
-DAILY_ALPHA_PREDICTION_SCHEMA = "daily-alpha-prediction-snapshot/v1"
+DAILY_ALPHA_PREDICTION_SCHEMA_V1 = "daily-alpha-prediction-snapshot/v1"
+DAILY_ALPHA_PREDICTION_SCHEMA = "daily-alpha-prediction-snapshot/v2"
 EVIDENCE_DEPENDENCY_NOT_SATISFIED = "EVIDENCE_DEPENDENCY_NOT_SATISFIED"
 
 
@@ -435,7 +436,279 @@ def _verify_lineage_stages(
 
 
 @dataclass(frozen=True, slots=True)
+class DailyAlphaPathForecastProjection:
+    reference: RuntimeArtifactReference
+    forecast_status: str
+    expected_mfe: str | None
+    expected_mae: str | None
+    return_quantiles: tuple[tuple[str, str | None], ...]
+    usable_sample_count: int
+    excluded_sample_count: int
+    calibration_status: str
+    reason_codes: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if self.reference.reference_kind != "PATH_FORECAST":
+            raise ValueError("Path Forecast projection requires its typed owner")
+        require_text("Path Forecast status", self.forecast_status)
+        require_text("Path Forecast calibration status", self.calibration_status)
+        if min(self.usable_sample_count, self.excluded_sample_count) < 0:
+            raise ValueError("Path Forecast sample counts cannot be negative")
+        _ordered_pairs("Path Forecast return quantiles", self.return_quantiles)
+        _ordered_text("Path Forecast reason_codes", self.reason_codes, required=True)
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        return {
+            "reference": self.reference.to_canonical_dict(),
+            "forecast_status": self.forecast_status,
+            "expected_mfe": self.expected_mfe,
+            "expected_mae": self.expected_mae,
+            "return_quantiles": _pairs_payload(self.return_quantiles),
+            "usable_sample_count": self.usable_sample_count,
+            "excluded_sample_count": self.excluded_sample_count,
+            "calibration_status": self.calibration_status,
+            "reason_codes": list(self.reason_codes),
+        }
+
+    @classmethod
+    def from_canonical_dict(
+        cls, payload: Mapping[str, Any]
+    ) -> DailyAlphaPathForecastProjection:
+        _fields(
+            payload,
+            {
+                "reference",
+                "forecast_status",
+                "expected_mfe",
+                "expected_mae",
+                "return_quantiles",
+                "usable_sample_count",
+                "excluded_sample_count",
+                "calibration_status",
+                "reason_codes",
+            },
+            "Daily Alpha Path Forecast projection",
+        )
+        return cls(
+            reference=RuntimeArtifactReference.from_canonical_dict(
+                _mapping(payload["reference"])
+            ),
+            forecast_status=str(payload["forecast_status"]),
+            expected_mfe=_optional_text(payload["expected_mfe"]),
+            expected_mae=_optional_text(payload["expected_mae"]),
+            return_quantiles=_pairs(payload["return_quantiles"]),
+            usable_sample_count=int(payload["usable_sample_count"]),
+            excluded_sample_count=int(payload["excluded_sample_count"]),
+            calibration_status=str(payload["calibration_status"]),
+            reason_codes=_strings(payload["reason_codes"]),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class DailyAlphaConditionalForecastProjection:
+    availability_status: str
+    reference: RuntimeArtifactReference | None
+    selected_expected_return: str | None
+    prediction_uncertainty: str | None
+    model_reference: RuntimeArtifactReference | None
+    baseline_reference: RuntimeArtifactReference | None
+    calibration_status: str
+    reason_codes: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if self.availability_status not in {
+            "AVAILABLE_FOR_RESEARCH",
+            "DATA_INSUFFICIENT",
+            "NOT_AVAILABLE",
+        }:
+            raise ValueError("unsupported Conditional Forecast availability")
+        _ordered_text(
+            "Conditional Forecast reason_codes", self.reason_codes, required=True
+        )
+        if self.reference is not None and (
+            self.reference.reference_kind != "CONDITIONAL_FORECAST_RESULT"
+        ):
+            raise ValueError("Conditional Forecast projection owner kind drifted")
+        values = (
+            self.selected_expected_return,
+            self.prediction_uncertainty,
+            self.model_reference,
+            self.baseline_reference,
+        )
+        if self.availability_status == "AVAILABLE_FOR_RESEARCH":
+            if self.reference is None or self.selected_expected_return is None:
+                raise ValueError("available Conditional Forecast owner is incomplete")
+            if self.model_reference is None or self.baseline_reference is None:
+                raise ValueError("available Conditional Forecast lineage is incomplete")
+        elif any(item is not None for item in values):
+            raise ValueError("unavailable Conditional Forecast cannot carry estimates")
+
+    @classmethod
+    def not_available(cls) -> DailyAlphaConditionalForecastProjection:
+        return cls(
+            availability_status="NOT_AVAILABLE",
+            reference=None,
+            selected_expected_return=None,
+            prediction_uncertainty=None,
+            model_reference=None,
+            baseline_reference=None,
+            calibration_status="NOT_AVAILABLE",
+            reason_codes=("CONDITIONAL_FORECAST_OWNER_NOT_AVAILABLE",),
+        )
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        return {
+            "availability_status": self.availability_status,
+            "reference": _optional_runtime_reference(self.reference),
+            "selected_expected_return": self.selected_expected_return,
+            "prediction_uncertainty": self.prediction_uncertainty,
+            "model_reference": _optional_runtime_reference(self.model_reference),
+            "baseline_reference": _optional_runtime_reference(self.baseline_reference),
+            "calibration_status": self.calibration_status,
+            "reason_codes": list(self.reason_codes),
+        }
+
+    @classmethod
+    def from_canonical_dict(
+        cls, payload: Mapping[str, Any]
+    ) -> DailyAlphaConditionalForecastProjection:
+        _fields(
+            payload,
+            {
+                "availability_status",
+                "reference",
+                "selected_expected_return",
+                "prediction_uncertainty",
+                "model_reference",
+                "baseline_reference",
+                "calibration_status",
+                "reason_codes",
+            },
+            "Daily Alpha Conditional Forecast projection",
+        )
+        return cls(
+            availability_status=str(payload["availability_status"]),
+            reference=_runtime_reference(payload["reference"]),
+            selected_expected_return=_optional_text(
+                payload["selected_expected_return"]
+            ),
+            prediction_uncertainty=_optional_text(payload["prediction_uncertainty"]),
+            model_reference=_runtime_reference(payload["model_reference"]),
+            baseline_reference=_runtime_reference(payload["baseline_reference"]),
+            calibration_status=str(payload["calibration_status"]),
+            reason_codes=_strings(payload["reason_codes"]),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class DailyAlphaSymbolProjection:
+    symbol: str
+    selection_status: str
+    candidate_rank: int | None
+    incumbent_diagnostics: tuple[tuple[str, str | None], ...]
+    validated_alpha_contributions: tuple[tuple[str, str | None], ...]
+    conditional_context: tuple[tuple[str, str | None], ...]
+    signal_reference: RuntimeArtifactReference | None
+    signal_state: str | None
+    signal_score: str | None
+    path_forecast: DailyAlphaPathForecastProjection | None
+    conditional_forecast: DailyAlphaConditionalForecastProjection
+    strategy_diagnostic_reference: RuntimeArtifactReference
+    reason_codes: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        require_text("symbol", self.symbol)
+        require_text("selection_status", self.selection_status)
+        if self.candidate_rank is not None and self.candidate_rank < 1:
+            raise ValueError("daily Alpha Candidate rank must be positive")
+        for label, values in (
+            ("incumbent_diagnostics", self.incumbent_diagnostics),
+            ("validated_alpha_contributions", self.validated_alpha_contributions),
+            ("conditional_context", self.conditional_context),
+        ):
+            _ordered_pairs(f"daily Alpha {label}", values)
+        _ordered_text("symbol reason_codes", self.reason_codes, required=True)
+        if (self.signal_reference is None) != (self.signal_state is None):
+            raise ValueError("Signal reference/state must be paired")
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        return {
+            "symbol": self.symbol,
+            "selection_status": self.selection_status,
+            "candidate_rank": self.candidate_rank,
+            "incumbent_diagnostics": _pairs_payload(self.incumbent_diagnostics),
+            "validated_alpha_contributions": _pairs_payload(
+                self.validated_alpha_contributions
+            ),
+            "conditional_context": _pairs_payload(self.conditional_context),
+            "signal_reference": _optional_runtime_reference(self.signal_reference),
+            "signal_state": self.signal_state,
+            "signal_score": self.signal_score,
+            "path_forecast": (
+                None if self.path_forecast is None else self.path_forecast.to_canonical_dict()
+            ),
+            "conditional_forecast": self.conditional_forecast.to_canonical_dict(),
+            "strategy_diagnostic_reference": self.strategy_diagnostic_reference.to_canonical_dict(),
+            "reason_codes": list(self.reason_codes),
+        }
+
+    @classmethod
+    def from_canonical_dict(
+        cls, payload: Mapping[str, Any]
+    ) -> DailyAlphaSymbolProjection:
+        _fields(
+            payload,
+            {
+                "symbol",
+                "selection_status",
+                "candidate_rank",
+                "incumbent_diagnostics",
+                "validated_alpha_contributions",
+                "conditional_context",
+                "signal_reference",
+                "signal_state",
+                "signal_score",
+                "path_forecast",
+                "conditional_forecast",
+                "strategy_diagnostic_reference",
+                "reason_codes",
+            },
+            "Daily Alpha symbol projection",
+        )
+        rank = payload["candidate_rank"]
+        return cls(
+            symbol=str(payload["symbol"]),
+            selection_status=str(payload["selection_status"]),
+            candidate_rank=None if rank is None else int(rank),
+            incumbent_diagnostics=_pairs(payload["incumbent_diagnostics"]),
+            validated_alpha_contributions=_pairs(
+                payload["validated_alpha_contributions"]
+            ),
+            conditional_context=_pairs(payload["conditional_context"]),
+            signal_reference=_runtime_reference(payload["signal_reference"]),
+            signal_state=_optional_text(payload["signal_state"]),
+            signal_score=_optional_text(payload["signal_score"]),
+            path_forecast=(
+                None
+                if payload["path_forecast"] is None
+                else DailyAlphaPathForecastProjection.from_canonical_dict(
+                    _mapping(payload["path_forecast"])
+                )
+            ),
+            conditional_forecast=DailyAlphaConditionalForecastProjection.from_canonical_dict(
+                _mapping(payload["conditional_forecast"])
+            ),
+            strategy_diagnostic_reference=RuntimeArtifactReference.from_canonical_dict(
+                _mapping(payload["strategy_diagnostic_reference"])
+            ),
+            reason_codes=_strings(payload["reason_codes"]),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class DailyAlphaLegacySymbolProjection:
+    """Exact v1 decoder/encoder; never used for newly created snapshots."""
+
     symbol: str
     selection_status: str
     candidate_rank: int | None
@@ -464,20 +737,8 @@ class DailyAlphaSymbolProjection:
             ("factor_contributions", self.factor_contributions),
             ("context", self.context),
         ):
-            keys = tuple(item[0] for item in values)
-            if keys != tuple(sorted(set(keys))) or any(not key.strip() for key in keys):
-                raise ValueError(f"daily Alpha {label} keys must be unique and sorted")
+            _ordered_pairs(f"daily Alpha v1 {label}", values)
         _ordered_text("symbol reason_codes", self.reason_codes, required=True)
-        if (self.signal_reference is None) != (self.signal_state is None):
-            raise ValueError("Signal reference/state must be paired")
-        if self.forecast_reference is None and any(
-            value is not None
-            for value in (
-                self.forecast_expected_return,
-                self.forecast_uncertainty,
-            )
-        ):
-            raise ValueError("Forecast values require a Forecast owner")
 
     def to_canonical_dict(self) -> dict[str, Any]:
         return {
@@ -502,7 +763,7 @@ class DailyAlphaSymbolProjection:
     @classmethod
     def from_canonical_dict(
         cls, payload: Mapping[str, Any]
-    ) -> DailyAlphaSymbolProjection:
+    ) -> DailyAlphaLegacySymbolProjection:
         _fields(
             payload,
             {
@@ -523,7 +784,7 @@ class DailyAlphaSymbolProjection:
                 "strategy_diagnostic_reference",
                 "reason_codes",
             },
-            "Daily Alpha symbol projection",
+            "Daily Alpha v1 symbol projection",
         )
         rank = payload["candidate_rank"]
         return cls(
@@ -571,12 +832,17 @@ class DailyAlphaPredictionSnapshot:
     trading_date: date
     decision_time: datetime
     available_at: datetime
-    symbols: tuple[DailyAlphaSymbolProjection, ...]
+    symbols: tuple[
+        DailyAlphaSymbolProjection | DailyAlphaLegacySymbolProjection, ...
+    ]
     reason_codes: tuple[str, ...]
     schema_version: str = DAILY_ALPHA_PREDICTION_SCHEMA
 
     def __post_init__(self) -> None:
-        if self.schema_version != DAILY_ALPHA_PREDICTION_SCHEMA:
+        if self.schema_version not in {
+            DAILY_ALPHA_PREDICTION_SCHEMA_V1,
+            DAILY_ALPHA_PREDICTION_SCHEMA,
+        }:
             raise ValueError("unsupported Daily Alpha prediction schema")
         require_sha256("snapshot_hash", self.snapshot_hash)
         require_utc_second("decision_time", self.decision_time)
@@ -600,6 +866,13 @@ class DailyAlphaPredictionSnapshot:
         symbol_keys = tuple(item.symbol for item in self.symbols)
         if symbol_keys != tuple(sorted(set(symbol_keys))):
             raise ValueError("Daily Alpha symbols must be unique and sorted")
+        expected_symbol_type = (
+            DailyAlphaLegacySymbolProjection
+            if self.schema_version == DAILY_ALPHA_PREDICTION_SCHEMA_V1
+            else DailyAlphaSymbolProjection
+        )
+        if any(not isinstance(item, expected_symbol_type) for item in self.symbols):
+            raise ValueError("Daily Alpha symbol projection schema drifted")
         _ordered_text("snapshot reason_codes", self.reason_codes, required=True)
         if (
             self.evidence_gate.status
@@ -761,9 +1034,8 @@ class DailyAlphaPredictionSnapshot:
             trading_date=date.fromisoformat(str(payload["trading_date"])),
             decision_time=parse_utc_second("decision_time", payload["decision_time"]),
             available_at=parse_utc_second("available_at", payload["available_at"]),
-            symbols=tuple(
-                DailyAlphaSymbolProjection.from_canonical_dict(_mapping(item))
-                for item in _sequence(payload["symbols"])
+            symbols=_symbol_projections(
+                payload["symbols"], schema_version=str(payload["schema_version"])
             ),
             reason_codes=_strings(payload["reason_codes"]),
             schema_version=str(payload["schema_version"]),
@@ -854,6 +1126,32 @@ def _ordered_text(label: str, values: tuple[str, ...], *, required: bool) -> Non
         raise ValueError(f"{label} must be unique, non-empty, and sorted")
 
 
+def _ordered_pairs(
+    label: str, values: tuple[tuple[str, str | None], ...]
+) -> None:
+    keys = tuple(item[0] for item in values)
+    if keys != tuple(sorted(set(keys))) or any(not key.strip() for key in keys):
+        raise ValueError(f"{label} keys must be unique and sorted")
+
+
+def _symbol_projections(
+    value: object,
+    *,
+    schema_version: str,
+) -> tuple[DailyAlphaSymbolProjection | DailyAlphaLegacySymbolProjection, ...]:
+    if schema_version == DAILY_ALPHA_PREDICTION_SCHEMA_V1:
+        return tuple(
+            DailyAlphaLegacySymbolProjection.from_canonical_dict(_mapping(item))
+            for item in _sequence(value)
+        )
+    if schema_version == DAILY_ALPHA_PREDICTION_SCHEMA:
+        return tuple(
+            DailyAlphaSymbolProjection.from_canonical_dict(_mapping(item))
+            for item in _sequence(value)
+        )
+    raise ValueError("unsupported Daily Alpha prediction schema")
+
+
 def _optional_validation_reference(
     value: ValidationArtifactReference | None,
 ) -> dict[str, str] | None:
@@ -930,9 +1228,14 @@ def _fields(
 
 __all__ = [
     "DAILY_ALPHA_PREDICTION_KIND",
+    "DAILY_ALPHA_PREDICTION_SCHEMA",
+    "DAILY_ALPHA_PREDICTION_SCHEMA_V1",
     "DailyAlphaActivationStatus",
+    "DailyAlphaConditionalForecastProjection",
     "DailyAlphaEvidenceGate",
+    "DailyAlphaLegacySymbolProjection",
     "DailyAlphaOwnerResolver",
+    "DailyAlphaPathForecastProjection",
     "DailyAlphaPredictionAuthority",
     "DailyAlphaPredictionSnapshot",
     "DailyAlphaSymbolProjection",

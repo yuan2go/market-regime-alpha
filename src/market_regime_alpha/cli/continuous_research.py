@@ -2021,7 +2021,10 @@ def _run_due(
         strategy_opportunity_authority=opportunity_authority,
         daily_alpha_authority=PostgresDailyAlphaPredictionAuthority(
             factory,
-            resolver=PostgresDailyAlphaOwnerResolver(factory),
+            resolver=PostgresDailyAlphaOwnerResolver(
+                factory,
+                artifact_root=args.output_root,
+            ),
         ),
         daily_alpha_evidence_gate=PostgresDailyAlphaEvidenceGateResolver(
             factory,

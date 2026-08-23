@@ -339,6 +339,22 @@ def test_canonical_free_data_runtime_reaches_summary_and_replays(
     assert daily_child.child_artifact_id is not None
     daily_snapshot = daily_alpha_authority.get(daily_child.child_artifact_id)
     assert "EVIDENCE_DEPENDENCY_NOT_SATISFIED" in daily_snapshot.reason_codes
+    assert all(
+        item.validated_alpha_contributions == ()
+        and item.conditional_forecast.availability_status == "NOT_AVAILABLE"
+        and "CONDITIONAL_FORECAST_OWNER_NOT_AVAILABLE" in item.reason_codes
+        for item in daily_snapshot.symbols
+    )
+    assert all(
+        item.path_forecast is None
+        or (
+            item.path_forecast.forecast_status
+            in {"AVAILABLE_FOR_RESEARCH", "DATA_INSUFFICIENT"}
+            and item.path_forecast.calibration_status
+            in {"NOT_CALIBRATED", "DATA_INSUFFICIENT"}
+        )
+        for item in daily_snapshot.symbols
+    )
     assert summary.no_order and summary.no_fill and summary.no_broker
     assert summary.no_position_mutation_from_shadow
     by_stage = {stage.stage: stage for stage in summary.stages}

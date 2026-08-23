@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from market_regime_alpha.application.continuous_research.daily_alpha import (
@@ -9,6 +10,7 @@ from market_regime_alpha.application.continuous_research.daily_alpha import (
     DailyAlphaEvidenceGate,
     DailyAlphaOwnerResolver,
     DailyAlphaPredictionSnapshot,
+    DailyAlphaLegacySymbolProjection,
     assess_daily_alpha_evidence_gate,
     daily_alpha_admission_evidence_references,
 )
@@ -26,6 +28,9 @@ from market_regime_alpha.application.research_validation.postgres_repository imp
 )
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.persistence.postgres.connection import PostgresConnectionFactory
+from market_regime_alpha.strategies.postgres_opportunity import (
+    PostgresStrategySourceAuthority,
+)
 from market_regime_alpha.universe.operational import OperationalUniverseArtifact
 
 
@@ -198,8 +203,17 @@ class DailyAlphaSourceIntegrityError(ValueError):
 class PostgresDailyAlphaOwnerResolver:
     """Reload the canonical Continuous/State/Decision/Strategy owner chain."""
 
-    def __init__(self, factory: PostgresConnectionFactory) -> None:
+    def __init__(
+        self,
+        factory: PostgresConnectionFactory,
+        *,
+        artifact_root: Path | None = None,
+    ) -> None:
         self._factory = factory
+        self._sources = PostgresStrategySourceAuthority(
+            factory,
+            artifact_root=artifact_root,
+        )
 
     def verify_snapshot_sources(self, snapshot: DailyAlphaPredictionSnapshot) -> None:
         with self._factory.connection(read_only=True) as connection:
@@ -210,6 +224,50 @@ class PostgresDailyAlphaOwnerResolver:
             self._verify_candidate(connection, snapshot)
             self._verify_state_stages(connection, snapshot)
             self._verify_strategy(connection, snapshot)
+        self._verify_symbol_sources(snapshot)
+
+    def _verify_symbol_sources(self, snapshot: DailyAlphaPredictionSnapshot) -> None:
+        raw_forecasts = {
+            item
+            for item in snapshot.forecast_references
+            if item.reference_kind
+            in {"PATH_FORECAST", "CONDITIONAL_FORECAST_RESULT"}
+        }
+        projected_forecasts: set[RuntimeArtifactReference] = set()
+        for item in snapshot.symbols:
+            references: list[RuntimeArtifactReference] = []
+            if item.signal_reference is not None:
+                references.append(item.signal_reference)
+            if isinstance(item, DailyAlphaLegacySymbolProjection):
+                if item.forecast_reference is not None:
+                    references.append(item.forecast_reference)
+                    projected_forecasts.add(item.forecast_reference)
+            else:
+                if item.path_forecast is not None:
+                    references.append(item.path_forecast.reference)
+                    projected_forecasts.add(item.path_forecast.reference)
+                if item.conditional_forecast.reference is not None:
+                    references.append(item.conditional_forecast.reference)
+                    projected_forecasts.add(item.conditional_forecast.reference)
+            for reference in references:
+                try:
+                    owner = self._sources.reload(reference)
+                except (KeyError, ValueError) as exc:
+                    raise DailyAlphaSourceIntegrityError(
+                        f"Daily Alpha typed {reference.reference_kind} owner drift"
+                    ) from exc
+                if owner.available_at > snapshot.decision_time:
+                    raise DailyAlphaSourceIntegrityError(
+                        f"Daily Alpha {reference.reference_kind} owner is post-DecisionTime"
+                    )
+                if owner.symbols and item.symbol not in owner.symbols:
+                    raise DailyAlphaSourceIntegrityError(
+                        f"Daily Alpha {reference.reference_kind} symbol drift"
+                    )
+        if projected_forecasts != raw_forecasts:
+            raise DailyAlphaSourceIntegrityError(
+                "Daily Alpha raw Forecast projection/reference set drifted"
+            )
 
     @staticmethod
     def _verify_run_tick(connection: Any, snapshot: DailyAlphaPredictionSnapshot) -> None:
