@@ -215,7 +215,7 @@ def test_historical_opportunity_requires_complete_exact_risk_owner_binding() -> 
         "sha256:" + "a" * 64,
     )
 
-    with pytest.raises(ValueError, match="one exact Account"):
+    with pytest.raises(ValueError, match="exact Account/Reconciliation"):
         _historical_pre_strategy_risk_configuration(
             object(),  # type: ignore[arg-type]
             (account,),

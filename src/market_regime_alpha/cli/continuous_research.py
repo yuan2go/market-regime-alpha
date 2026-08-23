@@ -2638,31 +2638,64 @@ def _historical_pre_strategy_risk_configuration(
     }
     if not any(kinds.values()):
         return None, None, None
-    if any(len(items) != 1 for items in kinds.values()):
+    account_references = kinds["MANUAL_ACCOUNT_OBSERVATION"]
+    reconciliation_references = kinds["ACCOUNT_RECONCILIATION"]
+    risk_references = kinds["DECISION_RISK_CONFIGURATION"]
+    if (
+        not account_references
+        or not reconciliation_references
+        or len(risk_references) != 1
+    ):
         raise ValueError(
-            "Historical Strategy requires one exact Account, Reconciliation and Risk owner"
+            "Historical Strategy requires exact Account/Reconciliation owners "
+            "for every session and one Risk owner"
         )
-    account_reference = _as_runtime_reference(
-        kinds["MANUAL_ACCOUNT_OBSERVATION"][0]
+    accounts = tuple(
+        PostgresDecisionSystemRepository(factory).get_manual_observation(
+            item.artifact_id
+        )
+        for item in account_references
     )
-    reconciliation_reference = _as_runtime_reference(
-        kinds["ACCOUNT_RECONCILIATION"][0]
+    account_runtime_references = tuple(
+        _as_runtime_reference(item) for item in account_references
     )
-    risk_reference = _as_runtime_reference(
-        kinds["DECISION_RISK_CONFIGURATION"][0]
-    )
-    account = PostgresDecisionSystemRepository(factory).get_manual_observation(
-        account_reference.artifact_id
-    )
-    if account.content_hash != account_reference.content_hash:
+    if any(
+        account.content_hash != reference.content_hash
+        for account, reference in zip(accounts, account_references, strict=True)
+    ):
         raise ValueError("Historical Account owner hash drifted")
+    account_scopes = {item.account_id for item in accounts}
+    if len(account_scopes) != 1:
+        raise ValueError("Historical Strategy Account scope is ambiguous")
+    reconciliations = tuple(
+        PostgresDecisionSystemRepository(factory).get_reconciliation(
+            item.artifact_id
+        )
+        for item in reconciliation_references
+    )
+    account_ids = {item.observation_id for item in accounts}
+    if any(
+        reconciliation.content_hash != reference.content_hash
+        or reconciliation.manual_observation_id not in account_ids
+        for reconciliation, reference in zip(
+            reconciliations,
+            reconciliation_references,
+            strict=True,
+        )
+    ):
+        raise ValueError("Historical Reconciliation owner drifted")
+    risk_reference = _as_runtime_reference(risk_references[0])
+    account_scope = next(iter(account_scopes))
     return (
         PostgresHistoricalPreStrategyRiskFactResolver(
             factory,
-            account_state_reference=account_reference,
-            reconciliation_reference=reconciliation_reference,
+            account_scope=account_scope,
+            account_state_references=account_runtime_references,
+            reconciliation_references=tuple(
+                _as_runtime_reference(item) for item in reconciliation_references
+            ),
         ),
-        account.account_id,
+        account_scope,
         risk_reference,
     )
 

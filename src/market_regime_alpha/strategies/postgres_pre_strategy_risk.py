@@ -19,9 +19,6 @@ from market_regime_alpha.application.historical_corpus.materialization_contracts
 from market_regime_alpha.application.historical_corpus.postgres_materialization import (
     PostgresHistoricalMaterializationRepository,
 )
-from market_regime_alpha.application.decision_system.contracts import (
-    ReconciliationStatus,
-)
 from market_regime_alpha.application.research_validation.common import (
     ValidationArtifactReference,
 )
@@ -219,21 +216,31 @@ class PostgresHistoricalPreStrategyRiskFactResolver:
         self,
         factory: PostgresConnectionFactory,
         *,
-        account_state_reference: RuntimeArtifactReference,
-        reconciliation_reference: RuntimeArtifactReference,
+        account_scope: str,
+        account_state_references: tuple[RuntimeArtifactReference, ...],
+        reconciliation_references: tuple[RuntimeArtifactReference, ...],
     ) -> None:
-        if account_state_reference.reference_kind != "MANUAL_ACCOUNT_OBSERVATION":
-            raise ValueError("Historical Risk requires one Account Observation owner")
-        if reconciliation_reference.reference_kind != "ACCOUNT_RECONCILIATION":
-            raise ValueError("Historical Risk requires one Reconciliation owner")
+        if not account_scope:
+            raise ValueError("Historical Risk requires one Account scope")
+        if not account_state_references or any(
+            item.reference_kind != "MANUAL_ACCOUNT_OBSERVATION"
+            for item in account_state_references
+        ):
+            raise ValueError("Historical Risk requires exact Account Observation owners")
+        if not reconciliation_references or any(
+            item.reference_kind != "ACCOUNT_RECONCILIATION"
+            for item in reconciliation_references
+        ):
+            raise ValueError("Historical Risk requires exact Reconciliation owners")
         self._factory = factory
         self._decision = PostgresDecisionSystemRepository(factory)
         self._components = PostgresHistoricalMaterializationRepository(
             factory,
             apply_migrations=False,
         )
-        self._account_reference = account_state_reference
-        self._reconciliation_reference = reconciliation_reference
+        self._account_scope = account_scope
+        self._account_references = frozenset(account_state_references)
+        self._reconciliation_references = frozenset(reconciliation_references)
 
     def resolve(
         self,
@@ -256,25 +263,29 @@ class PostgresHistoricalPreStrategyRiskFactResolver:
         pool = self._components.get(pool_references[0])
         if pool.component_kind is not HistoricalComponentKind.DYNAMIC_POOL:
             raise ValueError("Historical Dynamic Pool owner kind drifted")
-        account = self._decision.get_manual_observation(
-            self._account_reference.artifact_id
+        if account_scope != self._account_scope:
+            raise ValueError("Historical Account scope drifted")
+        account, reconciliation = self._decision.resolve_strategy_execution_account(
+            account_id=account_scope,
+            decision_time=decision_time,
         )
-        reconciliation = self._decision.get_reconciliation(
-            self._reconciliation_reference.artifact_id
+        account_reference = RuntimeArtifactReference(
+            "MANUAL_ACCOUNT_OBSERVATION",
+            account.observation_id,
+            account.content_hash,
+        )
+        reconciliation_reference = RuntimeArtifactReference(
+            "ACCOUNT_RECONCILIATION",
+            reconciliation.reconciliation_id,
+            reconciliation.content_hash,
         )
         if (
-            account.content_hash != self._account_reference.content_hash
-            or account.account_id != account_scope
-            or account.as_of_time != decision_time
-            or reconciliation.content_hash
-            != self._reconciliation_reference.content_hash
-            or reconciliation.account_id != account_scope
-            or reconciliation.manual_observation_id != account.observation_id
-            or reconciliation.as_of_time != account.as_of_time
-            or reconciliation.status is not ReconciliationStatus.RECONCILED
-            or not reconciliation.fill_ledger_complete
+            account_reference not in self._account_references
+            or reconciliation_reference not in self._reconciliation_references
         ):
-            raise ValueError("Historical Account/Reconciliation owner drifted")
+            raise ValueError(
+                "Historical session Account/Reconciliation is absent from frozen configuration"
+            )
         configuration = self._decision.get_risk_configuration(
             risk_limit_reference.artifact_id
         )
@@ -306,8 +317,8 @@ class PostgresHistoricalPreStrategyRiskFactResolver:
         )
         return PreStrategyRiskFacts(
             account_scope=account_scope,
-            account_state_reference=self._account_reference,
-            reconciliation_reference=self._reconciliation_reference,
+            account_state_reference=account_reference,
+            reconciliation_reference=reconciliation_reference,
             market_state_reference=_runtime_reference(pool.reference),
             risk_limit_reference=risk_limit_reference,
             decision_time=decision_time,
@@ -423,6 +434,12 @@ def _historical_market_facts(
         eligible = item.get("eligible")
         if not isinstance(symbol, str) or not isinstance(eligible, bool):
             raise ValueError("Historical Dynamic Pool eligibility is malformed")
+        suspension_known = checks.get("suspension_known")
+        not_suspended = checks.get("not_suspended")
+        if not isinstance(suspension_known, bool) or (
+            suspension_known and not isinstance(not_suspended, bool)
+        ):
+            raise ValueError("Historical Dynamic Pool suspension fact is malformed")
         facts.append(
             PreStrategyMarketFact(
                 symbol=symbol,
@@ -430,9 +447,7 @@ def _historical_market_facts(
                 liquidity=None,
                 is_st=None,
                 suspended=(
-                    not bool(checks.get("not_suspended"))
-                    if checks.get("suspension_known") is True
-                    else None
+                    None if not suspension_known else not not_suspended
                 ),
             )
         )

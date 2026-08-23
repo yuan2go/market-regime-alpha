@@ -10,6 +10,22 @@ from psycopg.types.json import Jsonb
 from market_regime_alpha.application.continuous_research.journal import (
     RuntimeArtifactReference,
 )
+from market_regime_alpha.application.historical_corpus.materialization_contracts import (
+    HistoricalComponentKind,
+    HistoricalSessionComponent,
+)
+from market_regime_alpha.application.historical_corpus.postgres_materialization import (
+    PostgresHistoricalMaterializationRepository,
+)
+from market_regime_alpha.application.historical_research.contracts import (
+    HistoricalResearchCommand,
+)
+from market_regime_alpha.application.historical_research.postgres_journal import (
+    PostgresHistoricalResearchJournal,
+)
+from market_regime_alpha.application.research_validation.common import (
+    ValidationArtifactReference,
+)
 from market_regime_alpha.persistence.postgres.connection import (
     PostgresConnectionFactory,
 )
@@ -26,8 +42,14 @@ from market_regime_alpha.application.decision_system.reconciliation import (
 from market_regime_alpha.application.state_system.postgres_repository import (
     PostgresStateSystemRepository,
 )
+from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.strategies.postgres_pre_strategy_risk import (
+    PostgresHistoricalPreStrategyRiskFactResolver,
     PostgresPreStrategyRiskFactResolver,
+    _historical_market_facts,
+)
+from market_regime_alpha.universe.postgres_runtime_scope import (
+    PostgresRuntimeScopeRepository,
 )
 from market_regime_alpha.strategies.contracts import (
     StrategyOpportunityInput,
@@ -66,6 +88,10 @@ from tests.persistence.postgres.test_continuous_research_journal import (
     MutableClock,
     NOW as JOURNAL_NOW,
 )
+from tests.application.historical_research.test_contracts import (
+    _command as _historical_command,
+)
+from tests.universe.test_runtime_scope import _policy
 
 
 class _Sources:
@@ -371,6 +397,166 @@ def test_postgres_pre_strategy_risk_resolver_reloads_real_owner_facts(
     assert facts.market_state_reference.artifact_id == pool.pool_id
     assert facts.risk_limit_reference == limit_reference
     assert facts.total_equity == Decimal("100000")
+
+
+def test_postgres_historical_pre_strategy_resolver_reloads_frozen_session_owners(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    command_values = _historical_command().semantic_values()
+    command = HistoricalResearchCommand.create(
+        **{
+            **command_values,
+            "idempotency_key": "historical-risk-owner-session",
+            "start_date": NOW.date(),
+            "end_date": NOW.date(),
+            "trading_sessions": (NOW.date(),),
+            "created_at": NOW,
+        }
+    )
+    PostgresRuntimeScopeRepository(postgres_factory).register_policy(_policy())
+    run = PostgresHistoricalResearchJournal(
+        postgres_factory,
+        clock=lambda: NOW,
+    ).create_or_get(command)
+    session = run.sessions[0]
+    decision_time = session.request.decision_time
+    source = ValidationArtifactReference(
+        "HISTORICAL_SOURCE",
+        ArtifactId("historical-risk-source"),
+        canonical_hash({"historical": "risk-source"}),
+    )
+    candidates = _candidate_set()
+    pool = HistoricalSessionComponent.create(
+        run_id=command.run_id,
+        session_id=session.request.session_id,
+        trading_date=NOW.date(),
+        component_kind=HistoricalComponentKind.DYNAMIC_POOL,
+        source_max_event_time=decision_time,
+        materialized_at=decision_time,
+        source_references=(source,),
+        payload={
+            "universal_integrity": [
+                {
+                    "symbol": item.symbol,
+                    "eligible": True,
+                    "checks": {
+                        "suspension_known": True,
+                        "not_suspended": True,
+                    },
+                }
+                for item in candidates.records
+            ]
+        },
+    )
+    candidate_component = HistoricalSessionComponent.create(
+        run_id=command.run_id,
+        session_id=session.request.session_id,
+        trading_date=NOW.date(),
+        component_kind=HistoricalComponentKind.CANDIDATE,
+        source_max_event_time=decision_time,
+        materialized_at=decision_time,
+        source_references=(pool.reference,),
+        payload=candidates.to_canonical_dict(),
+    )
+    PostgresHistoricalMaterializationRepository(postgres_factory).put_many(
+        ((pool, 1), (candidate_component, 2))
+    )
+
+    clock = MutableClock(JOURNAL_NOW)
+    _journal, claim = _active_claim(postgres_factory, clock)
+    account = ManualAccountObservation.create(
+        account_id="historical-risk-account",
+        trading_date=NOW.date(),
+        as_of_time=decision_time,
+        total_equity=Decimal("100000"),
+        available_cash=Decimal("80000"),
+        frozen_cash=Decimal("0"),
+        source="MANUAL_ACCOUNT_AUTHORITY",
+        actor="operator",
+        reason="Historical pre-Strategy Risk owner test",
+        notes="",
+        idempotency_key="historical-risk-account-observation",
+        revision=1,
+        previous_observation_id=None,
+        positions=(),
+        created_at=decision_time,
+    )
+    decision = PostgresDecisionSystemRepository(
+        postgres_factory,
+        clock=lambda: JOURNAL_NOW,
+    )
+    decision.record_manual_observation(account)
+    selected_tolerance = tolerance()
+    decision.record_reconciliation_tolerance(selected_tolerance, claim=claim)
+    reconciliation = reconcile_account(
+        observation=account,
+        positions=(),
+        fill_ledger_head=HASH_A,
+        fill_ledger_complete=True,
+        tolerance=selected_tolerance,
+        authoritative_total_equity=account.total_equity,
+        authoritative_available_cash=account.available_cash,
+        authoritative_frozen_cash=account.frozen_cash,
+        as_of_time=decision_time,
+        revision=1,
+        previous_reconciliation_id=None,
+        idempotency_key="historical-risk-reconciliation",
+        created_at=decision_time,
+    )
+    decision.save_reconciliation(reconciliation, claim=claim)
+    limits = risk_configuration()
+    decision.record_risk_configuration(limits, claim=claim)
+    account_reference = RuntimeArtifactReference(
+        "MANUAL_ACCOUNT_OBSERVATION",
+        account.observation_id,
+        account.content_hash,
+    )
+    reconciliation_reference = RuntimeArtifactReference(
+        "ACCOUNT_RECONCILIATION",
+        reconciliation.reconciliation_id,
+        reconciliation.content_hash,
+    )
+    limit_reference = RuntimeArtifactReference(
+        "DECISION_RISK_CONFIGURATION",
+        limits.configuration_id,
+        limits.configuration_hash,
+    )
+
+    facts = PostgresHistoricalPreStrategyRiskFactResolver(
+        postgres_factory,
+        account_scope=account.account_id,
+        account_state_references=(account_reference,),
+        reconciliation_references=(reconciliation_reference,),
+    ).resolve(
+        candidates=candidates,
+        account_scope=account.account_id,
+        decision_time=decision_time,
+        risk_limit_reference=limit_reference,
+    )
+
+    assert facts.account_state_reference == account_reference
+    assert facts.reconciliation_reference == reconciliation_reference
+    assert facts.market_state_reference.reference_kind == "HISTORICAL_DYNAMIC_POOL"
+    assert facts.risk_limit_reference == limit_reference
+    assert all(item.liquidity is None for item in facts.market_facts)
+
+
+def test_historical_pool_rejects_non_boolean_suspension_facts() -> None:
+    with pytest.raises(ValueError, match="suspension fact is malformed"):
+        _historical_market_facts(
+            {
+                "universal_integrity": [
+                    {
+                        "symbol": "000001.SZ",
+                        "eligible": True,
+                        "checks": {
+                            "suspension_known": True,
+                            "not_suspended": "false",
+                        },
+                    }
+                ]
+            }
+        )
 
 
 def _reference(kind: str, name: str) -> RuntimeArtifactReference:
