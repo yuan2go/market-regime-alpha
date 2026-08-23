@@ -287,6 +287,21 @@ def load_historical_package_index(path: Path) -> HistoricalPackageIndex:
     )
 
 
+def verify_historical_package_files(package: HistoricalPackageIndex) -> None:
+    """Verify every physical file without decoding logical Parquet records."""
+
+    actual_files = {
+        item.relative_to(package.root).as_posix()
+        for item in package.root.rglob("*")
+        if item.is_file()
+    }
+    if actual_files != {*(name for name, _digest in package.checksums), "SHA256SUMS.json"}:
+        raise ValueError("Historical package exact file set mismatch")
+    for name, expected in package.checksums:
+        if _file_hash(package.root / name) != expected:
+            raise ValueError(f"Historical package checksum mismatch: {name}")
+
+
 def scan_historical_package(
     *,
     package: HistoricalPackageIndex,
@@ -597,4 +612,5 @@ __all__ = [
     "load_verified_historical_package",
     "publish_historical_package",
     "scan_historical_package",
+    "verify_historical_package_files",
 ]

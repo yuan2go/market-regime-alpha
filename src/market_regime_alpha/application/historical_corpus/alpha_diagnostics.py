@@ -166,8 +166,61 @@ class PlaceboResult:
                 }
                 for item in self.observations
             ],
+            "rank_ic_diagnostic": evaluate_placebo_rank_ic(self).to_canonical_dict(),
             "result_hash": self.result_hash,
         }
+
+
+@dataclass(frozen=True, slots=True)
+class PlaceboRankICDiagnostic:
+    observation_count: int
+    session_count: int
+    mean_rank_ic: Decimal
+    positive_ic_ratio: Decimal
+    icir: Decimal | None
+
+    def __post_init__(self) -> None:
+        if self.observation_count <= 0 or self.session_count <= 0:
+            raise ValueError("placebo RankIC diagnostic requires observations")
+        if not Decimal("0") <= self.positive_ic_ratio <= Decimal("1"):
+            raise ValueError("placebo positive IC ratio is outside [0, 1]")
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        return {
+            "observation_count": self.observation_count,
+            "session_count": self.session_count,
+            "mean_rank_ic": str(self.mean_rank_ic),
+            "positive_ic_ratio": str(self.positive_ic_ratio),
+            "icir": _decimal_text(self.icir),
+        }
+
+
+def evaluate_placebo_rank_ic(result: PlaceboResult) -> PlaceboRankICDiagnostic:
+    """Evaluate one frozen negative control without adding a tuning threshold."""
+
+    session_values: list[Decimal] = []
+    for values in _alpha_by_session(result.observations).values():
+        estimate = _correlation(
+            _ranks(tuple(item.factor_value for item in values)),
+            _ranks(tuple(item.target_return for item in values)),
+        )
+        if estimate is not None:
+            session_values.append(estimate)
+    if not session_values:
+        raise ValueError("placebo RankIC is not estimable")
+    estimates = tuple(session_values)
+    mean = _mean(estimates)
+    variance = _mean(tuple((item - mean) ** 2 for item in estimates))
+    standard_deviation = Decimal(str(sqrt(float(variance))))
+    return PlaceboRankICDiagnostic(
+        observation_count=len(result.observations),
+        session_count=len(estimates),
+        mean_rank_ic=mean,
+        positive_ic_ratio=(
+            Decimal(sum(item > 0 for item in estimates)) / Decimal(len(estimates))
+        ),
+        icir=(None if standard_deviation == 0 else mean / standard_deviation),
+    )
 
 
 def apply_placebo(
@@ -474,8 +527,8 @@ class FactorRedundancyResult:
         if self.factor_ids != tuple(sorted(set(self.factor_ids))):
             raise ValueError("redundancy Factor identities must be unique and sorted")
         if self.status not in {
-            "DISTINCT_INFORMATION_SUPPORTED",
-            "LATENT_FACTOR_MULTIPLE_EXPRESSIONS",
+            "INDEPENDENT",
+            "COMMON_LATENT_FACTOR",
             "PARTIALLY_REDUNDANT",
             "NOT_ESTIMABLE",
         }:
@@ -586,13 +639,13 @@ def evaluate_factor_redundancy(
     elif all(item >= Decimal("0.9") for item in estimable_pairs) and all(
         item < Decimal("0.02") for item in residual_strength
     ):
-        status = "LATENT_FACTOR_MULTIPLE_EXPRESSIONS"
+        status = "COMMON_LATENT_FACTOR"
     elif any(item >= Decimal("0.9") for item in estimable_pairs) or any(
         item < Decimal("0.02") for item in residual_strength
     ) or any(item < Decimal("0.005") for item in incremental_strength):
         status = "PARTIALLY_REDUNDANT"
     else:
-        status = "DISTINCT_INFORMATION_SUPPORTED"
+        status = "INDEPENDENT"
     return FactorRedundancyResult(
         factor_ids,
         full,
@@ -1064,10 +1117,12 @@ __all__ = [
     "FrozenPlaceboProtocol",
     "MovingBlockInferenceProtocol",
     "PlaceboKind",
+    "PlaceboRankICDiagnostic",
     "PlaceboResult",
     "RobustInferenceResult",
     "SessionEstimate",
     "apply_placebo",
+    "evaluate_placebo_rank_ic",
     "diagnose_execution_price",
     "evaluate_factor_redundancy",
     "evaluate_robust_inference",

@@ -22,6 +22,15 @@ from market_regime_alpha.application.historical_corpus.contracts import (
     HistoricalRawRequest,
     HistoricalTradingStatus,
 )
+from market_regime_alpha.application.historical_corpus.artifacts import (
+    verify_historical_package_files,
+)
+from market_regime_alpha.application.historical_corpus.postgres_repository import (
+    PostgresHistoricalCorpusRepository,
+)
+from market_regime_alpha.application.historical_corpus.selective_read import (
+    HistoricalReadQuery,
+)
 from market_regime_alpha.application.research_validation.common import (
     ValidationArtifactReference,
 )
@@ -371,6 +380,261 @@ def verify_independent_baostock_normalization(
     )
 
 
+def verify_independent_baostock_package_normalization(
+    *,
+    corpus: PostgresHistoricalCorpusRepository,
+    raw_owner_reference: ValidationArtifactReference,
+    normalized_owner_reference: ValidationArtifactReference,
+    provenance: PhysicalAcquisitionProvenance,
+) -> IndependentNormalizationVerification:
+    """Compare exact physical owners in bounded provider-period slices.
+
+    Every package file is checksum-verified once. Raw provider rows are then
+    independently normalized by the same pure kernel as the in-memory checker,
+    while PostgreSQL-resolved Parquet slices keep the 1.95M-row campaign within
+    a bounded memory envelope.
+    """
+
+    raw_index = corpus.open_index(raw_owner_reference)
+    normalized_index = corpus.open_index(normalized_owner_reference)
+    verify_historical_package_files(raw_index)
+    verify_historical_package_files(normalized_index)
+    if (
+        raw_index.artifact_kind is not HistoricalArtifactKind.RAW_PROVIDER_ARCHIVE
+        or normalized_index.artifact_kind
+        is not HistoricalArtifactKind.NORMALIZED_DATASET
+        or raw_index.provider_id != _PROVIDER
+        or normalized_index.provider_id != _PROVIDER
+        or normalized_index.parent_reference != raw_index.reference
+    ):
+        raise ValueError("independent package correctness owner contract drifted")
+
+    periods = tuple(
+        sorted(
+            {
+                (
+                    partition.timeframe,
+                    partition.first_market_date,
+                    partition.last_market_date,
+                )
+                for partition in raw_index.partitions
+            },
+            key=lambda item: (item[0].value, item[1], item[2]),
+        )
+    )
+    discrepancies: list[NormalizationDiscrepancy] = []
+    hash_chunks: list[dict[str, object]] = []
+    raw_row_count = 0
+    independent_count = 0
+    canonical_count = 0
+    for timeframe, first_market_date, last_market_date in periods:
+        raw_slice = corpus.read(
+            HistoricalReadQuery.create(
+                reference=raw_index.reference,
+                timeframes=(timeframe,),
+                first_market_date=first_market_date,
+                last_market_date=last_market_date,
+                symbols=None,
+                max_rows=10_000,
+                batch_size=8_192,
+            )
+        )
+        normalized_slice = corpus.read(
+            HistoricalReadQuery.create(
+                reference=normalized_index.reference,
+                timeframes=(timeframe,),
+                first_market_date=first_market_date,
+                last_market_date=last_market_date,
+                symbols=None,
+                max_rows=500_000,
+                batch_size=8_192,
+            )
+        )
+        independent: list[HistoricalNormalizedBar] = []
+        for record in raw_slice.records:
+            if not isinstance(record, HistoricalRawRequest):
+                raise ValueError("Raw package slice contains non-Raw record")
+            if not record.succeeded:
+                continue
+            for row_number, row in enumerate(record.rows, 1):
+                raw_row_count += 1
+                try:
+                    independent.append(
+                        _independently_normalize_row(record, row, row_number)
+                    )
+                except _IndependentRowError as exc:
+                    discrepancies.append(
+                        NormalizationDiscrepancy(
+                            exc.kind,
+                            f"{record.request_id}:{row_number}",
+                            exc.reason,
+                            None,
+                        )
+                    )
+        canonical = tuple(
+            item
+            for item in normalized_slice.records
+            if isinstance(item, HistoricalNormalizedBar)
+        )
+        if len(canonical) != len(normalized_slice.records):
+            raise ValueError("Normalized package slice contains non-Normalized record")
+        independent_by_key = {_observation_key(item): item for item in independent}
+        canonical_by_key = {_observation_key(item): item for item in canonical}
+        if len(independent_by_key) != len(independent):
+            raise ValueError("independent normalization produced duplicate observations")
+        if len(canonical_by_key) != len(canonical):
+            raise ValueError("canonical Normalized package contains duplicate observations")
+        for key in sorted(set(independent_by_key) | set(canonical_by_key)):
+            independently_normalized = independent_by_key.get(key)
+            canonical_bar = canonical_by_key.get(key)
+            rendered_key = _render_key(key)
+            if independently_normalized is None:
+                discrepancies.append(
+                    NormalizationDiscrepancy(
+                        NormalizationDiscrepancyKind.UNEXPECTED_CANONICAL_OBSERVATION,
+                        rendered_key,
+                        None,
+                        (
+                            str(canonical_bar.bar_id)
+                            if canonical_bar is not None
+                            else None
+                        ),
+                    )
+                )
+            elif canonical_bar is None:
+                discrepancies.append(
+                    NormalizationDiscrepancy(
+                        NormalizationDiscrepancyKind.MISSING_CANONICAL_OBSERVATION,
+                        rendered_key,
+                        str(independently_normalized.bar_id),
+                        None,
+                    )
+                )
+            else:
+                discrepancies.extend(
+                    _compare_bars(independently_normalized, canonical_bar, rendered_key)
+                )
+        ordered_independent = sorted(independent, key=_observation_key)
+        ordered_canonical = sorted(canonical, key=_observation_key)
+        independent_chunk_hash = canonical_hash(
+            {"bars": [_value_payload(item) for item in ordered_independent]}
+        )
+        canonical_chunk_hash = canonical_hash(
+            {"bars": [_value_payload(item) for item in ordered_canonical]}
+        )
+        hash_chunks.append(
+            {
+                "timeframe": timeframe.value,
+                "first_market_date": first_market_date.isoformat(),
+                "last_market_date": last_market_date.isoformat(),
+                "independent_count": len(independent),
+                "canonical_count": len(canonical),
+                "independent_hash": independent_chunk_hash,
+                "canonical_hash": canonical_chunk_hash,
+            }
+        )
+        independent_count += len(independent)
+        canonical_count += len(canonical)
+
+    if raw_row_count == 0:
+        return _verification(
+            provenance=provenance,
+            raw_owner_reference=raw_index.reference,
+            normalized_owner_reference=normalized_index.reference,
+            comparison_count=0,
+            independent_value_hash=None,
+            canonical_value_hash=None,
+            status=IndependentNormalizationStatus.INCONCLUSIVE,
+            discrepancies=(),
+            reason_codes=("RAW_NORMALIZATION_POPULATION_EMPTY",),
+        )
+    if raw_row_count != raw_index.coverage.source_row_count:
+        discrepancies.append(
+            NormalizationDiscrepancy(
+                NormalizationDiscrepancyKind.RAW_ROW_INVALID,
+                "RAW_OWNER_COVERAGE",
+                str(raw_row_count),
+                str(raw_index.coverage.source_row_count),
+            )
+        )
+    if canonical_count != normalized_index.coverage.normalized_row_count:
+        discrepancies.append(
+            NormalizationDiscrepancy(
+                NormalizationDiscrepancyKind.CANONICAL_VALUE_MISMATCH,
+                "NORMALIZED_OWNER_COVERAGE",
+                str(canonical_count),
+                str(normalized_index.coverage.normalized_row_count),
+            )
+        )
+    independent_value_hash = canonical_hash(
+        {
+            "schema_version": "independent-normalization-chunk-manifest/v1",
+            "chunks": [
+                {
+                    **chunk,
+                    "value_hash": chunk["independent_hash"],
+                }
+                for chunk in hash_chunks
+            ],
+        }
+    )
+    canonical_value_hash = canonical_hash(
+        {
+            "schema_version": "independent-normalization-chunk-manifest/v1",
+            "chunks": [
+                {
+                    **chunk,
+                    "value_hash": chunk["canonical_hash"],
+                }
+                for chunk in hash_chunks
+            ],
+        }
+    )
+    ordered_discrepancies = tuple(
+        sorted(
+            set(discrepancies),
+            key=lambda item: (
+                item.kind.value,
+                item.observation_key,
+                item.independent_value or "",
+                item.canonical_value or "",
+            ),
+        )
+    )
+    status = (
+        IndependentNormalizationStatus.MATCHED
+        if not ordered_discrepancies
+        and independent_count == canonical_count
+        and all(
+            item["independent_hash"] == item["canonical_hash"]
+            for item in hash_chunks
+        )
+        else IndependentNormalizationStatus.MISMATCH
+    )
+    return _verification(
+        provenance=provenance,
+        raw_owner_reference=raw_index.reference,
+        normalized_owner_reference=normalized_index.reference,
+        comparison_count=independent_count,
+        independent_value_hash=independent_value_hash,
+        canonical_value_hash=canonical_value_hash,
+        status=status,
+        discrepancies=ordered_discrepancies,
+        reason_codes=(
+            ("RAW_NORMALIZATION_MATCHED",)
+            if status is IndependentNormalizationStatus.MATCHED
+            else tuple(
+                sorted(
+                    {
+                        f"RAW_NORMALIZATION_{item.kind.value}"
+                        for item in ordered_discrepancies
+                    }
+                )
+            )
+        ),
+    )
+
+
 def _require_owner_contract(
     raw_owner: HistoricalDataOwner,
     normalized_owner: HistoricalDataOwner,
@@ -714,4 +978,5 @@ __all__ = [
     "NormalizationDiscrepancyKind",
     "PhysicalAcquisitionProvenance",
     "verify_independent_baostock_normalization",
+    "verify_independent_baostock_package_normalization",
 ]

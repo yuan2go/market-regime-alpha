@@ -73,9 +73,12 @@ from market_regime_alpha.application.historical_corpus.postgres_materialization 
 from market_regime_alpha.application.historical_corpus.postgres_repository import (
     PostgresHistoricalCorpusRepository,
 )
+from market_regime_alpha.application.historical_corpus.selective_read import (
+    HistoricalReadQuery,
+)
 from market_regime_alpha.application.historical_corpus.raw_normalization_correctness import (
     PhysicalAcquisitionProvenance,
-    verify_independent_baostock_normalization,
+    verify_independent_baostock_package_normalization,
 )
 from market_regime_alpha.application.historical_corpus.temporal_validation_window import (
     FrozenTemporalValidationWindow,
@@ -113,6 +116,7 @@ from market_regime_alpha.forecasting.conditional import (
 )
 from market_regime_alpha.forecasting.path import PathForecastArtifact
 from market_regime_alpha.data.trading_calendar import TradingCalendarArtifact
+from market_regime_alpha.market_data.contracts import Timeframe
 
 
 @dataclass(frozen=True, slots=True)
@@ -199,14 +203,17 @@ class HistoricalPhaseIIResearchService:
         )
         normalization = []
         for physical in reproduction.physical_verifications:
-            normalized = corpus.load(physical.normalized_owner_reference).owner
-            raw_reference = normalized.parent_reference
+            normalized_index = corpus.open_index(
+                physical.normalized_owner_reference
+            )
+            raw_reference = normalized_index.parent_reference
             if raw_reference is None:
                 raise ValueError("Normalized owner lacks Raw acquisition lineage")
             normalization.append(
-                verify_independent_baostock_normalization(
-                    raw_owner=corpus.load(raw_reference).owner,
-                    canonical_normalized_owner=normalized,
+                verify_independent_baostock_package_normalization(
+                    corpus=corpus,
+                    raw_owner_reference=raw_reference,
+                    normalized_owner_reference=physical.normalized_owner_reference,
                     provenance=physical_provenance,
                 )
             )
@@ -595,12 +602,18 @@ class HistoricalPhaseIIResearchService:
             reproduction=reproduction,
             corpus=self._corpus,
         )
-        run_components = self._components.list_for_run(run_id=run_id)
         owner_sources = tuple(
             item.reference
-            for item in run_components
-            if item.component_kind
-            in {HistoricalComponentKind.FEATURE, HistoricalComponentKind.OUTCOME}
+            for component_kind in (
+                HistoricalComponentKind.FEATURE,
+                HistoricalComponentKind.OUTCOME,
+            )
+            for batch in self._components.iter_for_run(
+                run_id=run_id,
+                component_kind=component_kind,
+                batch_size=1,
+            )
+            for item in batch
         )
         _require_sources(
             write,
@@ -1042,11 +1055,10 @@ def _verify_correctness_proof_against_owners(
     expected_normalization = tuple(
         sorted(
             (
-                verify_independent_baostock_normalization(
-                    raw_owner=corpus.load(item.raw_owner_reference).owner,
-                    canonical_normalized_owner=corpus.load(
-                        item.normalized_owner_reference
-                    ).owner,
+                verify_independent_baostock_package_normalization(
+                    corpus=corpus,
+                    raw_owner_reference=item.raw_owner_reference,
+                    normalized_owner_reference=item.normalized_owner_reference,
                     provenance=item.provenance,
                 )
                 for item in proof.normalization_verifications
@@ -1123,9 +1135,10 @@ def _verify_correctness_proof_against_owners(
 def _correctness_factor_observations(
     reproduction: HistoricalCorrectnessReproduction,
 ) -> tuple[FactorObservation, ...]:
-    target_by_key = {
-        (item.decision_time, item.symbol): item
+    target_return_by_key = {
+        (item.decision_time, item.symbol): item.target_return
         for item in reproduction.target_results
+        if item.target_return is not None
     }
     return tuple(
         FactorObservation(
@@ -1135,9 +1148,16 @@ def _correctness_factor_observations(
                 comparison.factor_id: comparison.recomputed_value
                 for comparison in item.comparisons
             },
-            target_by_key[(item.decision_time, item.symbol)].target_return,
+            target_return_by_key[(item.decision_time, item.symbol)],
         )
         for item in reproduction.feature_results
+        if {comparison.factor_id for comparison in item.comparisons}
+        == {
+            "intraday_return_to_decision_time",
+            "price_vs_vwap_return",
+            "vwap_slope",
+        }
+        and (item.decision_time, item.symbol) in target_return_by_key
     )
 
 
@@ -1146,23 +1166,34 @@ def _first_complete_execution_diagnostic(
     reproduction: HistoricalCorrectnessReproduction,
     corpus: PostgresHistoricalCorpusRepository,
 ) -> tuple[ExecutionTimingDiagnostic, ...]:
-    bars_by_owner = {
-        item.normalized_owner_reference: tuple(
-            record
-            for partition in corpus.load(item.normalized_owner_reference).owner.partitions
-            for record in partition.records
-            if isinstance(record, HistoricalNormalizedBar)
-        )
+    physical_owners = {
+        item.normalized_owner_reference
         for item in reproduction.physical_verifications
     }
     for target in reproduction.target_results:
         owner_reference = target.physical_source_reference
-        if target.persisted_observation is None or owner_reference not in bars_by_owner:
+        if target.persisted_observation is None or owner_reference not in physical_owners:
             continue
+        source_slice = corpus.read(
+            HistoricalReadQuery.create(
+                reference=owner_reference,
+                timeframes=(Timeframe.MINUTE_5,),
+                first_market_date=target.decision_time.date(),
+                last_market_date=target.target_session,
+                symbols=(target.symbol,),
+                max_rows=200,
+                batch_size=200,
+            )
+        )
+        source_bars = tuple(
+            item
+            for item in source_slice.records
+            if isinstance(item, HistoricalNormalizedBar)
+        )
         try:
             return reproduce_execution_timing_diagnostics(
                 target=target,
-                source_bars=bars_by_owner[owner_reference],
+                source_bars=source_bars,
             )
         except ValueError as exc:
             if str(exc) != "execution proxy is not estimable from frozen source bars":
@@ -1178,24 +1209,14 @@ def _verify_execution_diagnostics_against_corpus(
 ) -> None:
     if not proof.execution_diagnostics:
         return
-    owners = {
-        item.normalized_owner_reference: corpus.load(item.normalized_owner_reference)
+    physical_owners = {
+        item.normalized_owner_reference
         for item in reproduction.physical_verifications
     }
-    if not owners:
+    if not physical_owners:
         if proof.status.value == "CORRECTNESS_SUPPORTED":
             raise ValueError("supported Alpha Correctness lacks physical execution owners")
         return
-    bars_by_owner: dict[
-        ValidationArtifactReference, tuple[HistoricalNormalizedBar, ...]
-    ] = {}
-    for reference, package in owners.items():
-        bars_by_owner[reference] = tuple(
-            record
-            for partition in package.owner.partitions
-            for record in partition.records
-            if isinstance(record, HistoricalNormalizedBar)
-        )
     targets = tuple(reproduction.target_results)
     populations = {
         (
@@ -1224,11 +1245,27 @@ def _verify_execution_diagnostics_against_corpus(
         raise ValueError("Execution diagnostics are outside correctness Target owners")
     target = matching[0]
     owner_reference = target.physical_source_reference
-    if owner_reference is None:
+    if owner_reference not in physical_owners:
         raise ValueError("Execution diagnostics lack physical owner lineage")
+    source_slice = corpus.read(
+        HistoricalReadQuery.create(
+            reference=owner_reference,
+            timeframes=(Timeframe.MINUTE_5,),
+            first_market_date=target.decision_time.date(),
+            last_market_date=target.target_session,
+            symbols=(target.symbol,),
+            max_rows=200,
+            batch_size=200,
+        )
+    )
+    source_bars = tuple(
+        item
+        for item in source_slice.records
+        if isinstance(item, HistoricalNormalizedBar)
+    )
     expected = reproduce_execution_timing_diagnostics(
         target=target,
-        source_bars=bars_by_owner[owner_reference],
+        source_bars=source_bars,
     )
     if expected != proof.execution_diagnostics:
         raise ValueError("Execution proxy semantics drifted from physical owner bars")

@@ -368,10 +368,9 @@ def test_correctness_proof_requires_all_factors_target_and_physical_lineage(
         "count": 1,
         "status_counts": {"CORRECTNESS_SUPPORTED": 1},
         "discrepancy_counts": {},
+        "availability_reason_counts": {},
     }
-    assert evidence_projection["physical_verifications"][0][
-        "normalized_bar_binding_count"
-    ] > 0
+    assert evidence_projection["physical_verifications"][0]["normalized_bar_count"] > 0
     assert all(
         "observations" not in item
         for item in evidence_projection["placebo_results"]
@@ -642,7 +641,7 @@ def _matched_normalization_verification(
             canonical_hash({"raw": "physical-owner"}),
         ),
         normalized_owner_reference=physical.normalized_owner_reference,
-        comparison_count=len(physical.normalized_bar_bindings),
+        comparison_count=physical.normalized_bar_count,
         independent_value_hash=value_hash,
         canonical_value_hash=value_hash,
         status=IndependentNormalizationStatus.MATCHED,

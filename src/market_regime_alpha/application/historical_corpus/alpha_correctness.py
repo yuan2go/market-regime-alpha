@@ -20,11 +20,16 @@ from market_regime_alpha.application.historical_corpus.contracts import (
     HistoricalNormalizedBar,
 )
 from market_regime_alpha.application.historical_corpus.artifacts import (
+    HistoricalPackageIndex,
     VerifiedHistoricalPackage,
-    load_verified_historical_package,
+    load_historical_package_index,
+    verify_historical_package_files,
 )
 from market_regime_alpha.application.historical_corpus.postgres_repository import (
     PostgresHistoricalCorpusRepository,
+)
+from market_regime_alpha.application.historical_corpus.selective_read import (
+    HistoricalReadQuery,
 )
 from market_regime_alpha.application.historical_corpus.materialization_contracts import (
     HistoricalComponentKind,
@@ -95,7 +100,8 @@ class PhysicalSourceVerification:
     physical_hash: str
     checksums: tuple[tuple[str, str], ...]
     checksums_hash: str
-    normalized_bar_bindings: tuple[tuple[str, str], ...]
+    normalized_bar_count: int
+    normalized_bar_manifest_hash: str
 
     def __post_init__(self) -> None:
         if self.normalized_owner_reference.artifact_kind != "NORMALIZED_DATASET":
@@ -109,16 +115,22 @@ class PhysicalSourceVerification:
             != self.checksums_hash
         ):
             raise ValueError("physical checksum manifest is invalid")
-        if not self.normalized_bar_bindings:
+        if self.normalized_bar_count <= 0:
             raise ValueError("physical verification requires normalized bars")
-        if self.normalized_bar_bindings != tuple(
-            sorted(set(self.normalized_bar_bindings))
-        ):
-            raise ValueError("physical normalized-bar bindings must be unique and sorted")
-        for bar_id, content_hash in self.normalized_bar_bindings:
-            if not bar_id:
-                raise ValueError("physical normalized-bar binding requires bar identity")
-            require_sha256("normalized bar hash", content_hash)
+        require_sha256(
+            "normalized_bar_manifest_hash", self.normalized_bar_manifest_hash
+        )
+        expected_manifest_hash = canonical_hash(
+            {
+                "normalized_owner_reference": (
+                    self.normalized_owner_reference.to_canonical_dict()
+                ),
+                "physical_hash": self.physical_hash,
+                "normalized_bar_count": self.normalized_bar_count,
+            }
+        )
+        if self.normalized_bar_manifest_hash != expected_manifest_hash:
+            raise ValueError("physical normalized-bar manifest is invalid")
 
     def to_canonical_dict(self) -> dict[str, object]:
         return {
@@ -126,7 +138,8 @@ class PhysicalSourceVerification:
             "physical_hash": self.physical_hash,
             "checksums": [list(item) for item in self.checksums],
             "checksums_hash": self.checksums_hash,
-            "normalized_bar_bindings": [list(item) for item in self.normalized_bar_bindings],
+            "normalized_bar_count": self.normalized_bar_count,
+            "normalized_bar_manifest_hash": self.normalized_bar_manifest_hash,
         }
 
 def establish_physical_reproduction(
@@ -136,11 +149,72 @@ def establish_physical_reproduction(
 ) -> PhysicalSourceVerification:
     """Open physical bytes independently, then compare with the PG owner reload."""
 
-    physical = load_verified_historical_package(package_path)
-    postgres_owner = corpus_repository.load(physical.owner.reference)
-    return _physical_verification_from_reloaded_packages(
-        physical_package=physical,
-        postgres_owner_package=postgres_owner,
+    _package, verification = _open_physical_reproduction(
+        package_path=package_path,
+        corpus_repository=corpus_repository,
+    )
+    return verification
+
+
+def _open_physical_reproduction(
+    *,
+    package_path: Path,
+    corpus_repository: PostgresHistoricalCorpusRepository,
+) -> tuple[HistoricalPackageIndex, PhysicalSourceVerification]:
+    """Verify PostgreSQL metadata and every physical byte without bulk decoding."""
+
+    physical_index = load_historical_package_index(package_path)
+    postgres_index = corpus_repository.open_index(physical_index.reference)
+    if physical_index != postgres_index:
+        raise ValueError("physical package index does not match PostgreSQL owner")
+    verify_historical_package_files(physical_index)
+    return physical_index, _physical_verification_from_index(physical_index)
+
+
+def _physical_verification_from_index(
+    package: HistoricalPackageIndex,
+) -> PhysicalSourceVerification:
+    normalized_bar_count = package.coverage.normalized_row_count
+    normalized_bar_manifest_hash = canonical_hash(
+        {
+            "normalized_owner_reference": package.reference.to_canonical_dict(),
+            "physical_hash": package.physical_hash,
+            "normalized_bar_count": normalized_bar_count,
+        }
+    )
+    return PhysicalSourceVerification(
+        normalized_owner_reference=package.reference,
+        physical_hash=package.physical_hash,
+        checksums=package.checksums,
+        checksums_hash=canonical_hash(
+            {"checksums": [list(item) for item in package.checksums]}
+        ),
+        normalized_bar_count=normalized_bar_count,
+        normalized_bar_manifest_hash=normalized_bar_manifest_hash,
+    )
+
+
+def _physical_verification_from_package(
+    package: VerifiedHistoricalPackage,
+) -> PhysicalSourceVerification:
+    package.owner.verify_identity()
+    normalized_bar_count = package.owner.coverage.normalized_row_count
+    normalized_bar_manifest_hash = canonical_hash(
+        {
+            "normalized_owner_reference": package.owner.reference.to_canonical_dict(),
+            "physical_hash": package.physical_hash,
+            "normalized_bar_count": normalized_bar_count,
+        }
+    )
+    return PhysicalSourceVerification(
+        normalized_owner_reference=package.owner.reference,
+        physical_hash=package.physical_hash,
+        checksums=package.checksums,
+        checksums_hash=canonical_hash(
+            {"checksums": [list(item) for item in package.checksums]}
+        ),
+        normalized_bar_count=normalized_bar_count,
+        normalized_bar_manifest_hash=normalized_bar_manifest_hash,
     )
 
 
@@ -158,22 +232,7 @@ def _physical_verification_from_reloaded_packages(
         or physical_package.checksums != postgres_owner_package.checksums
     ):
         raise ValueError("physical package checksum projection disagrees with owner")
-    return PhysicalSourceVerification(
-        normalized_owner_reference=physical_package.owner.reference,
-        physical_hash=physical_package.physical_hash,
-        checksums=physical_package.checksums,
-        checksums_hash=canonical_hash(
-            {"checksums": [list(item) for item in physical_package.checksums]}
-        ),
-        normalized_bar_bindings=tuple(
-            sorted(
-                (str(record.bar_id), record.content_hash)
-                for partition in physical_package.owner.partitions
-                for record in partition.records
-                if isinstance(record, HistoricalNormalizedBar)
-            )
-        ),
-    )
+    return _physical_verification_from_package(physical_package)
 
 
 @dataclass(frozen=True, slots=True)
@@ -202,122 +261,174 @@ class HistoricalAlphaCorrectnessChecker:
         trading_calendar: TradingCalendarArtifact,
         physical_package_paths: Mapping[ValidationArtifactReference, Path] | None = None,
     ) -> HistoricalCorrectnessReproduction:
-        components = self._components.list_for_run(run_id=run_id)
-        features = {
-            item.trading_date: item
-            for item in components
-            if item.component_kind is HistoricalComponentKind.FEATURE
-        }
-        outcomes = {
-            item.trading_date: item
-            for item in components
-            if item.component_kind is HistoricalComponentKind.OUTCOME
-        }
-        if not features or set(features) != set(outcomes):
+        feature_sessions = tuple(
+            item.trading_date
+            for batch in self._components.iter_for_run(
+                run_id=run_id,
+                component_kind=HistoricalComponentKind.FEATURE,
+                batch_size=1,
+            )
+            for item in batch
+        )
+        outcome_sessions = tuple(
+            item.trading_date
+            for batch in self._components.iter_for_run(
+                run_id=run_id,
+                component_kind=HistoricalComponentKind.OUTCOME,
+                batch_size=1,
+            )
+            for item in batch
+        )
+        if (
+            not feature_sessions
+            or feature_sessions != tuple(sorted(set(feature_sessions)))
+            or feature_sessions != outcome_sessions
+        ):
             raise ValueError("Historical correctness requires aligned Feature/Outcome owners")
         feature_results: list[FeatureReproductionResult] = []
         target_results: list[TargetReproductionResult] = []
-        normalized_by_session = {
-            session: _shared_normalized_owner(features[session], outcomes[session])
-            for session in sorted(features)
+        monthly_sessions: defaultdict[tuple[int, int], list[date]] = defaultdict(
+            list
+        )
+        for session in feature_sessions:
+            monthly_sessions[(session.year, session.month)].append(session)
+        monthly_query_ranges = {
+            key: (
+                values[0],
+                trading_calendar.resolve_next_session_date(
+                    DecisionTime(
+                        datetime.combine(
+                            values[-1], time(14, 55), _SHANGHAI
+                        )
+                    )
+                ),
+            )
+            for key, values in monthly_sessions.items()
         }
-        bars_by_id_by_owner: dict[
-            ValidationArtifactReference, Mapping[str, HistoricalNormalizedBar]
-        ] = {}
-        minute_bars_by_owner: dict[
-            ValidationArtifactReference,
-            Mapping[tuple[date, str], tuple[HistoricalNormalizedBar, ...]],
-        ] = {}
         physical_by_owner: dict[
             ValidationArtifactReference, PhysicalSourceVerification
         ] = {}
-        physical_bindings_by_owner: dict[
-            ValidationArtifactReference, frozenset[tuple[str, str]]
+        verified_owner_references: set[ValidationArtifactReference] = set()
+        loaded_month_key: tuple[ValidationArtifactReference, int, int] | None = (
+            None
+        )
+        minute_bars: dict[
+            tuple[date, str], tuple[HistoricalNormalizedBar, ...]
         ] = {}
-        for normalized_reference in sorted(
-            set(normalized_by_session.values()),
-            key=lambda item: (
-                item.artifact_kind,
-                str(item.artifact_id),
-                item.content_hash,
-            ),
+        for batch in self._components.iter_for_run(
+            run_id=run_id,
+            component_kind=HistoricalComponentKind.FEATURE,
+            batch_size=1,
         ):
-            package = self._corpus.load(normalized_reference)
-            package.owner.verify_identity()
-            bars = tuple(
-                record
-                for partition in package.owner.partitions
-                for record in partition.records
-                if isinstance(record, HistoricalNormalizedBar)
+            if len(batch) != 1:
+                raise ValueError("Historical Feature stream is not session-bounded")
+            feature_component = batch[0]
+            session = feature_component.trading_date
+            outcome_components = self._components.get_for_run_date(
+                run_id=run_id,
+                trading_date=session,
+                component_kinds=(HistoricalComponentKind.OUTCOME,),
             )
-            bars_by_id_by_owner[normalized_reference] = {
-                str(item.bar_id): item for item in bars
-            }
-            grouped: defaultdict[
-                tuple[date, str], list[HistoricalNormalizedBar]
-            ] = defaultdict(list)
-            for item in bars:
-                if item.timeframe is Timeframe.MINUTE_5:
-                    grouped[(item.market_date, item.symbol)].append(item)
-            minute_bars_by_owner[normalized_reference] = {
-                key: _ordered_bars(tuple(values)) for key, values in grouped.items()
-            }
-            if physical_package_paths is not None:
-                path = physical_package_paths.get(normalized_reference)
-                if path is not None:
-                    physical_by_owner[normalized_reference] = (
-                        establish_physical_reproduction(
+            if len(outcome_components) != 1:
+                raise ValueError("Historical Outcome owner is not unique")
+            outcome_component = outcome_components[0]
+            normalized_reference = _shared_normalized_owner(
+                feature_component, outcome_component
+            )
+            if normalized_reference not in verified_owner_references:
+                package_index: HistoricalPackageIndex
+                path = (
+                    None
+                    if physical_package_paths is None
+                    else physical_package_paths.get(normalized_reference)
+                )
+                if path is None:
+                    package_index = self._corpus.open_index(normalized_reference)
+                else:
+                    package_index, physical_by_owner[normalized_reference] = (
+                        _open_physical_reproduction(
                             package_path=path,
                             corpus_repository=self._corpus,
                         )
                     )
-                    physical_bindings_by_owner[normalized_reference] = frozenset(
-                        physical_by_owner[
-                            normalized_reference
-                        ].normalized_bar_bindings
-                    )
-        for session in sorted(features):
-            feature_component = features[session]
-            outcome_component = outcomes[session]
-            normalized_reference = normalized_by_session[session]
+                if package_index.reference != normalized_reference:
+                    raise ValueError("Historical normalized package identity drifted")
+                verified_owner_references.add(normalized_reference)
             active_verification = physical_by_owner.get(normalized_reference)
-            active_bindings = physical_bindings_by_owner.get(normalized_reference)
             decision_time = _component_decision_time(feature_component)
-            persisted_by_symbol = _persisted_feature_projection(
-                feature_component, bars_by_id_by_owner[normalized_reference]
-            )
             labels = _target_labels(outcome_component)
-            if set(persisted_by_symbol) != set(labels):
-                raise ValueError("Historical correctness Feature/Target symbols drifted")
             next_session = date.fromisoformat(
                 str(outcome_component.payload["next_session_date"])
             )
+            month_key = (normalized_reference, session.year, session.month)
+            if month_key != loaded_month_key:
+                first_read_date, last_read_date = monthly_query_ranges[
+                    (session.year, session.month)
+                ]
+                source_slice = self._corpus.read(
+                    HistoricalReadQuery.create(
+                        reference=normalized_reference,
+                        timeframes=(Timeframe.MINUTE_5,),
+                        first_market_date=first_read_date,
+                        last_market_date=last_read_date,
+                        symbols=None,
+                        max_rows=500_000,
+                        batch_size=8_192,
+                    )
+                )
+                grouped: defaultdict[
+                    tuple[date, str], list[HistoricalNormalizedBar]
+                ] = defaultdict(list)
+                for item in source_slice.records:
+                    if isinstance(item, HistoricalNormalizedBar):
+                        grouped[(item.market_date, item.symbol)].append(item)
+                minute_bars = {
+                    key: _ordered_bars(tuple(values))
+                    for key, values in grouped.items()
+                }
+                loaded_month_key = month_key
+            decision_bars = {
+                symbol: minute_bars.get((session, symbol), ())
+                for symbol in labels
+            }
+            next_session_bars = {
+                symbol: minute_bars.get((next_session, symbol), ())
+                for symbol in labels
+            }
+            bars_by_id = {
+                str(item.bar_id): item
+                for symbol in labels
+                for item in (*decision_bars[symbol], *next_session_bars[symbol])
+            }
+            persisted_by_symbol, feature_unavailable = _persisted_feature_projection(
+                feature_component, bars_by_id
+            )
+            if set(persisted_by_symbol) != set(labels):
+                raise ValueError("Historical correctness Feature/Target symbols drifted")
             for symbol in sorted(persisted_by_symbol):
-                decision_bars = minute_bars_by_owner[normalized_reference].get(
-                    (session, symbol), ()
-                )
-                next_session_bars = minute_bars_by_owner[normalized_reference].get(
-                    (next_session, symbol), ()
-                )
+                symbol_decision_bars = decision_bars[symbol]
+                symbol_next_session_bars = next_session_bars[symbol]
                 decision_source_bars = tuple(
-                    item for item in decision_bars if item.event_end <= decision_time
+                    item
+                    for item in symbol_decision_bars
+                    if item.event_end <= decision_time
                 )
                 feature_results.append(
                     reproduce_intraday_features(
                         session=session,
                         symbol=symbol,
                         decision_time=decision_time,
-                        source_bars=decision_bars,
+                        source_bars=symbol_decision_bars,
                         persisted=persisted_by_symbol[symbol],
                         physical_verification=active_verification,
-                        verified_physical_bindings=active_bindings,
+                        incomplete_reason_codes=feature_unavailable.get(symbol, ()),
                     )
                 )
                 label = labels[symbol]
                 target_bars = _ordered_bars(
                     tuple(
                         item
-                        for item in next_session_bars
+                        for item in symbol_next_session_bars
                         if item.event_start >= label.label_interval_start
                         and item.event_end <= label.label_interval_end
                     )
@@ -329,10 +440,48 @@ class HistoricalAlphaCorrectnessChecker:
                             decision_time=decision_time,
                             next_session=next_session,
                             trading_calendar=trading_calendar,
-                            source_bars=(*decision_bars, *next_session_bars),
+                            source_bars=(
+                                *symbol_decision_bars,
+                                *symbol_next_session_bars,
+                            ),
                             persisted=None,
                             physical_verification=active_verification,
-                            verified_physical_bindings=active_bindings,
+                            unavailable_reason_codes=(
+                                label.reason_codes
+                                or ("PERSISTED_TARGET_NOT_ESTIMABLE",)
+                            ),
+                        )
+                    )
+                    continue
+                persisted_sources_complete = bool(
+                    decision_source_bars
+                    and decision_source_bars[-1].event_end == decision_time
+                    and decision_source_bars[-1].close is not None
+                    and decision_source_bars[-1].close > 0
+                    and target_bars
+                    and target_bars[0].event_start
+                    == datetime.combine(
+                        next_session, time(9, 30), _SHANGHAI
+                    ).astimezone(decision_time.tzinfo)
+                    and target_bars[-1].event_end == label.label_interval_end
+                    and target_bars[-1].close is not None
+                )
+                if not persisted_sources_complete:
+                    target_results.append(
+                        reproduce_t_plus_one_1030_target(
+                            symbol=symbol,
+                            decision_time=decision_time,
+                            next_session=next_session,
+                            trading_calendar=trading_calendar,
+                            source_bars=(
+                                *symbol_decision_bars,
+                                *symbol_next_session_bars,
+                            ),
+                            persisted=None,
+                            physical_verification=active_verification,
+                            unavailable_reason_codes=(
+                                "PERSISTED_TARGET_SOURCE_NOT_REPRODUCIBLE",
+                            ),
                         )
                     )
                     continue
@@ -350,10 +499,12 @@ class HistoricalAlphaCorrectnessChecker:
                         decision_time=decision_time,
                         next_session=next_session,
                         trading_calendar=trading_calendar,
-                        source_bars=(*decision_bars, *next_session_bars),
+                        source_bars=(
+                            *symbol_decision_bars,
+                            *symbol_next_session_bars,
+                        ),
                         persisted=persisted_target,
                         physical_verification=active_verification,
-                        verified_physical_bindings=active_bindings,
                     )
                 )
         return HistoricalCorrectnessReproduction(
@@ -373,8 +524,7 @@ class HistoricalAlphaCorrectnessChecker:
 class PersistedFeatureObservation:
     factor_id: str
     value: Decimal
-    source_bar_ids: tuple[str, ...]
-    source_bar_hashes: tuple[str, ...]
+    source_bar_count: int
     source_lineage_hash: str
     event_start: datetime
     event_end: datetime
@@ -396,8 +546,7 @@ class PersistedFeatureObservation:
         return cls(
             factor_id=factor_id,
             value=value,
-            source_bar_ids=ids,
-            source_bar_hashes=hashes,
+            source_bar_count=len(ids),
             source_lineage_hash=lineage,
             event_start=ordered[0].event_start,
             event_end=ordered[-1].event_end,
@@ -409,13 +558,11 @@ class FeatureCorrectnessComparison:
     factor_id: str
     persisted_value: Decimal
     recomputed_value: Decimal
-    persisted_source_bar_ids: tuple[str, ...]
-    persisted_source_bar_hashes: tuple[str, ...]
+    persisted_source_bar_count: int
     persisted_source_lineage_hash: str
     persisted_event_start: datetime
     persisted_event_end: datetime
-    source_bar_ids: tuple[str, ...]
-    source_bar_hashes: tuple[str, ...]
+    source_bar_count: int
     source_lineage_hash: str
     event_start: datetime
     event_end: datetime
@@ -425,26 +572,23 @@ class FeatureCorrectnessComparison:
     def __post_init__(self) -> None:
         if self.factor_id not in _SUPPORTED_FACTORS:
             raise ValueError("Feature comparison Factor is unsupported")
-        for ids, hashes, lineage in (
+        for count, lineage in (
             (
-                self.persisted_source_bar_ids,
-                self.persisted_source_bar_hashes,
+                self.persisted_source_bar_count,
                 self.persisted_source_lineage_hash,
             ),
-            (self.source_bar_ids, self.source_bar_hashes, self.source_lineage_hash),
+            (self.source_bar_count, self.source_lineage_hash),
         ):
-            if not ids or len(ids) != len(hashes):
+            if count <= 0:
                 raise ValueError("Feature comparison lineage is incomplete")
-            if lineage != _lineage_hash(ids, hashes):
-                raise ValueError("Feature comparison lineage hash drifted")
+            require_sha256("Feature comparison lineage hash", lineage)
         if self.event_end > self.decision_time or self.persisted_event_end > self.decision_time:
             raise ValueError("Feature comparison uses information after DecisionTime")
         expected: list[str] = []
         if self.persisted_value != self.recomputed_value:
             expected.append(f"VALUE_MISMATCH:{self.factor_id}")
         if (
-            self.persisted_source_bar_ids != self.source_bar_ids
-            or self.persisted_source_bar_hashes != self.source_bar_hashes
+            self.persisted_source_bar_count != self.source_bar_count
             or self.persisted_source_lineage_hash != self.source_lineage_hash
         ):
             expected.append(f"SOURCE_LINEAGE_MISMATCH:{self.factor_id}")
@@ -461,13 +605,11 @@ class FeatureCorrectnessComparison:
             "factor_id": self.factor_id,
             "persisted_value": str(self.persisted_value),
             "recomputed_value": str(self.recomputed_value),
-            "persisted_source_bar_ids": list(self.persisted_source_bar_ids),
-            "persisted_source_bar_hashes": list(self.persisted_source_bar_hashes),
+            "persisted_source_bar_count": self.persisted_source_bar_count,
             "persisted_source_lineage_hash": self.persisted_source_lineage_hash,
             "persisted_event_start": self.persisted_event_start.isoformat(),
             "persisted_event_end": self.persisted_event_end.isoformat(),
-            "source_bar_ids": list(self.source_bar_ids),
-            "source_bar_hashes": list(self.source_bar_hashes),
+            "source_bar_count": self.source_bar_count,
             "source_lineage_hash": self.source_lineage_hash,
             "event_start": self.event_start.isoformat(),
             "event_end": self.event_end.isoformat(),
@@ -485,6 +627,7 @@ class FeatureReproductionResult:
     physical_source_reference: ValidationArtifactReference | None
     comparisons: tuple[FeatureCorrectnessComparison, ...]
     discrepancies: tuple[str, ...]
+    incomplete_reason_codes: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         _require_aware("Feature result DecisionTime", self.decision_time)
@@ -495,10 +638,17 @@ class FeatureReproductionResult:
             raise ValueError("Feature result comparisons must be unique and sorted")
         if any(item.decision_time != self.decision_time for item in self.comparisons):
             raise ValueError("Feature comparison DecisionTime drifted")
+        if self.incomplete_reason_codes != tuple(
+            sorted(set(self.incomplete_reason_codes))
+        ):
+            raise ValueError("Feature incomplete reasons must be unique and sorted")
         derived = _correctness_status(
             discrepancies=self.discrepancies,
             physical_source_available=self.physical_source_reference is not None,
-            complete=set(factor_ids) == _SUPPORTED_FACTORS,
+            complete=(
+                set(factor_ids) == _SUPPORTED_FACTORS
+                and not self.incomplete_reason_codes
+            ),
         )
         if self.status is not derived:
             raise ValueError("Feature result status is not derived")
@@ -516,6 +666,7 @@ class FeatureReproductionResult:
             ),
             "comparisons": [item.to_canonical_dict() for item in self.comparisons],
             "discrepancies": list(self.discrepancies),
+            "incomplete_reason_codes": list(self.incomplete_reason_codes),
         }
 
 
@@ -603,9 +754,9 @@ class TargetReproductionResult:
     decision_time: datetime
     target_session: date
     target_event_end: datetime
-    decision_reference_price: Decimal
-    target_price: Decimal
-    target_return: Decimal
+    decision_reference_price: Decimal | None
+    target_price: Decimal | None
+    target_return: Decimal | None
     decision_source_ids: tuple[str, ...]
     decision_source_hashes: tuple[str, ...]
     target_source_ids: tuple[str, ...]
@@ -615,6 +766,7 @@ class TargetReproductionResult:
     physical_source_reference: ValidationArtifactReference | None
     trading_calendar_reference: ValidationArtifactReference
     discrepancies: tuple[str, ...]
+    unavailable_reason_codes: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         _require_aware("Target result DecisionTime", self.decision_time)
@@ -626,31 +778,76 @@ class TargetReproductionResult:
             or set(self.decision_source_ids).intersection(self.target_source_ids)
         ):
             raise ValueError("Target result temporal/source lineage is invalid")
-        if (
-            len(self.decision_source_ids) != len(self.decision_source_hashes)
-            or len(self.target_source_ids) != len(self.target_source_hashes)
-            or not self.decision_source_ids
-            or not self.target_source_ids
+        if self.unavailable_reason_codes != tuple(
+            sorted(set(self.unavailable_reason_codes))
         ):
-            raise ValueError("Target result source bindings are incomplete")
-        expected_discrepancies = _target_discrepancies(
-            self.persisted_observation,
-            decision_price=self.decision_reference_price,
-            target_price=self.target_price,
-            target_return=self.target_return,
-            decision_ids=self.decision_source_ids,
-            decision_hashes=self.decision_source_hashes,
-            target_ids=self.target_source_ids,
-            target_hashes=self.target_source_hashes,
-            target_session=self.target_session,
-            target_event_end=self.target_event_end,
+            raise ValueError("Target unavailable reasons must be unique and sorted")
+        values = (
+            self.decision_reference_price,
+            self.target_price,
+            self.target_return,
         )
+        values_available = all(item is not None for item in values)
+        expected_discrepancies: tuple[str, ...]
+        if not values_available:
+            if any(item is not None for item in values) or any(
+                (
+                    self.decision_source_ids,
+                    self.decision_source_hashes,
+                    self.target_source_ids,
+                    self.target_source_hashes,
+                )
+            ):
+                raise ValueError("unavailable Target result must not invent values")
+            if not self.unavailable_reason_codes:
+                raise ValueError("unavailable Target result requires reasons")
+            expected_discrepancies = (
+                ("PERSISTED_TARGET_SOURCE_NOT_REPRODUCIBLE",)
+                if "PERSISTED_TARGET_SOURCE_NOT_REPRODUCIBLE"
+                in self.unavailable_reason_codes
+                else ()
+            )
+        else:
+            if (
+                len(self.decision_source_ids) != len(self.decision_source_hashes)
+                or len(self.target_source_ids) != len(self.target_source_hashes)
+                or not self.decision_source_ids
+                or not self.target_source_ids
+            ):
+                raise ValueError("Target result source bindings are incomplete")
+            assert self.decision_reference_price is not None
+            assert self.target_price is not None
+            assert self.target_return is not None
+            expected_discrepancies = _target_discrepancies(
+                self.persisted_observation,
+                decision_price=self.decision_reference_price,
+                target_price=self.target_price,
+                target_return=self.target_return,
+                decision_ids=self.decision_source_ids,
+                decision_hashes=self.decision_source_hashes,
+                target_ids=self.target_source_ids,
+                target_hashes=self.target_source_hashes,
+                target_session=self.target_session,
+                target_event_end=self.target_event_end,
+            )
+            if (
+                "PERSISTED_TARGET_SOURCE_NOT_REPRODUCIBLE"
+                in self.unavailable_reason_codes
+            ):
+                expected_discrepancies = (
+                    *expected_discrepancies,
+                    "PERSISTED_TARGET_SOURCE_NOT_REPRODUCIBLE",
+                )
         if expected_discrepancies != self.discrepancies:
             raise ValueError("Target result discrepancies are not derived")
         derived = _correctness_status(
             discrepancies=expected_discrepancies,
             physical_source_available=self.physical_source_reference is not None,
-            complete=self.persisted_observation is not None,
+            complete=(
+                values_available
+                and self.persisted_observation is not None
+                and not self.unavailable_reason_codes
+            ),
         )
         if self.status is not derived:
             raise ValueError("Target result status is not derived")
@@ -661,9 +858,11 @@ class TargetReproductionResult:
             "decision_time": self.decision_time.isoformat(),
             "target_session": self.target_session.isoformat(),
             "target_event_end": self.target_event_end.isoformat(),
-            "decision_reference_price": str(self.decision_reference_price),
-            "target_price": str(self.target_price),
-            "target_return": str(self.target_return),
+            "decision_reference_price": _optional_decimal_text(
+                self.decision_reference_price
+            ),
+            "target_price": _optional_decimal_text(self.target_price),
+            "target_return": _optional_decimal_text(self.target_return),
             "decision_source_ids": list(self.decision_source_ids),
             "decision_source_hashes": list(self.decision_source_hashes),
             "target_source_ids": list(self.target_source_ids),
@@ -681,6 +880,7 @@ class TargetReproductionResult:
             ),
             "trading_calendar_reference": self.trading_calendar_reference.to_canonical_dict(),
             "discrepancies": list(self.discrepancies),
+            "unavailable_reason_codes": list(self.unavailable_reason_codes),
         }
 
 
@@ -811,8 +1011,9 @@ class AlphaCorrectnessProof:
                     "physical_hash": item.physical_hash,
                     "checksums_hash": item.checksums_hash,
                     "checksum_count": len(item.checksums),
-                    "normalized_bar_binding_count": len(
-                        item.normalized_bar_bindings
+                    "normalized_bar_count": item.normalized_bar_count,
+                    "normalized_bar_manifest_hash": (
+                        item.normalized_bar_manifest_hash
                     ),
                 }
                 for item in self.physical_verifications
@@ -842,6 +1043,9 @@ class AlphaCorrectnessProof:
                     "target_id": item.target_id,
                     "kind": item.kind.value,
                     "observation_count": len(item.observations),
+                    "rank_ic_diagnostic": (
+                        item.to_canonical_dict()["rank_ic_diagnostic"]
+                    ),
                     "result_hash": item.result_hash,
                 }
                 for item in self.placebo_results
@@ -989,10 +1193,17 @@ def _result_population_summary(
     discrepancies = Counter(
         discrepancy for item in results for discrepancy in item.discrepancies
     )
+    availability_reasons: Counter[str] = Counter()
+    for item in results:
+        if isinstance(item, FeatureReproductionResult):
+            availability_reasons.update(item.incomplete_reason_codes)
+        else:
+            availability_reasons.update(item.unavailable_reason_codes)
     return {
         "count": len(results),
         "status_counts": dict(sorted(statuses.items())),
         "discrepancy_counts": dict(sorted(discrepancies.items())),
+        "availability_reason_counts": dict(sorted(availability_reasons.items())),
     }
 
 
@@ -1139,6 +1350,13 @@ def reproduce_execution_timing_diagnostics(
     owner_reference = target.physical_source_reference
     if owner_reference is None:
         raise ValueError("execution reproduction requires physical owner binding")
+    if (
+        target.decision_reference_price is None
+        or target.target_price is None
+        or not target.decision_source_ids
+        or not target.target_source_ids
+    ):
+        raise ValueError("execution proxy is not estimable from frozen source bars")
     bound = tuple(
         item
         for item in _ordered_bars(source_bars)
@@ -1283,12 +1501,11 @@ def _validate_proof_population(
             raise ValueError(
                 "Alpha Correctness Feature and Target physical owners must match"
             )
-        feature_source_ids = {
-            source_id
+        if any(
+            comparison.event_end.astimezone(_SHANGHAI).date()
+            >= target.target_session
             for comparison in feature.comparisons
-            for source_id in comparison.source_bar_ids
-        }
-        if feature_source_ids.intersection(target.target_source_ids):
+        ):
             raise ValueError(
                 "Alpha Correctness Feature lineage references future Target bars"
             )
@@ -1330,7 +1547,7 @@ def reproduce_intraday_features(
     source_bars: tuple[HistoricalNormalizedBar, ...],
     persisted: tuple[PersistedFeatureObservation, ...],
     physical_verification: PhysicalSourceVerification | None,
-    verified_physical_bindings: frozenset[tuple[str, str]] | None = None,
+    incomplete_reason_codes: tuple[str, ...] = (),
 ) -> FeatureReproductionResult:
     """Recompute frozen intraday factors directly from bounded normalized bars."""
 
@@ -1367,22 +1584,49 @@ def reproduce_intraday_features(
                 else physical_verification.normalized_owner_reference
             ),
             comparisons=(),
-            discrepancies=("DECISION_TIME_SOURCE_BARS_MISSING",),
+            discrepancies=(),
+            incomplete_reason_codes=tuple(
+                sorted(
+                    set(incomplete_reason_codes)
+                    | {"DECISION_TIME_SOURCE_BARS_MISSING"}
+                )
+            ),
         )
-    if physical_verification is not None:
-        physical_bindings = (
-            verified_physical_bindings
-            if verified_physical_bindings is not None
-            else frozenset(physical_verification.normalized_bar_bindings)
-        )
-        selected_bindings = {
-            (str(item.bar_id), item.content_hash) for item in selected
-        }
-        if not selected_bindings.issubset(physical_bindings):
-            raise ValueError("Feature source bars are outside verified physical package")
     if any(item.event_end > decision_time for item in selected):
         raise ValueError("Feature source event_end exceeds DecisionTime")
-    recomputed = _intraday_values(selected)
+    try:
+        recomputed = _intraday_values(selected)
+    except ValueError:
+        if not incomplete_reason_codes:
+            raise
+        source_discrepancies = (
+            ("PERSISTED_FEATURE_SOURCE_NOT_REPRODUCIBLE",)
+            if persisted
+            else ()
+        )
+        return FeatureReproductionResult(
+            session=session,
+            symbol=symbol,
+            decision_time=decision_time,
+            status=_correctness_status(
+                discrepancies=source_discrepancies,
+                physical_source_available=physical_verification is not None,
+                complete=False,
+            ),
+            physical_source_reference=(
+                None
+                if physical_verification is None
+                else physical_verification.normalized_owner_reference
+            ),
+            comparisons=(),
+            discrepancies=source_discrepancies,
+            incomplete_reason_codes=tuple(
+                sorted(
+                    set(incomplete_reason_codes)
+                    | {"FEATURE_SOURCE_NOT_ESTIMABLE"}
+                )
+            ),
+        )
     comparisons: list[FeatureCorrectnessComparison] = []
     all_discrepancies: list[str] = []
     for observation in persisted:
@@ -1392,8 +1636,7 @@ def reproduce_intraday_features(
         if observation.value != value:
             discrepancies.append(f"VALUE_MISMATCH:{observation.factor_id}")
         if (
-            observation.source_bar_ids != ids
-            or observation.source_bar_hashes != hashes
+            observation.source_bar_count != len(ids)
             or observation.source_lineage_hash != lineage
         ):
             discrepancies.append(f"SOURCE_LINEAGE_MISMATCH:{observation.factor_id}")
@@ -1406,13 +1649,11 @@ def reproduce_intraday_features(
             factor_id=observation.factor_id,
             persisted_value=observation.value,
             recomputed_value=value,
-            persisted_source_bar_ids=observation.source_bar_ids,
-            persisted_source_bar_hashes=observation.source_bar_hashes,
+            persisted_source_bar_count=observation.source_bar_count,
             persisted_source_lineage_hash=observation.source_lineage_hash,
             persisted_event_start=observation.event_start,
             persisted_event_end=observation.event_end,
-            source_bar_ids=ids,
-            source_bar_hashes=hashes,
+            source_bar_count=len(ids),
             source_lineage_hash=lineage,
             event_start=factor_bars[0].event_start,
             event_end=factor_bars[-1].event_end,
@@ -1424,7 +1665,10 @@ def reproduce_intraday_features(
     status = _correctness_status(
         discrepancies=tuple(all_discrepancies),
         physical_source_available=physical_verification is not None,
-        complete={item.factor_id for item in persisted} == _SUPPORTED_FACTORS,
+        complete=(
+            {item.factor_id for item in persisted} == _SUPPORTED_FACTORS
+            and not incomplete_reason_codes
+        ),
     )
     return FeatureReproductionResult(
         session=session,
@@ -1438,6 +1682,7 @@ def reproduce_intraday_features(
         ),
         comparisons=tuple(comparisons),
         discrepancies=tuple(all_discrepancies),
+        incomplete_reason_codes=tuple(sorted(set(incomplete_reason_codes))),
     )
 
 
@@ -1450,7 +1695,7 @@ def reproduce_t_plus_one_1030_target(
     source_bars: tuple[HistoricalNormalizedBar, ...],
     persisted: PersistedTargetObservation | None,
     physical_verification: PhysicalSourceVerification | None,
-    verified_physical_bindings: frozenset[tuple[str, str]] | None = None,
+    unavailable_reason_codes: tuple[str, ...] = (),
 ) -> TargetReproductionResult:
     """Independently reconstruct the frozen Decision reference and T+1 10:30 return."""
 
@@ -1471,10 +1716,6 @@ def reproduce_t_plus_one_1030_target(
             and item.event_end <= decision_time
         )
     )
-    if not decision_bars:
-        raise ValueError("Decision reference bar is unavailable")
-    if decision_bars[-1].event_end != decision_time:
-        raise ValueError("Decision reference checkpoint is incomplete")
     checkpoint = datetime.combine(next_session, time(10, 30), _SHANGHAI).astimezone(
         decision_time.tzinfo
     )
@@ -1493,24 +1734,60 @@ def reproduce_t_plus_one_1030_target(
     target_start = datetime.combine(
         next_session, time(9, 30), _SHANGHAI
     ).astimezone(decision_time.tzinfo)
-    if (
+    checkpoint_complete = not (
         not target_bars
         or target_bars[0].event_start != target_start
         or target_bars[-1].event_end != checkpoint
-    ):
-        raise ValueError("T+1 10:30 checkpoint is incomplete")
-    if physical_verification is not None:
-        physical_bindings = (
-            verified_physical_bindings
-            if verified_physical_bindings is not None
-            else frozenset(physical_verification.normalized_bar_bindings)
+    )
+    decision_complete = bool(
+        decision_bars and decision_bars[-1].event_end == decision_time
+    )
+    if not decision_complete or not checkpoint_complete:
+        if not unavailable_reason_codes:
+            if not decision_complete:
+                raise ValueError("Decision reference checkpoint is incomplete")
+            raise ValueError("T+1 10:30 checkpoint is incomplete")
+        reasons = set(unavailable_reason_codes)
+        if not decision_complete:
+            reasons.add("DECISION_REFERENCE_NOT_ESTIMABLE")
+        if not checkpoint_complete:
+            reasons.add("T_PLUS_ONE_1030_NOT_ESTIMABLE")
+        unavailable_discrepancies = (
+            ("PERSISTED_TARGET_SOURCE_NOT_REPRODUCIBLE",)
+            if "PERSISTED_TARGET_SOURCE_NOT_REPRODUCIBLE" in reasons
+            else ()
         )
-        required_bindings = {
-            (str(item.bar_id), item.content_hash)
-            for item in (*decision_bars, *target_bars)
-        }
-        if not required_bindings.issubset(physical_bindings):
-            raise ValueError("Target source bars are outside verified physical package")
+        return TargetReproductionResult(
+            symbol=symbol,
+            decision_time=decision_time,
+            target_session=next_session,
+            target_event_end=checkpoint,
+            decision_reference_price=None,
+            target_price=None,
+            target_return=None,
+            decision_source_ids=(),
+            decision_source_hashes=(),
+            target_source_ids=(),
+            target_source_hashes=(),
+            persisted_observation=None,
+            status=_correctness_status(
+                discrepancies=unavailable_discrepancies,
+                physical_source_available=physical_verification is not None,
+                complete=False,
+            ),
+            physical_source_reference=(
+                None
+                if physical_verification is None
+                else physical_verification.normalized_owner_reference
+            ),
+            trading_calendar_reference=ValidationArtifactReference(
+                "PIT_TRADING_CALENDAR",
+                trading_calendar.artifact_id,
+                trading_calendar.content_hash,
+            ),
+            discrepancies=unavailable_discrepancies,
+            unavailable_reason_codes=tuple(sorted(reasons)),
+        )
     if any(left.event_end != right.event_start for left, right in zip(target_bars, target_bars[1:], strict=False)):
         raise ValueError("T+1 checkpoint bars are not contiguous")
     decision_source = (decision_bars[-1],)
@@ -1521,6 +1798,49 @@ def reproduce_t_plus_one_1030_target(
     decision_price = decision_bars[-1].close
     target_price = target_bars[-1].close
     if decision_price is None or target_price is None or decision_price <= 0:
+        if unavailable_reason_codes:
+            price_reasons = tuple(
+                sorted(
+                    set(unavailable_reason_codes)
+                    | {"TARGET_SOURCE_PRICE_NOT_ESTIMABLE"}
+                )
+            )
+            unavailable_discrepancies = (
+                ("PERSISTED_TARGET_SOURCE_NOT_REPRODUCIBLE",)
+                if "PERSISTED_TARGET_SOURCE_NOT_REPRODUCIBLE" in price_reasons
+                else ()
+            )
+            return TargetReproductionResult(
+                symbol=symbol,
+                decision_time=decision_time,
+                target_session=next_session,
+                target_event_end=checkpoint,
+                decision_reference_price=None,
+                target_price=None,
+                target_return=None,
+                decision_source_ids=(),
+                decision_source_hashes=(),
+                target_source_ids=(),
+                target_source_hashes=(),
+                persisted_observation=None,
+                status=_correctness_status(
+                    discrepancies=unavailable_discrepancies,
+                    physical_source_available=physical_verification is not None,
+                    complete=False,
+                ),
+                physical_source_reference=(
+                    None
+                    if physical_verification is None
+                    else physical_verification.normalized_owner_reference
+                ),
+                trading_calendar_reference=ValidationArtifactReference(
+                    "PIT_TRADING_CALENDAR",
+                    trading_calendar.artifact_id,
+                    trading_calendar.content_hash,
+                ),
+                discrepancies=unavailable_discrepancies,
+                unavailable_reason_codes=price_reasons,
+            )
         raise ValueError("Target reproduction requires positive source prices")
     target_return = (target_price - decision_price) / decision_price
     discrepancies = _target_discrepancies(
@@ -1535,10 +1855,18 @@ def reproduce_t_plus_one_1030_target(
         target_session=next_session,
         target_event_end=checkpoint,
     )
+    if (
+        "PERSISTED_TARGET_SOURCE_NOT_REPRODUCIBLE"
+        in unavailable_reason_codes
+    ):
+        discrepancies = (
+            *discrepancies,
+            "PERSISTED_TARGET_SOURCE_NOT_REPRODUCIBLE",
+        )
     status = _correctness_status(
         discrepancies=tuple(discrepancies),
         physical_source_available=physical_verification is not None,
-        complete=persisted is not None,
+        complete=persisted is not None and not unavailable_reason_codes,
     )
     return TargetReproductionResult(
         symbol=symbol,
@@ -1565,16 +1893,16 @@ def reproduce_t_plus_one_1030_target(
             trading_calendar.content_hash,
         ),
         discrepancies=tuple(discrepancies),
+        unavailable_reason_codes=tuple(sorted(set(unavailable_reason_codes))),
     )
 
 
 def _intraday_values(
     bars: tuple[HistoricalNormalizedBar, ...],
 ) -> dict[str, tuple[Decimal, tuple[HistoricalNormalizedBar, ...]]]:
-    if any(item.close is None or item.open is None for item in bars):
-        raise ValueError("intraday correctness bars require complete prices")
     first, latest = bars[0], bars[-1]
-    assert first.open is not None and latest.close is not None
+    if first.open is None or latest.close is None:
+        raise ValueError("intraday correctness bars require endpoint prices")
     if first.open <= 0:
         raise ValueError("intraday first open must be positive")
     total_volume = sum((item.volume for item in bars), Decimal("0"))
@@ -1692,14 +2020,19 @@ def _component_decision_time(component: HistoricalSessionComponent) -> datetime:
 def _persisted_feature_projection(
     component: HistoricalSessionComponent,
     bars_by_id: Mapping[str, HistoricalNormalizedBar],
-) -> dict[str, tuple[PersistedFeatureObservation, ...]]:
+) -> tuple[
+    dict[str, tuple[PersistedFeatureObservation, ...]],
+    dict[str, tuple[str, ...]],
+]:
     raw_features = component.payload.get("features")
     if not isinstance(raw_features, list):
         raise ValueError("Historical Feature owner payload is missing")
     projected: dict[str, list[PersistedFeatureObservation]] = {}
+    unavailable: dict[str, list[str]] = {}
     for raw_feature in raw_features:
         feature = _mapping(raw_feature, "Historical Feature computation")
         symbol = str(feature["symbol"])
+        projected.setdefault(symbol, [])
         values = feature.get("values")
         if not isinstance(values, list):
             raise ValueError("Historical Feature values are missing")
@@ -1709,10 +2042,16 @@ def _persisted_feature_projection(
             if factor_id not in _SUPPORTED_FACTORS:
                 continue
             if value.get("state") != "AVAILABLE" or value.get("value") is None:
-                raise ValueError(
-                    "frozen intraday Factor is unavailable in Feature owner: "
-                    f"{symbol}:{factor_id}:{value.get('missing_reason_codes')}"
+                raw_reasons = value.get("missing_reason_codes")
+                reasons = (
+                    tuple(str(item) for item in raw_reasons)
+                    if isinstance(raw_reasons, list)
+                    else ("OWNER_DECLARED_FACTOR_NOT_ESTIMABLE",)
                 )
+                unavailable.setdefault(symbol, []).extend(
+                    f"{factor_id}:{reason}" for reason in reasons
+                )
+                continue
             raw_ids = value.get("normalized_source_bar_ids")
             raw_hashes = value.get("normalized_source_bar_hashes")
             if not isinstance(raw_ids, list) or not isinstance(raw_hashes, list):
@@ -1743,11 +2082,14 @@ def _persisted_feature_projection(
         for symbol, values in projected.items()
     }
     if not result or any(
-        {item.factor_id for item in values} != _SUPPORTED_FACTORS
+        not {item.factor_id for item in values}.issubset(_SUPPORTED_FACTORS)
         for values in result.values()
     ):
-        raise ValueError("Historical Feature owner lacks the frozen intraday family")
-    return result
+        raise ValueError("Historical Feature owner projection is invalid")
+    return result, {
+        symbol: tuple(sorted(set(reasons)))
+        for symbol, reasons in unavailable.items()
+    }
 
 
 def _target_labels(
@@ -1815,6 +2157,10 @@ def _correctness_status(
 
 def _quantize(value: Decimal) -> Decimal:
     return value.quantize(_SCALE, rounding=ROUND_HALF_EVEN)
+
+
+def _optional_decimal_text(value: Decimal | None) -> str | None:
+    return None if value is None else str(value)
 
 
 def _require_aware(label: str, value: datetime) -> None:
