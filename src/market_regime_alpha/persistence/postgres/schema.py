@@ -152,6 +152,7 @@ EXPECTED_AUTHORITY_TABLES: Final[frozenset[str]] = frozenset(
         "research_evaluation_dataset_settlement",
         "etf_theme_reference_snapshot",
         "research_validation_artifact",
+        "daily_alpha_prediction_target_session",
         "research_panel_factor_exposure",
         "historical_path_sample_record",
         "calibration_partition_binding",
@@ -856,6 +857,10 @@ EXPECTED_AUTHORITY_TRIGGERS: Final[frozenset[tuple[str, str]]] = frozenset(
         (
             "controlled_operation_package_locator",
             "controlled_operation_package_locator_no_update",
+        ),
+        (
+            "daily_alpha_prediction_target_session",
+            "daily_alpha_prediction_target_session_no_update",
         ),
         ("longitudinal_operational_index", "longitudinal_operational_no_delete"),
         ("longitudinal_operational_index", "longitudinal_operational_no_update"),

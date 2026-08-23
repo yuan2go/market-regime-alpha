@@ -30,7 +30,7 @@
 | Pre-Strategy Risk / Opportunity | One `PostgresStrategyOpportunityAuthority` owns immutable owner-derived Risk State and Strategy Opportunity bindings. Continuous/Historical adapters share one producer and typed source resolver; post-Portfolio Complete Account Risk never feeds Strategy. |
 | Multi-Strategy business facts | One `PostgresMultiStrategyRepository` owns stable Strategy registration, cycles/runs/gates/proposals, cross-strategy Portfolio decisions, observed-Fill allocations, Path Outcomes and version-scoped feedback. The existing Strategy Shadow owner resolves state/outcomes from those facts. `StrategyExecutionApplicationService` bridges accepted lines into the existing ManualTrade/Fill owner; it is not another Authority. |
 | Production Admission | A blocked projection only. No final Production Admission Authority exists. |
-| PostgreSQL Authority-schema tables | 275 in `EXPECTED_AUTHORITY_TABLES`; this catalog includes owner state, journals and projections and is not a count of independent business Authorities. |
+| PostgreSQL Authority-schema tables | 276 in `EXPECTED_AUTHORITY_TABLES`; this catalog includes owner state, journals and projections and is not a count of independent business Authorities. |
 
 ## Complete capability ledger
 

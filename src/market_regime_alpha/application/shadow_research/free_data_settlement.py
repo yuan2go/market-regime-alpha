@@ -44,6 +44,9 @@ from market_regime_alpha.application.continuous_research.postgres_daily_alpha im
     PostgresDailyAlphaOwnerResolver,
     PostgresDailyAlphaPredictionAuthority,
 )
+from market_regime_alpha.application.continuous_research.journal import (
+    RuntimeArtifactReference,
+)
 from market_regime_alpha.application.research_evaluation.targets import (
     engineering_multi_horizon_protocol,
 )
@@ -413,6 +416,7 @@ class FreeDataSettlementOperator:
         next_session_date: date,
         artifact_root: Path,
         decision_id: ArtifactId | None = None,
+        prediction_snapshot_reference: RuntimeArtifactReference | None = None,
     ) -> dict[str, Any]:
         session, decision = self._pending_decision(
             trading_date,
@@ -448,6 +452,17 @@ class FreeDataSettlementOperator:
                 ),
             ).get_for_tick(run_id=decision.run_id, tick_id=decision.tick_id)
         )
+        if prediction_snapshot is not None:
+            if (
+                prediction_snapshot.target_session_date != next_session_date
+                or prediction_snapshot.trading_date != trading_date
+                or (
+                    prediction_snapshot_reference is not None
+                    and prediction_snapshot.reference
+                    != prediction_snapshot_reference
+                )
+            ):
+                raise ValueError("settle-day Daily prediction target lineage drifted")
         if existing_factual is None:
             acquisition = self._acquisition.acquire(
                 symbols=symbols,

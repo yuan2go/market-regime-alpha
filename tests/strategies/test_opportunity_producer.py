@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from decimal import Decimal
 
 from market_regime_alpha.application.continuous_research.journal import (
@@ -56,6 +57,9 @@ def test_pre_strategy_risk_is_computed_from_exact_owner_facts() -> None:
             ),
         ),
         maximum_single_symbol_weight=Decimal("0.20"),
+        maximum_theme_weight=Decimal("0.50"),
+        theme_exposures=(("theme-test", Decimal("0.30")),),
+        theme_exposure_complete=True,
         minimum_liquidity=Decimal("0.50"),
         daily_loss_limit=None,
     )
@@ -75,3 +79,46 @@ def test_pre_strategy_risk_is_computed_from_exact_owner_facts() -> None:
         "000001.SZ",
         "000002.SZ",
     }
+
+
+def test_pre_strategy_risk_fails_closed_when_theme_or_market_facts_are_unknown() -> None:
+    candidates = _candidate_set()
+    baseline = PreStrategyRiskFacts(
+        account_scope="research-account",
+        account_state_reference=_reference("MANUAL_ACCOUNT_OBSERVATION", "account"),
+        reconciliation_reference=_reference("ACCOUNT_RECONCILIATION", "reconciliation"),
+        market_state_reference=_reference("DYNAMIC_STOCK_POOL", "pool"),
+        risk_limit_reference=_reference("DECISION_RISK_CONFIGURATION", "risk"),
+        decision_time=NOW,
+        available_at=NOW,
+        total_equity=Decimal("1000"),
+        available_cash=Decimal("500"),
+        positions=(),
+        market_facts=(
+            PreStrategyMarketFact("000001.SZ", True, None, None, None),
+            PreStrategyMarketFact("000002.SZ", True, Decimal("0.9"), False, False),
+        ),
+        maximum_single_symbol_weight=Decimal("0.20"),
+        maximum_theme_weight=Decimal("0.20"),
+        theme_exposures=(),
+        theme_exposure_complete=False,
+        minimum_liquidity=Decimal("0.50"),
+        daily_loss_limit=None,
+    )
+
+    state = build_pre_strategy_risk_state(candidates=candidates, facts=baseline)
+
+    assert state.decision_for("000001.SZ").reason_codes == (
+        "LIQUIDITY_EVIDENCE_UNAVAILABLE",
+        "ST_STATUS_EVIDENCE_UNAVAILABLE",
+        "SUSPENSION_STATUS_EVIDENCE_UNAVAILABLE",
+        "THEME_EXPOSURE_EVIDENCE_UNAVAILABLE",
+    )
+    assert "THEME_EXPOSURE_LIMIT" in build_pre_strategy_risk_state(
+        candidates=candidates,
+        facts=replace(
+            baseline,
+            theme_exposures=(("theme-test", Decimal("0.30")),),
+            theme_exposure_complete=True,
+        ),
+    ).decision_for("000002.SZ").reason_codes

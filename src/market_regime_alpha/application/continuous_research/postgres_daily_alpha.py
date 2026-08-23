@@ -33,6 +33,9 @@ from market_regime_alpha.application.research_validation.postgres_repository imp
     PostgresResearchValidationRepository,
 )
 from market_regime_alpha.core.identity import ArtifactId
+from market_regime_alpha.data.postgres_trading_calendar import (
+    PostgresPITTradingCalendarSnapshotRepository,
+)
 from market_regime_alpha.forecasting.conditional import ConditionalForecastResult
 from market_regime_alpha.forecasting.path import PathForecastArtifact
 from market_regime_alpha.persistence.postgres.connection import PostgresConnectionFactory
@@ -91,7 +94,58 @@ class PostgresDailyAlphaPredictionAuthority:
             payload=snapshot.identity_payload(),
             created_at=snapshot.available_at,
         )
+        self._record_target_session(snapshot)
         return self.get(snapshot.snapshot_id)
+
+    def _record_target_session(self, snapshot: DailyAlphaPredictionSnapshot) -> None:
+        if (
+            snapshot.target_session_date is None
+            or snapshot.target_calendar_reference is None
+        ):
+            return
+        target_session = snapshot.target_session_date
+        calendar_reference = snapshot.target_calendar_reference
+
+        def operation(connection: Any) -> None:
+            connection.execute(
+                """
+                INSERT INTO daily_alpha_prediction_target_session(
+                    snapshot_id, snapshot_hash, decision_session,
+                    target_session, trading_calendar_id,
+                    trading_calendar_hash, created_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (snapshot_id) DO NOTHING
+                """,
+                (
+                    str(snapshot.snapshot_id),
+                    snapshot.snapshot_hash,
+                    snapshot.trading_date,
+                    target_session,
+                    str(calendar_reference.artifact_id),
+                    calendar_reference.content_hash,
+                    snapshot.available_at,
+                ),
+            )
+            row = connection.execute(
+                """
+                SELECT snapshot_hash, decision_session, target_session,
+                       trading_calendar_id, trading_calendar_hash
+                FROM daily_alpha_prediction_target_session
+                WHERE snapshot_id = %s
+                """,
+                (str(snapshot.snapshot_id),),
+            ).fetchone()
+            expected = (
+                snapshot.snapshot_hash,
+                snapshot.trading_date,
+                target_session,
+                str(calendar_reference.artifact_id),
+                calendar_reference.content_hash,
+            )
+            if row is None or tuple(row) != expected:
+                raise ValueError("Daily Alpha target session identity conflict")
+
+        self._factory.run_transaction(operation)
 
     def get(self, snapshot_id: ArtifactId) -> DailyAlphaPredictionSnapshot:
         reference = self._reference(snapshot_id)
@@ -103,8 +157,38 @@ class PostgresDailyAlphaPredictionAuthority:
                 **payload,
             }
         )
+        self._verify_target_binding(snapshot)
         self._resolver.verify_snapshot_sources(snapshot)
         return snapshot
+
+    def _verify_target_binding(self, snapshot: DailyAlphaPredictionSnapshot) -> None:
+        with self._factory.connection(read_only=True) as connection:
+            rows = connection.execute(
+                """
+                SELECT snapshot_hash, decision_session, target_session,
+                       trading_calendar_id, trading_calendar_hash
+                FROM daily_alpha_prediction_target_session
+                WHERE snapshot_id = %s
+                """,
+                (str(snapshot.snapshot_id),),
+            ).fetchall()
+        if snapshot.target_calendar_reference is None:
+            if rows:
+                raise DailyAlphaSourceIntegrityError(
+                    "legacy Daily Alpha snapshot gained target lineage"
+                )
+            return
+        expected = (
+            snapshot.snapshot_hash,
+            snapshot.trading_date,
+            snapshot.target_session_date,
+            str(snapshot.target_calendar_reference.artifact_id),
+            snapshot.target_calendar_reference.content_hash,
+        )
+        if len(rows) != 1 or tuple(rows[0]) != expected:
+            raise DailyAlphaSourceIntegrityError(
+                "Daily Alpha target session projection drifted"
+            )
 
     def get_for_tick(
         self,
@@ -446,6 +530,7 @@ class PostgresDailyAlphaOwnerResolver:
         )
 
     def verify_snapshot_sources(self, snapshot: DailyAlphaPredictionSnapshot) -> None:
+        self._verify_target_session(snapshot)
         try:
             with self._factory.connection(read_only=True) as connection:
                 self._verify_run_tick(connection, snapshot)
@@ -458,6 +543,35 @@ class PostgresDailyAlphaOwnerResolver:
         except DailyAlphaSourceIntegrityError as exc:
             raise DailyAlphaRelationalSourceIntegrityError(str(exc)) from exc
         self._verify_symbol_sources(snapshot)
+
+    def _verify_target_session(self, snapshot: DailyAlphaPredictionSnapshot) -> None:
+        if (
+            snapshot.target_session_date is None
+            or snapshot.target_calendar_reference is None
+        ):
+            return
+        reference = snapshot.target_calendar_reference
+        calendar = PostgresPITTradingCalendarSnapshotRepository(
+            self._factory,
+            apply_migrations=False,
+        ).get(reference.artifact_id)
+        if calendar.content_hash != reference.content_hash:
+            raise DailyAlphaRelationalSourceIntegrityError(
+                "Daily Alpha target Calendar hash drifted"
+            )
+        sessions = calendar.trading_dates
+        if snapshot.trading_date not in sessions:
+            raise DailyAlphaRelationalSourceIntegrityError(
+                "Daily Alpha decision session is absent from target Calendar"
+            )
+        index = sessions.index(snapshot.trading_date)
+        if (
+            index + 1 >= len(sessions)
+            or sessions[index + 1] != snapshot.target_session_date
+        ):
+            raise DailyAlphaRelationalSourceIntegrityError(
+                "Daily Alpha target is not the adjacent canonical session"
+            )
 
     def _verify_symbol_sources(self, snapshot: DailyAlphaPredictionSnapshot) -> None:
         aggregate_references = tuple(

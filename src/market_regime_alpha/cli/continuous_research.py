@@ -56,6 +56,9 @@ from market_regime_alpha.application.continuous_research.scheduler import (
     ContinuousResearchScheduleRunner,
     TradingDayAssessment,
 )
+from market_regime_alpha.application.decision_system.postgres_repository import (
+    PostgresDecisionSystemRepository,
+)
 from market_regime_alpha.application.continuous_research.runner import (
     ContinuousResearchTickRunner,
 )
@@ -318,6 +321,7 @@ from market_regime_alpha.strategies.postgres_repository import (
     PostgresMultiStrategyRepository,
 )
 from market_regime_alpha.strategies.postgres_pre_strategy_risk import (
+    PostgresHistoricalPreStrategyRiskFactResolver,
     PostgresPreStrategyRiskFactResolver,
 )
 from market_regime_alpha.universe.operational import OperationalUniverseArtifact
@@ -2024,6 +2028,10 @@ def _run_due(
         root_candidate_policy_reference=daily_alpha_evidence_root,
     )
     pre_strategy_risk_configuration = _pre_strategy_risk_configuration(args)
+    target_session_date, target_calendar_reference = _daily_alpha_target_session(
+        factory,
+        trading_day,
+    )
     children = CanonicalFreeDataResearchComposition(
         service=service,
         invocation_builder=lambda _: invocation(),
@@ -2073,6 +2081,8 @@ def _run_due(
                 artifact_root=args.output_root,
             )
         ),
+        target_session_date=target_session_date,
+        target_calendar_reference=target_calendar_reference,
         clock=runtime_clock,
     )
     tick_runner = ContinuousResearchTickRunner(
@@ -2565,6 +2575,10 @@ def _historical_runner(
             factory,
             root_candidate_policy_reference=historical_evidence_root,
         )
+        historical_risk = _historical_pre_strategy_risk_configuration(
+            factory,
+            command.configuration_references,
+        )
         archive_materializer = MultiStrategyHistoricalAdapter(
             delegate=base_materializer,
             component_repository=component_repository,
@@ -2580,6 +2594,9 @@ def _historical_runner(
             ),
             opportunity_resolver=PostgresHistoricalStrategyOpportunityResolver(
                 opportunity_authority,
+                risk_fact_resolver=historical_risk[0],
+                account_scope=historical_risk[1],
+                risk_limit_reference=historical_risk[2],
                 material_resolver=PostgresStrategyOpportunityMaterialResolver(
                     factory,
                     root_candidate_policy_reference=historical_evidence_root,
@@ -2598,6 +2615,93 @@ def _historical_runner(
                 apply_migrations=False,
             )
         ),
+    )
+
+
+def _historical_pre_strategy_risk_configuration(
+    factory: PostgresConnectionFactory,
+    configuration_references: tuple[ValidationArtifactReference, ...],
+) -> tuple[
+    PostgresHistoricalPreStrategyRiskFactResolver | None,
+    str | None,
+    RuntimeArtifactReference | None,
+]:
+    kinds = {
+        kind: tuple(
+            item for item in configuration_references if item.artifact_kind == kind
+        )
+        for kind in (
+            "MANUAL_ACCOUNT_OBSERVATION",
+            "ACCOUNT_RECONCILIATION",
+            "DECISION_RISK_CONFIGURATION",
+        )
+    }
+    if not any(kinds.values()):
+        return None, None, None
+    if any(len(items) != 1 for items in kinds.values()):
+        raise ValueError(
+            "Historical Strategy requires one exact Account, Reconciliation and Risk owner"
+        )
+    account_reference = _as_runtime_reference(
+        kinds["MANUAL_ACCOUNT_OBSERVATION"][0]
+    )
+    reconciliation_reference = _as_runtime_reference(
+        kinds["ACCOUNT_RECONCILIATION"][0]
+    )
+    risk_reference = _as_runtime_reference(
+        kinds["DECISION_RISK_CONFIGURATION"][0]
+    )
+    account = PostgresDecisionSystemRepository(factory).get_manual_observation(
+        account_reference.artifact_id
+    )
+    if account.content_hash != account_reference.content_hash:
+        raise ValueError("Historical Account owner hash drifted")
+    return (
+        PostgresHistoricalPreStrategyRiskFactResolver(
+            factory,
+            account_state_reference=account_reference,
+            reconciliation_reference=reconciliation_reference,
+        ),
+        account.account_id,
+        risk_reference,
+    )
+
+
+def _daily_alpha_target_session(
+    factory: PostgresConnectionFactory,
+    assessment: TradingDayAssessment,
+) -> tuple[date, RuntimeArtifactReference]:
+    calendar = PostgresPITTradingCalendarSnapshotRepository(
+        factory,
+        apply_migrations=False,
+    ).get(assessment.trading_calendar_id)
+    if (
+        calendar.content_hash != assessment.trading_calendar_hash
+        or calendar.artifact_id != assessment.trading_calendar_id
+        or assessment.trading_date not in calendar.trading_dates
+        or not assessment.is_trading_day
+    ):
+        raise ValueError("Daily Alpha Trading Calendar owner drifted")
+    index = calendar.trading_dates.index(assessment.trading_date)
+    if index + 1 >= len(calendar.trading_dates):
+        raise ValueError("Daily Alpha target session is absent from canonical Calendar")
+    return (
+        calendar.trading_dates[index + 1],
+        RuntimeArtifactReference(
+            "TRADING_CALENDAR",
+            calendar.artifact_id,
+            calendar.content_hash,
+        ),
+    )
+
+
+def _as_runtime_reference(
+    reference: ValidationArtifactReference,
+) -> RuntimeArtifactReference:
+    return RuntimeArtifactReference(
+        reference.artifact_kind,
+        reference.artifact_id,
+        reference.content_hash,
     )
 
 

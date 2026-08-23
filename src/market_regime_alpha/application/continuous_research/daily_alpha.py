@@ -37,7 +37,8 @@ from market_regime_alpha.universe.operational import OperationalUniverseArtifact
 
 DAILY_ALPHA_PREDICTION_KIND = "DAILY_ALPHA_PREDICTION_SNAPSHOT"
 DAILY_ALPHA_PREDICTION_SCHEMA_V1 = "daily-alpha-prediction-snapshot/v1"
-DAILY_ALPHA_PREDICTION_SCHEMA = "daily-alpha-prediction-snapshot/v2"
+DAILY_ALPHA_PREDICTION_SCHEMA_V2 = "daily-alpha-prediction-snapshot/v2"
+DAILY_ALPHA_PREDICTION_SCHEMA = "daily-alpha-prediction-snapshot/v3"
 EVIDENCE_DEPENDENCY_NOT_SATISFIED = "EVIDENCE_DEPENDENCY_NOT_SATISFIED"
 
 
@@ -926,6 +927,8 @@ class DailyAlphaPredictionSnapshot:
     strategy_diagnostic_reference: RuntimeArtifactReference
     evidence_gate: DailyAlphaEvidenceGate
     trading_date: date
+    target_session_date: date | None
+    target_calendar_reference: RuntimeArtifactReference | None
     decision_time: datetime
     available_at: datetime
     symbols: tuple[
@@ -937,6 +940,7 @@ class DailyAlphaPredictionSnapshot:
     def __post_init__(self) -> None:
         if self.schema_version not in {
             DAILY_ALPHA_PREDICTION_SCHEMA_V1,
+            DAILY_ALPHA_PREDICTION_SCHEMA_V2,
             DAILY_ALPHA_PREDICTION_SCHEMA,
         }:
             raise ValueError("unsupported Daily Alpha prediction schema")
@@ -945,6 +949,22 @@ class DailyAlphaPredictionSnapshot:
         require_utc_second("available_at", self.available_at)
         if self.available_at < self.decision_time:
             raise ValueError("Daily Alpha snapshot cannot predate DecisionTime")
+        if self.schema_version == DAILY_ALPHA_PREDICTION_SCHEMA:
+            if (
+                self.target_session_date is None
+                or self.target_session_date <= self.trading_date
+                or self.target_calendar_reference is None
+                or self.target_calendar_reference.reference_kind
+                != "TRADING_CALENDAR"
+            ):
+                raise ValueError(
+                    "Daily Alpha v3 requires one future canonical target session"
+                )
+        elif (
+            self.target_session_date is not None
+            or self.target_calendar_reference is not None
+        ):
+            raise ValueError("legacy Daily Alpha snapshots cannot gain target lineage")
         for label, references in (
             ("configuration", self.configuration_references),
             ("feature", self.feature_references),
@@ -1009,6 +1029,8 @@ class DailyAlphaPredictionSnapshot:
             )
         )
         normalized.setdefault("schema_version", DAILY_ALPHA_PREDICTION_SCHEMA)
+        normalized.setdefault("target_session_date", None)
+        normalized.setdefault("target_calendar_reference", None)
         digest = canonical_hash(_snapshot_payload(**normalized))
         return cls(
             snapshot_id=ArtifactId(f"daily-alpha-prediction:{digest[7:]}"),
@@ -1047,6 +1069,8 @@ class DailyAlphaPredictionSnapshot:
             strategy_diagnostic_reference=self.strategy_diagnostic_reference,
             evidence_gate=self.evidence_gate,
             trading_date=self.trading_date,
+            target_session_date=self.target_session_date,
+            target_calendar_reference=self.target_calendar_reference,
             decision_time=self.decision_time,
             available_at=self.available_at,
             symbols=self.symbols,
@@ -1065,6 +1089,7 @@ class DailyAlphaPredictionSnapshot:
     def from_canonical_dict(
         cls, payload: Mapping[str, Any]
     ) -> DailyAlphaPredictionSnapshot:
+        schema_version = str(payload.get("schema_version"))
         expected = {
             "snapshot_id",
             "snapshot_hash",
@@ -1089,6 +1114,8 @@ class DailyAlphaPredictionSnapshot:
             "symbols",
             "reason_codes",
         }
+        if schema_version == DAILY_ALPHA_PREDICTION_SCHEMA:
+            expected.update({"target_session_date", "target_calendar_reference"})
         _fields(payload, expected, "Daily Alpha prediction snapshot")
         return cls(
             snapshot_id=ArtifactId(str(payload["snapshot_id"])),
@@ -1128,13 +1155,25 @@ class DailyAlphaPredictionSnapshot:
                 _mapping(payload["evidence_gate"])
             ),
             trading_date=date.fromisoformat(str(payload["trading_date"])),
+            target_session_date=(
+                None
+                if schema_version != DAILY_ALPHA_PREDICTION_SCHEMA
+                else date.fromisoformat(str(payload["target_session_date"]))
+            ),
+            target_calendar_reference=(
+                None
+                if schema_version != DAILY_ALPHA_PREDICTION_SCHEMA
+                else RuntimeArtifactReference.from_canonical_dict(
+                    _mapping(payload["target_calendar_reference"])
+                )
+            ),
             decision_time=parse_utc_second("decision_time", payload["decision_time"]),
             available_at=parse_utc_second("available_at", payload["available_at"]),
             symbols=_symbol_projections(
                 payload["symbols"], schema_version=str(payload["schema_version"])
             ),
             reason_codes=_strings(payload["reason_codes"]),
-            schema_version=str(payload["schema_version"]),
+            schema_version=schema_version,
         )
 
 
@@ -1152,7 +1191,7 @@ class DailyAlphaPredictionAuthority(Protocol):
 
 
 def _snapshot_payload(**values: Any) -> dict[str, Any]:
-    return {
+    payload = {
         "schema_version": values["schema_version"],
         "run_reference": values["run_reference"].to_canonical_dict(),
         "tick_reference": values["tick_reference"].to_canonical_dict(),
@@ -1186,6 +1225,12 @@ def _snapshot_payload(**values: Any) -> dict[str, Any]:
         "symbols": [item.to_canonical_dict() for item in values["symbols"]],
         "reason_codes": list(values["reason_codes"]),
     }
+    if values["schema_version"] == DAILY_ALPHA_PREDICTION_SCHEMA:
+        payload["target_session_date"] = values["target_session_date"].isoformat()
+        payload["target_calendar_reference"] = values[
+            "target_calendar_reference"
+        ].to_canonical_dict()
+    return payload
 
 
 def _sort_runtime_references(
@@ -1240,7 +1285,10 @@ def _symbol_projections(
             DailyAlphaLegacySymbolProjection.from_canonical_dict(_mapping(item))
             for item in _sequence(value)
         )
-    if schema_version == DAILY_ALPHA_PREDICTION_SCHEMA:
+    if schema_version in {
+        DAILY_ALPHA_PREDICTION_SCHEMA_V2,
+        DAILY_ALPHA_PREDICTION_SCHEMA,
+    }:
         return tuple(
             DailyAlphaSymbolProjection.from_canonical_dict(_mapping(item))
             for item in _sequence(value)

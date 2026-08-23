@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 from typing import Mapping
 
 from market_regime_alpha.application.continuous_research.journal import (
@@ -10,6 +11,19 @@ from market_regime_alpha.application.continuous_research.journal import (
 )
 from market_regime_alpha.application.decision_system.postgres_repository import (
     PostgresDecisionSystemRepository,
+)
+from market_regime_alpha.application.historical_corpus.materialization_contracts import (
+    HistoricalComponentKind,
+    HistoricalSessionComponent,
+)
+from market_regime_alpha.application.historical_corpus.postgres_materialization import (
+    PostgresHistoricalMaterializationRepository,
+)
+from market_regime_alpha.application.decision_system.contracts import (
+    ReconciliationStatus,
+)
+from market_regime_alpha.application.research_validation.common import (
+    ValidationArtifactReference,
 )
 from market_regime_alpha.application.state_system.postgres_repository import (
     PostgresStateSystemRepository,
@@ -82,6 +96,20 @@ class PostgresPreStrategyRiskFactResolver:
         )
         if available_at > decision_time:
             raise ValueError("pre-Strategy owner fact is unavailable at DecisionTime")
+        positions = tuple(
+            PreStrategyPositionFact(
+                item.symbol,
+                item.total_quantity,
+                item.available_quantity,
+                item.observed_market_value,
+            )
+            for item in account.positions
+        )
+        theme_exposures, theme_complete = _theme_exposures(
+            candidates,
+            positions,
+            account.total_equity,
+        )
         return PreStrategyRiskFacts(
             account_scope=account_scope,
             account_state_reference=RuntimeArtifactReference(
@@ -100,15 +128,7 @@ class PostgresPreStrategyRiskFactResolver:
             available_at=available_at,
             total_equity=account.total_equity,
             available_cash=account.available_cash,
-            positions=tuple(
-                PreStrategyPositionFact(
-                    item.symbol,
-                    item.total_quantity,
-                    item.available_quantity,
-                    item.observed_market_value,
-                )
-                for item in account.positions
-            ),
+            positions=positions,
             market_facts=tuple(
                 PreStrategyMarketFact(
                     item.symbol,
@@ -122,6 +142,9 @@ class PostgresPreStrategyRiskFactResolver:
             maximum_single_symbol_weight=(
                 configuration.maximum_single_symbol_weight
             ),
+            maximum_theme_weight=configuration.maximum_theme_weight,
+            theme_exposures=theme_exposures,
+            theme_exposure_complete=theme_complete,
             minimum_liquidity=configuration.minimum_liquidity,
             daily_loss_limit=configuration.daily_loss_limit,
         )
@@ -189,4 +212,244 @@ class PostgresPreStrategyRiskFactResolver:
         return row[0]
 
 
-__all__ = ["PostgresPreStrategyRiskFactResolver"]
+class PostgresHistoricalPreStrategyRiskFactResolver:
+    """Reload exact Historical Pool and explicitly bound Account/Risk owners."""
+
+    def __init__(
+        self,
+        factory: PostgresConnectionFactory,
+        *,
+        account_state_reference: RuntimeArtifactReference,
+        reconciliation_reference: RuntimeArtifactReference,
+    ) -> None:
+        if account_state_reference.reference_kind != "MANUAL_ACCOUNT_OBSERVATION":
+            raise ValueError("Historical Risk requires one Account Observation owner")
+        if reconciliation_reference.reference_kind != "ACCOUNT_RECONCILIATION":
+            raise ValueError("Historical Risk requires one Reconciliation owner")
+        self._factory = factory
+        self._decision = PostgresDecisionSystemRepository(factory)
+        self._components = PostgresHistoricalMaterializationRepository(
+            factory,
+            apply_migrations=False,
+        )
+        self._account_reference = account_state_reference
+        self._reconciliation_reference = reconciliation_reference
+
+    def resolve(
+        self,
+        *,
+        candidates: CandidateSet,
+        account_scope: str,
+        decision_time: datetime,
+        risk_limit_reference: RuntimeArtifactReference,
+    ) -> PreStrategyRiskFacts:
+        if risk_limit_reference.reference_kind != "DECISION_RISK_CONFIGURATION":
+            raise ValueError("Historical Risk requires an exact configuration owner")
+        candidate_component = self._historical_candidate_component(candidates)
+        pool_references = tuple(
+            item
+            for item in candidate_component.source_references
+            if item.artifact_kind == "HISTORICAL_DYNAMIC_POOL"
+        )
+        if len(pool_references) != 1:
+            raise ValueError("Historical Dynamic Pool owner is missing or ambiguous")
+        pool = self._components.get(pool_references[0])
+        if pool.component_kind is not HistoricalComponentKind.DYNAMIC_POOL:
+            raise ValueError("Historical Dynamic Pool owner kind drifted")
+        account = self._decision.get_manual_observation(
+            self._account_reference.artifact_id
+        )
+        reconciliation = self._decision.get_reconciliation(
+            self._reconciliation_reference.artifact_id
+        )
+        if (
+            account.content_hash != self._account_reference.content_hash
+            or account.account_id != account_scope
+            or account.as_of_time != decision_time
+            or reconciliation.content_hash
+            != self._reconciliation_reference.content_hash
+            or reconciliation.account_id != account_scope
+            or reconciliation.manual_observation_id != account.observation_id
+            or reconciliation.as_of_time != account.as_of_time
+            or reconciliation.status is not ReconciliationStatus.RECONCILED
+            or not reconciliation.fill_ledger_complete
+        ):
+            raise ValueError("Historical Account/Reconciliation owner drifted")
+        configuration = self._decision.get_risk_configuration(
+            risk_limit_reference.artifact_id
+        )
+        if configuration.configuration_hash != risk_limit_reference.content_hash:
+            raise ValueError("Historical Risk configuration owner drifted")
+        configuration_created_at = self._risk_configuration_created_at(
+            risk_limit_reference
+        )
+        if max(
+            account.as_of_time,
+            reconciliation.as_of_time,
+            pool.source_max_event_time,
+            configuration_created_at,
+        ) > decision_time:
+            raise ValueError("Historical pre-Strategy owner is unavailable at DecisionTime")
+        positions = tuple(
+            PreStrategyPositionFact(
+                item.symbol,
+                item.total_quantity,
+                item.available_quantity,
+                item.observed_market_value,
+            )
+            for item in account.positions
+        )
+        theme_exposures, theme_complete = _theme_exposures(
+            candidates,
+            positions,
+            account.total_equity,
+        )
+        return PreStrategyRiskFacts(
+            account_scope=account_scope,
+            account_state_reference=self._account_reference,
+            reconciliation_reference=self._reconciliation_reference,
+            market_state_reference=_runtime_reference(pool.reference),
+            risk_limit_reference=risk_limit_reference,
+            decision_time=decision_time,
+            available_at=max(
+                account.as_of_time,
+                reconciliation.as_of_time,
+                pool.source_max_event_time,
+                configuration_created_at,
+            ),
+            total_equity=account.total_equity,
+            available_cash=account.available_cash,
+            positions=positions,
+            market_facts=_historical_market_facts(pool.payload),
+            maximum_single_symbol_weight=configuration.maximum_single_symbol_weight,
+            maximum_theme_weight=configuration.maximum_theme_weight,
+            theme_exposures=theme_exposures,
+            theme_exposure_complete=theme_complete,
+            minimum_liquidity=configuration.minimum_liquidity,
+            daily_loss_limit=configuration.daily_loss_limit,
+        )
+
+    def _historical_candidate_component(
+        self,
+        candidates: CandidateSet,
+    ) -> HistoricalSessionComponent:
+        with self._factory.connection(read_only=True) as connection:
+            rows = connection.execute(
+                """
+                SELECT component_id, component_hash
+                FROM historical_corpus_session_component
+                WHERE component_kind = 'CANDIDATE'
+                  AND payload_json->'payload'->'envelope'->>'artifact_id' = %s
+                  AND payload_json->'payload'->'envelope'->>'content_hash' = %s
+                """,
+                (
+                    str(candidates.envelope.artifact_id),
+                    candidates.envelope.content_hash,
+                ),
+            ).fetchall()
+        references = tuple(
+            ValidationArtifactReference(
+                "HISTORICAL_CANDIDATE",
+                ArtifactId(str(row[0])),
+                str(row[1]),
+            )
+            for row in rows
+        )
+        components = tuple(self._components.get(item) for item in references)
+        exact = tuple(
+            item
+            for item in components
+            if CandidateSet.from_canonical_dict(dict(item.payload)) == candidates
+        )
+        if len(exact) != 1:
+            raise ValueError("Historical Candidate owner is missing or ambiguous")
+        return exact[0]
+
+    def _risk_configuration_created_at(
+        self,
+        reference: RuntimeArtifactReference,
+    ) -> datetime:
+        with self._factory.connection(read_only=True) as connection:
+            row = connection.execute(
+                """
+                SELECT created_at FROM decision_risk_configuration
+                WHERE configuration_id = %s AND configuration_hash = %s
+                """,
+                (str(reference.artifact_id), reference.content_hash),
+            ).fetchone()
+        if row is None:
+            raise KeyError(str(reference.artifact_id))
+        return row[0]
+
+
+def _theme_exposures(
+    candidates: CandidateSet,
+    positions: tuple[PreStrategyPositionFact, ...],
+    total_equity: Decimal,
+) -> tuple[tuple[tuple[str, Decimal], ...], bool]:
+    if not positions:
+        return (), True
+    if total_equity <= 0:
+        return (), False
+    themes = {
+        item.symbol: item.primary_theme_id
+        for item in candidates.records
+        if item.primary_theme_id is not None
+    }
+    if any(item.symbol not in themes for item in positions):
+        return (), False
+    exposures: dict[str, Decimal] = {}
+    for position in positions:
+        theme_id = themes[position.symbol]
+        exposures[theme_id] = (
+            exposures.get(theme_id, Decimal("0"))
+            + position.observed_market_value / total_equity
+        )
+    return tuple(sorted(exposures.items())), True
+
+
+def _historical_market_facts(
+    payload: Mapping[str, object],
+) -> tuple[PreStrategyMarketFact, ...]:
+    raw = payload.get("universal_integrity")
+    if not isinstance(raw, list):
+        raise ValueError("Historical Dynamic Pool integrity facts are malformed")
+    facts: list[PreStrategyMarketFact] = []
+    for item in raw:
+        if not isinstance(item, Mapping) or not isinstance(item.get("checks"), Mapping):
+            raise ValueError("Historical Dynamic Pool integrity fact is malformed")
+        checks = item["checks"]
+        symbol = item.get("symbol")
+        eligible = item.get("eligible")
+        if not isinstance(symbol, str) or not isinstance(eligible, bool):
+            raise ValueError("Historical Dynamic Pool eligibility is malformed")
+        facts.append(
+            PreStrategyMarketFact(
+                symbol=symbol,
+                eligible=eligible,
+                liquidity=None,
+                is_st=None,
+                suspended=(
+                    not bool(checks.get("not_suspended"))
+                    if checks.get("suspension_known") is True
+                    else None
+                ),
+            )
+        )
+    return tuple(sorted(facts, key=lambda item: item.symbol))
+
+
+def _runtime_reference(
+    reference: ValidationArtifactReference,
+) -> RuntimeArtifactReference:
+    return RuntimeArtifactReference(
+        reference.artifact_kind,
+        reference.artifact_id,
+        reference.content_hash,
+    )
+
+
+__all__ = [
+    "PostgresHistoricalPreStrategyRiskFactResolver",
+    "PostgresPreStrategyRiskFactResolver",
+]

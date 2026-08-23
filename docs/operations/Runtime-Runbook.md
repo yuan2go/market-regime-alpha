@@ -147,8 +147,8 @@ uv run python scripts/apply_postgres_migrations.py
 uv run python scripts/apply_postgres_migrations.py --verify-only
 ```
 
-Expected head: migration 096, `daily_alpha_outcome_lineage`. Expected schema
-catalog: 275 tables. Migrations 052–067 add Formal Protocol bindings and
+Expected head: migration 097, `daily_alpha_target_session`. Expected schema
+catalog: 276 tables. Migrations 052–067 add Formal Protocol bindings and
 owner-resolution receipts, Provider×Contract×Fact decisions,
 Historical/Locked-OOS/Calibration owners, the durable underlying Locked-OOS
 and frozen-family consumption ledgers, owner-computed Forecast receipts,

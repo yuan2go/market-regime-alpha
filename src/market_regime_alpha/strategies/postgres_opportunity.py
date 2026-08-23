@@ -55,6 +55,7 @@ from market_regime_alpha.application.research_validation.common import (
 )
 from market_regime_alpha.research.state_system.pool import DynamicStockPoolVersion
 from market_regime_alpha.signals.decimal_model import CanonicalSignalSnapshotV3
+from market_regime_alpha.signals.contracts import SignalSnapshot
 from market_regime_alpha.signals.v3 import load_verified_signal_run_v3
 from market_regime_alpha.strategies.contracts import (
     StrategyOpportunityInput,
@@ -144,6 +145,11 @@ class PostgresStrategySourceAuthority:
             "FORECAST_SET",
             "PATH_FORECAST",
         }:
+            if reference.reference_kind in {"SIGNAL_SNAPSHOT", "PATH_FORECAST"}:
+                try:
+                    return self._historical_embedded_artifact(reference)
+                except KeyError:
+                    pass
             return self._controlled_artifact(reference)
         if reference.reference_kind in {
             "CONDITIONAL_FORECAST_RESULT",
@@ -295,7 +301,7 @@ class PostgresStrategySourceAuthority:
             if not isinstance(snapshots, list):
                 raise ValueError("Historical Signal owner payload is malformed")
             symbols = tuple(
-                CanonicalSignalSnapshotV3.from_canonical_dict(item).symbol
+                _typed_signal_snapshot(item).symbol
                 for item in snapshots
                 if isinstance(item, Mapping)
             )
@@ -321,6 +327,133 @@ class PostgresStrategySourceAuthority:
             tuple(_runtime_reference(item) for item in component.source_references),
             component.to_canonical_dict(),
         )
+
+    def _historical_embedded_artifact(
+        self,
+        reference: RuntimeArtifactReference,
+    ) -> ResolvedStrategySource:
+        component_kind = (
+            "SIGNAL"
+            if reference.reference_kind == "SIGNAL_SNAPSHOT"
+            else "FORECAST"
+        )
+        with self._factory.connection(read_only=True) as connection:
+            rows = connection.execute(
+                """
+                SELECT payload_json
+                FROM historical_corpus_session_component
+                WHERE component_kind = %s
+                ORDER BY component_id
+                """,
+                (component_kind,),
+            ).fetchall()
+        matches: dict[
+            tuple[datetime, tuple[RuntimeArtifactReference, ...], str],
+            ResolvedStrategySource,
+        ] = {}
+        for row in rows:
+            if not isinstance(row[0], Mapping):
+                raise ValueError("Historical embedded owner payload is malformed")
+            component = HistoricalSessionComponent.from_canonical_dict(row[0])
+            if reference.reference_kind == "SIGNAL_SNAPSHOT":
+                raw = component.payload.get("snapshots")
+                if not isinstance(raw, list):
+                    raise ValueError("Historical Signal snapshots are malformed")
+                snapshots = tuple(
+                    _typed_signal_snapshot(item)
+                    for item in raw
+                    if isinstance(item, Mapping)
+                )
+                if len(snapshots) != len(raw):
+                    raise ValueError("Historical Signal snapshots are malformed")
+                for snapshot in snapshots:
+                    actual = RuntimeArtifactReference(
+                        "SIGNAL_SNAPSHOT",
+                        snapshot.envelope.artifact_id,
+                        snapshot.envelope.content_hash,
+                    )
+                    if actual != reference:
+                        continue
+                    candidate_components = tuple(
+                        item
+                        for item in component.source_references
+                        if item.artifact_kind == "HISTORICAL_CANDIDATE"
+                    )
+                    if len(candidate_components) != 1:
+                        raise ValueError(
+                            "Historical Signal Candidate owner is missing or ambiguous"
+                        )
+                    candidate_owner = self._historical(
+                        _runtime_reference(candidate_components[0])
+                    )
+                    candidate = CandidateSet.from_canonical_dict(
+                        dict(candidate_owner.payload["payload"])
+                    )
+                    sources = (
+                        RuntimeArtifactReference(
+                            "CANDIDATE_SET",
+                            candidate.envelope.artifact_id,
+                            candidate.envelope.content_hash,
+                        ),
+                    )
+                    resolved = ResolvedStrategySource(
+                        reference,
+                        snapshot.envelope.decision_time.value,
+                        (snapshot.symbol,),
+                        sources,
+                        snapshot.to_canonical_dict(),
+                    )
+                    matches[
+                        (
+                            resolved.available_at,
+                            resolved.source_references,
+                            canonical_hash(dict(resolved.payload)),
+                        )
+                    ] = resolved
+            else:
+                raw = component.payload.get("forecasts")
+                if not isinstance(raw, list):
+                    raise ValueError("Historical Path Forecasts are malformed")
+                forecasts = tuple(
+                    PathForecastArtifact.from_canonical_dict(dict(item))
+                    for item in raw
+                    if isinstance(item, Mapping)
+                )
+                if len(forecasts) != len(raw):
+                    raise ValueError("Historical Path Forecasts are malformed")
+                for forecast in forecasts:
+                    actual = RuntimeArtifactReference(
+                        "PATH_FORECAST",
+                        forecast.artifact_id,
+                        forecast.forecast.envelope.content_hash,
+                    )
+                    if actual != reference:
+                        continue
+                    signal = forecast.signal_snapshot
+                    sources = (
+                        RuntimeArtifactReference(
+                            "SIGNAL_SNAPSHOT",
+                            signal.envelope.artifact_id,
+                            signal.envelope.content_hash,
+                        ),
+                    )
+                    resolved = ResolvedStrategySource(
+                        reference,
+                        forecast.forecast.envelope.decision_time.value,
+                        (forecast.forecast.symbol,),
+                        sources,
+                        forecast.to_canonical_dict(),
+                    )
+                    matches[
+                        (
+                            resolved.available_at,
+                            resolved.source_references,
+                            canonical_hash(dict(resolved.payload)),
+                        )
+                    ] = resolved
+        if len(matches) != 1:
+            raise KeyError(str(reference.artifact_id))
+        return next(iter(matches.values()))
 
     def _strategy_version(
         self,
@@ -959,6 +1092,14 @@ def _opportunity_sources(
             opportunity.model_reference,
         )
     )
+
+
+def _typed_signal_snapshot(
+    payload: Mapping[str, Any],
+) -> SignalSnapshot | CanonicalSignalSnapshotV3:
+    if payload.get("schema_version") == "canonical-signal-snapshot-v3":
+        return CanonicalSignalSnapshotV3.from_canonical_dict(payload)
+    return SignalSnapshot.from_canonical_dict(dict(payload))
 
 
 def _insert_bindings(

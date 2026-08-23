@@ -28,6 +28,13 @@ from market_regime_alpha.data.pit_artifact_authority import (
     PITArtifactAuthorityUnavailableError,
 )
 from market_regime_alpha.data.postgres_pit_authority import PostgresPITAuthority
+from market_regime_alpha.data.postgres_trading_calendar import (
+    PostgresPITTradingCalendarSnapshotRepository,
+)
+from market_regime_alpha.data.trading_calendar import TradingCalendarArtifact
+from market_regime_alpha.application.continuous_research.journal import (
+    RuntimeArtifactReference,
+)
 from market_regime_alpha.evidence.canonical import canonical_hash
 
 
@@ -146,6 +153,27 @@ class MutableClock:
 
     def __call__(self) -> datetime:
         return self.value
+
+
+def record_calendar_owner(
+    factory,
+    *,
+    calendar: TradingCalendarArtifact,
+    clock: datetime,
+    idempotency_key: str,
+) -> RuntimeArtifactReference:
+    pit_authority(factory, clock=MutableClock(clock)).resolve_artifact(
+        PITArtifactReference(
+            "TRADING_CALENDAR", calendar.artifact_id, calendar.content_hash
+        ),
+        actor="postgres-calendar-fixture",
+        reason="bind exact fixture Trading Calendar",
+        idempotency_key=idempotency_key,
+    )
+    PostgresPITTradingCalendarSnapshotRepository(factory).record(calendar)
+    return RuntimeArtifactReference(
+        "TRADING_CALENDAR", calendar.artifact_id, calendar.content_hash
+    )
 
 
 def ref(kind: str, name: str, item_hash: str = HASH_A) -> PITArtifactReference:

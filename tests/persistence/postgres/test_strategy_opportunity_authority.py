@@ -155,6 +155,9 @@ def test_strategy_opportunity_is_pg_owned_idempotent_and_owner_resolved(
             ),
         ),
         maximum_single_symbol_weight=Decimal("0.20"),
+        maximum_theme_weight=Decimal("0.20"),
+        theme_exposures=(),
+        theme_exposure_complete=True,
         minimum_liquidity=Decimal("0.50"),
         daily_loss_limit=None,
     )

@@ -19,7 +19,7 @@ remain authoritative.
 | Historical Phase II audit HEAD | `091324c7e28a2b6a3b89f894d18afc7380486d13` |
 | Current implementation checkpoint | `879849b6b899944dd51961fee1e719f661c96833` |
 | Source workspace | existing branch with protected `.idea/modules.xml` modification; untouched |
-| Packaged migration head | `096_daily_alpha_outcome_lineage` |
+| Packaged migration head | `097_daily_alpha_target_session` |
 | Python / uv | Python 3.12.13 / uv 0.11.7 |
 | PostgreSQL | PostgreSQL 16.14; sole persistent business Authority |
 | Runtime | `CONTINUOUS_RESEARCH` sole all-day Runtime; Historical Research remains bounded |

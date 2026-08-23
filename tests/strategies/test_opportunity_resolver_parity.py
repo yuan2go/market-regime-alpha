@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from decimal import Decimal
+from typing import Any
+
+import pytest
 
 from market_regime_alpha.application.continuous_research.multi_strategy import (
     PostgresContinuousStrategyOpportunityResolver,
@@ -16,11 +19,18 @@ from market_regime_alpha.application.continuous_research.journal import (
     RuntimeArtifactReference,
 )
 from market_regime_alpha.core.identity import ArtifactId
+from market_regime_alpha.application.research_validation.common import (
+    ValidationArtifactReference,
+)
 from market_regime_alpha.evidence.canonical import canonical_hash
 from market_regime_alpha.strategies.opportunity import (
     PreStrategyMarketFact,
     PreStrategyRiskFacts,
     StrategyOpportunityMaterial,
+)
+from market_regime_alpha.strategies.postgres_opportunity_material import (
+    PostgresConditionalForecastOwnerResolver,
+    PostgresStrategyOpportunityMaterialResolver,
 )
 from market_regime_alpha.strategies.contracts import (
     StrategyRegistry,
@@ -135,6 +145,9 @@ def test_continuous_and_historical_use_the_same_risk_producer_semantics() -> Non
             for symbol in ("000001.SZ", "000002.SZ")
         ),
         maximum_single_symbol_weight=Decimal("0.20"),
+        maximum_theme_weight=Decimal("0.20"),
+        theme_exposures=(),
+        theme_exposure_complete=True,
         minimum_liquidity=Decimal("0.50"),
         daily_loss_limit=None,
     )
@@ -200,6 +213,9 @@ def test_continuous_resolver_records_materialized_opportunity_before_reload() ->
             ),
         ),
         maximum_single_symbol_weight=Decimal("0.20"),
+        maximum_theme_weight=Decimal("0.20"),
+        theme_exposures=(),
+        theme_exposure_complete=True,
         minimum_liquidity=Decimal("0.50"),
         daily_loss_limit=None,
     )
@@ -236,3 +252,76 @@ def test_continuous_resolver_records_materialized_opportunity_before_reload() ->
 
     assert len(authority.risk_states) == 1
     assert len(authority.opportunities) == 1
+
+
+def test_conditional_owner_query_binds_exact_context_reference() -> None:
+    captured: dict[str, Any] = {}
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def execute(self, query: str, parameters: tuple[str, ...]):
+            captured["query"] = query
+            captured["parameters"] = parameters
+            return self
+
+        def fetchall(self):
+            return []
+
+    class Factory:
+        def connection(self, *, read_only: bool = False):
+            assert read_only
+            return Connection()
+
+    resolver: Any = object.__new__(PostgresConditionalForecastOwnerResolver)
+    resolver._factory = Factory()
+    resolver._evidence = object()
+    path = ValidationArtifactReference(
+        "PATH_FORECAST", ArtifactId("path"), "sha256:" + "1" * 64
+    )
+    experiment = ValidationArtifactReference(
+        "RESEARCH_EXPERIMENT_DEFINITION",
+        ArtifactId("experiment"),
+        "sha256:" + "2" * 64,
+    )
+    context = ValidationArtifactReference(
+        "HISTORICAL_CONTEXT_CONDITIONAL_EVIDENCE",
+        ArtifactId("context"),
+        "sha256:" + "3" * 64,
+    )
+
+    with pytest.raises(ValueError, match="missing or ambiguous"):
+        resolver.resolve(
+            path_reference=path,
+            experiment_reference=experiment,
+            context_evidence_reference=context,
+        )
+
+    assert "context.artifact_id" in captured["query"]
+    assert captured["parameters"][-3:] == (
+        context.artifact_kind,
+        str(context.artifact_id),
+        context.content_hash,
+    )
+
+
+def test_material_resolver_never_selects_an_implicit_evidence_root() -> None:
+    resolver: Any = object.__new__(PostgresStrategyOpportunityMaterialResolver)
+    resolver._root = None
+    contract = _conditional_contract()
+    registry = StrategyRegistry.create(
+        contracts=(contract,),
+        versions=(StrategyVersion.activate(contract),),
+    )
+
+    with pytest.raises(ValueError, match="explicit Candidate Evidence root"):
+        resolver.resolve(
+            candidates=_candidate_set(),
+            decision_time=NOW,
+            registry=registry,
+            path_forecasts=(),
+        )

@@ -2,11 +2,14 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import UTC, date, datetime
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
 from market_regime_alpha.application.continuous_research.daily_alpha import (
     DAILY_ALPHA_PREDICTION_SCHEMA_V1,
+    DAILY_ALPHA_PREDICTION_SCHEMA_V2,
     DailyAlphaActivationStatus,
     DailyAlphaConditionalForecastProjection,
     DailyAlphaEvidenceGate,
@@ -18,6 +21,7 @@ from market_regime_alpha.application.continuous_research.daily_alpha import (
     assess_daily_alpha_evidence_gate,
 )
 from market_regime_alpha.application.continuous_research.postgres_daily_alpha import (
+    PostgresDailyAlphaConditionalForecastResolver,
     _single_context_evidence_reference,
 )
 from market_regime_alpha.application.continuous_research.journal import (
@@ -246,6 +250,8 @@ def _snapshot(gate: DailyAlphaEvidenceGate) -> DailyAlphaPredictionSnapshot:
         ),
         evidence_gate=gate,
         trading_date=date(2026, 8, 21),
+        target_session_date=date(2026, 8, 24),
+        target_calendar_reference=_reference("TRADING_CALENDAR", "calendar"),
         decision_time=NOW,
         available_at=NOW,
         symbols=(_symbol(),),
@@ -316,6 +322,38 @@ def test_daily_snapshot_keeps_v1_identity_replay_compatible() -> None:
 
     assert restored == old
     assert restored.snapshot_hash == old.snapshot_hash
+
+
+def test_daily_snapshot_keeps_v2_identity_replay_compatible() -> None:
+    current = _snapshot(DailyAlphaEvidenceGate.inactive())
+    legacy = DailyAlphaPredictionSnapshot.create(
+        run_reference=current.run_reference,
+        tick_reference=current.tick_reference,
+        code_reference=current.code_reference,
+        configuration_references=current.configuration_references,
+        provider_evidence_reference=current.provider_evidence_reference,
+        dataset_reference=current.dataset_reference,
+        universe_reference=current.universe_reference,
+        feature_references=current.feature_references,
+        context_references=current.context_references,
+        candidate_reference=current.candidate_reference,
+        signal_reference=current.signal_reference,
+        forecast_references=current.forecast_references,
+        strategy_diagnostic_reference=current.strategy_diagnostic_reference,
+        evidence_gate=current.evidence_gate,
+        trading_date=current.trading_date,
+        decision_time=current.decision_time,
+        available_at=current.available_at,
+        symbols=current.symbols,
+        reason_codes=("DAILY_PREDICTION_FROZEN_BEFORE_OUTCOME",),
+        schema_version=DAILY_ALPHA_PREDICTION_SCHEMA_V2,
+    )
+
+    assert legacy.target_session_date is None
+    assert legacy.target_calendar_reference is None
+    assert DailyAlphaPredictionSnapshot.from_canonical_dict(
+        legacy.to_canonical_dict()
+    ) == legacy
 
 
 def test_inactive_gate_cannot_silently_look_successful() -> None:
@@ -474,6 +512,53 @@ def test_conditional_projection_requires_one_exact_admitted_context_owner() -> N
                 ]
             }
         )
+
+
+def test_postgres_conditional_projection_passes_exact_admitted_context_owner() -> None:
+    context = _validation_reference(
+        "HISTORICAL_CONTEXT_CONDITIONAL_EVIDENCE", "admitted-context"
+    )
+    root = _validation_reference(
+        "HISTORICAL_CANDIDATE_POLICY_EVIDENCE", "candidate-root"
+    )
+    experiment = _validation_reference(
+        "RESEARCH_EXPERIMENT_DEFINITION", "conditional-experiment"
+    )
+    candidate = SimpleNamespace(
+        reference=root,
+        evidence_kind=HistoricalEvidenceKind.CANDIDATE_POLICY,
+        experiment_reference=experiment,
+        payload={
+            "daily_alpha_admission": {
+                "schema_version": "daily-alpha-evidence-admission/v2",
+                "context_evidence_references": [context.to_canonical_dict()],
+            }
+        },
+    )
+    captured: dict[str, object] = {}
+
+    class Conditional:
+        def resolve(self, **kwargs):
+            captured.update(kwargs)
+            raise ValueError("stop after exact lookup")
+
+    resolver: Any = object.__new__(PostgresDailyAlphaConditionalForecastResolver)
+    resolver._root = root
+    resolver._evidence = SimpleNamespace(get=lambda _artifact_id: candidate)
+    resolver._conditional = Conditional()
+    resolver._sources = object()
+    path = SimpleNamespace(
+        artifact_id=ArtifactId("path-forecast"),
+        forecast=SimpleNamespace(
+            envelope=SimpleNamespace(content_hash="sha256:" + "7" * 64)
+        ),
+    )
+
+    projection = resolver.resolve(path_forecast=path, decision_time=NOW)
+
+    assert projection.availability_status == "NOT_AVAILABLE"
+    assert captured["experiment_reference"] == experiment
+    assert captured["context_evidence_reference"] == context
 
 
 def test_gate_uses_only_the_explicit_root_and_rejects_superseded_chain() -> None:

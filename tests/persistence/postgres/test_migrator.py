@@ -148,7 +148,7 @@ def test_packaged_migrations_are_contiguous_and_checksummed() -> None:
     migrations = load_packaged_migrations()
 
     assert tuple(item.version for item in migrations) == tuple(range(1, 97))
-    assert len({item.name for item in migrations}) == 96
+    assert len({item.name for item in migrations}) == 97
     assert all(item.checksum == sha256(item.sql.encode("utf-8")).hexdigest() for item in migrations)
 
 
@@ -333,7 +333,7 @@ def test_apply_all_is_idempotent(
     assert second == ()
     with postgres_factory.connection(read_only=True) as connection:
         rows = connection.execute("SELECT version, name, checksum FROM schema_migrations ORDER BY version").fetchall()
-    assert len(rows) == 96
+    assert len(rows) == 97
 
 
 def test_verify_current_is_read_only_and_requires_complete_head(

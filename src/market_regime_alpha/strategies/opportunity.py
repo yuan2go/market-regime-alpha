@@ -49,13 +49,15 @@ class PreStrategyPositionFact:
 class PreStrategyMarketFact:
     symbol: str
     eligible: bool
-    liquidity: Decimal
-    is_st: bool
-    suspended: bool
+    liquidity: Decimal | None
+    is_st: bool | None
+    suspended: bool | None
 
     def __post_init__(self) -> None:
         require_text("symbol", self.symbol)
-        if not Decimal("0") <= self.liquidity <= Decimal("1"):
+        if self.liquidity is not None and not (
+            Decimal("0") <= self.liquidity <= Decimal("1")
+        ):
             raise ValueError("pre-Strategy liquidity must be within [0, 1]")
 
 
@@ -75,6 +77,9 @@ class PreStrategyRiskFacts:
     positions: tuple[PreStrategyPositionFact, ...]
     market_facts: tuple[PreStrategyMarketFact, ...]
     maximum_single_symbol_weight: Decimal
+    maximum_theme_weight: Decimal
+    theme_exposures: tuple[tuple[str, Decimal], ...]
+    theme_exposure_complete: bool
     minimum_liquidity: Decimal
     daily_loss_limit: Decimal | None
 
@@ -88,7 +93,10 @@ class PreStrategyRiskFacts:
             raise ValueError("pre-Strategy Account owner kind is invalid")
         if self.reconciliation_reference.reference_kind != "ACCOUNT_RECONCILIATION":
             raise ValueError("pre-Strategy reconciliation owner kind is invalid")
-        if self.market_state_reference.reference_kind != "DYNAMIC_STOCK_POOL":
+        if self.market_state_reference.reference_kind not in {
+            "DYNAMIC_STOCK_POOL",
+            "HISTORICAL_DYNAMIC_POOL",
+        }:
             raise ValueError("pre-Strategy market owner kind is invalid")
         if self.risk_limit_reference.reference_kind != "DECISION_RISK_CONFIGURATION":
             raise ValueError("pre-Strategy Risk configuration owner kind is invalid")
@@ -96,6 +104,8 @@ class PreStrategyRiskFacts:
             raise ValueError("pre-Strategy Account amounts cannot be negative")
         if not Decimal("0") < self.maximum_single_symbol_weight <= Decimal("1"):
             raise ValueError("pre-Strategy symbol limit must be within (0, 1]")
+        if not Decimal("0") < self.maximum_theme_weight <= Decimal("1"):
+            raise ValueError("pre-Strategy theme limit must be within (0, 1]")
         if not Decimal("0") <= self.minimum_liquidity <= Decimal("1"):
             raise ValueError("pre-Strategy liquidity limit must be within [0, 1]")
         position_symbols = tuple(item.symbol for item in self.positions)
@@ -104,6 +114,12 @@ class PreStrategyRiskFacts:
             raise ValueError("pre-Strategy positions must be unique and sorted")
         if market_symbols != tuple(sorted(set(market_symbols))):
             raise ValueError("pre-Strategy market facts must be unique and sorted")
+        theme_ids = tuple(item[0] for item in self.theme_exposures)
+        if theme_ids != tuple(sorted(set(theme_ids))) or any(
+            not Decimal("0") <= exposure <= Decimal("1")
+            for _theme_id, exposure in self.theme_exposures
+        ):
+            raise ValueError("pre-Strategy theme exposures must be valid and sorted")
 
 
 @dataclass(frozen=True, slots=True)
@@ -217,6 +233,7 @@ def build_pre_strategy_risk_state(
     )
     positions = {item.symbol: item for item in facts.positions}
     market = {item.symbol: item for item in facts.market_facts}
+    theme_exposures = dict(facts.theme_exposures)
     decisions: list[PreStrategySymbolRiskDecision] = []
     for candidate in candidates.records:
         if candidate.selection_status not in {
@@ -245,12 +262,27 @@ def build_pre_strategy_risk_state(
         else:
             if not market_fact.eligible:
                 reasons.add("SYMBOL_NOT_ELIGIBLE")
-            if market_fact.liquidity < facts.minimum_liquidity:
+            if market_fact.liquidity is None:
+                reasons.add("LIQUIDITY_EVIDENCE_UNAVAILABLE")
+            elif market_fact.liquidity < facts.minimum_liquidity:
                 reasons.add("LIQUIDITY_LIMIT")
-            if market_fact.is_st:
+            if market_fact.is_st is None:
+                reasons.add("ST_STATUS_EVIDENCE_UNAVAILABLE")
+            elif market_fact.is_st:
                 reasons.add("ST_TRADING_RESTRICTION")
-            if market_fact.suspended:
+            if market_fact.suspended is None:
+                reasons.add("SUSPENSION_STATUS_EVIDENCE_UNAVAILABLE")
+            elif market_fact.suspended:
                 reasons.add("SUSPENSION_TRADING_RESTRICTION")
+        if not facts.theme_exposure_complete:
+            reasons.add("THEME_EXPOSURE_EVIDENCE_UNAVAILABLE")
+        elif candidate.primary_theme_id is None:
+            reasons.add("THEME_CLASSIFICATION_UNAVAILABLE")
+        elif (
+            theme_exposures.get(candidate.primary_theme_id, Decimal("0"))
+            > facts.maximum_theme_weight
+        ):
+            reasons.add("THEME_EXPOSURE_LIMIT")
         if facts.daily_loss_limit is not None:
             reasons.add("DAILY_LOSS_EVIDENCE_UNAVAILABLE")
         decisions.append(

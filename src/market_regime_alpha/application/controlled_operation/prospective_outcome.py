@@ -439,6 +439,7 @@ def build_prospective_shadow_outcome(
             or prediction_snapshot.candidate_reference != decision.candidate_set
             or prediction_snapshot.signal_reference != decision.signal
             or decision.forecast not in prediction_snapshot.forecast_references
+            or prediction_snapshot.target_session_date != next_session_date
         ):
             raise ValueError(
                 "Outcome Daily prediction lineage differs from frozen Decision"

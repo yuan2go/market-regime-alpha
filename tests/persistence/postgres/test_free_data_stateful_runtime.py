@@ -245,6 +245,7 @@ from tests.persistence.postgres.test_free_data_continuous_runtime import (
     _qualify_runtime_models,
     _tick,
 )
+from tests.persistence.postgres.pit_fixture import record_calendar_owner
 
 
 @pytest.mark.parametrize(
@@ -327,6 +328,15 @@ def test_real_stateful_positive_path_reaches_research_candidate(
             ),
         )
     calendar = _calendar()
+    calendar_reference = record_calendar_owner(
+        postgres_factory,
+        calendar=calendar,
+        clock=DECISION.value.astimezone(UTC),
+        idempotency_key=f"stateful-daily-alpha-calendar-{authority_mode.value}",
+    )
+    target_session = calendar.trading_dates[
+        calendar.trading_dates.index(DECISION.value.date()) + 1
+    ]
     configuration = _outcome_configuration(calendar, watch_only=watch_only)
     configuration_path = publish_controlled_runtime_configuration(
         root=tmp_path / "runtime-configurations",
@@ -494,6 +504,8 @@ def test_real_stateful_positive_path_reaches_research_candidate(
             daily_alpha_evidence_gate=PostgresDailyAlphaEvidenceGateResolver(
                 postgres_factory
             ).assess,
+            target_session_date=target_session,
+            target_calendar_reference=calendar_reference,
             clock=lambda: runtime_now[0],
         )
         return ContinuousResearchTickRunner(
@@ -1213,7 +1225,7 @@ def test_real_stateful_positive_path_reaches_research_candidate(
                 "theme_rotation_state",
             ),
         )
-        assert recovery.migration_head == 96
+        assert recovery.migration_head == 97
         assert recovery.continuous_replay_hashes == (
             (
                 str(command.run_id),

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
@@ -316,6 +316,8 @@ class CanonicalFreeDataResearchComposition:
         daily_alpha_conditional_forecast_resolver: (
             DailyAlphaConditionalForecastResolver | None
         ) = None,
+        target_session_date: date | None = None,
+        target_calendar_reference: RuntimeArtifactReference | None = None,
         strategy_opportunity_resolver: ContinuousStrategyOpportunityResolver | None = None,
         strategy_opportunity_authority: StrategyOpportunityAuthority | None = None,
         clock: Clock,
@@ -332,10 +334,22 @@ class CanonicalFreeDataResearchComposition:
         self._daily_alpha_conditional_forecast_resolver = (
             daily_alpha_conditional_forecast_resolver
         )
+        self._target_session_date = target_session_date
+        self._target_calendar_reference = target_calendar_reference
         if (daily_alpha_authority is None) != (daily_alpha_evidence_gate is None):
             raise ValueError(
                 "Daily Alpha projection requires both authority and Evidence gate"
             )
+        if daily_alpha_authority is not None and (
+            target_session_date is None or target_calendar_reference is None
+        ):
+            raise ValueError(
+                "Daily Alpha projection requires one canonical target session"
+            )
+        if daily_alpha_authority is None and (
+            target_session_date is not None or target_calendar_reference is not None
+        ):
+            raise ValueError("Daily Alpha target session requires its authority")
         self._summary_runtime = ResearchSummaryRuntimeService(summary_repository)
         self._strategy_runtime = MultiStrategyContinuousAdapter(
             repository=strategy_repository,
@@ -484,6 +498,8 @@ class CanonicalFreeDataResearchComposition:
                 conditional_forecast_resolver=(
                     self._daily_alpha_conditional_forecast_resolver
                 ),
+                target_session_date=self._target_session_date,
+                target_calendar_reference=self._target_calendar_reference,
                 available_at=self._clock(),
             ),
             universe=preparation.controlled_preparation.universe,
@@ -512,6 +528,8 @@ def _build_daily_alpha_snapshot(
     strategy_result: ChildExecutionResult,
     evidence_gate: DailyAlphaEvidenceGate,
     conditional_forecast_resolver: DailyAlphaConditionalForecastResolver | None,
+    target_session_date: date | None,
+    target_calendar_reference: RuntimeArtifactReference | None,
     available_at: datetime,
 ) -> DailyAlphaPredictionSnapshot:
     if request.run_hash is None or request.tick_hash is None:
@@ -737,6 +755,8 @@ def _build_daily_alpha_snapshot(
         ),
         evidence_gate=evidence_gate,
         trading_date=request.trading_date,
+        target_session_date=target_session_date,
+        target_calendar_reference=target_calendar_reference,
         decision_time=request.as_of_time,
         available_at=available_at,
         symbols=tuple(symbol_rows),

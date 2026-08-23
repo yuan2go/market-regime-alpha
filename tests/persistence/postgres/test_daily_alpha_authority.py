@@ -15,9 +15,23 @@ from market_regime_alpha.application.continuous_research.postgres_daily_alpha im
 from market_regime_alpha.application.continuous_research.journal import (
     RuntimeArtifactReference,
 )
-from market_regime_alpha.core.identity import ArtifactId
+from market_regime_alpha.core.identity import ArtifactId, DatasetId
+from market_regime_alpha.data.pit_authority import PITArtifactReference
+from market_regime_alpha.data.postgres_pit_authority import PostgresPITAuthority
+from market_regime_alpha.data.postgres_trading_calendar import (
+    PostgresPITTradingCalendarSnapshotRepository,
+)
+from market_regime_alpha.data.trading_calendar import (
+    TradingSession,
+    build_trading_calendar_artifact,
+)
 from market_regime_alpha.evidence.canonical import canonical_hash
 from market_regime_alpha.persistence.postgres.connection import PostgresConnectionFactory
+from tests.persistence.postgres.pit_fixture import (
+    FixturePITArtifactAuthorityResolver,
+    MutableClock,
+    fixture_provider_policy,
+)
 
 
 NOW = datetime(2026, 8, 21, 6, 55, tzinfo=UTC)
@@ -40,7 +54,9 @@ class RecordingResolver:
         self.calls += 1
 
 
-def _snapshot() -> DailyAlphaPredictionSnapshot:
+def _snapshot(
+    calendar_reference: RuntimeArtifactReference,
+) -> DailyAlphaPredictionSnapshot:
     return DailyAlphaPredictionSnapshot.create(
         run_reference=_reference("CONTINUOUS_RESEARCH_RUN", "run"),
         tick_reference=_reference("CONTINUOUS_RUNTIME_TICK", "tick"),
@@ -61,6 +77,8 @@ def _snapshot() -> DailyAlphaPredictionSnapshot:
         ),
         evidence_gate=DailyAlphaEvidenceGate.inactive(),
         trading_date=date(2026, 8, 21),
+        target_session_date=date(2026, 8, 24),
+        target_calendar_reference=calendar_reference,
         decision_time=NOW,
         available_at=NOW,
         symbols=(),
@@ -76,7 +94,8 @@ def test_daily_alpha_owner_is_idempotent_append_only_and_reload_verified(
         postgres_factory,
         resolver=resolver,
     )
-    expected = _snapshot()
+    expected = _snapshot(_seed_calendar(postgres_factory))
+    assert expected.target_calendar_reference is not None
 
     assert authority.put(expected) == expected
     assert authority.put(expected) == expected
@@ -93,3 +112,60 @@ def test_daily_alpha_owner_is_idempotent_append_only_and_reload_verified(
                 """,
                 (str(expected.snapshot_id),),
             )
+        connection.rollback()
+        row = connection.execute(
+            """
+            SELECT decision_session, target_session,
+                   trading_calendar_id, trading_calendar_hash
+            FROM daily_alpha_prediction_target_session
+            WHERE snapshot_id = %s AND snapshot_hash = %s
+            """,
+            (str(expected.snapshot_id), expected.snapshot_hash),
+        ).fetchone()
+        assert row == (
+            expected.trading_date,
+            expected.target_session_date,
+            str(expected.target_calendar_reference.artifact_id),
+            expected.target_calendar_reference.content_hash,
+        )
+        with pytest.raises(psycopg.errors.RaiseException):
+            connection.execute(
+                """
+                UPDATE daily_alpha_prediction_target_session
+                SET target_session = target_session + 1
+                WHERE snapshot_id = %s
+                """,
+                (str(expected.snapshot_id),),
+            )
+
+
+def _seed_calendar(
+    factory: PostgresConnectionFactory,
+) -> RuntimeArtifactReference:
+    calendar = build_trading_calendar_artifact(
+        source_dataset_id=DatasetId("daily-alpha-target-calendar-dataset"),
+        market="CN_A_SHARE",
+        calendar_version="daily-alpha-target-calendar-v1",
+        timezone_name="Asia/Shanghai",
+        sessions=(
+            TradingSession(date(2026, 8, 21), datetime(2026, 8, 21, 7, tzinfo=UTC)),
+            TradingSession(date(2026, 8, 24), datetime(2026, 8, 24, 7, tzinfo=UTC)),
+        ),
+    )
+    PostgresPITAuthority(
+        factory,
+        clock=MutableClock(NOW),
+        artifact_resolver=FixturePITArtifactAuthorityResolver(),
+        provider_policy=fixture_provider_policy(),
+    ).resolve_artifact(
+        PITArtifactReference(
+            "TRADING_CALENDAR", calendar.artifact_id, calendar.content_hash
+        ),
+        actor="daily-alpha-target-test",
+        reason="bind exact target calendar",
+        idempotency_key="daily-alpha-target-calendar-owner",
+    )
+    PostgresPITTradingCalendarSnapshotRepository(factory).record(calendar)
+    return RuntimeArtifactReference(
+        "TRADING_CALENDAR", calendar.artifact_id, calendar.content_hash
+    )
