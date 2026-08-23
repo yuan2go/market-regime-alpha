@@ -687,11 +687,52 @@ class HistoricalPhaseIIResearchService:
     def persist_context_evaluation(
         self,
         write: PhaseIIEvidenceWrite,
+        definition: ContextDefinition,
         evaluation: ContextConditionalEvaluation,
     ) -> HistoricalResearchEvidence:
         if write.evidence_kind is not HistoricalEvidenceKind.CONTEXT_CONDITIONAL:
             raise ValueError("Context Evaluation Evidence kind mismatch")
-        write = _with_required_sources(write, evaluation.definition_reference)
+        if evaluation.definition_reference != definition.reference:
+            raise ValueError("Context Evaluation Definition owner drifted")
+        external = self.load_evidence(
+            definition.alpha_evidence.reference.artifact_id,
+            expected_kind=HistoricalEvidenceKind.EXTERNAL_VALIDATION,
+        )
+        if (
+            external != definition.alpha_evidence
+            or external.reference != definition.alpha_evidence.reference
+            or external.experiment_reference != write.experiment_reference
+        ):
+            raise ValueError("Context External Evidence owner drifted")
+        if self._components is None:
+            raise ValueError("Context persistence requires Research Panel owner reload")
+        panels = tuple(
+            self._components.get(reference)
+            for reference in definition.research_panel_references
+        )
+        if tuple(item.reference for item in panels) != definition.research_panel_references:
+            raise ValueError("Context Research Panel owner set drifted")
+        authoritative_sources = (
+            definition.reference,
+            external.reference,
+            definition.target_reference,
+            *definition.research_panel_references,
+        )
+        if not set(write.source_references).issubset(set(authoritative_sources)):
+            raise ValueError("Context caller supplied a non-authoritative source")
+        write = replace(
+            write,
+            source_references=tuple(
+                sorted(
+                    set(authoritative_sources),
+                    key=lambda item: (
+                        item.artifact_kind,
+                        str(item.artifact_id),
+                        item.content_hash,
+                    ),
+                )
+            ),
+        )
         return self._persist(
             replace(
                 write,

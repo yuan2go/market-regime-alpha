@@ -432,6 +432,8 @@ def test_context_operator_preserves_session_context_role_and_owner_lineage(
     assert service.definition_kwargs["research_panel_references"] == (panel,)
     assert service.persist_args is not None
     write = service.persist_args[0]
+    assert service.persist_args[1] is service.definition
+    assert service.persist_args[2] is service.evaluation
     assert write.experiment_reference == service.external.experiment_reference
     assert {item for item in write.source_references} == {
         panel,

@@ -289,7 +289,7 @@ class HistoricalPhaseIIResearchOperator:
             experiment_reference=external.experiment_reference,
             source_references=(external.reference, *panels),
         )
-        return self.service.persist_context_evaluation(write, evaluation)
+        return self.service.persist_context_evaluation(write, definition, evaluation)
 
     def _candidate(
         self,

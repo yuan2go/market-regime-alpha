@@ -17,6 +17,9 @@ from market_regime_alpha.application.continuous_research.daily_alpha import (
     EVIDENCE_DEPENDENCY_NOT_SATISFIED,
     assess_daily_alpha_evidence_gate,
 )
+from market_regime_alpha.application.continuous_research.postgres_daily_alpha import (
+    _single_context_evidence_reference,
+)
 from market_regime_alpha.application.continuous_research.journal import (
     RuntimeArtifactReference,
 )
@@ -450,6 +453,27 @@ def test_gate_rejects_legacy_admission_without_explicit_context_lineage() -> Non
 
     assert gate.status is DailyAlphaActivationStatus.VALIDATED_CHALLENGER_INACTIVE
     assert "EVIDENCE_LINEAGE_INCOMPLETE" in gate.reason_codes
+
+
+def test_conditional_projection_requires_one_exact_admitted_context_owner() -> None:
+    context = _validation_reference(
+        "HISTORICAL_CONTEXT_CONDITIONAL_EVIDENCE", "admitted-context"
+    )
+
+    assert _single_context_evidence_reference(
+        {"context_evidence_references": [context.to_canonical_dict()]}
+    ) == context
+    with pytest.raises(ValueError, match="one admitted Context"):
+        _single_context_evidence_reference({"context_evidence_references": []})
+    with pytest.raises(ValueError, match="one admitted Context"):
+        _single_context_evidence_reference(
+            {
+                "context_evidence_references": [
+                    context.to_canonical_dict(),
+                    context.to_canonical_dict(),
+                ]
+            }
+        )
 
 
 def test_gate_uses_only_the_explicit_root_and_rejects_superseded_chain() -> None:

@@ -289,6 +289,7 @@ class PostgresDailyAlphaConditionalForecastResolver:
                 != "daily-alpha-evidence-admission/v2"
             ):
                 raise ValueError("Conditional Forecast Candidate lineage is invalid")
+            context_reference = _single_context_evidence_reference(admission)
             path_reference = ValidationArtifactReference(
                 "PATH_FORECAST",
                 path_forecast.artifact_id,
@@ -297,6 +298,7 @@ class PostgresDailyAlphaConditionalForecastResolver:
             _evidence, result = self._conditional.resolve(
                 path_reference=path_reference,
                 experiment_reference=candidate.experiment_reference,
+                context_evidence_reference=context_reference,
             )
             reference = RuntimeArtifactReference(
                 result.reference.artifact_kind,
@@ -372,6 +374,24 @@ class PostgresDailyAlphaConditionalForecastResolver:
             return DailyAlphaConditionalForecastProjection.not_available(
                 "CONDITIONAL_FORECAST_OWNER_MISSING_OR_AMBIGUOUS"
             )
+
+
+def _single_context_evidence_reference(
+    admission: Mapping[str, Any],
+) -> ValidationArtifactReference:
+    raw = admission.get("context_evidence_references")
+    if not isinstance(raw, list):
+        raise ValueError("Conditional Forecast Context lineage is malformed")
+    references = tuple(
+        ValidationArtifactReference.from_canonical_dict(item)
+        for item in raw
+        if isinstance(item, Mapping)
+    )
+    if len(references) != len(raw) or len(references) != 1:
+        raise ValueError("Conditional Forecast requires one admitted Context owner")
+    if references[0].artifact_kind != "HISTORICAL_CONTEXT_CONDITIONAL_EVIDENCE":
+        raise ValueError("Conditional Forecast Context owner kind is invalid")
+    return references[0]
 
 
 class DailyAlphaSourceIntegrityError(ValueError):
