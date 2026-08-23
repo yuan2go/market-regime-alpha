@@ -42,7 +42,7 @@ A downstream artifact may retain or lower the minimum input eligibility. It may 
 
 ## PostgreSQL-only persistence
 
-- Packaged migrations are contiguous from 001 through 096 and checksummed.
+- Packaged migrations are contiguous from 001 through 097 and checksummed.
 - `schema_migrations` and the schema catalog are verified at startup/tests.
 - Runtime database bindings exclude credentials and fail closed on a different database/schema.
 - Journals use leases, fencing, CAS and append-only events.
@@ -106,14 +106,19 @@ Candidate/Signal/Forecast/Context/Model/Strategy facts. Continuous and
 Historical adapters share one typed material/Risk/Opportunity producer
 semantics. Continuous derives those facts from the exact account,
 Position/exposure, liquidity, restriction, quantity and Risk-limit owners when
-configured; Historical rejects Opportunity material unless equivalent
-DecisionTime account facts are supplied. Both paths typed-reload before
+configured; Historical produces the same owner facts only when exact
+DecisionTime Account/Reconciliation/Risk references are supplied and otherwise
+fails closed. Unknown liquidity, restriction or theme facts remain explicit
+blocking reasons. Both paths typed-reload before
 Strategy. Migration
 095 admits an immutable Daily Alpha snapshot as a terminal child of the
 existing Continuous Runtime. Migration 096 adds an append-only Controlled
 package locator and exact Prediction Snapshot/Strategy diagnostic foreign-key
 bindings to Prospective Outcome V2. Legacy Outcome V1 remains immutable and
-replayable. None grants empirical or Production authority.
+replayable. Migration 097 adds the append-only snapshot→adjacent-target-session
+projection with an exact typed Trading Calendar owner reference; settlement no
+longer infers ownership from `trading_date`. None grants empirical or Production
+authority.
 
 Daily Alpha Evidence admission is rooted at one explicitly configured immutable
 Candidate Policy Evidence reference. Admission schema v2 reloads Discovery,

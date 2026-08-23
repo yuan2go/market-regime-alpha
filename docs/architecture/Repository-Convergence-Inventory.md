@@ -12,7 +12,7 @@ roots and PostgreSQL writers. A directory name is not treated as Authority.
 Historical files remain immutable even when their producing code is retired.
 
 The disposition column reflects the consumer graph at implementation checkpoint
-`879849b`. Zero-consumer producers have been physically deleted. Every retained
+`f8c97ed`. Zero-consumer producers have been physically deleted. Every retained
 compatibility layer below names a current replay/migration consumer and a
 deletion condition.
 

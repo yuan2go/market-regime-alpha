@@ -472,7 +472,7 @@ Every entry separates ownership from storage and consumption. A missing writer o
 - **Canonical Writer:** PostgreSQL target/outcome/attestation repositories.
 - **Reader:** target, targeted outcome, settlement and attestation Readers.
 - **Repository:** target/outcome repositories used by `application/research_evaluation` and Shadow Research.
-- **PostgreSQL tables:** `outcome_target_protocol`, `outcome_target_definition`, `targeted_shadow_outcome`, `targeted_shadow_outcome_label`, `prospective_outcome_settlement`, `prospective_evidence_attestation` and `controlled_operation_package_locator`.
+- **PostgreSQL tables:** `outcome_target_protocol`, `outcome_target_definition`, `targeted_shadow_outcome`, `targeted_shadow_outcome_label`, `prospective_outcome_settlement`, `prospective_evidence_attestation`, `controlled_operation_package_locator` and the append-only `daily_alpha_prediction_target_session` lineage projection.
 - **Artifact / Receipt:** Target Protocol/Definition, immutable Daily Alpha
   Prediction Snapshot, Targeted Shadow Outcome, Prospective Settlement and
   Attestation.
@@ -481,7 +481,8 @@ Every entry separates ownership from storage and consumption. A missing writer o
 - **Downstream consumer:** Evaluation Dataset, Panel, calibration/evaluation harnesses and Strategy Shadow qualification assessment.
 - **Replay mechanism:** immutable target/outcome/settlement/attestation reload;
   Outcome V2 verifies exact Prediction Snapshot ID/hash, run/tick,
-  Candidate/Signal/Forecast and Strategy diagnostic. Missing or ambiguous
+  Candidate/Signal/Forecast, Strategy diagnostic, adjacent target session and
+  typed Trading Calendar owner. Missing or ambiguous
   prediction scope fails closed and settlement is idempotent.
 - **Evidence ceiling:** factual outcome mechanics exist; current attestation remains `prospective_proven=false`.
 - **Legacy replacement:** legacy diagnostic outcome files are research inputs only, not this factual owner.

@@ -214,8 +214,10 @@ Migration 093 persists the frozen `TEMPORAL_VALIDATION_V1` window. Migration
 Opportunity facts. Migration 095 admits the immutable Daily Alpha snapshot.
 Migration 096 adds the Controlled package locator and exact Prediction
 Snapshot/Strategy diagnostic lineage for Prospective Outcome V2. Runtime and
-Repository construction verify this schema and fail closed; only this explicit
-operator surface may apply migrations.
+Repository construction verify this schema and fail closed. Migration 097 binds
+each new Daily Alpha snapshot to the adjacent target session under the exact
+typed Trading Calendar owner. Only this explicit operator surface may apply
+migrations.
 Migration 046 remains unchanged. Missing/unreachable PostgreSQL is a blocked
 operation; there is no alternate persistent backend.
 

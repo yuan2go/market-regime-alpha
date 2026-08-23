@@ -2,7 +2,7 @@
 
 > **Status:** CURRENT_RESEARCH_PROGRAM
 > **Authority:** Subordinate implementation and research protocol
-> **Implementation Checkpoint:** `agent/engineering-closure-architecture-convergence-01@879849b6b899944dd51961fee1e719f661c96833`, based on `main@b617844d338523d7dfea72642cfce8213121786e`
+> **Implementation Checkpoint:** `agent/engineering-closure-architecture-convergence-01@f8c97ed62ac60f6e0da5dcc1319b5586a2493d41`, based on `main@b617844d338523d7dfea72642cfce8213121786e`
 > **Evidence Ceiling:** `ENGINEERING_ONLY / EXPLORATORY / PIT_INCOMPLETE / NOT_PROVEN`
 > **Last Updated:** 2026-08-24
 
@@ -17,7 +17,7 @@ remain authoritative.
 |---|---|
 | Branch / worktree | isolated `agent/engineering-closure-architecture-convergence-01`; original worktree preserved |
 | Historical Phase II audit HEAD | `091324c7e28a2b6a3b89f894d18afc7380486d13` |
-| Current implementation checkpoint | `879849b6b899944dd51961fee1e719f661c96833` |
+| Current implementation checkpoint | `f8c97ed62ac60f6e0da5dcc1319b5586a2493d41` |
 | Source workspace | existing branch with protected `.idea/modules.xml` modification; untouched |
 | Packaged migration head | `097_daily_alpha_target_session` |
 | Python / uv | Python 3.12.13 / uv 0.11.7 |
@@ -49,7 +49,8 @@ Migrations 091–092 extend the existing immutable Historical Evidence and Strat
 owners and constrain Forecast semantics without rewriting V1. Migration 093
 persists the frozen Temporal window; 094 adds pre-Strategy Risk/Opportunity
 owners; 095 admits the Daily Alpha snapshot; 096 binds its exact immutable
-prediction and Strategy diagnostic to T+1 Outcome. Phase II Evidence V2 carries typed
+prediction and Strategy diagnostic to T+1 Outcome; 097 binds the snapshot to
+its adjacent target session and exact typed Trading Calendar owner. Phase II Evidence V2 carries typed
 `FACT`, `MODEL_ASSUMPTION`, `RESEARCH_RESULT`, `INFERENCE`, `LIMITATION` and
 `INVALIDATION_CONDITION` statements while retaining positive, negative,
 inconclusive and not-estimable classifications.

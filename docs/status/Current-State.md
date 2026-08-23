@@ -2,7 +2,7 @@
 
 > **Status:** CURRENT_STATUS  
 > **Authority:** Current implementation/evidence summary  
-> **Implementation Checkpoint:** `agent/engineering-closure-architecture-convergence-01@879849b6b899944dd51961fee1e719f661c96833`, based on `main@b617844d338523d7dfea72642cfce8213121786e`
+> **Implementation Checkpoint:** `agent/engineering-closure-architecture-convergence-01@f8c97ed62ac60f6e0da5dcc1319b5586a2493d41`, based on `main@b617844d338523d7dfea72642cfce8213121786e`; the final documentation commit is its documentation-only successor
 > **Strongest Research Evidence Revision:** `0d1a5a8` (WP-ALPHA-RESEARCH-01)
 > **Last Updated:** 2026-08-24
 > **Code Evidence:** `src/market_regime_alpha`, `src/market_regime_alpha/persistence/postgres/migrations/*.sql`, `tests`
@@ -15,7 +15,7 @@ target architecture.
 
 - **Architecture:** Python 3.12+ PostgreSQL-centered modular monolith.
 - **Persistent business authority:** PostgreSQL 16; no canonical file/SQLite/memory fallback.
-- **Packaged migration head:** 096 (`daily_alpha_outcome_lineage`).
+- **Packaged migration head:** 097 (`daily_alpha_target_session`).
 - **Canonical all-day runtime:** one Continuous Research control plane.
 - **Installed operator scripts:** six — `continuous-research`, `state-system`, `decision-system`, `model-governance`, `pit-authority`, `research-shadow`.
 - **Execution boundary:** human-operated/manual; no broker writer or automatic live-trading authority.
@@ -27,11 +27,13 @@ target architecture.
   Daily Alpha, Continuous FreeData, automatic settlement, migration and
   architecture tests. Focused application/unit/owner groups pass. PostgreSQL
   stateful Continuous and Daily Alpha suites pass. The migration suite applied
-  001–096 and passed all 24 test bodies; its final host-schema teardown reported
+  001–096 and passed all 24 test bodies; targeted migration/owner tests then
+  applied 001–097 and passed. The earlier full migration run's final
+  host-schema teardown reported
   one PostgreSQL `max_locks_per_transaction` environment error. This is
   `TARGETED_TESTED`, not campaign or Alpha evidence.
 - **WP-01 branch validation:** docs/platform/full pytest, ruff, mypy and build pass on a fresh PostgreSQL test database; a first full run against a heavily reused test database hit one `pg_catalog` autovacuum DDL lock timeout, while the exact node and the clean-database full suite both pass. This is retained as an environment failure, not hidden.
-- **Current CI:** GitHub has no run for `b617844` or the unpushed closure
+- **Current CI:** GitHub has no run for `b617844` or the local closure
   checkpoint. Local targeted validation is not CI proof.
 - **Alpha/Daily engineering closure:** the branch binds one explicit Candidate
   admission root to Discovery→Correctness→External→supported Context→Candidate
@@ -41,7 +43,7 @@ target architecture.
   retains settlement inside the one Continuous control plane.
 - **Database binding:** Runtime requires an explicit PostgreSQL URL and principal; a database name or stale schema does not establish current Authority. The replayable Golden V2 Evidence schema is at migration 090.
 - **Local implementation baseline:** Python 3.12.13, uv 0.11.7 and PostgreSQL
-  16.14. The packaged migration head is 096. A Golden V2 evidence database is
+  16.14. The packaged migration head is 097. A Golden V2 evidence database is
   at migration 090; the default local application database is only at 055 and
   is not evidence for the current schema.
 
@@ -55,11 +57,13 @@ target architecture.
   superseded, negative, inconclusive, mismatched or hash-drifted owners return
   `VALIDATED_CHALLENGER_INACTIVE`; no latest/best-row selection remains.
 - Continuous and Historical Opportunity adapters share the same material,
-  Risk and Opportunity producer semantics. The Continuous composition root
-  supplies owner-derived account/Risk configuration when explicitly configured;
-  Historical fails closed when equivalent DecisionTime account facts are absent.
+  Risk and Opportunity producer semantics. Each composition root supplies
+  explicitly bound owner-derived Account/Reconciliation/Risk configuration;
+  Historical resolves its exact Candidate and Dynamic Pool owners and fails
+  closed when those bindings or required liquidity/restriction facts are absent.
   The producer derives `PRE_STRATEGY_RISK_STATE` from typed account, Position/exposure,
-  liquidity, restriction, available-quantity and configured Risk-limit facts,
+  liquidity, restriction, available-quantity, symbol/theme exposure and
+  configured Risk-limit facts,
   records `STRATEGY_OPPORTUNITY`, then typed-reloads both before Strategy.
   `COMPLETE_ACCOUNT_RISK_DECISION` remains forbidden as a Strategy input.
 - Runtime/Repository construction no longer applies migrations. Explicit
@@ -70,11 +74,13 @@ target architecture.
   state from its owner. Conditional output is shown only after exact owner
   reload; an exact insufficient owner retains only its baseline/calibration
   lineage and limitations, while absence is `NOT_AVAILABLE`, never fabrication.
-- Migration 096 freezes exact aggregate Candidate/Signal/Forecast and Strategy
-  diagnostic references plus snapshot ID/hash/run/tick. T+1 settlement resolves
-  that unique immutable prediction, enforces DecisionTime before Outcome
-  availability, appends Outcome without rewriting prediction, and fails closed
-  on missing/ambiguous scope. CLI delegates orchestration to
+- Migrations 096–097 freeze exact aggregate Candidate/Signal/Forecast and
+  Strategy diagnostic references, snapshot ID/hash/run/tick, and the adjacent
+  target session under an exact typed Trading Calendar owner. T+1 settlement
+  resolves that unique immutable prediction rather than guessing from a date,
+  enforces DecisionTime before Outcome availability, appends Outcome without
+  rewriting prediction, and fails closed on missing/ambiguous scope. CLI
+  delegates orchestration to
   `ContinuousOutcomeSettlementService`.
 - `continuous-research historical-phase-ii` is the single resumable operator
   adapter for Correctness, External, Context and Candidate Phase-II operations.
@@ -120,8 +126,11 @@ Candidate / Signal / Forecast / Context
 ```
 
 The producer semantics and typed material resolver are wired in Continuous and
-Historical adapters; PostgreSQL typed reload remains mandatory, and Historical
-execution fails closed unless exact DecisionTime account/Risk facts are supplied.
+Historical adapters; PostgreSQL typed reload remains mandatory. Historical
+execution produces the same owner facts when exact DecisionTime
+Account/Reconciliation/Risk references are supplied and otherwise fails closed;
+unknown historical liquidity, ST, suspension or theme facts never receive a
+synthetic safe value.
 Conditional Strategy
 still remains `RESEARCH/SHADOW`, inactive and fail-closed because no real
 correctness/external Candidate admission or qualified conditional Forecast
@@ -210,7 +219,9 @@ Migration 094 adds immutable pre-Strategy Risk and Opportunity owner tables;
 migration 095 admits the Daily Alpha snapshot into the existing Continuous
 child and Research Validation authorities. Migration 096 adds the exact
 Prediction Snapshot→Outcome locator and lineage bindings without creating a
-second Outcome engine. These migrations grant no Alpha, External, OOS,
+second Outcome engine. Migration 097 binds every new snapshot to its adjacent
+target session and exact typed Calendar owner in an append-only projection.
+These migrations grant no Alpha, External, OOS,
 prospective, Strategy or Production qualification.
 
 ### Manual execution and Position
