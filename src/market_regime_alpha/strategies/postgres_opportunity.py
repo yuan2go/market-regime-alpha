@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Mapping, Protocol
 
 from psycopg.types.json import Jsonb
@@ -12,14 +13,45 @@ from market_regime_alpha.application.continuous_research.journal import (
     RuntimeArtifactReference,
 )
 from market_regime_alpha.application.historical_corpus.materialization_contracts import (
+    HistoricalComponentKind,
     HistoricalSessionComponent,
 )
+from market_regime_alpha.application.historical_corpus.context_conditional import (
+    ContextConditionalEvaluation,
+)
+from market_regime_alpha.application.historical_corpus.evidence import (
+    HistoricalEvidenceKind,
+)
+from market_regime_alpha.application.historical_corpus.postgres_evidence import (
+    PostgresHistoricalEvidenceRepository,
+)
+from market_regime_alpha.application.controlled_operation.evidence_package import (
+    load_controlled_operation_package,
+)
+from market_regime_alpha.application.controlled_operation.longitudinal_index import (
+    resolve_artifact_root_locator,
+)
+from market_regime_alpha.application.decision_system.postgres_repository import (
+    PostgresDecisionSystemRepository,
+)
+from market_regime_alpha.application.state_system.postgres_repository import (
+    PostgresStateSystemRepository,
+)
 from market_regime_alpha.core.identity import ArtifactId
+from market_regime_alpha.forecasting.artifact import load_verified_path_forecast
+from market_regime_alpha.forecasting.conditional import ConditionalForecastResult
+from market_regime_alpha.forecasting.path import PathForecastArtifact
 from market_regime_alpha.persistence.postgres.connection import (
     PostgresConnectionFactory,
 )
 from market_regime_alpha.persistence.postgres.migrator import PostgresMigrator
 from market_regime_alpha.research.candidate_discovery.contracts import CandidateSet
+from market_regime_alpha.application.research_validation.research_model import (
+    ResearchModelArtifact,
+)
+from market_regime_alpha.research.state_system.pool import DynamicStockPoolVersion
+from market_regime_alpha.signals.decimal_model import CanonicalSignalSnapshotV3
+from market_regime_alpha.signals.v3 import load_verified_signal_run_v3
 from market_regime_alpha.strategies.contracts import (
     StrategyOpportunityInput,
     StrategyRegistry,
@@ -53,6 +85,20 @@ class StrategySourceAuthority(Protocol):
 
 
 class StrategyOpportunityResolverAuthority(Protocol):
+    def record_risk_state(
+        self,
+        state: PreStrategyRiskState,
+        *,
+        created_at: datetime,
+    ) -> PreStrategyRiskState: ...
+
+    def record_opportunity(
+        self,
+        opportunity: StrategyOpportunityInput,
+        *,
+        created_at: datetime,
+    ) -> StrategyOpportunityInput: ...
+
     def resolve(
         self,
         *,
@@ -65,8 +111,16 @@ class StrategyOpportunityResolverAuthority(Protocol):
 class PostgresStrategySourceAuthority:
     """Resolve supported canonical source owners directly from PostgreSQL."""
 
-    def __init__(self, factory: PostgresConnectionFactory) -> None:
+    def __init__(
+        self,
+        factory: PostgresConnectionFactory,
+        *,
+        artifact_root: Path | None = None,
+    ) -> None:
         self._factory = factory
+        self._artifact_root = (
+            None if artifact_root is None else artifact_root.resolve()
+        )
 
     def reload(
         self,
@@ -80,7 +134,86 @@ class PostgresStrategySourceAuthority:
             return self._strategy_version(reference)
         if reference.reference_kind == "RESEARCH_MODEL_ARTIFACT":
             return self._research_model(reference)
-        return self._research_validation(reference)
+        if reference.reference_kind in {"SIGNAL_SNAPSHOT", "PATH_FORECAST"}:
+            return self._controlled_artifact(reference)
+        if reference.reference_kind in {
+            "CONDITIONAL_FORECAST_RESULT",
+            "CONTEXT_CONDITIONAL_EVALUATION",
+        }:
+            return self._phase_ii_source(reference)
+        if reference.reference_kind in {
+            "MANUAL_ACCOUNT_OBSERVATION",
+            "ACCOUNT_RECONCILIATION",
+            "DECISION_RISK_CONFIGURATION",
+            "DYNAMIC_STOCK_POOL",
+        }:
+            return self._pre_strategy_risk_source(reference)
+        raise ValueError(
+            f"unsupported typed Strategy source owner: {reference.reference_kind}"
+        )
+
+    def _pre_strategy_risk_source(
+        self,
+        reference: RuntimeArtifactReference,
+    ) -> ResolvedStrategySource:
+        decision = PostgresDecisionSystemRepository(self._factory)
+        if reference.reference_kind == "MANUAL_ACCOUNT_OBSERVATION":
+            account = decision.get_manual_observation(reference.artifact_id)
+            if account.content_hash != reference.content_hash:
+                raise ValueError("Manual Account Observation owner hash drifted")
+            return ResolvedStrategySource(
+                reference,
+                account.as_of_time,
+                tuple(item.symbol for item in account.positions),
+                (),
+                account.to_canonical_dict(),
+            )
+        if reference.reference_kind == "ACCOUNT_RECONCILIATION":
+            reconciliation = decision.get_reconciliation(reference.artifact_id)
+            if reconciliation.content_hash != reference.content_hash:
+                raise ValueError("Account Reconciliation owner hash drifted")
+            return ResolvedStrategySource(
+                reference,
+                reconciliation.as_of_time,
+                (),
+                (),
+                reconciliation.to_canonical_dict(),
+            )
+        if reference.reference_kind == "DECISION_RISK_CONFIGURATION":
+            configuration = decision.get_risk_configuration(reference.artifact_id)
+            if configuration.configuration_hash != reference.content_hash:
+                raise ValueError("Decision Risk Configuration owner hash drifted")
+            with self._factory.connection(read_only=True) as connection:
+                row = connection.execute(
+                    """
+                    SELECT created_at FROM decision_risk_configuration
+                    WHERE configuration_id = %s AND configuration_hash = %s
+                    """,
+                    (str(reference.artifact_id), reference.content_hash),
+                ).fetchone()
+            if row is None:
+                raise KeyError(str(reference.artifact_id))
+            return ResolvedStrategySource(
+                reference,
+                row[0],
+                (),
+                (),
+                configuration.to_canonical_dict(),
+            )
+        payload = PostgresStateSystemRepository(
+            self._factory,
+            apply_migrations=False,
+        ).read_pool(reference.artifact_id)
+        pool = DynamicStockPoolVersion.from_canonical_dict(payload)
+        if pool.pool_hash != reference.content_hash:
+            raise ValueError("Dynamic Pool owner hash drifted")
+        return ResolvedStrategySource(
+            reference,
+            pool.available_at,
+            tuple(item.symbol for item in pool.members),
+            (),
+            pool.to_canonical_dict(),
+        )
 
     def _candidate(
         self,
@@ -144,10 +277,38 @@ class PostgresStrategySourceAuthority:
         actual = _runtime_reference(component.reference)
         if actual != reference:
             raise ValueError("Historical Strategy source owner drifted")
+        symbols: tuple[str, ...]
+        if component.component_kind is HistoricalComponentKind.CANDIDATE:
+            candidate = CandidateSet.from_canonical_dict(dict(component.payload))
+            symbols = tuple(item.symbol for item in candidate.records)
+        elif component.component_kind is HistoricalComponentKind.SIGNAL:
+            snapshots = component.payload.get("snapshots")
+            if not isinstance(snapshots, list):
+                raise ValueError("Historical Signal owner payload is malformed")
+            symbols = tuple(
+                CanonicalSignalSnapshotV3.from_canonical_dict(item).symbol
+                for item in snapshots
+                if isinstance(item, Mapping)
+            )
+            if len(symbols) != len(snapshots):
+                raise ValueError("Historical Signal owner payload is malformed")
+        elif component.component_kind is HistoricalComponentKind.FORECAST:
+            forecasts = component.payload.get("forecasts")
+            if not isinstance(forecasts, list):
+                raise ValueError("Historical Forecast owner payload is malformed")
+            symbols = tuple(
+                PathForecastArtifact.from_canonical_dict(dict(item)).forecast.symbol
+                for item in forecasts
+                if isinstance(item, Mapping)
+            )
+            if len(symbols) != len(forecasts):
+                raise ValueError("Historical Forecast owner payload is malformed")
+        else:
+            symbols = ()
         return ResolvedStrategySource(
             reference,
             row[1],
-            _payload_symbols(component.payload),
+            tuple(sorted(symbols)),
             tuple(_runtime_reference(item) for item in component.source_references),
             component.to_canonical_dict(),
         )
@@ -187,41 +348,198 @@ class PostgresStrategySourceAuthority:
             ).fetchone()
         if row is None or not isinstance(row[0], Mapping):
             raise KeyError(str(reference.artifact_id))
+        model = ResearchModelArtifact.from_canonical_dict(row[0])
+        if (
+            model.artifact_id != reference.artifact_id
+            or model.artifact_hash != reference.content_hash
+        ):
+            raise ValueError("Research Model owner drifted")
         return ResolvedStrategySource(
             reference,
-            row[1],
-            _payload_symbols(row[0]),
-            _payload_references(row[0]),
-            dict(row[0]),
+            model.trained_at,
+            (),
+            (_runtime_reference(model.request_reference),),
+            model.to_canonical_dict(),
         )
 
-    def _research_validation(
+    def _phase_ii_source(
         self,
         reference: RuntimeArtifactReference,
     ) -> ResolvedStrategySource:
         with self._factory.connection(read_only=True) as connection:
-            row = connection.execute(
+            key = (
+                "forecast"
+                if reference.reference_kind == "CONDITIONAL_FORECAST_RESULT"
+                else "evaluation"
+            )
+            id_key = (
+                "result_id"
+                if reference.reference_kind == "CONDITIONAL_FORECAST_RESULT"
+                else "evaluation_id"
+            )
+            hash_key = (
+                "result_hash"
+                if reference.reference_kind == "CONDITIONAL_FORECAST_RESULT"
+                else "evaluation_hash"
+            )
+            rows = connection.execute(
                 """
-                SELECT payload_json, created_at
-                FROM research_validation_artifact
-                WHERE artifact_kind = %s AND artifact_id = %s
-                  AND artifact_hash = %s
+                SELECT evidence_id FROM historical_research_evidence
+                WHERE payload_json->'payload'->%s->>%s = %s
+                  AND payload_json->'payload'->%s->>%s = %s
                 """,
                 (
-                    reference.reference_kind,
+                    key,
+                    id_key,
                     str(reference.artifact_id),
+                    key,
+                    hash_key,
                     reference.content_hash,
                 ),
-            ).fetchone()
-        if row is None or not isinstance(row[0], Mapping):
+            ).fetchall()
+        if len(rows) != 1:
             raise KeyError(str(reference.artifact_id))
+        evidence = PostgresHistoricalEvidenceRepository(
+            self._factory,
+            apply_migrations=False,
+        ).get(ArtifactId(str(rows[0][0])))
+        if reference.reference_kind == "CONDITIONAL_FORECAST_RESULT":
+            if evidence.evidence_kind is not HistoricalEvidenceKind.CONDITIONAL_PREDICTION:
+                raise ValueError("Conditional Forecast owner Evidence kind drifted")
+            payload = evidence.payload.get("forecast")
+            if not isinstance(payload, Mapping):
+                raise ValueError("Conditional Forecast owner payload is malformed")
+            forecast = ConditionalForecastResult.from_canonical_dict(payload)
+            if _runtime_reference(forecast.reference) != reference:
+                raise ValueError("Conditional Forecast owner drifted")
+            sources = (
+                forecast.configuration_reference,
+                forecast.training_request_reference,
+                forecast.baseline_reference,
+                *((forecast.model_reference,) if forecast.model_reference else ()),
+                *((forecast.inference_reference,) if forecast.inference_reference else ()),
+            )
+            baseline_payload = evidence.payload.get("baseline_forecast")
+            if not isinstance(baseline_payload, Mapping):
+                raise ValueError("Conditional Forecast baseline owner is missing")
+            baseline = PathForecastArtifact.from_canonical_dict(
+                dict(baseline_payload)
+            )
+            if _runtime_reference(forecast.baseline_reference) != RuntimeArtifactReference(
+                "PATH_FORECAST",
+                baseline.artifact_id,
+                baseline.forecast.envelope.content_hash,
+            ):
+                raise ValueError("Conditional Forecast baseline owner drifted")
+            symbols: tuple[str, ...] = (baseline.forecast.symbol,)
+            available_at = forecast.fit_available_at or evidence.created_at
+            owner_payload = forecast.to_canonical_dict()
+        else:
+            if evidence.evidence_kind is not HistoricalEvidenceKind.CONTEXT_CONDITIONAL:
+                raise ValueError("Context owner Evidence kind drifted")
+            payload = evidence.payload.get("evaluation")
+            if not isinstance(payload, Mapping):
+                raise ValueError("Context owner payload is malformed")
+            context = ContextConditionalEvaluation.from_canonical_dict(payload)
+            if _runtime_reference(context.reference) != reference:
+                raise ValueError("Context owner drifted")
+            sources = (context.definition_reference,)
+            symbols = ()
+            available_at = evidence.created_at
+            owner_payload = context.to_canonical_dict()
         return ResolvedStrategySource(
             reference,
-            row[1],
-            _payload_symbols(row[0]),
-            _payload_references(row[0]),
-            dict(row[0]),
+            available_at,
+            symbols,
+            tuple(_runtime_reference(item) for item in sources),
+            owner_payload,
         )
+
+    def _controlled_artifact(
+        self,
+        reference: RuntimeArtifactReference,
+    ) -> ResolvedStrategySource:
+        if self._artifact_root is None:
+            raise ValueError("Strategy source Artifact root is not configured")
+        with self._factory.connection(read_only=True) as connection:
+            locators = tuple(
+                str(row[0])
+                for row in connection.execute(
+                    "SELECT package_locator FROM longitudinal_operational_index"
+                ).fetchall()
+            )
+        matches: dict[
+            tuple[str, str, str],
+            ResolvedStrategySource,
+        ] = {}
+        for locator in locators:
+            package_path = resolve_artifact_root_locator(
+                artifact_root=self._artifact_root,
+                locator=locator,
+            )
+            package = load_controlled_operation_package(package_path)
+            run_root = package_path.parent.parent
+            if reference.reference_kind == "PATH_FORECAST":
+                evidence = tuple(
+                    item
+                    for item in package.evidence_references
+                    if item.reference_type == "PATH_FORECAST"
+                    and item.object_id == reference.artifact_id
+                    and item.content_hash == reference.content_hash
+                )
+                for item in evidence:
+                    verified_path = load_verified_path_forecast(
+                        run_root / item.locator
+                    )
+                    forecast = verified_path.artifact.forecast
+                    signal = verified_path.artifact.signal_snapshot
+                    resolved = ResolvedStrategySource(
+                        reference,
+                        forecast.envelope.created_at,
+                        (forecast.symbol,),
+                        (
+                            RuntimeArtifactReference(
+                                "SIGNAL_SNAPSHOT",
+                                signal.envelope.artifact_id,
+                                signal.envelope.content_hash,
+                            ),
+                        ),
+                        verified_path.artifact.to_canonical_dict(),
+                    )
+                    matches[(reference.reference_kind, str(reference.artifact_id), reference.content_hash)] = resolved
+            else:
+                signal_runs = tuple(
+                    item
+                    for item in package.evidence_references
+                    if item.reference_type == "SIGNAL_V3"
+                )
+                for item in signal_runs:
+                    signal_run = load_verified_signal_run_v3(run_root / item.locator)
+                    snapshots = tuple(
+                        snapshot
+                        for snapshot in signal_run.artifact.snapshots
+                        if snapshot.artifact_id == reference.artifact_id
+                        and snapshot.envelope.content_hash == reference.content_hash
+                    )
+                    for snapshot in snapshots:
+                        candidate = signal_run.artifact.candidate_set
+                        resolved = ResolvedStrategySource(
+                            reference,
+                            snapshot.envelope.created_at,
+                            (snapshot.symbol,),
+                            (
+                                RuntimeArtifactReference(
+                                    "CANDIDATE_SET",
+                                    candidate.envelope.artifact_id,
+                                    candidate.envelope.content_hash,
+                                ),
+                            ),
+                            snapshot.to_canonical_dict(),
+                        )
+                        matches[(reference.reference_kind, str(reference.artifact_id), reference.content_hash)] = resolved
+        if len(matches) != 1:
+            raise KeyError(str(reference.artifact_id))
+        return next(iter(matches.values()))
 
 
 class PostgresStrategyOpportunityAuthority:
@@ -567,54 +885,6 @@ def _load_bindings(
         RuntimeArtifactReference(str(row[0]), ArtifactId(str(row[1])), str(row[2]))
         for row in rows
     )
-
-
-def _payload_symbols(payload: Mapping[str, Any]) -> tuple[str, ...]:
-    found: set[str] = set()
-
-    def visit(value: object) -> None:
-        if isinstance(value, Mapping):
-            symbol = value.get("symbol")
-            if isinstance(symbol, str) and symbol.strip():
-                found.add(symbol)
-            for item in value.values():
-                visit(item)
-        elif isinstance(value, (list, tuple)):
-            for item in value:
-                visit(item)
-
-    visit(payload)
-    return tuple(sorted(found))
-
-
-def _payload_references(
-    payload: Mapping[str, Any],
-) -> tuple[RuntimeArtifactReference, ...]:
-    found: set[RuntimeArtifactReference] = set()
-
-    def visit(value: object) -> None:
-        if isinstance(value, Mapping):
-            if set(value) >= {"artifact_id", "content_hash"}:
-                kind = value.get("reference_kind", value.get("artifact_kind"))
-                if isinstance(kind, str):
-                    try:
-                        found.add(
-                            RuntimeArtifactReference(
-                                kind,
-                                ArtifactId(str(value["artifact_id"])),
-                                str(value["content_hash"]),
-                            )
-                        )
-                    except ValueError:
-                        pass
-            for item in value.values():
-                visit(item)
-        elif isinstance(value, (list, tuple)):
-            for item in value:
-                visit(item)
-
-    visit(payload)
-    return _references(tuple(found))
 
 
 def _runtime_reference(reference: Any) -> RuntimeArtifactReference:

@@ -57,6 +57,7 @@ from market_regime_alpha.application.continuous_research.runner import (
 )
 from market_regime_alpha.strategies.postgres_opportunity import (
     PostgresStrategyOpportunityAuthority,
+    PostgresStrategySourceAuthority,
 )
 from market_regime_alpha.application.continuous_research.runtime_authority_evidence import (
     PostgresRuntimeAuthorityEvidenceRepository,
@@ -306,6 +307,9 @@ from market_regime_alpha.strategies.portfolio import (
 from market_regime_alpha.strategies.postgres_repository import (
     PostgresMultiStrategyRepository,
 )
+from market_regime_alpha.strategies.postgres_pre_strategy_risk import (
+    PostgresPreStrategyRiskFactResolver,
+)
 from market_regime_alpha.universe.operational import OperationalUniverseArtifact
 from market_regime_alpha.universe.postgres_research import (
     PostgresFreeResearchUniverseRepository,
@@ -396,6 +400,14 @@ def _add_run_arguments(command: argparse.ArgumentParser) -> None:
             "Resolve Strategy sleeve state from observed Fill allocations and "
             "manual account observations for this account."
         ),
+    )
+    command.add_argument(
+        "--pre-strategy-risk-configuration-id",
+        help="Exact Decision Risk Configuration owner used before Strategy.",
+    )
+    command.add_argument(
+        "--pre-strategy-risk-configuration-hash",
+        help="Exact SHA-256 for --pre-strategy-risk-configuration-id.",
     )
     command.add_argument("--historical-sample-lookback-calendar-days", type=int, default=180)
     command.add_argument("--historical-sample-maximum-per-symbol", type=int, default=60)
@@ -1764,6 +1776,28 @@ def _daily_alpha_evidence_root(
     )
 
 
+def _pre_strategy_risk_configuration(
+    args: argparse.Namespace,
+) -> RuntimeArtifactReference | None:
+    configuration_id = args.pre_strategy_risk_configuration_id
+    configuration_hash = args.pre_strategy_risk_configuration_hash
+    if (configuration_id is None) != (configuration_hash is None):
+        raise ValueError(
+            "pre-Strategy Risk configuration requires both exact ID and hash"
+        )
+    if configuration_id is None:
+        return None
+    if args.strategy_account_id is None:
+        raise ValueError(
+            "pre-Strategy Risk configuration requires --strategy-account-id"
+        )
+    return RuntimeArtifactReference(
+        "DECISION_RISK_CONFIGURATION",
+        ArtifactId(str(configuration_id)),
+        str(configuration_hash),
+    )
+
+
 def _run_due(
     args: argparse.Namespace,
     settings: DatabaseSettings,
@@ -1948,8 +1982,15 @@ def _run_due(
         invocation_builder=lambda _: invocation(),
         clock=runtime_clock,
     )
-    opportunity_authority = PostgresStrategyOpportunityAuthority(factory)
+    opportunity_authority = PostgresStrategyOpportunityAuthority(
+        factory,
+        source_authority=PostgresStrategySourceAuthority(
+            factory,
+            artifact_root=args.output_root,
+        ),
+    )
     daily_alpha_evidence_root = _daily_alpha_evidence_root(args)
+    pre_strategy_risk_configuration = _pre_strategy_risk_configuration(args)
     children = CanonicalFreeDataResearchComposition(
         service=service,
         invocation_builder=lambda _: invocation(),
@@ -1964,7 +2005,18 @@ def _run_due(
         ),
         strategy_account_id=args.strategy_account_id,
         strategy_opportunity_resolver=PostgresContinuousStrategyOpportunityResolver(
-            opportunity_authority
+            opportunity_authority,
+            risk_fact_resolver=(
+                None
+                if pre_strategy_risk_configuration is None
+                else PostgresPreStrategyRiskFactResolver(factory)
+            ),
+            account_scope=(
+                None
+                if pre_strategy_risk_configuration is None
+                else args.strategy_account_id
+            ),
+            risk_limit_reference=pre_strategy_risk_configuration,
         ),
         strategy_opportunity_authority=opportunity_authority,
         daily_alpha_authority=PostgresDailyAlphaPredictionAuthority(
@@ -2520,6 +2572,10 @@ def _historical_runner(
         )
         opportunity_authority = PostgresStrategyOpportunityAuthority(
             factory,
+            source_authority=PostgresStrategySourceAuthority(
+                factory,
+                artifact_root=artifact_root,
+            ),
             apply_migrations=False,
         )
         archive_materializer = MultiStrategyHistoricalAdapter(

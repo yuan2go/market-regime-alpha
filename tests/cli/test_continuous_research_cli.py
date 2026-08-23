@@ -13,6 +13,7 @@ from market_regime_alpha.cli.continuous_research import (
     SUCCESS,
     _daily_alpha_evidence_root,
     _operator_resource,
+    _pre_strategy_risk_configuration,
     _settle_previous_prediction_if_due,
     build_parser,
     main,
@@ -129,6 +130,10 @@ def test_cli_exposes_converged_free_data_day_operations() -> None:
             "2025-02-03T14:54:00+08:00",
             "--strategy-account-id",
             "strategy-shadow-account",
+            "--pre-strategy-risk-configuration-id",
+            "decision-risk-configuration:test",
+            "--pre-strategy-risk-configuration-hash",
+            f"sha256:{'b' * 64}",
             "--daily-alpha-candidate-evidence-id",
             "historical-evidence-candidate",
             "--daily-alpha-candidate-evidence-hash",
@@ -140,6 +145,7 @@ def test_cli_exposes_converged_free_data_day_operations() -> None:
     assert args.runtime_clock_mode == "LIVE"
     assert args.strategy_account_id == "strategy-shadow-account"
     assert _daily_alpha_evidence_root(args) is not None
+    assert _pre_strategy_risk_configuration(args) is not None
     assert _operator_resource(args).artifact_kind == (
         "CONTINUOUS_OPERATOR_OPERATION"
     )

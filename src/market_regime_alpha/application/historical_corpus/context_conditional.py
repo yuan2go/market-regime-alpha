@@ -329,6 +329,61 @@ class ContextConditionalEvaluation:
             **self.identity_payload(),
         }
 
+    @classmethod
+    def from_canonical_dict(
+        cls,
+        payload: Mapping[str, Any],
+    ) -> ContextConditionalEvaluation:
+        raw_slices = payload.get("slices")
+        raw_limitations = payload.get("limitations")
+        if not isinstance(raw_slices, list) or not isinstance(raw_limitations, list):
+            raise ValueError("Context Conditional Evaluation payload is malformed")
+
+        def optional_decimal(value: object) -> Decimal | None:
+            return None if value is None else Decimal(str(value))
+
+        slices: list[ConditionalContextSlice] = []
+        for item in raw_slices:
+            if not isinstance(item, Mapping):
+                raise ValueError("Context Conditional slice is malformed")
+            slices.append(
+                ConditionalContextSlice(
+                    context_value=str(item["context_value"]),
+                    sample_count=int(item["sample_count"]),
+                    coverage=Decimal(str(item["coverage"])),
+                    conditional_rank_ic=optional_decimal(
+                        item["conditional_rank_ic"]
+                    ),
+                    conditional_top_k=optional_decimal(
+                        item["conditional_top_k"]
+                    ),
+                    temporal_stability=str(item["temporal_stability"]),
+                    confidence=str(item["confidence"]),
+                )
+            )
+        return cls(
+            evaluation_id=ArtifactId(str(payload["evaluation_id"])),
+            evaluation_hash=str(payload["evaluation_hash"]),
+            definition_reference=ValidationArtifactReference.from_canonical_dict(
+                payload["definition_reference"]
+            ),
+            observation_set_hash=str(payload["observation_set_hash"]),
+            sample_count=int(payload["sample_count"]),
+            coverage=Decimal(str(payload["coverage"])),
+            unconditional_rank_ic=optional_decimal(
+                payload["unconditional_rank_ic"]
+            ),
+            slices=tuple(slices),
+            interaction_effect=optional_decimal(payload["interaction_effect"]),
+            incremental_information=optional_decimal(
+                payload["incremental_information"]
+            ),
+            temporal_stability=str(payload["temporal_stability"]),
+            confidence=str(payload["confidence"]),
+            status=str(payload["status"]),
+            limitations=tuple(str(item) for item in raw_limitations),
+        )
+
 
 def evaluate_context_conditioning(
     definition: ContextDefinition,

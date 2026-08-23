@@ -6,6 +6,7 @@ from decimal import Decimal
 import pytest
 
 from market_regime_alpha.application.historical_corpus.context_conditional import (
+    ContextConditionalEvaluation,
     ContextDefinition,
     ContextKind,
     ContextObservation,
@@ -120,6 +121,9 @@ def test_session_context_evaluates_performance_across_sessions_only() -> None:
     assert result.incremental_information is None
     assert result.status in {"AMPLIFIER", "SUPPRESSOR", "UNSTABLE"}
     assert {item.context_value for item in result.slices} == {"BEAR", "BULL"}
+    assert ContextConditionalEvaluation.from_canonical_dict(
+        result.to_canonical_dict()
+    ) == result
 
 
 def test_cross_sectional_context_supports_interaction_and_incremental_information() -> None:

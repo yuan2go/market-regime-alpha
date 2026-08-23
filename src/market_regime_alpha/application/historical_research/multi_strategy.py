@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Protocol
 
 from market_regime_alpha.application.continuous_research.journal import (
@@ -57,6 +58,11 @@ from market_regime_alpha.strategies.postgres_repository import (
 from market_regime_alpha.strategies.postgres_opportunity import (
     StrategyOpportunityResolverAuthority,
 )
+from market_regime_alpha.strategies.opportunity import (
+    PreStrategyRiskFacts,
+    StrategyOpportunityMaterial,
+    StrategyOpportunityProducer,
+)
 from market_regime_alpha.strategies.runtime import (
     MultiStrategyRuntime,
     StrategyOpportunityAuthority,
@@ -85,11 +91,36 @@ class HistoricalStrategyOpportunityResolver(Protocol):
     ) -> tuple[StrategyOpportunityInput, ...]: ...
 
 
+class HistoricalPreStrategyRiskFactResolver(Protocol):
+    def resolve(
+        self,
+        *,
+        candidates: CandidateSet,
+        account_scope: str,
+        decision_time: datetime,
+        risk_limit_reference: RuntimeArtifactReference,
+    ) -> PreStrategyRiskFacts: ...
+
+
+class HistoricalOpportunityMaterialResolver(Protocol):
+    def resolve(
+        self,
+        *,
+        candidates: CandidateSet,
+        decision_time: datetime,
+        registry: StrategyRegistry,
+    ) -> tuple[StrategyOpportunityMaterial, ...]: ...
+
+
 @dataclass(frozen=True, slots=True)
 class PostgresHistoricalStrategyOpportunityResolver:
     """Resolve the same persisted Opportunity owners for Historical Strategy."""
 
     authority: StrategyOpportunityResolverAuthority
+    risk_fact_resolver: HistoricalPreStrategyRiskFactResolver | None = None
+    account_scope: str | None = None
+    risk_limit_reference: RuntimeArtifactReference | None = None
+    material_resolver: HistoricalOpportunityMaterialResolver | None = None
 
     def resolve(
         self,
@@ -98,6 +129,41 @@ class PostgresHistoricalStrategyOpportunityResolver:
         candidates: CandidateSet,
         registry: StrategyRegistry,
     ) -> tuple[StrategyOpportunityInput, ...]:
+        production_configuration = (
+            self.risk_fact_resolver,
+            self.account_scope,
+            self.risk_limit_reference,
+        )
+        if any(item is not None for item in production_configuration) and not all(
+            item is not None for item in production_configuration
+        ):
+            raise ValueError("pre-Strategy Risk producer configuration is incomplete")
+        if all(item is not None for item in production_configuration):
+            assert self.risk_fact_resolver is not None
+            assert self.account_scope is not None
+            assert self.risk_limit_reference is not None
+            facts = self.risk_fact_resolver.resolve(
+                candidates=candidates,
+                account_scope=self.account_scope,
+                decision_time=request.decision_time,
+                risk_limit_reference=self.risk_limit_reference,
+            )
+            materials = (
+                ()
+                if self.material_resolver is None
+                else self.material_resolver.resolve(
+                    candidates=candidates,
+                    decision_time=request.decision_time,
+                    registry=registry,
+                )
+            )
+            StrategyOpportunityProducer(self.authority).produce(
+                candidates=candidates,
+                facts=facts,
+                registry=registry,
+                materials=materials,
+                created_at=request.materialized_at,
+            )
         return self.authority.resolve(
             candidate_reference=RuntimeArtifactReference(
                 "CANDIDATE_SET",
