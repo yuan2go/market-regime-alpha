@@ -40,7 +40,7 @@ class PostgresTargetOutcomeRepository:
         factory: PostgresConnectionFactory,
         *,
         clock: Clock = _now,
-        apply_migrations: bool = True,
+        apply_migrations: bool = False,
     ) -> None:
         self._factory = factory
         self._clock = clock

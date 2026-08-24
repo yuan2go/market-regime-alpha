@@ -29,7 +29,7 @@ class NativePostgresRepository:
         self,
         factory: PostgresConnectionFactory,
         *,
-        migrate: bool = True,
+        migrate: bool = False,
         read_only: bool = False,
     ) -> None:
         if not isinstance(factory, PostgresConnectionFactory):

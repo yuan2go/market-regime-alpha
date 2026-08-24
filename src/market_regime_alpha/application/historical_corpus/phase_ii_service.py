@@ -615,7 +615,7 @@ class HistoricalPhaseIIResearchService:
             )
             for item in batch
         )
-        _require_sources(
+        write = _with_required_sources(
             write,
             proof.reference,
             ValidationArtifactReference(
@@ -654,7 +654,7 @@ class HistoricalPhaseIIResearchService:
             or experiment.reference != evaluation.experiment_reference
         ):
             raise ValueError("External Evaluation Experiment owner drifted")
-        _require_sources(
+        write = _with_required_sources(
             write,
             evaluation.experiment_reference,
             evaluation.thresholds_reference,
@@ -687,11 +687,52 @@ class HistoricalPhaseIIResearchService:
     def persist_context_evaluation(
         self,
         write: PhaseIIEvidenceWrite,
+        definition: ContextDefinition,
         evaluation: ContextConditionalEvaluation,
     ) -> HistoricalResearchEvidence:
         if write.evidence_kind is not HistoricalEvidenceKind.CONTEXT_CONDITIONAL:
             raise ValueError("Context Evaluation Evidence kind mismatch")
-        _require_sources(write, evaluation.definition_reference)
+        if evaluation.definition_reference != definition.reference:
+            raise ValueError("Context Evaluation Definition owner drifted")
+        external = self.load_evidence(
+            definition.alpha_evidence.reference.artifact_id,
+            expected_kind=HistoricalEvidenceKind.EXTERNAL_VALIDATION,
+        )
+        if (
+            external != definition.alpha_evidence
+            or external.reference != definition.alpha_evidence.reference
+            or external.experiment_reference != write.experiment_reference
+        ):
+            raise ValueError("Context External Evidence owner drifted")
+        if self._components is None:
+            raise ValueError("Context persistence requires Research Panel owner reload")
+        panels = tuple(
+            self._components.get(reference)
+            for reference in definition.research_panel_references
+        )
+        if tuple(item.reference for item in panels) != definition.research_panel_references:
+            raise ValueError("Context Research Panel owner set drifted")
+        authoritative_sources = (
+            definition.reference,
+            external.reference,
+            definition.target_reference,
+            *definition.research_panel_references,
+        )
+        if not set(write.source_references).issubset(set(authoritative_sources)):
+            raise ValueError("Context caller supplied a non-authoritative source")
+        write = replace(
+            write,
+            source_references=tuple(
+                sorted(
+                    set(authoritative_sources),
+                    key=lambda item: (
+                        item.artifact_kind,
+                        str(item.artifact_id),
+                        item.content_hash,
+                    ),
+                )
+            ),
+        )
         return self._persist(
             replace(
                 write,
@@ -709,7 +750,7 @@ class HistoricalPhaseIIResearchService:
     ) -> HistoricalResearchEvidence:
         if write.evidence_kind is not HistoricalEvidenceKind.CANDIDATE_POLICY:
             raise ValueError("Candidate Evaluation Evidence kind mismatch")
-        _require_sources(
+        write = _with_required_sources(
             write,
             evaluation.policy_reference,
             evaluation.dataset_reference,
@@ -728,7 +769,7 @@ class HistoricalPhaseIIResearchService:
     ) -> HistoricalResearchEvidence:
         if write.evidence_kind is not HistoricalEvidenceKind.CANDIDATE_POLICY:
             raise ValueError("Candidate Comparison Evidence kind mismatch")
-        _require_sources(
+        write = _with_required_sources(
             write,
             comparison.incumbent_reference,
             comparison.challenger_reference,
@@ -742,12 +783,204 @@ class HistoricalPhaseIIResearchService:
             )
         )
 
+    def persist_candidate_admission(
+        self,
+        write: PhaseIIEvidenceWrite,
+        *,
+        comparison: CandidatePolicyComparison,
+        challenger_policy: CandidatePolicyDefinition,
+        activation_status: str,
+    ) -> HistoricalResearchEvidence:
+        """Persist the single explicit root consumed by Daily Alpha.
+
+        The method reuses Historical Evidence and Candidate Policy owners.  It
+        does not select a comparison or policy by recency or metric value.
+        """
+
+        if write.evidence_kind is not HistoricalEvidenceKind.CANDIDATE_POLICY:
+            raise ValueError("Candidate admission Evidence kind mismatch")
+        if activation_status not in {
+            "CHALLENGER_ACTIVE",
+            "CHALLENGER_DORMANT",
+        }:
+            raise ValueError("Candidate admission status must be explicit")
+        if (
+            comparison.challenger_reference != challenger_policy.reference
+            or comparison.dataset_reference != challenger_policy.dataset_reference
+        ):
+            raise ValueError("Candidate admission Policy/Dataset owner drifted")
+        self._verify_candidate_policy_evidence(challenger_policy)
+        external_references = {
+            item.external_validation_evidence.reference
+            for item in challenger_policy.validated_factors
+        }
+        if len(external_references) != 1:
+            raise ValueError(
+                "Candidate admission requires one External Evidence chain"
+            )
+        external_reference = next(iter(external_references))
+        external = self.load_evidence(
+            external_reference.artifact_id,
+            expected_kind=HistoricalEvidenceKind.EXTERNAL_VALIDATION,
+        )
+        if external.reference != external_reference:
+            raise ValueError("Candidate External Evidence owner drifted")
+        experiment = _mapping_value(external.payload.get("experiment"))
+        external_experiment_reference = ValidationArtifactReference(
+            "RESEARCH_EXPERIMENT_DEFINITION",
+            ArtifactId(str(experiment["experiment_id"])),
+            str(experiment["experiment_hash"]),
+        )
+        if external_experiment_reference != external.experiment_reference:
+            raise ValueError("Candidate External Experiment owner drifted")
+        correctness_reference = ValidationArtifactReference.from_canonical_dict(
+            _mapping_value(experiment["correctness_evidence_reference"])
+        )
+        hypothesis = _mapping_value(experiment["hypothesis"])
+        hypothesis_reference = ValidationArtifactReference(
+            "FROZEN_ALPHA_HYPOTHESIS",
+            ArtifactId(str(hypothesis["hypothesis_id"])),
+            str(hypothesis["hypothesis_hash"]),
+        )
+        discovery_reference = ValidationArtifactReference.from_canonical_dict(
+            _mapping_value(hypothesis["discovery_evidence_reference"])
+        )
+        correctness = self.load_evidence(
+            correctness_reference.artifact_id,
+            expected_kind=HistoricalEvidenceKind.ALPHA_CORRECTNESS,
+        )
+        discovery = self.load_evidence(
+            discovery_reference.artifact_id,
+            expected_kind=HistoricalEvidenceKind.ALPHA_ABLATION,
+        )
+        if (
+            correctness.reference != correctness_reference
+            or discovery.reference != discovery_reference
+            or not {correctness.reference, discovery.reference}.issubset(
+                external.source_references
+            )
+        ):
+            raise ValueError("Candidate upstream Evidence lineage drifted")
+        panels = tuple(
+            ValidationArtifactReference.from_canonical_dict(_mapping_value(item))
+            for item in experiment.get("validation_panel_references", ())
+        )
+        if research_panel_dataset_reference(panels) != comparison.dataset_reference:
+            raise ValueError("Candidate/External dataset owner drifted")
+        context_evidence = tuple(
+            sorted(
+                (
+                    item.context_evidence
+                    for item in challenger_policy.context_adjustments
+                ),
+                key=lambda item: (
+                    item.reference.artifact_kind,
+                    str(item.reference.artifact_id),
+                    item.reference.content_hash,
+                ),
+            )
+        )
+        for context in context_evidence:
+            if context.experiment_reference != external_experiment_reference:
+                raise ValueError("Candidate Context Experiment owner drifted")
+            if external.reference not in context.source_references:
+                raise ValueError("Candidate Context lacks External Evidence lineage")
+            evaluation = _mapping_value(context.payload.get("evaluation"))
+            definition_reference = ValidationArtifactReference.from_canonical_dict(
+                _mapping_value(evaluation["definition_reference"])
+            )
+            if definition_reference not in context.source_references:
+                raise ValueError("Candidate Context definition owner drifted")
+            context_panels = tuple(
+                item
+                for item in context.source_references
+                if item.artifact_kind
+                in {"RESEARCH_PANEL", "HISTORICAL_RESEARCH_PANEL"}
+            )
+            if (
+                not context_panels
+                or research_panel_dataset_reference(context_panels)
+                != comparison.dataset_reference
+            ):
+                raise ValueError("Candidate Context dataset owner drifted")
+        factor_directions = tuple(
+            sorted(
+                (item.factor_id, item.direction)
+                for item in challenger_policy.validated_factors
+            )
+        )
+        if factor_directions != _strict_factor_directions(
+            external.payload.get("validated_factors")
+        ):
+            raise ValueError("Candidate validated Factor family drifted")
+        if activation_status == "CHALLENGER_ACTIVE" and (
+            write.classification is not ResearchFinding.POSITIVE
+            or comparison.stability != "STABLE"
+            or external.classification is not ResearchFinding.POSITIVE
+            or external.payload.get("qualification_status") != "SUPPORTED"
+            or correctness.classification is not ResearchFinding.POSITIVE
+            or correctness.payload.get("status") != "CORRECTNESS_SUPPORTED"
+            or discovery.classification is not ResearchFinding.POSITIVE
+        ):
+            raise ValueError(
+                "Candidate Challenger activation lacks supported stable Evidence"
+            )
+        write = _with_required_sources(
+            write,
+            comparison.incumbent_reference,
+            comparison.challenger_reference,
+            comparison.dataset_reference,
+            comparison.protocol_reference,
+            challenger_policy.reference,
+            external.reference,
+            correctness.reference,
+            discovery.reference,
+            external_experiment_reference,
+            hypothesis_reference,
+            *(item.reference for item in context_evidence),
+        )
+        admission = {
+            "schema_version": "daily-alpha-evidence-admission/v2",
+            "candidate_policy_reference": challenger_policy.reference.to_canonical_dict(),
+            "candidate_dataset_reference": comparison.dataset_reference.to_canonical_dict(),
+            "external_validation_evidence_reference": external.reference.to_canonical_dict(),
+            "correctness_evidence_reference": correctness.reference.to_canonical_dict(),
+            "discovery_evidence_reference": discovery.reference.to_canonical_dict(),
+            "external_experiment_reference": external_experiment_reference.to_canonical_dict(),
+            "frozen_hypothesis_reference": hypothesis_reference.to_canonical_dict(),
+            "factor_directions": [list(item) for item in factor_directions],
+            "context_evidence_references": [
+                item.reference.to_canonical_dict() for item in context_evidence
+            ],
+            "lineage_stages": [
+                _phase_ii_lineage_stage("DISCOVERY", discovery),
+                _phase_ii_lineage_stage("CORRECTNESS", correctness),
+                _phase_ii_lineage_stage("EXTERNAL_VALIDATION", external),
+                *(
+                    _phase_ii_lineage_stage("CONTEXT_CONDITIONAL", item)
+                    for item in context_evidence
+                ),
+            ],
+        }
+        return self._persist(
+            replace(
+                write,
+                payload={
+                    "comparison": comparison.to_canonical_dict(),
+                    "activation_status": activation_status,
+                    "stability": comparison.stability,
+                    "daily_alpha_admission": admission,
+                },
+            )
+        )
+
     def persist_conditional_forecast(
         self,
         write: PhaseIIEvidenceWrite,
         configuration: ConditionalForecastConfig,
         forecast: ConditionalForecastResult,
         baseline_forecast: PathForecastArtifact,
+        context_evidence: HistoricalResearchEvidence,
     ) -> HistoricalResearchEvidence:
         if write.evidence_kind is not HistoricalEvidenceKind.CONDITIONAL_PREDICTION:
             raise ValueError("Conditional Forecast Evidence kind mismatch")
@@ -758,16 +991,34 @@ class HistoricalPhaseIIResearchService:
             raise ValueError("Conditional Forecast configuration owner drifted")
         if _path_forecast_reference(baseline_forecast) != forecast.baseline_reference:
             raise ValueError("Conditional Forecast baseline owner drifted")
+        if (
+            context_evidence.evidence_kind
+            is not HistoricalEvidenceKind.CONTEXT_CONDITIONAL
+            or context_evidence.experiment_reference != write.experiment_reference
+            or context_evidence.classification is not ResearchFinding.POSITIVE
+            or context_evidence.payload.get("status")
+            not in {"AMPLIFIER", "SUPPRESSOR"}
+        ):
+            raise ValueError(
+                "Conditional Forecast requires supported Context from its Experiment"
+            )
+        context_payload = _mapping_value(context_evidence.payload.get("evaluation"))
+        context_reference = ValidationArtifactReference.from_canonical_dict(
+            _mapping_value(context_payload["definition_reference"])
+        )
+        if context_reference not in context_evidence.source_references:
+            raise ValueError("Conditional Forecast Context definition owner drifted")
         self._verify_conditional_model_owners(
             forecast,
             configuration=configuration,
             baseline_forecast=baseline_forecast,
         )
-        _require_sources(
+        write = _with_required_sources(
             write,
             forecast.configuration_reference,
             forecast.training_request_reference,
             forecast.baseline_reference,
+            context_evidence.reference,
             *((forecast.model_reference,) if forecast.model_reference is not None else ()),
             *((forecast.inference_reference,) if forecast.inference_reference is not None else ()),
         )
@@ -1029,13 +1280,23 @@ def _embedded_artifact(
     return artifact
 
 
-def _require_sources(
+def _with_required_sources(
     write: PhaseIIEvidenceWrite,
     *required: ValidationArtifactReference,
-) -> None:
-    missing = set(required).difference(write.source_references)
-    if missing:
-        raise ValueError("Phase II Evidence is missing required artifact owner lineage")
+) -> PhaseIIEvidenceWrite:
+    """Freeze typed owner-derived lineage; callers cannot omit authoritative refs."""
+
+    references = tuple(
+        sorted(
+            {*write.source_references, *required},
+            key=lambda item: (
+                item.artifact_kind,
+                str(item.artifact_id),
+                item.content_hash,
+            ),
+        )
+    )
+    return replace(write, source_references=references)
 
 
 def _verify_correctness_proof_against_owners(
@@ -1710,6 +1971,42 @@ def _mapping_value(value: object) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
         raise ValueError("Phase II owner payload must be an object")
     return value
+
+
+def _strict_factor_directions(value: object) -> tuple[tuple[str, str], ...]:
+    if not isinstance(value, (list, tuple)):
+        raise ValueError("External Validation Factors must be an array")
+    parsed: list[tuple[str, str]] = []
+    for item in value:
+        if (
+            not isinstance(item, (list, tuple))
+            or len(item) != 2
+            or not isinstance(item[0], str)
+            or not item[0].strip()
+            or not isinstance(item[1], str)
+            or not item[1].strip()
+        ):
+            raise ValueError("External Validation Factor lineage is malformed")
+        parsed.append((item[0], item[1]))
+    result = tuple(parsed)
+    if not result or result != tuple(sorted(set(result))):
+        raise ValueError(
+            "External Validation Factors must be non-empty, unique and sorted"
+        )
+    return result
+
+
+def _phase_ii_lineage_stage(
+    stage: str,
+    evidence: HistoricalResearchEvidence,
+) -> dict[str, str]:
+    return {
+        "stage": stage,
+        "run_id": str(evidence.run_id),
+        "command_hash": evidence.command_hash,
+        "experiment_id": str(evidence.experiment_reference.artifact_id),
+        "experiment_hash": evidence.experiment_reference.content_hash,
+    }
 
 
 __all__ = [

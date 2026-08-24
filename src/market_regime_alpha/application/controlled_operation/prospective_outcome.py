@@ -17,6 +17,9 @@ from zoneinfo import ZoneInfo
 from market_regime_alpha.application.continuous_research.journal import (
     RuntimeArtifactReference,
 )
+from market_regime_alpha.application.continuous_research.daily_alpha import (
+    DailyAlphaPredictionSnapshot,
+)
 from market_regime_alpha.application.controlled_operation.outcome_evidence import (
     OutcomeCompleteness,
     TradeHorizonOutcomeEvidence,
@@ -233,6 +236,8 @@ class ProspectiveShadowOutcome:
     candidate_set: RuntimeArtifactReference | None
     signal: RuntimeArtifactReference | None
     forecast: RuntimeArtifactReference | None
+    prediction_snapshot: RuntimeArtifactReference | None
+    strategy_diagnostic: RuntimeArtifactReference | None
     model_selection_receipts: tuple[RuntimeArtifactReference, ...]
     source_archive: RuntimeArtifactReference
     source_dataset: RuntimeArtifactReference
@@ -245,11 +250,25 @@ class ProspectiveShadowOutcome:
     created_at: datetime
     reason_codes: tuple[str, ...]
     limitations: tuple[str, ...]
-    schema_version: str = "prospective-shadow-outcome/v1"
+    schema_version: str = "prospective-shadow-outcome/v2"
 
     def __post_init__(self) -> None:
-        if self.schema_version != "prospective-shadow-outcome/v1":
+        if self.schema_version not in {
+            "prospective-shadow-outcome/v1",
+            "prospective-shadow-outcome/v2",
+        }:
             raise ValueError("unsupported Prospective Shadow Outcome schema")
+        if self.schema_version == "prospective-shadow-outcome/v1":
+            if self.prediction_snapshot is not None or self.strategy_diagnostic is not None:
+                raise ValueError("Outcome v1 cannot carry Daily prediction lineage")
+        elif (
+            self.prediction_snapshot is None
+            or self.prediction_snapshot.reference_kind
+            != "DAILY_ALPHA_PREDICTION_SNAPSHOT"
+            or self.strategy_diagnostic is None
+            or self.strategy_diagnostic.reference_kind != "MULTI_STRATEGY_CYCLE"
+        ):
+            raise ValueError("Outcome v2 requires exact Daily prediction lineage")
         require_sha256("settlement_hash", self.settlement_hash)
         _aware("outcome_available_at", self.outcome_available_at)
         _aware("created_at", self.created_at)
@@ -284,6 +303,7 @@ class ProspectiveShadowOutcome:
     @classmethod
     def create(cls, **values: Any) -> ProspectiveShadowOutcome:
         normalized = dict(values)
+        normalized.setdefault("schema_version", "prospective-shadow-outcome/v2")
         normalized["observations"] = tuple(
             sorted(values["observations"], key=lambda item: item.symbol)
         )
@@ -309,6 +329,8 @@ class ProspectiveShadowOutcome:
             candidate_set=self.candidate_set,
             signal=self.signal,
             forecast=self.forecast,
+            prediction_snapshot=self.prediction_snapshot,
+            strategy_diagnostic=self.strategy_diagnostic,
             model_selection_receipts=self.model_selection_receipts,
             source_archive=self.source_archive,
             source_dataset=self.source_dataset,
@@ -321,6 +343,7 @@ class ProspectiveShadowOutcome:
             created_at=self.created_at,
             reason_codes=self.reason_codes,
             limitations=self.limitations,
+            schema_version=self.schema_version,
         )
 
     def to_canonical_dict(self) -> dict[str, Any]:
@@ -357,6 +380,12 @@ class ProspectiveShadowOutcome:
             candidate_set=_optional_reference(payload["candidate_set"]),
             signal=_optional_reference(payload["signal"]),
             forecast=_optional_reference(payload["forecast"]),
+            prediction_snapshot=_optional_reference(
+                payload.get("prediction_snapshot")
+            ),
+            strategy_diagnostic=_optional_reference(
+                payload.get("strategy_diagnostic")
+            ),
             model_selection_receipts=tuple(
                 _reference(item) for item in _array(payload["model_selection_receipts"])
             ),
@@ -387,15 +416,38 @@ class ProspectiveShadowOutcome:
 def build_prospective_shadow_outcome(
     *,
     decision: ShadowDecision,
+    prediction_snapshot: DailyAlphaPredictionSnapshot | None,
     source_archive: OutcomeSettlementSourceArchive,
     settlement_dataset: VerifiedMarketDataDataset,
     factual_evidence: TradeHorizonOutcomeEvidence,
     next_session_date: date,
     session_status: SettlementSessionStatus,
     created_at: datetime,
+    schema_version: str = "prospective-shadow-outcome/v2",
 ) -> ProspectiveShadowOutcome:
     """Derive checkpoint facts from verified artifacts, never caller metrics."""
 
+    if schema_version == "prospective-shadow-outcome/v2":
+        if prediction_snapshot is None:
+            raise ValueError("Outcome v2 requires a Daily prediction owner")
+        prediction_snapshot.verify_identity()
+        if (
+            prediction_snapshot.run_reference.artifact_id != decision.run_id
+            or prediction_snapshot.tick_reference.artifact_id != decision.tick_id
+            or prediction_snapshot.trading_date != decision.trading_date
+            or prediction_snapshot.decision_time != decision.decision_time
+            or prediction_snapshot.candidate_reference != decision.candidate_set
+            or prediction_snapshot.signal_reference != decision.signal
+            or decision.forecast not in prediction_snapshot.forecast_references
+            or prediction_snapshot.target_session_date != next_session_date
+        ):
+            raise ValueError(
+                "Outcome Daily prediction lineage differs from frozen Decision"
+            )
+        if prediction_snapshot.available_at > decision.decision_frozen_at:
+            raise ValueError("Daily prediction was unavailable at Shadow Decision freeze")
+    elif schema_version != "prospective-shadow-outcome/v1" or prediction_snapshot is not None:
+        raise ValueError("legacy Outcome build requires v1 without Daily prediction")
     if factual_evidence.operation_package_id != decision.controlled_operation.artifact_id:
         raise ValueError("Outcome Controlled Operation identity mismatch")
     if factual_evidence.operation_package_hash != decision.controlled_operation.content_hash:
@@ -430,6 +482,11 @@ def build_prospective_shadow_outcome(
     )
     if availability <= decision.decision_frozen_at:
         raise ValueError("Outcome must become available after frozen Shadow Decision")
+    if (
+        prediction_snapshot is not None
+        and availability <= prediction_snapshot.available_at
+    ):
+        raise ValueError("Outcome must become available after Daily prediction")
     if created_at < availability:
         raise ValueError("Outcome creation predates evidence availability")
     if not observations:
@@ -466,6 +523,14 @@ def build_prospective_shadow_outcome(
         candidate_set=decision.candidate_set,
         signal=decision.signal,
         forecast=decision.forecast,
+        prediction_snapshot=(
+            None if prediction_snapshot is None else prediction_snapshot.reference
+        ),
+        strategy_diagnostic=(
+            None
+            if prediction_snapshot is None
+            else prediction_snapshot.strategy_diagnostic_reference
+        ),
         model_selection_receipts=decision.model_selection_receipts,
         source_archive=RuntimeArtifactReference(
             "OUTCOME_SOURCE_ARCHIVE",
@@ -495,6 +560,7 @@ def build_prospective_shadow_outcome(
             "NOT_ALPHA_VALIDATION",
             "NOT_PROSPECTIVE_EVIDENCE",
         ),
+        schema_version=schema_version,
     )
 
 
@@ -661,8 +727,9 @@ def _observation_payload(**values: Any) -> dict[str, Any]:
 
 
 def _settlement_payload(**values: Any) -> dict[str, Any]:
-    return {
-        "schema_version": "prospective-shadow-outcome/v1",
+    schema_version = values["schema_version"]
+    payload = {
+        "schema_version": schema_version,
         "shadow_decision": values["shadow_decision"].to_canonical_dict(),
         "shadow_session_id": str(values["shadow_session_id"]),
         "run_id": str(values["run_id"]),
@@ -686,6 +753,14 @@ def _settlement_payload(**values: Any) -> dict[str, Any]:
         "reason_codes": list(values["reason_codes"]),
         "limitations": list(values["limitations"]),
     }
+    if schema_version == "prospective-shadow-outcome/v2":
+        payload["prediction_snapshot"] = _optional_reference_dict(
+            values["prediction_snapshot"]
+        )
+        payload["strategy_diagnostic"] = _optional_reference_dict(
+            values["strategy_diagnostic"]
+        )
+    return payload
 
 
 def _content_id(prefix: str, digest: str) -> ArtifactId:

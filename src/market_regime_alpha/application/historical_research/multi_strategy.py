@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Protocol
 
 from market_regime_alpha.application.continuous_research.journal import (
@@ -38,9 +39,11 @@ from market_regime_alpha.application.research_validation.historical_economics im
 )
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.evidence.canonical import canonical_hash
+from market_regime_alpha.forecasting.path import PathForecastArtifact
 from market_regime_alpha.platform.runtime_governance import RuntimeAuthorityMode
 from market_regime_alpha.research.candidate_discovery.contracts import CandidateSet
 from market_regime_alpha.strategies.contracts import (
+    StrategyForecastRequirement,
     StrategyOpportunityInput,
     StrategyRegistry,
     StrategyRunOrigin,
@@ -56,6 +59,11 @@ from market_regime_alpha.strategies.postgres_repository import (
 )
 from market_regime_alpha.strategies.postgres_opportunity import (
     StrategyOpportunityResolverAuthority,
+)
+from market_regime_alpha.strategies.opportunity import (
+    PreStrategyRiskFacts,
+    StrategyOpportunityMaterial,
+    StrategyOpportunityProducer,
 )
 from market_regime_alpha.strategies.runtime import (
     MultiStrategyRuntime,
@@ -82,7 +90,30 @@ class HistoricalStrategyOpportunityResolver(Protocol):
         request: ResearchDecisionSessionRequest,
         candidates: CandidateSet,
         registry: StrategyRegistry,
+        path_forecasts: tuple[PathForecastArtifact, ...] = (),
     ) -> tuple[StrategyOpportunityInput, ...]: ...
+
+
+class HistoricalPreStrategyRiskFactResolver(Protocol):
+    def resolve(
+        self,
+        *,
+        candidates: CandidateSet,
+        account_scope: str,
+        decision_time: datetime,
+        risk_limit_reference: RuntimeArtifactReference,
+    ) -> PreStrategyRiskFacts: ...
+
+
+class HistoricalOpportunityMaterialResolver(Protocol):
+    def resolve(
+        self,
+        *,
+        candidates: CandidateSet,
+        decision_time: datetime,
+        registry: StrategyRegistry,
+        path_forecasts: tuple[PathForecastArtifact, ...],
+    ) -> tuple[StrategyOpportunityMaterial, ...]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,6 +121,10 @@ class PostgresHistoricalStrategyOpportunityResolver:
     """Resolve the same persisted Opportunity owners for Historical Strategy."""
 
     authority: StrategyOpportunityResolverAuthority
+    risk_fact_resolver: HistoricalPreStrategyRiskFactResolver | None = None
+    account_scope: str | None = None
+    risk_limit_reference: RuntimeArtifactReference | None = None
+    material_resolver: HistoricalOpportunityMaterialResolver | None = None
 
     def resolve(
         self,
@@ -97,16 +132,66 @@ class PostgresHistoricalStrategyOpportunityResolver:
         request: ResearchDecisionSessionRequest,
         candidates: CandidateSet,
         registry: StrategyRegistry,
+        path_forecasts: tuple[PathForecastArtifact, ...] = (),
     ) -> tuple[StrategyOpportunityInput, ...]:
-        return self.authority.resolve(
-            candidate_reference=RuntimeArtifactReference(
-                "CANDIDATE_SET",
-                candidates.envelope.artifact_id,
-                candidates.envelope.content_hash,
-            ),
-            decision_time=request.decision_time,
-            registry=registry,
+        production_configuration = (
+            self.risk_fact_resolver,
+            self.account_scope,
+            self.risk_limit_reference,
         )
+        materials = (
+            ()
+            if self.material_resolver is None
+            else self.material_resolver.resolve(
+                candidates=candidates,
+                decision_time=request.decision_time,
+                registry=registry,
+                path_forecasts=path_forecasts,
+            )
+        )
+        if self.material_resolver is None and any(
+            registry.contract_for(item).forecast_requirement
+            is StrategyForecastRequirement.FORECAST_REQUIRED
+            for item in registry.active_versions
+        ):
+            raise ValueError(
+                "FORECAST_REQUIRED Strategy lacks an Opportunity material resolver"
+            )
+        if any(item is not None for item in production_configuration) and not all(
+            item is not None for item in production_configuration
+        ):
+            raise ValueError("pre-Strategy Risk producer configuration is incomplete")
+        if materials and not all(item is not None for item in production_configuration):
+            raise ValueError(
+                "Strategy Opportunity material requires owner-derived Risk facts"
+            )
+        if all(item is not None for item in production_configuration):
+            assert self.risk_fact_resolver is not None
+            assert self.account_scope is not None
+            assert self.risk_limit_reference is not None
+            facts = self.risk_fact_resolver.resolve(
+                candidates=candidates,
+                account_scope=self.account_scope,
+                decision_time=request.decision_time,
+                risk_limit_reference=self.risk_limit_reference,
+            )
+            StrategyOpportunityProducer(self.authority).produce(
+                candidates=candidates,
+                facts=facts,
+                registry=registry,
+                materials=materials,
+                created_at=request.materialized_at,
+            )
+            return self.authority.resolve(
+                candidate_reference=RuntimeArtifactReference(
+                    "CANDIDATE_SET",
+                    candidates.envelope.artifact_id,
+                    candidates.envelope.content_hash,
+                ),
+                decision_time=request.decision_time,
+                registry=registry,
+            )
+        return ()
 
 
 @dataclass(slots=True)
@@ -152,6 +237,19 @@ class MultiStrategyHistoricalAdapter:
         candidate_reference = _single(inputs, "HISTORICAL_CANDIDATE")
         candidate_component = self.component_repository.get(candidate_reference)
         candidates = CandidateSet.from_canonical_dict(dict(candidate_component.payload))
+        forecast_component = self.component_repository.get(
+            _single(inputs, "HISTORICAL_FORECAST")
+        )
+        raw_forecasts = forecast_component.payload.get("forecasts")
+        if not isinstance(raw_forecasts, list):
+            raise ValueError("Historical Forecast owner payload is malformed")
+        path_forecasts = tuple(
+            PathForecastArtifact.from_canonical_dict(dict(item))
+            for item in raw_forecasts
+            if isinstance(item, dict)
+        )
+        if len(path_forecasts) != len(raw_forecasts):
+            raise ValueError("Historical Forecast owner payload is malformed")
         dataset = _single_configuration(request, "NORMALIZED_DATASET")
         registry = self.strategy_repository.load_registry()
         opportunities = (
@@ -161,6 +259,7 @@ class MultiStrategyHistoricalAdapter:
                 request=request,
                 candidates=candidates,
                 registry=registry,
+                path_forecasts=path_forecasts,
             )
         )
         runtime_input = StrategyRuntimeInput(

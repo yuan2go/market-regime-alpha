@@ -95,7 +95,42 @@ class LongitudinalOperationalRecord:
             raise ValueError("Longitudinal Outcome status is invalid")
 
 
+@dataclass(frozen=True, slots=True)
+class ControlledPackageLocatorRecord:
+    """Authoritative locator for one immutable pending or settled package."""
+
+    package_id: ArtifactId
+    package_hash: str
+    operation_run_id: ArtifactId
+    package_status: str
+    package_locator: str
+    created_at: datetime
+
+    def __post_init__(self) -> None:
+        require_sha256("package_hash", self.package_hash)
+        if self.package_status not in {"OUTCOME_PENDING", "SETTLED"}:
+            raise ValueError("Controlled package locator status is invalid")
+        path = PurePosixPath(self.package_locator)
+        if (
+            path.is_absolute()
+            or ".." in path.parts
+            or len(path.parts) < 2
+            or path.parts[0] != ARTIFACT_ROOT_LOCATOR_PREFIX
+            or self.package_locator != path.as_posix()
+        ):
+            raise ValueError(
+                "Controlled package locator must use artifact-root-v1"
+            )
+
+
 class LongitudinalOperationalIndex(Protocol):
+    def record_package_locator(
+        self,
+        *,
+        package: ControlledOperationalEvidencePackage,
+        package_locator: str,
+    ) -> ControlledPackageLocatorRecord: ...
+
     def append(
         self,
         *,
@@ -106,6 +141,7 @@ class LongitudinalOperationalIndex(Protocol):
 
 __all__ = [
     "ARTIFACT_ROOT_LOCATOR_PREFIX",
+    "ControlledPackageLocatorRecord",
     "LongitudinalOperationalIndex",
     "LongitudinalOperationalRecord",
     "encode_artifact_root_locator",

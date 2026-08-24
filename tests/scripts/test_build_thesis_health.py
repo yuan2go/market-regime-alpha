@@ -9,7 +9,6 @@ import pytest
 
 import market_regime_alpha.execution  # noqa: F401  # existing package initialization order
 from market_regime_alpha.data.contracts import DataEligibility
-from market_regime_alpha.dividend_t.brokers import PaperBrokerAdapter
 from market_regime_alpha.evidence import ArtifactEnvelope, EvidenceAuthority
 from market_regime_alpha.forecasting import PathForecast, PathForecastArtifact
 from market_regime_alpha.forecasting.artifact import publish_path_forecast
@@ -297,11 +296,6 @@ def test_cli_persists_and_replays_v2_observation_without_trade_authority(tmp_pat
     request = tmp_path / "health.json"
     _write_request(request, idempotency_key="cli-health-replay")
     _install_verified_package_readers(monkeypatch)
-    monkeypatch.setattr(
-        PaperBrokerAdapter,
-        "place_order",
-        lambda *_args, **_kwargs: pytest.fail("H5 CLI must not call a Broker"),
-    )
     monkeypatch.setattr(
         RiskRouteApplicationService,
         "assess_reducing",

@@ -2,9 +2,9 @@
 
 > **Status:** CURRENT_RESEARCH_PROGRAM
 > **Authority:** Subordinate implementation and research protocol
-> **Repository Baseline:** `main@091324c7e28a2b6a3b89f894d18afc7380486d13`
+> **Implementation Checkpoint:** `agent/engineering-closure-architecture-convergence-01@b853297bcfb08b9ab6e21e7a7f7d22866a7cf6d2`, based on `main@b617844d338523d7dfea72642cfce8213121786e`
 > **Evidence Ceiling:** `ENGINEERING_ONLY / EXPLORATORY / PIT_INCOMPLETE / NOT_PROVEN`
-> **Last Updated:** 2026-08-21
+> **Last Updated:** 2026-08-24
 
 This protocol records the dependency-coherent implementation scope following
 WP-ALPHA-RESEARCH-01. It does not create runtime, data, Evidence, qualification
@@ -15,14 +15,15 @@ remain authoritative.
 
 | Item | Observed baseline |
 |---|---|
-| Branch / worktree | isolated `agent/alpha-daily-arch-convergence-01`; original worktree preserved |
-| HEAD | `091324c7e28a2b6a3b89f894d18afc7380486d13` |
+| Branch / worktree | isolated `agent/engineering-closure-architecture-convergence-01`; original worktree preserved |
+| Historical Phase II audit HEAD | `091324c7e28a2b6a3b89f894d18afc7380486d13` |
+| Current implementation checkpoint | `b853297bcfb08b9ab6e21e7a7f7d22866a7cf6d2` |
 | Source workspace | existing branch with protected `.idea/modules.xml` modification; untouched |
-| Packaged migration head | `092_strategy_forecast_contract_semantics` (after `091_alpha_research_phase_ii`) |
+| Packaged migration head | `097_daily_alpha_target_session` |
 | Python / uv | Python 3.12.13 / uv 0.11.7 |
 | PostgreSQL | PostgreSQL 16.14; sole persistent business Authority |
 | Runtime | `CONTINUOUS_RESEARCH` sole all-day Runtime; Historical Research remains bounded |
-| CI | no GitHub check run for merge commit `091324c`; exact-merge CI status `NOT_RUN` |
+| CI / validation | no GitHub run for `b617844` or the unpushed closure branch; directly relevant unit/architecture/PostgreSQL owner tests are `PASS`, full repository pytest is `NOT_RUN` |
 | Physical Raw/Normalized packages | owner rows/checksums exist, but locators cannot be reopened locally; `ORIGINAL_PHYSICAL_REOPENED=false` |
 
 The audited call chain is Historical Research Runtime → bounded Dataset Window
@@ -41,12 +42,15 @@ Overnight/Swing policies.
 | WP-ALPHA-CORRECTNESS-01 | independent normalized-bar Feature/T+1 Target reproduction, exact temporal/lineage comparison, five frozen placebo kinds, four entry proxies, three-factor redundancy diagnostics and Research Validation moving-block inference are implemented; the Research Panel now separates universal integrity from incumbent factor availability | focused synthetic/unit evidence only; current real physical package remains unavailable, so `PHYSICAL_REPRODUCTION_NOT_ESTABLISHED`; `ALPHA_PROVEN=false` |
 | WP-ALPHA-RESEARCH-02 | `FrozenExternalValidationExperiment` is owned by the existing `ResearchExperimentDefinition`, changes exactly one of Temporal/Universe/Provider, freezes thresholds and emits the requested evaluation diagnostics | `NOT_RUN`; `EMPIRICALLY_EXECUTED=false`; `EXTERNALLY_VALIDATED=false` |
 | WP-ALPHA-CONTEXT-01 | typed session-level versus cross-sectional evaluation, interaction/incremental-information boundary and five research interpretation states | synthetic/unit evidence only; no Context promoted to trading authority |
-| WP-CANDIDATE-POLICY-02 | content-addressed Incumbent/Challenger definitions, Universal Integrity → validated Alpha → supported Context layers, full explanation and same-dataset comparison | Challenger is dormant because no real correctness/external evidence has passed |
-| WP-PREDICTION-01 | empirical median baseline plus frozen regularized model comparison, per-fold Target-availability admission, uncertainty and raw barrier scores; Strategy contract requires explicit Signal/Forecast/Context/Risk/Model lineage and owner-authority reload | `IMPLEMENTED_NOT_WIRED / RESEARCH_READY_KERNEL`; the current post-Portfolio RiskDecision is not reused circularly, so no conditional action path is active; no calibration, Formal OOS, Strategy qualification or Production proof |
+| WP-CANDIDATE-POLICY-02 | content-addressed Incumbent/Challenger definitions, Universal Integrity → validated Alpha → supported Context layers, full explanation and same-dataset comparison; admission v2 rejects cross-Experiment/External/Dataset Context mixing | Challenger is dormant because no real correctness/external evidence has passed |
+| WP-PREDICTION-01 | empirical median baseline plus frozen regularized model comparison; Continuous/Historical adapters share typed material/Risk/Opportunity producer semantics and owner reload, while missing DecisionTime Account facts fail closed | `ENGINEERING_CLOSED / EVIDENCE_INACTIVE`; post-Portfolio RiskDecision remains forbidden and no conditional action path is active; no calibration, Formal OOS, Strategy qualification or Production proof |
 
 Migrations 091–092 extend the existing immutable Historical Evidence and Strategy
-owners and constrain Forecast semantics without rewriting V1. They add no table
-or Authority. Phase II Evidence V2 carries typed
+owners and constrain Forecast semantics without rewriting V1. Migration 093
+persists the frozen Temporal window; 094 adds pre-Strategy Risk/Opportunity
+owners; 095 admits the Daily Alpha snapshot; 096 binds its exact immutable
+prediction and Strategy diagnostic to T+1 Outcome; 097 binds the snapshot to
+its adjacent target session and exact typed Trading Calendar owner. Phase II Evidence V2 carries typed
 `FACT`, `MODEL_ASSUMPTION`, `RESEARCH_RESULT`, `INFERENCE`, `LIMITATION` and
 `INVALIDATION_CONDITION` statements while retaining positive, negative,
 inconclusive and not-estimable classifications.
@@ -54,9 +58,16 @@ inconclusive and not-estimable classifications.
 The Historical Phase II application service reloads exact prerequisite Evidence
 and materialization/data owners from PostgreSQL and persists typed correctness, external,
 Context, Candidate and conditional-prediction artifacts through that same owner.
+`continuous-research historical-phase-ii` is its single idempotent operator
+adapter for the four campaign stages; it adds no runner or scheduler and fixes
+the correctness placebo/inference protocol instead of exposing tuning flags.
 External/Context results bind the exact input set and Research Panel lineage;
 External and Candidate Top-K boundaries reuse the canonical fractional tie
 kernel rather than symbol identity.
+Candidate admission schema v2 additionally binds each declared Context Evidence
+to the same External Experiment and research-panel Dataset. Conditional Forecast
+Evidence must bind one supported same-Experiment Context owner. These are
+lineage constraints only and do not upgrade any empirical state.
 
 ## Dependency order and boundaries
 
@@ -78,8 +89,8 @@ kernel rather than symbol identity.
    and splits integrity, Alpha ranking and Context conditioning.
 5. `WP-PREDICTION-01` freezes Candidate, Signal, Forecast, Context, Risk,
    DecisionTime and model/version lineage in Strategy semantics; canonical
-   consumption remains fail-closed until the missing pre-Strategy Risk owner
-   resolver exists.
+   producer/reload wiring is complete, while consumption remains fail-closed
+   until correctness, external, calibration and economic Evidence exists.
 
 The implementation reuses Historical Research, Research Panel, Target/Outcome,
 Research Validation statistics, existing Experiment Definition, existing
@@ -124,11 +135,11 @@ engine, Evidence authority or qualification framework.
 
 ## Test and execution ceiling
 
-The active closure program runs focused tests plus the explicitly required real
-126-session correctness campaign. It executes `TEMPORAL_VALIDATION_V1` only if
-Correctness is supported. Context and Candidate campaigns remain gated by an
-executed supported External result. No engineering completion creates Formal
-OOS, prospective proof, Strategy qualification or Production qualification.
+The current engineering-closure program runs focused tests only. The real
+126-session correctness, Temporal External Validation, Context and Candidate
+campaigns are explicitly `NOT_RUN`; any later execution remains gated by the
+frozen dependency order. No engineering completion creates Formal OOS,
+prospective proof, Strategy qualification or Production qualification.
 
 Until separately recorded otherwise:
 
@@ -141,5 +152,6 @@ STRATEGY_QUALIFIED=false
 PRODUCTION_QUALIFIED=false
 ```
 
-The approved closure work is decomposed in the subordinate
-[Alpha Daily Architecture Convergence Implementation Plan](../../references/Alpha-Daily-Architecture-Convergence-Implementation-Plan.md).
+The completed PR #74 implementation plan is retained in Git history and is
+`HISTORICAL / SUPERSEDED`; this current protocol and the status/Roadmap documents
+are the only live planning surfaces.

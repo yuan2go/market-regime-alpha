@@ -33,7 +33,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         settings,
         application_schema=settings.application_schema,
     ) as factory:
-        applied = () if args.verify_only else PostgresMigrator().apply_all(factory)
+        migrator = PostgresMigrator()
+        applied = () if args.verify_only else migrator.apply_all(factory)
+        migrator.verify_current(factory)
         with factory.connection(read_only=True) as connection:
             verify_postgres_authority_schema(connection)
             migration = connection.execute(

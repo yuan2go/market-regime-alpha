@@ -63,7 +63,7 @@ class PostgresShadowObservationRepository:
         self,
         factory: PostgresConnectionFactory,
         *,
-        apply_migrations: bool = True,
+        apply_migrations: bool = False,
     ) -> None:
         self._factory = factory
         if apply_migrations:
@@ -695,7 +695,7 @@ class PostgresOwnerResolvedShadowObservationBuilder:
         self,
         factory: PostgresConnectionFactory,
         *,
-        apply_migrations: bool = True,
+        apply_migrations: bool = False,
     ) -> None:
         self._factory = factory
         self._observations = PostgresShadowObservationRepository(

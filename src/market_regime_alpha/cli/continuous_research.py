@@ -25,12 +25,16 @@ from market_regime_alpha.application.continuous_research.free_data_runtime impor
     ControlledRuntimeModelSelector,
 )
 from market_regime_alpha.application.continuous_research.postgres_daily_alpha import (
+    PostgresDailyAlphaConditionalForecastResolver,
     PostgresDailyAlphaEvidenceGateResolver,
     PostgresDailyAlphaOwnerResolver,
     PostgresDailyAlphaPredictionAuthority,
 )
 from market_regime_alpha.application.continuous_research.multi_strategy import (
     PostgresContinuousStrategyOpportunityResolver,
+)
+from market_regime_alpha.application.continuous_research.outcome_settlement import (
+    ContinuousOutcomeSettlementService,
 )
 from market_regime_alpha.application.continuous_research.policy import (
     ContinuousSessionPhase,
@@ -52,11 +56,18 @@ from market_regime_alpha.application.continuous_research.scheduler import (
     ContinuousResearchScheduleRunner,
     TradingDayAssessment,
 )
+from market_regime_alpha.application.decision_system.postgres_repository import (
+    PostgresDecisionSystemRepository,
+)
 from market_regime_alpha.application.continuous_research.runner import (
     ContinuousResearchTickRunner,
 )
 from market_regime_alpha.strategies.postgres_opportunity import (
     PostgresStrategyOpportunityAuthority,
+    PostgresStrategySourceAuthority,
+)
+from market_regime_alpha.strategies.postgres_opportunity_material import (
+    PostgresStrategyOpportunityMaterialResolver,
 )
 from market_regime_alpha.application.continuous_research.runtime_authority_evidence import (
     PostgresRuntimeAuthorityEvidenceRepository,
@@ -113,6 +124,9 @@ from market_regime_alpha.application.historical_corpus.postgres_materialization 
 )
 from market_regime_alpha.application.historical_corpus.postgres_repository import (
     PostgresHistoricalCorpusRepository,
+)
+from market_regime_alpha.application.historical_corpus.phase_ii_operator import (
+    build_postgres_phase_ii_operator,
 )
 from market_regime_alpha.application.historical_research.postgres_journal import (
     DEFAULT_HISTORICAL_STAGE_LEASE,
@@ -290,6 +304,7 @@ from market_regime_alpha.market_data import AssetType, Timeframe
 from market_regime_alpha.persistence.postgres.connection import (
     PostgresConnectionFactory,
 )
+from market_regime_alpha.persistence.postgres.migrator import PostgresMigrator
 from market_regime_alpha.persistence.settings import DatabaseSettings
 from market_regime_alpha.persistence.repository_factory import RepositoryFactory
 from market_regime_alpha.platform.runtime_governance import RuntimeAuthorityMode
@@ -304,6 +319,10 @@ from market_regime_alpha.strategies.portfolio import (
 )
 from market_regime_alpha.strategies.postgres_repository import (
     PostgresMultiStrategyRepository,
+)
+from market_regime_alpha.strategies.postgres_pre_strategy_risk import (
+    PostgresHistoricalPreStrategyRiskFactResolver,
+    PostgresPreStrategyRiskFactResolver,
 )
 from market_regime_alpha.universe.operational import OperationalUniverseArtifact
 from market_regime_alpha.universe.postgres_research import (
@@ -396,8 +415,27 @@ def _add_run_arguments(command: argparse.ArgumentParser) -> None:
             "manual account observations for this account."
         ),
     )
+    command.add_argument(
+        "--pre-strategy-risk-configuration-id",
+        help="Exact Decision Risk Configuration owner used before Strategy.",
+    )
+    command.add_argument(
+        "--pre-strategy-risk-configuration-hash",
+        help="Exact SHA-256 for --pre-strategy-risk-configuration-id.",
+    )
     command.add_argument("--historical-sample-lookback-calendar-days", type=int, default=180)
     command.add_argument("--historical-sample-maximum-per-symbol", type=int, default=60)
+    command.add_argument(
+        "--daily-alpha-candidate-evidence-id",
+        help=(
+            "Explicit HISTORICAL_CANDIDATE_POLICY_EVIDENCE root; omitted keeps "
+            "the validated Challenger inactive."
+        ),
+    )
+    command.add_argument(
+        "--daily-alpha-candidate-evidence-hash",
+        help="Exact SHA-256 for --daily-alpha-candidate-evidence-id.",
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -572,6 +610,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     historical_evidence.add_argument("--run-id", required=True)
     historical_evidence.add_argument("--artifact-root", type=Path, required=True)
+    historical_phase_ii = subparsers.add_parser(
+        "historical-phase-ii",
+        help=(
+            "Execute one owner-resolved Correctness, External, Context or "
+            "Candidate Phase-II operation through Historical Research."
+        ),
+    )
+    historical_phase_ii.add_argument("--input", type=Path, required=True)
+    historical_phase_ii.add_argument("--artifact-root", type=Path, required=True)
     performance_build = subparsers.add_parser(
         "performance-build",
         help="Build immutable multi-period Performance/Attribution from Portfolio Shadow.",
@@ -709,7 +756,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             environ={},
         )
         factory = PostgresConnectionFactory(settings, application_schema=args.application_schema)
-        read_only = args.operation in _READ_OPERATIONS
+        PostgresMigrator().verify_current(factory)
         governance = PostgresAccessGovernance(
             factory,
             apply_migrations=False,
@@ -739,7 +786,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 f"{resource_reference.content_hash}; "
                 f"reasons={','.join(decision.reason_codes)}"
             )
-        journal = PostgresContinuousResearchJournal(factory, apply_migrations=not read_only)
+        journal = PostgresContinuousResearchJournal(factory, apply_migrations=False)
         output = (
             _run_due(args, settings, factory, journal)
             if args.operation == "run-due"
@@ -774,6 +821,16 @@ def _dispatch(
     journal: PostgresContinuousResearchJournal,
     factory: PostgresConnectionFactory,
 ) -> dict[str, Any]:
+    if args.operation == "historical-phase-ii":
+        evidence = build_postgres_phase_ii_operator(
+            factory,
+            artifact_root=args.artifact_root.resolve(),
+        ).execute(_load_json_object(args.input))
+        return {
+            "operation": "HISTORICAL_PHASE_II",
+            "evidence": evidence.to_canonical_dict(),
+            **_authority_ceiling(),
+        }
     if args.operation == "historical-corpus-acquire":
         payload = _load_json_object(args.input)
         required = {"start_date", "end_date", "bucket_count"}
@@ -1734,6 +1791,46 @@ def _dispatch(
     raise ValueError("unsupported Continuous Research operation")
 
 
+def _daily_alpha_evidence_root(
+    args: argparse.Namespace,
+) -> ValidationArtifactReference | None:
+    evidence_id = args.daily_alpha_candidate_evidence_id
+    evidence_hash = args.daily_alpha_candidate_evidence_hash
+    if (evidence_id is None) != (evidence_hash is None):
+        raise ValueError(
+            "Daily Alpha Evidence root requires both exact ID and hash"
+        )
+    if evidence_id is None:
+        return None
+    return ValidationArtifactReference(
+        "HISTORICAL_CANDIDATE_POLICY_EVIDENCE",
+        ArtifactId(str(evidence_id)),
+        str(evidence_hash),
+    )
+
+
+def _pre_strategy_risk_configuration(
+    args: argparse.Namespace,
+) -> RuntimeArtifactReference | None:
+    configuration_id = args.pre_strategy_risk_configuration_id
+    configuration_hash = args.pre_strategy_risk_configuration_hash
+    if (configuration_id is None) != (configuration_hash is None):
+        raise ValueError(
+            "pre-Strategy Risk configuration requires both exact ID and hash"
+        )
+    if configuration_id is None:
+        return None
+    if args.strategy_account_id is None:
+        raise ValueError(
+            "pre-Strategy Risk configuration requires --strategy-account-id"
+        )
+    return RuntimeArtifactReference(
+        "DECISION_RISK_CONFIGURATION",
+        ArtifactId(str(configuration_id)),
+        str(configuration_hash),
+    )
+
+
 def _run_due(
     args: argparse.Namespace,
     settings: DatabaseSettings,
@@ -1918,7 +2015,23 @@ def _run_due(
         invocation_builder=lambda _: invocation(),
         clock=runtime_clock,
     )
-    opportunity_authority = PostgresStrategyOpportunityAuthority(factory)
+    opportunity_authority = PostgresStrategyOpportunityAuthority(
+        factory,
+        source_authority=PostgresStrategySourceAuthority(
+            factory,
+            artifact_root=args.output_root,
+        ),
+    )
+    daily_alpha_evidence_root = _daily_alpha_evidence_root(args)
+    daily_alpha_evidence_gate_resolver = PostgresDailyAlphaEvidenceGateResolver(
+        factory,
+        root_candidate_policy_reference=daily_alpha_evidence_root,
+    )
+    pre_strategy_risk_configuration = _pre_strategy_risk_configuration(args)
+    target_session_date, target_calendar_reference = _daily_alpha_target_session(
+        factory,
+        trading_day,
+    )
     children = CanonicalFreeDataResearchComposition(
         service=service,
         invocation_builder=lambda _: invocation(),
@@ -1933,16 +2046,43 @@ def _run_due(
         ),
         strategy_account_id=args.strategy_account_id,
         strategy_opportunity_resolver=PostgresContinuousStrategyOpportunityResolver(
-            opportunity_authority
+            opportunity_authority,
+            risk_fact_resolver=(
+                None
+                if pre_strategy_risk_configuration is None
+                else PostgresPreStrategyRiskFactResolver(factory)
+            ),
+            account_scope=(
+                None
+                if pre_strategy_risk_configuration is None
+                else args.strategy_account_id
+            ),
+            risk_limit_reference=pre_strategy_risk_configuration,
+            material_resolver=PostgresStrategyOpportunityMaterialResolver(
+                factory,
+                root_candidate_policy_reference=daily_alpha_evidence_root,
+                evidence_gate=daily_alpha_evidence_gate_resolver.assess,
+                artifact_root=args.output_root,
+            ),
         ),
         strategy_opportunity_authority=opportunity_authority,
         daily_alpha_authority=PostgresDailyAlphaPredictionAuthority(
             factory,
-            resolver=PostgresDailyAlphaOwnerResolver(factory),
+            resolver=PostgresDailyAlphaOwnerResolver(
+                factory,
+                artifact_root=args.output_root,
+            ),
         ),
-        daily_alpha_evidence_gate=PostgresDailyAlphaEvidenceGateResolver(
-            factory
-        ).assess,
+        daily_alpha_evidence_gate=daily_alpha_evidence_gate_resolver.assess,
+        daily_alpha_conditional_forecast_resolver=(
+            PostgresDailyAlphaConditionalForecastResolver(
+                factory,
+                root_candidate_policy_reference=daily_alpha_evidence_root,
+                artifact_root=args.output_root,
+            )
+        ),
+        target_session_date=target_session_date,
+        target_calendar_reference=target_calendar_reference,
         clock=runtime_clock,
     )
     tick_runner = ContinuousResearchTickRunner(
@@ -2013,12 +2153,13 @@ def _run_due(
                 idempotency_key=f"{run_command.run_id}:free-data",
                 supplemental_evidence_path=args.supplemental_evidence,
             )
-            automatic_settlement = _settle_previous_prediction_if_due(
-                factory=factory,
+            automatic_settlement = ContinuousOutcomeSettlementService(
+                factory,
+                clock=runtime_clock,
+            ).settle_previous_if_due(
                 calendar=prepared.prepared_inputs.calendar,
                 current_session=run_command.trading_date,
                 artifact_root=args.output_root.resolve(),
-                clock=runtime_clock,
                 authority_mode=run_command.authority_mode,
             )
     return {
@@ -2037,82 +2178,6 @@ def _run_due(
         "historical_sample_build": (None if historical_sample_build is None else historical_sample_build.to_canonical_dict()),
         "path_forecast_registry_wired": forecast_sample_provider is not None,
         "automatic_outcome_settlement": automatic_settlement,
-    }
-
-
-def _settle_previous_prediction_if_due(
-    *,
-    factory: PostgresConnectionFactory,
-    calendar: Any,
-    current_session: date,
-    artifact_root: Path,
-    clock: Any,
-    authority_mode: RuntimeAuthorityMode,
-) -> dict[str, Any]:
-    """Settle the prior canonical session without creating another scheduler."""
-
-    if authority_mode is not RuntimeAuthorityMode.SHADOW:
-        return {
-            "status": "NOT_APPLICABLE",
-            "reason_codes": ["SHADOW_OUTCOME_AUTHORITY_NOT_ACTIVE"],
-        }
-    sessions = calendar.trading_dates
-    if current_session not in sessions:
-        return {
-            "status": "CALENDAR_BLOCKED",
-            "reason_codes": ["CURRENT_SESSION_NOT_IN_CANONICAL_CALENDAR"],
-        }
-    index = sessions.index(current_session)
-    if index == 0:
-        return {
-            "status": "NO_DUE_PREDICTION",
-            "reason_codes": ["NO_PREVIOUS_CANONICAL_SESSION"],
-        }
-    previous_session = sessions[index - 1]
-    with factory.connection(read_only=True) as connection:
-        row = connection.execute(
-            """
-            SELECT count(*), count(*) FILTER (WHERE status = 'SETTLED')
-            FROM shadow_research_session
-            WHERE trading_date = %s
-              AND status IN ('OUTCOME_PENDING', 'SETTLED')
-            """,
-            (previous_session,),
-        ).fetchone()
-    if row is None or int(row[0]) == 0:
-        return {
-            "status": "NO_DUE_PREDICTION",
-            "decision_session": previous_session.isoformat(),
-            "target_session": current_session.isoformat(),
-            "reason_codes": ["NO_PENDING_SHADOW_PREDICTION"],
-        }
-    if int(row[0]) != 1:
-        raise ValueError("automatic settlement requires one exact prior-session owner")
-    try:
-        settled = FreeDataSettlementOperator(factory, clock=clock).settle_day(
-            trading_date=previous_session,
-            next_session_date=current_session,
-            artifact_root=artifact_root,
-        )
-    except ValueError as exc:
-        if str(exc) == "settle-day requires selected Candidates":
-            return {
-                "status": "NO_SELECTED_CANDIDATES",
-                "decision_session": previous_session.isoformat(),
-                "target_session": current_session.isoformat(),
-                "reason_codes": ["NO_SELECTED_CANDIDATES"],
-            }
-        raise
-    return {
-        "status": "SETTLED" if int(row[1]) == 0 else "REPLAY_VERIFIED",
-        "decision_session": previous_session.isoformat(),
-        "target_session": current_session.isoformat(),
-        "settlement_id": settled["factual_outcome_id"],
-        "targeted_outcome_id": settled["targeted_outcome_id"],
-        "reason_codes": [
-            "T_PLUS_1_OUTCOME_SETTLED_IDEMPOTENTLY",
-            "PREDICTION_SNAPSHOT_IMMUTABLE",
-        ],
     }
 
 
@@ -2488,7 +2553,31 @@ def _historical_runner(
         )
         opportunity_authority = PostgresStrategyOpportunityAuthority(
             factory,
+            source_authority=PostgresStrategySourceAuthority(
+                factory,
+                artifact_root=artifact_root,
+            ),
             apply_migrations=False,
+        )
+        candidate_roots = tuple(
+            item
+            for item in command.configuration_references
+            if item.artifact_kind == "HISTORICAL_CANDIDATE_POLICY_EVIDENCE"
+        )
+        if len(candidate_roots) > 1:
+            raise ValueError(
+                "Historical Strategy binds multiple Candidate Evidence roots"
+            )
+        historical_evidence_root = (
+            None if not candidate_roots else candidate_roots[0]
+        )
+        historical_evidence_gate_resolver = PostgresDailyAlphaEvidenceGateResolver(
+            factory,
+            root_candidate_policy_reference=historical_evidence_root,
+        )
+        historical_risk = _historical_pre_strategy_risk_configuration(
+            factory,
+            command.configuration_references,
         )
         archive_materializer = MultiStrategyHistoricalAdapter(
             delegate=base_materializer,
@@ -2504,7 +2593,16 @@ def _historical_runner(
                 maximum_symbol_weight=Decimal("0.20"),
             ),
             opportunity_resolver=PostgresHistoricalStrategyOpportunityResolver(
-                opportunity_authority
+                opportunity_authority,
+                risk_fact_resolver=historical_risk[0],
+                account_scope=historical_risk[1],
+                risk_limit_reference=historical_risk[2],
+                material_resolver=PostgresStrategyOpportunityMaterialResolver(
+                    factory,
+                    root_candidate_policy_reference=historical_evidence_root,
+                    evidence_gate=historical_evidence_gate_resolver.assess,
+                    artifact_root=artifact_root,
+                ),
             ),
             opportunity_authority=opportunity_authority,
         )
@@ -2517,6 +2615,126 @@ def _historical_runner(
                 apply_migrations=False,
             )
         ),
+    )
+
+
+def _historical_pre_strategy_risk_configuration(
+    factory: PostgresConnectionFactory,
+    configuration_references: tuple[ValidationArtifactReference, ...],
+) -> tuple[
+    PostgresHistoricalPreStrategyRiskFactResolver | None,
+    str | None,
+    RuntimeArtifactReference | None,
+]:
+    kinds = {
+        kind: tuple(
+            item for item in configuration_references if item.artifact_kind == kind
+        )
+        for kind in (
+            "MANUAL_ACCOUNT_OBSERVATION",
+            "ACCOUNT_RECONCILIATION",
+            "DECISION_RISK_CONFIGURATION",
+        )
+    }
+    if not any(kinds.values()):
+        return None, None, None
+    account_references = kinds["MANUAL_ACCOUNT_OBSERVATION"]
+    reconciliation_references = kinds["ACCOUNT_RECONCILIATION"]
+    risk_references = kinds["DECISION_RISK_CONFIGURATION"]
+    if (
+        not account_references
+        or not reconciliation_references
+        or len(risk_references) != 1
+    ):
+        raise ValueError(
+            "Historical Strategy requires exact Account/Reconciliation owners "
+            "for every session and one Risk owner"
+        )
+    accounts = tuple(
+        PostgresDecisionSystemRepository(factory).get_manual_observation(
+            item.artifact_id
+        )
+        for item in account_references
+    )
+    account_runtime_references = tuple(
+        _as_runtime_reference(item) for item in account_references
+    )
+    if any(
+        account.content_hash != reference.content_hash
+        for account, reference in zip(accounts, account_references, strict=True)
+    ):
+        raise ValueError("Historical Account owner hash drifted")
+    account_scopes = {item.account_id for item in accounts}
+    if len(account_scopes) != 1:
+        raise ValueError("Historical Strategy Account scope is ambiguous")
+    reconciliations = tuple(
+        PostgresDecisionSystemRepository(factory).get_reconciliation(
+            item.artifact_id
+        )
+        for item in reconciliation_references
+    )
+    account_ids = {item.observation_id for item in accounts}
+    if any(
+        reconciliation.content_hash != reference.content_hash
+        or reconciliation.manual_observation_id not in account_ids
+        for reconciliation, reference in zip(
+            reconciliations,
+            reconciliation_references,
+            strict=True,
+        )
+    ):
+        raise ValueError("Historical Reconciliation owner drifted")
+    risk_reference = _as_runtime_reference(risk_references[0])
+    account_scope = next(iter(account_scopes))
+    return (
+        PostgresHistoricalPreStrategyRiskFactResolver(
+            factory,
+            account_scope=account_scope,
+            account_state_references=account_runtime_references,
+            reconciliation_references=tuple(
+                _as_runtime_reference(item) for item in reconciliation_references
+            ),
+        ),
+        account_scope,
+        risk_reference,
+    )
+
+
+def _daily_alpha_target_session(
+    factory: PostgresConnectionFactory,
+    assessment: TradingDayAssessment,
+) -> tuple[date, RuntimeArtifactReference]:
+    calendar = PostgresPITTradingCalendarSnapshotRepository(
+        factory,
+        apply_migrations=False,
+    ).get(assessment.trading_calendar_id)
+    if (
+        calendar.content_hash != assessment.trading_calendar_hash
+        or calendar.artifact_id != assessment.trading_calendar_id
+        or assessment.trading_date not in calendar.trading_dates
+        or not assessment.is_trading_day
+    ):
+        raise ValueError("Daily Alpha Trading Calendar owner drifted")
+    index = calendar.trading_dates.index(assessment.trading_date)
+    if index + 1 >= len(calendar.trading_dates):
+        raise ValueError("Daily Alpha target session is absent from canonical Calendar")
+    return (
+        calendar.trading_dates[index + 1],
+        RuntimeArtifactReference(
+            "TRADING_CALENDAR",
+            calendar.artifact_id,
+            calendar.content_hash,
+        ),
+    )
+
+
+def _as_runtime_reference(
+    reference: ValidationArtifactReference,
+) -> RuntimeArtifactReference:
+    return RuntimeArtifactReference(
+        reference.artifact_kind,
+        reference.artifact_id,
+        reference.content_hash,
     )
 
 
@@ -2568,6 +2786,7 @@ def _required_permission(args: argparse.Namespace) -> SecurityPermission:
         "qualification-shadow",
         "qualification-status",
         "historical-evidence",
+        "historical-phase-ii",
         "strategy-feedback-close",
     }:
         return SecurityPermission.RECORD_RESEARCH_EVIDENCE

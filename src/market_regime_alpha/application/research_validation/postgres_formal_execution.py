@@ -89,7 +89,7 @@ class PostgresFormalExecutionRepository:
         self,
         factory: PostgresConnectionFactory,
         *,
-        apply_migrations: bool = True,
+        apply_migrations: bool = False,
     ) -> None:
         self._factory = factory
         if apply_migrations:

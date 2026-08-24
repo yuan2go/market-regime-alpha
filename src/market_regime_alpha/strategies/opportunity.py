@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Mapping
+from decimal import Decimal
+from typing import Any, Mapping, Protocol
 
 from market_regime_alpha.application.continuous_research.journal import (
     RuntimeArtifactReference,
@@ -16,6 +17,298 @@ from market_regime_alpha.evidence.canonical import (
     require_sha256,
     require_text,
 )
+from market_regime_alpha.research.candidate_discovery.contracts import (
+    CandidateSelectionStatus,
+    CandidateSet,
+)
+from market_regime_alpha.strategies.contracts import (
+    StrategyOpportunityInput,
+    StrategyRegistry,
+    strategy_reference,
+)
+
+
+@dataclass(frozen=True, slots=True)
+class PreStrategyPositionFact:
+    symbol: str
+    total_quantity: int
+    available_quantity: int
+    observed_market_value: Decimal
+
+    def __post_init__(self) -> None:
+        require_text("symbol", self.symbol)
+        if min(self.total_quantity, self.available_quantity) < 0:
+            raise ValueError("pre-Strategy position quantities cannot be negative")
+        if self.available_quantity > self.total_quantity:
+            raise ValueError("pre-Strategy available quantity exceeds total")
+        if self.observed_market_value < 0:
+            raise ValueError("pre-Strategy position value cannot be negative")
+
+
+@dataclass(frozen=True, slots=True)
+class PreStrategyMarketFact:
+    symbol: str
+    eligible: bool
+    liquidity: Decimal | None
+    is_st: bool | None
+    suspended: bool | None
+
+    def __post_init__(self) -> None:
+        require_text("symbol", self.symbol)
+        if self.liquidity is not None and not (
+            Decimal("0") <= self.liquidity <= Decimal("1")
+        ):
+            raise ValueError("pre-Strategy liquidity must be within [0, 1]")
+
+
+@dataclass(frozen=True, slots=True)
+class PreStrategyRiskFacts:
+    """Typed projection of existing Account/Position/Pool/Risk owners."""
+
+    account_scope: str
+    account_state_reference: RuntimeArtifactReference
+    reconciliation_reference: RuntimeArtifactReference
+    market_state_reference: RuntimeArtifactReference
+    risk_limit_reference: RuntimeArtifactReference
+    decision_time: datetime
+    available_at: datetime
+    total_equity: Decimal
+    available_cash: Decimal
+    positions: tuple[PreStrategyPositionFact, ...]
+    market_facts: tuple[PreStrategyMarketFact, ...]
+    maximum_single_symbol_weight: Decimal
+    maximum_theme_weight: Decimal
+    theme_exposures: tuple[tuple[str, Decimal], ...]
+    theme_exposure_complete: bool
+    minimum_liquidity: Decimal
+    daily_loss_limit: Decimal | None
+
+    def __post_init__(self) -> None:
+        require_text("account_scope", self.account_scope)
+        canonical_datetime(self.decision_time)
+        canonical_datetime(self.available_at)
+        if self.available_at > self.decision_time:
+            raise ValueError("pre-Strategy facts are unavailable at DecisionTime")
+        if self.account_state_reference.reference_kind != "MANUAL_ACCOUNT_OBSERVATION":
+            raise ValueError("pre-Strategy Account owner kind is invalid")
+        if self.reconciliation_reference.reference_kind != "ACCOUNT_RECONCILIATION":
+            raise ValueError("pre-Strategy reconciliation owner kind is invalid")
+        if self.market_state_reference.reference_kind not in {
+            "DYNAMIC_STOCK_POOL",
+            "HISTORICAL_DYNAMIC_POOL",
+        }:
+            raise ValueError("pre-Strategy market owner kind is invalid")
+        if self.risk_limit_reference.reference_kind != "DECISION_RISK_CONFIGURATION":
+            raise ValueError("pre-Strategy Risk configuration owner kind is invalid")
+        if self.total_equity < 0 or self.available_cash < 0:
+            raise ValueError("pre-Strategy Account amounts cannot be negative")
+        if not Decimal("0") < self.maximum_single_symbol_weight <= Decimal("1"):
+            raise ValueError("pre-Strategy symbol limit must be within (0, 1]")
+        if not Decimal("0") < self.maximum_theme_weight <= Decimal("1"):
+            raise ValueError("pre-Strategy theme limit must be within (0, 1]")
+        if not Decimal("0") <= self.minimum_liquidity <= Decimal("1"):
+            raise ValueError("pre-Strategy liquidity limit must be within [0, 1]")
+        position_symbols = tuple(item.symbol for item in self.positions)
+        market_symbols = tuple(item.symbol for item in self.market_facts)
+        if position_symbols != tuple(sorted(set(position_symbols))):
+            raise ValueError("pre-Strategy positions must be unique and sorted")
+        if market_symbols != tuple(sorted(set(market_symbols))):
+            raise ValueError("pre-Strategy market facts must be unique and sorted")
+        theme_ids = tuple(item[0] for item in self.theme_exposures)
+        if theme_ids != tuple(sorted(set(theme_ids))) or any(
+            not Decimal("0") <= exposure <= Decimal("1")
+            for _theme_id, exposure in self.theme_exposures
+        ):
+            raise ValueError("pre-Strategy theme exposures must be valid and sorted")
+
+
+@dataclass(frozen=True, slots=True)
+class StrategyOpportunityMaterial:
+    """Exact owner-resolved Signal/Forecast/Context/Model material."""
+
+    symbol: str
+    strategy_version_reference: RuntimeArtifactReference
+    signal_reference: RuntimeArtifactReference
+    forecast_reference: RuntimeArtifactReference
+    context_reference: RuntimeArtifactReference
+    model_reference: RuntimeArtifactReference
+    signal_active: bool
+    expected_return: Decimal | None
+    prediction_uncertainty: Decimal | None
+    calibration_status: str
+    available_at: datetime
+
+    def __post_init__(self) -> None:
+        require_text("symbol", self.symbol)
+        canonical_datetime(self.available_at)
+
+
+class StrategyOpportunityWriteAuthority(Protocol):
+    def record_risk_state(
+        self,
+        state: PreStrategyRiskState,
+        *,
+        created_at: datetime,
+    ) -> PreStrategyRiskState: ...
+
+    def record_opportunity(
+        self,
+        opportunity: StrategyOpportunityInput,
+        *,
+        created_at: datetime,
+    ) -> StrategyOpportunityInput: ...
+
+
+class StrategyOpportunityProducer:
+    """The sole business producer for both pre-Strategy owner facts."""
+
+    def __init__(self, authority: StrategyOpportunityWriteAuthority) -> None:
+        self._authority = authority
+
+    def produce(
+        self,
+        *,
+        candidates: CandidateSet,
+        facts: PreStrategyRiskFacts,
+        registry: StrategyRegistry,
+        materials: tuple[StrategyOpportunityMaterial, ...],
+        created_at: datetime,
+    ) -> tuple[PreStrategyRiskState, tuple[StrategyOpportunityInput, ...]]:
+        risk = self._authority.record_risk_state(
+            build_pre_strategy_risk_state(candidates=candidates, facts=facts),
+            created_at=created_at,
+        )
+        active = {strategy_reference(item) for item in registry.active_versions}
+        candidate_reference = RuntimeArtifactReference(
+            "CANDIDATE_SET",
+            candidates.envelope.artifact_id,
+            candidates.envelope.content_hash,
+        )
+        opportunities: list[StrategyOpportunityInput] = []
+        keys: set[tuple[RuntimeArtifactReference, str]] = set()
+        for material in sorted(
+            materials,
+            key=lambda item: (str(item.strategy_version_reference.artifact_id), item.symbol),
+        ):
+            key = (material.strategy_version_reference, material.symbol)
+            if key in keys:
+                raise ValueError("Strategy Opportunity material is ambiguous")
+            keys.add(key)
+            if material.strategy_version_reference not in active:
+                raise ValueError("Strategy Opportunity material uses an inactive version")
+            decision = risk.decision_for(material.symbol)
+            opportunity = StrategyOpportunityInput.create(
+                symbol=material.symbol,
+                strategy_version_reference=material.strategy_version_reference,
+                candidate_reference=candidate_reference,
+                decision_time=facts.decision_time,
+                signal_reference=material.signal_reference,
+                forecast_reference=material.forecast_reference,
+                context_reference=material.context_reference,
+                risk_state_reference=risk.reference,
+                model_reference=material.model_reference,
+                signal_active=material.signal_active,
+                risk_allows_action=decision.allows_action,
+                risk_reason_codes=decision.reason_codes,
+                expected_return=material.expected_return,
+                prediction_uncertainty=material.prediction_uncertainty,
+                calibration_status=material.calibration_status,
+                available_at=max(risk.available_at, material.available_at),
+            )
+            opportunities.append(
+                self._authority.record_opportunity(opportunity, created_at=created_at)
+            )
+        return risk, tuple(opportunities)
+
+
+def build_pre_strategy_risk_state(
+    *,
+    candidates: CandidateSet,
+    facts: PreStrategyRiskFacts,
+) -> PreStrategyRiskState:
+    candidate_reference = RuntimeArtifactReference(
+        "CANDIDATE_SET",
+        candidates.envelope.artifact_id,
+        candidates.envelope.content_hash,
+    )
+    positions = {item.symbol: item for item in facts.positions}
+    market = {item.symbol: item for item in facts.market_facts}
+    theme_exposures = dict(facts.theme_exposures)
+    decisions: list[PreStrategySymbolRiskDecision] = []
+    for candidate in candidates.records:
+        if candidate.selection_status not in {
+            CandidateSelectionStatus.SELECTED,
+            CandidateSelectionStatus.WATCHLIST,
+        }:
+            continue
+        reasons: set[str] = set()
+        position = positions.get(candidate.symbol)
+        market_fact = market.get(candidate.symbol)
+        if facts.total_equity <= 0:
+            reasons.add("ACCOUNT_EQUITY_UNAVAILABLE")
+        if facts.available_cash <= 0:
+            reasons.add("AVAILABLE_CASH_UNAVAILABLE")
+        if position is not None:
+            if position.total_quantity > 0 and position.available_quantity == 0:
+                reasons.add("POSITION_AVAILABLE_QUANTITY_ZERO")
+            if (
+                facts.total_equity <= 0
+                or position.observed_market_value / facts.total_equity
+                > facts.maximum_single_symbol_weight
+            ):
+                reasons.add("SINGLE_SYMBOL_EXPOSURE_LIMIT")
+        if market_fact is None:
+            reasons.add("MARKET_ELIGIBILITY_DATA_INSUFFICIENT")
+        else:
+            if not market_fact.eligible:
+                reasons.add("SYMBOL_NOT_ELIGIBLE")
+            if market_fact.liquidity is None:
+                reasons.add("LIQUIDITY_EVIDENCE_UNAVAILABLE")
+            elif market_fact.liquidity < facts.minimum_liquidity:
+                reasons.add("LIQUIDITY_LIMIT")
+            if market_fact.is_st is None:
+                reasons.add("ST_STATUS_EVIDENCE_UNAVAILABLE")
+            elif market_fact.is_st:
+                reasons.add("ST_TRADING_RESTRICTION")
+            if market_fact.suspended is None:
+                reasons.add("SUSPENSION_STATUS_EVIDENCE_UNAVAILABLE")
+            elif market_fact.suspended:
+                reasons.add("SUSPENSION_TRADING_RESTRICTION")
+        if not facts.theme_exposure_complete:
+            reasons.add("THEME_EXPOSURE_EVIDENCE_UNAVAILABLE")
+        elif candidate.primary_theme_id is None:
+            reasons.add("THEME_CLASSIFICATION_UNAVAILABLE")
+        elif (
+            theme_exposures.get(candidate.primary_theme_id, Decimal("0"))
+            > facts.maximum_theme_weight
+        ):
+            reasons.add("THEME_EXPOSURE_LIMIT")
+        if facts.daily_loss_limit is not None:
+            reasons.add("DAILY_LOSS_EVIDENCE_UNAVAILABLE")
+        decisions.append(
+            PreStrategySymbolRiskDecision(
+                candidate.symbol,
+                not reasons,
+                tuple(sorted(reasons)),
+            )
+        )
+    return PreStrategyRiskState.create(
+        account_scope=facts.account_scope,
+        candidate_reference=candidate_reference,
+        decision_time=facts.decision_time,
+        available_at=facts.available_at,
+        account_state_reference=facts.account_state_reference,
+        position_state_references=(facts.account_state_reference,),
+        liquidity_constraint_references=(facts.market_state_reference,),
+        position_constraint_references=(facts.reconciliation_reference,),
+        risk_limit_references=(facts.risk_limit_reference,),
+        trading_restriction_references=(facts.market_state_reference,),
+        symbol_decisions=tuple(decisions),
+        limitations=(
+            "PRE_STRATEGY_RISK_INCREASE_FILTER_ONLY",
+            "RESEARCH_SHADOW_ONLY",
+        ),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -312,4 +605,13 @@ def _references(
     )
 
 
-__all__ = ["PreStrategyRiskState", "PreStrategySymbolRiskDecision"]
+__all__ = [
+    "PreStrategyMarketFact",
+    "PreStrategyPositionFact",
+    "PreStrategyRiskFacts",
+    "PreStrategyRiskState",
+    "PreStrategySymbolRiskDecision",
+    "StrategyOpportunityMaterial",
+    "StrategyOpportunityProducer",
+    "build_pre_strategy_risk_state",
+]

@@ -52,3 +52,25 @@ def test_free_data_composition_cannot_import_trading_mutation_domains() -> None:
                 violations.append(f"{path.relative_to(PACKAGE_ROOT)} -> {module}")
 
     assert violations == [], "Free-data trading mutation imports:\n" + "\n".join(violations)
+
+
+def test_postgres_authority_constructors_never_default_to_migration() -> None:
+    violations: list[str] = []
+    for path in sorted(PACKAGE_ROOT.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if node.name != "__init__":
+                continue
+            positional = tuple(node.args.args[-len(node.args.defaults) :]) if node.args.defaults else ()
+            defaults = zip(positional + tuple(node.args.kwonlyargs), tuple(node.args.defaults) + tuple(node.args.kw_defaults), strict=True)
+            for argument, default in defaults:
+                if argument.arg not in {"apply_migrations", "migrate"}:
+                    continue
+                if isinstance(default, ast.Constant) and default.value is True:
+                    violations.append(
+                        f"{path.relative_to(PACKAGE_ROOT)}:{node.lineno} {argument.arg}=True"
+                    )
+
+    assert violations == [], "Implicit PostgreSQL migration defaults:\n" + "\n".join(violations)

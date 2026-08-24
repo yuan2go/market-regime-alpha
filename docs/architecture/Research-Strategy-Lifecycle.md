@@ -90,6 +90,14 @@ qualification or empirical validation.
   Risk state, DecisionTime/availability and Model/version lineage; missing,
   wrong-version or inactive binding fails closed. This is a real
   consumer contract, not an adapter that grants Forecast or trading Authority.
+- Continuous/Historical adapters share one Opportunity material/Risk producer
+  semantics. When exact DecisionTime Account facts and Risk configuration are
+  supplied, it derives `PRE_STRATEGY_RISK_STATE` from typed account,
+  Position/exposure, liquidity, restriction, available-quantity and
+  configured-limit owners, records the exact `STRATEGY_OPPORTUNITY`, and
+  typed-reloads every source before Strategy. Historical input without those
+  facts fails closed. Post-Portfolio `COMPLETE_ACCOUNT_RISK_DECISION` is never
+  a Strategy input.
 - Runtime Scope owns the session symbol decision. It combines overlapping free
   Operational Universe facts conservatively, preserves every Provider artifact
   reference and retains `EXCLUDED`/`UNKNOWN`; downstream owners receive the
@@ -102,6 +110,16 @@ qualification or empirical validation.
   independently frozen policy; current evidence does not.
 - Entry research evaluates Candidate-only, Candidate+Signal, Candidate+Forecast and Candidate+Intraday variants. Its strongest output is `SHADOW_ENTER`; Canonical Entry still has no `ENTER` state.
 - Research Shadow freezes what the research system knew and later binds factual outcomes. It has no simulated account or execution ledger.
+- Daily Alpha freezes the exact Candidate/Signal/Forecast and Strategy
+  diagnostic together with run/tick and snapshot hash. T+1 settlement appends
+  Outcome V2 through the one Continuous control plane; it never rewrites the
+  prediction or guesses ownership from trading date alone.
+- Daily Alpha admission starts from one explicit Candidate Policy Evidence root
+  and reloads its exact Discovery, Correctness, External and supported Context
+  lineage. Context must share Experiment and Dataset identity. A unique typed
+  Conditional Forecast owner is projected with its real model/baseline,
+  expected return, uncertainty and calibration state; missing or ambiguous
+  ownership remains explicitly unavailable.
 - Strategy Shadow owns the isolated simulated Entry/Fill/Position/Holding/Exit
   session and the observed-Fill Strategy sleeve projection. When a canonical
   Multi-Strategy cycle exists, the free-data Shadow Entry is downstream of the

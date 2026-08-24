@@ -7,14 +7,30 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pytest
+
 from market_regime_alpha.cli.continuous_research import (
     ARGUMENT_ERROR,
     DATABASE_ERROR,
     SUCCESS,
+    _daily_alpha_evidence_root,
+    _historical_pre_strategy_risk_configuration,
     _operator_resource,
-    _settle_previous_prediction_if_due,
+    _pre_strategy_risk_configuration,
     build_parser,
     main,
+)
+from market_regime_alpha.application.continuous_research.outcome_settlement import (
+    ContinuousOutcomeSettlementService,
+)
+from market_regime_alpha.application.continuous_research.daily_alpha import (
+    DailyAlphaEvidenceGate,
+)
+from market_regime_alpha.application.continuous_research.journal import (
+    RuntimeArtifactReference,
+)
+from market_regime_alpha.application.research_validation.common import (
+    ValidationArtifactReference,
 )
 from market_regime_alpha.application.continuous_research.scheduler import (
     TradingDayAssessment,
@@ -30,6 +46,9 @@ from market_regime_alpha.persistence.postgres.connection import (
     PostgresConnectionFactory,
 )
 from market_regime_alpha.platform.runtime_governance import RuntimeAuthorityMode
+from tests.application.continuous_research.test_daily_alpha import (
+    _snapshot as daily_alpha_snapshot,
+)
 from tests.application.continuous_research.test_runner import _command, _tick
 from tests.persistence.postgres.conftest import (
     TEST_DATABASE_URL_ENV,
@@ -55,21 +74,34 @@ def _authority_args(postgres_factory: PostgresConnectionFactory) -> list[str]:
     ]
 
 
-def test_automatic_settlement_uses_exact_previous_canonical_session() -> None:
+def test_automatic_settlement_uses_exact_snapshot_target_session() -> None:
     calls: list[tuple[date, date]] = []
+    snapshot = daily_alpha_snapshot(DailyAlphaEvidenceGate.inactive())
+    assert snapshot.target_session_date is not None
 
     class Connection:
+        query = ""
+
         def __enter__(self):
             return self
 
         def __exit__(self, *_: object) -> None:
             return None
 
-        def execute(self, *_: object):
+        def execute(self, query: str, *_: object):
+            self.query = query
             return self
 
-        def fetchone(self) -> tuple[int, int]:
-            return (1, 0)
+        def fetchall(self):
+            if "daily_alpha_prediction_target_session" in self.query:
+                return [
+                    (
+                        str(snapshot.snapshot_id),
+                        snapshot.snapshot_hash,
+                        snapshot.identity_payload(),
+                    )
+                ]
+            return [("shadow-session", "shadow-decision", "OUTCOME_PENDING")]
 
     class Factory:
         def connection(self, *, read_only: bool = False) -> Connection:
@@ -83,31 +115,111 @@ def test_automatic_settlement_uses_exact_previous_canonical_session() -> None:
             trading_date: date,
             next_session_date: date,
             artifact_root: Path,
+            decision_id: ArtifactId,
+            prediction_snapshot_reference: RuntimeArtifactReference,
         ) -> dict[str, str]:
             assert artifact_root == Path("/tmp/daily-alpha-test")
+            assert decision_id == ArtifactId("shadow-decision")
+            assert prediction_snapshot_reference == snapshot.reference
             calls.append((trading_date, next_session_date))
             return {
                 "factual_outcome_id": "factual-outcome",
                 "targeted_outcome_id": "targeted-outcome",
+                "prediction_snapshot_id": "daily-prediction",
+                "prediction_snapshot_hash": "sha256:" + "1" * 64,
             }
 
-    sessions = (date(2026, 1, 16), date(2026, 1, 19), date(2026, 1, 20))
+    sessions = (snapshot.trading_date, snapshot.target_session_date)
     with patch(
-        "market_regime_alpha.cli.continuous_research.FreeDataSettlementOperator",
+        "market_regime_alpha.application.continuous_research.outcome_settlement.FreeDataSettlementOperator",
         return_value=Settlement(),
     ):
-        result = _settle_previous_prediction_if_due(
-            factory=Factory(),  # type: ignore[arg-type]
-            calendar=SimpleNamespace(trading_dates=sessions),
-            current_session=sessions[1],
-            artifact_root=Path("/tmp/daily-alpha-test"),
+        result = ContinuousOutcomeSettlementService(
+            Factory(),  # type: ignore[arg-type]
             clock=lambda: datetime(2026, 1, 19, 7, 1, tzinfo=UTC),
+        ).settle_previous_if_due(
+            calendar=SimpleNamespace(trading_dates=sessions),
+            current_session=snapshot.target_session_date,
+            artifact_root=Path("/tmp/daily-alpha-test"),
             authority_mode=RuntimeAuthorityMode.SHADOW,
         )
 
-    assert calls == [(date(2026, 1, 16), date(2026, 1, 19))]
+    assert calls == [(snapshot.trading_date, snapshot.target_session_date)]
     assert result["status"] == "SETTLED"
     assert result["settlement_id"] == "factual-outcome"
+
+
+def test_automatic_settlement_fails_closed_for_ambiguous_decision_scope() -> None:
+    snapshot = daily_alpha_snapshot(DailyAlphaEvidenceGate.inactive())
+    assert snapshot.target_session_date is not None
+
+    class Connection:
+        query = ""
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            return None
+
+        def execute(self, query: str, *_: object):
+            self.query = query
+            return self
+
+        def fetchall(self):
+            if "daily_alpha_prediction_target_session" in self.query:
+                return [
+                    (
+                        str(snapshot.snapshot_id),
+                        snapshot.snapshot_hash,
+                        snapshot.identity_payload(),
+                    )
+                ]
+            return [
+                ("shadow-session-a", "shadow-decision-a", "OUTCOME_PENDING"),
+                ("shadow-session-b", "shadow-decision-b", "OUTCOME_PENDING"),
+            ]
+
+    class Factory:
+        def connection(self, *, read_only: bool = False) -> Connection:
+            assert read_only is True
+            return Connection()
+
+    sessions = (snapshot.trading_date, snapshot.target_session_date)
+    with patch(
+        "market_regime_alpha.application.continuous_research.outcome_settlement.FreeDataSettlementOperator"
+    ) as settlement:
+        result = ContinuousOutcomeSettlementService(
+            Factory(),  # type: ignore[arg-type]
+            clock=lambda: datetime(2026, 1, 19, 7, 1, tzinfo=UTC),
+        ).settle_previous_if_due(
+            calendar=SimpleNamespace(trading_dates=sessions),
+            current_session=snapshot.target_session_date,
+            artifact_root=Path("/tmp/daily-alpha-test"),
+            authority_mode=RuntimeAuthorityMode.SHADOW,
+        )
+
+    settlement.assert_not_called()
+    assert result["status"] == "LINEAGE_AMBIGUOUS"
+    assert result["reason_codes"] == ["SHADOW_DECISION_SCOPE_AMBIGUOUS"]
+
+
+def test_historical_opportunity_requires_complete_exact_risk_owner_binding() -> None:
+    assert _historical_pre_strategy_risk_configuration(
+        object(),  # type: ignore[arg-type]
+        (),
+    ) == (None, None, None)
+    account = ValidationArtifactReference(
+        "MANUAL_ACCOUNT_OBSERVATION",
+        ArtifactId("historical-account"),
+        "sha256:" + "a" * 64,
+    )
+
+    with pytest.raises(ValueError, match="exact Account/Reconciliation"):
+        _historical_pre_strategy_risk_configuration(
+            object(),  # type: ignore[arg-type]
+            (account,),
+        )
 
 
 def test_cli_exposes_converged_free_data_day_operations() -> None:
@@ -128,12 +240,22 @@ def test_cli_exposes_converged_free_data_day_operations() -> None:
             "2025-02-03T14:54:00+08:00",
             "--strategy-account-id",
             "strategy-shadow-account",
+            "--pre-strategy-risk-configuration-id",
+            "decision-risk-configuration:test",
+            "--pre-strategy-risk-configuration-hash",
+            f"sha256:{'b' * 64}",
+            "--daily-alpha-candidate-evidence-id",
+            "historical-evidence-candidate",
+            "--daily-alpha-candidate-evidence-hash",
+            f"sha256:{'a' * 64}",
         ]
     )
 
     assert args.operation == "run-due"
     assert args.runtime_clock_mode == "LIVE"
     assert args.strategy_account_id == "strategy-shadow-account"
+    assert _daily_alpha_evidence_root(args) is not None
+    assert _pre_strategy_risk_configuration(args) is not None
     assert _operator_resource(args).artifact_kind == (
         "CONTINUOUS_OPERATOR_OPERATION"
     )
@@ -286,6 +408,17 @@ def test_cli_exposes_converged_free_data_day_operations() -> None:
             "historical-evidence",
             "--run-id",
             "historical-run-1",
+            "--artifact-root",
+            "historical-artifacts",
+        ]
+    )
+    historical_phase_ii = build_parser().parse_args(
+        [
+            "--database-url",
+            "postgresql://runtime-authority",
+            "historical-phase-ii",
+            "--input",
+            "phase-ii.json",
             "--artifact-root",
             "historical-artifacts",
         ]
@@ -489,6 +622,7 @@ def test_cli_exposes_converged_free_data_day_operations() -> None:
     assert historical_run.operation == "historical-run"
     assert historical_acquire.operation == "historical-corpus-acquire"
     assert historical_evidence.operation == "historical-evidence"
+    assert historical_phase_ii.operation == "historical-phase-ii"
     assert strategy_feedback_close.operation == "strategy-feedback-close"
     assert (
         strategy_feedback_close.incumbent_version_id

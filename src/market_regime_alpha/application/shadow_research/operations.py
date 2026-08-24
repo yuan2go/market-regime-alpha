@@ -15,6 +15,9 @@ from typing import Any
 from market_regime_alpha.application.continuous_research.journal import (
     RuntimeArtifactReference,
 )
+from market_regime_alpha.application.continuous_research.daily_alpha import (
+    DailyAlphaPredictionSnapshot,
+)
 from market_regime_alpha.application.continuous_research.postgres_journal import (
     PostgresContinuousResearchJournal,
 )
@@ -222,6 +225,7 @@ class ResearchShadowOperations:
         self,
         *,
         decision_id: ArtifactId,
+        prediction_snapshot: DailyAlphaPredictionSnapshot | None,
         source_archive: OutcomeSettlementSourceArchive,
         settlement_dataset: VerifiedMarketDataDataset,
         factual_evidence: TradeHorizonOutcomeEvidence,
@@ -265,8 +269,11 @@ class ResearchShadowOperations:
         try:
             factual = self._outcomes.get_for_decision(decision_id)
         except KeyError:
+            if prediction_snapshot is None:
+                raise ValueError("new factual Outcome requires Daily prediction owner")
             factual = self._outcomes.build(
                 decision_id=decision_id,
+                prediction_snapshot=prediction_snapshot,
                 source_archive=source_archive,
                 settlement_dataset=settlement_dataset,
                 factual_evidence=factual_evidence,
@@ -276,7 +283,17 @@ class ResearchShadowOperations:
             )
             factual = self._outcomes.settle(factual, expected_shadow_version=expected_shadow_version)
         else:
-            if factual.next_session_date != next_session_date or factual.session_status is not session_status:
+            if (
+                factual.next_session_date != next_session_date
+                or factual.session_status is not session_status
+                or (
+                    factual.schema_version == "prospective-shadow-outcome/v2"
+                    and (
+                        prediction_snapshot is None
+                        or factual.prediction_snapshot != prediction_snapshot.reference
+                    )
+                )
+            ):
                 raise ValueError("Existing factual Outcome settlement request conflicts")
             self._outcomes.replay(
                 factual.settlement_id,

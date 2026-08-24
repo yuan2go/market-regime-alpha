@@ -2,10 +2,13 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 from decimal import Decimal
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
 from market_regime_alpha.application.historical_corpus.context_conditional import (
+    ContextConditionalEvaluation,
     ContextDefinition,
     ContextKind,
     ContextObservation,
@@ -18,6 +21,10 @@ from market_regime_alpha.application.historical_corpus.evidence import (
     ResearchFinding,
     ResearchStatement,
     ResearchStatementKind,
+)
+from market_regime_alpha.application.historical_corpus.phase_ii_service import (
+    HistoricalPhaseIIResearchService,
+    PhaseIIEvidenceWrite,
 )
 from market_regime_alpha.application.research_validation.common import ValidationArtifactReference
 from market_regime_alpha.core.identity import ArtifactId
@@ -120,6 +127,58 @@ def test_session_context_evaluates_performance_across_sessions_only() -> None:
     assert result.incremental_information is None
     assert result.status in {"AMPLIFIER", "SUPPRESSOR", "UNSTABLE"}
     assert {item.context_value for item in result.slices} == {"BEAR", "BULL"}
+    assert ContextConditionalEvaluation.from_canonical_dict(
+        result.to_canonical_dict()
+    ) == result
+
+
+def test_context_persistence_rejects_caller_supplied_panel_lineage() -> None:
+    definition = _definition(
+        context_id="MARKET_REGIME",
+        kind=ContextKind.SESSION_LEVEL_CONTEXT,
+        role=ContextResearchRole.CONDITIONAL_PERFORMANCE,
+        expected_population=16,
+    )
+    observations = tuple(
+        ContextObservation(
+            date(2026, 1, day),
+            f"S{index}",
+            Decimal(index),
+            Decimal(index if label == "BULL" else -index),
+            label,
+            Decimal("1") if label == "BULL" else Decimal("-1"),
+            PANEL,
+            TARGET,
+        )
+        for day, label in ((2, "BULL"), (3, "BEAR"), (4, "BULL"), (5, "BEAR"))
+        for index in range(4)
+    )
+    evaluation = evaluate_context_conditioning(definition, observations=observations)
+    rogue_panel = _ref("RESEARCH_PANEL", "rogue-panel")
+    write = PhaseIIEvidenceWrite(
+        run_id=ArtifactId("context-run"),
+        command_hash="sha256:" + "c" * 64,
+        experiment_reference=definition.alpha_evidence.experiment_reference,
+        evidence_kind=HistoricalEvidenceKind.CONTEXT_CONDITIONAL,
+        research_question="Does Context condition Alpha?",
+        classification=ResearchFinding.POSITIVE,
+        rationale="Owner-binding test.",
+        source_references=(definition.alpha_evidence.reference, rogue_panel),
+        metrics=(),
+        payload={},
+        created_at=datetime(2026, 8, 22, tzinfo=UTC),
+        statements=(
+            ResearchStatement(ResearchStatementKind.FACT, "Owner-binding test."),
+        ),
+    )
+    service: Any = object.__new__(HistoricalPhaseIIResearchService)
+    service._components = SimpleNamespace(
+        get=lambda reference: SimpleNamespace(reference=reference)
+    )
+    service.load_evidence = lambda _evidence_id, **_kwargs: definition.alpha_evidence
+
+    with pytest.raises(ValueError, match="non-authoritative source"):
+        service.persist_context_evaluation(write, definition, evaluation)
 
 
 def test_cross_sectional_context_supports_interaction_and_incremental_information() -> None:

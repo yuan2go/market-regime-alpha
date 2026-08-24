@@ -147,8 +147,8 @@ uv run python scripts/apply_postgres_migrations.py
 uv run python scripts/apply_postgres_migrations.py --verify-only
 ```
 
-Expected head: migration 090, `tie_aware_pool_ranks`. Expected schema
-catalog: 270 tables. Migrations 052–067 add Formal Protocol bindings and
+Expected head: migration 097, `daily_alpha_target_session`. Expected schema
+catalog: 276 tables. Migrations 052–067 add Formal Protocol bindings and
 owner-resolution receipts, Provider×Contract×Fact decisions,
 Historical/Locked-OOS/Calibration owners, the durable underlying Locked-OOS
 and frozen-family consumption ledgers, owner-computed Forecast receipts,
@@ -206,6 +206,18 @@ lineage bindings and temporal/owner constraints. It does not rewrite migrations
 Migration 065 names the global Artifact-root locator contract for Controlled
 packages. New rows must use it; old un-namespaced rows remain immutable and
 fail closed instead of triggering filesystem discovery.
+Migrations 089–092 admit Golden Loop V2 engineering evidence, Alpha Research
+Phase II evidence kinds and Strategy Contract V2 under existing owners, then
+enforce the Forecast semantic boundary without granting qualification.
+Migration 093 persists the frozen `TEMPORAL_VALIDATION_V1` window. Migration
+094 adds immutable, owner-derived pre-Strategy Risk State and Strategy
+Opportunity facts. Migration 095 admits the immutable Daily Alpha snapshot.
+Migration 096 adds the Controlled package locator and exact Prediction
+Snapshot/Strategy diagnostic lineage for Prospective Outcome V2. Runtime and
+Repository construction verify this schema and fail closed. Migration 097 binds
+each new Daily Alpha snapshot to the adjacent target session under the exact
+typed Trading Calendar owner. Only this explicit operator surface may apply
+migrations.
 Migration 046 remains unchanged. Missing/unreachable PostgreSQL is a blocked
 operation; there is no alternate persistent backend.
 

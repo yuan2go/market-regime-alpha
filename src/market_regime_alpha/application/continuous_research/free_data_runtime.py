@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
 from market_regime_alpha.application.continuous_research.daily_alpha import (
+    DailyAlphaConditionalForecastProjection,
     DailyAlphaEvidenceGate,
+    DailyAlphaPathForecastProjection,
     DailyAlphaPredictionAuthority,
     DailyAlphaPredictionSnapshot,
     DailyAlphaSymbolProjection,
@@ -91,6 +93,7 @@ from market_regime_alpha.data.providers.public_composite import (
     TENCENT_PUBLIC_PROVIDER_ID,
 )
 from market_regime_alpha.evidence.canonical import canonical_hash
+from market_regime_alpha.forecasting.path import PathForecastArtifact
 from market_regime_alpha.strategies.defaults import (
     canonical_exploratory_strategy_registry,
 )
@@ -155,6 +158,15 @@ FREE_DATA_PROVIDER_CONTRACTS = (
 
 ChildInvocationBuilder = Callable[[ChildExecutionRequest], FreeDataPreparationInvocation]
 Clock = Callable[[], datetime]
+
+
+class DailyAlphaConditionalForecastResolver(Protocol):
+    def resolve(
+        self,
+        *,
+        path_forecast: PathForecastArtifact,
+        decision_time: datetime,
+    ) -> DailyAlphaConditionalForecastProjection: ...
 
 
 class RuntimeModelGovernancePort(Protocol):
@@ -301,6 +313,11 @@ class CanonicalFreeDataResearchComposition:
         strategy_account_id: str | None = None,
         daily_alpha_authority: DailyAlphaPredictionAuthority | None = None,
         daily_alpha_evidence_gate: Callable[[], DailyAlphaEvidenceGate] | None = None,
+        daily_alpha_conditional_forecast_resolver: (
+            DailyAlphaConditionalForecastResolver | None
+        ) = None,
+        target_session_date: date | None = None,
+        target_calendar_reference: RuntimeArtifactReference | None = None,
         strategy_opportunity_resolver: ContinuousStrategyOpportunityResolver | None = None,
         strategy_opportunity_authority: StrategyOpportunityAuthority | None = None,
         clock: Clock,
@@ -314,10 +331,25 @@ class CanonicalFreeDataResearchComposition:
         self._clock = clock
         self._daily_alpha_authority = daily_alpha_authority
         self._daily_alpha_evidence_gate = daily_alpha_evidence_gate
+        self._daily_alpha_conditional_forecast_resolver = (
+            daily_alpha_conditional_forecast_resolver
+        )
+        self._target_session_date = target_session_date
+        self._target_calendar_reference = target_calendar_reference
         if (daily_alpha_authority is None) != (daily_alpha_evidence_gate is None):
             raise ValueError(
                 "Daily Alpha projection requires both authority and Evidence gate"
             )
+        if daily_alpha_authority is not None and (
+            target_session_date is None or target_calendar_reference is None
+        ):
+            raise ValueError(
+                "Daily Alpha projection requires one canonical target session"
+            )
+        if daily_alpha_authority is None and (
+            target_session_date is not None or target_calendar_reference is not None
+        ):
+            raise ValueError("Daily Alpha target session requires its authority")
         self._summary_runtime = ResearchSummaryRuntimeService(summary_repository)
         self._strategy_runtime = MultiStrategyContinuousAdapter(
             repository=strategy_repository,
@@ -446,6 +478,11 @@ class CanonicalFreeDataResearchComposition:
             decision_price_dataset=(
                 None if decision is None else decision.minute_dataset.artifact
             ),
+            path_forecasts=(
+                ()
+                if decision is None
+                else tuple(item.artifact for item in decision.forecasts)
+            ),
         )
         if self._daily_alpha_authority is None or self._daily_alpha_evidence_gate is None:
             return (*owner_results, strategy_result)
@@ -458,6 +495,11 @@ class CanonicalFreeDataResearchComposition:
                 summary=persisted,
                 strategy_result=strategy_result,
                 evidence_gate=self._daily_alpha_evidence_gate(),
+                conditional_forecast_resolver=(
+                    self._daily_alpha_conditional_forecast_resolver
+                ),
+                target_session_date=self._target_session_date,
+                target_calendar_reference=self._target_calendar_reference,
                 available_at=self._clock(),
             ),
             universe=preparation.controlled_preparation.universe,
@@ -485,6 +527,9 @@ def _build_daily_alpha_snapshot(
     summary: ResearchDailySummary,
     strategy_result: ChildExecutionResult,
     evidence_gate: DailyAlphaEvidenceGate,
+    conditional_forecast_resolver: DailyAlphaConditionalForecastResolver | None,
+    target_session_date: date | None,
+    target_calendar_reference: RuntimeArtifactReference | None,
     available_at: datetime,
 ) -> DailyAlphaPredictionSnapshot:
     if request.run_hash is None or request.tick_hash is None:
@@ -492,6 +537,8 @@ def _build_daily_alpha_snapshot(
     candidate_set = state_coordinator.final_candidates
     if candidate_set is None:
         raise ValueError("Daily Alpha snapshot requires Candidate owner")
+    if summary.candidate_set is None:
+        raise ValueError("Daily Alpha snapshot requires Summary Candidate lineage")
     controlled = preparation.controlled_preparation
     feature_references = [
         RuntimeArtifactReference(
@@ -500,12 +547,12 @@ def _build_daily_alpha_snapshot(
             controlled.static_feature_bundle.artifact.content_hash,
         )
     ]
-    signal_reference = _state_stage_reference(
-        state_coordinator, StateResearchStage.SIGNAL
-    )
-    forecast_stage_reference = _state_stage_reference(
-        state_coordinator, StateResearchStage.FORECAST
-    )
+    stage_outputs = {item.stage: item.output_reference for item in summary.stages}
+    # The Summary freezes the aggregate Signal and Forecast owners consumed by
+    # Shadow Decision.  Per-symbol snapshots below supplement these references;
+    # they do not replace the aggregate lineage.
+    signal_reference = stage_outputs[StateResearchStage.SIGNAL]
+    forecast_stage_reference = stage_outputs[StateResearchStage.FORECAST]
     signals: dict[str, Any] = {}
     forecasts: dict[str, Any] = {}
     raw_forecast_references: list[RuntimeArtifactReference] = []
@@ -521,7 +568,7 @@ def _build_daily_alpha_snapshot(
             item.symbol: item for item in execution.decision.signal.artifact.snapshots
         }
         forecasts = {
-            item.artifact.forecast.symbol: item.artifact.forecast
+            item.artifact.forecast.symbol: item.artifact
             for item in execution.decision.forecasts
         }
         raw_forecast_references = [
@@ -560,32 +607,87 @@ def _build_daily_alpha_snapshot(
             ),
         )
         signal = signals.get(candidate.symbol)
-        forecast = forecasts.get(candidate.symbol)
+        forecast_artifact = forecasts.get(candidate.symbol)
+        forecast = (
+            None if forecast_artifact is None else forecast_artifact.forecast
+        )
+        conditional_projection = (
+            DailyAlphaConditionalForecastProjection.not_available()
+            if forecast_artifact is None
+            or conditional_forecast_resolver is None
+            else conditional_forecast_resolver.resolve(
+                path_forecast=forecast_artifact,
+                decision_time=request.as_of_time,
+            )
+        )
+        if conditional_projection.reference is not None:
+            raw_forecast_references.append(conditional_projection.reference)
         symbol_reasons = {
             *candidate.reason_codes,
             *(() if signal is None else signal.reason_codes),
             *(() if forecast is None else forecast.reason_codes),
+            *conditional_projection.reason_codes,
+            "VALIDATED_ALPHA_CONTRIBUTION_OWNER_NOT_AVAILABLE",
         }
-        if forecast is not None:
-            symbol_reasons.add("PATH_FORECAST_EXPECTED_RETURN_NOT_IMPLEMENTED")
-            symbol_reasons.add("PATH_FORECAST_UNCERTAINTY_NOT_IMPLEMENTED")
+        if forecast is None:
+            symbol_reasons.add("PATH_FORECAST_OWNER_NOT_AVAILABLE")
+        incumbent_diagnostics = tuple(
+            sorted(
+                (
+                    (
+                        "candidate_discovery_score",
+                        _value_text(candidate.candidate_discovery_score),
+                    ),
+                    (
+                        "capital_evolution_score",
+                        _value_text(candidate.capital_evolution_score),
+                    ),
+                    (
+                        "market_regime_score",
+                        _value_text(candidate.market_regime_score),
+                    ),
+                    ("theme_score", _value_text(candidate.theme_score)),
+                    *((f"feature:{key}", value) for key, value in feature_values),
+                )
+            )
+        )
+        path_projection = (
+            None
+            if forecast is None
+            else DailyAlphaPathForecastProjection(
+                reference=RuntimeArtifactReference(
+                    "PATH_FORECAST",
+                    forecast.envelope.artifact_id,
+                    forecast.envelope.content_hash,
+                ),
+                forecast_status=forecast.forecast_status.value,
+                expected_mfe=_value_text(forecast.expected_mfe),
+                expected_mae=_value_text(forecast.expected_mae),
+                return_quantiles=tuple(
+                    (
+                        str(item.probability),
+                        _value_text(item.return_value),
+                    )
+                    for item in forecast.return_quantiles
+                ),
+                usable_sample_count=forecast.usable_sample_count,
+                excluded_sample_count=forecast.excluded_sample_count,
+                calibration_status=forecast.calibration_status.value,
+                reason_codes=tuple(
+                    sorted(forecast.reason_codes or ("NO_PATH_FORECAST_REASON",))
+                ),
+            )
+        )
         symbol_rows.append(
             DailyAlphaSymbolProjection(
                 symbol=candidate.symbol,
                 selection_status=candidate.selection_status.value,
                 candidate_rank=candidate.rank,
-                factor_score=_value_text(candidate.candidate_discovery_score),
-                factor_values=feature_values,
-                factor_contributions=tuple(
-                    sorted(
-                        (
-                            ("capital_evolution_score", _value_text(candidate.capital_evolution_score)),
-                            ("market_regime_score", _value_text(candidate.market_regime_score)),
-                            ("theme_score", _value_text(candidate.theme_score)),
-                        )
-                    )
-                ),
-                context=tuple(
+                incumbent_diagnostics=incumbent_diagnostics,
+                # No per-symbol Alpha contribution owner exists yet.  The
+                # admission gate cannot turn Context diagnostics into one.
+                validated_alpha_contributions=(),
+                conditional_context=tuple(
                     sorted(
                         (
                             ("capital", candidate.capital_evolution_state.value),
@@ -605,22 +707,8 @@ def _build_daily_alpha_snapshot(
                 ),
                 signal_state=None if signal is None else signal.signal_state.value,
                 signal_score=None if signal is None else _value_text(signal.signal_score),
-                forecast_reference=(
-                    None
-                    if forecast is None
-                    else RuntimeArtifactReference(
-                        "PATH_FORECAST",
-                        forecast.envelope.artifact_id,
-                        forecast.envelope.content_hash,
-                    )
-                ),
-                forecast_expected_return=None,
-                forecast_uncertainty=None,
-                calibration_status=(
-                    "DATA_INSUFFICIENT"
-                    if forecast is None
-                    else forecast.calibration_status.value
-                ),
+                path_forecast=path_projection,
+                conditional_forecast=conditional_projection,
                 strategy_diagnostic_reference=RuntimeArtifactReference(
                     "MULTI_STRATEGY_CYCLE",
                     strategy_result.child_receipt_id,
@@ -653,11 +741,7 @@ def _build_daily_alpha_snapshot(
         ),
         feature_references=tuple(feature_references),
         context_references=tuple(context_references),
-        candidate_reference=RuntimeArtifactReference(
-            "CANDIDATE_SET",
-            candidate_set.envelope.artifact_id,
-            candidate_set.envelope.content_hash,
-        ),
+        candidate_reference=summary.candidate_set,
         signal_reference=signal_reference,
         forecast_references=tuple(
             item
@@ -671,6 +755,8 @@ def _build_daily_alpha_snapshot(
         ),
         evidence_gate=evidence_gate,
         trading_date=request.trading_date,
+        target_session_date=target_session_date,
+        target_calendar_reference=target_calendar_reference,
         decision_time=request.as_of_time,
         available_at=available_at,
         symbols=tuple(symbol_rows),

@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 import pytest
 
-from market_regime_alpha.dividend_t.brokers import PaperBrokerAdapter
 from market_regime_alpha.portfolio import ExecutionConstraintState, RiskChangeKind
 from scripts.assess_risk_reduction import main
 from tests.portfolio.risk_route_test_support import (
@@ -63,12 +62,6 @@ def test_cli_persists_and_replays_decision_without_execution_authority(tmp_path,
     database = tmp_path / "risk-routes.postgres-scope"
     request = tmp_path / "request.json"
     _write_request(request, idempotency_key="cli-replay")
-    monkeypatch.setattr(
-        PaperBrokerAdapter,
-        "place_order",
-        lambda *_args, **_kwargs: pytest.fail("CLI must not call a Broker"),
-    )
-
     first = _invoke(database, request, capsys)
     duplicate = _invoke(database, request, capsys)
 

@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 
-import pandas as pd
 import pytest
 
-from market_regime_alpha.dividend_t.backtest import BacktestSignal, BacktestSignalCache, DividendTBacktestConfig
 from market_regime_alpha.dividend_t.macd import (
     BarInterval,
     HistogramToleranceMode,
@@ -21,7 +19,6 @@ from market_regime_alpha.dividend_t.macd_experiments import (
     MACDExperimentIdentity,
     ablation_profiles,
     build_experiment_identity,
-    cache_metadata,
     canonical_experiment_config,
     canonical_json,
     experiment_config_hash,
@@ -40,6 +37,15 @@ from market_regime_alpha.dividend_t.signal_intent import (
 )
 
 
+@dataclass(frozen=True)
+class LegacyExecutionConfigFixture:
+    """Frozen identity input; this test owns no Backtest Runtime."""
+
+    price_field: str = "NEXT_BAR_OPEN"
+    slippage_bps: float = 5.0
+    signal_cache_dir: Path | None = None
+
+
 def identity_fixture(**overrides: object) -> MACDExperimentIdentity:
     identity = build_experiment_identity(
         git_commit="03548f0123456789",
@@ -47,7 +53,7 @@ def identity_fixture(**overrides: object) -> MACDExperimentIdentity:
         pipeline_id="dividend-t-5m",
         macd_config=MACDConfig(bar_interval=BarInterval.MINUTE_5),
         policy_config=MACDPolicyConfig(),
-        execution_config=DividendTBacktestConfig(signal_cache_dir=None),
+        execution_config=LegacyExecutionConfigFixture(signal_cache_dir=None),
         sizing_owner="dividend_t_backtest_execution",
     )
     return replace(identity, **overrides)
@@ -156,7 +162,7 @@ def test_four_profiles_have_distinct_hashes_and_baseline_stays_disabled() -> Non
                 pipeline_id="dividend-t-5m",
                 macd_config=MACDConfig(bar_interval=BarInterval.MINUTE_5),
                 policy_config=policy,
-                execution_config=DividendTBacktestConfig(),
+                execution_config=LegacyExecutionConfigFixture(),
                 sizing_owner="dividend_t_backtest_execution",
             )
         )
@@ -177,33 +183,6 @@ def test_canonical_cache_path_ignores_profile_label_and_uses_full_hash(tmp_path:
     assert first == second
     assert MACD_CACHE_SCHEMA_VERSION in first.parts
     assert experiment_config_hash(identity) in first.name
-
-
-def test_cache_validates_internal_config_hash(tmp_path: Path) -> None:
-    identity = identity_fixture()
-    path = signal_cache_path(tmp_path, symbol="601919.SH", identity=identity)
-    cache = BacktestSignalCache(path, expected_metadata=cache_metadata(identity))
-    cache.set(_minimal_signal())
-    cache.save()
-
-    reopened = BacktestSignalCache(path, expected_metadata=cache_metadata(identity))
-    assert reopened.get("2026-07-13 10:05:00") is not None
-
-    data = pd.read_csv(path)
-    data["_experiment_config_hash"] = "tampered"
-    data.to_csv(path, index=False)
-    with pytest.raises(ValueError, match="CACHE_CONFIG_HASH_MISMATCH"):
-        BacktestSignalCache(path, expected_metadata=cache_metadata(identity))
-
-
-def test_old_cache_cannot_be_read_as_macd_experiment(tmp_path: Path) -> None:
-    identity = identity_fixture()
-    path = signal_cache_path(tmp_path, symbol="601919.SH", identity=identity)
-    path.parent.mkdir(parents=True)
-    pd.DataFrame([_minimal_signal().__dict__]).to_csv(path, index=False)
-
-    with pytest.raises(ValueError, match="CACHE_IDENTITY_MISSING"):
-        BacktestSignalCache(path, expected_metadata=cache_metadata(identity))
 
 
 @pytest.mark.parametrize(
@@ -368,19 +347,3 @@ def event_fixture(**overrides: object) -> CounterfactualEvent:
     }
     values.update(overrides)
     return CounterfactualEvent.create(**values)
-
-
-def _minimal_signal() -> BacktestSignal:
-    return BacktestSignal(
-        timestamp="2026-07-13 10:05:00",
-        action="WAIT",
-        daily_state="STRONG",
-        intraday_state="RANGE",
-        trend_state="RANGE",
-        market_regime_state="RANGE_T",
-        position_multiplier=1.0,
-        fundamental_score=70.0,
-        base_position_limit_pct=0.10,
-        base_position_target_pct=0.10,
-        t_trade_limit_pct=0.50,
-    )

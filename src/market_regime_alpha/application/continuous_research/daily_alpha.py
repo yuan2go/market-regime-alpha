@@ -18,11 +18,13 @@ from market_regime_alpha.application.continuous_research.journal import (
 from market_regime_alpha.application.historical_corpus.evidence import (
     HistoricalEvidenceKind,
     HistoricalResearchEvidence,
+    ResearchFinding,
 )
 from market_regime_alpha.application.research_validation.common import (
     ValidationArtifactReference,
 )
 from market_regime_alpha.core.identity import ArtifactId
+from market_regime_alpha.candidates.policy import research_panel_dataset_reference
 from market_regime_alpha.evidence.canonical import (
     canonical_datetime,
     canonical_hash,
@@ -34,7 +36,9 @@ from market_regime_alpha.universe.operational import OperationalUniverseArtifact
 
 
 DAILY_ALPHA_PREDICTION_KIND = "DAILY_ALPHA_PREDICTION_SNAPSHOT"
-DAILY_ALPHA_PREDICTION_SCHEMA = "daily-alpha-prediction-snapshot/v1"
+DAILY_ALPHA_PREDICTION_SCHEMA_V1 = "daily-alpha-prediction-snapshot/v1"
+DAILY_ALPHA_PREDICTION_SCHEMA_V2 = "daily-alpha-prediction-snapshot/v2"
+DAILY_ALPHA_PREDICTION_SCHEMA = "daily-alpha-prediction-snapshot/v3"
 EVIDENCE_DEPENDENCY_NOT_SATISFIED = "EVIDENCE_DEPENDENCY_NOT_SATISFIED"
 
 
@@ -128,62 +132,680 @@ class HistoricalEvidenceReader(Protocol):
 
 def assess_daily_alpha_evidence_gate(
     evidence: tuple[HistoricalResearchEvidence, ...],
+    *,
+    root_candidate_policy_reference: ValidationArtifactReference | None = None,
+    superseded_references: tuple[ValidationArtifactReference, ...] = (),
 ) -> DailyAlphaEvidenceGate:
-    """Admit only an explicitly supported dependency chain.
+    """Admit one explicitly configured immutable Evidence lineage.
 
-    Evidence is selected by immutable creation time and identity.  Missing,
-    negative, inconclusive, or merely engineering-ready facts all remain
-    inactive.  Candidate activation is deliberately explicit rather than
-    inferred from one favourable comparison metric.
+    No database recency, metric ordering, or implicit policy selection is used.
+    The Candidate Policy Evidence root must bind the exact External,
+    Correctness and Discovery owners plus their Experiment, hypothesis, dataset,
+    factor-family and run/command lineage.
     """
 
-    latest: dict[HistoricalEvidenceKind, HistoricalResearchEvidence] = {}
-    for item in sorted(evidence, key=lambda value: (value.created_at, str(value.evidence_id))):
-        latest[item.evidence_kind] = item
-    correctness = latest.get(HistoricalEvidenceKind.ALPHA_CORRECTNESS)
-    external = latest.get(HistoricalEvidenceKind.EXTERNAL_VALIDATION)
-    candidate = latest.get(HistoricalEvidenceKind.CANDIDATE_POLICY)
-    correctness_supported = (
-        correctness is not None
-        and correctness.payload.get("status") == "CORRECTNESS_SUPPORTED"
-    )
-    external_supported = (
-        external is not None
-        and external.payload.get("qualification_status") == "SUPPORTED"
-    )
-    candidate_active = (
-        candidate is not None
-        and candidate.payload.get("activation_status") == "CHALLENGER_ACTIVE"
-        and candidate.payload.get("stability") == "STABLE"
-    )
-    references = (
-        None if correctness is None else correctness.reference,
-        None if external is None else external.reference,
-        None if candidate is None else candidate.reference,
-    )
-    if correctness_supported and external_supported and candidate_active:
-        return DailyAlphaEvidenceGate(
-            DailyAlphaActivationStatus.VALIDATED_CHALLENGER_ACTIVE,
-            *references,
-            reason_codes=("EVIDENCE_DEPENDENCIES_SUPPORTED",),
+    if root_candidate_policy_reference is None:
+        return DailyAlphaEvidenceGate.inactive(
+            reason_codes=("EVIDENCE_ROOT_NOT_CONFIGURED",)
         )
-    reasons = []
-    if not correctness_supported:
+    by_reference: dict[ValidationArtifactReference, HistoricalResearchEvidence] = {}
+    try:
+        for item in evidence:
+            item.verify_identity()
+            by_reference[item.reference] = item
+    except ValueError:
+        return DailyAlphaEvidenceGate.inactive(
+            candidate_policy_reference=root_candidate_policy_reference,
+            reason_codes=("EVIDENCE_HASH_DRIFT",),
+        )
+    candidate = by_reference.get(root_candidate_policy_reference)
+    if candidate is None:
+        return DailyAlphaEvidenceGate.inactive(
+            candidate_policy_reference=root_candidate_policy_reference,
+            reason_codes=("EVIDENCE_LINEAGE_INCOMPLETE",),
+        )
+    try:
+        correctness, external, discovery, contexts = _daily_alpha_lineage(
+            candidate=candidate,
+            by_reference=by_reference,
+        )
+    except _DailyAlphaLineageError as exc:
+        return DailyAlphaEvidenceGate.inactive(
+            correctness_reference=exc.correctness_reference,
+            external_validation_reference=exc.external_reference,
+            candidate_policy_reference=root_candidate_policy_reference,
+            reason_codes=(exc.reason_code,),
+        )
+    chain_references = {
+        candidate.reference,
+        external.reference,
+        correctness.reference,
+        discovery.reference,
+        *(item.reference for item in contexts),
+    }
+    if chain_references.intersection(superseded_references):
+        return DailyAlphaEvidenceGate.inactive(
+            correctness_reference=correctness.reference,
+            external_validation_reference=external.reference,
+            candidate_policy_reference=candidate.reference,
+            reason_codes=("EVIDENCE_SUPERSEDED",),
+        )
+    reasons: list[str] = []
+    if (
+        correctness.classification is not ResearchFinding.POSITIVE
+        or correctness.payload.get("status") != "CORRECTNESS_SUPPORTED"
+    ):
         reasons.append("CORRECTNESS_NOT_SUPPORTED")
-    if not external_supported:
+    if (
+        external.classification is not ResearchFinding.POSITIVE
+        or external.payload.get("qualification_status") != "SUPPORTED"
+    ):
         reasons.append("EXTERNAL_VALIDATION_NOT_SUPPORTED")
-    if not candidate_active:
+    if discovery.classification is not ResearchFinding.POSITIVE:
+        reasons.append("DISCOVERY_NOT_SUPPORTED")
+    if any(
+        item.classification is not ResearchFinding.POSITIVE
+        or item.payload.get("status") not in {"AMPLIFIER", "SUPPRESSOR"}
+        for item in contexts
+    ):
+        reasons.append("CONTEXT_NOT_SUPPORTED")
+    if (
+        candidate.classification is not ResearchFinding.POSITIVE
+        or candidate.payload.get("activation_status") != "CHALLENGER_ACTIVE"
+        or candidate.payload.get("stability") != "STABLE"
+    ):
         reasons.append("CANDIDATE_CHALLENGER_NOT_ACTIVE")
-    return DailyAlphaEvidenceGate.inactive(
-        correctness_reference=references[0],
-        external_validation_reference=references[1],
-        candidate_policy_reference=references[2],
-        reason_codes=tuple(reasons),
+    if reasons:
+        return DailyAlphaEvidenceGate.inactive(
+            correctness_reference=correctness.reference,
+            external_validation_reference=external.reference,
+            candidate_policy_reference=candidate.reference,
+            reason_codes=tuple(reasons),
+        )
+    return DailyAlphaEvidenceGate(
+        DailyAlphaActivationStatus.VALIDATED_CHALLENGER_ACTIVE,
+        correctness.reference,
+        external.reference,
+        candidate.reference,
+        reason_codes=("EVIDENCE_DEPENDENCIES_SUPPORTED",),
     )
+
+
+class _DailyAlphaLineageError(ValueError):
+    def __init__(
+        self,
+        reason_code: str,
+        *,
+        correctness_reference: ValidationArtifactReference | None = None,
+        external_reference: ValidationArtifactReference | None = None,
+    ) -> None:
+        super().__init__(reason_code)
+        self.reason_code = reason_code
+        self.correctness_reference = correctness_reference
+        self.external_reference = external_reference
+
+
+def daily_alpha_admission_evidence_references(
+    candidate: HistoricalResearchEvidence,
+) -> tuple[ValidationArtifactReference, ...]:
+    """Return the exact upstream Evidence references declared by one root."""
+
+    try:
+        admission = _mapping(candidate.payload.get("daily_alpha_admission"))
+        if admission.get("schema_version") != "daily-alpha-evidence-admission/v2":
+            raise ValueError("unsupported Daily Alpha admission schema")
+        core = (
+            _required_validation_reference(
+                admission, "discovery_evidence_reference"
+            ),
+            _required_validation_reference(
+                admission, "correctness_evidence_reference"
+            ),
+            _required_validation_reference(
+                admission, "external_validation_evidence_reference"
+            ),
+        )
+        return (*core, *_context_evidence_references(admission))
+    except (KeyError, ValueError) as exc:
+        raise _DailyAlphaLineageError("EVIDENCE_LINEAGE_INVALID") from exc
+
+
+def _daily_alpha_lineage(
+    *,
+    candidate: HistoricalResearchEvidence,
+    by_reference: Mapping[
+        ValidationArtifactReference, HistoricalResearchEvidence
+    ],
+) -> tuple[
+    HistoricalResearchEvidence,
+    HistoricalResearchEvidence,
+    HistoricalResearchEvidence,
+    tuple[HistoricalResearchEvidence, ...],
+]:
+    correctness_reference: ValidationArtifactReference | None = None
+    external_reference: ValidationArtifactReference | None = None
+    try:
+        if candidate.evidence_kind is not HistoricalEvidenceKind.CANDIDATE_POLICY:
+            raise ValueError("root is not Candidate Policy Evidence")
+        admission = _mapping(candidate.payload.get("daily_alpha_admission"))
+        if admission.get("schema_version") != "daily-alpha-evidence-admission/v2":
+            raise ValueError("unsupported Daily Alpha admission schema")
+        discovery_reference = _required_validation_reference(
+            admission, "discovery_evidence_reference"
+        )
+        correctness_reference = _required_validation_reference(
+            admission, "correctness_evidence_reference"
+        )
+        external_reference = _required_validation_reference(
+            admission, "external_validation_evidence_reference"
+        )
+        candidate_policy_reference = _required_validation_reference(
+            admission, "candidate_policy_reference"
+        )
+        dataset_reference = _required_validation_reference(
+            admission, "candidate_dataset_reference"
+        )
+        external_experiment_reference = _required_validation_reference(
+            admission, "external_experiment_reference"
+        )
+        hypothesis_reference = _required_validation_reference(
+            admission, "frozen_hypothesis_reference"
+        )
+        context_references = _context_evidence_references(admission)
+        required_candidate_sources = {
+            discovery_reference,
+            correctness_reference,
+            external_reference,
+            candidate_policy_reference,
+            dataset_reference,
+            external_experiment_reference,
+            hypothesis_reference,
+            *context_references,
+        }
+        if not required_candidate_sources.issubset(candidate.source_references):
+            raise ValueError("Candidate Evidence source lineage is incomplete")
+        discovery = by_reference[discovery_reference]
+        correctness = by_reference[correctness_reference]
+        external = by_reference[external_reference]
+        contexts = tuple(by_reference[item] for item in context_references)
+        if (
+            discovery.evidence_kind is not HistoricalEvidenceKind.ALPHA_ABLATION
+            or correctness.evidence_kind
+            is not HistoricalEvidenceKind.ALPHA_CORRECTNESS
+            or external.evidence_kind
+            is not HistoricalEvidenceKind.EXTERNAL_VALIDATION
+            or any(
+                item.evidence_kind is not HistoricalEvidenceKind.CONTEXT_CONDITIONAL
+                for item in contexts
+            )
+        ):
+            raise ValueError("Evidence kind drifted")
+        if not {discovery.reference, correctness.reference}.issubset(
+            external.source_references
+        ):
+            raise ValueError("External Evidence does not bind upstream Evidence")
+        external_experiment = _mapping(external.payload.get("experiment"))
+        embedded_experiment_reference = ValidationArtifactReference(
+            "RESEARCH_EXPERIMENT_DEFINITION",
+            ArtifactId(str(external_experiment["experiment_id"])),
+            str(external_experiment["experiment_hash"]),
+        )
+        if (
+            embedded_experiment_reference != external.experiment_reference
+            or embedded_experiment_reference != external_experiment_reference
+            or candidate.experiment_reference != external_experiment_reference
+        ):
+            raise ValueError("External Experiment identity drifted")
+        if (
+            ValidationArtifactReference.from_canonical_dict(
+                _mapping(external_experiment["correctness_evidence_reference"])
+            )
+            != correctness.reference
+        ):
+            raise ValueError("External Correctness lineage drifted")
+        hypothesis = _mapping(external_experiment["hypothesis"])
+        embedded_hypothesis_reference = ValidationArtifactReference(
+            "FROZEN_ALPHA_HYPOTHESIS",
+            ArtifactId(str(hypothesis["hypothesis_id"])),
+            str(hypothesis["hypothesis_hash"]),
+        )
+        if embedded_hypothesis_reference != hypothesis_reference:
+            raise ValueError("frozen hypothesis identity drifted")
+        if (
+            ValidationArtifactReference.from_canonical_dict(
+                _mapping(hypothesis["discovery_evidence_reference"])
+            )
+            != discovery.reference
+        ):
+            raise ValueError("Discovery lineage drifted")
+        factor_directions = _factor_directions(admission.get("factor_directions"))
+        if (
+            factor_directions
+            != _factor_directions(hypothesis.get("factor_directions"))
+            or factor_directions
+            != _factor_directions(external.payload.get("validated_factors"))
+        ):
+            raise ValueError("Factor family/direction drifted")
+        panels = tuple(
+            ValidationArtifactReference.from_canonical_dict(_mapping(item))
+            for item in _sequence(
+                external_experiment.get("validation_panel_references")
+            )
+        )
+        if research_panel_dataset_reference(panels) != dataset_reference:
+            raise ValueError("Candidate/External dataset drifted")
+        for context in contexts:
+            if (
+                context.experiment_reference != external_experiment_reference
+                or external.reference not in context.source_references
+            ):
+                raise ValueError("Context/External Experiment lineage drifted")
+            evaluation = _mapping(context.payload.get("evaluation"))
+            definition_reference = ValidationArtifactReference.from_canonical_dict(
+                _mapping(evaluation["definition_reference"])
+            )
+            context_panels = tuple(
+                item
+                for item in context.source_references
+                if item.artifact_kind
+                in {"RESEARCH_PANEL", "HISTORICAL_RESEARCH_PANEL"}
+            )
+            if (
+                definition_reference not in context.source_references
+                or not context_panels
+                or research_panel_dataset_reference(context_panels)
+                != dataset_reference
+            ):
+                raise ValueError("Context owner/Dataset lineage drifted")
+        _verify_lineage_stages(
+            admission.get("lineage_stages"),
+            ("DISCOVERY", discovery),
+            ("CORRECTNESS", correctness),
+            ("EXTERNAL_VALIDATION", external),
+            *(("CONTEXT_CONDITIONAL", item) for item in contexts),
+        )
+        return correctness, external, discovery, contexts
+    except (KeyError, TypeError, ValueError) as exc:
+        raise _DailyAlphaLineageError(
+            "EVIDENCE_LINEAGE_INCOMPLETE",
+            correctness_reference=correctness_reference,
+            external_reference=external_reference,
+        ) from exc
+
+
+def _required_validation_reference(
+    payload: Mapping[str, Any], name: str
+) -> ValidationArtifactReference:
+    return ValidationArtifactReference.from_canonical_dict(_mapping(payload[name]))
+
+
+def _factor_directions(value: object) -> tuple[tuple[str, str], ...]:
+    result: list[tuple[str, str]] = []
+    for item in _sequence(value):
+        if (
+            not isinstance(item, (list, tuple))
+            or len(item) != 2
+            or not isinstance(item[0], str)
+            or not item[0].strip()
+            or not isinstance(item[1], str)
+            or not item[1].strip()
+        ):
+            raise ValueError("Factor direction lineage is malformed")
+        result.append((item[0], item[1]))
+    parsed = tuple(result)
+    if not parsed or parsed != tuple(sorted(set(parsed))):
+        raise ValueError("Factor directions must be non-empty, unique and sorted")
+    return parsed
+
+
+def _context_evidence_references(
+    admission: Mapping[str, Any],
+) -> tuple[ValidationArtifactReference, ...]:
+    references = tuple(
+        ValidationArtifactReference.from_canonical_dict(_mapping(item))
+        for item in _sequence(admission.get("context_evidence_references"))
+    )
+    if references != tuple(
+        sorted(
+            set(references),
+            key=lambda item: (
+                item.artifact_kind,
+                str(item.artifact_id),
+                item.content_hash,
+            ),
+        )
+    ):
+        raise ValueError("Context Evidence references must be unique and sorted")
+    return references
+
+
+def _verify_lineage_stages(
+    value: object,
+    *expected: tuple[str, HistoricalResearchEvidence],
+) -> None:
+    stages = tuple(_mapping(item) for item in _sequence(value))
+    projected = tuple(
+        (
+            str(item["stage"]),
+            str(item["run_id"]),
+            str(item["command_hash"]),
+            str(item["experiment_id"]),
+            str(item["experiment_hash"]),
+        )
+        for item in stages
+    )
+    actual = tuple(
+        (
+            stage,
+            str(evidence.run_id),
+            evidence.command_hash,
+            str(evidence.experiment_reference.artifact_id),
+            evidence.experiment_reference.content_hash,
+        )
+        for stage, evidence in expected
+    )
+    if projected != actual:
+        raise ValueError("Evidence run/command/Experiment lineage drifted")
+
+
+@dataclass(frozen=True, slots=True)
+class DailyAlphaPathForecastProjection:
+    reference: RuntimeArtifactReference
+    forecast_status: str
+    expected_mfe: str | None
+    expected_mae: str | None
+    return_quantiles: tuple[tuple[str, str | None], ...]
+    usable_sample_count: int
+    excluded_sample_count: int
+    calibration_status: str
+    reason_codes: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if self.reference.reference_kind != "PATH_FORECAST":
+            raise ValueError("Path Forecast projection requires its typed owner")
+        require_text("Path Forecast status", self.forecast_status)
+        require_text("Path Forecast calibration status", self.calibration_status)
+        if min(self.usable_sample_count, self.excluded_sample_count) < 0:
+            raise ValueError("Path Forecast sample counts cannot be negative")
+        _ordered_pairs("Path Forecast return quantiles", self.return_quantiles)
+        _ordered_text("Path Forecast reason_codes", self.reason_codes, required=True)
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        return {
+            "reference": self.reference.to_canonical_dict(),
+            "forecast_status": self.forecast_status,
+            "expected_mfe": self.expected_mfe,
+            "expected_mae": self.expected_mae,
+            "return_quantiles": _pairs_payload(self.return_quantiles),
+            "usable_sample_count": self.usable_sample_count,
+            "excluded_sample_count": self.excluded_sample_count,
+            "calibration_status": self.calibration_status,
+            "reason_codes": list(self.reason_codes),
+        }
+
+    @classmethod
+    def from_canonical_dict(
+        cls, payload: Mapping[str, Any]
+    ) -> DailyAlphaPathForecastProjection:
+        _fields(
+            payload,
+            {
+                "reference",
+                "forecast_status",
+                "expected_mfe",
+                "expected_mae",
+                "return_quantiles",
+                "usable_sample_count",
+                "excluded_sample_count",
+                "calibration_status",
+                "reason_codes",
+            },
+            "Daily Alpha Path Forecast projection",
+        )
+        return cls(
+            reference=RuntimeArtifactReference.from_canonical_dict(
+                _mapping(payload["reference"])
+            ),
+            forecast_status=str(payload["forecast_status"]),
+            expected_mfe=_optional_text(payload["expected_mfe"]),
+            expected_mae=_optional_text(payload["expected_mae"]),
+            return_quantiles=_pairs(payload["return_quantiles"]),
+            usable_sample_count=int(payload["usable_sample_count"]),
+            excluded_sample_count=int(payload["excluded_sample_count"]),
+            calibration_status=str(payload["calibration_status"]),
+            reason_codes=_strings(payload["reason_codes"]),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class DailyAlphaConditionalForecastProjection:
+    availability_status: str
+    reference: RuntimeArtifactReference | None
+    selected_expected_return: str | None
+    prediction_uncertainty: str | None
+    model_reference: RuntimeArtifactReference | None
+    baseline_reference: RuntimeArtifactReference | None
+    calibration_status: str
+    reason_codes: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if self.availability_status not in {
+            "AVAILABLE_FOR_RESEARCH",
+            "DATA_INSUFFICIENT",
+            "NOT_AVAILABLE",
+        }:
+            raise ValueError("unsupported Conditional Forecast availability")
+        _ordered_text(
+            "Conditional Forecast reason_codes", self.reason_codes, required=True
+        )
+        if self.reference is not None and (
+            self.reference.reference_kind != "CONDITIONAL_FORECAST_RESULT"
+        ):
+            raise ValueError("Conditional Forecast projection owner kind drifted")
+        values = (
+            self.selected_expected_return,
+            self.prediction_uncertainty,
+            self.model_reference,
+            self.baseline_reference,
+        )
+        if self.availability_status == "AVAILABLE_FOR_RESEARCH":
+            if self.reference is None or self.selected_expected_return is None:
+                raise ValueError("available Conditional Forecast owner is incomplete")
+            if self.model_reference is None or self.baseline_reference is None:
+                raise ValueError("available Conditional Forecast lineage is incomplete")
+        elif self.availability_status == "DATA_INSUFFICIENT":
+            if self.reference is None or self.baseline_reference is None:
+                raise ValueError("insufficient Conditional Forecast owner is incomplete")
+            if any(
+                item is not None
+                for item in (
+                    self.selected_expected_return,
+                    self.prediction_uncertainty,
+                    self.model_reference,
+                )
+            ):
+                raise ValueError(
+                    "insufficient Conditional Forecast cannot carry estimates"
+                )
+        elif any(item is not None for item in values):
+            raise ValueError("unavailable Conditional Forecast cannot carry estimates")
+
+    @classmethod
+    def not_available(
+        cls,
+        *reason_codes: str,
+    ) -> DailyAlphaConditionalForecastProjection:
+        return cls(
+            availability_status="NOT_AVAILABLE",
+            reference=None,
+            selected_expected_return=None,
+            prediction_uncertainty=None,
+            model_reference=None,
+            baseline_reference=None,
+            calibration_status="NOT_AVAILABLE",
+            reason_codes=tuple(
+                sorted(
+                    set(
+                        reason_codes
+                        or ("CONDITIONAL_FORECAST_OWNER_NOT_AVAILABLE",)
+                    )
+                )
+            ),
+        )
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        return {
+            "availability_status": self.availability_status,
+            "reference": _optional_runtime_reference(self.reference),
+            "selected_expected_return": self.selected_expected_return,
+            "prediction_uncertainty": self.prediction_uncertainty,
+            "model_reference": _optional_runtime_reference(self.model_reference),
+            "baseline_reference": _optional_runtime_reference(self.baseline_reference),
+            "calibration_status": self.calibration_status,
+            "reason_codes": list(self.reason_codes),
+        }
+
+    @classmethod
+    def from_canonical_dict(
+        cls, payload: Mapping[str, Any]
+    ) -> DailyAlphaConditionalForecastProjection:
+        _fields(
+            payload,
+            {
+                "availability_status",
+                "reference",
+                "selected_expected_return",
+                "prediction_uncertainty",
+                "model_reference",
+                "baseline_reference",
+                "calibration_status",
+                "reason_codes",
+            },
+            "Daily Alpha Conditional Forecast projection",
+        )
+        return cls(
+            availability_status=str(payload["availability_status"]),
+            reference=_runtime_reference(payload["reference"]),
+            selected_expected_return=_optional_text(
+                payload["selected_expected_return"]
+            ),
+            prediction_uncertainty=_optional_text(payload["prediction_uncertainty"]),
+            model_reference=_runtime_reference(payload["model_reference"]),
+            baseline_reference=_runtime_reference(payload["baseline_reference"]),
+            calibration_status=str(payload["calibration_status"]),
+            reason_codes=_strings(payload["reason_codes"]),
+        )
 
 
 @dataclass(frozen=True, slots=True)
 class DailyAlphaSymbolProjection:
+    symbol: str
+    selection_status: str
+    candidate_rank: int | None
+    incumbent_diagnostics: tuple[tuple[str, str | None], ...]
+    validated_alpha_contributions: tuple[tuple[str, str | None], ...]
+    conditional_context: tuple[tuple[str, str | None], ...]
+    signal_reference: RuntimeArtifactReference | None
+    signal_state: str | None
+    signal_score: str | None
+    path_forecast: DailyAlphaPathForecastProjection | None
+    conditional_forecast: DailyAlphaConditionalForecastProjection
+    strategy_diagnostic_reference: RuntimeArtifactReference
+    reason_codes: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        require_text("symbol", self.symbol)
+        require_text("selection_status", self.selection_status)
+        if self.candidate_rank is not None and self.candidate_rank < 1:
+            raise ValueError("daily Alpha Candidate rank must be positive")
+        for label, values in (
+            ("incumbent_diagnostics", self.incumbent_diagnostics),
+            ("validated_alpha_contributions", self.validated_alpha_contributions),
+            ("conditional_context", self.conditional_context),
+        ):
+            _ordered_pairs(f"daily Alpha {label}", values)
+        _ordered_text("symbol reason_codes", self.reason_codes, required=True)
+        if (self.signal_reference is None) != (self.signal_state is None):
+            raise ValueError("Signal reference/state must be paired")
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        return {
+            "symbol": self.symbol,
+            "selection_status": self.selection_status,
+            "candidate_rank": self.candidate_rank,
+            "incumbent_diagnostics": _pairs_payload(self.incumbent_diagnostics),
+            "validated_alpha_contributions": _pairs_payload(
+                self.validated_alpha_contributions
+            ),
+            "conditional_context": _pairs_payload(self.conditional_context),
+            "signal_reference": _optional_runtime_reference(self.signal_reference),
+            "signal_state": self.signal_state,
+            "signal_score": self.signal_score,
+            "path_forecast": (
+                None if self.path_forecast is None else self.path_forecast.to_canonical_dict()
+            ),
+            "conditional_forecast": self.conditional_forecast.to_canonical_dict(),
+            "strategy_diagnostic_reference": self.strategy_diagnostic_reference.to_canonical_dict(),
+            "reason_codes": list(self.reason_codes),
+        }
+
+    @classmethod
+    def from_canonical_dict(
+        cls, payload: Mapping[str, Any]
+    ) -> DailyAlphaSymbolProjection:
+        _fields(
+            payload,
+            {
+                "symbol",
+                "selection_status",
+                "candidate_rank",
+                "incumbent_diagnostics",
+                "validated_alpha_contributions",
+                "conditional_context",
+                "signal_reference",
+                "signal_state",
+                "signal_score",
+                "path_forecast",
+                "conditional_forecast",
+                "strategy_diagnostic_reference",
+                "reason_codes",
+            },
+            "Daily Alpha symbol projection",
+        )
+        rank = payload["candidate_rank"]
+        return cls(
+            symbol=str(payload["symbol"]),
+            selection_status=str(payload["selection_status"]),
+            candidate_rank=None if rank is None else int(rank),
+            incumbent_diagnostics=_pairs(payload["incumbent_diagnostics"]),
+            validated_alpha_contributions=_pairs(
+                payload["validated_alpha_contributions"]
+            ),
+            conditional_context=_pairs(payload["conditional_context"]),
+            signal_reference=_runtime_reference(payload["signal_reference"]),
+            signal_state=_optional_text(payload["signal_state"]),
+            signal_score=_optional_text(payload["signal_score"]),
+            path_forecast=(
+                None
+                if payload["path_forecast"] is None
+                else DailyAlphaPathForecastProjection.from_canonical_dict(
+                    _mapping(payload["path_forecast"])
+                )
+            ),
+            conditional_forecast=DailyAlphaConditionalForecastProjection.from_canonical_dict(
+                _mapping(payload["conditional_forecast"])
+            ),
+            strategy_diagnostic_reference=RuntimeArtifactReference.from_canonical_dict(
+                _mapping(payload["strategy_diagnostic_reference"])
+            ),
+            reason_codes=_strings(payload["reason_codes"]),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class DailyAlphaLegacySymbolProjection:
+    """Exact v1 decoder/encoder; never used for newly created snapshots."""
+
     symbol: str
     selection_status: str
     candidate_rank: int | None
@@ -212,20 +834,8 @@ class DailyAlphaSymbolProjection:
             ("factor_contributions", self.factor_contributions),
             ("context", self.context),
         ):
-            keys = tuple(item[0] for item in values)
-            if keys != tuple(sorted(set(keys))) or any(not key.strip() for key in keys):
-                raise ValueError(f"daily Alpha {label} keys must be unique and sorted")
+            _ordered_pairs(f"daily Alpha v1 {label}", values)
         _ordered_text("symbol reason_codes", self.reason_codes, required=True)
-        if (self.signal_reference is None) != (self.signal_state is None):
-            raise ValueError("Signal reference/state must be paired")
-        if self.forecast_reference is None and any(
-            value is not None
-            for value in (
-                self.forecast_expected_return,
-                self.forecast_uncertainty,
-            )
-        ):
-            raise ValueError("Forecast values require a Forecast owner")
 
     def to_canonical_dict(self) -> dict[str, Any]:
         return {
@@ -250,7 +860,7 @@ class DailyAlphaSymbolProjection:
     @classmethod
     def from_canonical_dict(
         cls, payload: Mapping[str, Any]
-    ) -> DailyAlphaSymbolProjection:
+    ) -> DailyAlphaLegacySymbolProjection:
         _fields(
             payload,
             {
@@ -271,7 +881,7 @@ class DailyAlphaSymbolProjection:
                 "strategy_diagnostic_reference",
                 "reason_codes",
             },
-            "Daily Alpha symbol projection",
+            "Daily Alpha v1 symbol projection",
         )
         rank = payload["candidate_rank"]
         return cls(
@@ -317,20 +927,44 @@ class DailyAlphaPredictionSnapshot:
     strategy_diagnostic_reference: RuntimeArtifactReference
     evidence_gate: DailyAlphaEvidenceGate
     trading_date: date
+    target_session_date: date | None
+    target_calendar_reference: RuntimeArtifactReference | None
     decision_time: datetime
     available_at: datetime
-    symbols: tuple[DailyAlphaSymbolProjection, ...]
+    symbols: tuple[
+        DailyAlphaSymbolProjection | DailyAlphaLegacySymbolProjection, ...
+    ]
     reason_codes: tuple[str, ...]
     schema_version: str = DAILY_ALPHA_PREDICTION_SCHEMA
 
     def __post_init__(self) -> None:
-        if self.schema_version != DAILY_ALPHA_PREDICTION_SCHEMA:
+        if self.schema_version not in {
+            DAILY_ALPHA_PREDICTION_SCHEMA_V1,
+            DAILY_ALPHA_PREDICTION_SCHEMA_V2,
+            DAILY_ALPHA_PREDICTION_SCHEMA,
+        }:
             raise ValueError("unsupported Daily Alpha prediction schema")
         require_sha256("snapshot_hash", self.snapshot_hash)
         require_utc_second("decision_time", self.decision_time)
         require_utc_second("available_at", self.available_at)
         if self.available_at < self.decision_time:
             raise ValueError("Daily Alpha snapshot cannot predate DecisionTime")
+        if self.schema_version == DAILY_ALPHA_PREDICTION_SCHEMA:
+            if (
+                self.target_session_date is None
+                or self.target_session_date <= self.trading_date
+                or self.target_calendar_reference is None
+                or self.target_calendar_reference.reference_kind
+                != "TRADING_CALENDAR"
+            ):
+                raise ValueError(
+                    "Daily Alpha v3 requires one future canonical target session"
+                )
+        elif (
+            self.target_session_date is not None
+            or self.target_calendar_reference is not None
+        ):
+            raise ValueError("legacy Daily Alpha snapshots cannot gain target lineage")
         for label, references in (
             ("configuration", self.configuration_references),
             ("feature", self.feature_references),
@@ -348,6 +982,13 @@ class DailyAlphaPredictionSnapshot:
         symbol_keys = tuple(item.symbol for item in self.symbols)
         if symbol_keys != tuple(sorted(set(symbol_keys))):
             raise ValueError("Daily Alpha symbols must be unique and sorted")
+        expected_symbol_type = (
+            DailyAlphaLegacySymbolProjection
+            if self.schema_version == DAILY_ALPHA_PREDICTION_SCHEMA_V1
+            else DailyAlphaSymbolProjection
+        )
+        if any(not isinstance(item, expected_symbol_type) for item in self.symbols):
+            raise ValueError("Daily Alpha symbol projection schema drifted")
         _ordered_text("snapshot reason_codes", self.reason_codes, required=True)
         if (
             self.evidence_gate.status
@@ -388,6 +1029,8 @@ class DailyAlphaPredictionSnapshot:
             )
         )
         normalized.setdefault("schema_version", DAILY_ALPHA_PREDICTION_SCHEMA)
+        normalized.setdefault("target_session_date", None)
+        normalized.setdefault("target_calendar_reference", None)
         digest = canonical_hash(_snapshot_payload(**normalized))
         return cls(
             snapshot_id=ArtifactId(f"daily-alpha-prediction:{digest[7:]}"),
@@ -426,6 +1069,8 @@ class DailyAlphaPredictionSnapshot:
             strategy_diagnostic_reference=self.strategy_diagnostic_reference,
             evidence_gate=self.evidence_gate,
             trading_date=self.trading_date,
+            target_session_date=self.target_session_date,
+            target_calendar_reference=self.target_calendar_reference,
             decision_time=self.decision_time,
             available_at=self.available_at,
             symbols=self.symbols,
@@ -444,6 +1089,7 @@ class DailyAlphaPredictionSnapshot:
     def from_canonical_dict(
         cls, payload: Mapping[str, Any]
     ) -> DailyAlphaPredictionSnapshot:
+        schema_version = str(payload.get("schema_version"))
         expected = {
             "snapshot_id",
             "snapshot_hash",
@@ -468,6 +1114,8 @@ class DailyAlphaPredictionSnapshot:
             "symbols",
             "reason_codes",
         }
+        if schema_version == DAILY_ALPHA_PREDICTION_SCHEMA:
+            expected.update({"target_session_date", "target_calendar_reference"})
         _fields(payload, expected, "Daily Alpha prediction snapshot")
         return cls(
             snapshot_id=ArtifactId(str(payload["snapshot_id"])),
@@ -507,14 +1155,25 @@ class DailyAlphaPredictionSnapshot:
                 _mapping(payload["evidence_gate"])
             ),
             trading_date=date.fromisoformat(str(payload["trading_date"])),
+            target_session_date=(
+                None
+                if schema_version != DAILY_ALPHA_PREDICTION_SCHEMA
+                else date.fromisoformat(str(payload["target_session_date"]))
+            ),
+            target_calendar_reference=(
+                None
+                if schema_version != DAILY_ALPHA_PREDICTION_SCHEMA
+                else RuntimeArtifactReference.from_canonical_dict(
+                    _mapping(payload["target_calendar_reference"])
+                )
+            ),
             decision_time=parse_utc_second("decision_time", payload["decision_time"]),
             available_at=parse_utc_second("available_at", payload["available_at"]),
-            symbols=tuple(
-                DailyAlphaSymbolProjection.from_canonical_dict(_mapping(item))
-                for item in _sequence(payload["symbols"])
+            symbols=_symbol_projections(
+                payload["symbols"], schema_version=str(payload["schema_version"])
             ),
             reason_codes=_strings(payload["reason_codes"]),
-            schema_version=str(payload["schema_version"]),
+            schema_version=schema_version,
         )
 
 
@@ -532,7 +1191,7 @@ class DailyAlphaPredictionAuthority(Protocol):
 
 
 def _snapshot_payload(**values: Any) -> dict[str, Any]:
-    return {
+    payload = {
         "schema_version": values["schema_version"],
         "run_reference": values["run_reference"].to_canonical_dict(),
         "tick_reference": values["tick_reference"].to_canonical_dict(),
@@ -566,6 +1225,12 @@ def _snapshot_payload(**values: Any) -> dict[str, Any]:
         "symbols": [item.to_canonical_dict() for item in values["symbols"]],
         "reason_codes": list(values["reason_codes"]),
     }
+    if values["schema_version"] == DAILY_ALPHA_PREDICTION_SCHEMA:
+        payload["target_session_date"] = values["target_session_date"].isoformat()
+        payload["target_calendar_reference"] = values[
+            "target_calendar_reference"
+        ].to_canonical_dict()
+    return payload
 
 
 def _sort_runtime_references(
@@ -600,6 +1265,35 @@ def _ordered_text(label: str, values: tuple[str, ...], *, required: bool) -> Non
         raise ValueError(f"{label} are required")
     if values != tuple(sorted(set(values))) or any(not item.strip() for item in values):
         raise ValueError(f"{label} must be unique, non-empty, and sorted")
+
+
+def _ordered_pairs(
+    label: str, values: tuple[tuple[str, str | None], ...]
+) -> None:
+    keys = tuple(item[0] for item in values)
+    if keys != tuple(sorted(set(keys))) or any(not key.strip() for key in keys):
+        raise ValueError(f"{label} keys must be unique and sorted")
+
+
+def _symbol_projections(
+    value: object,
+    *,
+    schema_version: str,
+) -> tuple[DailyAlphaSymbolProjection | DailyAlphaLegacySymbolProjection, ...]:
+    if schema_version == DAILY_ALPHA_PREDICTION_SCHEMA_V1:
+        return tuple(
+            DailyAlphaLegacySymbolProjection.from_canonical_dict(_mapping(item))
+            for item in _sequence(value)
+        )
+    if schema_version in {
+        DAILY_ALPHA_PREDICTION_SCHEMA_V2,
+        DAILY_ALPHA_PREDICTION_SCHEMA,
+    }:
+        return tuple(
+            DailyAlphaSymbolProjection.from_canonical_dict(_mapping(item))
+            for item in _sequence(value)
+        )
+    raise ValueError("unsupported Daily Alpha prediction schema")
 
 
 def _optional_validation_reference(
@@ -678,12 +1372,18 @@ def _fields(
 
 __all__ = [
     "DAILY_ALPHA_PREDICTION_KIND",
+    "DAILY_ALPHA_PREDICTION_SCHEMA",
+    "DAILY_ALPHA_PREDICTION_SCHEMA_V1",
     "DailyAlphaActivationStatus",
+    "DailyAlphaConditionalForecastProjection",
     "DailyAlphaEvidenceGate",
+    "DailyAlphaLegacySymbolProjection",
     "DailyAlphaOwnerResolver",
+    "DailyAlphaPathForecastProjection",
     "DailyAlphaPredictionAuthority",
     "DailyAlphaPredictionSnapshot",
     "DailyAlphaSymbolProjection",
     "EVIDENCE_DEPENDENCY_NOT_SATISFIED",
     "assess_daily_alpha_evidence_gate",
+    "daily_alpha_admission_evidence_references",
 ]

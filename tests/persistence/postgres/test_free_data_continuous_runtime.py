@@ -137,6 +137,7 @@ from tests.application.daily_loop.public_fixture import DECISION
 from tests.application.daily_loop.test_runner import _qualified_stage_clients
 from tests.persistence.postgres.test_free_data_operation import _path_config
 from tests.persistence.postgres.conftest import TEST_DATABASE_URL_ENV
+from tests.persistence.postgres.pit_fixture import record_calendar_owner
 
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
@@ -157,6 +158,15 @@ def test_canonical_free_data_runtime_reaches_summary_and_replays(
 ) -> None:
     policy, history, status, quote = _qualified_stage_clients()
     calendar = _calendar()
+    calendar_reference = record_calendar_owner(
+        postgres_factory,
+        calendar=calendar,
+        clock=DECISION.value.astimezone(UTC),
+        idempotency_key=f"free-data-calendar-{authority_mode.value}",
+    )
+    target_session = calendar.trading_dates[
+        calendar.trading_dates.index(DECISION.value.date()) + 1
+    ]
     configuration = _configuration(calendar)
     configuration_path = publish_controlled_runtime_configuration(
         root=tmp_path / "runtime-configurations",
@@ -267,6 +277,8 @@ def test_canonical_free_data_runtime_reaches_summary_and_replays(
         strategy_repository=repositories.multi_strategy(),
         daily_alpha_authority=daily_alpha_authority,
         daily_alpha_evidence_gate=daily_alpha_gate,
+        target_session_date=target_session,
+        target_calendar_reference=calendar_reference,
         clock=lambda: observed,
     )
     journal = repositories.continuous_research(clock=lambda: observed)
@@ -339,6 +351,22 @@ def test_canonical_free_data_runtime_reaches_summary_and_replays(
     assert daily_child.child_artifact_id is not None
     daily_snapshot = daily_alpha_authority.get(daily_child.child_artifact_id)
     assert "EVIDENCE_DEPENDENCY_NOT_SATISFIED" in daily_snapshot.reason_codes
+    assert all(
+        item.validated_alpha_contributions == ()
+        and item.conditional_forecast.availability_status == "NOT_AVAILABLE"
+        and "CONDITIONAL_FORECAST_OWNER_NOT_AVAILABLE" in item.reason_codes
+        for item in daily_snapshot.symbols
+    )
+    assert all(
+        item.path_forecast is None
+        or (
+            item.path_forecast.forecast_status
+            in {"AVAILABLE_FOR_RESEARCH", "DATA_INSUFFICIENT"}
+            and item.path_forecast.calibration_status
+            in {"NOT_CALIBRATED", "DATA_INSUFFICIENT"}
+        )
+        for item in daily_snapshot.symbols
+    )
     assert summary.no_order and summary.no_fill and summary.no_broker
     assert summary.no_position_mutation_from_shadow
     by_stage = {stage.stage: stage for stage in summary.stages}
@@ -369,6 +397,8 @@ def test_canonical_free_data_runtime_reaches_summary_and_replays(
             strategy_repository=repositories.multi_strategy(),
             daily_alpha_authority=daily_alpha_authority,
             daily_alpha_evidence_gate=daily_alpha_gate,
+            target_session_date=target_session,
+            target_calendar_reference=calendar_reference,
             clock=lambda: observed,
         ),
         policy=continuous_policy,
@@ -642,16 +672,26 @@ def _calendar():
         market="A_SHARE",
         calendar_version="free-data-continuous-v1",
         timezone_name="Asia/Shanghai",
-        sessions=tuple(
+        sessions=(
+            *tuple(
+                TradingSession(
+                    trade_date=(DECISION.value.date() - timedelta(days=offset)),
+                    session_close=datetime.combine(
+                        DECISION.value.date() - timedelta(days=offset),
+                        time(15),
+                        tzinfo=SHANGHAI,
+                    ),
+                )
+                for offset in range(30, -1, -1)
+            ),
             TradingSession(
-                trade_date=(DECISION.value.date() - timedelta(days=offset)),
+                trade_date=DECISION.value.date() + timedelta(days=1),
                 session_close=datetime.combine(
-                    DECISION.value.date() - timedelta(days=offset),
+                    DECISION.value.date() + timedelta(days=1),
                     time(15),
                     tzinfo=SHANGHAI,
                 ),
-            )
-            for offset in range(30, -1, -1)
+            ),
         ),
     )
 
