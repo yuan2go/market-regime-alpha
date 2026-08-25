@@ -230,21 +230,44 @@ def test_external_outcome_projection_remains_queryable_without_duplicate_label_j
         projection_count = connection.execute(
             "SELECT count(*) FROM historical_corpus_outcome_label"
         ).fetchone()
-        locators = connection.execute(
+        projections = connection.execute(
             """
-            SELECT payload_locator
-            FROM historical_corpus_session_component
-            WHERE component_kind = 'OUTCOME'
-            ORDER BY trading_date
+            SELECT component.payload_locator, label.payload_json
+            FROM historical_corpus_session_component AS component
+            JOIN historical_corpus_outcome_label AS label
+              ON label.component_id = component.component_id
+             AND label.component_hash = component.component_hash
+            WHERE component.component_kind = 'OUTCOME'
+            ORDER BY component.trading_date
             """
         ).fetchall()
-    assert projection_count == (0,)
+    assert projection_count == (3,)
     assert all(
         tmp_path.joinpath(*str(row[0]).split("/")[1:])
         .read_bytes()
         .startswith(b"MRAJZ1\n")
-        for row in locators
+        for row in projections
     )
+    assert all(
+        set(dict(row[1]))
+        == {"label_hash", "label_id", "schema_version", "symbol", "target"}
+        for row in projections
+    )
+    with postgres_factory.connection() as connection:
+        connection.execute("TRUNCATE historical_corpus_outcome_label")
+    assert repository.reindex_external_outcome_labels(run_id=command.run_id) == (
+        3,
+        3,
+    )
+    assert repository.reindex_external_outcome_labels(run_id=command.run_id) == (
+        0,
+        0,
+    )
+
+    oldest_path = tmp_path.joinpath(*str(projections[0][0]).split("/")[1:])
+    corrupted = bytearray(oldest_path.read_bytes())
+    corrupted[-1] ^= 1
+    oldest_path.write_bytes(corrupted)
     projected = repository.list_outcome_labels_before(
         run_id=command.run_id,
         before=date(2020, 1, 5),

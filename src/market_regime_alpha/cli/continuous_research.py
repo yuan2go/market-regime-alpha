@@ -620,6 +620,13 @@ def build_parser() -> argparse.ArgumentParser:
     historical_resume.add_argument("--run-id", required=True)
     historical_resume.add_argument("--max-stage-commits", type=int)
     historical_resume.add_argument("--artifact-root", type=Path)
+    historical_outcome_reindex = subparsers.add_parser(
+        "historical-reindex-outcomes",
+        help="Append missing bounded-query locators for external Outcome owners.",
+    )
+    historical_outcome_reindex.add_argument("--run-id", required=True)
+    historical_outcome_reindex.add_argument("--artifact-root", type=Path, required=True)
+    historical_outcome_reindex.add_argument("--max-components", type=int)
     historical_report = subparsers.add_parser("historical-report")
     historical_report.add_argument("--run-id", required=True)
     historical_replay = subparsers.add_parser("historical-replay")
@@ -1275,6 +1282,23 @@ def _dispatch(
         return {
             "operation": args.operation.replace("-", "_").upper(),
             **runtime_scope_receipt.to_canonical_dict(),
+        }
+    if args.operation == "historical-reindex-outcomes":
+        component_count, label_count = (
+            PostgresHistoricalMaterializationRepository(
+                factory,
+                artifact_root=args.artifact_root.resolve(),
+                apply_migrations=False,
+            ).reindex_external_outcome_labels(
+                run_id=ArtifactId(args.run_id),
+                maximum_components=args.max_components,
+            )
+        )
+        return {
+            "operation": "HISTORICAL_REINDEX_OUTCOMES",
+            "run_id": args.run_id,
+            "component_count": component_count,
+            "label_count": label_count,
         }
     if args.operation in {
         "historical-run",
