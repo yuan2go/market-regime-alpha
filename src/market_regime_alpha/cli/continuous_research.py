@@ -118,6 +118,8 @@ from market_regime_alpha.application.historical_corpus.evidence_producer import 
 )
 from market_regime_alpha.application.historical_corpus.frozen_experiment import (
     WP_ALPHA_PROOF_02_LOCKED_AT,
+    create_phase_e3_feature_configuration,
+    create_phase_e3_strategy_economics_policy_set,
     create_wp_alpha_proof_02_historical_experiment,
 )
 from market_regime_alpha.application.historical_corpus.normalization import (
@@ -2710,6 +2712,20 @@ def _freeze_wp_alpha_proof_experiment(
         factory,
         apply_migrations=False,
     ).register_protocol(exploratory_five_minute_multi_horizon_protocol())
+    validation = PostgresResearchValidationRepository(
+        factory,
+        apply_migrations=False,
+    )
+    feature = validation.record_feature_set_configuration(
+        create_phase_e3_feature_configuration(),
+        recorded_at=WP_ALPHA_PROOF_02_LOCKED_AT,
+    )
+    economics = validation.record_historical_strategy_economics_policy_set(
+        create_phase_e3_strategy_economics_policy_set(
+            target_protocol=target,
+            created_at=WP_ALPHA_PROOF_02_LOCKED_AT,
+        )
+    )
     definition = create_wp_alpha_proof_02_historical_experiment(
         target,
         locked_at=WP_ALPHA_PROOF_02_LOCKED_AT,
@@ -2726,10 +2742,7 @@ def _freeze_wp_alpha_proof_experiment(
     if recorded_at_row is None or not isinstance(recorded_at_row[0], datetime):
         raise RuntimeError("PostgreSQL clock did not return an authority timestamp")
     recorded_at = recorded_at_row[0]
-    recorded = PostgresResearchValidationRepository(
-        factory,
-        apply_migrations=False,
-    ).record_historical_experiment_definition(
+    recorded = validation.record_historical_experiment_definition(
         definition,
         recorded_at=recorded_at,
     )
@@ -2747,6 +2760,12 @@ def _freeze_wp_alpha_proof_experiment(
             target.protocol_id,
             target.protocol_hash,
         ).to_canonical_dict(),
+        "feature_reference": ValidationArtifactReference(
+            "FEATURE_SET_CONFIGURATION",
+            feature.feature_set_id,
+            feature.content_hash,
+        ).to_canonical_dict(),
+        "economics_reference": economics.reference.to_canonical_dict(),
         "locked_at": WP_ALPHA_PROOF_02_LOCKED_AT.isoformat(),
         "formal_pit": False,
         "locked_oos_consumed": False,

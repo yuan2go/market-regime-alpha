@@ -17,6 +17,7 @@ from market_regime_alpha.application.historical_corpus.frozen_experiment import 
     verify_golden_loop_v2_historical_experiment,
     verify_phase_e3_historical_experiment,
     verify_wp_alpha_research_01_historical_experiment,
+    verify_wp_alpha_proof_02_historical_experiment,
 )
 from market_regime_alpha.application.historical_corpus.golden_loop import (
     GoldenLoopScoringContract,
@@ -290,6 +291,42 @@ def test_wp_alpha_proof_02_binds_reacquired_owners_without_changing_protocol() -
     assert experiment.stopping_rule == (
         "EXHAUST_FROZEN_EXTERNAL_SCOPE_ONCE_NO_RESULT_DEPENDENT_CHANGE"
     )
+    verify_wp_alpha_proof_02_historical_experiment(
+        experiment,
+        target_protocol=target,
+        feature_owner=create_phase_e3_feature_configuration(),
+        economics_owner=create_phase_e3_strategy_economics_policy_set(
+            target_protocol=target,
+            created_at=WP_ALPHA_PROOF_02_LOCKED_AT,
+        ),
+        decision_local_time=time(14, 55),
+        timezone_name="Asia/Shanghai",
+        configuration_references=(
+            experiment.feature_reference,
+            experiment.cost_policy_reference,
+            GoldenLoopScoringContract.create_v2().reference,
+            alpha_discovery_evaluation_contract_reference(
+                create_phase_e3_feature_configuration()
+            ),
+            *references.values(),
+        ),
+    )
+    with pytest.raises(ValueError, match="omits frozen physical owner"):
+        verify_wp_alpha_proof_02_historical_experiment(
+            experiment,
+            target_protocol=target,
+            feature_owner=create_phase_e3_feature_configuration(),
+            economics_owner=create_phase_e3_strategy_economics_policy_set(
+                target_protocol=target,
+                created_at=WP_ALPHA_PROOF_02_LOCKED_AT,
+            ),
+            decision_local_time=time(14, 55),
+            timezone_name="Asia/Shanghai",
+            configuration_references=(
+                experiment.feature_reference,
+                experiment.cost_policy_reference,
+            ),
+        )
     with pytest.raises(ValueError, match="lock time is frozen"):
         create_wp_alpha_proof_02_historical_experiment(
             target,

@@ -765,6 +765,63 @@ def verify_wp_alpha_research_01_historical_experiment(
         raise ValueError("WP-ALPHA-RESEARCH-01 command omits a frozen binding")
 
 
+def verify_wp_alpha_proof_02_historical_experiment(
+    definition: ResearchExperimentDefinition,
+    *,
+    target_protocol: OutcomeTargetProtocol,
+    feature_owner: FeatureSetConfiguration,
+    economics_owner: HistoricalStrategyEconomicsPolicySet,
+    decision_local_time: time,
+    timezone_name: str,
+    configuration_references: tuple[ValidationArtifactReference, ...],
+) -> None:
+    """Reload and verify the exact approved vertical-slice methodology."""
+
+    references = set(configuration_references)
+
+    def required_owner(kind: str) -> ValidationArtifactReference:
+        matches = tuple(item for item in references if item.artifact_kind == kind)
+        if len(matches) != 1:
+            raise ValueError(
+                f"WP-ALPHA-PROOF-02 command omits frozen physical owner {kind}"
+            )
+        return matches[0]
+
+    expected = create_wp_alpha_proof_02_historical_experiment(
+        target_protocol,
+        locked_at=WP_ALPHA_PROOF_02_LOCKED_AT,
+        raw_owner_reference=required_owner("RAW_PROVIDER_ARCHIVE"),
+        normalized_owner_reference=required_owner("NORMALIZED_DATASET"),
+        calendar_reference=required_owner("TRADING_CALENDAR"),
+        universe_timeline_reference=required_owner(
+            "HISTORICAL_CONSTITUENT_TIMELINE"
+        ),
+        security_facts_reference=required_owner("HISTORICAL_SECURITY_FACTS"),
+    )
+    if definition != expected:
+        raise ValueError("WP-ALPHA-PROOF-02 Experiment Definition drifted")
+    if feature_owner != create_phase_e3_feature_configuration():
+        raise ValueError("WP-ALPHA-PROOF-02 Feature owner drifted")
+    if economics_owner != create_phase_e3_strategy_economics_policy_set(
+        target_protocol=target_protocol,
+        created_at=WP_ALPHA_PROOF_02_LOCKED_AT,
+    ):
+        raise ValueError("WP-ALPHA-PROOF-02 Economics owner drifted")
+    if (
+        decision_local_time != PHASE_E3_DECISION_LOCAL_TIME
+        or timezone_name != PHASE_E3_TIMEZONE
+    ):
+        raise ValueError("WP-ALPHA-PROOF-02 DecisionTime drifted")
+    methodology = {
+        definition.feature_reference,
+        definition.cost_policy_reference,
+        GoldenLoopScoringContract.create_v2().reference,
+        alpha_discovery_evaluation_contract_reference(feature_owner),
+    }
+    if not methodology.issubset(references):
+        raise ValueError("WP-ALPHA-PROOF-02 command omits frozen methodology owner")
+
+
 def _strategy_policy(
     target: TargetDefinition,
     created_at: datetime,
@@ -832,4 +889,5 @@ __all__ = [
     "verify_phase_e3_historical_experiment",
     "verify_golden_loop_v2_historical_experiment",
     "verify_wp_alpha_research_01_historical_experiment",
+    "verify_wp_alpha_proof_02_historical_experiment",
 ]

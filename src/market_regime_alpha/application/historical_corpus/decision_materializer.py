@@ -29,10 +29,12 @@ from market_regime_alpha.application.historical_corpus.historical_window import 
 )
 from market_regime_alpha.application.historical_corpus.frozen_experiment import (
     PHASE_E3_TIMEZONE,
+    WP_ALPHA_PROOF_02_MULTIPLE_TESTING_FAMILY,
     WP_ALPHA_RESEARCH_01_MULTIPLE_TESTING_FAMILY,
     verify_golden_loop_v2_historical_experiment,
     verify_phase_e3_historical_experiment,
     verify_wp_alpha_research_01_historical_experiment,
+    verify_wp_alpha_proof_02_historical_experiment,
 )
 from market_regime_alpha.application.historical_corpus.artifacts import (
     HistoricalPackageIndex,
@@ -688,6 +690,11 @@ class HistoricalDecisionMaterializer:
                     "Historical frozen methodology was recorded after materialization"
                 )
         if (
+            experiment.multiple_testing_family_id
+            == WP_ALPHA_PROOF_02_MULTIPLE_TESTING_FAMILY
+        ):
+            verifier = verify_wp_alpha_proof_02_historical_experiment
+        elif (
             experiment.multiple_testing_family_id
             == WP_ALPHA_RESEARCH_01_MULTIPLE_TESTING_FAMILY
         ):
