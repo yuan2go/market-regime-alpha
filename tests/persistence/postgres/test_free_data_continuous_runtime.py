@@ -548,6 +548,12 @@ def test_formal_run_due_entry_executes_staged_research_summary(
 ) -> None:
     policy, history, status, quote = _qualified_stage_clients()
     calendar = _calendar()
+    record_calendar_owner(
+        postgres_factory,
+        calendar=calendar,
+        clock=DECISION.value.astimezone(UTC),
+        idempotency_key="free-runtime-cli-calendar-owner",
+    )
     configuration = _configuration(calendar)
     configuration_path = publish_controlled_runtime_configuration(
         root=tmp_path / "runtime-configurations",
