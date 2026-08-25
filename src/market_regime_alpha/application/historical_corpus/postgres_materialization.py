@@ -236,6 +236,55 @@ class PostgresHistoricalMaterializationRepository:
             "target": {"artifact_id": str(label.target.artifact_id)},
         }
 
+    @staticmethod
+    def _external_forecast_labels(
+        component: HistoricalSessionComponent,
+        labels: tuple[TargetOutcomeLabel, ...],
+    ) -> tuple[TargetOutcomeLabel, ...]:
+        raw_protocol = component.payload.get("target_protocol")
+        if raw_protocol is None:
+            return labels
+        if not isinstance(raw_protocol, Mapping):
+            raise HistoricalMaterializationConflict(
+                "Historical Outcome target protocol is invalid"
+            )
+        raw_targets = raw_protocol.get("targets")
+        if not isinstance(raw_targets, list):
+            raise HistoricalMaterializationConflict(
+                "Historical Outcome target protocol is invalid"
+            )
+        forecast_target_ids: list[str] = []
+        for raw_target in raw_targets:
+            if not isinstance(raw_target, Mapping):
+                raise HistoricalMaterializationConflict(
+                    "Historical Outcome target protocol is invalid"
+                )
+            horizon = raw_target.get("canonical_horizon")
+            evaluation = (
+                horizon.get("evaluation_timestamp")
+                if isinstance(horizon, Mapping)
+                else None
+            )
+            if (
+                isinstance(evaluation, Mapping)
+                and evaluation.get("checkpoint") == "10:30"
+            ):
+                forecast_target_ids.append(str(raw_target.get("target_id")))
+        if len(forecast_target_ids) != 1:
+            raise HistoricalMaterializationConflict(
+                "Historical Outcome forecast target is not unique"
+            )
+        selected = tuple(
+            label
+            for label in labels
+            if str(label.target.artifact_id) == forecast_target_ids[0]
+        )
+        if not selected:
+            raise HistoricalMaterializationConflict(
+                "Historical Outcome forecast labels are missing"
+            )
+        return selected
+
     def _insert_outcome_label_projections(
         self,
         connection: Any,
@@ -244,6 +293,8 @@ class PostgresHistoricalMaterializationRepository:
         external: bool,
     ) -> int:
         labels = self._outcome_labels(component)
+        if external:
+            labels = self._external_forecast_labels(component, labels)
         with connection.cursor() as cursor:
             cursor.executemany(
                 """
@@ -997,6 +1048,11 @@ class PostgresHistoricalMaterializationRepository:
                 )
             )
             external = str(row[8]) == HISTORICAL_COMPONENT_PAYLOAD_STORAGE
+            if external:
+                expected_labels = self._external_forecast_labels(
+                    component,
+                    expected_labels,
+                )
             expected_rows = tuple(
                 (
                     str(item.label_id),

@@ -190,6 +190,11 @@ def test_external_outcome_projection_remains_queryable_without_duplicate_label_j
         ArtifactId("external-outcome-target"),
         canonical_hash({"external": "outcome-target"}),
     )
+    secondary_target = RuntimeArtifactReference(
+        "OUTCOME_TARGET_DEFINITION",
+        ArtifactId("external-outcome-secondary-target"),
+        canonical_hash({"external": "outcome-secondary-target"}),
+    )
     labels: list[TargetOutcomeLabel] = []
     for trading_date in sessions:
         request = command.session_request(trading_date)
@@ -212,6 +217,22 @@ def test_external_outcome_projection_remains_queryable_without_duplicate_label_j
             reason_codes=("TARGET_COMPLETE",),
         )
         labels.append(label)
+        secondary_label = TargetOutcomeLabel.create(
+            symbol="600000.SH",
+            target=secondary_target,
+            label_interval_start=start,
+            label_interval_end=end,
+            decision_reference_price=Decimal("10"),
+            checkpoint_price=Decimal("10.2"),
+            mfe=Decimal("0.03"),
+            mae=Decimal("-0.01"),
+            barrier_passages=(),
+            barrier_ordering=BarrierOrderingOutcome.NOT_APPLICABLE,
+            market_conditions=(OutcomeMarketCondition.TRADING,),
+            availability_status=OutcomeAvailabilityStatus.COMPLETE,
+            outcome_available_at=end,
+            reason_codes=("TARGET_COMPLETE",),
+        )
         repository.put(
             component=HistoricalSessionComponent.create(
                 run_id=command.run_id,
@@ -221,7 +242,32 @@ def test_external_outcome_projection_remains_queryable_without_duplicate_label_j
                 source_max_event_time=end,
                 materialized_at=request.materialized_at,
                 source_references=(source,),
-                payload={"labels": [label.to_canonical_dict()]},
+                payload={
+                    "target_protocol": {
+                        "targets": [
+                            {
+                                "target_id": str(target.artifact_id),
+                                "canonical_horizon": {
+                                    "evaluation_timestamp": {
+                                        "checkpoint": "10:30"
+                                    }
+                                },
+                            },
+                            {
+                                "target_id": str(secondary_target.artifact_id),
+                                "canonical_horizon": {
+                                    "evaluation_timestamp": {
+                                        "checkpoint": "CLOSE"
+                                    }
+                                },
+                            },
+                        ]
+                    },
+                    "labels": [
+                        label.to_canonical_dict(),
+                        secondary_label.to_canonical_dict(),
+                    ],
+                },
             ),
             ordinal=1,
         )
