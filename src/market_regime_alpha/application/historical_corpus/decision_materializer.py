@@ -1377,12 +1377,25 @@ class HistoricalDecisionMaterializer:
             action_gaps_by_symbol
         )
         labels: list[TargetOutcomeLabel] = []
+        target_omissions: list[dict[str, Any]] = []
         economics: list[StrategyEconomicsResult] = []
         capacity_protocol = economics_owner.capacity_protocol
         requested_notional = Decimal("100000")
         for symbol in symbols:
             reference_price = _decision_reference_price(bars, symbol, request.trading_date, request.decision_time)
             if reference_price is None:
+                target_omissions.append(
+                    {
+                        "symbol": symbol,
+                        "target_count": len(protocol.targets),
+                        "target_ids": [
+                            str(target.target_id) for target in protocol.targets
+                        ],
+                        "reason_codes": [
+                            "DECISION_REFERENCE_NOT_ESTIMABLE",
+                        ],
+                    }
+                )
                 continue
             initial_conditions = _market_conditions(bars, symbol, next_session)
             fallback_open = next(
@@ -1516,6 +1529,10 @@ class HistoricalDecisionMaterializer:
                 "next_session_date": next_session.isoformat(),
                 "target_protocol": protocol.to_canonical_dict(),
                 "labels": [item.to_canonical_dict() for item in labels],
+                "target_omissions": sorted(
+                    target_omissions,
+                    key=lambda item: str(item["symbol"]),
+                ),
                 "strategy_economics": [
                     item.identity_payload()
                     | {
@@ -1525,7 +1542,17 @@ class HistoricalDecisionMaterializer:
                     for item in economics
                 ],
                 "available_label_count": sum(item.availability_status is OutcomeAvailabilityStatus.COMPLETE for item in labels),
-                "not_estimated_label_count": sum(item.availability_status is not OutcomeAvailabilityStatus.COMPLETE for item in labels),
+                "not_estimated_label_count": (
+                    sum(
+                        item.availability_status
+                        is not OutcomeAvailabilityStatus.COMPLETE
+                        for item in labels
+                    )
+                    + sum(
+                        int(item["target_count"])
+                        for item in target_omissions
+                    )
+                ),
                 "corporate_action_exclusions": [
                     {
                         "symbol": symbol,

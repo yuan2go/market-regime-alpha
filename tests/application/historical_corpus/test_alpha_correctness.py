@@ -12,6 +12,7 @@ from market_regime_alpha.application.historical_corpus.alpha_correctness import 
     PersistedFeatureObservation,
     PersistedTargetObservation,
     _physical_verification_from_reloaded_packages,
+    _resolve_target_symbol_omissions,
     build_alpha_correctness_proof,
     reproduce_execution_timing_diagnostics,
     reproduce_intraday_features,
@@ -67,6 +68,35 @@ SHANGHAI = ZoneInfo("Asia/Shanghai")
 SESSION = date(2025, 1, 2)
 NEXT_SESSION = date(2025, 1, 3)
 DECISION_TIME = datetime.combine(SESSION, time(14, 55), SHANGHAI).astimezone(UTC)
+
+
+def test_target_symbol_omissions_fail_closed_without_a_declared_reason() -> None:
+    assert _resolve_target_symbol_omissions(
+        feature_symbols={"000001.SZ", "000002.SZ"},
+        label_symbols={"000001.SZ"},
+        declared_omissions={},
+    ) == {
+        "000002.SZ": ("PERSISTED_TARGET_OMISSION_NOT_DECLARED",),
+    }
+
+
+def test_target_symbol_omissions_preserve_explicit_owner_missingness() -> None:
+    assert _resolve_target_symbol_omissions(
+        feature_symbols={"000001.SZ", "000002.SZ"},
+        label_symbols={"000001.SZ"},
+        declared_omissions={
+            "000002.SZ": ("DECISION_REFERENCE_NOT_ESTIMABLE",),
+        },
+    ) == {
+        "000002.SZ": ("DECISION_REFERENCE_NOT_ESTIMABLE",),
+    }
+
+    with pytest.raises(ValueError, match="Target symbols absent from Feature owner"):
+        _resolve_target_symbol_omissions(
+            feature_symbols={"000001.SZ"},
+            label_symbols={"000001.SZ", "000002.SZ"},
+            declared_omissions={},
+        )
 
 
 def test_independent_intraday_recomputation_matches_persisted_values(tmp_path) -> None:
