@@ -206,7 +206,11 @@ def load_verified_historical_package(path: Path) -> VerifiedHistoricalPackage:
     return _load_verified_historical_package(path, enforce_directory_identity=True)
 
 
-def load_historical_package_index(path: Path) -> HistoricalPackageIndex:
+def load_historical_package_index(
+    path: Path,
+    *,
+    enforce_directory_identity: bool = True,
+) -> HistoricalPackageIndex:
     """Verify immutable package metadata without decoding Parquet records."""
 
     root = path.resolve()
@@ -245,7 +249,7 @@ def load_historical_package_index(path: Path) -> HistoricalPackageIndex:
         or encoding.get("parquet_schema") != HISTORICAL_PARQUET_SCHEMA
     ):
         raise ValueError("Historical package logical identity mismatch")
-    if root.name != owner_id:
+    if enforce_directory_identity and root.name != owner_id:
         raise ValueError("Historical package directory identity mismatch")
     partitions = tuple(HistoricalPartitionDescriptor.from_reference_dict(item) for item in raw_refs)
     if not partitions:

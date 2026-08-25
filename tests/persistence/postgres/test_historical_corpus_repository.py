@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from market_regime_alpha.application.historical_corpus.artifacts import (
+    load_historical_package_index,
     load_verified_historical_package,
     publish_historical_package,
 )
@@ -27,6 +28,10 @@ from market_regime_alpha.application.historical_corpus.contracts import (
 )
 from market_regime_alpha.application.historical_corpus.selective_read import (
     HistoricalReadQuery,
+)
+from market_regime_alpha.application.historical_corpus.staged_package import (
+    HistoricalOwnerMetadata,
+    StagedHistoricalPackageWriter,
 )
 from market_regime_alpha.application.research_validation.common import (
     ValidationArtifactReference,
@@ -56,6 +61,44 @@ def test_owner_registration_reloads_exact_locator_and_hash(
                 canonical_hash({"wrong": True}),
             )
         )
+
+
+def test_descriptor_index_registration_reloads_without_decoding_whole_owner(
+    postgres_factory: PostgresConnectionFactory,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner = raw_owner()
+    writer = StagedHistoricalPackageWriter(
+        artifact_root=tmp_path,
+        artifact_kind=owner.artifact_kind,
+        bucket_count=owner.bucket_count,
+    )
+    writer.add_partition(owner.partitions[0])
+    index = writer.finalize(
+        HistoricalOwnerMetadata(
+            provider_id=owner.provider_id,
+            normalization_version=owner.normalization_version,
+            parent_reference=owner.parent_reference,
+            created_at=owner.created_at,
+            retrieved_at=owner.retrieved_at,
+            coverage=owner.coverage,
+            limitations=owner.limitations,
+        )
+    )
+    repository = PostgresHistoricalCorpusRepository(
+        postgres_factory,
+        artifact_root=tmp_path,
+    )
+    monkeypatch.setattr(
+        "market_regime_alpha.application.historical_corpus.artifacts._read_partition",
+        lambda **_: (_ for _ in ()).throw(AssertionError("partition decoded")),
+    )
+
+    registered = repository.register_index(index)
+
+    assert registered == load_historical_package_index(index.root)
+    assert registered.reference == owner.reference
 
 
 def test_normalized_owner_requires_exact_registered_raw_parent(

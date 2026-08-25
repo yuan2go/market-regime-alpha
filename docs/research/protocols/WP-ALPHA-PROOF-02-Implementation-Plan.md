@@ -59,7 +59,7 @@
 - Consumes: `HistoricalDataPartition`, `HistoricalCorpusCoverage`, `HistoricalPackageIndex`, `ValidationArtifactReference` and the current V1 Parquet encoding.
 - Produces: `StagedHistoricalPackageWriter.add_partition(partition)`, `StagedHistoricalPackageWriter.finalize(metadata) -> HistoricalPackageIndex`, and `PostgresHistoricalCorpusRepository.register_index(index) -> HistoricalPackageIndex`.
 
-- [ ] **Step 1: Write public-seam red tests for bounded publication, exact identity, crash recovery and corruption rejection**
+- [x] **Step 1: Write public-seam red tests for bounded publication, exact identity, crash recovery and corruption rejection**
 
 ```python
 def test_staged_writer_releases_partition_records_and_replays_exact_index(tmp_path: Path) -> None:
@@ -92,13 +92,13 @@ def test_staged_writer_never_publishes_partial_package(tmp_path: Path) -> None:
     assert not tuple((tmp_path / "historical-corpus").glob("**/historical-data-owner-*"))
 ```
 
-- [ ] **Step 2: Run the staged-package tests and verify RED**
+- [x] **Step 2: Run the staged-package tests and verify RED**
 
 Run: `python -m pytest -q tests/application/historical_corpus/test_staged_package.py`
 
 Expected: FAIL because `staged_package` and its public writer do not exist.
 
-- [ ] **Step 3: Implement the staged writer with one-partition-at-a-time decoding**
+- [x] **Step 3: Implement the staged writer with one-partition-at-a-time decoding**
 
 ```python
 @dataclass(frozen=True, slots=True)
@@ -140,7 +140,7 @@ class StagedHistoricalPackageWriter:
 
 The finalizer writes `manifest.json`, `encoding.json`, `SHA256SUMS.json`, fsyncs the tree, validates with `load_historical_package_index`, then atomically renames to the owner-ID directory. It rejects duplicate timeframe/year/month/bucket keys, path escape, metadata/descriptor drift and conflicting pre-existing owner identity.
 
-- [ ] **Step 4: Add descriptor-only PostgreSQL registration and exact reload**
+- [x] **Step 4: Add descriptor-only PostgreSQL registration and exact reload**
 
 ```python
 def register_index(
@@ -158,7 +158,7 @@ def register_index(
 
 `register()` delegates its SQL projection to `_register_projection`; no migration runs in the repository constructor. The SQL validates parent reference, exact manifest, physical hash, ordered partition descriptors and checksums.
 
-- [ ] **Step 5: Run focused package/repository tests and verify GREEN**
+- [x] **Step 5: Run focused package/repository tests and verify GREEN**
 
 Run: `python -m pytest -q tests/application/historical_corpus/test_artifacts.py tests/application/historical_corpus/test_staged_package.py tests/persistence/postgres/test_historical_corpus_repository.py`
 
