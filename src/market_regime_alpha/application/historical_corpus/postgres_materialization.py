@@ -69,6 +69,9 @@ class PostgresHistoricalMaterializationRepository:
         component.verify_identity()
         if ordinal <= 0:
             raise ValueError("Historical component ordinal must be positive")
+        existing = self._existing_exact(((component, ordinal),))
+        if existing is not None:
+            return existing[0]
         artifact = self._publish_payload(component, dependencies=(component,))
 
         def operation(connection: Any) -> None:
@@ -103,6 +106,9 @@ class PostgresHistoricalMaterializationRepository:
             raise ValueError("Historical component batch identities must be unique")
         if len({ordinal for _component, ordinal in items}) != len(items):
             raise ValueError("Historical component batch ordinals must be unique")
+        existing = self._existing_exact(items)
+        if existing is not None:
+            return existing
         artifacts = tuple(
             self._publish_payload(component, dependencies=components)
             for component in components
@@ -120,6 +126,47 @@ class PostgresHistoricalMaterializationRepository:
                     "Historical component committed owner reload mismatch"
                 )
         return components
+
+    def _existing_exact(
+        self,
+        items: tuple[tuple[HistoricalSessionComponent, int], ...],
+    ) -> tuple[HistoricalSessionComponent, ...] | None:
+        component_ids = [str(component.component_id) for component, _ordinal in items]
+        with self._factory.connection(read_only=True) as connection:
+            rows = connection.execute(
+                """
+                SELECT component_id, component_hash, ordinal, payload_json,
+                       payload_storage, payload_locator, payload_physical_hash,
+                       payload_size_bytes, payload_logical_size_bytes
+                FROM historical_corpus_session_component
+                WHERE component_id = ANY(%s)
+                """,
+                (component_ids,),
+            ).fetchall()
+            if len(rows) != len(items):
+                return None
+            by_id = {str(row[0]): row for row in rows}
+            existing: list[HistoricalSessionComponent] = []
+            for component, ordinal in items:
+                row = by_id.get(str(component.component_id))
+                if row is None:
+                    return None
+                if str(row[1]) != component.component_hash:
+                    raise HistoricalMaterializationConflict(
+                        "Historical component identity hash conflict"
+                    )
+                if int(row[2]) != ordinal:
+                    raise HistoricalMaterializationConflict(
+                        "Historical component ordinal conflict"
+                    )
+                restored = self._restore_payload(*row[3:])
+                self._verify_projection(connection, restored, int(row[2]))
+                if restored != component:
+                    raise HistoricalMaterializationConflict(
+                        "Historical component existing owner mismatch"
+                    )
+                existing.append(restored)
+        return tuple(existing)
 
     @staticmethod
     def _verify_session(connection: Any, component: HistoricalSessionComponent) -> None:

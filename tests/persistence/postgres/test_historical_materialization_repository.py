@@ -211,8 +211,59 @@ def test_idempotent_external_put_preserves_existing_physical_encoding(
         changed_encoder,
     )
 
+    def unexpected_transaction(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError("existing immutable owner must not start a write transaction")
+
+    monkeypatch.setattr(type(postgres_factory), "run_transaction", unexpected_transaction)
+
     assert repository.put(component=component, ordinal=1) == component
     assert repository.get(component.reference) == component
+
+
+def test_idempotent_existing_component_batch_is_read_only(
+    postgres_factory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    command = _command(sessions=(date(2020, 1, 2),))
+    request = command.session_request(date(2020, 1, 2))
+    PostgresRuntimeScopeRepository(postgres_factory).register_policy(_policy())
+    PostgresHistoricalResearchJournal(
+        postgres_factory,
+        clock=MutableClock(CREATED_AT),
+    ).create_or_get(command)
+    repository = PostgresHistoricalMaterializationRepository(postgres_factory)
+    source = ValidationArtifactReference(
+        "NORMALIZED_DATASET",
+        ArtifactId("normalized-owner-existing-batch"),
+        canonical_hash({"normalized": "existing-batch"}),
+    )
+    components = tuple(
+        HistoricalSessionComponent.create(
+            run_id=command.run_id,
+            session_id=request.session_id,
+            trading_date=request.trading_date,
+            component_kind=kind,
+            source_max_event_time=request.decision_time,
+            materialized_at=request.materialized_at,
+            source_references=(source,),
+            payload={"kind": kind.value},
+        )
+        for kind in (
+            HistoricalComponentKind.CANDIDATE,
+            HistoricalComponentKind.SIGNAL,
+        )
+    )
+    items = tuple((component, ordinal) for ordinal, component in enumerate(components, 1))
+    repository.put_many(items)
+
+    def unexpected_transaction(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError("existing immutable batch must not start a write transaction")
+
+    monkeypatch.setattr(type(postgres_factory), "run_transaction", unexpected_transaction)
+
+    assert repository.put_many(items) == components
 
 
 def test_external_outcome_projection_remains_queryable_without_duplicate_label_json(
