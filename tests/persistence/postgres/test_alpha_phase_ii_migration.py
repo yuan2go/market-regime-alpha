@@ -17,8 +17,8 @@ def test_phase_ii_migration_is_forward_only_idempotent_and_extends_existing_evid
     first = migrator.apply_all(postgres_factory)
     second = migrator.apply_all(postgres_factory)
 
-    assert first[-1].version == 98
-    assert first[-1].name == "wp_alpha_proof_locked_scope"
+    assert first[-1].version == 104
+    assert first[-1].name == "historical_outcome_forecast_fk_index"
     assert second == ()
     with postgres_factory.connection(read_only=True) as connection:
         latest = connection.execute(
@@ -45,7 +45,7 @@ def test_phase_ii_migration_is_forward_only_idempotent_and_extends_existing_evid
             """
         ).fetchone()
 
-    assert latest == (98, "wp_alpha_proof_locked_scope")
+    assert latest == (104, "historical_outcome_forecast_fk_index")
     assert phase_ii_and_closure == [
         (91, "alpha_research_phase_ii"),
         (92, "strategy_forecast_contract_semantics"),
@@ -55,6 +55,12 @@ def test_phase_ii_migration_is_forward_only_idempotent_and_extends_existing_evid
         (96, "daily_alpha_outcome_lineage"),
         (97, "daily_alpha_target_session"),
         (98, "wp_alpha_proof_locked_scope"),
+        (99, "historical_fact_membership_index"),
+        (100, "historical_fact_guard_fk_indexes"),
+        (101, "locked_oos_typed_calendar_owner"),
+        (102, "historical_component_physical_payload"),
+        (103, "historical_outcome_forecast_index"),
+        (104, "historical_outcome_forecast_fk_index"),
     ]
     assert constraint is not None
     definition = str(constraint[0])

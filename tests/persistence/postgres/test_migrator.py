@@ -1491,6 +1491,26 @@ def test_migration_099_backfills_indexed_historical_fact_membership_guards(
     assert gap_count == len(owner.coverage_gaps)
 
 
+def test_migrations_098_through_104_upgrade_existing_097_authority(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    migrations = load_packaged_migrations()
+    PostgresMigrator(migrations=migrations[:97]).apply_all(postgres_factory)
+
+    upgraded = PostgresMigrator().apply_all(postgres_factory)
+
+    assert tuple((item.version, item.name) for item in upgraded) == (
+        (98, "wp_alpha_proof_locked_scope"),
+        (99, "historical_fact_membership_index"),
+        (100, "historical_fact_guard_fk_indexes"),
+        (101, "locked_oos_typed_calendar_owner"),
+        (102, "historical_component_physical_payload"),
+        (103, "historical_outcome_forecast_index"),
+        (104, "historical_outcome_forecast_fk_index"),
+    )
+    assert len(PostgresMigrator().verify_current(postgres_factory)) == 104
+
+
 def test_migration_100_indexes_historical_fact_guard_owner_foreign_keys(
     postgres_factory: PostgresConnectionFactory,
 ) -> None:
