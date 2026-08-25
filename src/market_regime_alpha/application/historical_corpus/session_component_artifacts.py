@@ -76,6 +76,12 @@ def publish_historical_component_payload(
     family = root / "historical-corpus" / "session-component-payload"
     family.mkdir(parents=True, exist_ok=True)
     final = family / f"{component.component_id}.json.zst"
+    if final.exists():
+        return _verified_existing_artifact(
+            final,
+            component,
+            feature_component=feature_component,
+        )
     canonical = canonical_json(component.to_canonical_dict()).encode("utf-8")
     encoded_payload = _encoded_payload(
         component,
@@ -91,14 +97,6 @@ def publish_historical_component_payload(
         size_bytes=len(physical),
         logical_size_bytes=len(canonical),
     )
-    if final.exists():
-        _verify_existing(
-            final,
-            artifact,
-            component,
-            feature_component=feature_component,
-        )
-        return artifact
 
     descriptor, stage_name = tempfile.mkstemp(
         prefix=f".{component.component_id}.",
@@ -114,9 +112,8 @@ def publish_historical_component_payload(
         try:
             os.link(stage, final)
         except FileExistsError:
-            _verify_existing(
+            artifact = _verified_existing_artifact(
                 final,
-                artifact,
                 component,
                 feature_component=feature_component,
             )
@@ -260,13 +257,24 @@ def external_projection(
     }
 
 
-def _verify_existing(
+def _verified_existing_artifact(
     path: Path,
-    artifact: HistoricalComponentPayloadArtifact,
     component: HistoricalSessionComponent,
     *,
     feature_component: HistoricalSessionComponent | None,
-) -> None:
+) -> HistoricalComponentPayloadArtifact:
+    physical = path.read_bytes()
+    artifact = HistoricalComponentPayloadArtifact(
+        locator=encode_artifact_root_locator(
+            artifact_root=_artifact_root(path),
+            path=path,
+        ),
+        physical_hash=f"sha256:{sha256(physical).hexdigest()}",
+        size_bytes=len(physical),
+        logical_size_bytes=len(
+            canonical_json(component.to_canonical_dict()).encode("utf-8")
+        ),
+    )
     restored = load_historical_component_payload(
         artifact_root=_artifact_root(path),
         artifact=artifact,
@@ -281,6 +289,7 @@ def _verify_existing(
     )
     if restored != component:
         raise FileExistsError("conflicting Historical component payload exists")
+    return artifact
 
 
 def _encoded_payload(

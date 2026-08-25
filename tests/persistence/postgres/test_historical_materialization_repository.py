@@ -16,6 +16,9 @@ from market_regime_alpha.application.historical_corpus.postgres_materialization 
     HistoricalMaterializationConflict,
     PostgresHistoricalMaterializationRepository,
 )
+from market_regime_alpha.application.historical_corpus import (
+    session_component_artifacts,
+)
 from market_regime_alpha.application.historical_corpus.panel_projection import (
     panel_research_features,
 )
@@ -163,6 +166,53 @@ def test_large_component_payload_is_content_addressed_outside_postgres(
         match="physical hash mismatch",
     ):
         repository.get(component.reference)
+
+
+def test_idempotent_external_put_preserves_existing_physical_encoding(
+    postgres_factory,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    command = _command(sessions=(date(2020, 1, 2),))
+    request = command.session_request(date(2020, 1, 2))
+    PostgresRuntimeScopeRepository(postgres_factory).register_policy(_policy())
+    PostgresHistoricalResearchJournal(
+        postgres_factory,
+        clock=MutableClock(CREATED_AT),
+    ).create_or_get(command)
+    repository = PostgresHistoricalMaterializationRepository(
+        postgres_factory,
+        artifact_root=tmp_path,
+    )
+    component = HistoricalSessionComponent.create(
+        run_id=command.run_id,
+        session_id=request.session_id,
+        trading_date=request.trading_date,
+        component_kind=HistoricalComponentKind.FEATURE,
+        source_max_event_time=request.decision_time,
+        materialized_at=request.materialized_at,
+        source_references=(
+            ValidationArtifactReference(
+                "NORMALIZED_DATASET",
+                ArtifactId("normalized-owner-existing-encoding"),
+                canonical_hash({"normalized": "existing-encoding"}),
+            ),
+        ),
+        payload={"features": [{"symbol": "600000.SH", "value": "1"}] * 100},
+    )
+    repository.put(component=component, ordinal=1)
+    def changed_encoder(**kwargs):
+        del kwargs
+        raise AssertionError("existing immutable payload must not be re-encoded")
+
+    monkeypatch.setattr(
+        session_component_artifacts,
+        "_encode_physical",
+        changed_encoder,
+    )
+
+    assert repository.put(component=component, ordinal=1) == component
+    assert repository.get(component.reference) == component
 
 
 def test_external_outcome_projection_remains_queryable_without_duplicate_label_json(
