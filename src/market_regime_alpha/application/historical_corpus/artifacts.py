@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime
+from functools import lru_cache
 from hashlib import sha256
 import json
 import os
@@ -607,6 +608,28 @@ def _read_object(path: Path) -> dict[str, Any]:
 
 
 def _file_hash(path: Path) -> str:
+    resolved = path.resolve(strict=True)
+    status = resolved.stat()
+    signature = (
+        status.st_dev,
+        status.st_ino,
+        status.st_size,
+        status.st_mtime_ns,
+        status.st_ctime_ns,
+    )
+    return _hash_file_with_signature(str(resolved), signature)
+
+
+@lru_cache(maxsize=4_096)
+def _hash_file_with_signature(
+    path: str,
+    signature: tuple[int, int, int, int, int],
+) -> str:
+    del signature
+    return _hash_file_contents(Path(path))
+
+
+def _hash_file_contents(path: Path) -> str:
     digest = sha256()
     with path.open("rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
