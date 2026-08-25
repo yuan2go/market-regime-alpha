@@ -693,7 +693,22 @@ class HistoricalDecisionMaterializer:
             experiment.multiple_testing_family_id
             == WP_ALPHA_PROOF_02_MULTIPLE_TESTING_FAMILY
         ):
-            verifier = verify_wp_alpha_proof_02_historical_experiment
+            verify_wp_alpha_proof_02_historical_experiment(
+                experiment,
+                target_protocol=target_protocol,
+                feature_owner=feature_owner,
+                economics_owner=economics_owner,
+                decision_local_time=request.decision_time.astimezone(
+                    ZoneInfo(PHASE_E3_TIMEZONE)
+                ).time(),
+                timezone_name=PHASE_E3_TIMEZONE,
+                runtime_scope_policy_id=request.runtime_scope_policy_id,
+                runtime_scope_policy_hash=request.runtime_scope_policy_hash,
+                decision_policy_id=request.decision_policy_id,
+                decision_policy_hash=request.decision_policy_hash,
+                configuration_references=request.configuration_references,
+            )
+            verifier = None
         elif (
             experiment.multiple_testing_family_id
             == WP_ALPHA_RESEARCH_01_MULTIPLE_TESTING_FAMILY
@@ -706,17 +721,18 @@ class HistoricalDecisionMaterializer:
             verifier = verify_golden_loop_v2_historical_experiment
         else:
             verifier = verify_phase_e3_historical_experiment
-        verifier(
-            experiment,
-            target_protocol=target_protocol,
-            feature_owner=feature_owner,
-            economics_owner=economics_owner,
-            decision_local_time=request.decision_time.astimezone(
-                ZoneInfo(PHASE_E3_TIMEZONE)
-            ).time(),
-            timezone_name=PHASE_E3_TIMEZONE,
-            configuration_references=request.configuration_references,
-        )
+        if verifier is not None:
+            verifier(
+                experiment,
+                target_protocol=target_protocol,
+                feature_owner=feature_owner,
+                economics_owner=economics_owner,
+                decision_local_time=request.decision_time.astimezone(
+                    ZoneInfo(PHASE_E3_TIMEZONE)
+                ).time(),
+                timezone_name=PHASE_E3_TIMEZONE,
+                configuration_references=request.configuration_references,
+            )
         self._economics_policy_cache[
             request.experiment_definition_reference
         ] = economics_owner

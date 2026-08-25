@@ -119,8 +119,10 @@ from market_regime_alpha.application.historical_corpus.evidence_producer import 
 from market_regime_alpha.application.historical_corpus.frozen_experiment import (
     WP_ALPHA_PROOF_02_LOCKED_AT,
     create_phase_e3_feature_configuration,
+    create_phase_e3_research_universe_policy,
     create_phase_e3_strategy_economics_policy_set,
     create_wp_alpha_proof_02_historical_experiment,
+    phase_e3_decision_policy_identity,
 )
 from market_regime_alpha.application.historical_corpus.normalization import (
     normalize_historical_package,
@@ -2733,6 +2735,15 @@ def _freeze_wp_alpha_proof_experiment(
             created_at=WP_ALPHA_PROOF_02_LOCKED_AT,
         )
     )
+    runtime_scope_policy = PostgresRuntimeScopeRepository(
+        factory,
+        apply_migrations=False,
+    ).register_policy(create_phase_e3_research_universe_policy())
+    (
+        decision_policy_id,
+        decision_policy_hash,
+        decision_policy_payload,
+    ) = phase_e3_decision_policy_identity()
     definition = create_wp_alpha_proof_02_historical_experiment(
         target,
         locked_at=WP_ALPHA_PROOF_02_LOCKED_AT,
@@ -2773,6 +2784,12 @@ def _freeze_wp_alpha_proof_experiment(
             feature.content_hash,
         ).to_canonical_dict(),
         "economics_reference": economics.reference.to_canonical_dict(),
+        "runtime_scope_policy": runtime_scope_policy.to_canonical_dict(),
+        "decision_policy": {
+            "policy_id": str(decision_policy_id),
+            "policy_hash": decision_policy_hash,
+            "payload": decision_policy_payload,
+        },
         "locked_at": WP_ALPHA_PROOF_02_LOCKED_AT.isoformat(),
         "formal_pit": False,
         "locked_oos_consumed": False,

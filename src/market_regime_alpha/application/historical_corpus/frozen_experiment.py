@@ -54,6 +54,12 @@ from market_regime_alpha.features.technical.catalog import canonical_technical_f
 from market_regime_alpha.features.spine import FeatureSetConfiguration
 from market_regime_alpha.evidence.canonical import canonical_hash
 from market_regime_alpha.core.identity import ArtifactId
+from market_regime_alpha.universe.runtime_scope import (
+    ResearchUniversePolicy,
+    UniversePolicySelector,
+    UniverseScopeKind,
+    build_research_universe_policy,
+)
 
 
 PHASE_E3_DECISION_LOCAL_TIME = time(14, 55)
@@ -97,6 +103,44 @@ _WP_ALPHA_SOURCE_RUN = (
     "historical-research-run-12e8dd606b480380dc0df356|"
     "sha256:12e8dd606b480380dc0df356ca5aa6c2fdc7b2abd6b215feca74195a50227029"
 )
+
+
+def create_phase_e3_research_universe_policy() -> ResearchUniversePolicy:
+    """Rebuild the exact CSI300 policy frozen by the canonical source run."""
+
+    return build_research_universe_policy(
+        policy_version="phase-e3-csi300-longitudinal-v1",
+        selectors=(
+            UniversePolicySelector(
+                kind=UniverseScopeKind.INDEX,
+                selector_id="CSI300_EFFECTIVE_DATED_CONSTITUENTS",
+                symbols=(),
+            ),
+        ),
+        minimum_history_sessions=60,
+        minimum_median_daily_amount=Decimal("1000000"),
+        include_st=False,
+        require_tradable=True,
+        lot_size=100,
+        data_authority="FREE_RESEARCH_ARCHIVE_PIT_INCOMPLETE",
+    )
+
+
+def phase_e3_decision_policy_identity() -> tuple[
+    ArtifactId,
+    str,
+    dict[str, str],
+]:
+    """Return the exact DecisionTime identity frozen by the source run."""
+
+    payload = {
+        "schema_version": "phase-e3-historical-decision-policy/v1",
+        "decision_local_time": "14:55:00",
+        "timezone_name": "Asia/Shanghai",
+        "methodology": "UNCHANGED_PHASE_E2_CANONICAL_CHAIN",
+    }
+    digest = canonical_hash(payload)
+    return ArtifactId(f"phase-e3-decision-policy:{digest[7:]}"), digest, payload
 
 
 def create_phase_e3_feature_configuration() -> FeatureSetConfiguration:
@@ -773,6 +817,10 @@ def verify_wp_alpha_proof_02_historical_experiment(
     economics_owner: HistoricalStrategyEconomicsPolicySet,
     decision_local_time: time,
     timezone_name: str,
+    runtime_scope_policy_id: ArtifactId,
+    runtime_scope_policy_hash: str,
+    decision_policy_id: ArtifactId,
+    decision_policy_hash: str,
     configuration_references: tuple[ValidationArtifactReference, ...],
 ) -> None:
     """Reload and verify the exact approved vertical-slice methodology."""
@@ -812,6 +860,18 @@ def verify_wp_alpha_proof_02_historical_experiment(
         or timezone_name != PHASE_E3_TIMEZONE
     ):
         raise ValueError("WP-ALPHA-PROOF-02 DecisionTime drifted")
+    domains = {
+        item.parameter_name: item.allowed_values
+        for item in definition.hyperparameter_space
+    }
+    if domains.get("runtime_scope_policy") != (
+        f"{runtime_scope_policy_id}|{runtime_scope_policy_hash}",
+    ):
+        raise ValueError("WP-ALPHA-PROOF-02 Runtime Scope Policy drifted")
+    if domains.get("decision_policy") != (
+        f"{decision_policy_id}|{decision_policy_hash}",
+    ):
+        raise ValueError("WP-ALPHA-PROOF-02 Decision Policy drifted")
     methodology = {
         definition.feature_reference,
         definition.cost_policy_reference,
@@ -883,9 +943,11 @@ __all__ = [
     "create_phase_e3_feature_configuration",
     "create_golden_loop_v2_historical_experiment",
     "create_phase_e3_historical_experiment",
+    "create_phase_e3_research_universe_policy",
     "create_phase_e3_strategy_economics_policy_set",
     "create_wp_alpha_proof_02_historical_experiment",
     "create_wp_alpha_research_01_historical_experiment",
+    "phase_e3_decision_policy_identity",
     "verify_phase_e3_historical_experiment",
     "verify_golden_loop_v2_historical_experiment",
     "verify_wp_alpha_research_01_historical_experiment",
