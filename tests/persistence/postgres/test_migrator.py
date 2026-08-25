@@ -1532,7 +1532,7 @@ def test_migration_101_binds_locked_scope_to_typed_calendar_owner(
     postgres_factory: PostgresConnectionFactory,
 ) -> None:
     migrations = load_packaged_migrations()
-    assert (migrations[-2].version, migrations[-2].name) == (
+    assert (migrations[100].version, migrations[100].name) == (
         101,
         "locked_oos_typed_calendar_owner",
     )
@@ -1560,7 +1560,7 @@ def test_migration_102_adds_external_payload_projection_without_mutating_inline_
     postgres_factory: PostgresConnectionFactory,
 ) -> None:
     migrations = load_packaged_migrations()
-    assert (migrations[-2].version, migrations[-2].name) == (
+    assert (migrations[101].version, migrations[101].name) == (
         102,
         "historical_component_physical_payload",
     )
