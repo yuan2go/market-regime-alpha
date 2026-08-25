@@ -401,6 +401,17 @@ def test_cli_exposes_converged_free_data_day_operations() -> None:
             "historical-artifacts",
         ]
     )
+    historical_corpus_replay = build_parser().parse_args(
+        [
+            "--database-url",
+            "postgresql://runtime-authority",
+            "historical-corpus-replay",
+            "--input",
+            "historical-corpus-replay.json",
+            "--artifact-root",
+            "historical-artifacts",
+        ]
+    )
     historical_evidence = build_parser().parse_args(
         [
             "--database-url",
@@ -621,6 +632,7 @@ def test_cli_exposes_converged_free_data_day_operations() -> None:
     assert runtime_scope.operation == "runtime-scope-build"
     assert historical_run.operation == "historical-run"
     assert historical_acquire.operation == "historical-corpus-acquire"
+    assert historical_corpus_replay.operation == "historical-corpus-replay"
     assert historical_evidence.operation == "historical-evidence"
     assert historical_phase_ii.operation == "historical-phase-ii"
     assert strategy_feedback_close.operation == "strategy-feedback-close"

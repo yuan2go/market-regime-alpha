@@ -306,6 +306,32 @@ def verify_historical_package_files(package: HistoricalPackageIndex) -> None:
             raise ValueError(f"Historical package checksum mismatch: {name}")
 
 
+def read_verified_historical_partition(
+    *,
+    package: HistoricalPackageIndex,
+    descriptor: HistoricalPartitionDescriptor,
+) -> HistoricalDataPartition:
+    """Decode one exact partition after verifying its registered checksum."""
+
+    authoritative = {
+        str(item.partition_id): item for item in package.partitions
+    }.get(str(descriptor.partition_id))
+    if authoritative != descriptor:
+        raise ValueError("Historical partition descriptor is outside package owner")
+    expected = dict(package.checksums).get(descriptor.relative_path)
+    candidate = (package.root / descriptor.relative_path).resolve()
+    if package.root not in candidate.parents:
+        raise ValueError("Historical partition path escapes package")
+    if expected is None or _file_hash(candidate) != expected:
+        raise ValueError(
+            f"Historical package checksum mismatch: {descriptor.relative_path}"
+        )
+    return _read_partition(
+        root=package.root,
+        reference=descriptor.reference_dict(),
+    )
+
+
 def scan_historical_package(
     *,
     package: HistoricalPackageIndex,

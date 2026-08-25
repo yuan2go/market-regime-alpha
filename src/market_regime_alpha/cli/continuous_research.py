@@ -106,6 +106,9 @@ from market_regime_alpha.application.historical_research.contracts import (
 from market_regime_alpha.application.historical_corpus.baostock_archive import (
     BaoStockHistoricalArchiveClient,
 )
+from market_regime_alpha.application.historical_corpus.artifacts import (
+    verify_historical_package_files,
+)
 from market_regime_alpha.application.historical_corpus.decision_materializer import (
     FREE_RESEARCH_UNIVERSE_KIND,
     HistoricalDecisionMaterializer,
@@ -114,7 +117,7 @@ from market_regime_alpha.application.historical_corpus.evidence_producer import 
     HistoricalEvidenceProducer,
 )
 from market_regime_alpha.application.historical_corpus.normalization import (
-    normalize_baostock_archive,
+    normalize_historical_package,
 )
 from market_regime_alpha.application.historical_corpus.postgres_evidence import (
     PostgresHistoricalEvidenceRepository,
@@ -372,6 +375,7 @@ _READ_OPERATIONS = {
     "runtime-scope-replay",
     "historical-report",
     "historical-replay",
+    "historical-corpus-replay",
     "performance-report",
     "performance-replay",
     "strategy-replay",
@@ -604,6 +608,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     historical_acquire.add_argument("--input", type=Path, required=True)
     historical_acquire.add_argument("--artifact-root", type=Path, required=True)
+    historical_corpus_replay = subparsers.add_parser(
+        "historical-corpus-replay",
+        help="Verify exact Raw/Normalized packages and deterministic normalization.",
+    )
+    historical_corpus_replay.add_argument("--input", type=Path, required=True)
+    historical_corpus_replay.add_argument(
+        "--artifact-root", type=Path, required=True
+    )
     historical_evidence = subparsers.add_parser(
         "historical-evidence",
         help="Produce owner-resolved Ablation, Economics and exploratory Model evidence.",
@@ -831,6 +843,46 @@ def _dispatch(
             "evidence": evidence.to_canonical_dict(),
             **_authority_ceiling(),
         }
+    if args.operation == "historical-corpus-replay":
+        payload = _load_json_object(args.input)
+        if set(payload) != {"raw_reference", "normalized_reference"}:
+            raise ValueError(
+                "historical-corpus-replay requires exact Raw and Normalized references"
+            )
+        raw_reference = ValidationArtifactReference.from_canonical_dict(
+            _object_value(payload["raw_reference"], "raw_reference")
+        )
+        normalized_reference = ValidationArtifactReference.from_canonical_dict(
+            _object_value(payload["normalized_reference"], "normalized_reference")
+        )
+        corpus = PostgresHistoricalCorpusRepository(
+            factory,
+            artifact_root=args.artifact_root.resolve(),
+            apply_migrations=False,
+        )
+        raw_package = corpus.open_index(raw_reference)
+        normalized_package = corpus.open_index(normalized_reference)
+        verify_historical_package_files(raw_package)
+        verify_historical_package_files(normalized_package)
+        replayed = normalize_historical_package(
+            raw=raw_package,
+            artifact_root=args.artifact_root.resolve(),
+        )
+        if (
+            replayed.reference != normalized_package.reference
+            or replayed.physical_hash != normalized_package.physical_hash
+        ):
+            raise ValueError("Historical normalization replay identity drift")
+        return {
+            "operation": "HISTORICAL_CORPUS_REPLAY",
+            "raw_reference": raw_package.reference.to_canonical_dict(),
+            "normalized_reference": replayed.reference.to_canonical_dict(),
+            "raw_physical_hash": raw_package.physical_hash,
+            "normalized_physical_hash": replayed.physical_hash,
+            "network_requests": 0,
+            "formal_pit": False,
+            "formal_oos": False,
+        }
     if args.operation == "historical-corpus-acquire":
         payload = _load_json_object(args.input)
         required = {"start_date", "end_date", "bucket_count"}
@@ -983,26 +1035,31 @@ def _dispatch(
             context_symbols = tuple(str(item) for item in _array_value(payload.get("context_symbols", []), "context_symbols"))
             context_reference = None
         symbols = tuple(sorted({*stock_symbols, *context_symbols}))
-        raw = BaoStockHistoricalArchiveClient().acquire(
-            symbols=symbols,
-            start_date=date.fromisoformat(str(payload["start_date"])),
-            end_date=date.fromisoformat(str(payload["end_date"])),
-            timeframe_ranges=timeframe_ranges,
-            bucket_count=int(payload["bucket_count"]),
-            checkpoint_root=(args.artifact_root.resolve() / "historical-corpus" / "query-checkpoints"),
-            acquisition_id=acquisition_id,
-        )
         corpus = PostgresHistoricalCorpusRepository(
             factory,
             artifact_root=args.artifact_root.resolve(),
             apply_migrations=False,
         )
-        raw_package = corpus.publish_and_register(raw)
-        normalized_package = corpus.publish_and_register(normalize_baostock_archive(raw_package.owner))
+        raw_package = BaoStockHistoricalArchiveClient().acquire_to_package(
+            symbols=symbols,
+            start_date=date.fromisoformat(str(payload["start_date"])),
+            end_date=date.fromisoformat(str(payload["end_date"])),
+            artifact_root=args.artifact_root.resolve(),
+            timeframe_ranges=timeframe_ranges,
+            bucket_count=int(payload["bucket_count"]),
+            checkpoint_root=(args.artifact_root.resolve() / "historical-corpus" / "query-checkpoints"),
+            acquisition_id=acquisition_id,
+        )
+        raw_package = corpus.register_index(raw_package)
+        normalized_package = normalize_historical_package(
+            raw=raw_package,
+            artifact_root=args.artifact_root.resolve(),
+        )
+        normalized_package = corpus.register_index(normalized_package)
         return {
             "operation": "HISTORICAL_CORPUS_ACQUIRE",
-            "raw_owner": raw_package.owner.to_canonical_dict(),
-            "normalized_owner": normalized_package.owner.to_canonical_dict(),
+            "raw_owner": dict(raw_package.manifest),
+            "normalized_owner": dict(normalized_package.manifest),
             "raw_physical_hash": raw_package.physical_hash,
             "normalized_physical_hash": normalized_package.physical_hash,
             "stock_symbol_count": len(stock_symbols),

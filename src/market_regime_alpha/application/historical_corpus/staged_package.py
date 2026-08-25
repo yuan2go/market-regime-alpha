@@ -118,6 +118,12 @@ class StagedHistoricalPackageWriter:
         self._descriptors.append(descriptor)
         return descriptor
 
+    def abort(self) -> None:
+        """Remove an unpublished staging directory after a bounded failure."""
+
+        if not self._finalized and self._stage.exists():
+            shutil.rmtree(self._stage)
+
     def finalize(self, metadata: HistoricalOwnerMetadata) -> HistoricalPackageIndex:
         if self._finalized:
             raise ValueError("Historical staged package is already finalized")

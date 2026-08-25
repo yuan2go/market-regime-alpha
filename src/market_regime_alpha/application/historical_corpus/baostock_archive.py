@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import redirect_stdout
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from io import StringIO
 import json
@@ -11,14 +12,24 @@ from pathlib import Path
 import signal
 import socket
 import tempfile
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Iterator, Mapping
+
+from market_regime_alpha.application.historical_corpus.artifacts import (
+    HistoricalPackageIndex,
+)
 
 from market_regime_alpha.application.historical_corpus.contracts import (
     HistoricalArtifactKind,
     HistoricalCorpusCoverage,
     HistoricalDataOwner,
+    HistoricalDataPartition,
     HistoricalRawRequest,
     build_partitions,
+    historical_symbol_bucket,
+)
+from market_regime_alpha.application.historical_corpus.staged_package import (
+    HistoricalOwnerMetadata,
+    StagedHistoricalPackageWriter,
 )
 from market_regime_alpha.data_sources.a_share_bars import (
     AShareDataError,
@@ -68,6 +79,35 @@ _MINUTE_FIELDS = (
 Clock = Callable[[], datetime]
 
 
+@dataclass(frozen=True, slots=True)
+class HistoricalRequestCheckpointDescriptor:
+    path: Path
+    symbol: str
+    timeframe: Timeframe
+    start_date: date
+    end_date: date
+    source_row_count: int
+
+    @property
+    def identity(self) -> dict[str, str]:
+        return _request_identity(
+            symbol=self.symbol,
+            timeframe=self.timeframe,
+            start_date=self.start_date,
+            end_date=self.end_date,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class _AcquisitionScope:
+    ordered_symbols: tuple[str, ...]
+    ordered_timeframes: tuple[Timeframe, ...]
+    ranges: Mapping[Timeframe, tuple[date, date]]
+    request_ranges: Mapping[Timeframe, tuple[tuple[date, date], ...]]
+    checkpoint_directory: Path | None
+    expected_request_count: int
+
+
 def _utc_now() -> datetime:
     return datetime.now(UTC).replace(microsecond=0)
 
@@ -82,7 +122,7 @@ class BaoStockHistoricalArchiveClient:
         baostock_module: Any | None = None,
         timeout_seconds: float = 30.0,
         maximum_source_requests: int = 10_000,
-        maximum_source_rows: int = 2_500_000,
+        maximum_source_rows: int = 20_000_000,
     ) -> None:
         if (
             timeout_seconds <= 0
@@ -111,164 +151,19 @@ class BaoStockHistoricalArchiveClient:
         checkpoint_root: Path | None = None,
         acquisition_id: str | None = None,
     ) -> HistoricalDataOwner:
-        ordered_symbols = tuple(sorted(set(symbols)))
-        ordered_timeframes = tuple(sorted(set(timeframes), key=lambda item: item.value))
-        if not ordered_symbols:
-            raise ValueError("Historical acquisition requires symbols")
-        if start_date > end_date:
-            raise ValueError("Historical acquisition date range is reversed")
-        if not ordered_timeframes or any(
-            item not in {Timeframe.DAILY, Timeframe.MINUTE_5}
-            for item in ordered_timeframes
-        ):
-            raise ValueError("BaoStock archive supports DAILY and MINUTE_5")
-        if bucket_count <= 0:
-            raise ValueError("Historical acquisition bucket_count must be positive")
-        if checkpoint_root is not None and not (
-            acquisition_id is not None and acquisition_id.strip()
-        ):
-            raise ValueError(
-                "checkpointed Historical acquisition requires acquisition_id"
-            )
-        ranges = {
-            timeframe: (start_date, end_date) for timeframe in ordered_timeframes
-        }
-        if timeframe_ranges is not None:
-            if set(timeframe_ranges) != set(ordered_timeframes):
-                raise ValueError(
-                    "Historical timeframe ranges must exactly cover timeframes"
-                )
-            ranges = dict(timeframe_ranges)
-        for timeframe, (range_start, range_end) in ranges.items():
-            if range_start > range_end:
-                raise ValueError(
-                    f"Historical {timeframe.value} acquisition range is reversed"
-                )
-            if range_start < start_date or range_end > end_date:
-                raise ValueError(
-                    "Historical timeframe range exceeds owner acquisition range"
-                )
-        request_ranges = {
-            timeframe: _request_ranges(timeframe, *bounds)
-            for timeframe, bounds in ranges.items()
-        }
-        request_count = sum(
-            len(items) for items in request_ranges.values()
-        ) * len(ordered_symbols)
-        if request_count > self._maximum_source_requests:
-            raise ValueError("Historical acquisition exceeds declared request ceiling")
-        checkpoint_directory = None
-        if checkpoint_root is not None:
-            acquisition_manifest = {
-                "schema_version": "baostock-historical-acquisition-manifest/v1",
-                "acquisition_id": acquisition_id,
-                "provider_id": BAOSTOCK_HISTORICAL_PROVIDER_ID,
-                "symbols": list(ordered_symbols),
-                "timeframe_ranges": {
-                    timeframe.value: {
-                        "start_date": ranges[timeframe][0].isoformat(),
-                        "end_date": ranges[timeframe][1].isoformat(),
-                    }
-                    for timeframe in ordered_timeframes
-                },
-                "bucket_count": bucket_count,
-            }
-            checkpoint_directory = (
-                checkpoint_root / canonical_hash(acquisition_manifest)[7:]
-            )
-            _ensure_acquisition_manifest(
-                checkpoint_directory,
-                acquisition_manifest,
-            )
-        bs = self._module()
-        user_id, password = baostock_credentials()
-        previous_timeout = socket.getdefaulttimeout()
-        socket.setdefaulttimeout(self._timeout_seconds)
-        logged_in = False
-        try:
-            requests: list[HistoricalRawRequest] = []
-            source_row_count = 0
-            try:
-                for symbol in ordered_symbols:
-                    for timeframe in ordered_timeframes:
-                        for request_start, request_end in request_ranges[timeframe]:
-                            request = self._load_existing_checkpoint(
-                                checkpoint_root=checkpoint_directory,
-                                symbol=symbol,
-                                timeframe=timeframe,
-                                start_date=request_start,
-                                end_date=request_end,
-                            )
-                            if request is None:
-                                if not logged_in:
-                                    with redirect_stdout(StringIO()):
-                                        login = self._timed_login(
-                                            bs,
-                                            user_id=user_id,
-                                            password=password,
-                                        )
-                                    if str(getattr(login, "error_code", "0")) != "0":
-                                        raise AShareDataError(
-                                            "BaoStock login failed: "
-                                            f"{getattr(login, 'error_msg', 'unknown')}"
-                                        )
-                                    logged_in = True
-                                request = self._checkpointed_acquire_one(
-                                    checkpoint_root=checkpoint_directory,
-                                    bs=bs,
-                                    symbol=symbol,
-                                    timeframe=timeframe,
-                                    start_date=request_start,
-                                    end_date=request_end,
-                                )
-                            if request.provider_error_code in (
-                                _BAOSTOCK_AUTHENTICATION_ERROR_CODES
-                            ):
-                                with redirect_stdout(StringIO()):
-                                    if logged_in:
-                                        self._timed_logout(bs)
-                                    relogin = self._timed_login(
-                                        bs,
-                                        user_id=user_id,
-                                        password=password,
-                                    )
-                                if str(getattr(relogin, "error_code", "0")) != "0":
-                                    raise AShareDataError(
-                                        "BaoStock reauthentication failed during acquisition"
-                                    )
-                                logged_in = True
-                                request = self._checkpointed_acquire_one(
-                                    checkpoint_root=checkpoint_directory,
-                                    bs=bs,
-                                    symbol=symbol,
-                                    timeframe=timeframe,
-                                    start_date=request_start,
-                                    end_date=request_end,
-                                )
-                            if request.provider_error_code in (
-                                _BAOSTOCK_AUTHENTICATION_ERROR_CODES
-                            ):
-                                raise AShareDataError(
-                                    "BaoStock authentication expired after bounded retry; "
-                                    "partial corpus is not publishable"
-                                )
-                            if request.provider_error_code is not None:
-                                raise AShareDataError(
-                                    "BaoStock Provider request failed with "
-                                    f"{request.provider_error_code}; partial corpus is not publishable"
-                                )
-                            source_row_count += len(request.rows)
-                            if source_row_count > self._maximum_source_rows:
-                                raise AShareDataError(
-                                    "BaoStock acquisition exceeds declared row ceiling"
-                                )
-                            requests.append(request)
-            finally:
-                if logged_in:
-                    with redirect_stdout(StringIO()):
-                        self._timed_logout(bs)
-        finally:
-            socket.setdefaulttimeout(previous_timeout)
+        scope = _prepare_acquisition_scope(
+            symbols=symbols,
+            start_date=start_date,
+            end_date=end_date,
+            timeframes=timeframes,
+            timeframe_ranges=timeframe_ranges,
+            bucket_count=bucket_count,
+            checkpoint_root=checkpoint_root,
+            acquisition_id=acquisition_id,
+            maximum_source_requests=self._maximum_source_requests,
+        )
+        ordered_symbols = scope.ordered_symbols
+        requests = list(self._request_stream(scope))
         partitions = build_partitions(
             artifact_kind=HistoricalArtifactKind.RAW_PROVIDER_ARCHIVE,
             records=tuple(requests),
@@ -312,6 +207,242 @@ class BaoStockHistoricalArchiveClient:
             ),
             limitations=BAOSTOCK_RAW_LIMITATIONS,
         )
+
+    def acquire_to_package(
+        self,
+        *,
+        symbols: tuple[str, ...],
+        start_date: date,
+        end_date: date,
+        artifact_root: Path,
+        checkpoint_root: Path,
+        acquisition_id: str,
+        timeframes: tuple[Timeframe, ...] = (
+            Timeframe.DAILY,
+            Timeframe.MINUTE_5,
+        ),
+        timeframe_ranges: Mapping[Timeframe, tuple[date, date]] | None = None,
+        bucket_count: int = 16,
+    ) -> HistoricalPackageIndex:
+        """Acquire durable checkpoints, then publish one bounded Raw package."""
+
+        scope = _prepare_acquisition_scope(
+            symbols=symbols,
+            start_date=start_date,
+            end_date=end_date,
+            timeframes=timeframes,
+            timeframe_ranges=timeframe_ranges,
+            bucket_count=bucket_count,
+            checkpoint_root=checkpoint_root,
+            acquisition_id=acquisition_id,
+            maximum_source_requests=self._maximum_source_requests,
+        )
+        checkpoint_directory = scope.checkpoint_directory
+        if checkpoint_directory is None:
+            raise ValueError("package acquisition requires durable checkpoints")
+        grouped: dict[
+            tuple[Timeframe, int, int, int | None],
+            list[HistoricalRequestCheckpointDescriptor],
+        ] = {}
+        observed: set[str] = set()
+        failures: dict[str, int] = {}
+        retrieved_at: datetime | None = None
+        source_row_count = 0
+        successful_request_count = 0
+        for request in self._request_stream(scope):
+            identity = _request_identity(
+                symbol=request.symbol,
+                timeframe=request.timeframe,
+                start_date=request.start_date,
+                end_date=request.end_date,
+            )
+            checkpoint = checkpoint_directory / f"{canonical_hash(identity)[7:]}.json"
+            if not checkpoint.is_file():
+                raise AShareDataError(
+                    "Historical package acquisition checkpoint is missing"
+                )
+            month = (
+                None
+                if request.timeframe is Timeframe.DAILY
+                else request.start_date.month
+            )
+            key = (
+                request.timeframe,
+                request.start_date.year,
+                historical_symbol_bucket(request.symbol, bucket_count),
+                month,
+            )
+            grouped.setdefault(key, []).append(
+                HistoricalRequestCheckpointDescriptor(
+                    path=checkpoint,
+                    symbol=request.symbol,
+                    timeframe=request.timeframe,
+                    start_date=request.start_date,
+                    end_date=request.end_date,
+                    source_row_count=len(request.rows),
+                )
+            )
+            source_row_count += len(request.rows)
+            successful_request_count += int(request.succeeded)
+            if request.rows:
+                observed.add(request.symbol)
+            else:
+                failures["EMPTY_PROVIDER_RESULT"] = (
+                    failures.get("EMPTY_PROVIDER_RESULT", 0) + 1
+                )
+            retrieved_at = (
+                request.retrieved_at
+                if retrieved_at is None
+                else max(retrieved_at, request.retrieved_at)
+            )
+        if len(tuple(item for values in grouped.values() for item in values)) != (
+            scope.expected_request_count
+        ):
+            raise AShareDataError("Historical package request catalog is incomplete")
+        writer = StagedHistoricalPackageWriter(
+            artifact_root=artifact_root,
+            artifact_kind=HistoricalArtifactKind.RAW_PROVIDER_ARCHIVE,
+            bucket_count=bucket_count,
+        )
+        for (timeframe, _year, bucket, _month), descriptors in sorted(
+            grouped.items(),
+            key=lambda item: (
+                item[0][0].value,
+                item[0][1],
+                item[0][3] or 0,
+                item[0][2],
+            ),
+        ):
+            requests = tuple(
+                _load_request_checkpoint(item.path, item.identity)
+                for item in descriptors
+            )
+            writer.add_partition(
+                HistoricalDataPartition.create(
+                    artifact_kind=HistoricalArtifactKind.RAW_PROVIDER_ARCHIVE,
+                    timeframe=timeframe,
+                    symbol_bucket=bucket,
+                    bucket_count=bucket_count,
+                    records=requests,
+                )
+            )
+        if retrieved_at is None:
+            raise AShareDataError("Historical package acquisition produced no requests")
+        return writer.finalize(
+            HistoricalOwnerMetadata(
+                provider_id=BAOSTOCK_HISTORICAL_PROVIDER_ID,
+                normalization_version=None,
+                parent_reference=None,
+                created_at=retrieved_at,
+                retrieved_at=retrieved_at,
+                coverage=HistoricalCorpusCoverage(
+                    expected_symbols=scope.ordered_symbols,
+                    observed_symbols=tuple(sorted(observed)),
+                    expected_request_count=scope.expected_request_count,
+                    successful_request_count=successful_request_count,
+                    source_row_count=source_row_count,
+                    normalized_row_count=0,
+                    missing_field_counts=(),
+                    failure_counts=tuple(sorted(failures.items())),
+                ),
+                limitations=BAOSTOCK_RAW_LIMITATIONS,
+            )
+        )
+
+    def _request_stream(
+        self,
+        scope: _AcquisitionScope,
+    ) -> Iterator[HistoricalRawRequest]:
+        bs = self._module()
+        user_id, password = baostock_credentials()
+        previous_timeout = socket.getdefaulttimeout()
+        socket.setdefaulttimeout(self._timeout_seconds)
+        logged_in = False
+        source_row_count = 0
+        try:
+            try:
+                for symbol in scope.ordered_symbols:
+                    for timeframe in scope.ordered_timeframes:
+                        for request_start, request_end in scope.request_ranges[
+                            timeframe
+                        ]:
+                            request = self._load_existing_checkpoint(
+                                checkpoint_root=scope.checkpoint_directory,
+                                symbol=symbol,
+                                timeframe=timeframe,
+                                start_date=request_start,
+                                end_date=request_end,
+                            )
+                            if request is None:
+                                if not logged_in:
+                                    with redirect_stdout(StringIO()):
+                                        login = self._timed_login(
+                                            bs,
+                                            user_id=user_id,
+                                            password=password,
+                                        )
+                                    if str(getattr(login, "error_code", "0")) != "0":
+                                        raise AShareDataError(
+                                            "BaoStock login failed: "
+                                            f"{getattr(login, 'error_msg', 'unknown')}"
+                                        )
+                                    logged_in = True
+                                request = self._checkpointed_acquire_one(
+                                    checkpoint_root=scope.checkpoint_directory,
+                                    bs=bs,
+                                    symbol=symbol,
+                                    timeframe=timeframe,
+                                    start_date=request_start,
+                                    end_date=request_end,
+                                )
+                            if request.provider_error_code in (
+                                _BAOSTOCK_AUTHENTICATION_ERROR_CODES
+                            ):
+                                with redirect_stdout(StringIO()):
+                                    if logged_in:
+                                        self._timed_logout(bs)
+                                    relogin = self._timed_login(
+                                        bs,
+                                        user_id=user_id,
+                                        password=password,
+                                    )
+                                if str(getattr(relogin, "error_code", "0")) != "0":
+                                    raise AShareDataError(
+                                        "BaoStock reauthentication failed during acquisition"
+                                    )
+                                logged_in = True
+                                request = self._checkpointed_acquire_one(
+                                    checkpoint_root=scope.checkpoint_directory,
+                                    bs=bs,
+                                    symbol=symbol,
+                                    timeframe=timeframe,
+                                    start_date=request_start,
+                                    end_date=request_end,
+                                )
+                            if request.provider_error_code in (
+                                _BAOSTOCK_AUTHENTICATION_ERROR_CODES
+                            ):
+                                raise AShareDataError(
+                                    "BaoStock authentication expired after bounded retry; "
+                                    "partial corpus is not publishable"
+                                )
+                            if request.provider_error_code is not None:
+                                raise AShareDataError(
+                                    "BaoStock Provider request failed with "
+                                    f"{request.provider_error_code}; partial corpus is not publishable"
+                                )
+                            source_row_count += len(request.rows)
+                            if source_row_count > self._maximum_source_rows:
+                                raise AShareDataError(
+                                    "BaoStock acquisition exceeds declared row ceiling"
+                                )
+                            yield request
+            finally:
+                if logged_in:
+                    with redirect_stdout(StringIO()):
+                        self._timed_logout(bs)
+        finally:
+            socket.setdefaulttimeout(previous_timeout)
 
     def _checkpointed_acquire_one(
         self,
@@ -546,6 +677,7 @@ __all__ = [
     "BAOSTOCK_HISTORICAL_PROVIDER_ID",
     "BAOSTOCK_RAW_LIMITATIONS",
     "BaoStockHistoricalArchiveClient",
+    "HistoricalRequestCheckpointDescriptor",
 ]
 
 
@@ -614,6 +746,95 @@ def _ensure_acquisition_manifest(
         _fsync_directory(checkpoint_root)
     finally:
         Path(temporary_name).unlink(missing_ok=True)
+
+
+def _prepare_acquisition_scope(
+    *,
+    symbols: tuple[str, ...],
+    start_date: date,
+    end_date: date,
+    timeframes: tuple[Timeframe, ...],
+    timeframe_ranges: Mapping[Timeframe, tuple[date, date]] | None,
+    bucket_count: int,
+    checkpoint_root: Path | None,
+    acquisition_id: str | None,
+    maximum_source_requests: int,
+) -> _AcquisitionScope:
+    ordered_symbols = tuple(sorted(set(symbols)))
+    ordered_timeframes = tuple(
+        sorted(set(timeframes), key=lambda item: item.value)
+    )
+    if not ordered_symbols:
+        raise ValueError("Historical acquisition requires symbols")
+    if start_date > end_date:
+        raise ValueError("Historical acquisition date range is reversed")
+    if not ordered_timeframes or any(
+        item not in {Timeframe.DAILY, Timeframe.MINUTE_5}
+        for item in ordered_timeframes
+    ):
+        raise ValueError("BaoStock archive supports DAILY and MINUTE_5")
+    if bucket_count <= 0:
+        raise ValueError("Historical acquisition bucket_count must be positive")
+    if checkpoint_root is not None and not (
+        acquisition_id is not None and acquisition_id.strip()
+    ):
+        raise ValueError("checkpointed Historical acquisition requires acquisition_id")
+    ranges = {
+        timeframe: (start_date, end_date) for timeframe in ordered_timeframes
+    }
+    if timeframe_ranges is not None:
+        if set(timeframe_ranges) != set(ordered_timeframes):
+            raise ValueError(
+                "Historical timeframe ranges must exactly cover timeframes"
+            )
+        ranges = dict(timeframe_ranges)
+    for timeframe, (range_start, range_end) in ranges.items():
+        if range_start > range_end:
+            raise ValueError(
+                f"Historical {timeframe.value} acquisition range is reversed"
+            )
+        if range_start < start_date or range_end > end_date:
+            raise ValueError("Historical timeframe range exceeds owner acquisition range")
+    request_ranges = {
+        timeframe: _request_ranges(timeframe, *bounds)
+        for timeframe, bounds in ranges.items()
+    }
+    request_count = sum(len(items) for items in request_ranges.values()) * len(
+        ordered_symbols
+    )
+    if request_count > maximum_source_requests:
+        raise ValueError("Historical acquisition exceeds declared request ceiling")
+    checkpoint_directory = None
+    if checkpoint_root is not None:
+        acquisition_manifest = {
+            "schema_version": "baostock-historical-acquisition-manifest/v1",
+            "acquisition_id": acquisition_id,
+            "provider_id": BAOSTOCK_HISTORICAL_PROVIDER_ID,
+            "symbols": list(ordered_symbols),
+            "timeframe_ranges": {
+                timeframe.value: {
+                    "start_date": ranges[timeframe][0].isoformat(),
+                    "end_date": ranges[timeframe][1].isoformat(),
+                }
+                for timeframe in ordered_timeframes
+            },
+            "bucket_count": bucket_count,
+        }
+        checkpoint_directory = (
+            checkpoint_root / canonical_hash(acquisition_manifest)[7:]
+        )
+        _ensure_acquisition_manifest(
+            checkpoint_directory,
+            acquisition_manifest,
+        )
+    return _AcquisitionScope(
+        ordered_symbols=ordered_symbols,
+        ordered_timeframes=ordered_timeframes,
+        ranges=ranges,
+        request_ranges=request_ranges,
+        checkpoint_directory=checkpoint_directory,
+        expected_request_count=request_count,
+    )
 
 
 def _request_ranges(

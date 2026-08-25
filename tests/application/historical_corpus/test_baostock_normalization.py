@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 import json
+from pathlib import Path
 import signal
 import time
 
@@ -13,6 +14,9 @@ import market_regime_alpha.application.historical_corpus.baostock_archive as arc
 from market_regime_alpha.application.historical_corpus.baostock_archive import (
     BAOSTOCK_HISTORICAL_PROVIDER_ID,
     BaoStockHistoricalArchiveClient,
+)
+from market_regime_alpha.application.historical_corpus.artifacts import (
+    load_verified_historical_package,
 )
 from market_regime_alpha.application.historical_corpus.contracts import (
     HistoricalArtifactKind,
@@ -26,6 +30,7 @@ from market_regime_alpha.application.historical_corpus.contracts import (
 from market_regime_alpha.application.historical_corpus.normalization import (
     HistoricalNormalizationError,
     normalize_baostock_archive,
+    normalize_historical_package,
 )
 from market_regime_alpha.data_sources.a_share_bars import AShareDataError
 from market_regime_alpha.evidence.canonical import canonical_hash, canonical_json
@@ -164,6 +169,45 @@ class _AuthenticationExpiresOnceBaoStock(_FakeBaoStock):
             self.expired = True
             return _Response([], [], error_code="10001001", error_msg="用户未登录")
         return super().query_history_k_data_plus(code, fields, **parameters)
+
+
+def test_package_acquisition_resumes_without_network_and_normalizes_by_partition(
+    tmp_path: Path,
+) -> None:
+    retrieved_at = datetime(2026, 8, 12, 3, 0, tzinfo=UTC)
+    values = {
+        "symbols": ("600000.SH",),
+        "start_date": date(2025, 1, 1),
+        "end_date": date(2025, 1, 31),
+        "artifact_root": tmp_path / "artifacts",
+        "checkpoint_root": tmp_path / "checkpoints",
+        "acquisition_id": "bounded-package-v1",
+        "bucket_count": 4,
+    }
+    provider = _FakeBaoStock()
+    first = BaoStockHistoricalArchiveClient(
+        clock=lambda: retrieved_at,
+        baostock_module=provider,
+    ).acquire_to_package(**values)
+    query_count = len(provider.queries)
+
+    replayed = BaoStockHistoricalArchiveClient(
+        clock=lambda: retrieved_at,
+        baostock_module=_FailingLoginBaoStock(),
+    ).acquire_to_package(**values)
+    normalized = normalize_historical_package(
+        raw=first,
+        artifact_root=tmp_path / "artifacts",
+    )
+
+    assert len(provider.queries) == query_count
+    assert replayed.reference == first.reference
+    assert replayed.physical_hash == first.physical_hash
+    assert normalized.parent_reference == first.reference
+    raw_owner_value = load_verified_historical_package(first.root).owner
+    expected_normalized = normalize_baostock_archive(raw_owner_value)
+    assert normalized.reference == expected_normalized.reference
+    assert load_verified_historical_package(normalized.root).owner == expected_normalized
 
 
 def test_acquisition_splits_requests_by_year_and_preserves_true_retrieval() -> None:

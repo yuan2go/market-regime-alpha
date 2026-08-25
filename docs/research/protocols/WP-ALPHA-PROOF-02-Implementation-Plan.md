@@ -164,7 +164,7 @@ Run: `python -m pytest -q tests/application/historical_corpus/test_artifacts.py 
 
 Expected: PASS, including legacy V1 full-package reload and new descriptor-index reload.
 
-- [ ] **Step 6: Commit the package seam**
+- [x] **Step 6: Commit the package seam**
 
 ```bash
 git add src/market_regime_alpha/application/historical_corpus tests/application/historical_corpus/test_staged_package.py tests/persistence/postgres/test_historical_corpus_repository.py
@@ -184,7 +184,7 @@ git commit -m "feat: stage bounded historical corpus packages"
 - Consumes: Task 1 `StagedHistoricalPackageWriter`; existing request checkpoints and `PostgresHistoricalCorpusRepository.register_index`.
 - Produces: `BaoStockHistoricalArchiveClient.acquire_to_package(...) -> HistoricalPackageIndex`, `normalize_historical_package(...) -> HistoricalPackageIndex`, and CLI `historical-corpus-acquire`/`historical-corpus-replay` outputs containing exact owner/hash/physical-hash/coverage/performance fields.
 
-- [ ] **Step 1: Write red tests for resume without network, bounded partition batches and normalized parent lineage**
+- [x] **Step 1: Write red tests for resume without network, bounded partition batches and normalized parent lineage**
 
 ```python
 def test_acquire_to_package_resumes_checkpoints_without_provider_calls(tmp_path: Path) -> None:
@@ -214,13 +214,13 @@ def test_acquire_to_package_resumes_checkpoints_without_provider_calls(tmp_path:
     assert second.physical_hash == first.physical_hash
 ```
 
-- [ ] **Step 2: Run the acquisition test and verify RED**
+- [x] **Step 2: Run the acquisition test and verify RED**
 
 Run: `python -m pytest -q tests/application/historical_corpus/test_baostock_normalization.py -k 'package or resume'`
 
 Expected: FAIL because package-oriented acquisition/normalization do not exist.
 
-- [ ] **Step 3: Implement checkpoint catalog and staged Raw publication**
+- [x] **Step 3: Implement checkpoint catalog and staged Raw publication**
 
 ```python
 @dataclass(frozen=True, slots=True)
@@ -266,7 +266,7 @@ def acquire_to_package(
 
 The catalog stores paths and counts only. Publication groups exact checkpoint paths by existing partition key, decodes one group, adds one partition, releases it, and validates request ceilings, finite retry, corrupt checkpoints, missing requests, empty results and duplicate identities.
 
-- [ ] **Step 4: Refactor normalization to a public per-partition transform and staged package path**
+- [x] **Step 4: Refactor normalization to a public per-partition transform and staged package path**
 
 ```python
 def normalize_baostock_requests(
@@ -305,11 +305,11 @@ def normalize_historical_package(
 
 The legacy `normalize_baostock_archive` calls the same per-request transform, preserving old identities.
 
-- [ ] **Step 5: Make CLI an adapter and add no-network replay**
+- [x] **Step 5: Make CLI an adapter and add no-network replay**
 
 `historical-corpus-acquire` delegates acquire → `register_index` → normalize → `register_index`. `historical-corpus-replay` accepts exact Raw and Normalized references, uses `open_index`, verifies every physical file, independently regenerates the Normalized package in a temporary staging area, and requires the same logical owner/hash and physical checksum manifest.
 
-- [ ] **Step 6: Run focused tests and verify GREEN**
+- [x] **Step 6: Run focused tests and verify GREEN**
 
 Run: `python -m pytest -q tests/application/historical_corpus/test_baostock_normalization.py tests/application/continuous_research/test_cli.py tests/persistence/postgres/test_historical_corpus_repository.py`
 
