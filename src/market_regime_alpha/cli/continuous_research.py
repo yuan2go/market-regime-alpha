@@ -648,6 +648,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     historical_acquire.add_argument("--input", type=Path, required=True)
     historical_acquire.add_argument("--artifact-root", type=Path, required=True)
+    historical_prefetch = subparsers.add_parser(
+        "historical-corpus-prefetch",
+        help=(
+            "Fill one deterministic shard of the canonical corpus request "
+            "checkpoints without publishing an owner."
+        ),
+    )
+    historical_prefetch.add_argument("--input", type=Path, required=True)
+    historical_prefetch.add_argument("--artifact-root", type=Path, required=True)
+    historical_prefetch.add_argument("--worker-index", type=int, required=True)
+    historical_prefetch.add_argument("--worker-count", type=int, required=True)
     historical_corpus_replay = subparsers.add_parser(
         "historical-corpus-replay",
         help="Verify exact Raw/Normalized packages and deterministic normalization.",
@@ -1001,7 +1012,7 @@ def _dispatch(
             "formal_pit": False,
             "formal_oos": False,
         }
-    if args.operation == "historical-corpus-acquire":
+    if args.operation in {"historical-corpus-acquire", "historical-corpus-prefetch"}:
         payload = _load_json_object(args.input)
         required = {"start_date", "end_date", "bucket_count"}
         if not required.issubset(payload) or not set(payload).issubset(
@@ -1158,15 +1169,41 @@ def _dispatch(
             artifact_root=args.artifact_root.resolve(),
             apply_migrations=False,
         )
-        raw_package = BaoStockHistoricalArchiveClient().acquire_to_package(
-            symbols=symbols,
-            start_date=date.fromisoformat(str(payload["start_date"])),
-            end_date=date.fromisoformat(str(payload["end_date"])),
+        archive_client = BaoStockHistoricalArchiveClient()
+        acquisition_values = {
+            "symbols": symbols,
+            "start_date": date.fromisoformat(str(payload["start_date"])),
+            "end_date": date.fromisoformat(str(payload["end_date"])),
+            "timeframe_ranges": timeframe_ranges,
+            "bucket_count": int(payload["bucket_count"]),
+            "checkpoint_root": (
+                args.artifact_root.resolve()
+                / "historical-corpus"
+                / "query-checkpoints"
+            ),
+            "acquisition_id": acquisition_id,
+        }
+        if args.operation == "historical-corpus-prefetch":
+            prefetch = archive_client.prefetch_to_checkpoints(
+                **acquisition_values,
+                worker_index=args.worker_index,
+                worker_count=args.worker_count,
+            )
+            return {
+                "operation": "HISTORICAL_CORPUS_PREFETCH",
+                "worker_index": prefetch.worker_index,
+                "worker_count": prefetch.worker_count,
+                "expected_request_count": prefetch.expected_request_count,
+                "assigned_request_count": prefetch.assigned_request_count,
+                "stock_symbol_count": len(stock_symbols),
+                "context_symbols": list(sorted(set(context_symbols))),
+                "owner_published": False,
+                "formal_pit": False,
+                "formal_oos": False,
+            }
+        raw_package = archive_client.acquire_to_package(
             artifact_root=args.artifact_root.resolve(),
-            timeframe_ranges=timeframe_ranges,
-            bucket_count=int(payload["bucket_count"]),
-            checkpoint_root=(args.artifact_root.resolve() / "historical-corpus" / "query-checkpoints"),
-            acquisition_id=acquisition_id,
+            **acquisition_values,
         )
         raw_package = corpus.register_index(raw_package)
         normalized_package = normalize_historical_package(
@@ -3105,6 +3142,7 @@ def _required_permission(args: argparse.Namespace) -> SecurityPermission:
         "runtime-scope-build",
         "historical-run",
         "historical-corpus-acquire",
+        "historical-corpus-prefetch",
         "locked-oos-scope-freeze",
     }:
         return SecurityPermission.RUN_RESEARCH

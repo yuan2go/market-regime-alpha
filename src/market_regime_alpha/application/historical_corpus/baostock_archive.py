@@ -102,6 +102,23 @@ class HistoricalRequestCheckpointDescriptor:
 
 
 @dataclass(frozen=True, slots=True)
+class HistoricalArchivePrefetch:
+    expected_request_count: int
+    assigned_request_count: int
+    worker_index: int
+    worker_count: int
+
+    def __post_init__(self) -> None:
+        assigned = _assigned_request_indices(
+            total=self.expected_request_count,
+            worker_index=self.worker_index,
+            worker_count=self.worker_count,
+        )
+        if self.assigned_request_count != len(assigned):
+            raise ValueError("Historical prefetch assignment count drifted")
+
+
+@dataclass(frozen=True, slots=True)
 class _AcquisitionScope:
     ordered_symbols: tuple[str, ...]
     ordered_timeframes: tuple[Timeframe, ...]
@@ -352,9 +369,54 @@ class BaoStockHistoricalArchiveClient:
             )
         )
 
+    def prefetch_to_checkpoints(
+        self,
+        *,
+        symbols: tuple[str, ...],
+        start_date: date,
+        end_date: date,
+        checkpoint_root: Path,
+        acquisition_id: str,
+        worker_index: int,
+        worker_count: int,
+        timeframes: tuple[Timeframe, ...] = (
+            Timeframe.DAILY,
+            Timeframe.MINUTE_5,
+        ),
+        timeframe_ranges: Mapping[Timeframe, tuple[date, date]] | None = None,
+        bucket_count: int = 16,
+    ) -> HistoricalArchivePrefetch:
+        """Fill one deterministic request shard; never publish a Raw owner."""
+
+        scope = _prepare_acquisition_scope(
+            symbols=symbols,
+            start_date=start_date,
+            end_date=end_date,
+            timeframes=timeframes,
+            timeframe_ranges=timeframe_ranges,
+            bucket_count=bucket_count,
+            checkpoint_root=checkpoint_root,
+            acquisition_id=acquisition_id,
+            maximum_source_requests=self._maximum_source_requests,
+        )
+        assigned = _assigned_request_indices(
+            total=scope.expected_request_count,
+            worker_index=worker_index,
+            worker_count=worker_count,
+        )
+        tuple(self._request_stream(scope, assigned_indices=frozenset(assigned)))
+        return HistoricalArchivePrefetch(
+            expected_request_count=scope.expected_request_count,
+            assigned_request_count=len(assigned),
+            worker_index=worker_index,
+            worker_count=worker_count,
+        )
+
     def _request_stream(
         self,
         scope: _AcquisitionScope,
+        *,
+        assigned_indices: frozenset[int] | None = None,
     ) -> Iterator[HistoricalRawRequest]:
         bs = self._module()
         user_id, password = baostock_credentials()
@@ -362,6 +424,7 @@ class BaoStockHistoricalArchiveClient:
         socket.setdefaulttimeout(self._timeout_seconds)
         logged_in = False
         source_row_count = 0
+        request_index = 0
         try:
             try:
                 for symbol in scope.ordered_symbols:
@@ -369,6 +432,13 @@ class BaoStockHistoricalArchiveClient:
                         for request_start, request_end in scope.request_ranges[
                             timeframe
                         ]:
+                            active_index = request_index
+                            request_index += 1
+                            if (
+                                assigned_indices is not None
+                                and active_index not in assigned_indices
+                            ):
+                                continue
                             request = self._load_existing_checkpoint(
                                 checkpoint_root=scope.checkpoint_directory,
                                 symbol=symbol,
@@ -675,12 +745,28 @@ __all__ = [
     "BAOSTOCK_HISTORICAL_PROVIDER_ID",
     "BAOSTOCK_RAW_LIMITATIONS",
     "BaoStockHistoricalArchiveClient",
+    "HistoricalArchivePrefetch",
     "HistoricalRequestCheckpointDescriptor",
 ]
 
 
 class _BaoStockRequestTimeout(BaseException):
     """Escape Provider code that catches ordinary socket exceptions."""
+
+
+def _assigned_request_indices(
+    *,
+    total: int,
+    worker_index: int,
+    worker_count: int,
+) -> tuple[int, ...]:
+    if total <= 0:
+        raise ValueError("Historical request total must be positive")
+    if worker_count <= 0:
+        raise ValueError("Historical request worker count must be positive")
+    if not 0 <= worker_index < worker_count:
+        raise ValueError("Historical request worker index is outside worker count")
+    return tuple(range(worker_index, total, worker_count))
 
 
 def _request_identity(**values: Any) -> dict[str, str]:

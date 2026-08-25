@@ -369,6 +369,42 @@ def test_acquisition_checkpoints_completed_requests_for_exact_resume(
         client.acquire(**values)
 
 
+def test_corpus_prefetch_shards_fill_one_canonical_checkpoint_scope(
+    tmp_path,
+) -> None:
+    retrieved_at = datetime(2026, 8, 12, 3, 0, tzinfo=UTC)
+    values = {
+        "symbols": ("600000.SH",),
+        "start_date": date(2025, 1, 1),
+        "end_date": date(2025, 1, 31),
+        "bucket_count": 4,
+        "checkpoint_root": tmp_path,
+        "acquisition_id": "prefetch-shards-v1",
+    }
+    providers = (_FakeBaoStock(), _FakeBaoStock())
+
+    results = tuple(
+        BaoStockHistoricalArchiveClient(
+            clock=lambda: retrieved_at,
+            baostock_module=provider,
+        ).prefetch_to_checkpoints(
+            **values,
+            worker_index=index,
+            worker_count=2,
+        )
+        for index, provider in enumerate(providers)
+    )
+    recovered = BaoStockHistoricalArchiveClient(
+        clock=lambda: retrieved_at,
+        baostock_module=_FailingLoginBaoStock(),
+    ).acquire(**values)
+
+    assert tuple(item.assigned_request_count for item in results) == (1, 1)
+    assert all(item.expected_request_count == 2 for item in results)
+    assert tuple(len(item.queries) for item in providers) == (1, 1)
+    assert recovered.coverage.expected_request_count == 2
+
+
 def test_complete_checkpoint_recovery_does_not_require_provider_login(
     tmp_path,
 ) -> None:
