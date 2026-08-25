@@ -14,6 +14,7 @@ from market_regime_alpha.cli.continuous_research import (
     DATABASE_ERROR,
     SUCCESS,
     _daily_alpha_evidence_root,
+    _dispatch,
     _historical_pre_strategy_risk_configuration,
     _operator_resource,
     _pre_strategy_risk_configuration,
@@ -147,6 +148,78 @@ def test_automatic_settlement_uses_exact_snapshot_target_session() -> None:
     assert calls == [(snapshot.trading_date, snapshot.target_session_date)]
     assert result["status"] == "SETTLED"
     assert result["settlement_id"] == "factual-outcome"
+
+
+def test_historical_security_fact_sync_passes_reloaded_timeline_reference(
+    tmp_path: Path,
+) -> None:
+    timeline_reference = ValidationArtifactReference(
+        "HISTORICAL_CONSTITUENT_TIMELINE",
+        ArtifactId("timeline-1"),
+        "sha256:" + "1" * 64,
+    )
+    timeline = SimpleNamespace(
+        reference=timeline_reference,
+        cohorts=(
+            SimpleNamespace(
+                snapshot_reference=ValidationArtifactReference(
+                    "FREE_RESEARCH_UNIVERSE",
+                    ArtifactId("universe-1"),
+                    "sha256:" + "2" * 64,
+                )
+            ),
+        ),
+    )
+    payload = tmp_path / "historical-security-facts.json"
+    payload.write_text(
+        json.dumps(
+            {
+                "start_date": "2025-01-01",
+                "end_date": "2026-08-24",
+                "universe_timeline_id": str(timeline_reference.artifact_id),
+            }
+        ),
+        encoding="utf-8",
+    )
+    args = build_parser().parse_args(
+        [
+            "--database-url",
+            "postgresql://runtime-authority",
+            "historical-security-facts-sync",
+            "--input",
+            str(payload),
+            "--artifact-root",
+            str(tmp_path / "artifacts"),
+        ]
+    )
+    captured: dict[str, object] = {}
+
+    class UniverseRepository:
+        def get_timeline(self, timeline_id: ArtifactId) -> object:
+            assert timeline_id == timeline_reference.artifact_id
+            return timeline
+
+    class FactsOperator:
+        def sync(self, **kwargs: object) -> dict[str, object]:
+            captured.update(kwargs)
+            return {"operation": "HISTORICAL_SECURITY_FACTS_SYNC"}
+
+    with (
+        patch(
+            "market_regime_alpha.cli.continuous_research."
+            "PostgresFreeResearchUniverseRepository",
+            return_value=UniverseRepository(),
+        ),
+        patch(
+            "market_regime_alpha.cli.continuous_research."
+            "HistoricalSecurityFactsOperator",
+            return_value=FactsOperator(),
+        ),
+    ):
+        result = _dispatch(args, SimpleNamespace(), SimpleNamespace())
+
+    assert result["universe_timeline_id"] == str(timeline_reference.artifact_id)
+    assert captured["universe_timeline_reference"] == timeline_reference
 
 
 def test_automatic_settlement_fails_closed_for_ambiguous_decision_scope() -> None:

@@ -1567,7 +1567,10 @@ def _dispatch(
         "historical-security-facts-sync",
     }:
         payload = _load_json_object(args.input)
-        timeline_id, raw_ids = _historical_security_fact_scope(factory, payload)
+        timeline_reference, raw_ids = _historical_security_fact_scope(
+            factory,
+            payload,
+        )
         if args.operation == "historical-security-facts-prefetch":
             return HistoricalSecurityFactsOperator(factory).prefetch(
                 universe_snapshot_ids=tuple(ArtifactId(item) for item in raw_ids),
@@ -1579,14 +1582,18 @@ def _dispatch(
             )
         result = HistoricalSecurityFactsOperator(factory).sync(
             universe_snapshot_ids=tuple(ArtifactId(item) for item in raw_ids),
-            universe_timeline_reference=(None if timeline_id is None else timeline.reference),
+            universe_timeline_reference=timeline_reference,
             start_date=date.fromisoformat(str(payload["start_date"])),
             end_date=date.fromisoformat(str(payload["end_date"])),
             artifact_root=args.artifact_root.resolve(),
         )
         return {
             **result,
-            "universe_timeline_id": (None if timeline_id is None else str(timeline_id)),
+            "universe_timeline_id": (
+                None
+                if timeline_reference is None
+                else str(timeline_reference.artifact_id)
+            ),
         }
     if args.operation == "research-universe-replay":
         return FreeResearchUniverseOperator(factory).replay(
@@ -2777,7 +2784,7 @@ def _freeze_wp_alpha_proof_experiment(
 def _historical_security_fact_scope(
     factory: PostgresConnectionFactory,
     payload: Mapping[str, Any],
-) -> tuple[ArtifactId | None, tuple[str, ...]]:
+) -> tuple[ValidationArtifactReference | None, tuple[str, ...]]:
     common = {"start_date", "end_date"}
     if set(payload) == {*common, "universe_timeline_id"}:
         timeline_id = ArtifactId(str(payload["universe_timeline_id"]))
@@ -2791,8 +2798,9 @@ def _historical_security_fact_scope(
                 for item in timeline.cohorts
             )
         )
+        timeline_reference = timeline.reference
     elif set(payload) == {*common, "universe_snapshot_ids"}:
-        timeline_id = None
+        timeline_reference = None
         raw_ids = tuple(
             str(item)
             for item in _array_value(
@@ -2809,7 +2817,7 @@ def _historical_security_fact_scope(
         raise ValueError(
             "historical Security Fact Universe IDs must be ordered and unique"
         )
-    return timeline_id, raw_ids
+    return timeline_reference, raw_ids
 
 
 def _reference_for(
