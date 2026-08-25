@@ -2,9 +2,9 @@
 
 > **Status:** CURRENT_STATUS  
 > **Authority:** Current implementation/evidence summary  
-> **Implementation Checkpoint:** `agent/engineering-closure-architecture-convergence-01@b853297bcfb08b9ab6e21e7a7f7d22866a7cf6d2`, based on `main@b617844d338523d7dfea72642cfce8213121786e`; the final documentation commit is its documentation-only successor
+> **Implementation Checkpoint:** `main@adbc7857e261835eccbe2acf4902910363dae724` at the WP-ALPHA-PROOF-02 start; the isolated work branch initially changes documentation only
 > **Strongest Research Evidence Revision:** `0d1a5a8` (WP-ALPHA-RESEARCH-01)
-> **Last Updated:** 2026-08-24
+> **Last Updated:** 2026-08-25
 > **Code Evidence:** `src/market_regime_alpha`, `src/market_regime_alpha/persistence/postgres/migrations/*.sql`, `tests`
 
 This document records what the named executable baseline implements and what
@@ -33,19 +33,40 @@ target architecture.
   one PostgreSQL `max_locks_per_transaction` environment error. This is
   `TARGETED_TESTED`, not campaign or Alpha evidence.
 - **WP-01 branch validation:** docs/platform/full pytest, ruff, mypy and build pass on a fresh PostgreSQL test database; a first full run against a heavily reused test database hit one `pg_catalog` autovacuum DDL lock timeout, while the exact node and the clean-database full suite both pass. This is retained as an environment failure, not hidden.
-- **Current CI:** GitHub has no run for `b617844` or the local closure
-  checkpoint. Local targeted validation is not CI proof.
-- **Alpha/Daily engineering closure:** the branch binds one explicit Candidate
+- **Current CI:** GitHub has no run for `adbc785`. The latest five observed
+  `main` runs predate this baseline; the newest is a failure at `fee02f6` on
+  2026-08-09. Prior local validation is not CI proof for this HEAD.
+- **Alpha/Daily engineering closure:** merged `main` binds one explicit Candidate
   admission root to Discovery→Correctness→External→supported Context→Candidate
   lineage, produces
   pre-Strategy Risk/Opportunity from owner-derived facts, projects typed
   Forecast semantics, binds Outcome to an exact immutable Daily snapshot and
   retains settlement inside the one Continuous control plane.
-- **Database binding:** Runtime requires an explicit PostgreSQL URL and principal; a database name or stale schema does not establish current Authority. The replayable Golden V2 Evidence schema is at migration 090.
+- **Database binding:** Runtime requires an explicit PostgreSQL URL and principal; a database name or stale schema does not establish current Authority. Audit tooling must discover application schemas and columns from packaged migrations and PostgreSQL catalogs rather than infer them from a database name.
 - **Local implementation baseline:** Python 3.12.13, uv 0.11.7 and PostgreSQL
-  16.14. The packaged migration head is 097. A Golden V2 evidence database is
-  at migration 090; the default local application database is only at 055 and
-  is not evidence for the current schema.
+  16.14. The packaged migration head is 097. Historical local evidence schemas
+  at older migration heads remain provenance only and are not the current
+  Runtime schema.
+
+### WP-ALPHA-PROOF-02 pre-result checkpoint
+
+- The active protocol is
+  `WP-ALPHA-PROOF-02-Frozen-Vertical-Slice-Protocol.md`. It retains the existing
+  126-session Discovery and 126-session `TEMPORAL_VALIDATION_V1` boundaries.
+- Formal PIT is the Locked OOS Outcome-access hard gate. While PIT is
+  incomplete, the roster may be frozen but Outcomes remain unread and
+  `LOCKED_OOS_CONSUMED=false`.
+- A read-only PostgreSQL audit found one exploratory Normalized owner with
+  413,773 rows through 2026-07-14, including only 302,928 five-minute rows from
+  2026-06-15 through 2026-07-14. It declares
+  `RETROSPECTIVE_EVENT_TIME / PIT_INCOMPLETE`; it is insufficient for this WP.
+- The earlier Discovery Raw/Normalized PostgreSQL owner rows remain, but their
+  physical Artifact Root locators cannot be reopened in the available
+  workspace. Reacquisition must create new immutable
+  `REACQUIRED_EQUIVALENT_SOURCE` identities.
+- At this checkpoint acquisition, correctness, External Validation, Locked
+  OOS, Forecast comparison, Strategy economics and prospective accumulation
+  are all `NOT_RUN`. No status is pre-promoted by the protocol.
 
 ### Engineering closure facts
 

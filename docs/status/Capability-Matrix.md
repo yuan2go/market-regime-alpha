@@ -2,9 +2,9 @@
 
 > **Status:** CURRENT_STATUS  
 > **Authority:** Current capability/evidence matrix  
-> **Implementation Checkpoint:** `agent/engineering-closure-architecture-convergence-01@b853297bcfb08b9ab6e21e7a7f7d22866a7cf6d2`, based on `main@b617844d338523d7dfea72642cfce8213121786e`
+> **Implementation Checkpoint:** `main@adbc7857e261835eccbe2acf4902910363dae724` at the WP-ALPHA-PROOF-02 pre-result checkpoint
 > **Strongest Research Evidence Revision:** `0d1a5a8` (WP-ALPHA-RESEARCH-01)
-> **Last Updated:** 2026-08-24
+> **Last Updated:** 2026-08-25
 > **Code Evidence:** `src/market_regime_alpha`, `src/market_regime_alpha/persistence/postgres/schema.py`, `tests`
 
 ## Status vocabulary
@@ -26,11 +26,12 @@
 
 | Domain | Current state | Canonical runtime/owner state | Evidence state | Target / gap | Priority |
 |---|---|---|---|---|---|
+| WP-ALPHA-PROOF-02 Vertical Slice | `DESIGN_FROZEN / NOT_RUN` | Reuses Historical Corpus, Historical Research, Phase-II operator, Research Validation, existing Strategy/Portfolio/Outcome owners and one frozen Locked OOS roster; creates no parallel Runtime or Evidence authority | No new empirical result; Formal PIT remains incomplete and Locked OOS unconsumed | Reacquire bounded physical data, prove correctness, execute frozen External, then follow fail-closed dependencies | P0 |
 | Market Data / Source Evidence | `IMPLEMENTED_AND_WIRED` | Public-provider evidence, source freeze and historical corpus are canonical inputs | Real historical public data exists; source qualification absent | Improve coverage/quality where Alpha Proof exposes need | P0/P2 |
 | Trading Calendar / Security Lifecycle | `IMPLEMENTED_AND_WIRED` | Canonical historical/effective-dated owners exist | Exploratory historical evidence; Formal PIT incomplete | Complete qualified facts for formal claims | P2 |
 | Formal PIT | `ENGINEERING_ONLY` | PIT owners/qualification/as-of mechanics exist | Current free Provider scopes do not establish qualified Formal PIT | Qualified Provider/fact evidence | P2 / external |
 | Tradable Universe / Runtime Scope | `IMPLEMENTED_AND_WIRED` | Frozen scope and eligibility flow exist | Historical exploratory scope proven operationally | Improve decision-time coverage and gate diagnostics | P0 |
-| Dataset Manifest / Historical Corpus | `IMPLEMENTED_AND_WIRED` | PostgreSQL identity/lineage + immutable artifact packages | Historical replay evidence exists | Stable research base; formal qualification later | P0/P2 |
+| Dataset Manifest / Historical Corpus | `IMPLEMENTED_AND_WIRED` | PostgreSQL identity/lineage + immutable artifact packages | Historical replay evidence exists; available full-scope physical locators cannot be reopened and a newer partial 5m owner covers only 2026-06-15 through 2026-07-14 | Bounded, resumable 2025-to-cutoff physical reacquisition under a new owner identity | P0/P2 |
 | Feature Materialization | `IMPLEMENTED_AND_WIRED` | Canonical Feature owners are consumed downstream | Engineering/replay evidence | Establish transparent Alpha baseline and coverage diagnostics | P0 |
 | Factor Catalog / Extraction | `IMPLEMENTED_AND_WIRED` | Panel v2 projects all 70 canonical outputs; 49 numeric hypotheses use the shared exact-rational tie-aware kernel | WP-01 finds three positive intraday factors and 25 significant negative-direction factors under exploratory BH-FDR; no external validation | Freeze exact surviving family for WP-02; no post-hoc direction flips | P0/P1 |
 | Alpha Correctness / Independent Reproduction | `IMPLEMENTED_NOT_PROVEN` | Independent BaoStock Raw parser/normalizer plus Normalized→Feature/Target replay; the one `historical-phase-ii` operator freezes placebo/inference parameters and delegates to the existing service | Focused kernel/operator tests `PASS`; original physical bytes remain unavailable; campaign `NOT_RUN`, top-level `INCONCLUSIVE`; Alpha not proven | Reacquire under a new source identity and execute the frozen suite | P0 / external data |

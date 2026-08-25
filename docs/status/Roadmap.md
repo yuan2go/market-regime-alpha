@@ -2,9 +2,9 @@
 
 > **Status:** ROADMAP
 > **Authority:** Dependency-ordered forward work
-> **Implementation Checkpoint:** `agent/engineering-closure-architecture-convergence-01@b853297bcfb08b9ab6e21e7a7f7d22866a7cf6d2`, based on `main@b617844d338523d7dfea72642cfce8213121786e`
+> **Implementation Checkpoint:** `main@adbc7857e261835eccbe2acf4902910363dae724` at the WP-ALPHA-PROOF-02 pre-result checkpoint
 > **Strongest Research Evidence Revision:** `0d1a5a8` (WP-ALPHA-RESEARCH-01)
-> **Last Updated:** 2026-08-24
+> **Last Updated:** 2026-08-25
 > **Code Evidence:** `docs/status/Current-State.md`, `docs/status/Gap-Register.md`
 
 The project is in an Alpha Research program, not another platform-completeness
@@ -49,7 +49,7 @@ promotion—the next dependency.
 
 ## Completed engineering closure before campaigns
 
-The closure branch completed and target-tested the dependency-ready engineering
+PR #75, now merged into `main`, completed and target-tested the dependency-ready engineering
 work discovered after PR #74:
 
 ```text
@@ -69,7 +69,7 @@ state to true. Full repository pytest and all real campaigns remain `NOT_RUN`.
 ## Phase II engineering state
 
 The five Work Package kernels/contracts and one recoverable operator surface
-are present and focused-tested on the closure branch. Their empirical
+are present and focused-tested on the merged baseline. Their empirical
 dependencies remain in the same order. Conditional Strategy owner composition
 is wired but inactive; implementation does not mean the hypothesis passed any
 dependency.
@@ -205,12 +205,21 @@ family stays Research/Shadow inactive because its evidence gates have not run.
 
 ## Active evidence-dependent work
 
-The next admissible action is to reacquire the missing physical package under a
-new identity and execute the frozen correctness proof. Only a real
-`CORRECTNESS_SUPPORTED` survivor may read outcomes and execute the already
-frozen `TEMPORAL_VALIDATION_V1`. Context, Challenger
-activation and conditional Strategy economics remain downstream of those real
-results.
+### WP-ALPHA-PROOF-02 — Formal PIT Alpha Evidence Vertical Slice
+
+**Protocol status:** `FROZEN / NOT_RUN` at this checkpoint.
+
+The active work package reacquires the missing physical package under a new
+identity, executes the frozen correctness proof, and only then executes the
+already-frozen `TEMPORAL_VALIDATION_V1`. It continues through Candidate,
+Forecast, Strategy economics and attribution only when each upstream result is
+admissible. It freezes the post-External Locked OOS roster but treats Formal PIT
+as a hard Outcome-access gate. `PIT_INCOMPLETE` must leave
+`LOCKED_OOS_CONSUMED=false` and `LOCKED_OOS_SUPPORTED=NOT_ESTIMABLE`.
+
+Context, Challenger activation and conditional Strategy economics remain
+downstream of real correctness and External results. No negative or blocked
+result is bypassed to complete the diagram.
 
 ### Strategy Economics
 

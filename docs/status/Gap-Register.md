@@ -2,9 +2,9 @@
 
 > **Status:** CURRENT_STATUS  
 > **Authority:** Current unresolved gap inventory  
-> **Implementation Checkpoint:** `agent/engineering-closure-architecture-convergence-01@b853297bcfb08b9ab6e21e7a7f7d22866a7cf6d2`, based on `main@b617844d338523d7dfea72642cfce8213121786e`
+> **Implementation Checkpoint:** `main@adbc7857e261835eccbe2acf4902910363dae724` at the WP-ALPHA-PROOF-02 pre-result checkpoint
 > **Strongest Research Evidence Revision:** `0d1a5a8` (WP-ALPHA-RESEARCH-01)
-> **Last Updated:** 2026-08-24
+> **Last Updated:** 2026-08-25
 > **Code Evidence:** `src/market_regime_alpha`, `docs/status/Current-State.md`
 
 Gaps are classified so missing future/external evidence does not block engineering and research that can be completed now.
@@ -40,8 +40,10 @@ These work items do not require waiting for future market sessions or a new exte
 
 | Gap | Current problem | Exit condition | Priority |
 |---|---|---|---|
+| WP-ALPHA-PROOF-02 physical corpus | Existing full Discovery package locators cannot be reopened; the inspected newer corpus has only 302,928 5m rows over 2026-06-15 through 2026-07-14 and is `PIT_INCOMPLETE` | Publish/reload/replay a new bounded, checkpointed 2025-to-cutoff Raw/Normalized owner with exact daily PIT membership, coverage and physical verification | P0 |
+| Locked OOS preservation | Existing Formal OOS mechanics do not yet have qualified Formal PIT input | Freeze exact post-External roster and hashes, but keep Outcome access and consumption false until Formal PIT and correctness are supported | P0 / evidence integrity |
 | Physical Alpha reproduction | The exact historical physical package locator cannot be reopened; PostgreSQL owner replay is not physical reproduction | Persist `REACQUIRED_EQUIVALENT_SOURCE`, independently normalize Raw bytes, compare canonical Normalized owner and execute the frozen proof | P0 / external data |
-| Frozen external execution | Capability exists but there is no admissible correctness-supported survivor or newly frozen external dataset run | Execute one dimension at a time without factor/threshold retuning; retain negative/inconclusive outcomes | P1 / evidence |
+| Frozen external execution | Capability and immutable Temporal window exist but there is no admissible correctness-supported reacquired Dataset run | Execute the existing Temporal dimension without factor/threshold/window retuning; retain negative/inconclusive outcomes | P1 / evidence |
 | Candidate / Signal / Forecast responsibility test | Separate artifacts exist, but empirical distinctness is not established | Each layer proves distinct information/policy/consumer value or is simplified/merged | P0/P1 |
 | Forecast estimability diagnostics | Forecast fails closed correctly, but `NOT_ESTIMABLE` must direct research instead of threshold relaxation | Diagnostics identify sample/coverage/conditioning/estimator/floor causes for blocked cohorts | P0 |
 | Strategy economic translation | Platform can simulate/record actions, but prediction value is not proven as executable net value | Frozen Entry/Holding/Exit/Portfolio protocol reconciles gross→cost→net under applicable A-share constraints | P1 |

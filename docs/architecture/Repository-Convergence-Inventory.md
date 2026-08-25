@@ -3,7 +3,7 @@
 > **Status:** CURRENT_ARCHITECTURE
 > **Authority:** Consumer/import inventory and Legacy disposition
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-24
+> **Last Updated:** 2026-08-25
 > **Executable guards:** `tests/architecture/`
 > **Code Evidence:** `src/market_regime_alpha`, `pyproject.toml`, `tests/architecture`
 
@@ -12,7 +12,7 @@ roots and PostgreSQL writers. A directory name is not treated as Authority.
 Historical files remain immutable even when their producing code is retired.
 
 The disposition column reflects the consumer graph at implementation checkpoint
-`b853297`. Zero-consumer producers have been physically deleted. Every retained
+`main@adbc7857e261835eccbe2acf4902910363dae724`. Zero-consumer producers have been physically deleted. Every retained
 compatibility layer below names a current replay/migration consumer and a
 deletion condition.
 
