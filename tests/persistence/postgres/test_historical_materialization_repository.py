@@ -278,16 +278,17 @@ def test_external_outcome_projection_remains_queryable_without_duplicate_label_j
         ).fetchone()
         projections = connection.execute(
             """
-            SELECT component.payload_locator, label.payload_json
+            SELECT component.payload_locator, locator.payload_json
             FROM historical_corpus_session_component AS component
-            JOIN historical_corpus_outcome_label AS label
-              ON label.component_id = component.component_id
-             AND label.component_hash = component.component_hash
+            JOIN historical_corpus_outcome_forecast_index AS locator
+              ON locator.component_id = component.component_id
+             AND locator.component_hash = component.component_hash
             WHERE component.component_kind = 'OUTCOME'
             ORDER BY component.trading_date
             """
         ).fetchall()
-    assert projection_count == (3,)
+    assert projection_count == (0,)
+    assert len(projections) == 3
     assert all(
         tmp_path.joinpath(*str(row[0]).split("/")[1:])
         .read_bytes()
@@ -296,11 +297,19 @@ def test_external_outcome_projection_remains_queryable_without_duplicate_label_j
     )
     assert all(
         set(dict(row[1]))
-        == {"label_hash", "label_id", "schema_version", "symbol", "target"}
+        == {
+            "component_hash",
+            "component_id",
+            "labels",
+            "schema_version",
+            "target_id",
+            "trading_date",
+        }
+        and len(dict(row[1])["labels"]) == 1
         for row in projections
     )
     with postgres_factory.connection() as connection:
-        connection.execute("TRUNCATE historical_corpus_outcome_label")
+        connection.execute("TRUNCATE historical_corpus_outcome_forecast_index")
     assert repository.reindex_external_outcome_labels(run_id=command.run_id) == (
         3,
         3,

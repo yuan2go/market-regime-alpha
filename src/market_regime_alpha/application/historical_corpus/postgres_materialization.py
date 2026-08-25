@@ -229,11 +229,34 @@ class PostgresHistoricalMaterializationRepository:
         label: TargetOutcomeLabel,
     ) -> dict[str, Any]:
         return {
-            "schema_version": "historical-outcome-label-index/v1",
             "label_id": str(label.label_id),
             "label_hash": label.label_hash,
             "symbol": label.symbol,
-            "target": {"artifact_id": str(label.target.artifact_id)},
+        }
+
+    def _external_forecast_index_payload(
+        self,
+        component: HistoricalSessionComponent,
+        labels: tuple[TargetOutcomeLabel, ...],
+    ) -> dict[str, Any]:
+        target_ids = {str(label.target.artifact_id) for label in labels}
+        if len(target_ids) != 1:
+            raise HistoricalMaterializationConflict(
+                "Historical Outcome forecast index target is not unique"
+            )
+        return {
+            "schema_version": "historical-outcome-forecast-index/v1",
+            "component_id": str(component.component_id),
+            "component_hash": component.component_hash,
+            "trading_date": component.trading_date.isoformat(),
+            "target_id": next(iter(target_ids)),
+            "labels": [
+                self._external_outcome_label_projection(label)
+                for label in sorted(
+                    labels,
+                    key=lambda item: (item.symbol, str(item.label_id)),
+                )
+            ],
         }
 
     @staticmethod
@@ -295,6 +318,24 @@ class PostgresHistoricalMaterializationRepository:
         labels = self._outcome_labels(component)
         if external:
             labels = self._external_forecast_labels(component, labels)
+            payload = self._external_forecast_index_payload(component, labels)
+            connection.execute(
+                """
+                INSERT INTO historical_corpus_outcome_forecast_index(
+                    component_id, component_hash, trading_date,
+                    target_id, payload_json
+                ) VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (component_id) DO NOTHING
+                """,
+                (
+                    str(component.component_id),
+                    component.component_hash,
+                    component.trading_date,
+                    str(labels[0].target.artifact_id),
+                    Jsonb(payload),
+                ),
+            )
+            return len(labels)
         with connection.cursor() as cursor:
             cursor.executemany(
                 """
@@ -318,11 +359,7 @@ class PostgresHistoricalMaterializationRepository:
                         label.label_interval_end,
                         label.outcome_available_at,
                         label.availability_status.value,
-                        Jsonb(
-                            self._external_outcome_label_projection(label)
-                            if external
-                            else label.to_canonical_dict()
-                        ),
+                        Jsonb(label.to_canonical_dict()),
                     )
                     for label in labels
                 ),
@@ -577,9 +614,9 @@ class PostgresHistoricalMaterializationRepository:
               AND payload_storage = %s
               AND NOT EXISTS (
                   SELECT 1
-                  FROM historical_corpus_outcome_label AS label
-                  WHERE label.component_id = component.component_id
-                    AND label.component_hash = component.component_hash
+                  FROM historical_corpus_outcome_forecast_index AS locator
+                  WHERE locator.component_id = component.component_id
+                    AND locator.component_hash = component.component_hash
               )
             ORDER BY trading_date, component_id
         """
@@ -666,39 +703,61 @@ class PostgresHistoricalMaterializationRepository:
         with self._factory.connection(read_only=True) as connection:
             rows = connection.execute(
                 """
-                WITH ranked_labels AS (
+                WITH label_rows AS (
                     SELECT label.symbol, component.component_id,
                            component.component_hash, label.payload_json,
-                           label.trading_date,
-                           component.payload_storage,
+                           label.trading_date, component.payload_storage,
                            label.label_id, label.label_hash, label.target_id,
-                           CASE
-                               WHEN component.payload_storage = 'INLINE_JSONB'
-                               THEN (
-                                   SELECT count(*) = 1
-                                   FROM jsonb_array_elements(
-                                       component.payload_json->'payload'->'labels'
-                                   ) AS owned_label
-                                   WHERE owned_label->>'label_id' = label.label_id
-                                     AND owned_label = label.payload_json
-                               )
-                               ELSE true
-                           END AS owner_matches,
-                           row_number() OVER (
-                               PARTITION BY label.symbol
-                               ORDER BY label.trading_date DESC,
-                                        component.component_id DESC,
-                                        label.label_id DESC
-                           ) AS sample_ordinal
+                           (
+                               SELECT count(*) = 1
+                               FROM jsonb_array_elements(
+                                   component.payload_json->'payload'->'labels'
+                               ) AS owned_label
+                               WHERE owned_label->>'label_id' = label.label_id
+                                 AND owned_label = label.payload_json
+                           ) AS owner_matches
                     FROM historical_corpus_outcome_label AS label
                     JOIN historical_corpus_session_component AS component
                       ON component.component_id = label.component_id
                      AND component.component_hash = label.component_hash
                     WHERE component.run_id = %s
                       AND component.component_kind = 'OUTCOME'
+                      AND component.payload_storage = 'INLINE_JSONB'
                       AND label.trading_date < %s
                       AND label.symbol = ANY(%s)
                       AND label.target_id = %s
+
+                    UNION ALL
+
+                    SELECT indexed_label->>'symbol', component.component_id,
+                           component.component_hash, indexed_label,
+                           locator.trading_date, component.payload_storage,
+                           indexed_label->>'label_id',
+                           indexed_label->>'label_hash', locator.target_id,
+                           true
+                    FROM historical_corpus_outcome_forecast_index AS locator
+                    JOIN historical_corpus_session_component AS component
+                      ON component.component_id = locator.component_id
+                     AND component.component_hash = locator.component_hash
+                     AND component.trading_date = locator.trading_date
+                    CROSS JOIN LATERAL jsonb_array_elements(
+                        locator.payload_json->'labels'
+                    ) AS indexed(indexed_label)
+                    WHERE component.run_id = %s
+                      AND component.component_kind = 'OUTCOME'
+                      AND component.payload_storage = %s
+                      AND locator.trading_date < %s
+                      AND indexed_label->>'symbol' = ANY(%s)
+                      AND locator.target_id = %s
+                ), ranked_labels AS (
+                    SELECT *,
+                           row_number() OVER (
+                               PARTITION BY symbol
+                               ORDER BY trading_date DESC,
+                                        component_id DESC,
+                                        label_id DESC
+                           ) AS sample_ordinal
+                    FROM label_rows
                 )
                 SELECT symbol, component_id, component_hash, payload_json,
                        trading_date, payload_storage, label_id, label_hash,
@@ -709,6 +768,11 @@ class PostgresHistoricalMaterializationRepository:
                 """,
                 (
                     str(run_id),
+                    before,
+                    list(symbols),
+                    str(target_id),
+                    str(run_id),
+                    HISTORICAL_COMPONENT_PAYLOAD_STORAGE,
                     before,
                     list(symbols),
                     str(target_id),
@@ -1023,6 +1087,40 @@ class PostgresHistoricalMaterializationRepository:
             component.component_kind is HistoricalComponentKind.OUTCOME
             and verify_outcome_labels
         ):
+            external = str(row[8]) == HISTORICAL_COMPONENT_PAYLOAD_STORAGE
+            if external:
+                forecast_labels = self._external_forecast_labels(
+                    component,
+                    self._outcome_labels(component),
+                )
+                locator = connection.execute(
+                    """
+                    SELECT component_hash, trading_date, target_id, payload_json
+                    FROM historical_corpus_outcome_forecast_index
+                    WHERE component_id = %s
+                    """,
+                    (str(component.component_id),),
+                ).fetchone()
+                expected_payload = self._external_forecast_index_payload(
+                    component,
+                    forecast_labels,
+                )
+                expected_locator = (
+                    component.component_hash,
+                    component.trading_date,
+                    str(forecast_labels[0].target.artifact_id),
+                    expected_payload,
+                )
+                actual_locator = (
+                    None
+                    if locator is None
+                    else (*locator[:3], dict(locator[3]))
+                )
+                if actual_locator != expected_locator:
+                    raise HistoricalMaterializationConflict(
+                        "Historical Outcome forecast index conflict"
+                    )
+                return
             label_rows = connection.execute(
                 """
                 SELECT label_id, label_hash, symbol, target_id, trading_date,
@@ -1047,12 +1145,6 @@ class PostgresHistoricalMaterializationRepository:
                     ),
                 )
             )
-            external = str(row[8]) == HISTORICAL_COMPONENT_PAYLOAD_STORAGE
-            if external:
-                expected_labels = self._external_forecast_labels(
-                    component,
-                    expected_labels,
-                )
             expected_rows = tuple(
                 (
                     str(item.label_id),
@@ -1060,11 +1152,7 @@ class PostgresHistoricalMaterializationRepository:
                     item.symbol,
                     str(item.target.artifact_id),
                     component.trading_date,
-                    (
-                        self._external_outcome_label_projection(item)
-                        if external
-                        else item.to_canonical_dict()
-                    ),
+                    item.to_canonical_dict(),
                 )
                 for item in expected_labels
             )
