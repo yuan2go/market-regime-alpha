@@ -16,6 +16,9 @@ from market_regime_alpha.application.historical_corpus.postgres_materialization 
     HistoricalMaterializationConflict,
     PostgresHistoricalMaterializationRepository,
 )
+from market_regime_alpha.application.historical_corpus.panel_projection import (
+    panel_research_features,
+)
 from market_regime_alpha.application.continuous_research.journal import (
     RuntimeArtifactReference,
 )
@@ -261,10 +264,26 @@ def test_external_panel_reuses_exact_feature_owner_without_payload_duplication(
     feature_record = {
         "symbol": "600000.SH",
         "feature_id": "frozen.factor.v1",
+        "timeframe": "MINUTE_5",
+        "available_at": request.decision_time.isoformat(),
+        "configuration_id": "frozen-feature-configuration",
+        "configuration_hash": canonical_hash({"configuration": "frozen"}),
+        "limitations": [],
         "values": [
             {
                 "output_id": f"frozen-{index}",
                 "value": canonical_hash({"feature-output": index}),
+                "state": "AVAILABLE",
+                "available_at": request.decision_time.isoformat(),
+                "source_bar_count": 0,
+                "source_bar_lineage_hash": canonical_hash(
+                    {"feature-lineage": index}
+                ),
+                "normalized_source_bar_ids": [],
+                "normalized_source_bar_hashes": [],
+                "source_event_start": None,
+                "source_event_end": None,
+                "missing_reason_codes": [],
             }
             for index in range(200)
         ],
@@ -279,6 +298,9 @@ def test_external_panel_reuses_exact_feature_owner_without_payload_duplication(
         source_references=(source,),
         payload={"features": [feature_record]},
     )
+    projected_features = [
+        dict(item) for item in panel_research_features(feature)["600000.SH"]
+    ]
     panel = HistoricalSessionComponent.create(
         run_id=command.run_id,
         session_id=request.session_id,
@@ -291,7 +313,7 @@ def test_external_panel_reuses_exact_feature_owner_without_payload_duplication(
             "rows": [
                 {
                     "symbol": "600000.SH",
-                    "research_features": [feature_record],
+                    "research_features": projected_features,
                 }
             ]
         },

@@ -43,6 +43,9 @@ from market_regime_alpha.application.historical_corpus.materialization_contracts
     HistoricalComponentKind,
     HistoricalSessionComponent,
 )
+from market_regime_alpha.application.historical_corpus.panel_projection import (
+    panel_research_features,
+)
 from market_regime_alpha.application.historical_corpus.postgres_materialization import (
     PostgresHistoricalMaterializationRepository,
 )
@@ -3040,7 +3043,7 @@ def _research_panel_rows(
     outcome: HistoricalSessionComponent,
 ) -> tuple[dict[str, Any], ...]:
     feature_values = _panel_feature_values(feature)
-    research_features = _panel_research_features(feature)
+    research_features = panel_research_features(feature)
     signal_by_symbol = {str(item["symbol"]): item for item in _objects(signal.payload.get("snapshots"), "signal snapshots")}
     forecast_by_symbol = {
         str(_mapping(item.get("forecast"), "forecast")["symbol"]): _mapping(item.get("forecast"), "forecast")
@@ -3309,58 +3312,6 @@ def _panel_feature_values(
             if value.get("state") == "AVAILABLE":
                 symbol_values[str(value["output_id"])] = value.get("value")
     return result
-
-
-def _panel_research_features(
-    feature: HistoricalSessionComponent,
-) -> dict[str, tuple[Mapping[str, Any], ...]]:
-    """Project every owner Feature output without recomputing its value."""
-
-    result: dict[str, list[Mapping[str, Any]]] = {}
-    for computation in _objects(feature.payload.get("features"), "features"):
-        common = {
-            "feature_id": str(computation["feature_id"]),
-            "timeframe": str(computation["timeframe"]),
-            "feature_available_at": str(computation["available_at"]),
-            "configuration_id": str(computation["configuration_id"]),
-            "configuration_hash": str(computation["configuration_hash"]),
-            "limitations": list(computation.get("limitations", [])),
-        }
-        projected = result.setdefault(str(computation["symbol"]), [])
-        for value in _objects(computation.get("values"), "feature values"):
-            projected.append(
-                {
-                    **common,
-                    "output_id": str(value["output_id"]),
-                    "state": str(value["state"]),
-                    "value": value.get("value"),
-                    "available_at": str(value["available_at"]),
-                    "source_bar_count": int(value["source_bar_count"]),
-                    "source_bar_lineage_hash": str(
-                        value["source_bar_lineage_hash"]
-                    ),
-                    "normalized_source_bar_ids": list(
-                        value.get("normalized_source_bar_ids", [])
-                    ),
-                    "normalized_source_bar_hashes": list(
-                        value.get("normalized_source_bar_hashes", [])
-                    ),
-                    "source_event_start": value.get("source_event_start"),
-                    "source_event_end": value.get("source_event_end"),
-                    "missing_reason_codes": list(
-                        value.get("missing_reason_codes", [])
-                    ),
-                }
-            )
-    return {
-        symbol: tuple(
-            sorted(
-                values,
-                key=lambda item: (str(item["feature_id"]), str(item["output_id"])),
-            )
-        )
-        for symbol, values in result.items()
-    }
 
 
 def _forecast_median(payload: Mapping[str, Any] | None) -> object:

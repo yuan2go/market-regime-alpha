@@ -26,6 +26,9 @@ from market_regime_alpha.application.historical_corpus.materialization_contracts
     HistoricalComponentKind,
     HistoricalSessionComponent,
 )
+from market_regime_alpha.application.historical_corpus.panel_projection import (
+    panel_research_features,
+)
 from market_regime_alpha.application.research_validation.common import (
     ValidationArtifactReference,
 )
@@ -326,13 +329,13 @@ def _encoded_payload(
     rows = compact.get("payload", {}).get("rows")
     if not isinstance(rows, list):
         raise ValueError("Historical Panel rows are invalid")
-    by_symbol = _features_by_symbol(feature_component)
+    by_symbol = panel_research_features(feature_component)
     for row in rows:
         if not isinstance(row, dict):
             raise ValueError("Historical Panel row is invalid")
         symbol = str(row.get("symbol"))
         actual = row.pop("research_features", None)
-        if actual != by_symbol.get(symbol):
+        if actual != list(by_symbol.get(symbol, ())):
             raise ValueError("Historical Panel Feature projection mismatch")
     return {
         "schema_version": _PANEL_FEATURE_REFERENCE_ENCODING,
@@ -362,7 +365,7 @@ def _decoded_payload(
     rows = restored.get("payload", {}).get("rows")
     if not isinstance(rows, list):
         raise ValueError("Historical Panel rows are invalid")
-    by_symbol = _features_by_symbol(feature_component)
+    by_symbol = panel_research_features(feature_component)
     for row in rows:
         if not isinstance(row, dict):
             raise ValueError("Historical Panel row is invalid")
@@ -370,24 +373,8 @@ def _decoded_payload(
         features = by_symbol.get(symbol)
         if features is None:
             raise ValueError("Historical Panel Feature symbol is missing")
-        row["research_features"] = features
+        row["research_features"] = [dict(item) for item in features]
     return restored
-
-
-def _features_by_symbol(
-    component: HistoricalSessionComponent,
-) -> dict[str, list[object]]:
-    if component.component_kind is not HistoricalComponentKind.FEATURE:
-        raise ValueError("Historical Panel source is not Feature")
-    raw_features = component.payload.get("features")
-    if not isinstance(raw_features, list):
-        raise ValueError("Historical Feature payload is invalid")
-    grouped: dict[str, list[object]] = {}
-    for feature in raw_features:
-        if not isinstance(feature, Mapping):
-            raise ValueError("Historical Feature payload is invalid")
-        grouped.setdefault(str(feature.get("symbol")), []).append(dict(feature))
-    return grouped
 
 
 def _resolved_feature(
