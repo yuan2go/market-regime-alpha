@@ -376,6 +376,21 @@ def test_cli_exposes_converged_free_data_day_operations() -> None:
             "historical-artifacts",
         ]
     )
+    historical_fact_prefetch = build_parser().parse_args(
+        [
+            "--database-url",
+            "postgresql://runtime-authority",
+            "historical-security-facts-prefetch",
+            "--input",
+            "historical-security-facts.json",
+            "--artifact-root",
+            "historical-artifacts",
+            "--worker-index",
+            "2",
+            "--worker-count",
+            "4",
+        ]
+    )
     portfolio_day = build_parser().parse_args(
         [
             "--database-url",
@@ -657,6 +672,9 @@ def test_cli_exposes_converged_free_data_day_operations() -> None:
     assert historical_facts.operation == "historical-security-facts-sync"
     assert historical_calendar.operation == "historical-calendar-freeze"
     assert historical_experiment.operation == "historical-experiment-freeze"
+    assert historical_fact_prefetch.operation == "historical-security-facts-prefetch"
+    assert historical_fact_prefetch.worker_index == 2
+    assert historical_fact_prefetch.worker_count == 4
     assert portfolio_day.operation == "portfolio-shadow-day"
     assert portfolio_replay.operation == "portfolio-shadow-replay"
     assert runtime_scope.operation == "runtime-scope-build"

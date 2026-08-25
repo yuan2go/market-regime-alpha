@@ -577,6 +577,23 @@ def build_parser() -> argparse.ArgumentParser:
     )
     historical_security_facts_sync.add_argument("--input", type=Path, required=True)
     historical_security_facts_sync.add_argument("--artifact-root", type=Path, required=True)
+    historical_security_facts_prefetch = subparsers.add_parser(
+        "historical-security-facts-prefetch",
+        help=(
+            "Fill one deterministic shard of the canonical Security Facts "
+            "request checkpoints without publishing an owner."
+        ),
+    )
+    historical_security_facts_prefetch.add_argument("--input", type=Path, required=True)
+    historical_security_facts_prefetch.add_argument(
+        "--artifact-root", type=Path, required=True
+    )
+    historical_security_facts_prefetch.add_argument(
+        "--worker-index", type=int, required=True
+    )
+    historical_security_facts_prefetch.add_argument(
+        "--worker-count", type=int, required=True
+    )
     universe_replay = subparsers.add_parser("research-universe-replay")
     universe_replay.add_argument("--snapshot-id", required=True)
     universe_replay.add_argument("--artifact-root", type=Path, required=True)
@@ -1506,20 +1523,21 @@ def _dispatch(
             artifact_root=args.artifact_root.resolve(),
             payload=_load_json_object(args.input),
         )
-    if args.operation == "historical-security-facts-sync":
+    if args.operation in {
+        "historical-security-facts-prefetch",
+        "historical-security-facts-sync",
+    }:
         payload = _load_json_object(args.input)
-        common = {"start_date", "end_date"}
-        if set(payload) == {*common, "universe_timeline_id"}:
-            timeline_id = ArtifactId(str(payload["universe_timeline_id"]))
-            timeline = PostgresFreeResearchUniverseRepository(factory, apply_migrations=False).get_timeline(timeline_id)
-            raw_ids = tuple(sorted(str(item.snapshot_reference.artifact_id) for item in timeline.cohorts))
-        elif set(payload) == {*common, "universe_snapshot_ids"}:
-            timeline_id = None
-            raw_ids = tuple(str(item) for item in _array_value(payload["universe_snapshot_ids"], "universe_snapshot_ids"))
-        else:
-            raise ValueError("historical-security-facts-sync requires one exact Universe timeline or cohort owner set and range")
-        if not raw_ids or raw_ids != tuple(sorted(set(raw_ids))):
-            raise ValueError("historical Security Fact Universe IDs must be ordered and unique")
+        timeline_id, raw_ids = _historical_security_fact_scope(factory, payload)
+        if args.operation == "historical-security-facts-prefetch":
+            return HistoricalSecurityFactsOperator(factory).prefetch(
+                universe_snapshot_ids=tuple(ArtifactId(item) for item in raw_ids),
+                start_date=date.fromisoformat(str(payload["start_date"])),
+                end_date=date.fromisoformat(str(payload["end_date"])),
+                artifact_root=args.artifact_root.resolve(),
+                worker_index=args.worker_index,
+                worker_count=args.worker_count,
+            )
         result = HistoricalSecurityFactsOperator(factory).sync(
             universe_snapshot_ids=tuple(ArtifactId(item) for item in raw_ids),
             universe_timeline_reference=(None if timeline_id is None else timeline.reference),
@@ -2700,6 +2718,44 @@ def _freeze_wp_alpha_proof_experiment(
     }
 
 
+def _historical_security_fact_scope(
+    factory: PostgresConnectionFactory,
+    payload: Mapping[str, Any],
+) -> tuple[ArtifactId | None, tuple[str, ...]]:
+    common = {"start_date", "end_date"}
+    if set(payload) == {*common, "universe_timeline_id"}:
+        timeline_id = ArtifactId(str(payload["universe_timeline_id"]))
+        timeline = PostgresFreeResearchUniverseRepository(
+            factory,
+            apply_migrations=False,
+        ).get_timeline(timeline_id)
+        raw_ids = tuple(
+            sorted(
+                str(item.snapshot_reference.artifact_id)
+                for item in timeline.cohorts
+            )
+        )
+    elif set(payload) == {*common, "universe_snapshot_ids"}:
+        timeline_id = None
+        raw_ids = tuple(
+            str(item)
+            for item in _array_value(
+                payload["universe_snapshot_ids"],
+                "universe_snapshot_ids",
+            )
+        )
+    else:
+        raise ValueError(
+            "historical Security Facts require one exact Universe timeline "
+            "or cohort owner set and range"
+        )
+    if not raw_ids or raw_ids != tuple(sorted(set(raw_ids))):
+        raise ValueError(
+            "historical Security Fact Universe IDs must be ordered and unique"
+        )
+    return timeline_id, raw_ids
+
+
 def _reference_for(
     kind: str,
     artifact_id: ArtifactId,
@@ -3040,6 +3096,7 @@ def _required_permission(args: argparse.Namespace) -> SecurityPermission:
         return SecurityPermission.READ_RESEARCH
     if operation in {
         "historical-security-facts-sync",
+        "historical-security-facts-prefetch",
         "historical-calendar-freeze",
         "historical-experiment-freeze",
         "historical-universe-history-sync",
