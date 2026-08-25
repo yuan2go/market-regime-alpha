@@ -1469,13 +1469,14 @@ def test_migration_100_indexes_historical_fact_guard_owner_foreign_keys(
     postgres_factory: PostgresConnectionFactory,
 ) -> None:
     migrations = load_packaged_migrations()
-    assert (migrations[-1].version, migrations[-1].name) == (
+    migration_100 = tuple(item for item in migrations if item.version <= 100)
+    assert (migration_100[-1].version, migration_100[-1].name) == (
         100,
         "historical_fact_guard_fk_indexes",
     )
     PostgresMigrator(migrations=migrations[:99]).apply_all(postgres_factory)
 
-    upgraded = PostgresMigrator(migrations=migrations).apply_all(postgres_factory)
+    upgraded = PostgresMigrator(migrations=migration_100).apply_all(postgres_factory)
 
     assert tuple((item.version, item.name) for item in upgraded) == (
         (100, "historical_fact_guard_fk_indexes"),
@@ -1499,3 +1500,31 @@ def test_migration_100_indexes_historical_fact_guard_owner_foreign_keys(
         "free_data_historical_security_fact_member_guard_owner_idx",
         "free_data_historical_security_fact_gap_member_guard_owner_idx",
     }
+
+
+def test_migration_101_binds_locked_scope_to_typed_calendar_owner(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    migrations = load_packaged_migrations()
+    assert (migrations[-1].version, migrations[-1].name) == (
+        101,
+        "locked_oos_typed_calendar_owner",
+    )
+    PostgresMigrator(migrations=migrations[:100]).apply_all(postgres_factory)
+
+    upgraded = PostgresMigrator(migrations=migrations).apply_all(postgres_factory)
+
+    assert tuple((item.version, item.name) for item in upgraded) == (
+        (101, "locked_oos_typed_calendar_owner"),
+    )
+    with postgres_factory.connection(read_only=True) as connection:
+        definition = connection.execute(
+            """
+            SELECT pg_get_constraintdef(oid)
+            FROM pg_catalog.pg_constraint
+            WHERE conrelid = 'frozen_locked_oos_scope'::regclass
+              AND conname = 'frozen_locked_oos_scope_calendar_owner_fk'
+            """
+        ).fetchone()
+    assert definition is not None
+    assert "pit_trading_calendar_canonical_snapshot" in str(definition[0])

@@ -41,6 +41,7 @@ from market_regime_alpha.universe.research import (
     HistoricalConstituentTimeline,
     build_free_research_universe_snapshot,
 )
+from tests.persistence.postgres.pit_fixture import record_calendar_owner
 
 
 NOW = datetime(2026, 8, 25, 1, tzinfo=UTC)
@@ -66,13 +67,11 @@ def test_locked_scope_is_exact_owner_reloaded_idempotent_and_append_only(
         calendar.artifact_id,
         calendar.content_hash,
     )
-    research.record(
-        artifact_id=calendar.artifact_id,
-        artifact_hash=calendar.content_hash,
-        artifact_kind="TRADING_CALENDAR",
-        evidence_authority="ENGINEERING_ONLY",
-        payload=calendar.semantic_payload(),
-        created_at=NOW,
+    record_calendar_owner(
+        postgres_factory,
+        calendar=calendar,
+        clock=NOW,
+        idempotency_key="locked-oos-calendar-owner",
     )
     snapshot = _universe_snapshot()
     universe.publish(snapshot)

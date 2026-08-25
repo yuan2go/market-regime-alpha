@@ -28,6 +28,9 @@ from market_regime_alpha.application.research_validation.postgres_repository imp
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.data.pit_contracts import PITValidationOutcome
 from market_regime_alpha.data.postgres_pit_authority import PostgresPITAuthority
+from market_regime_alpha.data.postgres_trading_calendar import (
+    PostgresPITTradingCalendarSnapshotRepository,
+)
 from market_regime_alpha.data.trading_calendar import TradingCalendarArtifact
 from market_regime_alpha.persistence.postgres.connection import (
     PostgresConnectionFactory,
@@ -46,6 +49,7 @@ class PostgresLockedOOSScopeAuthority:
         self._research = PostgresResearchValidationRepository(factory)
         self._universe = PostgresFreeResearchUniverseRepository(factory)
         self._pit = PostgresPITAuthority(factory)
+        self._calendars = PostgresPITTradingCalendarSnapshotRepository(factory)
         self._evidence = PostgresHistoricalEvidenceRepository(factory)
 
     def freeze(
@@ -260,10 +264,7 @@ class PostgresLockedOOSScopeAuthority:
     ) -> TradingCalendarArtifact:
         if reference.artifact_kind != "TRADING_CALENDAR":
             raise ValueError("Locked OOS Calendar reference kind is invalid")
-        payload = self._research.get_artifact_payload(reference)
-        calendar = TradingCalendarArtifact.from_canonical_dict(
-            {"artifact_id": str(reference.artifact_id), **payload}
-        )
+        calendar = self._calendars.get(reference.artifact_id)
         if calendar.content_hash != reference.content_hash:
             raise ValueError("Locked OOS Calendar owner drifted")
         return calendar
