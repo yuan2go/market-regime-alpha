@@ -723,6 +723,12 @@ class PostgresHistoricalMaterializationRepository:
             ),
             None,
         )
+        if (
+            feature_component is None
+            and component.component_kind is HistoricalComponentKind.RESEARCH_PANEL
+            and len(feature_references) == 1
+        ):
+            feature_component = self.get(feature_references[0])
         return publish_historical_component_payload(
             artifact_root=self._artifact_root,
             component=component,

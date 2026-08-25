@@ -261,7 +261,13 @@ def test_external_panel_reuses_exact_feature_owner_without_payload_duplication(
     feature_record = {
         "symbol": "600000.SH",
         "feature_id": "frozen.factor.v1",
-        "values": [{"output_id": "frozen", "value": "1"}] * 200,
+        "values": [
+            {
+                "output_id": f"frozen-{index}",
+                "value": canonical_hash({"feature-output": index}),
+            }
+            for index in range(200)
+        ],
     }
     feature = HistoricalSessionComponent.create(
         run_id=command.run_id,
@@ -291,7 +297,8 @@ def test_external_panel_reuses_exact_feature_owner_without_payload_duplication(
         },
     )
 
-    repository.put_many(((feature, 1), (panel, 2)))
+    repository.put(component=feature, ordinal=1)
+    repository.put(component=panel, ordinal=2)
 
     assert repository.get(panel.reference) == panel
     with postgres_factory.connection(read_only=True) as connection:
@@ -304,7 +311,7 @@ def test_external_panel_reuses_exact_feature_owner_without_payload_duplication(
             (str(panel.component_id),),
         ).fetchone()
     assert row is not None
-    assert int(row[0]) < int(row[1])
+    assert int(row[0]) * 4 < int(row[1])
     assert int(row[1]) == len(canonical_json(panel.to_canonical_dict()))
 
 
