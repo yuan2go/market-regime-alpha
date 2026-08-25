@@ -51,6 +51,9 @@ from market_regime_alpha.persistence.postgres.migrator import (
     PostgresMigrator,
     load_packaged_migrations,
 )
+from market_regime_alpha.universe.postgres_historical_facts import (
+    PostgresHistoricalSecurityFactsRepository,
+)
 from market_regime_alpha.platform.contracts import EvidenceLevel, ModelLifecycleStatus
 from market_regime_alpha.platform.governance_serialization import (
     model_registration_to_dict,
@@ -68,6 +71,7 @@ from tests.persistence.postgres.test_continuous_research_journal import (
     _command,
     _tick,
 )
+from tests.universe.test_historical_security_facts import _owner
 
 
 pytestmark = pytest.mark.unmigrated_postgres
@@ -1412,3 +1416,49 @@ def test_migration_067_adds_forward_exact_lineage_without_rewriting_history(
         legacy_policy,
         legacy_portfolio,
     )
+
+
+def test_migration_099_backfills_indexed_historical_fact_membership_guards(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    migrations = load_packaged_migrations()
+    assert (migrations[-1].version, migrations[-1].name) == (
+        99,
+        "historical_fact_membership_index",
+    )
+    PostgresMigrator(migrations=migrations[:98]).apply_all(postgres_factory)
+    repository = PostgresHistoricalSecurityFactsRepository(
+        postgres_factory,
+        apply_migrations=False,
+    )
+    owner = repository.publish(_owner(include_gap=True))
+
+    upgraded = PostgresMigrator(migrations=migrations).apply_all(postgres_factory)
+
+    assert tuple((item.version, item.name) for item in upgraded) == (
+        (99, "historical_fact_membership_index"),
+    )
+    assert repository.publish(owner) == owner
+    with postgres_factory.connection(read_only=True) as connection:
+        fact_count, gap_count = connection.execute(
+            """
+            SELECT (
+                       SELECT count(*)
+                       FROM free_data_historical_security_fact_member_guard
+                       WHERE owner_id = %s AND owner_hash = %s
+                   ),
+                   (
+                       SELECT count(*)
+                       FROM free_data_historical_security_fact_gap_member_guard
+                       WHERE owner_id = %s AND owner_hash = %s
+                   )
+            """,
+            (
+                str(owner.owner_id),
+                owner.owner_hash,
+                str(owner.owner_id),
+                owner.owner_hash,
+            ),
+        ).fetchone()
+    assert fact_count == len(owner.facts)
+    assert gap_count == len(owner.coverage_gaps)

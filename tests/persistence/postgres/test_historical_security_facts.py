@@ -197,6 +197,45 @@ def test_historical_security_fact_projection_rejects_non_member_child(
         )
 
 
+def test_historical_security_fact_membership_guard_uses_indexed_owner_projection(
+    postgres_factory,
+) -> None:
+    with postgres_factory.connection(read_only=True) as connection:
+        guard_relations = connection.execute(
+            """
+            SELECT to_regclass(
+                       'free_data_historical_security_fact_member_guard'
+                   )::text,
+                   to_regclass(
+                       'free_data_historical_security_fact_gap_member_guard'
+                   )::text
+            """
+        ).fetchone()
+        fact_guard = connection.execute(
+            """
+            SELECT pg_get_functiondef(
+                'guard_historical_security_fact_membership()'::regprocedure
+            )
+            """
+        ).fetchone()
+        gap_guard = connection.execute(
+            """
+            SELECT pg_get_functiondef(
+                'guard_historical_security_fact_gap_membership()'::regprocedure
+            )
+            """
+        ).fetchone()
+
+    assert guard_relations == (
+        "free_data_historical_security_fact_member_guard",
+        "free_data_historical_security_fact_gap_member_guard",
+    )
+    assert fact_guard is not None and gap_guard is not None
+    for definition in (str(fact_guard[0]), str(gap_guard[0])):
+        assert "jsonb_array_elements" not in definition
+        assert "member_guard" in definition
+
+
 def test_historical_security_fact_projection_binds_publication_date(
     postgres_factory,
 ) -> None:
