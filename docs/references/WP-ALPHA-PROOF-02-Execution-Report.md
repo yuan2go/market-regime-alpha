@@ -8,6 +8,12 @@
 **Git baseline:** `main@adbc7857e261835eccbe2acf4902910363dae724`;
 frozen design checkpoint `a926b95`.
 
+**Delivery:** implementation head `ded5f6e` was merged through PRs #76 and
+#77; `main@8e71535f06d29c148d8588d8ab142d14d4b99364` contains the complete
+code, tests, terminal evidence and local-campaign ignore rule. This delivery
+record is documentation-only and does not revise the frozen Experiment or its
+negative result.
+
 ## Conclusion
 
 The pre-registered three-factor, higher-is-better, equal-weight Top-5 hypothesis
