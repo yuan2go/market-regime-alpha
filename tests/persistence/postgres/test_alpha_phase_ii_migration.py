@@ -17,8 +17,8 @@ def test_phase_ii_migration_is_forward_only_idempotent_and_extends_existing_evid
     first = migrator.apply_all(postgres_factory)
     second = migrator.apply_all(postgres_factory)
 
-    assert first[-1].version == 97
-    assert first[-1].name == "daily_alpha_target_session"
+    assert first[-1].version == 98
+    assert first[-1].name == "wp_alpha_proof_locked_scope"
     assert second == ()
     with postgres_factory.connection(read_only=True) as connection:
         latest = connection.execute(
@@ -45,7 +45,7 @@ def test_phase_ii_migration_is_forward_only_idempotent_and_extends_existing_evid
             """
         ).fetchone()
 
-    assert latest == (97, "daily_alpha_target_session")
+    assert latest == (98, "wp_alpha_proof_locked_scope")
     assert phase_ii_and_closure == [
         (91, "alpha_research_phase_ii"),
         (92, "strategy_forecast_contract_semantics"),
@@ -54,6 +54,7 @@ def test_phase_ii_migration_is_forward_only_idempotent_and_extends_existing_evid
         (95, "daily_alpha_continuous_projection"),
         (96, "daily_alpha_outcome_lineage"),
         (97, "daily_alpha_target_session"),
+        (98, "wp_alpha_proof_locked_scope"),
     ]
     assert constraint is not None
     definition = str(constraint[0])

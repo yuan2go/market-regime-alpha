@@ -119,6 +119,9 @@ from market_regime_alpha.application.historical_corpus.evidence_producer import 
 from market_regime_alpha.application.historical_corpus.normalization import (
     normalize_historical_package,
 )
+from market_regime_alpha.application.historical_corpus.postgres_locked_oos_scope import (
+    PostgresLockedOOSScopeAuthority,
+)
 from market_regime_alpha.application.historical_corpus.postgres_evidence import (
     PostgresHistoricalEvidenceRepository,
 )
@@ -376,6 +379,7 @@ _READ_OPERATIONS = {
     "historical-report",
     "historical-replay",
     "historical-corpus-replay",
+    "locked-oos-scope-report",
     "performance-report",
     "performance-replay",
     "strategy-replay",
@@ -616,6 +620,19 @@ def build_parser() -> argparse.ArgumentParser:
     historical_corpus_replay.add_argument(
         "--artifact-root", type=Path, required=True
     )
+    locked_oos_freeze = subparsers.add_parser(
+        "locked-oos-scope-freeze",
+        help=(
+            "Freeze a label-blind Locked OOS roster from exact PostgreSQL "
+            "owners without reading Outcomes."
+        ),
+    )
+    locked_oos_freeze.add_argument("--input", type=Path, required=True)
+    locked_oos_report = subparsers.add_parser(
+        "locked-oos-scope-report",
+        help="Reload one exact Locked OOS scope and report its closed access gate.",
+    )
+    locked_oos_report.add_argument("--scope-id", required=True)
     historical_evidence = subparsers.add_parser(
         "historical-evidence",
         help="Produce owner-resolved Ablation, Economics and exploratory Model evidence.",
@@ -833,6 +850,71 @@ def _dispatch(
     journal: PostgresContinuousResearchJournal,
     factory: PostgresConnectionFactory,
 ) -> dict[str, Any]:
+    if args.operation == "locked-oos-scope-freeze":
+        payload = _load_json_object(args.input)
+        expected = {
+            "protocol_reference",
+            "calendar_reference",
+            "universe_timeline_reference",
+            "external_final_target_session",
+            "data_cutoff",
+            "recorded_at",
+        }
+        if set(payload) != expected:
+            raise ValueError(
+                "locked-oos-scope-freeze requires exact Protocol, Calendar, "
+                "Timeline, External Target, cutoff and recorded_at"
+            )
+        locked_scope = PostgresLockedOOSScopeAuthority(factory).freeze(
+            protocol_reference=ValidationArtifactReference.from_canonical_dict(
+                _object_value(payload["protocol_reference"], "protocol_reference")
+            ),
+            calendar_reference=ValidationArtifactReference.from_canonical_dict(
+                _object_value(payload["calendar_reference"], "calendar_reference")
+            ),
+            universe_timeline_reference=(
+                ValidationArtifactReference.from_canonical_dict(
+                    _object_value(
+                        payload["universe_timeline_reference"],
+                        "universe_timeline_reference",
+                    )
+                )
+            ),
+            external_final_target_session=date.fromisoformat(
+                str(payload["external_final_target_session"])
+            ),
+            data_cutoff=_instant(str(payload["data_cutoff"])),
+            recorded_at=_instant(str(payload["recorded_at"])),
+        )
+        return {
+            "operation": "LOCKED_OOS_SCOPE_FREEZE",
+            **locked_scope.to_canonical_dict(),
+            "outcome_access_allowed": False,
+            "reason_codes": [
+                "FORMAL_PIT_NOT_SUPPORTED",
+                "PHYSICAL_CORRECTNESS_NOT_SUPPORTED",
+            ],
+            "formal_oos": False,
+            "production_qualified": False,
+        }
+    if args.operation == "locked-oos-scope-report":
+        locked_scope_authority = PostgresLockedOOSScopeAuthority(factory)
+        locked_scope = locked_scope_authority.get_by_id(
+            ArtifactId(args.scope_id)
+        )
+        decision = locked_scope_authority.assess_access(
+            scope_reference=locked_scope.reference,
+            formal_pit_references=(),
+            physical_correctness_reference=None,
+        )
+        return {
+            "operation": "LOCKED_OOS_SCOPE_REPORT",
+            **locked_scope.to_canonical_dict(),
+            "outcome_access_allowed": decision.outcome_access_allowed,
+            "reason_codes": list(decision.reason_codes),
+            "formal_oos": False,
+            "production_qualified": False,
+        }
     if args.operation == "historical-phase-ii":
         evidence = build_postgres_phase_ii_operator(
             factory,
@@ -2828,6 +2910,7 @@ def _required_permission(args: argparse.Namespace) -> SecurityPermission:
         "runtime-scope-build",
         "historical-run",
         "historical-corpus-acquire",
+        "locked-oos-scope-freeze",
     }:
         return SecurityPermission.RUN_RESEARCH
     if operation == "model-train":

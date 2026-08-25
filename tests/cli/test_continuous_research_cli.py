@@ -412,6 +412,12 @@ def test_cli_exposes_converged_free_data_day_operations() -> None:
             "historical-artifacts",
         ]
     )
+    locked_oos_freeze = build_parser().parse_args(
+        ["locked-oos-scope-freeze", "--input", "locked-scope.json"]
+    )
+    locked_oos_report = build_parser().parse_args(
+        ["locked-oos-scope-report", "--scope-id", "frozen-scope"]
+    )
     historical_evidence = build_parser().parse_args(
         [
             "--database-url",
@@ -633,6 +639,8 @@ def test_cli_exposes_converged_free_data_day_operations() -> None:
     assert historical_run.operation == "historical-run"
     assert historical_acquire.operation == "historical-corpus-acquire"
     assert historical_corpus_replay.operation == "historical-corpus-replay"
+    assert locked_oos_freeze.operation == "locked-oos-scope-freeze"
+    assert locked_oos_report.operation == "locked-oos-scope-report"
     assert historical_evidence.operation == "historical-evidence"
     assert historical_phase_ii.operation == "historical-phase-ii"
     assert strategy_feedback_close.operation == "strategy-feedback-close"

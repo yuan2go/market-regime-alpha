@@ -141,14 +141,16 @@ FREE_RUNTIME_MIGRATIONS = (
     (94, "pre_strategy_risk_opportunity"),
     (95, "daily_alpha_continuous_projection"),
     (96, "daily_alpha_outcome_lineage"),
+    (97, "daily_alpha_target_session"),
+    (98, "wp_alpha_proof_locked_scope"),
 )
 
 
 def test_packaged_migrations_are_contiguous_and_checksummed() -> None:
     migrations = load_packaged_migrations()
 
-    assert tuple(item.version for item in migrations) == tuple(range(1, 97))
-    assert len({item.name for item in migrations}) == 97
+    assert tuple(item.version for item in migrations) == tuple(range(1, 99))
+    assert len({item.name for item in migrations}) == 98
     assert all(item.checksum == sha256(item.sql.encode("utf-8")).hexdigest() for item in migrations)
 
 
@@ -329,11 +331,11 @@ def test_apply_all_is_idempotent(
     first = migrator.apply_all(postgres_factory)
     second = migrator.apply_all(postgres_factory)
 
-    assert tuple(item.version for item in first) == tuple(range(1, 97))
+    assert tuple(item.version for item in first) == tuple(range(1, 99))
     assert second == ()
     with postgres_factory.connection(read_only=True) as connection:
         rows = connection.execute("SELECT version, name, checksum FROM schema_migrations ORDER BY version").fetchall()
-    assert len(rows) == 97
+    assert len(rows) == 98
 
 
 def test_verify_current_is_read_only_and_requires_complete_head(
@@ -342,14 +344,14 @@ def test_verify_current_is_read_only_and_requires_complete_head(
     migrations = load_packaged_migrations()
     PostgresMigrator(migrations=migrations[:-1]).apply_all(postgres_factory)
 
-    with pytest.raises(PostgresMigrationSequenceError, match="missing versions: \\[96\\]"):
+    with pytest.raises(PostgresMigrationSequenceError, match="missing versions: \\[98\\]"):
         PostgresMigrator().verify_current(postgres_factory)
 
     with postgres_factory.connection(read_only=True) as connection:
         stored = connection.execute(
             "SELECT max(version) FROM schema_migrations"
         ).fetchone()
-    assert stored == (95,)
+    assert stored == (97,)
 
 
 def test_verify_current_rejects_missing_registry_without_creating_it(
@@ -566,7 +568,7 @@ def test_migration_026_preserves_prerelease_v1_decision_rows_forward_only(
         )
         + FREE_RUNTIME_MIGRATIONS
     )
-    assert applied == (96,)
+    assert applied == (98,)
     assert restored == account
 
 
@@ -1129,6 +1131,8 @@ def test_migration_060_preserves_v1_protocols_and_accepts_explicit_inference(
         (94, "pre_strategy_risk_opportunity"),
         (95, "daily_alpha_continuous_projection"),
         (96, "daily_alpha_outcome_lineage"),
+        (97, "daily_alpha_target_session"),
+        (98, "wp_alpha_proof_locked_scope"),
     )
     with postgres_factory.connection(read_only=True) as connection:
         stored = connection.execute(

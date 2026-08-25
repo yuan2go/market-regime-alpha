@@ -315,7 +315,7 @@ Run: `python -m pytest -q tests/application/historical_corpus/test_baostock_norm
 
 Expected: PASS with provider call count unchanged during resume/replay and maximum decoded batch bounded by one partition.
 
-- [ ] **Step 7: Commit acquisition and normalization**
+- [x] **Step 7: Commit acquisition and normalization**
 
 ```bash
 git add src/market_regime_alpha/application/historical_corpus/baostock_archive.py src/market_regime_alpha/application/historical_corpus/normalization.py src/market_regime_alpha/cli/continuous_research.py tests/application/historical_corpus/test_baostock_normalization.py tests/application/continuous_research/test_cli.py
@@ -331,13 +331,13 @@ git commit -m "feat: acquire historical corpus with bounded replay"
 - Modify: `src/market_regime_alpha/cli/continuous_research.py`
 - Test: `tests/application/historical_corpus/test_locked_oos_scope.py`
 - Test: `tests/persistence/postgres/test_locked_oos_scope.py`
-- Test: `tests/persistence/postgres/test_migrations.py`
+- Test: `tests/persistence/postgres/test_migrator.py`
 
 **Interfaces:**
 - Consumes: exact Calendar, historical constituent timeline, frozen protocol reference/hash and External final target `2026-01-19`; never consumes an Outcome owner.
 - Produces: `FrozenLockedOOSScope`, `LockedOOSAccessDecision`, `PostgresLockedOOSScopeAuthority.freeze/get/assess_access` and CLI freeze/report.
 
-- [ ] **Step 1: Write red tests for non-overlap, exact T+1 bindings, replay and fail-closed Outcome access**
+- [x] **Step 1: Write red tests for non-overlap, exact T+1 bindings, replay and fail-closed Outcome access**
 
 ```python
 def test_locked_scope_freezes_after_external_without_reading_outcomes() -> None:
@@ -364,13 +364,13 @@ def test_locked_scope_freezes_after_external_without_reading_outcomes() -> None:
     outcome_loader.assert_not_called()
 ```
 
-- [ ] **Step 2: Run Locked scope tests and verify RED**
+- [x] **Step 2: Run Locked scope tests and verify RED**
 
 Run: `python -m pytest -q tests/application/historical_corpus/test_locked_oos_scope.py tests/persistence/postgres/test_locked_oos_scope.py`
 
 Expected: FAIL because the typed owner and migration do not exist.
 
-- [ ] **Step 3: Implement the immutable scope and pure gate**
+- [x] **Step 3: Implement the immutable scope and pure gate**
 
 ```python
 @dataclass(frozen=True, slots=True)
@@ -410,15 +410,15 @@ def assess_locked_oos_access(
 
 The freezer derives sessions only from explicit Calendar entries, requires each target session to be the next Calendar session, binds effective PIT universe hashes without reading prices/labels, rejects Discovery/External overlap and rejects changed cutoff/protocol/calendar/timeline identity.
 
-- [ ] **Step 4: Add append-only PostgreSQL owner and migration 098**
+- [x] **Step 4: Add append-only PostgreSQL owner and migration 098**
 
 Migration 098 adds `FROZEN_LOCKED_OOS_SCOPE` to the existing Research Validation artifact-kind check and an append-only projection table keyed by `(scope_id, scope_hash)` with exact protocol/calendar/timeline references, session/target counts and `outcome_values_read = false`. It uses the existing `reject_append_only_mutation()` trigger.
 
-- [ ] **Step 5: Add typed CLI freeze/report without Outcome dependencies**
+- [x] **Step 5: Add typed CLI freeze/report without Outcome dependencies**
 
 `locked-oos-scope-freeze` accepts exact owner IDs/hashes and the frozen cutoff. `locked-oos-scope-report` accepts only `scope_id` and reloads the exact typed owner. Neither command imports Target Outcome, Shadow Outcome or Formal Evaluation value loaders.
 
-- [ ] **Step 6: Run unit/PostgreSQL/migration tests and verify GREEN**
+- [x] **Step 6: Run unit/PostgreSQL/migration tests and verify GREEN**
 
 Run: `python -m pytest -q tests/application/historical_corpus/test_locked_oos_scope.py tests/persistence/postgres/test_locked_oos_scope.py tests/persistence/postgres/test_migrations.py`
 
