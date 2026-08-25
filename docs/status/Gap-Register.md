@@ -2,9 +2,9 @@
 
 > **Status:** CURRENT_STATUS  
 > **Authority:** Current unresolved gap inventory  
-> **Implementation Checkpoint:** `agent/engineering-closure-architecture-convergence-01@b853297bcfb08b9ab6e21e7a7f7d22866a7cf6d2`, based on `main@b617844d338523d7dfea72642cfce8213121786e`
+> **Implementation Checkpoint:** WP-ALPHA-PROOF-02 owner-backed execution on `agent/wp-alpha-proof-02`
 > **Strongest Research Evidence Revision:** `0d1a5a8` (WP-ALPHA-RESEARCH-01)
-> **Last Updated:** 2026-08-24
+> **Last Updated:** 2026-08-26
 > **Code Evidence:** `src/market_regime_alpha`, `docs/status/Current-State.md`
 
 Gaps are classified so missing future/external evidence does not block engineering and research that can be completed now.
@@ -40,8 +40,11 @@ These work items do not require waiting for future market sessions or a new exte
 
 | Gap | Current problem | Exit condition | Priority |
 |---|---|---|---|
-| Physical Alpha reproduction | The exact historical physical package locator cannot be reopened; PostgreSQL owner replay is not physical reproduction | Persist `REACQUIRED_EQUIVALENT_SOURCE`, independently normalize Raw bytes, compare canonical Normalized owner and execute the frozen proof | P0 / external data |
-| Frozen external execution | Capability exists but there is no admissible correctness-supported survivor or newly frozen external dataset run | Execute one dimension at a time without factor/threshold retuning; retain negative/inconclusive outcomes | P1 / evidence |
+| WP-ALPHA-PROOF-02 physical corpus | Closed: new owners contain 6,548,518 Daily+5m bars, exact lineage/checksums, bounded acquisition and successful replay | Retain immutable owners; no additional architecture required | COMPLETE / PIT_INCOMPLETE |
+| WP-ALPHA-PROOF-02 Target correctness | Eight persisted Target sources are not independently reproducible; 425 more Targets are partial | Preserve the failed proof and identify source-session causes under a new frozen correctness revision | P0 / research correctness |
+| Locked OOS preservation | Existing Formal OOS mechanics do not yet have qualified Formal PIT input | Freeze exact post-External roster and hashes, but keep Outcome access and consumption false until Formal PIT and correctness are supported | P0 / evidence integrity |
+| Physical Alpha reproduction | Closed: the new immutable package independently reproduces all 6,548,518 Raw→Normalized observations and exact Historical replay | Retain owner/hash/source-manifest lineage and corruption detection | COMPLETE |
+| Frozen external execution | Closed fail-closed for this Experiment: correctness failed, so External was not admitted and no official External Outcome was consumed | Preserve the terminal gate result; a future attempt requires a new frozen correctness revision | COMPLETE / BLOCKED_BY_CORRECTNESS |
 | Candidate / Signal / Forecast responsibility test | Separate artifacts exist, but empirical distinctness is not established | Each layer proves distinct information/policy/consumer value or is simplified/merged | P0/P1 |
 | Forecast estimability diagnostics | Forecast fails closed correctly, but `NOT_ESTIMABLE` must direct research instead of threshold relaxation | Diagnostics identify sample/coverage/conditioning/estimator/floor causes for blocked cohorts | P0 |
 | Strategy economic translation | Platform can simulate/record actions, but prediction value is not proven as executable net value | Frozen Entry/Holding/Exit/Portfolio protocol reconciles gross→cost→net under applicable A-share constraints | P1 |

@@ -54,6 +54,12 @@ from market_regime_alpha.features.technical.catalog import canonical_technical_f
 from market_regime_alpha.features.spine import FeatureSetConfiguration
 from market_regime_alpha.evidence.canonical import canonical_hash
 from market_regime_alpha.core.identity import ArtifactId
+from market_regime_alpha.universe.runtime_scope import (
+    ResearchUniversePolicy,
+    UniversePolicySelector,
+    UniverseScopeKind,
+    build_research_universe_policy,
+)
 
 
 PHASE_E3_DECISION_LOCAL_TIME = time(14, 55)
@@ -61,6 +67,16 @@ PHASE_E3_TIMEZONE = "Asia/Shanghai"
 _FEATURE_EFFECTIVE_FROM = datetime(1990, 1, 1, tzinfo=UTC)
 WP_ALPHA_RESEARCH_01_MULTIPLE_TESTING_FAMILY = (
     "WP_ALPHA_RESEARCH_01_DISCOVERY_V1"
+)
+WP_ALPHA_PROOF_02_MULTIPLE_TESTING_FAMILY = "WP_ALPHA_PROOF_02_FROZEN_V1"
+WP_ALPHA_PROOF_02_LOCKED_AT = datetime(2026, 8, 25, 1, 5, 33, tzinfo=UTC)
+_WP_ALPHA_PROOF_02_DISCOVERY_EXPERIMENT = ValidationArtifactReference(
+    "RESEARCH_EXPERIMENT_DEFINITION",
+    ArtifactId(
+        "research-experiment-definition:"
+        "ab6820cb12247973feab2103684b47b9785d8969b5d4362a595888752f99c02e"
+    ),
+    "sha256:ab6820cb12247973feab2103684b47b9785d8969b5d4362a595888752f99c02e",
 )
 
 _WP_ALPHA_DATASET_OWNER = (
@@ -87,6 +103,44 @@ _WP_ALPHA_SOURCE_RUN = (
     "historical-research-run-12e8dd606b480380dc0df356|"
     "sha256:12e8dd606b480380dc0df356ca5aa6c2fdc7b2abd6b215feca74195a50227029"
 )
+
+
+def create_phase_e3_research_universe_policy() -> ResearchUniversePolicy:
+    """Rebuild the exact CSI300 policy frozen by the canonical source run."""
+
+    return build_research_universe_policy(
+        policy_version="phase-e3-csi300-longitudinal-v1",
+        selectors=(
+            UniversePolicySelector(
+                kind=UniverseScopeKind.INDEX,
+                selector_id="CSI300_EFFECTIVE_DATED_CONSTITUENTS",
+                symbols=(),
+            ),
+        ),
+        minimum_history_sessions=60,
+        minimum_median_daily_amount=Decimal("1000000"),
+        include_st=False,
+        require_tradable=True,
+        lot_size=100,
+        data_authority="FREE_RESEARCH_ARCHIVE_PIT_INCOMPLETE",
+    )
+
+
+def phase_e3_decision_policy_identity() -> tuple[
+    ArtifactId,
+    str,
+    dict[str, str],
+]:
+    """Return the exact DecisionTime identity frozen by the source run."""
+
+    payload = {
+        "schema_version": "phase-e3-historical-decision-policy/v1",
+        "decision_local_time": "14:55:00",
+        "timezone_name": "Asia/Shanghai",
+        "methodology": "UNCHANGED_PHASE_E2_CANONICAL_CHAIN",
+    }
+    digest = canonical_hash(payload)
+    return ArtifactId(f"phase-e3-decision-policy:{digest[7:]}"), digest, payload
 
 
 def create_phase_e3_feature_configuration() -> FeatureSetConfiguration:
@@ -443,6 +497,188 @@ def create_wp_alpha_research_01_historical_experiment(
         cost_policy_reference=golden.cost_policy_reference,
         schema_version=golden.schema_version,
     )
+
+
+def create_wp_alpha_proof_02_historical_experiment(
+    target_protocol: OutcomeTargetProtocol,
+    *,
+    locked_at: datetime,
+    raw_owner_reference: ValidationArtifactReference,
+    normalized_owner_reference: ValidationArtifactReference,
+    calendar_reference: ValidationArtifactReference,
+    universe_timeline_reference: ValidationArtifactReference,
+    security_facts_reference: ValidationArtifactReference,
+) -> ResearchExperimentDefinition:
+    """Bind reacquired physical owners to the approved frozen vertical slice.
+
+    This is an Experiment revision, not a replacement for the immutable
+    Discovery parent. Execution must still reload every typed PostgreSQL owner
+    before producing Evidence.
+    """
+
+    if locked_at != WP_ALPHA_PROOF_02_LOCKED_AT:
+        raise ValueError("WP-ALPHA-PROOF-02 lock time is frozen at protocol checkpoint a926b95")
+    expected_kinds = (
+        (raw_owner_reference, "RAW_PROVIDER_ARCHIVE"),
+        (normalized_owner_reference, "NORMALIZED_DATASET"),
+        (calendar_reference, "TRADING_CALENDAR"),
+        (
+            universe_timeline_reference,
+            "HISTORICAL_CONSTITUENT_TIMELINE",
+        ),
+        (security_facts_reference, "HISTORICAL_SECURITY_FACTS"),
+    )
+    for reference, expected_kind in expected_kinds:
+        if reference.artifact_kind != expected_kind:
+            raise ValueError(
+                f"WP-ALPHA-PROOF-02 requires {expected_kind} owner"
+            )
+    discovery = create_wp_alpha_research_01_historical_experiment(
+        target_protocol,
+        locked_at=locked_at,
+    )
+    primary_target = next(
+        item
+        for item in target_protocol.targets
+        if item.checkpoint is OutcomeCheckpoint.TIME_1030
+    )
+    domains = {
+        item.parameter_name: item for item in discovery.hyperparameter_space
+    }
+
+    def bind(name: str, *values: str) -> None:
+        domains[name] = HyperparameterDomain(name, tuple(sorted(set(values))))
+
+    bind("raw_owner", _render_reference(raw_owner_reference))
+    bind("normalized_owner", _render_reference(normalized_owner_reference))
+    bind("dataset_owner", _render_reference(normalized_owner_reference))
+    bind("trading_calendar_owner", _render_reference(calendar_reference))
+    bind(
+        "constituent_timeline",
+        _render_reference(universe_timeline_reference),
+    )
+    bind("security_facts_owner", _render_reference(security_facts_reference))
+    bind(
+        "parent_discovery_experiment",
+        _render_reference(_WP_ALPHA_PROOF_02_DISCOVERY_EXPERIMENT),
+    )
+    bind(
+        "parent_discovery_evidence",
+        "HISTORICAL_ALPHA_ABLATION_EVIDENCE|"
+        "historical-evidence-f9326f869186419a89e450b9|"
+        "sha256:f9326f869186419a89e450b9b64923046a30677d4c3c0003f1f12060388c1fe6",
+    )
+    bind(
+        "external_window_owner",
+        "FROZEN_TEMPORAL_VALIDATION_WINDOW|"
+        "frozen-temporal-validation-window:"
+        "b9e0dfaf85e5ed006f217b1e4b309347a6e5d296d2a8c09beba4296c0800278e|"
+        "sha256:b9e0dfaf85e5ed006f217b1e4b309347a6e5d296d2a8c09beba4296c0800278e",
+    )
+    bind(
+        "primary_target",
+        f"OUTCOME_TARGET|{primary_target.target_id}|{primary_target.target_hash}",
+    )
+    bind(
+        "factor_directions",
+        "intraday_return_to_decision_time|HIGHER_IS_BETTER",
+        "price_vs_vwap_return|HIGHER_IS_BETTER",
+        "vwap_slope|HIGHER_IS_BETTER",
+    )
+    bind("factor_composite", "EQUAL_WEIGHT_RANK_PERCENTILE")
+    bind("candidate_policies", "HARD_INTEGRITY_PRICE_RETURN")
+    bind("candidate_selection_top_k", "5_WITH_BOUNDARY_TIES")
+    bind("fractional_boundary", "FRACTIONAL_BOUNDARY_WEIGHT_V1")
+    bind("round_trip_cost", "0.002100")
+    bind("minimum_observation_coverage", "0.80")
+    bind("minimum_discovery_rank_ic_retention", "0.50")
+    bind("minimum_top_5_net_return", "0")
+    bind("multiple_testing_method", "BENJAMINI_HOCHBERG_FDR")
+    bind("inference_iterations", "2000")
+    bind("inference_block_lengths", "1|5|10")
+    bind("inference_confidence", "0.95")
+    bind("random_seed", "20260813")
+    bind(
+        "discovery_sessions",
+        "2025-01-02|2025-07-11|126|FINAL_TARGET_2025-07-14",
+    )
+    bind(
+        "external_sessions",
+        "2025-07-15|2026-01-16|126|FINAL_TARGET_2026-01-19",
+    )
+    bind(
+        "forecast_model_families",
+        "NAIVE_BASELINE",
+        "EMPIRICAL_PATH_FORECAST",
+        "REGULARIZED_LINEAR_CONDITIONAL",
+    )
+    bind("conditional_forecast_penalties", "0.1", "1")
+    bind("conditional_forecast_max_fits_per_fold", "2")
+    bind("purge_embargo", "ONE_TARGET_SESSION")
+    bind(
+        "formal_pit_locked_oos_gate",
+        "FORMAL_PIT_SUPPORTED_AND_PHYSICAL_CORRECTNESS_SUPPORTED",
+    )
+    bind("locked_oos_outcome_access", "FAIL_CLOSED_BEFORE_GATE")
+    bind("protocol_checkpoint", "git:a926b95")
+    return ResearchExperimentDefinition.create(
+        research_question=(
+            "Does the frozen three-Factor equal-weight rank composite reproduce "
+            "and retain stable T+1 10:30 information and non-negative Top-5 "
+            "net research economics in the frozen External window?"
+        ),
+        hypothesis=(
+            "All three Factor directions, equal weights, Top-5, cost, "
+            "partitions and inference rules are pre-registered; negative and "
+            "not-estimable results are terminal for this Experiment."
+        ),
+        decision_time_policy="FROZEN_14_55_ASIA_SHANGHAI",
+        target_references=discovery.target_references,
+        feature_reference=discovery.feature_reference,
+        feature_version=discovery.feature_version,
+        allowed_model_families=(
+            "EMPIRICAL_PATH_FORECAST",
+            "NAIVE_BASELINE",
+            "REGULARIZED_LINEAR_CONDITIONAL",
+        ),
+        hyperparameter_space=tuple(domains.values()),
+        search_budget=SearchBudget(2, 3_600),
+        primary_hypothesis_ids=(
+            "ALPHA:THREE_FACTOR_COMPOSITE:RANK_IC",
+            "ALPHA:THREE_FACTOR_COMPOSITE:TOP_5_NET",
+        ),
+        secondary_hypothesis_ids=(
+            "CANDIDATE:INCUMBENT_VS_CHALLENGER",
+            "FORECAST:CONDITIONAL_BASELINE_LIFT",
+            "STRATEGY:NET_ECONOMICS",
+        ),
+        multiple_testing_family_id=(
+            WP_ALPHA_PROOF_02_MULTIPLE_TESTING_FAMILY
+        ),
+        stopping_rule=(
+            "EXHAUST_FROZEN_EXTERNAL_SCOPE_ONCE_NO_RESULT_DEPENDENT_CHANGE"
+        ),
+        train_validation_policy=(
+            "DISCOVERY_REPRODUCTION_THEN_FROZEN_EXTERNAL_NO_OOS_TUNING"
+        ),
+        purge_embargo_policy="ONE_TARGET_SESSION_PURGE_AND_EMBARGO",
+        oos_unlock_policy=(
+            "FORMAL_PIT_AND_PHYSICAL_CORRECTNESS_HARD_GATE_NO_OUTCOME_READ"
+        ),
+        randomness_algorithm="DETERMINISTIC_FROZEN_SEED",
+        random_seeds=(20260813,),
+        cost_policy_reference=discovery.cost_policy_reference,
+        schema_version="research-experiment-definition/v2",
+    )
+
+
+def _render_reference(reference: ValidationArtifactReference) -> str:
+    return (
+        f"{reference.artifact_kind}|{reference.artifact_id}|"
+        f"{reference.content_hash}"
+    )
+
+
 def verify_phase_e3_historical_experiment(
     definition: ResearchExperimentDefinition,
     *,
@@ -573,6 +809,79 @@ def verify_wp_alpha_research_01_historical_experiment(
         raise ValueError("WP-ALPHA-RESEARCH-01 command omits a frozen binding")
 
 
+def verify_wp_alpha_proof_02_historical_experiment(
+    definition: ResearchExperimentDefinition,
+    *,
+    target_protocol: OutcomeTargetProtocol,
+    feature_owner: FeatureSetConfiguration,
+    economics_owner: HistoricalStrategyEconomicsPolicySet,
+    decision_local_time: time,
+    timezone_name: str,
+    runtime_scope_policy_id: ArtifactId,
+    runtime_scope_policy_hash: str,
+    decision_policy_id: ArtifactId,
+    decision_policy_hash: str,
+    configuration_references: tuple[ValidationArtifactReference, ...],
+) -> None:
+    """Reload and verify the exact approved vertical-slice methodology."""
+
+    references = set(configuration_references)
+
+    def required_owner(kind: str) -> ValidationArtifactReference:
+        matches = tuple(item for item in references if item.artifact_kind == kind)
+        if len(matches) != 1:
+            raise ValueError(
+                f"WP-ALPHA-PROOF-02 command omits frozen physical owner {kind}"
+            )
+        return matches[0]
+
+    expected = create_wp_alpha_proof_02_historical_experiment(
+        target_protocol,
+        locked_at=WP_ALPHA_PROOF_02_LOCKED_AT,
+        raw_owner_reference=required_owner("RAW_PROVIDER_ARCHIVE"),
+        normalized_owner_reference=required_owner("NORMALIZED_DATASET"),
+        calendar_reference=required_owner("TRADING_CALENDAR"),
+        universe_timeline_reference=required_owner(
+            "HISTORICAL_CONSTITUENT_TIMELINE"
+        ),
+        security_facts_reference=required_owner("HISTORICAL_SECURITY_FACTS"),
+    )
+    if definition != expected:
+        raise ValueError("WP-ALPHA-PROOF-02 Experiment Definition drifted")
+    if feature_owner != create_phase_e3_feature_configuration():
+        raise ValueError("WP-ALPHA-PROOF-02 Feature owner drifted")
+    if economics_owner != create_phase_e3_strategy_economics_policy_set(
+        target_protocol=target_protocol,
+        created_at=WP_ALPHA_PROOF_02_LOCKED_AT,
+    ):
+        raise ValueError("WP-ALPHA-PROOF-02 Economics owner drifted")
+    if (
+        decision_local_time != PHASE_E3_DECISION_LOCAL_TIME
+        or timezone_name != PHASE_E3_TIMEZONE
+    ):
+        raise ValueError("WP-ALPHA-PROOF-02 DecisionTime drifted")
+    domains = {
+        item.parameter_name: item.allowed_values
+        for item in definition.hyperparameter_space
+    }
+    if domains.get("runtime_scope_policy") != (
+        f"{runtime_scope_policy_id}|{runtime_scope_policy_hash}",
+    ):
+        raise ValueError("WP-ALPHA-PROOF-02 Runtime Scope Policy drifted")
+    if domains.get("decision_policy") != (
+        f"{decision_policy_id}|{decision_policy_hash}",
+    ):
+        raise ValueError("WP-ALPHA-PROOF-02 Decision Policy drifted")
+    methodology = {
+        definition.feature_reference,
+        definition.cost_policy_reference,
+        GoldenLoopScoringContract.create_v2().reference,
+        alpha_discovery_evaluation_contract_reference(feature_owner),
+    }
+    if not methodology.issubset(references):
+        raise ValueError("WP-ALPHA-PROOF-02 command omits frozen methodology owner")
+
+
 def _strategy_policy(
     target: TargetDefinition,
     created_at: datetime,
@@ -628,13 +937,19 @@ __all__ = [
     "HistoricalStrategyEconomicsPolicySet",
     "PHASE_E3_DECISION_LOCAL_TIME",
     "PHASE_E3_TIMEZONE",
+    "WP_ALPHA_PROOF_02_LOCKED_AT",
+    "WP_ALPHA_PROOF_02_MULTIPLE_TESTING_FAMILY",
     "WP_ALPHA_RESEARCH_01_MULTIPLE_TESTING_FAMILY",
     "create_phase_e3_feature_configuration",
     "create_golden_loop_v2_historical_experiment",
     "create_phase_e3_historical_experiment",
+    "create_phase_e3_research_universe_policy",
     "create_phase_e3_strategy_economics_policy_set",
+    "create_wp_alpha_proof_02_historical_experiment",
     "create_wp_alpha_research_01_historical_experiment",
+    "phase_e3_decision_policy_identity",
     "verify_phase_e3_historical_experiment",
     "verify_golden_loop_v2_historical_experiment",
     "verify_wp_alpha_research_01_historical_experiment",
+    "verify_wp_alpha_proof_02_historical_experiment",
 ]

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from datetime import date, datetime
+from pathlib import Path
 from typing import Any, Mapping
 
 from psycopg.types.json import Jsonb
@@ -11,6 +12,13 @@ from psycopg.types.json import Jsonb
 from market_regime_alpha.application.historical_corpus.materialization_contracts import (
     HistoricalComponentKind,
     HistoricalSessionComponent,
+)
+from market_regime_alpha.application.historical_corpus.session_component_artifacts import (
+    HISTORICAL_COMPONENT_PAYLOAD_STORAGE,
+    HistoricalComponentPayloadArtifact,
+    external_projection,
+    load_historical_component_payload,
+    publish_historical_component_payload,
 )
 from market_regime_alpha.application.research_evaluation.targeted_outcome import (
     TargetOutcomeLabel,
@@ -27,14 +35,28 @@ class HistoricalMaterializationConflict(RuntimeError):
     """Raised when an immutable session component conflicts with Authority."""
 
 
+_EXTERNAL_COMPONENT_KINDS = frozenset(
+    {
+        HistoricalComponentKind.FEATURE,
+        HistoricalComponentKind.OUTCOME,
+        HistoricalComponentKind.RESEARCH_PANEL,
+        HistoricalComponentKind.RESEARCH_EVALUATION,
+    }
+)
+
+
 class PostgresHistoricalMaterializationRepository:
     def __init__(
         self,
         factory: PostgresConnectionFactory,
         *,
+        artifact_root: Path | None = None,
         apply_migrations: bool = False,
     ) -> None:
         self._factory = factory
+        self._artifact_root = (
+            None if artifact_root is None else artifact_root.resolve()
+        )
         if apply_migrations:
             PostgresMigrator().apply_all(factory)
 
@@ -47,12 +69,20 @@ class PostgresHistoricalMaterializationRepository:
         component.verify_identity()
         if ordinal <= 0:
             raise ValueError("Historical component ordinal must be positive")
+        existing = self._existing_exact(((component, ordinal),))
+        if existing is not None:
+            return existing[0]
+        artifact = self._publish_payload(component, dependencies=(component,))
 
         def operation(connection: Any) -> None:
             self._verify_session(connection, component)
-            self._insert(connection, component, ordinal)
+            self._insert(connection, component, ordinal, artifact)
 
         self._factory.run_transaction(operation)
+        if self.get(component.reference) != component:
+            raise HistoricalMaterializationConflict(
+                "Historical component committed owner reload mismatch"
+            )
         return component
 
     def put_many(
@@ -76,14 +106,67 @@ class PostgresHistoricalMaterializationRepository:
             raise ValueError("Historical component batch identities must be unique")
         if len({ordinal for _component, ordinal in items}) != len(items):
             raise ValueError("Historical component batch ordinals must be unique")
+        existing = self._existing_exact(items)
+        if existing is not None:
+            return existing
+        artifacts = tuple(
+            self._publish_payload(component, dependencies=components)
+            for component in components
+        )
 
         def operation(connection: Any) -> None:
             self._verify_session(connection, first)
-            for component, ordinal in items:
-                self._insert(connection, component, ordinal)
+            for (component, ordinal), artifact in zip(items, artifacts, strict=True):
+                self._insert(connection, component, ordinal, artifact)
 
         self._factory.run_transaction(operation)
+        for component in components:
+            if self.get(component.reference) != component:
+                raise HistoricalMaterializationConflict(
+                    "Historical component committed owner reload mismatch"
+                )
         return components
+
+    def _existing_exact(
+        self,
+        items: tuple[tuple[HistoricalSessionComponent, int], ...],
+    ) -> tuple[HistoricalSessionComponent, ...] | None:
+        component_ids = [str(component.component_id) for component, _ordinal in items]
+        with self._factory.connection(read_only=True) as connection:
+            rows = connection.execute(
+                """
+                SELECT component_id, component_hash, ordinal, payload_json,
+                       payload_storage, payload_locator, payload_physical_hash,
+                       payload_size_bytes, payload_logical_size_bytes
+                FROM historical_corpus_session_component
+                WHERE component_id = ANY(%s)
+                """,
+                (component_ids,),
+            ).fetchall()
+            if len(rows) != len(items):
+                return None
+            by_id = {str(row[0]): row for row in rows}
+            existing: list[HistoricalSessionComponent] = []
+            for component, ordinal in items:
+                row = by_id.get(str(component.component_id))
+                if row is None:
+                    return None
+                if str(row[1]) != component.component_hash:
+                    raise HistoricalMaterializationConflict(
+                        "Historical component identity hash conflict"
+                    )
+                if int(row[2]) != ordinal:
+                    raise HistoricalMaterializationConflict(
+                        "Historical component ordinal conflict"
+                    )
+                restored = self._restore_payload(*row[3:])
+                self._verify_projection(connection, restored, int(row[2]))
+                if restored != component:
+                    raise HistoricalMaterializationConflict(
+                        "Historical component existing owner mismatch"
+                    )
+                existing.append(restored)
+        return tuple(existing)
 
     @staticmethod
     def _verify_session(connection: Any, component: HistoricalSessionComponent) -> None:
@@ -103,14 +186,25 @@ class PostgresHistoricalMaterializationRepository:
         connection: Any,
         component: HistoricalSessionComponent,
         ordinal: int,
+        artifact: HistoricalComponentPayloadArtifact | None,
     ) -> None:
+        payload_projection = (
+            component.to_canonical_dict()
+            if artifact is None
+            else external_projection(component, artifact)
+        )
         connection.execute(
             """
                 INSERT INTO historical_corpus_session_component(
                     component_id, component_hash, run_id, session_id,
                     trading_date, ordinal, component_kind,
-                    source_max_event_time, materialized_at, payload_json, created_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    source_max_event_time, materialized_at, payload_json, created_at,
+                    payload_storage, payload_locator, payload_physical_hash,
+                    payload_size_bytes, payload_logical_size_bytes
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s
+                )
                 ON CONFLICT (component_id) DO NOTHING
                 """,
             (
@@ -123,8 +217,13 @@ class PostgresHistoricalMaterializationRepository:
                 component.component_kind.value,
                 component.source_max_event_time,
                 component.materialized_at,
-                Jsonb(component.to_canonical_dict()),
+                Jsonb(payload_projection),
                 component.materialized_at,
+                "INLINE_JSONB" if artifact is None else HISTORICAL_COMPONENT_PAYLOAD_STORAGE,
+                None if artifact is None else artifact.locator,
+                None if artifact is None else artifact.physical_hash,
+                None if artifact is None else artifact.size_bytes,
+                None if artifact is None else artifact.logical_size_bytes,
             ),
         )
         for source_ordinal, source in enumerate(component.source_references, 1):
@@ -146,47 +245,181 @@ class PostgresHistoricalMaterializationRepository:
                 ),
             )
         if component.component_kind is HistoricalComponentKind.OUTCOME:
-            raw_labels = component.payload.get("labels")
-            if not isinstance(raw_labels, list):
-                raise HistoricalMaterializationConflict("Historical Outcome labels projection is missing")
-            labels = tuple(TargetOutcomeLabel.from_canonical_dict(item) for item in raw_labels if isinstance(item, Mapping))
-            if len(labels) != len(raw_labels):
-                raise HistoricalMaterializationConflict("Historical Outcome labels projection is invalid")
-            with connection.cursor() as cursor:
-                cursor.executemany(
-                    """
-                    INSERT INTO historical_corpus_outcome_label(
-                        component_id, component_hash, trading_date,
-                        label_id, label_hash, symbol, target_id,
-                        label_interval_end, outcome_available_at,
-                        availability_status, payload_json
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (component_id, label_id) DO NOTHING
-                    """,
-                    tuple(
-                        (
-                            str(component.component_id),
-                            component.component_hash,
-                            component.trading_date,
-                            str(label.label_id),
-                            label.label_hash,
-                            label.symbol,
-                            str(label.target.artifact_id),
-                            label.label_interval_end,
-                            label.outcome_available_at,
-                            label.availability_status.value,
-                            Jsonb(label.to_canonical_dict()),
-                        )
-                        for label in labels
-                    ),
+            self._insert_outcome_label_projections(
+                connection,
+                component,
+                external=artifact is not None,
+            )
+
+    @staticmethod
+    def _outcome_labels(
+        component: HistoricalSessionComponent,
+    ) -> tuple[TargetOutcomeLabel, ...]:
+        raw_labels = component.payload.get("labels")
+        if not isinstance(raw_labels, list):
+            raise HistoricalMaterializationConflict(
+                "Historical Outcome labels projection is missing"
+            )
+        labels = tuple(
+            TargetOutcomeLabel.from_canonical_dict(item)
+            for item in raw_labels
+            if isinstance(item, Mapping)
+        )
+        if len(labels) != len(raw_labels):
+            raise HistoricalMaterializationConflict(
+                "Historical Outcome labels projection is invalid"
+            )
+        return labels
+
+    @staticmethod
+    def _external_outcome_label_projection(
+        label: TargetOutcomeLabel,
+    ) -> dict[str, Any]:
+        return {
+            "label_id": str(label.label_id),
+            "label_hash": label.label_hash,
+            "symbol": label.symbol,
+        }
+
+    def _external_forecast_index_payload(
+        self,
+        component: HistoricalSessionComponent,
+        labels: tuple[TargetOutcomeLabel, ...],
+    ) -> dict[str, Any]:
+        target_ids = {str(label.target.artifact_id) for label in labels}
+        if len(target_ids) != 1:
+            raise HistoricalMaterializationConflict(
+                "Historical Outcome forecast index target is not unique"
+            )
+        return {
+            "schema_version": "historical-outcome-forecast-index/v1",
+            "component_id": str(component.component_id),
+            "component_hash": component.component_hash,
+            "trading_date": component.trading_date.isoformat(),
+            "target_id": next(iter(target_ids)),
+            "labels": [
+                self._external_outcome_label_projection(label)
+                for label in sorted(
+                    labels,
+                    key=lambda item: (item.symbol, str(item.label_id)),
                 )
-        self._verify_projection(connection, component, ordinal)
+            ],
+        }
+
+    @staticmethod
+    def _external_forecast_labels(
+        component: HistoricalSessionComponent,
+        labels: tuple[TargetOutcomeLabel, ...],
+    ) -> tuple[TargetOutcomeLabel, ...]:
+        raw_protocol = component.payload.get("target_protocol")
+        if raw_protocol is None:
+            return labels
+        if not isinstance(raw_protocol, Mapping):
+            raise HistoricalMaterializationConflict(
+                "Historical Outcome target protocol is invalid"
+            )
+        raw_targets = raw_protocol.get("targets")
+        if not isinstance(raw_targets, list):
+            raise HistoricalMaterializationConflict(
+                "Historical Outcome target protocol is invalid"
+            )
+        forecast_target_ids: list[str] = []
+        for raw_target in raw_targets:
+            if not isinstance(raw_target, Mapping):
+                raise HistoricalMaterializationConflict(
+                    "Historical Outcome target protocol is invalid"
+                )
+            horizon = raw_target.get("canonical_horizon")
+            evaluation = (
+                horizon.get("evaluation_timestamp")
+                if isinstance(horizon, Mapping)
+                else None
+            )
+            if (
+                isinstance(evaluation, Mapping)
+                and evaluation.get("checkpoint") == "10:30"
+            ):
+                forecast_target_ids.append(str(raw_target.get("target_id")))
+        if len(forecast_target_ids) != 1:
+            raise HistoricalMaterializationConflict(
+                "Historical Outcome forecast target is not unique"
+            )
+        selected = tuple(
+            label
+            for label in labels
+            if str(label.target.artifact_id) == forecast_target_ids[0]
+        )
+        if not selected:
+            raise HistoricalMaterializationConflict(
+                "Historical Outcome forecast labels are missing"
+            )
+        return selected
+
+    def _insert_outcome_label_projections(
+        self,
+        connection: Any,
+        component: HistoricalSessionComponent,
+        *,
+        external: bool,
+    ) -> int:
+        labels = self._outcome_labels(component)
+        if external:
+            labels = self._external_forecast_labels(component, labels)
+            payload = self._external_forecast_index_payload(component, labels)
+            connection.execute(
+                """
+                INSERT INTO historical_corpus_outcome_forecast_index(
+                    component_id, component_hash, trading_date,
+                    target_id, payload_json
+                ) VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (component_id) DO NOTHING
+                """,
+                (
+                    str(component.component_id),
+                    component.component_hash,
+                    component.trading_date,
+                    str(labels[0].target.artifact_id),
+                    Jsonb(payload),
+                ),
+            )
+            return len(labels)
+        with connection.cursor() as cursor:
+            cursor.executemany(
+                """
+                INSERT INTO historical_corpus_outcome_label(
+                    component_id, component_hash, trading_date,
+                    label_id, label_hash, symbol, target_id,
+                    label_interval_end, outcome_available_at,
+                    availability_status, payload_json
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (component_id, label_id) DO NOTHING
+                """,
+                tuple(
+                    (
+                        str(component.component_id),
+                        component.component_hash,
+                        component.trading_date,
+                        str(label.label_id),
+                        label.label_hash,
+                        label.symbol,
+                        str(label.target.artifact_id),
+                        label.label_interval_end,
+                        label.outcome_available_at,
+                        label.availability_status.value,
+                        Jsonb(label.to_canonical_dict()),
+                    )
+                    for label in labels
+                ),
+            )
+        return len(labels)
 
     def get(self, reference: ValidationArtifactReference) -> HistoricalSessionComponent:
         with self._factory.connection(read_only=True) as connection:
             row = connection.execute(
                 """
-                SELECT ordinal, payload_json
+                SELECT ordinal, payload_json, payload_storage, payload_locator,
+                       payload_physical_hash, payload_size_bytes,
+                       payload_logical_size_bytes
                 FROM historical_corpus_session_component
                 WHERE component_id = %s AND component_hash = %s
                 """,
@@ -194,10 +427,7 @@ class PostgresHistoricalMaterializationRepository:
             ).fetchone()
             if row is None:
                 raise KeyError(str(reference.artifact_id))
-            payload = row[1]
-            if not isinstance(payload, Mapping):
-                raise HistoricalMaterializationConflict("Historical component payload projection is invalid")
-            component = HistoricalSessionComponent.from_canonical_dict(payload)
+            component = self._restore_payload(*row[1:])
             self._verify_projection(connection, component, int(row[0]))
         if component.reference != reference:
             raise HistoricalMaterializationConflict("Historical component reference kind mismatch")
@@ -236,7 +466,9 @@ class PostgresHistoricalMaterializationRepository:
             rows = connection.execute(
                 """
                 SELECT component_id, component_hash, component_kind,
-                       ordinal, trading_date, payload_json
+                       ordinal, trading_date, payload_json, payload_storage,
+                       payload_locator, payload_physical_hash,
+                       payload_size_bytes, payload_logical_size_bytes
                 FROM historical_corpus_session_component
                 WHERE run_id = %s AND trading_date = %s
                   AND component_kind = ANY(%s)
@@ -301,7 +533,9 @@ class PostgresHistoricalMaterializationRepository:
                 rows = connection.execute(
                     f"""
                     SELECT component_id, component_hash, component_kind,
-                           ordinal, trading_date, payload_json
+                           ordinal, trading_date, payload_json, payload_storage,
+                           payload_locator, payload_physical_hash,
+                           payload_size_bytes, payload_logical_size_bytes
                     FROM historical_corpus_session_component
                     WHERE run_id = %s {kind_clause} {cursor_clause}
                     ORDER BY trading_date, ordinal, component_id
@@ -346,7 +580,9 @@ class PostgresHistoricalMaterializationRepository:
             rows = connection.execute(
                 """
                 SELECT component_id, component_hash, component_kind,
-                       ordinal, trading_date, payload_json
+                       ordinal, trading_date, payload_json, payload_storage,
+                       payload_locator, payload_physical_hash,
+                       payload_size_bytes, payload_logical_size_bytes
                 FROM historical_corpus_session_component
                 WHERE run_id = %s AND component_kind = %s
                   AND trading_date < %s
@@ -403,6 +639,96 @@ class PostgresHistoricalMaterializationRepository:
             maximum_labels_per_symbol=maximum_labels,
         )[symbol]
 
+    def reindex_external_outcome_labels(
+        self,
+        *,
+        run_id: ArtifactId,
+        maximum_components: int | None = None,
+    ) -> tuple[int, int]:
+        """Append missing lightweight label locators for external Outcome owners."""
+
+        if maximum_components is not None and maximum_components <= 0:
+            raise ValueError("Historical Outcome reindex limit must be positive")
+        if self._artifact_root is None:
+            raise HistoricalMaterializationConflict(
+                "Historical component Artifact Root is required"
+            )
+        query = """
+            SELECT component_id, component_hash
+            FROM historical_corpus_session_component AS component
+            WHERE run_id = %s
+              AND component_kind = 'OUTCOME'
+              AND payload_storage = %s
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM historical_corpus_outcome_forecast_index AS locator
+                  WHERE locator.component_id = component.component_id
+                    AND locator.component_hash = component.component_hash
+              )
+            ORDER BY trading_date, component_id
+        """
+        parameters: tuple[object, ...] = (
+            str(run_id),
+            HISTORICAL_COMPONENT_PAYLOAD_STORAGE,
+        )
+        if maximum_components is not None:
+            query += " LIMIT %s"
+            parameters = (*parameters, maximum_components)
+        with self._factory.connection(read_only=True) as connection:
+            rows = connection.execute(query, parameters).fetchall()
+
+        component_count = 0
+        label_count = 0
+        for row in rows:
+            reference = ValidationArtifactReference(
+                "HISTORICAL_OUTCOME",
+                ArtifactId(str(row[0])),
+                str(row[1]),
+            )
+            component = self._get_for_outcome_reindex(reference)
+
+            def operation(connection: Any) -> int:
+                self._verify_session(connection, component)
+                return self._insert_outcome_label_projections(
+                    connection,
+                    component,
+                    external=True,
+                )
+
+            label_count += self._factory.run_transaction(operation)
+            component_count += 1
+        return component_count, label_count
+
+    def _get_for_outcome_reindex(
+        self,
+        reference: ValidationArtifactReference,
+    ) -> HistoricalSessionComponent:
+        with self._factory.connection(read_only=True) as connection:
+            row = connection.execute(
+                """
+                SELECT ordinal, payload_json, payload_storage, payload_locator,
+                       payload_physical_hash, payload_size_bytes,
+                       payload_logical_size_bytes
+                FROM historical_corpus_session_component
+                WHERE component_id = %s AND component_hash = %s
+                """,
+                (str(reference.artifact_id), reference.content_hash),
+            ).fetchone()
+            if row is None:
+                raise KeyError(str(reference.artifact_id))
+            component = self._restore_payload(*row[1:])
+            self._verify_projection(
+                connection,
+                component,
+                int(row[0]),
+                verify_outcome_labels=False,
+            )
+        if component.reference != reference:
+            raise HistoricalMaterializationConflict(
+                "Historical component reference kind mismatch"
+            )
+        return component
+
     def list_outcome_labels_for_symbols_before(
         self,
         *,
@@ -424,9 +750,11 @@ class PostgresHistoricalMaterializationRepository:
         with self._factory.connection(read_only=True) as connection:
             rows = connection.execute(
                 """
-                WITH ranked_labels AS (
+                WITH label_rows AS (
                     SELECT label.symbol, component.component_id,
                            component.component_hash, label.payload_json,
+                           label.trading_date, component.payload_storage,
+                           label.label_id, label.label_hash, label.target_id,
                            (
                                SELECT count(*) = 1
                                FROM jsonb_array_elements(
@@ -434,25 +762,53 @@ class PostgresHistoricalMaterializationRepository:
                                ) AS owned_label
                                WHERE owned_label->>'label_id' = label.label_id
                                  AND owned_label = label.payload_json
-                           ) AS owner_matches,
-                           row_number() OVER (
-                               PARTITION BY label.symbol
-                               ORDER BY label.trading_date DESC,
-                                        component.component_id DESC,
-                                        label.label_id DESC
-                           ) AS sample_ordinal
+                           ) AS owner_matches
                     FROM historical_corpus_outcome_label AS label
                     JOIN historical_corpus_session_component AS component
                       ON component.component_id = label.component_id
                      AND component.component_hash = label.component_hash
                     WHERE component.run_id = %s
                       AND component.component_kind = 'OUTCOME'
+                      AND component.payload_storage = 'INLINE_JSONB'
                       AND label.trading_date < %s
                       AND label.symbol = ANY(%s)
                       AND label.target_id = %s
+
+                    UNION ALL
+
+                    SELECT indexed_label->>'symbol', component.component_id,
+                           component.component_hash, indexed_label,
+                           locator.trading_date, component.payload_storage,
+                           indexed_label->>'label_id',
+                           indexed_label->>'label_hash', locator.target_id,
+                           true
+                    FROM historical_corpus_outcome_forecast_index AS locator
+                    JOIN historical_corpus_session_component AS component
+                      ON component.component_id = locator.component_id
+                     AND component.component_hash = locator.component_hash
+                     AND component.trading_date = locator.trading_date
+                    CROSS JOIN LATERAL jsonb_array_elements(
+                        locator.payload_json->'labels'
+                    ) AS indexed(indexed_label)
+                    WHERE component.run_id = %s
+                      AND component.component_kind = 'OUTCOME'
+                      AND component.payload_storage = %s
+                      AND locator.trading_date < %s
+                      AND indexed_label->>'symbol' = ANY(%s)
+                      AND locator.target_id = %s
+                ), ranked_labels AS (
+                    SELECT *,
+                           row_number() OVER (
+                               PARTITION BY symbol
+                               ORDER BY trading_date DESC,
+                                        component_id DESC,
+                                        label_id DESC
+                           ) AS sample_ordinal
+                    FROM label_rows
                 )
                 SELECT symbol, component_id, component_hash, payload_json,
-                       owner_matches
+                       trading_date, payload_storage, label_id, label_hash,
+                       target_id, owner_matches
                 FROM ranked_labels
                 WHERE sample_ordinal <= %s
                 ORDER BY symbol, sample_ordinal DESC, component_id, payload_json->>'label_id'
@@ -462,29 +818,100 @@ class PostgresHistoricalMaterializationRepository:
                     before,
                     list(symbols),
                     str(target_id),
+                    str(run_id),
+                    HISTORICAL_COMPONENT_PAYLOAD_STORAGE,
+                    before,
+                    list(symbols),
+                    str(target_id),
                     maximum_labels_per_symbol,
                 ),
             ).fetchall()
-        if any(not bool(row[4]) for row in rows):
-            raise HistoricalMaterializationConflict(
-                "Historical Outcome label projection diverged from owner"
-            )
         grouped: dict[
             str,
-            list[tuple[ValidationArtifactReference, TargetOutcomeLabel]],
+            list[
+                tuple[
+                    date,
+                    ValidationArtifactReference,
+                    TargetOutcomeLabel,
+                ]
+            ],
         ] = {symbol: [] for symbol in symbols}
+        external_rows: dict[
+            ValidationArtifactReference,
+            list[Any],
+        ] = {}
         for row in rows:
+            reference = ValidationArtifactReference(
+                "HISTORICAL_OUTCOME",
+                ArtifactId(str(row[1])),
+                str(row[2]),
+            )
+            if str(row[5]) == HISTORICAL_COMPONENT_PAYLOAD_STORAGE:
+                external_rows.setdefault(reference, []).append(row)
+                continue
+            raw_payload = row[3]
+            if not isinstance(raw_payload, Mapping):
+                raise HistoricalMaterializationConflict(
+                    "Historical Outcome label projection is invalid"
+                )
+            if not bool(row[9]):
+                raise HistoricalMaterializationConflict(
+                    "Historical Outcome label projection diverged from owner"
+                )
+            label = TargetOutcomeLabel.from_canonical_dict(raw_payload)
+            if (
+                str(label.label_id) != str(row[6])
+                or label.label_hash != str(row[7])
+                or label.symbol != str(row[0])
+                or str(label.target.artifact_id) != str(row[8])
+            ):
+                raise HistoricalMaterializationConflict(
+                    "Historical Outcome label projection diverged from owner"
+                )
             grouped[str(row[0])].append(
                 (
-                    ValidationArtifactReference(
-                        "HISTORICAL_OUTCOME",
-                        ArtifactId(str(row[1])),
-                        str(row[2]),
-                    ),
-                    TargetOutcomeLabel.from_canonical_dict(row[3]),
+                    row[4],
+                    reference,
+                    label,
                 )
             )
-        return {symbol: tuple(grouped[symbol]) for symbol in symbols}
+        for reference, indexed_rows in external_rows.items():
+            component = self.get(reference)
+            labels = {
+                str(label.label_id): label
+                for label in self._outcome_labels(component)
+            }
+            for row in indexed_rows:
+                owner_label = labels.get(str(row[6]))
+                projection = row[3]
+                if (
+                    owner_label is None
+                    or not isinstance(projection, Mapping)
+                    or dict(projection)
+                    != self._external_outcome_label_projection(owner_label)
+                    or owner_label.label_hash != str(row[7])
+                    or owner_label.symbol != str(row[0])
+                    or str(owner_label.target.artifact_id) != str(row[8])
+                ):
+                    raise HistoricalMaterializationConflict(
+                        "Historical Outcome label projection diverged from owner"
+                    )
+                grouped[owner_label.symbol].append((row[4], reference, owner_label))
+        result: dict[
+            str,
+            tuple[tuple[ValidationArtifactReference, TargetOutcomeLabel], ...],
+        ] = {}
+        for symbol in symbols:
+            ordered = sorted(
+                grouped[symbol],
+                key=lambda item: (
+                    item[0],
+                    str(item[1].artifact_id),
+                    str(item[2].label_id),
+                ),
+            )[-maximum_labels_per_symbol:]
+            result[symbol] = tuple((item[1], item[2]) for item in ordered)
+        return result
 
     def list_references_for_run(
         self,
@@ -540,8 +967,8 @@ class PostgresHistoricalMaterializationRepository:
             raise KeyError(str(run_id))
         return row[0]
 
-    @staticmethod
     def _restore_batch(
+        self,
         *,
         rows: list[Any],
         source_rows: list[Any],
@@ -552,10 +979,7 @@ class PostgresHistoricalMaterializationRepository:
             sources.setdefault(str(item[0]), []).append((int(item[1]), str(item[2]), str(item[3]), str(item[4])))
         components = []
         for row in rows:
-            payload = row[5]
-            if not isinstance(payload, Mapping):
-                raise HistoricalMaterializationConflict("Historical component payload projection is invalid")
-            component = HistoricalSessionComponent.from_canonical_dict(payload)
+            component = self._restore_payload(*row[5:11])
             expected_reference = ValidationArtifactReference(
                 f"HISTORICAL_{str(row[2])}",
                 ArtifactId(str(row[0])),
@@ -576,22 +1000,106 @@ class PostgresHistoricalMaterializationRepository:
             components.append(component)
         return tuple(components)
 
-    @staticmethod
+    def _publish_payload(
+        self,
+        component: HistoricalSessionComponent,
+        *,
+        dependencies: tuple[HistoricalSessionComponent, ...],
+    ) -> HistoricalComponentPayloadArtifact | None:
+        if (
+            self._artifact_root is None
+            or component.component_kind not in _EXTERNAL_COMPONENT_KINDS
+        ):
+            return None
+        feature_references = tuple(
+            item
+            for item in component.source_references
+            if item.artifact_kind == "HISTORICAL_FEATURE"
+        )
+        feature_component = next(
+            (
+                item
+                for item in dependencies
+                if item.component_kind is HistoricalComponentKind.FEATURE
+                and item.reference in feature_references
+            ),
+            None,
+        )
+        if (
+            feature_component is None
+            and component.component_kind is HistoricalComponentKind.RESEARCH_PANEL
+            and len(feature_references) == 1
+        ):
+            feature_component = self.get(feature_references[0])
+        return publish_historical_component_payload(
+            artifact_root=self._artifact_root,
+            component=component,
+            feature_component=feature_component,
+        )
+
+    def _restore_payload(
+        self,
+        payload: object,
+        storage: object,
+        locator: object,
+        physical_hash: object,
+        size_bytes: object,
+        logical_size_bytes: object,
+    ) -> HistoricalSessionComponent:
+        if not isinstance(payload, Mapping):
+            raise HistoricalMaterializationConflict(
+                "Historical component payload projection is invalid"
+            )
+        if str(storage) == "INLINE_JSONB":
+            return HistoricalSessionComponent.from_canonical_dict(payload)
+        if str(storage) != HISTORICAL_COMPONENT_PAYLOAD_STORAGE:
+            raise HistoricalMaterializationConflict(
+                "Historical component payload storage is invalid"
+            )
+        if self._artifact_root is None:
+            raise HistoricalMaterializationConflict(
+                "Historical component Artifact Root is required"
+            )
+        try:
+            artifact = HistoricalComponentPayloadArtifact(
+                locator=str(locator),
+                physical_hash=str(physical_hash),
+                size_bytes=int(str(size_bytes)),
+                logical_size_bytes=int(str(logical_size_bytes)),
+            )
+            component = load_historical_component_payload(
+                artifact_root=self._artifact_root,
+                artifact=artifact,
+                feature_resolver=self.get,
+            )
+        except (FileNotFoundError, TypeError, ValueError) as error:
+            raise HistoricalMaterializationConflict(str(error)) from error
+        if dict(payload) != external_projection(component, artifact):
+            raise HistoricalMaterializationConflict(
+                "Historical component external projection conflict"
+            )
+        return component
+
     def _verify_projection(
+        self,
         connection: Any,
         component: HistoricalSessionComponent,
         ordinal: int,
+        *,
+        verify_outcome_labels: bool = True,
     ) -> None:
         row = connection.execute(
             """
             SELECT run_id, session_id, trading_date, ordinal, component_kind,
-                   source_max_event_time, materialized_at, payload_json
+                   source_max_event_time, materialized_at, payload_json,
+                   payload_storage, payload_locator, payload_physical_hash,
+                   payload_size_bytes, payload_logical_size_bytes
             FROM historical_corpus_session_component
             WHERE component_id = %s
             """,
             (str(component.component_id),),
         ).fetchone()
-        expected = (
+        expected_metadata = (
             str(component.run_id),
             str(component.session_id),
             component.trading_date,
@@ -599,11 +1107,14 @@ class PostgresHistoricalMaterializationRepository:
             component.component_kind.value,
             component.source_max_event_time,
             component.materialized_at,
-            component.to_canonical_dict(),
         )
-        actual = None if row is None else (*row[:7], dict(row[7]))
-        if actual != expected:
+        if row is None or tuple(row[:7]) != expected_metadata:
             raise HistoricalMaterializationConflict("Historical component PostgreSQL projection conflict")
+        restored = self._restore_payload(*row[7:13])
+        if restored != component:
+            raise HistoricalMaterializationConflict(
+                "Historical component PostgreSQL projection conflict"
+            )
         rows = connection.execute(
             """
             SELECT ordinal, artifact_kind, artifact_id, content_hash
@@ -619,9 +1130,52 @@ class PostgresHistoricalMaterializationRepository:
         )
         if tuple((int(r[0]), str(r[1]), str(r[2]), str(r[3])) for r in rows) != source_projection:
             raise HistoricalMaterializationConflict("Historical component source projection conflict")
-        if component.component_kind is HistoricalComponentKind.OUTCOME:
+        if (
+            component.component_kind is HistoricalComponentKind.OUTCOME
+            and verify_outcome_labels
+        ):
+            external = str(row[8]) == HISTORICAL_COMPONENT_PAYLOAD_STORAGE
+            if external:
+                forecast_labels = self._external_forecast_labels(
+                    component,
+                    self._outcome_labels(component),
+                )
+                locator = connection.execute(
+                    """
+                    SELECT component_hash, trading_date, target_id, payload_json
+                    FROM historical_corpus_outcome_forecast_index
+                    WHERE component_id = %s
+                    """,
+                    (str(component.component_id),),
+                ).fetchone()
+                expected_payload = self._external_forecast_index_payload(
+                    component,
+                    forecast_labels,
+                )
+                expected_locator = (
+                    component.component_hash,
+                    component.trading_date,
+                    str(forecast_labels[0].target.artifact_id),
+                    expected_payload,
+                )
+                actual_locator = (
+                    None
+                    if locator is None
+                    else (*locator[:3], dict(locator[3]))
+                )
+                if actual_locator != expected_locator:
+                    raise HistoricalMaterializationConflict(
+                        "Historical Outcome forecast index conflict"
+                    )
+                return
             label_rows = connection.execute(
-                "SELECT payload_json FROM historical_corpus_outcome_label WHERE component_id = %s ORDER BY symbol, target_id, label_id",
+                """
+                SELECT label_id, label_hash, symbol, target_id, trading_date,
+                       payload_json
+                FROM historical_corpus_outcome_label
+                WHERE component_id = %s
+                ORDER BY symbol, target_id, label_id
+                """,
                 (str(component.component_id),),
             ).fetchall()
             expected_labels = tuple(
@@ -638,8 +1192,25 @@ class PostgresHistoricalMaterializationRepository:
                     ),
                 )
             )
-            if tuple(dict(row[0]) for row in label_rows) != tuple(item.to_canonical_dict() for item in expected_labels):
-                raise HistoricalMaterializationConflict("Historical Outcome label projection conflict")
+            expected_rows = tuple(
+                (
+                    str(item.label_id),
+                    item.label_hash,
+                    item.symbol,
+                    str(item.target.artifact_id),
+                    component.trading_date,
+                    item.to_canonical_dict(),
+                )
+                for item in expected_labels
+            )
+            actual_rows = tuple(
+                (*item[:5], dict(item[5]))
+                for item in label_rows
+            )
+            if actual_rows != expected_rows:
+                raise HistoricalMaterializationConflict(
+                    "Historical Outcome label projection conflict"
+                )
 
 
 __all__ = [

@@ -6,15 +6,20 @@ from datetime import UTC, datetime, time
 import pytest
 
 from market_regime_alpha.application.historical_corpus.frozen_experiment import (
+    WP_ALPHA_PROOF_02_LOCKED_AT,
     WP_ALPHA_RESEARCH_01_MULTIPLE_TESTING_FAMILY,
     create_golden_loop_v2_historical_experiment,
     create_phase_e3_feature_configuration,
     create_phase_e3_historical_experiment,
+    create_phase_e3_research_universe_policy,
     create_phase_e3_strategy_economics_policy_set,
     create_wp_alpha_research_01_historical_experiment,
+    create_wp_alpha_proof_02_historical_experiment,
+    phase_e3_decision_policy_identity,
     verify_golden_loop_v2_historical_experiment,
     verify_phase_e3_historical_experiment,
     verify_wp_alpha_research_01_historical_experiment,
+    verify_wp_alpha_proof_02_historical_experiment,
 )
 from market_regime_alpha.application.historical_corpus.golden_loop import (
     GoldenLoopScoringContract,
@@ -38,6 +43,33 @@ from market_regime_alpha.core.identity import ArtifactId
 
 
 LOCKED_AT = datetime(2026, 8, 13, 8, 0, tzinfo=UTC)
+
+
+def test_wp_alpha_proof_reuses_exact_frozen_runtime_and_decision_policies() -> None:
+    policy = create_phase_e3_research_universe_policy()
+    decision_policy_id, decision_policy_hash, payload = (
+        phase_e3_decision_policy_identity()
+    )
+
+    assert str(policy.policy_id) == (
+        "research-universe-policy-b8f7171e930c35e52292dc49"
+    )
+    assert policy.policy_hash == (
+        "sha256:b8f7171e930c35e52292dc492215973fca55321aa5ae0443345619cf9f680e4a"
+    )
+    assert str(decision_policy_id) == (
+        "phase-e3-decision-policy:"
+        "290d0639913fe993c6b5b6db5b21b98d513e20a4cef2e6230c3a30f98dc6c894"
+    )
+    assert decision_policy_hash == (
+        "sha256:290d0639913fe993c6b5b6db5b21b98d513e20a4cef2e6230c3a30f98dc6c894"
+    )
+    assert payload == {
+        "schema_version": "phase-e3-historical-decision-policy/v1",
+        "decision_local_time": "14:55:00",
+        "timezone_name": "Asia/Shanghai",
+        "methodology": "UNCHANGED_PHASE_E2_CANONICAL_CHAIN",
+    }
 
 
 def test_phase_e3_experiment_accepts_only_exact_frozen_methodology() -> None:
@@ -223,4 +255,162 @@ def test_wp_alpha_research_01_freezes_complete_discovery_design() -> None:
                 "sha256:12e8dd606b480380dc0df356ca5aa6c2fdc7b2abd6b215feca74195a50227029",
             ),
         ),
+    )
+
+
+def test_wp_alpha_proof_02_binds_reacquired_owners_without_changing_protocol() -> None:
+    target = exploratory_five_minute_multi_horizon_protocol()
+    runtime_scope_policy = create_phase_e3_research_universe_policy()
+    decision_policy_id, decision_policy_hash, _decision_payload = (
+        phase_e3_decision_policy_identity()
+    )
+    references = {
+        "raw_owner_reference": _reference("RAW_PROVIDER_ARCHIVE", "raw-v2"),
+        "normalized_owner_reference": _reference(
+            "NORMALIZED_DATASET", "normalized-v2"
+        ),
+        "calendar_reference": _reference("TRADING_CALENDAR", "calendar-v2"),
+        "universe_timeline_reference": _reference(
+            "HISTORICAL_CONSTITUENT_TIMELINE", "timeline-v2"
+        ),
+        "security_facts_reference": _reference(
+            "HISTORICAL_SECURITY_FACTS", "facts-v2"
+        ),
+    }
+
+    experiment = create_wp_alpha_proof_02_historical_experiment(
+        target,
+        locked_at=WP_ALPHA_PROOF_02_LOCKED_AT,
+        **references,
+    )
+    domains = {
+        item.parameter_name: item.allowed_values
+        for item in experiment.hyperparameter_space
+    }
+
+    assert domains["factor_directions"] == (
+        "intraday_return_to_decision_time|HIGHER_IS_BETTER",
+        "price_vs_vwap_return|HIGHER_IS_BETTER",
+        "vwap_slope|HIGHER_IS_BETTER",
+    )
+    assert domains["candidate_selection_top_k"] == (
+        "5_WITH_BOUNDARY_TIES",
+    )
+    assert domains["round_trip_cost"] == ("0.002100",)
+    assert domains["inference_iterations"] == ("2000",)
+    assert domains["inference_block_lengths"] == ("1|5|10",)
+    assert domains["random_seed"] == ("20260813",)
+    assert domains["discovery_sessions"] == (
+        "2025-01-02|2025-07-11|126|FINAL_TARGET_2025-07-14",
+    )
+    assert domains["external_sessions"] == (
+        "2025-07-15|2026-01-16|126|FINAL_TARGET_2026-01-19",
+    )
+    assert domains["parent_discovery_experiment"] == (
+        "RESEARCH_EXPERIMENT_DEFINITION|"
+        "research-experiment-definition:"
+        "ab6820cb12247973feab2103684b47b9785d8969b5d4362a595888752f99c02e|"
+        "sha256:ab6820cb12247973feab2103684b47b9785d8969b5d4362a595888752f99c02e",
+    )
+    assert domains["formal_pit_locked_oos_gate"] == (
+        "FORMAL_PIT_SUPPORTED_AND_PHYSICAL_CORRECTNESS_SUPPORTED",
+    )
+    assert domains["raw_owner"] == (
+        _render_reference(references["raw_owner_reference"]),
+    )
+    assert domains["normalized_owner"] == (
+        _render_reference(references["normalized_owner_reference"]),
+    )
+    assert experiment.stopping_rule == (
+        "EXHAUST_FROZEN_EXTERNAL_SCOPE_ONCE_NO_RESULT_DEPENDENT_CHANGE"
+    )
+    verify_wp_alpha_proof_02_historical_experiment(
+        experiment,
+        target_protocol=target,
+        feature_owner=create_phase_e3_feature_configuration(),
+        economics_owner=create_phase_e3_strategy_economics_policy_set(
+            target_protocol=target,
+            created_at=WP_ALPHA_PROOF_02_LOCKED_AT,
+        ),
+        decision_local_time=time(14, 55),
+        timezone_name="Asia/Shanghai",
+        runtime_scope_policy_id=runtime_scope_policy.policy_id,
+        runtime_scope_policy_hash=runtime_scope_policy.policy_hash,
+        decision_policy_id=decision_policy_id,
+        decision_policy_hash=decision_policy_hash,
+        configuration_references=(
+            experiment.feature_reference,
+            experiment.cost_policy_reference,
+            GoldenLoopScoringContract.create_v2().reference,
+            alpha_discovery_evaluation_contract_reference(
+                create_phase_e3_feature_configuration()
+            ),
+            *references.values(),
+        ),
+    )
+    with pytest.raises(ValueError, match="omits frozen physical owner"):
+        verify_wp_alpha_proof_02_historical_experiment(
+            experiment,
+            target_protocol=target,
+            feature_owner=create_phase_e3_feature_configuration(),
+            economics_owner=create_phase_e3_strategy_economics_policy_set(
+                target_protocol=target,
+                created_at=WP_ALPHA_PROOF_02_LOCKED_AT,
+            ),
+            decision_local_time=time(14, 55),
+            timezone_name="Asia/Shanghai",
+            runtime_scope_policy_id=runtime_scope_policy.policy_id,
+            runtime_scope_policy_hash=runtime_scope_policy.policy_hash,
+            decision_policy_id=decision_policy_id,
+            decision_policy_hash=decision_policy_hash,
+            configuration_references=(
+                experiment.feature_reference,
+                experiment.cost_policy_reference,
+            ),
+        )
+    with pytest.raises(ValueError, match="Runtime Scope Policy drifted"):
+        verify_wp_alpha_proof_02_historical_experiment(
+            experiment,
+            target_protocol=target,
+            feature_owner=create_phase_e3_feature_configuration(),
+            economics_owner=create_phase_e3_strategy_economics_policy_set(
+                target_protocol=target,
+                created_at=WP_ALPHA_PROOF_02_LOCKED_AT,
+            ),
+            decision_local_time=time(14, 55),
+            timezone_name="Asia/Shanghai",
+            runtime_scope_policy_id=ArtifactId("wrong-runtime-policy"),
+            runtime_scope_policy_hash=runtime_scope_policy.policy_hash,
+            decision_policy_id=decision_policy_id,
+            decision_policy_hash=decision_policy_hash,
+            configuration_references=(
+                experiment.feature_reference,
+                experiment.cost_policy_reference,
+                GoldenLoopScoringContract.create_v2().reference,
+                alpha_discovery_evaluation_contract_reference(
+                    create_phase_e3_feature_configuration()
+                ),
+                *references.values(),
+            ),
+        )
+    with pytest.raises(ValueError, match="lock time is frozen"):
+        create_wp_alpha_proof_02_historical_experiment(
+            target,
+            locked_at=LOCKED_AT,
+            **references,
+        )
+
+
+def _reference(kind: str, name: str) -> ValidationArtifactReference:
+    return ValidationArtifactReference(
+        kind,
+        ArtifactId(f"{name}-owner"),
+        "sha256:" + name.encode().hex().ljust(64, "0")[:64],
+    )
+
+
+def _render_reference(reference: ValidationArtifactReference) -> str:
+    return (
+        f"{reference.artifact_kind}|{reference.artifact_id}|"
+        f"{reference.content_hash}"
     )

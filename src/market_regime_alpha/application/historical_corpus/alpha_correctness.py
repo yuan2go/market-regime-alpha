@@ -357,6 +357,9 @@ class HistoricalAlphaCorrectnessChecker:
             active_verification = physical_by_owner.get(normalized_reference)
             decision_time = _component_decision_time(feature_component)
             labels = _target_labels(outcome_component)
+            declared_target_omissions = _declared_target_omissions(
+                outcome_component
+            )
             next_session = date.fromisoformat(
                 str(outcome_component.payload["next_session_date"])
             )
@@ -387,24 +390,29 @@ class HistoricalAlphaCorrectnessChecker:
                     for key, values in grouped.items()
                 }
                 loaded_month_key = month_key
+            feature_symbols = _feature_symbols(feature_component)
+            source_symbols = feature_symbols | set(labels)
             decision_bars = {
                 symbol: minute_bars.get((session, symbol), ())
-                for symbol in labels
+                for symbol in source_symbols
             }
             next_session_bars = {
                 symbol: minute_bars.get((next_session, symbol), ())
-                for symbol in labels
+                for symbol in source_symbols
             }
             bars_by_id = {
                 str(item.bar_id): item
-                for symbol in labels
+                for symbol in source_symbols
                 for item in (*decision_bars[symbol], *next_session_bars[symbol])
             }
             persisted_by_symbol, feature_unavailable = _persisted_feature_projection(
                 feature_component, bars_by_id
             )
-            if set(persisted_by_symbol) != set(labels):
-                raise ValueError("Historical correctness Feature/Target symbols drifted")
+            target_omissions = _resolve_target_symbol_omissions(
+                feature_symbols=set(persisted_by_symbol),
+                label_symbols=set(labels),
+                declared_omissions=declared_target_omissions,
+            )
             for symbol in sorted(persisted_by_symbol):
                 symbol_decision_bars = decision_bars[symbol]
                 symbol_next_session_bars = next_session_bars[symbol]
@@ -424,7 +432,24 @@ class HistoricalAlphaCorrectnessChecker:
                         incomplete_reason_codes=feature_unavailable.get(symbol, ()),
                     )
                 )
-                label = labels[symbol]
+                label = labels.get(symbol)
+                if label is None:
+                    target_results.append(
+                        reproduce_t_plus_one_1030_target(
+                            symbol=symbol,
+                            decision_time=decision_time,
+                            next_session=next_session,
+                            trading_calendar=trading_calendar,
+                            source_bars=(
+                                *symbol_decision_bars,
+                                *symbol_next_session_bars,
+                            ),
+                            persisted=None,
+                            physical_verification=active_verification,
+                            unavailable_reason_codes=target_omissions[symbol],
+                        )
+                    )
+                    continue
                 target_bars = _ordered_bars(
                     tuple(
                         item
@@ -801,11 +826,8 @@ class TargetReproductionResult:
                 raise ValueError("unavailable Target result must not invent values")
             if not self.unavailable_reason_codes:
                 raise ValueError("unavailable Target result requires reasons")
-            expected_discrepancies = (
-                ("PERSISTED_TARGET_SOURCE_NOT_REPRODUCIBLE",)
-                if "PERSISTED_TARGET_SOURCE_NOT_REPRODUCIBLE"
-                in self.unavailable_reason_codes
-                else ()
+            expected_discrepancies = _unavailable_target_discrepancies(
+                set(self.unavailable_reason_codes)
             )
         else:
             if (
@@ -1752,11 +1774,7 @@ def reproduce_t_plus_one_1030_target(
             reasons.add("DECISION_REFERENCE_NOT_ESTIMABLE")
         if not checkpoint_complete:
             reasons.add("T_PLUS_ONE_1030_NOT_ESTIMABLE")
-        unavailable_discrepancies = (
-            ("PERSISTED_TARGET_SOURCE_NOT_REPRODUCIBLE",)
-            if "PERSISTED_TARGET_SOURCE_NOT_REPRODUCIBLE" in reasons
-            else ()
-        )
+        unavailable_discrepancies = _unavailable_target_discrepancies(reasons)
         return TargetReproductionResult(
             symbol=symbol,
             decision_time=decision_time,
@@ -1805,10 +1823,8 @@ def reproduce_t_plus_one_1030_target(
                     | {"TARGET_SOURCE_PRICE_NOT_ESTIMABLE"}
                 )
             )
-            unavailable_discrepancies = (
-                ("PERSISTED_TARGET_SOURCE_NOT_REPRODUCIBLE",)
-                if "PERSISTED_TARGET_SOURCE_NOT_REPRODUCIBLE" in price_reasons
-                else ()
+            unavailable_discrepancies = _unavailable_target_discrepancies(
+                set(price_reasons)
             )
             return TargetReproductionResult(
                 symbol=symbol,
@@ -2017,6 +2033,79 @@ def _component_decision_time(component: HistoricalSessionComponent) -> datetime:
     return decision_time
 
 
+def _feature_symbols(component: HistoricalSessionComponent) -> set[str]:
+    raw_features = component.payload.get("features")
+    if not isinstance(raw_features, list):
+        raise ValueError("Historical Feature owner payload is missing")
+    symbols = {
+        str(_mapping(item, "Historical Feature computation")["symbol"])
+        for item in raw_features
+    }
+    if not symbols:
+        raise ValueError("Historical Feature symbols are incomplete")
+    return symbols
+
+
+def _declared_target_omissions(
+    component: HistoricalSessionComponent,
+) -> dict[str, tuple[str, ...]]:
+    raw_omissions = component.payload.get("target_omissions", [])
+    if not isinstance(raw_omissions, list):
+        raise ValueError("Historical Outcome target omissions are malformed")
+    result: dict[str, tuple[str, ...]] = {}
+    for raw_omission in raw_omissions:
+        omission = _mapping(raw_omission, "Historical Outcome target omission")
+        if set(omission) != {
+            "symbol",
+            "target_count",
+            "target_ids",
+            "reason_codes",
+        }:
+            raise ValueError("Historical Outcome target omission fields drifted")
+        symbol = str(omission["symbol"])
+        target_ids = omission["target_ids"]
+        reasons = omission["reason_codes"]
+        target_count = omission["target_count"]
+        if (
+            symbol in result
+            or not symbol
+            or isinstance(target_count, bool)
+            or not isinstance(target_count, int)
+            or target_count <= 0
+            or not isinstance(target_ids, list)
+            or len(target_ids) != target_count
+            or len({str(item) for item in target_ids}) != target_count
+            or not isinstance(reasons, list)
+            or not reasons
+            or any(not isinstance(item, str) or not item for item in reasons)
+        ):
+            raise ValueError("Historical Outcome target omission is invalid")
+        result[symbol] = tuple(sorted(set(reasons)))
+    return result
+
+
+def _resolve_target_symbol_omissions(
+    *,
+    feature_symbols: set[str],
+    label_symbols: set[str],
+    declared_omissions: Mapping[str, tuple[str, ...]],
+) -> dict[str, tuple[str, ...]]:
+    target_only = label_symbols - feature_symbols
+    if target_only:
+        raise ValueError("Target symbols absent from Feature owner")
+    declared_symbols = set(declared_omissions)
+    if declared_symbols - feature_symbols or declared_symbols & label_symbols:
+        raise ValueError("Historical target omission owner projection drifted")
+    omitted = feature_symbols - label_symbols
+    return {
+        symbol: declared_omissions.get(
+            symbol,
+            ("PERSISTED_TARGET_OMISSION_NOT_DECLARED",),
+        )
+        for symbol in sorted(omitted)
+    }
+
+
 def _persisted_feature_projection(
     component: HistoricalSessionComponent,
     bars_by_id: Mapping[str, HistoricalNormalizedBar],
@@ -2153,6 +2242,17 @@ def _correctness_status(
     if not complete:
         return AlphaCorrectnessStatus.PARTIALLY_REPRODUCED
     return AlphaCorrectnessStatus.CORRECTNESS_SUPPORTED
+
+
+def _unavailable_target_discrepancies(
+    reasons: set[str],
+) -> tuple[str, ...]:
+    discrepancies: set[str] = set()
+    if "PERSISTED_TARGET_SOURCE_NOT_REPRODUCIBLE" in reasons:
+        discrepancies.add("PERSISTED_TARGET_SOURCE_NOT_REPRODUCIBLE")
+    if "PERSISTED_TARGET_OMISSION_NOT_DECLARED" in reasons:
+        discrepancies.add("PERSISTED_TARGET_SYMBOL_MISSING")
+    return tuple(sorted(discrepancies))
 
 
 def _quantize(value: Decimal) -> Decimal:

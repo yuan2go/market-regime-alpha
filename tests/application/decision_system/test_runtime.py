@@ -626,11 +626,12 @@ def _execution_authority_counts(
         )
 
 
-def test_decision_system_is_the_unique_final_continuous_child() -> None:
+def test_decision_system_precedes_strategy_and_daily_alpha_projection() -> None:
     assert tuple(ContinuousChildKind).count(ContinuousChildKind.DECISION_SYSTEM) == 1
-    assert CONTINUOUS_CHILD_ORDER[-2:] == (
+    assert CONTINUOUS_CHILD_ORDER[-3:] == (
         ContinuousChildKind.DECISION_SYSTEM,
         ContinuousChildKind.STRATEGY_RUNTIME,
+        ContinuousChildKind.DAILY_ALPHA_SNAPSHOT,
     )
 
 

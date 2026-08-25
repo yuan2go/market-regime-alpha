@@ -462,6 +462,7 @@ def test_existing_historical_runner_actively_materializes_and_replays(
     outcome = component_repository.get(outcome_reference)
     assert outcome.payload["available_label_count"] == (len(STOCKS) - 1) * 6
     assert outcome.payload["not_estimated_label_count"] == 6
+    assert outcome.payload["target_omissions"] == []
     assert len(outcome.payload["labels"]) == len(STOCKS) * 6
     assert len(outcome.payload["strategy_economics"]) == (len(STOCKS) - 1) * 6
     assert outcome.payload["corporate_action_coverage"] == {

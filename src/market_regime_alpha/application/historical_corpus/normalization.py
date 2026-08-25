@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from collections import Counter
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
+from pathlib import Path
 from typing import Mapping
 from zoneinfo import ZoneInfo
 
@@ -15,11 +17,20 @@ from market_regime_alpha.application.historical_corpus.contracts import (
     HistoricalArtifactKind,
     HistoricalCorpusCoverage,
     HistoricalDataOwner,
+    HistoricalDataPartition,
     HistoricalListingStatus,
     HistoricalNormalizedBar,
     HistoricalRawRequest,
     HistoricalTradingStatus,
     build_partitions,
+)
+from market_regime_alpha.application.historical_corpus.artifacts import (
+    HistoricalPackageIndex,
+    read_verified_historical_partition,
+)
+from market_regime_alpha.application.historical_corpus.staged_package import (
+    HistoricalOwnerMetadata,
+    StagedHistoricalPackageWriter,
 )
 from market_regime_alpha.application.research_validation.common import (
     ValidationArtifactReference,
@@ -33,6 +44,128 @@ _SHANGHAI = ZoneInfo("Asia/Shanghai")
 
 class HistoricalNormalizationError(ValueError):
     """Raised when deterministic normalization cannot preserve correctness."""
+
+
+@dataclass(frozen=True, slots=True)
+class _NormalizationBatch:
+    bars: tuple[HistoricalNormalizedBar, ...]
+    successful_request_count: int
+    source_row_count: int
+    missing_field_counts: tuple[tuple[str, int], ...]
+    failure_counts: tuple[tuple[str, int], ...]
+
+
+def normalize_baostock_requests(
+    requests: tuple[HistoricalRawRequest, ...],
+) -> tuple[HistoricalNormalizedBar, ...]:
+    """Normalize one bounded Raw request partition."""
+
+    return _normalize_request_batch(requests).bars
+
+
+def normalize_historical_package(
+    *,
+    raw: HistoricalPackageIndex,
+    artifact_root: Path,
+) -> HistoricalPackageIndex:
+    """Normalize a physical Raw owner one immutable partition at a time."""
+
+    if (
+        raw.artifact_kind is not HistoricalArtifactKind.RAW_PROVIDER_ARCHIVE
+        or raw.provider_id != BAOSTOCK_HISTORICAL_PROVIDER_ID
+    ):
+        raise HistoricalNormalizationError(
+            "BaoStock normalization requires exact Raw owner"
+        )
+    writer = StagedHistoricalPackageWriter(
+        artifact_root=artifact_root,
+        artifact_kind=HistoricalArtifactKind.NORMALIZED_DATASET,
+        bucket_count=raw.bucket_count,
+    )
+    observed: set[str] = set()
+    missing: Counter[str] = Counter()
+    failures: Counter[str] = Counter()
+    successful_request_count = 0
+    source_row_count = 0
+    normalized_row_count = 0
+    try:
+        for descriptor in raw.partitions:
+            partition = read_verified_historical_partition(
+                package=raw,
+                descriptor=descriptor,
+            )
+            if any(
+                not isinstance(item, HistoricalRawRequest)
+                for item in partition.records
+            ):
+                raise HistoricalNormalizationError(
+                    "Raw package contains normalized records"
+                )
+            requests = tuple(
+                item
+                for item in partition.records
+                if isinstance(item, HistoricalRawRequest)
+            )
+            batch = _normalize_request_batch(requests)
+            successful_request_count += batch.successful_request_count
+            source_row_count += batch.source_row_count
+            normalized_row_count += len(batch.bars)
+            missing.update(dict(batch.missing_field_counts))
+            failures.update(dict(batch.failure_counts))
+            observed.update(item.symbol for item in batch.bars)
+            if not batch.bars:
+                continue
+            writer.add_partition(
+                HistoricalDataPartition.create(
+                    artifact_kind=HistoricalArtifactKind.NORMALIZED_DATASET,
+                    timeframe=descriptor.timeframe,
+                    symbol_bucket=descriptor.symbol_bucket,
+                    bucket_count=descriptor.bucket_count,
+                    records=batch.bars,
+                )
+            )
+        if normalized_row_count == 0:
+            raise HistoricalNormalizationError("normalized Dataset has no valid rows")
+        if (
+            source_row_count != raw.coverage.source_row_count
+            or successful_request_count != raw.coverage.successful_request_count
+        ):
+            raise HistoricalNormalizationError(
+                "Raw package coverage diverges from physical requests"
+            )
+        limitations = tuple(
+            sorted(
+                {
+                    "BAOSTOCK_HISTORICAL_NORMALIZATION",
+                    "HISTORICAL_LISTING_STATUS_NOT_PROVIDED",
+                    "MINUTE_ST_STATUS_NOT_PROVIDED",
+                    *raw.limitations,
+                }
+            )
+        )
+        return writer.finalize(
+            HistoricalOwnerMetadata(
+                provider_id=raw.provider_id,
+                normalization_version=BAOSTOCK_NORMALIZATION_VERSION,
+                parent_reference=raw.reference,
+                created_at=raw.created_at,
+                retrieved_at=raw.retrieved_at,
+                coverage=HistoricalCorpusCoverage(
+                    expected_symbols=raw.coverage.expected_symbols,
+                    observed_symbols=tuple(sorted(observed)),
+                    expected_request_count=raw.coverage.expected_request_count,
+                    successful_request_count=successful_request_count,
+                    source_row_count=source_row_count,
+                    normalized_row_count=normalized_row_count,
+                    missing_field_counts=tuple(sorted(missing.items())),
+                    failure_counts=tuple(sorted(failures.items())),
+                ),
+                limitations=limitations,
+            )
+        )
+    except BaseException:
+        writer.abort()
+        raise
 
 
 def normalize_baostock_archive(raw_owner: HistoricalDataOwner) -> HistoricalDataOwner:
@@ -110,6 +243,55 @@ def normalize_baostock_archive(raw_owner: HistoricalDataOwner) -> HistoricalData
             failure_counts=tuple(sorted(failures.items())),
         ),
         limitations=tuple(sorted(limitations)),
+    )
+
+
+def _normalize_request_batch(
+    requests: tuple[HistoricalRawRequest, ...],
+) -> _NormalizationBatch:
+    bars: list[HistoricalNormalizedBar] = []
+    failures: Counter[str] = Counter()
+    missing: Counter[str] = Counter()
+    source_row_count = 0
+    for request in requests:
+        source_row_count += len(request.rows)
+        if not request.succeeded:
+            failures[f"PROVIDER_ERROR::{request.provider_error_code}"] += 1
+            continue
+        for row_number, raw_row in enumerate(request.rows, 1):
+            try:
+                bar = _normalize_row(request, raw_row, row_number)
+            except HistoricalNormalizationError as exc:
+                failures[f"ROW_REJECTED::{exc}"] += 1
+                continue
+            bars.append(bar)
+            missing.update(bar.missing_fields)
+    duplicate_keys = Counter(
+        (item.symbol, item.timeframe, item.event_start) for item in bars
+    )
+    duplicate_count = sum(
+        count - 1 for count in duplicate_keys.values() if count > 1
+    )
+    if duplicate_count:
+        raise HistoricalNormalizationError(
+            f"duplicate normalized event facts: {duplicate_count}"
+        )
+    return _NormalizationBatch(
+        bars=tuple(
+            sorted(
+                bars,
+                key=lambda item: (
+                    item.market_date,
+                    item.symbol,
+                    item.event_start,
+                    str(item.bar_id),
+                ),
+            )
+        ),
+        successful_request_count=sum(item.succeeded for item in requests),
+        source_row_count=source_row_count,
+        missing_field_counts=tuple(sorted(missing.items())),
+        failure_counts=tuple(sorted(failures.items())),
     )
 
 
@@ -234,6 +416,7 @@ def _decimal(
         if allow_blank:
             return None
         raise HistoricalNormalizationError(f"{label}_MISSING")
+    assert value is not None
     try:
         parsed = Decimal(value)
     except InvalidOperation as exc:
@@ -255,4 +438,6 @@ __all__ = [
     "BAOSTOCK_NORMALIZATION_VERSION",
     "HistoricalNormalizationError",
     "normalize_baostock_archive",
+    "normalize_baostock_requests",
+    "normalize_historical_package",
 ]

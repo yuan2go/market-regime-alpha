@@ -20,6 +20,7 @@ from market_regime_alpha.application.historical_corpus.artifacts import (
     load_verified_historical_package,
     publish_historical_package,
     scan_historical_package,
+    verify_historical_package_files,
 )
 from market_regime_alpha.application.historical_corpus.contracts import (
     HistoricalArtifactKind,
@@ -84,15 +85,38 @@ class PostgresHistoricalCorpusRepository:
             raise HistoricalCorpusIntegrityError(
                 "Historical package changed between verification and registration"
             )
-        owner = verified.owner
+        index = load_historical_package_index(verified.root)
+        if index.reference != verified.owner.reference:
+            raise HistoricalCorpusIntegrityError(
+                "Historical full package and index identities diverged"
+            )
+        self._register_index_projection(index)
+
+    def register_index(
+        self,
+        package: HistoricalPackageIndex,
+    ) -> HistoricalPackageIndex:
+        """Register a fully verified descriptor package without decoding its rows."""
+
+        verified = load_historical_package_index(package.root)
+        if verified != package:
+            raise HistoricalCorpusIntegrityError(
+                "Historical package changed between verification and registration"
+            )
+        verify_historical_package_files(verified)
+        self._register_index_projection(verified)
+        return self.open_index(verified.reference)
+
+    def _register_index_projection(self, package: HistoricalPackageIndex) -> None:
+        manifest = dict(package.manifest)
         locator = encode_artifact_root_locator(
             artifact_root=self._artifact_root,
-            path=verified.root,
+            path=package.root,
         )
-        checksum_by_path = dict(verified.checksums)
+        checksum_by_path = dict(package.checksums)
 
         def operation(connection: Any) -> None:
-            if owner.parent_reference is not None:
+            if package.parent_reference is not None:
                 parent = connection.execute(
                     """
                     SELECT artifact_kind, content_hash
@@ -100,11 +124,14 @@ class PostgresHistoricalCorpusRepository:
                     WHERE owner_id = %s AND content_hash = %s
                     """,
                     (
-                        str(owner.parent_reference.artifact_id),
-                        owner.parent_reference.content_hash,
+                        str(package.parent_reference.artifact_id),
+                        package.parent_reference.content_hash,
                     ),
                 ).fetchone()
-                if parent is None or str(parent[0]) != owner.parent_reference.artifact_kind:
+                if (
+                    parent is None
+                    or str(parent[0]) != package.parent_reference.artifact_kind
+                ):
                     raise HistoricalCorpusIntegrityError(
                         "Historical parent owner reference mismatch"
                     )
@@ -123,33 +150,33 @@ class PostgresHistoricalCorpusRepository:
                 ) ON CONFLICT (owner_id) DO NOTHING
                 """,
                 (
-                    str(owner.owner_id),
-                    owner.content_hash,
-                    owner.artifact_kind.value,
-                    owner.provider_id,
-                    owner.schema_version,
-                    owner.normalization_version,
+                    str(package.owner_id),
+                    package.content_hash,
+                    package.artifact_kind.value,
+                    package.provider_id,
+                    str(manifest["schema_version"]),
+                    package.normalization_version,
                     (
-                        str(owner.parent_reference.artifact_id)
-                        if owner.parent_reference is not None
+                        str(package.parent_reference.artifact_id)
+                        if package.parent_reference is not None
                         else None
                     ),
                     (
-                        owner.parent_reference.content_hash
-                        if owner.parent_reference is not None
+                        package.parent_reference.content_hash
+                        if package.parent_reference is not None
                         else None
                     ),
                     locator,
-                    verified.physical_hash,
-                    owner.availability_basis,
-                    owner.data_eligibility,
-                    owner.formal_pit_status,
-                    owner.first_market_date,
-                    owner.last_market_date,
-                    owner.retrieved_at,
-                    owner.created_at,
-                    Jsonb(owner.coverage.to_canonical_dict()),
-                    Jsonb(owner.to_canonical_dict()),
+                    package.physical_hash,
+                    str(manifest["availability_basis"]),
+                    str(manifest["data_eligibility"]),
+                    str(manifest["formal_pit_status"]),
+                    package.first_market_date,
+                    package.last_market_date,
+                    package.retrieved_at,
+                    package.created_at,
+                    Jsonb(package.coverage.to_canonical_dict()),
+                    Jsonb(manifest),
                 ),
             )
             stored = connection.execute(
@@ -158,20 +185,20 @@ class PostgresHistoricalCorpusRepository:
                        manifest_json
                 FROM historical_corpus_owner WHERE owner_id = %s
                 """,
-                (str(owner.owner_id),),
+                (str(package.owner_id),),
             ).fetchone()
             if stored is None or (
-                str(stored[0]) != owner.content_hash
-                or str(stored[1]) != owner.artifact_kind.value
+                str(stored[0]) != package.content_hash
+                or str(stored[1]) != package.artifact_kind.value
                 or str(stored[2]) != locator
-                or str(stored[3]) != verified.physical_hash
+                or str(stored[3]) != package.physical_hash
                 or not isinstance(stored[4], Mapping)
-                or dict(stored[4]) != owner.to_canonical_dict()
+                or dict(stored[4]) != manifest
             ):
                 raise HistoricalCorpusIntegrityError(
                     "Historical PostgreSQL owner identity conflict"
                 )
-            for ordinal, partition in enumerate(owner.partitions, 1):
+            for ordinal, partition in enumerate(package.partitions, 1):
                 checksum = checksum_by_path.get(partition.relative_path)
                 if checksum is None:
                     raise HistoricalCorpusIntegrityError(
@@ -191,8 +218,8 @@ class PostgresHistoricalCorpusRepository:
                     ) ON CONFLICT (owner_id, ordinal) DO NOTHING
                     """,
                     (
-                        str(owner.owner_id),
-                        owner.content_hash,
+                        str(package.owner_id),
+                        package.content_hash,
                         ordinal,
                         str(partition.partition_id),
                         partition.content_hash,
@@ -215,7 +242,7 @@ class PostgresHistoricalCorpusRepository:
                 WHERE owner_id = %s AND owner_hash = %s
                 ORDER BY ordinal
                 """,
-                (str(owner.owner_id), owner.content_hash),
+                (str(package.owner_id), package.content_hash),
             ).fetchall()
             expected = tuple(
                 (
@@ -223,7 +250,7 @@ class PostgresHistoricalCorpusRepository:
                     partition.reference_dict(),
                     checksum_by_path[partition.relative_path],
                 )
-                for ordinal, partition in enumerate(owner.partitions, 1)
+                for ordinal, partition in enumerate(package.partitions, 1)
             )
             actual = tuple(
                 (int(row[0]), dict(row[1]), str(row[2])) for row in rows

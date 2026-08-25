@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 from psycopg.errors import UniqueViolation
@@ -14,6 +15,12 @@ from market_regime_alpha.application.historical_corpus.materialization_contracts
 from market_regime_alpha.application.historical_corpus.postgres_materialization import (
     HistoricalMaterializationConflict,
     PostgresHistoricalMaterializationRepository,
+)
+from market_regime_alpha.application.historical_corpus import (
+    session_component_artifacts,
+)
+from market_regime_alpha.application.historical_corpus.panel_projection import (
+    panel_research_features,
 )
 from market_regime_alpha.application.continuous_research.journal import (
     RuntimeArtifactReference,
@@ -33,7 +40,7 @@ from market_regime_alpha.application.research_validation.common import (
     ValidationArtifactReference,
 )
 from market_regime_alpha.core.identity import ArtifactId
-from market_regime_alpha.evidence.canonical import canonical_hash
+from market_regime_alpha.evidence.canonical import canonical_hash, canonical_json
 from market_regime_alpha.universe.postgres_runtime_scope import PostgresRuntimeScopeRepository
 from tests.application.historical_research.test_contracts import CREATED_AT, _command
 from tests.persistence.postgres.test_historical_research_journal import MutableClock
@@ -95,6 +102,432 @@ def test_session_component_is_idempotent_owner_resolved_and_append_only(
         match="reference kind mismatch",
     ):
         repository.get(wrong_reference)
+
+
+def test_large_component_payload_is_content_addressed_outside_postgres(
+    postgres_factory,
+    tmp_path: Path,
+) -> None:
+    command = _command(sessions=(date(2020, 1, 2),))
+    request = command.session_request(date(2020, 1, 2))
+    PostgresRuntimeScopeRepository(postgres_factory).register_policy(_policy())
+    PostgresHistoricalResearchJournal(
+        postgres_factory,
+        clock=MutableClock(CREATED_AT),
+    ).create_or_get(command)
+    repository = PostgresHistoricalMaterializationRepository(
+        postgres_factory,
+        artifact_root=tmp_path,
+    )
+    source = ValidationArtifactReference(
+        "NORMALIZED_DATASET",
+        ArtifactId("normalized-owner-external"),
+        canonical_hash({"normalized": "external"}),
+    )
+    component = HistoricalSessionComponent.create(
+        run_id=command.run_id,
+        session_id=request.session_id,
+        trading_date=request.trading_date,
+        component_kind=HistoricalComponentKind.FEATURE,
+        source_max_event_time=request.decision_time,
+        materialized_at=request.materialized_at,
+        source_references=(source,),
+        payload={"features": [{"symbol": "600000.SH", "value": "1"}] * 100},
+    )
+
+    repository.put(component=component, ordinal=1)
+    repository.put(component=component, ordinal=1)
+
+    with postgres_factory.connection(read_only=True) as connection:
+        row = connection.execute(
+            """
+            SELECT payload_storage, payload_locator, payload_physical_hash,
+                   payload_size_bytes, payload_logical_size_bytes,
+                   payload_json->>'schema_version'
+            FROM historical_corpus_session_component
+            WHERE component_id = %s
+            """,
+            (str(component.component_id),),
+        ).fetchone()
+    assert row is not None
+    assert row[0] == "ARTIFACT_PHYSICAL_V1"
+    assert str(row[1]).startswith("artifact-root-v1/")
+    assert str(row[2]).startswith("sha256:")
+    assert 0 < int(row[3]) < int(row[4])
+    assert row[5] == "historical-session-component-external-projection/v1"
+    assert repository.get(component.reference) == component
+
+    payload_path = tmp_path.joinpath(*str(row[1]).split("/")[1:])
+    corrupted = bytearray(payload_path.read_bytes())
+    corrupted[-1] ^= 1
+    payload_path.write_bytes(corrupted)
+    with pytest.raises(
+        HistoricalMaterializationConflict,
+        match="physical hash mismatch",
+    ):
+        repository.get(component.reference)
+
+
+def test_idempotent_external_put_preserves_existing_physical_encoding(
+    postgres_factory,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    command = _command(sessions=(date(2020, 1, 2),))
+    request = command.session_request(date(2020, 1, 2))
+    PostgresRuntimeScopeRepository(postgres_factory).register_policy(_policy())
+    PostgresHistoricalResearchJournal(
+        postgres_factory,
+        clock=MutableClock(CREATED_AT),
+    ).create_or_get(command)
+    repository = PostgresHistoricalMaterializationRepository(
+        postgres_factory,
+        artifact_root=tmp_path,
+    )
+    component = HistoricalSessionComponent.create(
+        run_id=command.run_id,
+        session_id=request.session_id,
+        trading_date=request.trading_date,
+        component_kind=HistoricalComponentKind.FEATURE,
+        source_max_event_time=request.decision_time,
+        materialized_at=request.materialized_at,
+        source_references=(
+            ValidationArtifactReference(
+                "NORMALIZED_DATASET",
+                ArtifactId("normalized-owner-existing-encoding"),
+                canonical_hash({"normalized": "existing-encoding"}),
+            ),
+        ),
+        payload={"features": [{"symbol": "600000.SH", "value": "1"}] * 100},
+    )
+    repository.put(component=component, ordinal=1)
+    def changed_encoder(**kwargs):
+        del kwargs
+        raise AssertionError("existing immutable payload must not be re-encoded")
+
+    monkeypatch.setattr(
+        session_component_artifacts,
+        "_encode_physical",
+        changed_encoder,
+    )
+
+    def unexpected_transaction(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError("existing immutable owner must not start a write transaction")
+
+    monkeypatch.setattr(type(postgres_factory), "run_transaction", unexpected_transaction)
+
+    assert repository.put(component=component, ordinal=1) == component
+    assert repository.get(component.reference) == component
+
+
+def test_idempotent_existing_component_batch_is_read_only(
+    postgres_factory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    command = _command(sessions=(date(2020, 1, 2),))
+    request = command.session_request(date(2020, 1, 2))
+    PostgresRuntimeScopeRepository(postgres_factory).register_policy(_policy())
+    PostgresHistoricalResearchJournal(
+        postgres_factory,
+        clock=MutableClock(CREATED_AT),
+    ).create_or_get(command)
+    repository = PostgresHistoricalMaterializationRepository(postgres_factory)
+    source = ValidationArtifactReference(
+        "NORMALIZED_DATASET",
+        ArtifactId("normalized-owner-existing-batch"),
+        canonical_hash({"normalized": "existing-batch"}),
+    )
+    components = tuple(
+        HistoricalSessionComponent.create(
+            run_id=command.run_id,
+            session_id=request.session_id,
+            trading_date=request.trading_date,
+            component_kind=kind,
+            source_max_event_time=request.decision_time,
+            materialized_at=request.materialized_at,
+            source_references=(source,),
+            payload={"kind": kind.value},
+        )
+        for kind in (
+            HistoricalComponentKind.CANDIDATE,
+            HistoricalComponentKind.SIGNAL,
+        )
+    )
+    items = tuple((component, ordinal) for ordinal, component in enumerate(components, 1))
+    repository.put_many(items)
+
+    def unexpected_transaction(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError("existing immutable batch must not start a write transaction")
+
+    monkeypatch.setattr(type(postgres_factory), "run_transaction", unexpected_transaction)
+
+    assert repository.put_many(items) == components
+
+
+def test_external_outcome_projection_remains_queryable_without_duplicate_label_json(
+    postgres_factory,
+    tmp_path: Path,
+) -> None:
+    sessions = (date(2020, 1, 2), date(2020, 1, 3), date(2020, 1, 4))
+    command = _command(sessions=sessions)
+    PostgresRuntimeScopeRepository(postgres_factory).register_policy(_policy())
+    PostgresHistoricalResearchJournal(
+        postgres_factory,
+        clock=MutableClock(CREATED_AT),
+    ).create_or_get(command)
+    repository = PostgresHistoricalMaterializationRepository(
+        postgres_factory,
+        artifact_root=tmp_path,
+    )
+    source = ValidationArtifactReference(
+        "NORMALIZED_DATASET",
+        ArtifactId("external-outcome-source"),
+        canonical_hash({"external": "outcome-source"}),
+    )
+    target = RuntimeArtifactReference(
+        "OUTCOME_TARGET_DEFINITION",
+        ArtifactId("external-outcome-target"),
+        canonical_hash({"external": "outcome-target"}),
+    )
+    secondary_target = RuntimeArtifactReference(
+        "OUTCOME_TARGET_DEFINITION",
+        ArtifactId("external-outcome-secondary-target"),
+        canonical_hash({"external": "outcome-secondary-target"}),
+    )
+    labels: list[TargetOutcomeLabel] = []
+    for trading_date in sessions:
+        request = command.session_request(trading_date)
+        start = datetime.combine(trading_date, time(10, 30), tzinfo=UTC)
+        end = start + timedelta(days=1)
+        label = TargetOutcomeLabel.create(
+            symbol="600000.SH",
+            target=target,
+            label_interval_start=start,
+            label_interval_end=end,
+            decision_reference_price=Decimal("10"),
+            checkpoint_price=Decimal("10.1"),
+            mfe=Decimal("0.02"),
+            mae=Decimal("-0.01"),
+            barrier_passages=(),
+            barrier_ordering=BarrierOrderingOutcome.NOT_APPLICABLE,
+            market_conditions=(OutcomeMarketCondition.TRADING,),
+            availability_status=OutcomeAvailabilityStatus.COMPLETE,
+            outcome_available_at=end,
+            reason_codes=("TARGET_COMPLETE",),
+        )
+        labels.append(label)
+        secondary_label = TargetOutcomeLabel.create(
+            symbol="600000.SH",
+            target=secondary_target,
+            label_interval_start=start,
+            label_interval_end=end,
+            decision_reference_price=Decimal("10"),
+            checkpoint_price=Decimal("10.2"),
+            mfe=Decimal("0.03"),
+            mae=Decimal("-0.01"),
+            barrier_passages=(),
+            barrier_ordering=BarrierOrderingOutcome.NOT_APPLICABLE,
+            market_conditions=(OutcomeMarketCondition.TRADING,),
+            availability_status=OutcomeAvailabilityStatus.COMPLETE,
+            outcome_available_at=end,
+            reason_codes=("TARGET_COMPLETE",),
+        )
+        repository.put(
+            component=HistoricalSessionComponent.create(
+                run_id=command.run_id,
+                session_id=request.session_id,
+                trading_date=trading_date,
+                component_kind=HistoricalComponentKind.OUTCOME,
+                source_max_event_time=end,
+                materialized_at=request.materialized_at,
+                source_references=(source,),
+                payload={
+                    "target_protocol": {
+                        "targets": [
+                            {
+                                "target_id": str(target.artifact_id),
+                                "canonical_horizon": {
+                                    "evaluation_timestamp": {
+                                        "checkpoint": "10:30"
+                                    }
+                                },
+                            },
+                            {
+                                "target_id": str(secondary_target.artifact_id),
+                                "canonical_horizon": {
+                                    "evaluation_timestamp": {
+                                        "checkpoint": "CLOSE"
+                                    }
+                                },
+                            },
+                        ]
+                    },
+                    "labels": [
+                        label.to_canonical_dict(),
+                        secondary_label.to_canonical_dict(),
+                    ],
+                },
+            ),
+            ordinal=1,
+        )
+
+    with postgres_factory.connection(read_only=True) as connection:
+        projection_count = connection.execute(
+            "SELECT count(*) FROM historical_corpus_outcome_label"
+        ).fetchone()
+        projections = connection.execute(
+            """
+            SELECT component.payload_locator, locator.payload_json
+            FROM historical_corpus_session_component AS component
+            JOIN historical_corpus_outcome_forecast_index AS locator
+              ON locator.component_id = component.component_id
+             AND locator.component_hash = component.component_hash
+            WHERE component.component_kind = 'OUTCOME'
+            ORDER BY component.trading_date
+            """
+        ).fetchall()
+    assert projection_count == (0,)
+    assert len(projections) == 3
+    assert all(
+        tmp_path.joinpath(*str(row[0]).split("/")[1:])
+        .read_bytes()
+        .startswith(b"MRAJZ1\n")
+        for row in projections
+    )
+    assert all(
+        set(dict(row[1]))
+        == {
+            "component_hash",
+            "component_id",
+            "labels",
+            "schema_version",
+            "target_id",
+            "trading_date",
+        }
+        and len(dict(row[1])["labels"]) == 1
+        for row in projections
+    )
+    with postgres_factory.connection() as connection:
+        connection.execute("TRUNCATE historical_corpus_outcome_forecast_index")
+    assert repository.reindex_external_outcome_labels(run_id=command.run_id) == (
+        3,
+        3,
+    )
+    assert repository.reindex_external_outcome_labels(run_id=command.run_id) == (
+        0,
+        0,
+    )
+
+    oldest_path = tmp_path.joinpath(*str(projections[0][0]).split("/")[1:])
+    corrupted = bytearray(oldest_path.read_bytes())
+    corrupted[-1] ^= 1
+    oldest_path.write_bytes(corrupted)
+    projected = repository.list_outcome_labels_before(
+        run_id=command.run_id,
+        before=date(2020, 1, 5),
+        symbol="600000.SH",
+        target_id=target.artifact_id,
+        maximum_labels=2,
+    )
+    assert tuple(item[1] for item in projected) == tuple(labels[-2:])
+
+
+def test_external_panel_reuses_exact_feature_owner_without_payload_duplication(
+    postgres_factory,
+    tmp_path: Path,
+) -> None:
+    command = _command(sessions=(date(2020, 1, 2),))
+    request = command.session_request(date(2020, 1, 2))
+    PostgresRuntimeScopeRepository(postgres_factory).register_policy(_policy())
+    PostgresHistoricalResearchJournal(
+        postgres_factory,
+        clock=MutableClock(CREATED_AT),
+    ).create_or_get(command)
+    repository = PostgresHistoricalMaterializationRepository(
+        postgres_factory,
+        artifact_root=tmp_path,
+    )
+    source = ValidationArtifactReference(
+        "NORMALIZED_DATASET",
+        ArtifactId("panel-feature-source"),
+        canonical_hash({"panel": "feature-source"}),
+    )
+    feature_record = {
+        "symbol": "600000.SH",
+        "feature_id": "frozen.factor.v1",
+        "timeframe": "MINUTE_5",
+        "available_at": request.decision_time.isoformat(),
+        "configuration_id": "frozen-feature-configuration",
+        "configuration_hash": canonical_hash({"configuration": "frozen"}),
+        "limitations": [],
+        "values": [
+            {
+                "output_id": f"frozen-{index}",
+                "value": canonical_hash({"feature-output": index}),
+                "state": "AVAILABLE",
+                "available_at": request.decision_time.isoformat(),
+                "source_bar_count": 0,
+                "source_bar_lineage_hash": canonical_hash(
+                    {"feature-lineage": index}
+                ),
+                "normalized_source_bar_ids": [],
+                "normalized_source_bar_hashes": [],
+                "source_event_start": None,
+                "source_event_end": None,
+                "missing_reason_codes": [],
+            }
+            for index in range(200)
+        ],
+    }
+    feature = HistoricalSessionComponent.create(
+        run_id=command.run_id,
+        session_id=request.session_id,
+        trading_date=request.trading_date,
+        component_kind=HistoricalComponentKind.FEATURE,
+        source_max_event_time=request.decision_time,
+        materialized_at=request.materialized_at,
+        source_references=(source,),
+        payload={"features": [feature_record]},
+    )
+    projected_features = [
+        dict(item) for item in panel_research_features(feature)["600000.SH"]
+    ]
+    panel = HistoricalSessionComponent.create(
+        run_id=command.run_id,
+        session_id=request.session_id,
+        trading_date=request.trading_date,
+        component_kind=HistoricalComponentKind.RESEARCH_PANEL,
+        source_max_event_time=request.decision_time,
+        materialized_at=request.materialized_at,
+        source_references=(feature.reference,),
+        payload={
+            "rows": [
+                {
+                    "symbol": "600000.SH",
+                    "research_features": projected_features,
+                }
+            ]
+        },
+    )
+
+    repository.put(component=feature, ordinal=1)
+    repository.put(component=panel, ordinal=2)
+
+    assert repository.get(panel.reference) == panel
+    with postgres_factory.connection(read_only=True) as connection:
+        row = connection.execute(
+            """
+            SELECT payload_size_bytes, payload_logical_size_bytes
+            FROM historical_corpus_session_component
+            WHERE component_id = %s
+            """,
+            (str(panel.component_id),),
+        ).fetchone()
+    assert row is not None
+    assert int(row[0]) * 4 < int(row[1])
+    assert int(row[1]) == len(canonical_json(panel.to_canonical_dict()))
 
 
 def test_prior_outcome_projection_keeps_newest_bounded_window(

@@ -391,7 +391,10 @@ def build_postgres_phase_ii_operator(
     validation = PostgresResearchValidationRepository(factory)
     service = HistoricalPhaseIIResearchService(
         PostgresHistoricalEvidenceRepository(factory),
-        components=PostgresHistoricalMaterializationRepository(factory),
+        components=PostgresHistoricalMaterializationRepository(
+            factory,
+            artifact_root=artifact_root,
+        ),
         corpus=PostgresHistoricalCorpusRepository(
             factory,
             artifact_root=artifact_root,

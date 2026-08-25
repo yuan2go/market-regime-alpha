@@ -58,6 +58,15 @@ _FactQueryResponse = tuple[
 
 
 @dataclass(frozen=True, slots=True)
+class _FactQuerySpec:
+    product: str
+    locator: str
+    parameters: tuple[tuple[str, str], ...]
+    scope: tuple[str, ...]
+    query: Callable[[], Any]
+
+
+@dataclass(frozen=True, slots=True)
 class HistoricalSecurityFactsAcquisition:
     provider_result: PublicCompositeProviderResult
     source_manifest: SourceManifest
@@ -75,6 +84,40 @@ class HistoricalSecurityFactsAcquisition:
             raise ValueError("Historical fact acquisition counts cannot be negative")
         if self.fact_counts != tuple(sorted(self.fact_counts)):
             raise ValueError("Historical fact counts must be ordered")
+
+
+@dataclass(frozen=True, slots=True)
+class HistoricalSecurityFactsPrefetch:
+    expected_query_count: int
+    assigned_query_count: int
+    worker_index: int
+    worker_count: int
+
+    def __post_init__(self) -> None:
+        if self.expected_query_count <= 0 or self.assigned_query_count <= 0:
+            raise ValueError("Historical fact prefetch requires assigned queries")
+        assigned = _assigned_fact_query_indices(
+            total=self.expected_query_count,
+            worker_index=self.worker_index,
+            worker_count=self.worker_count,
+        )
+        if self.assigned_query_count != len(assigned):
+            raise ValueError("Historical fact prefetch assignment count drifted")
+
+
+def _assigned_fact_query_indices(
+    *,
+    total: int,
+    worker_index: int,
+    worker_count: int,
+) -> tuple[int, ...]:
+    if total <= 0:
+        raise ValueError("Historical fact query total must be positive")
+    if worker_count <= 0:
+        raise ValueError("Historical fact worker count must be positive")
+    if not 0 <= worker_index < worker_count:
+        raise ValueError("Historical fact worker index is outside worker count")
+    return tuple(range(worker_index, total, worker_count))
 
 
 class BaoStockHistoricalSecurityFactsClient:
@@ -109,21 +152,18 @@ class BaoStockHistoricalSecurityFactsClient:
             raise ValueError("Historical fact cohort dates must be ordered")
         if start_date > end_date:
             raise ValueError("Historical fact range is reversed")
-        years = tuple(range(start_date.year - 1, end_date.year + 1))
-        prior_annual_period = (start_date.year - 1, 4)
-        profit_periods = tuple(
-            (year, quarter)
-            for year in years
-            for quarter in range(1, 5)
-            if (year, quarter) == prior_annual_period or start_date.replace(month=1, day=1) <= _quarter_end(year, quarter) <= end_date
-        )
-        expected_queries = len(cohort_dates) + len(symbols) * len(profit_periods) + len(symbols) + len(symbols) * len(years)
-        if expected_queries > self._maximum_source_queries:
-            raise ValueError("Historical fact acquisition exceeds declared query ceiling")
         try:
             import baostock as bs
         except ImportError as exc:
             raise AShareDataError("baostock is not installed") from exc
+        specs = _historical_fact_query_specs(
+            bs,
+            symbols=symbols,
+            cohort_dates=cohort_dates,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        self._verify_query_ceiling(len(specs))
         previous_timeout = socket.getdefaulttimeout()
         socket.setdefaulttimeout(self._timeout_seconds)
         try:
@@ -134,9 +174,6 @@ class BaoStockHistoricalSecurityFactsClient:
                 raise AShareDataError(f"BaoStock login failed: {login.error_msg}")
             try:
                 responses: list[_FactQueryResponse] = []
-                parameters: tuple[tuple[str, str], ...]
-                scope: tuple[str, ...]
-
                 def fetch(
                     *,
                     product: str,
@@ -155,129 +192,25 @@ class BaoStockHistoricalSecurityFactsClient:
                         query=query,
                     )
 
-                for cohort_date in cohort_dates:
-                    product = "query_stock_industry:effective-date:v1"
-                    locator = f"baostock://query-stock-industry/{cohort_date.isoformat()}"
-                    parameters = (("date", cohort_date.isoformat()),)
-                    scope = ("A_SHARE_SECURITIES",)
+                for spec in specs:
                     requested_at, retrieved_at, response = fetch(
-                        product=product,
-                        locator=locator,
-                        parameters=parameters,
-                        scope=scope,
-                        query=partial(
-                            bs.query_stock_industry,
-                            date=cohort_date.isoformat(),
-                        ),
+                        product=spec.product,
+                        locator=spec.locator,
+                        parameters=spec.parameters,
+                        scope=spec.scope,
+                        query=spec.query,
                     )
                     responses.append(
                         (
-                            product,
-                            locator,
-                            parameters,
-                            scope,
+                            spec.product,
+                            spec.locator,
+                            spec.parameters,
+                            spec.scope,
                             requested_at,
                             retrieved_at,
                             response,
                         )
                     )
-                for symbol in symbols:
-                    code = _baostock_code(symbol)
-                    for year, quarter in profit_periods:
-                        product = "query_profit_data:quarter:v1"
-                        locator = f"baostock://query-profit-data/{code}/{year}/{quarter}"
-                        parameters = (
-                            ("code", code),
-                            ("quarter", str(quarter)),
-                            ("year", str(year)),
-                        )
-                        scope = (symbol,)
-                        requested_at, retrieved_at, response = fetch(
-                            product=product,
-                            locator=locator,
-                            parameters=parameters,
-                            scope=scope,
-                            query=partial(
-                                bs.query_profit_data,
-                                code=code,
-                                year=year,
-                                quarter=quarter,
-                            ),
-                        )
-                        responses.append(
-                            (
-                                product,
-                                locator,
-                                parameters,
-                                scope,
-                                requested_at,
-                                retrieved_at,
-                                response,
-                            )
-                        )
-                    product = "query_adjust_factor:range:v1"
-                    locator = f"baostock://query-adjust-factor/{code}/{start_date.isoformat()}/{end_date.isoformat()}"
-                    parameters = (
-                        ("code", code),
-                        ("end_date", end_date.isoformat()),
-                        ("start_date", start_date.isoformat()),
-                    )
-                    scope = (symbol,)
-                    requested_at, retrieved_at, response = fetch(
-                        product=product,
-                        locator=locator,
-                        parameters=parameters,
-                        scope=scope,
-                        query=partial(
-                            bs.query_adjust_factor,
-                            code=code,
-                            start_date=start_date.isoformat(),
-                            end_date=end_date.isoformat(),
-                        ),
-                    )
-                    responses.append(
-                        (
-                            product,
-                            locator,
-                            parameters,
-                            scope,
-                            requested_at,
-                            retrieved_at,
-                            response,
-                        )
-                    )
-                    for year in years:
-                        product = "query_dividend_data:report-year:v1"
-                        locator = f"baostock://query-dividend-data/{code}/{year}/report"
-                        parameters = (
-                            ("code", code),
-                            ("year", str(year)),
-                            ("year_type", "report"),
-                        )
-                        scope = (symbol,)
-                        requested_at, retrieved_at, response = fetch(
-                            product=product,
-                            locator=locator,
-                            parameters=parameters,
-                            scope=scope,
-                            query=partial(
-                                bs.query_dividend_data,
-                                code=code,
-                                year=str(year),
-                                yearType="report",
-                            ),
-                        )
-                        responses.append(
-                            (
-                                product,
-                                locator,
-                                parameters,
-                                scope,
-                                requested_at,
-                                retrieved_at,
-                                response,
-                            )
-                        )
             finally:
                 with redirect_stdout(StringIO()):
                     bs.logout()
@@ -290,6 +223,182 @@ class BaoStockHistoricalSecurityFactsClient:
             universe_scope_references=universe_scope_references,
             responses=tuple(responses),
         )
+
+    def prefetch(
+        self,
+        *,
+        symbols: tuple[str, ...],
+        cohort_dates: tuple[date, ...],
+        start_date: date,
+        end_date: date,
+        checkpoint_root: Path,
+        worker_index: int,
+        worker_count: int,
+    ) -> HistoricalSecurityFactsPrefetch:
+        """Fill one deterministic subset of the canonical query checkpoints.
+
+        This method deliberately cannot publish a Facts owner.  The sole
+        ``acquire`` path must reload and verify every expected checkpoint before
+        it constructs the immutable archive and PostgreSQL owner.
+        """
+
+        if not symbols or symbols != tuple(sorted(set(symbols))):
+            raise ValueError("Historical fact symbols must be ordered")
+        if not cohort_dates or cohort_dates != tuple(sorted(set(cohort_dates))):
+            raise ValueError("Historical fact cohort dates must be ordered")
+        if start_date > end_date:
+            raise ValueError("Historical fact range is reversed")
+        try:
+            import baostock as bs
+        except ImportError as exc:
+            raise AShareDataError("baostock is not installed") from exc
+        specs = _historical_fact_query_specs(
+            bs,
+            symbols=symbols,
+            cohort_dates=cohort_dates,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        self._verify_query_ceiling(len(specs))
+        assigned = _assigned_fact_query_indices(
+            total=len(specs),
+            worker_index=worker_index,
+            worker_count=worker_count,
+        )
+        previous_timeout = socket.getdefaulttimeout()
+        socket.setdefaulttimeout(self._timeout_seconds)
+        try:
+            user_id, password = baostock_credentials()
+            with redirect_stdout(StringIO()):
+                login = bs.login(user_id=user_id, password=password)
+            if getattr(login, "error_code", "0") != "0":
+                raise AShareDataError(f"BaoStock login failed: {login.error_msg}")
+            try:
+                for index in assigned:
+                    spec = specs[index]
+                    _checkpointed_fact_query(
+                        checkpoint_root=checkpoint_root,
+                        product=spec.product,
+                        locator=spec.locator,
+                        parameters=spec.parameters,
+                        scope=spec.scope,
+                        clock=self._clock,
+                        query=spec.query,
+                    )
+            finally:
+                with redirect_stdout(StringIO()):
+                    bs.logout()
+        finally:
+            socket.setdefaulttimeout(previous_timeout)
+        return HistoricalSecurityFactsPrefetch(
+            expected_query_count=len(specs),
+            assigned_query_count=len(assigned),
+            worker_index=worker_index,
+            worker_count=worker_count,
+        )
+
+    def _verify_query_ceiling(self, query_count: int) -> None:
+        if query_count > self._maximum_source_queries:
+            raise ValueError("Historical fact acquisition exceeds declared query ceiling")
+
+
+def _historical_fact_query_specs(
+    provider: Any,
+    *,
+    symbols: tuple[str, ...],
+    cohort_dates: tuple[date, ...],
+    start_date: date,
+    end_date: date,
+) -> tuple[_FactQuerySpec, ...]:
+    years = tuple(range(start_date.year - 1, end_date.year + 1))
+    prior_annual_period = (start_date.year - 1, 4)
+    profit_periods = tuple(
+        (year, quarter)
+        for year in years
+        for quarter in range(1, 5)
+        if (year, quarter) == prior_annual_period
+        or start_date.replace(month=1, day=1)
+        <= _quarter_end(year, quarter)
+        <= end_date
+    )
+    specs: list[_FactQuerySpec] = []
+    for cohort_date in cohort_dates:
+        iso_date = cohort_date.isoformat()
+        specs.append(
+            _FactQuerySpec(
+                product="query_stock_industry:effective-date:v1",
+                locator=f"baostock://query-stock-industry/{iso_date}",
+                parameters=(("date", iso_date),),
+                scope=("A_SHARE_SECURITIES",),
+                query=partial(provider.query_stock_industry, date=iso_date),
+            )
+        )
+    for symbol in symbols:
+        code = _baostock_code(symbol)
+        for year, quarter in profit_periods:
+            specs.append(
+                _FactQuerySpec(
+                    product="query_profit_data:quarter:v1",
+                    locator=(
+                        f"baostock://query-profit-data/{code}/{year}/{quarter}"
+                    ),
+                    parameters=(
+                        ("code", code),
+                        ("quarter", str(quarter)),
+                        ("year", str(year)),
+                    ),
+                    scope=(symbol,),
+                    query=partial(
+                        provider.query_profit_data,
+                        code=code,
+                        year=year,
+                        quarter=quarter,
+                    ),
+                )
+            )
+        specs.append(
+            _FactQuerySpec(
+                product="query_adjust_factor:range:v1",
+                locator=(
+                    f"baostock://query-adjust-factor/{code}/"
+                    f"{start_date.isoformat()}/{end_date.isoformat()}"
+                ),
+                parameters=(
+                    ("code", code),
+                    ("end_date", end_date.isoformat()),
+                    ("start_date", start_date.isoformat()),
+                ),
+                scope=(symbol,),
+                query=partial(
+                    provider.query_adjust_factor,
+                    code=code,
+                    start_date=start_date.isoformat(),
+                    end_date=end_date.isoformat(),
+                ),
+            )
+        )
+        for year in years:
+            specs.append(
+                _FactQuerySpec(
+                    product="query_dividend_data:report-year:v1",
+                    locator=(
+                        f"baostock://query-dividend-data/{code}/{year}/report"
+                    ),
+                    parameters=(
+                        ("code", code),
+                        ("year", str(year)),
+                        ("year_type", "report"),
+                    ),
+                    scope=(symbol,),
+                    query=partial(
+                        provider.query_dividend_data,
+                        code=code,
+                        year=str(year),
+                        yearType="report",
+                    ),
+                )
+            )
+    return tuple(specs)
 
 
 def _checkpointed_fact_query(
@@ -784,4 +893,5 @@ def _canonical_symbol(code: str) -> str:
 __all__ = [
     "BaoStockHistoricalSecurityFactsClient",
     "HistoricalSecurityFactsAcquisition",
+    "HistoricalSecurityFactsPrefetch",
 ]

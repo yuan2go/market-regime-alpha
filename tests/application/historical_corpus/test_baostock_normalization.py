@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 import json
+from pathlib import Path
 import signal
 import time
 
@@ -13,6 +14,9 @@ import market_regime_alpha.application.historical_corpus.baostock_archive as arc
 from market_regime_alpha.application.historical_corpus.baostock_archive import (
     BAOSTOCK_HISTORICAL_PROVIDER_ID,
     BaoStockHistoricalArchiveClient,
+)
+from market_regime_alpha.application.historical_corpus.artifacts import (
+    load_verified_historical_package,
 )
 from market_regime_alpha.application.historical_corpus.contracts import (
     HistoricalArtifactKind,
@@ -26,9 +30,10 @@ from market_regime_alpha.application.historical_corpus.contracts import (
 from market_regime_alpha.application.historical_corpus.normalization import (
     HistoricalNormalizationError,
     normalize_baostock_archive,
+    normalize_historical_package,
 )
 from market_regime_alpha.data_sources.a_share_bars import AShareDataError
-from market_regime_alpha.evidence.canonical import canonical_hash, canonical_json
+from market_regime_alpha.evidence.canonical import canonical_json
 from market_regime_alpha.market_data.contracts import Timeframe
 from tests.application.historical_corpus.support import raw_owner, raw_request
 
@@ -164,6 +169,45 @@ class _AuthenticationExpiresOnceBaoStock(_FakeBaoStock):
             self.expired = True
             return _Response([], [], error_code="10001001", error_msg="用户未登录")
         return super().query_history_k_data_plus(code, fields, **parameters)
+
+
+def test_package_acquisition_resumes_without_network_and_normalizes_by_partition(
+    tmp_path: Path,
+) -> None:
+    retrieved_at = datetime(2026, 8, 12, 3, 0, tzinfo=UTC)
+    values = {
+        "symbols": ("600000.SH",),
+        "start_date": date(2025, 1, 1),
+        "end_date": date(2025, 1, 31),
+        "artifact_root": tmp_path / "artifacts",
+        "checkpoint_root": tmp_path / "checkpoints",
+        "acquisition_id": "bounded-package-v1",
+        "bucket_count": 4,
+    }
+    provider = _FakeBaoStock()
+    first = BaoStockHistoricalArchiveClient(
+        clock=lambda: retrieved_at,
+        baostock_module=provider,
+    ).acquire_to_package(**values)
+    query_count = len(provider.queries)
+
+    replayed = BaoStockHistoricalArchiveClient(
+        clock=lambda: retrieved_at,
+        baostock_module=_FailingLoginBaoStock(),
+    ).acquire_to_package(**values)
+    normalized = normalize_historical_package(
+        raw=first,
+        artifact_root=tmp_path / "artifacts",
+    )
+
+    assert len(provider.queries) == query_count
+    assert replayed.reference == first.reference
+    assert replayed.physical_hash == first.physical_hash
+    assert normalized.parent_reference == first.reference
+    raw_owner_value = load_verified_historical_package(first.root).owner
+    expected_normalized = normalize_baostock_archive(raw_owner_value)
+    assert normalized.reference == expected_normalized.reference
+    assert load_verified_historical_package(normalized.root).owner == expected_normalized
 
 
 def test_acquisition_splits_requests_by_year_and_preserves_true_retrieval() -> None:
@@ -312,9 +356,53 @@ def test_acquisition_checkpoints_completed_requests_for_exact_resume(
         if path.name != "acquisition-manifest.json"
     )
     assert len(checkpoints) == 2
+    checkpoint_payload = json.loads(checkpoints[0].read_text(encoding="utf-8"))
+    assert checkpoint_payload["schema_version"] == (
+        "baostock-historical-request-checkpoint/v2"
+    )
+    assert checkpoint_payload["response_codec"] == "ZLIB_BASE64_CANONICAL_JSON"
+    assert isinstance(checkpoint_payload["response_compressed"], str)
+    assert "response" not in checkpoint_payload
+    assert '"rows"' not in checkpoints[0].read_text(encoding="utf-8")
     checkpoints[0].write_text("{}\n", encoding="utf-8")
     with pytest.raises(AShareDataError, match="identity drift"):
         client.acquire(**values)
+
+
+def test_corpus_prefetch_shards_fill_one_canonical_checkpoint_scope(
+    tmp_path,
+) -> None:
+    retrieved_at = datetime(2026, 8, 12, 3, 0, tzinfo=UTC)
+    values = {
+        "symbols": ("600000.SH",),
+        "start_date": date(2025, 1, 1),
+        "end_date": date(2025, 1, 31),
+        "bucket_count": 4,
+        "checkpoint_root": tmp_path,
+        "acquisition_id": "prefetch-shards-v1",
+    }
+    providers = (_FakeBaoStock(), _FakeBaoStock())
+
+    results = tuple(
+        BaoStockHistoricalArchiveClient(
+            clock=lambda: retrieved_at,
+            baostock_module=provider,
+        ).prefetch_to_checkpoints(
+            **values,
+            worker_index=index,
+            worker_count=2,
+        )
+        for index, provider in enumerate(providers)
+    )
+    recovered = BaoStockHistoricalArchiveClient(
+        clock=lambda: retrieved_at,
+        baostock_module=_FailingLoginBaoStock(),
+    ).acquire(**values)
+
+    assert tuple(item.assigned_request_count for item in results) == (1, 1)
+    assert all(item.expected_request_count == 2 for item in results)
+    assert tuple(len(item.queries) for item in providers) == (1, 1)
+    assert recovered.coverage.expected_request_count == 2
 
 
 def test_complete_checkpoint_recovery_does_not_require_provider_login(
@@ -407,17 +495,12 @@ def test_concurrent_checkpoint_accepts_valid_winner_with_different_clock(
 
     def concurrent_link(source: str, destination: str) -> None:
         loser_payload = json.loads(open(source, encoding="utf-8").read())  # noqa: PTH123, SIM115
-        envelope = {
-            "schema_version": loser_payload["schema_version"],
-            "request_identity": loser_payload["request_identity"],
-            "response": winner.to_canonical_dict(),
-        }
+        payload = archive_module._checkpoint_payload(  # noqa: SLF001
+            winner,
+            loser_payload["request_identity"],
+        )
         with open(destination, "w", encoding="utf-8") as handle:  # noqa: PTH123
-            handle.write(
-                canonical_json(
-                    {**envelope, "checkpoint_hash": canonical_hash(envelope)}
-                )
-            )
+            handle.write(canonical_json(payload))
             handle.write("\n")
         raise FileExistsError
 

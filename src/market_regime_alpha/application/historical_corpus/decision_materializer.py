@@ -29,10 +29,12 @@ from market_regime_alpha.application.historical_corpus.historical_window import 
 )
 from market_regime_alpha.application.historical_corpus.frozen_experiment import (
     PHASE_E3_TIMEZONE,
+    WP_ALPHA_PROOF_02_MULTIPLE_TESTING_FAMILY,
     WP_ALPHA_RESEARCH_01_MULTIPLE_TESTING_FAMILY,
     verify_golden_loop_v2_historical_experiment,
     verify_phase_e3_historical_experiment,
     verify_wp_alpha_research_01_historical_experiment,
+    verify_wp_alpha_proof_02_historical_experiment,
 )
 from market_regime_alpha.application.historical_corpus.artifacts import (
     HistoricalPackageIndex,
@@ -40,6 +42,9 @@ from market_regime_alpha.application.historical_corpus.artifacts import (
 from market_regime_alpha.application.historical_corpus.materialization_contracts import (
     HistoricalComponentKind,
     HistoricalSessionComponent,
+)
+from market_regime_alpha.application.historical_corpus.panel_projection import (
+    panel_research_features,
 )
 from market_regime_alpha.application.historical_corpus.postgres_materialization import (
     PostgresHistoricalMaterializationRepository,
@@ -689,6 +694,26 @@ class HistoricalDecisionMaterializer:
                 )
         if (
             experiment.multiple_testing_family_id
+            == WP_ALPHA_PROOF_02_MULTIPLE_TESTING_FAMILY
+        ):
+            verify_wp_alpha_proof_02_historical_experiment(
+                experiment,
+                target_protocol=target_protocol,
+                feature_owner=feature_owner,
+                economics_owner=economics_owner,
+                decision_local_time=request.decision_time.astimezone(
+                    ZoneInfo(PHASE_E3_TIMEZONE)
+                ).time(),
+                timezone_name=PHASE_E3_TIMEZONE,
+                runtime_scope_policy_id=request.runtime_scope_policy_id,
+                runtime_scope_policy_hash=request.runtime_scope_policy_hash,
+                decision_policy_id=request.decision_policy_id,
+                decision_policy_hash=request.decision_policy_hash,
+                configuration_references=request.configuration_references,
+            )
+            verifier = None
+        elif (
+            experiment.multiple_testing_family_id
             == WP_ALPHA_RESEARCH_01_MULTIPLE_TESTING_FAMILY
         ):
             verifier = verify_wp_alpha_research_01_historical_experiment
@@ -699,17 +724,18 @@ class HistoricalDecisionMaterializer:
             verifier = verify_golden_loop_v2_historical_experiment
         else:
             verifier = verify_phase_e3_historical_experiment
-        verifier(
-            experiment,
-            target_protocol=target_protocol,
-            feature_owner=feature_owner,
-            economics_owner=economics_owner,
-            decision_local_time=request.decision_time.astimezone(
-                ZoneInfo(PHASE_E3_TIMEZONE)
-            ).time(),
-            timezone_name=PHASE_E3_TIMEZONE,
-            configuration_references=request.configuration_references,
-        )
+        if verifier is not None:
+            verifier(
+                experiment,
+                target_protocol=target_protocol,
+                feature_owner=feature_owner,
+                economics_owner=economics_owner,
+                decision_local_time=request.decision_time.astimezone(
+                    ZoneInfo(PHASE_E3_TIMEZONE)
+                ).time(),
+                timezone_name=PHASE_E3_TIMEZONE,
+                configuration_references=request.configuration_references,
+            )
         self._economics_policy_cache[
             request.experiment_definition_reference
         ] = economics_owner
@@ -1351,12 +1377,25 @@ class HistoricalDecisionMaterializer:
             action_gaps_by_symbol
         )
         labels: list[TargetOutcomeLabel] = []
+        target_omissions: list[dict[str, Any]] = []
         economics: list[StrategyEconomicsResult] = []
         capacity_protocol = economics_owner.capacity_protocol
         requested_notional = Decimal("100000")
         for symbol in symbols:
             reference_price = _decision_reference_price(bars, symbol, request.trading_date, request.decision_time)
             if reference_price is None:
+                target_omissions.append(
+                    {
+                        "symbol": symbol,
+                        "target_count": len(protocol.targets),
+                        "target_ids": [
+                            str(target.target_id) for target in protocol.targets
+                        ],
+                        "reason_codes": [
+                            "DECISION_REFERENCE_NOT_ESTIMABLE",
+                        ],
+                    }
+                )
                 continue
             initial_conditions = _market_conditions(bars, symbol, next_session)
             fallback_open = next(
@@ -1490,6 +1529,10 @@ class HistoricalDecisionMaterializer:
                 "next_session_date": next_session.isoformat(),
                 "target_protocol": protocol.to_canonical_dict(),
                 "labels": [item.to_canonical_dict() for item in labels],
+                "target_omissions": sorted(
+                    target_omissions,
+                    key=lambda item: str(item["symbol"]),
+                ),
                 "strategy_economics": [
                     item.identity_payload()
                     | {
@@ -1499,7 +1542,17 @@ class HistoricalDecisionMaterializer:
                     for item in economics
                 ],
                 "available_label_count": sum(item.availability_status is OutcomeAvailabilityStatus.COMPLETE for item in labels),
-                "not_estimated_label_count": sum(item.availability_status is not OutcomeAvailabilityStatus.COMPLETE for item in labels),
+                "not_estimated_label_count": (
+                    sum(
+                        item.availability_status
+                        is not OutcomeAvailabilityStatus.COMPLETE
+                        for item in labels
+                    )
+                    + sum(
+                        int(item["target_count"])
+                        for item in target_omissions
+                    )
+                ),
                 "corporate_action_exclusions": [
                     {
                         "symbol": symbol,
@@ -3017,7 +3070,7 @@ def _research_panel_rows(
     outcome: HistoricalSessionComponent,
 ) -> tuple[dict[str, Any], ...]:
     feature_values = _panel_feature_values(feature)
-    research_features = _panel_research_features(feature)
+    research_features = panel_research_features(feature)
     signal_by_symbol = {str(item["symbol"]): item for item in _objects(signal.payload.get("snapshots"), "signal snapshots")}
     forecast_by_symbol = {
         str(_mapping(item.get("forecast"), "forecast")["symbol"]): _mapping(item.get("forecast"), "forecast")
@@ -3286,58 +3339,6 @@ def _panel_feature_values(
             if value.get("state") == "AVAILABLE":
                 symbol_values[str(value["output_id"])] = value.get("value")
     return result
-
-
-def _panel_research_features(
-    feature: HistoricalSessionComponent,
-) -> dict[str, tuple[Mapping[str, Any], ...]]:
-    """Project every owner Feature output without recomputing its value."""
-
-    result: dict[str, list[Mapping[str, Any]]] = {}
-    for computation in _objects(feature.payload.get("features"), "features"):
-        common = {
-            "feature_id": str(computation["feature_id"]),
-            "timeframe": str(computation["timeframe"]),
-            "feature_available_at": str(computation["available_at"]),
-            "configuration_id": str(computation["configuration_id"]),
-            "configuration_hash": str(computation["configuration_hash"]),
-            "limitations": list(computation.get("limitations", [])),
-        }
-        projected = result.setdefault(str(computation["symbol"]), [])
-        for value in _objects(computation.get("values"), "feature values"):
-            projected.append(
-                {
-                    **common,
-                    "output_id": str(value["output_id"]),
-                    "state": str(value["state"]),
-                    "value": value.get("value"),
-                    "available_at": str(value["available_at"]),
-                    "source_bar_count": int(value["source_bar_count"]),
-                    "source_bar_lineage_hash": str(
-                        value["source_bar_lineage_hash"]
-                    ),
-                    "normalized_source_bar_ids": list(
-                        value.get("normalized_source_bar_ids", [])
-                    ),
-                    "normalized_source_bar_hashes": list(
-                        value.get("normalized_source_bar_hashes", [])
-                    ),
-                    "source_event_start": value.get("source_event_start"),
-                    "source_event_end": value.get("source_event_end"),
-                    "missing_reason_codes": list(
-                        value.get("missing_reason_codes", [])
-                    ),
-                }
-            )
-    return {
-        symbol: tuple(
-            sorted(
-                values,
-                key=lambda item: (str(item["feature_id"]), str(item["output_id"])),
-            )
-        )
-        for symbol, values in result.items()
-    }
 
 
 def _forecast_median(payload: Mapping[str, Any] | None) -> object:

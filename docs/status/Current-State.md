@@ -2,9 +2,9 @@
 
 > **Status:** CURRENT_STATUS  
 > **Authority:** Current implementation/evidence summary  
-> **Implementation Checkpoint:** `agent/engineering-closure-architecture-convergence-01@b853297bcfb08b9ab6e21e7a7f7d22866a7cf6d2`, based on `main@b617844d338523d7dfea72642cfce8213121786e`; the final documentation commit is its documentation-only successor
+> **Implementation Checkpoint:** WP-ALPHA-PROOF-02 final owner-backed execution checkpoint on `agent/wp-alpha-proof-02`
 > **Strongest Research Evidence Revision:** `0d1a5a8` (WP-ALPHA-RESEARCH-01)
-> **Last Updated:** 2026-08-24
+> **Last Updated:** 2026-08-26
 > **Code Evidence:** `src/market_regime_alpha`, `src/market_regime_alpha/persistence/postgres/migrations/*.sql`, `tests`
 
 This document records what the named executable baseline implements and what
@@ -15,7 +15,7 @@ target architecture.
 
 - **Architecture:** Python 3.12+ PostgreSQL-centered modular monolith.
 - **Persistent business authority:** PostgreSQL 16; no canonical file/SQLite/memory fallback.
-- **Packaged migration head:** 097 (`daily_alpha_target_session`).
+- **Packaged migration head:** 104 (`historical_outcome_forecast_fk_index`).
 - **Canonical all-day runtime:** one Continuous Research control plane.
 - **Installed operator scripts:** six — `continuous-research`, `state-system`, `decision-system`, `model-governance`, `pit-authority`, `research-shadow`.
 - **Execution boundary:** human-operated/manual; no broker writer or automatic live-trading authority.
@@ -33,19 +33,51 @@ target architecture.
   one PostgreSQL `max_locks_per_transaction` environment error. This is
   `TARGETED_TESTED`, not campaign or Alpha evidence.
 - **WP-01 branch validation:** docs/platform/full pytest, ruff, mypy and build pass on a fresh PostgreSQL test database; a first full run against a heavily reused test database hit one `pg_catalog` autovacuum DDL lock timeout, while the exact node and the clean-database full suite both pass. This is retained as an environment failure, not hidden.
-- **Current CI:** GitHub has no run for `b617844` or the local closure
-  checkpoint. Local targeted validation is not CI proof.
-- **Alpha/Daily engineering closure:** the branch binds one explicit Candidate
+- **Current CI:** GitHub has no run for starting `main@adbc785`. The latest five observed
+  `main` runs predate this baseline; the newest is a failure at `fee02f6` on
+  2026-08-09. Prior local validation is not CI proof for this HEAD.
+- **Alpha/Daily engineering closure:** merged `main` binds one explicit Candidate
   admission root to Discovery→Correctness→External→supported Context→Candidate
   lineage, produces
   pre-Strategy Risk/Opportunity from owner-derived facts, projects typed
   Forecast semantics, binds Outcome to an exact immutable Daily snapshot and
   retains settlement inside the one Continuous control plane.
-- **Database binding:** Runtime requires an explicit PostgreSQL URL and principal; a database name or stale schema does not establish current Authority. The replayable Golden V2 Evidence schema is at migration 090.
+- **Database binding:** Runtime requires an explicit PostgreSQL URL and principal; a database name or stale schema does not establish current Authority. Audit tooling must discover application schemas and columns from packaged migrations and PostgreSQL catalogs rather than infer them from a database name.
 - **Local implementation baseline:** Python 3.12.13, uv 0.11.7 and PostgreSQL
-  16.14. The packaged migration head is 097. A Golden V2 evidence database is
-  at migration 090; the default local application database is only at 055 and
-  is not evidence for the current schema.
+  16.14. The packaged migration head is 104. Historical local evidence schemas
+  at older migration heads remain provenance only and are not the current
+  Runtime schema.
+
+### WP-ALPHA-PROOF-02 terminal research result
+
+- The approved frozen protocol was executed without changing its windows,
+  target, three higher-is-better factor directions, Top-5, cost, inference,
+  multiple-testing or stopping rules.
+- A new immutable reacquired corpus contains 134,134 Daily and 6,414,384 5m
+  bars from 2025-01-02 through 2026-08-24 for 338 union symbols. All 1,408
+  package files passed checksum verification and independent normalization
+  matched all 6,548,518 rows.
+- BaoStock remains `RETROSPECTIVE_EVENT_TIME /
+  HISTORICAL_AVAILABLE_TIME_NOT_PROVIDED / PIT_INCOMPLETE`. The frozen Locked
+  roster remains label-blind and `LOCKED_OOS_CONSUMED=false`.
+- Discovery run `historical-research-run-0382e3c92084432a7d7b9c36` completed
+  126/126 sessions and exact replay matched. The frozen challenger produced
+  mean RankIC `-0.0911379`, Top-5 gross `-0.00089056` and assumed-cost net
+  `-0.00299088`; the adverse pre-registered direction is `REJECTED`.
+- Independent correctness proof `alpha-correctness-proof:9196bf13...` is
+  `CORRECTNESS_FAILED`: eight of 37,800 persisted Targets have
+  `PERSISTED_TARGET_SOURCE_NOT_REPRODUCIBLE`. Missing and corporate-action
+  cases remain explicit rather than fabricated.
+- External Validation was not admitted. Candidate activation, Conditional
+  Forecast comparison, calibration, Strategy Economics and Portfolio
+  qualification are `NOT_ESTIMABLE / BLOCKED_BY_CORRECTNESS`; Strategy and
+  Portfolio Discovery evidence are themselves `NOT_ESTIMABLE`.
+- Full identities, metrics, performance and the terminal Evidence matrix are in
+  `../references/WP-ALPHA-PROOF-02-Execution-Report.md`.
+- **Validation:** Fresh/upgrade PostgreSQL checks and the final full regression pass. The fixes
+  align stale migration-head fixtures, require an exact typed Calendar owner at
+  the CLI seam and remove the last test/data pair for the already-retired
+  duplicate visualization backtest; they create no empirical upgrade.
 
 ### Engineering closure facts
 

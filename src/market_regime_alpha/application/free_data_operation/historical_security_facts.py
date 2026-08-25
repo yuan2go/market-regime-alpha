@@ -13,6 +13,7 @@ from market_regime_alpha.application.research_validation.common import (
 from market_regime_alpha.data.providers.public_composite.historical_security_facts import (
     BaoStockHistoricalSecurityFactsClient,
     HistoricalSecurityFactsAcquisition,
+    HistoricalSecurityFactsPrefetch,
 )
 from market_regime_alpha.data.providers.public_composite.replay_archive import (
     SourceReplayArchiveReader,
@@ -43,6 +44,18 @@ class HistoricalSecurityFactsAcquirer(Protocol):
         universe_scope_references: tuple[ValidationArtifactReference, ...],
         checkpoint_root: Path | None = None,
     ) -> HistoricalSecurityFactsAcquisition: ...
+
+    def prefetch(
+        self,
+        *,
+        symbols: tuple[str, ...],
+        cohort_dates: tuple[date, ...],
+        start_date: date,
+        end_date: date,
+        checkpoint_root: Path,
+        worker_index: int,
+        worker_count: int,
+    ) -> HistoricalSecurityFactsPrefetch: ...
 
 
 class HistoricalSecurityFactsOperator:
@@ -143,6 +156,73 @@ class HistoricalSecurityFactsOperator:
             "raw_archive": str(archive_path),
             "data_eligibility": owner.data_eligibility.value,
             "evidence_ceiling": owner.evidence_ceiling.value,
+            "formal_pit": False,
+            "formal_oos": False,
+            "production_authorized": False,
+        }
+
+    def prefetch(
+        self,
+        *,
+        universe_snapshot_ids: tuple[ArtifactId, ...],
+        start_date: date,
+        end_date: date,
+        artifact_root: Path,
+        worker_index: int,
+        worker_count: int,
+    ) -> dict[str, object]:
+        """Populate deterministic request checkpoints without publishing facts."""
+
+        if not universe_snapshot_ids or universe_snapshot_ids != tuple(
+            sorted(set(universe_snapshot_ids), key=str)
+        ):
+            raise ValueError("Historical fact Universe owners must be ordered")
+        universes = tuple(
+            self._universes.get(snapshot_id) for snapshot_id in universe_snapshot_ids
+        )
+        raw_cohort_dates = tuple(
+            item.constituent_effective_date for item in universes
+        )
+        if any(item is None for item in raw_cohort_dates):
+            raise ValueError("Historical fact Universe cohort dates are invalid")
+        cohort_dates = tuple(
+            sorted({item for item in raw_cohort_dates if item is not None})
+        )
+        if len(cohort_dates) != len(universes):
+            raise ValueError("Historical fact Universe cohort dates are not unique")
+        symbols = tuple(
+            sorted(
+                {
+                    record.symbol
+                    for universe in universes
+                    for record in universe.records
+                    if record.membership_status
+                    is ResearchUniverseMembershipStatus.INCLUDED
+                }
+            )
+        )
+        result = self._acquisition.prefetch(
+            symbols=symbols,
+            cohort_dates=cohort_dates,
+            start_date=start_date,
+            end_date=end_date,
+            checkpoint_root=(
+                artifact_root
+                / "free-data-historical-security-facts"
+                / "query-checkpoints"
+            ),
+            worker_index=worker_index,
+            worker_count=worker_count,
+        )
+        return {
+            "operation": "HISTORICAL_SECURITY_FACTS_PREFETCH",
+            "worker_index": result.worker_index,
+            "worker_count": result.worker_count,
+            "expected_query_count": result.expected_query_count,
+            "assigned_query_count": result.assigned_query_count,
+            "symbol_count": len(symbols),
+            "cohort_count": len(cohort_dates),
+            "owner_published": False,
             "formal_pit": False,
             "formal_oos": False,
             "production_authorized": False,

@@ -11,8 +11,10 @@ from market_regime_alpha.application.research_validation.common import (
 )
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.data.providers.public_composite.historical_security_facts import (
+    _assigned_fact_query_indices,
     _build_acquisition,
     _checkpointed_fact_query,
+    _historical_fact_query_specs,
 )
 from market_regime_alpha.data_sources.a_share_bars import AShareDataError
 from market_regime_alpha.evidence.canonical import canonical_hash
@@ -27,6 +29,52 @@ SCOPE = ValidationArtifactReference(
     ArtifactId("historical-fact-provider-test-timeline"),
     canonical_hash({"scope": "historical-fact-provider-test"}),
 )
+
+
+def test_historical_fact_prefetch_partition_is_complete_disjoint_and_stable() -> None:
+    partitions = tuple(
+        _assigned_fact_query_indices(total=17, worker_index=index, worker_count=4)
+        for index in range(4)
+    )
+
+    assert tuple(sorted(item for partition in partitions for item in partition)) == tuple(
+        range(17)
+    )
+    assert sum(len(partition) for partition in partitions) == len(
+        {item for partition in partitions for item in partition}
+    )
+    assert partitions[2] == _assigned_fact_query_indices(
+        total=17,
+        worker_index=2,
+        worker_count=4,
+    )
+    with pytest.raises(ValueError, match="worker index"):
+        _assigned_fact_query_indices(total=17, worker_index=4, worker_count=4)
+
+
+def test_historical_fact_prefetch_uses_the_exact_full_acquisition_plan() -> None:
+    provider = SimpleNamespace(
+        query_stock_industry=lambda **_values: None,
+        query_profit_data=lambda **_values: None,
+        query_adjust_factor=lambda **_values: None,
+        query_dividend_data=lambda **_values: None,
+    )
+
+    specs = _historical_fact_query_specs(
+        provider,
+        symbols=("600000.SH", "000001.SZ"),
+        cohort_dates=(date(2025, 1, 2), date(2025, 7, 1)),
+        start_date=date(2025, 1, 1),
+        end_date=date(2026, 8, 24),
+    )
+
+    assert len(specs) == 24
+    assert tuple(item.product for item in specs[:2]) == (
+        "query_stock_industry:effective-date:v1",
+        "query_stock_industry:effective-date:v1",
+    )
+    assert specs[2].locator == "baostock://query-profit-data/sh.600000/2024/4"
+    assert specs[-1].locator == "baostock://query-dividend-data/sz.000001/2026/report"
 
 
 def _response(fields: tuple[str, ...], rows: tuple[tuple[str, ...], ...]):

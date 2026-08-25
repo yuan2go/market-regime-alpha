@@ -14,6 +14,7 @@ from market_regime_alpha.cli.continuous_research import (
     DATABASE_ERROR,
     SUCCESS,
     _daily_alpha_evidence_root,
+    _dispatch,
     _historical_pre_strategy_risk_configuration,
     _operator_resource,
     _pre_strategy_risk_configuration,
@@ -147,6 +148,78 @@ def test_automatic_settlement_uses_exact_snapshot_target_session() -> None:
     assert calls == [(snapshot.trading_date, snapshot.target_session_date)]
     assert result["status"] == "SETTLED"
     assert result["settlement_id"] == "factual-outcome"
+
+
+def test_historical_security_fact_sync_passes_reloaded_timeline_reference(
+    tmp_path: Path,
+) -> None:
+    timeline_reference = ValidationArtifactReference(
+        "HISTORICAL_CONSTITUENT_TIMELINE",
+        ArtifactId("timeline-1"),
+        "sha256:" + "1" * 64,
+    )
+    timeline = SimpleNamespace(
+        reference=timeline_reference,
+        cohorts=(
+            SimpleNamespace(
+                snapshot_reference=ValidationArtifactReference(
+                    "FREE_RESEARCH_UNIVERSE",
+                    ArtifactId("universe-1"),
+                    "sha256:" + "2" * 64,
+                )
+            ),
+        ),
+    )
+    payload = tmp_path / "historical-security-facts.json"
+    payload.write_text(
+        json.dumps(
+            {
+                "start_date": "2025-01-01",
+                "end_date": "2026-08-24",
+                "universe_timeline_id": str(timeline_reference.artifact_id),
+            }
+        ),
+        encoding="utf-8",
+    )
+    args = build_parser().parse_args(
+        [
+            "--database-url",
+            "postgresql://runtime-authority",
+            "historical-security-facts-sync",
+            "--input",
+            str(payload),
+            "--artifact-root",
+            str(tmp_path / "artifacts"),
+        ]
+    )
+    captured: dict[str, object] = {}
+
+    class UniverseRepository:
+        def get_timeline(self, timeline_id: ArtifactId) -> object:
+            assert timeline_id == timeline_reference.artifact_id
+            return timeline
+
+    class FactsOperator:
+        def sync(self, **kwargs: object) -> dict[str, object]:
+            captured.update(kwargs)
+            return {"operation": "HISTORICAL_SECURITY_FACTS_SYNC"}
+
+    with (
+        patch(
+            "market_regime_alpha.cli.continuous_research."
+            "PostgresFreeResearchUniverseRepository",
+            return_value=UniverseRepository(),
+        ),
+        patch(
+            "market_regime_alpha.cli.continuous_research."
+            "HistoricalSecurityFactsOperator",
+            return_value=FactsOperator(),
+        ),
+    ):
+        result = _dispatch(args, SimpleNamespace(), SimpleNamespace())
+
+    assert result["universe_timeline_id"] == str(timeline_reference.artifact_id)
+    assert captured["universe_timeline_reference"] == timeline_reference
 
 
 def test_automatic_settlement_fails_closed_for_ambiguous_decision_scope() -> None:
@@ -354,6 +427,58 @@ def test_cli_exposes_converged_free_data_day_operations() -> None:
             "historical-artifacts",
         ]
     )
+    historical_calendar = build_parser().parse_args(
+        [
+            "--database-url",
+            "postgresql://runtime-authority",
+            "historical-calendar-freeze",
+            "--timeline-id",
+            "historical-timeline-1",
+            "--artifact-root",
+            "historical-artifacts",
+        ]
+    )
+    historical_experiment = build_parser().parse_args(
+        [
+            "--database-url",
+            "postgresql://runtime-authority",
+            "historical-experiment-freeze",
+            "--input",
+            "historical-experiment.json",
+            "--artifact-root",
+            "historical-artifacts",
+        ]
+    )
+    historical_fact_prefetch = build_parser().parse_args(
+        [
+            "--database-url",
+            "postgresql://runtime-authority",
+            "historical-security-facts-prefetch",
+            "--input",
+            "historical-security-facts.json",
+            "--artifact-root",
+            "historical-artifacts",
+            "--worker-index",
+            "2",
+            "--worker-count",
+            "4",
+        ]
+    )
+    historical_corpus_prefetch = build_parser().parse_args(
+        [
+            "--database-url",
+            "postgresql://runtime-authority",
+            "historical-corpus-prefetch",
+            "--input",
+            "historical-corpus.json",
+            "--artifact-root",
+            "historical-artifacts",
+            "--worker-index",
+            "2",
+            "--worker-count",
+            "4",
+        ]
+    )
     portfolio_day = build_parser().parse_args(
         [
             "--database-url",
@@ -400,6 +525,23 @@ def test_cli_exposes_converged_free_data_day_operations() -> None:
             "--artifact-root",
             "historical-artifacts",
         ]
+    )
+    historical_corpus_replay = build_parser().parse_args(
+        [
+            "--database-url",
+            "postgresql://runtime-authority",
+            "historical-corpus-replay",
+            "--input",
+            "historical-corpus-replay.json",
+            "--artifact-root",
+            "historical-artifacts",
+        ]
+    )
+    locked_oos_freeze = build_parser().parse_args(
+        ["locked-oos-scope-freeze", "--input", "locked-scope.json"]
+    )
+    locked_oos_report = build_parser().parse_args(
+        ["locked-oos-scope-report", "--scope-id", "frozen-scope"]
     )
     historical_evidence = build_parser().parse_args(
         [
@@ -616,11 +758,22 @@ def test_cli_exposes_converged_free_data_day_operations() -> None:
     assert universe_sync.operation == "research-universe-sync"
     assert universe_replay.operation == "research-universe-replay"
     assert historical_facts.operation == "historical-security-facts-sync"
+    assert historical_calendar.operation == "historical-calendar-freeze"
+    assert historical_experiment.operation == "historical-experiment-freeze"
+    assert historical_fact_prefetch.operation == "historical-security-facts-prefetch"
+    assert historical_fact_prefetch.worker_index == 2
+    assert historical_fact_prefetch.worker_count == 4
+    assert historical_corpus_prefetch.operation == "historical-corpus-prefetch"
+    assert historical_corpus_prefetch.worker_index == 2
+    assert historical_corpus_prefetch.worker_count == 4
     assert portfolio_day.operation == "portfolio-shadow-day"
     assert portfolio_replay.operation == "portfolio-shadow-replay"
     assert runtime_scope.operation == "runtime-scope-build"
     assert historical_run.operation == "historical-run"
     assert historical_acquire.operation == "historical-corpus-acquire"
+    assert historical_corpus_replay.operation == "historical-corpus-replay"
+    assert locked_oos_freeze.operation == "locked-oos-scope-freeze"
+    assert locked_oos_report.operation == "locked-oos-scope-report"
     assert historical_evidence.operation == "historical-evidence"
     assert historical_phase_ii.operation == "historical-phase-ii"
     assert strategy_feedback_close.operation == "strategy-feedback-close"

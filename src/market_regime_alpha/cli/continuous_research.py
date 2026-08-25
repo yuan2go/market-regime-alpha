@@ -106,6 +106,9 @@ from market_regime_alpha.application.historical_research.contracts import (
 from market_regime_alpha.application.historical_corpus.baostock_archive import (
     BaoStockHistoricalArchiveClient,
 )
+from market_regime_alpha.application.historical_corpus.artifacts import (
+    verify_historical_package_files,
+)
 from market_regime_alpha.application.historical_corpus.decision_materializer import (
     FREE_RESEARCH_UNIVERSE_KIND,
     HistoricalDecisionMaterializer,
@@ -113,8 +116,19 @@ from market_regime_alpha.application.historical_corpus.decision_materializer imp
 from market_regime_alpha.application.historical_corpus.evidence_producer import (
     HistoricalEvidenceProducer,
 )
+from market_regime_alpha.application.historical_corpus.frozen_experiment import (
+    WP_ALPHA_PROOF_02_LOCKED_AT,
+    create_phase_e3_feature_configuration,
+    create_phase_e3_research_universe_policy,
+    create_phase_e3_strategy_economics_policy_set,
+    create_wp_alpha_proof_02_historical_experiment,
+    phase_e3_decision_policy_identity,
+)
 from market_regime_alpha.application.historical_corpus.normalization import (
-    normalize_baostock_archive,
+    normalize_historical_package,
+)
+from market_regime_alpha.application.historical_corpus.postgres_locked_oos_scope import (
+    PostgresLockedOOSScopeAuthority,
 )
 from market_regime_alpha.application.historical_corpus.postgres_evidence import (
     PostgresHistoricalEvidenceRepository,
@@ -154,6 +168,9 @@ from market_regime_alpha.application.research_validation.common import (
 )
 from market_regime_alpha.application.research_evaluation.postgres_target_repository import (
     PostgresTargetOutcomeRepository,
+)
+from market_regime_alpha.application.research_evaluation.targets import (
+    exploratory_five_minute_multi_horizon_protocol,
 )
 from market_regime_alpha.application.research_validation.free_historical_samples import (
     AShareBarProviderReader,
@@ -372,6 +389,8 @@ _READ_OPERATIONS = {
     "runtime-scope-replay",
     "historical-report",
     "historical-replay",
+    "historical-corpus-replay",
+    "locked-oos-scope-report",
     "performance-report",
     "performance-replay",
     "strategy-replay",
@@ -544,12 +563,41 @@ def build_parser() -> argparse.ArgumentParser:
     historical_universe_history_sync.add_argument("--start-date", required=True)
     historical_universe_history_sync.add_argument("--end-date", required=True)
     historical_universe_history_sync.add_argument("--artifact-root", type=Path, required=True)
+    historical_calendar_freeze = subparsers.add_parser(
+        "historical-calendar-freeze",
+        help="Freeze the canonical Calendar from one exact historical Universe timeline.",
+    )
+    historical_calendar_freeze.add_argument("--timeline-id", required=True)
+    historical_calendar_freeze.add_argument("--artifact-root", type=Path, required=True)
+    historical_experiment_freeze = subparsers.add_parser(
+        "historical-experiment-freeze",
+        help="Bind reacquired physical owners to the frozen WP-ALPHA-PROOF-02 Experiment.",
+    )
+    historical_experiment_freeze.add_argument("--input", type=Path, required=True)
+    historical_experiment_freeze.add_argument("--artifact-root", type=Path, required=True)
     historical_security_facts_sync = subparsers.add_parser(
         "historical-security-facts-sync",
         help=("Acquire and publish effective/publication-dated Industry, shares and corporate-action facts for exact historical cohorts."),
     )
     historical_security_facts_sync.add_argument("--input", type=Path, required=True)
     historical_security_facts_sync.add_argument("--artifact-root", type=Path, required=True)
+    historical_security_facts_prefetch = subparsers.add_parser(
+        "historical-security-facts-prefetch",
+        help=(
+            "Fill one deterministic shard of the canonical Security Facts "
+            "request checkpoints without publishing an owner."
+        ),
+    )
+    historical_security_facts_prefetch.add_argument("--input", type=Path, required=True)
+    historical_security_facts_prefetch.add_argument(
+        "--artifact-root", type=Path, required=True
+    )
+    historical_security_facts_prefetch.add_argument(
+        "--worker-index", type=int, required=True
+    )
+    historical_security_facts_prefetch.add_argument(
+        "--worker-count", type=int, required=True
+    )
     universe_replay = subparsers.add_parser("research-universe-replay")
     universe_replay.add_argument("--snapshot-id", required=True)
     universe_replay.add_argument("--artifact-root", type=Path, required=True)
@@ -572,6 +620,13 @@ def build_parser() -> argparse.ArgumentParser:
     historical_resume.add_argument("--run-id", required=True)
     historical_resume.add_argument("--max-stage-commits", type=int)
     historical_resume.add_argument("--artifact-root", type=Path)
+    historical_outcome_reindex = subparsers.add_parser(
+        "historical-reindex-outcomes",
+        help="Append missing bounded-query locators for external Outcome owners.",
+    )
+    historical_outcome_reindex.add_argument("--run-id", required=True)
+    historical_outcome_reindex.add_argument("--artifact-root", type=Path, required=True)
+    historical_outcome_reindex.add_argument("--max-components", type=int)
     historical_report = subparsers.add_parser("historical-report")
     historical_report.add_argument("--run-id", required=True)
     historical_replay = subparsers.add_parser("historical-replay")
@@ -604,6 +659,38 @@ def build_parser() -> argparse.ArgumentParser:
     )
     historical_acquire.add_argument("--input", type=Path, required=True)
     historical_acquire.add_argument("--artifact-root", type=Path, required=True)
+    historical_prefetch = subparsers.add_parser(
+        "historical-corpus-prefetch",
+        help=(
+            "Fill one deterministic shard of the canonical corpus request "
+            "checkpoints without publishing an owner."
+        ),
+    )
+    historical_prefetch.add_argument("--input", type=Path, required=True)
+    historical_prefetch.add_argument("--artifact-root", type=Path, required=True)
+    historical_prefetch.add_argument("--worker-index", type=int, required=True)
+    historical_prefetch.add_argument("--worker-count", type=int, required=True)
+    historical_corpus_replay = subparsers.add_parser(
+        "historical-corpus-replay",
+        help="Verify exact Raw/Normalized packages and deterministic normalization.",
+    )
+    historical_corpus_replay.add_argument("--input", type=Path, required=True)
+    historical_corpus_replay.add_argument(
+        "--artifact-root", type=Path, required=True
+    )
+    locked_oos_freeze = subparsers.add_parser(
+        "locked-oos-scope-freeze",
+        help=(
+            "Freeze a label-blind Locked OOS roster from exact PostgreSQL "
+            "owners without reading Outcomes."
+        ),
+    )
+    locked_oos_freeze.add_argument("--input", type=Path, required=True)
+    locked_oos_report = subparsers.add_parser(
+        "locked-oos-scope-report",
+        help="Reload one exact Locked OOS scope and report its closed access gate.",
+    )
+    locked_oos_report.add_argument("--scope-id", required=True)
     historical_evidence = subparsers.add_parser(
         "historical-evidence",
         help="Produce owner-resolved Ablation, Economics and exploratory Model evidence.",
@@ -821,6 +908,71 @@ def _dispatch(
     journal: PostgresContinuousResearchJournal,
     factory: PostgresConnectionFactory,
 ) -> dict[str, Any]:
+    if args.operation == "locked-oos-scope-freeze":
+        payload = _load_json_object(args.input)
+        expected = {
+            "protocol_reference",
+            "calendar_reference",
+            "universe_timeline_reference",
+            "external_final_target_session",
+            "data_cutoff",
+            "recorded_at",
+        }
+        if set(payload) != expected:
+            raise ValueError(
+                "locked-oos-scope-freeze requires exact Protocol, Calendar, "
+                "Timeline, External Target, cutoff and recorded_at"
+            )
+        locked_scope = PostgresLockedOOSScopeAuthority(factory).freeze(
+            protocol_reference=ValidationArtifactReference.from_canonical_dict(
+                _object_value(payload["protocol_reference"], "protocol_reference")
+            ),
+            calendar_reference=ValidationArtifactReference.from_canonical_dict(
+                _object_value(payload["calendar_reference"], "calendar_reference")
+            ),
+            universe_timeline_reference=(
+                ValidationArtifactReference.from_canonical_dict(
+                    _object_value(
+                        payload["universe_timeline_reference"],
+                        "universe_timeline_reference",
+                    )
+                )
+            ),
+            external_final_target_session=date.fromisoformat(
+                str(payload["external_final_target_session"])
+            ),
+            data_cutoff=_instant(str(payload["data_cutoff"])),
+            recorded_at=_instant(str(payload["recorded_at"])),
+        )
+        return {
+            "operation": "LOCKED_OOS_SCOPE_FREEZE",
+            **locked_scope.to_canonical_dict(),
+            "outcome_access_allowed": False,
+            "reason_codes": [
+                "FORMAL_PIT_NOT_SUPPORTED",
+                "PHYSICAL_CORRECTNESS_NOT_SUPPORTED",
+            ],
+            "formal_oos": False,
+            "production_qualified": False,
+        }
+    if args.operation == "locked-oos-scope-report":
+        locked_scope_authority = PostgresLockedOOSScopeAuthority(factory)
+        locked_scope = locked_scope_authority.get_by_id(
+            ArtifactId(args.scope_id)
+        )
+        decision = locked_scope_authority.assess_access(
+            scope_reference=locked_scope.reference,
+            formal_pit_references=(),
+            physical_correctness_reference=None,
+        )
+        return {
+            "operation": "LOCKED_OOS_SCOPE_REPORT",
+            **locked_scope.to_canonical_dict(),
+            "outcome_access_allowed": decision.outcome_access_allowed,
+            "reason_codes": list(decision.reason_codes),
+            "formal_oos": False,
+            "production_qualified": False,
+        }
     if args.operation == "historical-phase-ii":
         evidence = build_postgres_phase_ii_operator(
             factory,
@@ -831,7 +983,47 @@ def _dispatch(
             "evidence": evidence.to_canonical_dict(),
             **_authority_ceiling(),
         }
-    if args.operation == "historical-corpus-acquire":
+    if args.operation == "historical-corpus-replay":
+        payload = _load_json_object(args.input)
+        if set(payload) != {"raw_reference", "normalized_reference"}:
+            raise ValueError(
+                "historical-corpus-replay requires exact Raw and Normalized references"
+            )
+        raw_reference = ValidationArtifactReference.from_canonical_dict(
+            _object_value(payload["raw_reference"], "raw_reference")
+        )
+        normalized_reference = ValidationArtifactReference.from_canonical_dict(
+            _object_value(payload["normalized_reference"], "normalized_reference")
+        )
+        corpus = PostgresHistoricalCorpusRepository(
+            factory,
+            artifact_root=args.artifact_root.resolve(),
+            apply_migrations=False,
+        )
+        raw_package = corpus.open_index(raw_reference)
+        normalized_package = corpus.open_index(normalized_reference)
+        verify_historical_package_files(raw_package)
+        verify_historical_package_files(normalized_package)
+        replayed = normalize_historical_package(
+            raw=raw_package,
+            artifact_root=args.artifact_root.resolve(),
+        )
+        if (
+            replayed.reference != normalized_package.reference
+            or replayed.physical_hash != normalized_package.physical_hash
+        ):
+            raise ValueError("Historical normalization replay identity drift")
+        return {
+            "operation": "HISTORICAL_CORPUS_REPLAY",
+            "raw_reference": raw_package.reference.to_canonical_dict(),
+            "normalized_reference": replayed.reference.to_canonical_dict(),
+            "raw_physical_hash": raw_package.physical_hash,
+            "normalized_physical_hash": replayed.physical_hash,
+            "network_requests": 0,
+            "formal_pit": False,
+            "formal_oos": False,
+        }
+    if args.operation in {"historical-corpus-acquire", "historical-corpus-prefetch"}:
         payload = _load_json_object(args.input)
         required = {"start_date", "end_date", "bucket_count"}
         if not required.issubset(payload) or not set(payload).issubset(
@@ -983,26 +1175,57 @@ def _dispatch(
             context_symbols = tuple(str(item) for item in _array_value(payload.get("context_symbols", []), "context_symbols"))
             context_reference = None
         symbols = tuple(sorted({*stock_symbols, *context_symbols}))
-        raw = BaoStockHistoricalArchiveClient().acquire(
-            symbols=symbols,
-            start_date=date.fromisoformat(str(payload["start_date"])),
-            end_date=date.fromisoformat(str(payload["end_date"])),
-            timeframe_ranges=timeframe_ranges,
-            bucket_count=int(payload["bucket_count"]),
-            checkpoint_root=(args.artifact_root.resolve() / "historical-corpus" / "query-checkpoints"),
-            acquisition_id=acquisition_id,
-        )
         corpus = PostgresHistoricalCorpusRepository(
             factory,
             artifact_root=args.artifact_root.resolve(),
             apply_migrations=False,
         )
-        raw_package = corpus.publish_and_register(raw)
-        normalized_package = corpus.publish_and_register(normalize_baostock_archive(raw_package.owner))
+        archive_client = BaoStockHistoricalArchiveClient()
+        acquisition_values = {
+            "symbols": symbols,
+            "start_date": date.fromisoformat(str(payload["start_date"])),
+            "end_date": date.fromisoformat(str(payload["end_date"])),
+            "timeframe_ranges": timeframe_ranges,
+            "bucket_count": int(payload["bucket_count"]),
+            "checkpoint_root": (
+                args.artifact_root.resolve()
+                / "historical-corpus"
+                / "query-checkpoints"
+            ),
+            "acquisition_id": acquisition_id,
+        }
+        if args.operation == "historical-corpus-prefetch":
+            prefetch = archive_client.prefetch_to_checkpoints(
+                **acquisition_values,
+                worker_index=args.worker_index,
+                worker_count=args.worker_count,
+            )
+            return {
+                "operation": "HISTORICAL_CORPUS_PREFETCH",
+                "worker_index": prefetch.worker_index,
+                "worker_count": prefetch.worker_count,
+                "expected_request_count": prefetch.expected_request_count,
+                "assigned_request_count": prefetch.assigned_request_count,
+                "stock_symbol_count": len(stock_symbols),
+                "context_symbols": list(sorted(set(context_symbols))),
+                "owner_published": False,
+                "formal_pit": False,
+                "formal_oos": False,
+            }
+        raw_package = archive_client.acquire_to_package(
+            artifact_root=args.artifact_root.resolve(),
+            **acquisition_values,
+        )
+        raw_package = corpus.register_index(raw_package)
+        normalized_package = normalize_historical_package(
+            raw=raw_package,
+            artifact_root=args.artifact_root.resolve(),
+        )
+        normalized_package = corpus.register_index(normalized_package)
         return {
             "operation": "HISTORICAL_CORPUS_ACQUIRE",
-            "raw_owner": raw_package.owner.to_canonical_dict(),
-            "normalized_owner": normalized_package.owner.to_canonical_dict(),
+            "raw_owner": dict(raw_package.manifest),
+            "normalized_owner": dict(normalized_package.manifest),
             "raw_physical_hash": raw_package.physical_hash,
             "normalized_physical_hash": normalized_package.physical_hash,
             "stock_symbol_count": len(stock_symbols),
@@ -1059,6 +1282,23 @@ def _dispatch(
         return {
             "operation": args.operation.replace("-", "_").upper(),
             **runtime_scope_receipt.to_canonical_dict(),
+        }
+    if args.operation == "historical-reindex-outcomes":
+        component_count, label_count = (
+            PostgresHistoricalMaterializationRepository(
+                factory,
+                artifact_root=args.artifact_root.resolve(),
+                apply_migrations=False,
+            ).reindex_external_outcome_labels(
+                run_id=ArtifactId(args.run_id),
+                maximum_components=args.max_components,
+            )
+        )
+        return {
+            "operation": "HISTORICAL_REINDEX_OUTCOMES",
+            "run_id": args.run_id,
+            "component_count": component_count,
+            "label_count": label_count,
         }
     if args.operation in {
         "historical-run",
@@ -1129,7 +1369,11 @@ def _dispatch(
                 artifact_root=args.artifact_root.resolve(),
                 apply_migrations=False,
             ),
-            component_repository=PostgresHistoricalMaterializationRepository(factory, apply_migrations=False),
+            component_repository=PostgresHistoricalMaterializationRepository(
+                factory,
+                artifact_root=args.artifact_root.resolve(),
+                apply_migrations=False,
+            ),
             evidence_repository=PostgresHistoricalEvidenceRepository(factory, apply_migrations=False),
         ).produce(run_id=run_id)
         return {
@@ -1337,30 +1581,49 @@ def _dispatch(
             end_date=date.fromisoformat(args.end_date),
             artifact_root=args.artifact_root.resolve(),
         )
-    if args.operation == "historical-security-facts-sync":
+    if args.operation == "historical-calendar-freeze":
+        return FreeResearchUniverseOperator(factory).freeze_historical_trading_calendar(
+            timeline_id=ArtifactId(args.timeline_id),
+            artifact_root=args.artifact_root.resolve(),
+        )
+    if args.operation == "historical-experiment-freeze":
+        return _freeze_wp_alpha_proof_experiment(
+            factory,
+            artifact_root=args.artifact_root.resolve(),
+            payload=_load_json_object(args.input),
+        )
+    if args.operation in {
+        "historical-security-facts-prefetch",
+        "historical-security-facts-sync",
+    }:
         payload = _load_json_object(args.input)
-        common = {"start_date", "end_date"}
-        if set(payload) == {*common, "universe_timeline_id"}:
-            timeline_id = ArtifactId(str(payload["universe_timeline_id"]))
-            timeline = PostgresFreeResearchUniverseRepository(factory, apply_migrations=False).get_timeline(timeline_id)
-            raw_ids = tuple(sorted(str(item.snapshot_reference.artifact_id) for item in timeline.cohorts))
-        elif set(payload) == {*common, "universe_snapshot_ids"}:
-            timeline_id = None
-            raw_ids = tuple(str(item) for item in _array_value(payload["universe_snapshot_ids"], "universe_snapshot_ids"))
-        else:
-            raise ValueError("historical-security-facts-sync requires one exact Universe timeline or cohort owner set and range")
-        if not raw_ids or raw_ids != tuple(sorted(set(raw_ids))):
-            raise ValueError("historical Security Fact Universe IDs must be ordered and unique")
+        timeline_reference, raw_ids = _historical_security_fact_scope(
+            factory,
+            payload,
+        )
+        if args.operation == "historical-security-facts-prefetch":
+            return HistoricalSecurityFactsOperator(factory).prefetch(
+                universe_snapshot_ids=tuple(ArtifactId(item) for item in raw_ids),
+                start_date=date.fromisoformat(str(payload["start_date"])),
+                end_date=date.fromisoformat(str(payload["end_date"])),
+                artifact_root=args.artifact_root.resolve(),
+                worker_index=args.worker_index,
+                worker_count=args.worker_count,
+            )
         result = HistoricalSecurityFactsOperator(factory).sync(
             universe_snapshot_ids=tuple(ArtifactId(item) for item in raw_ids),
-            universe_timeline_reference=(None if timeline_id is None else timeline.reference),
+            universe_timeline_reference=timeline_reference,
             start_date=date.fromisoformat(str(payload["start_date"])),
             end_date=date.fromisoformat(str(payload["end_date"])),
             artifact_root=args.artifact_root.resolve(),
         )
         return {
             **result,
-            "universe_timeline_id": (None if timeline_id is None else str(timeline_id)),
+            "universe_timeline_id": (
+                None
+                if timeline_reference is None
+                else str(timeline_reference.artifact_id)
+            ),
         }
     if args.operation == "research-universe-replay":
         return FreeResearchUniverseOperator(factory).replay(
@@ -2425,6 +2688,183 @@ def _record_phase_c_owner_package(
     }
 
 
+def _freeze_wp_alpha_proof_experiment(
+    factory: PostgresConnectionFactory,
+    *,
+    artifact_root: Path,
+    payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    expected = {
+        "raw_reference",
+        "normalized_reference",
+        "calendar_reference",
+        "universe_timeline_reference",
+        "security_facts_reference",
+    }
+    if set(payload) != expected:
+        raise ValueError(
+            "historical-experiment-freeze requires exact physical and PIT owner references"
+        )
+    references = {
+        name: ValidationArtifactReference.from_canonical_dict(
+            _object_value(payload[name], name)
+        )
+        for name in expected
+    }
+    corpus = PostgresHistoricalCorpusRepository(
+        factory,
+        artifact_root=artifact_root,
+        apply_migrations=False,
+    )
+    raw = corpus.open_index(references["raw_reference"])
+    normalized = corpus.open_index(references["normalized_reference"])
+    if normalized.parent_reference != raw.reference:
+        raise ValueError("reacquired Normalized Dataset does not bind exact Raw owner")
+    calendar = PostgresPITTradingCalendarSnapshotRepository(
+        factory,
+        apply_migrations=False,
+    ).get(references["calendar_reference"].artifact_id)
+    calendar_reference = ValidationArtifactReference(
+        "TRADING_CALENDAR",
+        calendar.artifact_id,
+        calendar.content_hash,
+    )
+    if calendar_reference != references["calendar_reference"]:
+        raise ValueError("Historical Calendar owner drifted")
+    timeline = PostgresFreeResearchUniverseRepository(
+        factory,
+        apply_migrations=False,
+    ).get_timeline(references["universe_timeline_reference"].artifact_id)
+    if timeline.reference != references["universe_timeline_reference"]:
+        raise ValueError("Historical Universe Timeline owner drifted")
+    facts = PostgresHistoricalSecurityFactsRepository(
+        factory,
+        apply_migrations=False,
+    ).get(references["security_facts_reference"].artifact_id)
+    if facts.reference != references["security_facts_reference"]:
+        raise ValueError("Historical Security Facts owner drifted")
+    if timeline.reference not in facts.universe_scope_references:
+        raise ValueError("Historical Security Facts do not bind the frozen Timeline")
+    target = PostgresTargetOutcomeRepository(
+        factory,
+        apply_migrations=False,
+    ).register_protocol(exploratory_five_minute_multi_horizon_protocol())
+    validation = PostgresResearchValidationRepository(
+        factory,
+        apply_migrations=False,
+    )
+    feature = validation.record_feature_set_configuration(
+        create_phase_e3_feature_configuration(),
+        recorded_at=WP_ALPHA_PROOF_02_LOCKED_AT,
+    )
+    economics = validation.record_historical_strategy_economics_policy_set(
+        create_phase_e3_strategy_economics_policy_set(
+            target_protocol=target,
+            created_at=WP_ALPHA_PROOF_02_LOCKED_AT,
+        )
+    )
+    runtime_scope_policy = PostgresRuntimeScopeRepository(
+        factory,
+        apply_migrations=False,
+    ).register_policy(create_phase_e3_research_universe_policy())
+    (
+        decision_policy_id,
+        decision_policy_hash,
+        decision_policy_payload,
+    ) = phase_e3_decision_policy_identity()
+    definition = create_wp_alpha_proof_02_historical_experiment(
+        target,
+        locked_at=WP_ALPHA_PROOF_02_LOCKED_AT,
+        raw_owner_reference=raw.reference,
+        normalized_owner_reference=normalized.reference,
+        calendar_reference=calendar_reference,
+        universe_timeline_reference=timeline.reference,
+        security_facts_reference=facts.reference,
+    )
+    with factory.connection(read_only=True) as connection:
+        recorded_at_row = connection.execute(
+            "SELECT date_trunc('second', clock_timestamp())"
+        ).fetchone()
+    if recorded_at_row is None or not isinstance(recorded_at_row[0], datetime):
+        raise RuntimeError("PostgreSQL clock did not return an authority timestamp")
+    recorded_at = recorded_at_row[0]
+    recorded = validation.record_historical_experiment_definition(
+        definition,
+        recorded_at=recorded_at,
+    )
+    if recorded != definition:
+        raise ValueError("WP-ALPHA-PROOF-02 Experiment owner replay drifted")
+    return {
+        "operation": "HISTORICAL_EXPERIMENT_FREEZE",
+        "experiment_reference": ValidationArtifactReference(
+            "RESEARCH_EXPERIMENT_DEFINITION",
+            definition.definition_id,
+            definition.definition_hash,
+        ).to_canonical_dict(),
+        "target_protocol_reference": ValidationArtifactReference(
+            "OUTCOME_TARGET_PROTOCOL",
+            target.protocol_id,
+            target.protocol_hash,
+        ).to_canonical_dict(),
+        "feature_reference": ValidationArtifactReference(
+            "FEATURE_SET_CONFIGURATION",
+            feature.feature_set_id,
+            feature.content_hash,
+        ).to_canonical_dict(),
+        "economics_reference": economics.reference.to_canonical_dict(),
+        "runtime_scope_policy": runtime_scope_policy.to_canonical_dict(),
+        "decision_policy": {
+            "policy_id": str(decision_policy_id),
+            "policy_hash": decision_policy_hash,
+            "payload": decision_policy_payload,
+        },
+        "locked_at": WP_ALPHA_PROOF_02_LOCKED_AT.isoformat(),
+        "formal_pit": False,
+        "locked_oos_consumed": False,
+        "formal_oos": False,
+        "production_qualified": False,
+    }
+
+
+def _historical_security_fact_scope(
+    factory: PostgresConnectionFactory,
+    payload: Mapping[str, Any],
+) -> tuple[ValidationArtifactReference | None, tuple[str, ...]]:
+    common = {"start_date", "end_date"}
+    if set(payload) == {*common, "universe_timeline_id"}:
+        timeline_id = ArtifactId(str(payload["universe_timeline_id"]))
+        timeline = PostgresFreeResearchUniverseRepository(
+            factory,
+            apply_migrations=False,
+        ).get_timeline(timeline_id)
+        raw_ids = tuple(
+            sorted(
+                str(item.snapshot_reference.artifact_id)
+                for item in timeline.cohorts
+            )
+        )
+        timeline_reference = timeline.reference
+    elif set(payload) == {*common, "universe_snapshot_ids"}:
+        timeline_reference = None
+        raw_ids = tuple(
+            str(item)
+            for item in _array_value(
+                payload["universe_snapshot_ids"],
+                "universe_snapshot_ids",
+            )
+        )
+    else:
+        raise ValueError(
+            "historical Security Facts require one exact Universe timeline "
+            "or cohort owner set and range"
+        )
+    if not raw_ids or raw_ids != tuple(sorted(set(raw_ids))):
+        raise ValueError(
+            "historical Security Fact Universe IDs must be ordered and unique"
+        )
+    return timeline_reference, raw_ids
+
+
 def _reference_for(
     kind: str,
     artifact_id: ArtifactId,
@@ -2524,6 +2964,7 @@ def _historical_runner(
             raise ValueError("FREE_RESEARCH_ARCHIVE Historical execution requires --artifact-root")
         component_repository = PostgresHistoricalMaterializationRepository(
             factory,
+            artifact_root=artifact_root.resolve(),
             apply_migrations=False,
         )
         base_materializer = HistoricalDecisionMaterializer(
@@ -2765,12 +3206,17 @@ def _required_permission(args: argparse.Namespace) -> SecurityPermission:
         return SecurityPermission.READ_RESEARCH
     if operation in {
         "historical-security-facts-sync",
+        "historical-security-facts-prefetch",
+        "historical-calendar-freeze",
+        "historical-experiment-freeze",
         "historical-universe-history-sync",
         "historical-universe-sync",
         "research-universe-sync",
         "runtime-scope-build",
         "historical-run",
         "historical-corpus-acquire",
+        "historical-corpus-prefetch",
+        "locked-oos-scope-freeze",
     }:
         return SecurityPermission.RUN_RESEARCH
     if operation == "model-train":

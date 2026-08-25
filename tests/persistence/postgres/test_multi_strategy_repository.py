@@ -162,6 +162,7 @@ def _seed_fill(factory: PostgresConnectionFactory, fill: Fill) -> None:
         connection.commit()
 
 
+@pytest.mark.unmigrated_postgres
 def test_migration_085_upgrades_084_forward_only_and_installs_business_tables(
     postgres_factory: PostgresConnectionFactory,
 ) -> None:
@@ -194,6 +195,7 @@ def test_migration_085_upgrades_084_forward_only_and_installs_business_tables(
     assert len(tables) == 12
 
 
+@pytest.mark.unmigrated_postgres
 def test_migration_086_upgrades_085_with_one_fill_derived_outcome_table(
     postgres_factory: PostgresConnectionFactory,
 ) -> None:
@@ -218,6 +220,7 @@ def test_migration_086_upgrades_085_with_one_fill_derived_outcome_table(
     assert table == ("strategy_realized_outcome",)
 
 
+@pytest.mark.unmigrated_postgres
 def test_migration_087_upgrades_086_without_a_parallel_ledger(
     postgres_factory: PostgresConnectionFactory,
 ) -> None:
@@ -263,6 +266,7 @@ def test_migration_087_upgrades_086_without_a_parallel_ledger(
     }
 
 
+@pytest.mark.unmigrated_postgres
 def test_migration_088_extends_manual_trade_without_reservation_ledger(
     postgres_factory: PostgresConnectionFactory,
 ) -> None:

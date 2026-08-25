@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime
+from functools import lru_cache
 from hashlib import sha256
 import json
 import os
@@ -206,7 +207,11 @@ def load_verified_historical_package(path: Path) -> VerifiedHistoricalPackage:
     return _load_verified_historical_package(path, enforce_directory_identity=True)
 
 
-def load_historical_package_index(path: Path) -> HistoricalPackageIndex:
+def load_historical_package_index(
+    path: Path,
+    *,
+    enforce_directory_identity: bool = True,
+) -> HistoricalPackageIndex:
     """Verify immutable package metadata without decoding Parquet records."""
 
     root = path.resolve()
@@ -245,7 +250,7 @@ def load_historical_package_index(path: Path) -> HistoricalPackageIndex:
         or encoding.get("parquet_schema") != HISTORICAL_PARQUET_SCHEMA
     ):
         raise ValueError("Historical package logical identity mismatch")
-    if root.name != owner_id:
+    if enforce_directory_identity and root.name != owner_id:
         raise ValueError("Historical package directory identity mismatch")
     partitions = tuple(HistoricalPartitionDescriptor.from_reference_dict(item) for item in raw_refs)
     if not partitions:
@@ -300,6 +305,32 @@ def verify_historical_package_files(package: HistoricalPackageIndex) -> None:
     for name, expected in package.checksums:
         if _file_hash(package.root / name) != expected:
             raise ValueError(f"Historical package checksum mismatch: {name}")
+
+
+def read_verified_historical_partition(
+    *,
+    package: HistoricalPackageIndex,
+    descriptor: HistoricalPartitionDescriptor,
+) -> HistoricalDataPartition:
+    """Decode one exact partition after verifying its registered checksum."""
+
+    authoritative = {
+        str(item.partition_id): item for item in package.partitions
+    }.get(str(descriptor.partition_id))
+    if authoritative != descriptor:
+        raise ValueError("Historical partition descriptor is outside package owner")
+    expected = dict(package.checksums).get(descriptor.relative_path)
+    candidate = (package.root / descriptor.relative_path).resolve()
+    if package.root not in candidate.parents:
+        raise ValueError("Historical partition path escapes package")
+    if expected is None or _file_hash(candidate) != expected:
+        raise ValueError(
+            f"Historical package checksum mismatch: {descriptor.relative_path}"
+        )
+    return _read_partition(
+        root=package.root,
+        reference=descriptor.reference_dict(),
+    )
 
 
 def scan_historical_package(
@@ -577,6 +608,28 @@ def _read_object(path: Path) -> dict[str, Any]:
 
 
 def _file_hash(path: Path) -> str:
+    resolved = path.resolve(strict=True)
+    status = resolved.stat()
+    signature = (
+        status.st_dev,
+        status.st_ino,
+        status.st_size,
+        status.st_mtime_ns,
+        status.st_ctime_ns,
+    )
+    return _hash_file_with_signature(str(resolved), signature)
+
+
+@lru_cache(maxsize=4_096)
+def _hash_file_with_signature(
+    path: str,
+    signature: tuple[int, int, int, int, int],
+) -> str:
+    del signature
+    return _hash_file_contents(Path(path))
+
+
+def _hash_file_contents(path: Path) -> str:
     digest = sha256()
     with path.open("rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):

@@ -3,7 +3,7 @@
 > **Status:** CURRENT_ARCHITECTURE
 > **Authority:** Consumer/import inventory and Legacy disposition
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-24
+> **Last Updated:** 2026-08-26
 > **Executable guards:** `tests/architecture/`
 > **Code Evidence:** `src/market_regime_alpha`, `pyproject.toml`, `tests/architecture`
 
@@ -11,8 +11,8 @@ This inventory follows actual imports, installed entry points, composition
 roots and PostgreSQL writers. A directory name is not treated as Authority.
 Historical files remain immutable even when their producing code is retired.
 
-The disposition column reflects the consumer graph at implementation checkpoint
-`b853297`. Zero-consumer producers have been physically deleted. Every retained
+The disposition column reflects the consumer graph at the WP-ALPHA-PROOF-02
+final implementation checkpoint. Zero-consumer producers have been physically deleted. Every retained
 compatibility layer below names a current replay/migration consumer and a
 deletion condition.
 
@@ -37,7 +37,7 @@ deletion condition.
 |---|---|---|---|---|---|
 | retired Dividend-T execution plane: `backtest`, `bar_store`, `brokers`, `cache`, `scheduler`, `sell_side`, `signal_audit`, `strategy_modes`, `grid_25t_test`, `point_hit_rate`, `risk`, `universe` | no canonical/runtime/replay/migration consumer | no installed CLI, PostgreSQL writer or execute Authority | frozen output/evidence remains immutable; quantitative equivalents already live in canonical Feature/Research | Feature pipeline + Historical/Strategy Runtime | **DELETE — completed** |
 | retained `dividend_t` technical/trend/MACD identity subset | `migration/legacy/adapters/technical_observables.py`, `migration/legacy/adapters/tencent_dividend_t.py`, `legacy/dataset_contract_adapter.py` | read/compare/replay only | exact old observable, Tencent trend snapshot and MACD dataset/experiment identity interpretation | canonical Feature/Dataset owners | **COMPATIBILITY_ONLY**; delete after those adapters and every referenced artifact identity are superseded with differential replay proof |
-| `backtesting/**` and `backtesting.py` | zero consumers after identity fixtures were decoupled | no entry point, journal or writer | frozen results remain historical evidence; new work uses Historical Research | Historical Research Runtime | **DELETE — completed** |
+| `backtesting/**` and `backtesting.py` | zero consumers after identity fixtures were decoupled; the final orphan visualization test/sample were removed in WP-ALPHA-PROOF-02 | no entry point, journal or writer | frozen results remain historical evidence; new work uses Historical Research | Historical Research Runtime | **DELETE — completed** |
 | `web/dividend_t_app.py`, `web/tushare_app.py` and manual Dividend-T schedulers | zero canonical/replay/migration consumers | parallel web/schedule execution removed; FastAPI/Uvicorn/APScheduler dependencies removed | none retained | installed canonical CLIs | **DELETE — completed** |
 | `daily_research/**` | no current production import; compatibility tests and Authority catalog preserve existing identity meaning | no write/execute capability | V1 identities/readers retained by repository contract | Continuous Research + Decision System | **COMPATIBILITY_ONLY**; delete only after immutable `daily_research` artifacts no longer require their readers |
 | `daily_decision/**` | Canonical Lifecycle replay/stages, Operational Research, thesis health and old Daily Loop readers | bounded compatibility contracts; not the all-day Runtime | existing MR1/daily-decision identities retain meaning | Decision System for current writes | **COMPATIBILITY_ONLY / MIGRATE_GRADUALLY**; delete after named consumers reload typed canonical replacements and differential replay passes |

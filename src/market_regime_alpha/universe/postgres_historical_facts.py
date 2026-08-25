@@ -292,36 +292,49 @@ class PostgresHistoricalSecurityFactsRepository:
         with self._factory.connection(read_only=True) as connection:
             industry_rows = connection.execute(
                 """
-                SELECT DISTINCT ON (symbol) symbol, payload_json
-                FROM free_data_historical_security_fact
-                WHERE owner_id = %s AND owner_hash = %s
-                  AND symbol = ANY(%s) AND fact_kind = 'INDUSTRY'
-                  AND effective_date <= %s
-                ORDER BY symbol, effective_date DESC,
-                         published_date DESC NULLS LAST, fact_id DESC
+                SELECT requested.symbol, latest.payload_json
+                FROM unnest(%s::text[]) AS requested(symbol)
+                JOIN LATERAL (
+                    SELECT payload_json
+                    FROM free_data_historical_security_fact
+                    WHERE owner_id = %s AND owner_hash = %s
+                      AND symbol = requested.symbol
+                      AND fact_kind = 'INDUSTRY'
+                      AND effective_date <= %s
+                    ORDER BY effective_date DESC,
+                             published_date DESC NULLS LAST, fact_id DESC
+                    LIMIT 1
+                ) AS latest ON true
                 """,
                 (
+                    list(symbols),
                     str(reference.artifact_id),
                     reference.content_hash,
-                    list(symbols),
                     decision_date,
                 ),
             ).fetchall()
             share_rows = connection.execute(
                 """
-                SELECT DISTINCT ON (symbol) symbol, payload_json
-                FROM free_data_historical_security_fact
-                WHERE owner_id = %s AND owner_hash = %s
-                  AND symbol = ANY(%s) AND fact_kind = 'SHARE_CAPITAL'
-                  AND effective_date <= %s
-                  AND published_date IS NOT NULL AND published_date <= %s
-                ORDER BY symbol, published_date DESC,
-                         effective_date DESC, fact_id DESC
+                SELECT requested.symbol, latest.payload_json
+                FROM unnest(%s::text[]) AS requested(symbol)
+                JOIN LATERAL (
+                    SELECT payload_json
+                    FROM free_data_historical_security_fact
+                    WHERE owner_id = %s AND owner_hash = %s
+                      AND symbol = requested.symbol
+                      AND fact_kind = 'SHARE_CAPITAL'
+                      AND effective_date <= %s
+                      AND published_date IS NOT NULL
+                      AND published_date <= %s
+                    ORDER BY published_date DESC,
+                             effective_date DESC, fact_id DESC
+                    LIMIT 1
+                ) AS latest ON true
                 """,
                 (
+                    list(symbols),
                     str(reference.artifact_id),
                     reference.content_hash,
-                    list(symbols),
                     decision_date,
                     decision_date,
                 ),

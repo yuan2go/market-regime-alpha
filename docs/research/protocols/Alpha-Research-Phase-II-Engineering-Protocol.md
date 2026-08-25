@@ -1,15 +1,18 @@
 # Alpha Research Phase II Engineering Protocol
 
-> **Status:** CURRENT_RESEARCH_PROGRAM
-> **Authority:** Subordinate implementation and research protocol
+> **Status:** HISTORICAL
+> **Authority:** Historical subordinate implementation protocol
+> **Plan Status:** `SUPERSEDED_AS_ACTIVE_PLAN`
 > **Implementation Checkpoint:** `agent/engineering-closure-architecture-convergence-01@b853297bcfb08b9ab6e21e7a7f7d22866a7cf6d2`, based on `main@b617844d338523d7dfea72642cfce8213121786e`
 > **Evidence Ceiling:** `ENGINEERING_ONLY / EXPLORATORY / PIT_INCOMPLETE / NOT_PROVEN`
-> **Last Updated:** 2026-08-24
+> **Superseded By:** `WP-ALPHA-PROOF-02-Frozen-Vertical-Slice-Protocol.md`
+> **Last Updated:** 2026-08-25
 
-This protocol records the dependency-coherent implementation scope following
+This protocol preserves the dependency-coherent implementation scope following
 WP-ALPHA-RESEARCH-01. It does not create runtime, data, Evidence, qualification
-or trading Authority. Executable owners and persisted content-addressed records
-remain authoritative.
+or trading Authority. It is no longer the active execution plan; WP-ALPHA-PROOF-02
+reuses its frozen engineering contracts without rewriting them. Executable
+owners and persisted content-addressed records remain authoritative.
 
 ## Baseline audit
 

@@ -16,6 +16,7 @@ from market_regime_alpha.universe.postgres_historical_facts import (
 from market_regime_alpha.universe.historical_facts import (
     HistoricalSecurityFact,
     HistoricalSecurityFactKind,
+    HistoricalSecurityFactsOwner,
 )
 from tests.universe.test_historical_security_facts import _owner
 
@@ -38,6 +39,71 @@ def test_historical_security_facts_publish_reload_and_bulk_project(
     assert projection.share_capital["600000.SH"].effective_date == date(2024, 9, 30)
     assert "600001.SH" not in projection.industries
     assert "600001.SH" not in projection.share_capital
+
+
+def test_bulk_projection_does_not_require_a_global_temp_sort(
+    postgres_factory,
+) -> None:
+    repository = PostgresHistoricalSecurityFactsRepository(postgres_factory)
+    base = _owner()
+    symbols = tuple(f"{600000 + index:06d}.SH" for index in range(120))
+    facts = tuple(
+        HistoricalSecurityFact.create(
+            fact_kind=kind,
+            symbol=symbol,
+            effective_date=date(2024, 1, 1) + timedelta(days=revision),
+            published_date=(
+                None
+                if kind is HistoricalSecurityFactKind.INDUSTRY
+                else date(2024, 1, 2) + timedelta(days=revision)
+            ),
+            values=(
+                {"industry": f"INDUSTRY-{revision}", "classification": "TEST"}
+                if kind is HistoricalSecurityFactKind.INDUSTRY
+                else {
+                    "total_shares": str(1_000_000 + revision),
+                    "liquid_shares": str(900_000 + revision),
+                }
+            ),
+            source_reference=base.facts[0].source_reference,
+        )
+        for symbol in symbols
+        for revision in range(30)
+        for kind in (
+            HistoricalSecurityFactKind.INDUSTRY,
+            HistoricalSecurityFactKind.SHARE_CAPITAL,
+        )
+    )
+    owner = HistoricalSecurityFactsOwner.create(
+        known_at=base.known_at,
+        provider_id=base.provider_id,
+        provider_contracts=base.provider_contracts,
+        source_manifest_reference=base.source_manifest_reference,
+        raw_archive_id="historical-facts-bulk-projection-archive",
+        facts=facts,
+        requested_symbols=symbols,
+        acquisition_start_date=date(2024, 1, 1),
+        acquisition_end_date=date(2025, 12, 31),
+        universe_scope_references=base.universe_scope_references,
+    )
+    repository.publish(owner)
+    repository.resolve_as_of(
+        owner.reference,
+        symbols=(symbols[0],),
+        decision_date=date(2025, 1, 2),
+    )
+    with postgres_factory.connection() as connection:
+        connection.execute("SET work_mem = '64kB'")
+        connection.execute("SET temp_file_limit = '0kB'")
+
+    projection = repository.resolve_as_of(
+        owner.reference,
+        symbols=symbols,
+        decision_date=date(2025, 1, 2),
+    )
+
+    assert set(projection.industries) == set(symbols)
+    assert set(projection.share_capital) == set(symbols)
 
 
 def test_historical_security_facts_enforce_publication_and_action_interval(
@@ -195,6 +261,45 @@ def test_historical_security_fact_projection_rejects_non_member_child(
                 Jsonb(extra.to_canonical_dict()),
             ),
         )
+
+
+def test_historical_security_fact_membership_guard_uses_indexed_owner_projection(
+    postgres_factory,
+) -> None:
+    with postgres_factory.connection(read_only=True) as connection:
+        guard_relations = connection.execute(
+            """
+            SELECT to_regclass(
+                       'free_data_historical_security_fact_member_guard'
+                   )::text,
+                   to_regclass(
+                       'free_data_historical_security_fact_gap_member_guard'
+                   )::text
+            """
+        ).fetchone()
+        fact_guard = connection.execute(
+            """
+            SELECT pg_get_functiondef(
+                'guard_historical_security_fact_membership()'::regprocedure
+            )
+            """
+        ).fetchone()
+        gap_guard = connection.execute(
+            """
+            SELECT pg_get_functiondef(
+                'guard_historical_security_fact_gap_membership()'::regprocedure
+            )
+            """
+        ).fetchone()
+
+    assert guard_relations == (
+        "free_data_historical_security_fact_member_guard",
+        "free_data_historical_security_fact_gap_member_guard",
+    )
+    assert fact_guard is not None and gap_guard is not None
+    for definition in (str(fact_guard[0]), str(gap_guard[0])):
+        assert "jsonb_array_elements" not in definition
+        assert "member_guard" in definition
 
 
 def test_historical_security_fact_projection_binds_publication_date(
