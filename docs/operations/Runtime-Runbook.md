@@ -147,8 +147,8 @@ uv run python scripts/apply_postgres_migrations.py
 uv run python scripts/apply_postgres_migrations.py --verify-only
 ```
 
-Expected head: migration 097, `daily_alpha_target_session`. Expected schema
-catalog: 276 tables. Migrations 052–067 add Formal Protocol bindings and
+Expected head: migration 104, `historical_outcome_forecast_fk_index`. Expected
+schema catalog: 280 tables. Migrations 052–067 add Formal Protocol bindings and
 owner-resolution receipts, Provider×Contract×Fact decisions,
 Historical/Locked-OOS/Calibration owners, the durable underlying Locked-OOS
 and frozen-family consumption ledgers, owner-computed Forecast receipts,
@@ -216,8 +216,11 @@ Migration 096 adds the Controlled package locator and exact Prediction
 Snapshot/Strategy diagnostic lineage for Prospective Outcome V2. Runtime and
 Repository construction verify this schema and fail closed. Migration 097 binds
 each new Daily Alpha snapshot to the adjacent target session under the exact
-typed Trading Calendar owner. Only this explicit operator surface may apply
-migrations.
+typed Trading Calendar owner. Migrations 098–104 add the label-blind frozen
+Locked-OOS scope, exact historical fact indexes, typed Calendar binding,
+externalized component payloads and bounded Outcome/Forecast indexes used by
+the WP-ALPHA-PROOF-02 canonical campaign. Only this explicit operator surface
+may apply migrations.
 Migration 046 remains unchanged. Missing/unreachable PostgreSQL is a blocked
 operation; there is no alternate persistent backend.
 

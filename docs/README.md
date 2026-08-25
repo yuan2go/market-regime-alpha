@@ -3,7 +3,7 @@
 > **Status:** CURRENT_STATUS  
 > **Authority:** Documentation navigation and precedence only  
 > **Owner:** Market Regime Alpha maintainers  
-> **Last Updated:** 2026-08-25
+> **Last Updated:** 2026-08-26
 > **Code Evidence:** `src/market_regime_alpha`, `src/market_regime_alpha/persistence/postgres/migrations/*.sql`, `tests`
 
 Documentation never creates implementation truth, research evidence, qualification, or trading authority.
@@ -49,7 +49,7 @@ Target design does not turn an unimplemented or unproven capability into a curre
 
 ## Research claims
 
-- [WP-ALPHA-PROOF-02 Frozen Vertical Slice Protocol](research/protocols/WP-ALPHA-PROOF-02-Frozen-Vertical-Slice-Protocol.md) is the current pre-result execution protocol. It reuses the existing Discovery and Temporal External partitions, freezes the reacquisition/correctness/External/Forecast/economics design, and keeps Locked OOS Outcome access closed unless Formal PIT is established.
+- [WP-ALPHA-PROOF-02 Frozen Vertical Slice Protocol](research/protocols/WP-ALPHA-PROOF-02-Frozen-Vertical-Slice-Protocol.md) is the immutable pre-registered protocol. Its [Execution Report](references/WP-ALPHA-PROOF-02-Execution-Report.md) records the terminal adverse Discovery result, failed correctness gate, unconsumed External/Locked Outcomes and exact owner identities.
 - [Alpha Research Phase II Engineering Protocol](research/protocols/Alpha-Research-Phase-II-Engineering-Protocol.md) is the historical engineering baseline that produced the current kernels and owner wiring. It creates no empirical claim and is superseded as the active execution plan by WP-ALPHA-PROOF-02.
 - [TEMPORAL_VALIDATION_V1 Frozen Protocol](research/protocols/TEMPORAL-VALIDATION-V1-Frozen-Protocol.md) freezes the first owner-derived 126-session temporal partition and every unchanged discovery input before outcome access; its [Contamination Audit](references/TEMPORAL-VALIDATION-V1-Contamination-Audit.md) records why the window is admissible but does not unlock it.
 - [WP-ALPHA-RESEARCH-01 Frozen Discovery Protocol](research/protocols/WP-ALPHA-RESEARCH-01-Frozen-Discovery-Protocol.md) pre-registers the frozen Phase E3 dataset scope, Factor families, Gate/Candidate variants, metrics, multiple-testing policy and discovery evidence ceiling. The persisted Experiment Definition remains the executable owner.

@@ -2,14 +2,27 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> **Status:** CURRENT_RESEARCH_PROGRAM
-> **Authority:** Execution plan subordinate to the frozen WP-ALPHA-PROOF-02 protocol
+> **Status:** HISTORICAL
+> **Authority:** Superseded execution plan subordinate to the immutable WP-ALPHA-PROOF-02 protocol
+> **Superseded By:** `docs/references/WP-ALPHA-PROOF-02-Execution-Report.md`
 
 **Goal:** Execute the frozen WP-ALPHA-PROOF-02 protocol through the existing Historical Corpus, Historical Research, Research Validation, Continuous/Shadow and PostgreSQL authorities, producing reproducible positive, negative, not-estimable or data-blocked evidence without consuming Locked OOS Outcomes unless Formal PIT and physical correctness both pass.
 
 **Architecture:** Keep the PostgreSQL-centered modular monolith and its single Historical/Continuous runtimes. Extend the current Historical Corpus package encoding with descriptor-driven staged publication so real Daily+5m acquisition and normalization remain bounded in memory, freeze a label-blind Locked OOS scope in the existing Research Validation authority, and compose existing Phase-II/Candidate/Forecast/Strategy kernels through thin operator inputs and immutable evidence. Legacy in-memory package loading remains readable for V1 artifacts; new campaign code uses `open_index` and selective reads.
 
 **Tech Stack:** Python 3.12, uv, psycopg/PostgreSQL 16, PyArrow/Parquet, pytest, Ruff, mypy, `python -m build`, existing `continuous-research` CLI.
+
+## Terminal execution reconciliation
+
+This plan is retained as historical implementation provenance, not an active
+todo list. Tasks 1–5 and the admissible portions of Task 10 executed through
+the existing owners. Tasks 6–8 stopped fail closed because the independent
+correctness proof failed before External admission; their runtime capabilities
+remain implemented but this Experiment produced no admissible activation,
+Forecast-comparison or Strategy-economics sample. Task 9 required no new
+execution plane or broad legacy move. Task 11 records the final validation and
+delivery checkpoint. Unchecked boxes below preserve the originally planned
+dependency path; they are not permission to bypass the terminal gate.
 
 ## Global Constraints
 

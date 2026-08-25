@@ -3,7 +3,7 @@
 > **Status:** CURRENT_RESEARCH_PROGRAM
 > **Authority:** Current registry of failed, blocked or insufficient research claims
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-21
+> **Last Updated:** 2026-08-26
 > **Code Evidence:** `src/market_regime_alpha/application/historical_corpus`, `src/market_regime_alpha/application/research_evaluation`
 
 | Claim | Current result | Evidence authority |
@@ -59,5 +59,8 @@
 | Market Regime, Theme or Capital is now a supported stock-level hard Gate | False: session-level and cross-sectional Context semantics are implemented; current Market/Global Theme roles are session-level and Capital is a public proxy. No Context was empirically promoted | engineering only / several roles `NOT_ESTIMABLE` |
 | Candidate Policy V2 activates the Challenger | False: Incumbent/Challenger coexistence and comparison are implemented, but Challenger admission requires real correctness plus external validation evidence | dormant engineering capability |
 | Conditional Forecast outputs calibrated probability or qualified Strategy action | False: at this result's evidence revision barrier heads emitted raw logits/frequencies, calibration was absent, no non-circular pre-Strategy Risk resolver was wired and Strategy economics were not run. A later engineering checkpoint wired the resolver without creating calibration, economics or qualification evidence | historical `IMPLEMENTED_NOT_WIRED`; current `OWNER_WIRED / CALIBRATED=false / STRATEGY_QUALIFIED=false` |
+| WP-ALPHA-PROOF-02 frozen three-factor higher-direction challenger has Discovery Alpha | `REJECTED`: mean RankIC -0.091138, ICIR -0.496474, BH-FDR 0.001732, Top-5 gross -0.000891 and engineering-assumption-cost net -0.002991; the significant sign is adverse and must not be reversed under the same Experiment | exact 126-session Discovery run `historical-research-run-0382e3c92084432a7d7b9c36` + immutable Evidence |
+| WP-ALPHA-PROOF-02 establishes end-to-end physical correctness | `CORRECTNESS_FAILED`: package checksum and all 6,548,518 Raw→Normalized observations reproduce, but 8/37,800 persisted Target sources are not reproducible and 425 are partial | `alpha-correctness-proof:9196bf13d40dde78f50ab3314ac511d05f952f91b4075bf5f201c755eeb1067b` |
+| WP-ALPHA-PROOF-02 externally validates or consumes Locked OOS | `NOT_ESTIMABLE / BLOCKED_BY_CORRECTNESS`: External was not admitted; BaoStock remains `PIT_INCOMPLETE`; Locked roster is frozen and `LOCKED_OOS_CONSUMED=false` | exact correctness Evidence + label-blind Locked scope `frozen-locked-oos-scope:ed65a20e87fba32e48194f3c74592d880defa8ec972e593aa69f84217751c8b3` |
 
 Negative evidence is first-class and immutable. A failed result may motivate a new separately frozen hypothesis; it may not be reworded into success.

@@ -2,9 +2,9 @@
 
 > **Status:** ROADMAP
 > **Authority:** Dependency-ordered forward work
-> **Implementation Checkpoint:** `main@adbc7857e261835eccbe2acf4902910363dae724` at the WP-ALPHA-PROOF-02 pre-result checkpoint
+> **Implementation Checkpoint:** WP-ALPHA-PROOF-02 owner-backed execution on `agent/wp-alpha-proof-02`
 > **Strongest Research Evidence Revision:** `0d1a5a8` (WP-ALPHA-RESEARCH-01)
-> **Last Updated:** 2026-08-25
+> **Last Updated:** 2026-08-26
 > **Code Evidence:** `docs/status/Current-State.md`, `docs/status/Gap-Register.md`
 
 The project is in an Alpha Research program, not another platform-completeness
@@ -207,7 +207,7 @@ family stays Research/Shadow inactive because its evidence gates have not run.
 
 ### WP-ALPHA-PROOF-02 — Formal PIT Alpha Evidence Vertical Slice
 
-**Protocol status:** `FROZEN / NOT_RUN` at this checkpoint.
+**Protocol status:** `EXECUTED / REJECTED / BLOCKED_BY_CORRECTNESS`.
 
 The active work package reacquires the missing physical package under a new
 identity, executes the frozen correctness proof, and only then executes the
@@ -216,6 +216,13 @@ Forecast, Strategy economics and attribution only when each upstream result is
 admissible. It freezes the post-External Locked OOS roster but treats Formal PIT
 as a hard Outcome-access gate. `PIT_INCOMPLETE` must leave
 `LOCKED_OOS_CONSUMED=false` and `LOCKED_OOS_SUPPORTED=NOT_ESTIMABLE`.
+
+Execution completed the reacquisition, 126-session Discovery materialization,
+Discovery Evidence, exact replay and independent correctness. The frozen
+higher-is-better challenger is significantly adverse and economically negative;
+correctness also failed on eight non-reproducible persisted Target sources.
+External admission and every dependent stage therefore stopped fail closed.
+This Experiment is terminal negative evidence, not an active tuning program.
 
 Context, Challenger activation and conditional Strategy economics remain
 downstream of real correctness and External results. No negative or blocked
