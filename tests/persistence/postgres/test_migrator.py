@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 from hashlib import sha256
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 import json
 
@@ -39,6 +39,13 @@ from market_regime_alpha.application.strategy_shadow.postgres_portfolio import (
 from market_regime_alpha.application.research_validation.common import (
     ValidationArtifactReference,
 )
+from market_regime_alpha.application.historical_corpus.materialization_contracts import (
+    HistoricalComponentKind,
+    HistoricalSessionComponent,
+)
+from market_regime_alpha.application.historical_research.postgres_journal import (
+    PostgresHistoricalResearchJournal,
+)
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.evidence.canonical import canonical_hash
 from market_regime_alpha.persistence.postgres.connection import (
@@ -53,6 +60,9 @@ from market_regime_alpha.persistence.postgres.migrator import (
 )
 from market_regime_alpha.universe.postgres_historical_facts import (
     PostgresHistoricalSecurityFactsRepository,
+)
+from market_regime_alpha.universe.postgres_runtime_scope import (
+    PostgresRuntimeScopeRepository,
 )
 from market_regime_alpha.platform.contracts import EvidenceLevel, ModelLifecycleStatus
 from market_regime_alpha.platform.governance_serialization import (
@@ -71,7 +81,11 @@ from tests.persistence.postgres.test_continuous_research_journal import (
     _command,
     _tick,
 )
+from tests.application.historical_research.test_contracts import (
+    _command as _historical_command,
+)
 from tests.universe.test_historical_security_facts import _owner
+from tests.universe.test_runtime_scope import _policy
 
 
 pytestmark = pytest.mark.unmigrated_postgres
@@ -147,14 +161,18 @@ FREE_RUNTIME_MIGRATIONS = (
     (96, "daily_alpha_outcome_lineage"),
     (97, "daily_alpha_target_session"),
     (98, "wp_alpha_proof_locked_scope"),
+    (99, "historical_fact_membership_index"),
+    (100, "historical_fact_guard_fk_indexes"),
+    (101, "locked_oos_typed_calendar_owner"),
+    (102, "historical_component_physical_payload"),
 )
 
 
 def test_packaged_migrations_are_contiguous_and_checksummed() -> None:
     migrations = load_packaged_migrations()
 
-    assert tuple(item.version for item in migrations) == tuple(range(1, 99))
-    assert len({item.name for item in migrations}) == 98
+    assert tuple(item.version for item in migrations) == tuple(range(1, 103))
+    assert len({item.name for item in migrations}) == 102
     assert all(item.checksum == sha256(item.sql.encode("utf-8")).hexdigest() for item in migrations)
 
 
@@ -335,11 +353,11 @@ def test_apply_all_is_idempotent(
     first = migrator.apply_all(postgres_factory)
     second = migrator.apply_all(postgres_factory)
 
-    assert tuple(item.version for item in first) == tuple(range(1, 99))
+    assert tuple(item.version for item in first) == tuple(range(1, 103))
     assert second == ()
     with postgres_factory.connection(read_only=True) as connection:
         rows = connection.execute("SELECT version, name, checksum FROM schema_migrations ORDER BY version").fetchall()
-    assert len(rows) == 98
+    assert len(rows) == 102
 
 
 def test_verify_current_is_read_only_and_requires_complete_head(
@@ -348,14 +366,14 @@ def test_verify_current_is_read_only_and_requires_complete_head(
     migrations = load_packaged_migrations()
     PostgresMigrator(migrations=migrations[:-1]).apply_all(postgres_factory)
 
-    with pytest.raises(PostgresMigrationSequenceError, match="missing versions: \\[98\\]"):
+    with pytest.raises(PostgresMigrationSequenceError, match="missing versions: \\[102\\]"):
         PostgresMigrator().verify_current(postgres_factory)
 
     with postgres_factory.connection(read_only=True) as connection:
         stored = connection.execute(
             "SELECT max(version) FROM schema_migrations"
         ).fetchone()
-    assert stored == (97,)
+    assert stored == (101,)
 
 
 def test_verify_current_rejects_missing_registry_without_creating_it(
@@ -572,7 +590,7 @@ def test_migration_026_preserves_prerelease_v1_decision_rows_forward_only(
         )
         + FREE_RUNTIME_MIGRATIONS
     )
-    assert applied == (98,)
+    assert applied == (102,)
     assert restored == account
 
 
@@ -1137,6 +1155,10 @@ def test_migration_060_preserves_v1_protocols_and_accepts_explicit_inference(
         (96, "daily_alpha_outcome_lineage"),
         (97, "daily_alpha_target_session"),
         (98, "wp_alpha_proof_locked_scope"),
+        (99, "historical_fact_membership_index"),
+        (100, "historical_fact_guard_fk_indexes"),
+        (101, "locked_oos_typed_calendar_owner"),
+        (102, "historical_component_physical_payload"),
     )
     with postgres_factory.connection(read_only=True) as connection:
         stored = connection.execute(
@@ -1506,13 +1528,13 @@ def test_migration_101_binds_locked_scope_to_typed_calendar_owner(
     postgres_factory: PostgresConnectionFactory,
 ) -> None:
     migrations = load_packaged_migrations()
-    assert (migrations[-1].version, migrations[-1].name) == (
+    assert (migrations[-2].version, migrations[-2].name) == (
         101,
         "locked_oos_typed_calendar_owner",
     )
     PostgresMigrator(migrations=migrations[:100]).apply_all(postgres_factory)
 
-    upgraded = PostgresMigrator(migrations=migrations).apply_all(postgres_factory)
+    upgraded = PostgresMigrator(migrations=migrations[:101]).apply_all(postgres_factory)
 
     assert tuple((item.version, item.name) for item in upgraded) == (
         (101, "locked_oos_typed_calendar_owner"),
@@ -1528,3 +1550,78 @@ def test_migration_101_binds_locked_scope_to_typed_calendar_owner(
         ).fetchone()
     assert definition is not None
     assert "pit_trading_calendar_canonical_snapshot" in str(definition[0])
+
+
+def test_migration_102_adds_external_payload_projection_without_mutating_inline_rows(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    migrations = load_packaged_migrations()
+    assert (migrations[-1].version, migrations[-1].name) == (
+        102,
+        "historical_component_physical_payload",
+    )
+    PostgresMigrator(migrations=migrations[:101]).apply_all(postgres_factory)
+
+    command = _historical_command(sessions=(date(2020, 1, 2),))
+    PostgresRuntimeScopeRepository(postgres_factory).register_policy(_policy())
+    PostgresHistoricalResearchJournal(
+        postgres_factory,
+        clock=MutableClock(NOW),
+    ).create_or_get(command)
+    request = command.session_request(date(2020, 1, 2))
+    source = ValidationArtifactReference(
+        "NORMALIZED_DATASET",
+        ArtifactId("migration-102-source"),
+        canonical_hash({"migration": 102}),
+    )
+    component = HistoricalSessionComponent.create(
+        run_id=command.run_id,
+        session_id=request.session_id,
+        trading_date=request.trading_date,
+        component_kind=HistoricalComponentKind.FEATURE,
+        source_max_event_time=request.decision_time,
+        materialized_at=request.materialized_at,
+        source_references=(source,),
+        payload={"legacy": "inline"},
+    )
+    with postgres_factory.connection() as connection:
+        connection.execute(
+            """
+            INSERT INTO historical_corpus_session_component(
+                component_id, component_hash, run_id, session_id,
+                trading_date, ordinal, component_kind,
+                source_max_event_time, materialized_at, payload_json, created_at
+            ) VALUES (%s, %s, %s, %s, %s, 1, %s, %s, %s, %s, %s)
+            """,
+            (
+                str(component.component_id),
+                component.component_hash,
+                str(component.run_id),
+                str(component.session_id),
+                component.trading_date,
+                component.component_kind.value,
+                component.source_max_event_time,
+                component.materialized_at,
+                Jsonb(component.to_canonical_dict()),
+                component.materialized_at,
+            ),
+        )
+
+    upgraded = PostgresMigrator(migrations=migrations).apply_all(postgres_factory)
+
+    assert tuple((item.version, item.name) for item in upgraded) == (
+        (102, "historical_component_physical_payload"),
+    )
+    with postgres_factory.connection(read_only=True) as connection:
+        row = connection.execute(
+            """
+            SELECT payload_storage, payload_locator, payload_json
+            FROM historical_corpus_session_component
+            WHERE component_id = %s
+            """,
+            (str(component.component_id),),
+        ).fetchone()
+    assert row is not None
+    assert row[0] == "INLINE_JSONB"
+    assert row[1] is None
+    assert dict(row[2]) == component.to_canonical_dict()

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 from psycopg.errors import UniqueViolation
@@ -33,7 +34,7 @@ from market_regime_alpha.application.research_validation.common import (
     ValidationArtifactReference,
 )
 from market_regime_alpha.core.identity import ArtifactId
-from market_regime_alpha.evidence.canonical import canonical_hash
+from market_regime_alpha.evidence.canonical import canonical_hash, canonical_json
 from market_regime_alpha.universe.postgres_runtime_scope import PostgresRuntimeScopeRepository
 from tests.application.historical_research.test_contracts import CREATED_AT, _command
 from tests.persistence.postgres.test_historical_research_journal import MutableClock
@@ -95,6 +96,216 @@ def test_session_component_is_idempotent_owner_resolved_and_append_only(
         match="reference kind mismatch",
     ):
         repository.get(wrong_reference)
+
+
+def test_large_component_payload_is_content_addressed_outside_postgres(
+    postgres_factory,
+    tmp_path: Path,
+) -> None:
+    command = _command(sessions=(date(2020, 1, 2),))
+    request = command.session_request(date(2020, 1, 2))
+    PostgresRuntimeScopeRepository(postgres_factory).register_policy(_policy())
+    PostgresHistoricalResearchJournal(
+        postgres_factory,
+        clock=MutableClock(CREATED_AT),
+    ).create_or_get(command)
+    repository = PostgresHistoricalMaterializationRepository(
+        postgres_factory,
+        artifact_root=tmp_path,
+    )
+    source = ValidationArtifactReference(
+        "NORMALIZED_DATASET",
+        ArtifactId("normalized-owner-external"),
+        canonical_hash({"normalized": "external"}),
+    )
+    component = HistoricalSessionComponent.create(
+        run_id=command.run_id,
+        session_id=request.session_id,
+        trading_date=request.trading_date,
+        component_kind=HistoricalComponentKind.FEATURE,
+        source_max_event_time=request.decision_time,
+        materialized_at=request.materialized_at,
+        source_references=(source,),
+        payload={"features": [{"symbol": "600000.SH", "value": "1"}] * 100},
+    )
+
+    repository.put(component=component, ordinal=1)
+    repository.put(component=component, ordinal=1)
+
+    with postgres_factory.connection(read_only=True) as connection:
+        row = connection.execute(
+            """
+            SELECT payload_storage, payload_locator, payload_physical_hash,
+                   payload_size_bytes, payload_logical_size_bytes,
+                   payload_json->>'schema_version'
+            FROM historical_corpus_session_component
+            WHERE component_id = %s
+            """,
+            (str(component.component_id),),
+        ).fetchone()
+    assert row is not None
+    assert row[0] == "ARTIFACT_PHYSICAL_V1"
+    assert str(row[1]).startswith("artifact-root-v1/")
+    assert str(row[2]).startswith("sha256:")
+    assert 0 < int(row[3]) < int(row[4])
+    assert row[5] == "historical-session-component-external-projection/v1"
+    assert repository.get(component.reference) == component
+
+    payload_path = tmp_path.joinpath(*str(row[1]).split("/")[1:])
+    corrupted = bytearray(payload_path.read_bytes())
+    corrupted[-1] ^= 1
+    payload_path.write_bytes(corrupted)
+    with pytest.raises(
+        HistoricalMaterializationConflict,
+        match="physical hash mismatch",
+    ):
+        repository.get(component.reference)
+
+
+def test_external_outcome_projection_remains_queryable_without_duplicate_label_json(
+    postgres_factory,
+    tmp_path: Path,
+) -> None:
+    sessions = (date(2020, 1, 2), date(2020, 1, 3), date(2020, 1, 4))
+    command = _command(sessions=sessions)
+    PostgresRuntimeScopeRepository(postgres_factory).register_policy(_policy())
+    PostgresHistoricalResearchJournal(
+        postgres_factory,
+        clock=MutableClock(CREATED_AT),
+    ).create_or_get(command)
+    repository = PostgresHistoricalMaterializationRepository(
+        postgres_factory,
+        artifact_root=tmp_path,
+    )
+    source = ValidationArtifactReference(
+        "NORMALIZED_DATASET",
+        ArtifactId("external-outcome-source"),
+        canonical_hash({"external": "outcome-source"}),
+    )
+    target = RuntimeArtifactReference(
+        "OUTCOME_TARGET_DEFINITION",
+        ArtifactId("external-outcome-target"),
+        canonical_hash({"external": "outcome-target"}),
+    )
+    labels: list[TargetOutcomeLabel] = []
+    for trading_date in sessions:
+        request = command.session_request(trading_date)
+        start = datetime.combine(trading_date, time(10, 30), tzinfo=UTC)
+        end = start + timedelta(days=1)
+        label = TargetOutcomeLabel.create(
+            symbol="600000.SH",
+            target=target,
+            label_interval_start=start,
+            label_interval_end=end,
+            decision_reference_price=Decimal("10"),
+            checkpoint_price=Decimal("10.1"),
+            mfe=Decimal("0.02"),
+            mae=Decimal("-0.01"),
+            barrier_passages=(),
+            barrier_ordering=BarrierOrderingOutcome.NOT_APPLICABLE,
+            market_conditions=(OutcomeMarketCondition.TRADING,),
+            availability_status=OutcomeAvailabilityStatus.COMPLETE,
+            outcome_available_at=end,
+            reason_codes=("TARGET_COMPLETE",),
+        )
+        labels.append(label)
+        repository.put(
+            component=HistoricalSessionComponent.create(
+                run_id=command.run_id,
+                session_id=request.session_id,
+                trading_date=trading_date,
+                component_kind=HistoricalComponentKind.OUTCOME,
+                source_max_event_time=end,
+                materialized_at=request.materialized_at,
+                source_references=(source,),
+                payload={"labels": [label.to_canonical_dict()]},
+            ),
+            ordinal=1,
+        )
+
+    with postgres_factory.connection(read_only=True) as connection:
+        projection_count = connection.execute(
+            "SELECT count(*) FROM historical_corpus_outcome_label"
+        ).fetchone()
+    assert projection_count == (0,)
+    projected = repository.list_outcome_labels_before(
+        run_id=command.run_id,
+        before=date(2020, 1, 5),
+        symbol="600000.SH",
+        target_id=target.artifact_id,
+        maximum_labels=2,
+    )
+    assert tuple(item[1] for item in projected) == tuple(labels[-2:])
+
+
+def test_external_panel_reuses_exact_feature_owner_without_payload_duplication(
+    postgres_factory,
+    tmp_path: Path,
+) -> None:
+    command = _command(sessions=(date(2020, 1, 2),))
+    request = command.session_request(date(2020, 1, 2))
+    PostgresRuntimeScopeRepository(postgres_factory).register_policy(_policy())
+    PostgresHistoricalResearchJournal(
+        postgres_factory,
+        clock=MutableClock(CREATED_AT),
+    ).create_or_get(command)
+    repository = PostgresHistoricalMaterializationRepository(
+        postgres_factory,
+        artifact_root=tmp_path,
+    )
+    source = ValidationArtifactReference(
+        "NORMALIZED_DATASET",
+        ArtifactId("panel-feature-source"),
+        canonical_hash({"panel": "feature-source"}),
+    )
+    feature_record = {
+        "symbol": "600000.SH",
+        "feature_id": "frozen.factor.v1",
+        "values": [{"output_id": "frozen", "value": "1"}] * 200,
+    }
+    feature = HistoricalSessionComponent.create(
+        run_id=command.run_id,
+        session_id=request.session_id,
+        trading_date=request.trading_date,
+        component_kind=HistoricalComponentKind.FEATURE,
+        source_max_event_time=request.decision_time,
+        materialized_at=request.materialized_at,
+        source_references=(source,),
+        payload={"features": [feature_record]},
+    )
+    panel = HistoricalSessionComponent.create(
+        run_id=command.run_id,
+        session_id=request.session_id,
+        trading_date=request.trading_date,
+        component_kind=HistoricalComponentKind.RESEARCH_PANEL,
+        source_max_event_time=request.decision_time,
+        materialized_at=request.materialized_at,
+        source_references=(feature.reference,),
+        payload={
+            "rows": [
+                {
+                    "symbol": "600000.SH",
+                    "research_features": [feature_record],
+                }
+            ]
+        },
+    )
+
+    repository.put_many(((feature, 1), (panel, 2)))
+
+    assert repository.get(panel.reference) == panel
+    with postgres_factory.connection(read_only=True) as connection:
+        row = connection.execute(
+            """
+            SELECT payload_size_bytes, payload_logical_size_bytes
+            FROM historical_corpus_session_component
+            WHERE component_id = %s
+            """,
+            (str(panel.component_id),),
+        ).fetchone()
+    assert row is not None
+    assert int(row[0]) < int(row[1])
+    assert int(row[1]) == len(canonical_json(panel.to_canonical_dict()))
 
 
 def test_prior_outcome_projection_keeps_newest_bounded_window(

@@ -1345,7 +1345,11 @@ def _dispatch(
                 artifact_root=args.artifact_root.resolve(),
                 apply_migrations=False,
             ),
-            component_repository=PostgresHistoricalMaterializationRepository(factory, apply_migrations=False),
+            component_repository=PostgresHistoricalMaterializationRepository(
+                factory,
+                artifact_root=args.artifact_root.resolve(),
+                apply_migrations=False,
+            ),
             evidence_repository=PostgresHistoricalEvidenceRepository(factory, apply_migrations=False),
         ).produce(run_id=run_id)
         return {
@@ -2936,6 +2940,7 @@ def _historical_runner(
             raise ValueError("FREE_RESEARCH_ARCHIVE Historical execution requires --artifact-root")
         component_repository = PostgresHistoricalMaterializationRepository(
             factory,
+            artifact_root=artifact_root.resolve(),
             apply_migrations=False,
         )
         base_materializer = HistoricalDecisionMaterializer(
