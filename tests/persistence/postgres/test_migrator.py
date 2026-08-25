@@ -166,14 +166,15 @@ FREE_RUNTIME_MIGRATIONS = (
     (101, "locked_oos_typed_calendar_owner"),
     (102, "historical_component_physical_payload"),
     (103, "historical_outcome_forecast_index"),
+    (104, "historical_outcome_forecast_fk_index"),
 )
 
 
 def test_packaged_migrations_are_contiguous_and_checksummed() -> None:
     migrations = load_packaged_migrations()
 
-    assert tuple(item.version for item in migrations) == tuple(range(1, 104))
-    assert len({item.name for item in migrations}) == 103
+    assert tuple(item.version for item in migrations) == tuple(range(1, 105))
+    assert len({item.name for item in migrations}) == 104
     assert all(item.checksum == sha256(item.sql.encode("utf-8")).hexdigest() for item in migrations)
 
 
@@ -354,11 +355,11 @@ def test_apply_all_is_idempotent(
     first = migrator.apply_all(postgres_factory)
     second = migrator.apply_all(postgres_factory)
 
-    assert tuple(item.version for item in first) == tuple(range(1, 104))
+    assert tuple(item.version for item in first) == tuple(range(1, 105))
     assert second == ()
     with postgres_factory.connection(read_only=True) as connection:
         rows = connection.execute("SELECT version, name, checksum FROM schema_migrations ORDER BY version").fetchall()
-    assert len(rows) == 103
+    assert len(rows) == 104
 
 
 def test_verify_current_is_read_only_and_requires_complete_head(
@@ -367,14 +368,14 @@ def test_verify_current_is_read_only_and_requires_complete_head(
     migrations = load_packaged_migrations()
     PostgresMigrator(migrations=migrations[:-1]).apply_all(postgres_factory)
 
-    with pytest.raises(PostgresMigrationSequenceError, match="missing versions: \\[103\\]"):
+    with pytest.raises(PostgresMigrationSequenceError, match="missing versions: \\[104\\]"):
         PostgresMigrator().verify_current(postgres_factory)
 
     with postgres_factory.connection(read_only=True) as connection:
         stored = connection.execute(
             "SELECT max(version) FROM schema_migrations"
         ).fetchone()
-    assert stored == (102,)
+    assert stored == (103,)
 
 
 def test_verify_current_rejects_missing_registry_without_creating_it(
@@ -591,7 +592,7 @@ def test_migration_026_preserves_prerelease_v1_decision_rows_forward_only(
         )
         + FREE_RUNTIME_MIGRATIONS
     )
-    assert applied == (103,)
+    assert applied == (104,)
     assert restored == account
 
 
@@ -1161,6 +1162,7 @@ def test_migration_060_preserves_v1_protocols_and_accepts_explicit_inference(
         (101, "locked_oos_typed_calendar_owner"),
         (102, "historical_component_physical_payload"),
         (103, "historical_outcome_forecast_index"),
+        (104, "historical_outcome_forecast_fk_index"),
     )
     with postgres_factory.connection(read_only=True) as connection:
         stored = connection.execute(
@@ -1635,13 +1637,15 @@ def test_migration_103_adds_compact_external_outcome_forecast_index(
     postgres_factory: PostgresConnectionFactory,
 ) -> None:
     migrations = load_packaged_migrations()
-    assert (migrations[-1].version, migrations[-1].name) == (
+    assert (migrations[-2].version, migrations[-2].name) == (
         103,
         "historical_outcome_forecast_index",
     )
     PostgresMigrator(migrations=migrations[:102]).apply_all(postgres_factory)
 
-    applied = PostgresMigrator(migrations=migrations).apply_all(postgres_factory)
+    applied = PostgresMigrator(migrations=migrations[:103]).apply_all(
+        postgres_factory
+    )
 
     assert tuple((item.version, item.name) for item in applied) == (
         (103, "historical_outcome_forecast_index"),
@@ -1679,3 +1683,33 @@ def test_migration_103_adds_compact_external_outcome_forecast_index(
         for item in definitions
     )
     assert trigger == (1,)
+
+
+def test_migration_104_indexes_external_outcome_owner_foreign_key(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    migrations = load_packaged_migrations()
+    assert (migrations[-1].version, migrations[-1].name) == (
+        104,
+        "historical_outcome_forecast_fk_index",
+    )
+    PostgresMigrator(migrations=migrations[:103]).apply_all(postgres_factory)
+
+    applied = PostgresMigrator(migrations=migrations).apply_all(postgres_factory)
+
+    assert tuple((item.version, item.name) for item in applied) == (
+        (104, "historical_outcome_forecast_fk_index"),
+    )
+    with postgres_factory.connection(read_only=True) as connection:
+        definition = connection.execute(
+            """
+            SELECT pg_get_indexdef(index_record.indexrelid)
+            FROM pg_catalog.pg_index AS index_record
+            JOIN pg_catalog.pg_class AS relation
+              ON relation.oid = index_record.indexrelid
+            WHERE relation.relname =
+                'historical_corpus_outcome_forecast_owner_fk_idx'
+            """
+        ).fetchone()
+    assert definition is not None
+    assert "(component_id, component_hash, trading_date)" in str(definition[0])
