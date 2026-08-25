@@ -228,3 +228,19 @@ def test_repeated_immutable_partition_scan_reuses_verified_file_hash(
         )
 
     assert hash_calls == 1
+
+    parquet = next(path.rglob("*.parquet"))
+    with parquet.open("ab") as handle:
+        handle.write(b"corruption-after-cached-verification")
+    with pytest.raises(ValueError, match="checksum mismatch"):
+        scan_historical_package(
+            package=index,
+            partitions=index.partitions,
+            timeframes=(Timeframe.DAILY,),
+            first_market_date=index.first_market_date,
+            last_market_date=index.last_market_date,
+            symbols=None,
+            max_rows=10,
+            batch_size=10,
+        )
+    assert hash_calls == 2
