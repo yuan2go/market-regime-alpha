@@ -230,7 +230,21 @@ def test_external_outcome_projection_remains_queryable_without_duplicate_label_j
         projection_count = connection.execute(
             "SELECT count(*) FROM historical_corpus_outcome_label"
         ).fetchone()
+        locators = connection.execute(
+            """
+            SELECT payload_locator
+            FROM historical_corpus_session_component
+            WHERE component_kind = 'OUTCOME'
+            ORDER BY trading_date
+            """
+        ).fetchall()
     assert projection_count == (0,)
+    assert all(
+        tmp_path.joinpath(*str(row[0]).split("/")[1:])
+        .read_bytes()
+        .startswith(b"MRAJZ1\n")
+        for row in locators
+    )
     projected = repository.list_outcome_labels_before(
         run_id=command.run_id,
         before=date(2020, 1, 5),

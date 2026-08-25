@@ -160,36 +160,7 @@ def _encode_physical(
     component: HistoricalSessionComponent,
     encoded_payload: Mapping[str, Any],
 ) -> bytes:
-    if component.component_kind is HistoricalComponentKind.OUTCOME:
-        compact = json.loads(canonical_json(encoded_payload))
-        payload = compact.get("payload")
-        if not isinstance(payload, dict):
-            raise ValueError("Historical Outcome payload is invalid")
-        labels = payload.pop("labels", None)
-        if not isinstance(labels, list) or not labels:
-            raise ValueError("Historical Outcome labels are invalid")
-        try:
-            table = pa.Table.from_pylist(labels)
-        except pa.ArrowException as error:
-            raise ValueError("Historical Outcome labels are not columnar") from error
-        sink = pa.BufferOutputStream()
-        pq.write_table(
-            table,
-            sink,
-            compression="zstd",
-            compression_level=_COMPRESSION_LEVEL,
-            use_dictionary=True,
-            data_page_version="2.0",
-        )
-        parquet = bytes(sink.getvalue())
-        header = canonical_json(compact).encode("utf-8")
-        compressed_header = _compress(header)
-        return (
-            _OUTCOME_PARQUET_MAGIC
-            + struct.pack(">QQ", len(header), len(compressed_header))
-            + compressed_header
-            + parquet
-        )
+    del component
     raw = canonical_json(encoded_payload).encode("utf-8")
     return _JSON_ZSTD_MAGIC + struct.pack(">Q", len(raw)) + _compress(raw)
 
