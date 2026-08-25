@@ -42,6 +42,8 @@ reports/**/*.md
 artifacts/macd_oos/
 .free-data-runtime/
 .local/phase-e-historical-artifacts/
+.local/wp-alpha-proof-02-inputs/
+.local/wp-alpha-proof-02-artifacts/
 !reports/**/
 !reports/backtests/Backtest-Report-Template.md
 *.db
