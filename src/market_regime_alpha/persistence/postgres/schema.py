@@ -187,6 +187,8 @@ EXPECTED_AUTHORITY_TABLES: Final[frozenset[str]] = frozenset(
         "free_data_historical_constituent_timeline",
         "free_data_historical_constituent_timeline_cohort",
         "free_data_historical_security_fact_set",
+        "free_data_historical_security_fact_member_guard",
+        "free_data_historical_security_fact_gap_member_guard",
         "free_data_historical_security_fact",
         "free_data_historical_security_fact_coverage_gap",
         "security_principal",
@@ -384,6 +386,18 @@ EXPECTED_AUTHORITY_TRIGGERS: Final[frozenset[tuple[str, str]]] = frozenset(
         (
             "free_data_historical_security_fact_coverage_gap",
             "free_data_historical_security_fact_gap_membership",
+        ),
+        (
+            "free_data_historical_security_fact_set",
+            "free_data_historical_security_fact_membership_projection",
+        ),
+        (
+            "free_data_historical_security_fact_member_guard",
+            "free_data_historical_security_fact_member_guard_no_update",
+        ),
+        (
+            "free_data_historical_security_fact_gap_member_guard",
+            "free_data_historical_security_fact_gap_member_guard_no_update",
         ),
         (
             "historical_research_run",

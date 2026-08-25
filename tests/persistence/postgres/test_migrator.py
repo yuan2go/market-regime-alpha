@@ -1422,7 +1422,8 @@ def test_migration_099_backfills_indexed_historical_fact_membership_guards(
     postgres_factory: PostgresConnectionFactory,
 ) -> None:
     migrations = load_packaged_migrations()
-    assert (migrations[-1].version, migrations[-1].name) == (
+    migration_099 = tuple(item for item in migrations if item.version <= 99)
+    assert (migration_099[-1].version, migration_099[-1].name) == (
         99,
         "historical_fact_membership_index",
     )
@@ -1433,7 +1434,7 @@ def test_migration_099_backfills_indexed_historical_fact_membership_guards(
     )
     owner = repository.publish(_owner(include_gap=True))
 
-    upgraded = PostgresMigrator(migrations=migrations).apply_all(postgres_factory)
+    upgraded = PostgresMigrator(migrations=migration_099).apply_all(postgres_factory)
 
     assert tuple((item.version, item.name) for item in upgraded) == (
         (99, "historical_fact_membership_index"),
@@ -1462,3 +1463,39 @@ def test_migration_099_backfills_indexed_historical_fact_membership_guards(
         ).fetchone()
     assert fact_count == len(owner.facts)
     assert gap_count == len(owner.coverage_gaps)
+
+
+def test_migration_100_indexes_historical_fact_guard_owner_foreign_keys(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    migrations = load_packaged_migrations()
+    assert (migrations[-1].version, migrations[-1].name) == (
+        100,
+        "historical_fact_guard_fk_indexes",
+    )
+    PostgresMigrator(migrations=migrations[:99]).apply_all(postgres_factory)
+
+    upgraded = PostgresMigrator(migrations=migrations).apply_all(postgres_factory)
+
+    assert tuple((item.version, item.name) for item in upgraded) == (
+        (100, "historical_fact_guard_fk_indexes"),
+    )
+    with postgres_factory.connection(read_only=True) as connection:
+        indexes = {
+            str(row[0])
+            for row in connection.execute(
+                """
+                SELECT indexname
+                FROM pg_catalog.pg_indexes
+                WHERE schemaname = current_schema()
+                  AND indexname IN (
+                    'free_data_historical_security_fact_member_guard_owner_idx',
+                    'free_data_historical_security_fact_gap_member_guard_owner_idx'
+                  )
+                """
+            ).fetchall()
+        }
+    assert indexes == {
+        "free_data_historical_security_fact_member_guard_owner_idx",
+        "free_data_historical_security_fact_gap_member_guard_owner_idx",
+    }
