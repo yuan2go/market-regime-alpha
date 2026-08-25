@@ -116,6 +116,10 @@ from market_regime_alpha.application.historical_corpus.decision_materializer imp
 from market_regime_alpha.application.historical_corpus.evidence_producer import (
     HistoricalEvidenceProducer,
 )
+from market_regime_alpha.application.historical_corpus.frozen_experiment import (
+    WP_ALPHA_PROOF_02_LOCKED_AT,
+    create_wp_alpha_proof_02_historical_experiment,
+)
 from market_regime_alpha.application.historical_corpus.normalization import (
     normalize_historical_package,
 )
@@ -160,6 +164,9 @@ from market_regime_alpha.application.research_validation.common import (
 )
 from market_regime_alpha.application.research_evaluation.postgres_target_repository import (
     PostgresTargetOutcomeRepository,
+)
+from market_regime_alpha.application.research_evaluation.targets import (
+    exploratory_five_minute_multi_horizon_protocol,
 )
 from market_regime_alpha.application.research_validation.free_historical_samples import (
     AShareBarProviderReader,
@@ -558,6 +565,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     historical_calendar_freeze.add_argument("--timeline-id", required=True)
     historical_calendar_freeze.add_argument("--artifact-root", type=Path, required=True)
+    historical_experiment_freeze = subparsers.add_parser(
+        "historical-experiment-freeze",
+        help="Bind reacquired physical owners to the frozen WP-ALPHA-PROOF-02 Experiment.",
+    )
+    historical_experiment_freeze.add_argument("--input", type=Path, required=True)
+    historical_experiment_freeze.add_argument("--artifact-root", type=Path, required=True)
     historical_security_facts_sync = subparsers.add_parser(
         "historical-security-facts-sync",
         help=("Acquire and publish effective/publication-dated Industry, shares and corporate-action facts for exact historical cohorts."),
@@ -1486,6 +1499,12 @@ def _dispatch(
         return FreeResearchUniverseOperator(factory).freeze_historical_trading_calendar(
             timeline_id=ArtifactId(args.timeline_id),
             artifact_root=args.artifact_root.resolve(),
+        )
+    if args.operation == "historical-experiment-freeze":
+        return _freeze_wp_alpha_proof_experiment(
+            factory,
+            artifact_root=args.artifact_root.resolve(),
+            payload=_load_json_object(args.input),
         )
     if args.operation == "historical-security-facts-sync":
         payload = _load_json_object(args.input)
@@ -2575,6 +2594,112 @@ def _record_phase_c_owner_package(
     }
 
 
+def _freeze_wp_alpha_proof_experiment(
+    factory: PostgresConnectionFactory,
+    *,
+    artifact_root: Path,
+    payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    expected = {
+        "raw_reference",
+        "normalized_reference",
+        "calendar_reference",
+        "universe_timeline_reference",
+        "security_facts_reference",
+    }
+    if set(payload) != expected:
+        raise ValueError(
+            "historical-experiment-freeze requires exact physical and PIT owner references"
+        )
+    references = {
+        name: ValidationArtifactReference.from_canonical_dict(
+            _object_value(payload[name], name)
+        )
+        for name in expected
+    }
+    corpus = PostgresHistoricalCorpusRepository(
+        factory,
+        artifact_root=artifact_root,
+        apply_migrations=False,
+    )
+    raw = corpus.open_index(references["raw_reference"])
+    normalized = corpus.open_index(references["normalized_reference"])
+    if normalized.parent_reference != raw.reference:
+        raise ValueError("reacquired Normalized Dataset does not bind exact Raw owner")
+    calendar = PostgresPITTradingCalendarSnapshotRepository(
+        factory,
+        apply_migrations=False,
+    ).get(references["calendar_reference"].artifact_id)
+    calendar_reference = ValidationArtifactReference(
+        "TRADING_CALENDAR",
+        calendar.artifact_id,
+        calendar.content_hash,
+    )
+    if calendar_reference != references["calendar_reference"]:
+        raise ValueError("Historical Calendar owner drifted")
+    timeline = PostgresFreeResearchUniverseRepository(
+        factory,
+        apply_migrations=False,
+    ).get_timeline(references["universe_timeline_reference"].artifact_id)
+    if timeline.reference != references["universe_timeline_reference"]:
+        raise ValueError("Historical Universe Timeline owner drifted")
+    facts = PostgresHistoricalSecurityFactsRepository(
+        factory,
+        apply_migrations=False,
+    ).get(references["security_facts_reference"].artifact_id)
+    if facts.reference != references["security_facts_reference"]:
+        raise ValueError("Historical Security Facts owner drifted")
+    if timeline.reference not in facts.universe_scope_references:
+        raise ValueError("Historical Security Facts do not bind the frozen Timeline")
+    target = PostgresTargetOutcomeRepository(
+        factory,
+        apply_migrations=False,
+    ).register_protocol(exploratory_five_minute_multi_horizon_protocol())
+    definition = create_wp_alpha_proof_02_historical_experiment(
+        target,
+        locked_at=WP_ALPHA_PROOF_02_LOCKED_AT,
+        raw_owner_reference=raw.reference,
+        normalized_owner_reference=normalized.reference,
+        calendar_reference=calendar_reference,
+        universe_timeline_reference=timeline.reference,
+        security_facts_reference=facts.reference,
+    )
+    with factory.connection(read_only=True) as connection:
+        recorded_at_row = connection.execute(
+            "SELECT date_trunc('second', clock_timestamp())"
+        ).fetchone()
+    if recorded_at_row is None or not isinstance(recorded_at_row[0], datetime):
+        raise RuntimeError("PostgreSQL clock did not return an authority timestamp")
+    recorded_at = recorded_at_row[0]
+    recorded = PostgresResearchValidationRepository(
+        factory,
+        apply_migrations=False,
+    ).record_historical_experiment_definition(
+        definition,
+        recorded_at=recorded_at,
+    )
+    if recorded != definition:
+        raise ValueError("WP-ALPHA-PROOF-02 Experiment owner replay drifted")
+    return {
+        "operation": "HISTORICAL_EXPERIMENT_FREEZE",
+        "experiment_reference": ValidationArtifactReference(
+            "RESEARCH_EXPERIMENT_DEFINITION",
+            definition.definition_id,
+            definition.definition_hash,
+        ).to_canonical_dict(),
+        "target_protocol_reference": ValidationArtifactReference(
+            "OUTCOME_TARGET_PROTOCOL",
+            target.protocol_id,
+            target.protocol_hash,
+        ).to_canonical_dict(),
+        "locked_at": WP_ALPHA_PROOF_02_LOCKED_AT.isoformat(),
+        "formal_pit": False,
+        "locked_oos_consumed": False,
+        "formal_oos": False,
+        "production_qualified": False,
+    }
+
+
 def _reference_for(
     kind: str,
     artifact_id: ArtifactId,
@@ -2916,6 +3041,7 @@ def _required_permission(args: argparse.Namespace) -> SecurityPermission:
     if operation in {
         "historical-security-facts-sync",
         "historical-calendar-freeze",
+        "historical-experiment-freeze",
         "historical-universe-history-sync",
         "historical-universe-sync",
         "research-universe-sync",

@@ -63,6 +63,7 @@ WP_ALPHA_RESEARCH_01_MULTIPLE_TESTING_FAMILY = (
     "WP_ALPHA_RESEARCH_01_DISCOVERY_V1"
 )
 WP_ALPHA_PROOF_02_MULTIPLE_TESTING_FAMILY = "WP_ALPHA_PROOF_02_FROZEN_V1"
+WP_ALPHA_PROOF_02_LOCKED_AT = datetime(2026, 8, 25, 1, 5, 33, tzinfo=UTC)
 _WP_ALPHA_PROOF_02_DISCOVERY_EXPERIMENT = ValidationArtifactReference(
     "RESEARCH_EXPERIMENT_DEFINITION",
     ArtifactId(
@@ -471,6 +472,8 @@ def create_wp_alpha_proof_02_historical_experiment(
     before producing Evidence.
     """
 
+    if locked_at != WP_ALPHA_PROOF_02_LOCKED_AT:
+        raise ValueError("WP-ALPHA-PROOF-02 lock time is frozen at protocol checkpoint a926b95")
     expected_kinds = (
         (raw_owner_reference, "RAW_PROVIDER_ARCHIVE"),
         (normalized_owner_reference, "NORMALIZED_DATASET"),
@@ -817,6 +820,7 @@ __all__ = [
     "HistoricalStrategyEconomicsPolicySet",
     "PHASE_E3_DECISION_LOCAL_TIME",
     "PHASE_E3_TIMEZONE",
+    "WP_ALPHA_PROOF_02_LOCKED_AT",
     "WP_ALPHA_PROOF_02_MULTIPLE_TESTING_FAMILY",
     "WP_ALPHA_RESEARCH_01_MULTIPLE_TESTING_FAMILY",
     "create_phase_e3_feature_configuration",

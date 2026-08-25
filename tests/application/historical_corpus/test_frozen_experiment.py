@@ -6,6 +6,7 @@ from datetime import UTC, datetime, time
 import pytest
 
 from market_regime_alpha.application.historical_corpus.frozen_experiment import (
+    WP_ALPHA_PROOF_02_LOCKED_AT,
     WP_ALPHA_RESEARCH_01_MULTIPLE_TESTING_FAMILY,
     create_golden_loop_v2_historical_experiment,
     create_phase_e3_feature_configuration,
@@ -245,7 +246,7 @@ def test_wp_alpha_proof_02_binds_reacquired_owners_without_changing_protocol() -
 
     experiment = create_wp_alpha_proof_02_historical_experiment(
         target,
-        locked_at=LOCKED_AT,
+        locked_at=WP_ALPHA_PROOF_02_LOCKED_AT,
         **references,
     )
     domains = {
@@ -289,6 +290,12 @@ def test_wp_alpha_proof_02_binds_reacquired_owners_without_changing_protocol() -
     assert experiment.stopping_rule == (
         "EXHAUST_FROZEN_EXTERNAL_SCOPE_ONCE_NO_RESULT_DEPENDENT_CHANGE"
     )
+    with pytest.raises(ValueError, match="lock time is frozen"):
+        create_wp_alpha_proof_02_historical_experiment(
+            target,
+            locked_at=LOCKED_AT,
+            **references,
+        )
 
 
 def _reference(kind: str, name: str) -> ValidationArtifactReference:
