@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 from contextlib import redirect_stdout
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
@@ -13,6 +15,7 @@ import signal
 import socket
 import tempfile
 from typing import Any, Callable, Iterator, Mapping
+import zlib
 
 from market_regime_alpha.application.historical_corpus.artifacts import (
     HistoricalPackageIndex,
@@ -460,12 +463,7 @@ class BaoStockHistoricalArchiveClient:
         response = self._timed_acquire_one(**values)
         if response.provider_error_code is not None:
             return response
-        envelope = {
-            "schema_version": "baostock-historical-request-checkpoint/v1",
-            "request_identity": identity,
-            "response": response.to_canonical_dict(),
-        }
-        payload = {**envelope, "checkpoint_hash": canonical_hash(envelope)}
+        payload = _checkpoint_payload(response, identity)
         descriptor, temporary_name = tempfile.mkstemp(
             prefix=f".{checkpoint.stem}.",
             suffix=".tmp",
@@ -870,20 +868,34 @@ def _load_request_checkpoint(
         raise AShareDataError("BaoStock request checkpoint is corrupt") from exc
     if not isinstance(payload, Mapping):
         raise AShareDataError("BaoStock request checkpoint is invalid")
-    envelope = {
-        "schema_version": payload.get("schema_version"),
-        "request_identity": payload.get("request_identity"),
-        "response": payload.get("response"),
-    }
+    schema_version = payload.get("schema_version")
+    if schema_version == "baostock-historical-request-checkpoint/v1":
+        envelope = {
+            "schema_version": schema_version,
+            "request_identity": payload.get("request_identity"),
+            "response": payload.get("response"),
+        }
+        response_payload = envelope["response"]
+    elif schema_version == "baostock-historical-request-checkpoint/v2":
+        envelope = {
+            "schema_version": schema_version,
+            "request_identity": payload.get("request_identity"),
+            "response_codec": payload.get("response_codec"),
+            "response_hash": payload.get("response_hash"),
+            "response_compressed": payload.get("response_compressed"),
+        }
+        response_payload = _decompress_checkpoint_response(envelope)
+        if envelope["response_hash"] != canonical_hash(response_payload):
+            raise AShareDataError("BaoStock request checkpoint response drift")
+    else:
+        raise AShareDataError("BaoStock request checkpoint identity drift")
     if (
-        envelope["schema_version"]
-        != "baostock-historical-request-checkpoint/v1"
-        or envelope["request_identity"] != dict(identity)
+        envelope["request_identity"] != dict(identity)
         or payload.get("checkpoint_hash") != canonical_hash(envelope)
-        or not isinstance(envelope["response"], Mapping)
+        or not isinstance(response_payload, Mapping)
     ):
         raise AShareDataError("BaoStock request checkpoint identity drift")
-    response = HistoricalRawRequest.from_canonical_dict(envelope["response"])
+    response = HistoricalRawRequest.from_canonical_dict(response_payload)
     if (
         response.provider_id != identity["provider_id"]
         or response.symbol != identity["symbol"]
@@ -893,6 +905,53 @@ def _load_request_checkpoint(
     ):
         raise AShareDataError("BaoStock request checkpoint response drift")
     return response
+
+
+def _checkpoint_payload(
+    response: HistoricalRawRequest,
+    identity: Mapping[str, str],
+) -> dict[str, object]:
+    response_payload = response.to_canonical_dict()
+    compressed = zlib.compress(
+        canonical_json(response_payload).encode("utf-8"),
+        level=9,
+    )
+    envelope = {
+        "schema_version": "baostock-historical-request-checkpoint/v2",
+        "request_identity": dict(identity),
+        "response_codec": "ZLIB_BASE64_CANONICAL_JSON",
+        "response_hash": canonical_hash(response_payload),
+        "response_compressed": base64.b64encode(compressed).decode("ascii"),
+    }
+    return {**envelope, "checkpoint_hash": canonical_hash(envelope)}
+
+
+def _decompress_checkpoint_response(
+    envelope: Mapping[str, object],
+) -> Mapping[str, Any]:
+    encoded = envelope.get("response_compressed")
+    if (
+        envelope.get("response_codec") != "ZLIB_BASE64_CANONICAL_JSON"
+        or not isinstance(encoded, str)
+    ):
+        raise AShareDataError("BaoStock request checkpoint identity drift")
+    try:
+        compressed = base64.b64decode(
+            encoded,
+            validate=True,
+        )
+        decoded = zlib.decompress(compressed).decode("utf-8")
+        payload = json.loads(decoded)
+    except (
+        binascii.Error,
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        zlib.error,
+    ) as exc:
+        raise AShareDataError("BaoStock request checkpoint is corrupt") from exc
+    if not isinstance(payload, Mapping):
+        raise AShareDataError("BaoStock request checkpoint is invalid")
+    return payload
 
 
 def _fsync_directory(path: Path) -> None:

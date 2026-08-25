@@ -552,6 +552,12 @@ def build_parser() -> argparse.ArgumentParser:
     historical_universe_history_sync.add_argument("--start-date", required=True)
     historical_universe_history_sync.add_argument("--end-date", required=True)
     historical_universe_history_sync.add_argument("--artifact-root", type=Path, required=True)
+    historical_calendar_freeze = subparsers.add_parser(
+        "historical-calendar-freeze",
+        help="Freeze the canonical Calendar from one exact historical Universe timeline.",
+    )
+    historical_calendar_freeze.add_argument("--timeline-id", required=True)
+    historical_calendar_freeze.add_argument("--artifact-root", type=Path, required=True)
     historical_security_facts_sync = subparsers.add_parser(
         "historical-security-facts-sync",
         help=("Acquire and publish effective/publication-dated Industry, shares and corporate-action facts for exact historical cohorts."),
@@ -1474,6 +1480,11 @@ def _dispatch(
         return FreeResearchUniverseOperator(factory).sync_historical_constituent_history(
             start_date=date.fromisoformat(args.start_date),
             end_date=date.fromisoformat(args.end_date),
+            artifact_root=args.artifact_root.resolve(),
+        )
+    if args.operation == "historical-calendar-freeze":
+        return FreeResearchUniverseOperator(factory).freeze_historical_trading_calendar(
+            timeline_id=ArtifactId(args.timeline_id),
             artifact_root=args.artifact_root.resolve(),
         )
     if args.operation == "historical-security-facts-sync":
@@ -2904,6 +2915,7 @@ def _required_permission(args: argparse.Namespace) -> SecurityPermission:
         return SecurityPermission.READ_RESEARCH
     if operation in {
         "historical-security-facts-sync",
+        "historical-calendar-freeze",
         "historical-universe-history-sync",
         "historical-universe-sync",
         "research-universe-sync",

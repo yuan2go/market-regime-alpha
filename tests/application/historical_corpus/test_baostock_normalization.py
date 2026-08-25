@@ -33,7 +33,7 @@ from market_regime_alpha.application.historical_corpus.normalization import (
     normalize_historical_package,
 )
 from market_regime_alpha.data_sources.a_share_bars import AShareDataError
-from market_regime_alpha.evidence.canonical import canonical_hash, canonical_json
+from market_regime_alpha.evidence.canonical import canonical_json
 from market_regime_alpha.market_data.contracts import Timeframe
 from tests.application.historical_corpus.support import raw_owner, raw_request
 
@@ -356,6 +356,14 @@ def test_acquisition_checkpoints_completed_requests_for_exact_resume(
         if path.name != "acquisition-manifest.json"
     )
     assert len(checkpoints) == 2
+    checkpoint_payload = json.loads(checkpoints[0].read_text(encoding="utf-8"))
+    assert checkpoint_payload["schema_version"] == (
+        "baostock-historical-request-checkpoint/v2"
+    )
+    assert checkpoint_payload["response_codec"] == "ZLIB_BASE64_CANONICAL_JSON"
+    assert isinstance(checkpoint_payload["response_compressed"], str)
+    assert "response" not in checkpoint_payload
+    assert '"rows"' not in checkpoints[0].read_text(encoding="utf-8")
     checkpoints[0].write_text("{}\n", encoding="utf-8")
     with pytest.raises(AShareDataError, match="identity drift"):
         client.acquire(**values)
@@ -451,17 +459,12 @@ def test_concurrent_checkpoint_accepts_valid_winner_with_different_clock(
 
     def concurrent_link(source: str, destination: str) -> None:
         loser_payload = json.loads(open(source, encoding="utf-8").read())  # noqa: PTH123, SIM115
-        envelope = {
-            "schema_version": loser_payload["schema_version"],
-            "request_identity": loser_payload["request_identity"],
-            "response": winner.to_canonical_dict(),
-        }
+        payload = archive_module._checkpoint_payload(  # noqa: SLF001
+            winner,
+            loser_payload["request_identity"],
+        )
         with open(destination, "w", encoding="utf-8") as handle:  # noqa: PTH123
-            handle.write(
-                canonical_json(
-                    {**envelope, "checkpoint_hash": canonical_hash(envelope)}
-                )
-            )
+            handle.write(canonical_json(payload))
             handle.write("\n")
         raise FileExistsError
 

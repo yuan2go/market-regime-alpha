@@ -2,13 +2,26 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, time
 from pathlib import Path
 from typing import Protocol
+from zoneinfo import ZoneInfo
 
-from market_regime_alpha.core.identity import ArtifactId
+from market_regime_alpha.application.controlled_operation.input_artifacts import (
+    publish_controlled_trading_calendar,
+)
 from market_regime_alpha.application.research_validation.common import (
     ValidationArtifactReference,
+)
+from market_regime_alpha.core.identity import ArtifactId, DatasetId
+from market_regime_alpha.data.pit_artifact_authority import (
+    CanonicalPITArtifactAuthorityResolver,
+    PITArtifactKind,
+    PITArtifactReference,
+)
+from market_regime_alpha.data.postgres_pit_authority import PostgresPITAuthority
+from market_regime_alpha.data.postgres_trading_calendar import (
+    PostgresPITTradingCalendarSnapshotRepository,
 )
 from market_regime_alpha.data.providers.public_composite.replay_archive import (
     SourceReplayArchiveReader,
@@ -21,6 +34,11 @@ from market_regime_alpha.data.providers.public_composite.research_universe impor
 )
 from market_regime_alpha.persistence.postgres.connection import (
     PostgresConnectionFactory,
+)
+from market_regime_alpha.data.trading_calendar import (
+    TradingCalendarArtifact,
+    TradingSession,
+    build_trading_calendar_artifact,
 )
 from market_regime_alpha.universe.postgres_research import (
     PostgresFreeResearchUniverseRepository,
@@ -40,6 +58,31 @@ class FreeResearchUniverseAcquirer(Protocol):
     def acquire_historical_constituent_history(self, *, start_date: date, end_date: date) -> FreeResearchUniverseHistoryAcquisition: ...
 
 
+def build_historical_trading_calendar(
+    timeline: HistoricalConstituentTimeline,
+) -> TradingCalendarArtifact:
+    """Project the exact Provider scan sessions into the canonical Calendar."""
+
+    timezone = ZoneInfo("Asia/Shanghai")
+    return build_trading_calendar_artifact(
+        source_dataset_id=DatasetId(str(timeline.timeline_id)),
+        market="CN_A_SHARE",
+        calendar_version="BAOSTOCK_HISTORY_SCAN_V1",
+        timezone_name="Asia/Shanghai",
+        sessions=tuple(
+            TradingSession(
+                trade_date=session_date,
+                session_close=datetime.combine(
+                    session_date,
+                    time(hour=15),
+                    tzinfo=timezone,
+                ),
+            )
+            for session_date in timeline.queried_trading_dates
+        ),
+    )
+
+
 class FreeResearchUniverseOperator:
     def __init__(
         self,
@@ -47,6 +90,7 @@ class FreeResearchUniverseOperator:
         *,
         acquisition: FreeResearchUniverseAcquirer | None = None,
     ) -> None:
+        self._factory = factory
         self._repository = PostgresFreeResearchUniverseRepository(factory)
         self._acquisition = acquisition or BaoStockResearchUniverseClient()
 
@@ -141,6 +185,65 @@ class FreeResearchUniverseOperator:
             "production_authorized": False,
         }
 
+    def freeze_historical_trading_calendar(
+        self,
+        *,
+        timeline_id: ArtifactId,
+        artifact_root: Path,
+    ) -> dict[str, object]:
+        """Publish and record the Calendar projected from one exact timeline."""
+
+        timeline = self._repository.get_timeline(timeline_id)
+        calendar = build_historical_trading_calendar(timeline)
+        calendar_root = artifact_root / "historical-trading-calendar"
+        package_path = publish_controlled_trading_calendar(
+            root=calendar_root,
+            artifact=calendar,
+        )
+        reference = PITArtifactReference(
+            PITArtifactKind.TRADING_CALENDAR.value,
+            calendar.artifact_id,
+            calendar.content_hash,
+        )
+        resolution = PostgresPITAuthority(
+            self._factory,
+            artifact_resolver=CanonicalPITArtifactAuthorityResolver(
+                artifact_roots={
+                    PITArtifactKind.TRADING_CALENDAR: calendar_root,
+                }
+            ),
+        ).resolve_artifact(
+            reference,
+            actor="HISTORICAL_RESEARCH",
+            reason="resolve exact provider-scanned Historical Trading Calendar",
+            idempotency_key=(
+                f"historical-calendar:{timeline.timeline_id}:"
+                f"{timeline.timeline_hash}"
+            ),
+        )
+        recorded = PostgresPITTradingCalendarSnapshotRepository(
+            self._factory,
+            apply_migrations=False,
+        ).record(calendar)
+        if recorded != calendar:
+            raise ValueError("Historical Trading Calendar owner identity drifted")
+        return {
+            "operation": "HISTORICAL_TRADING_CALENDAR_FREEZE",
+            "calendar_reference": ValidationArtifactReference(
+                "TRADING_CALENDAR",
+                calendar.artifact_id,
+                calendar.content_hash,
+            ).to_canonical_dict(),
+            "timeline_reference": timeline.reference.to_canonical_dict(),
+            "session_count": len(calendar.sessions),
+            "package_path": str(package_path),
+            "authority_resolution": resolution.to_canonical_dict(),
+            "data_eligibility": "EXPLORATORY",
+            "evidence_ceiling": "PIT_INCOMPLETE",
+            "formal_pit": False,
+            "formal_oos": False,
+        }
+
     def _publish(
         self,
         acquired: FreeResearchUniverseAcquisition,
@@ -216,4 +319,7 @@ def _result(snapshot, *, archive_path: str | None, replayed: bool) -> dict[str, 
     }
 
 
-__all__ = ["FreeResearchUniverseOperator"]
+__all__ = [
+    "FreeResearchUniverseOperator",
+    "build_historical_trading_calendar",
+]
