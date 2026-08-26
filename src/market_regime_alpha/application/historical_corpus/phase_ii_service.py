@@ -1583,7 +1583,7 @@ def _first_complete_execution_diagnostic(
     }
     for target in reproduction.target_results:
         owner_reference = target.physical_source_reference
-        if target.persisted_observation is None or owner_reference not in physical_owners:
+        if owner_reference not in physical_owners:
             continue
         source_slice = corpus.read(
             HistoricalReadQuery.create(

@@ -8,7 +8,7 @@ the T+1 10:30 target without reading their persisted numerical outputs.
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, time
 from decimal import Decimal, ROUND_HALF_EVEN
 from enum import Enum
@@ -65,6 +65,7 @@ from market_regime_alpha.application.historical_corpus.alpha_diagnostics import 
     RobustInferenceResult,
     TimedPriceObservation,
     diagnose_execution_price,
+    factor_ranks,
 )
 from market_regime_alpha.application.research_validation.common import (
     ValidationArtifactReference,
@@ -631,7 +632,7 @@ class HistoricalAlphaCorrectnessChecker:
                     )
                 )
         return HistoricalCorrectnessReproduction(
-            tuple(feature_results),
+            attach_feature_rank_reproduction(tuple(feature_results)),
             tuple(target_results),
             tuple(
                 physical_by_owner[key]
@@ -690,6 +691,9 @@ class FeatureCorrectnessComparison:
     event_start: datetime
     event_end: datetime
     decision_time: datetime
+    persisted_rank: Decimal | None
+    recomputed_rank: Decimal | None
+    rank_population_count: int
     discrepancies: tuple[str, ...]
 
     def __post_init__(self) -> None:
@@ -707,6 +711,18 @@ class FeatureCorrectnessComparison:
             require_sha256("Feature comparison lineage hash", lineage)
         if self.event_end > self.decision_time or self.persisted_event_end > self.decision_time:
             raise ValueError("Feature comparison uses information after DecisionTime")
+        if (self.persisted_rank is None) != (self.recomputed_rank is None):
+            raise ValueError("Feature rank comparison must be paired")
+        if self.persisted_rank is None:
+            if self.rank_population_count != 0:
+                raise ValueError("unranked Feature comparison cannot claim a population")
+        elif (
+            self.rank_population_count <= 0
+            or self.persisted_rank <= 0
+            or self.recomputed_rank is None
+            or self.recomputed_rank <= 0
+        ):
+            raise ValueError("Feature rank comparison is invalid")
         expected: list[str] = []
         if self.persisted_value != self.recomputed_value:
             expected.append(f"VALUE_MISMATCH:{self.factor_id}")
@@ -720,6 +736,8 @@ class FeatureCorrectnessComparison:
             or self.persisted_event_end != self.event_end
         ):
             expected.append(f"EVENT_INTERVAL_MISMATCH:{self.factor_id}")
+        if self.persisted_rank != self.recomputed_rank:
+            expected.append(f"RANK_MISMATCH:{self.factor_id}")
         if tuple(expected) != self.discrepancies:
             raise ValueError("Feature comparison discrepancies are not derived")
 
@@ -737,6 +755,9 @@ class FeatureCorrectnessComparison:
             "event_start": self.event_start.isoformat(),
             "event_end": self.event_end.isoformat(),
             "decision_time": self.decision_time.isoformat(),
+            "persisted_rank": None if self.persisted_rank is None else str(self.persisted_rank),
+            "recomputed_rank": None if self.recomputed_rank is None else str(self.recomputed_rank),
+            "rank_population_count": self.rank_population_count,
             "discrepancies": list(self.discrepancies),
         }
 
@@ -1210,6 +1231,7 @@ class AlphaCorrectnessProof:
             "conclusion": self.conclusion.value,
             "factor_ids": list(factor_ids),
             "feature_results": _result_population_summary(self.feature_results),
+            "feature_rank_reproduction": _feature_rank_summary(self.feature_results),
             "target_results": _result_population_summary(self.target_results),
             "physical_verifications": [
                 {
@@ -1429,6 +1451,34 @@ def _result_population_summary(
     }
 
 
+def _feature_rank_summary(
+    results: tuple[FeatureReproductionResult, ...],
+) -> dict[str, object]:
+    comparisons = tuple(
+        comparison for result in results for comparison in result.comparisons
+    )
+    ranked = tuple(
+        item
+        for item in comparisons
+        if item.persisted_rank is not None and item.recomputed_rank is not None
+    )
+    return {
+        "comparison_count": len(comparisons),
+        "ranked_comparison_count": len(ranked),
+        "rank_population_count": len(
+            {
+                (result.session, comparison.factor_id)
+                for result in results
+                for comparison in result.comparisons
+                if comparison.persisted_rank is not None
+            }
+        ),
+        "rank_mismatch_count": sum(
+            item.persisted_rank != item.recomputed_rank for item in ranked
+        ),
+    }
+
+
 def _target_semantic_status_summary(
     results: tuple[TargetReproductionResult, ...],
 ) -> dict[str, object]:
@@ -1498,6 +1548,12 @@ def _derive_proof_status(
         return AlphaCorrectnessStatus.CORRECTNESS_FAILED
     factor_complete = bool(feature_results) and all(
         {item.factor_id for item in result.comparisons} == _SUPPORTED_FACTORS
+        and all(
+            comparison.persisted_rank is not None
+            and comparison.recomputed_rank is not None
+            and comparison.rank_population_count > 0
+            for comparison in result.comparisons
+        )
         for result in feature_results
     )
     physical_by_reference = {
@@ -1926,6 +1982,9 @@ def reproduce_intraday_features(
             event_start=factor_bars[0].event_start,
             event_end=factor_bars[-1].event_end,
             decision_time=decision_time,
+            persisted_rank=None,
+            recomputed_rank=None,
+            rank_population_count=0,
             discrepancies=tuple(discrepancies),
         )
         comparisons.append(comparison)
@@ -1952,6 +2011,92 @@ def reproduce_intraday_features(
         discrepancies=tuple(all_discrepancies),
         incomplete_reason_codes=tuple(sorted(set(incomplete_reason_codes))),
     )
+
+
+def attach_feature_rank_reproduction(
+    results: tuple[FeatureReproductionResult, ...],
+) -> tuple[FeatureReproductionResult, ...]:
+    """Compare the production rank transform with an independent implementation."""
+
+    ordered = tuple(sorted(results, key=lambda item: (item.session, item.symbol)))
+    grouped: defaultdict[
+        tuple[date, str],
+        list[tuple[int, int, FeatureCorrectnessComparison]],
+    ] = defaultdict(list)
+    for result_index, result in enumerate(ordered):
+        for comparison_index, comparison in enumerate(result.comparisons):
+            grouped[(result.session, comparison.factor_id)].append(
+                (result_index, comparison_index, comparison)
+            )
+
+    ranked: dict[tuple[int, int], FeatureCorrectnessComparison] = {}
+    for population in grouped.values():
+        persisted = factor_ranks(
+            tuple(item.persisted_value for _left, _right, item in population)
+        )
+        recomputed = _independent_factor_ranks(
+            tuple(item.recomputed_value for _left, _right, item in population)
+        )
+        population_count = len(population)
+        for (result_index, comparison_index, comparison), left, right in zip(
+            population, persisted, recomputed, strict=True
+        ):
+            discrepancies = (
+                *comparison.discrepancies,
+                *((f"RANK_MISMATCH:{comparison.factor_id}",) if left != right else ()),
+            )
+            ranked[(result_index, comparison_index)] = replace(
+                comparison,
+                persisted_rank=left,
+                recomputed_rank=right,
+                rank_population_count=population_count,
+                discrepancies=discrepancies,
+            )
+
+    enriched: list[FeatureReproductionResult] = []
+    for result_index, result in enumerate(ordered):
+        comparisons = tuple(
+            ranked[(result_index, comparison_index)]
+            for comparison_index in range(len(result.comparisons))
+        )
+        discrepancies = tuple(
+            discrepancy
+            for comparison in comparisons
+            for discrepancy in comparison.discrepancies
+        )
+        enriched.append(
+            replace(
+                result,
+                status=_correctness_status(
+                    discrepancies=discrepancies,
+                    physical_source_available=result.physical_source_reference is not None,
+                    complete=(
+                        {item.factor_id for item in comparisons} == _SUPPORTED_FACTORS
+                        and not result.incomplete_reason_codes
+                    ),
+                ),
+                comparisons=comparisons,
+                discrepancies=discrepancies,
+            )
+        )
+    return tuple(enriched)
+
+
+def _independent_factor_ranks(values: tuple[Decimal, ...]) -> tuple[Decimal, ...]:
+    """Independent average-rank checker; intentionally separate from Discovery."""
+
+    ordered = sorted(range(len(values)), key=lambda index: (values[index], index))
+    ranks = [Decimal("0")] * len(values)
+    start = 0
+    while start < len(ordered):
+        stop = start + 1
+        while stop < len(ordered) and values[ordered[stop]] == values[ordered[start]]:
+            stop += 1
+        average = (Decimal(start + 1) + Decimal(stop)) / Decimal("2")
+        for index in ordered[start:stop]:
+            ranks[index] = average
+        start = stop
+    return tuple(ranks)
 
 
 def reproduce_t_plus_one_1030_target_v2(
@@ -2716,6 +2861,7 @@ __all__ = [
     "PersistedTargetObservation",
     "PhysicalSourceVerification",
     "TargetReproductionResult",
+    "attach_feature_rank_reproduction",
     "build_alpha_correctness_proof",
     "reproduce_intraday_features",
     "reproduce_execution_timing_diagnostics",

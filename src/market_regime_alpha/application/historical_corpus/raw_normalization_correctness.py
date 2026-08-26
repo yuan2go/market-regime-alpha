@@ -259,6 +259,13 @@ def verify_independent_baostock_normalization(
     raw_owner.verify_identity()
     canonical_normalized_owner.verify_identity()
     _require_owner_contract(raw_owner, canonical_normalized_owner)
+    _require_derived_provenance(
+        expected=provenance,
+        retrieved_at=raw_owner.retrieved_at,
+        last_market_date=raw_owner.last_market_date,
+        availability_basis=raw_owner.availability_basis,
+        limitations=raw_owner.limitations,
+    )
     discrepancies: list[NormalizationDiscrepancy] = []
     independent: list[HistoricalNormalizedBar] = []
     raw_row_count = 0
@@ -408,6 +415,13 @@ def verify_independent_baostock_package_normalization(
         or normalized_index.parent_reference != raw_index.reference
     ):
         raise ValueError("independent package correctness owner contract drifted")
+    _require_derived_provenance(
+        expected=provenance,
+        retrieved_at=raw_index.retrieved_at,
+        last_market_date=raw_index.last_market_date,
+        availability_basis=str(raw_index.manifest.get("availability_basis")),
+        limitations=raw_index.limitations,
+    )
 
     periods = tuple(
         sorted(
@@ -969,6 +983,35 @@ def _verification(
         discrepancies=discrepancies,
         reason_codes=reason_codes,
     )
+
+
+def _require_derived_provenance(
+    *,
+    expected: PhysicalAcquisitionProvenance,
+    retrieved_at: datetime,
+    last_market_date: date,
+    availability_basis: str,
+    limitations: tuple[str, ...],
+) -> None:
+    """Derive physical provenance from immutable owner chronology and lineage."""
+
+    limitation_set = set(limitations)
+    if "ORIGINAL_PHYSICAL_REOPENED" in limitation_set:
+        derived = PhysicalAcquisitionProvenance.ORIGINAL_PHYSICAL_REOPENED
+    elif (
+        availability_basis == "RETROSPECTIVE_EVENT_TIME"
+        and retrieved_at.date() > last_market_date
+        and "RETRIEVED_AFTER_HISTORICAL_DECISION_TIME" in limitation_set
+    ):
+        derived = PhysicalAcquisitionProvenance.REACQUIRED_EQUIVALENT_SOURCE
+    else:
+        raise ValueError(
+            "physical acquisition provenance is not derivable from Raw owner lineage"
+        )
+    if expected is not derived:
+        raise ValueError(
+            "declared physical acquisition provenance disagrees with Raw owner lineage"
+        )
 
 
 __all__ = [

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -9,10 +10,12 @@ import pytest
 from market_regime_alpha.application.historical_corpus.alpha_correctness import (
     AlphaCorrectnessConclusion,
     AlphaCorrectnessStatus,
+    HistoricalCorrectnessReproduction,
     PersistedFeatureObservation,
     PersistedTargetObservation,
     _physical_verification_from_reloaded_packages,
     _resolve_target_symbol_omissions,
+    attach_feature_rank_reproduction,
     build_alpha_correctness_proof,
     reproduce_execution_timing_diagnostics,
     reproduce_intraday_features,
@@ -47,6 +50,7 @@ from market_regime_alpha.application.historical_corpus.evidence import (
     HistoricalEvidenceKind,
 )
 from market_regime_alpha.application.historical_corpus.phase_ii_service import (
+    _first_complete_execution_diagnostic,
     _verify_phase_ii_payload_values,
 )
 from market_regime_alpha.application.historical_corpus.contracts import (
@@ -151,6 +155,53 @@ def test_independent_intraday_recomputation_matches_persisted_values(tmp_path) -
         "vwap_slope": Decimal("0.100000000000"),
     }
     assert all(item.event_end <= DECISION_TIME for item in result.comparisons)
+
+
+def test_feature_rank_is_reproduced_across_the_session_population(tmp_path) -> None:
+    results = []
+    for symbol, close, expected in (
+        ("600000.SH", "12", ("0.200000000000", "0.090909090909", "0.100000000000")),
+        ("600001.SH", "11", ("0.100000000000", "0.047619047619", "0.050000000000")),
+    ):
+        bars = (
+            _bar(SESSION, time(14, 45), symbol=symbol, open_price="10", close="10", volume="100"),
+            _bar(SESSION, time(14, 50), symbol=symbol, open_price="10", close=close, volume="100", row=2),
+        )
+        persisted = tuple(
+            PersistedFeatureObservation.create(
+                factor_id=factor_id,
+                value=Decimal(value),
+                source_bars=bars,
+            )
+            for factor_id, value in zip(
+                ("intraday_return_to_decision_time", "price_vs_vwap_return", "vwap_slope"),
+                expected,
+                strict=True,
+            )
+        )
+        results.append(
+            reproduce_intraday_features(
+                session=SESSION,
+                symbol=symbol,
+                decision_time=DECISION_TIME,
+                source_bars=bars,
+                persisted=persisted,
+                physical_verification=_physical_verification(tmp_path, bars),
+            )
+        )
+
+    ranked = attach_feature_rank_reproduction(tuple(results))
+
+    assert {
+        item.symbol: {comparison.persisted_rank for comparison in item.comparisons}
+        for item in ranked
+    } == {"600000.SH": {Decimal("2")}, "600001.SH": {Decimal("1")}}
+    assert all(
+        comparison.persisted_rank == comparison.recomputed_rank
+        and comparison.rank_population_count == 2
+        for item in ranked
+        for comparison in item.comparisons
+    )
 
 
 def test_intraday_recomputation_mismatch_fails_closed(tmp_path) -> None:
@@ -383,6 +434,7 @@ def test_correctness_proof_requires_all_factors_target_and_physical_lineage(
         persisted=persisted_features,
         physical_verification=physical,
     )
+    features = attach_feature_rank_reproduction((features,))[0]
     target = reproduce_t_plus_one_1030_target(
         symbol="600000.SH",
         decision_time=DECISION_TIME,
@@ -458,6 +510,35 @@ def test_correctness_proof_requires_all_factors_target_and_physical_lineage(
         source_bars=(*decision_bars, *target_bars),
         physical_verification=physical,
     )
+    post_cutoff_bar = _bar(
+        SESSION,
+        time(14, 55),
+        open_price="12",
+        close="12",
+        volume="100",
+        row=3,
+    )
+    execution_source_bars = (*decision_bars, post_cutoff_bar, *target_bars)
+    execution_physical = _physical_verification(tmp_path, execution_source_bars)
+    execution_target = reproduce_t_plus_one_1030_target_v2(
+        label=semantic_label,
+        protocol=protocol_v2,
+        trading_calendar=_calendar(),
+        source_bars=execution_source_bars,
+        physical_verification=execution_physical,
+    )
+    execution_diagnostics = _first_complete_execution_diagnostic(
+        reproduction=HistoricalCorrectnessReproduction(
+            feature_results=(features,),
+            target_results=(execution_target,),
+            physical_verifications=(execution_physical,),
+        ),
+        corpus=SimpleNamespace(
+            read=lambda _query: SimpleNamespace(records=execution_source_bars)
+        ),
+    )
+    assert {item.proxy for item in execution_diagnostics} == set(ExecutionPriceProxy)
+    assert execution_target.persisted_observation is None
     semantic_proof = build_alpha_correctness_proof(
         feature_results=(features,),
         target_results=(semantic_target,),
@@ -783,6 +864,7 @@ def _bar(
     market_date: date,
     start_time: time,
     *,
+    symbol: str = "600000.SH",
     open_price: str,
     close: str,
     volume: str,
@@ -792,7 +874,7 @@ def _bar(
     close_value = Decimal(close)
     volume_value = Decimal(volume)
     return HistoricalNormalizedBar.create(
-        symbol="600000.SH",
+        symbol=symbol,
         timeframe=Timeframe.MINUTE_5,
         market_date=market_date,
         event_start=event_start,

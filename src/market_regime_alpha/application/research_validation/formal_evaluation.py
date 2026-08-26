@@ -258,12 +258,55 @@ def moving_block_mean_interval(
 ) -> tuple[Decimal, Decimal, Decimal]:
     """Public mean diagnostic using Formal Evaluation's moving-block semantics."""
 
+    if not Decimal("0") < confidence_level < Decimal("1"):
+        raise ValueError("moving-block confidence level must be within (0, 1)")
+    draws = _moving_block_mean_draws(
+        values,
+        iterations=iterations,
+        block_sessions=block_sessions,
+        seed=seed,
+    )
+    estimate = _mean(values)
+    lower, upper = _percentile_interval(draws, confidence_level)
+    return estimate, lower, upper
+
+
+def moving_block_mean_null_p_value(
+    values: tuple[Decimal, ...],
+    *,
+    iterations: int,
+    block_sessions: int,
+    seed: str,
+    null_value: Decimal,
+    alternative: AlternativeHypothesis,
+) -> Decimal:
+    """Test a mean against a frozen null with dependence-preserving draws."""
+
+    draws = _moving_block_mean_draws(
+        values,
+        iterations=iterations,
+        block_sessions=block_sessions,
+        seed=seed,
+    )
+    return null_centered_p_value(
+        estimate=_mean(values),
+        bootstrap_estimates=draws,
+        null_value=null_value,
+        alternative=alternative,
+    )
+
+
+def _moving_block_mean_draws(
+    values: tuple[Decimal, ...],
+    *,
+    iterations: int,
+    block_sessions: int,
+    seed: str,
+) -> tuple[Decimal, ...]:
     if not values or iterations <= 0 or block_sessions <= 0:
         raise ValueError("moving-block mean diagnostic dimensions are invalid")
     if block_sessions > len(values):
         raise ValueError("moving-block length exceeds the observation count")
-    if not Decimal("0") < confidence_level < Decimal("1"):
-        raise ValueError("moving-block confidence level must be within (0, 1)")
     random = Random(seed)
     draws: list[Decimal] = []
     for _iteration in range(iterations):
@@ -275,9 +318,7 @@ def moving_block_mean_interval(
                 for offset in range(block_sessions)
             )
         draws.append(_mean(tuple(sampled[: len(values)])))
-    estimate = _mean(values)
-    lower, upper = _percentile_interval(tuple(draws), confidence_level)
-    return estimate, lower, upper
+    return tuple(draws)
 
 
 class EvaluationMetricStatus(str, Enum):
@@ -878,7 +919,7 @@ def run_formal_evaluation(
                         ):
                             if spec.null_value is None:
                                 raise RuntimeError("validated hypothesis lost its null")
-                            p_value = _null_centered_p_value(
+                            p_value = null_centered_p_value(
                                 estimate=estimate,
                                 bootstrap_estimates=draws,
                                 null_value=spec.null_value,
@@ -1298,7 +1339,7 @@ def _percentile_interval(
     return low, high
 
 
-def _null_centered_p_value(
+def null_centered_p_value(
     *,
     estimate: Decimal,
     bootstrap_estimates: tuple[Decimal, ...],
@@ -1336,7 +1377,7 @@ def _adjust_p_values(values: list[Decimal], method: MultipleTestingMethod) -> li
     running = Decimal("1")
     for rank, (index, value) in reversed(list(enumerate(ordered, start=1))):
         running = min(running, value * Decimal(len(values)) / Decimal(rank))
-        adjusted[index] = min(Decimal("1"), running)
+        adjusted[index] = min(Decimal("1"), max(value, running))
     return adjusted
 
 
