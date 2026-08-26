@@ -198,6 +198,57 @@ def test_missing_exact_decision_reference_preserves_complete_target_path() -> No
     assert "OUTCOME_GRID_COMPLETE" in result.reason_codes
 
 
+def test_previous_session_intraday_bar_cannot_change_decision_diagnostics() -> None:
+    protocol, target = _protocol_target()
+    specification = protocol.target_semantic_specification
+    assert specification is not None
+    decision_session = date(2025, 1, 6)
+    target_session = date(2025, 1, 7)
+    decision_time = datetime.combine(
+        decision_session, time(14, 55), SHANGHAI
+    ).astimezone(UTC)
+    previous_daily = _bar(
+        date(2025, 1, 3),
+        time(0),
+        row=1,
+        close="7.22",
+        timeframe=Timeframe.DAILY,
+        trading_status=HistoricalTradingStatus.SUSPENDED,
+    )
+    previous_intraday = _bar(
+        date(2025, 1, 3),
+        time(14, 50),
+        row=2,
+        close="7.22",
+    )
+    target_bars = _target_bars(target_session)
+
+    session_bounded = evaluate_historical_target_semantics(
+        specification=specification,
+        target=target,
+        symbol="600000.SH",
+        decision_time=decision_time,
+        next_session_date=target_session,
+        source_bars=(previous_daily, *target_bars),
+    )
+    wider_owner_slice = evaluate_historical_target_semantics(
+        specification=specification,
+        target=target,
+        symbol="600000.SH",
+        decision_time=decision_time,
+        next_session_date=target_session,
+        source_bars=(previous_daily, previous_intraday, *target_bars),
+    )
+
+    assert wider_owner_slice == session_bounded
+    assert wider_owner_slice.diagnostic_source_references == (
+        previous_daily.reference,
+    )
+    assert "DIAGNOSTIC_LAST_AVAILABLE_BAR_IGNORED" not in (
+        wider_owner_slice.reason_codes
+    )
+
+
 def test_unpriced_exact_placeholder_is_unavailable_and_never_a_fallback() -> None:
     protocol, target = _protocol_target()
     specification = protocol.target_semantic_specification

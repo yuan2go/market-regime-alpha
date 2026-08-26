@@ -81,6 +81,7 @@ def evaluate_historical_target_semantics(
         else _diagnostic_bars(
             relevant_bars,
             decision_time=decision_time,
+            decision_session=local_decision.date(),
             exact_decision=exact_decision,
             reasons=reasons,
         )
@@ -263,6 +264,7 @@ def _diagnostic_bars(
     bars: tuple[HistoricalNormalizedBar, ...],
     *,
     decision_time: datetime,
+    decision_session: date,
     exact_decision: tuple[HistoricalNormalizedBar, ...],
     reasons: set[str],
 ) -> tuple[HistoricalNormalizedBar, ...]:
@@ -285,6 +287,7 @@ def _diagnostic_bars(
                 item
                 for item in bars
                 if item.timeframe is Timeframe.MINUTE_5
+                and item.market_date == decision_session
                 and item.event_end < decision_time
                 and item.reference not in exact_references
                 and item.close is not None
