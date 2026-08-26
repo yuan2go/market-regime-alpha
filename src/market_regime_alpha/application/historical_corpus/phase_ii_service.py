@@ -63,6 +63,12 @@ from market_regime_alpha.application.historical_corpus.contracts import (
 from market_regime_alpha.application.historical_corpus.postgres_evidence import (
     PostgresHistoricalEvidenceRepository,
 )
+from market_regime_alpha.application.historical_corpus.postgres_correctness_failures import (
+    PostgresAlphaCorrectnessFailureRepository,
+)
+from market_regime_alpha.application.historical_corpus.correctness_failures import (
+    AlphaCorrectnessFailureIndex,
+)
 from market_regime_alpha.application.historical_corpus.materialization_contracts import (
     HistoricalComponentKind,
     HistoricalSessionComponent,
@@ -117,6 +123,9 @@ from market_regime_alpha.forecasting.conditional import (
 from market_regime_alpha.forecasting.path import PathForecastArtifact
 from market_regime_alpha.data.trading_calendar import TradingCalendarArtifact
 from market_regime_alpha.market_data.contracts import Timeframe
+from market_regime_alpha.universe.postgres_historical_facts import (
+    PostgresHistoricalSecurityFactsRepository,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,12 +156,18 @@ class HistoricalPhaseIIResearchService:
         corpus: PostgresHistoricalCorpusRepository | None = None,
         validation: PostgresResearchValidationRepository | None = None,
         research_models: PostgresResearchModelRepository | None = None,
+        historical_facts: PostgresHistoricalSecurityFactsRepository | None = None,
+        correctness_failures: (
+            PostgresAlphaCorrectnessFailureRepository | None
+        ) = None,
     ) -> None:
         self._evidence = evidence
         self._components = components
         self._corpus = corpus
         self._validation = validation
         self._research_models = research_models
+        self._historical_facts = historical_facts
+        self._correctness_failures = correctness_failures
 
     def load_evidence(
         self,
@@ -196,6 +211,7 @@ class HistoricalPhaseIIResearchService:
         reproduction = HistoricalAlphaCorrectnessChecker(
             components=components,
             corpus=corpus,
+            historical_facts=self._historical_facts,
         ).reproduce_run(
             run_id=run_id,
             trading_calendar=trading_calendar,
@@ -582,6 +598,9 @@ class HistoricalPhaseIIResearchService:
         run_id: ArtifactId,
         trading_calendar: TradingCalendarArtifact,
         physical_package_paths: Mapping[ValidationArtifactReference, Path] | None = None,
+        predecessor_failure_index_reference: (
+            ValidationArtifactReference | None
+        ) = None,
     ) -> HistoricalResearchEvidence:
         if write.evidence_kind is not HistoricalEvidenceKind.ALPHA_CORRECTNESS:
             raise ValueError("Alpha Correctness proof Evidence kind mismatch")
@@ -592,6 +611,7 @@ class HistoricalPhaseIIResearchService:
         reproduction = HistoricalAlphaCorrectnessChecker(
             components=self._components,
             corpus=self._corpus,
+            historical_facts=self._historical_facts,
         ).reproduce_run(
             run_id=run_id,
             trading_calendar=trading_calendar,
@@ -602,6 +622,16 @@ class HistoricalPhaseIIResearchService:
             reproduction=reproduction,
             corpus=self._corpus,
         )
+        if predecessor_failure_index_reference is not None:
+            failure_index = self._load_correctness_failure_index(
+                predecessor_failure_index_reference,
+                proof=proof,
+            )
+            required_failure_sources: tuple[
+                ValidationArtifactReference, ...
+            ] = (failure_index.reference,)
+        else:
+            required_failure_sources = ()
         owner_sources = tuple(
             item.reference
             for component_kind in (
@@ -630,16 +660,60 @@ class HistoricalPhaseIIResearchService:
                 item.normalized_owner_reference
                 for item in proof.normalization_verifications
             ),
+            *required_failure_sources,
         )
         return self._persist(
             replace(
                 write,
                 payload={
                     "status": proof.conclusion.value,
-                    "proof": proof.to_evidence_dict(),
+                    "proof": proof.to_evidence_dict(
+                        predecessor_failure_index_reference=(
+                            predecessor_failure_index_reference
+                        )
+                    ),
                 },
             )
         )
+
+    def _load_correctness_failure_index(
+        self,
+        reference: ValidationArtifactReference,
+        *,
+        proof: AlphaCorrectnessProof,
+    ) -> AlphaCorrectnessFailureIndex:
+        repository = self._correctness_failures
+        if (
+            repository is None
+            or reference.artifact_kind != "ALPHA_CORRECTNESS_FAILURE_INDEX"
+        ):
+            raise ValueError(
+                "Correctness Evidence v2 requires the failure-index owner"
+            )
+        index = repository.get(reference.artifact_id)
+        if index.reference != reference or len(index.details) != 8:
+            raise ValueError("Correctness predecessor failure index drifted")
+        proof_specifications = {
+            item.semantic_result.semantic_specification
+            for item in proof.target_results
+            if item.semantic_result is not None
+        }
+        detail_specifications = {
+            item.materializer_result.semantic_specification
+            for item in index.details
+        }
+        if (
+            len(proof_specifications) != 1
+            or proof_specifications != detail_specifications
+            or any(
+                item.materializer_result != item.checker_result
+                for item in index.details
+            )
+        ):
+            raise ValueError(
+                "Correctness proof Target semantics drifted from failure index"
+            )
+        return index
 
     def persist_external_evaluation(
         self,
@@ -1129,6 +1203,20 @@ class HistoricalPhaseIIResearchService:
 
 def _verify_phase_ii_payload(evidence: HistoricalResearchEvidence) -> None:
     _verify_phase_ii_payload_values(evidence.evidence_kind, evidence.payload)
+    if evidence.evidence_kind is HistoricalEvidenceKind.ALPHA_CORRECTNESS:
+        raw_proof = evidence.payload.get("proof")
+        if isinstance(raw_proof, Mapping) and raw_proof.get("schema_version") == (
+            "alpha-correctness-evidence-projection/v2"
+        ):
+            reference = ValidationArtifactReference.from_canonical_dict(
+                _mapping_value(
+                    raw_proof.get("predecessor_failure_index_reference")
+                )
+            )
+            if reference not in evidence.source_references:
+                raise ValueError(
+                    "Correctness failure index is absent from Evidence lineage"
+                )
 
 
 def _verify_phase_ii_payload_values(
@@ -1249,14 +1337,76 @@ def _correctness_proof_projection(
     del projection["proof_id"]
     del projection["proof_hash"]
     del projection["projection_hash"]
+    schema_version = projection.get("schema_version")
     if (
         canonical_hash(projection) != projection_hash
-        or projection.get("schema_version")
-        != "alpha-correctness-evidence-projection/v1"
+        or schema_version
+        not in {
+            "alpha-correctness-evidence-projection/v1",
+            "alpha-correctness-evidence-projection/v2",
+        }
         or projection.get("full_proof_owner_reload_required") is not True
     ):
         raise ValueError("Alpha Correctness proof projection hash mismatch")
+    if schema_version == "alpha-correctness-evidence-projection/v2":
+        failure_reference = ValidationArtifactReference.from_canonical_dict(
+            _mapping_value(
+                projection.get("predecessor_failure_index_reference")
+            )
+        )
+        if failure_reference.artifact_kind != "ALPHA_CORRECTNESS_FAILURE_INDEX":
+            raise ValueError("Alpha Correctness failure-index projection drifted")
+        _verify_target_semantic_status_projection(
+            _mapping_value(projection.get("target_semantic_statuses")),
+            expected_count=int(
+                _mapping_value(projection.get("target_results")).get("count", -1)
+            ),
+        )
     return value
+
+
+def _verify_target_semantic_status_projection(
+    value: Mapping[str, Any],
+    *,
+    expected_count: int,
+) -> None:
+    if value.get("count") != expected_count or expected_count <= 0:
+        raise ValueError("Alpha Correctness Target semantic count drifted")
+    references = value.get("semantic_specification_references")
+    if not isinstance(references, list) or len(references) != 1:
+        raise ValueError("Alpha Correctness Target semantic owner drifted")
+    reference = ValidationArtifactReference.from_canonical_dict(
+        _mapping_value(references[0])
+    )
+    if reference.artifact_kind != "TARGET_SEMANTIC_SPECIFICATION":
+        raise ValueError("Alpha Correctness Target semantic owner drifted")
+    status_counts = _mapping_value(value.get("status_counts"))
+    required_fields = {
+        "decision_reference_status",
+        "outcome_window_status",
+        "checkpoint_observation_status",
+        "checkpoint_return_status",
+        "mfe_status",
+        "mae_status",
+        "barrier_status",
+    }
+    if set(status_counts) != required_fields:
+        raise ValueError("Alpha Correctness Target semantic fields drifted")
+    allowed_statuses = {"COMPLETE", "PARTIAL", "UNAVAILABLE", "FAILED"}
+    for raw_counts in status_counts.values():
+        counts = _mapping_value(raw_counts)
+        if (
+            not counts
+            or not set(counts).issubset(allowed_statuses)
+            or any(
+                isinstance(count, bool)
+                or not isinstance(count, int)
+                or count <= 0
+                for count in counts.values()
+            )
+            or sum(counts.values()) != expected_count
+        ):
+            raise ValueError("Alpha Correctness Target semantic counts drifted")
 
 
 def _embedded_artifact(

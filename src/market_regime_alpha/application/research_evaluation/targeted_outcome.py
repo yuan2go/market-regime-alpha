@@ -6,24 +6,20 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, time
 from decimal import Decimal
 from typing import Any, Mapping
-from enum import Enum
 from zoneinfo import ZoneInfo
 
 from market_regime_alpha.application.continuous_research.journal import (
     RuntimeArtifactReference,
 )
-
-
-class BarrierOrderingOutcome(str, Enum):
-    NOT_APPLICABLE = "NOT_APPLICABLE"
-    NO_TOUCH = "NO_TOUCH"
-    UP_FIRST = "UP_FIRST"
-    DOWN_FIRST = "DOWN_FIRST"
-    AMBIGUOUS_NOT_OBSERVABLE = "AMBIGUOUS_NOT_OBSERVABLE"
 from market_regime_alpha.application.controlled_operation.prospective_outcome import (
     OutcomeAvailabilityStatus,
     OutcomeMarketCondition,
     ProspectiveShadowOutcome,
+)
+from market_regime_alpha.application.research_evaluation.target_semantics import (
+    BarrierOrderingOutcome,
+    TargetSemanticResult,
+    TargetSemanticStatus,
 )
 from market_regime_alpha.application.research_evaluation.targets import (
     BarrierDefinition,
@@ -61,7 +57,7 @@ class TargetOutcomeLabel:
     target: RuntimeArtifactReference
     label_interval_start: datetime
     label_interval_end: datetime
-    decision_reference_price: Decimal
+    decision_reference_price: Decimal | None
     checkpoint_price: Decimal | None
     checkpoint_return: Decimal | None
     mfe: Decimal | None
@@ -73,11 +69,13 @@ class TargetOutcomeLabel:
     outcome_available_at: datetime
     reason_codes: tuple[str, ...]
     schema_version: str = "target-outcome-label/v2"
+    semantic_result: TargetSemanticResult | None = None
 
     def __post_init__(self) -> None:
         if self.schema_version not in {
             "target-outcome-label/v1",
             "target-outcome-label/v2",
+            "target-outcome-label/v3",
         }:
             raise ValueError("unsupported Target Outcome label schema")
         require_sha256("label_hash", self.label_hash)
@@ -88,11 +86,24 @@ class TargetOutcomeLabel:
             raise ValueError("Target label interval must advance beyond Decision")
         if self.outcome_available_at < self.label_interval_end:
             raise ValueError("Target label cannot be available before interval end")
+        if self.schema_version in {
+            "target-outcome-label/v1",
+            "target-outcome-label/v2",
+        } and self.decision_reference_price is None:
+            raise ValueError("legacy Target label requires a Decision reference")
         expected = (
-            None
-            if self.checkpoint_price is None
-            else (self.checkpoint_price - self.decision_reference_price) / self.decision_reference_price
+            self.semantic_result.checkpoint_return
+            if self.schema_version == "target-outcome-label/v3"
+            and self.semantic_result is not None
+            else None
         )
+        if self.schema_version != "target-outcome-label/v3" and (
+            self.checkpoint_price is not None
+            and self.decision_reference_price is not None
+        ):
+            expected = (
+                self.checkpoint_price - self.decision_reference_price
+            ) / self.decision_reference_price
         if self.checkpoint_return != expected:
             raise ValueError("Target checkpoint return does not match price")
         if self.barrier_passages != tuple(sorted(self.barrier_passages, key=lambda item: item[0])):
@@ -107,6 +118,10 @@ class TargetOutcomeLabel:
             raise ValueError("Target market conditions must be unique and sorted")
         if self.reason_codes != tuple(sorted(set(self.reason_codes))):
             raise ValueError("Target label reasons must be unique and sorted")
+        if self.schema_version == "target-outcome-label/v3":
+            self._verify_semantic_result()
+        elif self.semantic_result is not None:
+            raise ValueError("legacy Target label cannot embed v3 semantics")
         if canonical_hash(self.identity_payload()) != self.label_hash:
             raise ValueError("Target label hash does not match content")
         if str(self.label_id) != f"target-outcome-label:{self.label_hash[7:]}":
@@ -117,17 +132,29 @@ class TargetOutcomeLabel:
         normalized = dict(values)
         normalized.setdefault("schema_version", "target-outcome-label/v2")
         if (
-            normalized["schema_version"] == "target-outcome-label/v2"
+            normalized["schema_version"]
+            in {"target-outcome-label/v2", "target-outcome-label/v3"}
             and "barrier_ordering" not in normalized
         ):
             raise ValueError("Target Outcome label v2 requires barrier_ordering")
+        if (
+            normalized["schema_version"] == "target-outcome-label/v3"
+            and not isinstance(
+                normalized.get("semantic_result"), TargetSemanticResult
+            )
+        ):
+            raise ValueError("Target Outcome label v3 requires semantic result")
         normalized["barrier_passages"] = tuple(sorted(values["barrier_passages"], key=lambda item: item[0]))
         normalized["market_conditions"] = tuple(sorted(set(values["market_conditions"]), key=lambda item: item.value))
         normalized["reason_codes"] = tuple(sorted(set(values["reason_codes"])))
         normalized["checkpoint_return"] = (
-            None
+            normalized["semantic_result"].checkpoint_return
+            if normalized["schema_version"] == "target-outcome-label/v3"
+            else None
             if values["checkpoint_price"] is None
-            else (values["checkpoint_price"] - values["decision_reference_price"]) / values["decision_reference_price"]
+            or values["decision_reference_price"] is None
+            else (values["checkpoint_price"] - values["decision_reference_price"])
+            / values["decision_reference_price"]
         )
         digest = canonical_hash(_label_payload(**normalized))
         return cls(
@@ -135,6 +162,39 @@ class TargetOutcomeLabel:
             label_hash=digest,
             **normalized,
         )
+
+    def _verify_semantic_result(self) -> None:
+        result = self.semantic_result
+        if result is None:
+            raise ValueError("Target Outcome label v3 requires semantic result")
+        expected_values = (
+            result.symbol,
+            result.decision_time,
+            result.outcome_window_end,
+            result.decision_reference_price,
+            result.checkpoint_price,
+            result.checkpoint_return,
+            result.mfe,
+            result.mae,
+            result.barrier_passages,
+            result.barrier_ordering,
+        )
+        actual_values = (
+            self.symbol,
+            self.label_interval_start,
+            self.label_interval_end,
+            self.decision_reference_price,
+            self.checkpoint_price,
+            self.checkpoint_return,
+            self.mfe,
+            self.mae,
+            self.barrier_passages,
+            self.barrier_ordering,
+        )
+        if actual_values != expected_values:
+            raise ValueError("Target Outcome label v3 semantic projection drifted")
+        if not set(result.reason_codes).issubset(self.reason_codes):
+            raise ValueError("Target Outcome label v3 semantic reasons are incomplete")
 
     def identity_payload(self) -> dict[str, Any]:
         return _label_payload(**{name: getattr(self, name) for name in _label_value_names()})
@@ -155,7 +215,9 @@ class TargetOutcomeLabel:
             target=_reference(payload["target"]),
             label_interval_start=_instant(payload["label_interval_start"]),
             label_interval_end=_instant(payload["label_interval_end"]),
-            decision_reference_price=_decimal(payload["decision_reference_price"]),
+            decision_reference_price=_optional_decimal(
+                payload["decision_reference_price"]
+            ),
             checkpoint_price=_optional_decimal(payload["checkpoint_price"]),
             checkpoint_return=_optional_decimal(payload["checkpoint_return"]),
             mfe=_optional_decimal(payload["mfe"]),
@@ -171,6 +233,13 @@ class TargetOutcomeLabel:
             outcome_available_at=_instant(payload["outcome_available_at"]),
             reason_codes=tuple(str(item) for item in _array(payload["reason_codes"])),
             schema_version=str(payload["schema_version"]),
+            semantic_result=(
+                None
+                if payload.get("semantic_result") is None
+                else TargetSemanticResult.from_canonical_dict(
+                    _object(payload["semantic_result"])
+                )
+            ),
         )
 
 
@@ -528,6 +597,61 @@ def build_target_outcome_label_from_bars(
     )
 
 
+def build_target_outcome_label_from_semantic_result(
+    *,
+    target: TargetDefinition,
+    semantic_result: TargetSemanticResult,
+    outcome_available_at: datetime,
+    market_conditions: tuple[OutcomeMarketCondition, ...] = (),
+) -> TargetOutcomeLabel:
+    """Persist a v3 label without inventing reference-dependent values."""
+
+    statuses = (
+        semantic_result.decision_reference_status,
+        semantic_result.outcome_window_status,
+        semantic_result.checkpoint_observation_status,
+        semantic_result.checkpoint_return_status,
+        semantic_result.mfe_status,
+        semantic_result.mae_status,
+        semantic_result.barrier_status,
+    )
+    if all(item is TargetSemanticStatus.COMPLETE for item in statuses):
+        availability = OutcomeAvailabilityStatus.COMPLETE
+    elif all(item is TargetSemanticStatus.UNAVAILABLE for item in statuses):
+        availability = OutcomeAvailabilityStatus.UNAVAILABLE
+    else:
+        availability = OutcomeAvailabilityStatus.PARTIAL
+    conditions = set(market_conditions)
+    if semantic_result.checkpoint_observation_status is not TargetSemanticStatus.COMPLETE:
+        conditions.add(OutcomeMarketCondition.MISSING_QUOTE)
+    reasons = {
+        *semantic_result.reason_codes,
+        f"TARGET_{availability.value}",
+    }
+    return TargetOutcomeLabel.create(
+        symbol=semantic_result.symbol,
+        target=RuntimeArtifactReference(
+            "OUTCOME_TARGET_DEFINITION", target.target_id, target.target_hash
+        ),
+        label_interval_start=semantic_result.decision_time,
+        label_interval_end=semantic_result.outcome_window_end,
+        decision_reference_price=semantic_result.decision_reference_price,
+        checkpoint_price=semantic_result.checkpoint_price,
+        mfe=semantic_result.mfe,
+        mae=semantic_result.mae,
+        barrier_passages=semantic_result.barrier_passages,
+        barrier_ordering=semantic_result.barrier_ordering,
+        market_conditions=tuple(conditions),
+        availability_status=availability,
+        outcome_available_at=max(
+            outcome_available_at, semantic_result.outcome_window_end
+        ),
+        reason_codes=tuple(reasons),
+        schema_version="target-outcome-label/v3",
+        semantic_result=semantic_result,
+    )
+
+
 def _checkpoint_price(
     checkpoint: OutcomeCheckpoint,
     *,
@@ -651,6 +775,7 @@ def _label_value_names() -> tuple[str, ...]:
         "outcome_available_at",
         "reason_codes",
         "schema_version",
+        "semantic_result",
     )
 
 
@@ -661,7 +786,9 @@ def _label_payload(**values: Any) -> dict[str, Any]:
         "target": values["target"].to_canonical_dict(),
         "label_interval_start": canonical_datetime(values["label_interval_start"]),
         "label_interval_end": canonical_datetime(values["label_interval_end"]),
-        "decision_reference_price": canonical_decimal(values["decision_reference_price"]),
+        "decision_reference_price": _decimal_value(
+            values["decision_reference_price"]
+        ),
         "checkpoint_price": _decimal_value(values["checkpoint_price"]),
         "checkpoint_return": _decimal_value(values["checkpoint_return"]),
         "mfe": _decimal_value(values["mfe"]),
@@ -678,8 +805,16 @@ def _label_payload(**values: Any) -> dict[str, Any]:
         "outcome_available_at": canonical_datetime(values["outcome_available_at"]),
         "reason_codes": list(values["reason_codes"]),
     }
-    if values["schema_version"] == "target-outcome-label/v2":
+    if values["schema_version"] in {
+        "target-outcome-label/v2",
+        "target-outcome-label/v3",
+    }:
         payload["barrier_ordering"] = values["barrier_ordering"].value
+    if values["schema_version"] == "target-outcome-label/v3":
+        semantic_result = values["semantic_result"]
+        if not isinstance(semantic_result, TargetSemanticResult):
+            raise ValueError("Target Outcome label v3 semantics are missing")
+        payload["semantic_result"] = semantic_result.to_canonical_dict()
     return payload
 
 
@@ -728,6 +863,12 @@ def _reference(value: object) -> RuntimeArtifactReference:
     )
 
 
+def _object(value: object) -> Mapping[str, Any]:
+    if not isinstance(value, Mapping):
+        raise TypeError("expected object")
+    return value
+
+
 def _objects(value: object) -> tuple[Mapping[str, Any], ...]:
     if not isinstance(value, list) or any(not isinstance(item, Mapping) for item in value):
         raise ValueError("expected object array")
@@ -768,5 +909,6 @@ __all__ = [
     "BarrierOrderingOutcome",
     "TargetOutcomeLabel",
     "TargetedShadowOutcome",
+    "build_target_outcome_label_from_semantic_result",
     "build_targeted_shadow_outcome",
 ]

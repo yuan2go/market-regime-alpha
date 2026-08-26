@@ -16,6 +16,10 @@ from market_regime_alpha.application.research_evaluation.targets import (
     OutcomeTargetProtocol,
     TargetDefinition,
 )
+from market_regime_alpha.application.research_evaluation.target_semantics import (
+    WP_ALPHA_CORRECTNESS_02_SEMANTIC_REVISION,
+    wp_alpha_correctness_02_target_semantic_specification,
+)
 from market_regime_alpha.application.historical_corpus.alpha_discovery import (
     ALPHA_DISCOVERY_GATE_IDS,
     ALPHA_DISCOVERY_TOP_K,
@@ -70,6 +74,12 @@ WP_ALPHA_RESEARCH_01_MULTIPLE_TESTING_FAMILY = (
 )
 WP_ALPHA_PROOF_02_MULTIPLE_TESTING_FAMILY = "WP_ALPHA_PROOF_02_FROZEN_V1"
 WP_ALPHA_PROOF_02_LOCKED_AT = datetime(2026, 8, 25, 1, 5, 33, tzinfo=UTC)
+WP_ALPHA_CORRECTNESS_02_MULTIPLE_TESTING_FAMILY = (
+    "WP-ALPHA-CORRECTNESS-02-DISCOVERY-V1"
+)
+WP_ALPHA_CORRECTNESS_02_LOCKED_AT = datetime(
+    2026, 8, 26, 0, 48, 43, tzinfo=UTC
+)
 _WP_ALPHA_PROOF_02_DISCOVERY_EXPERIMENT = ValidationArtifactReference(
     "RESEARCH_EXPERIMENT_DEFINITION",
     ArtifactId(
@@ -672,6 +682,203 @@ def create_wp_alpha_proof_02_historical_experiment(
     )
 
 
+def create_wp_alpha_correctness_02_historical_experiment(
+    target_protocol: OutcomeTargetProtocol,
+    *,
+    locked_at: datetime,
+    analysis_code_sha: str,
+    raw_owner_reference: ValidationArtifactReference,
+    normalized_owner_reference: ValidationArtifactReference,
+    calendar_reference: ValidationArtifactReference,
+    universe_timeline_reference: ValidationArtifactReference,
+    security_facts_reference: ValidationArtifactReference,
+    predecessor_run_reference: ValidationArtifactReference,
+    predecessor_correctness_evidence_reference: ValidationArtifactReference,
+    predecessor_failure_index_reference: ValidationArtifactReference,
+) -> ResearchExperimentDefinition:
+    """Freeze the corrective Discovery rerun without changing Alpha choices."""
+
+    if locked_at != WP_ALPHA_CORRECTNESS_02_LOCKED_AT:
+        raise ValueError(
+            "WP-ALPHA-CORRECTNESS-02 lock time is frozen at the protocol commit"
+        )
+    if len(analysis_code_sha) != 40 or any(
+        item not in "0123456789abcdef" for item in analysis_code_sha
+    ):
+        raise ValueError(
+            "WP-ALPHA-CORRECTNESS-02 requires one exact lowercase Git SHA"
+        )
+    expected_kinds = (
+        (raw_owner_reference, "RAW_PROVIDER_ARCHIVE"),
+        (normalized_owner_reference, "NORMALIZED_DATASET"),
+        (calendar_reference, "TRADING_CALENDAR"),
+        (universe_timeline_reference, "HISTORICAL_CONSTITUENT_TIMELINE"),
+        (security_facts_reference, "HISTORICAL_SECURITY_FACTS"),
+        (predecessor_run_reference, "HISTORICAL_RESEARCH_RUN"),
+        (
+            predecessor_correctness_evidence_reference,
+            "HISTORICAL_ALPHA_CORRECTNESS_EVIDENCE",
+        ),
+        (
+            predecessor_failure_index_reference,
+            "ALPHA_CORRECTNESS_FAILURE_INDEX",
+        ),
+    )
+    for reference, expected_kind in expected_kinds:
+        if reference.artifact_kind != expected_kind:
+            raise ValueError(
+                f"WP-ALPHA-CORRECTNESS-02 requires {expected_kind} owner"
+            )
+    semantic_specification = (
+        wp_alpha_correctness_02_target_semantic_specification()
+    )
+    if (
+        target_protocol.schema_version != "outcome-target-protocol/v2"
+        or target_protocol.target_semantic_specification
+        != semantic_specification
+    ):
+        raise ValueError(
+            "WP-ALPHA-CORRECTNESS-02 requires the frozen Target semantic revision"
+        )
+    discovery = create_wp_alpha_research_01_historical_experiment(
+        target_protocol,
+        locked_at=locked_at,
+    )
+    primary_target = next(
+        item
+        for item in target_protocol.targets
+        if item.checkpoint is OutcomeCheckpoint.TIME_1030
+    )
+    domains = {
+        item.parameter_name: item for item in discovery.hyperparameter_space
+    }
+
+    def bind(name: str, *values: str) -> None:
+        domains[name] = HyperparameterDomain(
+            name, tuple(sorted(set(values)))
+        )
+
+    bind("campaign_key", WP_ALPHA_CORRECTNESS_02_MULTIPLE_TESTING_FAMILY)
+    bind("analysis_code_sha", analysis_code_sha)
+    bind("raw_owner", _render_reference(raw_owner_reference))
+    bind("normalized_owner", _render_reference(normalized_owner_reference))
+    bind("dataset_owner", _render_reference(normalized_owner_reference))
+    bind("trading_calendar_owner", _render_reference(calendar_reference))
+    bind(
+        "constituent_timeline",
+        _render_reference(universe_timeline_reference),
+    )
+    bind("security_facts_owner", _render_reference(security_facts_reference))
+    bind("predecessor_run", _render_reference(predecessor_run_reference))
+    bind(
+        "predecessor_correctness_evidence",
+        _render_reference(predecessor_correctness_evidence_reference),
+    )
+    bind(
+        "predecessor_failure_index",
+        _render_reference(predecessor_failure_index_reference),
+    )
+    bind(
+        "target_semantic_specification",
+        _render_reference(semantic_specification.reference),
+    )
+    bind(
+        "semantic_revision",
+        WP_ALPHA_CORRECTNESS_02_SEMANTIC_REVISION,
+    )
+    bind(
+        "target_protocol",
+        _render_reference(
+            ValidationArtifactReference(
+                "OUTCOME_TARGET_PROTOCOL",
+                target_protocol.protocol_id,
+                target_protocol.protocol_hash,
+            )
+        ),
+    )
+    bind(
+        "discovery_target",
+        f"OUTCOME_TARGET|{primary_target.target_id}|{primary_target.target_hash}",
+    )
+    bind(
+        "factor_directions",
+        "intraday_return_to_decision_time|HIGHER_IS_BETTER",
+        "price_vs_vwap_return|HIGHER_IS_BETTER",
+        "vwap_slope|HIGHER_IS_BETTER",
+    )
+    bind("factor_composite", "EQUAL_WEIGHT_RANK_PERCENTILE")
+    bind("candidate_policies", "HARD_INTEGRITY_PRICE_RETURN")
+    bind("candidate_selection_top_k", "5_WITH_BOUNDARY_TIES")
+    bind("fractional_boundary", "FRACTIONAL_BOUNDARY_WEIGHT_V1")
+    bind("round_trip_cost", "0.002100")
+    bind("minimum_observation_coverage", "0.80")
+    bind("minimum_discovery_rank_ic_retention", "0.50")
+    bind("minimum_top_5_net_return", "0")
+    bind("placebo_controls", *tuple(item for item in (
+        "FACTOR_LAG",
+        "RANDOM_RANKING",
+        "SYMBOL_PERMUTATION",
+        "TARGET_PERMUTATION",
+        "TARGET_SHIFT",
+    )))
+    bind("multiple_testing_method", "BENJAMINI_HOCHBERG_FDR")
+    bind("inference_iterations", "2000")
+    bind("inference_block_lengths", "1|5|10")
+    bind("inference_confidence", "0.95")
+    bind("random_seed", "20260813")
+    bind(
+        "session_range",
+        "2025-01-02|2025-07-11|126|FINAL_TARGET_2025-07-14",
+    )
+    bind("external_outcome_access", "PROHIBITED")
+    bind("locked_oos_outcome_access", "PROHIBITED")
+    return ResearchExperimentDefinition.create(
+        research_question=(
+            "Does the unchanged exploratory three-Factor Alpha survive "
+            "independent source, feature, Target, placebo, redundancy and "
+            "dependence-aware correctness checks on its frozen Discovery scope?"
+        ),
+        hypothesis=(
+            "No positive result is presumed; the frozen Alpha choices remain "
+            "unchanged and negative, rejected or not-estimable results are terminal."
+        ),
+        decision_time_policy=discovery.decision_time_policy,
+        target_references=discovery.target_references,
+        feature_reference=discovery.feature_reference,
+        feature_version=discovery.feature_version,
+        allowed_model_families=(
+            "OWNER_RESOLVED_INDEPENDENT_ALPHA_CORRECTNESS",
+        ),
+        hyperparameter_space=tuple(domains.values()),
+        search_budget=discovery.search_budget,
+        primary_hypothesis_ids=(
+            "CORRECTNESS:FEATURE_REPRODUCTION",
+            "CORRECTNESS:TARGET_REPRODUCTION",
+            "CORRECTNESS:PLACEBO_FALSIFICATION",
+            "CORRECTNESS:FACTOR_REDUNDANCY",
+            "CORRECTNESS:DEPENDENCE_AWARE_INFERENCE",
+        ),
+        secondary_hypothesis_ids=discovery.secondary_hypothesis_ids,
+        multiple_testing_family_id=(
+            WP_ALPHA_CORRECTNESS_02_MULTIPLE_TESTING_FAMILY
+        ),
+        stopping_rule=(
+            "EXHAUST_EXACTLY_126_FROZEN_DISCOVERY_SESSIONS_NO_RESULT_DEPENDENT_CHANGE"
+        ),
+        train_validation_policy=(
+            "FROZEN_DISCOVERY_CORRECTNESS_ONLY_NO_EXTERNAL_OR_LOCKED_OUTCOME_READ"
+        ),
+        purge_embargo_policy=discovery.purge_embargo_policy,
+        oos_unlock_policy=(
+            "EXTERNAL_AND_LOCKED_OOS_HARD_CLOSED_UNTIL_SEPARATE_REVIEW"
+        ),
+        randomness_algorithm=discovery.randomness_algorithm,
+        random_seeds=discovery.random_seeds,
+        cost_policy_reference=discovery.cost_policy_reference,
+        schema_version=discovery.schema_version,
+    )
+
+
 def _render_reference(reference: ValidationArtifactReference) -> str:
     return (
         f"{reference.artifact_kind}|{reference.artifact_id}|"
@@ -882,6 +1089,94 @@ def verify_wp_alpha_proof_02_historical_experiment(
         raise ValueError("WP-ALPHA-PROOF-02 command omits frozen methodology owner")
 
 
+def verify_wp_alpha_correctness_02_historical_experiment(
+    definition: ResearchExperimentDefinition,
+    *,
+    target_protocol: OutcomeTargetProtocol,
+    feature_owner: FeatureSetConfiguration,
+    economics_owner: HistoricalStrategyEconomicsPolicySet,
+    decision_local_time: time,
+    timezone_name: str,
+    runtime_scope_policy_id: ArtifactId,
+    runtime_scope_policy_hash: str,
+    decision_policy_id: ArtifactId,
+    decision_policy_hash: str,
+    code_revision: str,
+    configuration_references: tuple[ValidationArtifactReference, ...],
+) -> None:
+    """Reload every frozen correctness owner before materialization."""
+
+    references = set(configuration_references)
+
+    def required_owner(kind: str) -> ValidationArtifactReference:
+        matches = tuple(item for item in references if item.artifact_kind == kind)
+        if len(matches) != 1:
+            raise ValueError(
+                f"WP-ALPHA-CORRECTNESS-02 command requires one {kind} owner"
+            )
+        return matches[0]
+
+    expected = create_wp_alpha_correctness_02_historical_experiment(
+        target_protocol,
+        locked_at=WP_ALPHA_CORRECTNESS_02_LOCKED_AT,
+        analysis_code_sha=code_revision,
+        raw_owner_reference=required_owner("RAW_PROVIDER_ARCHIVE"),
+        normalized_owner_reference=required_owner("NORMALIZED_DATASET"),
+        calendar_reference=required_owner("TRADING_CALENDAR"),
+        universe_timeline_reference=required_owner(
+            "HISTORICAL_CONSTITUENT_TIMELINE"
+        ),
+        security_facts_reference=required_owner("HISTORICAL_SECURITY_FACTS"),
+        predecessor_run_reference=required_owner("HISTORICAL_RESEARCH_RUN"),
+        predecessor_correctness_evidence_reference=required_owner(
+            "HISTORICAL_ALPHA_CORRECTNESS_EVIDENCE"
+        ),
+        predecessor_failure_index_reference=required_owner(
+            "ALPHA_CORRECTNESS_FAILURE_INDEX"
+        ),
+    )
+    if definition != expected:
+        raise ValueError(
+            "WP-ALPHA-CORRECTNESS-02 Experiment Definition drifted"
+        )
+    if feature_owner != create_phase_e3_feature_configuration():
+        raise ValueError("WP-ALPHA-CORRECTNESS-02 Feature owner drifted")
+    if economics_owner != create_phase_e3_strategy_economics_policy_set(
+        target_protocol=target_protocol,
+        created_at=WP_ALPHA_CORRECTNESS_02_LOCKED_AT,
+    ):
+        raise ValueError("WP-ALPHA-CORRECTNESS-02 Economics owner drifted")
+    if (
+        decision_local_time != PHASE_E3_DECISION_LOCAL_TIME
+        or timezone_name != PHASE_E3_TIMEZONE
+    ):
+        raise ValueError("WP-ALPHA-CORRECTNESS-02 DecisionTime drifted")
+    domains = {
+        item.parameter_name: item.allowed_values
+        for item in definition.hyperparameter_space
+    }
+    if domains.get("runtime_scope_policy") != (
+        f"{runtime_scope_policy_id}|{runtime_scope_policy_hash}",
+    ):
+        raise ValueError("WP-ALPHA-CORRECTNESS-02 Runtime Scope Policy drifted")
+    if domains.get("decision_policy") != (
+        f"{decision_policy_id}|{decision_policy_hash}",
+    ):
+        raise ValueError("WP-ALPHA-CORRECTNESS-02 Decision Policy drifted")
+    if domains.get("analysis_code_sha") != (code_revision,):
+        raise ValueError("WP-ALPHA-CORRECTNESS-02 code SHA drifted")
+    required_methodology = {
+        definition.feature_reference,
+        definition.cost_policy_reference,
+        GoldenLoopScoringContract.create_v2().reference,
+        alpha_discovery_evaluation_contract_reference(feature_owner),
+    }
+    if not required_methodology.issubset(references):
+        raise ValueError(
+            "WP-ALPHA-CORRECTNESS-02 command omits frozen methodology owner"
+        )
+
+
 def _strategy_policy(
     target: TargetDefinition,
     created_at: datetime,
@@ -937,6 +1232,8 @@ __all__ = [
     "HistoricalStrategyEconomicsPolicySet",
     "PHASE_E3_DECISION_LOCAL_TIME",
     "PHASE_E3_TIMEZONE",
+    "WP_ALPHA_CORRECTNESS_02_LOCKED_AT",
+    "WP_ALPHA_CORRECTNESS_02_MULTIPLE_TESTING_FAMILY",
     "WP_ALPHA_PROOF_02_LOCKED_AT",
     "WP_ALPHA_PROOF_02_MULTIPLE_TESTING_FAMILY",
     "WP_ALPHA_RESEARCH_01_MULTIPLE_TESTING_FAMILY",
@@ -945,11 +1242,13 @@ __all__ = [
     "create_phase_e3_historical_experiment",
     "create_phase_e3_research_universe_policy",
     "create_phase_e3_strategy_economics_policy_set",
+    "create_wp_alpha_correctness_02_historical_experiment",
     "create_wp_alpha_proof_02_historical_experiment",
     "create_wp_alpha_research_01_historical_experiment",
     "phase_e3_decision_policy_identity",
     "verify_phase_e3_historical_experiment",
     "verify_golden_loop_v2_historical_experiment",
     "verify_wp_alpha_research_01_historical_experiment",
+    "verify_wp_alpha_correctness_02_historical_experiment",
     "verify_wp_alpha_proof_02_historical_experiment",
 ]

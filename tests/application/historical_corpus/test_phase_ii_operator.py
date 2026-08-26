@@ -229,6 +229,10 @@ def _command(tmp_path: Path) -> dict[str, object]:
             ],
             "physical_provenance": "REACQUIRED_EQUIVALENT_SOURCE",
             "target_id": "next-session-10:30-return",
+            "predecessor_failure_index_reference": _reference(
+                "ALPHA_CORRECTNESS_FAILURE_INDEX",
+                "predecessor-failure-index",
+            ).to_canonical_dict(),
         },
     }
 
@@ -256,6 +260,9 @@ def test_correctness_operator_freezes_protocol_and_delegates_to_existing_service
     assert service.persist_args is not None
     write = service.persist_args[0][0]
     assert write.evidence_kind is HistoricalEvidenceKind.ALPHA_CORRECTNESS
+    assert service.persist_args[1][
+        "predecessor_failure_index_reference"
+    ].artifact_kind == "ALPHA_CORRECTNESS_FAILURE_INDEX"
     assert {item.artifact_kind for item in write.source_references} == {
         "HISTORICAL_NORMALIZED_DATA",
         "TRADING_CALENDAR",

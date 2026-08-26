@@ -7,6 +7,10 @@ from decimal import Decimal
 from enum import Enum
 from typing import Any, Mapping
 
+from market_regime_alpha.application.research_evaluation.target_semantics import (
+    TargetSemanticSpecification,
+    wp_alpha_correctness_02_target_semantic_specification,
+)
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.evidence.canonical import canonical_hash, require_sha256, require_text
 
@@ -423,6 +427,8 @@ class OutcomeTargetProtocol:
     session_offset: int
     targets: tuple[TargetDefinition, ...]
     limitations: tuple[str, ...]
+    target_semantic_specification: TargetSemanticSpecification | None = None
+    schema_version: str = "outcome-target-protocol/v1"
 
     def __post_init__(self) -> None:
         require_sha256("protocol_hash", self.protocol_hash)
@@ -441,6 +447,17 @@ class OutcomeTargetProtocol:
             raise ValueError("Protocol and Target session offsets must agree")
         if self.limitations != tuple(sorted(set(self.limitations))):
             raise ValueError("Protocol limitations must be unique and sorted")
+        if self.schema_version not in {
+            "outcome-target-protocol/v1",
+            "outcome-target-protocol/v2",
+        }:
+            raise ValueError("unsupported Outcome Target Protocol schema")
+        if (self.schema_version == "outcome-target-protocol/v2") != (
+            self.target_semantic_specification is not None
+        ):
+            raise ValueError(
+                "Outcome Target Protocol v2 requires one semantic specification"
+            )
         if canonical_hash(self.identity_payload()) != self.protocol_hash:
             raise ValueError("Target Protocol hash does not match content")
         if str(self.protocol_id) != f"outcome-target-protocol:{self.protocol_hash[7:]}":
@@ -455,6 +472,7 @@ class OutcomeTargetProtocol:
         session_offset: int,
         targets: tuple[TargetDefinition, ...],
         limitations: tuple[str, ...],
+        target_semantic_specification: TargetSemanticSpecification | None = None,
     ) -> OutcomeTargetProtocol:
         ordered_targets = tuple(sorted(targets, key=lambda item: str(item.target_id)))
         ordered_limitations = tuple(sorted(set(limitations)))
@@ -464,6 +482,12 @@ class OutcomeTargetProtocol:
             session_offset=session_offset,
             targets=ordered_targets,
             limitations=ordered_limitations,
+            target_semantic_specification=target_semantic_specification,
+            schema_version=(
+                "outcome-target-protocol/v2"
+                if target_semantic_specification is not None
+                else "outcome-target-protocol/v1"
+            ),
         )
         digest = canonical_hash(identity)
         return cls(
@@ -474,6 +498,12 @@ class OutcomeTargetProtocol:
             session_offset=session_offset,
             targets=ordered_targets,
             limitations=ordered_limitations,
+            target_semantic_specification=target_semantic_specification,
+            schema_version=(
+                "outcome-target-protocol/v2"
+                if target_semantic_specification is not None
+                else "outcome-target-protocol/v1"
+            ),
         )
 
     def identity_payload(self) -> dict[str, Any]:
@@ -483,6 +513,8 @@ class OutcomeTargetProtocol:
             session_offset=self.session_offset,
             targets=self.targets,
             limitations=self.limitations,
+            target_semantic_specification=self.target_semantic_specification,
+            schema_version=self.schema_version,
         )
 
     def to_canonical_dict(self) -> dict[str, Any]:
@@ -502,6 +534,16 @@ class OutcomeTargetProtocol:
             session_offset=int(payload["session_offset"]),
             targets=tuple(TargetDefinition.from_canonical_dict(item) for item in _objects(payload["targets"])),
             limitations=_strings(payload["limitations"]),
+            target_semantic_specification=(
+                None
+                if payload.get("target_semantic_specification") is None
+                else TargetSemanticSpecification.from_canonical_dict(
+                    _object(payload["target_semantic_specification"])
+                )
+            ),
+            schema_version=str(
+                payload.get("schema_version", "outcome-target-protocol/v1")
+            ),
         )
 
 
@@ -586,8 +628,55 @@ def exploratory_five_minute_multi_horizon_protocol() -> OutcomeTargetProtocol:
             "RESEARCH_LABELS_ONLY",
         ),
     )
+
+
+def exploratory_five_minute_multi_horizon_protocol_v2() -> OutcomeTargetProtocol:
+    """Correctness revision with exact Decision and path-state semantics.
+
+    The v1 factory remains immutable. This revision changes identities instead
+    of reinterpreting an already persisted protocol or Target label.
+    """
+
+    barriers = (
+        BarrierDefinition("DOWN_1_PERCENT", Decimal("0.01"), "DOWN"),
+        BarrierDefinition("UP_1_PERCENT", Decimal("0.01"), "UP"),
+        BarrierDefinition("UP_2_PERCENT", Decimal("0.02"), "UP"),
+    )
+    targets = tuple(
+        TargetDefinition.create(
+            target_version="phase-e-free-5m-exploratory-v2",
+            canonical_horizon=canonical_target_horizon(
+                checkpoint=checkpoint,
+                barriers=barriers,
+                compute_mfe_mae=True,
+            ),
+            required_market_data=(
+                ("NORMALIZED_DAILY_OPEN",)
+                if checkpoint is OutcomeCheckpoint.OPEN
+                else ("MINUTE_5", "DAILY")
+                if checkpoint is OutcomeCheckpoint.CLOSE
+                else ("MINUTE_5",)
+            ),
+        )
+        for checkpoint in OutcomeCheckpoint
+    )
+    return OutcomeTargetProtocol.create(
+        protocol_version="phase-e-free-5m-exploratory-v2",
+        timezone_name="Asia/Shanghai",
+        session_offset=1,
+        targets=targets,
+        limitations=(
+            "BARRIER_ORDERING_WITHIN_FIVE_MINUTE_BAR_NOT_OBSERVABLE",
+            "FORMAL_OOS_FALSE",
+            "PIT_INCOMPLETE",
+            "RESEARCH_LABELS_ONLY",
+        ),
+        target_semantic_specification=(
+            wp_alpha_correctness_02_target_semantic_specification()
+        ),
+    )
 def _protocol_payload(**values: Any) -> dict[str, Any]:
-    return {
+    result = {
         "schema": "outcome_target_protocol/v1",
         "protocol_version": values["protocol_version"],
         "timezone_name": values["timezone_name"],
@@ -595,6 +684,15 @@ def _protocol_payload(**values: Any) -> dict[str, Any]:
         "targets": [item.to_canonical_dict() for item in values["targets"]],
         "limitations": list(values["limitations"]),
     }
+    if values.get("schema_version") == "outcome-target-protocol/v2":
+        result["schema_version"] = "outcome-target-protocol/v2"
+        specification = values.get("target_semantic_specification")
+        if not isinstance(specification, TargetSemanticSpecification):
+            raise ValueError("Outcome Target Protocol v2 semantics are missing")
+        result["target_semantic_specification"] = (
+            specification.to_canonical_dict()
+        )
+    return result
 
 
 def _time_point_key(value: TargetTimePoint) -> tuple[int, int]:

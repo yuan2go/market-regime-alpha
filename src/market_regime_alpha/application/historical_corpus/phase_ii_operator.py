@@ -41,6 +41,9 @@ from market_regime_alpha.application.historical_corpus.phase_ii_service import (
 from market_regime_alpha.application.historical_corpus.postgres_evidence import (
     PostgresHistoricalEvidenceRepository,
 )
+from market_regime_alpha.application.historical_corpus.postgres_correctness_failures import (
+    PostgresAlphaCorrectnessFailureRepository,
+)
 from market_regime_alpha.application.historical_corpus.postgres_materialization import (
     PostgresHistoricalMaterializationRepository,
 )
@@ -73,6 +76,9 @@ from market_regime_alpha.evidence.canonical import require_sha256
 from market_regime_alpha.market_data.contracts import parse_utc_second
 from market_regime_alpha.persistence.postgres.connection import (
     PostgresConnectionFactory,
+)
+from market_regime_alpha.universe.postgres_historical_facts import (
+    PostgresHistoricalSecurityFactsRepository,
 )
 
 
@@ -132,6 +138,7 @@ class HistoricalPhaseIIResearchOperator:
                 "target_id",
             },
             label="Correctness parameters",
+            optional={"predecessor_failure_index_reference"},
         )
         experiment_reference = _reference(parameters["experiment_reference"])
         calendar_reference = _reference(parameters["calendar_reference"])
@@ -141,6 +148,20 @@ class HistoricalPhaseIIResearchOperator:
         if calendar.content_hash != calendar_reference.content_hash:
             raise ValueError("Correctness Trading Calendar owner drifted")
         physical_packages = _physical_packages(parameters["physical_packages"])
+        raw_failure_reference = parameters.get(
+            "predecessor_failure_index_reference"
+        )
+        failure_reference = (
+            None
+            if raw_failure_reference is None
+            else _reference(raw_failure_reference)
+        )
+        if (
+            failure_reference is not None
+            and failure_reference.artifact_kind
+            != "ALPHA_CORRECTNESS_FAILURE_INDEX"
+        ):
+            raise ValueError("Correctness requires a failure-index owner")
         proof = self.service.evaluate_correctness_campaign(
             run_id=ArtifactId(str(evidence["run_id"])),
             trading_calendar=calendar,
@@ -169,6 +190,7 @@ class HistoricalPhaseIIResearchOperator:
             run_id=write.run_id,
             trading_calendar=calendar,
             physical_package_paths=physical_packages,
+            predecessor_failure_index_reference=failure_reference,
         )
 
     def _external(
@@ -400,6 +422,8 @@ def build_postgres_phase_ii_operator(
             artifact_root=artifact_root,
         ),
         validation=validation,
+        historical_facts=PostgresHistoricalSecurityFactsRepository(factory),
+        correctness_failures=PostgresAlphaCorrectnessFailureRepository(factory),
     )
     return HistoricalPhaseIIResearchOperator(
         service=service,

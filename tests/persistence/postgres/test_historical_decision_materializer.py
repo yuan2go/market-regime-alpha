@@ -79,6 +79,7 @@ from market_regime_alpha.application.research_evaluation.postgres_target_reposit
 )
 from market_regime_alpha.application.research_evaluation.targets import (
     exploratory_five_minute_multi_horizon_protocol,
+    exploratory_five_minute_multi_horizon_protocol_v2,
 )
 from market_regime_alpha.application.research_session.contracts import (
     DataAuthorityMode,
@@ -157,9 +158,18 @@ ETF = "510300.SH"
 INDEX = "000300.SH"
 
 
+@pytest.mark.parametrize(
+    "target_protocol_factory",
+    (
+        exploratory_five_minute_multi_horizon_protocol,
+        exploratory_five_minute_multi_horizon_protocol_v2,
+    ),
+    ids=("legacy-v1", "correctness-v2"),
+)
 def test_existing_historical_runner_actively_materializes_and_replays(
     postgres_factory,
     tmp_path: Path,
+    target_protocol_factory,
 ) -> None:
     artifact_root = tmp_path / "artifact-root"
     corpus = PostgresHistoricalCorpusRepository(
@@ -202,7 +212,7 @@ def test_existing_historical_runner_actively_materializes_and_replays(
     policy = scope_repository.register_policy(_policy())
     target_repository = PostgresTargetOutcomeRepository(postgres_factory)
     target_protocol = target_repository.register_protocol(
-        exploratory_five_minute_multi_horizon_protocol(),
+        target_protocol_factory(),
         recorded_at=MATERIALIZED_AT,
     )
     context_payload = {
@@ -400,6 +410,7 @@ def test_existing_historical_runner_actively_materializes_and_replays(
     correctness = HistoricalAlphaCorrectnessChecker(
         components=component_repository,
         corpus=corpus,
+        historical_facts=facts_repository,
     ).reproduce_run(
         run_id=command.run_id,
         trading_calendar=build_trading_calendar_artifact(
@@ -432,7 +443,26 @@ def test_existing_historical_runner_actively_materializes_and_replays(
             AlphaCorrectnessStatus.PARTIALLY_REPRODUCED,
             AlphaCorrectnessStatus.PHYSICAL_REPRODUCTION_NOT_ESTABLISHED,
         }
-    ), [(item.symbol, item.discrepancies) for item in correctness.target_results]
+    ), [
+        (
+            item.symbol,
+            item.discrepancies,
+            {
+                key: (persisted[key], reproduced[key])
+                for key in persisted
+                if persisted[key] != reproduced[key]
+            },
+        )
+        for item in correctness.target_results
+        if item.persisted_semantic_result is not None
+        and item.semantic_result is not None
+        for persisted, reproduced in (
+            (
+                item.persisted_semantic_result.to_canonical_dict(),
+                item.semantic_result.to_canonical_dict(),
+            ),
+        )
+    ]
     assert {
         item.artifact_kind
         for item in resumed.sessions[0].receipts[-1].output_references
@@ -572,7 +602,15 @@ def test_existing_historical_runner_actively_materializes_and_replays(
     assert excluded["target_status"] == "CORPORATE_ACTION_EXCLUDED"
     assert outcome.payload["corporate_action_exclusions"][0]["reason_code"] == ("CORPORATE_ACTION_COVERAGE_GAP_RAW_RETURN_NOT_ESTIMABLE")
     action_labels = tuple(TargetOutcomeLabel.from_canonical_dict(item) for item in outcome.payload["labels"] if item["symbol"] == STOCKS[0])
-    assert all(item.availability_status is OutcomeAvailabilityStatus.UNAVAILABLE for item in action_labels)
+    expected_action_availability = (
+        OutcomeAvailabilityStatus.PARTIAL
+        if target_protocol.schema_version == "outcome-target-protocol/v2"
+        else OutcomeAvailabilityStatus.UNAVAILABLE
+    )
+    assert all(
+        item.availability_status is expected_action_availability
+        for item in action_labels
+    )
     assert all("CORPORATE_ACTION_POLICY_FAILED_CLOSED" in item.reason_codes for item in action_labels)
     assert excluded["industry"] == "TEST_INDUSTRY"
     assert excluded["market_cap_bucket"] != "NOT_ESTIMABLE"
