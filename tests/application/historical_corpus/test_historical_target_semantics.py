@@ -551,6 +551,7 @@ def test_typed_failure_detail_and_index_are_content_addressed() -> None:
                 "run_id": index.source_run_reference.artifact_id,
                 "evidence_id": index.source_evidence_reference.artifact_id,
                 "semantic_revision": specification.semantic_revision,
+                "analysis_code_sha": index.analysis_code_sha,
             }
             return index
 
@@ -577,12 +578,3 @@ def test_typed_failure_detail_and_index_are_content_addressed() -> None:
         analysis_code_sha=index.analysis_code_sha,
         created_at=RETRIEVED_AT + timedelta(days=1),
     ) == index
-    with pytest.raises(ValueError, match="conflicts with request"):
-        indexer.build_and_persist(
-            predecessor_run_id=index.source_run_reference.artifact_id,
-            predecessor_evidence_id=index.source_evidence_reference.artifact_id,
-            corrected_target_protocol=protocol,
-            trading_calendar=calendar,  # type: ignore[arg-type]
-            analysis_code_sha="b" * 40,
-            created_at=RETRIEVED_AT + timedelta(days=1),
-        )

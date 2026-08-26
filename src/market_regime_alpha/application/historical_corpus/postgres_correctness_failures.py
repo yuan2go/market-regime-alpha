@@ -158,19 +158,25 @@ class PostgresAlphaCorrectnessFailureRepository:
         run_id: ArtifactId,
         evidence_id: ArtifactId,
         semantic_revision: str,
+        analysis_code_sha: str,
     ) -> AlphaCorrectnessFailureIndex:
         with self._factory.connection(read_only=True) as connection:
             row = connection.execute(
                 """
                 SELECT index_id FROM alpha_correctness_failure_index
                 WHERE source_run_id = %s AND source_evidence_id = %s
-                  AND semantic_revision = %s
+                  AND semantic_revision = %s AND analysis_code_sha = %s
                 """,
-                (str(run_id), str(evidence_id), semantic_revision),
+                (
+                    str(run_id),
+                    str(evidence_id),
+                    semantic_revision,
+                    analysis_code_sha,
+                ),
             ).fetchone()
         if row is None:
             raise KeyError(
-                f"{run_id}/{evidence_id}/{semantic_revision}"
+                f"{run_id}/{evidence_id}/{semantic_revision}/{analysis_code_sha}"
             )
         return self.get(ArtifactId(str(row[0])))
 

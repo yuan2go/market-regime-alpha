@@ -178,14 +178,31 @@ def test_failure_index_is_idempotent_owner_verified_and_reloadable(
 
     first = repository.put(index)
     repeated = repository.put(index)
+    corrected_index = _failure_index(
+        command=command,
+        evidence=evidence,
+        raw_reference=raw.reference,
+        normalized_reference=normalized.reference,
+        analysis_code_sha="b" * 40,
+    )
+    corrected = repository.put(corrected_index)
 
     assert repeated == first == index
+    assert corrected == corrected_index
+    assert corrected.reference != first.reference
     assert repository.get(index.index_id) == index
     assert repository.get_for_source(
         run_id=command.run_id,
         evidence_id=evidence.evidence_id,
         semantic_revision=index.semantic_revision,
+        analysis_code_sha=index.analysis_code_sha,
     ) == index
+    assert repository.get_for_source(
+        run_id=command.run_id,
+        evidence_id=evidence.evidence_id,
+        semantic_revision=corrected.semantic_revision,
+        analysis_code_sha=corrected.analysis_code_sha,
+    ) == corrected
 
 
 def _failure_index(
@@ -194,6 +211,7 @@ def _failure_index(
     evidence: HistoricalResearchEvidence,
     raw_reference: ValidationArtifactReference,
     normalized_reference: ValidationArtifactReference,
+    analysis_code_sha: str = "a" * 40,
 ) -> AlphaCorrectnessFailureIndex:
     specification = wp_alpha_correctness_02_target_semantic_specification()
     decision_time = datetime.combine(
@@ -262,7 +280,7 @@ def _failure_index(
         ),
         normalization_revision="baostock-historical-normalization/v1",
         semantic_revision=specification.semantic_revision,
-        analysis_code_sha="a" * 40,
+        analysis_code_sha=analysis_code_sha,
     )
     return AlphaCorrectnessFailureIndex.create(
         source_run_reference=ValidationArtifactReference(
@@ -281,7 +299,7 @@ def _failure_index(
         raw_owner_reference=raw_reference,
         normalized_owner_reference=normalized_reference,
         normalization_revision="baostock-historical-normalization/v1",
-        analysis_code_sha="a" * 40,
+        analysis_code_sha=analysis_code_sha,
         semantic_revision=specification.semantic_revision,
         details=(detail,),
         created_at=NOW,

@@ -124,6 +124,7 @@ class HistoricalCorrectnessFailureIndexer:
                 run_id=predecessor_run_id,
                 evidence_id=predecessor_evidence_id,
                 semantic_revision=specification.semantic_revision,
+                analysis_code_sha=analysis_code_sha,
             )
         except KeyError:
             existing = None

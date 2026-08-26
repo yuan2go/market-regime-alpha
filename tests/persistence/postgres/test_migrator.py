@@ -168,14 +168,15 @@ FREE_RUNTIME_MIGRATIONS = (
     (103, "historical_outcome_forecast_index"),
     (104, "historical_outcome_forecast_fk_index"),
     (105, "alpha_correctness_target_semantics"),
+    (106, "alpha_correctness_failure_revision"),
 )
 
 
 def test_packaged_migrations_are_contiguous_and_checksummed() -> None:
     migrations = load_packaged_migrations()
 
-    assert tuple(item.version for item in migrations) == tuple(range(1, 106))
-    assert len({item.name for item in migrations}) == 105
+    assert tuple(item.version for item in migrations) == tuple(range(1, 107))
+    assert len({item.name for item in migrations}) == 106
     assert all(item.checksum == sha256(item.sql.encode("utf-8")).hexdigest() for item in migrations)
 
 
@@ -356,11 +357,11 @@ def test_apply_all_is_idempotent(
     first = migrator.apply_all(postgres_factory)
     second = migrator.apply_all(postgres_factory)
 
-    assert tuple(item.version for item in first) == tuple(range(1, 106))
+    assert tuple(item.version for item in first) == tuple(range(1, 107))
     assert second == ()
     with postgres_factory.connection(read_only=True) as connection:
         rows = connection.execute("SELECT version, name, checksum FROM schema_migrations ORDER BY version").fetchall()
-    assert len(rows) == 105
+    assert len(rows) == 106
 
 
 def test_verify_current_is_read_only_and_requires_complete_head(
@@ -369,14 +370,14 @@ def test_verify_current_is_read_only_and_requires_complete_head(
     migrations = load_packaged_migrations()
     PostgresMigrator(migrations=migrations[:-1]).apply_all(postgres_factory)
 
-    with pytest.raises(PostgresMigrationSequenceError, match="missing versions: \\[105\\]"):
+    with pytest.raises(PostgresMigrationSequenceError, match="missing versions: \\[106\\]"):
         PostgresMigrator().verify_current(postgres_factory)
 
     with postgres_factory.connection(read_only=True) as connection:
         stored = connection.execute(
             "SELECT max(version) FROM schema_migrations"
         ).fetchone()
-    assert stored == (104,)
+    assert stored == (105,)
 
 
 def test_verify_current_rejects_missing_registry_without_creating_it(
@@ -593,7 +594,7 @@ def test_migration_026_preserves_prerelease_v1_decision_rows_forward_only(
         )
         + FREE_RUNTIME_MIGRATIONS
     )
-    assert applied == (105,)
+    assert applied == (106,)
     assert restored == account
 
 
@@ -1165,6 +1166,7 @@ def test_migration_060_preserves_v1_protocols_and_accepts_explicit_inference(
         (103, "historical_outcome_forecast_index"),
         (104, "historical_outcome_forecast_fk_index"),
         (105, "alpha_correctness_target_semantics"),
+        (106, "alpha_correctness_failure_revision"),
     )
     with postgres_factory.connection(read_only=True) as connection:
         stored = connection.execute(
@@ -1493,7 +1495,7 @@ def test_migration_099_backfills_indexed_historical_fact_membership_guards(
     assert gap_count == len(owner.coverage_gaps)
 
 
-def test_migrations_098_through_105_upgrade_existing_097_authority(
+def test_migrations_098_through_106_upgrade_existing_097_authority(
     postgres_factory: PostgresConnectionFactory,
 ) -> None:
     migrations = load_packaged_migrations()
@@ -1510,8 +1512,9 @@ def test_migrations_098_through_105_upgrade_existing_097_authority(
         (103, "historical_outcome_forecast_index"),
         (104, "historical_outcome_forecast_fk_index"),
         (105, "alpha_correctness_target_semantics"),
+        (106, "alpha_correctness_failure_revision"),
     )
-    assert len(PostgresMigrator().verify_current(postgres_factory)) == 105
+    assert len(PostgresMigrator().verify_current(postgres_factory)) == 106
 
 
 def test_migration_100_indexes_historical_fact_guard_owner_foreign_keys(
@@ -1746,8 +1749,9 @@ def test_migration_105_upgrades_104_with_typed_target_semantics_and_failures(
     migration_104 = tuple(item for item in migrations if item.version <= 104)
     PostgresMigrator(migrations=migration_104).apply_all(postgres_factory)
 
-    applied = PostgresMigrator(migrations=migrations).apply_all(postgres_factory)
-    repeated = PostgresMigrator(migrations=migrations).apply_all(postgres_factory)
+    migration_105 = tuple(item for item in migrations if item.version <= 105)
+    applied = PostgresMigrator(migrations=migration_105).apply_all(postgres_factory)
+    repeated = PostgresMigrator(migrations=migration_105).apply_all(postgres_factory)
 
     assert tuple((item.version, item.name) for item in applied) == (
         (105, "alpha_correctness_target_semantics"),
@@ -1826,3 +1830,40 @@ def test_migration_105_upgrades_104_with_typed_target_semantics_and_failures(
         ),
     ]
     assert latest == (105,)
+
+
+def test_migration_106_allows_code_revisions_without_overwriting_failure_indexes(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    migrations = load_packaged_migrations()
+    migration_105 = tuple(item for item in migrations if item.version <= 105)
+    PostgresMigrator(migrations=migration_105).apply_all(postgres_factory)
+
+    applied = PostgresMigrator(migrations=migrations).apply_all(postgres_factory)
+    repeated = PostgresMigrator(migrations=migrations).apply_all(postgres_factory)
+
+    assert tuple((item.version, item.name) for item in applied) == (
+        (106, "alpha_correctness_failure_revision"),
+    )
+    assert repeated == ()
+    with postgres_factory.connection(read_only=True) as connection:
+        constraints = connection.execute(
+            """
+            SELECT conname, pg_get_constraintdef(oid)
+            FROM pg_constraint
+            WHERE conrelid = 'alpha_correctness_failure_index'::regclass
+              AND contype = 'u'
+            ORDER BY conname
+            """
+        ).fetchall()
+        latest = connection.execute(
+            "SELECT max(version) FROM schema_migrations"
+        ).fetchone()
+
+    definitions = {str(name): str(definition) for name, definition in constraints}
+    assert "alpha_correctness_failure_ind_source_run_id_source_evidence_key" not in definitions
+    assert definitions["alpha_correctness_failure_index_source_revision_key"] == (
+        "UNIQUE (source_run_id, source_evidence_id, semantic_revision, "
+        "analysis_code_sha)"
+    )
+    assert latest == (106,)
