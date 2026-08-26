@@ -114,6 +114,38 @@ class HistoricalCorrectnessFailureIndexer:
         analysis_code_sha: str,
         created_at: datetime,
     ) -> AlphaCorrectnessFailureIndex:
+        specification = corrected_target_protocol.target_semantic_specification
+        if specification is None:
+            raise ValueError(
+                "correctness failure extraction requires Target semantics"
+            )
+        try:
+            existing = self._failures.get_for_source(
+                run_id=predecessor_run_id,
+                evidence_id=predecessor_evidence_id,
+                semantic_revision=specification.semantic_revision,
+            )
+        except KeyError:
+            existing = None
+        if existing is not None:
+            expected_calendar = ValidationArtifactReference(
+                "TRADING_CALENDAR",
+                trading_calendar.artifact_id,
+                trading_calendar.content_hash,
+            )
+            if (
+                existing.source_run_reference.artifact_id
+                != predecessor_run_id
+                or existing.source_evidence_reference.artifact_id
+                != predecessor_evidence_id
+                or existing.calendar_reference != expected_calendar
+                or existing.analysis_code_sha != analysis_code_sha
+                or existing.semantic_revision != specification.semantic_revision
+            ):
+                raise ValueError(
+                    "existing correctness failure index conflicts with request"
+                )
+            return existing
         return self._failures.put(
             self.build(
                 predecessor_run_id=predecessor_run_id,

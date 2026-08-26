@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -16,6 +17,9 @@ from market_regime_alpha.application.historical_corpus.correctness_failures impo
     AlphaCorrectnessFailureDetail,
     AlphaCorrectnessFailureIndex,
     FailureSourceBinding,
+)
+from market_regime_alpha.application.historical_corpus.correctness_failure_indexer import (
+    HistoricalCorrectnessFailureIndexer,
 )
 from market_regime_alpha.application.historical_corpus.historical_target_semantics import (
     evaluate_historical_target_semantics,
@@ -499,3 +503,45 @@ def test_typed_failure_detail_and_index_are_content_addressed() -> None:
         index.to_canonical_dict()
     ) == index
     assert index.details == (detail,)
+
+    class ExistingRepository:
+        def get_for_source(self, **values):
+            assert values == {
+                "run_id": index.source_run_reference.artifact_id,
+                "evidence_id": index.source_evidence_reference.artifact_id,
+                "semantic_revision": specification.semantic_revision,
+            }
+            return index
+
+        def put(self, _value):
+            raise AssertionError("idempotent reload must not write")
+
+    indexer = HistoricalCorrectnessFailureIndexer(
+        journal=object(),  # type: ignore[arg-type]
+        components=object(),  # type: ignore[arg-type]
+        corpus=object(),  # type: ignore[arg-type]
+        evidence=object(),  # type: ignore[arg-type]
+        historical_facts=object(),  # type: ignore[arg-type]
+        failures=ExistingRepository(),  # type: ignore[arg-type]
+    )
+    calendar = SimpleNamespace(
+        artifact_id=index.calendar_reference.artifact_id,
+        content_hash=index.calendar_reference.content_hash,
+    )
+    assert indexer.build_and_persist(
+        predecessor_run_id=index.source_run_reference.artifact_id,
+        predecessor_evidence_id=index.source_evidence_reference.artifact_id,
+        corrected_target_protocol=protocol,
+        trading_calendar=calendar,  # type: ignore[arg-type]
+        analysis_code_sha=index.analysis_code_sha,
+        created_at=RETRIEVED_AT + timedelta(days=1),
+    ) == index
+    with pytest.raises(ValueError, match="conflicts with request"):
+        indexer.build_and_persist(
+            predecessor_run_id=index.source_run_reference.artifact_id,
+            predecessor_evidence_id=index.source_evidence_reference.artifact_id,
+            corrected_target_protocol=protocol,
+            trading_calendar=calendar,  # type: ignore[arg-type]
+            analysis_code_sha="b" * 40,
+            created_at=RETRIEVED_AT + timedelta(days=1),
+        )
