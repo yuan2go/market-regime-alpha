@@ -212,10 +212,14 @@ Alpha Discovery
 → Strategy economics
 ```
 
-Correctness compares canonical persisted values with independently recomputed
-values from decision-bounded source bars. Owner replay is deterministic evidence,
-but is not physical-package reproduction. A missing physical package therefore
-remains `PHYSICAL_REPRODUCTION_NOT_ESTABLISHED` even when owner replay passes.
+Correctness compares canonical persisted values with independently selected and
+recomputed values from decision-bounded source bars. Owner replay is
+deterministic evidence, but is not physical-package reproduction. Target state
+separates Decision reference, Outcome window and each derived metric: an absent
+Decision reference cannot erase a genuinely observed Outcome path, and an
+unavailable return is reproducible when both paths agree on its status and
+lineage. The frozen exact-reference rules are recorded in
+[ADR-014](decisions/ADR-014-Frozen-Target-Semantics-and-Independent-Correctness.md).
 
 External validation changes one declared dimension at a time: time, Universe or
 Provider. Free/PIT-incomplete validation is external validation only; it is not
@@ -607,7 +611,8 @@ The next program is an **Alpha Proof Campaign** with these Work Packages:
 
 - **P0 WP-GOLDEN-LOOP-01** — one DecisionTime→Universe→Feature→Candidate→Strategy→Shadow Portfolio→Outcome→Attribution vertical slice.
 - **P0 WP-ALPHA-RESEARCH-01** — frozen PIT-aware Factor→Gate→Candidate discovery: owner-resolved Panel, transparent baseline, predictive-Gate ablation and explicit rejection.
-- **P0 WP-ALPHA-CORRECTNESS-01 — ENGINEERING COMPLETE** — independent source-bar/target reproduction, temporal/placebo/bar-order-derived execution/redundancy/robust-inference checks; current physical state remains `PHYSICAL_REPRODUCTION_NOT_ESTABLISHED`.
+- **P0 WP-ALPHA-PROOF-02 — TERMINAL REJECTED / CORRECTNESS_FAILED** — the reacquired physical corpus and all Raw→Normalized observations reproduce, but the immutable higher-is-better Discovery is adverse and eight persisted Target sources fail independent reproduction; External and Locked OOS Outcomes remain unconsumed.
+- **P0 WP-ALPHA-CORRECTNESS-02 — DESIGN FROZEN / CODE NOT STARTED** — new protocol revision separates exact 14:55 Decision reference, observed T+1 path and derived-metric states, persists row-level failure Evidence and permits only a Discovery-only rerun under a new Experiment identity.
 - **P1 WP-ALPHA-RESEARCH-02 — CAPABILITY COMPLETE / NOT RUN** — canonical Experiment Definition freezes single-dimension time/Universe/Provider external validation after a discovery result survives correctness; Panel-linked Outcome/Strategy Economics owners gate entry economics.
 - **P1 WP-ALPHA-CONTEXT-01 — CAPABILITY COMPLETE / NOT RUN** — session-level and cross-sectional Context conditional evaluation without default hard-Gate authority.
 - **P1 WP-CANDIDATE-POLICY-02 — ENGINEERING COMPLETE / CHALLENGER DORMANT** — explicit Incumbent/Challenger policies with integrity, Alpha and Context layers; admission binds supported Context to the same Experiment, External Evidence and Dataset.

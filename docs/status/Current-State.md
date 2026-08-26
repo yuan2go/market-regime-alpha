@@ -2,8 +2,8 @@
 
 > **Status:** CURRENT_STATUS  
 > **Authority:** Current implementation/evidence summary  
-> **Implementation Checkpoint:** WP-ALPHA-PROOF-02 final owner-backed execution checkpoint on `agent/wp-alpha-proof-02`
-> **Strongest Research Evidence Revision:** `0d1a5a8` (WP-ALPHA-RESEARCH-01)
+> **Implementation Checkpoint:** `main@1a92ee41b02dd94df9ef4488c59cba55df4674ce`; WP-ALPHA-CORRECTNESS-02 design on `agent/wp-alpha-correctness-02`
+> **Strongest Research Evidence Revision:** `3b58c2a5e374e413fa6fb934ccfe284f39740a40` (WP-ALPHA-PROOF-02 execution)
 > **Last Updated:** 2026-08-26
 > **Code Evidence:** `src/market_regime_alpha`, `src/market_regime_alpha/persistence/postgres/migrations/*.sql`, `tests`
 
@@ -33,9 +33,10 @@ target architecture.
   one PostgreSQL `max_locks_per_transaction` environment error. This is
   `TARGETED_TESTED`, not campaign or Alpha evidence.
 - **WP-01 branch validation:** docs/platform/full pytest, ruff, mypy and build pass on a fresh PostgreSQL test database; a first full run against a heavily reused test database hit one `pg_catalog` autovacuum DDL lock timeout, while the exact node and the clean-database full suite both pass. This is retained as an environment failure, not hidden.
-- **Current CI:** GitHub has no run for starting `main@adbc785`. The latest five observed
-  `main` runs predate this baseline; the newest is a failure at `fee02f6` on
-  2026-08-09. Prior local validation is not CI proof for this HEAD.
+- **Current WP-ALPHA-CORRECTNESS-02 checkpoint:** documentation and ADR only.
+  Business code, migration, Target owners, correctness Evidence and Discovery
+  rerun are `NOT_STARTED / NOT_RUN`; prior local or CI results do not prove this
+  future implementation.
 - **Alpha/Daily engineering closure:** merged `main` binds one explicit Candidate
   admission root to Discovery→Correctness→External→supported Context→Candidate
   lineage, produces
@@ -78,6 +79,28 @@ target architecture.
   align stale migration-head fixtures, require an exact typed Calendar owner at
   the CLI seam and remove the last test/data pair for the already-retired
   duplicate visualization backtest; they create no empirical upgrade.
+
+### WP-ALPHA-CORRECTNESS-02 frozen design boundary
+
+- Owner reload of the immutable predecessor campaign located all eight failed
+  rows. Three Decision sessions have no five-minute observations; five contain
+  an exact 14:55 placeholder with null OHLC. In every row the writer used the
+  preceding session's suspended Daily close, while the checker correctly
+  rejected that fallback.
+- All eight rows retain a complete twelve-bar T+1 09:30-10:30 Raw path. Their
+  frozen state is therefore `Decision reference=UNAVAILABLE`, `Outcome
+  window=COMPLETE` and Decision-dependent return/MFE/MAE `UNAVAILABLE`.
+- [ADR-014](../architecture/decisions/ADR-014-Frozen-Target-Semantics-and-Independent-Correctness.md)
+  and the [frozen protocol](../research/protocols/WP-ALPHA-CORRECTNESS-02-Frozen-Protocol.md)
+  define the approved revision, compatibility and Discovery-only boundary.
+- Current state is `DESIGN_FROZEN / CODE_NOT_STARTED / RERUN_NOT_RUN`:
+  `CODE_IMPLEMENTED=false`, `CANONICAL_WIRED=false`,
+  `TEST_EXECUTED=false`, `RUNTIME_PROVEN=false`,
+  `RESEARCH_QUALIFIED=false`, `PRODUCTION_QUALIFIED=false` for this Work
+  Package. The design checkpoint itself creates no owner or research result.
+- The predecessor Experiment remains terminal
+  `REJECTED / CORRECTNESS_FAILED / NO-GO`. External remains unexecuted,
+  Locked OOS Outcomes remain unconsumed and Formal PIT remains incomplete.
 
 ### Engineering closure facts
 
@@ -436,33 +459,33 @@ Engineering gaps remain, but they should be selected because they unblock this e
 
 ## 7. Current development posture
 
-The Phase II and Daily Alpha engineering chain is owner/runtime wired and
-target-tested. The conditional Strategy remains inactive because its empirical
-admission chain is absent, not because a caller-only Risk/Opportunity seam is
-missing. Engineering closure does not change any research conclusion.
-Its three unusually strong intraday discovery results have not been reclassified
-as Alpha because the physical package cannot currently be reopened and no new
-external dataset was run.
-The registered physical packages are unavailable locally, so the current
-top-level correctness state is `INCONCLUSIVE` pending reacquisition and the full
-frozen campaign. This maps the internal diagnostic
-`PHYSICAL_REPRODUCTION_NOT_ESTABLISHED` without upgrading PostgreSQL owner reuse
-into physical proof.
+The Phase II and Daily Alpha engineering chain is owner/runtime wired. The
+conditional Strategy remains inactive because its empirical admission chain is
+absent. WP-ALPHA-PROOF-02 did reopen a new immutable physical corpus, verified
+all package checksums and reproduced all Raw→Normalized observations, then
+ended `REJECTED / CORRECTNESS_FAILED`. Its eight Target failures are now fully
+located; that diagnosis does not revise the immutable proof.
 
 The next empirical dependency order remains:
 
 ```text
-WP-ALPHA-CORRECTNESS-01
-→ WP-ALPHA-RESEARCH-02
+WP-ALPHA-CORRECTNESS-02 design review
+→ implementation and full regression
+→ new-identity Discovery-only materialization/correctness/economics
+→ independent GO / NO-GO
+→ only after an explicit GO: freeze a separately reviewed External Experiment
 → WP-ALPHA-CONTEXT-01
 → WP-CANDIDATE-POLICY-02
 → WP-PREDICTION-01
 ```
 
-No new External Dataset, large historical Campaign or prospective cohort was
-run in this implementation phase. Until separately executed evidence exists,
-external validation, Formal OOS, prospective proof, Strategy qualification and
-Production qualification remain false.
+The design work has read no External or Locked OOS Outcome and has run no new
+Campaign. Even future `CORRECTNESS_SUPPORTED` does not automatically admit
+External: unchanged-direction Discovery economics and a credible explanation
+of the old/new sign difference must independently support `GO`. Until such
+separately executed evidence exists, External validation, Formal OOS,
+prospective proof, Strategy qualification and Production qualification remain
+false.
 
 The repository now moves through the **Alpha Proof Campaign**:
 
