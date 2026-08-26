@@ -1663,13 +1663,14 @@ def test_migration_103_adds_compact_external_outcome_forecast_index(
     postgres_factory: PostgresConnectionFactory,
 ) -> None:
     migrations = load_packaged_migrations()
-    assert (migrations[-2].version, migrations[-2].name) == (
+    migration_103 = tuple(item for item in migrations if item.version <= 103)
+    assert (migration_103[-1].version, migration_103[-1].name) == (
         103,
         "historical_outcome_forecast_index",
     )
     PostgresMigrator(migrations=migrations[:102]).apply_all(postgres_factory)
 
-    applied = PostgresMigrator(migrations=migrations[:103]).apply_all(
+    applied = PostgresMigrator(migrations=migration_103).apply_all(
         postgres_factory
     )
 
