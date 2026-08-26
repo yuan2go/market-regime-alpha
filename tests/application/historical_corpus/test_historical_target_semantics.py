@@ -284,6 +284,47 @@ def test_complete_reference_and_grid_produce_reference_dependent_metrics() -> No
         replace(result, outcome_window_start=decision_time)
 
 
+def test_open_target_window_ends_when_its_source_bar_becomes_observable() -> None:
+    protocol, _ = _protocol_target()
+    specification = protocol.target_semantic_specification
+    assert specification is not None
+    target = next(
+        item
+        for item in protocol.targets
+        if item.checkpoint is OutcomeCheckpoint.OPEN
+    )
+    decision_session = date(2025, 1, 6)
+    target_session = date(2025, 1, 7)
+    decision_time = datetime.combine(
+        decision_session, time(14, 55), SHANGHAI
+    ).astimezone(UTC)
+    decision_bar = _bar(decision_session, time(14, 50), row=1, close="10")
+    opening_bar = _bar(target_session, time(9, 30), row=2, close="10.2")
+
+    result = evaluate_historical_target_semantics(
+        specification=specification,
+        target=target,
+        symbol="600000.SH",
+        decision_time=decision_time,
+        next_session_date=target_session,
+        source_bars=(decision_bar, opening_bar),
+    )
+
+    assert result.outcome_window_start == datetime.combine(
+        target_session, time(9, 30), SHANGHAI
+    ).astimezone(UTC)
+    assert result.outcome_window_end == datetime.combine(
+        target_session, time(9, 35), SHANGHAI
+    ).astimezone(UTC)
+    assert result.barrier_passages == (
+        ("DOWN_1_PERCENT", None),
+        ("UP_1_PERCENT", result.outcome_window_end),
+        ("UP_2_PERCENT", result.outcome_window_end),
+    )
+    assert result.barrier_status is TargetSemanticStatus.COMPLETE
+    assert result.barrier_ordering is BarrierOrderingOutcome.UP_FIRST
+
+
 def test_partial_path_can_retain_exact_checkpoint_but_not_path_metrics() -> None:
     protocol, target = _protocol_target()
     specification = protocol.target_semantic_specification

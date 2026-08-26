@@ -91,9 +91,6 @@ def evaluate_historical_target_semantics(
         _parse_time(specification.outcome_window_start_local_time),
         zone,
     )
-    checkpoint_local = datetime.combine(
-        next_session_date, _checkpoint_time(target.checkpoint), zone
-    )
     expected_grid = _expected_grid(
         next_session_date,
         checkpoint=target.checkpoint,
@@ -160,7 +157,10 @@ def evaluate_historical_target_semantics(
         decision_time=decision_time,
         target_session=next_session_date,
         outcome_window_start=outcome_start_local.astimezone(UTC),
-        outcome_window_end=checkpoint_local.astimezone(UTC),
+        # OPEN is observed through the first 5-minute source bar.  Its Target
+        # reference is 09:30, while the independently observable path ends at
+        # 09:35.  Other frozen checkpoints already coincide with grid end.
+        outcome_window_end=expected_grid[-1][1],
         expected_outcome_bar_count=len(expected_grid),
         observed_outcome_bar_count=len(valid_outcome),
         decision_reference_status=decision_status,
