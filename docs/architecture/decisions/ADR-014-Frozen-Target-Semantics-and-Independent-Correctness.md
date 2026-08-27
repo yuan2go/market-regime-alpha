@@ -1,6 +1,6 @@
 # ADR-014: Frozen Target Semantics and Independent Correctness
 
-> **Status:** CURRENT_ARCHITECTURE
+> **Status:** HISTORICAL
 > **Implementation State:** IMPLEMENTED_AT_8cd79972fa96d397967948d75592f5163613e02a / EXECUTED / NO-GO
 > **Authority:** Approved architecture decision for WP-ALPHA-CORRECTNESS-02
 > **Owner:** Market Regime Alpha maintainers

@@ -3,14 +3,13 @@
 > **Status:** CANONICAL_TARGET_ARCHITECTURE
 > **Authority:** Target package, Legacy, documentation, prompt, and Skill disposition
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-27
-> **Implementation State:** REPOSITORY_GOVERNANCE_IMPLEMENTED / BUSINESS_TARGET_NOT_STARTED
-> **Code Evidence:** `src/market_regime_alpha`, `pyproject.toml`, `tests/architecture`, `AGENTS.md`, `.claude/skills/reconcile-branches/SKILL.md`
+> **Last Updated:** 2026-08-28
+> **Code Evidence:** `src/market_regime_alpha`, `pyproject.toml`, `tests/architecture`, `AGENTS.md`, `scripts/reconcile_branches.py`, `.claude/skills/reconcile-branches/SKILL.md`
 
 This inventory freezes what the business implementation phase will converge and
-delete. WP-ARCHITECTURE-REFOUNDATION-02 applies its documentation, Skill, and
-persistent-prompt dispositions. Business source, migrations, fixtures, and
-business test semantics remain unchanged.
+delete. A governance checkpoint may apply its documentation, Skill, and
+persistent-prompt dispositions without claiming that the business Target is
+implemented or changing business source, migrations, fixtures, or test semantics.
 
 ## 1. Current structural facts
 
@@ -121,7 +120,8 @@ historical claims they contain.
 | `CLAUDE.md` | **REWRITE MINIMAL** | imports `AGENTS.md` and adds only tool-specific startup |
 | `docs/README.md` | **REWRITE/KEEP** | documentation navigation and precedence |
 | Context Map + five current architecture documents | **KEEP/CONSOLIDATE** | target architecture; never implementation/evidence status |
-| ADR-014 and ADR-015 | **KEEP** | durable Target temporal semantics and Hard Cutover decision |
+| ADR-014 | **KEEP HISTORICAL** | provenance for the implemented pre-refoundation correctness repair; valid temporal rules are restated in the Target architecture |
+| ADR-015 | **KEEP** | durable Hard Cutover and schema epoch decision |
 | ADR-008 through ADR-013 | **ARCHIVE FROM DEFAULT TREE** after implementation | historical rationale only; cannot constrain target compatibility |
 | `docs/status/Current-State.md` | **GENERATE/REWRITE** | non-authoritative read model with generated time, SHA, schema epoch, source queries/tests |
 | Capability Matrix/status view | **GENERATE**, not manually promote | non-authoritative read model from code/schema/test/evidence queries |
@@ -139,7 +139,7 @@ canonical data; it has no write credentials.
 ## 6. Skill and prompt governance
 
 The approved-design audit found three Skills and three persistent reviewer
-prompts. WP-ARCHITECTURE-REFOUNDATION-02 physically applies these dispositions:
+prompts. The required repository dispositions are:
 
 | Asset | Current responsibility | Target disposition | Reason |
 |---|---|---|---|
@@ -159,7 +159,7 @@ Target Skill contract for `reconcile-branches`:
 - side effects: none unless separately authorized;
 - failure: unknown PR/auth state remains unknown;
 - tests: fixture repositories covering merge, squash, rebase, supersession, and
-  unique content;
+  unique content through `scripts/reconcile_branches.py`;
 - no architecture/business/evidence instructions duplicated from `AGENTS.md`.
 
 No versioned Skill forks, prompt packs, generic implementation Skill, test wrapper
@@ -180,9 +180,10 @@ The target is complete only when:
 - the old 106 migrations and 283-table schema do not appear in the target epoch;
 - the worktree is clean after reviewable commits.
 
-## 8. Governance checkpoint stop
+## 8. Governance checkpoint acceptance boundary
 
-Repository instructions, status hierarchy, Skill inventory, and persistent
-prompts now conform to this target. Business source, 001–106 migrations,
-fixtures, Runtime behavior, and business test semantics remain unchanged until
-a later implementation authorization.
+A conforming governance checkpoint must apply the instruction, status, Skill,
+and persistent-prompt dispositions while leaving business source, 001–106
+migrations, fixtures, Runtime behavior, and business test semantics unchanged.
+Completion is reported by an exact-SHA Current State or checkpoint record, never
+by this Target document.

@@ -3,7 +3,7 @@
 > **Status:** ROADMAP
 > **Authority:** Planning and dependency order only; never business, evidence, or qualification Authority
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-27
+> **Last Updated:** 2026-08-28
 > **Approved Design:** `d0d1f3152a20f1a3f4f9b8a1d9c4383a49162fb7`
 > **Current Implementation Parent:** `0382dad416d6d50d1eea0bda1603d7c359d65274`
 > **Code Evidence:** `docs/architecture/Canonical-Overall-Design.md`, `docs/status/Current-State.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-01-Domain-Invariant-Catalog.md`
@@ -66,10 +66,11 @@ migrations; no compatibility schema is introduced.
 
 ## Entry decision for implementation
 
-Foundation and Market/PIT are dependency-ready when the Repository Governance
-checkpoint is committed with its full validation green. This technical readiness
-does not itself authorize implementation; the next work package must explicitly
-grant business/schema implementation scope.
+Foundation is dependency-ready when the Repository Governance checkpoint is
+committed with its full validation green. Market/PIT becomes dependency-ready
+only after the Foundation exit gate passes. Technical readiness does not itself
+authorize implementation; the next work package must explicitly grant the
+corresponding business/schema implementation scope.
 
 No Alpha hypothesis, model optimization, OOS outcome access, Provider
 qualification, broker integration, or destructive database operation belongs to

@@ -29,8 +29,19 @@ task, branch name, UI label, or remote configuration.
    SHA without mutation.
 2. Do not fetch unless the current request explicitly grants `FETCH_ALLOWED` or
    stronger authority.
-3. For each named branch, record head SHA, merge-base, ahead/behind counts,
-   ancestry, effective patch/content difference, and known PR state.
+3. Run the repository-local classifier for ancestry and content evidence:
+
+   ```bash
+   python scripts/reconcile_branches.py \
+     --repository REPOSITORY \
+     --comparison COMPARISON_REF \
+     --branch NAMED_BRANCH \
+     --authorization AUTHORIZATION
+   ```
+
+   It is local and read-only: it never fetches, queries PRs, or mutates refs.
+   Independently establish known PR state with an authorized read-only remote
+   query when available.
 4. Do not treat non-ancestry as unmerged content: squash, rebase, and recreated
    commits require patch/content comparison.
 5. Classify exactly one of:
@@ -62,6 +73,8 @@ UNRESOLVED_STATE
 ```
 
 The default output is read-only. Do not create a persistent audit-document
-hierarchy. Fixture-repository tests for merge, squash, rebase, supersession, and
-unique-content classification are required before this Skill may automate any
-future mutation.
+hierarchy. `tests/scripts/test_reconcile_branches.py` covers merge, squash,
+rebase-equivalent, divergent supersession, and unique-content fixtures. The
+classifier intentionally leaves divergent supersession `UNKNOWN`; only explicit
+external evidence may promote it to `SUPERSEDED_OR_OBSOLETE`. It never automates
+mutation.

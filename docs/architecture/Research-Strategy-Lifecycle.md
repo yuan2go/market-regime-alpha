@@ -3,7 +3,7 @@
 > **Status:** CANONICAL_TARGET_ARCHITECTURE
 > **Authority:** Target research, context, decision, outcome, and qualification lifecycle
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-27
+> **Last Updated:** 2026-08-28
 > **Implementation State:** DESIGN_CHECKPOINT_ONLY
 > **Code Evidence:** `src/market_regime_alpha/research`, `src/market_regime_alpha/candidates`, `src/market_regime_alpha/signals`, `src/market_regime_alpha/forecasting`, `src/market_regime_alpha/strategies`, `tests/research`
 
@@ -170,8 +170,10 @@ independent; complete source path does not manufacture an unavailable reference
 or MFE/MAE.
 
 The exact T+1 10:30 and 14:55 Raw reference semantics are specified in
-[PostgreSQL, Temporal and Evidence Architecture](Data-and-Evidence-Architecture.md)
-and retained from [ADR-014](decisions/ADR-014-Frozen-Target-Semantics-and-Independent-Correctness.md).
+[PostgreSQL, Temporal and Evidence Architecture](Data-and-Evidence-Architecture.md).
+They incorporate the valid semantics originally established by historical
+[ADR-014](decisions/ADR-014-Frozen-Target-Semantics-and-Independent-Correctness.md)
+without retaining its compatibility implementation policy.
 
 ## 7. Attribution
 

@@ -3,7 +3,7 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Documentation navigation and precedence only
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-27
+> **Last Updated:** 2026-08-28
 > **Code Evidence:** `src/market_regime_alpha`, `src/market_regime_alpha/persistence/postgres/migrations/*.sql`, `tests`
 
 Documentation never creates implementation truth, research evidence,
@@ -85,10 +85,11 @@ Frozen protocols, negative/inconclusive results, and execution reports under
 provenance. They are not the current engineering program and do not constrain
 the Hard Cutover to preserve old module/table identities.
 
-ADR-008 through ADR-013 describe superseded implementation eras. ADR-014 retains
-the implemented Target temporal semantics. ADR-015 owns the new schema epoch
-and destructive-recreate decision. Historical ADRs cannot create compatibility
-requirements.
+ADR-008 through ADR-014 describe superseded implementation eras. The valid
+temporal rules originally established by ADR-014 are restated in the Target
+architecture; its v1/v2 readers and additive-migration policy are historical and
+create no compatibility requirement. ADR-015 owns the new schema epoch and
+destructive-recreate decision.
 
 ## Status vocabulary
 
