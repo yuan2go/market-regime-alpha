@@ -328,6 +328,12 @@ class HistoricalNormalizedBar:
         if str(self.bar_id) != f"historical-normalized-bar-{digest[7:31]}":
             raise ValueError("Historical normalized bar identity mismatch")
 
+    @property
+    def reference(self) -> ValidationArtifactReference:
+        return ValidationArtifactReference(
+            "HISTORICAL_NORMALIZED_BAR", self.bar_id, self.content_hash
+        )
+
     def to_canonical_dict(self) -> dict[str, Any]:
         return {
             "bar_id": str(self.bar_id),

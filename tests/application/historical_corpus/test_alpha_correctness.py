@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -9,14 +10,17 @@ import pytest
 from market_regime_alpha.application.historical_corpus.alpha_correctness import (
     AlphaCorrectnessConclusion,
     AlphaCorrectnessStatus,
+    HistoricalCorrectnessReproduction,
     PersistedFeatureObservation,
     PersistedTargetObservation,
     _physical_verification_from_reloaded_packages,
     _resolve_target_symbol_omissions,
+    attach_feature_rank_reproduction,
     build_alpha_correctness_proof,
     reproduce_execution_timing_diagnostics,
     reproduce_intraday_features,
     reproduce_t_plus_one_1030_target,
+    reproduce_t_plus_one_1030_target_v2,
 )
 from market_regime_alpha.application.historical_corpus.alpha_diagnostics import (
     AlphaObservation,
@@ -42,6 +46,13 @@ from market_regime_alpha.application.historical_corpus.raw_normalization_correct
     IndependentNormalizationVerification,
     PhysicalAcquisitionProvenance,
 )
+from market_regime_alpha.application.historical_corpus.evidence import (
+    HistoricalEvidenceKind,
+)
+from market_regime_alpha.application.historical_corpus.phase_ii_service import (
+    _first_complete_execution_diagnostic,
+    _verify_phase_ii_payload_values,
+)
 from market_regime_alpha.application.historical_corpus.contracts import (
     HistoricalArtifactKind,
     HistoricalCorpusCoverage,
@@ -50,6 +61,16 @@ from market_regime_alpha.application.historical_corpus.contracts import (
     HistoricalNormalizedBar,
     HistoricalTradingStatus,
     build_partitions,
+)
+from market_regime_alpha.application.historical_corpus.historical_target_semantics import (
+    evaluate_historical_target_semantics,
+)
+from market_regime_alpha.application.research_evaluation.targeted_outcome import (
+    build_target_outcome_label_from_semantic_result,
+)
+from market_regime_alpha.application.research_evaluation.targets import (
+    OutcomeCheckpoint,
+    exploratory_five_minute_multi_horizon_protocol_v2,
 )
 from market_regime_alpha.application.research_validation.common import (
     ValidationArtifactReference,
@@ -134,6 +155,53 @@ def test_independent_intraday_recomputation_matches_persisted_values(tmp_path) -
         "vwap_slope": Decimal("0.100000000000"),
     }
     assert all(item.event_end <= DECISION_TIME for item in result.comparisons)
+
+
+def test_feature_rank_is_reproduced_across_the_session_population(tmp_path) -> None:
+    results = []
+    for symbol, close, expected in (
+        ("600000.SH", "12", ("0.200000000000", "0.090909090909", "0.100000000000")),
+        ("600001.SH", "11", ("0.100000000000", "0.047619047619", "0.050000000000")),
+    ):
+        bars = (
+            _bar(SESSION, time(14, 45), symbol=symbol, open_price="10", close="10", volume="100"),
+            _bar(SESSION, time(14, 50), symbol=symbol, open_price="10", close=close, volume="100", row=2),
+        )
+        persisted = tuple(
+            PersistedFeatureObservation.create(
+                factor_id=factor_id,
+                value=Decimal(value),
+                source_bars=bars,
+            )
+            for factor_id, value in zip(
+                ("intraday_return_to_decision_time", "price_vs_vwap_return", "vwap_slope"),
+                expected,
+                strict=True,
+            )
+        )
+        results.append(
+            reproduce_intraday_features(
+                session=SESSION,
+                symbol=symbol,
+                decision_time=DECISION_TIME,
+                source_bars=bars,
+                persisted=persisted,
+                physical_verification=_physical_verification(tmp_path, bars),
+            )
+        )
+
+    ranked = attach_feature_rank_reproduction(tuple(results))
+
+    assert {
+        item.symbol: {comparison.persisted_rank for comparison in item.comparisons}
+        for item in ranked
+    } == {"600000.SH": {Decimal("2")}, "600001.SH": {Decimal("1")}}
+    assert all(
+        comparison.persisted_rank == comparison.recomputed_rank
+        and comparison.rank_population_count == 2
+        for item in ranked
+        for comparison in item.comparisons
+    )
 
 
 def test_intraday_recomputation_mismatch_fails_closed(tmp_path) -> None:
@@ -366,6 +434,7 @@ def test_correctness_proof_requires_all_factors_target_and_physical_lineage(
         persisted=persisted_features,
         physical_verification=physical,
     )
+    features = attach_feature_rank_reproduction((features,))[0]
     target = reproduce_t_plus_one_1030_target(
         symbol="600000.SH",
         decision_time=DECISION_TIME,
@@ -400,10 +469,121 @@ def test_correctness_proof_requires_all_factors_target_and_physical_lineage(
         "discrepancy_counts": {},
         "availability_reason_counts": {},
     }
-    assert evidence_projection["physical_verifications"][0]["normalized_bar_count"] > 0
+    physical_projections = evidence_projection["physical_verifications"]
+    assert isinstance(physical_projections, list)
+    assert isinstance(physical_projections[0], dict)
+    assert physical_projections[0]["normalized_bar_count"] > 0
+    placebo_projections = evidence_projection["placebo_results"]
+    assert isinstance(placebo_projections, list)
+    assert all(isinstance(item, dict) for item in placebo_projections)
     assert all(
         "observations" not in item
-        for item in evidence_projection["placebo_results"]
+        for item in placebo_projections
+        if isinstance(item, dict)
+    )
+
+    protocol_v2 = exploratory_five_minute_multi_horizon_protocol_v2()
+    specification = protocol_v2.target_semantic_specification
+    assert specification is not None
+    target_definition = next(
+        item
+        for item in protocol_v2.targets
+        if item.checkpoint is OutcomeCheckpoint.TIME_1030
+    )
+    semantic_result = evaluate_historical_target_semantics(
+        specification=specification,
+        target=target_definition,
+        symbol="600000.SH",
+        decision_time=DECISION_TIME,
+        next_session_date=NEXT_SESSION,
+        source_bars=(*decision_bars, *target_bars),
+    )
+    semantic_label = build_target_outcome_label_from_semantic_result(
+        target=target_definition,
+        semantic_result=semantic_result,
+        outcome_available_at=datetime(2026, 8, 20, tzinfo=UTC),
+    )
+    semantic_target = reproduce_t_plus_one_1030_target_v2(
+        label=semantic_label,
+        protocol=protocol_v2,
+        trading_calendar=_calendar(),
+        source_bars=(*decision_bars, *target_bars),
+        physical_verification=physical,
+    )
+    post_cutoff_bar = _bar(
+        SESSION,
+        time(14, 55),
+        open_price="12",
+        close="12",
+        volume="100",
+        row=3,
+    )
+    execution_source_bars = (*decision_bars, post_cutoff_bar, *target_bars)
+    execution_physical = _physical_verification(tmp_path, execution_source_bars)
+    execution_target = reproduce_t_plus_one_1030_target_v2(
+        label=semantic_label,
+        protocol=protocol_v2,
+        trading_calendar=_calendar(),
+        source_bars=execution_source_bars,
+        physical_verification=execution_physical,
+    )
+    execution_diagnostics = _first_complete_execution_diagnostic(
+        reproduction=HistoricalCorrectnessReproduction(
+            feature_results=(features,),
+            target_results=(execution_target,),
+            physical_verifications=(execution_physical,),
+        ),
+        corpus=SimpleNamespace(
+            read=lambda _query: SimpleNamespace(records=execution_source_bars)
+        ),
+    )
+    assert {item.proxy for item in execution_diagnostics} == set(ExecutionPriceProxy)
+    assert execution_target.persisted_observation is None
+    semantic_proof = build_alpha_correctness_proof(
+        feature_results=(features,),
+        target_results=(semantic_target,),
+        physical_verifications=(physical,),
+        normalization_verifications=(normalization,),
+        placebo_results=_complete_placebos(),
+        execution_diagnostics=_execution_diagnostics(),
+        factor_redundancy=_redundancy(),
+        robust_inference=_robust_inference(),
+    )
+    failure_index_reference = ValidationArtifactReference(
+        "ALPHA_CORRECTNESS_FAILURE_INDEX",
+        ArtifactId("predecessor-failure-index"),
+        canonical_hash({"failure-index": "predecessor"}),
+    )
+    evidence_v2 = semantic_proof.to_evidence_dict(
+        predecessor_failure_index_reference=failure_index_reference
+    )
+    assert evidence_v2["schema_version"] == (
+        "alpha-correctness-evidence-projection/v2"
+    )
+    assert evidence_v2["predecessor_failure_index_reference"] == (
+        failure_index_reference.to_canonical_dict()
+    )
+    assert evidence_v2["target_semantic_statuses"] == {
+        "count": 1,
+        "semantic_specification_references": [
+            specification.reference.to_canonical_dict()
+        ],
+        "status_counts": {
+            "decision_reference_status": {"COMPLETE": 1},
+            "outcome_window_status": {"COMPLETE": 1},
+            "checkpoint_observation_status": {"COMPLETE": 1},
+            "checkpoint_return_status": {"COMPLETE": 1},
+            "mfe_status": {"COMPLETE": 1},
+            "mae_status": {"COMPLETE": 1},
+            "barrier_status": {"COMPLETE": 1},
+        },
+    }
+    _verify_phase_ii_payload_values(
+        HistoricalEvidenceKind.ALPHA_CORRECTNESS,
+        {
+            "status": semantic_proof.conclusion.value,
+            "proof": evidence_v2,
+        },
     )
 
     incomplete = build_alpha_correctness_proof(
@@ -684,6 +864,7 @@ def _bar(
     market_date: date,
     start_time: time,
     *,
+    symbol: str = "600000.SH",
     open_price: str,
     close: str,
     volume: str,
@@ -693,7 +874,7 @@ def _bar(
     close_value = Decimal(close)
     volume_value = Decimal(volume)
     return HistoricalNormalizedBar.create(
-        symbol="600000.SH",
+        symbol=symbol,
         timeframe=Timeframe.MINUTE_5,
         market_date=market_date,
         event_start=event_start,

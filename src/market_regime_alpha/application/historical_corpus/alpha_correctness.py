@@ -8,7 +8,7 @@ the T+1 10:30 target without reading their persisted numerical outputs.
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, time
 from decimal import Decimal, ROUND_HALF_EVEN
 from enum import Enum
@@ -18,6 +18,10 @@ from zoneinfo import ZoneInfo
 
 from market_regime_alpha.application.historical_corpus.contracts import (
     HistoricalNormalizedBar,
+)
+from market_regime_alpha.application.historical_corpus.historical_target_semantics import (
+    apply_raw_corporate_action_conflict,
+    evaluate_historical_target_semantics,
 )
 from market_regime_alpha.application.historical_corpus.artifacts import (
     HistoricalPackageIndex,
@@ -45,6 +49,12 @@ from market_regime_alpha.application.historical_corpus.raw_normalization_correct
 from market_regime_alpha.application.research_evaluation.targeted_outcome import (
     TargetOutcomeLabel,
 )
+from market_regime_alpha.application.research_evaluation.target_semantics import (
+    TargetSemanticResult,
+)
+from market_regime_alpha.application.research_evaluation.targets import (
+    OutcomeTargetProtocol,
+)
 from market_regime_alpha.application.historical_corpus.alpha_diagnostics import (
     ExecutionPriceInputs,
     ExecutionPriceProxy,
@@ -55,6 +65,7 @@ from market_regime_alpha.application.historical_corpus.alpha_diagnostics import 
     RobustInferenceResult,
     TimedPriceObservation,
     diagnose_execution_price,
+    factor_ranks,
 )
 from market_regime_alpha.application.research_validation.common import (
     ValidationArtifactReference,
@@ -64,6 +75,9 @@ from market_regime_alpha.core.time import DecisionTime
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.evidence.canonical import canonical_hash, require_sha256
 from market_regime_alpha.market_data import Timeframe
+from market_regime_alpha.universe.postgres_historical_facts import (
+    PostgresHistoricalSecurityFactsRepository,
+)
 
 
 _SHANGHAI: Final[ZoneInfo] = ZoneInfo("Asia/Shanghai")
@@ -250,9 +264,11 @@ class HistoricalAlphaCorrectnessChecker:
         *,
         components: PostgresHistoricalMaterializationRepository,
         corpus: PostgresHistoricalCorpusRepository,
+        historical_facts: PostgresHistoricalSecurityFactsRepository | None = None,
     ) -> None:
         self._components = components
         self._corpus = corpus
+        self._historical_facts = historical_facts
 
     def reproduce_run(
         self,
@@ -294,7 +310,14 @@ class HistoricalAlphaCorrectnessChecker:
             monthly_sessions[(session.year, session.month)].append(session)
         monthly_query_ranges = {
             key: (
-                values[0],
+                max(
+                    (
+                        item
+                        for item in trading_calendar.trading_dates
+                        if item < values[0]
+                    ),
+                    default=values[0],
+                ),
                 trading_calendar.resolve_next_session_date(
                     DecisionTime(
                         datetime.combine(
@@ -314,6 +337,9 @@ class HistoricalAlphaCorrectnessChecker:
         )
         minute_bars: dict[
             tuple[date, str], tuple[HistoricalNormalizedBar, ...]
+        ] = {}
+        monthly_bars_by_symbol: dict[
+            str, tuple[HistoricalNormalizedBar, ...]
         ] = {}
         for batch in self._components.iter_for_run(
             run_id=run_id,
@@ -357,6 +383,12 @@ class HistoricalAlphaCorrectnessChecker:
             active_verification = physical_by_owner.get(normalized_reference)
             decision_time = _component_decision_time(feature_component)
             labels = _target_labels(outcome_component)
+            target_protocol = OutcomeTargetProtocol.from_canonical_dict(
+                _mapping(
+                    outcome_component.payload.get("target_protocol"),
+                    "Historical Outcome target protocol",
+                )
+            )
             declared_target_omissions = _declared_target_omissions(
                 outcome_component
             )
@@ -371,7 +403,7 @@ class HistoricalAlphaCorrectnessChecker:
                 source_slice = self._corpus.read(
                     HistoricalReadQuery.create(
                         reference=normalized_reference,
-                        timeframes=(Timeframe.MINUTE_5,),
+                        timeframes=(Timeframe.DAILY, Timeframe.MINUTE_5),
                         first_market_date=first_read_date,
                         last_market_date=last_read_date,
                         symbols=None,
@@ -389,9 +421,57 @@ class HistoricalAlphaCorrectnessChecker:
                     key: _ordered_bars(tuple(values))
                     for key, values in grouped.items()
                 }
+                by_symbol: defaultdict[
+                    str, list[HistoricalNormalizedBar]
+                ] = defaultdict(list)
+                for values in grouped.values():
+                    for item in values:
+                        by_symbol[item.symbol].append(item)
+                monthly_bars_by_symbol = {
+                    symbol: _ordered_bars(tuple(values))
+                    for symbol, values in by_symbol.items()
+                }
                 loaded_month_key = month_key
             feature_symbols = _feature_symbols(feature_component)
             source_symbols = feature_symbols | set(labels)
+            corporate_action_reasons: dict[str, str] = {}
+            if target_protocol.target_semantic_specification is not None:
+                fact_references = tuple(
+                    item
+                    for item in outcome_component.source_references
+                    if item.artifact_kind == "HISTORICAL_SECURITY_FACTS"
+                )
+                if len(fact_references) > 1:
+                    raise ValueError(
+                        "Historical Outcome binds multiple Security Facts owners"
+                    )
+                if fact_references:
+                    if self._historical_facts is None:
+                        raise ValueError(
+                            "v3 Target reproduction requires Security Facts owner reload"
+                        )
+                    actions, gaps = (
+                        self._historical_facts.corporate_action_evidence_for_symbols(
+                            fact_references[0],
+                            symbols=tuple(sorted(source_symbols)),
+                            after=session,
+                            through=next_session,
+                        )
+                    )
+                    corporate_action_reasons.update(
+                        {
+                            symbol: "RAW_UNADJUSTED_RETURN_CROSSES_CORPORATE_ACTION"
+                            for symbol in actions
+                        }
+                    )
+                    corporate_action_reasons.update(
+                        {
+                            symbol: (
+                                "CORPORATE_ACTION_COVERAGE_GAP_RAW_RETURN_NOT_ESTIMABLE"
+                            )
+                            for symbol in gaps
+                        }
+                    )
             decision_bars = {
                 symbol: minute_bars.get((session, symbol), ())
                 for symbol in source_symbols
@@ -419,7 +499,8 @@ class HistoricalAlphaCorrectnessChecker:
                 decision_source_bars = tuple(
                     item
                     for item in symbol_decision_bars
-                    if item.event_end <= decision_time
+                    if item.timeframe is Timeframe.MINUTE_5
+                    and item.event_end <= decision_time
                 )
                 feature_results.append(
                     reproduce_intraday_features(
@@ -447,6 +528,20 @@ class HistoricalAlphaCorrectnessChecker:
                             persisted=None,
                             physical_verification=active_verification,
                             unavailable_reason_codes=target_omissions[symbol],
+                        )
+                    )
+                    continue
+                if label.schema_version == "target-outcome-label/v3":
+                    target_results.append(
+                        reproduce_t_plus_one_1030_target_v2(
+                            label=label,
+                            protocol=target_protocol,
+                            trading_calendar=trading_calendar,
+                            source_bars=monthly_bars_by_symbol.get(symbol, ()),
+                            physical_verification=active_verification,
+                            corporate_action_reason_code=(
+                                corporate_action_reasons.get(symbol)
+                            ),
                         )
                     )
                     continue
@@ -510,6 +605,10 @@ class HistoricalAlphaCorrectnessChecker:
                         )
                     )
                     continue
+                if label.decision_reference_price is None:
+                    raise ValueError(
+                        "legacy Target label lost its required Decision reference"
+                    )
                 persisted_target = PersistedTargetObservation.create(
                     decision_reference_price=label.decision_reference_price,
                     target_price=label.checkpoint_price,
@@ -533,7 +632,7 @@ class HistoricalAlphaCorrectnessChecker:
                     )
                 )
         return HistoricalCorrectnessReproduction(
-            tuple(feature_results),
+            attach_feature_rank_reproduction(tuple(feature_results)),
             tuple(target_results),
             tuple(
                 physical_by_owner[key]
@@ -592,6 +691,9 @@ class FeatureCorrectnessComparison:
     event_start: datetime
     event_end: datetime
     decision_time: datetime
+    persisted_rank: Decimal | None
+    recomputed_rank: Decimal | None
+    rank_population_count: int
     discrepancies: tuple[str, ...]
 
     def __post_init__(self) -> None:
@@ -609,6 +711,18 @@ class FeatureCorrectnessComparison:
             require_sha256("Feature comparison lineage hash", lineage)
         if self.event_end > self.decision_time or self.persisted_event_end > self.decision_time:
             raise ValueError("Feature comparison uses information after DecisionTime")
+        if (self.persisted_rank is None) != (self.recomputed_rank is None):
+            raise ValueError("Feature rank comparison must be paired")
+        if self.persisted_rank is None:
+            if self.rank_population_count != 0:
+                raise ValueError("unranked Feature comparison cannot claim a population")
+        elif (
+            self.rank_population_count <= 0
+            or self.persisted_rank <= 0
+            or self.recomputed_rank is None
+            or self.recomputed_rank <= 0
+        ):
+            raise ValueError("Feature rank comparison is invalid")
         expected: list[str] = []
         if self.persisted_value != self.recomputed_value:
             expected.append(f"VALUE_MISMATCH:{self.factor_id}")
@@ -622,6 +736,8 @@ class FeatureCorrectnessComparison:
             or self.persisted_event_end != self.event_end
         ):
             expected.append(f"EVENT_INTERVAL_MISMATCH:{self.factor_id}")
+        if self.persisted_rank != self.recomputed_rank:
+            expected.append(f"RANK_MISMATCH:{self.factor_id}")
         if tuple(expected) != self.discrepancies:
             raise ValueError("Feature comparison discrepancies are not derived")
 
@@ -639,6 +755,9 @@ class FeatureCorrectnessComparison:
             "event_start": self.event_start.isoformat(),
             "event_end": self.event_end.isoformat(),
             "decision_time": self.decision_time.isoformat(),
+            "persisted_rank": None if self.persisted_rank is None else str(self.persisted_rank),
+            "recomputed_rank": None if self.recomputed_rank is None else str(self.recomputed_rank),
+            "rank_population_count": self.rank_population_count,
             "discrepancies": list(self.discrepancies),
         }
 
@@ -792,6 +911,8 @@ class TargetReproductionResult:
     trading_calendar_reference: ValidationArtifactReference
     discrepancies: tuple[str, ...]
     unavailable_reason_codes: tuple[str, ...] = ()
+    semantic_result: TargetSemanticResult | None = None
+    persisted_semantic_result: TargetSemanticResult | None = None
 
     def __post_init__(self) -> None:
         _require_aware("Target result DecisionTime", self.decision_time)
@@ -807,6 +928,12 @@ class TargetReproductionResult:
             sorted(set(self.unavailable_reason_codes))
         ):
             raise ValueError("Target unavailable reasons must be unique and sorted")
+        if (
+            self.semantic_result is not None
+            or self.persisted_semantic_result is not None
+        ):
+            self._verify_semantic_reproduction()
+            return
         values = (
             self.decision_reference_price,
             self.target_price,
@@ -874,8 +1001,70 @@ class TargetReproductionResult:
         if self.status is not derived:
             raise ValueError("Target result status is not derived")
 
+    def _verify_semantic_reproduction(self) -> None:
+        result = self.semantic_result
+        persisted = self.persisted_semantic_result
+        if result is None or persisted is None:
+            raise ValueError("v3 Target reproduction requires both semantic results")
+        if self.persisted_observation is not None:
+            raise ValueError("v3 Target reproduction cannot use a legacy observation")
+        decision_ids = tuple(
+            str(item.artifact_id) for item in result.decision_source_references
+        )
+        decision_hashes = tuple(
+            item.content_hash for item in result.decision_source_references
+        )
+        target_ids = tuple(
+            str(item.artifact_id) for item in result.outcome_source_references
+        )
+        target_hashes = tuple(
+            item.content_hash for item in result.outcome_source_references
+        )
+        expected_projection = (
+            result.symbol,
+            result.decision_time,
+            result.target_session,
+            result.outcome_window_end,
+            result.decision_reference_price,
+            result.checkpoint_price,
+            result.checkpoint_return,
+            decision_ids,
+            decision_hashes,
+            target_ids,
+            target_hashes,
+            tuple(sorted(result.reason_codes)),
+        )
+        actual_projection = (
+            self.symbol,
+            self.decision_time,
+            self.target_session,
+            self.target_event_end,
+            self.decision_reference_price,
+            self.target_price,
+            self.target_return,
+            self.decision_source_ids,
+            self.decision_source_hashes,
+            self.target_source_ids,
+            self.target_source_hashes,
+            self.unavailable_reason_codes,
+        )
+        if actual_projection != expected_projection:
+            raise ValueError("v3 Target reproduction projection drifted")
+        expected_discrepancies = _semantic_target_discrepancies(
+            persisted, result
+        )
+        if self.discrepancies != expected_discrepancies:
+            raise ValueError("v3 Target discrepancies are not derived")
+        derived = _correctness_status(
+            discrepancies=expected_discrepancies,
+            physical_source_available=self.physical_source_reference is not None,
+            complete=True,
+        )
+        if self.status is not derived:
+            raise ValueError("v3 Target correctness status is not derived")
+
     def to_canonical_dict(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "symbol": self.symbol,
             "decision_time": self.decision_time.isoformat(),
             "target_session": self.target_session.isoformat(),
@@ -904,6 +1093,14 @@ class TargetReproductionResult:
             "discrepancies": list(self.discrepancies),
             "unavailable_reason_codes": list(self.unavailable_reason_codes),
         }
+        if self.semantic_result is not None:
+            assert self.persisted_semantic_result is not None
+            payload["schema_version"] = "target-reproduction-result/v2"
+            payload["semantic_result"] = self.semantic_result.to_canonical_dict()
+            payload["persisted_semantic_result"] = (
+                self.persisted_semantic_result.to_canonical_dict()
+            )
+        return payload
 
 
 @dataclass(frozen=True, slots=True)
@@ -1000,7 +1197,13 @@ class AlphaCorrectnessProof:
             **self.identity_payload(),
         }
 
-    def to_evidence_dict(self) -> dict[str, object]:
+    def to_evidence_dict(
+        self,
+        *,
+        predecessor_failure_index_reference: (
+            ValidationArtifactReference | None
+        ) = None,
+    ) -> dict[str, object]:
         """Return a bounded projection while retaining the full proof Merkle root.
 
         The in-memory proof is owner-rebuilt before admission. PostgreSQL Evidence
@@ -1019,11 +1222,16 @@ class AlphaCorrectnessProof:
             )
         )
         projection: dict[str, object] = {
-            "schema_version": "alpha-correctness-evidence-projection/v1",
+            "schema_version": (
+                "alpha-correctness-evidence-projection/v2"
+                if predecessor_failure_index_reference is not None
+                else "alpha-correctness-evidence-projection/v1"
+            ),
             "status": self.status.value,
             "conclusion": self.conclusion.value,
             "factor_ids": list(factor_ids),
             "feature_results": _result_population_summary(self.feature_results),
+            "feature_rank_reproduction": _feature_rank_summary(self.feature_results),
             "target_results": _result_population_summary(self.target_results),
             "physical_verifications": [
                 {
@@ -1083,6 +1291,20 @@ class AlphaCorrectnessProof:
             "limitations": list(self.limitations),
             "full_proof_owner_reload_required": True,
         }
+        if predecessor_failure_index_reference is not None:
+            if (
+                predecessor_failure_index_reference.artifact_kind
+                != "ALPHA_CORRECTNESS_FAILURE_INDEX"
+            ):
+                raise ValueError(
+                    "Correctness Evidence v2 requires a failure-index owner"
+                )
+            projection["predecessor_failure_index_reference"] = (
+                predecessor_failure_index_reference.to_canonical_dict()
+            )
+            projection["target_semantic_statuses"] = (
+                _target_semantic_status_summary(self.target_results)
+            )
         projection_hash = canonical_hash(projection)
         return {
             "proof_id": str(self.proof_id),
@@ -1229,6 +1451,80 @@ def _result_population_summary(
     }
 
 
+def _feature_rank_summary(
+    results: tuple[FeatureReproductionResult, ...],
+) -> dict[str, object]:
+    comparisons = tuple(
+        comparison for result in results for comparison in result.comparisons
+    )
+    ranked = tuple(
+        item
+        for item in comparisons
+        if item.persisted_rank is not None and item.recomputed_rank is not None
+    )
+    return {
+        "comparison_count": len(comparisons),
+        "ranked_comparison_count": len(ranked),
+        "rank_population_count": len(
+            {
+                (result.session, comparison.factor_id)
+                for result in results
+                for comparison in result.comparisons
+                if comparison.persisted_rank is not None
+            }
+        ),
+        "rank_mismatch_count": sum(
+            item.persisted_rank != item.recomputed_rank for item in ranked
+        ),
+    }
+
+
+def _target_semantic_status_summary(
+    results: tuple[TargetReproductionResult, ...],
+) -> dict[str, object]:
+    semantic_results = tuple(item.semantic_result for item in results)
+    if not semantic_results or any(item is None for item in semantic_results):
+        raise ValueError(
+            "Correctness Evidence v2 requires semantic Target results"
+        )
+    resolved = tuple(item for item in semantic_results if item is not None)
+    specifications = tuple(
+        sorted(
+            {item.semantic_specification for item in resolved},
+            key=lambda item: (
+                item.artifact_kind,
+                str(item.artifact_id),
+                item.content_hash,
+            ),
+        )
+    )
+    fields = (
+        "decision_reference_status",
+        "outcome_window_status",
+        "checkpoint_observation_status",
+        "checkpoint_return_status",
+        "mfe_status",
+        "mae_status",
+        "barrier_status",
+    )
+    return {
+        "count": len(resolved),
+        "semantic_specification_references": [
+            item.to_canonical_dict() for item in specifications
+        ],
+        "status_counts": {
+            field_name: dict(
+                sorted(
+                    Counter(
+                        getattr(item, field_name).value for item in resolved
+                    ).items()
+                )
+            )
+            for field_name in fields
+        },
+    }
+
+
 def _derive_proof_status(
     *,
     feature_results: tuple[FeatureReproductionResult, ...],
@@ -1252,6 +1548,12 @@ def _derive_proof_status(
         return AlphaCorrectnessStatus.CORRECTNESS_FAILED
     factor_complete = bool(feature_results) and all(
         {item.factor_id for item in result.comparisons} == _SUPPORTED_FACTORS
+        and all(
+            comparison.persisted_rank is not None
+            and comparison.recomputed_rank is not None
+            and comparison.rank_population_count > 0
+            for comparison in result.comparisons
+        )
         for result in feature_results
     )
     physical_by_reference = {
@@ -1680,6 +1982,9 @@ def reproduce_intraday_features(
             event_start=factor_bars[0].event_start,
             event_end=factor_bars[-1].event_end,
             decision_time=decision_time,
+            persisted_rank=None,
+            recomputed_rank=None,
+            rank_population_count=0,
             discrepancies=tuple(discrepancies),
         )
         comparisons.append(comparison)
@@ -1705,6 +2010,187 @@ def reproduce_intraday_features(
         comparisons=tuple(comparisons),
         discrepancies=tuple(all_discrepancies),
         incomplete_reason_codes=tuple(sorted(set(incomplete_reason_codes))),
+    )
+
+
+def attach_feature_rank_reproduction(
+    results: tuple[FeatureReproductionResult, ...],
+) -> tuple[FeatureReproductionResult, ...]:
+    """Compare the production rank transform with an independent implementation."""
+
+    ordered = tuple(sorted(results, key=lambda item: (item.session, item.symbol)))
+    grouped: defaultdict[
+        tuple[date, str],
+        list[tuple[int, int, FeatureCorrectnessComparison]],
+    ] = defaultdict(list)
+    for result_index, result in enumerate(ordered):
+        for comparison_index, comparison in enumerate(result.comparisons):
+            grouped[(result.session, comparison.factor_id)].append(
+                (result_index, comparison_index, comparison)
+            )
+
+    ranked: dict[tuple[int, int], FeatureCorrectnessComparison] = {}
+    for population in grouped.values():
+        persisted = factor_ranks(
+            tuple(item.persisted_value for _left, _right, item in population)
+        )
+        recomputed = _independent_factor_ranks(
+            tuple(item.recomputed_value for _left, _right, item in population)
+        )
+        population_count = len(population)
+        for (result_index, comparison_index, comparison), left, right in zip(
+            population, persisted, recomputed, strict=True
+        ):
+            discrepancies = (
+                *comparison.discrepancies,
+                *((f"RANK_MISMATCH:{comparison.factor_id}",) if left != right else ()),
+            )
+            ranked[(result_index, comparison_index)] = replace(
+                comparison,
+                persisted_rank=left,
+                recomputed_rank=right,
+                rank_population_count=population_count,
+                discrepancies=discrepancies,
+            )
+
+    enriched: list[FeatureReproductionResult] = []
+    for result_index, result in enumerate(ordered):
+        comparisons = tuple(
+            ranked[(result_index, comparison_index)]
+            for comparison_index in range(len(result.comparisons))
+        )
+        discrepancies = tuple(
+            discrepancy
+            for comparison in comparisons
+            for discrepancy in comparison.discrepancies
+        )
+        enriched.append(
+            replace(
+                result,
+                status=_correctness_status(
+                    discrepancies=discrepancies,
+                    physical_source_available=result.physical_source_reference is not None,
+                    complete=(
+                        {item.factor_id for item in comparisons} == _SUPPORTED_FACTORS
+                        and not result.incomplete_reason_codes
+                    ),
+                ),
+                comparisons=comparisons,
+                discrepancies=discrepancies,
+            )
+        )
+    return tuple(enriched)
+
+
+def _independent_factor_ranks(values: tuple[Decimal, ...]) -> tuple[Decimal, ...]:
+    """Independent average-rank checker; intentionally separate from Discovery."""
+
+    ordered = sorted(range(len(values)), key=lambda index: (values[index], index))
+    ranks = [Decimal("0")] * len(values)
+    start = 0
+    while start < len(ordered):
+        stop = start + 1
+        while stop < len(ordered) and values[ordered[stop]] == values[ordered[start]]:
+            stop += 1
+        average = (Decimal(start + 1) + Decimal(stop)) / Decimal("2")
+        for index in ordered[start:stop]:
+            ranks[index] = average
+        start = stop
+    return tuple(ranks)
+
+
+def reproduce_t_plus_one_1030_target_v2(
+    *,
+    label: TargetOutcomeLabel,
+    protocol: OutcomeTargetProtocol,
+    trading_calendar: TradingCalendarArtifact,
+    source_bars: tuple[HistoricalNormalizedBar, ...],
+    physical_verification: PhysicalSourceVerification | None,
+    corporate_action_reason_code: str | None = None,
+) -> TargetReproductionResult:
+    """Independently select sources and reproduce one persisted v3 label."""
+
+    persisted = label.semantic_result
+    specification = protocol.target_semantic_specification
+    if label.schema_version != "target-outcome-label/v3" or persisted is None:
+        raise ValueError("v2 Target protocol requires a v3 persisted label")
+    if specification is None:
+        raise ValueError("v3 Target label requires protocol semantics")
+    if persisted.semantic_specification != specification.reference:
+        raise ValueError("v3 Target semantic specification owner drifted")
+    target = next(
+        (
+            item
+            for item in protocol.targets
+            if item.target_id == label.target.artifact_id
+            and item.target_hash == label.target.content_hash
+        ),
+        None,
+    )
+    if target is None:
+        raise ValueError("v3 Target Definition owner is not bound to its protocol")
+    resolved_next = trading_calendar.resolve_next_session_date(
+        DecisionTime(persisted.decision_time)
+    )
+    if persisted.target_session != resolved_next:
+        raise ValueError("v3 Target session is not Calendar-owner resolved")
+    reproduced = evaluate_historical_target_semantics(
+        specification=specification,
+        target=target,
+        symbol=label.symbol,
+        decision_time=persisted.decision_time,
+        next_session_date=resolved_next,
+        source_bars=source_bars,
+    )
+    if corporate_action_reason_code is not None:
+        reproduced = apply_raw_corporate_action_conflict(
+            reproduced,
+            target=target,
+            reason_code=corporate_action_reason_code,
+        )
+    discrepancies = _semantic_target_discrepancies(persisted, reproduced)
+    physical_reference = (
+        None
+        if physical_verification is None
+        else physical_verification.normalized_owner_reference
+    )
+    return TargetReproductionResult(
+        symbol=reproduced.symbol,
+        decision_time=reproduced.decision_time,
+        target_session=reproduced.target_session,
+        target_event_end=reproduced.outcome_window_end,
+        decision_reference_price=reproduced.decision_reference_price,
+        target_price=reproduced.checkpoint_price,
+        target_return=reproduced.checkpoint_return,
+        decision_source_ids=tuple(
+            str(item.artifact_id)
+            for item in reproduced.decision_source_references
+        ),
+        decision_source_hashes=tuple(
+            item.content_hash for item in reproduced.decision_source_references
+        ),
+        target_source_ids=tuple(
+            str(item.artifact_id) for item in reproduced.outcome_source_references
+        ),
+        target_source_hashes=tuple(
+            item.content_hash for item in reproduced.outcome_source_references
+        ),
+        persisted_observation=None,
+        status=_correctness_status(
+            discrepancies=discrepancies,
+            physical_source_available=physical_reference is not None,
+            complete=True,
+        ),
+        physical_source_reference=physical_reference,
+        trading_calendar_reference=ValidationArtifactReference(
+            "PIT_TRADING_CALENDAR",
+            trading_calendar.artifact_id,
+            trading_calendar.content_hash,
+        ),
+        discrepancies=discrepancies,
+        unavailable_reason_codes=tuple(sorted(reproduced.reason_codes)),
+        semantic_result=reproduced,
+        persisted_semantic_result=persisted,
     )
 
 
@@ -1988,6 +2474,101 @@ def _target_discrepancies(
     ):
         discrepancies.append("TARGET_TEMPORAL_BOUNDARY_MISMATCH")
     return tuple(discrepancies)
+
+
+def _semantic_target_discrepancies(
+    persisted: TargetSemanticResult,
+    reproduced: TargetSemanticResult,
+) -> tuple[str, ...]:
+    comparisons = (
+        (
+            "TARGET_SEMANTIC_SPECIFICATION_MISMATCH",
+            persisted.semantic_specification,
+            reproduced.semantic_specification,
+        ),
+        (
+            "TARGET_SEMANTIC_BOUNDARY_MISMATCH",
+            (
+                persisted.symbol,
+                persisted.decision_time,
+                persisted.target_session,
+                persisted.outcome_window_start,
+                persisted.outcome_window_end,
+                persisted.expected_outcome_bar_count,
+                persisted.observed_outcome_bar_count,
+            ),
+            (
+                reproduced.symbol,
+                reproduced.decision_time,
+                reproduced.target_session,
+                reproduced.outcome_window_start,
+                reproduced.outcome_window_end,
+                reproduced.expected_outcome_bar_count,
+                reproduced.observed_outcome_bar_count,
+            ),
+        ),
+        (
+            "TARGET_SEMANTIC_STATUS_MISMATCH",
+            (
+                persisted.decision_reference_status,
+                persisted.outcome_window_status,
+                persisted.checkpoint_observation_status,
+                persisted.checkpoint_return_status,
+                persisted.mfe_status,
+                persisted.mae_status,
+                persisted.barrier_status,
+            ),
+            (
+                reproduced.decision_reference_status,
+                reproduced.outcome_window_status,
+                reproduced.checkpoint_observation_status,
+                reproduced.checkpoint_return_status,
+                reproduced.mfe_status,
+                reproduced.mae_status,
+                reproduced.barrier_status,
+            ),
+        ),
+        (
+            "TARGET_SEMANTIC_VALUE_MISMATCH",
+            (
+                persisted.decision_reference_price,
+                persisted.checkpoint_price,
+                persisted.checkpoint_return,
+                persisted.mfe,
+                persisted.mae,
+                persisted.barrier_passages,
+                persisted.barrier_ordering,
+            ),
+            (
+                reproduced.decision_reference_price,
+                reproduced.checkpoint_price,
+                reproduced.checkpoint_return,
+                reproduced.mfe,
+                reproduced.mae,
+                reproduced.barrier_passages,
+                reproduced.barrier_ordering,
+            ),
+        ),
+        (
+            "TARGET_SEMANTIC_SOURCE_LINEAGE_MISMATCH",
+            (
+                persisted.decision_source_references,
+                persisted.outcome_source_references,
+                persisted.diagnostic_source_references,
+            ),
+            (
+                reproduced.decision_source_references,
+                reproduced.outcome_source_references,
+                reproduced.diagnostic_source_references,
+            ),
+        ),
+        (
+            "TARGET_SEMANTIC_REASON_MISMATCH",
+            persisted.reason_codes,
+            reproduced.reason_codes,
+        ),
+    )
+    return tuple(code for code, left, right in comparisons if left != right)
 
 
 def _source_lineage(
@@ -2280,9 +2861,11 @@ __all__ = [
     "PersistedTargetObservation",
     "PhysicalSourceVerification",
     "TargetReproductionResult",
+    "attach_feature_rank_reproduction",
     "build_alpha_correctness_proof",
     "reproduce_intraday_features",
     "reproduce_execution_timing_diagnostics",
     "reproduce_t_plus_one_1030_target",
+    "reproduce_t_plus_one_1030_target_v2",
     "establish_physical_reproduction",
 ]

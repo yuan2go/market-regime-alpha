@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 import json
@@ -116,11 +117,16 @@ from market_regime_alpha.application.historical_corpus.decision_materializer imp
 from market_regime_alpha.application.historical_corpus.evidence_producer import (
     HistoricalEvidenceProducer,
 )
+from market_regime_alpha.application.historical_corpus.correctness_failure_indexer import (
+    HistoricalCorrectnessFailureIndexer,
+)
 from market_regime_alpha.application.historical_corpus.frozen_experiment import (
+    WP_ALPHA_CORRECTNESS_02_LOCKED_AT,
     WP_ALPHA_PROOF_02_LOCKED_AT,
     create_phase_e3_feature_configuration,
     create_phase_e3_research_universe_policy,
     create_phase_e3_strategy_economics_policy_set,
+    create_wp_alpha_correctness_02_historical_experiment,
     create_wp_alpha_proof_02_historical_experiment,
     phase_e3_decision_policy_identity,
 )
@@ -132,6 +138,9 @@ from market_regime_alpha.application.historical_corpus.postgres_locked_oos_scope
 )
 from market_regime_alpha.application.historical_corpus.postgres_evidence import (
     PostgresHistoricalEvidenceRepository,
+)
+from market_regime_alpha.application.historical_corpus.postgres_correctness_failures import (
+    PostgresAlphaCorrectnessFailureRepository,
 )
 from market_regime_alpha.application.historical_corpus.postgres_materialization import (
     PostgresHistoricalMaterializationRepository,
@@ -171,6 +180,7 @@ from market_regime_alpha.application.research_evaluation.postgres_target_reposit
 )
 from market_regime_alpha.application.research_evaluation.targets import (
     exploratory_five_minute_multi_horizon_protocol,
+    exploratory_five_minute_multi_horizon_protocol_v2,
 )
 from market_regime_alpha.application.research_validation.free_historical_samples import (
     AShareBarProviderReader,
@@ -575,6 +585,29 @@ def build_parser() -> argparse.ArgumentParser:
     )
     historical_experiment_freeze.add_argument("--input", type=Path, required=True)
     historical_experiment_freeze.add_argument("--artifact-root", type=Path, required=True)
+    correctness_failure_index = subparsers.add_parser(
+        "historical-correctness-failure-index",
+        help=(
+            "Extract the frozen predecessor Target failures through owner reload."
+        ),
+    )
+    correctness_failure_index.add_argument("--input", type=Path, required=True)
+    correctness_failure_index.add_argument(
+        "--artifact-root", type=Path, required=True
+    )
+    correctness_experiment_freeze = subparsers.add_parser(
+        "historical-correctness-experiment-freeze",
+        help=(
+            "Bind the v2 Target semantics and predecessor failure index to "
+            "WP-ALPHA-CORRECTNESS-02."
+        ),
+    )
+    correctness_experiment_freeze.add_argument(
+        "--input", type=Path, required=True
+    )
+    correctness_experiment_freeze.add_argument(
+        "--artifact-root", type=Path, required=True
+    )
     historical_security_facts_sync = subparsers.add_parser(
         "historical-security-facts-sync",
         help=("Acquire and publish effective/publication-dated Industry, shares and corporate-action facts for exact historical cohorts."),
@@ -1588,6 +1621,18 @@ def _dispatch(
         )
     if args.operation == "historical-experiment-freeze":
         return _freeze_wp_alpha_proof_experiment(
+            factory,
+            artifact_root=args.artifact_root.resolve(),
+            payload=_load_json_object(args.input),
+        )
+    if args.operation == "historical-correctness-failure-index":
+        return _build_wp_alpha_correctness_failure_index(
+            factory,
+            artifact_root=args.artifact_root.resolve(),
+            payload=_load_json_object(args.input),
+        )
+    if args.operation == "historical-correctness-experiment-freeze":
+        return _freeze_wp_alpha_correctness_experiment(
             factory,
             artifact_root=args.artifact_root.resolve(),
             payload=_load_json_object(args.input),
@@ -2826,6 +2871,309 @@ def _freeze_wp_alpha_proof_experiment(
     }
 
 
+def _build_wp_alpha_correctness_failure_index(
+    factory: PostgresConnectionFactory,
+    *,
+    artifact_root: Path,
+    payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    expected = {
+        "predecessor_run_id",
+        "predecessor_evidence_id",
+        "analysis_code_sha",
+    }
+    if set(payload) != expected:
+        raise ValueError(
+            "historical-correctness-failure-index requires exact predecessor "
+            "run/Evidence and code SHA"
+        )
+    analysis_code_sha = str(payload["analysis_code_sha"])
+    journal = PostgresHistoricalResearchJournal(
+        factory,
+        apply_migrations=False,
+    )
+    snapshot = journal.get_run(ArtifactId(str(payload["predecessor_run_id"])))
+    calendar = PostgresPITTradingCalendarSnapshotRepository(
+        factory,
+        apply_migrations=False,
+    ).get(snapshot.command.trading_calendar_id)
+    corrected_target = PostgresTargetOutcomeRepository(
+        factory,
+        apply_migrations=False,
+    ).register_protocol(
+        exploratory_five_minute_multi_horizon_protocol_v2(),
+        recorded_at=WP_ALPHA_CORRECTNESS_02_LOCKED_AT,
+    )
+    index = HistoricalCorrectnessFailureIndexer(
+        journal=journal,
+        components=PostgresHistoricalMaterializationRepository(
+            factory,
+            artifact_root=artifact_root,
+            apply_migrations=False,
+        ),
+        corpus=PostgresHistoricalCorpusRepository(
+            factory,
+            artifact_root=artifact_root,
+            apply_migrations=False,
+        ),
+        evidence=PostgresHistoricalEvidenceRepository(
+            factory,
+            apply_migrations=False,
+        ),
+        historical_facts=PostgresHistoricalSecurityFactsRepository(
+            factory,
+            apply_migrations=False,
+        ),
+        failures=PostgresAlphaCorrectnessFailureRepository(
+            factory,
+            apply_migrations=False,
+        ),
+    ).build_and_persist(
+        predecessor_run_id=snapshot.command.run_id,
+        predecessor_evidence_id=ArtifactId(
+            str(payload["predecessor_evidence_id"])
+        ),
+        corrected_target_protocol=corrected_target,
+        trading_calendar=calendar,
+        analysis_code_sha=analysis_code_sha,
+        created_at=_postgres_authority_now(factory),
+    )
+    return {
+        "operation": "HISTORICAL_CORRECTNESS_FAILURE_INDEX",
+        "failure_index_reference": index.reference.to_canonical_dict(),
+        "detail_count": len(index.details),
+        "classifications": dict(
+            sorted(
+                Counter(item.classification for item in index.details).items()
+            )
+        ),
+        "corrected_target_protocol_reference": ValidationArtifactReference(
+            "OUTCOME_TARGET_PROTOCOL",
+            corrected_target.protocol_id,
+            corrected_target.protocol_hash,
+        ).to_canonical_dict(),
+        "semantic_specification_reference": (
+            corrected_target.target_semantic_specification.reference.to_canonical_dict()
+            if corrected_target.target_semantic_specification is not None
+            else None
+        ),
+        "physical_reproduction": "ESTABLISHED",
+        "formal_pit": False,
+        "external_outcome_consumed": False,
+        "locked_oos_outcome_consumed": False,
+        "production_qualified": False,
+    }
+
+
+def _freeze_wp_alpha_correctness_experiment(
+    factory: PostgresConnectionFactory,
+    *,
+    artifact_root: Path,
+    payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    reference_fields = {
+        "raw_reference",
+        "normalized_reference",
+        "calendar_reference",
+        "universe_timeline_reference",
+        "security_facts_reference",
+        "predecessor_run_reference",
+        "predecessor_correctness_evidence_reference",
+        "predecessor_failure_index_reference",
+    }
+    expected = {*reference_fields, "analysis_code_sha"}
+    if set(payload) != expected:
+        raise ValueError(
+            "historical-correctness-experiment-freeze requires exact physical, "
+            "PIT, predecessor and code references"
+        )
+    references = {
+        name: ValidationArtifactReference.from_canonical_dict(
+            _object_value(payload[name], name)
+        )
+        for name in reference_fields
+    }
+    analysis_code_sha = str(payload["analysis_code_sha"])
+    corpus = PostgresHistoricalCorpusRepository(
+        factory,
+        artifact_root=artifact_root,
+        apply_migrations=False,
+    )
+    raw = corpus.open_index(references["raw_reference"])
+    normalized = corpus.open_index(references["normalized_reference"])
+    if normalized.parent_reference != raw.reference:
+        raise ValueError(
+            "correctness Normalized Dataset does not bind exact Raw owner"
+        )
+    calendar = PostgresPITTradingCalendarSnapshotRepository(
+        factory,
+        apply_migrations=False,
+    ).get(references["calendar_reference"].artifact_id)
+    calendar_reference = ValidationArtifactReference(
+        "TRADING_CALENDAR",
+        calendar.artifact_id,
+        calendar.content_hash,
+    )
+    if calendar_reference != references["calendar_reference"]:
+        raise ValueError("correctness Calendar owner drifted")
+    timeline = PostgresFreeResearchUniverseRepository(
+        factory,
+        apply_migrations=False,
+    ).get_timeline(references["universe_timeline_reference"].artifact_id)
+    if timeline.reference != references["universe_timeline_reference"]:
+        raise ValueError("correctness Universe Timeline owner drifted")
+    facts = PostgresHistoricalSecurityFactsRepository(
+        factory,
+        apply_migrations=False,
+    ).get(references["security_facts_reference"].artifact_id)
+    if (
+        facts.reference != references["security_facts_reference"]
+        or timeline.reference not in facts.universe_scope_references
+    ):
+        raise ValueError("correctness Security Facts owner drifted")
+    predecessor = PostgresHistoricalResearchJournal(
+        factory,
+        apply_migrations=False,
+    ).get_run(references["predecessor_run_reference"].artifact_id)
+    predecessor_run_reference = ValidationArtifactReference(
+        "HISTORICAL_RESEARCH_RUN",
+        predecessor.command.run_id,
+        predecessor.command.command_hash,
+    )
+    if predecessor_run_reference != references["predecessor_run_reference"]:
+        raise ValueError("correctness predecessor run owner drifted")
+    predecessor_evidence = PostgresHistoricalEvidenceRepository(
+        factory,
+        apply_migrations=False,
+    ).get(references["predecessor_correctness_evidence_reference"].artifact_id)
+    if (
+        predecessor_evidence.reference
+        != references["predecessor_correctness_evidence_reference"]
+    ):
+        raise ValueError("correctness predecessor Evidence owner drifted")
+    failure_index = PostgresAlphaCorrectnessFailureRepository(
+        factory,
+        apply_migrations=False,
+    ).get(references["predecessor_failure_index_reference"].artifact_id)
+    if (
+        failure_index.reference
+        != references["predecessor_failure_index_reference"]
+        or failure_index.source_run_reference != predecessor_run_reference
+        or failure_index.source_evidence_reference
+        != predecessor_evidence.reference
+        or failure_index.raw_owner_reference != raw.reference
+        or failure_index.normalized_owner_reference != normalized.reference
+        or failure_index.calendar_reference != calendar_reference
+        or failure_index.analysis_code_sha != analysis_code_sha
+    ):
+        raise ValueError("correctness predecessor failure index drifted")
+    target = PostgresTargetOutcomeRepository(
+        factory,
+        apply_migrations=False,
+    ).register_protocol(
+        exploratory_five_minute_multi_horizon_protocol_v2(),
+        recorded_at=WP_ALPHA_CORRECTNESS_02_LOCKED_AT,
+    )
+    validation = PostgresResearchValidationRepository(
+        factory,
+        apply_migrations=False,
+    )
+    feature = validation.record_feature_set_configuration(
+        create_phase_e3_feature_configuration(),
+        recorded_at=WP_ALPHA_CORRECTNESS_02_LOCKED_AT,
+    )
+    economics = validation.record_historical_strategy_economics_policy_set(
+        create_phase_e3_strategy_economics_policy_set(
+            target_protocol=target,
+            created_at=WP_ALPHA_CORRECTNESS_02_LOCKED_AT,
+        )
+    )
+    runtime_scope_policy = PostgresRuntimeScopeRepository(
+        factory,
+        apply_migrations=False,
+    ).register_policy(create_phase_e3_research_universe_policy())
+    (
+        decision_policy_id,
+        decision_policy_hash,
+        decision_policy_payload,
+    ) = phase_e3_decision_policy_identity()
+    definition = create_wp_alpha_correctness_02_historical_experiment(
+        target,
+        locked_at=WP_ALPHA_CORRECTNESS_02_LOCKED_AT,
+        analysis_code_sha=analysis_code_sha,
+        raw_owner_reference=raw.reference,
+        normalized_owner_reference=normalized.reference,
+        calendar_reference=calendar_reference,
+        universe_timeline_reference=timeline.reference,
+        security_facts_reference=facts.reference,
+        predecessor_run_reference=predecessor_run_reference,
+        predecessor_correctness_evidence_reference=(
+            predecessor_evidence.reference
+        ),
+        predecessor_failure_index_reference=failure_index.reference,
+    )
+    recorded = validation.record_historical_experiment_definition(
+        definition,
+        recorded_at=_postgres_authority_now(factory),
+    )
+    if recorded != definition:
+        raise ValueError(
+            "WP-ALPHA-CORRECTNESS-02 Experiment owner replay drifted"
+        )
+    return {
+        "operation": "HISTORICAL_CORRECTNESS_EXPERIMENT_FREEZE",
+        "experiment_reference": ValidationArtifactReference(
+            "RESEARCH_EXPERIMENT_DEFINITION",
+            definition.definition_id,
+            definition.definition_hash,
+        ).to_canonical_dict(),
+        "target_protocol_reference": ValidationArtifactReference(
+            "OUTCOME_TARGET_PROTOCOL",
+            target.protocol_id,
+            target.protocol_hash,
+        ).to_canonical_dict(),
+        "semantic_specification_reference": (
+            target.target_semantic_specification.reference.to_canonical_dict()
+            if target.target_semantic_specification is not None
+            else None
+        ),
+        "feature_reference": ValidationArtifactReference(
+            "FEATURE_SET_CONFIGURATION",
+            feature.feature_set_id,
+            feature.content_hash,
+        ).to_canonical_dict(),
+        "economics_reference": economics.reference.to_canonical_dict(),
+        "runtime_scope_policy": runtime_scope_policy.to_canonical_dict(),
+        "decision_policy": {
+            "policy_id": str(decision_policy_id),
+            "policy_hash": decision_policy_hash,
+            "payload": decision_policy_payload,
+        },
+        "predecessor_failure_index_reference": (
+            failure_index.reference.to_canonical_dict()
+        ),
+        "analysis_code_sha": analysis_code_sha,
+        "locked_at": WP_ALPHA_CORRECTNESS_02_LOCKED_AT.isoformat(),
+        "discovery_only": True,
+        "formal_pit": False,
+        "external_outcome_consumed": False,
+        "locked_oos_outcome_consumed": False,
+        "production_qualified": False,
+    }
+
+
+def _postgres_authority_now(
+    factory: PostgresConnectionFactory,
+) -> datetime:
+    with factory.connection(read_only=True) as connection:
+        row = connection.execute(
+            "SELECT date_trunc('second', clock_timestamp())"
+        ).fetchone()
+    if row is None or not isinstance(row[0], datetime):
+        raise RuntimeError("PostgreSQL clock did not return an authority timestamp")
+    return row[0]
+
+
 def _historical_security_fact_scope(
     factory: PostgresConnectionFactory,
     payload: Mapping[str, Any],
@@ -3209,6 +3557,8 @@ def _required_permission(args: argparse.Namespace) -> SecurityPermission:
         "historical-security-facts-prefetch",
         "historical-calendar-freeze",
         "historical-experiment-freeze",
+        "historical-correctness-failure-index",
+        "historical-correctness-experiment-freeze",
         "historical-universe-history-sync",
         "historical-universe-sync",
         "research-universe-sync",

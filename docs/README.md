@@ -3,7 +3,7 @@
 > **Status:** CURRENT_STATUS  
 > **Authority:** Documentation navigation and precedence only  
 > **Owner:** Market Regime Alpha maintainers  
-> **Last Updated:** 2026-08-26
+> **Last Updated:** 2026-08-27
 > **Code Evidence:** `src/market_regime_alpha`, `src/market_regime_alpha/persistence/postgres/migrations/*.sql`, `tests`
 
 Documentation never creates implementation truth, research evidence, qualification, or trading authority.
@@ -49,6 +49,8 @@ Target design does not turn an unimplemented or unproven capability into a curre
 
 ## Research claims
 
+- [WP-ALPHA-CORRECTNESS-02 Frozen Protocol](research/protocols/WP-ALPHA-CORRECTNESS-02-Frozen-Protocol.md) froze the approved three-dimensional Target semantics and Discovery-only repair boundary before implementation. The protocol has now been executed without changing the hypothesis; its [Execution Report](references/WP-ALPHA-CORRECTNESS-02-Execution-Report.md) records `INCONCLUSIVE / PARTIALLY_REPRODUCED / NO-GO`, not supported Alpha.
+- [WP-ALPHA-CORRECTNESS-02 Baseline Audit](references/WP-ALPHA-CORRECTNESS-02-Baseline-Audit.md) records the exact starting SHA, environment, PostgreSQL schema, immutable owner availability, code call chain and pre-implementation capability boundary.
 - [WP-ALPHA-PROOF-02 Frozen Vertical Slice Protocol](research/protocols/WP-ALPHA-PROOF-02-Frozen-Vertical-Slice-Protocol.md) is the immutable pre-registered protocol. Its [Execution Report](references/WP-ALPHA-PROOF-02-Execution-Report.md) records the terminal adverse Discovery result, failed correctness gate, unconsumed External/Locked Outcomes and exact owner identities.
 - [Alpha Research Phase II Engineering Protocol](research/protocols/Alpha-Research-Phase-II-Engineering-Protocol.md) is the historical engineering baseline that produced the current kernels and owner wiring. It creates no empirical claim and is superseded as the active execution plan by WP-ALPHA-PROOF-02.
 - [TEMPORAL_VALIDATION_V1 Frozen Protocol](research/protocols/TEMPORAL-VALIDATION-V1-Frozen-Protocol.md) freezes the first owner-derived 126-session temporal partition and every unchanged discovery input before outcome access; its [Contamination Audit](references/TEMPORAL-VALIDATION-V1-Contamination-Audit.md) records why the window is admissible but does not unlock it.
@@ -62,6 +64,8 @@ Target design does not turn an unimplemented or unproven capability into a curre
 ## Architecture decisions
 
 ADRs under `docs/architecture/decisions/` record accepted decisions and their historical rationale. They remain useful provenance, but the Canonical Overall Design is the current consolidated design authority.
+
+- [ADR-014: Frozen Target Semantics and Independent Correctness](architecture/decisions/ADR-014-Frozen-Target-Semantics-and-Independent-Correctness.md) records the accepted WP-ALPHA-CORRECTNESS-02 design. It separates Decision reference, Outcome window and derived-metric status while preserving independent source selection.
 
 ## Documentation cleanup policy
 

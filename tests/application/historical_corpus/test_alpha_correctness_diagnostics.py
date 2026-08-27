@@ -185,7 +185,29 @@ def test_moving_block_inference_is_deterministic_and_block_sensitive() -> None:
     assert first == second
     assert tuple(item.block_length for item in first.sensitivity) == (1, 3, 5)
     assert all(item.lower <= item.estimate <= item.upper for item in first.sensitivity)
+    assert first.raw_p_value == max(item.null_p_value for item in first.sensitivity)
     assert first.temporal_stability in {"STABLE", "UNSTABLE"}
+    assert protocol.to_canonical_dict()["schema_version"] == "alpha-moving-block-inference/v2"
+    assert protocol.to_canonical_dict()["test_method"] == "NULL_CENTERED_MOVING_BLOCK"
+
+
+def test_moving_block_inference_tests_the_zero_mean_null() -> None:
+    observations = tuple(
+        SessionEstimate(date(2026, 1, day), Decimal("0.1"))
+        for day in range(2, 22)
+    )
+    protocol = MovingBlockInferenceProtocol.create(
+        iterations=199,
+        block_lengths=(1, 3, 5),
+        confidence_level=Decimal("0.9"),
+        seed=20260819,
+    )
+
+    result = evaluate_robust_inference(protocol, observations)
+
+    assert result.raw_p_value == Decimal("0.005")
+    assert result.adjusted_p_value == result.raw_p_value
+    assert all(item.null_p_value == Decimal("0.005") for item in result.sensitivity)
 
 
 def test_robust_inference_adjusts_one_frozen_multiple_testing_family() -> None:

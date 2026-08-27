@@ -27,13 +27,19 @@ from market_regime_alpha.application.historical_corpus.contracts import (
 from market_regime_alpha.application.historical_corpus.historical_window import (
     HistoricalWindowReader,
 )
+from market_regime_alpha.application.historical_corpus.historical_target_semantics import (
+    apply_raw_corporate_action_conflict,
+    evaluate_historical_target_semantics,
+)
 from market_regime_alpha.application.historical_corpus.frozen_experiment import (
     PHASE_E3_TIMEZONE,
+    WP_ALPHA_CORRECTNESS_02_MULTIPLE_TESTING_FAMILY,
     WP_ALPHA_PROOF_02_MULTIPLE_TESTING_FAMILY,
     WP_ALPHA_RESEARCH_01_MULTIPLE_TESTING_FAMILY,
     verify_golden_loop_v2_historical_experiment,
     verify_phase_e3_historical_experiment,
     verify_wp_alpha_research_01_historical_experiment,
+    verify_wp_alpha_correctness_02_historical_experiment,
     verify_wp_alpha_proof_02_historical_experiment,
 )
 from market_regime_alpha.application.historical_corpus.artifacts import (
@@ -64,6 +70,7 @@ from market_regime_alpha.application.research_evaluation.targeted_outcome import
     BarrierOrderingOutcome,
     TargetOutcomeLabel,
     build_target_outcome_label_from_bars,
+    build_target_outcome_label_from_semantic_result,
 )
 from market_regime_alpha.application.research_evaluation.targets import (
     OutcomeCheckpoint,
@@ -693,6 +700,27 @@ class HistoricalDecisionMaterializer:
                     "Historical frozen methodology was recorded after materialization"
                 )
         if (
+            experiment.multiple_testing_family_id
+            == WP_ALPHA_CORRECTNESS_02_MULTIPLE_TESTING_FAMILY
+        ):
+            verify_wp_alpha_correctness_02_historical_experiment(
+                experiment,
+                target_protocol=target_protocol,
+                feature_owner=feature_owner,
+                economics_owner=economics_owner,
+                decision_local_time=request.decision_time.astimezone(
+                    ZoneInfo(PHASE_E3_TIMEZONE)
+                ).time(),
+                timezone_name=PHASE_E3_TIMEZONE,
+                runtime_scope_policy_id=request.runtime_scope_policy_id,
+                runtime_scope_policy_hash=request.runtime_scope_policy_hash,
+                decision_policy_id=request.decision_policy_id,
+                decision_policy_hash=request.decision_policy_hash,
+                code_revision=request.code_revision,
+                configuration_references=request.configuration_references,
+            )
+            verifier = None
+        elif (
             experiment.multiple_testing_family_id
             == WP_ALPHA_PROOF_02_MULTIPLE_TESTING_FAMILY
         ):
@@ -1382,45 +1410,86 @@ class HistoricalDecisionMaterializer:
         capacity_protocol = economics_owner.capacity_protocol
         requested_notional = Decimal("100000")
         for symbol in symbols:
-            reference_price = _decision_reference_price(bars, symbol, request.trading_date, request.decision_time)
-            if reference_price is None:
-                target_omissions.append(
-                    {
-                        "symbol": symbol,
-                        "target_count": len(protocol.targets),
-                        "target_ids": [
-                            str(target.target_id) for target in protocol.targets
-                        ],
-                        "reason_codes": [
-                            "DECISION_REFERENCE_NOT_ESTIMABLE",
-                        ],
-                    }
-                )
-                continue
             initial_conditions = _market_conditions(bars, symbol, next_session)
-            fallback_open = next(
-                (
-                    item.open
-                    for item in bars
-                    if item.symbol == symbol and item.market_date == next_session and item.timeframe is Timeframe.DAILY
-                ),
-                None,
-            )
-            symbol_labels = tuple(
-                build_target_outcome_label_from_bars(
-                    symbol=symbol,
-                    decision_frozen_at=request.decision_time,
-                    decision_reference_price=reference_price,
-                    target=target,
-                    protocol=protocol,
-                    bars=canonical,
-                    fallback_available_at=owner.retrieved_at,
-                    next_session_date=next_session,
-                    initial_market_conditions=initial_conditions,
-                    fallback_open=fallback_open,
+            semantic_specification = protocol.target_semantic_specification
+            if semantic_specification is None:
+                reference_price = _decision_reference_price(
+                    bars,
+                    symbol,
+                    request.trading_date,
+                    request.decision_time,
                 )
-                for target in protocol.targets
-            )
+                if reference_price is None:
+                    target_omissions.append(
+                        {
+                            "symbol": symbol,
+                            "target_count": len(protocol.targets),
+                            "target_ids": [
+                                str(target.target_id)
+                                for target in protocol.targets
+                            ],
+                            "reason_codes": [
+                                "DECISION_REFERENCE_NOT_ESTIMABLE",
+                            ],
+                        }
+                    )
+                    continue
+                fallback_open = next(
+                    (
+                        item.open
+                        for item in bars
+                        if item.symbol == symbol
+                        and item.market_date == next_session
+                        and item.timeframe is Timeframe.DAILY
+                    ),
+                    None,
+                )
+                symbol_labels = tuple(
+                    build_target_outcome_label_from_bars(
+                        symbol=symbol,
+                        decision_frozen_at=request.decision_time,
+                        decision_reference_price=reference_price,
+                        target=target,
+                        protocol=protocol,
+                        bars=canonical,
+                        fallback_available_at=owner.retrieved_at,
+                        next_session_date=next_session,
+                        initial_market_conditions=initial_conditions,
+                        fallback_open=fallback_open,
+                    )
+                    for target in protocol.targets
+                )
+            else:
+                semantic_results = tuple(
+                    evaluate_historical_target_semantics(
+                        specification=semantic_specification,
+                        target=target,
+                        symbol=symbol,
+                        decision_time=request.decision_time,
+                        next_session_date=next_session,
+                        source_bars=bars,
+                    )
+                    for target in protocol.targets
+                )
+                reference_prices = {
+                    item.decision_reference_price for item in semantic_results
+                }
+                if len(reference_prices) != 1:
+                    raise ValueError(
+                        "Target semantic Decision reference drifted across horizons"
+                    )
+                reference_price = next(iter(reference_prices))
+                symbol_labels = tuple(
+                    build_target_outcome_label_from_semantic_result(
+                        target=target,
+                        semantic_result=result,
+                        outcome_available_at=owner.retrieved_at,
+                        market_conditions=initial_conditions,
+                    )
+                    for target, result in zip(
+                        protocol.targets, semantic_results, strict=True
+                    )
+                )
             if symbol in corporate_action_excluded_symbols:
                 exclusion_reason = (
                     "CORPORATE_ACTION_COVERAGE_GAP_RAW_RETURN_NOT_ESTIMABLE"
@@ -1440,7 +1509,10 @@ class HistoricalDecisionMaterializer:
                     )
                 )
             labels.extend(symbol_labels)
-            if symbol in corporate_action_excluded_symbols:
+            if (
+                symbol in corporate_action_excluded_symbols
+                or reference_price is None
+            ):
                 continue
             historical_daily = _canonical_bars(
                 tuple(
@@ -2893,6 +2965,22 @@ def _corporate_action_unavailable_label(
     reason_code: str,
 ) -> TargetOutcomeLabel:
     """Retain one projected sample while failing raw corporate-action returns closed."""
+
+    if label.semantic_result is not None:
+        semantic_result = apply_raw_corporate_action_conflict(
+            label.semantic_result,
+            target=target,
+            reason_code=reason_code,
+        )
+        return build_target_outcome_label_from_semantic_result(
+            target=target,
+            semantic_result=semantic_result,
+            outcome_available_at=label.outcome_available_at,
+            market_conditions=(
+                *label.market_conditions,
+                OutcomeMarketCondition.CORPORATE_ACTION,
+            ),
+        )
 
     reasons = {
         item

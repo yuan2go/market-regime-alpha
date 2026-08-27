@@ -290,6 +290,9 @@ EXPECTED_AUTHORITY_TABLES: Final[frozenset[str]] = frozenset(
         "historical_research_evidence",
         "historical_research_evidence_source_binding",
         "historical_research_evidence_metric",
+        "alpha_correctness_failure_index",
+        "alpha_correctness_failure_detail",
+        "alpha_correctness_failure_source_binding",
     }
 )
 
@@ -371,6 +374,9 @@ EXPECTED_AUTHORITY_TRIGGERS: Final[frozenset[tuple[str, str]]] = frozenset(
                 "historical_research_evidence",
                 "historical_research_evidence_source_binding",
                 "historical_research_evidence_metric",
+                "alpha_correctness_failure_index",
+                "alpha_correctness_failure_detail",
+                "alpha_correctness_failure_source_binding",
                 "free_data_historical_security_fact_set",
                 "free_data_historical_security_fact",
                 "free_data_historical_constituent_timeline",

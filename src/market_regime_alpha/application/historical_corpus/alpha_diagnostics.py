@@ -18,9 +18,11 @@ from market_regime_alpha.application.research_validation.common import (
     ValidationArtifactReference,
 )
 from market_regime_alpha.application.research_validation.formal_evaluation import (
+    AlternativeHypothesis,
     MultipleTestingMethod,
     adjust_multiple_testing,
     moving_block_mean_interval,
+    moving_block_mean_null_p_value,
 )
 from market_regime_alpha.evidence.canonical import canonical_datetime
 from market_regime_alpha.core.identity import ArtifactId
@@ -201,8 +203,8 @@ def evaluate_placebo_rank_ic(result: PlaceboResult) -> PlaceboRankICDiagnostic:
     session_values: list[Decimal] = []
     for values in _alpha_by_session(result.observations).values():
         estimate = _correlation(
-            _ranks(tuple(item.factor_value for item in values)),
-            _ranks(tuple(item.target_return for item in values)),
+            factor_ranks(tuple(item.factor_value for item in values)),
+            factor_ranks(tuple(item.target_return for item in values)),
         )
         if estimate is not None:
             session_values.append(estimate)
@@ -568,8 +570,8 @@ def evaluate_factor_redundancy(
                     tuple(item.factors[right] for item in values),
                 )
                 ranked = _correlation(
-                    _ranks(tuple(item.factors[left] for item in values)),
-                    _ranks(tuple(item.factors[right] for item in values)),
+                    factor_ranks(tuple(item.factors[left] for item in values)),
+                    factor_ranks(tuple(item.factors[right] for item in values)),
                 )
                 if linear is not None:
                     daily_linear.append(linear)
@@ -592,14 +594,14 @@ def evaluate_factor_redundancy(
         for values in _factor_by_session(observations).values():
             if len(values) < 3:
                 continue
-            factor_rank = _ranks(tuple(item.factors[factor_id] for item in values))
+            factor_rank = factor_ranks(tuple(item.factors[factor_id] for item in values))
             other_ranks = tuple(
-                _ranks(tuple(item.factors[other] for item in values)) for other in others
+                factor_ranks(tuple(item.factors[other] for item in values)) for other in others
             )
             residuals = _orthogonal_residual(factor_rank, other_ranks)
             residual_ic = _correlation(
-                _ranks(residuals),
-                _ranks(tuple(item.target_return for item in values)),
+                factor_ranks(residuals),
+                factor_ranks(tuple(item.target_return for item in values)),
             )
             if residual_ic is not None:
                 residual_daily.append(residual_ic)
@@ -743,11 +745,7 @@ class MovingBlockInferenceProtocol:
         return {
             "protocol_id": str(self.protocol_id),
             "protocol_hash": self.protocol_hash,
-            "iterations": self.iterations,
-            "block_lengths": list(self.block_lengths),
-            "confidence_level": str(self.confidence_level),
-            "seed": self.seed,
-            "multiple_testing_method": self.multiple_testing_method.value,
+            **_moving_block_protocol_payload(self),
         }
 
     @classmethod
@@ -792,6 +790,15 @@ class BlockSensitivityEstimate:
     estimate: Decimal
     lower: Decimal
     upper: Decimal
+    null_p_value: Decimal
+
+    def __post_init__(self) -> None:
+        if (
+            self.block_length <= 0
+            or self.lower > self.upper
+            or not Decimal("0") <= self.null_p_value <= Decimal("1")
+        ):
+            raise ValueError("block sensitivity estimate is invalid")
 
     def to_canonical_dict(self) -> dict[str, Any]:
         return {
@@ -799,6 +806,7 @@ class BlockSensitivityEstimate:
             "estimate": str(self.estimate),
             "lower": str(self.lower),
             "upper": str(self.upper),
+            "null_p_value": str(self.null_p_value),
         }
 
 
@@ -823,11 +831,15 @@ def _moving_block_protocol_payload_values(
     multiple_testing_method: MultipleTestingMethod,
 ) -> dict[str, Any]:
     return {
-        "schema_version": "alpha-moving-block-inference/v1",
+        "schema_version": "alpha-moving-block-inference/v2",
         "iterations": iterations,
         "block_lengths": list(block_lengths),
         "confidence_level": str(confidence_level),
         "seed": seed,
+        "test_method": "NULL_CENTERED_MOVING_BLOCK",
+        "null_value": "0",
+        "alternative": "TWO_SIDED",
+        "block_length_p_value_rule": "MAX_CONSERVATIVE",
         "multiple_testing_method": multiple_testing_method.value,
     }
 
@@ -923,8 +935,8 @@ def factor_rank_ic_session_estimates(
         if len(values) < 3:
             continue
         estimate = _correlation(
-            _ranks(tuple(item.factors[factor_id] for item in values)),
-            _ranks(tuple(item.target_return for item in values)),
+            factor_ranks(tuple(item.factors[factor_id] for item in values)),
+            factor_ranks(tuple(item.target_return for item in values)),
         )
         if estimate is not None:
             estimates.append(SessionEstimate(session, estimate))
@@ -943,12 +955,21 @@ def _evaluate_robust_inference_unadjusted(
     values = tuple(item.value for item in ordered)
     sensitivity: list[BlockSensitivityEstimate] = []
     for block_length in protocol.block_lengths:
+        inference_seed = f"{protocol.seed}|ALPHA_CORRECTNESS|{block_length}"
         estimate, lower, upper = moving_block_mean_interval(
             values,
             iterations=protocol.iterations,
             block_sessions=block_length,
             confidence_level=protocol.confidence_level,
-            seed=f"{protocol.seed}|ALPHA_CORRECTNESS|{block_length}",
+            seed=inference_seed,
+        )
+        null_p_value = moving_block_mean_null_p_value(
+            values,
+            iterations=protocol.iterations,
+            block_sessions=block_length,
+            seed=inference_seed,
+            null_value=Decimal("0"),
+            alternative=AlternativeHypothesis.TWO_SIDED,
         )
         sensitivity.append(
             BlockSensitivityEstimate(
@@ -956,15 +977,14 @@ def _evaluate_robust_inference_unadjusted(
                 estimate,
                 lower,
                 upper,
+                null_p_value,
             )
         )
     midpoint = len(values) // 2
     first = _mean(values[:midpoint])
     second = _mean(values[midpoint:])
     stable = first == 0 or second == 0 or (first > 0) == (second > 0)
-    non_positive = Decimal(sum(item <= 0 for item in values)) / Decimal(len(values))
-    non_negative = Decimal(sum(item >= 0 for item in values)) / Decimal(len(values))
-    raw_p_value = min(Decimal("1"), Decimal("2") * min(non_positive, non_negative))
+    raw_p_value = max(item.null_p_value for item in sensitivity)
     return RobustInferenceResult(
         protocol,
         len(values),
@@ -984,14 +1004,14 @@ def _daily_composite_rank_ic(
         if len(values) < 3:
             continue
         ranked = tuple(
-            _ranks(tuple(item.factors[factor] for item in values))
+            factor_ranks(tuple(item.factors[factor] for item in values))
             for factor in factor_ids
         )
         scores = tuple(
             sum((rank[index] for rank in ranked), Decimal("0")) / Decimal(len(ranked))
             for index in range(len(values))
         )
-        target = _ranks(tuple(item.target_return for item in values))
+        target = factor_ranks(tuple(item.target_return for item in values))
         value = _correlation(scores, target)
         if value is not None:
             daily.append(value)
@@ -1052,7 +1072,7 @@ def _placebo_result_payload(
     }
 
 
-def _ranks(values: tuple[Decimal, ...]) -> tuple[Decimal, ...]:
+def factor_ranks(values: tuple[Decimal, ...]) -> tuple[Decimal, ...]:
     indexed = sorted(enumerate(values), key=lambda item: (item[1], item[0]))
     result = [Decimal("0")] * len(values)
     position = 0
@@ -1127,4 +1147,5 @@ __all__ = [
     "evaluate_factor_redundancy",
     "evaluate_robust_inference",
     "evaluate_robust_inference_family",
+    "factor_ranks",
 ]

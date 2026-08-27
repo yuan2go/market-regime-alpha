@@ -4,6 +4,8 @@ from dataclasses import replace
 from datetime import UTC, date, datetime
 from decimal import Decimal
 
+import pytest
+
 from market_regime_alpha.application.historical_corpus.contracts import (
     HistoricalArtifactKind,
     HistoricalCorpusCoverage,
@@ -44,6 +46,21 @@ def test_independent_raw_normalization_matches_canonical_owner() -> None:
     assert verification.raw_owner_reference == raw.reference
     assert verification.normalized_owner_reference == canonical.reference
     assert verification.original_physical_reopened is False
+
+
+def test_physical_provenance_is_derived_from_raw_owner_chronology() -> None:
+    raw = _raw_owner()
+    canonical = normalize_baostock_archive(raw)
+
+    with pytest.raises(
+        ValueError,
+        match="declared physical acquisition provenance disagrees",
+    ):
+        verify_independent_baostock_normalization(
+            raw_owner=raw,
+            canonical_normalized_owner=canonical,
+            provenance=PhysicalAcquisitionProvenance.ORIGINAL_PHYSICAL_REOPENED,
+        )
 
 
 def test_independent_normalization_classifies_amount_and_hash_mismatch() -> None:

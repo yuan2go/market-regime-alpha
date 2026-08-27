@@ -2,9 +2,9 @@
 
 > **Status:** ROADMAP
 > **Authority:** Dependency-ordered forward work
-> **Implementation Checkpoint:** WP-ALPHA-PROOF-02 owner-backed execution on `agent/wp-alpha-proof-02`
-> **Strongest Research Evidence Revision:** `0d1a5a8` (WP-ALPHA-RESEARCH-01)
-> **Last Updated:** 2026-08-26
+> **Implementation Checkpoint:** `origin/main@1a92ee41b02dd94df9ef4488c59cba55df4674ce`; WP-ALPHA-CORRECTNESS-02 code/evidence revision `8cd79972fa96d397967948d75592f5163613e02a` on `agent/wp-alpha-correctness-02`
+> **Strongest Research Evidence Revision:** `8cd79972fa96d397967948d75592f5163613e02a` (WP-ALPHA-CORRECTNESS-02 execution)
+> **Last Updated:** 2026-08-27
 > **Code Evidence:** `docs/status/Current-State.md`, `docs/status/Gap-Register.md`
 
 The project is in an Alpha Research program, not another platform-completeness
@@ -42,10 +42,11 @@ in-sample campaign preserved all 70 Feature outputs, evaluated 49 numeric
 Factors, 12 Gate variants and five Candidate policies, and retained complete
 negative/`NOT_ESTIMABLE` evidence.
 
-The Price/Return challenger and three intraday contributors are unusually
-strong exploratory discoveries. Their shared retrospective source family,
-physical-package gap and absent external validation make correctness—not model
-promotion—the next dependency.
+The Price/Return challenger and three intraday contributors were unusually
+strong exploratory discoveries under that immutable Experiment. The later
+WP-ALPHA-PROOF-02 Experiment reacquired physical data and found the frozen
+higher-is-better challenger significantly adverse and economically negative;
+it is terminal `REJECTED`, not a direction-tuning invitation.
 
 ## Completed engineering closure before campaigns
 
@@ -61,12 +62,14 @@ single-lineage Daily Alpha Evidence admission
 → one Phase-II operator and physical retirement of duplicate Legacy execution planes
 ```
 
-This closure reaches `ENGINEERING_CLOSED / OWNER_WIRED / RUNTIME_WIRED /
-TARGETED_TESTED` for the named chain. It does not change the frozen research
-protocol or set any empirical, External, prospective, Formal OOS or Production
-state to true. Full repository pytest and all real campaigns remain `NOT_RUN`.
+This closure reached `ENGINEERING_CLOSED / OWNER_WIRED / RUNTIME_WIRED /
+TARGETED_TESTED` for the named chain. At that historical PR #75 checkpoint,
+full repository pytest and real campaigns were `NOT_RUN`. WP-ALPHA-PROOF-02
+later completed its own full regression and campaign; WP-ALPHA-CORRECTNESS-02
+has now completed a separately identified implementation, regression and
+Discovery-only campaign at its own evidence revision.
 
-## Phase II engineering state
+## Correctness engineering and completed repair
 
 The five Work Package kernels/contracts and one recoverable operator surface
 are present and focused-tested on the merged baseline. Their empirical
@@ -74,30 +77,30 @@ dependencies remain in the same order. Conditional Strategy owner composition
 is wired but inactive; implementation does not mean the hypothesis passed any
 dependency.
 
-### P0 — WP-ALPHA-CORRECTNESS-CLOSURE-01
+### P0 — WP-ALPHA-CORRECTNESS-CLOSURE-01 historical baseline
 
 **Engineering status:** `IMPLEMENTED / OWNER_WIRED / TARGETED_TESTED`.
 
-**Research status:** top-level `INCONCLUSIVE`; internal diagnostic
-`PHYSICAL_REPRODUCTION_NOT_ESTABLISHED`. No complete real correctness proof was
-run because the original physical packages are unavailable.
+**Research status:** superseded as a current status statement. Its original
+campaign was `NOT_RUN`; WP-ALPHA-PROOF-02 later reacquired a new immutable
+physical corpus, ran the proof and ended `CORRECTNESS_FAILED`.
 
 **Goal:** determine whether the intraday discovery survives independent source
 bar/target reproduction, temporal checks, placebo controls, execution-reference
 separation, redundancy diagnostics and dependence-aware inference.
 
-**Required engineering:**
+**Delivered engineering:**
 
-- a distinct `REACQUIRED_EQUIVALENT_SOURCE` owner when original physical bytes
-  cannot be reopened;
+- support for a distinct `REACQUIRED_EQUIVALENT_SOURCE` owner when original
+  physical bytes cannot be reopened;
 - Raw provider record → independent parser/normalizer → canonical Normalized
   owner comparison without production transformation reuse;
 - canonical persisted value versus independently recomputed value by
   session/symbol/factor, including source bars, event interval, DecisionTime,
   lineage and discrepancy;
 - independent T+1 10:30 Decision reference/target reconstruction;
-- explicit `PHYSICAL_REPRODUCTION_NOT_ESTABLISHED` when physical bytes cannot be
-  reopened;
+- explicit `PHYSICAL_REPRODUCTION_NOT_ESTABLISHED` when physical bytes cannot
+  be reopened;
 - frozen deterministic symbol/target permutations, target shift, factor lag and
   random ranking;
 - Information Cutoff, Decision Reference, Executable Entry Proxy and Target
@@ -110,6 +113,40 @@ separation, redundancy diagnostics and dependence-aware inference.
 
 **Evidence ceiling:** correctness state only; never `ALPHA_PROVEN`.
 
+### Completed — WP-ALPHA-CORRECTNESS-02
+
+**Current status:** `EXECUTED / INCONCLUSIVE / PARTIALLY_REPRODUCED / NO-GO`.
+
+**Goal:** repair the Target semantic mismatch without changing the immutable
+predecessor Experiment or its negative conclusion. Decision reference, observed
+Outcome window and every derived metric have independent status. Exact 14:55
+Decision prices accept only a valid same-session Raw five-minute bar; Daily and
+latest-bar fallbacks are diagnostic lineage only.
+
+**Delivered closure:**
+
+- persist all eight predecessor failures with stable canonical identity, full
+  source IDs/hashes, revisions, SHA and owner lineage;
+- introduce a new content-addressed Target semantic/protocol revision and new
+  Experiment identity while retaining exact v1/v2 owner reload/replay;
+- converge materializer, independent checker, report and replay on the frozen
+  semantics while preserving independent source selection;
+- focused PostgreSQL, migration, concurrency/recovery, compatibility and
+  complete repository validation pass at the reported revision;
+- the unchanged 126-session Discovery population executed under a new
+  Experiment/run identity while External and Locked OOS Outcomes remained
+  unread;
+- equivalent-source normalization and every typed Target state reproduced;
+  37,722 Features were supported and 78 partial, all 113,166 independent ranks
+  matched, and no Feature or Target discrepancy was found;
+- the unchanged higher-is-better Factors remained adverse, target-shift
+  controls dominated and redundancy was partial. The independent decision is
+  `NO-GO`; no direction, sample, threshold or tolerance was tuned.
+
+**Evidence ceiling:** Discovery correctness and economics only. The actual
+result is `INCONCLUSIVE`, not `CORRECTNESS_SUPPORTED`, so External is not
+admitted.
+
 ### P0 — Frozen Temporal External Validation Execution
 
 **Engineering status:** `IMPLEMENTED / OWNER_PERSISTED / TARGETED_TESTED`.
@@ -117,7 +154,10 @@ The content owner
 is the existing canonical `ResearchExperimentDefinition`, not a parallel
 Experiment authority.
 
-**Dependency:** only a `CORRECTNESS_SUPPORTED` frozen hypothesis may be admitted.
+**Dependency:** only a future separately frozen Discovery survivor with
+`CORRECTNESS_SUPPORTED` and an explicit independent `GO` may be considered for
+a separately reviewed External Experiment. WP-ALPHA-CORRECTNESS-02 did not meet
+that dependency.
 
 **Goal:** provide content-addressed, single-dimension Temporal, Universe or
 Provider external-validation Experiments without rescanning factors or retuning
@@ -131,8 +171,10 @@ temporal stability, capacity and discovery-effect retention/degradation.
 access: start `2025-07-15`, exactly 126 sessions generated by the canonical
 A-share Calendar owner, with one additional session required for the final T+1
 Target. Contamination audit is `PASS`; migration 093 persists the exact session
-identities, Calendar/window hashes and final Target session. Outcome evaluation
-remains `BLOCKED_BY_CORRECTNESS` and was not run.
+identities, Calendar/window hashes and final Target session. It was not admitted
+for the now-terminal predecessor Experiment and must not be reopened. Any future
+External execution requires a new separately frozen identity after an explicit
+`GO`; no Outcome evaluation ran.
 
 ### P1 — WP-ALPHA-CONTEXT-01
 
@@ -205,16 +247,33 @@ family stays Research/Shadow inactive because its evidence gates have not run.
 
 ## Active evidence-dependent work
 
+### New Alpha Discovery hypothesis — correctness-driven reset
+
+WP-ALPHA-CORRECTNESS-02 is complete and remains immutable. Its corrected Target
+semantics did not rescue the frozen higher-is-better hypothesis: all three real
+Factors remain adverse, the target-shift controls dominate, 78 Feature rows are
+partial, the Factors are partially redundant and original-package physical
+reproduction remains unestablished. External therefore stays closed.
+
+Any next empirical work must return to Alpha Discovery with a new Experiment
+identity. It may investigate why target shift is strong and whether a distinct,
+economically motivated factor family exists, but it may not flip the old sign,
+reuse the old identity, inspect External/Locked OOS Outcomes, or optimize the
+closed hypothesis. The completed protocol is
+[`WP-ALPHA-CORRECTNESS-02`](../research/protocols/WP-ALPHA-CORRECTNESS-02-Frozen-Protocol.md);
+its ADR is
+[`ADR-014`](../architecture/decisions/ADR-014-Frozen-Target-Semantics-and-Independent-Correctness.md).
+
 ### WP-ALPHA-PROOF-02 — Formal PIT Alpha Evidence Vertical Slice
 
 **Protocol status:** `EXECUTED / REJECTED / BLOCKED_BY_CORRECTNESS`.
 
-The active work package reacquires the missing physical package under a new
-identity, executes the frozen correctness proof, and only then executes the
-already-frozen `TEMPORAL_VALIDATION_V1`. It continues through Candidate,
-Forecast, Strategy economics and attribution only when each upstream result is
-admissible. It freezes the post-External Locked OOS roster but treats Formal PIT
-as a hard Outcome-access gate. `PIT_INCOMPLETE` must leave
+This terminal work package reacquired the missing physical package under a new
+identity and executed the frozen correctness proof. It would have admitted the
+already-frozen `TEMPORAL_VALIDATION_V1`, Candidate, Forecast, Strategy economics
+and attribution only if each upstream result were admissible. It froze the
+post-External Locked OOS roster while treating Formal PIT as a hard
+Outcome-access gate. `PIT_INCOMPLETE` must leave
 `LOCKED_OOS_CONSUMED=false` and `LOCKED_OOS_SUPPORTED=NOT_ESTIMABLE`.
 
 Execution completed the reacquisition, 126-session Discovery materialization,

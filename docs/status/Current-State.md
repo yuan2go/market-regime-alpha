@@ -2,9 +2,9 @@
 
 > **Status:** CURRENT_STATUS  
 > **Authority:** Current implementation/evidence summary  
-> **Implementation Checkpoint:** WP-ALPHA-PROOF-02 final owner-backed execution checkpoint on `agent/wp-alpha-proof-02`
-> **Strongest Research Evidence Revision:** `0d1a5a8` (WP-ALPHA-RESEARCH-01)
-> **Last Updated:** 2026-08-26
+> **Implementation Checkpoint:** `origin/main@1a92ee41b02dd94df9ef4488c59cba55df4674ce`; WP-ALPHA-CORRECTNESS-02 code/evidence revision `8cd79972fa96d397967948d75592f5163613e02a` on `agent/wp-alpha-correctness-02`
+> **Strongest Research Evidence Revision:** `8cd79972fa96d397967948d75592f5163613e02a` (WP-ALPHA-CORRECTNESS-02 execution)
+> **Last Updated:** 2026-08-27
 > **Code Evidence:** `src/market_regime_alpha`, `src/market_regime_alpha/persistence/postgres/migrations/*.sql`, `tests`
 
 This document records what the named executable baseline implements and what
@@ -15,7 +15,7 @@ target architecture.
 
 - **Architecture:** Python 3.12+ PostgreSQL-centered modular monolith.
 - **Persistent business authority:** PostgreSQL 16; no canonical file/SQLite/memory fallback.
-- **Packaged migration head:** 104 (`historical_outcome_forecast_fk_index`).
+- **Packaged migration head:** 106 (`alpha_correctness_failure_revision`).
 - **Canonical all-day runtime:** one Continuous Research control plane.
 - **Installed operator scripts:** six — `continuous-research`, `state-system`, `decision-system`, `model-governance`, `pit-authority`, `research-shadow`.
 - **Execution boundary:** human-operated/manual; no broker writer or automatic live-trading authority.
@@ -33,9 +33,10 @@ target architecture.
   one PostgreSQL `max_locks_per_transaction` environment error. This is
   `TARGETED_TESTED`, not campaign or Alpha evidence.
 - **WP-01 branch validation:** docs/platform/full pytest, ruff, mypy and build pass on a fresh PostgreSQL test database; a first full run against a heavily reused test database hit one `pg_catalog` autovacuum DDL lock timeout, while the exact node and the clean-database full suite both pass. This is retained as an environment failure, not hidden.
-- **Current CI:** GitHub has no run for starting `main@adbc785`. The latest five observed
-  `main` runs predate this baseline; the newest is a failure at `fee02f6` on
-  2026-08-09. Prior local validation is not CI proof for this HEAD.
+- **Current WP-ALPHA-CORRECTNESS-02 checkpoint:** implementation, migration,
+  owner wiring, real Discovery-only campaign, Evidence reload, resume and exact
+  replay are executed. The terminal result is `INCONCLUSIVE /
+  PARTIALLY_REPRODUCED / NO-GO`, not supported Alpha.
 - **Alpha/Daily engineering closure:** merged `main` binds one explicit Candidate
   admission root to Discovery→Correctness→External→supported Context→Candidate
   lineage, produces
@@ -43,8 +44,8 @@ target architecture.
   Forecast semantics, binds Outcome to an exact immutable Daily snapshot and
   retains settlement inside the one Continuous control plane.
 - **Database binding:** Runtime requires an explicit PostgreSQL URL and principal; a database name or stale schema does not establish current Authority. Audit tooling must discover application schemas and columns from packaged migrations and PostgreSQL catalogs rather than infer them from a database name.
-- **Local implementation baseline:** Python 3.12.13, uv 0.11.7 and PostgreSQL
-  16.14. The packaged migration head is 104. Historical local evidence schemas
+- **Local implementation baseline:** Python 3.12.2, uv 0.11.7 and PostgreSQL
+  16.14. The packaged migration head is 106. Historical local evidence schemas
   at older migration heads remain provenance only and are not the current
   Runtime schema.
 
@@ -78,6 +79,57 @@ target architecture.
   align stale migration-head fixtures, require an exact typed Calendar owner at
   the CLI seam and remove the last test/data pair for the already-retired
   duplicate visualization backtest; they create no empirical upgrade.
+
+### WP-ALPHA-CORRECTNESS-02 executed closure
+
+- Owner reload of the immutable predecessor campaign located all eight failed
+  rows. Three Decision sessions have no five-minute observations; five contain
+  an exact 14:55 placeholder with null OHLC. In every row the writer used the
+  preceding session's suspended Daily close, while the checker correctly
+  rejected that fallback.
+- All eight rows retain a complete twelve-bar T+1 09:30-10:30 Raw path. Their
+  frozen state is therefore `Decision reference=UNAVAILABLE`, `Outcome
+  window=COMPLETE` and Decision-dependent return/MFE/MAE `UNAVAILABLE`.
+- [ADR-014](../architecture/decisions/ADR-014-Frozen-Target-Semantics-and-Independent-Correctness.md)
+  and the [frozen protocol](../research/protocols/WP-ALPHA-CORRECTNESS-02-Frozen-Protocol.md)
+  define the approved revision, compatibility and Discovery-only boundary.
+- Migrations 105–106 add typed Target semantic projections and an append-only,
+  code-revision-aware failure index without rewriting legacy labels. The
+  existing Historical Research/Phase-II operator is the only execution path;
+  no new runner, feature/target engine or Evidence authority was introduced.
+- The first immutable execution attempt
+  `historical-evidence-ae6cd0eb9c395b8cb9804429` is retained as
+  provenance but is ineligible as final Evidence: review found missing
+  independent rank proof, skipped executable entry proxies and a
+  non-null-centered bootstrap p-value. It was not overwritten.
+- Final run `historical-research-run-acaa77a9adfe7a07b5ed181d` completed
+  126/126 sessions at journal version 1513 with 756 receipts. A distinct
+  recovery run `historical-research-run-0f11ce5b866f42f906f5915d` was stopped
+  after one stage (`RUNNING`, version 3, one receipt), resumed, and reached the
+  same 126 sessions/756 receipts/version 1513 under identical frozen data,
+  protocol, Experiment and code revision.
+- The staged final run's canonical replay
+  `historical-replay-018133d5ca19d31cbf253297` continuously recomputed all 126
+  sessions from its frozen command and exited zero with `matched=true` and no
+  mismatches. This is the authoritative `resume == uninterrupted` and
+  `replay == original` proof; different run timestamps and content-addressed
+  identities are not falsely required to be byte-identical.
+- Final Evidence `historical-evidence-fe2b1060e72d59e04bf27295` is
+  `INCONCLUSIVE`; proof
+  `alpha-correctness-proof:8cedafbaecb12c1137dc6c01f84d731445216370ed47d310d6b80a08056d5f55` is
+  `PARTIALLY_REPRODUCED`. Reacquired-equivalent normalization matched
+  6,548,518/6,548,518 rows; Features are 37,722 supported and 78 partial;
+  all 113,166 independent Feature ranks matched; Targets are 37,800/37,800
+  independently supported with zero discrepancies.
+  Supported Target correctness includes honest failed/unavailable semantic
+  states and is not an estimability or Alpha claim.
+- All three unchanged higher-is-better Factors remain adverse; target-shift
+  controls dominate them, redundancy is `PARTIALLY_REDUNDANT`, and Top-5 net
+  return is `-0.00299088`. The result is `NO-GO`: External remains unexecuted,
+  Locked OOS Outcomes remain unconsumed and Formal PIT remains incomplete.
+- Full owner identities, semantic counts, placebos, dependence-aware inference,
+  validation and environment-retry evidence are in the
+  [execution report](../references/WP-ALPHA-CORRECTNESS-02-Execution-Report.md).
 
 ### Engineering closure facts
 
@@ -355,7 +407,10 @@ The durable findings do **not** establish general Alpha:
 
 The correct current conclusion is:
 
-> The platform can produce and replay serious quantitative research evidence, including negative evidence. It has one exploratory Candidate challenger worth separately frozen external validation, but has not established trustworthy Formal OOS Alpha or an executable strategy edge.
+> The platform can produce and replay serious quantitative research evidence,
+> including negative evidence. No current Alpha survivor is admitted to External
+> Validation; Formal OOS Alpha and an executable strategy edge remain
+> unestablished.
 
 ## 4. Evidence ceiling
 
@@ -436,33 +491,31 @@ Engineering gaps remain, but they should be selected because they unblock this e
 
 ## 7. Current development posture
 
-The Phase II and Daily Alpha engineering chain is owner/runtime wired and
-target-tested. The conditional Strategy remains inactive because its empirical
-admission chain is absent, not because a caller-only Risk/Opportunity seam is
-missing. Engineering closure does not change any research conclusion.
-Its three unusually strong intraday discovery results have not been reclassified
-as Alpha because the physical package cannot currently be reopened and no new
-external dataset was run.
-The registered physical packages are unavailable locally, so the current
-top-level correctness state is `INCONCLUSIVE` pending reacquisition and the full
-frozen campaign. This maps the internal diagnostic
-`PHYSICAL_REPRODUCTION_NOT_ESTABLISHED` without upgrading PostgreSQL owner reuse
-into physical proof.
+The Phase II and Daily Alpha engineering chain is owner/runtime wired. The
+conditional Strategy remains inactive because its empirical admission chain is
+absent. WP-ALPHA-PROOF-02 did reopen a new immutable equivalent-source corpus,
+verified all package checksums and reproduced all Raw→Normalized observations,
+then ended `REJECTED / CORRECTNESS_FAILED`. WP-ALPHA-CORRECTNESS-02 corrected
+the Target representation under new identities without rewriting that result;
+its own terminal conclusion is `INCONCLUSIVE / PARTIALLY_REPRODUCED / NO-GO`.
 
 The next empirical dependency order remains:
 
 ```text
-WP-ALPHA-CORRECTNESS-01
-→ WP-ALPHA-RESEARCH-02
-→ WP-ALPHA-CONTEXT-01
-→ WP-CANDIDATE-POLICY-02
-→ WP-PREDICTION-01
+preserve the closed WP-ALPHA-CORRECTNESS-02 evidence
+→ freeze a genuinely new Alpha Discovery hypothesis/Experiment
+→ Discovery-only correctness and economics
+→ independent GO / NO-GO
+→ only after CORRECTNESS_SUPPORTED plus explicit GO: freeze External
+→ Context / Candidate / Prediction only for an External survivor
 ```
 
-No new External Dataset, large historical Campaign or prospective cohort was
-run in this implementation phase. Until separately executed evidence exists,
-external validation, Formal OOS, prospective proof, Strategy qualification and
-Production qualification remain false.
+The campaign read no External or Locked OOS Outcome. Its adverse unchanged
+direction, dominating target-shift controls, partial Feature coverage and
+incomplete physical/PIT ceiling forbid External admission. Any new Discovery
+must use a new Experiment identity; reversing the old direction after seeing
+this result is not a correction. External validation, Formal OOS, prospective
+proof, Strategy qualification and Production qualification remain false.
 
 The repository now moves through the **Alpha Proof Campaign**:
 

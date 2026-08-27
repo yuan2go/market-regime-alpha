@@ -6,6 +6,8 @@ from datetime import UTC, datetime, time
 import pytest
 
 from market_regime_alpha.application.historical_corpus.frozen_experiment import (
+    WP_ALPHA_CORRECTNESS_02_LOCKED_AT,
+    WP_ALPHA_CORRECTNESS_02_MULTIPLE_TESTING_FAMILY,
     WP_ALPHA_PROOF_02_LOCKED_AT,
     WP_ALPHA_RESEARCH_01_MULTIPLE_TESTING_FAMILY,
     create_golden_loop_v2_historical_experiment,
@@ -14,11 +16,13 @@ from market_regime_alpha.application.historical_corpus.frozen_experiment import 
     create_phase_e3_research_universe_policy,
     create_phase_e3_strategy_economics_policy_set,
     create_wp_alpha_research_01_historical_experiment,
+    create_wp_alpha_correctness_02_historical_experiment,
     create_wp_alpha_proof_02_historical_experiment,
     phase_e3_decision_policy_identity,
     verify_golden_loop_v2_historical_experiment,
     verify_phase_e3_historical_experiment,
     verify_wp_alpha_research_01_historical_experiment,
+    verify_wp_alpha_correctness_02_historical_experiment,
     verify_wp_alpha_proof_02_historical_experiment,
 )
 from market_regime_alpha.application.historical_corpus.golden_loop import (
@@ -29,6 +33,7 @@ from market_regime_alpha.application.historical_corpus.alpha_discovery import (
 )
 from market_regime_alpha.application.research_evaluation.targets import (
     exploratory_five_minute_multi_horizon_protocol,
+    exploratory_five_minute_multi_horizon_protocol_v2,
 )
 from market_regime_alpha.application.research_validation.formal_protocol import (
     ResearchExperimentDefinition,
@@ -398,6 +403,128 @@ def test_wp_alpha_proof_02_binds_reacquired_owners_without_changing_protocol() -
             target,
             locked_at=LOCKED_AT,
             **references,
+        )
+
+
+def test_wp_alpha_correctness_02_freezes_discovery_only_semantic_revision() -> None:
+    target = exploratory_five_minute_multi_horizon_protocol_v2()
+    runtime_scope_policy = create_phase_e3_research_universe_policy()
+    decision_policy_id, decision_policy_hash, _decision_payload = (
+        phase_e3_decision_policy_identity()
+    )
+    references = {
+        "raw_owner_reference": _reference(
+            "RAW_PROVIDER_ARCHIVE", "correctness-raw"
+        ),
+        "normalized_owner_reference": _reference(
+            "NORMALIZED_DATASET", "correctness-normalized"
+        ),
+        "calendar_reference": _reference(
+            "TRADING_CALENDAR", "correctness-calendar"
+        ),
+        "universe_timeline_reference": _reference(
+            "HISTORICAL_CONSTITUENT_TIMELINE", "correctness-timeline"
+        ),
+        "security_facts_reference": _reference(
+            "HISTORICAL_SECURITY_FACTS", "correctness-facts"
+        ),
+        "predecessor_run_reference": _reference(
+            "HISTORICAL_RESEARCH_RUN", "correctness-predecessor-run"
+        ),
+        "predecessor_correctness_evidence_reference": _reference(
+            "HISTORICAL_ALPHA_CORRECTNESS_EVIDENCE",
+            "correctness-predecessor-evidence",
+        ),
+        "predecessor_failure_index_reference": _reference(
+            "ALPHA_CORRECTNESS_FAILURE_INDEX",
+            "correctness-predecessor-failure-index",
+        ),
+    }
+    code_sha = "c" * 40
+    experiment = create_wp_alpha_correctness_02_historical_experiment(
+        target,
+        locked_at=WP_ALPHA_CORRECTNESS_02_LOCKED_AT,
+        analysis_code_sha=code_sha,
+        **references,
+    )
+    domains = {
+        item.parameter_name: item.allowed_values
+        for item in experiment.hyperparameter_space
+    }
+
+    assert experiment.multiple_testing_family_id == (
+        WP_ALPHA_CORRECTNESS_02_MULTIPLE_TESTING_FAMILY
+    )
+    assert {
+        (item.artifact_id, item.content_hash)
+        for item in experiment.target_references
+    } == {
+        (item.target_id, item.target_hash) for item in target.targets
+    }
+    assert domains["analysis_code_sha"] == (code_sha,)
+    assert domains["session_range"] == (
+        "2025-01-02|2025-07-11|126|FINAL_TARGET_2025-07-14",
+    )
+    assert domains["external_outcome_access"] == ("PROHIBITED",)
+    assert domains["locked_oos_outcome_access"] == ("PROHIBITED",)
+    assert domains["inference_block_lengths"] == ("1|5|10",)
+    assert domains["placebo_controls"] == (
+        "FACTOR_LAG",
+        "RANDOM_RANKING",
+        "SYMBOL_PERMUTATION",
+        "TARGET_PERMUTATION",
+        "TARGET_SHIFT",
+    )
+    verify_wp_alpha_correctness_02_historical_experiment(
+        experiment,
+        target_protocol=target,
+        feature_owner=create_phase_e3_feature_configuration(),
+        economics_owner=create_phase_e3_strategy_economics_policy_set(
+            target_protocol=target,
+            created_at=WP_ALPHA_CORRECTNESS_02_LOCKED_AT,
+        ),
+        decision_local_time=time(14, 55),
+        timezone_name="Asia/Shanghai",
+        runtime_scope_policy_id=runtime_scope_policy.policy_id,
+        runtime_scope_policy_hash=runtime_scope_policy.policy_hash,
+        decision_policy_id=decision_policy_id,
+        decision_policy_hash=decision_policy_hash,
+        code_revision=code_sha,
+        configuration_references=(
+            experiment.feature_reference,
+            experiment.cost_policy_reference,
+            GoldenLoopScoringContract.create_v2().reference,
+            alpha_discovery_evaluation_contract_reference(
+                create_phase_e3_feature_configuration()
+            ),
+            *references.values(),
+        ),
+    )
+    with pytest.raises(ValueError, match="Experiment Definition drifted"):
+        verify_wp_alpha_correctness_02_historical_experiment(
+            experiment,
+            target_protocol=target,
+            feature_owner=create_phase_e3_feature_configuration(),
+            economics_owner=create_phase_e3_strategy_economics_policy_set(
+                target_protocol=target,
+                created_at=WP_ALPHA_CORRECTNESS_02_LOCKED_AT,
+            ),
+            decision_local_time=time(14, 55),
+            timezone_name="Asia/Shanghai",
+            runtime_scope_policy_id=runtime_scope_policy.policy_id,
+            runtime_scope_policy_hash=runtime_scope_policy.policy_hash,
+            decision_policy_id=decision_policy_id,
+            decision_policy_hash=decision_policy_hash,
+            code_revision="d" * 40,
+            configuration_references=(
+                experiment.feature_reference,
+                experiment.cost_policy_reference,
+                GoldenLoopScoringContract.create_v2().reference,
+                alpha_discovery_evaluation_contract_reference(
+                    create_phase_e3_feature_configuration()
+                ),
+                *references.values(),
+            ),
         )
 
 
