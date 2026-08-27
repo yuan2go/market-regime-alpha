@@ -1,216 +1,357 @@
-# System Architecture
+# System and Runtime Architecture
 
 > **Status:** CURRENT_ARCHITECTURE
-> **Authority:** Canonical implementation architecture
+> **Authority:** Target Application, Runtime, concurrency, recovery, and interface specification
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-14
-> **Code Evidence:** `src/market_regime_alpha/cli/continuous_research.py`, `src/market_regime_alpha/application/continuous_research`, `src/market_regime_alpha/persistence/repository_factory.py`, `src/market_regime_alpha/persistence/postgres/migrations/*.sql`
+> **Last Updated:** 2026-08-27
+> **Implementation State:** DESIGN_CHECKPOINT_ONLY
+> **Code Evidence:** `src/market_regime_alpha/cli/continuous_research.py`, `src/market_regime_alpha/application/continuous_research`, `src/market_regime_alpha/persistence/repository_factory.py`, `tests/application`
 
-## Shape
+This is a target specification, not a description of the current implementation.
+The current nested Continuous/Controlled/Lifecycle/State/Historical journals are
+to be replaced by one Runtime journal. Business owners remain in their bounded
+contexts.
 
-Market Regime Alpha is one Python modular monolith with one PostgreSQL 16 authority. It is a human-in-the-loop research and decision-support system. It has no broker writer and no automatic Order, Fill or Position authority.
+## 1. Application versus Runtime
 
-There is one canonical all-day runtime owner:
+Application services perform one business use case. Runtime schedules and
+coordinates those services; it does not reimplement their rules.
 
-```text
-continuous-research run-due
-  -> ContinuousResearchScheduleRunner
-  -> ContinuousResearchTickRunner
-  -> PostgresContinuousResearchJournal
-  -> Provider attempt / immutable evidence commit / change decision
-  -> ordered bounded-context children
-```
-
-`canonical_lifecycle`, `controlled_operation`, `state_system` and `decision_system` are bounded children or operator tools. They are not parallel daily schedulers.
-
-## Actual runtime chain
-
-The current free-data Research/Shadow composition is:
-
-```text
-BaoStock/Tencent recorded provider evidence
--> SourceFreezeService
-   -> retained DailyLoop identity adapter
--> Canonical market-data Dataset
--> Feature materialization
--> PostgreSQL Model Governance selection
--> State System
-   -> Market Regime
-   -> ETF Rotation
-   -> Theme Rotation
-   -> Capital State
-   -> StateSeries
-   -> Dynamic Stock Pool
-   -> Candidate
--> Controlled Operation
-   -> pre-decision minute evidence
-   -> Signal
-   -> PostgreSQL Historical Sample Registry Reader
-   -> uncalibrated exploratory PathForecast
-   -> optional Canonical Lifecycle child
--> ResearchDailySummary
--> MultiStrategyRuntime child
-   -> Overnight Strategy Run
-   -> Swing State Strategy Run
-   -> owner-frozen one-minute decision prices
-   -> Cross-strategy Portfolio Decision
--> Continuous child receipts and terminal tick
-```
-
-The Strategy child is part of the existing tick fence. It reloads the exact
-Candidate fact and stable Strategy Versions, records the complete gate/action
-funnel, and persists one Portfolio decision. It creates no Order, Fill, or
-physical Position. A model-blocked empty CandidateSet is itself a durable State
-owner fact, so both strategies record `DATA_INSUFFICIENT` instead of silently
-disappearing from the research sample.
-
-Accepted Portfolio lines enter the existing human-operated execution path:
-
-```text
-MultiStrategyRuntime / Cross-strategy Portfolio
--> StrategyExecutionApplicationService owner reload
--> account + Proposal PostgreSQL transaction locks
--> existing ManualTrade Intent lifecycle
--> observed partial/corrected Fill
--> physical Position + Strategy Fill Allocation
--> fill-derived Strategy Outcome revision
-```
-
-The transaction reconstructs account cash, available sell quantity, existing
-physical exposure, unobserved effective Fill deltas and active Strategy Intent
-reservations before authorizing an increase. Reduction/Exit does not borrow
-gross budget but still requires real available sell quantity. No runtime child,
-scheduler, execution database, reservation ledger, broker writer or Position
-owner is added by this path.
-
-Before the decision child, the Research/Shadow composition may retrospectively
-build exact-14:55 BaoStock decisions, T+1 multi-horizon outcomes and PathForecast
-samples. The resulting Historical Sample Dataset is immutable, PostgreSQL-owned,
-`UNQUALIFIED` and `FREE_DATA_EXPLORATORY`. Its retrieval time is its earliest
-availability time, so the current run cannot consume a dataset retrieved at or
-after its own decision time. A first run therefore remains fail-closed; a later
-decision may consume already-registered samples. Production composition never
-receives this Reader. BaoStock `adjustflag=3` is accepted only when the frozen
-Target declares `RAW_UNADJUSTED_TRADABLE_PRICE_V1`; adjustment semantics are
-never substituted or promoted.
-
-The runtime denies `PRODUCTION` when the input is free public evidence. A missing or invalid stage is represented by typed blocked evidence; the runtime does not synthesize a missing Canonical Lifecycle receipt.
-
-Multi-year research runs are bounded operator jobs, not a second all-day
-Runtime. `HistoricalResearchRunner` advances a shared Decision Session Kernel
-through a PostgreSQL lease/fence/stage journal and can resume or replay the same
-Runtime Scope, Experiment and Target identities. Research-model and performance
-operators use the same database and remain exploratory.
-
-The Historical `STRATEGY` and `PORTFOLIO` stages call the same
-`MultiStrategyRuntime` and PostgreSQL repository as the Continuous child.
-`HISTORICAL`, `REPLAY`, and `SHADOW` remain explicit origins in lineage, while
-the strategy-policy/action semantics are shared.
-
-The post-runtime chain is orchestrated by thin commands on the same runtime and
-the existing PostgreSQL owners; it is not a second scheduler or daily writer:
-
-```text
-ResearchDailySummary
--> Research Shadow frozen decision
--> factual Outcome / Target settlement
--> prospective attestation (currently prospective_proven=false)
--> Evaluation Dataset / Research Panel V2
--> canonical Factor Extraction
--> engineering Ablation / Calibration / Formal Evaluation
--> Entry research
--> isolated Strategy Shadow Entry/Fill/Position
--> CAS-linked Portfolio Shadow day state
--> Holding / Exit engineering validation
--> engineering RBAC Approval/Audit (separate operator boundary)
--> blocked Production Admission projection
-```
-
-Historical Research is a bounded batch child, not another all-day Runtime or a
-separate Backtest authority:
-
-```text
-Free Research Universe + captured Operational Universe facts
--> immutable Runtime Scope receipt
--> PostgreSQL Historical Research Journal
--> shared Decision Session Kernel
--> existing Continuous/Shadow/Strategy/Portfolio/Outcome owners
--> immutable Performance/Attribution report
--> deterministic replay against the same owner hashes
-```
-
-The journal applies sessions and stateful portfolio transitions serially in
-trading-calendar order. Each stage uses a lease, fencing token, expected
-predecessor and immutable receipt. Resume advances the same run; replay reloads
-captured facts and never calls a replacement Provider. Free Provider overlap is
-resolved below Canonical facts with complete provenance and conservative
-eligibility aggregation.
-
-## Installed CLI boundary
-
-There are six installed scripts and exactly the same six CLI modules have
-`__main__` guards: `continuous-research`, `state-system`, `decision-system`,
-`model-governance`, `pit-authority` and `research-shadow`.
-
-The prior 18 guarded modules are classified as follows. Removing a guard does
-not remove an importable compatibility function or its tests.
-
-| Module | Classification | Executable treatment |
+| Layer | Owns | Does not own |
 |---|---|---|
-| `continuous_research` | `PUBLIC_OPERATOR` | installed; owns the daily commands plus Runtime Scope, Historical Research, Performance, exploratory Model and fail-closed Formal assessment build/report/replay operations |
-| `state_system` | `PUBLIC_OPERATOR` | installed bounded owner/admin command |
-| `decision_system` | `PUBLIC_OPERATOR` | installed bounded decision-support command |
-| `model_governance` | `PUBLIC_OPERATOR` | installed Model and engineering Access Governance administration command |
-| `pit_authority` | `PUBLIC_OPERATOR` | installed Authority administration command; Formal qualification remains closed |
-| `research_shadow` | `PUBLIC_OPERATOR` | installed bounded research command |
-| `compare_legacy_features` | `RESEARCH_TOOL` | importable harness; main guard removed |
-| `materialize_features` | `RESEARCH_TOOL` | importable harness; main guard removed |
-| `replay_feature_bundle` | `RESEARCH_TOOL` | importable harness; main guard removed |
-| `prepare_controlled_operation` | `INTERNAL_ONLY` | called through the canonical composition; main guard removed |
-| `report_controlled_operation` | `INTERNAL_ONLY` | compatibility function; main guard removed |
-| `resume_controlled_operation` | `INTERNAL_ONLY` | compatibility function; main guard removed |
-| `replay_controlled_operation` | `INTERNAL_ONLY` | compatibility function; main guard removed |
-| `settle_controlled_operation` | `INTERNAL_ONLY` | reused by settlement owner; main guard removed |
-| `run_canonical_lifecycle` | `INTERNAL_ONLY` | bounded child implementation; main guard removed |
-| `replay_canonical_lifecycle` | `INTERNAL_ONLY` | bounded child replay; main guard removed |
-| `create_manual_trade_from_risk_decision` | `INTERNAL_ONLY` | manual-account application helper; main guard removed |
-| `run_decision_window` | `LEGACY` | compatibility composition only; main guard removed |
+| Domain | aggregates, value objects, state transitions, invariant failures | SQL, retries, clocks, providers, artifacts, logging |
+| Application | command/query orchestration, transaction boundary, port calls, authorization, result DTO | scheduling loops, adapter selection, table-level CRUD |
+| Runtime | schedule, DAG, claim, lease, fence, retry, resume, recovery, trace | Candidate logic, PIT rules, Risk rules, Position math, qualification |
+| Infrastructure | PostgreSQL transaction/repository/query adapters, providers, artifact store, telemetry | business choices or fallback policy |
+| Interface | CLI parsing and read-only inspection presentation | direct SQL writes or composition |
 
-No reviewed guarded module was `DEAD`; deletion would remove still-tested
-compatibility behavior. The six former `*-free-data-operation` installed aliases
-were duplicate entry points and were removed from packaging.
+Historical, replay, shadow, and prospective execution select different port
+implementations at the composition root. They call the same commands and do not
+fork Domain logic.
 
-## Package responsibilities
+## 2. Composition root
 
-| Package | One responsibility |
-|---|---|
-| `application/continuous_research` | Own the all-day schedule, tick lease/fence, provider attempt and child composition. |
-| `application/source_freeze` | Expose the canonical source-only freeze seam over retained Daily identities. |
-| `application/free_data_operation` | Run one bounded public-data decision-window operation. |
-| `application/state_system` | Persist ordered State, StateSeries, Pool and Candidate owner receipts. |
-| `application/controlled_operation` | Coordinate one decision-time acquisition/calculation package. |
-| `application/canonical_lifecycle` | Recover one downstream research-to-manual lifecycle run; never schedule the day. |
-| `application/decision_system` | Own Research Summary and the separate manual-account decision-support projection. |
-| `application/shadow_research` | Freeze research decisions and settle factual prospective outcomes. |
-| `application/research_evaluation` | Build immutable outcome datasets, target protocols and complete Research Panel V2. |
-| `application/research_validation` | Compute engineering-only factor, ablation, calibration, evaluation and Entry evidence. |
-| `application/research_session` | Apply one ordered live/Shadow/Historical decision session through typed owner stages. |
-| `application/historical_research` | Own the bounded multi-session command, PostgreSQL journal, recovery and deterministic replay. |
-| `application/strategy_shadow` | Simulate Entry/Fill/Position/Holding/Exit without real execution mutation. |
-| `application/governance` | Own append-only engineering Principal/Role/Approval/Audit facts; never Production Admission. |
-| `research/**` | Hold pure research models and observable State algorithms. |
-| `market_data`, `data`, `universe`, `features` | Own source semantics, datasets, eligibility, materialization and feature lineage. |
-| `signals`, `forecasting`, `candidates` | Compute distinct Candidate, Signal and Forecast artifacts. |
-| `platform` | Own Model Registry, Model Governance, experiment governance and selection receipts. |
-| `decision`, `portfolio`, `execution`, `position` | Own Opportunity/Thesis, Portfolio/Risk, manual Fill and fill-derived Position lifecycles. |
-| `persistence` | Compose PostgreSQL-only repositories and validate the full schema. |
+`bootstrap.py` performs exactly these actions:
 
-## Dependency rules
+1. load and validate environment configuration;
+2. connect and verify the exact schema epoch before resolving any writer;
+3. construct PostgreSQL unit-of-work and query adapters;
+4. construct artifact, Provider, clock, telemetry, and authorization adapters;
+5. construct Application command/query handlers;
+6. register the finite Runtime step catalog;
+7. expose the small CLI command tree.
 
-- Domain objects do not schedule runtimes or select repositories.
-- Application compositions call bounded owners; they do not recreate their persistence.
-- Projection, DTO, protocol, policy and reference objects never grant Authority.
-- New writers use `RepositoryFactory` and PostgreSQL. No file or SQLite persistence fallback exists.
-- Legacy may be read or characterized only through explicit compatibility/migration boundaries.
-- Artifact recovery resolves PostgreSQL `artifact-root-v1` locators and receipt
-  locators with hash verification; directory discovery is not an Authority.
+No import-time singleton opens a connection or chooses a Provider. No
+Repository Factory exposes every repository to every caller. A handler receives
+only the ports it needs.
+
+## 3. Canonical Runtime aggregates
+
+### Run
+
+A Run freezes:
+
+- `run_id`, `schedule_id`/revision, mode, requested time and Decision time;
+- code SHA, resolved config artifact/hash, schema epoch;
+- parent/original Run for replay where applicable;
+- state, created/started/finished timestamps and terminal reason.
+
+Closed Run states:
+
+```text
+QUEUED
+  └─> RUNNING
+        ├─> WAITING ─> RUNNING
+        ├─> SUCCEEDED
+        ├─> BLOCKED
+        ├─> FAILED
+        └─> CANCELLED
+QUEUED ───────────────> CANCELLED
+WAITING ──────────────> BLOCKED | FAILED | CANCELLED
+```
+
+`SUCCEEDED` means every required Step is `SUCCEEDED` or explicitly
+`SKIPPED`. `BLOCKED` means a declared external/business prerequisite is absent
+or denied. `FAILED` means an integrity defect, invariant breach, terminal
+adapter failure, or exhausted safe retries. Cancellation is an explicit
+operator command; it is not inferred from process death.
+
+### Step
+
+A Step is one logical DAG node within a Run. It freezes `step_key`,
+implementation/version, required/optional status, ordinal, request hash, input
+evidence hash, retry policy, and current fence.
+
+Closed Step states:
+
+```text
+PENDING --dependencies satisfied--> READY
+READY -----------------------------> CLAIMED
+CLAIMED ----------------------------> RUNNING
+CLAIMED/RUNNING --------------------> READY       (safe retry via terminal old Attempt)
+RUNNING ----------------------------> WAITING     (external reconciliation or scheduled prerequisite)
+RUNNING ----------------------------> SUCCEEDED
+RUNNING ----------------------------> BLOCKED
+RUNNING ----------------------------> FAILED
+PENDING/READY/CLAIMED/RUNNING/WAITING -> CANCELLED
+PENDING ----------------------------> SKIPPED     (declared optional branch only)
+```
+
+A Step never moves from a terminal state. A retry creates a new Attempt and
+moves only a non-terminal Step back to `READY`. `SKIPPED` requires a frozen
+branch rule and reason; an exception cannot be converted to `SKIPPED`.
+
+### Attempt
+
+An Attempt is one exclusive execution claim. It owns:
+
+- `attempt_id`, `step_id`, monotonically increasing `attempt_no`;
+- monotonically increasing `fence_token`;
+- `lease_owner`, `lease_acquired_at`, `lease_until`, last heartbeat;
+- state, error class/code, external-effect classification;
+- started/finished times and result/receipt IDs.
+
+Closed Attempt states:
+
+```text
+CLAIMED -> RUNNING
+CLAIMED -> ABANDONED
+RUNNING -> SUCCEEDED
+RUNNING -> FAILED_RETRYABLE
+RUNNING -> FAILED_TERMINAL
+RUNNING -> ABANDONED
+RUNNING -> RECONCILIATION_REQUIRED
+```
+
+All terminal Attempt states are immutable. `RECONCILIATION_REQUIRED` means an
+external effect may have occurred but cannot be proven; it is never an automatic
+retry signal.
+
+## 4. Claim, lease, fence, and heartbeat
+
+Claim is one short PostgreSQL transaction:
+
+1. select one `READY` Step whose Run is runnable and dependencies are satisfied,
+   using `FOR UPDATE SKIP LOCKED`;
+2. lock its Run and Step;
+3. reject a non-expired current claim;
+4. increment the Step's fence token;
+5. create an Attempt with `attempt_no = prior + 1` and database-clock lease;
+6. set Step to `CLAIMED` and commit.
+
+Only PostgreSQL `clock_timestamp()` determines lease expiry. Worker clocks are
+diagnostic. A heartbeat updates the lease only when all of these match:
+
+- Attempt is current and non-terminal;
+- Step's current Attempt and fence match;
+- lease owner matches;
+- prior lease has not expired;
+- Run is `RUNNING`.
+
+Finalization repeats those predicates under lock. Every business write performed
+on behalf of a Step carries `step_id` and `fence_token`; its repository validates
+the live fence in the same transaction. A stale worker may finish computation or
+upload bytes, but cannot commit a business fact, receipt, or Step state.
+
+Lease duration exceeds the expected local transaction duration, not the total
+remote job duration. Long computation heartbeats between bounded operations.
+External I/O never occurs while database locks are held.
+
+## 5. Retry and error classification
+
+Retry policy is frozen into the Run config artifact and copied to the Step:
+maximum attempts, backoff sequence, retryable codes, and deadline. Code cannot
+invent a new retry class at runtime.
+
+| Failure | Attempt terminal state | Step result | Automatic action |
+|---|---|---|---|
+| deterministic Domain rejection | `FAILED_TERMINAL` | `BLOCKED` or `FAILED` by declared code | none |
+| integrity/hash/schema/fence conflict | `FAILED_TERMINAL` | `FAILED` | none |
+| known no-effect transient adapter error | `FAILED_RETRYABLE` | `READY` if budget remains | new Attempt after backoff |
+| lease expiry before any external effect | `ABANDONED` | `READY` if budget remains | new Attempt |
+| external effect known committed with receipt | `SUCCEEDED` | `SUCCEEDED` | reuse receipt |
+| external effect outcome unknown | `RECONCILIATION_REQUIRED` | `WAITING` | explicit reconciliation |
+| retry budget/deadline exhausted | final retry state retained | `FAILED` | none |
+
+Retry never edits or reopens an old Attempt. Backoff is scheduling metadata; no
+database transaction sleeps.
+
+## 6. Idempotency
+
+Every mutating Application command has:
+
+- caller-supplied or deterministically derived `idempotency_key`;
+- canonical request hash after validation and secret removal;
+- command kind and aggregate scope;
+- terminal status, result aggregate/version, result hash, timestamps.
+
+`command_receipt` enforces uniqueness on
+`(command_kind, scope_id, idempotency_key)`.
+
+- Exact request hash retry returns the original committed result.
+- Same key with a different hash fails `IDEMPOTENCY_KEY_REUSED`.
+- A pending receipt owned by another live fence cannot be taken over.
+- A failed command is retryable only through its declared policy; changing input
+  requires a new key.
+- Provider captures and artifact uploads deduplicate by content hash but still
+  receive distinct capture/command identities when business events differ.
+- A future broker request additionally uses the broker's idempotency identifier;
+  absence of deterministic outcome routes to reconciliation.
+
+Business fact, exact input/dependency links, terminal command receipt, audit
+event, and Runtime Step finalization commit in one transaction whenever the
+business effect is relational. There is no “write fact then best-effort mark
+done” path.
+
+## 7. Transaction and lock invariants
+
+The global lock order is:
+
+1. current Runtime Run/Step/Attempt when a Runtime fence participates;
+2. Account and Account Authority Epoch;
+3. Portfolio Proposal / Risk Decision;
+4. Execution Intent;
+5. Fill / Fill Allocation;
+6. any other aggregate roots ordered by `(aggregate_kind, aggregate_id)`.
+
+Immutable definitions and evidence are verified but not locked for mutation.
+Every multi-root command follows this order. Repository methods do not start or
+commit nested transactions.
+
+Isolation defaults to `READ COMMITTED` with explicit row locks and uniqueness/
+version predicates. Use `SERIALIZABLE` only for a measured invariant that cannot
+be protected by scoped locks/constraints. Expected uniqueness races are handled
+by insert-on-conflict plus exact re-read; unexpected constraint violations fail
+closed.
+
+Database-enforced examples:
+
+- one live Attempt per Step;
+- monotonic Attempt number and fence;
+- one command receipt per idempotency scope;
+- immutable business identity and revision uniqueness;
+- non-negative quantities and legal OHLC;
+- exactly one qualification subject/purpose;
+- Fill correction links and allocation totals;
+- allowed lifecycle transitions through guarded repository statements.
+
+## 8. Crash recovery invariants
+
+| Crash point | Durable state | Recovery |
+|---|---|---|
+| before claim commit | no Attempt/effect | another worker claims |
+| after claim, before work | live/expired lease only | heartbeat or expiry → old Attempt `ABANDONED` → new Attempt |
+| during pure computation | no business effect | same as above |
+| after artifact publish, before PostgreSQL commit | content-addressed orphan bytes | retry may reuse exact hash; GC later quarantines if unreferenced |
+| after remote side effect, before its receipt is proven | Attempt cannot prove outcome | `RECONCILIATION_REQUIRED`; never blind retry |
+| after relational business commit | command receipt and Step terminal in same commit | retry reads original receipt; no redispatch |
+| after response serialization | committed result exists | caller retries same key and receives original result |
+| during heartbeat/finalization race | fence/version predicate selects one winner | stale worker rejected; no partial fact |
+
+Recovery scans expired non-terminal Attempts. It never changes completed
+business facts, advances Decision-time visibility, substitutes a Provider,
+rebuilds an immutable input with “latest,” or opens terminal blocked work without
+a new explicit command/evidence condition.
+
+## 9. Resume, replay, and deterministic comparison
+
+`resume` operates on the same Run:
+
+- retains code/config/input identities;
+- leaves successful/skipped Steps untouched;
+- claims only `READY` work or work made ready by a resolved prerequisite;
+- creates new Attempts with higher fences;
+- never converts `BLOCKED`/`FAILED` to success without an explicit resolution
+  command recorded in audit.
+
+`replay` creates a new Run that references the original. It reloads exact
+captures, facts, Universe revision, policies, definitions, artifacts, and
+Decision times. It cannot call a replacement Provider or rewrite original rows.
+Pure outputs are recomputed and compared by canonical status, value, identity,
+hash, and lineage. Replay succeeds only with a terminal report containing
+`matched=true` and zero mismatches; process completion or row counts are not
+proof.
+
+Historical execution is a Run over ordered owner-resolved trading sessions.
+Session order comes only from `trading_session`, never weekday arithmetic.
+Prospective execution cannot read evidence captured after its Decision time.
+
+## 10. External effects
+
+Adapters classify operations before dispatch:
+
+- `PURE_READ`: safe to repeat, but every returned capture has a new observed
+  capture time unless exact bytes are reused as a replay input;
+- `CONTENT_PUT`: idempotent by hash and verified after write;
+- `IDEMPOTENT_REMOTE_COMMAND`: requires remote idempotency and status query;
+- `NON_IDEMPOTENT_REMOTE_COMMAND`: forbidden from unattended Runtime;
+- `OBSERVATION_ONLY`: broker/provider observation cannot mutate Position.
+
+No broker writer is part of this target checkpoint. If introduced later, it
+must implement remote receipt lookup and reconciliation before Production
+admission.
+
+## 11. Commands and queries
+
+Representative commands:
+
+- `CaptureMarketData`, `NormalizeMarketFacts`, `FreezeUniverse`,
+  `AssessEligibility`, `BuildCandidateSet`;
+- `AssessContext`, `ProduceSignal`, `ProduceForecast`,
+  `CreateOpportunity`, `ProposePortfolio`, `AssessRisk`;
+- `ApproveExecutionIntent`, `RecordObservedFill`, `CorrectFill`,
+  `RecordBrokerObservation`, `ReconcileAccount`;
+- `SettleOutcome`, `RunAttribution`, `AssessResearchClaim`,
+  `DecideQualification`;
+- `ScheduleRun`, `ClaimStep`, `HeartbeatAttempt`, `ResumeRun`,
+  `ResolveExternalEffect`, `VerifyArtifact`.
+
+Representative queries:
+
+- exact/as-of Market facts and source lineage;
+- Universe/Eligibility/Candidate dossier at Decision time;
+- Decision dossier from Candidate through Risk;
+- current Position and Strategy sleeve projection;
+- Outcome/metric availability;
+- evidence graph and qualification-floor matrix;
+- Run trace, stuck leases, artifact integrity, and reconciliation differences.
+
+Query handlers use dedicated SQL/read DTOs. They do not hydrate large write
+aggregates or acquire write locks.
+
+## 12. Interface behavior
+
+CLI commands:
+
+- validate schema epoch before handler construction;
+- print stable IDs and machine-readable terminal status;
+- return non-zero for `FAILED`, schema/integrity mismatch, or unsafe command;
+- distinguish valid `BLOCKED`/`NOT_ESTIMABLE`/`NO_ACTION` outcomes from
+  process failure;
+- never display secrets or infer proof from a successful exit;
+- require an explicit operator identity and reason for destructive recreate,
+  reconciliation adjustment, cancellation, and qualification decisions.
+
+Inspection commands are read-only and safe against a mismatched schema: they
+report the mismatch without attempting migration.
+
+## 13. Architecture verification
+
+Required target tests include:
+
+- import/dependency graph and sole composition-root checks;
+- Run/Step/Attempt transition tables and property tests;
+- concurrent claim proves one live fence;
+- expired lease rejects stale finalization;
+- exact command retry returns one fact/receipt;
+- reused key with altered request fails;
+- crash-point recovery matrix;
+- unknown external effect cannot auto-retry;
+- resume preserves successful identity;
+- replay requires exact zero-mismatch terminal evidence;
+- lock-order contention completes without deadlock;
+- empty PostgreSQL bootstrap and mismatched epoch fail-fast;
+- CLI smoke from capture through outcome/evidence.
+
+The current tests are not classified for deletion until their Domain invariants
+are mapped in the checkpoint catalog.

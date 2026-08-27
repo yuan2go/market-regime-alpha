@@ -19,11 +19,12 @@ Documentation never creates implementation truth, research evidence, qualificati
 
 The **single normative target-design source** is the Canonical Overall Design. Supporting architecture documents refine it but may not contradict it:
 
-- [System Architecture](architecture/System-Architecture.md)
+- [Context Map](../CONTEXT-MAP.md)
+- [System and Runtime Architecture](architecture/System-Architecture.md)
 - [Authority Map](architecture/Authority-Map.md)
-- [Data and Evidence Architecture](architecture/Data-and-Evidence-Architecture.md)
-- [Research and Strategy Lifecycle](architecture/Research-Strategy-Lifecycle.md)
-- [Repository Convergence Inventory](architecture/Repository-Convergence-Inventory.md) — actual consumers, replacements and Legacy dispositions; subordinate to the four current architecture documents.
+- [PostgreSQL, Temporal and Evidence Architecture](architecture/Data-and-Evidence-Architecture.md)
+- [Research and Decision Lifecycle](architecture/Research-Strategy-Lifecycle.md)
+- [Repository Convergence Inventory](architecture/Repository-Convergence-Inventory.md) — package, Legacy, documentation, prompt and Skill dispositions.
 
 If a supporting document conflicts with the Canonical Overall Design, the Canonical Overall Design wins and the supporting document must be corrected.
 
@@ -38,6 +39,21 @@ When documentation conflicts with the repository, current implementation truth i
 5. current status documents.
 
 Target design does not turn an unimplemented or unproven capability into a current fact.
+
+## Architecture Re-foundation design checkpoint
+
+WP-ARCHITECTURE-REFOUNDATION-01 freezes a Hard Cutover target for review. It
+changes documentation only; the current 283-table schema and current Runtime
+remain implementation truth until a separately approved implementation lands.
+
+Checkpoint traceability:
+
+- [Capability Preservation Matrix](references/WP-ARCHITECTURE-REFOUNDATION-01-Capability-Preservation-Matrix.md) — every requested business capability mapped to its target owner, Runtime and persistence;
+- [283 to Target Table Disposition](references/WP-ARCHITECTURE-REFOUNDATION-01-Table-Disposition.md) — complete current owner/writer/reader/meaning and KEEP/MERGE/DERIVE/DELETE ledger;
+- [Domain Invariant Catalog](references/WP-ARCHITECTURE-REFOUNDATION-01-Domain-Invariant-Catalog.md) — 98 invariants and legacy-test deletion gates.
+
+These annexes support design review. They are not a Current State, Evidence
+Ledger, migration, or qualification Authority.
 
 ## Current state and execution order
 
@@ -66,6 +82,7 @@ Target design does not turn an unimplemented or unproven capability into a curre
 ADRs under `docs/architecture/decisions/` record accepted decisions and their historical rationale. They remain useful provenance, but the Canonical Overall Design is the current consolidated design authority.
 
 - [ADR-014: Frozen Target Semantics and Independent Correctness](architecture/decisions/ADR-014-Frozen-Target-Semantics-and-Independent-Correctness.md) records the accepted WP-ALPHA-CORRECTNESS-02 design. It separates Decision reference, Outcome window and derived-metric status while preserving independent source selection.
+- [ADR-015: Hard Cutover and Schema Epoch](architecture/decisions/ADR-015-Hard-Cutover-and-Schema-Epoch.md) records the new epoch, fail-fast bootstrap, explicit destructive recreate boundary and forward-only migration policy.
 
 ## Documentation cleanup policy
 
@@ -110,9 +127,10 @@ For architecture or implementation work, read in this order:
 3. [Authority Map](architecture/Authority-Map.md)
 4. [Data and Evidence Architecture](architecture/Data-and-Evidence-Architecture.md)
 5. [Research and Strategy Lifecycle](architecture/Research-Strategy-Lifecycle.md)
-6. [Current State](status/Current-State.md)
-7. [Gap Register](status/Gap-Register.md)
-8. [Roadmap](status/Roadmap.md)
-9. the code, schema, tests and runtime evidence relevant to the work package
+6. [Repository Convergence Inventory](architecture/Repository-Convergence-Inventory.md)
+7. [Current State](status/Current-State.md)
+8. [Gap Register](status/Gap-Register.md)
+9. [Roadmap](status/Roadmap.md)
+10. the code, schema, tests and runtime evidence relevant to the work package
 
 The design defines where the system should converge. The repository and evidence define what is true today.
