@@ -1,268 +1,317 @@
-# Research and Strategy Lifecycle
+# Research and Decision Lifecycle
 
 > **Status:** CURRENT_ARCHITECTURE
-> **Authority:** Canonical research/strategy responsibility split
+> **Authority:** Target research, context, decision, outcome, and qualification lifecycle
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-14
-> **Code Evidence:** `src/market_regime_alpha/application/research_evaluation`, `src/market_regime_alpha/application/research_validation`, `src/market_regime_alpha/application/shadow_research`, `src/market_regime_alpha/application/strategy_shadow`
+> **Last Updated:** 2026-08-27
+> **Implementation State:** DESIGN_CHECKPOINT_ONLY
+> **Code Evidence:** `src/market_regime_alpha/research`, `src/market_regime_alpha/candidates`, `src/market_regime_alpha/signals`, `src/market_regime_alpha/forecasting`, `src/market_regime_alpha/strategies`, `tests/research`
 
-## Lifecycle
+Research is a consumer of Market/PIT facts and a producer of scoped evidence. It
+cannot alter historical inputs, promote its own model, or create a Position.
 
-```text
-Research Universe Policy / immutable Runtime Scope
--> Canonical Dataset / Feature / State / Candidate / Signal / Forecast
--> ResearchDailySummary
--> shared MultiStrategyRuntime
-   -> Overnight action/proposal
-   -> Swing Entry/Hold/Add/Reduce/Exit action/proposal
--> simple cross-strategy Portfolio/Risk baseline
--> account-aware Proposal remaining/exposure authorization
--> Strategy Shadow simulated lifecycle or owner-resolved Manual Intent/Fill
-   -> immutable Strategy Fill Allocation
-   -> owner-resolved Strategy Sleeve State on the next session
-   -> fill-derived realized Strategy Outcome after full Exit
--> Research Shadow decision
--> factual multi-target Outcome
--> Evaluation Dataset and complete Panel V2
--> canonical Factor Extraction
--> exploratory Ablation and capacity analysis
--> calibration fit/evaluation (not calibrated)
--> locked-partition metric computation (not Formal OOS Authority)
--> Entry research
--> Portfolio Shadow Cash/NAV/Exposure/Cost/Attribution
--> Holding/Exit engineering assessment
--> blocked Production Admission projection
-```
-
-The same owner stages can be applied across a frozen multi-session range by the
-Shared Decision Session Kernel. `HistoricalResearchRunner` journals each
-session/stage in PostgreSQL, resumes under lease/fence, and replays exact owner
-hashes. It is exploratory Historical Research, not a second daily Runtime and
-not Formal OOS.
-
-Candidate eligibility/ranking is upstream evidence, not an Entry decision. Each
-Strategy Run records every input symbol's terminal eligibility and policy reason
-before it may emit a proposal. This makes an empty or starved sample observable.
-The current deterministic Path Outcome kernel supports short and multi-session
-MFE/MAE, target-before-stop, time-to-MFE, continuation/failure, post-exit
-opportunity loss and avoided drawdown. Automatic longitudinal outcome production
-and scheduled feedback are still pending empirical work.
-
-Observed manual Fill remains the sole source of physical Position. An immutable
-Fill Allocation may attribute that quantity to Strategy Version sleeves; it
-cannot allocate more than the physical Fill or sell a sleeve below zero. The
-cross-strategy Portfolio remains a proposal/risk decision and never manufactures
-an Order or Fill. On each account-bound Continuous tick, the existing Strategy
-Shadow PostgreSQL owner reconstructs open sleeve quantity, average cost,
-current/peak price, sessions held, add/reduce counts, exact Strategy Version and
-Proposal/Fill lineage. Same-session marks update price but do not age a sleeve.
-The frozen cycle input is the replay boundary; callers cannot supply those
-values through the production composition.
-
-For an accepted Strategy Proposal, command idempotency and aggregate execution
-authority are separate invariants. PostgreSQL reconstructs
-`authorized - effective filled - active reserved = remaining executable` under
-account → Proposal → Intent locks, so a different idempotency key cannot reuse
-the same Proposal or cash. Terminal cancellation/rejection releases the unused
-reservation for a replacement; late Fill and correction facts revise effective
-quantity without rewriting history. BUY authorization includes physical
-exposure, active reservations and Fill/correction cash deltas not yet present in
-the exact account observation. SELL/Exit remains risk-reducing and bypasses
-gross-increase ceilings, but cannot exceed owner-resolved available quantity.
-The sizing price is the canonical one-minute Market Bar frozen by the Strategy
-cycle together with its complete reloadable Market Data Dataset owner. Execution
-reverifies Dataset identity and exact Bar membership; price is not a caller field.
-
-For free-data operation, retrospective decisions and later outcomes additionally
-feed an immutable Historical Sample Dataset in PostgreSQL. The Registry Reader
-may supply those already-available `UNQUALIFIED` samples to a later
-Research/Shadow PathForecast. This is operational sample plumbing, not PIT/OOS
-qualification or empirical validation.
-
-## Responsibility split
-
-- Factor Extraction reads verified canonical Dataset, FeatureBundle, State, Pool, Candidate, Signal and Forecast values. It records missingness; it does not recompute those owners.
-- Existing Overnight/Swing Contract V1 identities remain byte-stable and their
-  runtime semantics are `FORECAST_NOT_REQUIRED`. Contract V2 makes Forecast
-  consumption explicit and is database-constrained by family. A
-  `FORECAST_REQUIRED` contract receives one symbol-level opportunity binding
-  the exact Strategy Version and Candidate owner to Signal, Forecast, Context,
-  Risk state, DecisionTime/availability and Model/version lineage; missing,
-  wrong-version or inactive binding fails closed. This is a real
-  consumer contract, not an adapter that grants Forecast or trading Authority.
-- Continuous/Historical adapters share one Opportunity material/Risk producer
-  semantics. When exact DecisionTime Account facts and Risk configuration are
-  supplied, it derives `PRE_STRATEGY_RISK_STATE` from typed account,
-  Position/exposure, liquidity, restriction, available-quantity and
-  configured-limit owners, records the exact `STRATEGY_OPPORTUNITY`, and
-  typed-reloads every source before Strategy. Historical input without those
-  facts fails closed. Post-Portfolio `COMPLETE_ACCOUNT_RISK_DECISION` is never
-  a Strategy input.
-- Runtime Scope owns the session symbol decision. It combines overlapping free
-  Operational Universe facts conservatively, preserves every Provider artifact
-  reference and retains `EXCLUDED`/`UNKNOWN`; downstream owners receive the
-  resulting scope rather than selecting a Provider.
-- Evaluation Dataset binds frozen decisions to later settlements. Panel V2 provides the complete row/slice cross-section used by factor and evaluation consumers. They are complementary, not V1/V2 competing Authorities.
-- Ablation compares factor variants and incremental lift under exploratory evidence. Formal Evaluation applies frozen windows, purge/embargo, multiple-testing and sensitivity rules. Neither grants model qualification.
-- Calibration fits and evaluates Platt/isotonic/binning mappings on disjoint
-  partitions. The qualification owner now exists, but it remains
-  `calibrated=false` until exact Formal OOS and calibration evidence satisfy its
-  independently frozen policy; current evidence does not.
-- Entry research evaluates Candidate-only, Candidate+Signal, Candidate+Forecast and Candidate+Intraday variants. Its strongest output is `SHADOW_ENTER`; Canonical Entry still has no `ENTER` state.
-- Research Shadow freezes what the research system knew and later binds factual outcomes. It has no simulated account or execution ledger.
-- Daily Alpha freezes the exact Candidate/Signal/Forecast and Strategy
-  diagnostic together with run/tick and snapshot hash. T+1 settlement appends
-  Outcome V2 through the one Continuous control plane; it never rewrites the
-  prediction or guesses ownership from trading date alone.
-- Daily Alpha admission starts from one explicit Candidate Policy Evidence root
-  and reloads its exact Discovery, Correctness, External and supported Context
-  lineage. Context must share Experiment and Dataset identity. A unique typed
-  Conditional Forecast owner is projected with its real model/baseline,
-  expected return, uncertainty and calibration state; missing or ambiguous
-  ownership remains explicitly unavailable.
-- Strategy Shadow owns the isolated simulated Entry/Fill/Position/Holding/Exit
-  session and the observed-Fill Strategy sleeve projection. When a canonical
-  Multi-Strategy cycle exists, the free-data Shadow Entry is downstream of the
-  exact Overnight `StrategyProposal`; a non-Entry gate yields `NO_ACTION`
-  instead of a second Candidate-to-Entry decision. Candidate pass-through is
-  retained only for historical rows/ticks with no Multi-Strategy cycle. Later
-  invocations reload simulated Entry/Fill/Position artifacts and append
-  Holding/Exit observations until settlement. Simulated artifacts keep
-  `real_trading_mutation=false`; physical Position still comes only from the
-  manual Fill owner.
-- A fully closed observed-Fill allocation chain persists one immutable realized
-  Strategy Outcome with exact account/version, entry/exit Proposal, pre-exit
-  state, allocation and Fill lineage. It reconciles gross, costs and net cash
-  flows for ENTER/ADD/REDUCE/EXIT. It is not a market Path Outcome and grants no
-  Alpha, PIT, OOS, economic-support or Production status.
-- Portfolio Shadow owns an independent simulated Cash/Order Intent/Fill/Position/NAV ledger under the same Strategy Shadow boundary. Top1/3/5 Equal/Score/Risk policies and all cost/capacity inputs carry explicit provenance; T+1, 100-share lots, suspension, price limits and continuous-auction constraints fail closed. It cannot write actual account or Position authorities.
-- Performance/Attribution reloads the immutable Portfolio Shadow chain and emits
-  content-addressed metric, monthly/yearly return and attribution rows. Missing
-  denominators or dimensions remain `NOT_ESTIMABLE`; reconciliation failure is
-  rejected rather than hidden in a residual.
-- Migration 067 binds new Strategy and Portfolio rows to the exact Experiment,
-  session, Policy, Target, Outcome, Observation Receipt and source owners. Every
-  binding verifies artifact ID and content hash, and every derived timestamp is
-  at or after its required inputs. Pre-067 policy-only rows stay readable as
-  legacy-unbound data and cannot enter typed Historical or qualification paths.
-- Exploratory Model Research freezes samples, features, targets, walk-forward
-  folds, coefficients and lineage. Its executor emits raw barrier scores, not
-  probabilities. A real stored research artifact makes
-  `RESEARCH_MODEL_AVAILABLE=true`; Formal qualification, OOS and calibration
-  remain false.
-- Holding/Exit validation consumes Strategy Shadow outcomes only. It cannot mutate actual `position_books` or `manual_fills`.
-- Production Admission lists missing floors. It is not an Authority and cannot reach review eligibility or authorization.
-
-## Qualification state
-
-The repository contains operational writers for `UNQUALIFIED` free-data
-Historical Samples, exploratory model artifacts and narrow owner-specific
-Formal assessment decisions. The Formal orchestration checks Provider Fact
-qualification, Formal PIT, Historical Sample, Locked OOS and Calibration in
-order and stops at the first missing or rejected predecessor. With current free
-data it persists `BLOCKED`; it cannot invoke OOS consumption or calibration fit.
-Migration 046 still prevents reference-only promotion.
-
-## Phase D Alpha proof foundation decision
-
-> **Decision state:** IMPLEMENTED engineering boundary; empirical evidence pending
-
-Phase D converges the existing research owners around one semantic spine rather
-than adding another governance plane:
+## 1. Capability chain and semantic separations
 
 ```text
-Frozen Experiment Definition
--> Canonical Target/Horizon
--> deterministic measure-oriented Forecast computation
--> Outcome settlement
--> metric-specific Evaluation and Calibration
--> target-bound Strategy/Portfolio research
--> diagnostic Attribution
--> frozen follow-up Experiment
+Market Fact
+→ Market / ETF / Theme / Capital Context
+→ Universe Revision
+→ Eligibility Assessment
+→ Candidate
+→ Signal
+→ Target-bound Forecast
+→ Opportunity
+→ Thesis / Strategy action
+→ Portfolio Proposal
+→ Risk Decision
+→ Execution Intent
+→ observed Fill
+→ Position / Strategy sleeve
+→ Outcome
+→ Attribution
+→ Assessment
+→ Qualification Decision
 ```
 
-The following decisions are normative for the implementation:
+The following are non-equivalences:
 
-- Confidence intervals describe sampling uncertainty. Hypothesis tests use a
-  separately frozen null, benchmark, alternative and inference method. Effect
-  size and economic significance remain separate results. Metrics without a
-  defensible frozen null do not manufacture a p-value.
-- `FormalResearchProtocol` remains the experiment Authority. Its immutable,
-  content-addressed Experiment Definition freezes the research question,
-  hypothesis, decision time, target, feature and model search space, budget,
-  metrics, multiplicity family, stopping rule, train/validation and
-  purge/embargo policies, OOS policy, randomness and cost assumptions before
-  execution. A mutation creates a different Protocol identity and cannot reuse
-  consumed Locked OOS evidence.
-- `TargetDefinition` is the canonical semantic identity shared by Forecast,
-  Outcome, Evaluation and Calibration. Strategy policies bind that identity but
-  retain independent Holding and Exit responsibilities. A bar that touches both
-  barriers without adequate path resolution is `AMBIGUOUS`/`NOT_OBSERVABLE`;
-  the system never invents an intrabar path.
-- Forecast estimators are deterministic mathematical kernels independent of PIT
-  qualification. Exploratory Research may execute them over explicitly
-  unqualified data. Only the existing owner-resolving Formal gate may persist a
-  Formal Forecast, and only from qualified PIT inputs.
-- Forecast output is measure-oriented. Expected return, downside, direction,
-  barriers, MFE and MAE each report `AVAILABLE` or `NOT_ESTIMABLE`. An
-  uncalibrated classifier emits a raw score or logit, never a probability.
-- Free public data remains `EXPLORATORY`/`PIT_INCOMPLETE`/`UNQUALIFIED` unless
-  its real Provider evidence satisfies the existing contract. Phase D neither
-  weakens the floor nor makes a paid Provider a dependency.
+- Market Fact ≠ inferred Regime/Theme/Capital state.
+- Universe membership ≠ Eligibility.
+- Eligibility ≠ Candidate.
+- Candidate ≠ Signal.
+- Signal ≠ Forecast.
+- Forecast ≠ calibrated probability.
+- Opportunity/Thesis ≠ Portfolio allocation.
+- Proposal/Risk acceptance ≠ Intent.
+- Intent ≠ Fill.
+- Fill ≠ target quantity.
+- Outcome ≠ Attribution.
+- Assessment ≠ Qualification.
+- Target horizon ≠ holding/exit time.
+- `NO_ACTION` ≠ `HOLD`.
 
-The approved public seams are:
+## 2. Market and Context model
+
+Market/PIT owns raw facts. Decision Support owns inferred Context assessments:
+
+| Context kind | Meaning | Required evidence boundary | Prohibited claim |
+|---|---|---|---|
+| `MARKET_REGIME` | inferred broad market condition for one Decision scope | exact Market bars/breadth/liquidity and model version visible at Decision time | raw exchange fact or future regime label |
+| `ETF_ROTATION` | relative ETF segment/asset state | ETF instruments/classification membership, raw prices and methodology | proof of tradable rotation Alpha |
+| `THEME_ROTATION` | state of declared theme classifications | PIT theme membership plus instrument facts and methodology | retrospective current-membership reconstruction |
+| `CAPITAL_PROXY` | explicitly named flow/participation proxy | exact public facts, calculation and limits | hidden institutional intent or direct capital-flow fact |
+
+Each assessment is immutable, has status and Evidence, and stores its component
+metrics relationally. A “current state” is a view over assessments. There are no
+table-per-state observations/transitions/current pointers. State transition is a
+query comparing consecutive assessments unless a real business command consumes
+a transition fact.
+
+A Context kind survives only while it has a distinct consumer contract or
+research question. Unsupported Context is valid `UNKNOWN` evidence; it is not
+filled with defaults.
+
+## 3. Universe, Eligibility, and Candidate lifecycle
+
+1. `FreezeUniverse` resolves one immutable Universe revision from Decision-
+   visible Market/classification/lifecycle evidence.
+2. Every scoped instrument receives `INCLUDED`, `EXCLUDED`, or `UNKNOWN`
+   membership status; no symbol silently disappears.
+3. `AssessEligibility` applies one policy to every included/unknown member and
+   persists each criterion result.
+4. Missing required data yields `UNKNOWN`; explicit policy failure yields
+   `INELIGIBLE`.
+5. `BuildCandidateSet` accepts only matching `ELIGIBLE` assessments, freezes
+   score components/ties/ranks, and accounts for the full funnel.
+6. An empty Candidate Set is a successful, queryable business result.
+7. Downstream Strategy Runs must record terminal disposition for every Candidate
+   they received.
+
+Eligibility protects tradability and evidence sufficiency. Candidate selection
+answers a research/decision ranking question. Neither can imply Entry.
+
+## 4. Signal, Forecast, Opportunity, and Thesis
+
+A Signal is a versioned assertion such as setup present/absent/unknown. It binds
+one Candidate and Decision Run and preserves missingness. Signal values are not
+probabilities.
+
+A Forecast binds exactly:
+
+- Candidate and Decision Run;
+- Target Definition and checkpoint/metric;
+- Model Version and Dataset/Feature lineage;
+- estimate, uncertainty interval/distribution semantics;
+- calibration status and Qualification Decision if any;
+- known/available times and Evidence.
+
+Raw scores remain raw. Probability fields are legal only when calibration method,
+partition, metric, and qualification floor are satisfied for that exact purpose.
+
+An Opportunity is the Strategy input bundle. It binds Candidate, Signal,
+Forecast requirement/result, all required Context assessments, pre-strategy
+Risk evidence, Decision time, and Strategy Version. If the Strategy declares
+Forecast required, absent or wrong-target Forecast is fail-closed. If Forecast is
+not required, that fact is explicit in Strategy Version; it is not a legacy
+fallback.
+
+A Thesis is a falsifiable rationale over one Opportunity. Typed conditions state
+entry, hold, invalidation, reduce, or exit observation requirements. A later
+condition observation may lead a Strategy to a new action, but it does not edit
+the original Thesis or Position. Exit is not inverse Entry.
+
+## 5. Strategy, Portfolio, Risk, and Execution boundary
+
+Strategy Version is immutable action policy. For each Opportunity it emits a
+closed result such as `ENTER`, `ADD`, `HOLD`, `REDUCE`, `EXIT`,
+`NO_ACTION`, `WAIT`, or `DATA_INSUFFICIENT` with reasons. Unsupported actions
+do not collapse into empty output.
+
+Portfolio combines Opportunities under one policy and emits a complete Proposal
+and lines. It does not read future Outcome or write account state.
+
+Risk reloads Proposal, exact account Authority epoch, current Fill-derived
+Position, active Intent reservations, Decision-visible trading restrictions and
+Risk Policy. It emits accepted/rejected/unknown authorization with every rule
+result. Rejection cannot be bypassed by Strategy code, operator convenience, or
+a new idempotency key.
+
+Execution remains human-in-the-loop. Intent records authorized scope; observed
+Fill is the only trade fact. Position and sleeve rules are frozen in the
+[Authority Map](Authority-Map.md).
+
+## 6. Target and Outcome lifecycle
+
+Target Definition is registered before a qualifying experiment or Decision. It
+separates:
+
+1. Decision reference;
+2. outcome path/window;
+3. checkpoint observations;
+4. each derived metric.
+
+Outcome settlement occurs after each source becomes available. It may append
+new observations/metrics to the same immutable Target-bound Outcome aggregate
+under idempotent keys, but cannot revise the Decision. Status dimensions remain
+independent; complete source path does not manufacture an unavailable reference
+or MFE/MAE.
+
+The exact T+1 10:30 and 14:55 Raw reference semantics are specified in
+[PostgreSQL, Temporal and Evidence Architecture](Data-and-Evidence-Architecture.md)
+and retained from [ADR-014](decisions/ADR-014-Frozen-Target-Semantics-and-Independent-Correctness.md).
+
+## 7. Attribution
+
+Attribution is run only against frozen Outcome and, where relevant, effective
+Fill Allocation/Strategy sleeve evidence. The policy declares dimensions before
+calculation: Market, Context, Candidate/Signal/Forecast, Strategy action,
+Portfolio selection/sizing, execution costs, and residual policy.
+
+Every line has status and evidence. Contributions must reconcile to the declared
+total within numeric tolerance. If a denominator/dimension is missing or
+reconciliation fails, affected lines or the Run are `NOT_ESTIMABLE`/
+`REJECTED`; no unexplained residual is silently balanced. Attribution is
+diagnosis, not causal proof and not an Outcome/Position writer.
+
+## 8. Research objects
+
+### Dataset
+
+A Dataset is immutable and content-addressed. It binds exact source facts,
+Universe revision, Eligibility scope where relevant, temporal/PIT basis,
+missingness/exclusions, Feature/Target definitions, code/config, and artifact.
+Materialized values may be artifact-backed; identity/status/lineage remain
+relational.
+
+### Experiment
+
+An Experiment is registered before result access and freezes:
+
+- hypothesis and one primary research change;
+- Dataset/Target;
+- Features/Model/Strategy variants;
+- partitions and their purposes;
+- metrics, population, costs, multiple-testing and sensitivity rules;
+- evidence ceiling and success/rejection/not-estimable criteria.
+
+One primary change prevents causal ambiguity. A new change creates a new
+Experiment; it does not mutate the old definition.
+
+### Partitions
+
+Purposes are distinct:
+
+- `DISCOVERY`: exploratory selection and rejection;
+- `VALIDATION`: correctness/robustness without promotion;
+- `LOCKED_OOS`: pre-frozen independent evaluation;
+- `CALIBRATION_FIT` and `CALIBRATION_TEST`: disjoint probability calibration;
+- `PROSPECTIVE`: decisions committed before outcomes.
+
+A partition is frozen before its Outcome is read by that Experiment. Purge,
+embargo, calendar, membership, and Target overlap rules are stored. Consumption
+is an Evidence edge, not a mutable “unlocked” table per campaign.
+
+### Evaluation and Assessment
+
+Evaluation produces typed metrics with estimability. Assessment applies the
+predeclared decision rule and returns `SUPPORTED`, `REJECTED`,
+`NOT_ESTIMABLE`, `INCONCLUSIVE`, `BLOCKED`, or `FAILED`. Negative and
+inconclusive evidence is retained and queryable.
+
+Assessment does not update Model/Strategy Version. A proposed improvement gets a
+new immutable version and a new qualification request.
+
+## 9. Evidence and proof boundary
+
+The formal flow is:
 
 ```text
-FormalResearchProtocol.create(..., experiment_definition=...)
-FormalEvaluationProtocol.create(..., hypothesis_specs=...)
-TargetDefinition.create(..., canonical_horizon=...)
-FormalForecastExecutor.compute(resolved_owner_context)
-ResearchDecisionSessionKernel.run_next(...)
-HistoricalResearchRunner.run/resume/replay(...)
-run_shadow_portfolio_day(..., target_identity, policy_v2)
-FreeDataSettlementOperator.settle_day(...)
+Engineering correctness
+→ Source and temporal/PIT qualification
+→ frozen Dataset and Experiment
+→ Discovery (optional, exploratory)
+→ separately frozen Formal OOS
+→ calibration/economics where required
+→ Prospective observation
+→ purpose-specific Production admission
 ```
 
-Earlier Phase D work is an implementation inventory, not a merge unit. Each
-capability is classified against the current `main` schema and this decision as
-`REUSE`, `PORT`, `REWRITE` or `DROP`. New migrations start after the current
-migration head and express only the accepted current semantics; historical
-migrations are not mechanically cherry-picked.
+This is a dependency graph, not an automatic ladder. Evidence Class, origin,
+Assessment Status, proof class, required floors, and floor statuses are specified
+in [PostgreSQL, Temporal and Evidence Architecture](Data-and-Evidence-Architecture.md).
 
-The implementation order is dependency-bound: Statistics, Protocol/Target,
-Formal Forecast, Alpha/Ablation, Strategy Economics, Portfolio Risk,
-Attribution/Feedback, architecture simplification and full verification.
+Examples:
 
-The implemented boundary now includes deterministic synthetic null/power
-proofs, explicit hypothesis-specific inference, Protocol V2 and Target
-Definition V2, measure-oriented benchmark/linear/raw-logit/regime Forecast
-kernels, PostgreSQL research-model and multi-year Historical journals, Full-A
-Runtime Scope, owner-derived Strategy/Portfolio observations, multi-period
-performance, factor coverage and cumulative ablation, target-bound Strategy
-Economics, constrained Portfolio Risk, and non-causal Attribution/Feedback.
-These are executable research capabilities, not positive Alpha evidence.
+- Passing unit/PostgreSQL tests can satisfy an Engineering floor only.
+- A recorded free Provider capture remains Exploratory when archive/finality/
+  availability is not qualified.
+- Correct historical as-of reconstruction may satisfy PIT but not Formal OOS.
+- A locked metric run can be `NOT_ESTIMABLE` and still be valid evidence.
+- Prospective observations do not repair historical PIT or OOS gaps.
+- Good returns do not establish calibration, execution integrity, or Production
+  admission.
+- `REJECTED` is a legitimate terminal research result.
 
-Only the bounded Strategy/Portfolio observation and simulated ledger operators
-have a natural CLI/runtime consumer. Strategy Economics, Portfolio Risk,
-Ablation and Attribution/Feedback remain exploratory kernels consumed by the
-Historical research composition; they are not installed as new Canonical
-Runtime stages and do not create a second Authority or qualification plane.
+## 10. Prospective lifecycle
 
-Canonical free-data composition now calls `SourceFreezeService`; the retained
-DailyLoop owns historical Daily identities only behind that adapter. Controlled
-package recovery uses the PostgreSQL longitudinal record's explicit
-`artifact-root-v1` locator and verifies immutable content hash. No recovery path
-discovers package or Feature identities by filesystem scan. Canonical Lifecycle
-keeps its journal-compatible stage identities but publishes three actual
-boundaries: Research Decision Support, Manual Account Observation, and
-contract-only Position Review. The last boundary remains fail-closed.
+A Prospective prediction is admissible only when:
 
-## Non-claims
+1. the Decision Run and every input/evidence hash commit before its Decision
+   deadline;
+2. Runtime/database clocks and session are owner-resolved;
+3. no later revision or outcome is visible to the command;
+4. the Candidate/Signal/Forecast/Portfolio/Risk dossier is immutable;
+5. the eventual Outcome references that exact dossier and Target;
+6. missed deadlines, missing evidence, and no-action days remain in the sample;
+7. restarts reuse idempotent receipts and do not rebuild from newer input.
 
-- no Alpha winner;
-- no parameter optimization in this lifecycle;
-- no formal OOS result;
-- no calibrated probability;
-- no Entry authorization;
-- no actual Fill or physical Position from simulated Strategy Shadow artifacts;
-- no authenticated operator or broker readiness proof; engineering RBAC is not authentication or Production Admission.
+A prospective attestation document is not needed as a separate Authority table.
+The Run/Decision/Evidence/Outcome timestamps and dependencies prove or reject the
+condition. A generated prospective report is a non-authoritative read model.
+
+## 11. Model and Strategy qualification
+
+Models and Strategies have stable family identity and immutable versions.
+Qualification is purpose-scoped:
+
+- a Model Version may be eligible for Exploratory Forecast but blocked for
+  calibrated probability;
+- a Strategy Version may be eligible for Shadow research but blocked for
+  execution support;
+- Production admission requires all policy floors and does not follow from
+  “qualified” in another purpose.
+
+Selection is a query over current, non-superseded Qualification Decisions plus a
+frozen selection policy. There is no mutable “Champion pointer.” A Decision Run
+stores the exact selected version and qualification IDs, so replay does not ask
+what is current now.
+
+## 12. Research feedback
+
+Outcome/Attribution may propose a hypothesis, challenger, degradation review, or
+retirement assessment. Feedback cannot:
+
+- mutate existing Feature/Target/Model/Strategy definitions;
+- train on locked/prospective outcomes outside a new declared Dataset;
+- auto-promote a version;
+- erase negative evidence;
+- lower Risk;
+- write Execution or Position.
+
+Every feedback experiment restarts the freeze/evaluate/qualify path with a new
+identity.
+
+## 13. Capability preservation acceptance
+
+Implementation cannot delete an old module/table/test path until:
+
+1. its business capability appears in the
+   [Capability Preservation Matrix](../references/WP-ARCHITECTURE-REFOUNDATION-01-Capability-Preservation-Matrix.md);
+2. every valuable correctness rule appears in the
+   [Domain Invariant Catalog](../references/WP-ARCHITECTURE-REFOUNDATION-01-Domain-Invariant-Catalog.md);
+3. its current table is classified in the
+   [283-table Disposition](../references/WP-ARCHITECTURE-REFOUNDATION-01-Table-Disposition.md);
+4. target Domain and PostgreSQL tests prove the replacement;
+5. architecture tests prove the old writer/reader/composition path is gone.
+
+Code presence or a passing fixture cannot satisfy a research proof floor.
