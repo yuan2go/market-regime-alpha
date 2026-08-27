@@ -1,12 +1,14 @@
 # WP-ALPHA-CORRECTNESS-02 Frozen Protocol
 
 > **Status:** CURRENT_RESEARCH_PROGRAM
-> **Implementation State:** FROZEN_DESIGN / CODE_NOT_STARTED / RERUN_NOT_RUN
+> **Protocol State:** FROZEN_BEFORE_IMPLEMENTATION / EXECUTED_UNCHANGED
+> **Execution State:** `8cd79972fa96d397967948d75592f5163613e02a` / `INCONCLUSIVE / PARTIALLY_REPRODUCED / NO-GO`
 > **Authority:** Pre-result correctness and Discovery-only execution protocol
 > **Decision Date:** 2026-08-26
 > **Repository Baseline:** `main@1a92ee41b02dd94df9ef4488c59cba55df4674ce`
 > **Architecture Decision:** [ADR-014](../../architecture/decisions/ADR-014-Frozen-Target-Semantics-and-Independent-Correctness.md)
 > **Baseline Audit:** [WP-ALPHA-CORRECTNESS-02 Baseline Audit](../../references/WP-ALPHA-CORRECTNESS-02-Baseline-Audit.md)
+> **Execution Report:** [WP-ALPHA-CORRECTNESS-02 Execution Report](../../references/WP-ALPHA-CORRECTNESS-02-Execution-Report.md)
 > **Evidence Ceiling:** `DISCOVERY_ONLY / FREE_DATA / PIT_INCOMPLETE / FORMAL_OOS=false / PRODUCTION_QUALIFIED=false`
 
 This protocol freezes the Target-correctness repair before business-code

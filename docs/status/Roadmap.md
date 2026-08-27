@@ -2,9 +2,9 @@
 
 > **Status:** ROADMAP
 > **Authority:** Dependency-ordered forward work
-> **Implementation Checkpoint:** `main@1a92ee41b02dd94df9ef4488c59cba55df4674ce`; WP-ALPHA-CORRECTNESS-02 design on `agent/wp-alpha-correctness-02`
-> **Strongest Research Evidence Revision:** `3b58c2a5e374e413fa6fb934ccfe284f39740a40` (WP-ALPHA-PROOF-02 execution)
-> **Last Updated:** 2026-08-26
+> **Implementation Checkpoint:** `origin/main@1a92ee41b02dd94df9ef4488c59cba55df4674ce`; WP-ALPHA-CORRECTNESS-02 code/evidence revision `8cd79972fa96d397967948d75592f5163613e02a` on `agent/wp-alpha-correctness-02`
+> **Strongest Research Evidence Revision:** `8cd79972fa96d397967948d75592f5163613e02a` (WP-ALPHA-CORRECTNESS-02 execution)
+> **Last Updated:** 2026-08-27
 > **Code Evidence:** `docs/status/Current-State.md`, `docs/status/Gap-Register.md`
 
 The project is in an Alpha Research program, not another platform-completeness
@@ -65,10 +65,11 @@ single-lineage Daily Alpha Evidence admission
 This closure reached `ENGINEERING_CLOSED / OWNER_WIRED / RUNTIME_WIRED /
 TARGETED_TESTED` for the named chain. At that historical PR #75 checkpoint,
 full repository pytest and real campaigns were `NOT_RUN`. WP-ALPHA-PROOF-02
-later completed its own full regression and campaign; those results do not
-prove the new WP-ALPHA-CORRECTNESS-02 implementation.
+later completed its own full regression and campaign; WP-ALPHA-CORRECTNESS-02
+has now completed a separately identified implementation, regression and
+Discovery-only campaign at its own evidence revision.
 
-## Correctness engineering and active repair
+## Correctness engineering and completed repair
 
 The five Work Package kernels/contracts and one recoverable operator surface
 are present and focused-tested on the merged baseline. Their empirical
@@ -112,9 +113,9 @@ separation, redundancy diagnostics and dependence-aware inference.
 
 **Evidence ceiling:** correctness state only; never `ALPHA_PROVEN`.
 
-### P0 — WP-ALPHA-CORRECTNESS-02
+### Completed — WP-ALPHA-CORRECTNESS-02
 
-**Current status:** `FROZEN_DESIGN / CODE_NOT_STARTED / RERUN_NOT_RUN`.
+**Current status:** `EXECUTED / INCONCLUSIVE / PARTIALLY_REPRODUCED / NO-GO`.
 
 **Goal:** repair the Target semantic mismatch without changing the immutable
 predecessor Experiment or its negative conclusion. Decision reference, observed
@@ -122,7 +123,7 @@ Outcome window and every derived metric have independent status. Exact 14:55
 Decision prices accept only a valid same-session Raw five-minute bar; Daily and
 latest-bar fallbacks are diagnostic lineage only.
 
-**Required closure:**
+**Delivered closure:**
 
 - persist all eight predecessor failures with stable canonical identity, full
   source IDs/hashes, revisions, SHA and owner lineage;
@@ -130,15 +131,21 @@ latest-bar fallbacks are diagnostic lineage only.
   Experiment identity while retaining exact v1/v2 owner reload/replay;
 - converge materializer, independent checker, report and replay on the frozen
   semantics while preserving independent source selection;
-- pass focused PostgreSQL, migration, concurrency/recovery, compatibility and
-  complete repository validation;
-- execute only the unchanged 126-session Discovery population and prove that
-  External and Locked OOS Outcomes remain unread;
-- explain correctness and economic differences, then issue an independent
-  `GO` or `NO-GO` without direction, sample, threshold or tolerance tuning.
+- focused PostgreSQL, migration, concurrency/recovery, compatibility and
+  complete repository validation pass at the reported revision;
+- the unchanged 126-session Discovery population executed under a new
+  Experiment/run identity while External and Locked OOS Outcomes remained
+  unread;
+- equivalent-source normalization and every typed Target state reproduced;
+  37,722 Features were supported and 78 partial, all 113,166 independent ranks
+  matched, and no Feature or Target discrepancy was found;
+- the unchanged higher-is-better Factors remained adverse, target-shift
+  controls dominated and redundancy was partial. The independent decision is
+  `NO-GO`; no direction, sample, threshold or tolerance was tuned.
 
-**Evidence ceiling:** Discovery correctness and economics only. Even
-`CORRECTNESS_SUPPORTED` does not automatically admit External.
+**Evidence ceiling:** Discovery correctness and economics only. The actual
+result is `INCONCLUSIVE`, not `CORRECTNESS_SUPPORTED`, so External is not
+admitted.
 
 ### P0 — Frozen Temporal External Validation Execution
 
@@ -147,9 +154,10 @@ The content owner
 is the existing canonical `ResearchExperimentDefinition`, not a parallel
 Experiment authority.
 
-**Dependency:** only a `CORRECTNESS_SUPPORTED` new revision with an explicit
-independent `GO` may be considered for a separately reviewed frozen External
-Experiment. Correctness support alone is insufficient.
+**Dependency:** only a future separately frozen Discovery survivor with
+`CORRECTNESS_SUPPORTED` and an explicit independent `GO` may be considered for
+a separately reviewed External Experiment. WP-ALPHA-CORRECTNESS-02 did not meet
+that dependency.
 
 **Goal:** provide content-addressed, single-dimension Temporal, Universe or
 Provider external-validation Experiments without rescanning factors or retuning
@@ -239,11 +247,19 @@ family stays Research/Shadow inactive because its evidence gates have not run.
 
 ## Active evidence-dependent work
 
-### WP-ALPHA-CORRECTNESS-02 — Target semantics closure
+### New Alpha Discovery hypothesis — correctness-driven reset
 
-The frozen design and row-level diagnosis are complete. Business implementation,
-migration, regression and new-identity Discovery-only execution remain pending.
-The active protocol is
+WP-ALPHA-CORRECTNESS-02 is complete and remains immutable. Its corrected Target
+semantics did not rescue the frozen higher-is-better hypothesis: all three real
+Factors remain adverse, the target-shift controls dominate, 78 Feature rows are
+partial, the Factors are partially redundant and original-package physical
+reproduction remains unestablished. External therefore stays closed.
+
+Any next empirical work must return to Alpha Discovery with a new Experiment
+identity. It may investigate why target shift is strong and whether a distinct,
+economically motivated factor family exists, but it may not flip the old sign,
+reuse the old identity, inspect External/Locked OOS Outcomes, or optimize the
+closed hypothesis. The completed protocol is
 [`WP-ALPHA-CORRECTNESS-02`](../research/protocols/WP-ALPHA-CORRECTNESS-02-Frozen-Protocol.md);
 its ADR is
 [`ADR-014`](../architecture/decisions/ADR-014-Frozen-Target-Semantics-and-Independent-Correctness.md).

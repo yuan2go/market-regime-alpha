@@ -3,7 +3,7 @@
 > **Status:** CURRENT_RESEARCH_PROGRAM
 > **Authority:** Current registry of failed, blocked or insufficient research claims
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-26
+> **Last Updated:** 2026-08-27
 > **Code Evidence:** `src/market_regime_alpha/application/historical_corpus`, `src/market_regime_alpha/application/research_evaluation`
 
 | Claim | Current result | Evidence authority |
@@ -63,6 +63,9 @@
 | WP-ALPHA-PROOF-02 establishes end-to-end physical correctness | `CORRECTNESS_FAILED`: package checksum and all 6,548,518 Raw→Normalized observations reproduce, but 8/37,800 persisted Target sources are not reproducible and 425 are partial | `alpha-correctness-proof:9196bf13d40dde78f50ab3314ac511d05f952f91b4075bf5f201c755eeb1067b` |
 | WP-ALPHA-PROOF-02 externally validates or consumes Locked OOS | `NOT_ESTIMABLE / BLOCKED_BY_CORRECTNESS`: External was not admitted; BaoStock remains `PIT_INCOMPLETE`; Locked roster is frozen and `LOCKED_OOS_CONSUMED=false` | exact correctness Evidence + label-blind Locked scope `frozen-locked-oos-scope:ed65a20e87fba32e48194f3c74592d880defa8ec972e593aa69f84217751c8b3` |
 | Missing exact Decision reference means the observed T+1 path is unavailable | False for the diagnosed eight rows: exact 14:55 Decision is `UNAVAILABLE`, but each owner contains the complete twelve-bar T+1 09:30-10:30 Raw path. Only Decision-dependent returns/MFE/MAE are unavailable | read-only predecessor owner reload + frozen WP-ALPHA-CORRECTNESS-02 design |
-| WP-ALPHA-CORRECTNESS-02's frozen design proves corrected correctness or permits External | False: it locates the eight-row cause and freezes a new semantic/identity contract only. Code, migration, durable detail index, regression and Discovery-only rerun are `NOT_STARTED / NOT_RUN`; External and Locked OOS remain closed | [ADR-014](../architecture/decisions/ADR-014-Frozen-Target-Semantics-and-Independent-Correctness.md) + [frozen protocol](protocols/WP-ALPHA-CORRECTNESS-02-Frozen-Protocol.md) |
+| WP-ALPHA-CORRECTNESS-02 attempt `ae6c…4429` is the final proof | False: review found that immutable attempt omitted independent rank proof, skipped executable entry proxies and used a non-null-centered bootstrap p-value. It remains provenance only and is ineligible as final Evidence; a new Experiment/run/Evidence identity supersedes it | immutable `historical-evidence-ae6cd0eb9c395b8cb9804429` + review findings |
+| WP-ALPHA-CORRECTNESS-02 establishes supported Alpha or permits External | `INCONCLUSIVE / PARTIALLY_REPRODUCED / NO-GO`: equivalent-source normalization and all 37,800 typed Target states match independently; 37,722 Feature rows are supported and 78 partial with zero discrepancies; all 113,166 independent ranks match. The unchanged real Factors remain adverse, target-shift controls dominate and redundancy is partial | `historical-evidence-fe2b1060e72d59e04bf27295` / `alpha-correctness-proof:8cedafbaecb12c1137dc6c01f84d731445216370ed47d310d6b80a08056d5f55` |
+| WP-ALPHA-CORRECTNESS-02 reopens the unavailable original physical package or proves Formal PIT | False: it verifies a separately identified `REACQUIRED_EQUIVALENT_SOURCE` without inventing historical availability. Original physical reproduction remains `PHYSICAL_REPRODUCTION_NOT_ESTABLISHED`; BaoStock remains `PIT_INCOMPLETE` | final correctness proof + corpus physical replay |
+| WP-ALPHA-CORRECTNESS-02's adverse significance is economic significance | False: null-centered block inference supports an adverse association in the frozen direction; the separate Top-5 net diagnostic is -0.002991 and executable proxies are explicitly not Fill proof | final correctness proof + unchanged Discovery Evidence |
 
 Negative evidence is first-class and immutable. A failed result may motivate a new separately frozen hypothesis; it may not be reworded into success.
