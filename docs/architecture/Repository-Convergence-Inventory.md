@@ -1,15 +1,16 @@
 # Repository Convergence Inventory
 
-> **Status:** CURRENT_ARCHITECTURE
+> **Status:** CANONICAL_TARGET_ARCHITECTURE
 > **Authority:** Target package, Legacy, documentation, prompt, and Skill disposition
 > **Owner:** Market Regime Alpha maintainers
 > **Last Updated:** 2026-08-27
-> **Implementation State:** DESIGN_CHECKPOINT_ONLY
-> **Code Evidence:** `src/market_regime_alpha`, `pyproject.toml`, `tests/architecture`, `.claude/skills/*/SKILL.md`, `.claude/agents/*.md`
+> **Implementation State:** REPOSITORY_GOVERNANCE_IMPLEMENTED / BUSINESS_TARGET_NOT_STARTED
+> **Code Evidence:** `src/market_regime_alpha`, `pyproject.toml`, `tests/architecture`, `AGENTS.md`, `.claude/skills/reconcile-branches/SKILL.md`
 
-This inventory freezes what the implementation phase will converge and delete.
-No source, Skill, prompt, migration, or test file is removed in this design-only
-checkpoint.
+This inventory freezes what the business implementation phase will converge and
+delete. WP-ARCHITECTURE-REFOUNDATION-02 applies its documentation, Skill, and
+persistent-prompt dispositions. Business source, migrations, fixtures, and
+business test semantics remain unchanged.
 
 ## 1. Current structural facts
 
@@ -137,8 +138,8 @@ canonical data; it has no write credentials.
 
 ## 6. Skill and prompt governance
 
-Current repository audit found three Skills and three persistent reviewer
-prompts.
+The approved-design audit found three Skills and three persistent reviewer
+prompts. WP-ARCHITECTURE-REFOUNDATION-02 physically applies these dispositions:
 
 | Asset | Current responsibility | Target disposition | Reason |
 |---|---|---|---|
@@ -179,8 +180,9 @@ The target is complete only when:
 - the old 106 migrations and 283-table schema do not appear in the target epoch;
 - the worktree is clean after reviewable commits.
 
-## 8. Design checkpoint stop
+## 8. Governance checkpoint stop
 
-This document only records the target. Business source, migrations, tests,
-fixtures, Skills, prompts, and operational instructions remain unchanged until a
-later implementation authorization.
+Repository instructions, status hierarchy, Skill inventory, and persistent
+prompts now conform to this target. Business source, 001–106 migrations,
+fixtures, Runtime behavior, and business test semantics remain unchanged until
+a later implementation authorization.

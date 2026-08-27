@@ -1,6 +1,6 @@
 # WP-ALPHA-RESEARCH-01 Frozen Discovery Protocol
 
-> **Status:** CURRENT_RESEARCH_PROGRAM
+> **Status:** HISTORICAL
 > **Authority:** Pre-registered exploratory research protocol; executable truth requires the persisted Experiment Definition and canonical PostgreSQL owners
 > **Owner:** Market Regime Alpha maintainers
 > **Decision Date:** 2026-08-20

@@ -1,6 +1,6 @@
 # ADR-015: Hard Cutover and Schema Epoch
 
-> **Status:** CURRENT_ARCHITECTURE
+> **Status:** CANONICAL_TARGET_ARCHITECTURE
 > **Implementation State:** DESIGN_CHECKPOINT_ONLY
 > **Authority:** Approved-principle target decision for WP-ARCHITECTURE-REFOUNDATION-01
 > **Owner:** Market Regime Alpha maintainers

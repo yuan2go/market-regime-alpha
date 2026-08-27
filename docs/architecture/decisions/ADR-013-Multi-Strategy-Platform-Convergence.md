@@ -1,6 +1,6 @@
 # ADR-013: Multi-Strategy Platform Convergence
 
-> **Status:** CURRENT_ARCHITECTURE
+> **Status:** HISTORICAL
 > **Authority:** Approved implementation decision for the multi-strategy convergence slice
 > **Owner:** Market Regime Alpha maintainers
 > **Last Updated:** 2026-08-14

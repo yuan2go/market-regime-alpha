@@ -1,6 +1,6 @@
 # Negative and Inconclusive Results
 
-> **Status:** CURRENT_RESEARCH_PROGRAM
+> **Status:** HISTORICAL
 > **Authority:** Current registry of failed, blocked or insufficient research claims
 > **Owner:** Market Regime Alpha maintainers
 > **Last Updated:** 2026-08-27

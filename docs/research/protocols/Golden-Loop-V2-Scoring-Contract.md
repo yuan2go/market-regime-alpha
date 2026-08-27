@@ -1,6 +1,6 @@
 # Golden Loop V2 Scoring and Research Correctness Contract
 
-> **Status:** CURRENT_RESEARCH_PROGRAM
+> **Status:** HISTORICAL
 > **Authority:** Frozen methodology contract for the first Golden Loop V2 campaign
 > **Owner:** Market Regime Alpha maintainers
 > **Frozen:** 2026-08-20

@@ -1,6 +1,6 @@
 # WP-ALPHA-PROOF-02 Frozen Vertical Slice Protocol
 
-> **Status:** CURRENT_RESEARCH_PROGRAM
+> **Status:** HISTORICAL
 > **Authority:** Pre-result execution protocol subordinate to the Canonical Overall Design and existing persisted Experiment owners
 > **Decision Date:** 2026-08-25
 > **Repository Baseline:** `main@adbc7857e261835eccbe2acf4902910363dae724`

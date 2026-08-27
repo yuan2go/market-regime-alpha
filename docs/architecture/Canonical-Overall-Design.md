@@ -225,6 +225,12 @@ CAPTURE
 → ASSESS_RESEARCH
 ```
 
+This is a dependency invariant, not merely a display order. Same-run Context
+may consume Market/PIT and the frozen Candidate scope, but Universe,
+Eligibility, and Candidate commands never consume that Context result. An
+Opportunity carries Decision input Evidence only; the single authoritative Risk
+evaluation occurs after a complete Portfolio Proposal.
+
 Historical, replay, shadow, and prospective modes reuse Application commands
 and business semantics. They differ only in clock, frozen input resolver,
 execution adapter, and qualification purpose. They are not parallel business
@@ -334,13 +340,13 @@ Roadmaps, status pages, Capability views, Evidence Ledgers, and delivery reports
 are non-authoritative projections. If retained, each states generation time,
 source query/artifact, and code SHA; manual edits cannot promote state.
 
-A repository Skill survives only if it provides a stable, reusable,
-domain-specific workflow with an explicit input/output contract and a testable
-failure boundary. Ordinary Git, testing, formatting, documentation, table
-inspection, or prompt wrappers are not Skills. Overlapping prompts, duplicate
-agent instructions, versioned Skill forks, and Skills superseded by code are
-deleted at cutover. One canonical architecture/research qualification Skill may
-remain only if actual repeated use justifies it.
+A repository Skill survives only if it provides a stable, reusable procedure
+with an explicit input/output contract, authorization boundary, and testable
+failure behavior. The sole retained project Skill is the high-risk,
+explicitly-triggered branch-reconciliation procedure. Ordinary coding, testing,
+formatting, documentation, table inspection, architecture/research checklists,
+and prompt wrappers are not Skills. Overlapping prompts, duplicate agent
+instructions, versioned Skill forks, and Skills superseded by code are deleted.
 
 ## 13. Hard Cutover sequence
 

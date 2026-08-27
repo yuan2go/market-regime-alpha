@@ -1,111 +1,147 @@
 # AGENTS.md — Market Regime Alpha Execution Contract
 
 > **Status:** CURRENT_STATUS
-> **Authority:** Repository execution contract for coding and research agents
+> **Authority:** Sole repository execution, safety, and evidence contract
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-19
+> **Last Updated:** 2026-08-27
 > **Related Documents:** `CLAUDE.md`, `docs/README.md`, `docs/architecture/Canonical-Overall-Design.md`, `docs/status/Roadmap.md`
 
-## Mission and product boundary
+## Mission and current program
 
-Market Regime Alpha is a Reliable A-share Alpha Research Operating System and human-in-the-loop trading decision-support platform. It is not unattended live trading.
+Market Regime Alpha is an A-share research operating system and human-in-the-loop
+decision-support platform. It is not unattended live trading.
 
-The current engineering platform is multi-strategy capable, but the forward program is **Alpha Proof / evidence-driven research engineering**. Candidate, Signal, Forecast, Strategy, Portfolio, Decision, Execution, Position and Outcome remain distinct only where they have distinct semantics and consumers. A recommendation or target position cannot create an actual position; physical positions derive from observed effective fills.
+The approved Hard Cutover Architecture Re-foundation is the sole engineering
+program. The target is frozen by
+`docs/architecture/Canonical-Overall-Design.md` and ADR-015. The current source,
+106 migrations, 283-table PostgreSQL schema, and existing Runtime remain the
+implementation truth until an explicit Runtime/CLI cutover checkpoint succeeds.
+Target prose never makes an unimplemented capability current.
+
+The dependency order is:
+
+```text
+Foundation
+→ Market/PIT
+→ Universe/Eligibility/Candidate
+→ Research/Qualification
+→ Decision/Outcome
+→ Execution/Account
+→ Runtime/CLI Cutover
+→ Legacy deletion/qualification
+```
+
+Do not resume the former Alpha Proof Roadmap as an engineering program. Existing
+protocols, results, and negative evidence remain immutable provenance. New
+research execution requires a separately approved request and must not interrupt
+the active re-foundation dependency chain.
 
 ## Agent entry points
 
-Read `AGENTS.md`, then `docs/README.md`, the Canonical Overall Design, supporting architecture documents, Current State, Gap Register and Roadmap. `CLAUDE.md` adds only Claude-specific workflow. Do not create a parallel instruction or documentation hierarchy.
+Read in this order:
+
+1. `AGENTS.md`;
+2. `docs/README.md`;
+3. the Canonical Overall Design and supporting target architecture documents;
+4. `docs/status/Current-State.md`, `docs/status/Capability-Matrix.md`, and
+   `docs/status/Roadmap.md`;
+5. current code, migrations, tests, and reproducible evidence for the affected
+   context.
+
+`CLAUDE.md` may add only Claude-specific startup behavior. Do not create a
+parallel instruction, prompt, status, roadmap, or architecture hierarchy.
 
 ## Normative authority order
 
 1. latest explicit user decision not superseded;
-2. `docs/architecture/Canonical-Overall-Design.md`;
-3. supporting current architecture documents linked from `docs/README.md`;
-4. Current State, Gap Register and Roadmap;
-5. accepted ADRs/evidence reports as subordinate provenance;
+2. `docs/architecture/Canonical-Overall-Design.md` and accepted ADR-015;
+3. supporting target architecture documents linked from `docs/README.md`;
+4. the dependency plan in `docs/status/Roadmap.md`;
+5. historical ADRs, frozen protocols, and evidence reports as provenance only;
 6. Git history for historical context only.
 
 ## Implementation fact authority order
 
 1. current checked-out code and actual call chains;
-2. current PostgreSQL schema and migrations;
-3. current tests and static checks actually executed;
-4. reproducible runtime/research artifacts;
-5. `docs/status/Current-State.md` and Capability Matrix.
+2. current PostgreSQL schema, migrations, writers, and readers;
+3. tests and static checks actually executed at an exact SHA;
+4. reproducible Runtime, replay, and research evidence;
+5. generated or exact-SHA status read models.
 
-Never use prose to overrule executable evidence. Never recreate the superseded Constitution or another normative hierarchy. A change to the Canonical Overall Design must keep supporting current documents and real implementation/evidence status explicit.
+Current State, Capability views, Roadmap, reports, Evidence Ledgers, artifacts,
+DTOs, policies, receipts, and documentation are not business or qualification
+Authority. They may summarize canonical facts but cannot mutate or promote them.
 
-## Current architecture boundary
+## Re-foundation execution rules
 
-- `CONTINUOUS_RESEARCH` is the sole all-day Runtime.
-- PostgreSQL 16 is the only persistent Runtime, Journal, Repository, Replay, account, Position and Risk database; unavailability fails closed.
-- Historical Research is a bounded runner that reuses canonical business/strategy semantics; it is not a second daily Runtime.
-- Canonical Lifecycle, State System, Controlled Operation and Decision System are bounded children/tools, not competing daily runtimes.
-- Model Governance owns model lifecycle/selection. Strategy Registry/Runtime owns Strategy Version semantics. Neither creates Alpha by existence.
-- Research Validation and Strategy Shadow produce evidence only at the level their real inputs/protocols justify.
-- Production Admission remains independently evidence-gated; broker execution is Future/Deferred.
-- `daily_research`, `dividend_t`, `legacy/**` and `migration/legacy/**` have no Canonical write or execute authority.
+- Work on one dependency-coherent checkpoint from `docs/status/Roadmap.md`.
+- Do not implement a later context before its declared predecessor exit gate.
+- An incomplete target path is test-only and non-canonical. Do not dual-write,
+  fall back between old and target owners, or choose Authority by availability.
+- The existing Runtime stays canonical until the explicit Runtime/CLI Cutover.
+- The target baseline is built for a newly provisioned empty database. Ordinary
+  startup must fail before DDL on legacy, unknown, or mismatched schema epoch.
+- Never edit released migration bytes or add compatibility migrations to carry
+  the 283-table catalog into the target epoch.
+- Legacy code/tests are deleted only after every mapped invariant has passing
+  target coverage and the last executable consumer is absent.
+- No permanent `v1`/`v2`/`v3`, compatibility reader, registry, snapshot, journal,
+  or parallel composition root may survive cutover.
+- Do not introduce microservices, a message broker, event sourcing, generic
+  workflow/registry frameworks, dashboards, or infrastructure expansion unless
+  a later explicit scope changes the approved architecture.
 
-## Non-negotiable domain and evidence rules
+## Domain and evidence invariants
 
-- Facts, derived indicators, inferred state, prediction, decision, execution facts, outcomes and qualification evidence are distinct.
-- Target horizon is not automatically holding or exit time; Exit is not inverse Entry.
-- Empty results, `WAIT`, `DATA_INSUFFICIENT`, `NO_ACTION` and `NOT_ESTIMABLE` are valid; `NO_ACTION != HOLD`.
-- A score is not a probability without calibration.
-- Public Capital proxies do not identify hidden institutional intent and must remain labelled proxies/derived evidence.
-- Data Authority cannot inflate; no silent Provider substitution or invented PIT/finality/availability/adjustment semantics.
-- Candidate does not automatically mean Entry. Forecast does not automatically mean trade action.
-- Risk rejection cannot be bypassed by strategy code or ordinary operator action.
-- References, DTOs, projections, protocols, policies and receipts are not Authority.
-- Preserve negative, inconclusive and not-estimable research results; do not tune implementation parameters simply to make evidence positive.
-- Historical artifacts and identities are immutable unless an explicit migration/supersession contract exists.
-- Existing compatibility identities retain their historical meaning until explicitly retired with consumer/replay proof.
+- Market fact, inferred Context, Universe membership, Eligibility, Candidate,
+  Signal, Forecast, Opportunity, Thesis, Portfolio, Risk, Fill, Position,
+  Outcome, Attribution, Assessment, and Qualification remain distinct.
+- Universe → Eligibility → Candidate completes before same-run Context. Context
+  cannot feed back into that same Candidate Set.
+- Opportunity contains decision input evidence, not a Risk authorization. The
+  sole Risk Decision follows a complete Portfolio Proposal.
+- Target horizon is not a holding or exit time; Exit is not inverse Entry.
+- Empty, `UNKNOWN`, `WAIT`, `DATA_INSUFFICIENT`, `NO_ACTION`,
+  `NOT_ESTIMABLE`, rejection, and inconclusive evidence are valid results.
+- Scores are not probabilities without exact calibration evidence.
+- No silent Provider substitution or invented PIT/finality/availability/
+  adjustment semantics is permitted.
+- Trade-caused Position changes derive only from observed effective Fills.
+  Opening balances, corporate actions, and reconciliation adjustments use the
+  separately authorized typed basis-event rules in the Authority Map.
+- Risk rejection cannot be bypassed by Strategy code or ordinary operator retry.
+- Evidence classes, Assessment status, and purpose-scoped Qualification floors
+  cannot be collapsed into one maturity flag.
+- Fixture/local/CI evidence never proves Provider quality, Formal PIT/OOS Alpha,
+  Prospective value, broker authority, trading authority, or Production.
 
-## Alpha Proof program
+## Provider and trading boundary
 
-The forward organizing loop is:
+Provider adapters remain unqualified until exact source/archive/version,
+availability, finality, adjustment, identity, and lineage evidence satisfies the
+declared purpose. Public-source availability gaps remain `UNKNOWN` or
+Exploratory rather than guessed.
 
-```text
-Golden Strategy Question
-→ transparent quantitative baseline
-→ factor/context ablation
-→ Strategy / Portfolio economics
-→ prospective Shadow
-→ Outcome / Attribution
-→ diagnosis
-→ next evidence-driven change
-```
+Agents may diagnose and implement an approved checkpoint. They do not place
+orders, invoke a broker mutation, promote a model, change approved Risk, unlock
+Production, or reinterpret a passing Runtime as trading authority.
 
-Prefer the highest-information P0/P1 Work Package in `docs/status/Roadmap.md`. Build platform capability only when the loop exposes a real blocker. Treat Architecture Compression as active work: unused or duplicate abstractions should be simplified/merged/retired when consumer inventory and replay safety permit it.
+## Workspace, branch, and commit discipline
 
-Do not jump directly to complex ML before the baseline and incremental-value evidence exist.
-
-## Provider and trading rules
-
-Tencent, BaoStock, Tushare, AKShare and similar public sources remain auxiliary/exploratory unless formally qualified by the owning evidence policy. A runnable adapter is not Formal evidence. Any future qualified Provider direction remains subject to actual source/archive/version/availability evidence.
-
-Agents may diagnose, implement approved scope and propose experiments/model changes. They do not auto-promote models, mutate approved risk, place broker orders or unlock Production/Broker authority.
-
-## Workspace, branch and commit discipline
-
-- Inspect current workspace before Git mutation; preserve unrelated user changes/local configuration.
+- Inspect the workspace, exact HEAD, ancestry, worktrees, and diffs before Git
+  mutation. Preserve unrelated user changes and local configuration.
 - Never implement directly on `main`; use an isolated branch/worktree.
-- Do not reset, clean, stash, force-push, rewrite history or delete branches unless explicitly authorized.
-- Do not merge automatically.
-- Before commit, run `git diff --check`, inspect scope and exclude credentials, generated secrets, personal paths and unrelated files.
-- Never modify, stage, overwrite, stash or commit `.idea/modules.xml`.
+- Do not fetch, pull, switch, reset, clean, stash, force-push, rewrite history,
+  delete branches, merge, or open a PR unless explicitly authorized.
+- Use dependency-coherent checkpoint commits. Before every commit, inspect all
+  staged/unstaged/untracked scope and run `git diff --check`.
+- Exclude credentials, generated secrets, personal paths, build output, and
+  unrelated files.
+- Never modify, stage, overwrite, stash, or commit `.idea/modules.xml`.
 
-## Engineering discipline
+## Validation and reporting
 
-For broad work, continue across the dependency-coherent scope needed to complete one Work Package; do not stop after a ceremonial DTO/class/test. Core capability must enter the real canonical runtime/owner/consumer chain where applicable.
-
-Use production-grade best practices but not maximum complexity. New Authority, Receipt, Evidence, Policy, Repository wrapper, Workflow, Qualification type or compatibility layer requires a concrete unresolved failure mode and real consumer.
-
-Do not introduce broker integration, microservices, infrastructure expansion, complex Portfolio optimization or autonomous-agent trading unless explicitly scoped by current evidence and target architecture.
-
-Stop only for a genuine external blocker that cannot be bypassed safely. A future market window or unavailable Formal Provider evidence blocks only that proof; it does not block engineering/research work that can be completed honestly now.
-
-## Validation
+Repository gate:
 
 ```bash
 uv sync --frozen --extra dev --extra postgres
@@ -119,9 +155,13 @@ python -m build
 git diff --check
 ```
 
-Run focused PostgreSQL migration, idempotency, concurrency, replay and compatibility tests for affected owners. Report each command as `PASS`, `FAIL`, `NOT_RUN` or `BLOCKED`.
+Use a dedicated PostgreSQL test database and run the focused migration,
+bootstrap, constraint, repository, concurrency, idempotency, replay, recovery,
+and architecture tests required by the checkpoint. Never weaken an assertion,
+skip/xfail a failure, or add a compatibility path merely to make a gate green.
 
-Strictly distinguish:
+Report every command as `PASS`, `FAIL`, `BLOCKED`, or `NOT_RUN`, including the
+exact SHA, prerequisites, and failure cause. Keep these evidence levels separate:
 
 ```text
 CODE_IMPLEMENTED
@@ -132,4 +172,10 @@ RESEARCH_QUALIFIED
 PRODUCTION_QUALIFIED
 ```
 
-Never promote fixture/local/engineering evidence into Provider qualification, Formal PIT/OOS Alpha, calibrated probability, prospective proof, trading authority or Production qualification.
+## Repository-local Skill boundary
+
+The only retained project Skill is `.claude/skills/reconcile-branches/SKILL.md`.
+It is invoked only for an explicit branch-reconciliation request and is
+read-only unless the user separately authorizes side effects. Ordinary coding,
+verification, architecture review, and research-evidence rules live here, in
+code/tests, or in the target architecture—not in persistent prompt forks.

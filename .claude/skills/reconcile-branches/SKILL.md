@@ -1,54 +1,67 @@
 ---
 name: reconcile-branches
-description: Audit all remote branches against main, distinguish already-integrated PR branches from true unmerged content, and submit safe merges. Use when the user asks whether all branches are merged or requests branch cleanup/reconciliation.
+description: Classify explicitly named branches against an explicitly named comparison ref and propose safe integration actions. Use only when the user asks for branch integration or reconciliation.
 disable-model-invocation: true
 ---
 
-Audit branch integration conservatively.
+# Reconcile Branches
 
-## Procedure
+This Skill is a bounded, high-risk Git audit procedure. It contains no Market
+Regime Alpha architecture, business, research, or evidence rules; those remain
+in `AGENTS.md`.
 
-1. Fetch all refs:
+## Required input
 
-```bash
-git fetch origin '+refs/heads/*:refs/remotes/origin/*' --prune
-```
+Before any command, resolve and report:
 
-2. Record `origin/main` SHA.
-3. For every remote branch except `main` and `HEAD`, calculate:
-   - branch head SHA;
-   - ahead/behind counts against `origin/main`;
-   - ancestry status;
-   - associated PR and PR merge status;
-   - effective file/content difference against `main`.
-4. Do **not** treat `merge-base --is-ancestor=false` as proof that a branch is unmerged. Squash, rebase or reconstructed merges can integrate content without preserving the branch head as an ancestor.
-5. Classify each branch:
+- repository path;
+- comparison ref and its locally resolved SHA;
+- exact named branch scope;
+- authorization level: `READ_ONLY`, `FETCH_ALLOWED`, `PR_ALLOWED`, or
+  `MERGE_ALLOWED`.
+
+Missing or ambiguous input fails closed. Do not infer authorization from a prior
+task, branch name, UI label, or remote configuration.
+
+## Default procedure
+
+1. Inspect workspace status, worktrees, remotes, local refs, and the comparison
+   SHA without mutation.
+2. Do not fetch unless the current request explicitly grants `FETCH_ALLOWED` or
+   stronger authority.
+3. For each named branch, record head SHA, merge-base, ahead/behind counts,
+   ancestry, effective patch/content difference, and known PR state.
+4. Do not treat non-ancestry as unmerged content: squash, rebase, and recreated
+   commits require patch/content comparison.
+5. Classify exactly one of:
 
 ```text
 INTEGRATED_BY_MERGED_PR
-CONTAINED_IN_MAIN
+CONTAINED_IN_COMPARISON
 UNMERGED_UNIQUE_CONTENT
 SUPERSEDED_OR_OBSOLETE
 CURRENT_WORK_BRANCH
 UNKNOWN_REQUIRES_REVIEW
 ```
 
-6. For `UNMERGED_UNIQUE_CONTENT`:
-   - inspect every unique commit and changed file;
-   - check whether a later branch or PR supersedes it;
-   - run required validation;
-   - open a focused PR to `main`;
-   - merge only after checks pass and the user has authorized merging.
-7. Never merge stale historical branches again merely to make ancestry green.
-8. Never delete remote branches unless explicitly requested.
-9. Return the commit-bound reconciliation report in the task; do not create a new audit-document hierarchy.
+6. Unknown authentication, PR, remote, or content state remains `UNKNOWN`; do
+   not guess.
+7. Side effects require their matching authorization and a fresh preflight.
+   Never force-push, rewrite history, delete a branch, merge, or clean a
+   worktree unless that exact action is explicitly requested.
 
-## Report
+## Output contract
 
-Return a table:
+Return:
 
 ```text
-BRANCH | HEAD | PR | AHEAD/BEHIND | CLASSIFICATION | ACTION | EVIDENCE
+REPOSITORY | COMPARISON_REF | COMPARISON_SHA | AUTHORIZATION
+BRANCH | HEAD | PR | AHEAD/BEHIND | CLASSIFICATION | EVIDENCE | PROPOSED_ACTION
+SIDE_EFFECTS_PERFORMED
+UNRESOLVED_STATE
 ```
 
-Then report submitted/merged PRs, remaining work branches, and any branches requiring manual review.
+The default output is read-only. Do not create a persistent audit-document
+hierarchy. Fixture-repository tests for merge, squash, rebase, supersession, and
+unique-content classification are required before this Skill may automate any
+future mutation.

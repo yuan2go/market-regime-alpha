@@ -1,6 +1,6 @@
 # WP-ALPHA-CORRECTNESS-02 Execution Report
 
-> **Status:** CURRENT_RESEARCH_PROGRAM
+> **Status:** HISTORICAL
 > **Authority:** Exact PostgreSQL and reacquired-physical-owner execution record
 > **Protocol:** [WP-ALPHA-CORRECTNESS-02 Frozen Protocol](../research/protocols/WP-ALPHA-CORRECTNESS-02-Frozen-Protocol.md)
 > **Last Updated:** 2026-08-27

@@ -1,6 +1,6 @@
 # TEMPORAL_VALIDATION_V1 Contamination Audit
 
-> **Status:** CURRENT_RESEARCH_PROGRAM
+> **Status:** HISTORICAL
 > **Classification:** FACT / LIMITATION
 > **Repository Baseline:** `main@091324c7e28a2b6a3b89f894d18afc7380486d13`
 > **Audit Result:** PASS

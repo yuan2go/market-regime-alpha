@@ -1,6 +1,6 @@
 # ADR-012: Phase E3 Longitudinal Historical Evidence Runtime
 
-> **Status:** CURRENT_ARCHITECTURE
+> **Status:** HISTORICAL
 > **Decision:** Effective-dated constituent owners, owner-resolved historical business facts, and bounded incremental research aggregation
 > **Approved By:** Repository owner, 2026-08-13
 > **Base:** `origin/main@796b868c55bc9a3e58e427cbbfbba101a5936606`
