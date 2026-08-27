@@ -3,12 +3,12 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Non-authoritative exact-SHA implementation read model
 > **Owner:** Market Regime Alpha maintainers
-> **Generated At:** 2026-08-27T11:05:01Z
-> **Repository SHA:** `d0d1f3152a20f1a3f4f9b8a1d9c4383a49162fb7`
+> **Generated At:** 2026-08-27T23:32:32Z
+> **Repository SHA:** `15c96c742166a0e07ef42a8202f740e787de31b9`
 > **Business Implementation Parent:** `0382dad416d6d50d1eea0bda1603d7c359d65274`
 > **Schema Epoch:** `LEGACY_MIGRATIONS_001_106`
-> **Generator:** `WP-ARCHITECTURE-REFOUNDATION-02 repository audit v1`
-> **Source Tree IDs:** source `13e8922bb42a0054a2f168eac5ce3ab61f5694ed`; migrations `6d3730548780ad6244d2cfecb4fb3559064b6f06`; tests `7c525ee274be34d9cae7dbe1d76c700d9f21a54c`
+> **Generator:** `WP-ARCHITECTURE-REFOUNDATION-02 repository audit v2`
+> **Source Tree IDs:** source `13e8922bb42a0054a2f168eac5ce3ab61f5694ed`; migrations `6d3730548780ad6244d2cfecb4fb3559064b6f06`; tests `13ec6a9bdf831bfe53df0efd10d7940b9e364550`
 > **Code Evidence:** `src/market_regime_alpha`, `src/market_regime_alpha/persistence/postgres/migrations/*.sql`, `tests`
 
 This snapshot is invalid after any source, migration, test, or composition change
@@ -37,17 +37,23 @@ class/table has similar vocabulary.
 
 ## Exact-SHA verification
 
-The complete command ledger is
+The immutable pre-change command ledger is
 [WP-02 Pre-Refoundation Verification Baseline](../references/WP-ARCHITECTURE-REFOUNDATION-02-Pre-Refoundation-Verification-Baseline.md).
-At this snapshot:
+At this refreshed snapshot:
 
-- dependency sync, documentation checks, 3,034-test full regression, platform
-  tests, focused PostgreSQL migration/schema tests, focused Runtime/replay/
-  recovery/idempotency tests, Ruff, mypy, build, and diff checks pass;
+- dependency sync, documentation checks, the 3,039-test fresh-PostgreSQL full
+  regression, 33 platform tests, 5 branch-reconciliation Git fixtures, Ruff,
+  mypy over 423 source files, build, and diff checks pass;
 - clean explicit schema migration applies 001→106 and verifies 283 tables;
 - the migration operator fails if its configured application schema does not
   already exist, because `search_path` falls through to `pg_catalog`; Foundation
   must replace this implicit precondition with the new epoch bootstrap contract.
+
+One full-suite attempt against a previously reused test database failed while
+an old migration waited on system-catalog autovacuum and reached its lock
+timeout. The exact failing test passed in a separate empty database, and the
+complete 3,039-test suite then passed in a second fresh database. The failure is
+retained as test-infrastructure evidence; no assertion or migration was changed.
 
 This proves the pre-refoundation implementation is reproducible locally. It
 does not prove the target schema/runtime or any Provider, Alpha, broker, or

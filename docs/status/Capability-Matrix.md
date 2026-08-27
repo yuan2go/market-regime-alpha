@@ -3,11 +3,11 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Non-authoritative exact-SHA capability read model
 > **Owner:** Market Regime Alpha maintainers
-> **Generated At:** 2026-08-27T11:05:01Z
-> **Repository SHA:** `d0d1f3152a20f1a3f4f9b8a1d9c4383a49162fb7`
+> **Generated At:** 2026-08-27T23:32:32Z
+> **Repository SHA:** `15c96c742166a0e07ef42a8202f740e787de31b9`
 > **Schema Epoch:** `LEGACY_MIGRATIONS_001_106`
-> **Generator:** `WP-ARCHITECTURE-REFOUNDATION-02 repository audit v1`
-> **Source Tree IDs:** source `13e8922bb42a0054a2f168eac5ce3ab61f5694ed`; migrations `6d3730548780ad6244d2cfecb4fb3559064b6f06`; tests `7c525ee274be34d9cae7dbe1d76c700d9f21a54c`
+> **Generator:** `WP-ARCHITECTURE-REFOUNDATION-02 repository audit v2`
+> **Source Tree IDs:** source `13e8922bb42a0054a2f168eac5ce3ab61f5694ed`; migrations `6d3730548780ad6244d2cfecb4fb3559064b6f06`; tests `13ec6a9bdf831bfe53df0efd10d7940b9e364550`
 > **Code Evidence:** `src/market_regime_alpha`, `src/market_regime_alpha/persistence/postgres/schema.py`, `tests`
 
 This view separates current capability from target convergence. It is invalid
