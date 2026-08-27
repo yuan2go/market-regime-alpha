@@ -2,7 +2,7 @@
 
 > **Status:** CURRENT_STATUS  
 > **Authority:** Current implementation/evidence summary  
-> **Implementation Checkpoint:** `origin/main@1a92ee41b02dd94df9ef4488c59cba55df4674ce`; WP-ALPHA-CORRECTNESS-02 code/evidence revision `8cd79972fa96d397967948d75592f5163613e02a` on `agent/wp-alpha-correctness-02`
+> **Implementation Checkpoint:** `origin/main@9530370339da43bbb45d3a6b734eacbd658eb773` (PR #79); WP-ALPHA-CORRECTNESS-02 code/evidence revision `8cd79972fa96d397967948d75592f5163613e02a`
 > **Strongest Research Evidence Revision:** `8cd79972fa96d397967948d75592f5163613e02a` (WP-ALPHA-CORRECTNESS-02 execution)
 > **Last Updated:** 2026-08-27
 > **Code Evidence:** `src/market_regime_alpha`, `src/market_regime_alpha/persistence/postgres/migrations/*.sql`, `tests`
@@ -114,6 +114,12 @@ target architecture.
   mismatches. This is the authoritative `resume == uninterrupted` and
   `replay == original` proof; different run timestamps and content-addressed
   identities are not falsely required to be byte-identical.
+- A separate read-only replay invocation for recovery run
+  `historical-research-run-0f11ce5b866f42f906f5915d` was manually interrupted
+  with exit 130 before any terminal replay report was returned. It has no
+  terminal report identity, `matched` value or mismatch set, did not mutate
+  owner Evidence, and is explicitly not part of the Proof. The sole
+  authoritative replay remains `historical-replay-018133d5ca19d31cbf253297`.
 - Final Evidence `historical-evidence-fe2b1060e72d59e04bf27295` is
   `INCONCLUSIVE`; proof
   `alpha-correctness-proof:8cedafbaecb12c1137dc6c01f84d731445216370ed47d310d6b80a08056d5f55` is
