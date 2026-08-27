@@ -1,6 +1,6 @@
 # ADR-010: Phase E Historical Alpha Evidence Production
 
-> **Status:** CURRENT_ARCHITECTURE
+> **Status:** HISTORICAL
 > **Decision:** PostgreSQL Authority with a content-addressed immutable Artifact Root
 > **Approved By:** Repository owner, 2026-08-12
 > **Base:** `origin/main@8cd363d6b203df5413d20369f5d48100620c4246`

@@ -1,6 +1,6 @@
 # TEMPORAL_VALIDATION_V1 Frozen Protocol
 
-> **Status:** CURRENT_RESEARCH_PROGRAM
+> **Status:** HISTORICAL
 > **Authority:** Subordinate frozen research protocol
 > **Current Code Checkpoint:** `main@adbc7857e261835eccbe2acf4902910363dae724`; frozen values and owner identities remain unchanged from their original freeze baseline
 > **Frozen By:** explicit user decision on 2026-08-21

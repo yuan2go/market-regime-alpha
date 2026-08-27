@@ -1,6 +1,6 @@
 # System and Runtime Architecture
 
-> **Status:** CURRENT_ARCHITECTURE
+> **Status:** CANONICAL_TARGET_ARCHITECTURE
 > **Authority:** Target Application, Runtime, concurrency, recovery, and interface specification
 > **Owner:** Market Regime Alpha maintainers
 > **Last Updated:** 2026-08-27
@@ -305,6 +305,13 @@ Representative commands:
   `DecideQualification`;
 - `ScheduleRun`, `ClaimStep`, `HeartbeatAttempt`, `ResumeRun`,
   `ResolveExternalEffect`, `VerifyArtifact`.
+
+The command dependency is one-way:
+`FreezeUniverse → AssessEligibility → BuildCandidateSet → AssessContext`.
+Same-run Context cannot mutate or filter the already frozen Universe,
+Eligibility, or Candidate Set. `CreateOpportunity` carries no Risk
+authorization; only `AssessRisk` after `ProposePortfolio` creates a Risk
+Decision.
 
 Representative queries:
 

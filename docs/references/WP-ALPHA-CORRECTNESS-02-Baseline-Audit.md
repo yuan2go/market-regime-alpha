@@ -1,6 +1,6 @@
 # WP-ALPHA-CORRECTNESS-02 Baseline Audit
 
-> **Status:** CURRENT_STATUS
+> **Status:** HISTORICAL
 > **Authority:** Read-only pre-implementation audit checkpoint
 > **Audit Date:** 2026-08-26
 > **Starting Main:** `1a92ee41b02dd94df9ef4488c59cba55df4674ce`

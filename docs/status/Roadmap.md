@@ -1,327 +1,77 @@
-# Roadmap
+# Architecture Re-foundation Implementation Roadmap
 
 > **Status:** ROADMAP
-> **Authority:** Dependency-ordered forward work
-> **Implementation Checkpoint:** `origin/main@9530370339da43bbb45d3a6b734eacbd658eb773` (PR #79); WP-ALPHA-CORRECTNESS-02 code/evidence revision `8cd79972fa96d397967948d75592f5163613e02a`
-> **Strongest Research Evidence Revision:** `8cd79972fa96d397967948d75592f5163613e02a` (WP-ALPHA-CORRECTNESS-02 execution)
-> **Last Updated:** 2026-08-27
-> **Code Evidence:** `docs/status/Current-State.md`, `docs/status/Gap-Register.md`
+> **Authority:** Planning and dependency order only; never business, evidence, or qualification Authority
+> **Owner:** Market Regime Alpha maintainers
+> **Last Updated:** 2026-08-28
+> **Approved Design:** `d0d1f3152a20f1a3f4f9b8a1d9c4383a49162fb7`
+> **Current Implementation Parent:** `0382dad416d6d50d1eea0bda1603d7c359d65274`
+> **Code Evidence:** `docs/architecture/Canonical-Overall-Design.md`, `docs/status/Current-State.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-01-Domain-Invariant-Catalog.md`
 
-The project is in an Alpha Research program, not another platform-completeness
-program. Work advances only through the following dependency order:
+Architecture Re-foundation is the only active engineering program. Historical
+Alpha Proof protocols/results remain evidence provenance, not executable
+Roadmap items. This document includes the unresolved gap register; there is no
+second planning source.
 
-```text
-Alpha Discovery
-→ Alpha Correctness
-→ External Validation
-→ Context Conditional Research
-→ Candidate Policy
-→ Conditional Prediction
-→ Strategy Economics
-→ Formal PIT / Formal OOS
-→ Prospective Proof
-→ Production Qualification
-```
-
-Engineering completion never upgrades an empirical state. The current public
-historical evidence remains `EXPLORATORY / PIT_INCOMPLETE / UNQUALIFIED`.
-
-## Completed foundation
-
-### WP-GOLDEN-LOOP-01 — Golden Alpha Proof Vertical Slice
-
-**Status:** `COMPLETE` for engineering correctness and retrospective canonical
-Evidence. The exact-rational tie-aware V2 loop binds Historical Runtime, Panel,
-Evaluation, Strategy/Portfolio Outcome and immutable Evidence. It found negative
-or `NOT_ESTIMABLE` Strategy results and did not prove Alpha.
-
-### WP-ALPHA-RESEARCH-01 — PIT-aware Factor → Gate → Candidate Discovery
-
-**Status:** `COMPLETE` under the frozen discovery protocol. The 126-session
-in-sample campaign preserved all 70 Feature outputs, evaluated 49 numeric
-Factors, 12 Gate variants and five Candidate policies, and retained complete
-negative/`NOT_ESTIMABLE` evidence.
-
-The Price/Return challenger and three intraday contributors were unusually
-strong exploratory discoveries under that immutable Experiment. The later
-WP-ALPHA-PROOF-02 Experiment reacquired physical data and found the frozen
-higher-is-better challenger significantly adverse and economically negative;
-it is terminal `REJECTED`, not a direction-tuning invitation.
-
-## Completed engineering closure before campaigns
-
-PR #75, now merged into `main`, completed and target-tested the dependency-ready engineering
-work discovered after PR #74:
+## Sequence
 
 ```text
-single-lineage Daily Alpha Evidence admission
-→ typed PRE_STRATEGY_RISK_STATE / STRATEGY_OPPORTUNITY production/reload
-→ truthful Path/Conditional Forecast projection
-→ exact immutable Prediction Snapshot → T+1 Outcome lineage
-→ explicit schema migration/preflight boundary
-→ one Phase-II operator and physical retirement of duplicate Legacy execution planes
+Foundation
+→ Market/PIT
+→ Universe/Eligibility/Candidate
+→ Research/Qualification
+→ Decision/Outcome
+→ Execution/Account
+→ Runtime/CLI Cutover
+→ Legacy deletion/qualification
 ```
 
-This closure reached `ENGINEERING_CLOSED / OWNER_WIRED / RUNTIME_WIRED /
-TARGETED_TESTED` for the named chain. At that historical PR #75 checkpoint,
-full repository pytest and real campaigns were `NOT_RUN`. WP-ALPHA-PROOF-02
-later completed its own full regression and campaign; WP-ALPHA-CORRECTNESS-02
-has now completed a separately identified implementation, regression and
-Discovery-only campaign at its own evidence revision.
+No stage begins canonical writes until its predecessor exit gate passes. Before
+Runtime/CLI Cutover, completed target modules are test-only and the old Runtime
+remains the sole current implementation. There is no dual write or
+availability-selected fallback.
 
-## Correctness engineering and completed repair
+## Checkpoints and exit gates
 
-The five Work Package kernels/contracts and one recoverable operator surface
-are present and focused-tested on the merged baseline. Their empirical
-dependencies remain in the same order. Conditional Strategy owner composition
-is wired but inactive; implementation does not mean the hypothesis passed any
-dependency.
+| Stage | Required scope | Exit gate before next stage |
+|---|---|---|
+| **1. Foundation** | target package boundaries and dependency tests; shared value types; sole `bootstrap.py` composition contract; schema epoch/catalog preflight; unreleased `001_baseline.sql` build contract; stable seeds; cross-cutting schema/migration, command receipt, audit and Artifact metadata foundations | empty PostgreSQL → foundational baseline → seed → verify; retry idempotent; wrong/legacy/unknown epoch fails before DDL; foundational PK/FK/unique/check/index obligations verified; no old migration import |
+| **2. Market/PIT** | Provider/Product, Capture, Instrument, Session, Classification, Market/Instrument/Corporate Action revisions, Source Gap; exact temporal and price-basis semantics; artifact binding | capture → normalize → exact/as-of query passes clean-database, revision, missing/placeholder/suspension, concurrency, artifact-integrity and PIT tests |
+| **3. Universe/Eligibility/Candidate** | Universe revision/member, typed Eligibility policy/rules/assessment/reasons, Candidate policy/components/set/score components | Market-only dependency direction; complete three-state funnel and counts; deterministic ties; Decision-time evidence; empty-set and concurrent idempotency tests |
+| **4. Research/Qualification** | Dataset/Feature/Target/Partition/Experiment/Model/Evaluation/Evidence/Assessment/Qualification aggregates and Artifact lineage | Evidence Class, Assessment Status and proof floors stay independent; negative results immutable; qualification cannot exceed floors; replay/lineage tests pass |
+| **5. Decision/Outcome** | Decision Run, Context, Signal, Forecast, Opportunity, Thesis, Strategy, Portfolio, sole post-Portfolio Risk; Outcome/Metric/Attribution | Candidate → Context direction has no cycle; Opportunity has no Risk authorization; exact Target/Outcome/MFE/MAE availability semantics and post-Portfolio Risk constraints pass |
+| **6. Execution/Account** | Account epoch, Intent, observed Fill/corrections/allocations, broker observations, reconciliation, typed non-trade basis events, derived Position/sleeves | trade delta only from effective Fill; opening/corporate-action/reconciliation invariants; reservation, concurrency, correction, restart and reconciliation tests pass |
+| **7. Runtime/CLI Cutover** | complete and freeze the 91-table baseline; one Run/Step/Attempt/Lease/Fence Runtime; one `mra` CLI tree; target repositories/adapters, inspection/read models, recovery and Artifact integrity operations | baseline checksum/seed/catalog verify all 91 tables; clean DB canonical capture → decision → mutation → query → outcome/evidence; restart/recovery/concurrency/idempotency/replay pass; old Runtime receives no canonical entry or write |
+| **8. Legacy deletion/qualification** | remove old packages, 001–106 migrations, repositories, CLIs, compatibility readers, parallel journals/compositions, legacy tests after invariant replacement; rewrite runbook/status generators | all 98 invariant IDs covered; zero old imports/writers/tables/entry points; full gate clean; destructive cutover rehearsed on an explicitly provisioned database; qualification remains at actual evidence floor |
 
-### P0 — WP-ALPHA-CORRECTNESS-CLOSURE-01 historical baseline
+The target `001_baseline.sql` is an unreleased, reviewable build artifact during
+Stages 1–6. Foundation establishes its epoch/bootstrap and cross-cutting
+relations; each context checkpoint adds only its own frozen semantics and DDL.
+Stage 7 verifies the complete 91-table catalog and makes the baseline checksum
+immutable when the new epoch is released. Later changes use forward-only `002+`
+migrations; no compatibility schema is introduced.
 
-**Engineering status:** `IMPLEMENTED / OWNER_WIRED / TARGETED_TESTED`.
+## Dependency-owned unresolved gaps
 
-**Research status:** superseded as a current status statement. Its original
-campaign was `NOT_RUN`; WP-ALPHA-PROOF-02 later reacquired a new immutable
-physical corpus, ran the proof and ended `CORRECTNESS_FAILED`.
+| Gap | Owning stage | Required resolution |
+|---|---|---|
+| Current migration operator falls through to `pg_catalog` when the configured schema is absent | Foundation | epoch bootstrap must create/verify the exact schema or fail with a typed pre-DDL error; never rely on `search_path` fallback |
+| Current live database business-row inventory was unavailable to the design audit role | Foundation / Cutover | use a newly provisioned empty target database; any old-database destruction requires separate exact-OID authorization |
+| Provider availability/finality semantics may be absent | Market/PIT | store `UNKNOWN`/Exploratory and block historical visibility inflation; adapter qualification is purpose-scoped |
+| Corporate-action and broker account semantics vary | Market/PIT / Execution | adapter-specific fixtures and qualification; no inference from adjusted prices or unexplained broker deltas |
+| Target physical indexes are not plan-validated | each persistence stage | representative query plans and measured indexes before stage exit |
+| Artifact volume/retention is unmeasured | Foundation / Runtime | no partitioning by aesthetics; measure write volume, vacuum/retention and dominant plans |
+| Unknown external broker effects lack an operator workflow | Execution / Runtime | remain reconciliation-required; no broker adapter or blind retry before workflow proof |
+| Formal PIT/OOS, sustained Prospective value, Production, and broker evidence are absent | Qualification | remain blocked/unsupported; engineering cutover cannot promote them |
 
-**Goal:** determine whether the intraday discovery survives independent source
-bar/target reproduction, temporal checks, placebo controls, execution-reference
-separation, redundancy diagnostics and dependence-aware inference.
+## Entry decision for implementation
 
-**Delivered engineering:**
+Foundation is dependency-ready when the Repository Governance checkpoint is
+committed with its full validation green. Market/PIT becomes dependency-ready
+only after the Foundation exit gate passes. Technical readiness does not itself
+authorize implementation; the next work package must explicitly grant the
+corresponding business/schema implementation scope.
 
-- support for a distinct `REACQUIRED_EQUIVALENT_SOURCE` owner when original
-  physical bytes cannot be reopened;
-- Raw provider record → independent parser/normalizer → canonical Normalized
-  owner comparison without production transformation reuse;
-- canonical persisted value versus independently recomputed value by
-  session/symbol/factor, including source bars, event interval, DecisionTime,
-  lineage and discrepancy;
-- independent T+1 10:30 Decision reference/target reconstruction;
-- explicit `PHYSICAL_REPRODUCTION_NOT_ESTABLISHED` when physical bytes cannot
-  be reopened;
-- frozen deterministic symbol/target permutations, target shift, factor lag and
-  random ranking;
-- Information Cutoff, Decision Reference, Executable Entry Proxy and Target
-  Reference as distinct semantics;
-- pairwise/rank/leave-one-out/incremental/residual factor diagnostics;
-- moving-block bootstrap, block-length sensitivity, confidence interval,
-  temporal stability and multiple-testing adjustment through Research
-  Validation;
-- universal integrity separated from factor-specific availability.
-
-**Evidence ceiling:** correctness state only; never `ALPHA_PROVEN`.
-
-### Completed — WP-ALPHA-CORRECTNESS-02
-
-**Current status:** `EXECUTED / INCONCLUSIVE / PARTIALLY_REPRODUCED / NO-GO`.
-
-**Goal:** repair the Target semantic mismatch without changing the immutable
-predecessor Experiment or its negative conclusion. Decision reference, observed
-Outcome window and every derived metric have independent status. Exact 14:55
-Decision prices accept only a valid same-session Raw five-minute bar; Daily and
-latest-bar fallbacks are diagnostic lineage only.
-
-**Delivered closure:**
-
-- persist all eight predecessor failures with stable canonical identity, full
-  source IDs/hashes, revisions, SHA and owner lineage;
-- introduce a new content-addressed Target semantic/protocol revision and new
-  Experiment identity while retaining exact v1/v2 owner reload/replay;
-- converge materializer, independent checker, report and replay on the frozen
-  semantics while preserving independent source selection;
-- focused PostgreSQL, migration, concurrency/recovery, compatibility and
-  complete repository validation pass at the reported revision;
-- the unchanged 126-session Discovery population executed under a new
-  Experiment/run identity while External and Locked OOS Outcomes remained
-  unread;
-- equivalent-source normalization and every typed Target state reproduced;
-  37,722 Features were supported and 78 partial, all 113,166 independent ranks
-  matched, and no Feature or Target discrepancy was found;
-- the unchanged higher-is-better Factors remained adverse, target-shift
-  controls dominated and redundancy was partial. The independent decision is
-  `NO-GO`; no direction, sample, threshold or tolerance was tuned.
-
-**Evidence ceiling:** Discovery correctness and economics only. The actual
-result is `INCONCLUSIVE`, not `CORRECTNESS_SUPPORTED`, so External is not
-admitted.
-
-### P0 — Frozen Temporal External Validation Execution
-
-**Engineering status:** `IMPLEMENTED / OWNER_PERSISTED / TARGETED_TESTED`.
-The content owner
-is the existing canonical `ResearchExperimentDefinition`, not a parallel
-Experiment authority.
-
-**Dependency:** only a future separately frozen Discovery survivor with
-`CORRECTNESS_SUPPORTED` and an explicit independent `GO` may be considered for
-a separately reviewed External Experiment. WP-ALPHA-CORRECTNESS-02 did not meet
-that dependency.
-
-**Goal:** provide content-addressed, single-dimension Temporal, Universe or
-Provider external-validation Experiments without rescanning factors or retuning
-the frozen discovery question.
-
-**Required outputs:** coverage, RankIC and confidence interval, positive-IC
-ratio, ICIR, bucket monotonicity, Top-K gross/cost/net, turnover, drawdown,
-temporal stability, capacity and discovery-effect retention/degradation.
-
-**Current execution state:** `TEMPORAL_VALIDATION_V1` is frozen before result
-access: start `2025-07-15`, exactly 126 sessions generated by the canonical
-A-share Calendar owner, with one additional session required for the final T+1
-Target. Contamination audit is `PASS`; migration 093 persists the exact session
-identities, Calendar/window hashes and final Target session. It was not admitted
-for the now-terminal predecessor Experiment and must not be reopened. Any future
-External execution requires a new separately frozen identity after an explicit
-`GO`; no Outcome evaluation ran.
-
-### P1 — WP-ALPHA-CONTEXT-01
-
-**Engineering status:** `IMPLEMENTED / WIRED / UNIT_TESTED`.
-
-**Goal:** test whether Context changes a correctness/external-supported Alpha,
-without giving Context automatic stock-level hard-Gate authority.
-
-Session-level Context supports across-session conditional behavior only.
-Cross-sectional Context supports within-session interaction only when symbol
-values genuinely differ. Market Regime and the current Global Theme projection
-are session-level in the WP-01 dataset. Capital is a public proxy and has no
-hidden-intent interpretation.
-
-Research interpretations are `AMPLIFIER`, `SUPPRESSOR`, `NEUTRAL`, `UNSTABLE`
-or `NOT_ESTIMABLE`; they grant no trading authority.
-
-### P1 — WP-CANDIDATE-POLICY-02
-
-**Engineering status:** `IMPLEMENTED / WIRED / UNIT_TESTED`. Incumbent remains
-unchanged and the real Challenger is inactive.
-
-**Dependency:** Challenger activation requires supported Correctness and External
-Validation evidence. Implementation and synthetic tests do not activate it.
-
-**Goal:** preserve explicit `INCUMBENT` and `CHALLENGER` policies while separating:
-
-```text
-Universal Hard Integrity
-→ validated Alpha Ranking
-→ evidence-supported Context Conditioning
-```
-
-Every Candidate explains eligibility, hard failures, factor values and
-contributions, Context adjustment, final rank and selection status. Incumbent
-and Challenger comparison uses one frozen dataset and never retunes from the
-External Validation result.
-
-### P2 — WP-PREDICTION-01
-
-**Engineering status:** `ENGINEERING_CLOSED / OWNER_WIRED /
-RUNTIME_WIRED / TARGETED_TESTED`.
-
-**Dependency:** engineering can be wired now; a real Challenger remains dormant
-until upstream evidence survives.
-
-**Goal:** make Candidate → Signal → Forecast → Strategy an explicit
-contract. Forecast-required Strategies fail closed without exact Candidate,
-Signal, Forecast, Context, Risk, DecisionTime and Model/version lineage.
-Incumbent V1 Strategies retain their existing payload identity and have
-`FORECAST_NOT_REQUIRED` runtime semantics; any new non-conditional V2 contract
-must declare that value explicitly.
-
-The existing empirical historical path Forecast remains the baseline. The
-existing deterministic regularized-linear primitives may provide a simple
-conditional challenger with minimum-sample, frozen split/search/randomness,
-uncertainty, comparison and calibration-boundary semantics. Raw logits are not
-probabilities.
-
-Runtime now requires typed owner-authority reload for every Forecast-required
-opportunity. The shared producer derives and records Migration-094 Risk and
-Opportunity facts from existing account, Position/exposure, Risk-limit,
-liquidity, restriction and available-quantity owners in both Continuous and
-Historical paths. Generic JSON traversal is not used for typed
-Signal/Forecast/Context/Model authority. The complete-account RiskDecision
-remains forbidden because it is post-Portfolio and circular. The conditional
-family stays Research/Shadow inactive because its evidence gates have not run.
-
-**Maximum current state:** `ENGINEERING_CLOSED / EVIDENCE_INACTIVE`.
-
-## Active evidence-dependent work
-
-### New Alpha Discovery hypothesis — correctness-driven reset
-
-WP-ALPHA-CORRECTNESS-02 is complete and remains immutable. Its corrected Target
-semantics did not rescue the frozen higher-is-better hypothesis: all three real
-Factors remain adverse, the target-shift controls dominate, 78 Feature rows are
-partial, the Factors are partially redundant and original-package physical
-reproduction remains unestablished. External therefore stays closed.
-
-Any next empirical work must return to Alpha Discovery with a new Experiment
-identity. It may investigate why target shift is strong and whether a distinct,
-economically motivated factor family exists, but it may not flip the old sign,
-reuse the old identity, inspect External/Locked OOS Outcomes, or optimize the
-closed hypothesis. The completed protocol is
-[`WP-ALPHA-CORRECTNESS-02`](../research/protocols/WP-ALPHA-CORRECTNESS-02-Frozen-Protocol.md);
-its ADR is
-[`ADR-014`](../architecture/decisions/ADR-014-Frozen-Target-Semantics-and-Independent-Correctness.md).
-
-### WP-ALPHA-PROOF-02 — Formal PIT Alpha Evidence Vertical Slice
-
-**Protocol status:** `EXECUTED / REJECTED / BLOCKED_BY_CORRECTNESS`.
-
-This terminal work package reacquired the missing physical package under a new
-identity and executed the frozen correctness proof. It would have admitted the
-already-frozen `TEMPORAL_VALIDATION_V1`, Candidate, Forecast, Strategy economics
-and attribution only if each upstream result were admissible. It froze the
-post-External Locked OOS roster while treating Formal PIT as a hard
-Outcome-access gate. `PIT_INCOMPLETE` must leave
-`LOCKED_OOS_CONSUMED=false` and `LOCKED_OOS_SUPPORTED=NOT_ESTIMABLE`.
-
-Execution completed the reacquisition, 126-session Discovery materialization,
-Discovery Evidence, exact replay and independent correctness. The frozen
-higher-is-better challenger is significantly adverse and economically negative;
-correctness also failed on eight non-reproducible persisted Target sources.
-External admission and every dependent stage therefore stopped fail closed.
-This Experiment is terminal negative evidence, not an active tuning program.
-
-Context, Challenger activation and conditional Strategy economics remain
-downstream of real correctness and External results. No negative or blocked
-result is bypassed to complete the diagram.
-
-### Strategy Economics
-
-Translate a surviving prediction into explicit Entry proxy, fillability,
-A-share restrictions, holding/exit, turnover, cost, liquidity, capacity and
-drawdown. Reference-price RankIC economics remain distinct from executable
-Strategy economics.
-
-### Formal PIT / Formal OOS
-
-Requires qualified Provider facts, Frozen Dataset/Protocol, purge/embargo,
-untouched Locked OOS, disjoint calibration evidence and owner-resolved economic
-floors. Existing mechanics do not supply the missing evidence.
-
-### Prospective Proof
-
-Requires immutable future-time, live-origin trusted-clock cohorts under frozen
-Model/Strategy versions. Historical replay cannot backfill this proof.
-
-### Production Qualification
-
-Remains blocked until independent PIT, OOS, calibration/economics, prospective,
-risk and operational floors pass. Broker integration remains Future/Deferred.
-
-## Guardrails
-
-- no new all-day Runtime, scheduler or backtest plane;
-- no second Feature, Candidate, Outcome, Evidence or qualification Authority;
-- no post-result retuning under an existing Experiment identity;
-- no score-to-probability conversion without calibration;
-- no Candidate recommendation creates a Position;
-- no unit/local fixture result becomes Provider, OOS, prospective, Strategy or
-  Production proof;
-- negative, inconclusive and `NOT_ESTIMABLE` evidence remains immutable;
-- architecture compression is allowed only with consumer inventory and replay
-  safety for directly affected paths.
-
-After every Work Package, update Current State, Capability Matrix, Gap Register
-and this Roadmap from executable evidence rather than intended design.
+No Alpha hypothesis, model optimization, OOS outcome access, Provider
+qualification, broker integration, or destructive database operation belongs to
+Foundation or Market/PIT unless separately approved.

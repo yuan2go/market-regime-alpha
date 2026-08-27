@@ -1,6 +1,6 @@
 # Authority Map
 
-> **Status:** CURRENT_ARCHITECTURE
+> **Status:** CANONICAL_TARGET_ARCHITECTURE
 > **Authority:** Target business-fact ownership and canonical-write specification
 > **Owner:** Market Regime Alpha maintainers
 > **Last Updated:** 2026-08-27
@@ -89,7 +89,7 @@ owner tables through a generic repository or raw SQL.
 | Context assessment | Decision Support | `AssessContext` | `context_assessment`, `context_metric` | typed Regime/ETF/Theme/Capital kind with evidence and Known Time | Signal/Strategy |
 | Signal | Decision Support | `ProduceSignal` | `signal` | immutable setup assertion; no probability claim | Forecast/Opportunity |
 | Forecast | Decision Support | `ProduceForecast` | `forecast`, `forecast_estimate` | bound to Target/checkpoint/model; calibration state explicit | Opportunity/Outcome |
-| Opportunity | Decision Support | `CreateOpportunity` | `opportunity` | exact Candidate/Signal/Forecast/Context/Strategy/Risk-input binding | Thesis/Portfolio |
+| Opportunity | Decision Support | `CreateOpportunity` | `opportunity` | exact Candidate/Signal/Forecast/Context/Strategy input binding; no Risk authorization | Thesis/Portfolio |
 | Thesis/condition | Decision Support | `Create/ReviseThesis` | `thesis`, `thesis_condition` | immutable revision; conditions typed and independently observed | Portfolio, monitoring |
 | Strategy/version | Decision Support | `RegisterStrategyVersion` | `strategy`, `strategy_version` | stable semantics; qualification purpose-scoped | Opportunity/Portfolio |
 | Portfolio policy | Decision Support | `RegisterPortfolioPolicy` | `portfolio_policy` | immutable allocation constraints | proposal |

@@ -1,6 +1,6 @@
 # WP-ALPHA-CORRECTNESS-02 Frozen Protocol
 
-> **Status:** CURRENT_RESEARCH_PROGRAM
+> **Status:** HISTORICAL
 > **Protocol State:** FROZEN_BEFORE_IMPLEMENTATION / EXECUTED_UNCHANGED
 > **Execution State:** `8cd79972fa96d397967948d75592f5163613e02a` / `INCONCLUSIVE / PARTIALLY_REPRODUCED / NO-GO`
 > **Authority:** Pre-result correctness and Discovery-only execution protocol

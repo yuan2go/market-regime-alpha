@@ -1,38 +1,44 @@
 # Market Regime Alpha
 
 > **Status:** CURRENT_STATUS
-> **Authority:** Repository entry point
+> **Authority:** Repository entry point only
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-10
-> **Related Documents:** `docs/README.md`, `docs/status/Current-State.md`, `docs/architecture/System-Architecture.md`
+> **Last Updated:** 2026-08-27
+> **Related Documents:** `docs/README.md`, `docs/architecture/Canonical-Overall-Design.md`, `docs/status/Current-State.md`, `docs/status/Roadmap.md`
 
-Market Regime Alpha is an A-share Alpha Research Operating System and human-in-the-loop trading decision-support platform. It is not an unattended live-trading system.
+Market Regime Alpha is an A-share research operating system and
+human-in-the-loop decision-support platform. It is not unattended live trading.
 
-```text
-Data / Evidence
--> Dataset / Feature
--> Market / ETF / Theme / Capital State
--> Dynamic Pool / Candidate
--> Signal / PathForecast
--> Research Summary / Shadow / Outcome
--> Research and Strategy Validation
--> human decision support
-```
+The repository is in an approved Hard Cutover Architecture Re-foundation:
 
-The implementation is a PostgreSQL-only modular monolith. `continuous-research run-due` is the single canonical all-day Runtime. Actual positions derive only from observed manual fills. Free public data remains exploratory, Production qualification is closed, and no broker writer exists.
+- **Target:** context-first modular monolith, one PostgreSQL Authority, one
+  composition root, one Runtime, and a new `MRA_REFOUNDATION_1` schema epoch.
+- **Current implementation:** the pre-refoundation Python packages, 001–106
+  migrations, 283-table PostgreSQL schema, and existing Continuous Research
+  Runtime.
 
-Start with [Documentation Authority](docs/README.md), then read [System Architecture](docs/architecture/System-Architecture.md), [Authority Map](docs/architecture/Authority-Map.md), [Current State](docs/status/Current-State.md) and the [Runtime Runbook](docs/operations/Runtime-Runbook.md).
+The Target is approved but not implemented. Current code/schema/tests decide
+current behavior until an explicit Runtime/CLI cutover.
 
-## Development
+Start with [Documentation Authority](docs/README.md), then read the
+[Canonical Target Architecture](docs/architecture/Canonical-Overall-Design.md),
+[Current State](docs/status/Current-State.md), and
+[Implementation Roadmap](docs/status/Roadmap.md).
+
+## Development gate
 
 ```bash
 uv sync --frozen --extra dev --extra postgres
-uv run python scripts/check_docs_links.py
-MARKET_REGIME_ALPHA_TEST_DATABASE_URL="$TEST_DATABASE_URL" uv run pytest -q
-uv run ruff check .
-uv run mypy
-uv run python -m build
+python scripts/check_docs_links.py
+python -m pytest -q tests/scripts/test_check_docs_links.py
+python -m pytest -q tests/platform
+MARKET_REGIME_ALPHA_TEST_DATABASE_URL="postgresql://HOST/TEST_DATABASE" python -m pytest -q
+python -m ruff check .
+python -m mypy
+python -m build
 git diff --check
 ```
 
-PostgreSQL 16 is the only persistent authority. Missing or unreachable PostgreSQL fails closed; tests use isolated schemas and never skip core Authority integration.
+Use a dedicated PostgreSQL 16 test database. Missing PostgreSQL fails closed;
+tests use isolated schemas. Local/fixture success does not establish Provider,
+Alpha, broker, trading, or Production qualification.

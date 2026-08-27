@@ -1,9 +1,9 @@
 # Research and Decision Lifecycle
 
-> **Status:** CURRENT_ARCHITECTURE
+> **Status:** CANONICAL_TARGET_ARCHITECTURE
 > **Authority:** Target research, context, decision, outcome, and qualification lifecycle
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-27
+> **Last Updated:** 2026-08-28
 > **Implementation State:** DESIGN_CHECKPOINT_ONLY
 > **Code Evidence:** `src/market_regime_alpha/research`, `src/market_regime_alpha/candidates`, `src/market_regime_alpha/signals`, `src/market_regime_alpha/forecasting`, `src/market_regime_alpha/strategies`, `tests/research`
 
@@ -14,10 +14,10 @@ cannot alter historical inputs, promote its own model, or create a Position.
 
 ```text
 Market Fact
-→ Market / ETF / Theme / Capital Context
 → Universe Revision
 → Eligibility Assessment
 → Candidate
+→ Market / ETF / Theme / Capital Context
 → Signal
 → Target-bound Forecast
 → Opportunity
@@ -109,11 +109,20 @@ Raw scores remain raw. Probability fields are legal only when calibration method
 partition, metric, and qualification floor are satisfied for that exact purpose.
 
 An Opportunity is the Strategy input bundle. It binds Candidate, Signal,
-Forecast requirement/result, all required Context assessments, pre-strategy
-Risk evidence, Decision time, and Strategy Version. If the Strategy declares
+Forecast requirement/result, all required Context assessments, exact
+Decision-time input Evidence, Decision time, and Strategy Version. It contains
+no Risk Decision, risk authorization, accepted quantity, or account-limit
+result. If the Strategy declares
 Forecast required, absent or wrong-target Forecast is fail-closed. If Forecast is
 not required, that fact is explicit in Strategy Version; it is not a legacy
 fallback.
+
+Universe, Eligibility, and Candidate are frozen before same-run Context.
+`AssessContext` may read Market/PIT and the exact frozen Candidate scope, but its
+result cannot alter that Universe revision, Eligibility result, or Candidate
+Set. This one-way dependency prevents a Candidate/Context cycle. Instrument
+tradability belongs to Eligibility; account/Portfolio authorization belongs to
+the sole post-Portfolio Risk Decision.
 
 A Thesis is a falsifiable rationale over one Opportunity. Typed conditions state
 entry, hold, invalidation, reduce, or exit observation requirements. A later
@@ -129,6 +138,10 @@ do not collapse into empty output.
 
 Portfolio combines Opportunities under one policy and emits a complete Proposal
 and lines. It does not read future Outcome or write account state.
+
+Evidence previously labelled “pre-strategy risk” is split into Market/PIT
+facts, Eligibility reasons, Context metrics, or ordinary Evidence. No
+pre-Strategy allow/deny result survives as a Risk Decision.
 
 Risk reloads Proposal, exact account Authority epoch, current Fill-derived
 Position, active Intent reservations, Decision-visible trading restrictions and
@@ -157,8 +170,10 @@ independent; complete source path does not manufacture an unavailable reference
 or MFE/MAE.
 
 The exact T+1 10:30 and 14:55 Raw reference semantics are specified in
-[PostgreSQL, Temporal and Evidence Architecture](Data-and-Evidence-Architecture.md)
-and retained from [ADR-014](decisions/ADR-014-Frozen-Target-Semantics-and-Independent-Correctness.md).
+[PostgreSQL, Temporal and Evidence Architecture](Data-and-Evidence-Architecture.md).
+They incorporate the valid semantics originally established by historical
+[ADR-014](decisions/ADR-014-Frozen-Target-Semantics-and-Independent-Correctness.md)
+without retaining its compatibility implementation policy.
 
 ## 7. Attribution
 

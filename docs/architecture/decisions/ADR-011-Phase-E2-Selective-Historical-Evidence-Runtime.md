@@ -1,6 +1,6 @@
 # ADR-011: Phase E2 Selective Historical Evidence Runtime
 
-> **Status:** CURRENT_ARCHITECTURE
+> **Status:** HISTORICAL
 > **Decision:** Selective immutable Parquet reads plus effective-dated constituent ownership
 > **Approved By:** Repository owner, 2026-08-13
 > **Base:** `origin/main@e586521676b5b26b98285421023334a43a019ebd`

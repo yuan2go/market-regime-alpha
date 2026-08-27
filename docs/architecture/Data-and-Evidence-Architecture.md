@@ -1,6 +1,6 @@
 # PostgreSQL, Temporal and Evidence Architecture
 
-> **Status:** CURRENT_ARCHITECTURE
+> **Status:** CANONICAL_TARGET_ARCHITECTURE
 > **Authority:** Target logical schema, PIT, evidence, artifact, and cutover specification
 > **Owner:** Market Regime Alpha maintainers
 > **Last Updated:** 2026-08-27
@@ -125,7 +125,7 @@ The physical DDL does not exist in this checkpoint.
 | `signal` | setup assertion for one Candidate | unique decision run/candidate/signal kind/version |
 | `forecast` | Target/model-bound forecast envelope | unique decision run/candidate/target/model version |
 | `forecast_estimate` | checkpoint/metric estimate and uncertainty | unique forecast/checkpoint/estimate kind; calibration status |
-| `opportunity` | exact decision evidence binding | unique decision run/candidate/strategy version; required FK consistency |
+| `opportunity` | exact decision evidence binding; never Risk authorization | unique decision run/candidate/strategy version; required FK consistency; no `risk_decision` FK |
 | `thesis` | immutable falsifiable thesis revision | opportunity/revision unique; status follows typed lifecycle |
 | `thesis_condition` | entry/hold/invalidation/exit evidence condition | unique thesis/ordinal; typed condition and evidence requirement |
 | `strategy` | stable Strategy family identity | unique code |

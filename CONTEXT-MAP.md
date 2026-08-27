@@ -21,7 +21,7 @@ tests actually run, and reproducible evidence.
 | Candidate | An eligible instrument admitted by a versioned Candidate policy, with exact score components and evidence lineage. | A Signal, Forecast, Entry, or trade recommendation. |
 | Signal | A target-independent setup/state assertion produced from frozen inputs. | A calibrated probability or execution instruction. |
 | Forecast | A Target/Checkpoint-bound estimate with explicit uncertainty and calibration status. | A raw score relabelled as probability. |
-| Opportunity | A Decision-time binding of Candidate, Signal, Forecast, Context, Strategy Version, and pre-strategy Risk evidence. | A Fill or Position. |
+| Opportunity | A Decision-time binding of Candidate, Signal, Forecast, Context, Strategy Version, and exact input Evidence. | A Risk authorization, Fill, or Position. |
 | Thesis | A versioned, falsifiable decision rationale with explicit conditions and invalidation evidence. | Free-form notes that mutate trading state. |
 | Portfolio Proposal | An allocation proposal over Opportunities under a Portfolio Policy. | Account truth, reservation, or Fill. |
 | Risk Decision | A fail-closed authorization or rejection under one Risk Policy and exact account/evidence state. | A Strategy bypass or after-the-fact flag. |
@@ -50,7 +50,7 @@ tests actually run, and reproducible evidence.
                                                  v
 +----------------+     +----------------------+     +----------------------+
 | Market & PIT   | --> | Universe/Eligibility | --> | Decision Support     |
-| facts/calendar |     | scope/candidates     |     | context->risk        |
+| facts/calendar |     | scope/candidates     |     | context/portfolio/risk |
 +-------+--------+     +----------+-----------+     +----------+-----------+
         |                         |                            |
         | immutable evidence      | datasets/candidate facts   | intents
@@ -84,6 +84,11 @@ Python process and one PostgreSQL database. They are not microservices.
 | Execution & Account | account authority epoch, intents, Fills, allocations, broker observations, reconciliation, non-trade basis events | accepted Portfolio/Risk decisions, Market instrument identity | Candidate, Forecast, model promotion |
 | Outcome & Attribution | factual Outcomes, observations, metrics, reasons and diagnostic Attribution | Decisions, Market/PIT, Fill allocations | qualification, Decision mutation or Position truth |
 | Artifact Store | content-addressed immutable bytes | none | business state, lifecycle, latest pointers |
+
+The business dependency direction is
+`Market/PIT → Universe → Eligibility → Candidate → Context → Signal/Forecast → Opportunity → Portfolio → Risk`.
+Context cannot feed back into the same Candidate Set, and Opportunity cannot
+carry a Risk Decision. The sole Risk Authority follows Portfolio.
 
 ## Allowed dependency direction
 

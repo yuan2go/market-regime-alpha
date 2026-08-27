@@ -1,6 +1,6 @@
 # ADR-009: Phase D Final Correctness Closure
 
-> **Status:** CURRENT_ARCHITECTURE
+> **Status:** HISTORICAL
 > **Decision:** Typed Lineage Spine with forward migration 067
 > **Approved By:** Repository owner, 2026-08-12
 > **Base:** `origin/main@383f2430d6879257dae640978a599a1e56f45558`

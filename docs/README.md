@@ -1,136 +1,122 @@
 # Documentation Authority
 
-> **Status:** CURRENT_STATUS  
-> **Authority:** Documentation navigation and precedence only  
-> **Owner:** Market Regime Alpha maintainers  
-> **Last Updated:** 2026-08-27
+> **Status:** CURRENT_STATUS
+> **Authority:** Documentation navigation and precedence only
+> **Owner:** Market Regime Alpha maintainers
+> **Last Updated:** 2026-08-28
 > **Code Evidence:** `src/market_regime_alpha`, `src/market_regime_alpha/persistence/postgres/migrations/*.sql`, `tests`
 
-Documentation never creates implementation truth, research evidence, qualification, or trading authority.
+Documentation never creates implementation truth, research evidence,
+qualification, account state, or trading authority.
+
+## Two truths that must not be collapsed
+
+| Plane | Meaning | Source |
+|---|---|---|
+| Approved Target | The Hard Cutover architecture to be implemented | Canonical Overall Design, supporting target documents, ADR-015 |
+| Current implementation | What the checked-out source, 001–106 migrations, tests, and reproducible evidence actually do | code → PostgreSQL → tests → artifacts |
+
+The approved Target is normative for new implementation. It is not a claim that
+the target packages, `MRA_REFOUNDATION_1`, 91-table baseline, or target Runtime
+currently exists. Until the Runtime/CLI Cutover checkpoint, the existing
+283-table implementation remains the only current implementation.
 
 ## Normative authority order
 
 1. latest explicit user decision not superseded;
-2. [Canonical Overall Design](architecture/Canonical-Overall-Design.md);
-3. supporting current architecture documents listed below;
-4. current status, Gap Register and Roadmap;
-5. accepted ADRs and evidence/reference reports as subordinate provenance;
+2. [Canonical Overall Design](architecture/Canonical-Overall-Design.md) and
+   [ADR-015](architecture/decisions/ADR-015-Hard-Cutover-and-Schema-Epoch.md);
+3. supporting Target documents below;
+4. the planning-only [Implementation Roadmap](status/Roadmap.md);
+5. historical ADRs, frozen protocols, and evidence reports as provenance;
 6. Git history for historical context only.
 
-The **single normative target-design source** is the Canonical Overall Design. Supporting architecture documents refine it but may not contradict it:
+## Implementation fact authority order
+
+1. executable code and actual call chains;
+2. PostgreSQL schema, migrations, canonical writers, and readers;
+3. tests and checks actually executed at an exact SHA;
+4. reproducible Runtime, replay, and research artifacts;
+5. non-authoritative status read models.
+
+No status page, Capability view, Roadmap, Evidence Ledger, report, or CLI output
+may write or promote canonical state.
+
+## Approved Target architecture
 
 - [Context Map](../CONTEXT-MAP.md)
+- [Canonical Overall Design](architecture/Canonical-Overall-Design.md)
 - [System and Runtime Architecture](architecture/System-Architecture.md)
 - [Authority Map](architecture/Authority-Map.md)
 - [PostgreSQL, Temporal and Evidence Architecture](architecture/Data-and-Evidence-Architecture.md)
 - [Research and Decision Lifecycle](architecture/Research-Strategy-Lifecycle.md)
-- [Repository Convergence Inventory](architecture/Repository-Convergence-Inventory.md) — package, Legacy, documentation, prompt and Skill dispositions.
-
-If a supporting document conflicts with the Canonical Overall Design, the Canonical Overall Design wins and the supporting document must be corrected.
-
-## Implementation fact authority order
-
-When documentation conflicts with the repository, current implementation truth is established in this order:
-
-1. executable code and the real runtime call chain;
-2. PostgreSQL schema, migrations, canonical writers and readers;
-3. tests and checks actually executed against that code;
-4. reproducible runtime, replay and research evidence;
-5. current status documents.
-
-Target design does not turn an unimplemented or unproven capability into a current fact.
-
-## Architecture Re-foundation design checkpoint
-
-WP-ARCHITECTURE-REFOUNDATION-01 freezes a Hard Cutover target for review. It
-changes documentation only; the current 283-table schema and current Runtime
-remain implementation truth until a separately approved implementation lands.
+- [Repository Convergence Inventory](architecture/Repository-Convergence-Inventory.md)
 
 Checkpoint traceability:
 
-- [Capability Preservation Matrix](references/WP-ARCHITECTURE-REFOUNDATION-01-Capability-Preservation-Matrix.md) — every requested business capability mapped to its target owner, Runtime and persistence;
-- [283 to Target Table Disposition](references/WP-ARCHITECTURE-REFOUNDATION-01-Table-Disposition.md) — complete current owner/writer/reader/meaning and KEEP/MERGE/DERIVE/DELETE ledger;
-- [Domain Invariant Catalog](references/WP-ARCHITECTURE-REFOUNDATION-01-Domain-Invariant-Catalog.md) — 98 invariants and legacy-test deletion gates.
+- [Capability Preservation Matrix](references/WP-ARCHITECTURE-REFOUNDATION-01-Capability-Preservation-Matrix.md)
+- [283 to Target Table Disposition](references/WP-ARCHITECTURE-REFOUNDATION-01-Table-Disposition.md)
+- [Domain Invariant Catalog](references/WP-ARCHITECTURE-REFOUNDATION-01-Domain-Invariant-Catalog.md)
 
-These annexes support design review. They are not a Current State, Evidence
-Ledger, migration, or qualification Authority.
+All documents in this section have Target status. They define the destination,
+not current completion.
 
-## Current state and execution order
+## Current implementation and forward plan
 
-- [Current State](status/Current-State.md) — what the current `main` actually implements and proves.
-- [Capability Matrix](status/Capability-Matrix.md) — capability-by-capability implementation/evidence status.
-- [Gap Register](status/Gap-Register.md) — unresolved engineering, prospective and external-evidence gaps.
-- [Roadmap](status/Roadmap.md) — dependency-ordered work packages driven by current evidence.
-- [Runtime Runbook](operations/Runtime-Runbook.md) — operator procedures for the implemented runtime.
+- [Current State](status/Current-State.md) — exact-SHA, non-authoritative
+  implementation snapshot and invalidation rules.
+- [Capability Matrix](status/Capability-Matrix.md) — compact current-to-Target
+  convergence view; no evidence promotion.
+- [Implementation Roadmap](status/Roadmap.md) — the only active engineering
+  sequence. It includes unresolved gaps; there is no separate Gap Register.
+- [WP-02 Pre-Refoundation Verification Baseline](references/WP-ARCHITECTURE-REFOUNDATION-02-Pre-Refoundation-Verification-Baseline.md)
+  — immutable commands/results at the approved design SHA.
+- [Runtime Runbook](operations/Runtime-Runbook.md) — current 001–106 operator
+  procedures only; it will be rewritten at Runtime/CLI Cutover.
 
-## Research claims
+Current State and Capability Matrix are read models. They must display their
+generation time, repository SHA, schema epoch, source tree IDs, and proof
+ceiling. A later code/schema change invalidates them until regenerated.
 
-- [WP-ALPHA-CORRECTNESS-02 Frozen Protocol](research/protocols/WP-ALPHA-CORRECTNESS-02-Frozen-Protocol.md) froze the approved three-dimensional Target semantics and Discovery-only repair boundary before implementation. The protocol has now been executed without changing the hypothesis; its [Execution Report](references/WP-ALPHA-CORRECTNESS-02-Execution-Report.md) records `INCONCLUSIVE / PARTIALLY_REPRODUCED / NO-GO`, not supported Alpha.
-- [WP-ALPHA-CORRECTNESS-02 Baseline Audit](references/WP-ALPHA-CORRECTNESS-02-Baseline-Audit.md) records the exact starting SHA, environment, PostgreSQL schema, immutable owner availability, code call chain and pre-implementation capability boundary.
-- [WP-ALPHA-PROOF-02 Frozen Vertical Slice Protocol](research/protocols/WP-ALPHA-PROOF-02-Frozen-Vertical-Slice-Protocol.md) is the immutable pre-registered protocol. Its [Execution Report](references/WP-ALPHA-PROOF-02-Execution-Report.md) records the terminal adverse Discovery result, failed correctness gate, unconsumed External/Locked Outcomes and exact owner identities.
-- [Alpha Research Phase II Engineering Protocol](research/protocols/Alpha-Research-Phase-II-Engineering-Protocol.md) is the historical engineering baseline that produced the current kernels and owner wiring. It creates no empirical claim and is superseded as the active execution plan by WP-ALPHA-PROOF-02.
-- [TEMPORAL_VALIDATION_V1 Frozen Protocol](research/protocols/TEMPORAL-VALIDATION-V1-Frozen-Protocol.md) freezes the first owner-derived 126-session temporal partition and every unchanged discovery input before outcome access; its [Contamination Audit](references/TEMPORAL-VALIDATION-V1-Contamination-Audit.md) records why the window is admissible but does not unlock it.
-- [WP-ALPHA-RESEARCH-01 Frozen Discovery Protocol](research/protocols/WP-ALPHA-RESEARCH-01-Frozen-Discovery-Protocol.md) pre-registers the frozen Phase E3 dataset scope, Factor families, Gate/Candidate variants, metrics, multiple-testing policy and discovery evidence ceiling. The persisted Experiment Definition remains the executable owner.
-- [WP-ALPHA-RESEARCH-01 Research Report](references/WP-ALPHA-RESEARCH-01-Research-Report.md) records the final owner-bound Panel, complete pre-registered Factor/Gate/Candidate results, methodology supersession and exploratory evidence ceiling.
-- [Golden Loop V2 Scoring and Research Correctness Contract](research/protocols/Golden-Loop-V2-Scoring-Contract.md) freezes the tie-aware scoring, missingness, boundary-selection, immutable-lineage and canonical-Evidence rules for the first V2 campaign.
-- [Golden Loop V2 Research Correctness Report](references/Golden-Loop-V2-Research-Correctness-Report.md) records the exact campaign, owner lineage, negative results, replay and evidence ceiling.
-- [Negative and Inconclusive Results](research/Negative-and-Inconclusive-Results.md) is the current durable research-claim registry for negative, inconclusive and not-estimable findings.
-- Reports under `docs/references/` are evidence/reference material. They are not normative architecture.
+## Historical research and decisions
 
-## Architecture decisions
+Frozen protocols, negative/inconclusive results, and execution reports under
+`docs/research/` and `docs/references/` are retained only as immutable
+provenance. They are not the current engineering program and do not constrain
+the Hard Cutover to preserve old module/table identities.
 
-ADRs under `docs/architecture/decisions/` record accepted decisions and their historical rationale. They remain useful provenance, but the Canonical Overall Design is the current consolidated design authority.
+ADR-008 through ADR-014 describe superseded implementation eras. The valid
+temporal rules originally established by ADR-014 are restated in the Target
+architecture; its v1/v2 readers and additive-migration policy are historical and
+create no compatibility requirement. ADR-015 owns the new schema epoch and
+destructive-recreate decision.
 
-- [ADR-014: Frozen Target Semantics and Independent Correctness](architecture/decisions/ADR-014-Frozen-Target-Semantics-and-Independent-Correctness.md) records the accepted WP-ALPHA-CORRECTNESS-02 design. It separates Decision reference, Outcome window and derived-metric status while preserving independent source selection.
-- [ADR-015: Hard Cutover and Schema Epoch](architecture/decisions/ADR-015-Hard-Cutover-and-Schema-Epoch.md) records the new epoch, fail-fast bootstrap, explicit destructive recreate boundary and forward-only migration policy.
+## Status vocabulary
 
-## Documentation cleanup policy
+| Status | Meaning |
+|---|---|
+| `CANONICAL_TARGET_ARCHITECTURE` | approved future architecture; implementation may be absent |
+| `CURRENT_ARCHITECTURE` | retained decision that is both implemented and compatible with the Target |
+| `CURRENT_STATUS` | navigation or exact-SHA non-authoritative read model |
+| `ROADMAP` | planning order only |
+| `HISTORICAL` | immutable provenance, not current instruction |
+| `SUPERSEDED` | replaced and retained only for traceability |
 
-The former `docs/constitution/00` through `09` document set has been superseded by the Canonical Overall Design and removed from the active documentation tree. Git history preserves it for provenance. It must not be loaded as a second normative architecture.
-
-Historical audits, completed work packages, superseded roadmaps, temporary plans, delivery reports, designed-only specifications and obsolete static documentation are retained in Git history rather than the default documentation tree. See [Archive Boundary](archive/README.md).
-
-## Required evidence language
-
-Documentation must not collapse these distinct implementation/proof states:
-
-```text
-CODE_IMPLEMENTED
-CANONICAL_WIRED
-TEST_EXECUTED
-RUNTIME_PROVEN
-RESEARCH_QUALIFIED
-PRODUCTION_QUALIFIED
-```
-
-Research evidence must additionally retain its real limits, including where applicable:
-
-```text
-EXPLORATORY
-PIT_INCOMPLETE
-IN_SAMPLE
-SHADOW
-NOT_ESTIMABLE
-UNQUALIFIED
-FORMAL_OOS=false
-CALIBRATED=false
-```
-
-A class, table, protocol, receipt, passing fixture, or engineering qualification never upgrades an empirical claim by itself.
+`CURRENT_ARCHITECTURE` must not label an unimplemented Target document.
 
 ## Start here
 
-For architecture or implementation work, read in this order:
+For architecture or implementation work, read:
 
 1. [Canonical Overall Design](architecture/Canonical-Overall-Design.md)
 2. [System Architecture](architecture/System-Architecture.md)
 3. [Authority Map](architecture/Authority-Map.md)
 4. [Data and Evidence Architecture](architecture/Data-and-Evidence-Architecture.md)
-5. [Research and Strategy Lifecycle](architecture/Research-Strategy-Lifecycle.md)
+5. [Research and Decision Lifecycle](architecture/Research-Strategy-Lifecycle.md)
 6. [Repository Convergence Inventory](architecture/Repository-Convergence-Inventory.md)
 7. [Current State](status/Current-State.md)
-8. [Gap Register](status/Gap-Register.md)
-9. [Roadmap](status/Roadmap.md)
-10. the code, schema, tests and runtime evidence relevant to the work package
+8. [Capability Matrix](status/Capability-Matrix.md)
+9. [Implementation Roadmap](status/Roadmap.md)
+10. affected code, schema, tests, and exact evidence
 
-The design defines where the system should converge. The repository and evidence define what is true today.
+The design says where to converge. Executable evidence says what is true today.

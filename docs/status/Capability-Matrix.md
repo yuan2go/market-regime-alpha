@@ -1,89 +1,50 @@
 # Capability Matrix
 
-> **Status:** CURRENT_STATUS  
-> **Authority:** Current capability/evidence matrix  
-> **Implementation Checkpoint:** `origin/main@9530370339da43bbb45d3a6b734eacbd658eb773` (PR #79); WP-ALPHA-CORRECTNESS-02 code/evidence revision `8cd79972fa96d397967948d75592f5163613e02a`
-> **Strongest Research Evidence Revision:** `8cd79972fa96d397967948d75592f5163613e02a` (WP-ALPHA-CORRECTNESS-02 execution)
-> **Last Updated:** 2026-08-27
+> **Status:** CURRENT_STATUS
+> **Authority:** Non-authoritative exact-SHA capability read model
+> **Owner:** Market Regime Alpha maintainers
+> **Generated At:** 2026-08-27T23:32:32Z
+> **Repository SHA:** `15c96c742166a0e07ef42a8202f740e787de31b9`
+> **Schema Epoch:** `LEGACY_MIGRATIONS_001_106`
+> **Generator:** `WP-ARCHITECTURE-REFOUNDATION-02 repository audit v2`
+> **Source Tree IDs:** source `13e8922bb42a0054a2f168eac5ce3ab61f5694ed`; migrations `6d3730548780ad6244d2cfecb4fb3559064b6f06`; tests `13ec6a9bdf831bfe53df0efd10d7940b9e364550`
 > **Code Evidence:** `src/market_regime_alpha`, `src/market_regime_alpha/persistence/postgres/schema.py`, `tests`
 
-## Status vocabulary
+This view separates current capability from target convergence. It is invalid
+after its source tree changes and cannot promote a capability or research claim.
+The complete preservation contract remains the
+[Capability Preservation Matrix](../references/WP-ARCHITECTURE-REFOUNDATION-01-Capability-Preservation-Matrix.md).
 
-| Status | Meaning |
-|---|---|
-| `PROVEN` | The declared capability/claim has direct applicable runtime or empirical proof at the stated scope. |
-| `IMPLEMENTED_AND_WIRED` | Code exists and is part of the canonical execution path, but the broader business/research claim may remain unproven. |
-| `IMPLEMENTED_NOT_PROVEN` | Code/owner exists, but applicable runtime or empirical proof is insufficient. |
-| `IMPLEMENTED_NOT_WIRED` | Capability exists but is not part of the canonical path. |
-| `ENGINEERING_ONLY` | Correctness/infrastructure mechanics exist; no empirical Alpha/qualification claim follows. |
-| `DESIGN_FROZEN` | An accepted immutable design/protocol exists, but code, canonical wiring, execution and evidence must be assessed separately. |
-| `SCAFFOLDING` | Deliberate incomplete foundation with no claim of completion. |
-| `BLOCKED_BY_EVIDENCE` | Engineering can proceed or is ready, but the required external/prospective/formal evidence does not exist. |
-| `LEGACY` | Retained only for compatibility/replay/migration consumers. |
-| `MISSING` | Required target capability is absent. |
-| `DEFERRED` | Deliberately outside the current Alpha Proof program. |
+| Capability | Current implementation truth | Approved target owner | Target convergence |
+|---|---|---|---|
+| Market | implemented across data/market/PIT/historical owners | Market & PIT | `NOT_STARTED` |
+| Regime | current State System inference | Decision Support Context | `NOT_STARTED` |
+| ETF | current instrument/reference and rotation paths | Market classification + Decision Context | `NOT_STARTED` |
+| Theme | current reference/state/context paths | Market classification + Decision Context | `NOT_STARTED` |
+| Capital | current derived public-proxy state | Decision Context `CAPITAL_PROXY` | `NOT_STARTED` |
+| Universe | current Runtime Scope/free/historical owners | Universe & Eligibility | `NOT_STARTED` |
+| Eligibility | current funnel/orderability rules across paths | Universe & Eligibility | `NOT_STARTED` |
+| Candidate | current Candidate/State/daily/historical artifacts | Universe & Eligibility | `NOT_STARTED` |
+| Signal | current Signal artifacts and consumers | Decision Support | `NOT_STARTED` |
+| Forecast | current path/conditional/model estimates | Decision Support; definitions in Research | `NOT_STARTED` |
+| Opportunity | current Strategy Opportunity and pre-Strategy risk-era persistence | Decision Support, without pre-Strategy Risk authority | `NOT_STARTED` |
+| Thesis | current thesis/health paths | Decision Support | `NOT_STARTED` |
+| Strategy | current registry/runtime/shadow paths | Decision Support | `NOT_STARTED` |
+| Portfolio | current decision/research/shadow portfolios | Decision Support | `NOT_STARTED` |
+| Risk | several current pre/post-strategy and account routes | sole post-Portfolio Decision Support Risk owner | `NOT_STARTED` |
+| Execution | manual Intent/Fill and risk-reduction paths | Execution & Account | `NOT_STARTED` |
+| Position | current Fill-derived projections plus account observations | derived Execution & Account query | `NOT_STARTED` |
+| Outcome | historical/shadow/daily/strategy settlements | Outcome & Attribution | `NOT_STARTED` |
+| Attribution | current performance/evaluation diagnostics | Outcome & Attribution | `NOT_STARTED` |
+| Research | many dataset/experiment/campaign/evaluation owners | Research & Qualification | `NOT_STARTED` |
+| Qualification | current model/PIT/provider/OOS/calibration owners | Research & Qualification | `NOT_STARTED` |
+| Prospective | current freeze/settlement/attestation mechanics; no sustained proof | ordinary Runtime + Decision/Evidence/Outcome | `NOT_STARTED` |
 
-## Current capability map
+`IMPLEMENTED` in the current column never means the target Authority exists.
+`NOT_STARTED` refers only to target convergence, not loss of the current
+capability. Evidence ceilings remain as declared by immutable reports; no row in
+this matrix establishes Formal PIT, Formal OOS Alpha, Prospective value,
+Production, or broker authority.
 
-| Domain | Current state | Canonical runtime/owner state | Evidence state | Target / gap | Priority |
-|---|---|---|---|---|---|
-| WP-ALPHA-PROOF-02 Vertical Slice | `EXECUTED / REJECTED / BLOCKED_BY_CORRECTNESS` | Reacquired immutable Daily+5m corpus, exact Historical run/replay, Discovery Evidence and independent correctness use existing owners; Locked roster remains label-blind | Discovery is adverse and `REJECTED`; correctness has 8 non-reproducible Target sources; `PIT_INCOMPLETE`; External and Locked Outcomes unconsumed | Diagnose correctness failures only under a new frozen revision; do not retune this Experiment | P0 / negative evidence |
-| WP-ALPHA-CORRECTNESS-02 Target closure | `EXECUTED / INCONCLUSIVE / NO-GO` | Migrations 105–106, typed Target v3 semantics and code-revision-aware failure index are wired through the existing Historical operator and PostgreSQL Evidence owner | Reacquired Raw normalization matches 6,548,518/6,548,518; Features 37,722 supported/78 partial with zero discrepancies and 113,166/113,166 ranks matched; Targets 37,800/37,800 independently reproduce their exact typed states. Frozen Factors remain adverse, target-shift controls dominate and redundancy is partial | Preserve immutable result; return to a separately frozen Discovery hypothesis. Do not enter External | COMPLETE / negative-inconclusive evidence |
-| Market Data / Source Evidence | `IMPLEMENTED_AND_WIRED` | Public-provider evidence, source freeze and historical corpus are canonical inputs | Real historical public data exists; source qualification absent | Improve coverage/quality where Alpha Proof exposes need | P0/P2 |
-| Trading Calendar / Security Lifecycle | `IMPLEMENTED_AND_WIRED` | Canonical historical/effective-dated owners exist | Exploratory historical evidence; Formal PIT incomplete | Complete qualified facts for formal claims | P2 |
-| Formal PIT | `ENGINEERING_ONLY` | PIT owners/qualification/as-of mechanics exist | Current free Provider scopes do not establish qualified Formal PIT | Qualified Provider/fact evidence | P2 / external |
-| Tradable Universe / Runtime Scope | `IMPLEMENTED_AND_WIRED` | Frozen scope and eligibility flow exist | Historical exploratory scope proven operationally | Improve decision-time coverage and gate diagnostics | P0 |
-| Dataset Manifest / Historical Corpus | `IMPLEMENTED_AND_WIRED / PHYSICALLY_VERIFIED` | PostgreSQL identity/lineage + immutable staged artifact packages with selective reads | New Raw/Normalized owners contain 6,548,518 observations; all 1,408 files verify and exact replay succeeds; provider PIT remains incomplete | Preserve the immutable corpus; replace provider limitations only through qualified source evidence | COMPLETE / P2 external |
-| Feature Materialization | `IMPLEMENTED_AND_WIRED` | Canonical Feature owners are consumed downstream | Engineering/replay evidence | Establish transparent Alpha baseline and coverage diagnostics | P0 |
-| Factor Catalog / Extraction | `IMPLEMENTED_AND_WIRED` | Panel v2 projects all 70 canonical outputs; 49 numeric hypotheses use the shared exact-rational tie-aware kernel | The corrected frozen three-factor higher-direction challenger remains adverse in Discovery (RankIC -0.091152, BH-FDR 0.001727) and is not admitted; no direction flip | Preserve negative evidence; any reversed-direction family requires a new Experiment | Closed for this Experiment |
-| Alpha Correctness / Independent Reproduction | `EXECUTED / INCONCLUSIVE / PARTIALLY_REPRODUCED` | Independent physical normalization, Feature values/ranks, typed Target reconstruction, entry proxies, five controls, redundancy and null-centered 2,000-iteration moving-block inference execute through the existing `historical-phase-ii` path | Physical equivalent and all Target states reproduce; 78 Feature rows remain partial; real Factors are significantly adverse and target-shift controls dominate. Original physical package remains unavailable and Formal PIT remains incomplete | Preserve the result and review-invalid predecessor attempts; a new Alpha question requires a new frozen Experiment | COMPLETE / negative-inconclusive evidence |
-| External Validation | `NOT_ADMITTED / NOT_RUN` | Canonical frozen Temporal machinery remains typed and fail-closed | WP-ALPHA-CORRECTNESS-02 ended `INCONCLUSIVE / NO-GO`; no official External or Locked OOS Outcome was consumed; `EXTERNALLY_VALIDATED=false` | Do not execute for this Experiment. Only a separately frozen Discovery survivor with correctness support and an explicit independent `GO` may proceed | Closed for this Experiment |
-| Context Conditional Research | `IMPLEMENTED_NOT_PROVEN` | Typed evaluator enforces session-level across-session conditioning versus genuine cross-sectional interaction and `NOT_ESTIMABLE` | Synthetic/unit proof; Market/Theme are current session selectors and Capital is a public proxy | Run only for a correctness/external-supported Alpha; no trading authority | P1 / evidence |
-| Market Regime | `IMPLEMENTED_AND_WIRED` | State owner + strategy/research consumers | WP-01: 76 pass-all and 50 reject-all sessions, zero within-session mixed populations; hard lift `NOT_ESTIMABLE`, disposition `RETEST` | External/alternative policy test before keeping or retiring as predictive Gate | P1 |
-| ETF Context | `IMPLEMENTED_AND_WIRED` | Context role exists | Historical coverage is a material weakness in longitudinal campaign | Traceable context coverage; ablation | P0/P2 |
-| Theme Context | `IMPLEMENTED_AND_WIRED` | State/context owner exists and Panel preserves its diagnostics | WP-01: 80 pass-all and 46 reject-all sessions, zero within-session mixed populations; disposition `RETEST` | Test valid conditional-policy semantics externally; do not claim entity-level lift | P1 |
-| Capital State / Proxy | `IMPLEMENTED_AND_WIRED` | Derived state exists and public-proxy limitation is explicit | WP-01 rejects all 126 sessions; hard/soft predictive effect `NOT_ESTIMABLE`, disposition `RETEST` | Preserve Fact vs Proxy distinction; acquire valid observations before retest | P1/P2 |
-| StateSeries / Dynamic Pool | `IMPLEMENTED_AND_WIRED` | Canonical state/pool owners | WP-01 post-integrity population passes 126/126 sessions; effect is integrity-confounded, disposition `RETEST` | Separate predictive membership from integrity before retest | P1 |
-| Candidate Discovery | `IMPLEMENTED_AND_WIRED` | Panel v2 preserves status/rank/score/all reasons and isolated Gate diagnostics | WP-01's immutable Price/Return challenger was exploratory positive; the physical proof and corrected correctness campaign find the separately frozen higher-direction Experiment adverse and `NO-GO` | Preserve all immutable results; start any new hypothesis under a new identity without Signal/Forecast promotion | P0/P1 |
-| Layered Candidate Policy | `IMPLEMENTED_AND_WIRED` | Panel persists distinct Universe/tradability/suspension/data/history/PIT-boundary/liquidity/A-share checks separately from factor availability; service reloads evidence and recomputes both policies on the same frozen Panel/Target owners | Synthetic/unit proof; real Challenger remains dormant until correctness and external validation support it | Execute comparison only on a frozen admissible dataset; never retune from validation | P1 / evidence |
-| Signal | `IMPLEMENTED_AND_WIRED` | Distinct artifact and consumers exist | V2 coverage is 0/37,800 because no Candidate is selected | Prove distinct lift/policy value or merge/simplify | P0/P1 |
-| Path Forecast | `IMPLEMENTED_AND_WIRED` | Research/Shadow path is fail-closed when unestimable | V2 coverage is 0/37,800; `NOT_ESTIMABLE`, not a probability or zero lift | Estimator/sample diagnostics; no probability claim without calibration | P0/P2 |
-| Conditional Prediction / Strategy Input | `IMPLEMENTED_AND_WIRED` | Continuous/Historical adapters share one typed material/Risk/Opportunity producer semantics. Execution requires a fully admitted Evidence root plus exact Signal/Forecast/Context/Model and DecisionTime Account/Reconciliation/Risk facts; Historical PIT-selects the exact pair from the run's frozen per-session references, resolves exact Candidate/Pool owners, and fails closed on unknown liquidity/restriction/theme facts | Focused unit/direct-PostgreSQL/parity tests `PASS`; conditional consumer remains Research/Shadow inactive; raw scores are not probabilities; economics/calibration `NOT_RUN` | Execute only after admissible Candidate/Forecast evidence; preserve inactive registry meanwhile | P0/P1 / evidence |
-| Daily Alpha Prediction | `IMPLEMENTED_AND_WIRED` | Migration 095 snapshot is a terminal Continuous child; one explicit Candidate admission root is owner-reloaded through Discovery→Correctness→External→supported Context→Candidate with Experiment/Dataset/hash checks; exact Path/Conditional Forecast semantics are distinct | Focused gate/authority/runtime tests `PASS`; no positive admission exists, so challenger stays inactive. A unique Conditional owner is projected exactly; missing/ambiguous remains `NOT_AVAILABLE` | Run real campaigns in dependency order; no empirical promotion from projection | P0/P1 / evidence |
-| T+1 automatic settlement | `IMPLEMENTED_AND_WIRED` | Migrations 096–097 and `ContinuousOutcomeSettlementService` bind exact snapshot ID/hash, run/tick, Candidate/Signal/Forecast, Strategy diagnostic, adjacent target session and typed Calendar owner to append-only Outcome | Focused missing/ambiguity/idempotency/replay and PostgreSQL stateful tests `PASS`; no multi-day prospective campaign run | Accumulate future-time cohorts without changing the one Continuous control plane | P0 / prospective evidence |
-| Transparent Factor/Gate Baseline | `IMPLEMENTED_NOT_PROVEN` | WP-01 binds full Panel, common multi-K/quintile/stability/economics diagnostics and matched-session Gate contrasts to Golden V2 ranking | WP-01 is exploratory positive; the later physical/correctness hypothesis is adverse and `NO-GO`. All Gates remain unqualified; PIT/OOS/Production floors are false | Start only a separately frozen Discovery question; no External survivor is currently admitted | P0/P1 |
-| Cross-sectional Evaluation | `IMPLEMENTED_AND_WIRED` | One shared tie-aware kernel and canonical Evaluation owner feed Evidence | WP-01 adds 49-factor, 12-Gate, five-policy IC stability, tie-aware quintiles, Top-1/3/5/10, turnover, drawdown and conditional diagnostics; exact replay passes | Preserve contract through external validation | KEEP/P1 |
-| Statistical Validity / Multiple Testing | `IMPLEMENTED_AND_WIRED / EXPLORATORY_EVIDENCE` | BH-FDR is Decimal-stable; correctness uses two-sided null-centered moving-block inference, block lengths 1/5/10, conservative maximum p-value, confidence intervals and temporal stability | Corrected campaign estimates are -0.06364/-0.07221/-0.04870 with intervals below zero and adjusted p-values 0.000750/0.000750/0.003498; this is adverse effect evidence, not positive or economic significance | Preserve inference/economic-meaning separation; no qualified Locked-OOS result exists | KEEP / evidence |
-| Calibration | `BLOCKED_BY_EVIDENCE` | Owner/mechanics exist | `CALIBRATED=false` | Qualified disjoint evidence required | P2 |
-| Strategy Registry / Runtime | `IMPLEMENTED_AND_WIRED` | Active V1 `OVERNIGHT`/`SWING_STATE` retain identity in one bounded runtime; conditional contracts use produced/reloaded typed Opportunity but remain `RESEARCH/SHADOW` and fail closed | Producer/parity engineering tested; conditional economic value unproven and activation evidence absent | Keep inactive until upstream/economic evidence passes; keep one runtime | P0/P1 |
-| Entry / Hold / Add / Reduce / Exit | `IMPLEMENTED_AND_WIRED` | Strategy policy and Shadow/manual paths exist | Engineering evidence; no qualified strategy edge | Strategy economics under realistic execution | P1 |
-| Cross-strategy Portfolio | `IMPLEMENTED_AND_WIRED` | Simple Top-K/budget/exposure logic is canonical | Engineering correctness, not Portfolio Alpha | Keep simple; deepen only from empirical risk need | P1 |
-| Cost / Slippage / Fillability / Capacity | `IMPLEMENTED_NOT_PROVEN` | Strategy/portfolio research carries assumptions/provenance | Existing inputs are not fully empirically calibrated | Empirical inputs and sensitivity before economic qualification | P1/P2 |
-| Manual Execution Intent | `IMPLEMENTED_AND_WIRED` | Accepted Portfolio lines enter one manual ledger | Engineering correctness | Preserve; not a broker-authority project | KEEP |
-| Observed Fill / Physical Position | `IMPLEMENTED_AND_WIRED` | Fill-derived physical truth | Engineering/runtime path exists | Keep single Authority | KEEP |
-| Strategy Sleeve / Fill Allocation | `IMPLEMENTED_AND_WIRED` | Derived from observed effective Fill allocations | Engineering/runtime path exists | Keep for attribution/reconciliation | KEEP |
-| Market Outcome | `IMPLEMENTED_AND_WIRED` | Historical/Shadow outcome owners exist | Real exploratory T+1 outcomes exist | Extend exact Golden Slice outcomes as needed | P0 |
-| Strategy Outcome | `IMPLEMENTED_AND_WIRED` | Simulated/manual fill-derived strategy outcome path exists | V2 canonical path has 126 `NO_ACTION` sessions, so Strategy economics are `NOT_ESTIMABLE` | Gross→cost→net evidence only after a credible ranking/gated action exists | P1 |
-| Multi-horizon Path Outcome | `IMPLEMENTED_NOT_PROVEN` | Kernel and owner exist | Automatic longitudinal production not complete | Materialize windows only when relevant to active Strategy | P1 |
-| Attribution | `IMPLEMENTED_AND_WIRED` | Performance/diagnostic consumers exist | Mostly exploratory/non-causal | Make Data→Cost diagnosis part of Golden Loop | P0/P1 |
-| Research Feedback | `IMPLEMENTED_NOT_PROVEN` | Outcome→feedback/challenger mechanics exist | No mature empirical closed-loop proof | Drive next Experiment without automatic Champion mutation | P1 |
-| Historical Research Runtime | `PROVEN` for engineering scope | Bounded journal reuses canonical business semantics; `historical-phase-ii` is one recoverable application adapter, not a runner | Real prior 126-session resume/replay evidence plus focused Phase-II operator/owner tests | Keep; duplicate `backtesting/**` plane deleted | KEEP |
-| Prospective Shadow | `BLOCKED_BY_EVIDENCE` | Freeze/settle/attestation mechanics exist | Sustained live-origin sample absent | Start/continue immutable prospective clock | P0 / time-dependent |
-| Model Governance | `IMPLEMENTED_AND_WIRED` | PostgreSQL owner/selection exists | Model qualification remains false | Freeze new abstraction; consume real research evidence | KEEP |
-| Strategy Qualification | `BLOCKED_BY_EVIDENCE` | Fail-closed owner path exists | Formal PIT/OOS/economic/prospective floors missing | Evidence-driven qualification only | P2 |
-| Production Admission | `BLOCKED_BY_EVIDENCE` | Persisted blocker/projection exists | Not Production-qualified | Keep blocked until independent floors pass | P3 |
-| Runtime Recovery / Replay | `IMPLEMENTED_AND_WIRED` | Journals, leases/fences and replay boundaries exist | Exact executable-SHA V2 resume/replay proof exists in the isolated migrated Phase E3 database | Maintain and re-prove when modified | KEEP |
-| Observability / Query | `IMPLEMENTED_AND_WIRED` | Runtime/strategy inspection and metrics exist | Engineering evidence | Prioritize business diagnostics over new infrastructure metrics | P0/P1 |
-| RBAC / Approval / Audit | `ENGINEERING_ONLY` | PostgreSQL owners exist | External authentication not bound | No further governance expansion unless needed | P2 |
-| External Authentication | `MISSING` | No trusted external-subject binding | None | Required before operational production permissions depend on identity | P3 / external |
-| Broker Integration | `DEFERRED` | No broker writer/authority | None | Future controlled execution only after Alpha/Strategy proof | P3 |
-
-## Interpretation
-
-The matrix shows a deliberate asymmetry:
-
-- **Engineering platform maturity is high.**
-- **Empirical Alpha/Strategy maturity is low.**
-- **Formal and prospective qualification remains evidence-blocked.**
-
-The next phase is therefore not another infrastructure-completeness program. It is an Alpha Proof campaign that uses the existing platform to discover, reject, simplify and validate quantitative models and strategies.
+Future generation must derive current ownership and target acceptance gates
+read-only. A manually changed label is not a promotion mechanism.

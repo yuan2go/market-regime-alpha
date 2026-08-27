@@ -1,6 +1,6 @@
 # ADR-008: Phase D Research Execution
 
-> **Status:** CURRENT_ARCHITECTURE
+> **Status:** HISTORICAL
 > **Authority:** Accepted architecture decision; not implementation or evidence authority
 > **Owner:** Market Regime Alpha maintainers
 > **Last Updated:** 2026-08-12

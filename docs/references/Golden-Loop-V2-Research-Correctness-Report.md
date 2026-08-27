@@ -1,6 +1,6 @@
 # Golden Loop V2 Research Correctness Report
 
-> **Status:** CURRENT_RESEARCH_PROGRAM
+> **Status:** HISTORICAL
 > **Evidence Date:** 2026-08-20
 > **Starting main:** `6f6e4681e71af49172607a75a05a94358805f63b`
 > **Executable revision:** `bcee87a7d79f1028667a5874b7273a10fdcaacfa`

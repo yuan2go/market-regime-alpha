@@ -1,6 +1,6 @@
 # WP-ALPHA-PROOF-02 Execution Report
 
-> **Status:** CURRENT_RESEARCH_PROGRAM
+> **Status:** HISTORICAL
 > **Authority:** Exact PostgreSQL and physical-owner execution record
 > **Protocol:** [WP-ALPHA-PROOF-02 Frozen Vertical Slice Protocol](../research/protocols/WP-ALPHA-PROOF-02-Frozen-Vertical-Slice-Protocol.md)
 > **Last Updated:** 2026-08-26
