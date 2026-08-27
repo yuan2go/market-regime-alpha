@@ -3,7 +3,7 @@
 > **Status:** CURRENT_ARCHITECTURE
 > **Authority:** Canonical ownership and write map
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-24
+> **Last Updated:** 2026-08-27
 > **Code Evidence:** `src/market_regime_alpha/application/authority_boundary.py`, `src/market_regime_alpha/persistence/repository_factory.py`, `src/market_regime_alpha/persistence/postgres/schema.py`, `src/market_regime_alpha/persistence/postgres/migrations/*.sql`
 
 ## Terms
@@ -30,7 +30,7 @@
 | Pre-Strategy Risk / Opportunity | One `PostgresStrategyOpportunityAuthority` owns immutable owner-derived Risk State and Strategy Opportunity bindings. Continuous/Historical adapters share one producer and typed source resolver; post-Portfolio Complete Account Risk never feeds Strategy. |
 | Multi-Strategy business facts | One `PostgresMultiStrategyRepository` owns stable Strategy registration, cycles/runs/gates/proposals, cross-strategy Portfolio decisions, observed-Fill allocations, Path Outcomes and version-scoped feedback. The existing Strategy Shadow owner resolves state/outcomes from those facts. `StrategyExecutionApplicationService` bridges accepted lines into the existing ManualTrade/Fill owner; it is not another Authority. |
 | Production Admission | A blocked projection only. No final Production Admission Authority exists. |
-| PostgreSQL Authority-schema tables | 276 in `EXPECTED_AUTHORITY_TABLES`; this catalog includes owner state, journals and projections and is not a count of independent business Authorities. |
+| PostgreSQL Authority-schema tables | 283 in `EXPECTED_AUTHORITY_TABLES`; this catalog includes owner state, journals and projections and is not a count of independent business Authorities. |
 
 ## Complete capability ledger
 
@@ -251,7 +251,10 @@ Every entry separates ownership from storage and consumption. A missing writer o
   `PostgresResearchValidationRepository`,
   `PostgresHistoricalCorpusRepository` and
   `PostgresHistoricalMaterializationRepository` through the single Historical
-  Decision materializer. Context changes require a new frozen Experiment.
+  Decision materializer. `HistoricalCorrectnessFailureIndexer` uses
+  `PostgresAlphaCorrectnessFailureRepository` as the subordinate append-only
+  writer for exact predecessor failure provenance; it does not create another
+  materializer or Authority. Context changes require a new frozen Experiment.
 - **PostgreSQL tables:** `free_data_historical_constituent_timeline`,
   `free_data_historical_constituent_timeline_cohort`,
   `free_data_historical_security_fact_set`,
@@ -261,8 +264,14 @@ Every entry separates ownership from storage and consumption. A missing writer o
   `RESEARCH_EXPERIMENT_DEFINITION`),
   `historical_corpus_owner`, `historical_corpus_partition`,
   `historical_corpus_session_component`,
-  `historical_corpus_component_source_binding` and
-  `historical_corpus_outcome_label`.
+  `historical_corpus_component_source_binding`,
+  `historical_corpus_outcome_label`,
+  `alpha_correctness_failure_index`,
+  `alpha_correctness_failure_detail` and
+  `alpha_correctness_failure_source_binding`. The three Alpha Correctness
+  failure tables are immutable failure-provenance projections under this same
+  Historical Evidence Authority; they do not create a separate Feature,
+  Target, runner or Evidence Authority.
 - **Replay mechanism:** exact owner ID/hash and immutable Artifact Root checksum
   reload, exact session-to-cohort mapping, keyset component iteration and
   deterministic projected-label reconstruction.

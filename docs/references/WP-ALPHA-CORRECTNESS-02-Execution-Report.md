@@ -47,7 +47,8 @@ was changed after observing results.
   `trading-calendar-c5b2e78e0cf5c9a405bc307a@sha256:c5b2e78e0cf5c9a405bc307a889e57bdf526e565054d214b40ffec220673c862`.
 - Historical run:
   `historical-research-run-acaa77a9adfe7a07b5ed181d@sha256:acaa77a9adfe7a07b5ed181df59752a0b326a9acad5dce5bbcc189ad8baec5eb`.
-- Independent recovery run:
+- Independent recovery run (completed materialization; its separate
+  nonterminal replay is excluded from Proof below):
   `historical-research-run-0f11ce5b866f42f906f5915d@sha256:0f11ce5b866f42f906f5915dc7cb02b76955f72f636271f960855c667da9f365`.
 - Final correctness Evidence:
   `historical-evidence-fe2b1060e72d59e04bf27295@sha256:fe2b1060e72d59e04bf2729599cad2537301458928c1d3d42cec33e9b1effb71`.
@@ -268,12 +269,23 @@ authoritative result. Final correctness and companion Evidence typed reloads
 verify all six content hashes, classifications and exact run, Experiment and
 source projections.
 
+A second, separate read-only replay invocation for recovery run
+`historical-research-run-0f11ce5b866f42f906f5915d` was manually interrupted
+at an operator checkpoint with exit 130 before it returned a terminal
+`HistoricalReplayReport`. It therefore has no terminal report identity,
+`matched` value or mismatch set and is expressly excluded from Proof and
+Evidence. The invocation did not mutate the immutable run or Evidence owners.
+The completed recovery run establishes staged resume-to-completion; only
+`historical-replay-018133d5ca19d31cbf253297` establishes the authoritative
+replay equality above.
+
 Packaged migration head is 106, `alpha_correctness_failure_revision`. Fresh
 001→106, 097→106 upgrade, 104→105→106, idempotency, concurrent migration,
 append-only failure-index reload, Historical materialization and schema/runtime
-tests pass against PostgreSQL 16.14. The final validation ledger is:
+tests pass against PostgreSQL 16.14. The local validation ledger at the
+immutable code/Evidence revision is:
 
-| Command / scope | Result |
+| Local command / scope | Local result |
 |---|---|
 | `uv sync --frozen --extra dev --extra postgres` | PASS |
 | docs inventory/links + docs pytest (7 tests) | PASS |
@@ -286,6 +298,11 @@ tests pass against PostgreSQL 16.14. The final validation ledger is:
 | mypy (423 source files) | PASS |
 | wheel and sdist build | PASS |
 | `git diff --check` | PASS |
+
+GitHub CI is a separate evidence plane. At Delivery Closure it is
+`BLOCKED_BY_REPOSITORY_CONFIGURATION / NOT_RUN`: repository Actions permission
+reports `enabled=false`, and merged PR #79 has no check runs. This is not a CI
+PASS and does not upgrade the local or research Evidence level.
 
 Validation retained two environment diagnoses rather than hiding them. One
 invocation used the global pyenv interpreter and loaded the original worktree;

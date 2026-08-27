@@ -2,7 +2,7 @@
 
 > **Status:** ROADMAP
 > **Authority:** Dependency-ordered forward work
-> **Implementation Checkpoint:** `origin/main@1a92ee41b02dd94df9ef4488c59cba55df4674ce`; WP-ALPHA-CORRECTNESS-02 code/evidence revision `8cd79972fa96d397967948d75592f5163613e02a` on `agent/wp-alpha-correctness-02`
+> **Implementation Checkpoint:** `origin/main@9530370339da43bbb45d3a6b734eacbd658eb773` (PR #79); WP-ALPHA-CORRECTNESS-02 code/evidence revision `8cd79972fa96d397967948d75592f5163613e02a`
 > **Strongest Research Evidence Revision:** `8cd79972fa96d397967948d75592f5163613e02a` (WP-ALPHA-CORRECTNESS-02 execution)
 > **Last Updated:** 2026-08-27
 > **Code Evidence:** `docs/status/Current-State.md`, `docs/status/Gap-Register.md`
