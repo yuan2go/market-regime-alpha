@@ -8,10 +8,11 @@
 > **Implementation Line Start:** `6711331a781ccd483e9bbf9924cf6c0f697b0881`
 > **Code Evidence:** target Foundation source and tests; unchanged legacy source, migrations, and regression tests
 
-This record proves only the unpublished Foundation slice. It does not release
-the mutable target baseline, cut over the canonical Runtime, implement a
-business bounded context, or establish Provider, Alpha, broker, Prospective, or
-Production evidence.
+This record proves only the Foundation slice at its exact source checkpoint.
+Foundation has since merged to `main`; that merge does not release the mutable
+target baseline, cut over the canonical Runtime, implement a business bounded
+context, or establish Provider, Alpha, broker, Prospective, or Production
+evidence.
 
 ## Verified draft catalog
 

@@ -61,7 +61,7 @@ The physical DDL does not exist in this checkpoint.
 | Table | Purpose | Lifecycle and key constraints |
 |---|---|---|
 | `provider` | stable source identity | unique code; no credential |
-| `provider_product` | source/fact/time/price-basis contract | unique provider/product/revision; qualification link optional but explicit |
+| `provider_product` | source/fact/time/price-basis contract | unique provider/product/revision; no qualification state; a later Research-owned Qualification Decision may reference this identity |
 | `data_capture` | exact request/response capture metadata | provider product + artifact; DB capture times; request hash; status |
 | `instrument` | stable security/ETF/index identity | unique internal code; exchange/type/lifecycle checks |
 | `instrument_identifier` | effective-dated provider/exchange identifiers | no overlapping scheme/provider value or instrument interval |

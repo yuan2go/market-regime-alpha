@@ -16,12 +16,13 @@ qualification, account state, or trading authority.
 | Approved Target | The Hard Cutover architecture to be implemented | Canonical Overall Design, supporting target documents, ADR-015 |
 | Current implementation | What the checked-out source, legacy 001–106 migrations, draft target baseline, tests, and reproducible evidence actually do | code → PostgreSQL → tests → artifacts |
 
-The approved Target is normative for new implementation. The unpublished
-implementation line now contains the Foundation packages, the draft
-`MRA_REFOUNDATION_1` 13-table substrate, and the Foundation Runtime kernel. It
-does not contain the complete target baseline or any target business context.
-Until Runtime/CLI Cutover, the existing 283-table system remains the only
-canonical business implementation; there is no dual write or target fallback.
+The approved Target is normative for new implementation. Foundation is merged
+to `main`. The current implementation line extends its mutable
+`MRA_REFOUNDATION_1` draft from 13 Foundation relations to 25 relations by
+adding the isolated Market/PIT owner. The target Runtime exercises only a
+test-scoped `CAPTURE -> NORMALIZE_PIT` slice. Until Runtime/CLI Cutover, the
+existing 283-table system remains the only canonical business implementation;
+there is no dual write or target fallback.
 
 ## Normative authority order
 
@@ -74,7 +75,9 @@ not current completion.
 - [WP-02 Pre-Refoundation Verification Baseline](references/WP-ARCHITECTURE-REFOUNDATION-02-Pre-Refoundation-Verification-Baseline.md)
   — immutable commands/results at the approved design SHA.
 - [WP-03 Foundation Verification](references/WP-ARCHITECTURE-REFOUNDATION-03-Foundation-Verification.md)
-  — exact-SHA engineering proof for the unpublished Foundation substrate.
+  — exact-SHA engineering proof for the merged Foundation substrate.
+- [WP-04 Market/PIT Verification](references/WP-ARCHITECTURE-REFOUNDATION-04-Market-PIT-Verification.md)
+  — exact-SHA engineering proof for the test-only Market/PIT draft slice.
 - [Runtime Runbook](operations/Runtime-Runbook.md) — current 001–106 operator
   procedures only; it will be rewritten at Runtime/CLI Cutover.
 
