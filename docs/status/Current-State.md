@@ -3,13 +3,14 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Non-authoritative exact-SHA implementation read model
 > **Owner:** Market Regime Alpha maintainers
-> **Generated At:** 2026-08-27T23:32:32Z
-> **Repository SHA:** `15c96c742166a0e07ef42a8202f740e787de31b9`
-> **Business Implementation Parent:** `0382dad416d6d50d1eea0bda1603d7c359d65274`
-> **Schema Epoch:** `LEGACY_MIGRATIONS_001_106`
-> **Generator:** `WP-ARCHITECTURE-REFOUNDATION-02 repository audit v2`
-> **Source Tree IDs:** source `13e8922bb42a0054a2f168eac5ce3ab61f5694ed`; migrations `6d3730548780ad6244d2cfecb4fb3559064b6f06`; tests `13ec6a9bdf831bfe53df0efd10d7940b9e364550`
-> **Code Evidence:** `src/market_regime_alpha`, `src/market_regime_alpha/persistence/postgres/migrations/*.sql`, `tests`
+> **Generated At:** 2026-08-28T01:47:11Z
+> **Repository SHA:** `eeff49c7a3995ba6d65045be88d4244617301234`
+> **Re-foundation Parent:** `6711331a781ccd483e9bbf9924cf6c0f697b0881`
+> **Legacy Business Implementation Parent:** `0382dad416d6d50d1eea0bda1603d7c359d65274`
+> **Schema Epochs:** canonical business `LEGACY_MIGRATIONS_001_106`; unpublished target draft `MRA_REFOUNDATION_1`
+> **Generator:** `WP-ARCHITECTURE-REFOUNDATION-03 Foundation implementation audit`
+> **Source Tree IDs:** source `416b609041d3da6098d29245378a2c0100eed853`; legacy migrations `6d3730548780ad6244d2cfecb4fb3559064b6f06`; target baseline `6b9c746300457281ddcf9b6a6b4b474c6c55d892`; tests `192e6f9711f627d37fed1da151d83a1934f05689`
+> **Code Evidence:** target and legacy source/migration packages plus `tests`
 
 This snapshot is invalid after any source, migration, test, or composition change
 until regenerated. It can report implementation and validation facts; it cannot
@@ -19,45 +20,72 @@ write business state or promote research/Production qualification.
 
 | Area | Exact current fact at the snapshot SHA |
 |---|---|
-| Package shape | Python 3.12 modular monolith with global technical/domain packages and multiple historical compositions; target context-first packages do not exist |
-| PostgreSQL | PostgreSQL 16-only persistent implementation; 106 packaged incremental migrations and 283 expected Authority tables |
-| Runtime | Continuous Research is the current all-day control plane; Canonical Lifecycle, State, Decision, daily, controlled, historical, shadow, and research paths remain bounded or legacy children with overlapping persistence |
-| CLI | Six installed scripts: `continuous-research`, `state-system`, `decision-system`, `model-governance`, `pit-authority`, `research-shadow` |
+| Package shape | Existing Python 3.12 modular monolith remains intact. Isolated target `shared`, `runtime`, `infrastructure`, `interfaces`, and sole target `bootstrap.py` now exist and have architecture dependency tests |
+| PostgreSQL | Canonical business implementation remains legacy 001–106 with 283 tables. The unpublished target package also has a draft 13-table Foundation baseline and two read-only views under schema `mra` |
+| Runtime | Continuous Research remains the current all-day business control plane. A target Run/Step/Attempt kernel now exists on the unpublished line but has no Market or later business workflow and is not a canonical entry point |
+| CLI | The six legacy scripts remain. Installed `mra` adds explicit target DB bootstrap/verify/recreate and Runtime inspect/recover operations, but is not cut over to business execution |
 | Market/PIT | Public-provider capture, PIT/calendar, historical corpus, revisions, and gaps exist across several packages/tables; no target Market/PIT owner exists |
 | Universe/Candidate | Current Universe, Eligibility, State/Candidate, daily and historical paths are implemented but not converged on the target aggregates |
 | Research | Dataset/experiment/evaluation/evidence/qualification capability exists across campaign- and phase-specific owners; no target unified evidence model exists |
 | Decision/Outcome | Signal, Forecast, Opportunity, Strategy, Portfolio, Risk, Outcome, and Attribution capabilities exist through multiple current paths; target single write paths do not exist |
 | Execution/Account | Human/manual execution only; observed effective Fill drives trade-caused Position. No broker writer or unattended execution authority exists |
-| Target epoch | `MRA_REFOUNDATION_1`, the target 91-table `001_baseline.sql`, target `bootstrap.py`, and target `mra` CLI are not implemented |
+| Target epoch | Foundation slice implemented: `MRA_REFOUNDATION_1`, draft `001_baseline.sql`, checksum seed, catalog verification, `bootstrap.py`, and `mra`. The complete target baseline and all business contexts remain absent |
 | Legacy | `daily_research`, `daily_decision`, `dividend_t`, `legacy/**`, `migration/legacy/**`, old migrations, and compatibility tests remain physically present |
 
-The approved Target Architecture is therefore `DESIGN_APPROVED / CODE_NOT_STARTED`.
-No target bounded context may be reported implemented merely because a current
-class/table has similar vocabulary.
+The approved Target Architecture is therefore
+`FOUNDATION_IMPLEMENTED_ON_UNPUBLISHED_LINE / NOT_CUT_OVER`. Foundation is
+infrastructure and orchestration substrate, not a business bounded context.
+Market/PIT and every later target capability remain `NOT_STARTED`; no current
+class/table with similar vocabulary counts as convergence.
+
+## Foundation implementation truth
+
+The target Foundation owns only:
+
+- epoch, packaged baseline/seed checksums, exact catalog fingerprinting, safe
+  destructive-recreate authorization, and explicit operator DDL;
+- command receipts and audit events;
+- Runtime Schedule/Run/Step/Dependency/Attempt state, database-clock leases,
+  fences, retries, resume/recovery, and application-owned unit-of-work scope;
+- content-addressed local bytes plus relational Artifact metadata,
+  verification, dependency, and two-phase garbage-collection state.
+
+Its 13 relations are `schema_epoch`, `schema_migrations`, `command_receipt`,
+`runtime_schedule`, `runtime_run`, `runtime_step`,
+`runtime_step_dependency`, `runtime_attempt`, `audit_event`, `artifact`,
+`artifact_dependency`, `artifact_verification`, and
+`artifact_gc_candidate`. The two views are `run_trace` and
+`artifact_integrity_status`. The verified draft catalog contains 56 indexes,
+145 constraints, nine functions, and 21 non-internal triggers.
+
+Normal target startup is verify-only and performs no DDL. Draft checksum drift,
+a missing/wrong/legacy epoch, unexpected objects, owner drift, catalog drift,
+or Artifact corruption fails closed. Draft databases are recreated explicitly;
+there is no temporary upgrade migration.
 
 ## Exact-SHA verification
 
 The immutable pre-change command ledger is
 [WP-02 Pre-Refoundation Verification Baseline](../references/WP-ARCHITECTURE-REFOUNDATION-02-Pre-Refoundation-Verification-Baseline.md).
+Foundation results and investigated failed attempts are recorded in
+[WP-03 Foundation Verification](../references/WP-ARCHITECTURE-REFOUNDATION-03-Foundation-Verification.md).
 At this refreshed snapshot:
 
-- dependency sync, documentation checks, the 3,039-test fresh-PostgreSQL full
-  regression, 33 platform tests, 5 branch-reconciliation Git fixtures, Ruff,
-  mypy over 423 source files, build, and diff checks pass;
-- clean explicit schema migration applies 001→106 and verifies 283 tables;
-- the migration operator fails if its configured application schema does not
-  already exist, because `search_path` falls through to `pg_catalog`; Foundation
-  must replace this implicit precondition with the new epoch bootstrap contract.
+- the fresh-PostgreSQL full regression passes with 3,100 tests collected;
+- all 61 target Foundation tests, documentation checks, 33 platform tests,
+  focused legacy replay/recovery/concurrency tests, Ruff, mypy over 451 source
+  files, build, and diff checks pass;
+- the legacy 001→106 bootstrap/schema checks still pass without modification;
+- a clean database proves missing-schema fail-closed, explicit bootstrap,
+  idempotent retry, exact checksum/catalog verification, and guarded recreate.
 
-One full-suite attempt against a previously reused test database failed while
-an old migration waited on system-catalog autovacuum and reached its lock
-timeout. The exact failing test passed in a separate empty database, and the
-complete 3,039-test suite then passed in a second fresh database. The failure is
-retained as test-infrastructure evidence; no assertion or migration was changed.
+Non-final configuration and test-database failures were investigated and are
+retained in the WP-03 ledger. The final results above came from the newly
+recreated isolated database; no assertion or migration was changed.
 
-This proves the pre-refoundation implementation is reproducible locally. It
-does not prove the target schema/runtime or any Provider, Alpha, broker, or
-Production claim.
+This proves the Foundation exit gate at the stated exact SHA. It does not prove
+Market/PIT, any later target context, Provider, Alpha, broker, Production, or
+Runtime/CLI Cutover.
 
 ## Research and production ceiling
 

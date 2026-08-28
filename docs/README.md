@@ -4,7 +4,7 @@
 > **Authority:** Documentation navigation and precedence only
 > **Owner:** Market Regime Alpha maintainers
 > **Last Updated:** 2026-08-28
-> **Code Evidence:** `src/market_regime_alpha`, `src/market_regime_alpha/persistence/postgres/migrations/*.sql`, `tests`
+> **Code Evidence:** `src/market_regime_alpha`, both legacy and target PostgreSQL migration packages, `tests`
 
 Documentation never creates implementation truth, research evidence,
 qualification, account state, or trading authority.
@@ -14,12 +14,14 @@ qualification, account state, or trading authority.
 | Plane | Meaning | Source |
 |---|---|---|
 | Approved Target | The Hard Cutover architecture to be implemented | Canonical Overall Design, supporting target documents, ADR-015 |
-| Current implementation | What the checked-out source, 001–106 migrations, tests, and reproducible evidence actually do | code → PostgreSQL → tests → artifacts |
+| Current implementation | What the checked-out source, legacy 001–106 migrations, draft target baseline, tests, and reproducible evidence actually do | code → PostgreSQL → tests → artifacts |
 
-The approved Target is normative for new implementation. It is not a claim that
-the target packages, `MRA_REFOUNDATION_1`, 91-table baseline, or target Runtime
-currently exists. Until the Runtime/CLI Cutover checkpoint, the existing
-283-table implementation remains the only current implementation.
+The approved Target is normative for new implementation. The unpublished
+implementation line now contains the Foundation packages, the draft
+`MRA_REFOUNDATION_1` 13-table substrate, and the Foundation Runtime kernel. It
+does not contain the complete target baseline or any target business context.
+Until Runtime/CLI Cutover, the existing 283-table system remains the only
+canonical business implementation; there is no dual write or target fallback.
 
 ## Normative authority order
 
@@ -71,6 +73,8 @@ not current completion.
   sequence. It includes unresolved gaps; there is no separate Gap Register.
 - [WP-02 Pre-Refoundation Verification Baseline](references/WP-ARCHITECTURE-REFOUNDATION-02-Pre-Refoundation-Verification-Baseline.md)
   — immutable commands/results at the approved design SHA.
+- [WP-03 Foundation Verification](references/WP-ARCHITECTURE-REFOUNDATION-03-Foundation-Verification.md)
+  — exact-SHA engineering proof for the unpublished Foundation substrate.
 - [Runtime Runbook](operations/Runtime-Runbook.md) — current 001–106 operator
   procedures only; it will be rewritten at Runtime/CLI Cutover.
 
