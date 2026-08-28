@@ -3,12 +3,12 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Non-authoritative exact-SHA capability read model
 > **Owner:** Market Regime Alpha maintainers
-> **Generated At:** 2026-08-28T01:47:11Z
-> **Repository SHA:** `eeff49c7a3995ba6d65045be88d4244617301234`
+> **Generated At:** 2026-08-28T15:24:02Z
+> **Repository SHA:** `aeeabe684d5a775e195ecc593cbd37846bc67497`
 > **Schema Epochs:** canonical business `LEGACY_MIGRATIONS_001_106`; unpublished target draft `MRA_REFOUNDATION_1`
-> **Generator:** `WP-ARCHITECTURE-REFOUNDATION-03 Foundation implementation audit`
-> **Source Tree IDs:** source `416b609041d3da6098d29245378a2c0100eed853`; legacy migrations `6d3730548780ad6244d2cfecb4fb3559064b6f06`; target baseline `6b9c746300457281ddcf9b6a6b4b474c6c55d892`; tests `192e6f9711f627d37fed1da151d83a1934f05689`
-> **Code Evidence:** target and legacy source/migration packages plus `tests`
+> **Generator:** `governance-fix WP-03-equivalent environment audit`
+> **Source Tree IDs:** source `416b609041d3da6098d29245378a2c0100eed853`; legacy migrations `6d3730548780ad6244d2cfecb4fb3559064b6f06`; target baseline `6b9c746300457281ddcf9b6a6b4b474c6c55d892`; tests `c88d128b5483071d5d7e38ca2c5bc9263a6df59e`
+> **Code Evidence:** unchanged target and legacy source/migration packages, repository gate entry points, and `tests`
 
 This view separates current capability from target convergence. It is invalid
 after its source tree changes and cannot promote a capability or research claim.
@@ -19,6 +19,13 @@ Cross-cutting Foundation is `IMPLEMENTED_UNPUBLISHED / EXIT_GATE_PASS`: target
 schema-epoch, Runtime/Provenance, Artifact, transaction, bootstrap, and operator
 interfaces exist. It is not one of the business capabilities below, grants none
 of them target Authority, and creates no dual write.
+
+The governance-fix checkpoint binds repository Python gates to the frozen
+project environment and passes the WP-03-equivalent engineering gate with 3,101
+tests collected on a fresh isolated PostgreSQL 16 database. Source, legacy
+migration, and target baseline tree IDs are unchanged, so Foundation remains
+`EXIT_GATE_PASS`. This refresh changes no capability row and supplies no Market,
+research, Provider, Alpha, broker, Production, or trading evidence.
 
 | Capability | Current implementation truth | Approved target owner | Target convergence |
 |---|---|---|---|

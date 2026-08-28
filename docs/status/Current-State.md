@@ -3,14 +3,14 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Non-authoritative exact-SHA implementation read model
 > **Owner:** Market Regime Alpha maintainers
-> **Generated At:** 2026-08-28T01:47:11Z
-> **Repository SHA:** `eeff49c7a3995ba6d65045be88d4244617301234`
+> **Generated At:** 2026-08-28T15:24:02Z
+> **Repository SHA:** `aeeabe684d5a775e195ecc593cbd37846bc67497`
 > **Re-foundation Parent:** `6711331a781ccd483e9bbf9924cf6c0f697b0881`
 > **Legacy Business Implementation Parent:** `0382dad416d6d50d1eea0bda1603d7c359d65274`
 > **Schema Epochs:** canonical business `LEGACY_MIGRATIONS_001_106`; unpublished target draft `MRA_REFOUNDATION_1`
-> **Generator:** `WP-ARCHITECTURE-REFOUNDATION-03 Foundation implementation audit`
-> **Source Tree IDs:** source `416b609041d3da6098d29245378a2c0100eed853`; legacy migrations `6d3730548780ad6244d2cfecb4fb3559064b6f06`; target baseline `6b9c746300457281ddcf9b6a6b4b474c6c55d892`; tests `192e6f9711f627d37fed1da151d83a1934f05689`
-> **Code Evidence:** target and legacy source/migration packages plus `tests`
+> **Generator:** `governance-fix WP-03-equivalent environment audit`
+> **Source Tree IDs:** source `416b609041d3da6098d29245378a2c0100eed853`; legacy migrations `6d3730548780ad6244d2cfecb4fb3559064b6f06`; target baseline `6b9c746300457281ddcf9b6a6b4b474c6c55d892`; tests `c88d128b5483071d5d7e38ca2c5bc9263a6df59e`
+> **Code Evidence:** unchanged target and legacy source/migration packages, repository gate entry points, and `tests`
 
 This snapshot is invalid after any source, migration, test, or composition change
 until regenerated. It can report implementation and validation facts; it cannot
@@ -71,7 +71,15 @@ Foundation results and investigated failed attempts are recorded in
 [WP-03 Foundation Verification](../references/WP-ARCHITECTURE-REFOUNDATION-03-Foundation-Verification.md).
 At this refreshed snapshot:
 
-- the fresh-PostgreSQL full regression passes with 3,100 tests collected;
+- every Python-based repository gate in `AGENTS.md` and `README.md` executes
+  through `uv run`; a regression test rejects a return to bare `python` in
+  either entry point;
+- the clean, non-activated shell resolves bare `python` to pyenv 3.12.13 while
+  `uv run python` resolves to the worktree `.venv` on Python 3.12.2 with the
+  frozen lock's Ruff 0.16.1, mypy 2.3.0, and pytest 9.1.1;
+- the fresh-PostgreSQL full regression passes with 3,101 tests collected on
+  PostgreSQL 16.14 in a disposable loopback-only cluster and new database OID
+  `515555`;
 - all 61 target Foundation tests, documentation checks, 33 platform tests,
   focused legacy replay/recovery/concurrency tests, Ruff, mypy over 451 source
   files, build, and diff checks pass;
@@ -79,13 +87,20 @@ At this refreshed snapshot:
 - a clean database proves missing-schema fail-closed, explicit bootstrap,
   idempotent retry, exact checksum/catalog verification, and guarded recreate.
 
-Non-final configuration and test-database failures were investigated and are
-retained in the WP-03 ledger. The final results above came from the newly
-recreated isolated database; no assertion or migration was changed.
+One non-final host-database run was stopped at 58% after catalog autovacuum and
+schema teardown exhausted the host lock table while only 637 MiB of disk
+remained. Its exact disposable database was removed. The unchanged command then
+passed at 100% in the isolated cluster with `max_locks_per_transaction=256`, one
+autovacuum worker, and a 4 GiB RAM volume; no assertion, skip, migration, source,
+or test order was changed. GitHub Actions remain disabled, so remote CI is
+`BLOCKED_BY_REPOSITORY_CONFIGURATION / NOT_RUN`, not PASS.
 
-This proves the Foundation exit gate at the stated exact SHA. It does not prove
-Market/PIT, any later target context, Provider, Alpha, broker, Production, or
-Runtime/CLI Cutover.
+The source, legacy-migration, and target-baseline tree IDs remain identical to
+the Foundation checkpoint. The WP-03-equivalent rerun therefore keeps the
+Foundation exit gate at `GO`; it does not require reverting the mainline merge.
+It does not prove Market/PIT, any later target context, Provider, Alpha, broker,
+Production, or Runtime/CLI Cutover, and none of those evidence classes were
+rerun.
 
 ## Research and production ceiling
 
