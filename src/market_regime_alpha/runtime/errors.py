@@ -11,6 +11,14 @@ class CommandInProgressError(ConflictError):
     code = "COMMAND_IN_PROGRESS"
 
 
+class CommandPreviouslyFailedError(ConflictError):
+    code = "COMMAND_PREVIOUSLY_FAILED"
+
+    def __init__(self, error_code: str) -> None:
+        self.error_code = error_code
+        super().__init__(f"command already failed with {error_code}")
+
+
 class StaleFenceError(ConflictError):
     code = "STALE_FENCE"
 
@@ -27,9 +35,15 @@ class ArtifactIntegrityError(ConflictError):
     code = "ARTIFACT_INTEGRITY_FAILED"
 
 
+class ArtifactByteStoreError(RuntimeError):
+    """Physical content-store operation could not establish a safe identity."""
+
+
 __all__ = [
     "CommandInProgressError",
+    "CommandPreviouslyFailedError",
     "ArtifactIntegrityError",
+    "ArtifactByteStoreError",
     "IdempotencyKeyReusedError",
     "RuntimeNotFoundError",
     "RuntimeStateConflictError",

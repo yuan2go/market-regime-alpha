@@ -12,6 +12,25 @@ from typing import Any, Final
 
 import psycopg
 
+from market_regime_alpha.market.domain import (
+    BarTimeframe,
+    CaptureStatus,
+    CorporateActionType,
+    EvidenceScope,
+    GapFactKind,
+    GapKind,
+    GapReasonCode,
+    InstrumentFactKind,
+    InstrumentType,
+    ListingStatus,
+    MarketFactKind,
+    MembershipStatus,
+    PriceBasis,
+    ProviderKind,
+    SecurityStatus,
+    SourceAvailabilityStatus,
+    SpecialTreatmentStatus,
+)
 from market_regime_alpha.shared.errors import MraError
 from market_regime_alpha.shared.hashing import canonical_json_sha256, sha256_bytes
 
@@ -79,28 +98,15 @@ _LEGACY_TABLE_SIGNATURES: Final[frozenset[str]] = frozenset(
 )
 
 _REFERENCE_VOCABULARY: Final[dict[str, tuple[str, ...]]] = {
-    "adjustment_basis": (
-        "RAW_UNADJUSTED",
-        "FORWARD_ADJUSTED",
-        "BACKWARD_ADJUSTED",
-    ),
-    "bar_timeframe": (
-        "MINUTE_1",
-        "MINUTE_5",
-        "MINUTE_15",
-        "MINUTE_30",
-        "MINUTE_60",
-        "DAILY",
-    ),
-    "capture_status": ("CAPTURED", "PROVIDER_FAILURE"),
-    "corporate_action_type": (
-        "CASH_DIVIDEND",
-        "STOCK_DIVIDEND",
-        "SPLIT",
-        "RIGHTS_ISSUE",
-        "MERGER",
-        "DELISTING",
-    ),
+    "provider_kind": tuple(item.value for item in ProviderKind),
+    "instrument_type": tuple(item.value for item in InstrumentType),
+    "market_fact_kind": tuple(item.value for item in MarketFactKind),
+    "instrument_fact_kind": tuple(item.value for item in InstrumentFactKind),
+    "gap_fact_kind": tuple(item.value for item in GapFactKind),
+    "price_basis": tuple(item.value for item in PriceBasis),
+    "bar_timeframe": tuple(item.value for item in BarTimeframe),
+    "capture_status": tuple(item.value for item in CaptureStatus),
+    "corporate_action_type": tuple(item.value for item in CorporateActionType),
     "runtime_step_kind": (
         "CAPTURE",
         "NORMALIZE_PIT",
@@ -130,23 +136,19 @@ _REFERENCE_VOCABULARY: Final[dict[str, tuple[str, ...]]] = {
         "NON_IDEMPOTENT_REMOTE_COMMAND",
         "OBSERVATION_ONLY",
     ),
-    "fact_evidence_scope": (
-        "DECISION_SESSION",
-        "PRIOR_SESSION",
-        "EFFECTIVE_INTERVAL",
+    "fact_evidence_scope": tuple(item.value for item in EvidenceScope),
+    "fact_value_kind": ("STATUS", "DECIMAL"),
+    "membership_status": tuple(item.value for item in MembershipStatus),
+    "security_status": tuple(item.value for item in SecurityStatus),
+    "listing_status": tuple(item.value for item in ListingStatus),
+    "special_treatment_status": tuple(
+        item.value for item in SpecialTreatmentStatus
     ),
-    "fact_value_kind": ("STATUS", "DECIMAL", "TEXT"),
-    "market_authority_ceiling": ("EXPLORATORY_UNQUALIFIED",),
-    "membership_status": ("MEMBER", "NOT_MEMBER"),
-    "security_status": ("ACTIVE", "SUSPENDED", "UNKNOWN"),
-    "source_availability_status": ("UNKNOWN", "PROVIDER_REPORTED"),
-    "source_gap_kind": (
-        "MISSING",
-        "PLACEHOLDER",
-        "PROVIDER_FAILURE",
-        "CONFLICT",
-        "INVALID_OHLC",
+    "source_availability_status": tuple(
+        item.value for item in SourceAvailabilityStatus
     ),
+    "source_gap_kind": tuple(item.value for item in GapKind),
+    "source_gap_reason": tuple(item.value for item in GapReasonCode),
 }
 
 

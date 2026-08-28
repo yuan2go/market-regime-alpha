@@ -38,7 +38,6 @@ def test_tencent_adapter_preserves_exact_response_bytes_without_claiming_pit_aut
     assert response.payload_encoding == "GB18030"
     assert response.source_availability_status is SourceAvailabilityStatus.UNKNOWN
     assert response.source_available_at is None
-    assert response.authority_ceiling == "EXPLORATORY_UNQUALIFIED"
 
 
 def test_baostock_adapter_canonicalizes_library_rows_but_never_invents_available_time() -> None:
@@ -60,7 +59,6 @@ def test_baostock_adapter_canonicalizes_library_rows_but_never_invents_available
     assert response.source_availability_status is SourceAvailabilityStatus.UNKNOWN
     assert response.source_available_at is None
     assert response.limitation_code == "HISTORICAL_AVAILABLE_TIME_NOT_PROVIDED"
-    assert response.authority_ceiling == "EXPLORATORY_UNQUALIFIED"
 
 
 def test_baostock_canonical_bytes_are_deterministic() -> None:

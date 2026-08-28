@@ -110,6 +110,27 @@ def test_runtime_uow_is_not_expanded_into_a_market_mega_uow() -> None:
     assert "def runtime_finalization(" in market_uow
 
 
+def test_market_port_exposes_aggregate_commands_not_table_crud() -> None:
+    port_source = (PACKAGE / "market" / "ports" / "__init__.py").read_text(
+        encoding="utf-8"
+    )
+    application_source = (
+        PACKAGE / "market" / "application" / "__init__.py"
+    ).read_text(encoding="utf-8")
+    table_crud = (
+        "insert_instrument(",
+        "insert_trading_session(",
+        "insert_classification(",
+        "insert_bar_revision(",
+        "insert_instrument_fact_revision(",
+        "insert_corporate_action(",
+        "insert_source_gap(",
+    )
+    assert tuple(token for token in table_crud if token in port_source) == ()
+    assert tuple(token for token in table_crud if token in application_source) == ()
+    assert "def insert_normalization(" in port_source
+
+
 def test_target_sql_is_confined_to_postgres_adapter() -> None:
     violations: list[str] = []
     sql_tokens = ("SELECT ", "INSERT INTO ", "UPDATE mra.", "DELETE FROM ", "DROP SCHEMA")

@@ -11,11 +11,12 @@ from market_regime_alpha.runtime.application.service import (
     ActorType,
     CommandContext,
 )
-from market_regime_alpha.runtime.errors import ArtifactIntegrityError
+from market_regime_alpha.runtime.errors import ArtifactByteStoreError, ArtifactIntegrityError
 from market_regime_alpha.runtime.ports import (
     ArtifactByteStore,
     ArtifactRecord,
     ArtifactVerificationRecord,
+    ByteVerification,
     ReceiptRecord,
     RuntimeUnitOfWork,
     RuntimeUnitOfWorkProvider,
@@ -103,6 +104,15 @@ class ArtifactApplication:
                 retention_until=retention_until,
                 pin_reason_code=pin_reason_code,
             )
+            uow.artifacts.record_verification(
+                verification_id=uuid4(),
+                receipt_id=receipt.receipt_id,
+                artifact=artifact,
+                verifier_id="artifact-publisher",
+                policy="PUBLISH_READ_AFTER_WRITE",
+                verification=verification,
+            )
+            artifact = uow.artifacts.get(artifact.artifact_id)
             result_hash = _artifact_result_hash(artifact)
             uow.receipts.succeed(
                 receipt_id=receipt.receipt_id,
@@ -132,30 +142,46 @@ class ArtifactApplication:
     ) -> ArtifactVerificationRecord:
         if not verifier_id:
             raise ValueError("verifier_id is required")
-        with self._uow_provider() as read_uow:
-            artifact = read_uow.artifacts.get(artifact_id)
-        expected_locator = self._byte_store.canonical_locator(artifact.content_sha256)
-        if artifact.locator != expected_locator:
-            raise ArtifactIntegrityError(
-                "Artifact locator does not match its content-addressed identity"
-            )
-        if artifact.integrity_state in {"QUARANTINED", "DELETED"}:
-            raise ArtifactIntegrityError(
-                f"{artifact.integrity_state} Artifact cannot be verified as available"
-            )
-        byte_result = self._byte_store.verify(
-            artifact.content_sha256,
-            expected_size=artifact.size_bytes,
-        )
         request_hash = canonical_json_sha256(
             {
                 "artifact_id": artifact_id,
-                "content_sha256": artifact.content_sha256,
-                "expected_size": artifact.size_bytes,
                 "verifier_id": verifier_id,
                 "policy": "AUTHORITATIVE_READ",
             }
         )
+        # Exact command replay is resolved before byte I/O. A genuinely new physical
+        # observation must use a new caller-owned idempotency key.
+        with self._uow_provider() as preflight_uow:
+            receipt = preflight_uow.receipts.start(
+                receipt_id=uuid4(),
+                command_kind="VERIFY_ARTIFACT",
+                scope_id=str(artifact_id),
+                idempotency_key=context.idempotency_key,
+                request_hash=request_hash,
+            )
+            if not receipt.is_new:
+                return _verified_observation_or_raise(
+                    preflight_uow.artifacts.verification_for_receipt(
+                        receipt.receipt_id
+                    )
+                )
+            artifact = preflight_uow.artifacts.get(artifact_id)
+            _validate_verifiable_artifact(artifact, self._byte_store)
+
+        verification_exception: ArtifactByteStoreError | None = None
+        try:
+            byte_result = self._byte_store.verify(
+                artifact.content_sha256,
+                expected_size=artifact.size_bytes,
+            )
+        except ArtifactByteStoreError as exc:
+            verification_exception = exc
+            byte_result = ByteVerification(
+                result="INTEGRITY_ERROR",
+                observed_exists=False,
+                observed_size_bytes=None,
+                observed_sha256=None,
+            )
         with self._uow_provider() as uow:
             receipt = uow.receipts.start(
                 receipt_id=uuid4(),
@@ -164,40 +190,43 @@ class ArtifactApplication:
                 idempotency_key=context.idempotency_key,
                 request_hash=request_hash,
             )
-            if receipt.is_new:
-                record = uow.artifacts.record_verification(
-                    verification_id=uuid4(),
-                    receipt_id=receipt.receipt_id,
-                    artifact=artifact,
-                    verifier_id=verifier_id,
-                    policy="AUTHORITATIVE_READ",
-                    verification=byte_result,
+            if not receipt.is_new:
+                return _verified_observation_or_raise(
+                    uow.artifacts.verification_for_receipt(receipt.receipt_id)
                 )
-                result_hash = canonical_json_sha256(record)
-                uow.receipts.succeed(
-                    receipt_id=receipt.receipt_id,
-                    aggregate_kind="ARTIFACT_VERIFICATION",
-                    aggregate_id=str(record.verification_id),
-                    aggregate_version=1,
-                    result_hash=result_hash,
+            current_artifact = uow.artifacts.get(artifact_id)
+            _validate_verifiable_artifact(current_artifact, self._byte_store)
+            if current_artifact != artifact:
+                raise ArtifactIntegrityError(
+                    "Artifact metadata changed during physical verification"
                 )
-                _append_artifact_audit(
-                    uow,
-                    receipt=receipt,
-                    context=context,
-                    aggregate_id=str(artifact_id),
-                    action="VERIFY_ARTIFACT",
-                    before_version=None,
-                    after_version=1,
-                )
-                uow.commit()
-            else:
-                record = uow.artifacts.verification_for_receipt(receipt.receipt_id)
-        if record.result != "VERIFIED":
-            raise ArtifactIntegrityError(
-                f"Artifact {artifact_id} verification result is {record.result}"
+            record = uow.artifacts.record_verification(
+                verification_id=uuid4(),
+                receipt_id=receipt.receipt_id,
+                artifact=current_artifact,
+                verifier_id=verifier_id,
+                policy="AUTHORITATIVE_READ",
+                verification=byte_result,
             )
-        return record
+            result_hash = canonical_json_sha256(record)
+            uow.receipts.succeed(
+                receipt_id=receipt.receipt_id,
+                aggregate_kind="ARTIFACT_VERIFICATION",
+                aggregate_id=str(record.verification_id),
+                aggregate_version=1,
+                result_hash=result_hash,
+            )
+            _append_artifact_audit(
+                uow,
+                receipt=receipt,
+                context=context,
+                aggregate_id=str(artifact_id),
+                action="VERIFY_ARTIFACT",
+                before_version=None,
+                after_version=1,
+            )
+            uow.commit()
+        return _verified_observation_or_raise(record, cause=verification_exception)
 
     def scan_orphans(
         self,
@@ -220,6 +249,26 @@ class ArtifactApplication:
         for content_sha256 in sorted(object_hashes | quarantined_hashes):
             with self._uow_provider() as status_uow:
                 status = status_uow.artifacts.gc_status(content_sha256)
+            if status.state == "DELETED":
+                if content_sha256 in object_hashes:
+                    self._byte_store.quarantine(content_sha256)
+                if self._byte_store.is_quarantined(content_sha256):
+                    self._byte_store.delete_quarantined(content_sha256)
+                with self._uow_provider() as audit_uow:
+                    audit_uow.audit.append(
+                        audit_event_id=uuid4(),
+                        receipt_id=None,
+                        actor_type="SYSTEM",
+                        actor_id=actor_id,
+                        aggregate_kind="ARTIFACT",
+                        aggregate_id=content_sha256,
+                        action="RECONCILE_DELETED_ARTIFACT_BYTES",
+                        reason_code="DELETED_TOMBSTONE_RECONCILIATION",
+                        before_version=None,
+                        after_version=None,
+                    )
+                    audit_uow.commit()
+                continue
             if status.referenced or status.pinned:
                 if status.state == "OBSERVED":
                     self._clear_candidate(
@@ -234,14 +283,15 @@ class ArtifactApplication:
                     raise ArtifactIntegrityError(
                         "quarantined bytes have no PostgreSQL GC candidate"
                     )
-                self._observe_candidate(
+                if self._observe_candidate(
                     content_sha256,
-                    status.artifact_id,
                     scan_id=scan_id,
                     grace=grace,
                     actor_id=actor_id,
-                )
-                observed.append(content_sha256)
+                ):
+                    observed.append(content_sha256)
+                else:
+                    protected.append(content_sha256)
                 continue
             if status.state == "OBSERVED" and status.due:
                 operation_token = uuid4()
@@ -374,12 +424,11 @@ class ArtifactApplication:
     def _observe_candidate(
         self,
         content_sha256: str,
-        artifact_id: UUID | None,
         *,
         scan_id: UUID,
         grace: timedelta,
         actor_id: str,
-    ) -> None:
+    ) -> bool:
         context = _scanner_context(
             f"gc-observe:{scan_id}", actor_id, "ARTIFACT_ORPHAN_FIRST_SEEN"
         )
@@ -395,12 +444,18 @@ class ArtifactApplication:
                 request_hash=request_hash,
             )
             if not receipt.is_new:
-                return
-            uow.artifacts.observe_gc_candidate(
+                status = uow.artifacts.gc_status(content_sha256)
+                return (
+                    not status.referenced
+                    and not status.pinned
+                    and status.state == "OBSERVED"
+                )
+            observed = uow.artifacts.observe_gc_candidate(
                 content_sha256=content_sha256,
-                artifact_id=artifact_id,
                 grace=grace,
             )
+            if not observed:
+                return False
             _finish_gc_command(
                 uow,
                 receipt,
@@ -410,6 +465,7 @@ class ArtifactApplication:
                 action="OBSERVE_ARTIFACT_ORPHAN",
                 version=1,
             )
+            return True
 
     def _begin_quarantine(
         self,
@@ -524,6 +580,37 @@ def _scanner_context(key: str, actor_id: str, reason_code: str) -> CommandContex
         actor_id=actor_id,
         reason_code=reason_code,
     )
+
+
+def _validate_verifiable_artifact(
+    artifact: ArtifactRecord,
+    byte_store: ArtifactByteStore,
+) -> None:
+    expected_locator = byte_store.canonical_locator(artifact.content_sha256)
+    if artifact.locator != expected_locator:
+        raise ArtifactIntegrityError(
+            "Artifact locator does not match its content-addressed identity"
+        )
+    if artifact.integrity_state in {"QUARANTINED", "DELETED"}:
+        raise ArtifactIntegrityError(
+            f"{artifact.integrity_state} Artifact cannot be verified as available"
+        )
+
+
+def _verified_observation_or_raise(
+    record: ArtifactVerificationRecord,
+    *,
+    cause: ArtifactByteStoreError | None = None,
+) -> ArtifactVerificationRecord:
+    if record.result == "VERIFIED":
+        return record
+    error = ArtifactIntegrityError(
+        "ARTIFACT_INTEGRITY_FAILED: "
+        f"Artifact {record.artifact_id} verification result is {record.result}"
+    )
+    if cause is not None:
+        raise error from cause
+    raise error
 
 
 def _finish_gc_command(

@@ -35,19 +35,16 @@ class BaoStockHistoryProvider:
             raise MarketProviderError(
                 "BAOSTOCK_TRANSPORT_FAILED",
                 "BaoStock history query failed",
-                retryable=True,
             ) from exc
         if result.error_code != "0":
             raise MarketProviderError(
                 "BAOSTOCK_PROVIDER_ERROR",
                 f"BaoStock returned error {result.error_code}: {result.error_message}",
-                retryable=True,
             )
         if any(len(row) != len(result.fields) for row in result.rows):
             raise MarketProviderError(
                 "BAOSTOCK_ROW_SHAPE_INVALID",
                 "BaoStock row width does not match its field catalog",
-                retryable=False,
             )
         content = (
             json.dumps(

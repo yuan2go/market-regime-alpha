@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import AbstractContextManager
+from datetime import datetime
 from types import TracebackType
 from typing import Any
 
@@ -17,6 +18,7 @@ from market_regime_alpha.infrastructure.postgres.repositories import (
     PostgresRuntimeRepository,
 )
 from market_regime_alpha.market.ports import MarketUnitOfWork
+from market_regime_alpha.runtime.errors import RuntimeStateConflictError
 from market_regime_alpha.runtime.ports import AttemptClaim
 
 
@@ -25,6 +27,9 @@ class PostgresMarketRuntimeFinalization:
 
     def __init__(self, connection: psycopg.Connection[Any]) -> None:
         self._runtime = PostgresRuntimeRepository(connection)
+
+    def lock_live(self, claim: AttemptClaim) -> None:
+        self._runtime.lock_live_claim(claim)
 
     def succeed(
         self,
@@ -127,6 +132,14 @@ class PostgresMarketUnitOfWork:
         exception: BaseException | None,
         traceback: TracebackType | None,
     ) -> None:
+        deterministic_database_rejection = (
+            isinstance(exception, psycopg.Error)
+            and exception.sqlstate is not None
+            and (
+                exception.sqlstate.startswith(("22", "23"))
+                or exception.sqlstate == "55000"
+            )
+        )
         if self._connection is not None and not self._committed:
             self._connection.rollback()
         if self._scope is not None:
@@ -138,6 +151,10 @@ class PostgresMarketUnitOfWork:
         self._receipts = None
         self._audit = None
         self._runtime_finalization = None
+        if deterministic_database_rejection:
+            raise RuntimeStateConflictError(
+                "PostgreSQL rejected the Market command's canonical invariants"
+            ) from exception
 
 
 class PostgresMarketUnitOfWorkProvider:
@@ -148,8 +165,23 @@ class PostgresMarketUnitOfWorkProvider:
         return PostgresMarketUnitOfWork(self._pool)
 
 
+class PostgresMarketDatabaseClock:
+    """Read PostgreSQL acquisition time without spanning Provider or byte I/O."""
+
+    def __init__(self, pool: TargetPostgresPool) -> None:
+        self._pool = pool
+
+    def now(self) -> datetime:
+        with self._pool.connection(read_only=True) as connection:
+            row = connection.execute("SELECT clock_timestamp()").fetchone()
+        if row is None:
+            raise AssertionError("PostgreSQL clock query must return one row")
+        return row[0]
+
+
 __all__ = [
     "PostgresMarketRuntimeFinalization",
+    "PostgresMarketDatabaseClock",
     "PostgresMarketUnitOfWork",
     "PostgresMarketUnitOfWorkProvider",
 ]

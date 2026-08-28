@@ -25,13 +25,11 @@ class TencentQuoteProvider:
             raise MarketProviderError(
                 "TENCENT_TRANSPORT_FAILED",
                 "Tencent quote transport failed",
-                retryable=True,
             ) from exc
         if not isinstance(content, bytes) or not content:
             raise MarketProviderError(
                 "TENCENT_EMPTY_RESPONSE",
                 "Tencent quote response was not non-empty exact bytes",
-                retryable=True,
             )
         try:
             content.decode("gb18030")
@@ -39,7 +37,6 @@ class TencentQuoteProvider:
             raise MarketProviderError(
                 "TENCENT_INVALID_GB18030",
                 "Tencent quote bytes are not valid GB18030",
-                retryable=False,
             ) from exc
         return ProviderResponse(
             content=content,

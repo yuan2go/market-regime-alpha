@@ -12,6 +12,114 @@ BEGIN
 END;
 $$;
 
+CREATE FUNCTION mra.artifact_is_authoritatively_readable(
+    integrity_state text,
+    last_verified_at timestamptz
+)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+PARALLEL SAFE
+AS $$
+    SELECT integrity_state = 'AVAILABLE'
+       AND last_verified_at IS NOT NULL
+       AND last_verified_at >= transaction_timestamp() - interval '24 hours';
+$$;
+
+COMMENT ON FUNCTION mra.artifact_is_authoritatively_readable(text, timestamptz) IS
+    'WP-04 authoritative-read policy: AVAILABLE plus physical hash/size verification within 24 hours';
+
+CREATE FUNCTION mra.require_market_authority_capture(
+    authority_capture_id uuid,
+    authority_kind text
+)
+RETURNS void
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    readable boolean := false;
+BEGIN
+    SELECT true
+    INTO readable
+    FROM mra.data_capture AS capture
+    JOIN mra.artifact AS artifact ON artifact.artifact_id = capture.artifact_id
+    WHERE capture.capture_id = authority_capture_id
+      AND capture.status = 'CAPTURED'
+      AND mra.artifact_is_authoritatively_readable(
+          artifact.integrity_state,
+          artifact.last_verified_at
+      )
+    FOR SHARE OF capture, artifact;
+    IF NOT COALESCE(readable, false) THEN
+        RAISE EXCEPTION '% Authority Artifact is not authoritatively readable', authority_kind
+            USING ERRCODE = '55000';
+    END IF;
+END;
+$$;
+
+CREATE FUNCTION mra.validate_market_fact_temporal()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    evidence_capture_id uuid;
+    evidence_capture record;
+    evidence_gap_kind text;
+BEGIN
+    evidence_capture_id := COALESCE(
+        (to_jsonb(NEW) ->> 'capture_id')::uuid,
+        (to_jsonb(NEW) ->> 'source_capture_id')::uuid
+    );
+    evidence_gap_kind := to_jsonb(NEW) ->> 'gap_kind';
+    SELECT capture.capture_completed_at, capture.status,
+           artifact.integrity_state AS artifact_integrity_state,
+           artifact.last_verified_at AS artifact_last_verified_at
+    INTO evidence_capture
+    FROM mra.data_capture AS capture
+    LEFT JOIN mra.artifact AS artifact
+      ON artifact.artifact_id = capture.artifact_id
+    WHERE capture_id = evidence_capture_id;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Market fact Capture does not exist' USING ERRCODE = '23503';
+    END IF;
+    IF TG_TABLE_NAME = 'source_gap'
+       AND (
+           (evidence_gap_kind = 'PROVIDER_FAILURE'
+            AND evidence_capture.status <> 'PROVIDER_FAILURE')
+           OR
+           (evidence_gap_kind <> 'PROVIDER_FAILURE'
+            AND (
+                evidence_capture.status <> 'CAPTURED'
+                OR NOT mra.artifact_is_authoritatively_readable(
+                    evidence_capture.artifact_integrity_state,
+                    evidence_capture.artifact_last_verified_at
+                )
+            ))
+       ) THEN
+        RAISE EXCEPTION 'SourceGap kind is incompatible with its Capture evidence' USING ERRCODE = '55000';
+    ELSIF TG_TABLE_NAME <> 'source_gap'
+       AND (
+           evidence_capture.status <> 'CAPTURED'
+           OR NOT mra.artifact_is_authoritatively_readable(
+               evidence_capture.artifact_integrity_state,
+               evidence_capture.artifact_last_verified_at
+           )
+       ) THEN
+        RAISE EXCEPTION 'normalized Market facts require a CAPTURED source with an AVAILABLE Artifact' USING ERRCODE = '55000';
+    END IF;
+    IF NEW.known_at <> GREATEST(
+        evidence_capture.capture_completed_at,
+        NEW.recorded_at
+    ) THEN
+        RAISE EXCEPTION 'Market fact known_at is not canonical' USING ERRCODE = '23514';
+    END IF;
+    IF NEW.decision_visible_at <> NEW.known_at THEN
+        RAISE EXCEPTION 'unqualified Market fact visibility must equal known_at' USING ERRCODE = '23514';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
 CREATE FUNCTION mra.guard_runtime_schedule_update()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -290,7 +398,7 @@ DECLARE
     product_row record;
     artifact_row record;
 BEGIN
-    SELECT payload_encoding, source_availability_policy
+    SELECT payload_encoding, media_type, source_availability_policy
     INTO product_row
     FROM mra.provider_product
     WHERE provider_product_id = NEW.provider_product_id
@@ -298,19 +406,33 @@ BEGIN
     IF NOT FOUND THEN
         RAISE EXCEPTION 'Capture ProviderProduct does not exist' USING ERRCODE = '23503';
     END IF;
-    IF product_row.source_availability_policy <> NEW.source_availability_status THEN
+    IF NEW.status = 'CAPTURED'
+       AND product_row.source_availability_policy <> NEW.source_availability_status THEN
         RAISE EXCEPTION 'Capture availability semantics differ from ProviderProduct' USING ERRCODE = '55000';
     END IF;
+    IF NEW.status = 'PROVIDER_FAILURE'
+       AND (
+           NEW.source_availability_status <> 'UNKNOWN'
+           OR NEW.source_available_at IS NOT NULL
+       ) THEN
+        RAISE EXCEPTION 'Provider failure cannot assert source availability' USING ERRCODE = '55000';
+    END IF;
     IF NEW.status = 'CAPTURED' THEN
-        SELECT integrity_state INTO artifact_row
+        SELECT integrity_state, media_type, last_verified_at INTO artifact_row
         FROM mra.artifact
         WHERE artifact_id = NEW.artifact_id
         FOR SHARE;
-        IF NOT FOUND OR artifact_row.integrity_state <> 'AVAILABLE' THEN
-            RAISE EXCEPTION 'Capture requires an AVAILABLE exact Artifact' USING ERRCODE = '55000';
+        IF NOT FOUND OR NOT mra.artifact_is_authoritatively_readable(
+            artifact_row.integrity_state,
+            artifact_row.last_verified_at
+        ) THEN
+            RAISE EXCEPTION 'Capture requires an authoritatively readable exact Artifact' USING ERRCODE = '55000';
         END IF;
         IF NEW.payload_encoding <> product_row.payload_encoding THEN
             RAISE EXCEPTION 'Capture encoding differs from ProviderProduct' USING ERRCODE = '55000';
+        END IF;
+        IF artifact_row.media_type <> product_row.media_type THEN
+            RAISE EXCEPTION 'Capture Artifact media type differs from ProviderProduct' USING ERRCODE = '55000';
         END IF;
     END IF;
     RETURN NEW;
@@ -321,25 +443,543 @@ CREATE FUNCTION mra.validate_instrument_identifier_insert()
 RETURNS trigger
 LANGUAGE plpgsql
 AS $$
+DECLARE
+    instrument_capture_id uuid;
 BEGIN
+    SELECT source_capture_id
+    INTO instrument_capture_id
+    FROM mra.instrument
+    WHERE instrument_id = NEW.instrument_id
+    FOR SHARE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'InstrumentIdentifier Instrument does not exist' USING ERRCODE = '23503';
+    END IF;
+    PERFORM mra.require_market_authority_capture(
+        instrument_capture_id,
+        'InstrumentIdentifier Instrument'
+    );
     PERFORM pg_advisory_xact_lock(
         hashtextextended('mra:instrument-identifier:' || NEW.identifier_scheme, 0)
     );
     IF EXISTS (
+        WITH current_identifier AS (
+            SELECT DISTINCT ON (
+                existing.instrument_id,
+                existing.identifier_scheme,
+                existing.identifier_value,
+                existing.effective_from
+            )
+                existing.instrument_id,
+                existing.identifier_scheme,
+                existing.identifier_value,
+                existing.effective_from,
+                existing.effective_to
+            FROM mra.instrument_identifier AS existing
+            WHERE existing.identifier_scheme = NEW.identifier_scheme
+            ORDER BY existing.instrument_id,
+                     existing.identifier_scheme,
+                     existing.identifier_value,
+                     existing.effective_from,
+                     existing.decision_visible_at DESC,
+                     existing.revision DESC,
+                     existing.instrument_identifier_id DESC
+        )
         SELECT 1
-        FROM mra.instrument_identifier AS existing
-        WHERE existing.identifier_scheme = NEW.identifier_scheme
-          AND (
-              (existing.identifier_value = NEW.identifier_value
-               AND existing.instrument_id <> NEW.instrument_id)
-              OR
-              (existing.instrument_id = NEW.instrument_id
-               AND existing.identifier_value <> NEW.identifier_value)
+        FROM current_identifier AS existing
+        WHERE NOT (
+              existing.instrument_id = NEW.instrument_id
+              AND existing.identifier_value = NEW.identifier_value
+              AND existing.effective_from = NEW.effective_from
           )
-          AND existing.effective_from < COALESCE(NEW.effective_to, 'infinity'::timestamptz)
-          AND NEW.effective_from < COALESCE(existing.effective_to, 'infinity'::timestamptz)
+          AND (
+              existing.identifier_value = NEW.identifier_value
+              OR existing.instrument_id = NEW.instrument_id
+          )
+          AND existing.effective_from < COALESCE(
+              NEW.effective_to,
+              'infinity'::timestamptz
+          )
+          AND NEW.effective_from < COALESCE(
+              existing.effective_to,
+              'infinity'::timestamptz
+          )
     ) THEN
         RAISE EXCEPTION 'InstrumentIdentifier effective interval overlaps another Authority mapping' USING ERRCODE = '23P01';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.validate_market_bar_session()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    session_row record;
+    instrument_exchange text;
+    grid_anchor timestamptz;
+    duration_seconds bigint;
+BEGIN
+    IF TG_TABLE_NAME = 'source_gap' THEN
+        IF NEW.fact_kind <> 'MARKET_BAR' THEN
+            RETURN NEW;
+        END IF;
+    END IF;
+    SELECT exchange, open_at, break_start_at, break_end_at, close_at
+    INTO session_row
+    FROM mra.trading_session
+    WHERE session_id = NEW.session_id
+    FOR SHARE;
+    SELECT exchange INTO instrument_exchange
+    FROM mra.instrument
+    WHERE instrument_id = NEW.instrument_id
+    FOR SHARE;
+    IF NOT FOUND OR session_row.exchange IS NULL THEN
+        RAISE EXCEPTION 'MarketBar evidence requires exact Instrument and Session' USING ERRCODE = '23503';
+    END IF;
+    IF instrument_exchange <> session_row.exchange THEN
+        RAISE EXCEPTION 'MarketBar evidence Instrument and Session exchanges differ' USING ERRCODE = '23514';
+    END IF;
+    PERFORM mra.require_market_authority_capture(
+        (SELECT source_capture_id FROM mra.instrument WHERE instrument_id = NEW.instrument_id),
+        'MarketBar Instrument'
+    );
+    PERFORM mra.require_market_authority_capture(
+        (SELECT source_capture_id FROM mra.trading_session WHERE session_id = NEW.session_id),
+        'MarketBar TradingSession'
+    );
+    IF NEW.timeframe = 'DAILY' THEN
+        IF NEW.event_start <> session_row.open_at OR NEW.event_end <> session_row.close_at THEN
+            RAISE EXCEPTION 'Daily MarketBar evidence must span the exact Session' USING ERRCODE = '23514';
+        END IF;
+        RETURN NEW;
+    END IF;
+    duration_seconds := CASE NEW.timeframe
+        WHEN 'MINUTE_1' THEN 60
+        WHEN 'MINUTE_5' THEN 300
+        WHEN 'MINUTE_15' THEN 900
+        WHEN 'MINUTE_30' THEN 1800
+        WHEN 'MINUTE_60' THEN 3600
+    END;
+    IF NEW.event_start < session_row.open_at OR NEW.event_end > session_row.close_at THEN
+        RAISE EXCEPTION 'MarketBar evidence lies outside its Session' USING ERRCODE = '23514';
+    END IF;
+    IF session_row.break_start_at IS NOT NULL THEN
+        IF NEW.event_end <= session_row.break_start_at THEN
+            grid_anchor := session_row.open_at;
+        ELSIF NEW.event_start >= session_row.break_end_at THEN
+            grid_anchor := session_row.break_end_at;
+        ELSE
+            RAISE EXCEPTION 'MarketBar evidence crosses the Session break' USING ERRCODE = '23514';
+        END IF;
+    ELSE
+        grid_anchor := session_row.open_at;
+    END IF;
+    IF NEW.event_start <> NEW.event_end - make_interval(secs => duration_seconds)
+       OR mod(
+           extract(epoch FROM NEW.event_end - grid_anchor)::bigint,
+           duration_seconds
+       ) <> 0 THEN
+        RAISE EXCEPTION 'MarketBar evidence does not align to the Session grid' USING ERRCODE = '23514';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.validate_classification_membership_insert()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    classification_row record;
+    instrument_capture_id uuid;
+    current_membership_id uuid;
+    current_revision integer;
+BEGIN
+    SELECT classification_scheme, classification_code, source_capture_id
+    INTO classification_row
+    FROM mra.classification
+    WHERE classification_id = NEW.classification_id
+    FOR SHARE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'ClassificationMembership Classification does not exist' USING ERRCODE = '23503';
+    END IF;
+    SELECT source_capture_id
+    INTO instrument_capture_id
+    FROM mra.instrument
+    WHERE instrument_id = NEW.instrument_id
+    FOR SHARE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'ClassificationMembership Instrument does not exist' USING ERRCODE = '23503';
+    END IF;
+    PERFORM mra.require_market_authority_capture(
+        classification_row.source_capture_id,
+        'ClassificationMembership Classification'
+    );
+    PERFORM mra.require_market_authority_capture(
+        instrument_capture_id,
+        'ClassificationMembership Instrument'
+    );
+    PERFORM pg_advisory_xact_lock(
+        hashtextextended(
+            'mra:classification-membership:' ||
+            classification_row.classification_scheme || ':' ||
+            classification_row.classification_code || ':' ||
+            NEW.instrument_id::text,
+            0
+        )
+    );
+    SELECT existing.membership_revision_id, existing.revision
+    INTO current_membership_id, current_revision
+    FROM mra.classification_membership_revision AS existing
+    JOIN mra.classification AS existing_classification
+      ON existing_classification.classification_id = existing.classification_id
+    WHERE existing.instrument_id = NEW.instrument_id
+      AND existing.effective_from = NEW.effective_from
+      AND existing_classification.classification_scheme =
+          classification_row.classification_scheme
+      AND existing_classification.classification_code =
+          classification_row.classification_code
+    ORDER BY existing.decision_visible_at DESC,
+             existing.revision DESC,
+             existing.membership_revision_id DESC
+    LIMIT 1;
+    IF NEW.revision = 1 AND current_membership_id IS NOT NULL THEN
+        RAISE EXCEPTION 'ClassificationMembership stable lineage already has this interval root' USING ERRCODE = '23505';
+    END IF;
+    IF NEW.revision > 1 AND (
+        current_membership_id IS NULL
+        OR current_membership_id IS DISTINCT FROM NEW.supersedes_membership_revision_id
+        OR NEW.revision <> current_revision + 1
+    ) THEN
+        RAISE EXCEPTION 'ClassificationMembership must supersede the single current stable-lineage revision' USING ERRCODE = '55000';
+    END IF;
+    IF EXISTS (
+        WITH current_membership AS (
+            SELECT DISTINCT ON (
+                existing_classification.classification_scheme,
+                existing_classification.classification_code,
+                existing.instrument_id,
+                existing.effective_from
+            )
+                existing.instrument_id,
+                existing.effective_from,
+                existing.effective_to
+            FROM mra.classification_membership_revision AS existing
+            JOIN mra.classification AS existing_classification
+              ON existing_classification.classification_id = existing.classification_id
+            WHERE existing.instrument_id = NEW.instrument_id
+              AND existing_classification.classification_scheme =
+                  classification_row.classification_scheme
+              AND existing_classification.classification_code =
+                  classification_row.classification_code
+            ORDER BY existing_classification.classification_scheme,
+                     existing_classification.classification_code,
+                     existing.instrument_id,
+                     existing.effective_from,
+                     existing.decision_visible_at DESC,
+                     existing.revision DESC,
+                     existing.membership_revision_id DESC
+        )
+        SELECT 1
+        FROM current_membership AS existing
+        WHERE existing.effective_from <> NEW.effective_from
+          AND existing.effective_from < COALESCE(
+              NEW.effective_to,
+              'infinity'::timestamptz
+          )
+          AND NEW.effective_from < COALESCE(
+              existing.effective_to,
+              'infinity'::timestamptz
+          )
+    ) THEN
+        RAISE EXCEPTION 'ClassificationMembership effective interval overlaps its stable classification lineage' USING ERRCODE = '23P01';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.validate_classification_insert()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    current_classification_id uuid;
+    current_revision integer;
+BEGIN
+    PERFORM pg_advisory_xact_lock(
+        hashtextextended(
+            'mra:classification:' || NEW.classification_scheme || ':' ||
+            NEW.classification_code,
+            0
+        )
+    );
+    SELECT existing.classification_id, existing.revision
+    INTO current_classification_id, current_revision
+    FROM mra.classification AS existing
+    WHERE existing.classification_scheme = NEW.classification_scheme
+      AND existing.classification_code = NEW.classification_code
+      AND existing.effective_from = NEW.effective_from
+    ORDER BY existing.decision_visible_at DESC,
+             existing.revision DESC,
+             existing.classification_id DESC
+    LIMIT 1;
+    IF NEW.revision = 1 AND current_classification_id IS NOT NULL THEN
+        RAISE EXCEPTION 'Classification already has this effective root' USING ERRCODE = '23505';
+    END IF;
+    IF NEW.revision > 1 AND (
+        current_classification_id IS NULL
+        OR current_classification_id IS DISTINCT FROM NEW.supersedes_classification_id
+        OR NEW.revision <> current_revision + 1
+    ) THEN
+        RAISE EXCEPTION 'Classification must supersede the single current effective-root revision' USING ERRCODE = '55000';
+    END IF;
+    IF EXISTS (
+        WITH current_root AS (
+            SELECT DISTINCT ON (existing.effective_from)
+                existing.effective_from,
+                existing.effective_to
+            FROM mra.classification AS existing
+            WHERE existing.classification_scheme = NEW.classification_scheme
+              AND existing.classification_code = NEW.classification_code
+            ORDER BY existing.effective_from,
+                     existing.decision_visible_at DESC,
+                     existing.revision DESC,
+                     existing.classification_id DESC
+        )
+        SELECT 1
+        FROM current_root AS existing
+        WHERE existing.effective_from <> NEW.effective_from
+          AND existing.effective_from < COALESCE(
+              NEW.effective_to,
+              'infinity'::timestamptz
+          )
+          AND NEW.effective_from < COALESCE(
+              existing.effective_to,
+              'infinity'::timestamptz
+          )
+    ) THEN
+        RAISE EXCEPTION 'Classification current effective intervals overlap' USING ERRCODE = '23P01';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.validate_instrument_fact_session()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    session_row record;
+    instrument_exchange text;
+    instrument_currency text;
+    instrument_capture_id uuid;
+BEGIN
+    SELECT exchange, currency, source_capture_id
+    INTO instrument_exchange, instrument_currency, instrument_capture_id
+    FROM mra.instrument
+    WHERE instrument_id = NEW.instrument_id
+    FOR SHARE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'InstrumentFact Instrument does not exist' USING ERRCODE = '23503';
+    END IF;
+    PERFORM mra.require_market_authority_capture(
+        instrument_capture_id,
+        'InstrumentFact Instrument'
+    );
+    IF NEW.session_id IS NULL THEN
+        RETURN NEW;
+    END IF;
+    SELECT exchange, open_at, close_at, source_capture_id
+    INTO session_row
+    FROM mra.trading_session
+    WHERE session_id = NEW.session_id
+    FOR SHARE;
+    IF session_row.exchange IS NULL THEN
+        RAISE EXCEPTION 'InstrumentFact requires exact Instrument and Session' USING ERRCODE = '23503';
+    END IF;
+    PERFORM mra.require_market_authority_capture(
+        session_row.source_capture_id,
+        'InstrumentFact TradingSession'
+    );
+    IF instrument_exchange <> session_row.exchange
+       OR NEW.event_start < session_row.open_at
+       OR NEW.event_end IS NULL
+       OR NEW.event_end > session_row.close_at THEN
+        RAISE EXCEPTION 'InstrumentFact interval does not belong to its Session' USING ERRCODE = '23514';
+    END IF;
+    IF NEW.fact_kind = 'SECURITY_STATUS'
+       AND (
+           NEW.event_start <> session_row.open_at
+           OR NEW.event_end <> session_row.close_at
+       ) THEN
+        RAISE EXCEPTION 'SecurityStatus must cover the exact referenced Session' USING ERRCODE = '23514';
+    END IF;
+    IF NEW.fact_kind IN ('LIMIT_UP_PRICE', 'LIMIT_DOWN_PRICE', 'REFERENCE_PRICE')
+       AND NEW.unit_code <> instrument_currency THEN
+        RAISE EXCEPTION 'InstrumentFact Money currency does not match Instrument' USING ERRCODE = '23514';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.validate_instrument_fact_timeline_insert()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    current_fact_id uuid;
+    current_revision integer;
+BEGIN
+    IF NEW.evidence_scope <> 'EFFECTIVE_INTERVAL' THEN
+        RETURN NEW;
+    END IF;
+    PERFORM pg_advisory_xact_lock(
+        hashtextextended(
+            'mra:instrument-fact-timeline:' || NEW.provider_product_id::text ||
+            ':' || NEW.instrument_id::text || ':' || NEW.fact_kind,
+            0
+        )
+    );
+    SELECT existing.fact_revision_id, existing.revision
+    INTO current_fact_id, current_revision
+    FROM mra.instrument_fact_revision AS existing
+    WHERE existing.provider_product_id = NEW.provider_product_id
+      AND existing.instrument_id = NEW.instrument_id
+      AND existing.fact_kind = NEW.fact_kind
+      AND existing.evidence_scope = 'EFFECTIVE_INTERVAL'
+      AND existing.event_start = NEW.event_start
+    ORDER BY existing.decision_visible_at DESC,
+             existing.revision DESC,
+             existing.fact_revision_id DESC
+    LIMIT 1;
+    IF NEW.revision = 1 AND current_fact_id IS NOT NULL THEN
+        RAISE EXCEPTION 'InstrumentFact timeline already has this interval root' USING ERRCODE = '23505';
+    END IF;
+    IF NEW.revision > 1 AND (
+        current_fact_id IS NULL
+        OR current_fact_id IS DISTINCT FROM NEW.supersedes_revision_id
+        OR NEW.revision <> current_revision + 1
+    ) THEN
+        RAISE EXCEPTION 'InstrumentFact must supersede the single current timeline revision' USING ERRCODE = '55000';
+    END IF;
+    IF EXISTS (
+        WITH current_interval AS (
+            SELECT DISTINCT ON (existing.event_start)
+                existing.event_start,
+                existing.event_end
+            FROM mra.instrument_fact_revision AS existing
+            WHERE existing.provider_product_id = NEW.provider_product_id
+              AND existing.instrument_id = NEW.instrument_id
+              AND existing.fact_kind = NEW.fact_kind
+              AND existing.evidence_scope = 'EFFECTIVE_INTERVAL'
+            ORDER BY existing.event_start,
+                     existing.decision_visible_at DESC,
+                     existing.revision DESC,
+                     existing.fact_revision_id DESC
+        )
+        SELECT 1
+        FROM current_interval AS existing
+        WHERE existing.event_start <> NEW.event_start
+          AND existing.event_start < COALESCE(
+              NEW.event_end,
+              'infinity'::timestamptz
+          )
+          AND NEW.event_start < COALESCE(
+              existing.event_end,
+              'infinity'::timestamptz
+          )
+    ) THEN
+        RAISE EXCEPTION 'InstrumentFact current effective intervals overlap' USING ERRCODE = '23P01';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.validate_corporate_action_sessions()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    instrument_exchange text;
+    instrument_currency text;
+    instrument_capture_id uuid;
+    ex_row record;
+    record_exchange text;
+    record_date date;
+    record_capture_id uuid;
+    pay_exchange text;
+    pay_date date;
+    pay_capture_id uuid;
+    successor_capture_id uuid;
+BEGIN
+    SELECT exchange, currency, source_capture_id
+    INTO instrument_exchange, instrument_currency, instrument_capture_id
+    FROM mra.instrument
+    WHERE instrument_id = NEW.instrument_id
+    FOR SHARE;
+    SELECT exchange, session_date, source_capture_id INTO ex_row
+    FROM mra.trading_session
+    WHERE session_id = NEW.ex_session_id
+    FOR SHARE;
+    IF instrument_exchange IS NULL OR ex_row.exchange IS NULL
+       OR instrument_exchange <> ex_row.exchange THEN
+        RAISE EXCEPTION 'CorporateAction ex Session does not match Instrument exchange' USING ERRCODE = '23514';
+    END IF;
+    PERFORM mra.require_market_authority_capture(
+        instrument_capture_id,
+        'CorporateAction Instrument'
+    );
+    PERFORM mra.require_market_authority_capture(
+        ex_row.source_capture_id,
+        'CorporateAction ex TradingSession'
+    );
+    IF NEW.currency IS NOT NULL AND NEW.currency <> instrument_currency THEN
+        RAISE EXCEPTION 'CorporateAction currency does not match Instrument' USING ERRCODE = '23514';
+    END IF;
+    IF NEW.record_session_id IS NOT NULL THEN
+        SELECT exchange, session_date, source_capture_id
+        INTO record_exchange, record_date, record_capture_id
+        FROM mra.trading_session
+        WHERE session_id = NEW.record_session_id
+        FOR SHARE;
+        IF record_exchange IS NULL OR record_exchange <> instrument_exchange
+           OR record_date > ex_row.session_date THEN
+            RAISE EXCEPTION 'CorporateAction record Session is inconsistent' USING ERRCODE = '23514';
+        END IF;
+        PERFORM mra.require_market_authority_capture(
+            record_capture_id,
+            'CorporateAction record TradingSession'
+        );
+    END IF;
+    IF NEW.pay_session_id IS NOT NULL THEN
+        SELECT exchange, session_date, source_capture_id
+        INTO pay_exchange, pay_date, pay_capture_id
+        FROM mra.trading_session
+        WHERE session_id = NEW.pay_session_id
+        FOR SHARE;
+        IF pay_exchange IS NULL OR pay_exchange <> instrument_exchange
+           OR pay_date < ex_row.session_date THEN
+            RAISE EXCEPTION 'CorporateAction pay Session is inconsistent' USING ERRCODE = '23514';
+        END IF;
+        PERFORM mra.require_market_authority_capture(
+            pay_capture_id,
+            'CorporateAction pay TradingSession'
+        );
+    END IF;
+    IF NEW.successor_instrument_id IS NOT NULL THEN
+        SELECT source_capture_id
+        INTO successor_capture_id
+        FROM mra.instrument
+        WHERE instrument_id = NEW.successor_instrument_id
+        FOR SHARE;
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'CorporateAction successor Instrument does not exist' USING ERRCODE = '23503';
+        END IF;
+        PERFORM mra.require_market_authority_capture(
+            successor_capture_id,
+            'CorporateAction successor Instrument'
+        );
     END IF;
     RETURN NEW;
 END;
@@ -370,6 +1010,7 @@ BEGIN
               AND prior.instrument_id = NEW.instrument_id
               AND prior.identifier_scheme = NEW.identifier_scheme
               AND prior.identifier_value = NEW.identifier_value
+              AND prior.effective_from = NEW.effective_from
               AND prior.revision = NEW.revision - 1
         ) INTO valid;
     ELSIF TG_TABLE_NAME = 'classification' THEN
@@ -378,14 +1019,24 @@ BEGIN
             WHERE prior.classification_id = NEW.supersedes_classification_id
               AND prior.classification_scheme = NEW.classification_scheme
               AND prior.classification_code = NEW.classification_code
+              AND prior.effective_from = NEW.effective_from
               AND prior.revision = NEW.revision - 1
         ) INTO valid;
     ELSIF TG_TABLE_NAME = 'classification_membership_revision' THEN
         SELECT EXISTS (
-            SELECT 1 FROM mra.classification_membership_revision AS prior
+            SELECT 1
+            FROM mra.classification_membership_revision AS prior
+            JOIN mra.classification AS prior_classification
+              ON prior_classification.classification_id = prior.classification_id
+            JOIN mra.classification AS next_classification
+              ON next_classification.classification_id = NEW.classification_id
             WHERE prior.membership_revision_id = NEW.supersedes_membership_revision_id
-              AND prior.classification_id = NEW.classification_id
+              AND prior_classification.classification_scheme =
+                  next_classification.classification_scheme
+              AND prior_classification.classification_code =
+                  next_classification.classification_code
               AND prior.instrument_id = NEW.instrument_id
+              AND prior.effective_from = NEW.effective_from
               AND prior.revision = NEW.revision - 1
         ) INTO valid;
     ELSIF TG_TABLE_NAME = 'market_bar_revision' THEN
@@ -396,9 +1047,9 @@ BEGIN
               AND prior.instrument_id = NEW.instrument_id
               AND prior.session_id = NEW.session_id
               AND prior.timeframe = NEW.timeframe
-              AND prior.adjustment_basis = NEW.adjustment_basis
+              AND prior.price_basis = NEW.price_basis
               AND prior.event_start = NEW.event_start
-              AND prior.event_end = NEW.event_end
+              AND prior.event_end IS NOT DISTINCT FROM NEW.event_end
               AND prior.revision = NEW.revision - 1
         ) INTO valid;
     ELSIF TG_TABLE_NAME = 'instrument_fact_revision' THEN
@@ -407,10 +1058,14 @@ BEGIN
             WHERE prior.fact_revision_id = NEW.supersedes_revision_id
               AND prior.provider_product_id = NEW.provider_product_id
               AND prior.instrument_id = NEW.instrument_id
+              AND prior.session_id IS NOT DISTINCT FROM NEW.session_id
               AND prior.fact_kind = NEW.fact_kind
               AND prior.evidence_scope = NEW.evidence_scope
               AND prior.event_start = NEW.event_start
-              AND prior.event_end = NEW.event_end
+              AND (
+                  NEW.evidence_scope = 'EFFECTIVE_INTERVAL'
+                  OR prior.event_end IS NOT DISTINCT FROM NEW.event_end
+              )
               AND prior.revision = NEW.revision - 1
         ) INTO valid;
     ELSIF TG_TABLE_NAME = 'corporate_action_revision' THEN
@@ -430,39 +1085,204 @@ BEGIN
 END;
 $$;
 
-CREATE FUNCTION mra.reject_bar_gap_duality()
+CREATE FUNCTION mra.reject_fact_gap_duality()
 RETURNS trigger
 LANGUAGE plpgsql
 AS $$
 DECLARE
     conflict_exists boolean;
+    capture_key uuid;
 BEGIN
-    IF TG_TABLE_NAME = 'market_bar_revision' THEN
+    IF TG_TABLE_NAME IN (
+        'instrument', 'instrument_identifier', 'trading_session',
+        'classification', 'classification_membership_revision'
+    ) THEN
+        capture_key := NEW.source_capture_id;
+    ELSE
+        capture_key := NEW.capture_id;
+    END IF;
+    PERFORM pg_advisory_xact_lock(
+        hashtextextended('mra:capture-normalization:' || capture_key::text, 0)
+    );
+    IF TG_TABLE_NAME = 'instrument' THEN
         SELECT EXISTS (
             SELECT 1 FROM mra.source_gap AS gap
-            WHERE gap.capture_id = NEW.capture_id
+            WHERE gap.capture_id = capture_key
+              AND gap.fact_kind = 'INSTRUMENT'
+              AND gap.instrument_code = NEW.canonical_code
+        ) INTO conflict_exists;
+    ELSIF TG_TABLE_NAME = 'instrument_identifier' THEN
+        SELECT EXISTS (
+            SELECT 1 FROM mra.source_gap AS gap
+            WHERE gap.capture_id = capture_key
+              AND gap.fact_kind = 'INSTRUMENT_IDENTIFIER'
+              AND gap.identifier_scheme = NEW.identifier_scheme
+              AND gap.identifier_value = NEW.identifier_value
+              AND (gap.instrument_id IS NULL OR gap.instrument_id = NEW.instrument_id)
+              AND gap.effective_from = NEW.effective_from
+              AND gap.effective_to IS NOT DISTINCT FROM NEW.effective_to
+        ) INTO conflict_exists;
+    ELSIF TG_TABLE_NAME = 'trading_session' THEN
+        SELECT EXISTS (
+            SELECT 1 FROM mra.source_gap AS gap
+            WHERE gap.capture_id = capture_key
+              AND gap.fact_kind = 'TRADING_SESSION'
+              AND gap.exchange = NEW.exchange
+              AND gap.session_date = NEW.session_date
+        ) INTO conflict_exists;
+    ELSIF TG_TABLE_NAME = 'classification' THEN
+        SELECT EXISTS (
+            SELECT 1 FROM mra.source_gap AS gap
+            WHERE gap.capture_id = capture_key
+              AND gap.fact_kind = 'CLASSIFICATION'
+              AND gap.classification_scheme = NEW.classification_scheme
+              AND gap.classification_code = NEW.classification_code
+              AND gap.effective_from = NEW.effective_from
+              AND gap.effective_to IS NOT DISTINCT FROM NEW.effective_to
+        ) INTO conflict_exists;
+    ELSIF TG_TABLE_NAME = 'classification_membership_revision' THEN
+        SELECT EXISTS (
+            SELECT 1
+            FROM mra.source_gap AS gap
+            JOIN mra.classification AS classification
+              ON classification.classification_id = NEW.classification_id
+            WHERE gap.capture_id = capture_key
+              AND gap.fact_kind = 'CLASSIFICATION_MEMBERSHIP'
+              AND gap.classification_scheme = classification.classification_scheme
+              AND gap.classification_code = classification.classification_code
+              AND gap.instrument_id = NEW.instrument_id
+              AND gap.effective_from = NEW.effective_from
+              AND gap.effective_to IS NOT DISTINCT FROM NEW.effective_to
+        ) INTO conflict_exists;
+    ELSIF TG_TABLE_NAME = 'market_bar_revision' THEN
+        SELECT EXISTS (
+            SELECT 1 FROM mra.source_gap AS gap
+            WHERE gap.capture_id = capture_key
               AND gap.instrument_id = NEW.instrument_id
               AND gap.session_id = NEW.session_id
               AND gap.fact_kind = 'MARKET_BAR'
               AND gap.timeframe = NEW.timeframe
-              AND gap.adjustment_basis = NEW.adjustment_basis
+              AND gap.price_basis = NEW.price_basis
               AND gap.event_start = NEW.event_start
               AND gap.event_end = NEW.event_end
         ) INTO conflict_exists;
-    ELSE
-        SELECT NEW.fact_kind = 'MARKET_BAR' AND EXISTS (
-            SELECT 1 FROM mra.market_bar_revision AS bar
-            WHERE bar.capture_id = NEW.capture_id
-              AND bar.instrument_id = NEW.instrument_id
-              AND bar.session_id = NEW.session_id
-              AND bar.timeframe = NEW.timeframe
-              AND bar.adjustment_basis = NEW.adjustment_basis
-              AND bar.event_start = NEW.event_start
-              AND bar.event_end = NEW.event_end
+    ELSIF TG_TABLE_NAME = 'instrument_fact_revision' THEN
+        SELECT EXISTS (
+            SELECT 1 FROM mra.source_gap AS gap
+            WHERE gap.capture_id = capture_key
+              AND gap.fact_kind = 'INSTRUMENT_FACT'
+              AND gap.instrument_id = NEW.instrument_id
+              AND gap.instrument_fact_kind = NEW.fact_kind
+              AND gap.evidence_scope = NEW.evidence_scope
+              AND gap.session_id IS NOT DISTINCT FROM NEW.session_id
+              AND (
+                  (NEW.evidence_scope = 'EFFECTIVE_INTERVAL'
+                   AND gap.effective_from = NEW.event_start
+                   AND gap.effective_to IS NOT DISTINCT FROM NEW.event_end)
+                  OR
+                  (NEW.evidence_scope <> 'EFFECTIVE_INTERVAL'
+                   AND gap.event_start = NEW.event_start
+                   AND gap.event_end IS NOT DISTINCT FROM NEW.event_end)
+              )
         ) INTO conflict_exists;
+    ELSIF TG_TABLE_NAME = 'corporate_action_revision' THEN
+        SELECT EXISTS (
+            SELECT 1 FROM mra.source_gap AS gap
+            WHERE gap.capture_id = capture_key
+              AND gap.fact_kind = 'CORPORATE_ACTION'
+              AND gap.instrument_id = NEW.instrument_id
+              AND gap.session_id = NEW.ex_session_id
+              AND gap.action_key = NEW.action_key
+        ) INTO conflict_exists;
+    ELSE
+        IF NEW.fact_kind = 'DATA_CAPTURE' THEN
+            conflict_exists := false;
+        ELSIF NEW.fact_kind = 'INSTRUMENT' THEN
+            SELECT EXISTS (
+                SELECT 1 FROM mra.instrument AS fact
+                WHERE fact.source_capture_id = capture_key
+                  AND fact.canonical_code = NEW.instrument_code
+            ) INTO conflict_exists;
+        ELSIF NEW.fact_kind = 'INSTRUMENT_IDENTIFIER' THEN
+            SELECT EXISTS (
+                SELECT 1 FROM mra.instrument_identifier AS fact
+                WHERE fact.source_capture_id = capture_key
+                  AND fact.identifier_scheme = NEW.identifier_scheme
+                  AND fact.identifier_value = NEW.identifier_value
+                  AND (NEW.instrument_id IS NULL OR fact.instrument_id = NEW.instrument_id)
+                  AND fact.effective_from = NEW.effective_from
+                  AND fact.effective_to IS NOT DISTINCT FROM NEW.effective_to
+            ) INTO conflict_exists;
+        ELSIF NEW.fact_kind = 'TRADING_SESSION' THEN
+            SELECT EXISTS (
+                SELECT 1 FROM mra.trading_session AS fact
+                WHERE fact.source_capture_id = capture_key
+                  AND fact.exchange = NEW.exchange
+                  AND fact.session_date = NEW.session_date
+            ) INTO conflict_exists;
+        ELSIF NEW.fact_kind = 'CLASSIFICATION' THEN
+            SELECT EXISTS (
+                SELECT 1 FROM mra.classification AS fact
+                WHERE fact.source_capture_id = capture_key
+                  AND fact.classification_scheme = NEW.classification_scheme
+                  AND fact.classification_code = NEW.classification_code
+                  AND fact.effective_from = NEW.effective_from
+                  AND fact.effective_to IS NOT DISTINCT FROM NEW.effective_to
+            ) INTO conflict_exists;
+        ELSIF NEW.fact_kind = 'CLASSIFICATION_MEMBERSHIP' THEN
+            SELECT EXISTS (
+                SELECT 1
+                FROM mra.classification_membership_revision AS fact
+                JOIN mra.classification AS classification
+                  ON classification.classification_id = fact.classification_id
+                WHERE fact.source_capture_id = capture_key
+                  AND classification.classification_scheme = NEW.classification_scheme
+                  AND classification.classification_code = NEW.classification_code
+                  AND fact.instrument_id = NEW.instrument_id
+                  AND fact.effective_from = NEW.effective_from
+                  AND fact.effective_to IS NOT DISTINCT FROM NEW.effective_to
+            ) INTO conflict_exists;
+        ELSIF NEW.fact_kind = 'MARKET_BAR' THEN
+            SELECT EXISTS (
+                SELECT 1 FROM mra.market_bar_revision AS fact
+                WHERE fact.capture_id = capture_key
+                  AND fact.instrument_id = NEW.instrument_id
+                  AND fact.session_id = NEW.session_id
+                  AND fact.timeframe = NEW.timeframe
+                  AND fact.price_basis = NEW.price_basis
+                  AND fact.event_start = NEW.event_start
+                  AND fact.event_end = NEW.event_end
+            ) INTO conflict_exists;
+        ELSIF NEW.fact_kind = 'INSTRUMENT_FACT' THEN
+            SELECT EXISTS (
+                SELECT 1 FROM mra.instrument_fact_revision AS fact
+                WHERE fact.capture_id = capture_key
+                  AND fact.instrument_id = NEW.instrument_id
+                  AND fact.fact_kind = NEW.instrument_fact_kind
+                  AND fact.evidence_scope = NEW.evidence_scope
+                  AND fact.session_id IS NOT DISTINCT FROM NEW.session_id
+                  AND (
+                      (NEW.evidence_scope = 'EFFECTIVE_INTERVAL'
+                       AND fact.event_start = NEW.effective_from
+                       AND fact.event_end IS NOT DISTINCT FROM NEW.effective_to)
+                      OR
+                      (NEW.evidence_scope <> 'EFFECTIVE_INTERVAL'
+                       AND fact.event_start = NEW.event_start
+                       AND fact.event_end IS NOT DISTINCT FROM NEW.event_end)
+                  )
+            ) INTO conflict_exists;
+        ELSE
+            SELECT EXISTS (
+                SELECT 1 FROM mra.corporate_action_revision AS fact
+                WHERE fact.capture_id = capture_key
+                  AND fact.instrument_id = NEW.instrument_id
+                  AND fact.ex_session_id = NEW.session_id
+                  AND fact.action_key = NEW.action_key
+            ) INTO conflict_exists;
+        END IF;
     END IF;
     IF conflict_exists THEN
-        RAISE EXCEPTION 'one Capture cannot assert both a valid MarketBar and a SourceGap' USING ERRCODE = '55000';
+        RAISE EXCEPTION 'one Capture cannot assert both a canonical Market fact and a SourceGap for the same expected observation' USING ERRCODE = '55000';
     END IF;
     RETURN NEW;
 END;
@@ -550,7 +1370,10 @@ CREATE TABLE mra.artifact_verification (
     verified_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     CONSTRAINT artifact_verification_verifier_ck CHECK (verifier_id <> ''),
     CONSTRAINT artifact_verification_policy_ck CHECK (verification_policy ~ '^[A-Z][A-Z0-9_]{0,99}$'),
-    CONSTRAINT artifact_verification_result_ck CHECK (result IN ('VERIFIED', 'MISSING', 'SIZE_MISMATCH', 'HASH_MISMATCH')),
+    CONSTRAINT artifact_verification_result_ck CHECK (result IN (
+        'VERIFIED', 'MISSING', 'SIZE_MISMATCH', 'HASH_MISMATCH',
+        'INTEGRITY_ERROR'
+    )),
     CONSTRAINT artifact_verification_size_ck CHECK (observed_size_bytes IS NULL OR observed_size_bytes >= 0),
     CONSTRAINT artifact_verification_hash_ck CHECK (observed_sha256 IS NULL OR observed_sha256 ~ '^[0-9a-f]{64}$'),
     CONSTRAINT artifact_verification_observation_ck CHECK (
@@ -593,12 +1416,10 @@ CREATE TABLE mra.provider (
     provider_code text NOT NULL UNIQUE,
     display_name text NOT NULL,
     provider_kind text NOT NULL,
-    authority_ceiling text NOT NULL DEFAULT 'EXPLORATORY_UNQUALIFIED',
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     CONSTRAINT provider_code_ck CHECK (provider_code ~ '^[a-z][a-z0-9_-]{0,99}$'),
     CONSTRAINT provider_name_ck CHECK (display_name <> ''),
-    CONSTRAINT provider_kind_ck CHECK (provider_kind IN ('PUBLIC_ENDPOINT', 'DATA_VENDOR', 'BROKER_FEED')),
-    CONSTRAINT provider_authority_ceiling_ck CHECK (authority_ceiling = 'EXPLORATORY_UNQUALIFIED')
+    CONSTRAINT provider_kind_ck CHECK (provider_kind IN ('PUBLIC_ENDPOINT', 'DATA_VENDOR', 'BROKER_FEED'))
 );
 
 CREATE TABLE mra.provider_product (
@@ -609,9 +1430,12 @@ CREATE TABLE mra.provider_product (
     payload_family text NOT NULL,
     media_type text NOT NULL,
     payload_encoding text NOT NULL,
+    fact_kinds text[] NOT NULL,
+    instrument_fact_kinds text[] NOT NULL,
+    bar_timeframes text[] NOT NULL,
+    price_bases text[] NOT NULL,
     decision_visibility_policy text NOT NULL DEFAULT 'KNOWN_AT',
     source_availability_policy text NOT NULL,
-    contract_sha256 text NOT NULL,
     supersedes_provider_product_id uuid REFERENCES mra.provider_product(provider_product_id) ON DELETE RESTRICT,
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     CONSTRAINT provider_product_identity_uk UNIQUE (provider_id, product_code, revision),
@@ -624,9 +1448,46 @@ CREATE TABLE mra.provider_product (
     CONSTRAINT provider_product_payload_ck CHECK (payload_family ~ '^[A-Z][A-Z0-9_]{0,99}$'),
     CONSTRAINT provider_product_media_type_ck CHECK (media_type ~ '^[A-Za-z0-9][A-Za-z0-9.+-]+/[A-Za-z0-9][A-Za-z0-9.+-]+$'),
     CONSTRAINT provider_product_encoding_ck CHECK (payload_encoding <> ''),
+    CONSTRAINT provider_product_fact_kinds_ck CHECK (
+        cardinality(fact_kinds) > 0
+        AND array_position(fact_kinds, NULL) IS NULL
+        AND fact_kinds <@ ARRAY[
+            'INSTRUMENT', 'INSTRUMENT_IDENTIFIER', 'TRADING_SESSION',
+            'CLASSIFICATION', 'CLASSIFICATION_MEMBERSHIP', 'MARKET_BAR',
+            'INSTRUMENT_FACT', 'CORPORATE_ACTION'
+        ]::text[]
+    ),
+    CONSTRAINT provider_product_instrument_fact_kinds_ck CHECK (
+        array_position(instrument_fact_kinds, NULL) IS NULL
+        AND instrument_fact_kinds <@ ARRAY[
+            'SECURITY_STATUS', 'LISTING_STATUS',
+            'SPECIAL_TREATMENT_STATUS', 'TOTAL_SHARES', 'FREE_FLOAT_SHARES',
+            'LIMIT_UP_PRICE', 'LIMIT_DOWN_PRICE', 'REFERENCE_PRICE'
+        ]::text[]
+    ),
+    CONSTRAINT provider_product_bar_timeframes_ck CHECK (
+        array_position(bar_timeframes, NULL) IS NULL
+        AND bar_timeframes <@ ARRAY[
+            'MINUTE_1', 'MINUTE_5', 'MINUTE_15', 'MINUTE_30',
+            'MINUTE_60', 'DAILY'
+        ]::text[]
+    ),
+    CONSTRAINT provider_product_price_bases_ck CHECK (
+        array_position(price_bases, NULL) IS NULL
+        AND price_bases <@ ARRAY[
+            'RAW_UNADJUSTED', 'FORWARD_ADJUSTED', 'BACKWARD_ADJUSTED'
+        ]::text[]
+    ),
+    CONSTRAINT provider_product_bar_contract_ck CHECK (
+        ('MARKET_BAR' = ANY(fact_kinds)) = (cardinality(bar_timeframes) > 0)
+        AND ('MARKET_BAR' = ANY(fact_kinds)) = (cardinality(price_bases) > 0)
+    ),
+    CONSTRAINT provider_product_instrument_fact_contract_ck CHECK (
+        ('INSTRUMENT_FACT' = ANY(fact_kinds)) =
+        (cardinality(instrument_fact_kinds) > 0)
+    ),
     CONSTRAINT provider_product_visibility_ck CHECK (decision_visibility_policy = 'KNOWN_AT'),
     CONSTRAINT provider_product_availability_ck CHECK (source_availability_policy IN ('UNKNOWN', 'PROVIDER_REPORTED')),
-    CONSTRAINT provider_product_contract_hash_ck CHECK (contract_sha256 ~ '^[0-9a-f]{64}$'),
     CONSTRAINT provider_product_no_self_ck CHECK (supersedes_provider_product_id IS NULL OR supersedes_provider_product_id <> provider_product_id)
 );
 CREATE INDEX provider_product_provider_idx ON mra.provider_product (provider_id, product_code, revision DESC);
@@ -651,7 +1512,7 @@ CREATE TABLE mra.data_capture (
     error_code text,
     limitation_code text,
     payload_encoding text,
-    CONSTRAINT data_capture_identity_uk UNIQUE (provider_product_id, capture_key),
+    CONSTRAINT data_capture_product_identity_uk UNIQUE (capture_id, provider_product_id),
     CONSTRAINT data_capture_key_ck CHECK (capture_key ~ '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$'),
     CONSTRAINT data_capture_request_hash_ck CHECK (request_hash ~ '^[0-9a-f]{64}$'),
     CONSTRAINT data_capture_status_ck CHECK (status IN ('CAPTURED', 'PROVIDER_FAILURE')),
@@ -677,6 +1538,10 @@ CREATE TABLE mra.data_capture (
 );
 CREATE INDEX data_capture_product_visibility_idx
     ON mra.data_capture (provider_product_id, decision_visible_at DESC, capture_id);
+CREATE INDEX data_capture_correlation_idx
+    ON mra.data_capture (
+        provider_product_id, capture_key, decision_visible_at DESC, capture_id
+    );
 CREATE INDEX data_capture_artifact_idx ON mra.data_capture (artifact_id)
     WHERE artifact_id IS NOT NULL;
 CREATE INDEX data_capture_failure_idx ON mra.data_capture (provider_product_id, known_at DESC)
@@ -689,11 +1554,16 @@ CREATE TABLE mra.instrument (
     instrument_type text NOT NULL,
     currency text NOT NULL,
     source_capture_id uuid NOT NULL REFERENCES mra.data_capture(capture_id) ON DELETE RESTRICT,
-    recorded_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    recorded_at timestamptz NOT NULL,
+    known_at timestamptz NOT NULL,
+    decision_visible_at timestamptz NOT NULL,
     CONSTRAINT instrument_code_ck CHECK (canonical_code ~ '^[A-Z0-9][A-Z0-9._-]{0,31}$'),
     CONSTRAINT instrument_exchange_ck CHECK (exchange ~ '^[A-Z][A-Z0-9]{1,15}$'),
     CONSTRAINT instrument_type_ck CHECK (instrument_type IN ('EQUITY', 'ETF', 'INDEX', 'FUND', 'BOND')),
-    CONSTRAINT instrument_currency_ck CHECK (currency ~ '^[A-Z]{3}$')
+    CONSTRAINT instrument_currency_ck CHECK (currency ~ '^[A-Z]{3}$'),
+    CONSTRAINT instrument_temporal_ck CHECK (
+        known_at >= recorded_at AND decision_visible_at = known_at
+    )
 );
 CREATE INDEX instrument_capture_idx ON mra.instrument (source_capture_id);
 CREATE INDEX instrument_exchange_code_idx ON mra.instrument (exchange, canonical_code);
@@ -708,7 +1578,9 @@ CREATE TABLE mra.instrument_identifier (
     revision integer NOT NULL,
     supersedes_identifier_id uuid REFERENCES mra.instrument_identifier(instrument_identifier_id) ON DELETE RESTRICT,
     source_capture_id uuid NOT NULL REFERENCES mra.data_capture(capture_id) ON DELETE RESTRICT,
-    recorded_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    recorded_at timestamptz NOT NULL,
+    known_at timestamptz NOT NULL,
+    decision_visible_at timestamptz NOT NULL,
     CONSTRAINT instrument_identifier_identity_uk UNIQUE (instrument_id, identifier_scheme, effective_from, revision),
     CONSTRAINT instrument_identifier_lookup_uk UNIQUE (identifier_scheme, identifier_value, effective_from, revision),
     CONSTRAINT instrument_identifier_scheme_ck CHECK (identifier_scheme ~ '^[A-Z][A-Z0-9_]{0,31}$'),
@@ -719,7 +1591,10 @@ CREATE TABLE mra.instrument_identifier (
         (revision = 1 AND supersedes_identifier_id IS NULL) OR
         (revision > 1 AND supersedes_identifier_id IS NOT NULL)
     ),
-    CONSTRAINT instrument_identifier_no_self_ck CHECK (supersedes_identifier_id IS NULL OR supersedes_identifier_id <> instrument_identifier_id)
+    CONSTRAINT instrument_identifier_no_self_ck CHECK (supersedes_identifier_id IS NULL OR supersedes_identifier_id <> instrument_identifier_id),
+    CONSTRAINT instrument_identifier_temporal_ck CHECK (
+        known_at >= recorded_at AND decision_visible_at = known_at
+    )
 );
 CREATE INDEX instrument_identifier_instrument_idx
     ON mra.instrument_identifier (instrument_id, identifier_scheme, effective_from DESC);
@@ -727,7 +1602,10 @@ CREATE INDEX instrument_identifier_capture_idx ON mra.instrument_identifier (sou
 CREATE INDEX instrument_identifier_supersedes_idx ON mra.instrument_identifier (supersedes_identifier_id)
     WHERE supersedes_identifier_id IS NOT NULL;
 CREATE INDEX instrument_identifier_asof_idx
-    ON mra.instrument_identifier (identifier_scheme, identifier_value, effective_from DESC, effective_to);
+    ON mra.instrument_identifier (
+        identifier_scheme, identifier_value, effective_from DESC, effective_to,
+        decision_visible_at DESC, revision DESC
+    );
 
 CREATE TABLE mra.trading_session (
     session_id uuid PRIMARY KEY,
@@ -740,10 +1618,12 @@ CREATE TABLE mra.trading_session (
     close_at timestamptz NOT NULL,
     decision_reference_at timestamptz NOT NULL,
     source_capture_id uuid NOT NULL REFERENCES mra.data_capture(capture_id) ON DELETE RESTRICT,
-    recorded_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    recorded_at timestamptz NOT NULL,
+    known_at timestamptz NOT NULL,
+    decision_visible_at timestamptz NOT NULL,
     CONSTRAINT trading_session_identity_uk UNIQUE (exchange, session_date),
     CONSTRAINT trading_session_exchange_ck CHECK (exchange ~ '^[A-Z][A-Z0-9]{1,15}$'),
-    CONSTRAINT trading_session_timezone_ck CHECK (timezone_name <> ''),
+    CONSTRAINT trading_session_timezone_ck CHECK (timezone_name = 'Asia/Shanghai'),
     CONSTRAINT trading_session_break_ck CHECK ((break_start_at IS NULL) = (break_end_at IS NULL)),
     CONSTRAINT trading_session_order_ck CHECK (
         open_at < close_at
@@ -757,10 +1637,15 @@ CREATE TABLE mra.trading_session (
             break_start_at IS NULL OR
             (open_at < break_start_at AND break_start_at < break_end_at AND break_end_at < close_at)
         )
+    ),
+    CONSTRAINT trading_session_temporal_ck CHECK (
+        known_at >= recorded_at AND decision_visible_at = known_at
     )
 );
 CREATE INDEX trading_session_capture_idx ON mra.trading_session (source_capture_id);
-CREATE INDEX trading_session_calendar_idx ON mra.trading_session (exchange, session_date, session_id);
+CREATE INDEX trading_session_calendar_idx ON mra.trading_session (
+    exchange, session_date, decision_visible_at DESC, session_id
+);
 
 CREATE TABLE mra.classification (
     classification_id uuid PRIMARY KEY,
@@ -772,8 +1657,12 @@ CREATE TABLE mra.classification (
     effective_to timestamptz,
     supersedes_classification_id uuid REFERENCES mra.classification(classification_id) ON DELETE RESTRICT,
     source_capture_id uuid NOT NULL REFERENCES mra.data_capture(capture_id) ON DELETE RESTRICT,
-    recorded_at timestamptz NOT NULL DEFAULT clock_timestamp(),
-    CONSTRAINT classification_identity_uk UNIQUE (classification_scheme, classification_code, revision),
+    recorded_at timestamptz NOT NULL,
+    known_at timestamptz NOT NULL,
+    decision_visible_at timestamptz NOT NULL,
+    CONSTRAINT classification_identity_uk UNIQUE (
+        classification_scheme, classification_code, effective_from, revision
+    ),
     CONSTRAINT classification_scheme_ck CHECK (classification_scheme ~ '^[A-Z][A-Z0-9_]{0,31}$'),
     CONSTRAINT classification_code_ck CHECK (classification_code <> ''),
     CONSTRAINT classification_name_ck CHECK (display_name <> ''),
@@ -783,13 +1672,19 @@ CREATE TABLE mra.classification (
         (revision = 1 AND supersedes_classification_id IS NULL) OR
         (revision > 1 AND supersedes_classification_id IS NOT NULL)
     ),
-    CONSTRAINT classification_no_self_ck CHECK (supersedes_classification_id IS NULL OR supersedes_classification_id <> classification_id)
+    CONSTRAINT classification_no_self_ck CHECK (supersedes_classification_id IS NULL OR supersedes_classification_id <> classification_id),
+    CONSTRAINT classification_temporal_ck CHECK (
+        known_at >= recorded_at AND decision_visible_at = known_at
+    )
 );
 CREATE INDEX classification_capture_idx ON mra.classification (source_capture_id);
 CREATE INDEX classification_supersedes_idx ON mra.classification (supersedes_classification_id)
     WHERE supersedes_classification_id IS NOT NULL;
 CREATE INDEX classification_asof_idx
-    ON mra.classification (classification_scheme, classification_code, effective_from DESC, effective_to, revision DESC);
+    ON mra.classification (
+        classification_scheme, classification_code, effective_from DESC,
+        effective_to, decision_visible_at DESC, revision DESC
+    );
 
 CREATE TABLE mra.classification_membership_revision (
     membership_revision_id uuid PRIMARY KEY,
@@ -801,7 +1696,9 @@ CREATE TABLE mra.classification_membership_revision (
     effective_to timestamptz,
     revision integer NOT NULL,
     supersedes_membership_revision_id uuid REFERENCES mra.classification_membership_revision(membership_revision_id) ON DELETE RESTRICT,
-    recorded_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    recorded_at timestamptz NOT NULL,
+    known_at timestamptz NOT NULL,
+    decision_visible_at timestamptz NOT NULL,
     CONSTRAINT classification_membership_identity_uk UNIQUE (classification_id, instrument_id, effective_from, revision),
     CONSTRAINT classification_membership_status_ck CHECK (membership_status IN ('MEMBER', 'NOT_MEMBER')),
     CONSTRAINT classification_membership_interval_ck CHECK (effective_to IS NULL OR effective_to > effective_from),
@@ -810,10 +1707,16 @@ CREATE TABLE mra.classification_membership_revision (
         (revision = 1 AND supersedes_membership_revision_id IS NULL) OR
         (revision > 1 AND supersedes_membership_revision_id IS NOT NULL)
     ),
-    CONSTRAINT classification_membership_no_self_ck CHECK (supersedes_membership_revision_id IS NULL OR supersedes_membership_revision_id <> membership_revision_id)
+    CONSTRAINT classification_membership_no_self_ck CHECK (supersedes_membership_revision_id IS NULL OR supersedes_membership_revision_id <> membership_revision_id),
+    CONSTRAINT classification_membership_temporal_ck CHECK (
+        known_at >= recorded_at AND decision_visible_at = known_at
+    )
 );
 CREATE INDEX classification_membership_classification_idx
-    ON mra.classification_membership_revision (classification_id, instrument_id, effective_from DESC, revision DESC);
+    ON mra.classification_membership_revision (
+        classification_id, instrument_id, effective_from DESC,
+        decision_visible_at DESC, revision DESC
+    );
 CREATE INDEX classification_membership_instrument_idx
     ON mra.classification_membership_revision (instrument_id, classification_id, effective_from DESC);
 CREATE INDEX classification_membership_capture_idx
@@ -829,24 +1732,29 @@ CREATE TABLE mra.market_bar_revision (
     instrument_id uuid NOT NULL REFERENCES mra.instrument(instrument_id) ON DELETE RESTRICT,
     session_id uuid NOT NULL REFERENCES mra.trading_session(session_id) ON DELETE RESTRICT,
     timeframe text NOT NULL,
-    adjustment_basis text NOT NULL,
+    price_basis text NOT NULL,
     event_start timestamptz NOT NULL,
     event_end timestamptz NOT NULL,
     revision integer NOT NULL,
     supersedes_revision_id uuid REFERENCES mra.market_bar_revision(bar_revision_id) ON DELETE RESTRICT,
-    open_value numeric(30, 10) NOT NULL,
-    high_value numeric(30, 10) NOT NULL,
-    low_value numeric(30, 10) NOT NULL,
-    close_value numeric(30, 10) NOT NULL,
-    volume_value numeric(38, 10) NOT NULL,
-    turnover_value numeric(38, 10),
-    recorded_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    open_value numeric NOT NULL,
+    high_value numeric NOT NULL,
+    low_value numeric NOT NULL,
+    close_value numeric NOT NULL,
+    volume_value numeric NOT NULL,
+    turnover_value numeric,
+    recorded_at timestamptz NOT NULL,
+    known_at timestamptz NOT NULL,
+    decision_visible_at timestamptz NOT NULL,
+    CONSTRAINT market_bar_capture_product_fk FOREIGN KEY (
+        capture_id, provider_product_id
+    ) REFERENCES mra.data_capture(capture_id, provider_product_id) ON DELETE RESTRICT,
     CONSTRAINT market_bar_revision_identity_uk UNIQUE (
         provider_product_id, instrument_id, session_id, timeframe,
-        adjustment_basis, event_start, event_end, revision
+        price_basis, event_start, event_end, revision
     ),
     CONSTRAINT market_bar_timeframe_ck CHECK (timeframe IN ('MINUTE_1', 'MINUTE_5', 'MINUTE_15', 'MINUTE_30', 'MINUTE_60', 'DAILY')),
-    CONSTRAINT market_bar_basis_ck CHECK (adjustment_basis IN ('RAW_UNADJUSTED', 'FORWARD_ADJUSTED', 'BACKWARD_ADJUSTED')),
+    CONSTRAINT market_bar_basis_ck CHECK (price_basis IN ('RAW_UNADJUSTED', 'FORWARD_ADJUSTED', 'BACKWARD_ADJUSTED')),
     CONSTRAINT market_bar_interval_ck CHECK (
         event_end > event_start
         AND (timeframe <> 'MINUTE_1' OR event_end - event_start = interval '1 minute')
@@ -866,13 +1774,34 @@ CREATE TABLE mra.market_bar_revision (
         AND high_value >= greatest(open_value, close_value, low_value)
         AND low_value <= least(open_value, close_value, high_value)
     ),
-    CONSTRAINT market_bar_volume_ck CHECK (volume_value >= 0 AND (turnover_value IS NULL OR turnover_value >= 0))
+    CONSTRAINT market_bar_money_bounds_ck CHECK (
+        scale(open_value) <= 10 AND abs(open_value) < 1e20
+        AND scale(high_value) <= 10 AND abs(high_value) < 1e20
+        AND scale(low_value) <= 10 AND abs(low_value) < 1e20
+        AND scale(close_value) <= 10 AND abs(close_value) < 1e20
+        AND (
+            turnover_value IS NULL OR
+            (scale(turnover_value) <= 10 AND abs(turnover_value) < 1e20)
+        )
+    ),
+    CONSTRAINT market_bar_quantity_bounds_ck CHECK (
+        scale(volume_value) <= 10 AND abs(volume_value) < 1e28
+    ),
+    CONSTRAINT market_bar_volume_ck CHECK (volume_value >= 0 AND (turnover_value IS NULL OR turnover_value >= 0)),
+    CONSTRAINT market_bar_temporal_ck CHECK (
+        known_at >= recorded_at
+        AND known_at >= event_end
+        AND decision_visible_at = known_at
+    )
 );
 CREATE INDEX market_bar_exact_asof_idx ON mra.market_bar_revision (
     provider_product_id, instrument_id, session_id, timeframe,
-    adjustment_basis, event_end, event_start, revision DESC, capture_id
+    price_basis, event_end, event_start, decision_visible_at DESC,
+    revision DESC, capture_id
 );
-CREATE INDEX market_bar_capture_idx ON mra.market_bar_revision (capture_id);
+CREATE INDEX market_bar_capture_idx ON mra.market_bar_revision (
+    capture_id, provider_product_id
+);
 CREATE INDEX market_bar_instrument_idx ON mra.market_bar_revision (instrument_id, event_end DESC);
 CREATE INDEX market_bar_session_idx ON mra.market_bar_revision (session_id, instrument_id, event_end);
 CREATE INDEX market_bar_supersedes_idx ON mra.market_bar_revision (supersedes_revision_id)
@@ -887,31 +1816,86 @@ CREATE TABLE mra.instrument_fact_revision (
     fact_kind text NOT NULL,
     evidence_scope text NOT NULL,
     event_start timestamptz NOT NULL,
-    event_end timestamptz NOT NULL,
+    event_end timestamptz,
     value_kind text NOT NULL,
     status_value text,
-    numeric_value numeric(38, 10),
-    text_value text,
+    numeric_value numeric,
     unit_code text,
     revision integer NOT NULL,
     supersedes_revision_id uuid REFERENCES mra.instrument_fact_revision(fact_revision_id) ON DELETE RESTRICT,
-    recorded_at timestamptz NOT NULL DEFAULT clock_timestamp(),
-    CONSTRAINT instrument_fact_identity_uk UNIQUE (
-        provider_product_id, instrument_id, fact_kind, evidence_scope,
-        event_start, event_end, revision
+    recorded_at timestamptz NOT NULL,
+    known_at timestamptz NOT NULL,
+    decision_visible_at timestamptz NOT NULL,
+    CONSTRAINT instrument_fact_capture_product_fk FOREIGN KEY (
+        capture_id, provider_product_id
+    ) REFERENCES mra.data_capture(capture_id, provider_product_id) ON DELETE RESTRICT,
+    CONSTRAINT instrument_fact_identity_uk UNIQUE NULLS NOT DISTINCT (
+        provider_product_id, instrument_id, session_id, fact_kind,
+        evidence_scope, event_start, revision
     ),
-    CONSTRAINT instrument_fact_kind_ck CHECK (fact_kind ~ '^[A-Z][A-Z0-9_]{0,99}$'),
+    CONSTRAINT instrument_fact_kind_ck CHECK (fact_kind IN (
+        'SECURITY_STATUS', 'LISTING_STATUS', 'SPECIAL_TREATMENT_STATUS',
+        'TOTAL_SHARES', 'FREE_FLOAT_SHARES',
+        'LIMIT_UP_PRICE', 'LIMIT_DOWN_PRICE', 'REFERENCE_PRICE'
+    )),
     CONSTRAINT instrument_fact_scope_ck CHECK (evidence_scope IN ('DECISION_SESSION', 'PRIOR_SESSION', 'EFFECTIVE_INTERVAL')),
-    CONSTRAINT instrument_fact_interval_ck CHECK (event_end > event_start),
-    CONSTRAINT instrument_fact_value_kind_ck CHECK (value_kind IN ('STATUS', 'DECIMAL', 'TEXT')),
+    CONSTRAINT instrument_fact_interval_ck CHECK (
+        event_end IS NULL OR event_end > event_start
+    ),
+    CONSTRAINT instrument_fact_value_kind_ck CHECK (value_kind IN ('STATUS', 'DECIMAL')),
     CONSTRAINT instrument_fact_value_ck CHECK (
-        (value_kind = 'STATUS' AND status_value IS NOT NULL AND numeric_value IS NULL AND text_value IS NULL) OR
-        (value_kind = 'DECIMAL' AND status_value IS NULL AND numeric_value IS NOT NULL AND text_value IS NULL) OR
-        (value_kind = 'TEXT' AND status_value IS NULL AND numeric_value IS NULL AND text_value IS NOT NULL)
+        (value_kind = 'STATUS' AND status_value IS NOT NULL AND numeric_value IS NULL) OR
+        (value_kind = 'DECIMAL' AND status_value IS NULL AND numeric_value IS NOT NULL)
     ),
     CONSTRAINT instrument_fact_security_status_ck CHECK (
         fact_kind <> 'SECURITY_STATUS' OR
-        (value_kind = 'STATUS' AND status_value IN ('ACTIVE', 'SUSPENDED', 'UNKNOWN') AND session_id IS NOT NULL)
+        (value_kind = 'STATUS'
+         AND status_value IN ('ACTIVE', 'SUSPENDED', 'UNKNOWN')
+         AND session_id IS NOT NULL
+         AND evidence_scope IN ('DECISION_SESSION', 'PRIOR_SESSION')
+         AND event_end IS NOT NULL
+         AND unit_code IS NULL)
+    ),
+    CONSTRAINT instrument_fact_lifecycle_status_ck CHECK (
+        (fact_kind = 'LISTING_STATUS'
+         AND value_kind = 'STATUS'
+         AND status_value IN ('PRE_LISTING', 'LISTED', 'DELISTED', 'UNKNOWN')
+         AND session_id IS NULL
+         AND evidence_scope = 'EFFECTIVE_INTERVAL'
+         AND unit_code IS NULL)
+        OR
+        (fact_kind = 'SPECIAL_TREATMENT_STATUS'
+         AND value_kind = 'STATUS'
+         AND status_value IN ('NORMAL', 'ST', 'STAR_ST', 'UNKNOWN')
+         AND session_id IS NULL
+         AND evidence_scope = 'EFFECTIVE_INTERVAL'
+         AND unit_code IS NULL)
+        OR
+        fact_kind NOT IN ('LISTING_STATUS', 'SPECIAL_TREATMENT_STATUS')
+    ),
+    CONSTRAINT instrument_fact_kind_value_ck CHECK (
+        (fact_kind IN ('TOTAL_SHARES', 'FREE_FLOAT_SHARES')
+         AND value_kind = 'DECIMAL'
+         AND numeric_value >= 0
+         AND scale(numeric_value) <= 10
+         AND abs(numeric_value) < 1e28
+         AND unit_code = 'SHARES'
+         AND evidence_scope = 'EFFECTIVE_INTERVAL'
+         AND session_id IS NULL)
+        OR
+        (fact_kind IN ('LIMIT_UP_PRICE', 'LIMIT_DOWN_PRICE', 'REFERENCE_PRICE')
+         AND value_kind = 'DECIMAL'
+         AND numeric_value > 0
+         AND scale(numeric_value) <= 10
+         AND abs(numeric_value) < 1e20
+         AND unit_code ~ '^[A-Z]{3}$'
+         AND evidence_scope IN ('DECISION_SESSION', 'PRIOR_SESSION')
+         AND event_end IS NOT NULL
+         AND session_id IS NOT NULL)
+        OR
+        fact_kind IN (
+            'SECURITY_STATUS', 'LISTING_STATUS', 'SPECIAL_TREATMENT_STATUS'
+        )
     ),
     CONSTRAINT instrument_fact_session_scope_ck CHECK (
         evidence_scope = 'EFFECTIVE_INTERVAL' OR session_id IS NOT NULL
@@ -922,13 +1906,18 @@ CREATE TABLE mra.instrument_fact_revision (
         (revision = 1 AND supersedes_revision_id IS NULL) OR
         (revision > 1 AND supersedes_revision_id IS NOT NULL)
     ),
-    CONSTRAINT instrument_fact_no_self_ck CHECK (supersedes_revision_id IS NULL OR supersedes_revision_id <> fact_revision_id)
+    CONSTRAINT instrument_fact_no_self_ck CHECK (supersedes_revision_id IS NULL OR supersedes_revision_id <> fact_revision_id),
+    CONSTRAINT instrument_fact_temporal_ck CHECK (
+        known_at >= recorded_at AND decision_visible_at = known_at
+    )
 );
-CREATE INDEX instrument_fact_exact_asof_idx ON mra.instrument_fact_revision (
+CREATE INDEX instrument_fact_current_asof_idx ON mra.instrument_fact_revision (
     provider_product_id, instrument_id, fact_kind, evidence_scope,
-    session_id, event_end, revision DESC, capture_id
+    event_start, decision_visible_at DESC, revision DESC, fact_revision_id
 );
-CREATE INDEX instrument_fact_capture_idx ON mra.instrument_fact_revision (capture_id);
+CREATE INDEX instrument_fact_capture_idx ON mra.instrument_fact_revision (
+    capture_id, provider_product_id
+);
 CREATE INDEX instrument_fact_instrument_idx ON mra.instrument_fact_revision (instrument_id, fact_kind, event_end DESC);
 CREATE INDEX instrument_fact_session_idx ON mra.instrument_fact_revision (session_id, instrument_id, fact_kind)
     WHERE session_id IS NOT NULL;
@@ -943,35 +1932,99 @@ CREATE TABLE mra.corporate_action_revision (
     action_key text NOT NULL,
     action_type text NOT NULL,
     ex_session_id uuid NOT NULL REFERENCES mra.trading_session(session_id) ON DELETE RESTRICT,
-    payable_at timestamptz,
-    cash_amount numeric(30, 10),
-    ratio_factor numeric(30, 12),
+    record_session_id uuid REFERENCES mra.trading_session(session_id) ON DELETE RESTRICT,
+    pay_session_id uuid REFERENCES mra.trading_session(session_id) ON DELETE RESTRICT,
+    successor_instrument_id uuid REFERENCES mra.instrument(instrument_id) ON DELETE RESTRICT,
+    cash_amount_per_share numeric,
+    ratio_factor numeric,
+    subscription_price numeric,
     currency text,
     revision integer NOT NULL,
     supersedes_revision_id uuid REFERENCES mra.corporate_action_revision(corporate_action_revision_id) ON DELETE RESTRICT,
-    recorded_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    recorded_at timestamptz NOT NULL,
+    known_at timestamptz NOT NULL,
+    decision_visible_at timestamptz NOT NULL,
+    CONSTRAINT corporate_action_capture_product_fk FOREIGN KEY (
+        capture_id, provider_product_id
+    ) REFERENCES mra.data_capture(capture_id, provider_product_id) ON DELETE RESTRICT,
     CONSTRAINT corporate_action_identity_uk UNIQUE (provider_product_id, instrument_id, action_key, revision),
     CONSTRAINT corporate_action_key_ck CHECK (action_key <> ''),
-    CONSTRAINT corporate_action_type_ck CHECK (action_type IN ('CASH_DIVIDEND', 'STOCK_DIVIDEND', 'SPLIT', 'RIGHTS_ISSUE', 'MERGER', 'DELISTING')),
+    CONSTRAINT corporate_action_type_ck CHECK (action_type IN (
+        'CASH_DIVIDEND', 'STOCK_DIVIDEND', 'SPLIT', 'RIGHTS_ISSUE',
+        'CONVERSION', 'MERGER'
+    )),
+    CONSTRAINT corporate_action_successor_ck CHECK (
+        (action_type IN ('CONVERSION', 'MERGER')
+         AND successor_instrument_id IS NOT NULL
+         AND successor_instrument_id <> instrument_id)
+        OR
+        (action_type NOT IN ('CONVERSION', 'MERGER')
+         AND successor_instrument_id IS NULL)
+    ),
     CONSTRAINT corporate_action_value_ck CHECK (
-        (cash_amount IS NULL OR cash_amount >= 0)
-        AND (ratio_factor IS NULL OR ratio_factor > 0)
-        AND (currency IS NULL OR currency ~ '^[A-Z]{3}$')
-        AND (cash_amount IS NULL OR currency IS NOT NULL)
-        AND (cash_amount IS NOT NULL OR ratio_factor IS NOT NULL OR action_type IN ('MERGER', 'DELISTING'))
+        (action_type = 'CASH_DIVIDEND'
+         AND cash_amount_per_share >= 0
+         AND scale(cash_amount_per_share) <= 10
+         AND abs(cash_amount_per_share) < 1e20
+         AND ratio_factor IS NULL
+         AND subscription_price IS NULL
+         AND currency ~ '^[A-Z]{3}$')
+        OR
+        (action_type IN ('STOCK_DIVIDEND', 'SPLIT')
+         AND cash_amount_per_share IS NULL
+         AND ratio_factor > 0
+         AND scale(ratio_factor) <= 12
+         AND abs(ratio_factor) < 1e18
+         AND subscription_price IS NULL
+         AND currency IS NULL)
+        OR
+        (action_type IN ('CONVERSION', 'MERGER')
+         AND cash_amount_per_share IS NULL
+         AND ratio_factor > 0
+         AND scale(ratio_factor) <= 12
+         AND abs(ratio_factor) < 1e18
+         AND subscription_price IS NULL
+         AND currency IS NULL)
+        OR
+        (action_type = 'RIGHTS_ISSUE'
+         AND cash_amount_per_share IS NULL
+         AND ratio_factor > 0
+         AND scale(ratio_factor) <= 12
+         AND abs(ratio_factor) < 1e18
+         AND subscription_price > 0
+         AND scale(subscription_price) <= 10
+         AND abs(subscription_price) < 1e20
+         AND currency ~ '^[A-Z]{3}$')
     ),
     CONSTRAINT corporate_action_revision_ck CHECK (revision > 0),
     CONSTRAINT corporate_action_revision_chain_ck CHECK (
         (revision = 1 AND supersedes_revision_id IS NULL) OR
         (revision > 1 AND supersedes_revision_id IS NOT NULL)
     ),
-    CONSTRAINT corporate_action_no_self_ck CHECK (supersedes_revision_id IS NULL OR supersedes_revision_id <> corporate_action_revision_id)
+    CONSTRAINT corporate_action_no_self_ck CHECK (supersedes_revision_id IS NULL OR supersedes_revision_id <> corporate_action_revision_id),
+    CONSTRAINT corporate_action_temporal_ck CHECK (
+        known_at >= recorded_at AND decision_visible_at = known_at
+    )
 );
 CREATE INDEX corporate_action_exact_asof_idx
-    ON mra.corporate_action_revision (provider_product_id, instrument_id, ex_session_id, action_key, revision DESC, capture_id);
-CREATE INDEX corporate_action_capture_idx ON mra.corporate_action_revision (capture_id);
+    ON mra.corporate_action_revision (
+        provider_product_id, instrument_id, ex_session_id, action_key,
+        decision_visible_at DESC, revision DESC, capture_id
+    );
+CREATE INDEX corporate_action_capture_idx ON mra.corporate_action_revision (
+    capture_id, provider_product_id
+);
 CREATE INDEX corporate_action_instrument_idx ON mra.corporate_action_revision (instrument_id, ex_session_id, action_key);
 CREATE INDEX corporate_action_session_idx ON mra.corporate_action_revision (ex_session_id, instrument_id);
+CREATE INDEX corporate_action_record_session_idx
+    ON mra.corporate_action_revision (record_session_id, instrument_id)
+    WHERE record_session_id IS NOT NULL;
+CREATE INDEX corporate_action_pay_session_idx
+    ON mra.corporate_action_revision (pay_session_id, instrument_id)
+    WHERE pay_session_id IS NOT NULL;
+CREATE INDEX corporate_action_successor_instrument_idx
+    ON mra.corporate_action_revision (successor_instrument_id, ex_session_id)
+    WHERE successor_instrument_id IS NOT NULL;
 CREATE INDEX corporate_action_supersedes_idx ON mra.corporate_action_revision (supersedes_revision_id)
     WHERE supersedes_revision_id IS NOT NULL;
 
@@ -981,41 +2034,270 @@ CREATE TABLE mra.source_gap (
     capture_id uuid NOT NULL REFERENCES mra.data_capture(capture_id) ON DELETE RESTRICT,
     instrument_id uuid REFERENCES mra.instrument(instrument_id) ON DELETE RESTRICT,
     session_id uuid REFERENCES mra.trading_session(session_id) ON DELETE RESTRICT,
+    instrument_code text,
+    identifier_scheme text,
+    identifier_value text,
+    exchange text,
+    session_date date,
+    classification_scheme text,
+    classification_code text,
+    action_key text,
     gap_kind text NOT NULL,
     reason_code text NOT NULL,
     fact_kind text NOT NULL,
+    instrument_fact_kind text,
+    evidence_scope text,
     timeframe text,
-    adjustment_basis text,
+    price_basis text,
     event_start timestamptz,
     event_end timestamptz,
+    effective_from timestamptz,
+    effective_to timestamptz,
     detail text,
-    recorded_at timestamptz NOT NULL DEFAULT clock_timestamp(),
-    CONSTRAINT source_gap_identity_uk UNIQUE (
+    recorded_at timestamptz NOT NULL,
+    known_at timestamptz NOT NULL,
+    decision_visible_at timestamptz NOT NULL,
+    CONSTRAINT source_gap_capture_product_fk FOREIGN KEY (
+        capture_id, provider_product_id
+    ) REFERENCES mra.data_capture(capture_id, provider_product_id) ON DELETE RESTRICT,
+    CONSTRAINT source_gap_identity_uk UNIQUE NULLS NOT DISTINCT (
         capture_id, fact_kind, instrument_id, session_id,
-        timeframe, adjustment_basis, event_start, event_end, gap_kind
+        instrument_code, identifier_scheme, identifier_value,
+        exchange, session_date, classification_scheme,
+        classification_code, action_key,
+        instrument_fact_kind, evidence_scope, timeframe, price_basis,
+        event_start, event_end, effective_from, effective_to
     ),
     CONSTRAINT source_gap_kind_ck CHECK (gap_kind IN ('MISSING', 'PLACEHOLDER', 'PROVIDER_FAILURE', 'CONFLICT', 'INVALID_OHLC')),
-    CONSTRAINT source_gap_reason_ck CHECK (reason_code ~ '^[A-Z][A-Z0-9_]{0,99}$'),
-    CONSTRAINT source_gap_fact_kind_ck CHECK (fact_kind ~ '^[A-Z][A-Z0-9_]{0,99}$'),
+    CONSTRAINT source_gap_reason_ck CHECK (reason_code IN (
+        'PROVIDER_FAILURE', 'NO_ROWS_RETURNED',
+        'EXPECTED_OBSERVATION_MISSING', 'EXACT_BAR_MISSING',
+        'NULL_OHLC_PLACEHOLDER', 'CONFLICTING_SOURCE_REVISIONS',
+        'INVALID_OHLC'
+    )),
+    CONSTRAINT source_gap_reason_kind_ck CHECK (
+        (gap_kind = 'MISSING' AND reason_code IN (
+            'NO_ROWS_RETURNED', 'EXPECTED_OBSERVATION_MISSING',
+            'EXACT_BAR_MISSING'
+        )) OR
+        (gap_kind = 'PLACEHOLDER' AND reason_code = 'NULL_OHLC_PLACEHOLDER') OR
+        (gap_kind = 'PROVIDER_FAILURE' AND reason_code = 'PROVIDER_FAILURE') OR
+        (gap_kind = 'CONFLICT' AND reason_code = 'CONFLICTING_SOURCE_REVISIONS') OR
+        (gap_kind = 'INVALID_OHLC' AND reason_code = 'INVALID_OHLC')
+    ),
+    CONSTRAINT source_gap_reason_fact_ck CHECK (
+        reason_code NOT IN (
+            'EXACT_BAR_MISSING', 'NULL_OHLC_PLACEHOLDER', 'INVALID_OHLC'
+        ) OR fact_kind = 'MARKET_BAR'
+    ),
+    CONSTRAINT source_gap_fact_kind_ck CHECK (fact_kind IN (
+        'DATA_CAPTURE', 'INSTRUMENT',
+        'INSTRUMENT_IDENTIFIER', 'TRADING_SESSION', 'CLASSIFICATION',
+        'CLASSIFICATION_MEMBERSHIP', 'MARKET_BAR', 'INSTRUMENT_FACT',
+        'CORPORATE_ACTION'
+    )),
+    CONSTRAINT source_gap_instrument_code_ck CHECK (
+        instrument_code IS NULL OR instrument_code ~ '^[A-Z0-9][A-Z0-9._-]{0,31}$'
+    ),
+    CONSTRAINT source_gap_identifier_scheme_ck CHECK (
+        identifier_scheme IS NULL OR identifier_scheme ~ '^[A-Z][A-Z0-9_]{0,31}$'
+    ),
+    CONSTRAINT source_gap_identifier_value_ck CHECK (
+        identifier_value IS NULL OR identifier_value <> ''
+    ),
+    CONSTRAINT source_gap_exchange_ck CHECK (
+        exchange IS NULL OR exchange ~ '^[A-Z][A-Z0-9]{1,15}$'
+    ),
+    CONSTRAINT source_gap_classification_scheme_ck CHECK (
+        classification_scheme IS NULL OR
+        classification_scheme ~ '^[A-Z][A-Z0-9_]{0,31}$'
+    ),
+    CONSTRAINT source_gap_classification_code_ck CHECK (
+        classification_code IS NULL OR classification_code <> ''
+    ),
+    CONSTRAINT source_gap_action_key_ck CHECK (
+        action_key IS NULL OR action_key <> ''
+    ),
+    CONSTRAINT source_gap_instrument_fact_kind_ck CHECK (
+        (fact_kind = 'INSTRUMENT_FACT' AND instrument_fact_kind IN (
+            'SECURITY_STATUS', 'LISTING_STATUS',
+            'SPECIAL_TREATMENT_STATUS', 'TOTAL_SHARES', 'FREE_FLOAT_SHARES',
+            'LIMIT_UP_PRICE', 'LIMIT_DOWN_PRICE', 'REFERENCE_PRICE'
+        )) OR
+        (fact_kind <> 'INSTRUMENT_FACT' AND instrument_fact_kind IS NULL)
+    ),
+    CONSTRAINT source_gap_evidence_scope_ck CHECK (
+        (fact_kind = 'INSTRUMENT_FACT' AND evidence_scope IN (
+            'DECISION_SESSION', 'PRIOR_SESSION', 'EFFECTIVE_INTERVAL'
+        )) OR
+        (fact_kind <> 'INSTRUMENT_FACT' AND evidence_scope IS NULL)
+    ),
     CONSTRAINT source_gap_bar_scope_ck CHECK (
-        (timeframe IS NULL AND adjustment_basis IS NULL) OR
-        (timeframe IN ('MINUTE_1', 'MINUTE_5', 'MINUTE_15', 'MINUTE_30', 'MINUTE_60', 'DAILY')
-         AND adjustment_basis IN ('RAW_UNADJUSTED', 'FORWARD_ADJUSTED', 'BACKWARD_ADJUSTED'))
+        (fact_kind <> 'MARKET_BAR' AND timeframe IS NULL AND price_basis IS NULL) OR
+        (fact_kind = 'MARKET_BAR'
+         AND instrument_id IS NOT NULL
+         AND session_id IS NOT NULL
+         AND event_start IS NOT NULL
+         AND event_end IS NOT NULL
+         AND timeframe IN ('MINUTE_1', 'MINUTE_5', 'MINUTE_15', 'MINUTE_30', 'MINUTE_60', 'DAILY')
+         AND price_basis IN ('RAW_UNADJUSTED', 'FORWARD_ADJUSTED', 'BACKWARD_ADJUSTED'))
+    ),
+    CONSTRAINT source_gap_exact_scope_ck CHECK (
+        (fact_kind = 'DATA_CAPTURE'
+         AND instrument_id IS NULL AND session_id IS NULL
+         AND instrument_code IS NULL
+         AND identifier_scheme IS NULL AND identifier_value IS NULL
+         AND exchange IS NULL AND session_date IS NULL
+         AND classification_scheme IS NULL AND classification_code IS NULL
+         AND action_key IS NULL
+         AND instrument_fact_kind IS NULL
+         AND evidence_scope IS NULL
+         AND timeframe IS NULL AND price_basis IS NULL
+         AND event_start IS NULL AND event_end IS NULL
+         AND effective_from IS NULL AND effective_to IS NULL)
+        OR
+        (fact_kind = 'INSTRUMENT'
+         AND instrument_code IS NOT NULL
+         AND instrument_id IS NULL AND session_id IS NULL
+         AND identifier_scheme IS NULL AND identifier_value IS NULL
+         AND exchange IS NULL AND session_date IS NULL
+         AND classification_scheme IS NULL AND classification_code IS NULL
+         AND action_key IS NULL
+         AND evidence_scope IS NULL
+         AND event_start IS NULL AND event_end IS NULL
+         AND effective_from IS NULL AND effective_to IS NULL)
+        OR
+        (fact_kind = 'INSTRUMENT_IDENTIFIER'
+         AND identifier_scheme IS NOT NULL AND identifier_value IS NOT NULL
+         AND session_id IS NULL AND instrument_code IS NULL
+         AND exchange IS NULL AND session_date IS NULL
+         AND classification_scheme IS NULL AND classification_code IS NULL
+         AND action_key IS NULL
+         AND evidence_scope IS NULL
+         AND event_start IS NULL AND event_end IS NULL
+         AND effective_from IS NOT NULL)
+        OR
+        (fact_kind = 'TRADING_SESSION'
+         AND exchange IS NOT NULL AND session_date IS NOT NULL
+         AND instrument_id IS NULL AND session_id IS NULL
+         AND instrument_code IS NULL
+         AND identifier_scheme IS NULL AND identifier_value IS NULL
+         AND classification_scheme IS NULL AND classification_code IS NULL
+         AND action_key IS NULL
+         AND evidence_scope IS NULL
+         AND event_start IS NULL AND event_end IS NULL
+         AND effective_from IS NULL AND effective_to IS NULL)
+        OR
+        (fact_kind = 'CLASSIFICATION'
+         AND classification_scheme IS NOT NULL
+         AND classification_code IS NOT NULL
+         AND instrument_id IS NULL AND session_id IS NULL
+         AND instrument_code IS NULL
+         AND identifier_scheme IS NULL AND identifier_value IS NULL
+         AND exchange IS NULL AND session_date IS NULL
+         AND action_key IS NULL
+         AND evidence_scope IS NULL
+         AND event_start IS NULL AND event_end IS NULL
+         AND effective_from IS NOT NULL)
+        OR
+        (fact_kind = 'CLASSIFICATION_MEMBERSHIP'
+         AND classification_scheme IS NOT NULL
+         AND classification_code IS NOT NULL
+         AND instrument_id IS NOT NULL AND session_id IS NULL
+         AND instrument_code IS NULL
+         AND identifier_scheme IS NULL AND identifier_value IS NULL
+         AND exchange IS NULL AND session_date IS NULL
+         AND action_key IS NULL
+         AND evidence_scope IS NULL
+         AND event_start IS NULL AND event_end IS NULL
+         AND effective_from IS NOT NULL)
+        OR
+        (fact_kind = 'MARKET_BAR'
+         AND instrument_id IS NOT NULL AND session_id IS NOT NULL
+         AND instrument_code IS NULL
+         AND identifier_scheme IS NULL AND identifier_value IS NULL
+         AND exchange IS NULL AND session_date IS NULL
+         AND classification_scheme IS NULL AND classification_code IS NULL
+         AND action_key IS NULL
+         AND instrument_fact_kind IS NULL
+         AND evidence_scope IS NULL
+         AND event_start IS NOT NULL AND event_end IS NOT NULL
+         AND effective_from IS NULL AND effective_to IS NULL)
+        OR
+        (fact_kind = 'INSTRUMENT_FACT'
+         AND instrument_id IS NOT NULL AND instrument_fact_kind IS NOT NULL
+         AND instrument_code IS NULL
+         AND identifier_scheme IS NULL AND identifier_value IS NULL
+         AND exchange IS NULL AND session_date IS NULL
+         AND classification_scheme IS NULL AND classification_code IS NULL
+         AND action_key IS NULL
+         AND (
+             (instrument_fact_kind IN (
+                 'SECURITY_STATUS', 'LIMIT_UP_PRICE',
+                 'LIMIT_DOWN_PRICE', 'REFERENCE_PRICE'
+              )
+              AND session_id IS NOT NULL
+              AND evidence_scope IN ('DECISION_SESSION', 'PRIOR_SESSION')
+              AND event_start IS NOT NULL AND event_end IS NOT NULL
+              AND effective_from IS NULL AND effective_to IS NULL)
+             OR
+             (instrument_fact_kind IN (
+                 'LISTING_STATUS', 'SPECIAL_TREATMENT_STATUS',
+                 'TOTAL_SHARES', 'FREE_FLOAT_SHARES'
+              )
+              AND session_id IS NULL
+              AND evidence_scope = 'EFFECTIVE_INTERVAL'
+              AND event_start IS NULL AND event_end IS NULL
+              AND effective_from IS NOT NULL)
+         ))
+        OR
+        (fact_kind = 'CORPORATE_ACTION'
+         AND instrument_id IS NOT NULL AND session_id IS NOT NULL
+         AND action_key IS NOT NULL
+         AND instrument_code IS NULL
+         AND identifier_scheme IS NULL AND identifier_value IS NULL
+         AND exchange IS NULL AND session_date IS NULL
+         AND classification_scheme IS NULL AND classification_code IS NULL
+         AND instrument_fact_kind IS NULL
+         AND evidence_scope IS NULL
+         AND event_start IS NULL AND event_end IS NULL
+         AND effective_from IS NULL AND effective_to IS NULL)
     ),
     CONSTRAINT source_gap_interval_ck CHECK (
         (event_start IS NULL AND event_end IS NULL) OR
         (event_start IS NOT NULL AND event_end > event_start)
+    ),
+    CONSTRAINT source_gap_effective_interval_ck CHECK (
+        (effective_from IS NULL AND effective_to IS NULL) OR
+        (effective_from IS NOT NULL
+         AND (effective_to IS NULL OR effective_to > effective_from))
+    ),
+    CONSTRAINT source_gap_temporal_ck CHECK (
+        known_at >= recorded_at
+        AND (fact_kind <> 'MARKET_BAR' OR known_at >= event_end)
+        AND decision_visible_at = known_at
     )
 );
 CREATE INDEX source_gap_exact_asof_idx ON mra.source_gap (
     provider_product_id, instrument_id, session_id, fact_kind,
-    timeframe, adjustment_basis, event_end, capture_id
+    instrument_fact_kind, evidence_scope, timeframe, price_basis,
+    event_start, event_end, effective_from, effective_to,
+    decision_visible_at DESC, capture_id
 );
-CREATE INDEX source_gap_capture_idx ON mra.source_gap (capture_id);
+CREATE INDEX source_gap_capture_idx ON mra.source_gap (
+    capture_id, provider_product_id
+);
 CREATE INDEX source_gap_instrument_idx ON mra.source_gap (instrument_id, fact_kind, event_end DESC)
     WHERE instrument_id IS NOT NULL;
 CREATE INDEX source_gap_session_idx ON mra.source_gap (session_id, instrument_id, fact_kind)
     WHERE session_id IS NOT NULL;
+CREATE INDEX source_gap_session_calendar_idx ON mra.source_gap (
+    provider_product_id, exchange, session_date, decision_visible_at DESC
+) WHERE fact_kind = 'TRADING_SESSION';
+CREATE INDEX source_gap_classification_idx ON mra.source_gap (
+    provider_product_id, classification_scheme, classification_code,
+    decision_visible_at DESC
+) WHERE fact_kind IN ('CLASSIFICATION', 'CLASSIFICATION_MEMBERSHIP');
 
 CREATE TABLE mra.runtime_schedule (
     schedule_id uuid PRIMARY KEY,
@@ -1416,60 +2698,129 @@ FOR EACH ROW EXECUTE FUNCTION mra.validate_data_capture_insert();
 CREATE TRIGGER data_capture_append_only
 BEFORE UPDATE OR DELETE ON mra.data_capture
 FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER instrument_temporal_validate
+BEFORE INSERT ON mra.instrument
+FOR EACH ROW EXECUTE FUNCTION mra.validate_market_fact_temporal();
+CREATE TRIGGER instrument_gap_exclusive
+BEFORE INSERT ON mra.instrument
+FOR EACH ROW EXECUTE FUNCTION mra.reject_fact_gap_duality();
 CREATE TRIGGER instrument_append_only
 BEFORE UPDATE OR DELETE ON mra.instrument
 FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
 CREATE TRIGGER instrument_identifier_append_only
 BEFORE UPDATE OR DELETE ON mra.instrument_identifier
 FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER instrument_identifier_temporal_validate
+BEFORE INSERT ON mra.instrument_identifier
+FOR EACH ROW EXECUTE FUNCTION mra.validate_market_fact_temporal();
 CREATE TRIGGER instrument_identifier_validate_insert
 BEFORE INSERT ON mra.instrument_identifier
 FOR EACH ROW EXECUTE FUNCTION mra.validate_instrument_identifier_insert();
 CREATE TRIGGER instrument_identifier_revision_predecessor
 BEFORE INSERT ON mra.instrument_identifier
 FOR EACH ROW EXECUTE FUNCTION mra.validate_market_revision_predecessor();
+CREATE TRIGGER instrument_identifier_gap_exclusive
+BEFORE INSERT ON mra.instrument_identifier
+FOR EACH ROW EXECUTE FUNCTION mra.reject_fact_gap_duality();
 CREATE TRIGGER trading_session_append_only
 BEFORE UPDATE OR DELETE ON mra.trading_session
 FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER trading_session_temporal_validate
+BEFORE INSERT ON mra.trading_session
+FOR EACH ROW EXECUTE FUNCTION mra.validate_market_fact_temporal();
+CREATE TRIGGER trading_session_gap_exclusive
+BEFORE INSERT ON mra.trading_session
+FOR EACH ROW EXECUTE FUNCTION mra.reject_fact_gap_duality();
 CREATE TRIGGER classification_append_only
 BEFORE UPDATE OR DELETE ON mra.classification
 FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER classification_temporal_validate
+BEFORE INSERT ON mra.classification
+FOR EACH ROW EXECUTE FUNCTION mra.validate_market_fact_temporal();
 CREATE TRIGGER classification_revision_predecessor
 BEFORE INSERT ON mra.classification
 FOR EACH ROW EXECUTE FUNCTION mra.validate_market_revision_predecessor();
+CREATE TRIGGER classification_validate_insert
+BEFORE INSERT ON mra.classification
+FOR EACH ROW EXECUTE FUNCTION mra.validate_classification_insert();
+CREATE TRIGGER classification_gap_exclusive
+BEFORE INSERT ON mra.classification
+FOR EACH ROW EXECUTE FUNCTION mra.reject_fact_gap_duality();
 CREATE TRIGGER classification_membership_revision_append_only
 BEFORE UPDATE OR DELETE ON mra.classification_membership_revision
 FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER classification_membership_temporal_validate
+BEFORE INSERT ON mra.classification_membership_revision
+FOR EACH ROW EXECUTE FUNCTION mra.validate_market_fact_temporal();
 CREATE TRIGGER classification_membership_revision_predecessor
 BEFORE INSERT ON mra.classification_membership_revision
 FOR EACH ROW EXECUTE FUNCTION mra.validate_market_revision_predecessor();
+CREATE TRIGGER classification_membership_validate_insert
+BEFORE INSERT ON mra.classification_membership_revision
+FOR EACH ROW EXECUTE FUNCTION mra.validate_classification_membership_insert();
+CREATE TRIGGER classification_membership_gap_exclusive
+BEFORE INSERT ON mra.classification_membership_revision
+FOR EACH ROW EXECUTE FUNCTION mra.reject_fact_gap_duality();
 CREATE TRIGGER market_bar_revision_append_only
 BEFORE UPDATE OR DELETE ON mra.market_bar_revision
 FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER market_bar_temporal_validate
+BEFORE INSERT ON mra.market_bar_revision
+FOR EACH ROW EXECUTE FUNCTION mra.validate_market_fact_temporal();
 CREATE TRIGGER market_bar_revision_predecessor
 BEFORE INSERT ON mra.market_bar_revision
 FOR EACH ROW EXECUTE FUNCTION mra.validate_market_revision_predecessor();
+CREATE TRIGGER market_bar_session_validate
+BEFORE INSERT ON mra.market_bar_revision
+FOR EACH ROW EXECUTE FUNCTION mra.validate_market_bar_session();
 CREATE TRIGGER market_bar_gap_exclusive
 BEFORE INSERT ON mra.market_bar_revision
-FOR EACH ROW EXECUTE FUNCTION mra.reject_bar_gap_duality();
+FOR EACH ROW EXECUTE FUNCTION mra.reject_fact_gap_duality();
 CREATE TRIGGER instrument_fact_revision_append_only
 BEFORE UPDATE OR DELETE ON mra.instrument_fact_revision
 FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER instrument_fact_temporal_validate
+BEFORE INSERT ON mra.instrument_fact_revision
+FOR EACH ROW EXECUTE FUNCTION mra.validate_market_fact_temporal();
 CREATE TRIGGER instrument_fact_revision_predecessor
 BEFORE INSERT ON mra.instrument_fact_revision
 FOR EACH ROW EXECUTE FUNCTION mra.validate_market_revision_predecessor();
+CREATE TRIGGER instrument_fact_session_validate
+BEFORE INSERT ON mra.instrument_fact_revision
+FOR EACH ROW EXECUTE FUNCTION mra.validate_instrument_fact_session();
+CREATE TRIGGER instrument_fact_timeline_validate
+BEFORE INSERT ON mra.instrument_fact_revision
+FOR EACH ROW EXECUTE FUNCTION mra.validate_instrument_fact_timeline_insert();
+CREATE TRIGGER instrument_fact_gap_exclusive
+BEFORE INSERT ON mra.instrument_fact_revision
+FOR EACH ROW EXECUTE FUNCTION mra.reject_fact_gap_duality();
 CREATE TRIGGER corporate_action_revision_append_only
 BEFORE UPDATE OR DELETE ON mra.corporate_action_revision
 FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER corporate_action_temporal_validate
+BEFORE INSERT ON mra.corporate_action_revision
+FOR EACH ROW EXECUTE FUNCTION mra.validate_market_fact_temporal();
 CREATE TRIGGER corporate_action_revision_predecessor
 BEFORE INSERT ON mra.corporate_action_revision
 FOR EACH ROW EXECUTE FUNCTION mra.validate_market_revision_predecessor();
+CREATE TRIGGER corporate_action_session_validate
+BEFORE INSERT ON mra.corporate_action_revision
+FOR EACH ROW EXECUTE FUNCTION mra.validate_corporate_action_sessions();
+CREATE TRIGGER corporate_action_gap_exclusive
+BEFORE INSERT ON mra.corporate_action_revision
+FOR EACH ROW EXECUTE FUNCTION mra.reject_fact_gap_duality();
 CREATE TRIGGER source_gap_append_only
 BEFORE UPDATE OR DELETE ON mra.source_gap
 FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER source_gap_temporal_validate
+BEFORE INSERT ON mra.source_gap
+FOR EACH ROW EXECUTE FUNCTION mra.validate_market_fact_temporal();
+CREATE TRIGGER source_gap_session_validate
+BEFORE INSERT ON mra.source_gap
+FOR EACH ROW EXECUTE FUNCTION mra.validate_market_bar_session();
 CREATE TRIGGER source_gap_bar_exclusive
 BEFORE INSERT ON mra.source_gap
-FOR EACH ROW EXECUTE FUNCTION mra.reject_bar_gap_duality();
+FOR EACH ROW EXECUTE FUNCTION mra.reject_fact_gap_duality();
 
 CREATE VIEW mra.run_trace AS
 SELECT

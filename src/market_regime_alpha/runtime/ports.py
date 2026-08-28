@@ -25,6 +25,7 @@ class ReceiptRecord:
     result_aggregate_id: str | None
     result_aggregate_version: int | None
     result_hash: str | None
+    error_code: str | None
     is_new: bool
 
 
@@ -179,9 +180,8 @@ class ArtifactRepository(Protocol):
         self,
         *,
         content_sha256: str,
-        artifact_id: UUID | None,
         grace: timedelta,
-    ) -> None: ...
+    ) -> bool: ...
 
     def clear_gc_candidate(
         self,
@@ -302,6 +302,14 @@ class CommandReceiptRepository(Protocol):
         aggregate_id: str,
         aggregate_version: int,
         result_hash: str,
+        runtime_claim: AttemptClaim | None = None,
+    ) -> None: ...
+
+    def fail(
+        self,
+        *,
+        receipt_id: UUID,
+        error_code: str,
         runtime_claim: AttemptClaim | None = None,
     ) -> None: ...
 

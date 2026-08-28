@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from datetime import datetime, timedelta, timezone
+from threading import Event
 from uuid import uuid4
 
 import psycopg
 import pytest
 
+import market_regime_alpha.infrastructure.artifacts.local as local_artifacts
 from market_regime_alpha.infrastructure.artifacts import ArtifactStoreError, LocalArtifactStore
 from market_regime_alpha.infrastructure.postgres.pool import TargetPostgresPool
 from market_regime_alpha.infrastructure.postgres.schema import SchemaManager
@@ -63,6 +66,52 @@ def test_content_addressed_publish_is_atomic_deduplicated_and_verified(
     assert verification.result == "VERIFIED"
     assert verification.observed_sha256 == first.content_sha256
     assert len(store.list_objects()) == 1
+
+
+def test_publish_serializes_with_quarantine_and_cannot_recreate_orphan(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = LocalArtifactStore(tmp_path / "artifact-root")
+    content = b"publish versus quarantine"
+    published = store.publish_bytes(
+        content,
+        media_type="application/octet-stream",
+    )
+    quarantine_entered = Event()
+    release_quarantine = Event()
+    original_replace = local_artifacts.os.replace
+
+    def paused_replace(source, destination) -> None:
+        quarantine_entered.set()
+        if not release_quarantine.wait(timeout=10):
+            raise TimeoutError("test did not release Artifact quarantine")
+        original_replace(source, destination)
+
+    monkeypatch.setattr(local_artifacts.os, "replace", paused_replace)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        quarantine_future = executor.submit(
+            store.quarantine,
+            published.content_sha256,
+        )
+        assert quarantine_entered.wait(timeout=10)
+        publish_future = executor.submit(
+            store.publish_bytes,
+            content,
+            media_type="application/octet-stream",
+        )
+        with pytest.raises(FutureTimeoutError):
+            publish_future.result(timeout=0.2)
+        release_quarantine.set()
+        quarantine_future.result(timeout=10)
+        with pytest.raises(ArtifactStoreError, match="cannot be republished"):
+            publish_future.result(timeout=10)
+
+    assert not store.object_path(published.content_sha256).exists()
+    assert store.quarantine_path(published.content_sha256).is_file()
+    store.delete_quarantined(published.content_sha256)
+    assert not store.object_path(published.content_sha256).exists()
+    assert not store.quarantine_path(published.content_sha256).exists()
 
 
 def test_artifact_store_rejects_extra_objects_and_locator_tamper(
@@ -208,11 +257,67 @@ def test_corruption_is_recorded_and_blocks_authoritative_read(
             SELECT result, observed_exists, observed_size_bytes
             FROM mra.artifact_verification
             WHERE artifact_id = %s
+            ORDER BY verified_at DESC
+            LIMIT 1
             """,
             (registered.artifact_id,),
         ).fetchone()
     assert state == ("CORRUPT",)
     assert verification == ("SIZE_MISMATCH", True, len(b"corrupted bytes"))
+
+
+def test_verification_exact_retry_replays_and_new_key_records_new_observation(
+    artifact_stack: tuple[ArtifactApplication, LocalArtifactStore, TargetPostgresPool, str],
+) -> None:
+    application, store, _, database_url = artifact_stack
+    registered = application.publish(
+        b"verification observations are append-only",
+        media_type="application/octet-stream",
+        context=_context("publish-observation", "REGISTER_TEST_ARTIFACT"),
+    )
+    repeated_context = _context("same-verification-command", "VERIFY_ARTIFACT")
+    first = application.verify(
+        registered.artifact_id,
+        verifier_id="artifact-observation-test",
+        context=repeated_context,
+    )
+    assert first.result == "VERIFIED"
+    store.object_path(registered.content_sha256).write_bytes(b"corrupt")
+
+    replay = application.verify(
+        registered.artifact_id,
+        verifier_id="artifact-observation-test",
+        context=repeated_context,
+    )
+    assert replay == first
+
+    with pytest.raises(ArtifactIntegrityError, match="SIZE_MISMATCH"):
+        application.verify(
+            registered.artifact_id,
+            verifier_id="artifact-observation-test",
+            context=_context("new-verification-command", "VERIFY_ARTIFACT"),
+        )
+
+    with psycopg.connect(database_url) as connection:
+        observations = connection.execute(
+            """
+            SELECT result
+            FROM mra.artifact_verification
+            WHERE artifact_id = %s
+              AND verification_policy = 'AUTHORITATIVE_READ'
+            ORDER BY verified_at
+            """,
+            (registered.artifact_id,),
+        ).fetchall()
+        receipts = connection.execute(
+            """
+            SELECT count(*), count(DISTINCT idempotency_key)
+            FROM mra.command_receipt
+            WHERE command_kind = 'VERIFY_ARTIFACT'
+            """
+        ).fetchone()
+    assert observations == [("VERIFIED",), ("SIZE_MISMATCH",)]
+    assert receipts == (2, 2)
 
 
 def test_orphan_gc_requires_two_scans_quarantine_and_explicit_delete(
@@ -266,6 +371,28 @@ def test_orphan_gc_requires_two_scans_quarantine_and_explicit_delete(
         ).fetchall()
     assert candidate == ("DELETED", True, True, True, True)
     assert ("DELETE_ARTIFACT_BYTES",) in audit_actions
+
+    recreated = store.publish_bytes(
+        b"unbound physical bytes",
+        media_type="application/octet-stream",
+    )
+    assert recreated.content_sha256 == orphan.content_sha256
+    application.scan_orphans(
+        scan_id=uuid4(),
+        grace=timedelta(0),
+        actor_id="artifact-scanner",
+    )
+    assert not store.object_path(orphan.content_sha256).exists()
+    assert not store.quarantine_path(orphan.content_sha256).exists()
+    with psycopg.connect(database_url) as connection:
+        assert connection.execute(
+            """
+            SELECT count(*) FROM mra.audit_event
+            WHERE aggregate_id = %s
+              AND action = 'RECONCILE_DELETED_ARTIFACT_BYTES'
+            """,
+            (orphan.content_sha256,),
+        ).fetchone() == (1,)
 
 
 def test_referenced_or_pinned_artifact_is_never_an_orphan_candidate(
@@ -431,7 +558,12 @@ def test_same_size_hash_corruption_is_distinguished_from_size_mismatch(
         )
     with psycopg.connect(database_url) as connection:
         assert connection.execute(
-            "SELECT result FROM mra.artifact_verification"
+            """
+            SELECT result
+            FROM mra.artifact_verification
+            ORDER BY verified_at DESC
+            LIMIT 1
+            """
         ).fetchone() == ("HASH_MISMATCH",)
 
 
