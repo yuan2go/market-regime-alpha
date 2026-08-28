@@ -22,6 +22,7 @@ dependencies = [
 ]
 
 [project.scripts]
+mra = "market_regime_alpha.interfaces.cli:main"
 continuous-research = "market_regime_alpha.cli.continuous_research:main"
 state-system = "market_regime_alpha.cli.state_system:main"
 decision-system = "market_regime_alpha.cli.decision_system:main"
@@ -43,6 +44,8 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 market_regime_alpha = [
+    "infrastructure/postgres/migrations/*.sql",
+    "infrastructure/postgres/seeds/*.sql",
     "persistence/postgres/migrations/*.sql",
     "platform/migrations/*.sql",
     "decision/migrations/*.sql",
@@ -76,6 +79,12 @@ ignore = ["E402", "E501"]
 python_version = "3.12"
 mypy_path = "src"
 files = [
+    "src/market_regime_alpha/shared",
+    "src/market_regime_alpha/runtime",
+    "src/market_regime_alpha/infrastructure/postgres",
+    "src/market_regime_alpha/infrastructure/artifacts",
+    "src/market_regime_alpha/interfaces",
+    "src/market_regime_alpha/bootstrap.py",
     "src/market_regime_alpha/core/identity.py",
     "src/market_regime_alpha/core/status.py",
     "src/market_regime_alpha/core/time.py",

@@ -3,17 +3,22 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Non-authoritative exact-SHA capability read model
 > **Owner:** Market Regime Alpha maintainers
-> **Generated At:** 2026-08-27T23:32:32Z
-> **Repository SHA:** `15c96c742166a0e07ef42a8202f740e787de31b9`
-> **Schema Epoch:** `LEGACY_MIGRATIONS_001_106`
-> **Generator:** `WP-ARCHITECTURE-REFOUNDATION-02 repository audit v2`
-> **Source Tree IDs:** source `13e8922bb42a0054a2f168eac5ce3ab61f5694ed`; migrations `6d3730548780ad6244d2cfecb4fb3559064b6f06`; tests `13ec6a9bdf831bfe53df0efd10d7940b9e364550`
-> **Code Evidence:** `src/market_regime_alpha`, `src/market_regime_alpha/persistence/postgres/schema.py`, `tests`
+> **Generated At:** 2026-08-28T01:47:11Z
+> **Repository SHA:** `eeff49c7a3995ba6d65045be88d4244617301234`
+> **Schema Epochs:** canonical business `LEGACY_MIGRATIONS_001_106`; unpublished target draft `MRA_REFOUNDATION_1`
+> **Generator:** `WP-ARCHITECTURE-REFOUNDATION-03 Foundation implementation audit`
+> **Source Tree IDs:** source `416b609041d3da6098d29245378a2c0100eed853`; legacy migrations `6d3730548780ad6244d2cfecb4fb3559064b6f06`; target baseline `6b9c746300457281ddcf9b6a6b4b474c6c55d892`; tests `192e6f9711f627d37fed1da151d83a1934f05689`
+> **Code Evidence:** target and legacy source/migration packages plus `tests`
 
 This view separates current capability from target convergence. It is invalid
 after its source tree changes and cannot promote a capability or research claim.
 The complete preservation contract remains the
 [Capability Preservation Matrix](../references/WP-ARCHITECTURE-REFOUNDATION-01-Capability-Preservation-Matrix.md).
+
+Cross-cutting Foundation is `IMPLEMENTED_UNPUBLISHED / EXIT_GATE_PASS`: target
+schema-epoch, Runtime/Provenance, Artifact, transaction, bootstrap, and operator
+interfaces exist. It is not one of the business capabilities below, grants none
+of them target Authority, and creates no dual write.
 
 | Capability | Current implementation truth | Approved target owner | Target convergence |
 |---|---|---|---|
