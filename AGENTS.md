@@ -3,7 +3,7 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Sole repository execution, safety, and evidence contract
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-27
+> **Last Updated:** 2026-08-28
 > **Related Documents:** `CLAUDE.md`, `docs/README.md`, `docs/architecture/Canonical-Overall-Design.md`, `docs/status/Roadmap.md`
 
 ## Mission and current program
@@ -145,15 +145,19 @@ Repository gate:
 
 ```bash
 uv sync --frozen --extra dev --extra postgres
-python scripts/check_docs_links.py
-python -m pytest -q tests/scripts/test_check_docs_links.py
-python -m pytest -q tests/platform
-python -m pytest -q
-python -m ruff check .
-python -m mypy
-python -m build
+uv run python scripts/check_docs_links.py
+uv run python -m pytest -q tests/scripts/test_check_docs_links.py
+uv run python -m pytest -q tests/platform
+uv run python -m pytest -q
+uv run python -m ruff check .
+uv run python -m mypy
+uv run python -m build
 git diff --check
 ```
+
+`uv sync` does not activate the project environment in the current shell. Keep
+every Python-based gate behind `uv run` so its interpreter and tools resolve
+from the locked project environment.
 
 Use a dedicated PostgreSQL test database and run the focused migration,
 bootstrap, constraint, repository, concurrency, idempotency, replay, recovery,
