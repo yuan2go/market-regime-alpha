@@ -8,10 +8,14 @@ from market_regime_alpha.infrastructure.postgres.repositories.runtime import (
 from market_regime_alpha.infrastructure.postgres.repositories.artifacts import (
     PostgresArtifactRepository,
 )
+from market_regime_alpha.infrastructure.postgres.repositories.market import (
+    PostgresMarketRepository,
+)
 
 __all__ = [
     "PostgresAuditRepository",
     "PostgresArtifactRepository",
     "PostgresCommandReceiptRepository",
+    "PostgresMarketRepository",
     "PostgresRuntimeRepository",
 ]

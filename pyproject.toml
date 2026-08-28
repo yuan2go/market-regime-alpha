@@ -81,8 +81,10 @@ mypy_path = "src"
 files = [
     "src/market_regime_alpha/shared",
     "src/market_regime_alpha/runtime",
+    "src/market_regime_alpha/market",
     "src/market_regime_alpha/infrastructure/postgres",
     "src/market_regime_alpha/infrastructure/artifacts",
+    "src/market_regime_alpha/infrastructure/providers",
     "src/market_regime_alpha/interfaces",
     "src/market_regime_alpha/bootstrap.py",
     "src/market_regime_alpha/core/identity.py",

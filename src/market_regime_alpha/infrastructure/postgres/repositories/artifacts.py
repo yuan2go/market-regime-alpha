@@ -216,6 +216,9 @@ class PostgresArtifactRepository:
                         SELECT 1 FROM mra.command_receipt AS receipt
                         WHERE receipt.result_artifact_id = artifact.artifact_id
                     ) OR EXISTS (
+                        SELECT 1 FROM mra.data_capture AS capture
+                        WHERE capture.artifact_id = artifact.artifact_id
+                    ) OR EXISTS (
                         SELECT 1 FROM mra.artifact_dependency AS dependency
                         WHERE dependency.child_artifact_id = artifact.artifact_id
                            OR dependency.parent_artifact_id = artifact.artifact_id

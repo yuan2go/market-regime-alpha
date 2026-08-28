@@ -8,6 +8,7 @@ import pytest
 
 from market_regime_alpha.infrastructure.postgres.schema import (
     EXPECTED_FOUNDATION_TABLES,
+    EXPECTED_TARGET_TABLES,
     SCHEMA_EPOCH,
     CatalogDriftError,
     LegacySchemaPresentError,
@@ -37,7 +38,8 @@ def test_empty_database_bootstrap_retry_and_verify(target_database_url: str) -> 
     assert verified.schema_name == "mra"
     assert verified.release_state == "DRAFT"
     assert verified.baseline_version == 1
-    assert verified.tables == EXPECTED_FOUNDATION_TABLES
+    assert EXPECTED_FOUNDATION_TABLES < verified.tables
+    assert verified.tables == EXPECTED_TARGET_TABLES
     assert len(verified.baseline_checksum) == 64
     assert len(verified.seed_checksum) == 64
     assert len(verified.catalog_checksum) == 64

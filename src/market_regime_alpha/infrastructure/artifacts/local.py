@@ -133,6 +133,19 @@ class LocalArtifactStore:
             observed_sha256=observed_hash,
         )
 
+    def read_bytes(self, content_sha256: str, *, expected_size: int) -> bytes:
+        """Return exact verified bytes; never repair, substitute, or trust the locator."""
+
+        verification = self.verify(content_sha256, expected_size=expected_size)
+        if verification.result != "VERIFIED":
+            raise ArtifactStoreError(
+                f"content-addressed object cannot be read: {verification.result}"
+            )
+        content = self.object_path(content_sha256).read_bytes()
+        if len(content) != expected_size or hashlib.sha256(content).hexdigest() != content_sha256:
+            raise ArtifactStoreError("content-addressed object changed during verified read")
+        return content
+
     def list_objects(self) -> tuple[PublishedArtifact, ...]:
         result: list[PublishedArtifact] = []
         if not self._objects.exists():

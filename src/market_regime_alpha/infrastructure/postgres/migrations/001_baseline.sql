@@ -282,6 +282,192 @@ BEGIN
 END;
 $$;
 
+CREATE FUNCTION mra.validate_data_capture_insert()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    product_row record;
+    artifact_row record;
+BEGIN
+    SELECT payload_encoding, source_availability_policy
+    INTO product_row
+    FROM mra.provider_product
+    WHERE provider_product_id = NEW.provider_product_id
+    FOR SHARE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Capture ProviderProduct does not exist' USING ERRCODE = '23503';
+    END IF;
+    IF product_row.source_availability_policy <> NEW.source_availability_status THEN
+        RAISE EXCEPTION 'Capture availability semantics differ from ProviderProduct' USING ERRCODE = '55000';
+    END IF;
+    IF NEW.status = 'CAPTURED' THEN
+        SELECT integrity_state INTO artifact_row
+        FROM mra.artifact
+        WHERE artifact_id = NEW.artifact_id
+        FOR SHARE;
+        IF NOT FOUND OR artifact_row.integrity_state <> 'AVAILABLE' THEN
+            RAISE EXCEPTION 'Capture requires an AVAILABLE exact Artifact' USING ERRCODE = '55000';
+        END IF;
+        IF NEW.payload_encoding <> product_row.payload_encoding THEN
+            RAISE EXCEPTION 'Capture encoding differs from ProviderProduct' USING ERRCODE = '55000';
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.validate_instrument_identifier_insert()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    PERFORM pg_advisory_xact_lock(
+        hashtextextended('mra:instrument-identifier:' || NEW.identifier_scheme, 0)
+    );
+    IF EXISTS (
+        SELECT 1
+        FROM mra.instrument_identifier AS existing
+        WHERE existing.identifier_scheme = NEW.identifier_scheme
+          AND (
+              (existing.identifier_value = NEW.identifier_value
+               AND existing.instrument_id <> NEW.instrument_id)
+              OR
+              (existing.instrument_id = NEW.instrument_id
+               AND existing.identifier_value <> NEW.identifier_value)
+          )
+          AND existing.effective_from < COALESCE(NEW.effective_to, 'infinity'::timestamptz)
+          AND NEW.effective_from < COALESCE(existing.effective_to, 'infinity'::timestamptz)
+    ) THEN
+        RAISE EXCEPTION 'InstrumentIdentifier effective interval overlaps another Authority mapping' USING ERRCODE = '23P01';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.validate_market_revision_predecessor()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    valid boolean := false;
+BEGIN
+    IF NEW.revision = 1 THEN
+        RETURN NEW;
+    END IF;
+    IF TG_TABLE_NAME = 'provider_product' THEN
+        SELECT EXISTS (
+            SELECT 1 FROM mra.provider_product AS prior
+            WHERE prior.provider_product_id = NEW.supersedes_provider_product_id
+              AND prior.provider_id = NEW.provider_id
+              AND prior.product_code = NEW.product_code
+              AND prior.revision = NEW.revision - 1
+        ) INTO valid;
+    ELSIF TG_TABLE_NAME = 'instrument_identifier' THEN
+        SELECT EXISTS (
+            SELECT 1 FROM mra.instrument_identifier AS prior
+            WHERE prior.instrument_identifier_id = NEW.supersedes_identifier_id
+              AND prior.instrument_id = NEW.instrument_id
+              AND prior.identifier_scheme = NEW.identifier_scheme
+              AND prior.identifier_value = NEW.identifier_value
+              AND prior.revision = NEW.revision - 1
+        ) INTO valid;
+    ELSIF TG_TABLE_NAME = 'classification' THEN
+        SELECT EXISTS (
+            SELECT 1 FROM mra.classification AS prior
+            WHERE prior.classification_id = NEW.supersedes_classification_id
+              AND prior.classification_scheme = NEW.classification_scheme
+              AND prior.classification_code = NEW.classification_code
+              AND prior.revision = NEW.revision - 1
+        ) INTO valid;
+    ELSIF TG_TABLE_NAME = 'classification_membership_revision' THEN
+        SELECT EXISTS (
+            SELECT 1 FROM mra.classification_membership_revision AS prior
+            WHERE prior.membership_revision_id = NEW.supersedes_membership_revision_id
+              AND prior.classification_id = NEW.classification_id
+              AND prior.instrument_id = NEW.instrument_id
+              AND prior.revision = NEW.revision - 1
+        ) INTO valid;
+    ELSIF TG_TABLE_NAME = 'market_bar_revision' THEN
+        SELECT EXISTS (
+            SELECT 1 FROM mra.market_bar_revision AS prior
+            WHERE prior.bar_revision_id = NEW.supersedes_revision_id
+              AND prior.provider_product_id = NEW.provider_product_id
+              AND prior.instrument_id = NEW.instrument_id
+              AND prior.session_id = NEW.session_id
+              AND prior.timeframe = NEW.timeframe
+              AND prior.adjustment_basis = NEW.adjustment_basis
+              AND prior.event_start = NEW.event_start
+              AND prior.event_end = NEW.event_end
+              AND prior.revision = NEW.revision - 1
+        ) INTO valid;
+    ELSIF TG_TABLE_NAME = 'instrument_fact_revision' THEN
+        SELECT EXISTS (
+            SELECT 1 FROM mra.instrument_fact_revision AS prior
+            WHERE prior.fact_revision_id = NEW.supersedes_revision_id
+              AND prior.provider_product_id = NEW.provider_product_id
+              AND prior.instrument_id = NEW.instrument_id
+              AND prior.fact_kind = NEW.fact_kind
+              AND prior.evidence_scope = NEW.evidence_scope
+              AND prior.event_start = NEW.event_start
+              AND prior.event_end = NEW.event_end
+              AND prior.revision = NEW.revision - 1
+        ) INTO valid;
+    ELSIF TG_TABLE_NAME = 'corporate_action_revision' THEN
+        SELECT EXISTS (
+            SELECT 1 FROM mra.corporate_action_revision AS prior
+            WHERE prior.corporate_action_revision_id = NEW.supersedes_revision_id
+              AND prior.provider_product_id = NEW.provider_product_id
+              AND prior.instrument_id = NEW.instrument_id
+              AND prior.action_key = NEW.action_key
+              AND prior.revision = NEW.revision - 1
+        ) INTO valid;
+    END IF;
+    IF NOT valid THEN
+        RAISE EXCEPTION '% revision predecessor is not the same logical fact', TG_TABLE_NAME USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.reject_bar_gap_duality()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    conflict_exists boolean;
+BEGIN
+    IF TG_TABLE_NAME = 'market_bar_revision' THEN
+        SELECT EXISTS (
+            SELECT 1 FROM mra.source_gap AS gap
+            WHERE gap.capture_id = NEW.capture_id
+              AND gap.instrument_id = NEW.instrument_id
+              AND gap.session_id = NEW.session_id
+              AND gap.fact_kind = 'MARKET_BAR'
+              AND gap.timeframe = NEW.timeframe
+              AND gap.adjustment_basis = NEW.adjustment_basis
+              AND gap.event_start = NEW.event_start
+              AND gap.event_end = NEW.event_end
+        ) INTO conflict_exists;
+    ELSE
+        SELECT NEW.fact_kind = 'MARKET_BAR' AND EXISTS (
+            SELECT 1 FROM mra.market_bar_revision AS bar
+            WHERE bar.capture_id = NEW.capture_id
+              AND bar.instrument_id = NEW.instrument_id
+              AND bar.session_id = NEW.session_id
+              AND bar.timeframe = NEW.timeframe
+              AND bar.adjustment_basis = NEW.adjustment_basis
+              AND bar.event_start = NEW.event_start
+              AND bar.event_end = NEW.event_end
+        ) INTO conflict_exists;
+    END IF;
+    IF conflict_exists THEN
+        RAISE EXCEPTION 'one Capture cannot assert both a valid MarketBar and a SourceGap' USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
 CREATE TABLE mra.schema_epoch (
     singleton boolean PRIMARY KEY DEFAULT true,
     epoch_name text NOT NULL UNIQUE,
@@ -401,6 +587,432 @@ CREATE UNIQUE INDEX artifact_gc_candidate_artifact_idx ON mra.artifact_gc_candid
     WHERE artifact_id IS NOT NULL;
 CREATE INDEX artifact_gc_candidate_due_idx ON mra.artifact_gc_candidate (state, grace_until)
     WHERE state IN ('OBSERVED', 'QUARANTINE_PENDING', 'QUARANTINED', 'DELETE_PENDING');
+
+CREATE TABLE mra.provider (
+    provider_id uuid PRIMARY KEY,
+    provider_code text NOT NULL UNIQUE,
+    display_name text NOT NULL,
+    provider_kind text NOT NULL,
+    authority_ceiling text NOT NULL DEFAULT 'EXPLORATORY_UNQUALIFIED',
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT provider_code_ck CHECK (provider_code ~ '^[a-z][a-z0-9_-]{0,99}$'),
+    CONSTRAINT provider_name_ck CHECK (display_name <> ''),
+    CONSTRAINT provider_kind_ck CHECK (provider_kind IN ('PUBLIC_ENDPOINT', 'DATA_VENDOR', 'BROKER_FEED')),
+    CONSTRAINT provider_authority_ceiling_ck CHECK (authority_ceiling = 'EXPLORATORY_UNQUALIFIED')
+);
+
+CREATE TABLE mra.provider_product (
+    provider_product_id uuid PRIMARY KEY,
+    provider_id uuid NOT NULL REFERENCES mra.provider(provider_id) ON DELETE RESTRICT,
+    product_code text NOT NULL,
+    revision integer NOT NULL,
+    payload_family text NOT NULL,
+    media_type text NOT NULL,
+    payload_encoding text NOT NULL,
+    decision_visibility_policy text NOT NULL DEFAULT 'KNOWN_AT',
+    source_availability_policy text NOT NULL,
+    contract_sha256 text NOT NULL,
+    supersedes_provider_product_id uuid REFERENCES mra.provider_product(provider_product_id) ON DELETE RESTRICT,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT provider_product_identity_uk UNIQUE (provider_id, product_code, revision),
+    CONSTRAINT provider_product_code_ck CHECK (product_code ~ '^[a-z][a-z0-9_.-]{0,99}$'),
+    CONSTRAINT provider_product_revision_ck CHECK (revision > 0),
+    CONSTRAINT provider_product_revision_chain_ck CHECK (
+        (revision = 1 AND supersedes_provider_product_id IS NULL) OR
+        (revision > 1 AND supersedes_provider_product_id IS NOT NULL)
+    ),
+    CONSTRAINT provider_product_payload_ck CHECK (payload_family ~ '^[A-Z][A-Z0-9_]{0,99}$'),
+    CONSTRAINT provider_product_media_type_ck CHECK (media_type ~ '^[A-Za-z0-9][A-Za-z0-9.+-]+/[A-Za-z0-9][A-Za-z0-9.+-]+$'),
+    CONSTRAINT provider_product_encoding_ck CHECK (payload_encoding <> ''),
+    CONSTRAINT provider_product_visibility_ck CHECK (decision_visibility_policy = 'KNOWN_AT'),
+    CONSTRAINT provider_product_availability_ck CHECK (source_availability_policy IN ('UNKNOWN', 'PROVIDER_REPORTED')),
+    CONSTRAINT provider_product_contract_hash_ck CHECK (contract_sha256 ~ '^[0-9a-f]{64}$'),
+    CONSTRAINT provider_product_no_self_ck CHECK (supersedes_provider_product_id IS NULL OR supersedes_provider_product_id <> provider_product_id)
+);
+CREATE INDEX provider_product_provider_idx ON mra.provider_product (provider_id, product_code, revision DESC);
+CREATE INDEX provider_product_supersedes_idx ON mra.provider_product (supersedes_provider_product_id)
+    WHERE supersedes_provider_product_id IS NOT NULL;
+
+CREATE TABLE mra.data_capture (
+    capture_id uuid PRIMARY KEY,
+    provider_product_id uuid NOT NULL REFERENCES mra.provider_product(provider_product_id) ON DELETE RESTRICT,
+    capture_key text NOT NULL,
+    request_hash text NOT NULL,
+    artifact_id uuid REFERENCES mra.artifact(artifact_id) ON DELETE RESTRICT,
+    status text NOT NULL,
+    provider_time timestamptz,
+    source_availability_status text NOT NULL,
+    source_available_at timestamptz,
+    capture_started_at timestamptz NOT NULL,
+    capture_completed_at timestamptz NOT NULL,
+    recorded_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    known_at timestamptz NOT NULL,
+    decision_visible_at timestamptz NOT NULL,
+    error_code text,
+    limitation_code text,
+    payload_encoding text,
+    CONSTRAINT data_capture_identity_uk UNIQUE (provider_product_id, capture_key),
+    CONSTRAINT data_capture_key_ck CHECK (capture_key ~ '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$'),
+    CONSTRAINT data_capture_request_hash_ck CHECK (request_hash ~ '^[0-9a-f]{64}$'),
+    CONSTRAINT data_capture_status_ck CHECK (status IN ('CAPTURED', 'PROVIDER_FAILURE')),
+    CONSTRAINT data_capture_source_availability_ck CHECK (
+        (source_availability_status = 'UNKNOWN' AND source_available_at IS NULL) OR
+        (source_availability_status = 'PROVIDER_REPORTED' AND source_available_at IS NOT NULL)
+    ),
+    CONSTRAINT data_capture_time_order_ck CHECK (
+        capture_completed_at >= capture_started_at
+        AND known_at >= capture_completed_at
+        AND (source_available_at IS NULL OR source_available_at <= known_at)
+    ),
+    CONSTRAINT data_capture_visibility_ck CHECK (decision_visible_at = known_at),
+    CONSTRAINT data_capture_outcome_ck CHECK (
+        (status = 'CAPTURED' AND artifact_id IS NOT NULL AND error_code IS NULL AND payload_encoding IS NOT NULL) OR
+        (status = 'PROVIDER_FAILURE' AND error_code IS NOT NULL)
+    ),
+    CONSTRAINT data_capture_error_ck CHECK (error_code IS NULL OR error_code ~ '^[A-Z][A-Z0-9_]{0,99}$'),
+    CONSTRAINT data_capture_limitation_ck CHECK (limitation_code IS NULL OR limitation_code ~ '^[A-Z][A-Z0-9_]{0,99}$')
+);
+CREATE INDEX data_capture_product_visibility_idx
+    ON mra.data_capture (provider_product_id, decision_visible_at DESC, capture_id);
+CREATE INDEX data_capture_artifact_idx ON mra.data_capture (artifact_id)
+    WHERE artifact_id IS NOT NULL;
+CREATE INDEX data_capture_failure_idx ON mra.data_capture (provider_product_id, known_at DESC)
+    WHERE status = 'PROVIDER_FAILURE';
+
+CREATE TABLE mra.instrument (
+    instrument_id uuid PRIMARY KEY,
+    canonical_code text NOT NULL UNIQUE,
+    exchange text NOT NULL,
+    instrument_type text NOT NULL,
+    currency text NOT NULL,
+    source_capture_id uuid NOT NULL REFERENCES mra.data_capture(capture_id) ON DELETE RESTRICT,
+    recorded_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT instrument_code_ck CHECK (canonical_code ~ '^[A-Z0-9][A-Z0-9._-]{0,31}$'),
+    CONSTRAINT instrument_exchange_ck CHECK (exchange ~ '^[A-Z][A-Z0-9]{1,15}$'),
+    CONSTRAINT instrument_type_ck CHECK (instrument_type IN ('EQUITY', 'ETF', 'INDEX', 'FUND', 'BOND')),
+    CONSTRAINT instrument_currency_ck CHECK (currency ~ '^[A-Z]{3}$')
+);
+CREATE INDEX instrument_capture_idx ON mra.instrument (source_capture_id);
+CREATE INDEX instrument_exchange_code_idx ON mra.instrument (exchange, canonical_code);
+
+CREATE TABLE mra.instrument_identifier (
+    instrument_identifier_id uuid PRIMARY KEY,
+    instrument_id uuid NOT NULL REFERENCES mra.instrument(instrument_id) ON DELETE RESTRICT,
+    identifier_scheme text NOT NULL,
+    identifier_value text NOT NULL,
+    effective_from timestamptz NOT NULL,
+    effective_to timestamptz,
+    revision integer NOT NULL,
+    supersedes_identifier_id uuid REFERENCES mra.instrument_identifier(instrument_identifier_id) ON DELETE RESTRICT,
+    source_capture_id uuid NOT NULL REFERENCES mra.data_capture(capture_id) ON DELETE RESTRICT,
+    recorded_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT instrument_identifier_identity_uk UNIQUE (instrument_id, identifier_scheme, effective_from, revision),
+    CONSTRAINT instrument_identifier_lookup_uk UNIQUE (identifier_scheme, identifier_value, effective_from, revision),
+    CONSTRAINT instrument_identifier_scheme_ck CHECK (identifier_scheme ~ '^[A-Z][A-Z0-9_]{0,31}$'),
+    CONSTRAINT instrument_identifier_value_ck CHECK (identifier_value <> ''),
+    CONSTRAINT instrument_identifier_interval_ck CHECK (effective_to IS NULL OR effective_to > effective_from),
+    CONSTRAINT instrument_identifier_revision_ck CHECK (revision > 0),
+    CONSTRAINT instrument_identifier_revision_chain_ck CHECK (
+        (revision = 1 AND supersedes_identifier_id IS NULL) OR
+        (revision > 1 AND supersedes_identifier_id IS NOT NULL)
+    ),
+    CONSTRAINT instrument_identifier_no_self_ck CHECK (supersedes_identifier_id IS NULL OR supersedes_identifier_id <> instrument_identifier_id)
+);
+CREATE INDEX instrument_identifier_instrument_idx
+    ON mra.instrument_identifier (instrument_id, identifier_scheme, effective_from DESC);
+CREATE INDEX instrument_identifier_capture_idx ON mra.instrument_identifier (source_capture_id);
+CREATE INDEX instrument_identifier_supersedes_idx ON mra.instrument_identifier (supersedes_identifier_id)
+    WHERE supersedes_identifier_id IS NOT NULL;
+CREATE INDEX instrument_identifier_asof_idx
+    ON mra.instrument_identifier (identifier_scheme, identifier_value, effective_from DESC, effective_to);
+
+CREATE TABLE mra.trading_session (
+    session_id uuid PRIMARY KEY,
+    exchange text NOT NULL,
+    session_date date NOT NULL,
+    timezone_name text NOT NULL,
+    open_at timestamptz NOT NULL,
+    break_start_at timestamptz,
+    break_end_at timestamptz,
+    close_at timestamptz NOT NULL,
+    decision_reference_at timestamptz NOT NULL,
+    source_capture_id uuid NOT NULL REFERENCES mra.data_capture(capture_id) ON DELETE RESTRICT,
+    recorded_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT trading_session_identity_uk UNIQUE (exchange, session_date),
+    CONSTRAINT trading_session_exchange_ck CHECK (exchange ~ '^[A-Z][A-Z0-9]{1,15}$'),
+    CONSTRAINT trading_session_timezone_ck CHECK (timezone_name <> ''),
+    CONSTRAINT trading_session_break_ck CHECK ((break_start_at IS NULL) = (break_end_at IS NULL)),
+    CONSTRAINT trading_session_order_ck CHECK (
+        open_at < close_at
+        AND decision_reference_at > open_at
+        AND decision_reference_at <= close_at
+        AND (open_at AT TIME ZONE timezone_name)::date = session_date
+        AND (close_at AT TIME ZONE timezone_name)::date = session_date
+        AND (decision_reference_at AT TIME ZONE timezone_name)::date = session_date
+        AND (decision_reference_at AT TIME ZONE timezone_name)::time = TIME '14:55:00'
+        AND (
+            break_start_at IS NULL OR
+            (open_at < break_start_at AND break_start_at < break_end_at AND break_end_at < close_at)
+        )
+    )
+);
+CREATE INDEX trading_session_capture_idx ON mra.trading_session (source_capture_id);
+CREATE INDEX trading_session_calendar_idx ON mra.trading_session (exchange, session_date, session_id);
+
+CREATE TABLE mra.classification (
+    classification_id uuid PRIMARY KEY,
+    classification_scheme text NOT NULL,
+    classification_code text NOT NULL,
+    display_name text NOT NULL,
+    revision integer NOT NULL,
+    effective_from timestamptz NOT NULL,
+    effective_to timestamptz,
+    supersedes_classification_id uuid REFERENCES mra.classification(classification_id) ON DELETE RESTRICT,
+    source_capture_id uuid NOT NULL REFERENCES mra.data_capture(capture_id) ON DELETE RESTRICT,
+    recorded_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT classification_identity_uk UNIQUE (classification_scheme, classification_code, revision),
+    CONSTRAINT classification_scheme_ck CHECK (classification_scheme ~ '^[A-Z][A-Z0-9_]{0,31}$'),
+    CONSTRAINT classification_code_ck CHECK (classification_code <> ''),
+    CONSTRAINT classification_name_ck CHECK (display_name <> ''),
+    CONSTRAINT classification_revision_ck CHECK (revision > 0),
+    CONSTRAINT classification_interval_ck CHECK (effective_to IS NULL OR effective_to > effective_from),
+    CONSTRAINT classification_revision_chain_ck CHECK (
+        (revision = 1 AND supersedes_classification_id IS NULL) OR
+        (revision > 1 AND supersedes_classification_id IS NOT NULL)
+    ),
+    CONSTRAINT classification_no_self_ck CHECK (supersedes_classification_id IS NULL OR supersedes_classification_id <> classification_id)
+);
+CREATE INDEX classification_capture_idx ON mra.classification (source_capture_id);
+CREATE INDEX classification_supersedes_idx ON mra.classification (supersedes_classification_id)
+    WHERE supersedes_classification_id IS NOT NULL;
+CREATE INDEX classification_asof_idx
+    ON mra.classification (classification_scheme, classification_code, effective_from DESC, effective_to, revision DESC);
+
+CREATE TABLE mra.classification_membership_revision (
+    membership_revision_id uuid PRIMARY KEY,
+    classification_id uuid NOT NULL REFERENCES mra.classification(classification_id) ON DELETE RESTRICT,
+    instrument_id uuid NOT NULL REFERENCES mra.instrument(instrument_id) ON DELETE RESTRICT,
+    source_capture_id uuid NOT NULL REFERENCES mra.data_capture(capture_id) ON DELETE RESTRICT,
+    membership_status text NOT NULL,
+    effective_from timestamptz NOT NULL,
+    effective_to timestamptz,
+    revision integer NOT NULL,
+    supersedes_membership_revision_id uuid REFERENCES mra.classification_membership_revision(membership_revision_id) ON DELETE RESTRICT,
+    recorded_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT classification_membership_identity_uk UNIQUE (classification_id, instrument_id, effective_from, revision),
+    CONSTRAINT classification_membership_status_ck CHECK (membership_status IN ('MEMBER', 'NOT_MEMBER')),
+    CONSTRAINT classification_membership_interval_ck CHECK (effective_to IS NULL OR effective_to > effective_from),
+    CONSTRAINT classification_membership_revision_ck CHECK (revision > 0),
+    CONSTRAINT classification_membership_revision_chain_ck CHECK (
+        (revision = 1 AND supersedes_membership_revision_id IS NULL) OR
+        (revision > 1 AND supersedes_membership_revision_id IS NOT NULL)
+    ),
+    CONSTRAINT classification_membership_no_self_ck CHECK (supersedes_membership_revision_id IS NULL OR supersedes_membership_revision_id <> membership_revision_id)
+);
+CREATE INDEX classification_membership_classification_idx
+    ON mra.classification_membership_revision (classification_id, instrument_id, effective_from DESC, revision DESC);
+CREATE INDEX classification_membership_instrument_idx
+    ON mra.classification_membership_revision (instrument_id, classification_id, effective_from DESC);
+CREATE INDEX classification_membership_capture_idx
+    ON mra.classification_membership_revision (source_capture_id);
+CREATE INDEX classification_membership_supersedes_idx
+    ON mra.classification_membership_revision (supersedes_membership_revision_id)
+    WHERE supersedes_membership_revision_id IS NOT NULL;
+
+CREATE TABLE mra.market_bar_revision (
+    bar_revision_id uuid PRIMARY KEY,
+    provider_product_id uuid NOT NULL REFERENCES mra.provider_product(provider_product_id) ON DELETE RESTRICT,
+    capture_id uuid NOT NULL REFERENCES mra.data_capture(capture_id) ON DELETE RESTRICT,
+    instrument_id uuid NOT NULL REFERENCES mra.instrument(instrument_id) ON DELETE RESTRICT,
+    session_id uuid NOT NULL REFERENCES mra.trading_session(session_id) ON DELETE RESTRICT,
+    timeframe text NOT NULL,
+    adjustment_basis text NOT NULL,
+    event_start timestamptz NOT NULL,
+    event_end timestamptz NOT NULL,
+    revision integer NOT NULL,
+    supersedes_revision_id uuid REFERENCES mra.market_bar_revision(bar_revision_id) ON DELETE RESTRICT,
+    open_value numeric(30, 10) NOT NULL,
+    high_value numeric(30, 10) NOT NULL,
+    low_value numeric(30, 10) NOT NULL,
+    close_value numeric(30, 10) NOT NULL,
+    volume_value numeric(38, 10) NOT NULL,
+    turnover_value numeric(38, 10),
+    recorded_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT market_bar_revision_identity_uk UNIQUE (
+        provider_product_id, instrument_id, session_id, timeframe,
+        adjustment_basis, event_start, event_end, revision
+    ),
+    CONSTRAINT market_bar_timeframe_ck CHECK (timeframe IN ('MINUTE_1', 'MINUTE_5', 'MINUTE_15', 'MINUTE_30', 'MINUTE_60', 'DAILY')),
+    CONSTRAINT market_bar_basis_ck CHECK (adjustment_basis IN ('RAW_UNADJUSTED', 'FORWARD_ADJUSTED', 'BACKWARD_ADJUSTED')),
+    CONSTRAINT market_bar_interval_ck CHECK (
+        event_end > event_start
+        AND (timeframe <> 'MINUTE_1' OR event_end - event_start = interval '1 minute')
+        AND (timeframe <> 'MINUTE_5' OR event_end - event_start = interval '5 minutes')
+        AND (timeframe <> 'MINUTE_15' OR event_end - event_start = interval '15 minutes')
+        AND (timeframe <> 'MINUTE_30' OR event_end - event_start = interval '30 minutes')
+        AND (timeframe <> 'MINUTE_60' OR event_end - event_start = interval '60 minutes')
+    ),
+    CONSTRAINT market_bar_revision_ck CHECK (revision > 0),
+    CONSTRAINT market_bar_revision_chain_ck CHECK (
+        (revision = 1 AND supersedes_revision_id IS NULL) OR
+        (revision > 1 AND supersedes_revision_id IS NOT NULL)
+    ),
+    CONSTRAINT market_bar_no_self_ck CHECK (supersedes_revision_id IS NULL OR supersedes_revision_id <> bar_revision_id),
+    CONSTRAINT market_bar_ohlc_ck CHECK (
+        open_value > 0 AND high_value > 0 AND low_value > 0 AND close_value > 0
+        AND high_value >= greatest(open_value, close_value, low_value)
+        AND low_value <= least(open_value, close_value, high_value)
+    ),
+    CONSTRAINT market_bar_volume_ck CHECK (volume_value >= 0 AND (turnover_value IS NULL OR turnover_value >= 0))
+);
+CREATE INDEX market_bar_exact_asof_idx ON mra.market_bar_revision (
+    provider_product_id, instrument_id, session_id, timeframe,
+    adjustment_basis, event_end, event_start, revision DESC, capture_id
+);
+CREATE INDEX market_bar_capture_idx ON mra.market_bar_revision (capture_id);
+CREATE INDEX market_bar_instrument_idx ON mra.market_bar_revision (instrument_id, event_end DESC);
+CREATE INDEX market_bar_session_idx ON mra.market_bar_revision (session_id, instrument_id, event_end);
+CREATE INDEX market_bar_supersedes_idx ON mra.market_bar_revision (supersedes_revision_id)
+    WHERE supersedes_revision_id IS NOT NULL;
+
+CREATE TABLE mra.instrument_fact_revision (
+    fact_revision_id uuid PRIMARY KEY,
+    provider_product_id uuid NOT NULL REFERENCES mra.provider_product(provider_product_id) ON DELETE RESTRICT,
+    capture_id uuid NOT NULL REFERENCES mra.data_capture(capture_id) ON DELETE RESTRICT,
+    instrument_id uuid NOT NULL REFERENCES mra.instrument(instrument_id) ON DELETE RESTRICT,
+    session_id uuid REFERENCES mra.trading_session(session_id) ON DELETE RESTRICT,
+    fact_kind text NOT NULL,
+    evidence_scope text NOT NULL,
+    event_start timestamptz NOT NULL,
+    event_end timestamptz NOT NULL,
+    value_kind text NOT NULL,
+    status_value text,
+    numeric_value numeric(38, 10),
+    text_value text,
+    unit_code text,
+    revision integer NOT NULL,
+    supersedes_revision_id uuid REFERENCES mra.instrument_fact_revision(fact_revision_id) ON DELETE RESTRICT,
+    recorded_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT instrument_fact_identity_uk UNIQUE (
+        provider_product_id, instrument_id, fact_kind, evidence_scope,
+        event_start, event_end, revision
+    ),
+    CONSTRAINT instrument_fact_kind_ck CHECK (fact_kind ~ '^[A-Z][A-Z0-9_]{0,99}$'),
+    CONSTRAINT instrument_fact_scope_ck CHECK (evidence_scope IN ('DECISION_SESSION', 'PRIOR_SESSION', 'EFFECTIVE_INTERVAL')),
+    CONSTRAINT instrument_fact_interval_ck CHECK (event_end > event_start),
+    CONSTRAINT instrument_fact_value_kind_ck CHECK (value_kind IN ('STATUS', 'DECIMAL', 'TEXT')),
+    CONSTRAINT instrument_fact_value_ck CHECK (
+        (value_kind = 'STATUS' AND status_value IS NOT NULL AND numeric_value IS NULL AND text_value IS NULL) OR
+        (value_kind = 'DECIMAL' AND status_value IS NULL AND numeric_value IS NOT NULL AND text_value IS NULL) OR
+        (value_kind = 'TEXT' AND status_value IS NULL AND numeric_value IS NULL AND text_value IS NOT NULL)
+    ),
+    CONSTRAINT instrument_fact_security_status_ck CHECK (
+        fact_kind <> 'SECURITY_STATUS' OR
+        (value_kind = 'STATUS' AND status_value IN ('ACTIVE', 'SUSPENDED', 'UNKNOWN') AND session_id IS NOT NULL)
+    ),
+    CONSTRAINT instrument_fact_session_scope_ck CHECK (
+        evidence_scope = 'EFFECTIVE_INTERVAL' OR session_id IS NOT NULL
+    ),
+    CONSTRAINT instrument_fact_unit_ck CHECK (unit_code IS NULL OR unit_code ~ '^[A-Z][A-Z0-9_]{0,31}$'),
+    CONSTRAINT instrument_fact_revision_ck CHECK (revision > 0),
+    CONSTRAINT instrument_fact_revision_chain_ck CHECK (
+        (revision = 1 AND supersedes_revision_id IS NULL) OR
+        (revision > 1 AND supersedes_revision_id IS NOT NULL)
+    ),
+    CONSTRAINT instrument_fact_no_self_ck CHECK (supersedes_revision_id IS NULL OR supersedes_revision_id <> fact_revision_id)
+);
+CREATE INDEX instrument_fact_exact_asof_idx ON mra.instrument_fact_revision (
+    provider_product_id, instrument_id, fact_kind, evidence_scope,
+    session_id, event_end, revision DESC, capture_id
+);
+CREATE INDEX instrument_fact_capture_idx ON mra.instrument_fact_revision (capture_id);
+CREATE INDEX instrument_fact_instrument_idx ON mra.instrument_fact_revision (instrument_id, fact_kind, event_end DESC);
+CREATE INDEX instrument_fact_session_idx ON mra.instrument_fact_revision (session_id, instrument_id, fact_kind)
+    WHERE session_id IS NOT NULL;
+CREATE INDEX instrument_fact_supersedes_idx ON mra.instrument_fact_revision (supersedes_revision_id)
+    WHERE supersedes_revision_id IS NOT NULL;
+
+CREATE TABLE mra.corporate_action_revision (
+    corporate_action_revision_id uuid PRIMARY KEY,
+    provider_product_id uuid NOT NULL REFERENCES mra.provider_product(provider_product_id) ON DELETE RESTRICT,
+    capture_id uuid NOT NULL REFERENCES mra.data_capture(capture_id) ON DELETE RESTRICT,
+    instrument_id uuid NOT NULL REFERENCES mra.instrument(instrument_id) ON DELETE RESTRICT,
+    action_key text NOT NULL,
+    action_type text NOT NULL,
+    ex_session_id uuid NOT NULL REFERENCES mra.trading_session(session_id) ON DELETE RESTRICT,
+    payable_at timestamptz,
+    cash_amount numeric(30, 10),
+    ratio_factor numeric(30, 12),
+    currency text,
+    revision integer NOT NULL,
+    supersedes_revision_id uuid REFERENCES mra.corporate_action_revision(corporate_action_revision_id) ON DELETE RESTRICT,
+    recorded_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT corporate_action_identity_uk UNIQUE (provider_product_id, instrument_id, action_key, revision),
+    CONSTRAINT corporate_action_key_ck CHECK (action_key <> ''),
+    CONSTRAINT corporate_action_type_ck CHECK (action_type IN ('CASH_DIVIDEND', 'STOCK_DIVIDEND', 'SPLIT', 'RIGHTS_ISSUE', 'MERGER', 'DELISTING')),
+    CONSTRAINT corporate_action_value_ck CHECK (
+        (cash_amount IS NULL OR cash_amount >= 0)
+        AND (ratio_factor IS NULL OR ratio_factor > 0)
+        AND (currency IS NULL OR currency ~ '^[A-Z]{3}$')
+        AND (cash_amount IS NULL OR currency IS NOT NULL)
+        AND (cash_amount IS NOT NULL OR ratio_factor IS NOT NULL OR action_type IN ('MERGER', 'DELISTING'))
+    ),
+    CONSTRAINT corporate_action_revision_ck CHECK (revision > 0),
+    CONSTRAINT corporate_action_revision_chain_ck CHECK (
+        (revision = 1 AND supersedes_revision_id IS NULL) OR
+        (revision > 1 AND supersedes_revision_id IS NOT NULL)
+    ),
+    CONSTRAINT corporate_action_no_self_ck CHECK (supersedes_revision_id IS NULL OR supersedes_revision_id <> corporate_action_revision_id)
+);
+CREATE INDEX corporate_action_exact_asof_idx
+    ON mra.corporate_action_revision (provider_product_id, instrument_id, ex_session_id, action_key, revision DESC, capture_id);
+CREATE INDEX corporate_action_capture_idx ON mra.corporate_action_revision (capture_id);
+CREATE INDEX corporate_action_instrument_idx ON mra.corporate_action_revision (instrument_id, ex_session_id, action_key);
+CREATE INDEX corporate_action_session_idx ON mra.corporate_action_revision (ex_session_id, instrument_id);
+CREATE INDEX corporate_action_supersedes_idx ON mra.corporate_action_revision (supersedes_revision_id)
+    WHERE supersedes_revision_id IS NOT NULL;
+
+CREATE TABLE mra.source_gap (
+    gap_id uuid PRIMARY KEY,
+    provider_product_id uuid NOT NULL REFERENCES mra.provider_product(provider_product_id) ON DELETE RESTRICT,
+    capture_id uuid NOT NULL REFERENCES mra.data_capture(capture_id) ON DELETE RESTRICT,
+    instrument_id uuid REFERENCES mra.instrument(instrument_id) ON DELETE RESTRICT,
+    session_id uuid REFERENCES mra.trading_session(session_id) ON DELETE RESTRICT,
+    gap_kind text NOT NULL,
+    reason_code text NOT NULL,
+    fact_kind text NOT NULL,
+    timeframe text,
+    adjustment_basis text,
+    event_start timestamptz,
+    event_end timestamptz,
+    detail text,
+    recorded_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT source_gap_identity_uk UNIQUE (
+        capture_id, fact_kind, instrument_id, session_id,
+        timeframe, adjustment_basis, event_start, event_end, gap_kind
+    ),
+    CONSTRAINT source_gap_kind_ck CHECK (gap_kind IN ('MISSING', 'PLACEHOLDER', 'PROVIDER_FAILURE', 'CONFLICT', 'INVALID_OHLC')),
+    CONSTRAINT source_gap_reason_ck CHECK (reason_code ~ '^[A-Z][A-Z0-9_]{0,99}$'),
+    CONSTRAINT source_gap_fact_kind_ck CHECK (fact_kind ~ '^[A-Z][A-Z0-9_]{0,99}$'),
+    CONSTRAINT source_gap_bar_scope_ck CHECK (
+        (timeframe IS NULL AND adjustment_basis IS NULL) OR
+        (timeframe IN ('MINUTE_1', 'MINUTE_5', 'MINUTE_15', 'MINUTE_30', 'MINUTE_60', 'DAILY')
+         AND adjustment_basis IN ('RAW_UNADJUSTED', 'FORWARD_ADJUSTED', 'BACKWARD_ADJUSTED'))
+    ),
+    CONSTRAINT source_gap_interval_ck CHECK (
+        (event_start IS NULL AND event_end IS NULL) OR
+        (event_start IS NOT NULL AND event_end > event_start)
+    )
+);
+CREATE INDEX source_gap_exact_asof_idx ON mra.source_gap (
+    provider_product_id, instrument_id, session_id, fact_kind,
+    timeframe, adjustment_basis, event_end, capture_id
+);
+CREATE INDEX source_gap_capture_idx ON mra.source_gap (capture_id);
+CREATE INDEX source_gap_instrument_idx ON mra.source_gap (instrument_id, fact_kind, event_end DESC)
+    WHERE instrument_id IS NOT NULL;
+CREATE INDEX source_gap_session_idx ON mra.source_gap (session_id, instrument_id, fact_kind)
+    WHERE session_id IS NOT NULL;
 
 CREATE TABLE mra.runtime_schedule (
     schedule_id uuid PRIMARY KEY,
@@ -786,6 +1398,75 @@ FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
 CREATE TRIGGER runtime_step_dependency_append_only
 BEFORE UPDATE OR DELETE ON mra.runtime_step_dependency
 FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER provider_append_only
+BEFORE UPDATE OR DELETE ON mra.provider
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER provider_product_revision_predecessor
+BEFORE INSERT ON mra.provider_product
+FOR EACH ROW EXECUTE FUNCTION mra.validate_market_revision_predecessor();
+CREATE TRIGGER provider_product_append_only
+BEFORE UPDATE OR DELETE ON mra.provider_product
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER data_capture_validate_insert
+BEFORE INSERT ON mra.data_capture
+FOR EACH ROW EXECUTE FUNCTION mra.validate_data_capture_insert();
+CREATE TRIGGER data_capture_append_only
+BEFORE UPDATE OR DELETE ON mra.data_capture
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER instrument_append_only
+BEFORE UPDATE OR DELETE ON mra.instrument
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER instrument_identifier_append_only
+BEFORE UPDATE OR DELETE ON mra.instrument_identifier
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER instrument_identifier_validate_insert
+BEFORE INSERT ON mra.instrument_identifier
+FOR EACH ROW EXECUTE FUNCTION mra.validate_instrument_identifier_insert();
+CREATE TRIGGER instrument_identifier_revision_predecessor
+BEFORE INSERT ON mra.instrument_identifier
+FOR EACH ROW EXECUTE FUNCTION mra.validate_market_revision_predecessor();
+CREATE TRIGGER trading_session_append_only
+BEFORE UPDATE OR DELETE ON mra.trading_session
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER classification_append_only
+BEFORE UPDATE OR DELETE ON mra.classification
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER classification_revision_predecessor
+BEFORE INSERT ON mra.classification
+FOR EACH ROW EXECUTE FUNCTION mra.validate_market_revision_predecessor();
+CREATE TRIGGER classification_membership_revision_append_only
+BEFORE UPDATE OR DELETE ON mra.classification_membership_revision
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER classification_membership_revision_predecessor
+BEFORE INSERT ON mra.classification_membership_revision
+FOR EACH ROW EXECUTE FUNCTION mra.validate_market_revision_predecessor();
+CREATE TRIGGER market_bar_revision_append_only
+BEFORE UPDATE OR DELETE ON mra.market_bar_revision
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER market_bar_revision_predecessor
+BEFORE INSERT ON mra.market_bar_revision
+FOR EACH ROW EXECUTE FUNCTION mra.validate_market_revision_predecessor();
+CREATE TRIGGER market_bar_gap_exclusive
+BEFORE INSERT ON mra.market_bar_revision
+FOR EACH ROW EXECUTE FUNCTION mra.reject_bar_gap_duality();
+CREATE TRIGGER instrument_fact_revision_append_only
+BEFORE UPDATE OR DELETE ON mra.instrument_fact_revision
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER instrument_fact_revision_predecessor
+BEFORE INSERT ON mra.instrument_fact_revision
+FOR EACH ROW EXECUTE FUNCTION mra.validate_market_revision_predecessor();
+CREATE TRIGGER corporate_action_revision_append_only
+BEFORE UPDATE OR DELETE ON mra.corporate_action_revision
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER corporate_action_revision_predecessor
+BEFORE INSERT ON mra.corporate_action_revision
+FOR EACH ROW EXECUTE FUNCTION mra.validate_market_revision_predecessor();
+CREATE TRIGGER source_gap_append_only
+BEFORE UPDATE OR DELETE ON mra.source_gap
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER source_gap_bar_exclusive
+BEFORE INSERT ON mra.source_gap
+FOR EACH ROW EXECUTE FUNCTION mra.reject_bar_gap_duality();
 
 CREATE VIEW mra.run_trace AS
 SELECT

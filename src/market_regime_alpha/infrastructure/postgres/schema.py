@@ -44,6 +44,27 @@ EXPECTED_FOUNDATION_TABLES: Final[frozenset[str]] = frozenset(
     }
 )
 
+EXPECTED_MARKET_TABLES: Final[frozenset[str]] = frozenset(
+    {
+        "provider",
+        "provider_product",
+        "data_capture",
+        "instrument",
+        "instrument_identifier",
+        "trading_session",
+        "classification",
+        "classification_membership_revision",
+        "market_bar_revision",
+        "instrument_fact_revision",
+        "corporate_action_revision",
+        "source_gap",
+    }
+)
+
+EXPECTED_TARGET_TABLES: Final[frozenset[str]] = (
+    EXPECTED_FOUNDATION_TABLES | EXPECTED_MARKET_TABLES
+)
+
 _LEGACY_TABLE_SIGNATURES: Final[frozenset[str]] = frozenset(
     {
         "continuous_research_run",
@@ -58,6 +79,28 @@ _LEGACY_TABLE_SIGNATURES: Final[frozenset[str]] = frozenset(
 )
 
 _REFERENCE_VOCABULARY: Final[dict[str, tuple[str, ...]]] = {
+    "adjustment_basis": (
+        "RAW_UNADJUSTED",
+        "FORWARD_ADJUSTED",
+        "BACKWARD_ADJUSTED",
+    ),
+    "bar_timeframe": (
+        "MINUTE_1",
+        "MINUTE_5",
+        "MINUTE_15",
+        "MINUTE_30",
+        "MINUTE_60",
+        "DAILY",
+    ),
+    "capture_status": ("CAPTURED", "PROVIDER_FAILURE"),
+    "corporate_action_type": (
+        "CASH_DIVIDEND",
+        "STOCK_DIVIDEND",
+        "SPLIT",
+        "RIGHTS_ISSUE",
+        "MERGER",
+        "DELISTING",
+    ),
     "runtime_step_kind": (
         "CAPTURE",
         "NORMALIZE_PIT",
@@ -86,6 +129,23 @@ _REFERENCE_VOCABULARY: Final[dict[str, tuple[str, ...]]] = {
         "IDEMPOTENT_REMOTE_COMMAND",
         "NON_IDEMPOTENT_REMOTE_COMMAND",
         "OBSERVATION_ONLY",
+    ),
+    "fact_evidence_scope": (
+        "DECISION_SESSION",
+        "PRIOR_SESSION",
+        "EFFECTIVE_INTERVAL",
+    ),
+    "fact_value_kind": ("STATUS", "DECIMAL", "TEXT"),
+    "market_authority_ceiling": ("EXPLORATORY_UNQUALIFIED",),
+    "membership_status": ("MEMBER", "NOT_MEMBER"),
+    "security_status": ("ACTIVE", "SUSPENDED", "UNKNOWN"),
+    "source_availability_status": ("UNKNOWN", "PROVIDER_REPORTED"),
+    "source_gap_kind": (
+        "MISSING",
+        "PLACEHOLDER",
+        "PROVIDER_FAILURE",
+        "CONFLICT",
+        "INVALID_OHLC",
     ),
 }
 
@@ -614,11 +674,11 @@ class SchemaManager:
                 "REFERENCE_VOCABULARY_CHECKSUM_MISMATCH: explicit recreate is required"
             )
         tables = _target_tables(connection)
-        if tables != EXPECTED_FOUNDATION_TABLES:
-            missing = sorted(EXPECTED_FOUNDATION_TABLES - tables)
-            unexpected = sorted(tables - EXPECTED_FOUNDATION_TABLES)
+        if tables != EXPECTED_TARGET_TABLES:
+            missing = sorted(EXPECTED_TARGET_TABLES - tables)
+            unexpected = sorted(tables - EXPECTED_TARGET_TABLES)
             raise CatalogDriftError(
-                f"Foundation table inventory differs; missing={missing}, unexpected={unexpected}"
+                f"Target table inventory differs; missing={missing}, unexpected={unexpected}"
             )
         catalog_checksum = _target_catalog_checksum(connection)
         if catalog_checksum != epoch.catalog_checksum:
@@ -1020,7 +1080,7 @@ def _verify_primary_keys(
     with_primary_key = frozenset(str(row[0]) for row in rows)
     if with_primary_key != tables:
         raise CatalogDriftError(
-            f"every Foundation table requires a primary key; missing={sorted(tables - with_primary_key)}"
+            f"every target table requires a primary key; missing={sorted(tables - with_primary_key)}"
         )
 
 
@@ -1156,6 +1216,8 @@ __all__ = [
     "CatalogDriftError",
     "DatabaseIdentity",
     "EXPECTED_FOUNDATION_TABLES",
+    "EXPECTED_MARKET_TABLES",
+    "EXPECTED_TARGET_TABLES",
     "LegacySchemaPresentError",
     "RecreateAuthorization",
     "RecreatePlan",

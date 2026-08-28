@@ -4,11 +4,13 @@ import psycopg
 
 from market_regime_alpha.infrastructure.postgres.schema import (
     EXPECTED_FOUNDATION_TABLES,
+    EXPECTED_MARKET_TABLES,
+    EXPECTED_TARGET_TABLES,
     SchemaManager,
 )
 
 
-def test_foundation_schema_has_exact_relations_views_and_no_jsonb_or_partitions(
+def test_target_draft_schema_has_exact_relations_views_and_no_jsonb_or_partitions(
     target_database_url: str,
 ) -> None:
     SchemaManager(target_database_url).bootstrap()
@@ -43,13 +45,14 @@ def test_foundation_schema_has_exact_relations_views_and_no_jsonb_or_partitions(
             """
         ).fetchone()
 
-    assert tables == EXPECTED_FOUNDATION_TABLES
+    assert tables == EXPECTED_TARGET_TABLES
+    assert EXPECTED_TARGET_TABLES == EXPECTED_FOUNDATION_TABLES | EXPECTED_MARKET_TABLES
     assert views == {"artifact_integrity_status", "run_trace"}
     assert jsonb_columns == (0,)
     assert partitions == (0,)
 
 
-def test_foundation_foreign_keys_restrict_and_critical_partial_indexes_exist(
+def test_target_foreign_keys_restrict_and_critical_partial_indexes_exist(
     target_database_url: str,
 ) -> None:
     SchemaManager(target_database_url).bootstrap()
