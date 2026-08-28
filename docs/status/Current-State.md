@@ -3,14 +3,14 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Non-authoritative exact-SHA implementation read model
 > **Owner:** Market Regime Alpha maintainers
-> **Generated At:** 2026-08-28T13:54:43Z
-> **Repository SHA:** `7fd3b9fe626b8f026b77b0f40c4462f89a6a86cd`
+> **Generated At:** 2026-08-28T18:46:35Z
+> **Repository SHA:** `e7a276a30f71a98b6b32580fa0a4840c2e269b9f`
 > **Implementation Line Start:** `c3ac21ef1e13f2e8408d30b0481fa9b74c4f9539`
 > **Foundation Source Checkpoint:** `eeff49c7a3995ba6d65045be88d4244617301234`
 > **Legacy Business Implementation Parent:** `0382dad416d6d50d1eea0bda1603d7c359d65274`
 > **Schema Epochs:** canonical business `LEGACY_MIGRATIONS_001_106`; target draft `MRA_REFOUNDATION_1 / DRAFT / NOT_CUT_OVER`
 > **Generator:** `WP-ARCHITECTURE-REFOUNDATION-04 Market/PIT implementation audit`
-> **Source Tree IDs:** source `ab37813bef03de6767d11e632b6e84acca9a4ea8`; legacy migrations `6d3730548780ad6244d2cfecb4fb3559064b6f06`; target baseline `a201eb1d163d09445f45338986d9fff14e78eb94`; tests `9a48085633f3816650164a3adc53c10739df9ab9`
+> **Source Tree IDs:** source `3a8e9f062861f90d26a21c85835021386b662c8e`; legacy migrations `6d3730548780ad6244d2cfecb4fb3559064b6f06`; target baseline `b1d64d2525ee9be7aa1f32861796f148c62095a9`; tests `05faaca3c0282f7aae6f49f6ccefe4824a22ffbb`
 > **Code Evidence:** target and legacy source/migration packages plus `tests`
 
 This snapshot is invalid after any source, migration, test, or composition
@@ -54,15 +54,16 @@ Market/PIT adds exactly the approved 12 relations:
 `instrument_fact_revision`, `corporate_action_revision`, and `source_gap`.
 
 The two views remain `run_trace` and `artifact_integrity_status`. The verified
-draft catalog contains 120 indexes, 284 constraints, 13 functions, and 44
+draft catalog contains 126 indexes, 322 constraints, 22 functions, and 67
 non-internal triggers. Table count is descriptive, not an optimization target.
 
 ## Market/PIT implementation truth
 
 - Provider network I/O and content-addressed byte publication/verification run
   outside PostgreSQL transactions.
-- One short Market UoW atomically owns the business facts, command receipt,
-  audit event, live fence validation, and matching Runtime Step finalization.
+- One short Market UoW first locks and validates a participating Runtime claim,
+  then atomically owns the business facts, command receipt, audit event, and
+  matching Runtime Step finalization.
   A stale fence rolls all relational writes back; published bytes remain a
   discoverable, two-pass-GC orphan.
 - `data_capture` keeps provider, source-availability, capture, PostgreSQL
@@ -83,7 +84,10 @@ non-internal triggers. Table count is descriptive, not an optimization target.
   ending 14:55. Daily or previous-session prices cannot substitute; current-
   session typed suspension is distinct from prior-session status.
 - `data_capture` is a canonical Artifact reference and therefore protects its
-  bytes from orphan classification and garbage collection.
+  bytes from orphan classification and garbage collection. Authoritative reads
+  require an AVAILABLE physical hash/size verification no older than 24 hours;
+  stale evidence blocks until an explicit outside-transaction verification is
+  committed.
 
 ## Exact-SHA verification
 
@@ -93,16 +97,17 @@ the Foundation ledger is [WP-03](../references/WP-ARCHITECTURE-REFOUNDATION-03-F
 and the current results, including every failed attempt, are recorded in
 [WP-04](../references/WP-ARCHITECTURE-REFOUNDATION-04-Market-PIT-Verification.md).
 
-At this source checkpoint, all 3,132 collected tests pass through exhaustive
+At this source checkpoint, all 3,175 collected tests pass through exhaustive
 resource-bounded batches on a repeatedly recreated isolated PostgreSQL 16
-database. All 93 target tests, focused Market/Foundation/PostgreSQL/runtime/
-artifact/architecture tests, documentation checks, Ruff, mypy, build, and diff
+database. All 136 target tests, including 69 Market tests and focused
+Foundation/PostgreSQL/runtime/artifact/architecture tests, documentation
+checks, Ruff, mypy, build, and diff
 checks pass. The unchanged legacy 001–106 bootstrap and schema tests pass.
 Remote CI was not executed and is `NOT_RUN`.
 
 The monolithic local `pytest -q` attempt is not reported as PASS: it exhausted
 the host filesystem after repeated 283-table test-schema churn and caused a
-PostgreSQL recovery cycle. The complete 3,132-node collection subsequently
+PostgreSQL recovery cycle. The complete 3,175-node collection subsequently
 passed in five disjoint batches with an explicit database recreate between
 batches; no assertion, skip, or xfail changed.
 

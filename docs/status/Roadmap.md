@@ -7,7 +7,7 @@
 > **Approved Design:** `d0d1f3152a20f1a3f4f9b8a1d9c4383a49162fb7`
 > **Implementation Line Start:** `c3ac21ef1e13f2e8408d30b0481fa9b74c4f9539`
 > **Foundation Source Checkpoint:** `eeff49c7a3995ba6d65045be88d4244617301234`
-> **Market/PIT Source Checkpoint:** `7fd3b9fe626b8f026b77b0f40c4462f89a6a86cd`
+> **Market/PIT Source Checkpoint:** `e7a276a30f71a98b6b32580fa0a4840c2e269b9f`
 > **Code Evidence:** `docs/architecture/Canonical-Overall-Design.md`, `docs/status/Current-State.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-01-Domain-Invariant-Catalog.md`
 
 Architecture Re-foundation is the only active engineering program. Historical
@@ -38,7 +38,7 @@ availability-selected fallback.
 | Stage | State | Required scope | Exit gate before next stage |
 |---|---|---|---|
 | **1. Foundation** | `MERGED_MAIN / EXIT_GATE_PASS` at `eeff49c` | target package boundaries and dependency tests; shared value types; sole `bootstrap.py` composition contract; schema epoch/catalog preflight; unreleased `001_baseline.sql` build contract; stable seeds; cross-cutting schema/migration, command receipt, audit and Artifact metadata foundations | empty PostgreSQL → foundational baseline → seed → verify; retry idempotent; wrong/legacy/unknown epoch fails before DDL; foundational PK/FK/unique/check/index obligations verified; no old migration import |
-| **2. Market/PIT** | `IMPLEMENTED_DRAFT / EXIT_GATE_PASS / NOT_CUT_OVER` at `7fd3b9f` | Provider/Product, Capture, Instrument, Session, Classification, Market/Instrument/Corporate Action revisions, Source Gap; exact temporal and price-basis semantics; artifact binding | capture → normalize → exact/as-of query passes clean-database, revision, missing/placeholder/suspension, concurrency, artifact-integrity and PIT tests |
+| **2. Market/PIT** | `IMPLEMENTED_DRAFT / EXIT_GATE_PASS / NOT_CUT_OVER` at `e7a276a` | Provider/Product, Capture, Instrument, Session, Classification, Market/Instrument/Corporate Action revisions, Source Gap; exact temporal and price-basis semantics; artifact binding | capture → normalize → exact/as-of query passes clean-database, revision, missing/placeholder/suspension, concurrency, artifact-integrity and PIT tests |
 | **3. Universe/Eligibility/Candidate** | `NOT_STARTED` | Universe revision/member, typed Eligibility policy/rules/assessment/reasons, Candidate policy/components/set/score components | Market-only dependency direction; complete three-state funnel and counts; deterministic ties; Decision-time evidence; empty-set and concurrent idempotency tests |
 | **4. Research/Qualification** | `NOT_STARTED` | Dataset/Feature/Target/Partition/Experiment/Model/Evaluation/Evidence/Assessment/Qualification aggregates and Artifact lineage | Evidence Class, Assessment Status and proof floors stay independent; negative results immutable; qualification cannot exceed floors; replay/lineage tests pass |
 | **5. Decision/Outcome** | `NOT_STARTED` | Decision Run, Context, Signal, Forecast, Opportunity, Thesis, Strategy, Portfolio, sole post-Portfolio Risk; Outcome/Metric/Attribution | Candidate → Context direction has no cycle; Opportunity has no Risk authorization; exact Target/Outcome/MFE/MAE availability semantics and post-Portfolio Risk constraints pass |

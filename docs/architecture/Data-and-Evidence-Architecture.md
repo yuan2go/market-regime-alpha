@@ -3,13 +3,16 @@
 > **Status:** CANONICAL_TARGET_ARCHITECTURE
 > **Authority:** Target logical schema, PIT, evidence, artifact, and cutover specification
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-27
-> **Implementation State:** DESIGN_CHECKPOINT_ONLY
-> **Code Evidence:** `src/market_regime_alpha/persistence/postgres/schema.py`, `src/market_regime_alpha/persistence/postgres/migrations/*.sql`, `tests/persistence/postgres`
+> **Last Updated:** 2026-08-29
+> **Implementation State:** `FOUNDATION_AND_MARKET_IMPLEMENTED_DRAFT / REMAINDER_DESIGN_ONLY / NOT_CUT_OVER`
+> **Code Evidence:** target `src/market_regime_alpha/infrastructure/postgres`, `src/market_regime_alpha/shared`, `src/market_regime_alpha/runtime`, `src/market_regime_alpha/market`, `tests/refoundation`; legacy `src/market_regime_alpha/persistence/postgres` remains current business implementation
 
-The current baseline contains 283 tables. The target logical catalog contains
-**91 tables**. This count follows required semantics; it is not a reduction KPI.
-The physical DDL does not exist in this checkpoint.
+The current canonical business baseline contains 283 tables. The implemented
+mutable target draft contains the 13 Foundation plus 12 Market/PIT relations in
+schema `mra`; its physical DDL is
+`src/market_regime_alpha/infrastructure/postgres/migrations/001_baseline.sql`.
+The complete target logical catalog is still estimated at **91 tables**. That
+estimate follows required semantics and is neither a quota nor a cutover claim.
 
 ## 1. Database rules
 
@@ -286,12 +289,14 @@ accepts only Raw/unadjusted tradable prices.
 
 ### Revisions
 
-A logical Market fact is identified without revision by instrument, fact kind,
-event/effective interval, timeframe, price basis, and provider product. Each
-changed source value appends a monotonically numbered revision with source
-capture, content hash, temporal fields, and optional superseded ID. “Current” is
-an as-of query, not an updated row. Corrections cannot be visible before their
-own `decision_visible_at`.
+Point/session facts use their exact event interval in the logical identity.
+Effective-state timelines use the stable `effective_from` root; the current
+visible revision owns and may close `effective_to`. Owner queries first select
+one current visible revision per root and only then test whether its interval
+covers the requested effective time. Each changed source value appends a
+monotonically numbered revision with source capture, content hash, temporal
+fields, and optional superseded ID. “Current” is an as-of query, not an updated
+row. Corrections cannot be visible before their own `decision_visible_at`.
 
 ### Missing
 
@@ -304,7 +309,7 @@ it is never silently dropped or converted to zero.
 
 Raw placeholder bytes remain in `data_capture`. A placeholder with absent or
 invalid OHLC does not create a valid `market_bar_revision`. It creates or links a
-`source_gap` reason such as `UNPRICED_PLACEHOLDER`. Downstream selection cannot
+`source_gap` reason such as `NULL_OHLC_PLACEHOLDER`. Downstream selection cannot
 use it as a price.
 
 ### Suspension
@@ -316,8 +321,9 @@ previous-session close is not a same-session Decision price.
 
 ### Session and calendar
 
-Sessions come only from `trading_session`. Weekday inference and “next calendar
-day” are prohibited. Bar intervals must fall on an allowed session grid,
+Sessions come only from `trading_session`. Current A-share sessions require the
+`Asia/Shanghai` timezone. Weekday inference and “next calendar day” are
+prohibited. Bar intervals must fall on an allowed session grid,
 preserve half-day/break rules, and have unique non-overlapping logical
 identities.
 
@@ -512,11 +518,16 @@ it never leaves a canonical row pointing at a known-missing object.
 
 ### Read verification
 
-Every authoritative read checks metadata identity, expected size, and hash at
-the policy cadence. Missing/mismatch records an append-only
-`artifact_verification` failure and blocks the consumer. It is not silently
-re-downloaded from another Provider or repaired with different bytes. Exact
-bytes may be re-published only under the same hash.
+Every authoritative read requires a current policy-cadence verification. The
+Foundation/Market draft cadence is 24 hours: relational queries reject stale or
+non-AVAILABLE evidence; an explicit `VerifyArtifact` performs physical
+hash/size I/O outside the PostgreSQL transaction, then appends verification and
+refreshes integrity metadata in one short transaction. An exact command retry
+uses the caller's idempotency key and returns the committed observation; a new
+physical observation requires a new key. Missing/mismatch records an
+append-only `artifact_verification` failure and blocks the consumer. It is not
+silently re-downloaded from another Provider or repaired with different bytes.
+Exact bytes may be re-published only under the same hash.
 
 ### Orphan cleanup
 

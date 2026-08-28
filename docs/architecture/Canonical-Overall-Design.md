@@ -3,16 +3,17 @@
 > **Status:** CANONICAL_TARGET_ARCHITECTURE
 > **Authority:** WP-ARCHITECTURE-REFOUNDATION-01 design checkpoint
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-27
+> **Last Updated:** 2026-08-29
 > **Starting Main:** `0382dad416d6d50d1eea0bda1603d7c359d65274`
-> **Implementation State:** DESIGN_CHECKPOINT_ONLY
-> **Code Evidence:** `src/market_regime_alpha`, `src/market_regime_alpha/persistence/postgres/migrations/*.sql`, `tests`
+> **Implementation State:** `FOUNDATION_AND_MARKET_IMPLEMENTED_DRAFT / REMAINDER_DESIGN_ONLY / NOT_CUT_OVER`
+> **Code Evidence:** target `src/market_regime_alpha/shared`, `src/market_regime_alpha/runtime`, `src/market_regime_alpha/market`, `src/market_regime_alpha/infrastructure`, `src/market_regime_alpha/interfaces`, target draft `src/market_regime_alpha/infrastructure/postgres/migrations/001_baseline.sql`, `tests/refoundation`; legacy source/migrations remain current business implementation
 
-This document freezes the intended architecture for review. It authorizes no
-business-code, schema, data, runtime, or test mutation. Until a later
-implementation checkpoint lands, current code and the current 283-table schema
-remain implementation truth. This design creates no research, Provider,
-trading, or Production proof.
+This document freezes the approved architecture. Foundation and Market/PIT now
+exist as an isolated `MRA_REFOUNDATION_1 / DRAFT / NOT_CUT_OVER` implementation;
+all later target contexts remain design only. Legacy code and the current
+283-table schema remain canonical business implementation truth until the
+explicit Runtime/CLI Hard Cutover. Neither the design nor the draft creates
+research, Provider, trading, or Production proof.
 
 The approved direction is **Hard Cutover Re-foundation**: preserve real business
 capabilities and correctness invariants, but do not preserve wrong abstractions,

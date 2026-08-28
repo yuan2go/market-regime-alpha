@@ -3,11 +3,11 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Non-authoritative exact-SHA capability read model
 > **Owner:** Market Regime Alpha maintainers
-> **Generated At:** 2026-08-28T13:54:43Z
-> **Repository SHA:** `7fd3b9fe626b8f026b77b0f40c4462f89a6a86cd`
+> **Generated At:** 2026-08-28T18:46:35Z
+> **Repository SHA:** `e7a276a30f71a98b6b32580fa0a4840c2e269b9f`
 > **Schema Epochs:** canonical business `LEGACY_MIGRATIONS_001_106`; target draft `MRA_REFOUNDATION_1 / DRAFT / NOT_CUT_OVER`
 > **Generator:** `WP-ARCHITECTURE-REFOUNDATION-04 Market/PIT implementation audit`
-> **Source Tree IDs:** source `ab37813bef03de6767d11e632b6e84acca9a4ea8`; legacy migrations `6d3730548780ad6244d2cfecb4fb3559064b6f06`; target baseline `a201eb1d163d09445f45338986d9fff14e78eb94`; tests `9a48085633f3816650164a3adc53c10739df9ab9`
+> **Source Tree IDs:** source `3a8e9f062861f90d26a21c85835021386b662c8e`; legacy migrations `6d3730548780ad6244d2cfecb4fb3559064b6f06`; target baseline `b1d64d2525ee9be7aa1f32861796f148c62095a9`; tests `05faaca3c0282f7aae6f49f6ccefe4824a22ffbb`
 > **Code Evidence:** target and legacy source/migration packages plus `tests`
 
 This view separates current capability from target convergence. It is invalid
