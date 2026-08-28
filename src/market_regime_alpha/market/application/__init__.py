@@ -256,7 +256,8 @@ class MarketApplication:
                 limitation_code=response.limitation_code,
                 payload_encoding=response.payload_encoding,
             )
-            version = uow.market.insert_capture(capture, published)
+            capture = uow.market.insert_capture(capture, published)
+            version = 1
             result_hash = canonical_json_sha256(
                 {
                     "capture": capture,
@@ -393,7 +394,8 @@ class MarketApplication:
                     receipt_id=receipt.receipt_id,
                     replayed=True,
                 )
-            version = uow.market.insert_capture(capture, None)
+            capture = uow.market.insert_capture(capture, None)
+            version = 1
             gap = SourceGap(
                 gap_id=self._id_factory(),
                 provider_product_id=capture.provider_product_id,

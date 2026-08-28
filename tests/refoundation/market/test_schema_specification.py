@@ -74,6 +74,7 @@ def test_capture_owns_independent_pit_axes_without_latest_or_backfill_flags(
     } <= columns
     assert not {name for name in columns if "latest" in name or "backfill" in name}
     assert "decision_visible_at = known_at" in constraints
+    assert "known_at = GREATEST(capture_completed_at, recorded_at)" in constraints
     assert "source_availability_status = 'UNKNOWN'" in constraints
 
 

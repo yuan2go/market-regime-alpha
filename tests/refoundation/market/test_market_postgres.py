@@ -163,7 +163,8 @@ def test_capture_binds_exact_artifact_temporal_axes_receipt_and_audit_atomically
         row = connection.execute(
             """
             SELECT capture.status, capture.source_availability_status,
-                   capture.source_available_at, capture.known_at,
+                   capture.source_available_at, capture.capture_completed_at,
+                   capture.recorded_at, capture.known_at,
                    capture.decision_visible_at, artifact.content_sha256,
                    artifact.integrity_state
             FROM mra.data_capture AS capture
@@ -180,15 +181,11 @@ def test_capture_binds_exact_artifact_temporal_axes_receipt_and_audit_atomically
                 (SELECT count(*) FROM mra.audit_event WHERE action = 'CAPTURE_MARKET_DATA')
             """
         ).fetchone()
-    assert row == (
-        "CAPTURED",
-        "UNKNOWN",
-        None,
-        result.capture.temporal.known_at,
-        result.capture.temporal.known_at,
-        result.artifact.content_sha256,
-        "AVAILABLE",
-    )
+    assert row[:3] == ("CAPTURED", "UNKNOWN", None)
+    assert row[3] == result.capture.temporal.capture_completed_at
+    assert row[5] == max(row[3], row[4])
+    assert row[5] == row[6] == result.capture.temporal.known_at
+    assert row[7:] == (result.artifact.content_sha256, "AVAILABLE")
     assert counts == (1, 1, 1)
 
 

@@ -664,6 +664,9 @@ CREATE TABLE mra.data_capture (
         AND known_at >= capture_completed_at
         AND (source_available_at IS NULL OR source_available_at <= known_at)
     ),
+    CONSTRAINT data_capture_known_time_ck CHECK (
+        known_at = GREATEST(capture_completed_at, recorded_at)
+    ),
     CONSTRAINT data_capture_visibility_ck CHECK (decision_visible_at = known_at),
     CONSTRAINT data_capture_outcome_ck CHECK (
         (status = 'CAPTURED' AND artifact_id IS NOT NULL AND error_code IS NULL AND payload_encoding IS NOT NULL) OR

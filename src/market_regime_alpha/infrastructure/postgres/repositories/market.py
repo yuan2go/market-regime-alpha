@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 from uuid import UUID
 
@@ -20,6 +21,7 @@ from market_regime_alpha.market.domain import (
     ProviderProduct,
     SecurityStatusFactRevision,
     SourceGap,
+    TemporalEnvelope,
     TradingSession,
 )
 from market_regime_alpha.market.ports import CaptureSource
@@ -86,7 +88,7 @@ class PostgresMarketRepository:
         self,
         capture: ProviderCapture,
         published: PublishedArtifact | None,
-    ) -> int:
+    ) -> ProviderCapture:
         product = self._connection.execute(
             """
             SELECT media_type, payload_encoding, source_availability_policy
@@ -133,20 +135,31 @@ class PostgresMarketRepository:
                 raise ArtifactIntegrityError(
                     "Capture Artifact is not the exact verified published object"
                 )
-        self._connection.execute(
+        temporal = self._connection.execute(
             """
+            WITH database_clock AS (
+                SELECT clock_timestamp() AS recorded_at
+            ), canonical_time AS (
+                SELECT recorded_at,
+                       GREATEST(%s::timestamptz, recorded_at) AS known_at
+                FROM database_clock
+            )
             INSERT INTO mra.data_capture (
                 capture_id, provider_product_id, capture_key, request_hash,
                 artifact_id, status, provider_time,
                 source_availability_status, source_available_at,
-                capture_started_at, capture_completed_at, known_at,
+                capture_started_at, capture_completed_at, recorded_at, known_at,
                 decision_visible_at, error_code, limitation_code,
                 payload_encoding
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s, %s)
+            SELECT %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                   canonical_time.recorded_at, canonical_time.known_at,
+                   canonical_time.known_at, %s, %s, %s
+            FROM canonical_time
+            RETURNING recorded_at, known_at, decision_visible_at
             """,
             (
+                capture.temporal.capture_completed_at,
                 capture.capture_id,
                 capture.provider_product_id,
                 capture.capture_key,
@@ -158,14 +171,25 @@ class PostgresMarketRepository:
                 capture.temporal.source_available_at,
                 capture.temporal.capture_started_at,
                 capture.temporal.capture_completed_at,
-                capture.temporal.known_at,
-                capture.temporal.decision_visible_at,
                 capture.error_code,
                 capture.limitation_code,
                 capture.payload_encoding,
             ),
+        ).fetchone()
+        if temporal is None:
+            raise AssertionError("Capture insert must return its canonical times")
+        return replace(
+            capture,
+            temporal=TemporalEnvelope(
+                provider_time=capture.temporal.provider_time,
+                source_availability_status=capture.temporal.source_availability_status,
+                source_available_at=capture.temporal.source_available_at,
+                capture_started_at=capture.temporal.capture_started_at,
+                capture_completed_at=capture.temporal.capture_completed_at,
+                known_at=temporal[1],
+                decision_visible_at=temporal[2],
+            ),
         )
-        return 1
 
     def get_capture(self, capture_id: UUID) -> ProviderCapture:
         return self.capture_source(capture_id, lock=False).capture
