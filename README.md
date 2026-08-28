@@ -35,13 +35,13 @@ Start with [Documentation Authority](docs/README.md), then read the
 
 ```bash
 uv sync --frozen --extra dev --extra postgres
-python scripts/check_docs_links.py
-python -m pytest -q tests/scripts/test_check_docs_links.py
-python -m pytest -q tests/platform
-MARKET_REGIME_ALPHA_TEST_DATABASE_URL="postgresql://HOST/TEST_DATABASE" python -m pytest -q
-python -m ruff check .
-python -m mypy
-python -m build
+uv run python scripts/check_docs_links.py
+uv run python -m pytest -q tests/scripts/test_check_docs_links.py
+uv run python -m pytest -q tests/platform
+MARKET_REGIME_ALPHA_TEST_DATABASE_URL="postgresql://HOST/TEST_DATABASE" uv run python -m pytest -q
+uv run python -m ruff check .
+uv run python -m mypy
+uv run python -m build
 git diff --check
 ```
 

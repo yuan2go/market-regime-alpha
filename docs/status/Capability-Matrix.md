@@ -20,6 +20,13 @@ Cross-cutting Foundation is `MERGED_MAIN / EXIT_GATE_PASS`. Market/PIT is
 implementation line. Neither state grants canonical business Authority or
 creates dual write.
 
+The governance-fix checkpoint binds repository Python gates to the frozen
+project environment and passes the WP-03-equivalent engineering gate with 3,101
+tests collected on a fresh isolated PostgreSQL 16 database. Source, legacy
+migration, and target baseline tree IDs are unchanged, so Foundation remains
+`EXIT_GATE_PASS`. This refresh changes no capability row and supplies no Market,
+research, Provider, Alpha, broker, Production, or trading evidence.
+
 | Capability | Current implementation truth | Approved target owner | Target convergence |
 |---|---|---|---|
 | Market | legacy owners remain canonical; isolated target capture/revision/gap/as-of owner is implemented test-only | Market & PIT | `IMPLEMENTED_DRAFT / EXIT_GATE_PASS / NOT_CUT_OVER` |

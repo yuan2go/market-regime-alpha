@@ -111,6 +111,39 @@ PostgreSQL recovery cycle. The complete 3,175-node collection subsequently
 passed in five disjoint batches with an explicit database recreate between
 batches; no assertion, skip, or xfail changed.
 
+The earlier governance-fix checkpoint separately established that:
+
+- every Python-based repository gate in `AGENTS.md` and `README.md` executes
+  through `uv run`; a regression test rejects a return to bare `python` in
+  either entry point;
+- the clean, non-activated shell resolves bare `python` to pyenv 3.12.13 while
+  `uv run python` resolves to the worktree `.venv` on Python 3.12.2 with the
+  frozen lock's Ruff 0.16.1, mypy 2.3.0, and pytest 9.1.1;
+- the fresh-PostgreSQL full regression passes with 3,101 tests collected on
+  PostgreSQL 16.14 in a disposable loopback-only cluster and new database OID
+  `515555`;
+- all 61 target Foundation tests, documentation checks, 33 platform tests,
+  focused legacy replay/recovery/concurrency tests, Ruff, mypy over 451 source
+  files, build, and diff checks pass;
+- the legacy 001→106 bootstrap/schema checks still pass without modification;
+- a clean database proves missing-schema fail-closed, explicit bootstrap,
+  idempotent retry, exact checksum/catalog verification, and guarded recreate.
+
+One non-final host-database run was stopped at 58% after catalog autovacuum and
+schema teardown exhausted the host lock table while only 637 MiB of disk
+remained. Its exact disposable database was removed. The unchanged command then
+passed at 100% in the isolated cluster with `max_locks_per_transaction=256`, one
+autovacuum worker, and a 4 GiB RAM volume; no assertion, skip, migration, source,
+or test order was changed. GitHub Actions remain disabled, so remote CI is
+`BLOCKED_BY_REPOSITORY_CONFIGURATION / NOT_RUN`, not PASS.
+
+The source, legacy-migration, and target-baseline tree IDs remain identical to
+the Foundation checkpoint. The WP-03-equivalent rerun therefore keeps the
+Foundation exit gate at `GO`; it does not require reverting the mainline merge.
+It does not prove Market/PIT, any later target context, Provider, Alpha, broker,
+Production, or Runtime/CLI Cutover, and none of those evidence classes were
+rerun.
+
 ## Research and production ceiling
 
 ```text
