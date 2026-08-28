@@ -3,13 +3,15 @@
 > **Status:** CANONICAL_TARGET_ARCHITECTURE
 > **Authority:** Target Application, Runtime, concurrency, recovery, and interface specification
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-27
-> **Implementation State:** DESIGN_CHECKPOINT_ONLY
-> **Code Evidence:** `src/market_regime_alpha/cli/continuous_research.py`, `src/market_regime_alpha/application/continuous_research`, `src/market_regime_alpha/persistence/repository_factory.py`, `tests/application`
+> **Last Updated:** 2026-08-29
+> **Implementation State:** `FOUNDATION_AND_MARKET_IMPLEMENTED_DRAFT / REMAINDER_DESIGN_ONLY / NOT_CUT_OVER`
+> **Code Evidence:** target `src/market_regime_alpha/runtime`, `src/market_regime_alpha/market`, `src/market_regime_alpha/infrastructure`, `src/market_regime_alpha/interfaces`, `tests/refoundation`; legacy Runtime remains current business implementation
 
-This is a target specification, not a description of the current implementation.
-The current nested Continuous/Controlled/Lifecycle/State/Historical journals are
-to be replaced by one Runtime journal. Business owners remain in their bounded
+This is the target specification. Its Foundation Runtime and test-only
+Market/PIT vertical slice are implemented in the mutable target draft, but have
+not cut over the current business entry points. The current nested
+Continuous/Controlled/Lifecycle/State/Historical journals are still to be
+replaced by one Runtime journal. Business owners remain in their bounded
 contexts.
 
 ## 1. Application versus Runtime

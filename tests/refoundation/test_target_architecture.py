@@ -8,6 +8,7 @@ PACKAGE = Path(__file__).parents[2] / "src" / "market_regime_alpha"
 TARGET_ROOTS = (
     PACKAGE / "shared",
     PACKAGE / "runtime",
+    PACKAGE / "market",
     PACKAGE / "infrastructure",
     PACKAGE / "interfaces",
     PACKAGE / "bootstrap.py",
@@ -61,6 +62,73 @@ def test_domain_imports_only_standard_library_shared_and_own_domain() -> None:
         )
     )
     assert violations == ()
+
+
+def test_market_domain_and_ports_do_not_depend_on_infrastructure_or_legacy_market_planes() -> None:
+    forbidden = (
+        "market_regime_alpha.infrastructure",
+        "market_regime_alpha.data",
+        "market_regime_alpha.market_data",
+        "market_regime_alpha.persistence",
+        "market_regime_alpha.application",
+        "market_regime_alpha.migration",
+    )
+    violations = tuple(
+        f"{source_file.relative_to(PACKAGE)} -> {module}"
+        for root in (PACKAGE / "market" / "domain", PACKAGE / "market" / "ports")
+        for source_file, module in _imports(root)
+        if module.startswith(forbidden)
+    )
+    assert violations == ()
+
+
+def test_market_application_has_no_repository_factory_service_locator_or_legacy_fallback() -> None:
+    source = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in _python_files(PACKAGE / "market")
+    )
+    forbidden_tokens = (
+        "RepositoryFactory",
+        "PostgresPITAuthority",
+        "market_regime_alpha.data",
+        "market_regime_alpha.market_data",
+        "compatibility",
+        "fallback",
+    )
+    assert tuple(token for token in forbidden_tokens if token in source) == ()
+
+
+def test_runtime_uow_is_not_expanded_into_a_market_mega_uow() -> None:
+    runtime_uow = (
+        PACKAGE / "infrastructure" / "postgres" / "uow.py"
+    ).read_text(encoding="utf-8")
+    market_uow = (
+        PACKAGE / "infrastructure" / "postgres" / "market_uow.py"
+    ).read_text(encoding="utf-8")
+    assert "def market(" not in runtime_uow
+    assert "def runtime(" not in market_uow
+    assert "def runtime_finalization(" in market_uow
+
+
+def test_market_port_exposes_aggregate_commands_not_table_crud() -> None:
+    port_source = (PACKAGE / "market" / "ports" / "__init__.py").read_text(
+        encoding="utf-8"
+    )
+    application_source = (
+        PACKAGE / "market" / "application" / "__init__.py"
+    ).read_text(encoding="utf-8")
+    table_crud = (
+        "insert_instrument(",
+        "insert_trading_session(",
+        "insert_classification(",
+        "insert_bar_revision(",
+        "insert_instrument_fact_revision(",
+        "insert_corporate_action(",
+        "insert_source_gap(",
+    )
+    assert tuple(token for token in table_crud if token in port_source) == ()
+    assert tuple(token for token in table_crud if token in application_source) == ()
+    assert "def insert_normalization(" in port_source
 
 
 def test_target_sql_is_confined_to_postgres_adapter() -> None:

@@ -12,6 +12,25 @@ from typing import Any, Final
 
 import psycopg
 
+from market_regime_alpha.market.domain import (
+    BarTimeframe,
+    CaptureStatus,
+    CorporateActionType,
+    EvidenceScope,
+    GapFactKind,
+    GapKind,
+    GapReasonCode,
+    InstrumentFactKind,
+    InstrumentType,
+    ListingStatus,
+    MarketFactKind,
+    MembershipStatus,
+    PriceBasis,
+    ProviderKind,
+    SecurityStatus,
+    SourceAvailabilityStatus,
+    SpecialTreatmentStatus,
+)
 from market_regime_alpha.shared.errors import MraError
 from market_regime_alpha.shared.hashing import canonical_json_sha256, sha256_bytes
 
@@ -44,6 +63,27 @@ EXPECTED_FOUNDATION_TABLES: Final[frozenset[str]] = frozenset(
     }
 )
 
+EXPECTED_MARKET_TABLES: Final[frozenset[str]] = frozenset(
+    {
+        "provider",
+        "provider_product",
+        "data_capture",
+        "instrument",
+        "instrument_identifier",
+        "trading_session",
+        "classification",
+        "classification_membership_revision",
+        "market_bar_revision",
+        "instrument_fact_revision",
+        "corporate_action_revision",
+        "source_gap",
+    }
+)
+
+EXPECTED_TARGET_TABLES: Final[frozenset[str]] = (
+    EXPECTED_FOUNDATION_TABLES | EXPECTED_MARKET_TABLES
+)
+
 _LEGACY_TABLE_SIGNATURES: Final[frozenset[str]] = frozenset(
     {
         "continuous_research_run",
@@ -58,6 +98,15 @@ _LEGACY_TABLE_SIGNATURES: Final[frozenset[str]] = frozenset(
 )
 
 _REFERENCE_VOCABULARY: Final[dict[str, tuple[str, ...]]] = {
+    "provider_kind": tuple(item.value for item in ProviderKind),
+    "instrument_type": tuple(item.value for item in InstrumentType),
+    "market_fact_kind": tuple(item.value for item in MarketFactKind),
+    "instrument_fact_kind": tuple(item.value for item in InstrumentFactKind),
+    "gap_fact_kind": tuple(item.value for item in GapFactKind),
+    "price_basis": tuple(item.value for item in PriceBasis),
+    "bar_timeframe": tuple(item.value for item in BarTimeframe),
+    "capture_status": tuple(item.value for item in CaptureStatus),
+    "corporate_action_type": tuple(item.value for item in CorporateActionType),
     "runtime_step_kind": (
         "CAPTURE",
         "NORMALIZE_PIT",
@@ -87,6 +136,19 @@ _REFERENCE_VOCABULARY: Final[dict[str, tuple[str, ...]]] = {
         "NON_IDEMPOTENT_REMOTE_COMMAND",
         "OBSERVATION_ONLY",
     ),
+    "fact_evidence_scope": tuple(item.value for item in EvidenceScope),
+    "fact_value_kind": ("STATUS", "DECIMAL"),
+    "membership_status": tuple(item.value for item in MembershipStatus),
+    "security_status": tuple(item.value for item in SecurityStatus),
+    "listing_status": tuple(item.value for item in ListingStatus),
+    "special_treatment_status": tuple(
+        item.value for item in SpecialTreatmentStatus
+    ),
+    "source_availability_status": tuple(
+        item.value for item in SourceAvailabilityStatus
+    ),
+    "source_gap_kind": tuple(item.value for item in GapKind),
+    "source_gap_reason": tuple(item.value for item in GapReasonCode),
 }
 
 
@@ -614,11 +676,11 @@ class SchemaManager:
                 "REFERENCE_VOCABULARY_CHECKSUM_MISMATCH: explicit recreate is required"
             )
         tables = _target_tables(connection)
-        if tables != EXPECTED_FOUNDATION_TABLES:
-            missing = sorted(EXPECTED_FOUNDATION_TABLES - tables)
-            unexpected = sorted(tables - EXPECTED_FOUNDATION_TABLES)
+        if tables != EXPECTED_TARGET_TABLES:
+            missing = sorted(EXPECTED_TARGET_TABLES - tables)
+            unexpected = sorted(tables - EXPECTED_TARGET_TABLES)
             raise CatalogDriftError(
-                f"Foundation table inventory differs; missing={missing}, unexpected={unexpected}"
+                f"Target table inventory differs; missing={missing}, unexpected={unexpected}"
             )
         catalog_checksum = _target_catalog_checksum(connection)
         if catalog_checksum != epoch.catalog_checksum:
@@ -1020,7 +1082,7 @@ def _verify_primary_keys(
     with_primary_key = frozenset(str(row[0]) for row in rows)
     if with_primary_key != tables:
         raise CatalogDriftError(
-            f"every Foundation table requires a primary key; missing={sorted(tables - with_primary_key)}"
+            f"every target table requires a primary key; missing={sorted(tables - with_primary_key)}"
         )
 
 
@@ -1156,6 +1218,8 @@ __all__ = [
     "CatalogDriftError",
     "DatabaseIdentity",
     "EXPECTED_FOUNDATION_TABLES",
+    "EXPECTED_MARKET_TABLES",
+    "EXPECTED_TARGET_TABLES",
     "LegacySchemaPresentError",
     "RecreateAuthorization",
     "RecreatePlan",

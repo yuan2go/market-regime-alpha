@@ -28,6 +28,49 @@ class AggregateId:
 
 
 @dataclass(frozen=True, slots=True)
+class InstrumentId:
+    value: UUID
+
+    @classmethod
+    def new(cls) -> InstrumentId:
+        return cls(uuid4())
+
+    @classmethod
+    def parse(cls, value: InstrumentId | str | UUID) -> InstrumentId:
+        if isinstance(value, InstrumentId):
+            return value
+        if isinstance(value, UUID):
+            return cls(value)
+        return cls(UUID(value))
+
+    def __str__(self) -> str:
+        return str(self.value)
+
+
+@dataclass(frozen=True, slots=True)
+class TradingSessionId:
+    value: UUID
+
+    @classmethod
+    def new(cls) -> TradingSessionId:
+        return cls(uuid4())
+
+    @classmethod
+    def parse(
+        cls,
+        value: TradingSessionId | str | UUID,
+    ) -> TradingSessionId:
+        if isinstance(value, TradingSessionId):
+            return value
+        if isinstance(value, UUID):
+            return cls(value)
+        return cls(UUID(value))
+
+    def __str__(self) -> str:
+        return str(self.value)
+
+
+@dataclass(frozen=True, slots=True)
 class ContentHash:
     value: str
 
@@ -63,4 +106,11 @@ class FenceToken:
         return self.value
 
 
-__all__ = ["AggregateId", "ContentHash", "FenceToken", "IdempotencyKey"]
+__all__ = [
+    "AggregateId",
+    "ContentHash",
+    "FenceToken",
+    "IdempotencyKey",
+    "InstrumentId",
+    "TradingSessionId",
+]

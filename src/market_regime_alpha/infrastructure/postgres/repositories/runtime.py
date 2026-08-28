@@ -413,6 +413,11 @@ class PostgresRuntimeRepository:
             raise StaleFenceError(f"Attempt {claim.attempt_id} lease is no longer live")
         return row[0]
 
+    def lock_live_claim(self, claim: AttemptClaim) -> None:
+        """Acquire the global Run/Step/Attempt locks before business aggregates."""
+
+        self._lock_live_claim(claim, required_attempt_state="RUNNING")
+
     def succeed_attempt(
         self,
         claim: AttemptClaim,
@@ -1108,7 +1113,7 @@ class PostgresCommandReceiptRepository:
             ON CONFLICT (command_kind, scope_id, idempotency_key) DO NOTHING
             RETURNING receipt_id, status, request_hash,
                       result_aggregate_kind, result_aggregate_id,
-                      result_aggregate_version, result_hash
+                      result_aggregate_version, result_hash, error_code
             """,
             (receipt_id, command_kind, scope_id, idempotency_key, request_hash),
         ).fetchone()
@@ -1118,7 +1123,7 @@ class PostgresCommandReceiptRepository:
                 """
                 SELECT receipt_id, status, request_hash,
                        result_aggregate_kind, result_aggregate_id,
-                       result_aggregate_version, result_hash
+                       result_aggregate_version, result_hash, error_code
                 FROM mra.command_receipt
                 WHERE command_kind = %s AND scope_id = %s AND idempotency_key = %s
                 FOR UPDATE
@@ -1143,6 +1148,7 @@ class PostgresCommandReceiptRepository:
             result_aggregate_id=str(row[4]) if row[4] is not None else None,
             result_aggregate_version=int(row[5]) if row[5] is not None else None,
             result_hash=str(row[6]) if row[6] is not None else None,
+            error_code=str(row[7]) if row[7] is not None else None,
             is_new=is_new,
         )
 
@@ -1179,6 +1185,36 @@ class PostgresCommandReceiptRepository:
                 aggregate_id,
                 aggregate_version,
                 result_hash,
+                receipt_id,
+            ),
+        ).fetchone()
+        if row is None:
+            raise RuntimeStateConflictError(f"Receipt {receipt_id} is not pending")
+
+    def fail(
+        self,
+        *,
+        receipt_id: UUID,
+        error_code: str,
+        runtime_claim: AttemptClaim | None = None,
+    ) -> None:
+        row = self._connection.execute(
+            """
+            UPDATE mra.command_receipt
+            SET status = 'FAILED',
+                runtime_step_id = %s,
+                runtime_attempt_id = %s,
+                fence_token = %s,
+                error_code = %s,
+                completed_at = clock_timestamp()
+            WHERE receipt_id = %s AND status = 'PENDING'
+            RETURNING receipt_id
+            """,
+            (
+                runtime_claim.step_id if runtime_claim else None,
+                runtime_claim.attempt_id if runtime_claim else None,
+                runtime_claim.fence_token if runtime_claim else None,
+                error_code,
                 receipt_id,
             ),
         ).fetchone()

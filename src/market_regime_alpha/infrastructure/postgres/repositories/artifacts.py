@@ -32,6 +32,20 @@ class PostgresArtifactRepository:
         retention_until: datetime | None,
         pin_reason_code: str | None,
     ) -> ArtifactRecord:
+        self._lock_artifact_identity(published.content_sha256)
+        candidate = self._connection.execute(
+            """
+            SELECT state
+            FROM mra.artifact_gc_candidate
+            WHERE content_sha256 = %s
+            FOR UPDATE
+            """,
+            (published.content_sha256,),
+        ).fetchone()
+        if candidate is not None and candidate[0] not in {"OBSERVED", "CLEARED"}:
+            raise ArtifactIntegrityError(
+                "artifact identity is already under quarantine or deletion"
+            )
         self._connection.execute(
             """
             INSERT INTO mra.artifact (
@@ -73,6 +87,19 @@ class PostgresArtifactRepository:
         if actual != expected:
             raise ArtifactIntegrityError(
                 "same content hash is registered with conflicting metadata"
+            )
+        if candidate is not None and candidate[0] == "OBSERVED":
+            self._connection.execute(
+                """
+                UPDATE mra.artifact_gc_candidate
+                SET artifact_id = %s, state = 'CLEARED',
+                    last_seen_at = clock_timestamp(),
+                    cleared_at = clock_timestamp(),
+                    operator_id = 'artifact-registration',
+                    disposition_reason_code = 'ARTIFACT_REGISTERED'
+                WHERE content_sha256 = %s AND state = 'OBSERVED'
+                """,
+                (record.artifact_id, published.content_sha256),
             )
         return record
 
@@ -124,6 +151,7 @@ class PostgresArtifactRepository:
             "MISSING": "MISSING",
             "SIZE_MISMATCH": "CORRUPT",
             "HASH_MISMATCH": "CORRUPT",
+            "INTEGRITY_ERROR": "CORRUPT",
         }[verification.result]
         updated = self._connection.execute(
             """
@@ -216,6 +244,9 @@ class PostgresArtifactRepository:
                         SELECT 1 FROM mra.command_receipt AS receipt
                         WHERE receipt.result_artifact_id = artifact.artifact_id
                     ) OR EXISTS (
+                        SELECT 1 FROM mra.data_capture AS capture
+                        WHERE capture.artifact_id = artifact.artifact_id
+                    ) OR EXISTS (
                         SELECT 1 FROM mra.artifact_dependency AS dependency
                         WHERE dependency.child_artifact_id = artifact.artifact_id
                            OR dependency.parent_artifact_id = artifact.artifact_id
@@ -253,9 +284,16 @@ class PostgresArtifactRepository:
         self,
         *,
         content_sha256: str,
-        artifact_id: UUID | None,
         grace: timedelta,
-    ) -> None:
+    ) -> bool:
+        self._lock_artifact_identity(content_sha256)
+        status = self.gc_status(content_sha256)
+        if status.referenced or status.pinned:
+            return False
+        if status.state not in {None, "OBSERVED", "CLEARED"}:
+            raise ArtifactIntegrityError(
+                "artifact identity entered GC after orphan observation began"
+            )
         grace_ms = max(0, int(grace.total_seconds() * 1_000))
         self._connection.execute(
             """
@@ -314,8 +352,9 @@ class PostgresArtifactRepository:
                 END
             WHERE mra.artifact_gc_candidate.state IN ('OBSERVED', 'CLEARED')
             """,
-            (content_sha256, artifact_id, grace_ms, grace_ms),
+            (content_sha256, status.artifact_id, grace_ms, grace_ms),
         )
+        return True
 
     def clear_gc_candidate(
         self,
@@ -339,6 +378,7 @@ class PostgresArtifactRepository:
             raise ArtifactIntegrityError("artifact GC candidate cannot be cleared")
 
     def begin_quarantine(self, content_sha256: str, operation_token: UUID) -> None:
+        self._lock_artifact_identity(content_sha256)
         artifact_row = self._connection.execute(
             """
             SELECT artifact_id, integrity_state
@@ -403,6 +443,7 @@ class PostgresArtifactRepository:
                 raise ArtifactIntegrityError("Artifact quarantine binding is inconsistent")
 
     def begin_delete(self, content_sha256: str, operation_token: UUID) -> None:
+        self._lock_artifact_identity(content_sha256)
         status = self.gc_status(content_sha256)
         if status.referenced or status.pinned or status.state != "QUARANTINED":
             raise ArtifactIntegrityError("artifact is not eligible for explicit deletion")
@@ -461,6 +502,14 @@ class PostgresArtifactRepository:
                 """,
                 (verification_id, artifact_id, receipt_id, verifier_id),
             )
+
+    def _lock_artifact_identity(self, content_sha256: str) -> None:
+        """Serialize registration/binding against two-phase GC by content identity."""
+
+        self._connection.execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+            (content_sha256,),
+        )
 
 
 def _artifact_record(row: tuple[Any, ...]) -> ArtifactRecord:

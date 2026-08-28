@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 
@@ -11,4 +12,24 @@ def require_utc(value: datetime, *, field: str = "timestamp") -> datetime:
     return value.astimezone(timezone.utc)
 
 
-__all__ = ["require_utc"]
+@dataclass(frozen=True, order=True, slots=True)
+class KnownTime:
+    value: datetime
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "value", require_utc(self.value, field="known_time"))
+
+
+@dataclass(frozen=True, order=True, slots=True)
+class DecisionTime:
+    value: datetime
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "value",
+            require_utc(self.value, field="decision_time"),
+        )
+
+
+__all__ = ["DecisionTime", "KnownTime", "require_utc"]

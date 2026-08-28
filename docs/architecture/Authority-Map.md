@@ -3,9 +3,9 @@
 > **Status:** CANONICAL_TARGET_ARCHITECTURE
 > **Authority:** Target business-fact ownership and canonical-write specification
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-27
-> **Implementation State:** DESIGN_CHECKPOINT_ONLY
-> **Code Evidence:** `src/market_regime_alpha/application`, `src/market_regime_alpha/persistence`, `src/market_regime_alpha/position/authority.py`, `tests`
+> **Last Updated:** 2026-08-29
+> **Implementation State:** `FOUNDATION_AND_MARKET_IMPLEMENTED_DRAFT / REMAINDER_DESIGN_ONLY / NOT_CUT_OVER`
+> **Code Evidence:** target `src/market_regime_alpha/shared`, `src/market_regime_alpha/runtime`, `src/market_regime_alpha/market`, `src/market_regime_alpha/infrastructure`, `src/market_regime_alpha/interfaces`, `src/market_regime_alpha/infrastructure/postgres/migrations/001_baseline.sql`, `tests/refoundation`; legacy source/migrations remain current business implementation
 
 This document answers one question for every retained fact: who may create or
 change it? A table, DTO, policy, artifact, snapshot, report, receipt, or query is
@@ -30,19 +30,22 @@ not an Authority merely because it exists.
 
 ```text
 authenticated Command
-→ idempotency/request-hash check
+→ when Runtime-owned: lock current Run/Step/Attempt and validate lease/fence
+→ idempotency/request-hash check or exact terminal replay
 → load exact immutable dependencies
-→ lock aggregate(s) in global order
+→ lock every non-Runtime aggregate in global `(aggregate_kind, aggregate_id)` order
 → enforce Domain invariants and expected version
 → write canonical fact/revision
 → write dependency links + command receipt + audit event
-→ verify live Runtime fence when applicable
+→ finalize the same live Attempt with the matching receipt/fence when applicable
 → one PostgreSQL commit
 ```
 
 Remote I/O and artifact byte publication happen outside the transaction under
-the protocols in the supporting architecture documents. No caller may write
-owner tables through a generic repository or raw SQL.
+the protocols in the supporting architecture documents. When a Runtime claim
+participates, its lock/fence is the first relational lock in the short business
+transaction; the owner never writes first and validates the fence later. No
+caller may write owner tables through a generic repository or raw SQL.
 
 ## 3. Authority matrix
 

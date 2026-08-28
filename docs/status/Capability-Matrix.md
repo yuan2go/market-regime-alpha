@@ -3,11 +3,11 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Non-authoritative exact-SHA capability read model
 > **Owner:** Market Regime Alpha maintainers
-> **Generated At:** 2026-08-28T01:47:11Z
-> **Repository SHA:** `eeff49c7a3995ba6d65045be88d4244617301234`
-> **Schema Epochs:** canonical business `LEGACY_MIGRATIONS_001_106`; unpublished target draft `MRA_REFOUNDATION_1`
-> **Generator:** `WP-ARCHITECTURE-REFOUNDATION-03 Foundation implementation audit`
-> **Source Tree IDs:** source `416b609041d3da6098d29245378a2c0100eed853`; legacy migrations `6d3730548780ad6244d2cfecb4fb3559064b6f06`; target baseline `6b9c746300457281ddcf9b6a6b4b474c6c55d892`; tests `192e6f9711f627d37fed1da151d83a1934f05689`
+> **Generated At:** 2026-08-28T18:46:35Z
+> **Repository SHA:** `e7a276a30f71a98b6b32580fa0a4840c2e269b9f`
+> **Schema Epochs:** canonical business `LEGACY_MIGRATIONS_001_106`; target draft `MRA_REFOUNDATION_1 / DRAFT / NOT_CUT_OVER`
+> **Generator:** `WP-ARCHITECTURE-REFOUNDATION-04 Market/PIT implementation audit`
+> **Source Tree IDs:** source `3a8e9f062861f90d26a21c85835021386b662c8e`; legacy migrations `6d3730548780ad6244d2cfecb4fb3559064b6f06`; target baseline `b1d64d2525ee9be7aa1f32861796f148c62095a9`; tests `05faaca3c0282f7aae6f49f6ccefe4824a22ffbb`
 > **Code Evidence:** target and legacy source/migration packages plus `tests`
 
 This view separates current capability from target convergence. It is invalid
@@ -15,17 +15,24 @@ after its source tree changes and cannot promote a capability or research claim.
 The complete preservation contract remains the
 [Capability Preservation Matrix](../references/WP-ARCHITECTURE-REFOUNDATION-01-Capability-Preservation-Matrix.md).
 
-Cross-cutting Foundation is `IMPLEMENTED_UNPUBLISHED / EXIT_GATE_PASS`: target
-schema-epoch, Runtime/Provenance, Artifact, transaction, bootstrap, and operator
-interfaces exist. It is not one of the business capabilities below, grants none
-of them target Authority, and creates no dual write.
+Cross-cutting Foundation is `MERGED_MAIN / EXIT_GATE_PASS`. Market/PIT is
+`IMPLEMENTED_DRAFT / EXIT_GATE_PASS / NOT_CUT_OVER` on the current
+implementation line. Neither state grants canonical business Authority or
+creates dual write.
+
+The governance-fix checkpoint binds repository Python gates to the frozen
+project environment and passes the WP-03-equivalent engineering gate with 3,101
+tests collected on a fresh isolated PostgreSQL 16 database. Source, legacy
+migration, and target baseline tree IDs are unchanged, so Foundation remains
+`EXIT_GATE_PASS`. This refresh changes no capability row and supplies no Market,
+research, Provider, Alpha, broker, Production, or trading evidence.
 
 | Capability | Current implementation truth | Approved target owner | Target convergence |
 |---|---|---|---|
-| Market | implemented across data/market/PIT/historical owners | Market & PIT | `NOT_STARTED` |
+| Market | legacy owners remain canonical; isolated target capture/revision/gap/as-of owner is implemented test-only | Market & PIT | `IMPLEMENTED_DRAFT / EXIT_GATE_PASS / NOT_CUT_OVER` |
 | Regime | current State System inference | Decision Support Context | `NOT_STARTED` |
-| ETF | current instrument/reference and rotation paths | Market classification + Decision Context | `NOT_STARTED` |
-| Theme | current reference/state/context paths | Market classification + Decision Context | `NOT_STARTED` |
+| ETF | current instrument/reference and rotation paths; target instrument/classification facts implemented, rotation Context absent | Market classification + Decision Context | `PARTIAL_MARKET_SLICE / NOT_CUT_OVER` |
+| Theme | current reference/state/context paths; target taxonomy/membership facts implemented, Theme Context absent | Market classification + Decision Context | `PARTIAL_MARKET_SLICE / NOT_CUT_OVER` |
 | Capital | current derived public-proxy state | Decision Context `CAPITAL_PROXY` | `NOT_STARTED` |
 | Universe | current Runtime Scope/free/historical owners | Universe & Eligibility | `NOT_STARTED` |
 | Eligibility | current funnel/orderability rules across paths | Universe & Eligibility | `NOT_STARTED` |
@@ -45,11 +52,11 @@ of them target Authority, and creates no dual write.
 | Qualification | current model/PIT/provider/OOS/calibration owners | Research & Qualification | `NOT_STARTED` |
 | Prospective | current freeze/settlement/attestation mechanics; no sustained proof | ordinary Runtime + Decision/Evidence/Outcome | `NOT_STARTED` |
 
-`IMPLEMENTED` in the current column never means the target Authority exists.
-`NOT_STARTED` refers only to target convergence, not loss of the current
-capability. Evidence ceilings remain as declared by immutable reports; no row in
-this matrix establishes Formal PIT, Formal OOS Alpha, Prospective value,
-Production, or broker authority.
+`IMPLEMENTED` in the current column never means the target Authority is cut
+over. `NOT_STARTED` refers only to target convergence, not loss of the current
+capability. Evidence ceilings remain as declared by immutable reports; no row
+in this matrix establishes Formal PIT, qualified Provider data, Formal OOS
+Alpha, Prospective value, Production, or broker authority.
 
 Future generation must derive current ownership and target acceptance gates
 read-only. A manually changed label is not a promotion mechanism.

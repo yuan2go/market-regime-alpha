@@ -9,6 +9,13 @@ from typing import Mapping
 
 from market_regime_alpha.infrastructure.artifacts import LocalArtifactStore
 from market_regime_alpha.infrastructure.postgres.pool import TargetPostgresPool
+from market_regime_alpha.infrastructure.postgres.market_uow import (
+    PostgresMarketDatabaseClock,
+    PostgresMarketUnitOfWorkProvider,
+)
+from market_regime_alpha.infrastructure.postgres.queries import (
+    PostgresMarketQueryProvider,
+)
 from market_regime_alpha.infrastructure.postgres.schema import (
     DatabaseIdentity,
     RecreateAuthorization,
@@ -19,6 +26,8 @@ from market_regime_alpha.infrastructure.postgres.schema import (
 )
 from market_regime_alpha.infrastructure.postgres.uow import PostgresUnitOfWorkProvider
 from market_regime_alpha.runtime.application import ArtifactApplication, RuntimeApplication
+from market_regime_alpha.market.application import MarketApplication
+from market_regime_alpha.market.ports import MarketQueryProvider
 
 
 _ALLOWED_ENVIRONMENT_KEYS = frozenset(
@@ -95,6 +104,8 @@ class TargetSettings:
 class TargetApplication:
     runtime: RuntimeApplication
     artifacts: ArtifactApplication
+    market: MarketApplication
+    market_queries: MarketQueryProvider
     _pool: TargetPostgresPool
 
     def close(self) -> None:
@@ -122,6 +133,12 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
     return TargetApplication(
         runtime=RuntimeApplication(uow_provider),
         artifacts=ArtifactApplication(byte_store, uow_provider),
+        market=MarketApplication(
+            byte_store,
+            PostgresMarketUnitOfWorkProvider(pool),
+            PostgresMarketDatabaseClock(pool),
+        ),
+        market_queries=PostgresMarketQueryProvider(pool),
         _pool=pool,
     )
 
