@@ -3,14 +3,14 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Non-authoritative exact-SHA implementation read model
 > **Owner:** Market Regime Alpha maintainers
-> **Generated At:** 2026-08-28T18:46:35Z
-> **Repository SHA:** `e7a276a30f71a98b6b32580fa0a4840c2e269b9f`
+> **Generated At:** 2026-08-28T23:17:40Z
+> **Repository SHA:** `db206933b9c243bb65d2f85748d0e968b42497b0`
 > **Implementation Line Start:** `c3ac21ef1e13f2e8408d30b0481fa9b74c4f9539`
 > **Foundation Source Checkpoint:** `eeff49c7a3995ba6d65045be88d4244617301234`
 > **Legacy Business Implementation Parent:** `0382dad416d6d50d1eea0bda1603d7c359d65274`
 > **Schema Epochs:** canonical business `LEGACY_MIGRATIONS_001_106`; target draft `MRA_REFOUNDATION_1 / DRAFT / NOT_CUT_OVER`
-> **Generator:** `WP-ARCHITECTURE-REFOUNDATION-04 Market/PIT implementation audit`
-> **Source Tree IDs:** source `3a8e9f062861f90d26a21c85835021386b662c8e`; legacy migrations `6d3730548780ad6244d2cfecb4fb3559064b6f06`; target baseline `b1d64d2525ee9be7aa1f32861796f148c62095a9`; tests `05faaca3c0282f7aae6f49f6ccefe4824a22ffbb`
+> **Generator:** `WP-04 Market/PIT audit with CLAUDE governance follow-up`
+> **Source Tree IDs:** source `3a8e9f062861f90d26a21c85835021386b662c8e`; legacy migrations `6d3730548780ad6244d2cfecb4fb3559064b6f06`; target baseline `b1d64d2525ee9be7aa1f32861796f148c62095a9`; tests `dc13df166600eae6be1f97d1c90ac35f2ce97308`
 > **Code Evidence:** target and legacy source/migration packages plus `tests`
 
 This snapshot is invalid after any source, migration, test, or composition
@@ -97,13 +97,14 @@ the Foundation ledger is [WP-03](../references/WP-ARCHITECTURE-REFOUNDATION-03-F
 and the current results, including every failed attempt, are recorded in
 [WP-04](../references/WP-ARCHITECTURE-REFOUNDATION-04-Market-PIT-Verification.md).
 
-At this source checkpoint, all 3,175 collected tests pass through exhaustive
-resource-bounded batches on a repeatedly recreated isolated PostgreSQL 16
-database. All 136 target tests, including 69 Market tests and focused
-Foundation/PostgreSQL/runtime/artifact/architecture tests, documentation
-checks, Ruff, mypy, build, and diff
-checks pass. The unchanged legacy 001–106 bootstrap and schema tests pass.
-Remote CI was not executed and is `NOT_RUN`.
+At Market/PIT source checkpoint
+`e7a276a30f71a98b6b32580fa0a4840c2e269b9f`, all 3,175 collected tests pass
+through exhaustive resource-bounded batches on a repeatedly recreated isolated
+PostgreSQL 16 database. All 136 target tests, including 69 Market tests and
+focused Foundation/PostgreSQL/runtime/artifact/architecture tests,
+documentation checks, Ruff, mypy, build, and diff checks pass. The unchanged
+legacy 001–106 bootstrap and schema tests pass. Remote CI was not executed and
+is `NOT_RUN`.
 
 The monolithic local `pytest -q` attempt is not reported as PASS: it exhausted
 the host filesystem after repeated 283-table test-schema churn and caused a
@@ -113,9 +114,11 @@ batches; no assertion, skip, or xfail changed.
 
 The earlier governance-fix checkpoint separately established that:
 
-- every Python-based repository gate in `AGENTS.md` and `README.md` executes
-  through `uv run`; a regression test rejects a return to bare `python` in
-  either entry point;
+- the complete repository gate catalogs in `AGENTS.md` and `README.md` execute
+  every Python command through `uv run`;
+- `CLAUDE.md` delegates to that authoritative gate without copying the command
+  list, states the non-activation boundary, and joins both catalogs in the
+  regression test that rejects bare `python` across all three entry points;
 - the clean, non-activated shell resolves bare `python` to pyenv 3.12.13 while
   `uv run python` resolves to the worktree `.venv` on Python 3.12.2 with the
   frozen lock's Ruff 0.16.1, mypy 2.3.0, and pytest 9.1.1;
@@ -137,12 +140,16 @@ autovacuum worker, and a 4 GiB RAM volume; no assertion, skip, migration, source
 or test order was changed. GitHub Actions remain disabled, so remote CI is
 `BLOCKED_BY_REPOSITORY_CONFIGURATION / NOT_RUN`, not PASS.
 
-The source, legacy-migration, and target-baseline tree IDs remain identical to
-the Foundation checkpoint. The WP-03-equivalent rerun therefore keeps the
-Foundation exit gate at `GO`; it does not require reverting the mainline merge.
-It does not prove Market/PIT, any later target context, Provider, Alpha, broker,
-Production, or Runtime/CLI Cutover, and none of those evidence classes were
-rerun.
+At the current governance checkpoint, the documentation inventory/link checker,
+seven link-checker tests, three reproducible-environment tests, focused Ruff,
+and diff check pass. The full 3,175-test engineering suite, PostgreSQL tests,
+mypy, build, and every Market/research backtest are `NOT_RUN` at this follow-up.
+
+The current follow-up leaves the WP-04 source, legacy-migration, and target-
+baseline tree IDs unchanged. Foundation and Market/PIT therefore retain their
+recorded exit states without rollback or capability promotion. This follow-up
+does not prove Provider, Alpha/OOS, broker, trading, Prospective, Production, or
+Runtime/CLI Cutover evidence, and none of those evidence classes were rerun.
 
 ## Research and production ceiling
 

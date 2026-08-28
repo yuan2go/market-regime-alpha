@@ -3,11 +3,11 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Non-authoritative exact-SHA capability read model
 > **Owner:** Market Regime Alpha maintainers
-> **Generated At:** 2026-08-28T18:46:35Z
-> **Repository SHA:** `e7a276a30f71a98b6b32580fa0a4840c2e269b9f`
+> **Generated At:** 2026-08-28T23:17:40Z
+> **Repository SHA:** `db206933b9c243bb65d2f85748d0e968b42497b0`
 > **Schema Epochs:** canonical business `LEGACY_MIGRATIONS_001_106`; target draft `MRA_REFOUNDATION_1 / DRAFT / NOT_CUT_OVER`
-> **Generator:** `WP-ARCHITECTURE-REFOUNDATION-04 Market/PIT implementation audit`
-> **Source Tree IDs:** source `3a8e9f062861f90d26a21c85835021386b662c8e`; legacy migrations `6d3730548780ad6244d2cfecb4fb3559064b6f06`; target baseline `b1d64d2525ee9be7aa1f32861796f148c62095a9`; tests `05faaca3c0282f7aae6f49f6ccefe4824a22ffbb`
+> **Generator:** `WP-04 Market/PIT audit with CLAUDE governance follow-up`
+> **Source Tree IDs:** source `3a8e9f062861f90d26a21c85835021386b662c8e`; legacy migrations `6d3730548780ad6244d2cfecb4fb3559064b6f06`; target baseline `b1d64d2525ee9be7aa1f32861796f148c62095a9`; tests `dc13df166600eae6be1f97d1c90ac35f2ce97308`
 > **Code Evidence:** target and legacy source/migration packages plus `tests`
 
 This view separates current capability from target convergence. It is invalid
@@ -22,10 +22,14 @@ creates dual write.
 
 The governance-fix checkpoint binds repository Python gates to the frozen
 project environment and passes the WP-03-equivalent engineering gate with 3,101
-tests collected on a fresh isolated PostgreSQL 16 database. Source, legacy
-migration, and target baseline tree IDs are unchanged, so Foundation remains
-`EXIT_GATE_PASS`. This refresh changes no capability row and supplies no Market,
-research, Provider, Alpha, broker, Production, or trading evidence.
+tests collected on a fresh isolated PostgreSQL 16 database. This follow-up adds
+`CLAUDE.md` to the protected entry points without duplicating the authoritative
+command catalog; focused documentation, regression, Ruff, and diff checks pass.
+The WP-04 source, legacy migration, and target baseline tree IDs are unchanged,
+so Foundation and Market/PIT retain their recorded exit states. The full
+engineering suite, PostgreSQL tests, mypy, build, Market/research backtests, and
+all stronger evidence classes are `NOT_RUN` at this follow-up. No capability row
+changes.
 
 | Capability | Current implementation truth | Approved target owner | Target convergence |
 |---|---|---|---|
