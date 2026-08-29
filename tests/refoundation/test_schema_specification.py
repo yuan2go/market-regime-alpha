@@ -3,6 +3,7 @@ from __future__ import annotations
 import psycopg
 
 from market_regime_alpha.infrastructure.postgres.schema import (
+    EXPECTED_CANDIDATE_TABLES,
     EXPECTED_FOUNDATION_TABLES,
     EXPECTED_MARKET_TABLES,
     EXPECTED_RESEARCH_DEFINITION_TABLES,
@@ -54,7 +55,13 @@ def test_target_draft_schema_has_exact_relations_views_and_no_jsonb_or_partition
         | EXPECTED_SELECTION_TABLES
         | EXPECTED_RESEARCH_DEFINITION_TABLES
     )
-    assert views == {"artifact_integrity_status", "run_trace"}
+    assert views == {
+        "artifact_integrity_status",
+        "candidate_component_diagnostic",
+        "candidate_funnel",
+        "run_trace",
+    }
+    assert EXPECTED_CANDIDATE_TABLES <= EXPECTED_SELECTION_TABLES
     assert jsonb_columns == (0,)
     assert partitions == (0,)
 

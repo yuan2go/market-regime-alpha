@@ -98,7 +98,7 @@ EXPECTED_MARKET_TABLES: Final[frozenset[str]] = frozenset(
     }
 )
 
-EXPECTED_SELECTION_TABLES: Final[frozenset[str]] = frozenset(
+EXPECTED_SELECTION_CORE_TABLES: Final[frozenset[str]] = frozenset(
     {
         "universe",
         "universe_revision",
@@ -108,6 +108,20 @@ EXPECTED_SELECTION_TABLES: Final[frozenset[str]] = frozenset(
         "eligibility_assessment",
         "eligibility_reason",
     }
+)
+
+EXPECTED_CANDIDATE_TABLES: Final[frozenset[str]] = frozenset(
+    {
+        "candidate_policy",
+        "candidate_policy_component",
+        "candidate_set",
+        "candidate",
+        "candidate_score_component",
+    }
+)
+
+EXPECTED_SELECTION_TABLES: Final[frozenset[str]] = (
+    EXPECTED_SELECTION_CORE_TABLES | EXPECTED_CANDIDATE_TABLES
 )
 
 EXPECTED_RESEARCH_DEFINITION_TABLES: Final[frozenset[str]] = frozenset(
@@ -153,7 +167,8 @@ _REFERENCE_VOCABULARY: Final[dict[str, tuple[str, ...]]] = {
         "NORMALIZE_PIT",
         "FREEZE_UNIVERSE",
         "ASSESS_ELIGIBILITY",
-        "BUILD_CANDIDATES",
+        "REGISTER_DATASET",
+        "BUILD_CANDIDATE_SET",
         "ASSESS_CONTEXT",
         "SIGNAL_AND_FORECAST",
         "DECIDE_AND_RISK",
