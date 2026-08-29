@@ -27,11 +27,12 @@ Foundation
 → minimal Research Definition substrate required by Candidate
 → Candidate closure
 → post-Candidate dependency review across Target/Research/Model/Decision/Outcome/Evaluation/Evidence/Qualification
-→ later Research/Decision/Outcome checkpoints in the order approved by that review
-→ Execution/Account
-→ Runtime/CLI Cutover
-→ Legacy deletion/qualification
 ```
+
+This WP-07 sequence stops at the dependency review. Later Research/Decision/
+Outcome, Execution/Account, Runtime/CLI Cutover, and Legacy deletion/
+qualification work remains an unordered, unauthorized backlog until that review
+publishes an approved dependency map.
 
 No stage begins canonical writes until its predecessor exit gate passes. Before
 Runtime/CLI Cutover, completed target modules are test-only and the old Runtime
@@ -48,15 +49,13 @@ availability-selected fallback.
 | **4. Research Definition Core for Candidate** | `IMPLEMENTED_DRAFT / EXIT_GATE_PASS / NOT_CUT_OVER` at `22a5ec6` | permanent `market_regime_alpha.research_qualification`; exactly `dataset`, `dataset_source`, and `feature_definition`; shared deterministic command-failure contract; strict label-free Decision-input Dataset whose rows exactly equal same-time `INCLUDED` + `ELIGIBLE` population | real immutable relational Authority, Artifact/lineage integrity, success/failure/fence atomicity, leakage rejection, concurrency/replay/recovery, and representative-plan tests pass; no Model/ModelVersion, placeholder, nullable future FK, Registry, compatibility adapter, Evidence/Qualification surrogate, or dependency cycle |
 | **5. Candidate closure** | `APPROVED_DESIGN / IMPLEMENTATION_NOT_STARTED` | exactly five Selection-owned authorities: Candidate Policy, Policy Component, Candidate Set, Candidate, and Candidate Score Component; consume the immutable Decision-input Dataset and real Feature Definitions through a Selection-owned Research-input port and Infrastructure adapter | every Dataset row has one terminal disposition and a complete score-component matrix; STRICT complete case, exact-rational arithmetic-midrank/composite/competition rank, explicit constant/not-estimable diagnostics, include-all boundary ties, independent short Candidate UoW, fenced atomic success/failure/replay/concurrency proof, dossier/funnel and representative plans pass; no later-context Authority is introduced |
 | **6. Post-Candidate dependency review** | `NOT_STARTED / REQUIRED_AFTER_CANDIDATE_EXIT` | audit the real code and Authority dependencies among Target Definition/Checkpoint, Research Partition, Experiment, Model, Decision Run, Outcome, Evaluation, Evidence, and Qualification | publish an approved acyclic implementation order; prove that Research does not construct realized labels independently of future Outcome Authority; do not implement or authorize any listed context as part of Candidate Closure |
-| **7. Later Research/Decision/Outcome implementation** | `ORDER_NOT_AUTHORIZED` | scope and order are selected only by Stage 6; this row grants no Research Evaluation, Decision, Outcome, Evidence, Qualification, Target, or Model work | replace this placeholder with dependency-coherent checkpoints only after Stage 6 review is approved |
-| **8. Execution/Account** | `NOT_STARTED` | Account epoch, Intent, observed Fill/corrections/allocations, broker observations, reconciliation, typed non-trade basis events, derived Position/sleeves | trade delta only from effective Fill; opening/corporate-action/reconciliation invariants; reservation, concurrency, correction, restart and reconciliation tests pass |
-| **9. Runtime/CLI Cutover** | `NOT_STARTED` | complete and freeze the target baseline; one Run/Step/Attempt/Lease/Fence Runtime; one `mra` CLI tree; target repositories/adapters, inspection/read models, recovery and Artifact integrity operations | baseline checksum/seed/catalog verify all target tables; clean DB canonical capture → decision → mutation → query → outcome/evidence; restart/recovery/concurrency/idempotency/replay pass; old Runtime receives no canonical entry or write |
-| **10. Legacy deletion/qualification** | `NOT_STARTED` | remove old packages, 001–106 migrations, repositories, CLIs, compatibility readers, parallel journals/compositions, legacy tests after invariant replacement; rewrite runbook/status generators | all 98 invariant IDs covered; zero old imports/writers/tables/entry points; full gate clean; destructive cutover rehearsed on an explicitly provisioned database; qualification remains at actual evidence floor |
+| **Unordered later target work** | `ORDER_NOT_AUTHORIZED` | Research/Decision/Outcome, Execution/Account, Runtime/CLI Cutover, and Legacy deletion/qualification retain their target invariants but have no WP-07 stage number or relative implementation order | replace this row with dependency-coherent checkpoints only after Stage 6 review is separately approved; this row grants no implementation authority |
 
-The target `001_baseline.sql` is an unreleased, reviewable build artifact during
-Stages 1–8. Foundation establishes its epoch/bootstrap and cross-cutting
-relations; each context checkpoint adds only its own frozen semantics and DDL.
-Stage 9 verifies the complete semantically required catalog and makes the
+The target `001_baseline.sql` remains an unreleased, reviewable build artifact
+during pre-cutover checkpoints. Foundation establishes its epoch/bootstrap and
+cross-cutting relations; each separately authorized context checkpoint adds
+only its own frozen semantics and DDL. A later explicitly authorized Runtime/
+CLI Cutover must verify the complete semantically required catalog and make the
 baseline checksum immutable when the new epoch is released. The design-time
 91-table estimate is not a quota. Later changes use forward-only `002+`
 migrations; no compatibility schema is introduced.

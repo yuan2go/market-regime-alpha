@@ -27,11 +27,12 @@ Foundation
 → minimal Research Definition substrate required by Candidate
 → Candidate closure
 → post-Candidate dependency review across Target/Research/Model/Decision/Outcome/Evaluation/Evidence/Qualification
-→ later Research/Decision/Outcome checkpoints in the order approved by that review
-→ Execution/Account
-→ Runtime/CLI Cutover
-→ Legacy deletion/qualification
 ```
+
+WP-07 declares no order after that review. Research/Decision/Outcome,
+Execution/Account, Runtime/CLI Cutover, and Legacy deletion/qualification remain
+unauthorized unordered work until the review publishes an approved dependency
+map.
 
 Do not resume the former Alpha Proof Roadmap as an engineering program. Existing
 protocols, results, and negative evidence remain immutable provenance. New

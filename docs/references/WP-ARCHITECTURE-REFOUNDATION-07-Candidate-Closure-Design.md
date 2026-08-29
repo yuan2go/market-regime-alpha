@@ -301,9 +301,12 @@ numeric value. If any required component is `MISSING`, `UNKNOWN`, `STALE`, or
 `CONFLICT`, that row is `UNRANKABLE`; score and rank are null and no imputation
 occurs.
 
-The value `0.5` is never a missing-value fill. It has exactly one meaning: the
-arithmetic midrank percentile of an `AVAILABLE` value whose Feature has one
-distinct value in the complete rankable cross-section.
+The value `0.5` is never a missing-value fill. Assigning `0.5` without applying
+the ordinary `n > 1` formula is permitted only for an `AVAILABLE` Feature with
+one distinct value in the complete rankable cross-section. In a nonconstant
+cross-section the ordinary arithmetic-midrank formula may naturally evaluate to
+`0.5` for a middle value or tie group; that component remains `AVAILABLE`, not
+`CONSTANT`, and no imputation has occurred.
 
 ### 5.2 Arithmetic midrank percentile
 
@@ -328,8 +331,10 @@ rank, boundary, or selection.
 The approved constant cases are normative:
 
 1. Only an `AVAILABLE` Feature whose `distinct_count = 1` in the complete
-   rankable cross-section receives percentile `0.5`; its component ranking
-   status is `CONSTANT`.
+   rankable cross-section receives the special constant assignment `0.5`; its
+   component ranking status is `CONSTANT`. An ordinary nonconstant arithmetic
+   midrank may also be numerically `0.5`, without changing its `AVAILABLE`
+   status.
 2. `MISSING / UNKNOWN / STALE / CONFLICT` never receive `0.5` and make the row
    `UNRANKABLE` under `STRICT_COMPLETE_CASE`.
 3. If `rankable_count = 1`, every required Feature percentile is `0.5`, the
@@ -493,10 +498,32 @@ set/disposition, non-unique set/rank lookup, score rows by Candidate and by
 set/component, and existing Dataset-source lineage lookup. No UUID-array/GIN
 lineage index is permitted.
 
-## 8. Computation outside the write transaction
+## 8. Command and transaction boundaries
 
-Artifact verification/read/parse and ranking computation must not hold the
-final PostgreSQL Candidate write transaction open. The application sequence is:
+### 8.1 RegisterCandidatePolicy
+
+Policy registration does not load or rank a Dataset. Its one short Candidate
+transaction is:
+
+1. validate the live Runtime fence when present;
+2. start/replay the exact command receipt;
+3. lock and exactly validate the policy code/config Artifacts and every real
+   FeatureDefinition binding through Candidate-owned ports;
+4. insert `candidate_policy` and its complete ordered
+   `candidate_policy_component` rows;
+5. reload and reconcile identity, component count, declared weights, and
+   content hash;
+6. persist the successful receipt and audit;
+7. finalize Attempt/Step success under the same live fence;
+8. commit once.
+
+It writes only Policy and PolicyComponent Candidate authorities. An exact
+successful replay returns the existing Policy without rewriting it.
+
+### 8.2 BuildCandidateSet
+
+Dataset Artifact verification/read/parse and ranking computation must not hold
+the final PostgreSQL CandidateSet write transaction open. The build sequence is:
 
 1. in a short read/probe scope, resolve immutable Dataset, policy, components,
    FeatureDefinitions, Artifact metadata, receipt identity, and current Runtime
@@ -511,8 +538,9 @@ final PostgreSQL Candidate write transaction open. The application sequence is:
 5. reload and exactly revalidate all policy, component, Dataset,
    FeatureDefinition, scope, Artifact, population, and dependency identities
    against the prepared plan;
-6. write CandidatePolicy if this is policy registration, or write CandidateSet,
-   every Candidate, and the complete score-component matrix;
+6. write CandidateSet, every Candidate, and the complete score-component
+   matrix; Policy and PolicyComponent are pre-existing locked dependencies, not
+   writes of this command;
 7. reload/reconcile all counts, statuses, ranks, boundary diagnostics,
    fingerprints, and matrix identities;
 8. persist the successful command receipt and linked Artifact verification;
@@ -526,8 +554,11 @@ ranking, re-run Universe/Eligibility/Market gates, or invoke a Research UoW.
 
 ## 9. Idempotency, concurrency, failure, and recovery
 
-Command identity and deterministic request fingerprints bind the exact policy,
-Dataset, algorithm/projection contract, Runtime Attempt/Step, and dependencies.
+Command identity and deterministic semantic request fingerprints bind the exact
+policy, Dataset, algorithm/projection contract, and dependencies. They exclude
+Runtime Attempt, Step, lease, and fence identities so exact recovery can replay
+the same business request under a later valid Attempt. Receipt and Runtime
+finalization metadata separately bind the executing Step/Attempt/fence.
 An exact successful retry returns the original CandidateSet and does not read
 Artifact bytes, rerank, or rewrite Authority. The initial replay probe is short;
 if it tentatively creates a pending receipt for new work, that probe is rolled

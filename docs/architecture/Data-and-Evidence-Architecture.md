@@ -420,8 +420,10 @@ Dataset rows are `SELECTED` or `RANKED_NOT_SELECTED`.
 
 For the common complete rankable cross-section, each required Feature uses an
 identity-neutral arithmetic-midrank percentile. Only an `AVAILABLE` Feature
-with one distinct value in that cross-section receives percentile `0.5` and
-component status `CONSTANT`. A singleton rankable population therefore has
+with one distinct value in that cross-section receives the special constant
+assignment `0.5` and component status `CONSTANT`; an ordinary nonconstant
+middle rank may naturally evaluate to `0.5` while remaining `AVAILABLE`. A
+singleton rankable population therefore has
 percentile `0.5` for every component, exact composite score `0.5`, and
 competition rank `1`. No-rankable-row sets compute no percentile and have
 ranking status `NOT_ESTIMABLE`. Mixed constant and distinguishing components

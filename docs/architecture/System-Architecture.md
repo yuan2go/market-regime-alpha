@@ -232,14 +232,17 @@ Market, nor Selection UoW gains Research repositories.
 
 Selection declares the narrow immutable Research-input DTO/port required by
 Candidate. Only an Infrastructure adapter imports both that port and Research
-Definition parser/types. Candidate Artifact verification/read/parse and all
-ranking computation occur outside a PostgreSQL write transaction. The final
-fresh Candidate transaction is ordered:
+Definition parser/types. Candidate Dataset Artifact verification/read/parse and
+all ranking computation occur outside a PostgreSQL write transaction.
+`RegisterCandidatePolicy` instead uses a separate short Candidate transaction
+that locks real Feature Definitions and Artifacts, writes only Policy plus
+Policy Components, reconciles them, then writes receipt/audit/finalization and
+commits. The final fresh `BuildCandidateSet` transaction is ordered:
 
 ```text
 live fence
 → exact Policy/Dataset/Feature/Artifact/DatasetSource dependency revalidation
-→ five-table Candidate writes
+→ CandidateSet/Candidate/ScoreComponent writes
 → exact funnel/component/boundary reconciliation
 → terminal receipt and Artifact verification binding
 → audit
