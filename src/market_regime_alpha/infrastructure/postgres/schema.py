@@ -31,6 +31,15 @@ from market_regime_alpha.market.domain import (
     SourceAvailabilityStatus,
     SpecialTreatmentStatus,
 )
+from market_regime_alpha.selection.domain import (
+    CriterionOperator,
+    CriterionResult,
+    CriterionValueKind,
+    EligibilityRuleKind,
+    EligibilityStatus,
+    MarketEvidenceStatus,
+    UniverseMembershipStatus,
+)
 from market_regime_alpha.shared.errors import MraError
 from market_regime_alpha.shared.hashing import canonical_json_sha256, sha256_bytes
 
@@ -80,8 +89,22 @@ EXPECTED_MARKET_TABLES: Final[frozenset[str]] = frozenset(
     }
 )
 
+EXPECTED_SELECTION_TABLES: Final[frozenset[str]] = frozenset(
+    {
+        "universe",
+        "universe_revision",
+        "universe_member",
+        "eligibility_policy",
+        "eligibility_rule",
+        "eligibility_assessment",
+        "eligibility_reason",
+    }
+)
+
 EXPECTED_TARGET_TABLES: Final[frozenset[str]] = (
-    EXPECTED_FOUNDATION_TABLES | EXPECTED_MARKET_TABLES
+    EXPECTED_FOUNDATION_TABLES
+    | EXPECTED_MARKET_TABLES
+    | EXPECTED_SELECTION_TABLES
 )
 
 _LEGACY_TABLE_SIGNATURES: Final[frozenset[str]] = frozenset(
@@ -149,6 +172,24 @@ _REFERENCE_VOCABULARY: Final[dict[str, tuple[str, ...]]] = {
     ),
     "source_gap_kind": tuple(item.value for item in GapKind),
     "source_gap_reason": tuple(item.value for item in GapReasonCode),
+    "universe_membership_status": tuple(
+        item.value for item in UniverseMembershipStatus
+    ),
+    "selection_market_evidence_status": tuple(
+        item.value for item in MarketEvidenceStatus
+    ),
+    "eligibility_status": tuple(item.value for item in EligibilityStatus),
+    "eligibility_criterion_result": tuple(item.value for item in CriterionResult),
+    "eligibility_rule_kind": tuple(item.value for item in EligibilityRuleKind),
+    "eligibility_rule_value_kind": tuple(
+        item.value
+        for item in CriterionValueKind
+        if item is not CriterionValueKind.MISSING
+    ),
+    "eligibility_observed_value_kind": tuple(
+        item.value for item in CriterionValueKind
+    ),
+    "eligibility_operator": tuple(item.value for item in CriterionOperator),
 }
 
 

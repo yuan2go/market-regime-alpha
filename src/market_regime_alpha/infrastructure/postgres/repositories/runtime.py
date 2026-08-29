@@ -31,9 +31,7 @@ from market_regime_alpha.runtime.ports import (
 
 
 _SAFE_RETRY_EFFECTS = frozenset({"NONE", "PURE_READ", "CONTENT_PUT", "OBSERVATION_ONLY"})
-_REMOTE_EFFECTS = frozenset(
-    {"IDEMPOTENT_REMOTE_COMMAND", "NON_IDEMPOTENT_REMOTE_COMMAND"}
-)
+_REMOTE_EFFECTS = frozenset({"IDEMPOTENT_REMOTE_COMMAND", "NON_IDEMPOTENT_REMOTE_COMMAND"})
 _TERMINAL_STEP_STATES = (
     "SUCCEEDED",
     "BLOCKED",
@@ -90,9 +88,7 @@ class PostgresRuntimeRepository:
         if schedule is None:
             raise RuntimeNotFoundError(f"Schedule {run.schedule_id} does not exist")
         if not schedule[1] or schedule[0] != run.runtime_mode.value:
-            raise RuntimeStateConflictError(
-                "Run requires an enabled Schedule with the same Runtime mode"
-            )
+            raise RuntimeStateConflictError("Run requires an enabled Schedule with the same Runtime mode")
         config_artifact = self._connection.execute(
             """
             SELECT content_sha256, integrity_state
@@ -103,13 +99,9 @@ class PostgresRuntimeRepository:
             (run.config_artifact_id,),
         ).fetchone()
         if config_artifact is None:
-            raise RuntimeNotFoundError(
-                f"Run config Artifact {run.config_artifact_id} does not exist"
-            )
+            raise RuntimeNotFoundError(f"Run config Artifact {run.config_artifact_id} does not exist")
         if config_artifact != (run.config_hash, "AVAILABLE"):
-            raise RuntimeStateConflictError(
-                "Run config Artifact hash or integrity state does not match"
-            )
+            raise RuntimeStateConflictError("Run config Artifact hash or integrity state does not match")
         self._connection.execute(
             """
             INSERT INTO mra.runtime_run (
@@ -136,10 +128,7 @@ class PostgresRuntimeRepository:
         )
         ids_by_key = {step.step_key: step_id for step_id, step in steps}
         for step_id, step in steps:
-            backoff_ms = [
-                int(delay.total_seconds() * 1_000)
-                for delay in step.retry_policy.backoff
-            ]
+            backoff_ms = [int(delay.total_seconds() * 1_000) for delay in step.retry_policy.backoff]
             self._connection.execute(
                 """
                 INSERT INTO mra.runtime_step (
@@ -194,9 +183,7 @@ class PostgresRuntimeRepository:
         if row is None:
             raise RuntimeNotFoundError(f"Run {run_id} does not exist")
         if row[0] != "QUEUED":
-            raise RuntimeStateConflictError(
-                f"Run {run_id} must be QUEUED, found {row[0]}"
-            )
+            raise RuntimeStateConflictError(f"Run {run_id} must be QUEUED, found {row[0]}")
         updated = self._connection.execute(
             """
             UPDATE mra.runtime_run
@@ -285,9 +272,7 @@ class PostgresRuntimeRepository:
         effect_class = str(row[5])
         attempt_no = int(row[6]) + 1
         if attempt_no > max_attempts:
-            raise RuntimeStateConflictError(
-                f"Step {step_id} is READY after exhausting its retry budget"
-            )
+            raise RuntimeStateConflictError(f"Step {step_id} is READY after exhausting its retry budget")
         attempt_row = self._connection.execute(
             """
             INSERT INTO mra.runtime_attempt (
@@ -503,11 +488,7 @@ class PostgresRuntimeRepository:
                 (delay, claim.step_id, claim.attempt_id, claim.fence_token),
             ).fetchone()
         else:
-            terminal_reason_code = (
-                "EXTERNAL_EFFECT_UNKNOWN"
-                if step_state == "WAITING"
-                else error_code
-            )
+            terminal_reason_code = "EXTERNAL_EFFECT_UNKNOWN" if step_state == "WAITING" else error_code
             step = self._connection.execute(
                 """
                 UPDATE mra.runtime_step
@@ -596,9 +577,7 @@ class PostgresRuntimeRepository:
         ).fetchall()
         return tuple(UUID(str(row[0])) for row in rows)
 
-    def recover_expired_attempt(
-        self, attempt_id: UUID, *, receipt_id: UUID
-    ) -> RecoveryDecision | None:
+    def recover_expired_attempt(self, attempt_id: UUID, *, receipt_id: UUID) -> RecoveryDecision | None:
         row = self._connection.execute(
             """
             SELECT
@@ -617,12 +596,7 @@ class PostgresRuntimeRepository:
         ).fetchone()
         if row is None:
             return None
-        if (
-            row[1] != "RUNNING"
-            or row[9] not in ("CLAIMED", "RUNNING")
-            or row[7] != attempt_id
-            or int(row[8]) != int(row[11])
-        ):
+        if row[1] != "RUNNING" or row[9] not in ("CLAIMED", "RUNNING") or row[7] != attempt_id or int(row[8]) != int(row[11]):
             return None
         expired = self._connection.execute(
             "SELECT lease_until <= clock_timestamp() FROM mra.runtime_attempt WHERE attempt_id = %s",
@@ -773,9 +747,7 @@ class PostgresRuntimeRepository:
         effect_class = str(row[6])
         attempt_no = int(row[7]) + 1
         if attempt_no > max_attempts:
-            raise RuntimeStateConflictError(
-                f"Step {step_id} exhausted attempts before deadline recovery"
-            )
+            raise RuntimeStateConflictError(f"Step {step_id} exhausted attempts before deadline recovery")
         if step_state == "PENDING":
             made_ready = self._connection.execute(
                 """
@@ -904,9 +876,7 @@ class PostgresRuntimeRepository:
         if row is None:
             raise RuntimeNotFoundError("Run or Step does not exist")
         if row != ("WAITING", "WAITING"):
-            raise RuntimeStateConflictError(
-                f"resume requires WAITING Run/Step, found {row!r}"
-            )
+            raise RuntimeStateConflictError(f"resume requires WAITING Run/Step, found {row!r}")
         step = self._connection.execute(
             """
             UPDATE mra.runtime_step
@@ -927,9 +897,7 @@ class PostgresRuntimeRepository:
             (run_id,),
         ).fetchone()
         if step is None or run is None:
-            raise RuntimeStateConflictError(
-                f"resolution {resolution_code} could not resume locked Runtime state"
-            )
+            raise RuntimeStateConflictError(f"resolution {resolution_code} could not resume locked Runtime state")
         return int(step[0]), int(run[0])
 
     def inspect_run(self, run_id: UUID) -> RunTrace:
@@ -993,11 +961,7 @@ class PostgresRuntimeRepository:
             """,
             (claim.attempt_id,),
         ).fetchone()
-        expected_attempt_states = (
-            (required_attempt_state,)
-            if required_attempt_state is not None
-            else ("CLAIMED", "RUNNING")
-        )
+        expected_attempt_states = (required_attempt_state,) if required_attempt_state is not None else ("CLAIMED", "RUNNING")
         if (
             row is None
             or UUID(str(row[0])) != claim.run_id
@@ -1010,9 +974,7 @@ class PostgresRuntimeRepository:
             or UUID(str(row[14])) != claim.attempt_id
             or int(row[15]) != claim.fence_token
         ):
-            raise StaleFenceError(
-                f"Attempt {claim.attempt_id} does not own the current live fence"
-            )
+            raise StaleFenceError(f"Attempt {claim.attempt_id} does not own the current live fence")
         live = self._connection.execute(
             "SELECT lease_until > clock_timestamp() FROM mra.runtime_attempt WHERE attempt_id = %s",
             (claim.attempt_id,),
@@ -1133,13 +1095,9 @@ class PostgresCommandReceiptRepository:
         if row is None:
             raise RuntimeStateConflictError("idempotency conflict row disappeared")
         if str(row[2]) != request_hash:
-            raise IdempotencyKeyReusedError(
-                f"{command_kind}/{scope_id}/{idempotency_key} has a different request hash"
-            )
+            raise IdempotencyKeyReusedError(f"{command_kind}/{scope_id}/{idempotency_key} has a different request hash")
         if not is_new and row[1] == "PENDING":
-            raise CommandInProgressError(
-                f"{command_kind}/{scope_id}/{idempotency_key} is still pending"
-            )
+            raise CommandInProgressError(f"{command_kind}/{scope_id}/{idempotency_key} is still pending")
         return ReceiptRecord(
             receipt_id=UUID(str(row[0])),
             status=str(row[1]),

@@ -12,7 +12,7 @@ BEGIN
 END;
 $$;
 
-CREATE FUNCTION mra.artifact_is_authoritatively_readable(
+CREATE FUNCTION mra.artifact_has_verified_integrity(
     integrity_state text,
     last_verified_at timestamptz
 )
@@ -22,12 +22,30 @@ STABLE
 PARALLEL SAFE
 AS $$
     SELECT integrity_state = 'AVAILABLE'
-       AND last_verified_at IS NOT NULL
+       AND last_verified_at IS NOT NULL;
+$$;
+
+COMMENT ON FUNCTION mra.artifact_has_verified_integrity(text, timestamptz) IS
+    'Foundation integrity invariant: AVAILABLE bytes have a physical hash/size verification';
+
+CREATE FUNCTION mra.market_artifact_is_readable(
+    integrity_state text,
+    last_verified_at timestamptz
+)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+PARALLEL SAFE
+AS $$
+    SELECT mra.artifact_has_verified_integrity(
+               integrity_state,
+               last_verified_at
+           )
        AND last_verified_at >= transaction_timestamp() - interval '24 hours';
 $$;
 
-COMMENT ON FUNCTION mra.artifact_is_authoritatively_readable(text, timestamptz) IS
-    'WP-04 authoritative-read policy: AVAILABLE plus physical hash/size verification within 24 hours';
+COMMENT ON FUNCTION mra.market_artifact_is_readable(text, timestamptz) IS
+    'WP-04 Market consumer policy: verified exact bytes observed within 24 hours';
 
 CREATE FUNCTION mra.require_market_authority_capture(
     authority_capture_id uuid,
@@ -45,7 +63,7 @@ BEGIN
     JOIN mra.artifact AS artifact ON artifact.artifact_id = capture.artifact_id
     WHERE capture.capture_id = authority_capture_id
       AND capture.status = 'CAPTURED'
-      AND mra.artifact_is_authoritatively_readable(
+      AND mra.market_artifact_is_readable(
           artifact.integrity_state,
           artifact.last_verified_at
       )
@@ -90,7 +108,7 @@ BEGIN
            (evidence_gap_kind <> 'PROVIDER_FAILURE'
             AND (
                 evidence_capture.status <> 'CAPTURED'
-                OR NOT mra.artifact_is_authoritatively_readable(
+                OR NOT mra.market_artifact_is_readable(
                     evidence_capture.artifact_integrity_state,
                     evidence_capture.artifact_last_verified_at
                 )
@@ -100,7 +118,7 @@ BEGIN
     ELSIF TG_TABLE_NAME <> 'source_gap'
        AND (
            evidence_capture.status <> 'CAPTURED'
-           OR NOT mra.artifact_is_authoritatively_readable(
+           OR NOT mra.market_artifact_is_readable(
                evidence_capture.artifact_integrity_state,
                evidence_capture.artifact_last_verified_at
            )
@@ -422,7 +440,7 @@ BEGIN
         FROM mra.artifact
         WHERE artifact_id = NEW.artifact_id
         FOR SHARE;
-        IF NOT FOUND OR NOT mra.artifact_is_authoritatively_readable(
+        IF NOT FOUND OR NOT mra.market_artifact_is_readable(
             artifact_row.integrity_state,
             artifact_row.last_verified_at
         ) THEN
@@ -1334,6 +1352,9 @@ CREATE TABLE mra.artifact (
     pin_reason_code text,
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     last_verified_at timestamptz,
+    CONSTRAINT artifact_exact_identity_uk UNIQUE (
+        artifact_id, content_sha256, size_bytes
+    ),
     CONSTRAINT artifact_hash_ck CHECK (content_sha256 ~ '^[0-9a-f]{64}$'),
     CONSTRAINT artifact_size_ck CHECK (size_bytes >= 0),
     CONSTRAINT artifact_media_type_ck CHECK (media_type ~ '^[A-Za-z0-9][A-Za-z0-9.+-]+/[A-Za-z0-9][A-Za-z0-9.+-]+$'),
@@ -2299,6 +2320,471 @@ CREATE INDEX source_gap_classification_idx ON mra.source_gap (
     decision_visible_at DESC
 ) WHERE fact_kind IN ('CLASSIFICATION', 'CLASSIFICATION_MEMBERSHIP');
 
+CREATE TABLE mra.universe (
+    universe_id uuid PRIMARY KEY,
+    universe_code text NOT NULL UNIQUE,
+    purpose text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT universe_code_ck CHECK (
+        universe_code ~ '^[a-z][a-z0-9_-]{0,99}$'
+    ),
+    CONSTRAINT universe_purpose_ck CHECK (purpose <> '')
+);
+
+CREATE TABLE mra.universe_revision (
+    universe_revision_id uuid PRIMARY KEY,
+    universe_id uuid NOT NULL REFERENCES mra.universe(universe_id) ON DELETE RESTRICT,
+    revision integer NOT NULL,
+    decision_time timestamptz NOT NULL,
+    scope_artifact_id uuid NOT NULL,
+    scope_content_sha256 text NOT NULL,
+    scope_size_bytes bigint NOT NULL,
+    market_provider_product_id uuid NOT NULL
+        REFERENCES mra.provider_product(provider_product_id) ON DELETE RESTRICT,
+    classification_scheme text NOT NULL,
+    classification_code text NOT NULL,
+    total_count integer NOT NULL,
+    included_count integer NOT NULL,
+    excluded_count integer NOT NULL,
+    unknown_count integer NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT universe_revision_number_uk UNIQUE (universe_id, revision),
+    CONSTRAINT universe_revision_scope_uk UNIQUE (
+        universe_id, decision_time, scope_content_sha256
+    ),
+    CONSTRAINT universe_revision_artifact_fk FOREIGN KEY (
+        scope_artifact_id, scope_content_sha256, scope_size_bytes
+    ) REFERENCES mra.artifact(
+        artifact_id, content_sha256, size_bytes
+    ) ON DELETE RESTRICT,
+    CONSTRAINT universe_revision_revision_ck CHECK (revision > 0),
+    CONSTRAINT universe_revision_hash_ck CHECK (
+        scope_content_sha256 ~ '^[0-9a-f]{64}$'
+    ),
+    CONSTRAINT universe_revision_size_ck CHECK (scope_size_bytes >= 0),
+    CONSTRAINT universe_revision_classification_scheme_ck CHECK (
+        classification_scheme ~ '^[A-Z][A-Z0-9_]{0,31}$'
+    ),
+    CONSTRAINT universe_revision_classification_code_ck CHECK (
+        classification_code <> ''
+    ),
+    CONSTRAINT universe_revision_counts_ck CHECK (
+        total_count >= 0
+        AND included_count >= 0
+        AND excluded_count >= 0
+        AND unknown_count >= 0
+        AND total_count = included_count + excluded_count + unknown_count
+    )
+);
+CREATE INDEX universe_revision_decision_idx
+    ON mra.universe_revision (universe_id, decision_time DESC, revision DESC);
+CREATE INDEX universe_revision_scope_artifact_idx
+    ON mra.universe_revision (
+        scope_artifact_id, scope_content_sha256, scope_size_bytes
+    );
+CREATE INDEX universe_revision_provider_product_idx
+    ON mra.universe_revision (market_provider_product_id);
+
+CREATE TABLE mra.universe_member (
+    universe_member_id uuid PRIMARY KEY,
+    universe_revision_id uuid NOT NULL
+        REFERENCES mra.universe_revision(universe_revision_id) ON DELETE RESTRICT,
+    instrument_id uuid NOT NULL REFERENCES mra.instrument(instrument_id) ON DELETE RESTRICT,
+    membership_status text NOT NULL,
+    evidence_status text NOT NULL,
+    observed_membership_status text,
+    classification_id uuid REFERENCES mra.classification(classification_id) ON DELETE RESTRICT,
+    classification_membership_revision_id uuid
+        REFERENCES mra.classification_membership_revision(membership_revision_id)
+        ON DELETE RESTRICT,
+    source_gap_id uuid REFERENCES mra.source_gap(gap_id) ON DELETE RESTRICT,
+    market_capture_id uuid REFERENCES mra.data_capture(capture_id) ON DELETE RESTRICT,
+    market_decision_visible_at timestamptz,
+    reason_code text NOT NULL,
+    lineage_hash text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT universe_member_identity_uk UNIQUE (
+        universe_revision_id, instrument_id
+    ),
+    CONSTRAINT universe_member_join_uk UNIQUE (
+        universe_member_id, universe_revision_id, instrument_id
+    ),
+    CONSTRAINT universe_member_status_ck CHECK (
+        membership_status IN ('INCLUDED', 'EXCLUDED', 'UNKNOWN')
+    ),
+    CONSTRAINT universe_member_evidence_status_ck CHECK (
+        evidence_status IN ('AVAILABLE', 'MISSING', 'STALE', 'GAP', 'CONFLICT')
+    ),
+    CONSTRAINT universe_member_observed_status_ck CHECK (
+        observed_membership_status IS NULL
+        OR observed_membership_status IN ('MEMBER', 'NOT_MEMBER')
+    ),
+    CONSTRAINT universe_member_reason_ck CHECK (
+        reason_code IN (
+            'CLASSIFICATION_MEMBER', 'CLASSIFICATION_NOT_MEMBER',
+            'MARKET_EVIDENCE_MISSING', 'MARKET_EVIDENCE_STALE',
+            'MARKET_EVIDENCE_GAP', 'MARKET_EVIDENCE_CONFLICT'
+        )
+    ),
+    CONSTRAINT universe_member_lineage_hash_ck CHECK (
+        lineage_hash ~ '^[0-9a-f]{64}$'
+    ),
+    CONSTRAINT universe_member_disposition_ck CHECK (
+        (
+            evidence_status = 'AVAILABLE'
+            AND classification_id IS NOT NULL
+            AND classification_membership_revision_id IS NOT NULL
+            AND source_gap_id IS NULL
+            AND market_capture_id IS NOT NULL
+            AND market_decision_visible_at IS NOT NULL
+            AND (
+                (membership_status = 'INCLUDED'
+                 AND observed_membership_status = 'MEMBER'
+                 AND reason_code = 'CLASSIFICATION_MEMBER')
+                OR
+                (membership_status = 'EXCLUDED'
+                 AND observed_membership_status = 'NOT_MEMBER'
+                 AND reason_code = 'CLASSIFICATION_NOT_MEMBER')
+            )
+        )
+        OR
+        (
+            membership_status = 'UNKNOWN'
+            AND evidence_status <> 'AVAILABLE'
+            AND reason_code IN (
+                'MARKET_EVIDENCE_MISSING', 'MARKET_EVIDENCE_STALE',
+                'MARKET_EVIDENCE_GAP', 'MARKET_EVIDENCE_CONFLICT'
+            )
+        )
+    )
+);
+CREATE INDEX universe_member_status_idx
+    ON mra.universe_member (universe_revision_id, membership_status, instrument_id);
+CREATE INDEX universe_member_instrument_idx
+    ON mra.universe_member (instrument_id, universe_revision_id);
+CREATE INDEX universe_member_membership_lineage_idx
+    ON mra.universe_member (classification_membership_revision_id)
+    WHERE classification_membership_revision_id IS NOT NULL;
+CREATE INDEX universe_member_gap_lineage_idx
+    ON mra.universe_member (source_gap_id)
+    WHERE source_gap_id IS NOT NULL;
+CREATE INDEX universe_member_classification_lineage_idx
+    ON mra.universe_member (classification_id)
+    WHERE classification_id IS NOT NULL;
+CREATE INDEX universe_member_capture_lineage_idx
+    ON mra.universe_member (market_capture_id)
+    WHERE market_capture_id IS NOT NULL;
+
+CREATE TABLE mra.eligibility_policy (
+    eligibility_policy_id uuid PRIMARY KEY,
+    market_provider_product_id uuid NOT NULL
+        REFERENCES mra.provider_product(provider_product_id) ON DELETE RESTRICT,
+    policy_code text NOT NULL,
+    version integer NOT NULL,
+    content_sha256 text NOT NULL UNIQUE,
+    rule_count integer NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT eligibility_policy_identity_uk UNIQUE (policy_code, version),
+    CONSTRAINT eligibility_policy_code_ck CHECK (
+        policy_code ~ '^[a-z][a-z0-9_-]{0,99}$'
+    ),
+    CONSTRAINT eligibility_policy_version_ck CHECK (version > 0),
+    CONSTRAINT eligibility_policy_hash_ck CHECK (
+        content_sha256 ~ '^[0-9a-f]{64}$'
+    ),
+    CONSTRAINT eligibility_policy_rule_count_ck CHECK (rule_count > 0)
+);
+
+CREATE TABLE mra.eligibility_rule (
+    eligibility_rule_id uuid PRIMARY KEY,
+    eligibility_policy_id uuid NOT NULL
+        REFERENCES mra.eligibility_policy(eligibility_policy_id) ON DELETE RESTRICT,
+    rule_code text NOT NULL,
+    ordinal integer NOT NULL,
+    rule_kind text NOT NULL,
+    measure_code text NOT NULL,
+    aggregation text NOT NULL,
+    window_value integer NOT NULL,
+    window_unit text NOT NULL,
+    value_kind text NOT NULL,
+    operator text NOT NULL,
+    threshold_decimal numeric,
+    threshold_status text,
+    threshold_count integer,
+    value_unit text NOT NULL,
+    missing_result text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT eligibility_rule_code_uk UNIQUE (
+        eligibility_policy_id, rule_code
+    ),
+    CONSTRAINT eligibility_rule_ordinal_uk UNIQUE (
+        eligibility_policy_id, ordinal
+    ),
+    CONSTRAINT eligibility_rule_policy_join_uk UNIQUE (
+        eligibility_policy_id, eligibility_rule_id
+    ),
+    CONSTRAINT eligibility_rule_code_ck CHECK (
+        rule_code ~ '^[A-Z][A-Z0-9_]{0,99}$'
+    ),
+    CONSTRAINT eligibility_rule_ordinal_ck CHECK (ordinal > 0),
+    CONSTRAINT eligibility_rule_kind_ck CHECK (
+        rule_kind IN (
+            'NOT_SUSPENDED', 'NOT_SPECIAL_TREATMENT', 'MIN_LISTING_AGE',
+            'MIN_LIQUIDITY', 'LIMIT_METADATA_PRESENT'
+        )
+    ),
+    CONSTRAINT eligibility_rule_measure_ck CHECK (
+        measure_code IN (
+            'SECURITY_STATUS', 'SPECIAL_TREATMENT_STATUS', 'LISTING_AGE',
+            'TURNOVER_VALUE', 'LIMIT_PRICE_FACT_COUNT'
+        )
+    ),
+    CONSTRAINT eligibility_rule_aggregation_ck CHECK (
+        aggregation IN ('POINT', 'ELAPSED', 'MEAN', 'COUNT')
+    ),
+    CONSTRAINT eligibility_rule_window_ck CHECK (
+        window_value >= 0
+        AND window_unit IN ('NONE', 'SESSION')
+    ),
+    CONSTRAINT eligibility_rule_value_kind_ck CHECK (
+        value_kind IN ('STATUS', 'DECIMAL', 'COUNT')
+    ),
+    CONSTRAINT eligibility_rule_operator_ck CHECK (
+        operator IN ('EQ', 'GTE')
+    ),
+    CONSTRAINT eligibility_rule_decimal_ck CHECK (
+        threshold_decimal IS NULL
+        OR (scale(threshold_decimal) <= 10 AND abs(threshold_decimal) < 1e20)
+    ),
+    CONSTRAINT eligibility_rule_count_ck CHECK (
+        threshold_count IS NULL OR threshold_count >= 0
+    ),
+    CONSTRAINT eligibility_rule_unit_ck CHECK (
+        value_unit ~ '^[A-Z][A-Z0-9_]{0,31}$'
+    ),
+    CONSTRAINT eligibility_rule_missing_ck CHECK (missing_result = 'UNKNOWN'),
+    CONSTRAINT eligibility_rule_shape_ck CHECK (
+        (rule_kind = 'NOT_SUSPENDED'
+         AND measure_code = 'SECURITY_STATUS'
+         AND aggregation = 'POINT'
+         AND window_value = 1 AND window_unit = 'SESSION'
+         AND value_kind = 'STATUS' AND operator = 'EQ'
+         AND threshold_status = 'ACTIVE'
+         AND threshold_decimal IS NULL AND threshold_count IS NULL
+         AND value_unit = 'STATUS')
+        OR
+        (rule_kind = 'NOT_SPECIAL_TREATMENT'
+         AND measure_code = 'SPECIAL_TREATMENT_STATUS'
+         AND aggregation = 'POINT'
+         AND window_value = 0 AND window_unit = 'NONE'
+         AND value_kind = 'STATUS' AND operator = 'EQ'
+         AND threshold_status = 'NORMAL'
+         AND threshold_decimal IS NULL AND threshold_count IS NULL
+         AND value_unit = 'STATUS')
+        OR
+        (rule_kind = 'MIN_LISTING_AGE'
+         AND measure_code = 'LISTING_AGE'
+         AND aggregation = 'ELAPSED'
+         AND window_value = 0 AND window_unit = 'NONE'
+         AND value_kind = 'DECIMAL' AND operator = 'GTE'
+         AND threshold_decimal >= 0
+         AND threshold_status IS NULL AND threshold_count IS NULL
+         AND value_unit = 'CALENDAR_DAYS')
+        OR
+        (rule_kind = 'MIN_LIQUIDITY'
+         AND measure_code = 'TURNOVER_VALUE'
+         AND aggregation = 'MEAN'
+         AND window_value > 0 AND window_unit = 'SESSION'
+         AND value_kind = 'DECIMAL' AND operator = 'GTE'
+         AND threshold_decimal >= 0
+         AND threshold_status IS NULL AND threshold_count IS NULL
+         AND value_unit ~ '^[A-Z]{3}$')
+        OR
+        (rule_kind = 'LIMIT_METADATA_PRESENT'
+         AND measure_code = 'LIMIT_PRICE_FACT_COUNT'
+         AND aggregation = 'COUNT'
+         AND window_value = 1 AND window_unit = 'SESSION'
+         AND value_kind = 'COUNT' AND operator = 'GTE'
+         AND threshold_count = 3
+         AND threshold_status IS NULL AND threshold_decimal IS NULL
+         AND value_unit = 'FACT_COUNT')
+    )
+);
+CREATE INDEX eligibility_policy_provider_product_idx
+    ON mra.eligibility_policy (market_provider_product_id);
+
+CREATE TABLE mra.eligibility_assessment (
+    eligibility_assessment_id uuid PRIMARY KEY,
+    universe_revision_id uuid NOT NULL
+        REFERENCES mra.universe_revision(universe_revision_id) ON DELETE RESTRICT,
+    universe_member_id uuid NOT NULL,
+    eligibility_policy_id uuid NOT NULL
+        REFERENCES mra.eligibility_policy(eligibility_policy_id) ON DELETE RESTRICT,
+    instrument_id uuid NOT NULL REFERENCES mra.instrument(instrument_id) ON DELETE RESTRICT,
+    decision_time timestamptz NOT NULL,
+    result text NOT NULL,
+    rule_count integer NOT NULL,
+    pass_count integer NOT NULL,
+    fail_count integer NOT NULL,
+    unknown_count integer NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT eligibility_assessment_identity_uk UNIQUE (
+        universe_revision_id, eligibility_policy_id, instrument_id, decision_time
+    ),
+    CONSTRAINT eligibility_assessment_member_fk FOREIGN KEY (
+        universe_member_id, universe_revision_id, instrument_id
+    ) REFERENCES mra.universe_member(
+        universe_member_id, universe_revision_id, instrument_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT eligibility_assessment_result_ck CHECK (
+        result IN ('ELIGIBLE', 'INELIGIBLE', 'UNKNOWN')
+    ),
+    CONSTRAINT eligibility_assessment_counts_ck CHECK (
+        rule_count > 0
+        AND pass_count >= 0 AND fail_count >= 0 AND unknown_count >= 0
+        AND rule_count = pass_count + fail_count + unknown_count
+    ),
+    CONSTRAINT eligibility_assessment_aggregate_ck CHECK (
+        (result = 'INELIGIBLE' AND fail_count > 0)
+        OR
+        (result = 'UNKNOWN' AND fail_count = 0 AND unknown_count > 0)
+        OR
+        (result = 'ELIGIBLE'
+         AND pass_count = rule_count AND fail_count = 0 AND unknown_count = 0)
+    )
+);
+CREATE INDEX eligibility_assessment_result_idx
+    ON mra.eligibility_assessment (
+        universe_revision_id, eligibility_policy_id, result, instrument_id
+    );
+CREATE INDEX eligibility_assessment_instrument_idx
+    ON mra.eligibility_assessment (instrument_id, decision_time DESC);
+CREATE INDEX eligibility_assessment_policy_idx
+    ON mra.eligibility_assessment (eligibility_policy_id, decision_time DESC);
+CREATE INDEX eligibility_assessment_member_idx
+    ON mra.eligibility_assessment (
+        universe_member_id, universe_revision_id, instrument_id
+    );
+
+CREATE TABLE mra.eligibility_reason (
+    eligibility_reason_id uuid PRIMARY KEY,
+    eligibility_assessment_id uuid NOT NULL
+        REFERENCES mra.eligibility_assessment(eligibility_assessment_id)
+        ON DELETE RESTRICT,
+    eligibility_policy_id uuid NOT NULL,
+    eligibility_rule_id uuid NOT NULL,
+    criterion_result text NOT NULL,
+    observed_value_kind text NOT NULL,
+    observed_decimal numeric,
+    observed_status text,
+    observed_count integer,
+    measure_code text NOT NULL,
+    aggregation text NOT NULL,
+    window_value integer NOT NULL,
+    window_unit text NOT NULL,
+    operator text NOT NULL,
+    threshold_decimal numeric,
+    threshold_status text,
+    threshold_count integer,
+    value_unit text NOT NULL,
+    reason_code text NOT NULL,
+    market_fact_revision_ids uuid[] NOT NULL DEFAULT '{}',
+    market_bar_revision_ids uuid[] NOT NULL DEFAULT '{}',
+    market_gap_ids uuid[] NOT NULL DEFAULT '{}',
+    market_session_ids uuid[] NOT NULL DEFAULT '{}',
+    market_capture_ids uuid[] NOT NULL DEFAULT '{}',
+    lineage_hash text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT eligibility_reason_identity_uk UNIQUE (
+        eligibility_assessment_id, eligibility_rule_id
+    ),
+    CONSTRAINT eligibility_reason_rule_fk FOREIGN KEY (
+        eligibility_policy_id, eligibility_rule_id
+    ) REFERENCES mra.eligibility_rule(
+        eligibility_policy_id, eligibility_rule_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT eligibility_reason_result_ck CHECK (
+        criterion_result IN ('PASS', 'FAIL', 'UNKNOWN')
+    ),
+    CONSTRAINT eligibility_reason_observed_kind_ck CHECK (
+        observed_value_kind IN ('STATUS', 'DECIMAL', 'COUNT', 'MISSING')
+    ),
+    CONSTRAINT eligibility_reason_observed_ck CHECK (
+        (observed_value_kind = 'STATUS'
+         AND observed_status IS NOT NULL
+         AND observed_decimal IS NULL AND observed_count IS NULL)
+        OR
+        (observed_value_kind = 'DECIMAL'
+         AND observed_decimal IS NOT NULL
+         AND observed_status IS NULL AND observed_count IS NULL)
+        OR
+        (observed_value_kind = 'COUNT'
+         AND observed_count IS NOT NULL
+         AND observed_status IS NULL AND observed_decimal IS NULL)
+        OR
+        (observed_value_kind = 'MISSING'
+         AND observed_status IS NULL
+         AND observed_decimal IS NULL AND observed_count IS NULL)
+    ),
+    CONSTRAINT eligibility_reason_explicit_result_ck CHECK (
+        criterion_result = 'UNKNOWN' OR observed_value_kind <> 'MISSING'
+    ),
+    CONSTRAINT eligibility_reason_numeric_ck CHECK (
+        (observed_decimal IS NULL
+         OR (scale(observed_decimal) <= 10 AND abs(observed_decimal) < 1e20))
+        AND
+        (threshold_decimal IS NULL
+         OR (scale(threshold_decimal) <= 10 AND abs(threshold_decimal) < 1e20))
+    ),
+    CONSTRAINT eligibility_reason_count_ck CHECK (
+        (observed_count IS NULL OR observed_count >= 0)
+        AND (threshold_count IS NULL OR threshold_count >= 0)
+        AND window_value >= 0
+    ),
+    CONSTRAINT eligibility_reason_reason_ck CHECK (
+        reason_code IN (
+            'CRITERION_PASSED', 'EXPLICIT_CRITERION_FAILED',
+            'EVIDENCE_MISSING', 'EVIDENCE_STALE', 'EVIDENCE_GAP',
+            'EVIDENCE_CONFLICT', 'EVIDENCE_UNKNOWN_STATUS'
+        )
+        AND (
+            (criterion_result = 'PASS' AND reason_code = 'CRITERION_PASSED')
+            OR
+            (criterion_result = 'FAIL'
+             AND reason_code = 'EXPLICIT_CRITERION_FAILED')
+            OR
+            (criterion_result = 'UNKNOWN'
+             AND reason_code IN (
+                 'EVIDENCE_MISSING', 'EVIDENCE_STALE', 'EVIDENCE_GAP',
+                 'EVIDENCE_CONFLICT', 'EVIDENCE_UNKNOWN_STATUS'
+             ))
+        )
+    ),
+    CONSTRAINT eligibility_reason_unit_ck CHECK (
+        value_unit ~ '^[A-Z][A-Z0-9_]{0,31}$'
+    ),
+    CONSTRAINT eligibility_reason_lineage_ck CHECK (
+        lineage_hash ~ '^[0-9a-f]{64}$'
+        AND array_position(market_fact_revision_ids, NULL) IS NULL
+        AND array_position(market_bar_revision_ids, NULL) IS NULL
+        AND array_position(market_gap_ids, NULL) IS NULL
+        AND array_position(market_session_ids, NULL) IS NULL
+        AND array_position(market_capture_ids, NULL) IS NULL
+    )
+);
+CREATE INDEX eligibility_reason_assessment_idx
+    ON mra.eligibility_reason (eligibility_assessment_id, eligibility_rule_id);
+CREATE INDEX eligibility_reason_rule_idx
+    ON mra.eligibility_reason (eligibility_policy_id, eligibility_rule_id);
+CREATE INDEX eligibility_reason_fact_lineage_gin
+    ON mra.eligibility_reason USING gin (market_fact_revision_ids);
+CREATE INDEX eligibility_reason_bar_lineage_gin
+    ON mra.eligibility_reason USING gin (market_bar_revision_ids);
+CREATE INDEX eligibility_reason_gap_lineage_gin
+    ON mra.eligibility_reason USING gin (market_gap_ids);
+CREATE INDEX eligibility_reason_capture_lineage_gin
+    ON mra.eligibility_reason USING gin (market_capture_ids);
+
 CREATE TABLE mra.runtime_schedule (
     schedule_id uuid PRIMARY KEY,
     schedule_code text NOT NULL,
@@ -2821,6 +3307,27 @@ FOR EACH ROW EXECUTE FUNCTION mra.validate_market_bar_session();
 CREATE TRIGGER source_gap_bar_exclusive
 BEFORE INSERT ON mra.source_gap
 FOR EACH ROW EXECUTE FUNCTION mra.reject_fact_gap_duality();
+CREATE TRIGGER universe_append_only
+BEFORE UPDATE OR DELETE ON mra.universe
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER universe_revision_append_only
+BEFORE UPDATE OR DELETE ON mra.universe_revision
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER universe_member_append_only
+BEFORE UPDATE OR DELETE ON mra.universe_member
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER eligibility_policy_append_only
+BEFORE UPDATE OR DELETE ON mra.eligibility_policy
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER eligibility_rule_append_only
+BEFORE UPDATE OR DELETE ON mra.eligibility_rule
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER eligibility_assessment_append_only
+BEFORE UPDATE OR DELETE ON mra.eligibility_assessment
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER eligibility_reason_append_only
+BEFORE UPDATE OR DELETE ON mra.eligibility_reason
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
 
 CREATE VIEW mra.run_trace AS
 SELECT
