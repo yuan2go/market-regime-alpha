@@ -80,8 +80,10 @@ def test_candidate_and_future_research_authority_are_not_stubbed_in_target_schem
     for table in (
         "candidate_set",
         "candidate",
-        "feature_definition",
-        "dataset",
+        "evaluation_dataset",
+        "research_evidence",
+        "qualification_assessment",
+        "model",
         "model_version",
         "decision_run",
     ):

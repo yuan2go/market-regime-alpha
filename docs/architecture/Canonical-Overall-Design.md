@@ -5,12 +5,14 @@
 > **Owner:** Market Regime Alpha maintainers
 > **Last Updated:** 2026-08-29
 > **Starting Main:** `0382dad416d6d50d1eea0bda1603d7c359d65274`
-> **Implementation State:** `FOUNDATION_AND_MARKET_IMPLEMENTED_DRAFT / REMAINDER_DESIGN_ONLY / NOT_CUT_OVER`
-> **Code Evidence:** target `src/market_regime_alpha/shared`, `src/market_regime_alpha/runtime`, `src/market_regime_alpha/market`, `src/market_regime_alpha/infrastructure`, `src/market_regime_alpha/interfaces`, target draft `src/market_regime_alpha/infrastructure/postgres/migrations/001_baseline.sql`, `tests/refoundation`; legacy source/migrations remain current business implementation
+> **Implementation State:** `FOUNDATION_MARKET_SELECTION_RESEARCH_DEFINITION_IMPLEMENTED_DRAFT / NOT_CUT_OVER`
+> **Code Evidence:** target `src/market_regime_alpha/shared`, `src/market_regime_alpha/runtime`, `src/market_regime_alpha/market`, `src/market_regime_alpha/selection`, `src/market_regime_alpha/research_qualification`, `src/market_regime_alpha/infrastructure`, `src/market_regime_alpha/interfaces`, target draft `src/market_regime_alpha/infrastructure/postgres/migrations/001_baseline.sql`, `tests/refoundation`; legacy source/migrations remain current business implementation
 
-This document freezes the approved architecture. Foundation and Market/PIT now
-exist as an isolated `MRA_REFOUNDATION_1 / DRAFT / NOT_CUT_OVER` implementation;
-all later target contexts remain design only. Legacy code and the current
+This document freezes the approved architecture. Foundation, Market/PIT,
+Selection Core, and the three-table Research Definition Core now exist as an
+isolated `MRA_REFOUNDATION_1 / DRAFT / NOT_CUT_OVER` implementation. Candidate
+Closure is dependency-ready but not implemented; all later target contexts
+remain unimplemented. Legacy code and the current
 283-table schema remain canonical business implementation truth until the
 explicit Runtime/CLI Hard Cutover. Neither the design nor the draft creates
 research, Provider, trading, or Production proof.
@@ -96,7 +98,7 @@ src/market_regime_alpha/
     domain/
     application/
     ports.py
-  research/
+  research_qualification/
     domain/
     application/
     ports.py
@@ -155,7 +157,7 @@ composition root.
 | Runtime & Provenance | Schedule, Run, Step, Attempt, Command Receipt, Artifact | schedule, claim, heartbeat, finalize, resume, verify artifact | run trace, due work, integrity report |
 | Market & PIT | Capture, Instrument, Trading Session, Fact Revision, Classification Revision, Source Gap | register capture, normalize revision, record gap/correction | as-of fact, exact session grid, source lineage |
 | Selection | Universe Revision, Eligibility Assessment; later Candidate Set | freeze universe, assess eligibility; build candidates only after Research definition substrate | scope and eligibility at Decision time; later Candidate evidence |
-| Research & Qualification | Dataset, Target Definition, Experiment, Model Version, Evaluation, Evidence Item, Assessment, Qualification Decision | register immutable definitions, run evaluation, assess, qualify | lineage graph, evidence floor matrix |
+| Research & Qualification | initially Dataset, Dataset Source, and Feature Definition; later Target, Experiment, Model Version, Evaluation, Evidence, Assessment, and Qualification | initially register immutable Decision-input definitions; later run evaluation, assess, and qualify | initially exact Dataset/Feature lineage; later evidence floor matrix |
 | Decision Support | Decision Run, Context Assessment, Signal, Forecast, Opportunity, Thesis, Strategy Version, Portfolio Proposal, Risk Decision | decide, propose, risk-assess | decision dossier, risk authorization |
 | Outcome & Attribution | Outcome, Observation, Metric, Reason, Attribution Run/Line | settle outcome, attribute | outcome status/path, metric availability, attribution |
 | Execution & Account | Account Authority Epoch, Execution Intent, Fill, Fill Allocation, Broker Observation, Reconciliation, Position Basis Event | approve intent, record/correct fill, observe broker, reconcile, authorize non-trade adjustment | current position, sleeve, cash/exposure evidence |
@@ -180,6 +182,15 @@ Command
   → commit once
   → publish immutable read result
 ```
+
+For a Runtime-owned command whose business transaction raises a deterministic
+rejection, that transaction rolls back completely. The owning Application then
+opens a new short instance of the same bounded-context UoW and atomically locks
+the live fence, records the failed command receipt and audit event, finalizes the
+matching Attempt/Step as failed, and commits. A stale fence rejects before any
+failure receipt or audit write. The shared contract owns only these
+Runtime/receipt/audit failure semantics; Domain error interpretation and command
+dispatch remain in each bounded context.
 
 There is no generic `save(payload)`, generic registry, dual-write adapter, or
 “latest” row accepted from a caller. Exact authority assignments and the

@@ -237,6 +237,15 @@ class PostgresArtifactRepository:
                         SELECT 1 FROM mra.data_capture AS capture
                         WHERE capture.artifact_id = artifact.artifact_id
                     ) OR EXISTS (
+                        SELECT 1 FROM mra.feature_definition AS definition
+                        WHERE definition.code_artifact_id = artifact.artifact_id
+                           OR definition.config_artifact_id = artifact.artifact_id
+                    ) OR EXISTS (
+                        SELECT 1 FROM mra.dataset AS dataset
+                        WHERE dataset.manifest_artifact_id = artifact.artifact_id
+                           OR dataset.code_artifact_id = artifact.artifact_id
+                           OR dataset.config_artifact_id = artifact.artifact_id
+                    ) OR EXISTS (
                         SELECT 1 FROM mra.artifact_dependency AS dependency
                         WHERE dependency.child_artifact_id = artifact.artifact_id
                            OR dependency.parent_artifact_id = artifact.artifact_id

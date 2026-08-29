@@ -1,0 +1,262 @@
+"""Research-owned narrow reads over canonical Selection and Market facts."""
+
+from __future__ import annotations
+
+from collections import defaultdict
+from typing import Any
+from uuid import UUID
+
+import psycopg
+
+from market_regime_alpha.research_qualification.domain import (
+    DatasetSource,
+    DatasetSourceRole,
+)
+from market_regime_alpha.research_qualification.ports.sources import (
+    DatasetMarketSourceObservation,
+    DatasetPopulationMember,
+)
+from market_regime_alpha.runtime.errors import (
+    RuntimeNotFoundError,
+    RuntimeStateConflictError,
+)
+from market_regime_alpha.shared.time import DecisionTime
+
+
+_MARKET_ROLES = frozenset(
+    {
+        DatasetSourceRole.MARKET_BAR_REVISION,
+        DatasetSourceRole.MARKET_INSTRUMENT_FACT_REVISION,
+        DatasetSourceRole.MARKET_TRADING_SESSION,
+        DatasetSourceRole.MARKET_SOURCE_GAP,
+        DatasetSourceRole.MARKET_CAPTURE,
+    }
+)
+
+
+class PostgresResearchSourceQueries:
+    """Resolve exact source identities inside the caller-owned Research UoW."""
+
+    def __init__(self, connection: psycopg.Connection[Any]) -> None:
+        self._connection = connection
+
+    def expected_population(
+        self,
+        *,
+        universe_revision_id: UUID,
+        eligibility_policy_id: UUID,
+        decision_time: DecisionTime,
+        lock: bool,
+    ) -> tuple[DatasetPopulationMember, ...]:
+        lock_scope = " FOR SHARE OF revision, policy" if lock else ""
+        scope = self._connection.execute(
+            """
+            SELECT revision.universe_revision_id
+            FROM mra.universe_revision AS revision
+            CROSS JOIN mra.eligibility_policy AS policy
+            WHERE revision.universe_revision_id = %s
+              AND revision.decision_time = %s
+              AND policy.eligibility_policy_id = %s
+            """
+            + lock_scope,
+            (
+                universe_revision_id,
+                decision_time.value,
+                eligibility_policy_id,
+            ),
+        ).fetchone()
+        if scope is None:
+            raise RuntimeNotFoundError(
+                "Dataset Selection scope does not exist at the exact DecisionTime"
+            )
+        lock_rows = " FOR SHARE OF member, assessment" if lock else ""
+        rows = self._connection.execute(
+            """
+            SELECT member.instrument_id, member.universe_member_id,
+                   assessment.eligibility_assessment_id
+            FROM mra.universe_member AS member
+            JOIN mra.eligibility_assessment AS assessment
+              ON assessment.universe_member_id = member.universe_member_id
+             AND assessment.universe_revision_id = member.universe_revision_id
+             AND assessment.instrument_id = member.instrument_id
+            WHERE member.universe_revision_id = %s
+              AND member.membership_status = 'INCLUDED'
+              AND assessment.eligibility_policy_id = %s
+              AND assessment.decision_time = %s
+              AND assessment.result = 'ELIGIBLE'
+            ORDER BY member.instrument_id
+            """
+            + lock_rows,
+            (
+                universe_revision_id,
+                eligibility_policy_id,
+                decision_time.value,
+            ),
+        ).fetchall()
+        return tuple(
+            DatasetPopulationMember(
+                instrument_id=UUID(str(row[0])),
+                universe_member_id=UUID(str(row[1])),
+                eligibility_assessment_id=UUID(str(row[2])),
+            )
+            for row in rows
+        )
+
+    def market_source_observations(
+        self,
+        sources: tuple[DatasetSource, ...],
+        *,
+        lock: bool,
+    ) -> tuple[DatasetMarketSourceObservation, ...]:
+        by_role: dict[DatasetSourceRole, list[DatasetSource]] = defaultdict(list)
+        for source in sources:
+            if source.role in _MARKET_ROLES:
+                by_role[source.role].append(source)
+        observations: list[DatasetMarketSourceObservation] = []
+        for role, role_sources in by_role.items():
+            observations.extend(
+                self._market_role_observations(
+                    role,
+                    tuple(role_sources),
+                    lock=lock,
+                )
+            )
+        expected_ids = {
+            source.dataset_source_id
+            for source in sources
+            if source.role in _MARKET_ROLES
+        }
+        if {item.dataset_source_id for item in observations} != expected_ids:
+            raise RuntimeNotFoundError(
+                "one or more Dataset Market source identities do not exist"
+            )
+        return tuple(sorted(observations, key=lambda item: str(item.dataset_source_id)))
+
+    def _market_role_observations(
+        self,
+        role: DatasetSourceRole,
+        sources: tuple[DatasetSource, ...],
+        *,
+        lock: bool,
+    ) -> tuple[DatasetMarketSourceObservation, ...]:
+        identity_attribute, sql, lock_clause = {
+            DatasetSourceRole.MARKET_BAR_REVISION: (
+                "market_bar_revision_id",
+                """
+                SELECT fact.bar_revision_id, fact.instrument_id,
+                       fact.decision_visible_at,
+                       mra.artifact_has_verified_integrity(
+                           artifact.integrity_state, artifact.last_verified_at
+                       )
+                FROM mra.market_bar_revision AS fact
+                JOIN mra.data_capture AS capture
+                  ON capture.capture_id = fact.capture_id
+                JOIN mra.artifact AS artifact
+                  ON artifact.artifact_id = capture.artifact_id
+                WHERE fact.bar_revision_id = ANY(%s)
+                """,
+                " FOR SHARE OF fact, capture",
+            ),
+            DatasetSourceRole.MARKET_INSTRUMENT_FACT_REVISION: (
+                "market_instrument_fact_revision_id",
+                """
+                SELECT fact.fact_revision_id, fact.instrument_id,
+                       fact.decision_visible_at,
+                       mra.artifact_has_verified_integrity(
+                           artifact.integrity_state, artifact.last_verified_at
+                       )
+                FROM mra.instrument_fact_revision AS fact
+                JOIN mra.data_capture AS capture
+                  ON capture.capture_id = fact.capture_id
+                JOIN mra.artifact AS artifact
+                  ON artifact.artifact_id = capture.artifact_id
+                WHERE fact.fact_revision_id = ANY(%s)
+                """,
+                " FOR SHARE OF fact, capture",
+            ),
+            DatasetSourceRole.MARKET_TRADING_SESSION: (
+                "market_trading_session_id",
+                """
+                SELECT session.session_id, NULL::uuid,
+                       session.decision_visible_at,
+                       mra.artifact_has_verified_integrity(
+                           artifact.integrity_state, artifact.last_verified_at
+                       )
+                FROM mra.trading_session AS session
+                JOIN mra.data_capture AS capture
+                  ON capture.capture_id = session.source_capture_id
+                JOIN mra.artifact AS artifact
+                  ON artifact.artifact_id = capture.artifact_id
+                WHERE session.session_id = ANY(%s)
+                """,
+                " FOR SHARE OF session, capture",
+            ),
+            DatasetSourceRole.MARKET_SOURCE_GAP: (
+                "market_source_gap_id",
+                """
+                SELECT gap.gap_id, gap.instrument_id,
+                       gap.decision_visible_at,
+                       CASE
+                           WHEN capture.status = 'PROVIDER_FAILURE' THEN true
+                           ELSE mra.artifact_has_verified_integrity(
+                               artifact.integrity_state,
+                               artifact.last_verified_at
+                           )
+                       END
+                FROM mra.source_gap AS gap
+                JOIN mra.data_capture AS capture
+                  ON capture.capture_id = gap.capture_id
+                LEFT JOIN mra.artifact AS artifact
+                  ON artifact.artifact_id = capture.artifact_id
+                WHERE gap.gap_id = ANY(%s)
+                """,
+                " FOR SHARE OF gap, capture",
+            ),
+            DatasetSourceRole.MARKET_CAPTURE: (
+                "market_capture_id",
+                """
+                SELECT capture.capture_id, NULL::uuid,
+                       capture.decision_visible_at,
+                       CASE
+                           WHEN capture.status = 'PROVIDER_FAILURE' THEN true
+                           ELSE mra.artifact_has_verified_integrity(
+                               artifact.integrity_state,
+                               artifact.last_verified_at
+                           )
+                       END
+                FROM mra.data_capture AS capture
+                LEFT JOIN mra.artifact AS artifact
+                  ON artifact.artifact_id = capture.artifact_id
+                WHERE capture.capture_id = ANY(%s)
+                """,
+                " FOR SHARE OF capture",
+            ),
+        }[role]
+        source_by_identity: dict[UUID, DatasetSource] = {}
+        for source in sources:
+            identity = getattr(source, identity_attribute)
+            if identity is None:
+                raise AssertionError("Dataset source lost its role-specific identity")
+            if identity in source_by_identity:
+                raise RuntimeStateConflictError(
+                    "Dataset Market source identities must be unique per role"
+                )
+            source_by_identity[identity] = source
+        rows = self._connection.execute(
+            sql + (lock_clause if lock else ""),
+            (list(source_by_identity),),
+        ).fetchall()
+        return tuple(
+            DatasetMarketSourceObservation(
+                dataset_source_id=source_by_identity[UUID(str(row[0]))].dataset_source_id,
+                role=role,
+                source_identity=UUID(str(row[0])),
+                instrument_id=UUID(str(row[1])) if row[1] is not None else None,
+                decision_visible_at=row[2],
+                foundation_integrity=row[3] is True,
+            )
+            for row in rows
+        )
+
+
+__all__ = ["PostgresResearchSourceQueries"]

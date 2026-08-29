@@ -14,6 +14,12 @@ from market_regime_alpha.infrastructure.postgres.repositories.market import (
 from market_regime_alpha.infrastructure.postgres.repositories.selection import (
     PostgresSelectionRepository,
 )
+from market_regime_alpha.infrastructure.postgres.repositories.research_artifacts import (
+    PostgresResearchArtifactRepository,
+)
+from market_regime_alpha.infrastructure.postgres.repositories.research_definitions import (
+    PostgresResearchDefinitionRepository,
+)
 
 __all__ = [
     "PostgresAuditRepository",
@@ -21,5 +27,7 @@ __all__ = [
     "PostgresCommandReceiptRepository",
     "PostgresMarketRepository",
     "PostgresRuntimeRepository",
+    "PostgresResearchArtifactRepository",
+    "PostgresResearchDefinitionRepository",
     "PostgresSelectionRepository",
 ]

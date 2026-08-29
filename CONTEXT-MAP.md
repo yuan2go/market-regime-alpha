@@ -4,11 +4,13 @@
 > **Authority:** Target bounded-context vocabulary and dependency map
 > **Owner:** Market Regime Alpha maintainers
 > **Last Updated:** 2026-08-29
-> **Implementation State:** DESIGN_CHECKPOINT_ONLY
+> **Implementation State:** `FOUNDATION_MARKET_SELECTION_RESEARCH_DEFINITION_IMPLEMENTED_DRAFT / NOT_CUT_OVER`
 
-This file defines names and relationships only. It does not claim that the target
-packages or schema exist. Current implementation truth remains code, PostgreSQL,
-tests actually run, and reproducible evidence.
+This file defines names and relationships only. Foundation, Market/PIT,
+Selection Core, and the three-table Research Definition Core exist in the
+isolated target draft. Candidate and later target contexts remain absent.
+Current implementation truth remains code, PostgreSQL, tests actually run, and
+reproducible evidence.
 
 ## Ubiquitous language
 
@@ -18,6 +20,8 @@ tests actually run, and reproducible evidence.
 | Known Time | Earliest instant at which the exact normalized revision was legitimately usable by this system. | Event time, provider time, or a reconstructed historical guess. |
 | Universe Revision | Immutable, decision-time-resolvable membership scope with every included, excluded, and unknown symbol accounted for. | A current constituent list used retrospectively. |
 | Eligibility Assessment | Per-instrument policy result at one decision time: `ELIGIBLE`, `INELIGIBLE`, or `UNKNOWN`, with typed reasons and evidence. | Candidate selection or a silent filter. |
+| Decision-input Dataset | Immutable content-addressed Feature input whose rows exactly reconcile the same-DecisionTime `INCLUDED` and `ELIGIBLE` population, with explicit missing cells and exact lineage. | An Evaluation Dataset, Target/Outcome container, or posterior-label panel. |
+| Feature Definition | Immutable calculation semantics, type/unit, temporal window, source, availability, missingness, and algorithm/code/config identity. | Alpha evidence, research maturity, external validation, or qualification. |
 | Candidate | An eligible instrument admitted by a versioned Candidate policy, with exact score components and evidence lineage. | A Signal, Forecast, Entry, or trade recommendation. |
 | Signal | A target-independent setup/state assertion produced from frozen inputs. | A calibrated probability or execution instruction. |
 | Forecast | A Target/Checkpoint-bound estimate with explicit uncertainty and calibration status. | A raw score relabelled as probability. |
@@ -79,7 +83,7 @@ Python process and one PostgreSQL database. They are not microservices.
 | Runtime & Provenance | schedules, Runs, Steps, Attempts, command receipts, audit, artifact metadata/integrity | all application command results by stable ID | Market facts, decisions, qualifications, Positions |
 | Market & PIT | providers, captures, instruments, sessions, classifications, revisions, gaps | raw artifact bytes | Candidates, model assessment, Portfolio |
 | Selection | Universe revisions, membership, eligibility; later Candidate Sets | Universe/Eligibility consume only Market/PIT and immutable scope config; Candidate may later consume only actual policy-required Research definitions | Signal, Strategy action, Fill |
-| Research & Qualification | datasets, targets, partitions, experiments, models, evaluation, evidence, assessment, qualification | Market/PIT, Outcomes, Attribution | runtime scheduling, physical Position mutation |
+| Research & Qualification (`market_regime_alpha.research_qualification`) | initially Decision-input Dataset/DatasetSource/FeatureDefinition; later targets, partitions, experiments, models, evaluation, evidence, assessment, qualification | initially Market/PIT and Selection lineage; later Outcomes and Attribution | runtime scheduling, Candidate ownership, physical Position mutation |
 | Decision Support | Context assessments, Signal, Forecast, Opportunity, Thesis, Strategy Version, Portfolio/Risk decision | Candidate, Research identities, account query model | observed Fill, broker truth, qualification |
 | Execution & Account | account authority epoch, intents, Fills, allocations, broker observations, reconciliation, non-trade basis events | accepted Portfolio/Risk decisions, Market instrument identity | Candidate, Forecast, model promotion |
 | Outcome & Attribution | factual Outcomes, observations, metrics, reasons and diagnostic Attribution | Decisions, Market/PIT, Fill allocations | qualification, Decision mutation or Position truth |
@@ -89,8 +93,9 @@ The business dependency direction is
 `Market/PIT → Universe → Eligibility → Candidate → Context → Signal/Forecast → Opportunity → Portfolio → Risk`.
 Context cannot feed back into the same Candidate Set, and Opportunity cannot
 carry a Risk Decision. The sole Risk Authority follows Portfolio. Candidate is
-implemented only after its required Dataset, Feature Definition, or Model
-Version identities exist. Candidate Set creation does not require a Decision
+not implemented in the current draft, but its required V1 Dataset and Feature
+Definition identities now exist; Model Version is added only if a concrete
+policy proves it necessary. Candidate Set creation does not require a Decision
 Run, Evidence graph, Assessment, or Qualification; a later Decision Run must
 reference an already-existing Candidate Set.
 

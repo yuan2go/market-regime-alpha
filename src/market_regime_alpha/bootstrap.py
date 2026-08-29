@@ -16,6 +16,9 @@ from market_regime_alpha.infrastructure.postgres.market_uow import (
 from market_regime_alpha.infrastructure.postgres.selection_uow import (
     PostgresSelectionUnitOfWorkProvider,
 )
+from market_regime_alpha.infrastructure.postgres.research_uow import (
+    PostgresResearchUnitOfWorkProvider,
+)
 from market_regime_alpha.infrastructure.postgres.queries import (
     PostgresMarketQueryProvider,
 )
@@ -29,6 +32,9 @@ from market_regime_alpha.infrastructure.postgres.schema import (
 )
 from market_regime_alpha.infrastructure.postgres.uow import PostgresUnitOfWorkProvider
 from market_regime_alpha.runtime.application import ArtifactApplication, RuntimeApplication
+from market_regime_alpha.research_qualification.application import (
+    ResearchQualificationApplication,
+)
 from market_regime_alpha.selection.application import SelectionApplication
 from market_regime_alpha.market.application import MarketApplication
 from market_regime_alpha.market.ports import MarketQueryProvider
@@ -111,6 +117,7 @@ class TargetApplication:
     market: MarketApplication
     market_queries: MarketQueryProvider
     selection: SelectionApplication
+    research_definitions: ResearchQualificationApplication
     _pool: TargetPostgresPool
 
     def close(self) -> None:
@@ -145,6 +152,10 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
         ),
         market_queries=PostgresMarketQueryProvider(pool),
         selection=SelectionApplication(PostgresSelectionUnitOfWorkProvider(pool)),
+        research_definitions=ResearchQualificationApplication(
+            byte_store,
+            PostgresResearchUnitOfWorkProvider(pool),
+        ),
         _pool=pool,
     )
 

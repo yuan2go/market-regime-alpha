@@ -40,6 +40,15 @@ from market_regime_alpha.selection.domain import (
     MarketEvidenceStatus,
     UniverseMembershipStatus,
 )
+from market_regime_alpha.research_qualification.domain import (
+    DatasetSourceRole,
+    FeatureAvailabilityRule,
+    FeatureCellStatus,
+    FeatureIntervalUnit,
+    FeatureMissingnessPolicy,
+    FeatureSourceRequirement,
+    FeatureValueType,
+)
 from market_regime_alpha.shared.errors import MraError
 from market_regime_alpha.shared.hashing import canonical_json_sha256, sha256_bytes
 
@@ -101,10 +110,19 @@ EXPECTED_SELECTION_TABLES: Final[frozenset[str]] = frozenset(
     }
 )
 
+EXPECTED_RESEARCH_DEFINITION_TABLES: Final[frozenset[str]] = frozenset(
+    {
+        "dataset",
+        "dataset_source",
+        "feature_definition",
+    }
+)
+
 EXPECTED_TARGET_TABLES: Final[frozenset[str]] = (
     EXPECTED_FOUNDATION_TABLES
     | EXPECTED_MARKET_TABLES
     | EXPECTED_SELECTION_TABLES
+    | EXPECTED_RESEARCH_DEFINITION_TABLES
 )
 
 _LEGACY_TABLE_SIGNATURES: Final[frozenset[str]] = frozenset(
@@ -190,6 +208,19 @@ _REFERENCE_VOCABULARY: Final[dict[str, tuple[str, ...]]] = {
         item.value for item in CriterionValueKind
     ),
     "eligibility_operator": tuple(item.value for item in CriterionOperator),
+    "feature_value_type": tuple(item.value for item in FeatureValueType),
+    "feature_interval_unit": tuple(item.value for item in FeatureIntervalUnit),
+    "feature_source_requirement": tuple(
+        item.value for item in FeatureSourceRequirement
+    ),
+    "feature_availability_rule": tuple(
+        item.value for item in FeatureAvailabilityRule
+    ),
+    "feature_missingness_policy": tuple(
+        item.value for item in FeatureMissingnessPolicy
+    ),
+    "feature_cell_status": tuple(item.value for item in FeatureCellStatus),
+    "dataset_source_role": tuple(item.value for item in DatasetSourceRole),
 }
 
 
@@ -1260,6 +1291,8 @@ __all__ = [
     "DatabaseIdentity",
     "EXPECTED_FOUNDATION_TABLES",
     "EXPECTED_MARKET_TABLES",
+    "EXPECTED_RESEARCH_DEFINITION_TABLES",
+    "EXPECTED_SELECTION_TABLES",
     "EXPECTED_TARGET_TABLES",
     "LegacySchemaPresentError",
     "RecreateAuthorization",

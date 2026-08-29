@@ -5,6 +5,7 @@ import psycopg
 from market_regime_alpha.infrastructure.postgres.schema import (
     EXPECTED_FOUNDATION_TABLES,
     EXPECTED_MARKET_TABLES,
+    EXPECTED_RESEARCH_DEFINITION_TABLES,
     EXPECTED_SELECTION_TABLES,
     EXPECTED_TARGET_TABLES,
     SchemaManager,
@@ -51,6 +52,7 @@ def test_target_draft_schema_has_exact_relations_views_and_no_jsonb_or_partition
         EXPECTED_FOUNDATION_TABLES
         | EXPECTED_MARKET_TABLES
         | EXPECTED_SELECTION_TABLES
+        | EXPECTED_RESEARCH_DEFINITION_TABLES
     )
     assert views == {"artifact_integrity_status", "run_trace"}
     assert jsonb_columns == (0,)

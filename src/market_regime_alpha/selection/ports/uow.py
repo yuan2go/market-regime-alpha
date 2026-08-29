@@ -2,27 +2,14 @@
 
 from types import TracebackType
 from typing import Protocol, Self
-from uuid import UUID
 
 from market_regime_alpha.runtime.ports import (
-    AttemptClaim,
     AuditRepository,
     CommandReceiptRepository,
+    RuntimeCommandFinalization,
 )
 from market_regime_alpha.selection.ports.market import SelectionMarketQueries
 from market_regime_alpha.selection.ports.repository import SelectionRepository
-
-
-class SelectionRuntimeFinalization(Protocol):
-    def lock_live(self, claim: AttemptClaim) -> None: ...
-
-    def succeed(
-        self,
-        claim: AttemptClaim,
-        *,
-        receipt_id: UUID,
-        result_hash: str,
-    ) -> tuple[int, int]: ...
 
 
 class SelectionUnitOfWork(Protocol):
@@ -39,7 +26,7 @@ class SelectionUnitOfWork(Protocol):
     def audit(self) -> AuditRepository: ...
 
     @property
-    def runtime_finalization(self) -> SelectionRuntimeFinalization: ...
+    def runtime_finalization(self) -> RuntimeCommandFinalization: ...
 
     def __enter__(self) -> Self: ...
 
@@ -58,7 +45,6 @@ class SelectionUnitOfWorkProvider(Protocol):
 
 
 __all__ = [
-    "SelectionRuntimeFinalization",
     "SelectionUnitOfWork",
     "SelectionUnitOfWorkProvider",
 ]

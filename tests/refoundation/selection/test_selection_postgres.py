@@ -17,6 +17,9 @@ from market_regime_alpha.infrastructure.postgres.market_uow import (
     PostgresMarketUnitOfWorkProvider,
 )
 from market_regime_alpha.infrastructure.postgres.pool import TargetPostgresPool
+from market_regime_alpha.infrastructure.postgres.repositories import (
+    PostgresAuditRepository,
+)
 from market_regime_alpha.infrastructure.postgres.schema import SchemaManager
 from market_regime_alpha.infrastructure.postgres.selection_uow import (
     PostgresSelectionUnitOfWorkProvider,
@@ -447,7 +450,7 @@ def selection_stack(target_database_url: str, tmp_path) -> _SelectionStack:
                     turnover=turnover,
                 )
                 for instrument_id, turnover in ((first, "3000"), (second, "1000"))
-                for session in history
+                for session in (*history, current)
             ),
         )
 
@@ -604,6 +607,75 @@ def _policy(product_id: UUID) -> EligibilityPolicy:
         version=1,
         rules=rules,
     )
+
+
+def _claim_selection_runtime_step(
+    stack: _SelectionStack,
+    scope: UniverseScopeSpecification,
+) -> tuple[RuntimeApplication, AttemptClaim]:
+    runtime = RuntimeApplication(PostgresUnitOfWorkProvider(stack.pool))
+    schedule = ScheduleSpec(
+        schedule_id=uuid4(),
+        schedule_code="selection-failure-contract",
+        revision=1,
+        runtime_mode=RuntimeMode.OPERATIONAL,
+        schedule_expression=None,
+        timezone_name="Asia/Shanghai",
+        step_catalog_hash="d" * 64,
+        enabled=True,
+    )
+    runtime.create_schedule(
+        schedule,
+        _context("failure-schedule", "CREATE_RUNTIME_SCHEDULE"),
+    )
+    step = StepSpec(
+        step_key="assess-eligibility",
+        step_kind="ASSESS_ELIGIBILITY",
+        implementation="selection.failure-contract",
+        implementation_version="1",
+        ordinal=1,
+        required=True,
+        request_hash="e" * 64,
+        input_evidence_hash=None,
+        retry_policy=RetryPolicy(
+            max_attempts=1,
+            backoff=(),
+            retryable_codes=frozenset(),
+        ),
+        external_effect_class=ExternalEffectClass.PURE_READ,
+    )
+    run_id = uuid4()
+    runtime.schedule_run(
+        RunSpec(
+            run_id=run_id,
+            schedule_id=schedule.schedule_id,
+            fire_key="selection-failure-contract-run",
+            runtime_mode=RuntimeMode.OPERATIONAL,
+            requested_at=datetime.now(UTC),
+            decision_time=None,
+            code_sha="2" * 40,
+            config_artifact_id=scope.artifact_id,
+            config_hash=str(scope.content_sha256),
+        ),
+        (step,),
+        (),
+        _context("failure-plan", "SCHEDULE_RUNTIME_RUN"),
+    )
+    runtime.start_run(
+        run_id,
+        _context("failure-run-start", "START_RUNTIME_RUN"),
+    )
+    claim = runtime.claim_next(
+        worker_id="selection-failure-worker",
+        lease_duration=timedelta(seconds=10),
+        context=_context("failure-claim", "WORKER_CLAIM"),
+    )
+    assert claim is not None
+    runtime.start_attempt(
+        claim,
+        _context("failure-attempt-start", "WORKER_START"),
+    )
+    return runtime, claim
 
 
 def test_freeze_and_assess_cover_complete_scope_all_rules_and_exact_lineage(
@@ -795,7 +867,7 @@ def test_freeze_same_idempotency_key_is_concurrency_safe(
         ).fetchone() == (1,)
 
 
-def test_decision_time_mismatch_and_stale_fence_leave_no_selection_write(
+def test_stale_fence_writes_nothing_and_decision_time_failure_is_durable(
     selection_stack: _SelectionStack,
 ) -> None:
     stack = selection_stack
@@ -856,7 +928,147 @@ def test_decision_time_mismatch_and_stale_fence_leave_no_selection_write(
                 (SELECT count(*) FROM mra.command_receipt
                  WHERE idempotency_key = 'stale-freeze'),
                 (SELECT count(*) FROM mra.command_receipt
-                 WHERE idempotency_key = 'mismatched-assess'),
+                 WHERE idempotency_key = 'mismatched-assess'
+                   AND status = 'FAILED'
+                   AND error_code = 'ASSESS_ELIGIBILITY_REJECTED'),
+                (SELECT count(*) FROM mra.audit_event AS audit
+                 JOIN mra.command_receipt AS receipt
+                   ON receipt.receipt_id = audit.command_receipt_id
+                 WHERE receipt.idempotency_key = 'mismatched-assess'
+                   AND audit.action = 'SELECTION_COMMAND_FAILED'),
+                (SELECT count(*) FROM mra.eligibility_assessment)
+            """
+        ).fetchone()
+    assert counts == (0, 1, 1, 0)
+
+
+def test_deterministic_selection_failure_atomically_terminalizes_runtime_claim(
+    selection_stack: _SelectionStack,
+) -> None:
+    stack = selection_stack
+    scope = _scope(stack)
+    universe = UniverseDefinition(
+        universe_id=uuid4(),
+        universe_code="failure-contract-scope",
+        purpose="prove deterministic failure terminalization",
+    )
+    policy = _policy(stack.product.provider_product_id)
+    stack.application.register_universe(
+        universe,
+        _context("failure-universe", "REGISTER_UNIVERSE"),
+    )
+    stack.application.register_eligibility_policy(
+        policy,
+        _context("failure-policy", "REGISTER_ELIGIBILITY_POLICY"),
+    )
+    frozen = stack.application.freeze_universe(
+        universe_id=universe.universe_id,
+        scope=scope,
+        decision_time=stack.decision_time,
+        context=_context("failure-freeze", "FREEZE_UNIVERSE"),
+    )
+    runtime, claim = _claim_selection_runtime_step(stack, scope)
+    mismatched = DecisionTime(stack.decision_time.value - timedelta(seconds=1))
+
+    with pytest.raises(
+        ValueError,
+        match="Eligibility DecisionTime must equal Universe DecisionTime",
+    ):
+        stack.application.assess_eligibility(
+            universe_revision_id=frozen.universe_revision_id,
+            eligibility_policy_id=policy.eligibility_policy_id,
+            decision_time=mismatched,
+            context=_context("failure-assess", "ASSESS_ELIGIBILITY"),
+            runtime_claim=claim,
+        )
+
+    trace = runtime.inspect_run(claim.run_id)
+    assert trace.run_state == "FAILED"
+    assert trace.steps[0].state == "FAILED"
+    assert trace.steps[0].attempt_states == ("FAILED_TERMINAL",)
+    with psycopg.connect(stack.database_url) as connection:
+        facts = connection.execute(
+            """
+            SELECT receipt.status, receipt.error_code,
+                   audit.action, audit.reason_code,
+                   attempt.state, attempt.error_class, attempt.error_code,
+                   (SELECT count(*) FROM mra.eligibility_assessment)
+            FROM mra.command_receipt AS receipt
+            JOIN mra.audit_event AS audit
+              ON audit.command_receipt_id = receipt.receipt_id
+            JOIN mra.runtime_attempt AS attempt
+              ON attempt.result_receipt_id = receipt.receipt_id
+            WHERE receipt.command_kind = 'ASSESS_ELIGIBILITY'
+              AND receipt.idempotency_key = 'failure-assess'
+            """
+        ).fetchone()
+    assert facts == (
+        "FAILED",
+        "ASSESS_ELIGIBILITY_REJECTED",
+        "SELECTION_COMMAND_FAILED",
+        "ASSESS_ELIGIBILITY_REJECTED",
+        "FAILED_TERMINAL",
+        "COMMAND",
+        "ASSESS_ELIGIBILITY_REJECTED",
+        0,
+    )
+
+
+def test_selection_failure_receipt_audit_and_attempt_roll_back_together(
+    selection_stack: _SelectionStack,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stack = selection_stack
+    scope = _scope(stack)
+    universe = UniverseDefinition(
+        universe_id=uuid4(),
+        universe_code="failure-rollback-scope",
+        purpose="prove failure recording has one atomic transaction",
+    )
+    policy = _policy(stack.product.provider_product_id)
+    stack.application.register_universe(
+        universe,
+        _context("rollback-universe", "REGISTER_UNIVERSE"),
+    )
+    stack.application.register_eligibility_policy(
+        policy,
+        _context("rollback-policy", "REGISTER_ELIGIBILITY_POLICY"),
+    )
+    frozen = stack.application.freeze_universe(
+        universe_id=universe.universe_id,
+        scope=scope,
+        decision_time=stack.decision_time,
+        context=_context("rollback-freeze", "FREEZE_UNIVERSE"),
+    )
+    runtime, claim = _claim_selection_runtime_step(stack, scope)
+
+    def fail_audit(*_args, **_kwargs) -> None:
+        raise RuntimeError("injected Selection failure-audit error")
+
+    monkeypatch.setattr(PostgresAuditRepository, "append", fail_audit)
+    with pytest.raises(RuntimeError, match="injected Selection failure-audit error"):
+        stack.application.assess_eligibility(
+            universe_revision_id=frozen.universe_revision_id,
+            eligibility_policy_id=policy.eligibility_policy_id,
+            decision_time=DecisionTime(
+                stack.decision_time.value - timedelta(seconds=1)
+            ),
+            context=_context("rollback-assess", "ASSESS_ELIGIBILITY"),
+            runtime_claim=claim,
+        )
+
+    trace = runtime.inspect_run(claim.run_id)
+    assert trace.run_state == "RUNNING"
+    assert trace.steps[0].state == "RUNNING"
+    assert trace.steps[0].attempt_states == ("RUNNING",)
+    with psycopg.connect(stack.database_url) as connection:
+        counts = connection.execute(
+            """
+            SELECT
+                (SELECT count(*) FROM mra.command_receipt
+                 WHERE idempotency_key = 'rollback-assess'),
+                (SELECT count(*) FROM mra.audit_event
+                 WHERE aggregate_id LIKE 'ASSESS_ELIGIBILITY:%'),
                 (SELECT count(*) FROM mra.eligibility_assessment)
             """
         ).fetchone()

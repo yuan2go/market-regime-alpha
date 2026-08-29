@@ -9,33 +9,12 @@ from market_regime_alpha.market.ports.repository import MarketRepository
 from market_regime_alpha.runtime.ports import (
     ArtifactRecord,
     ArtifactVerificationRecord,
-    AttemptClaim,
     AuditRepository,
     ByteVerification,
     CommandReceiptRepository,
     PublishedArtifact,
+    RuntimeCommandFinalization,
 )
-
-
-class MarketRuntimeFinalization(Protocol):
-    def lock_live(self, claim: AttemptClaim) -> None: ...
-
-    def succeed(
-        self,
-        claim: AttemptClaim,
-        *,
-        receipt_id: UUID,
-        result_hash: str,
-    ) -> tuple[int, int]: ...
-
-    def fail(
-        self,
-        claim: AttemptClaim,
-        *,
-        receipt_id: UUID,
-        error_class: str,
-        error_code: str,
-    ) -> tuple[str, int, int]: ...
 
 
 class MarketArtifactRepository(Protocol):
@@ -76,7 +55,7 @@ class MarketUnitOfWork(Protocol):
     def audit(self) -> AuditRepository: ...
 
     @property
-    def runtime_finalization(self) -> MarketRuntimeFinalization: ...
+    def runtime_finalization(self) -> RuntimeCommandFinalization: ...
 
     def __enter__(self) -> Self: ...
 

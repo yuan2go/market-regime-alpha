@@ -10,6 +10,11 @@ from market_regime_alpha.runtime.application.artifacts import (
     ArtifactApplication,
     ArtifactGcScan,
 )
+from market_regime_alpha.runtime.application.command_failure import (
+    CommandFailureDescriptor,
+    ConcurrentCommandSucceeded,
+    RuntimeCommandFailureRecorder,
+)
 from market_regime_alpha.runtime.errors import (
     ArtifactIntegrityError,
     CommandInProgressError,
@@ -25,9 +30,12 @@ __all__ = [
     "ArtifactGcScan",
     "ArtifactIntegrityError",
     "CommandContext",
+    "CommandFailureDescriptor",
     "CommandInProgressError",
     "IdempotencyKeyReusedError",
     "MutationResult",
+    "ConcurrentCommandSucceeded",
+    "RuntimeCommandFailureRecorder",
     "RuntimeApplication",
     "RuntimeNotFoundError",
     "RuntimeStateConflictError",

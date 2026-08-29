@@ -4,12 +4,13 @@
 > **Authority:** Target logical schema, PIT, evidence, artifact, and cutover specification
 > **Owner:** Market Regime Alpha maintainers
 > **Last Updated:** 2026-08-29
-> **Implementation State:** `FOUNDATION_AND_MARKET_IMPLEMENTED_DRAFT / REMAINDER_DESIGN_ONLY / NOT_CUT_OVER`
-> **Code Evidence:** target `src/market_regime_alpha/infrastructure/postgres`, `src/market_regime_alpha/shared`, `src/market_regime_alpha/runtime`, `src/market_regime_alpha/market`, `tests/refoundation`; legacy `src/market_regime_alpha/persistence/postgres` remains current business implementation
+> **Implementation State:** `FOUNDATION_MARKET_SELECTION_RESEARCH_DEFINITION_IMPLEMENTED_DRAFT / NOT_CUT_OVER`
+> **Code Evidence:** target `src/market_regime_alpha/infrastructure/postgres`, `src/market_regime_alpha/shared`, `src/market_regime_alpha/runtime`, `src/market_regime_alpha/market`, `src/market_regime_alpha/selection`, `src/market_regime_alpha/research_qualification`, `tests/refoundation`; legacy `src/market_regime_alpha/persistence/postgres` remains current business implementation
 
-The current canonical business baseline contains 283 tables. The implemented
-mutable target draft contains the 13 Foundation plus 12 Market/PIT relations in
-schema `mra`; its physical DDL is
+The current canonical business baseline contains 283 tables. At implementation
+checkpoint `22a5ec692fcc261182197c2953a0a860d7cd6f94`, the mutable target draft
+contains 13 Foundation, 12 Market/PIT, seven Selection Core, and three Research
+Definition relations (35 tables total) in schema `mra`; its physical DDL is
 `src/market_regime_alpha/infrastructure/postgres/migrations/001_baseline.sql`.
 The complete target logical catalog is still estimated at **91 tables**. That
 estimate follows required semantics and is neither a quota nor a cutover claim.
@@ -102,21 +103,44 @@ exists with real relational Authority and an acyclic dependency graph.
 | `candidate` | admitted eligible instrument/rank/score | unique set/instrument and set/rank; eligibility FK must match instrument |
 | `candidate_score_component` | typed factor contribution and missingness | unique candidate/component; typed numeric value/status and exact available lineage |
 
-### Research and Qualification — 20 tables
+### Research Definition Core — 3 implemented draft tables
+
+This checkpoint creates the permanent
+`market_regime_alpha.research_qualification` owner and implements only the
+definitions that Candidate V1 demonstrably needs. It creates no Model,
+Evaluation, Evidence, Assessment, Qualification, Target, Candidate, or future
+placeholder relation.
 
 | Table | Purpose | Lifecycle and key constraints |
 |---|---|---|
-| `dataset` | immutable dataset identity/manifest | unique content hash/semantic version; artifact and PIT scope |
-| `dataset_source` | exact source fact/artifact dependencies | unique dataset/source/role; evidence-time constraint |
-| `feature_definition` | immutable feature/factor semantics | unique code/version/hash; units/window/missing policy typed |
+| `dataset` | immutable Decision-input Dataset identity and manifest binding | unique code/version and content hash; exact DecisionTime, Universe revision, Eligibility policy, manifest/code/config Artifact triples, complete population/cell counts; fixed Decision-input kind |
+| `dataset_source` | exact relational lineage for one Dataset | closed role vocabulary; every role has concrete existing FK columns and a role-specific shape CHECK; included-member/eligible-assessment matching, Feature identity, and Market/PIT revision/session/gap/capture sources only; no polymorphic string ID or business JSON |
+| `feature_definition` | immutable Feature calculation semantics | unique code/version/hash; typed value/unit, frequency/window/lookback, source requirements, availability/missingness, deterministic algorithm and exact code/config Artifact identity; no Alpha/maturity/evaluation/qualification state and no premature Feature dependency abstraction |
+
+The Dataset Artifact is parsed through a closed Domain schema before the SQL
+transaction. Its rows must exactly equal the same-DecisionTime intersection of
+`UniverseMember = INCLUDED` and `EligibilityAssessment = ELIGIBLE`; every row
+contains every bound Feature with an explicit status. Extra or missing rows,
+silent Feature-driven row deletion, and fields for Target, Outcome, return,
+MFE/MAE, barrier, future observation, realized label, or other posterior values
+are rejected. Artifact and `dataset_source` lineage are validated bidirectionally
+and cannot disagree.
+
+### Remaining Research and Qualification — 17 deferred tables
+
+These relations remain logical target design only. None is a prerequisite for
+Candidate Set existence unless a later concrete policy proves otherwise.
+
+| Table | Purpose | Lifecycle and key constraints |
+|---|---|---|
 | `target_definition` | immutable Decision reference/horizon/metric protocol | unique code/version/hash; price basis and calendar policy typed |
 | `target_checkpoint` | ordered target path/checkpoint grid | unique target/ordinal and target/session-offset/local-time |
 | `research_partition` | frozen Discovery/OOS/Prospective membership/time slice | unique identity/hash; non-overlap/purge/embargo constraints |
 | `experiment` | predeclared hypothesis and primary change | unique protocol hash; dataset/target/code/config |
 | `experiment_partition` | purpose-specific partition binding | unique experiment/purpose; partition frozen before outcome access |
 | `experiment_run` | one execution of frozen Experiment | unique experiment/run key; status and artifact/result hash |
-| `model` | stable model family identity | unique code |
-| `model_version` | immutable fitted/model artifact lineage | unique model/version/hash; dataset/feature/partition FKs |
+| `model` | stable model family identity | deferred; unique code when a real fitted-model consumer exists |
+| `model_version` | immutable fitted/model artifact lineage | deferred; unique model/version/hash and real dataset/feature/partition FKs when required |
 | `evaluation_run` | predeclared evaluation execution | experiment/model/partition/protocol and status |
 | `evaluation_metric` | typed metric value/estimability | unique run/metric/slice; status independent of value |
 | `evidence_item` | immutable typed evidence or counter-evidence | class/origin/scope/time/hash; artifact optional with consistency check |
@@ -535,6 +559,12 @@ and object-store ETag are not identity.
 A database row cannot reference bytes that were not verified before commit.
 Database failure after publish leaves harmless content-addressed orphan bytes;
 it never leaves a canonical row pointing at a known-missing object.
+
+When deterministic validation fails, the business transaction is fully rolled
+back. A new short owner UoW then locks the live Runtime claim before atomically
+writing the failed receipt, failure audit, and Attempt/Step failure. Stale fences
+produce no failure receipt or audit. This transaction contains no Artifact byte
+I/O and no business write from the rolled-back attempt.
 
 ### Read verification
 

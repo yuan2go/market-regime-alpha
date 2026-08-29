@@ -13,7 +13,12 @@ from market_regime_alpha.market.ports import (
     MarketUnitOfWork,
     MarketUnitOfWorkProvider,
 )
-from market_regime_alpha.runtime.application import CommandContext
+from market_regime_alpha.runtime.application import (
+    CommandContext,
+    CommandFailureDescriptor,
+    ConcurrentCommandSucceeded,
+    RuntimeCommandFailureRecorder,
+)
 from market_regime_alpha.runtime.errors import (
     ArtifactByteStoreError,
     ArtifactIntegrityError,
@@ -28,7 +33,6 @@ from market_regime_alpha.runtime.ports import (
     AttemptClaim,
     ReceiptRecord,
 )
-from market_regime_alpha.shared.hashing import canonical_json_sha256
 from market_regime_alpha.shared.time import DecisionTime
 
 from market_regime_alpha.market.application.results import MarketMutationResult
@@ -41,12 +45,7 @@ class _SourceArtifactVerificationFailure(ArtifactIntegrityError):
     """The verification observation and original command failure are durable."""
 
 
-class _ConcurrentCommandSucceeded(RuntimeError):
-    """A concurrent exact command committed while this worker was outside SQL."""
-
-    def __init__(self, *, runtime_finalized: bool = False) -> None:
-        super().__init__("concurrent exact command already succeeded")
-        self.runtime_finalized = runtime_finalized
+_ConcurrentCommandSucceeded = ConcurrentCommandSucceeded
 
 
 def _replay_concurrent_success(command: Callable[_P, _R]) -> Callable[_P, _R]:
@@ -79,6 +78,10 @@ class _MarketCommandSupport:
         self._uow_provider = uow_provider
         self._database_clock = database_clock
         self._id_factory = id_factory
+        self._failure_recorder = RuntimeCommandFailureRecorder(
+            uow_provider,
+            id_factory=id_factory,
+        )
 
     @contextmanager
     def _terminal_failure_boundary(
@@ -98,10 +101,14 @@ class _MarketCommandSupport:
         except StaleFenceError:
             raise
         except (CommandInProgressError, IdempotencyKeyReusedError) as exc:
-            self._record_idempotency_rejection(
-                operation=operation,
-                scope_id=scope_id,
-                rejected_request_hash=request_hash,
+            self._failure_recorder.record_idempotency_rejection(
+                self._failure_descriptor(
+                    operation=operation,
+                    scope_id=scope_id,
+                    request_hash=request_hash,
+                    error_class=error_class,
+                    error_code=error_code,
+                ),
                 rejection_code=exc.code,
                 context=context,
                 runtime_claim=runtime_claim,
@@ -115,16 +122,40 @@ class _MarketCommandSupport:
             RuntimeStateConflictError,
             ValueError,
         ):
-            self._record_command_failure(
-                operation=operation,
-                scope_id=scope_id,
-                request_hash=request_hash,
-                error_class=error_class,
-                error_code=error_code,
+            self._failure_recorder.record(
+                self._failure_descriptor(
+                    operation=operation,
+                    scope_id=scope_id,
+                    request_hash=request_hash,
+                    error_class=error_class,
+                    error_code=error_code,
+                ),
                 context=context,
                 runtime_claim=runtime_claim,
             )
             raise
+
+    @staticmethod
+    def _failure_descriptor(
+        *,
+        operation: str,
+        scope_id: str,
+        request_hash: str,
+        error_class: str,
+        error_code: str,
+    ) -> CommandFailureDescriptor:
+        return CommandFailureDescriptor(
+            command_kind=operation,
+            scope_id=scope_id,
+            request_hash=request_hash,
+            error_class=error_class,
+            error_code=error_code,
+            aggregate_kind="MARKET_COMMAND",
+            failure_action="MARKET_COMMAND_FAILED",
+            rejection_command_kind="MARKET_COMMAND_REJECTION",
+            rejection_action="MARKET_COMMAND_REJECTED",
+            rejection_key_prefix="market-command-rejection",
+        )
 
     def _record_command_failure(
         self,
@@ -137,79 +168,17 @@ class _MarketCommandSupport:
         context: CommandContext,
         runtime_claim: AttemptClaim | None,
     ) -> None:
-        """Commit the original command's FAILED receipt after business rollback."""
-        try:
-            with self._uow_provider() as uow:
-                if runtime_claim is not None:
-                    uow.runtime_finalization.lock_live(runtime_claim)
-                receipt = uow.receipts.start(
-                    receipt_id=self._id_factory(),
-                    command_kind=operation,
-                    scope_id=scope_id,
-                    idempotency_key=context.idempotency_key,
-                    request_hash=request_hash,
-                )
-                if receipt.is_new:
-                    uow.receipts.fail(receipt_id=receipt.receipt_id, error_code=error_code, runtime_claim=runtime_claim)
-                    uow.audit.append(
-                        audit_event_id=self._id_factory(),
-                        receipt_id=receipt.receipt_id,
-                        actor_type=context.actor_type.value,
-                        actor_id=context.actor_id,
-                        aggregate_kind="MARKET_COMMAND",
-                        aggregate_id=f"{operation}:{scope_id}",
-                        action="MARKET_COMMAND_FAILED",
-                        reason_code=error_code,
-                        before_version=None,
-                        after_version=None,
-                        runtime_claim=runtime_claim,
-                    )
-                elif receipt.status == "SUCCEEDED":
-                    raise _ConcurrentCommandSucceeded()
-                elif receipt.status != "FAILED":
-                    raise RuntimeStateConflictError("cannot replace a non-failed terminal command receipt")
-                if runtime_claim is not None:
-                    terminal_error_code = error_code if receipt.is_new else receipt.error_code or error_code
-                    uow.runtime_finalization.fail(
-                        runtime_claim, receipt_id=receipt.receipt_id, error_class=error_class, error_code=terminal_error_code
-                    )
-                uow.commit()
-        except (CommandInProgressError, IdempotencyKeyReusedError) as exc:
-            self._record_idempotency_rejection(
+        self._failure_recorder.record(
+            self._failure_descriptor(
                 operation=operation,
                 scope_id=scope_id,
-                rejected_request_hash=request_hash,
-                rejection_code=exc.code,
-                context=context,
-                runtime_claim=runtime_claim,
-            )
-            raise
-
-    def _record_idempotency_rejection(
-        self,
-        *,
-        operation: str,
-        scope_id: str,
-        rejected_request_hash: str,
-        rejection_code: str,
-        context: CommandContext,
-        runtime_claim: AttemptClaim | None,
-    ) -> None:
-        """Terminalize a fenced Attempt without taking over another command key."""
-        if runtime_claim is None:
-            return
-        with self._uow_provider() as uow:
-            uow.runtime_finalization.lock_live(runtime_claim)
-            self._append_idempotency_rejection(
-                uow,
-                operation=operation,
-                scope_id=scope_id,
-                rejected_request_hash=rejected_request_hash,
-                rejection_code=rejection_code,
-                context=context,
-                runtime_claim=runtime_claim,
-            )
-            uow.commit()
+                request_hash=request_hash,
+                error_class=error_class,
+                error_code=error_code,
+            ),
+            context=context,
+            runtime_claim=runtime_claim,
+        )
 
     def _append_idempotency_rejection(
         self,
@@ -222,45 +191,19 @@ class _MarketCommandSupport:
         context: CommandContext,
         runtime_claim: AttemptClaim,
     ) -> None:
-        """Append a rejection after the caller has locked the live Runtime claim."""
-        rejection_scope = str(runtime_claim.attempt_id)
-        rejection_key = f"market-command-rejection:{runtime_claim.attempt_id}"
-        rejection_hash = canonical_json_sha256(
-            {
-                "operation": operation,
-                "scope_id": scope_id,
-                "idempotency_key": context.idempotency_key,
-                "rejected_request_hash": rejected_request_hash,
-                "rejection_code": rejection_code,
-                "attempt_id": runtime_claim.attempt_id,
-                "fence_token": runtime_claim.fence_token,
-            }
+        self._failure_recorder.append_idempotency_rejection(
+            uow,
+            descriptor=self._failure_descriptor(
+                operation=operation,
+                scope_id=scope_id,
+                request_hash=rejected_request_hash,
+                error_class="COMMAND",
+                error_code=rejection_code,
+            ),
+            rejection_code=rejection_code,
+            context=context,
+            runtime_claim=runtime_claim,
         )
-        receipt = uow.receipts.start(
-            receipt_id=self._id_factory(),
-            command_kind="MARKET_COMMAND_REJECTION",
-            scope_id=rejection_scope,
-            idempotency_key=rejection_key,
-            request_hash=rejection_hash,
-        )
-        if receipt.is_new:
-            uow.receipts.fail(receipt_id=receipt.receipt_id, error_code=rejection_code, runtime_claim=runtime_claim)
-            uow.audit.append(
-                audit_event_id=self._id_factory(),
-                receipt_id=receipt.receipt_id,
-                actor_type=context.actor_type.value,
-                actor_id=context.actor_id,
-                aggregate_kind="MARKET_COMMAND",
-                aggregate_id=f"{operation}:{scope_id}",
-                action="MARKET_COMMAND_REJECTED",
-                reason_code=rejection_code,
-                before_version=None,
-                after_version=None,
-                runtime_claim=runtime_claim,
-            )
-        elif receipt.status != "FAILED":
-            raise RuntimeStateConflictError("idempotency rejection incident is not terminal FAILED")
-        uow.runtime_finalization.fail(runtime_claim, receipt_id=receipt.receipt_id, error_class="COMMAND", error_code=rejection_code)
 
     def _finish_mutation(
         self,

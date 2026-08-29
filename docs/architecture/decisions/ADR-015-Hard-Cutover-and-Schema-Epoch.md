@@ -1,12 +1,12 @@
 # ADR-015: Hard Cutover and Schema Epoch
 
 > **Status:** CANONICAL_TARGET_ARCHITECTURE
-> **Implementation State:** `FOUNDATION_AND_MARKET_IMPLEMENTED_DRAFT / NOT_CUT_OVER`
+> **Implementation State:** `FOUNDATION_MARKET_SELECTION_RESEARCH_DEFINITION_IMPLEMENTED_DRAFT / NOT_CUT_OVER`
 > **Authority:** Approved-principle target decision for WP-ARCHITECTURE-REFOUNDATION-01
 > **Owner:** Market Regime Alpha maintainers
 > **Decision Date:** 2026-08-27
 > **Starting Main:** `0382dad416d6d50d1eea0bda1603d7c359d65274`
-> **Code Evidence:** target `src/market_regime_alpha/infrastructure/postgres`, `tests/refoundation`; legacy `persistence/postgres` remains the current business schema
+> **Code Evidence:** target `src/market_regime_alpha/runtime`, `src/market_regime_alpha/market`, `src/market_regime_alpha/selection`, `src/market_regime_alpha/research_qualification`, `src/market_regime_alpha/infrastructure`, `tests/refoundation`; legacy `src/market_regime_alpha/persistence/postgres` remains the current business schema
 
 ## Context
 
@@ -33,11 +33,12 @@ legacy data  = not migrated
 compatibility writers/readers = none after cutover
 ```
 
-The target baseline is created from the frozen logical catalog in
+The target baseline is created incrementally from the frozen logical catalog in
 [PostgreSQL, Temporal and Evidence Architecture](../Data-and-Evidence-Architecture.md).
-The approximate 41-table estimate is not a constraint; the design checkpoint
-retains 91 tables because each protects a declared semantic/transactional
-boundary.
+The approximate 41-table estimate is not a constraint. The current unreleased
+draft implements 35 tables through Research Definition Core; the larger
+91-table destination remains a design catalog whose later owners are not yet
+implemented.
 
 ## Ordinary startup and bootstrap
 
@@ -151,6 +152,6 @@ Costs:
 
 ## Review status
 
-The Hard Cutover principle is approved. This ADR and its exact 91-table target
-remain a design checkpoint for the next review. No schema or business code is
-changed by this commit.
+The Hard Cutover principle is approved. The current 35-table draft remains
+unreleased and not cut over; the remaining 91-table target catalog is design
+only until each bounded owner passes its own implementation exit gate.

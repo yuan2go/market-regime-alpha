@@ -4,12 +4,13 @@
 > **Authority:** Target Application, Runtime, concurrency, recovery, and interface specification
 > **Owner:** Market Regime Alpha maintainers
 > **Last Updated:** 2026-08-29
-> **Implementation State:** `FOUNDATION_AND_MARKET_IMPLEMENTED_DRAFT / REMAINDER_DESIGN_ONLY / NOT_CUT_OVER`
-> **Code Evidence:** target `src/market_regime_alpha/runtime`, `src/market_regime_alpha/market`, `src/market_regime_alpha/infrastructure`, `src/market_regime_alpha/interfaces`, `tests/refoundation`; legacy Runtime remains current business implementation
+> **Implementation State:** `FOUNDATION_MARKET_SELECTION_RESEARCH_DEFINITION_IMPLEMENTED_DRAFT / NOT_CUT_OVER`
+> **Code Evidence:** target `src/market_regime_alpha/runtime`, `src/market_regime_alpha/market`, `src/market_regime_alpha/selection`, `src/market_regime_alpha/research_qualification`, `src/market_regime_alpha/infrastructure`, `src/market_regime_alpha/interfaces`, `tests/refoundation`; legacy Runtime remains current business implementation
 
 This is the target specification. Its Foundation Runtime and test-only
-Market/PIT vertical slice are implemented in the mutable target draft, but have
-not cut over the current business entry points. The current nested
+Market/PIT, Selection Core, and Research Definition Core are implemented in the
+mutable target draft, but have not cut over the current business entry points.
+The current nested
 Continuous/Controlled/Lifecycle/State/Historical journals are still to be
 replaced by one Runtime journal. Business owners remain in their bounded
 contexts.
@@ -178,6 +179,14 @@ invent a new retry class at runtime.
 Retry never edits or reopens an old Attempt. Backoff is scheduling metadata; no
 database transaction sleeps.
 
+For deterministic business-command failure, the failed business transaction
+rolls back completely. The owning Application then opens a new short instance
+of its own UoW and atomically performs live-fence validation, failed receipt,
+failure audit, Attempt/Step failure, and commit. Stale fence rejection precedes
+all failure writes. This shared cross-cutting contract contains no command
+dispatch, Domain exception classification, handler registry, or workflow
+semantics; each bounded context chooses which errors are deterministic.
+
 ## 6. Idempotency
 
 Every mutating Application command has:
@@ -212,6 +221,12 @@ import the Runtime UoW, Market UoW, a Market PostgreSQL repository, Legacy
 Universe, State System, Candidate, or compatibility persistence. When Runtime
 participates, live-fence validation, Selection writes, receipt, audit, and Step
 finalization share that one short Selection transaction.
+
+Research & Qualification follows the same shape with its own UoW: Research
+definitions and exact source bindings plus the minimal Artifact,
+receipt/audit/fence/finalization ports. Artifact byte verification and Dataset
+manifest parsing occur before the relational transaction. Neither the Runtime,
+Market, nor Selection UoW gains Research repositories.
 
 ## 7. Transaction and lock invariants
 
@@ -306,7 +321,8 @@ admission.
 Representative commands:
 
 - `CaptureMarketData`, `NormalizeMarketFacts`, `FreezeUniverse`,
-  `AssessEligibility`; later, after Research definitions, `BuildCandidateSet`;
+  `AssessEligibility`, `RegisterDataset`, `RegisterFeatureDefinition`; later,
+  after Research definitions, `BuildCandidateSet`;
 - `AssessContext`, `ProduceSignal`, `ProduceForecast`,
   `CreateOpportunity`, `ProposePortfolio`, `AssessRisk`;
 - `ApproveExecutionIntent`, `RecordObservedFill`, `CorrectFill`,

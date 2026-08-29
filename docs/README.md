@@ -18,12 +18,12 @@ qualification, account state, or trading authority.
 
 The approved Target is normative for new implementation. Foundation is merged
 to `main`. The current implementation line extends its mutable
-`MRA_REFOUNDATION_1` draft from 13 Foundation tables to 32 tables by adding the
-isolated Market/PIT and Selection Core owners. The target Runtime exercises only
-a test-scoped `CAPTURE -> NORMALIZE_PIT -> FREEZE_UNIVERSE ->
-ASSESS_ELIGIBILITY` slice. Until Runtime/CLI Cutover, the existing 283-table
-system remains the only canonical business implementation; there is no dual
-write or target fallback.
+`MRA_REFOUNDATION_1` draft from 13 Foundation tables to 35 tables by adding the
+isolated Market/PIT, Selection Core, and Research Definition Core owners. The
+target Runtime remains test-scoped; no target business CLI or canonical write
+cutover exists. Until Runtime/CLI Cutover, the existing 283-table system remains
+the only canonical business implementation; there is no dual write or target
+fallback.
 
 ## Normative authority order
 
@@ -82,6 +82,10 @@ not current completion.
 - [WP-05 Selection Core Verification](references/WP-ARCHITECTURE-REFOUNDATION-05-Selection-Core-Verification.md)
   — exact-SHA engineering proof for the test-only Universe/Eligibility draft
   slice; Candidate remains deferred.
+- [WP-06 Research Definition Core Verification](references/WP-ARCHITECTURE-REFOUNDATION-06-Research-Definition-Core-Verification.md)
+  — exact-SHA engineering proof for strict Decision-input Dataset,
+  DatasetSource, FeatureDefinition, and shared deterministic command-failure
+  semantics; Candidate code remains absent.
 - [Runtime Runbook](operations/Runtime-Runbook.md) — current 001–106 operator
   procedures only; it will be rewritten at Runtime/CLI Cutover.
 

@@ -13,7 +13,6 @@ from market_regime_alpha.runtime.errors import (
     ArtifactIntegrityError,
     CommandInProgressError,
     IdempotencyKeyReusedError,
-    RuntimeStateConflictError,
 )
 from market_regime_alpha.runtime.ports import (
     ArtifactRecord,
@@ -263,13 +262,19 @@ class _NormalizationCommands(_MarketCommandSupport):
                 runtime_claim=runtime_claim,
             )
             if failure_code is not None:
+                failure = self._failure_descriptor(
+                    operation="NORMALIZE_MARKET_PIT",
+                    scope_id=command_scope_id,
+                    request_hash=command_request_hash,
+                    error_class="DATA_INTEGRITY",
+                    error_code=failure_code,
+                )
                 try:
-                    command_receipt = uow.receipts.start(
-                        receipt_id=self._id_factory(),
-                        command_kind="NORMALIZE_MARKET_PIT",
-                        scope_id=command_scope_id,
-                        idempotency_key=context.idempotency_key,
-                        request_hash=command_request_hash,
+                    command_receipt = self._failure_recorder.append_failure(
+                        uow,
+                        descriptor=failure,
+                        context=context,
+                        runtime_claim=runtime_claim,
                     )
                 except (CommandInProgressError, IdempotencyKeyReusedError) as exc:
                     if runtime_claim is not None:
@@ -284,32 +289,11 @@ class _NormalizationCommands(_MarketCommandSupport):
                         )
                     idempotency_collision = exc
                 else:
-                    if command_receipt.is_new:
-                        uow.receipts.fail(receipt_id=command_receipt.receipt_id, error_code=failure_code, runtime_claim=runtime_claim)
-                        uow.audit.append(
-                            audit_event_id=self._id_factory(),
-                            receipt_id=command_receipt.receipt_id,
-                            actor_type=context.actor_type.value,
-                            actor_id=context.actor_id,
-                            aggregate_kind="MARKET_COMMAND",
-                            aggregate_id=f"NORMALIZE_MARKET_PIT:{command_scope_id}",
-                            action="MARKET_COMMAND_FAILED",
-                            reason_code=failure_code,
-                            before_version=None,
-                            after_version=None,
-                            runtime_claim=runtime_claim,
-                        )
-                    elif command_receipt.status == "SUCCEEDED":
+                    if command_receipt.status == "SUCCEEDED":
                         result_hash = _required_result_hash(command_receipt.result_hash)
                         if runtime_claim is not None:
                             uow.runtime_finalization.succeed(runtime_claim, receipt_id=command_receipt.receipt_id, result_hash=result_hash)
                         concurrent_success = True
-                    elif command_receipt.status != "FAILED":
-                        raise RuntimeStateConflictError("cannot record Artifact failure over a non-failed command")
-                    if runtime_claim is not None and (not concurrent_success):
-                        uow.runtime_finalization.fail(
-                            runtime_claim, receipt_id=command_receipt.receipt_id, error_class="DATA_INTEGRITY", error_code=failure_code
-                        )
             uow.commit()
         if idempotency_collision is not None:
             raise idempotency_collision
