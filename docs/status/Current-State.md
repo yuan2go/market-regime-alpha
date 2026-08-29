@@ -166,6 +166,45 @@ Remote CI is therefore `BLOCKED_BY_REPOSITORY_CONFIGURATION / NOT_RUN`, not
 PASS. Local engineering proof does not establish Provider qualification,
 Formal PIT, Alpha/OOS, broker, trading, Production, or Runtime/CLI Cutover.
 
+The earlier governance checkpoints separately established that:
+
+- the complete repository gate catalogs in `AGENTS.md` and `README.md` execute
+  every Python command through `uv run`;
+- `CLAUDE.md` delegates to that authoritative gate without copying the command
+  list, states the non-activation boundary, and joins both catalogs in the
+  regression test that rejects bare `python` across all three entry points;
+- the clean, non-activated shell resolves bare `python` to pyenv 3.12.13 while
+  `uv run python` resolves to the worktree `.venv` on Python 3.12.2 with the
+  frozen lock's Ruff 0.16.1, mypy 2.3.0, and pytest 9.1.1;
+- the fresh-PostgreSQL full regression passes with 3,101 tests collected on
+  PostgreSQL 16.14 in a disposable loopback-only cluster and new database OID
+  `515555`;
+- all 61 target Foundation tests, documentation checks, 33 platform tests,
+  focused legacy replay/recovery/concurrency tests, Ruff, mypy over 451 source
+  files, build, and diff checks pass;
+- the legacy 001→106 bootstrap/schema checks still pass without modification;
+- a clean database proves missing-schema fail-closed, explicit bootstrap,
+  idempotent retry, exact checksum/catalog verification, and guarded recreate.
+
+One non-final host-database run was stopped at 58% after catalog autovacuum and
+schema teardown exhausted the host lock table while only 637 MiB of disk
+remained. Its exact disposable database was removed. The unchanged command then
+passed at 100% in the isolated cluster with `max_locks_per_transaction=256`, one
+autovacuum worker, and a 4 GiB RAM volume; no assertion, skip, migration, source,
+or test order was changed. GitHub Actions remain disabled, so remote CI is
+`BLOCKED_BY_REPOSITORY_CONFIGURATION / NOT_RUN`, not PASS.
+
+At governance follow-up `db20693`, the documentation inventory/link checker,
+seven link-checker tests, three reproducible-environment tests, focused Ruff,
+and diff check pass. The full 3,175-test engineering suite, PostgreSQL tests,
+mypy, build, and every Market/research backtest are `NOT_RUN` at this follow-up.
+
+The current follow-up leaves the WP-04 source, legacy-migration, and target-
+baseline tree IDs unchanged. Foundation and Market/PIT therefore retain their
+recorded exit states without rollback or capability promotion. This follow-up
+does not prove Provider, Alpha/OOS, broker, trading, Prospective, Production, or
+Runtime/CLI Cutover evidence, and none of those evidence classes were rerun.
+
 ## Research and production ceiling
 
 ```text

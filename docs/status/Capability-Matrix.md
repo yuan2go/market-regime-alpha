@@ -27,6 +27,13 @@ advances only the test-only Universe and Eligibility convergence rows. It
 supplies no Candidate, Research, Provider qualification, Formal PIT, Alpha,
 broker, Production, or trading evidence.
 
+The earlier governance follow-up adds `CLAUDE.md` to the protected entry points
+without duplicating the authoritative command catalog. Its focused
+documentation, regression, Ruff, and diff checks pass, while its full
+engineering suite, PostgreSQL tests, mypy, build, Market/research backtests, and
+all stronger evidence classes are `NOT_RUN`. That follow-up changes no
+capability row and does not roll back the later Selection checkpoint.
+
 | Capability | Current implementation truth | Approved target owner | Target convergence |
 |---|---|---|---|
 | Market | legacy owners remain canonical; isolated target capture/revision/gap/as-of owner is implemented test-only | Market & PIT | `IMPLEMENTED_DRAFT / EXIT_GATE_PASS / NOT_CUT_OVER` |
