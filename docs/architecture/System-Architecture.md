@@ -3,8 +3,8 @@
 > **Status:** CANONICAL_TARGET_ARCHITECTURE
 > **Authority:** Target Application, Runtime, concurrency, recovery, and interface specification
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-29
-> **Implementation State:** `FOUNDATION_MARKET_SELECTION_RESEARCH_DEFINITION_IMPLEMENTED_DRAFT / NOT_CUT_OVER`
+> **Last Updated:** 2026-08-30
+> **Implementation State:** `FOUNDATION_MARKET_SELECTION_RESEARCH_DEFINITION_IMPLEMENTED_DRAFT / CANDIDATE_APPROVED_DESIGN_NOT_IMPLEMENTED / NOT_CUT_OVER`
 > **Code Evidence:** target `src/market_regime_alpha/runtime`, `src/market_regime_alpha/market`, `src/market_regime_alpha/selection`, `src/market_regime_alpha/research_qualification`, `src/market_regime_alpha/infrastructure`, `src/market_regime_alpha/interfaces`, `tests/refoundation`; legacy Runtime remains current business implementation
 
 This is the target specification. Its Foundation Runtime and test-only
@@ -214,19 +214,42 @@ event, and Runtime Step finalization commit in one transaction whenever the
 business effect is relational. There is no “write fact then best-effort mark
 done” path.
 
-Each business context owns a narrow unit of work. Selection receives only its
-aggregate repository, a read-only Market/PIT query port, and the minimal
-cross-cutting fence/receipt/audit/finalization ports. It does not extend or
-import the Runtime UoW, Market UoW, a Market PostgreSQL repository, Legacy
-Universe, State System, Candidate, or compatibility persistence. When Runtime
-participates, live-fence validation, Selection writes, receipt, audit, and Step
-finalization share that one short Selection transaction.
+Each business context owns narrow, use-case-specific units of work. The
+implemented Selection Core UoW receives only its Universe/Eligibility aggregate
+repository, a read-only Market/PIT query port, and the minimal cross-cutting
+fence/receipt/audit/finalization ports. Candidate closure adds a separate
+Selection-owned `CandidateApplication` and `CandidateUoW`; it does not grow the
+Selection Core, Research, or Runtime UoW into a mega-UoW. Neither Selection UoW
+extends or imports the Runtime UoW, Market UoW, Research UoW, a cross-context
+PostgreSQL repository, Legacy Universe/State/Candidate, or compatibility
+persistence.
 
 Research & Qualification follows the same shape with its own UoW: Research
 definitions and exact source bindings plus the minimal Artifact,
 receipt/audit/fence/finalization ports. Artifact byte verification and Dataset
 manifest parsing occur before the relational transaction. Neither the Runtime,
 Market, nor Selection UoW gains Research repositories.
+
+Selection declares the narrow immutable Research-input DTO/port required by
+Candidate. Only an Infrastructure adapter imports both that port and Research
+Definition parser/types. Candidate Artifact verification/read/parse and all
+ranking computation occur outside a PostgreSQL write transaction. The final
+fresh Candidate transaction is ordered:
+
+```text
+live fence
+→ exact Policy/Dataset/Feature/Artifact/DatasetSource dependency revalidation
+→ five-table Candidate writes
+→ exact funnel/component/boundary reconciliation
+→ terminal receipt and Artifact verification binding
+→ audit
+→ Attempt/Step finalization
+→ commit
+```
+
+It never re-executes Universe, Eligibility, or a Market hard gate. A
+deterministic business failure first rolls back and then uses the shared narrow
+failure recorder in a fresh Candidate UoW; a stale fence writes nothing.
 
 ## 7. Transaction and lock invariants
 
@@ -321,8 +344,8 @@ admission.
 Representative commands:
 
 - `CaptureMarketData`, `NormalizeMarketFacts`, `FreezeUniverse`,
-  `AssessEligibility`, `RegisterDataset`, `RegisterFeatureDefinition`; later,
-  after Research definitions, `BuildCandidateSet`;
+  `AssessEligibility`, `RegisterDataset`, `RegisterFeatureDefinition`,
+  `RegisterCandidatePolicy`, and `BuildCandidateSet`;
 - `AssessContext`, `ProduceSignal`, `ProduceForecast`,
   `CreateOpportunity`, `ProposePortfolio`, `AssessRisk`;
 - `ApproveExecutionIntent`, `RecordObservedFill`, `CorrectFill`,
@@ -332,19 +355,22 @@ Representative commands:
 - `ScheduleRun`, `ClaimStep`, `HeartbeatAttempt`, `ResumeRun`,
   `ResolveExternalEffect`, `VerifyArtifact`.
 
-The command dependency is one-way:
-`FreezeUniverse → AssessEligibility → BuildCandidateSet → AssessContext`.
+The Candidate command dependency is one-way:
+`FreezeUniverse → AssessEligibility → RegisterDataset → BuildCandidateSet → AssessContext`.
 Same-run Context cannot mutate or filter the already frozen Universe,
 Eligibility, or Candidate Set. `CreateOpportunity` carries no Risk
 authorization; only `AssessRisk` after `ProposePortfolio` creates a Risk
-Decision. The current Selection Core Runtime slice stops after
-`ASSESS_ELIGIBILITY`; it does not create a Candidate or Decision fact.
+Decision. Candidate closure extends only the test vertical slice to
+`CAPTURE → NORMALIZE_PIT → FREEZE_UNIVERSE → ASSESS_ELIGIBILITY → REGISTER_DATASET → BUILD_CANDIDATE_SET`.
+`BUILD_CANDIDATES` is not an alias or compatibility path. No current Runtime
+dispatcher, business CLI, or cutover authority is created.
 
 Representative queries:
 
 - exact/as-of Market facts and source lineage;
-- Selection Universe/Eligibility dossier at Decision time; later Candidate
-  dossier after Candidate closure;
+- Selection Universe/Eligibility dossier at Decision time; Candidate funnel and
+  Candidate dossier after Candidate closure, including Dataset-manifest/source
+  lineage and complete component diagnostics;
 - Decision dossier from Candidate through Risk;
 - current Position and Strategy sleeve projection;
 - Outcome/metric availability;

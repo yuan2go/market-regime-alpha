@@ -3,8 +3,8 @@
 > **Status:** CANONICAL_TARGET_ARCHITECTURE
 > **Authority:** Target research, context, decision, outcome, and qualification lifecycle
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-29
-> **Implementation State:** `SELECTION_RESEARCH_DEFINITION_IMPLEMENTED_DRAFT / CANDIDATE_READY_NOT_IMPLEMENTED / LATER_RESEARCH_DESIGN_ONLY`
+> **Last Updated:** 2026-08-30
+> **Implementation State:** `SELECTION_RESEARCH_DEFINITION_IMPLEMENTED_DRAFT / CANDIDATE_APPROVED_DESIGN_NOT_IMPLEMENTED / LATER_DEPENDENCY_ORDER_NOT_AUTHORIZED`
 > **Code Evidence:** target `src/market_regime_alpha/selection`, `src/market_regime_alpha/research_qualification`, target draft schema and `tests/refoundation`; existing `src/market_regime_alpha/research`, `src/market_regime_alpha/features`, and `src/market_regime_alpha/candidates` are Legacy invariant sources only, not target Authority
 
 Research is a consumer of Market/PIT facts and a producer of scoped evidence. It
@@ -89,20 +89,26 @@ filled with defaults.
    `ELIGIBLE`.
 6. Listing-age units and liquidity measure/window/unit/operator/threshold are
    immutable policy data; there are no inherited defaults.
-7. Candidate implementation is dependency-ready because its actual
-   Research-owned Dataset and FeatureDefinition identities now exist; Candidate
-   itself remains absent from this checkpoint. `BuildCandidateSet` will accept
-   only matching `ELIGIBLE` assessments, freeze score components/ties/ranks,
-   and account for the full funnel.
-8. Candidate Set existence will not depend on Decision Run, Evidence,
-   Assessment, or Qualification. A later Decision Run must reference an existing
-   Candidate Set; Qualification supplies purpose-scoped admission only.
-9. An empty Candidate Set is a successful, queryable business result.
-10. Downstream Strategy Runs must record terminal disposition for every Candidate
-   they received.
-11. Candidate V1 requires real immutable Decision-input Dataset and Feature
-    Definition identities, but no fitted Model Version. Model/Model Version stays
-    deferred until a concrete policy or Forecast consumer proves that dependency.
+7. Candidate has an approved Selection-owned design because its real
+   Research-owned Dataset and FeatureDefinition inputs now exist. Policy
+   components bind only numeric Feature Definitions; Candidate Set binds one
+   immutable Decision-input Dataset, whose rows are the sole population.
+8. Every Dataset row becomes `SELECTED`, `RANKED_NOT_SELECTED`, or
+   `UNRANKABLE`. Any required non-`AVAILABLE` cell is strict complete-case
+   `UNRANKABLE`; no imputation, gate rerun, or row deletion is permitted.
+9. Rankable components use identity-neutral arithmetic midrank, exact-rational
+   fixed-weight composite, competition rank, and Top-K with all boundary ties.
+   Constant complete cross-sections use `0.5`; missing statuses never do.
+10. Empty/no-rankable/constant/available sets are successful, queryable results
+    with complete funnel and component diagnostics.
+11. Candidate V1 reads no Decision Run, Context, Target, Outcome, Model/Model
+    Version, Evidence, Assessment, or Qualification and expresses no probability,
+    expected return, MFE/MAE, Forecast, Signal, or Entry authority.
+12. Candidate completion authorizes only a dependency review across Target
+    Definition/Checkpoint, Research Partition, Experiment, Model, Decision Run,
+    Outcome, Evaluation, Evidence, and Qualification. Their implementation order
+    is not frozen here, and Research must not create a realized-label Authority
+    that competes with future Outcome facts.
 
 Eligibility protects tradability and evidence sufficiency. Candidate selection
 answers a research/decision ranking question. Neither can imply Entry.

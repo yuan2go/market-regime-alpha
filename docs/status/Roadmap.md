@@ -3,7 +3,7 @@
 > **Status:** ROADMAP
 > **Authority:** Planning and dependency order only; never business, evidence, or qualification Authority
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-29
+> **Last Updated:** 2026-08-30
 > **Approved Design:** `d0d1f3152a20f1a3f4f9b8a1d9c4383a49162fb7`
 > **Implementation Line Start:** `c3ac21ef1e13f2e8408d30b0481fa9b74c4f9539`
 > **Foundation Source Checkpoint:** `eeff49c7a3995ba6d65045be88d4244617301234`
@@ -26,8 +26,8 @@ Foundation
 → Selection Core: Universe/Eligibility
 → minimal Research Definition substrate required by Candidate
 → Candidate closure
-→ Research Evaluation/Evidence/Qualification
-→ Decision/Outcome
+→ post-Candidate dependency review across Target/Research/Model/Decision/Outcome/Evaluation/Evidence/Qualification
+→ later Research/Decision/Outcome checkpoints in the order approved by that review
 → Execution/Account
 → Runtime/CLI Cutover
 → Legacy deletion/qualification
@@ -46,9 +46,9 @@ availability-selected fallback.
 | **2. Market/PIT** | `IMPLEMENTED_DRAFT / EXIT_GATE_PASS / NOT_CUT_OVER` at `e7a276a` | Provider/Product, Capture, Instrument, Session, Classification, Market/Instrument/Corporate Action revisions, Source Gap; exact temporal and price-basis semantics; artifact binding | capture → normalize → exact/as-of query passes clean-database, revision, missing/placeholder/suspension, concurrency, artifact-integrity and PIT tests |
 | **3. Selection Core: Universe/Eligibility** | `IMPLEMENTED_DRAFT / EXIT_GATE_PASS / NOT_CUT_OVER` at `44caf94` | permanent `market_regime_alpha.selection`; exactly seven Universe revision/member and typed Eligibility policy/rule/assessment/reason tables; independent narrow Selection UoW; behavior-preserving Market physical modularization; generic Market exact/as-of facts and Market-local 24-hour consumer policy | explicit immutable scope config; Market-only query dependency; every scoped instrument and every rule accounted; three-state/count reconciliation; Decision-time lineage, empty-scope, concurrent idempotency, stale-fence and representative-plan tests; no Market Target resolver or global Artifact cadence |
 | **4. Research Definition Core for Candidate** | `IMPLEMENTED_DRAFT / EXIT_GATE_PASS / NOT_CUT_OVER` at `22a5ec6` | permanent `market_regime_alpha.research_qualification`; exactly `dataset`, `dataset_source`, and `feature_definition`; shared deterministic command-failure contract; strict label-free Decision-input Dataset whose rows exactly equal same-time `INCLUDED` + `ELIGIBLE` population | real immutable relational Authority, Artifact/lineage integrity, success/failure/fence atomicity, leakage rejection, concurrency/replay/recovery, and representative-plan tests pass; no Model/ModelVersion, placeholder, nullable future FK, Registry, compatibility adapter, Evidence/Qualification surrogate, or dependency cycle |
-| **5. Candidate closure** | `READY_FOR_IMPLEMENTATION / NOT_STARTED` | Candidate policy/components/set/candidate/score components; consume only real Selection and Research Definition identities proven by the approved policy | Candidate Set exists independently of Decision Run and Qualification; deterministic ties and complete funnel; future Decision Run must reference an existing Candidate Set |
-| **6. Research Evaluation/Evidence/Qualification** | `DEFERRED` | Target/Partition/Experiment/Evaluation/Evidence/Assessment/Qualification aggregates and Artifact lineage plus any remaining research owners | Evidence Class, Assessment Status and purpose-scoped proof floors stay independent; negative results immutable; qualification cannot exceed floors; replay/lineage tests pass |
-| **7. Decision/Outcome** | `NOT_STARTED` | Decision Run, Context, Signal, Forecast, Opportunity, Thesis, Strategy, Portfolio, sole post-Portfolio Risk; Outcome/Metric/Attribution | required existing Candidate Set FK; Candidate → Context direction has no cycle; Opportunity has no Risk authorization; exact Target/Outcome/MFE/MAE availability semantics and post-Portfolio Risk constraints pass |
+| **5. Candidate closure** | `APPROVED_DESIGN / IMPLEMENTATION_NOT_STARTED` | exactly five Selection-owned authorities: Candidate Policy, Policy Component, Candidate Set, Candidate, and Candidate Score Component; consume the immutable Decision-input Dataset and real Feature Definitions through a Selection-owned Research-input port and Infrastructure adapter | every Dataset row has one terminal disposition and a complete score-component matrix; STRICT complete case, exact-rational arithmetic-midrank/composite/competition rank, explicit constant/not-estimable diagnostics, include-all boundary ties, independent short Candidate UoW, fenced atomic success/failure/replay/concurrency proof, dossier/funnel and representative plans pass; no later-context Authority is introduced |
+| **6. Post-Candidate dependency review** | `NOT_STARTED / REQUIRED_AFTER_CANDIDATE_EXIT` | audit the real code and Authority dependencies among Target Definition/Checkpoint, Research Partition, Experiment, Model, Decision Run, Outcome, Evaluation, Evidence, and Qualification | publish an approved acyclic implementation order; prove that Research does not construct realized labels independently of future Outcome Authority; do not implement or authorize any listed context as part of Candidate Closure |
+| **7. Later Research/Decision/Outcome implementation** | `ORDER_NOT_AUTHORIZED` | scope and order are selected only by Stage 6; this row grants no Research Evaluation, Decision, Outcome, Evidence, Qualification, Target, or Model work | replace this placeholder with dependency-coherent checkpoints only after Stage 6 review is approved |
 | **8. Execution/Account** | `NOT_STARTED` | Account epoch, Intent, observed Fill/corrections/allocations, broker observations, reconciliation, typed non-trade basis events, derived Position/sleeves | trade delta only from effective Fill; opening/corporate-action/reconciliation invariants; reservation, concurrency, correction, restart and reconciliation tests pass |
 | **9. Runtime/CLI Cutover** | `NOT_STARTED` | complete and freeze the target baseline; one Run/Step/Attempt/Lease/Fence Runtime; one `mra` CLI tree; target repositories/adapters, inspection/read models, recovery and Artifact integrity operations | baseline checksum/seed/catalog verify all target tables; clean DB canonical capture → decision → mutation → query → outcome/evidence; restart/recovery/concurrency/idempotency/replay pass; old Runtime receives no canonical entry or write |
 | **10. Legacy deletion/qualification** | `NOT_STARTED` | remove old packages, 001–106 migrations, repositories, CLIs, compatibility readers, parallel journals/compositions, legacy tests after invariant replacement; rewrite runbook/status generators | all 98 invariant IDs covered; zero old imports/writers/tables/entry points; full gate clean; destructive cutover rehearsed on an explicitly provisioned database; qualification remains at actual evidence floor |
@@ -119,9 +119,10 @@ mypy, build, docs, and diff gates pass locally. The exact ledger is
 
 Candidate remains absent from this checkpoint. Its real V1 Selection and
 Research Definition dependencies now exist in an acyclic physical Authority
-order, so Candidate Closure is ready to begin only as the next separately
-bounded work package. Model/ModelVersion and Qualification are not Candidate
-existence prerequisites.
+order. The separately approved WP-07 design permits Candidate implementation
+only: Candidate Policy components bind Feature Definitions, Candidate Set binds
+the immutable Decision-input Dataset, and no Model/ModelVersion, Target,
+Outcome, Evidence, Assessment, or Qualification is an existence prerequisite.
 
 ## Dependency-owned unresolved gaps
 
@@ -139,14 +140,20 @@ existence prerequisites.
 
 Foundation is merged; Market/PIT, Selection Core, and Research Definition Core
 pass their test-only engineering exit gates. Candidate Closure is the next
-dependency-ready stage, but no Candidate code or schema exists yet. Its V1
-policy may bind only same-DecisionTime INCLUDED/ELIGIBLE Selection facts plus
-the immutable Decision-input Dataset and FeatureDefinition identities it
-actually consumes. Candidate Set must exist independently; a future Decision
-Run must reference an already-existing Candidate Set. Model/ModelVersion and
-full Evidence/Assessment/Qualification are not existence prerequisites unless
-a later concrete policy proves otherwise. This is not a Runtime/CLI cutover or
-target baseline release.
+dependency-ready stage and its design is approved, but no Candidate code or
+schema exists at this design checkpoint. Its V1 policy binds only real Feature
+Definitions; Candidate Set binds the immutable same-DecisionTime Decision-input
+Dataset whose population already proves INCLUDED plus ELIGIBLE. It introduces
+no Model/ModelVersion, Target, Outcome, Evidence, Assessment, Qualification, or
+future placeholder. This is not a Runtime/CLI cutover or target baseline
+release.
+
+Candidate Closure completion authorizes only the Stage 6 dependency review. It
+does not freeze Research Evaluation before Decision/Outcome, or the reverse.
+That review must inspect the actual Target, partition, Experiment, Model,
+Decision Run, Outcome, Evaluation, Evidence, and Qualification call chains and
+must prevent Research-created realized labels from becoming a second Authority
+beside future Outcome facts.
 
 No Alpha hypothesis, model optimization, OOS outcome access, Provider
 qualification, broker integration, or destructive database operation belongs to

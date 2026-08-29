@@ -3,12 +3,14 @@
 > **Status:** CANONICAL_TARGET_ARCHITECTURE
 > **Authority:** Target bounded-context vocabulary and dependency map
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-29
-> **Implementation State:** `FOUNDATION_MARKET_SELECTION_RESEARCH_DEFINITION_IMPLEMENTED_DRAFT / NOT_CUT_OVER`
+> **Last Updated:** 2026-08-30
+> **Implementation State:** `FOUNDATION_MARKET_SELECTION_RESEARCH_DEFINITION_IMPLEMENTED_DRAFT / CANDIDATE_APPROVED_DESIGN_NOT_IMPLEMENTED / NOT_CUT_OVER`
 
 This file defines names and relationships only. Foundation, Market/PIT,
 Selection Core, and the three-table Research Definition Core exist in the
-isolated target draft. Candidate and later target contexts remain absent.
+isolated target draft. Candidate has an approved design but remains absent;
+later target contexts remain absent and their implementation order awaits the
+post-Candidate dependency review.
 Current implementation truth remains code, PostgreSQL, tests actually run, and
 reproducible evidence.
 
@@ -22,7 +24,7 @@ reproducible evidence.
 | Eligibility Assessment | Per-instrument policy result at one decision time: `ELIGIBLE`, `INELIGIBLE`, or `UNKNOWN`, with typed reasons and evidence. | Candidate selection or a silent filter. |
 | Decision-input Dataset | Immutable content-addressed Feature input whose rows exactly reconcile the same-DecisionTime `INCLUDED` and `ELIGIBLE` population, with explicit missing cells and exact lineage. | An Evaluation Dataset, Target/Outcome container, or posterior-label panel. |
 | Feature Definition | Immutable calculation semantics, type/unit, temporal window, source, availability, missingness, and algorithm/code/config identity. | Alpha evidence, research maturity, external validation, or qualification. |
-| Candidate | An eligible instrument admitted by a versioned Candidate policy, with exact score components and evidence lineage. | A Signal, Forecast, Entry, or trade recommendation. |
+| Candidate | The immutable terminal disposition for one row of a Decision-input Dataset under one Candidate Policy: `SELECTED`, `RANKED_NOT_SELECTED`, or `UNRANKABLE`, with complete typed score-component facts. | Only the selected subset; a probability, Forecast, Target, Outcome, Entry, or trade recommendation. |
 | Signal | A target-independent setup/state assertion produced from frozen inputs. | A calibrated probability or execution instruction. |
 | Forecast | A Target/Checkpoint-bound estimate with explicit uncertainty and calibration status. | A raw score relabelled as probability. |
 | Opportunity | A Decision-time binding of Candidate, Signal, Forecast, Context, Strategy Version, and exact input Evidence. | A Risk authorization, Fill, or Position. |
@@ -82,22 +84,23 @@ Python process and one PostgreSQL database. They are not microservices.
 |---|---|---|---|
 | Runtime & Provenance | schedules, Runs, Steps, Attempts, command receipts, audit, artifact metadata/integrity | all application command results by stable ID | Market facts, decisions, qualifications, Positions |
 | Market & PIT | providers, captures, instruments, sessions, classifications, revisions, gaps | raw artifact bytes | Candidates, model assessment, Portfolio |
-| Selection | Universe revisions, membership, eligibility; later Candidate Sets | Universe/Eligibility consume only Market/PIT and immutable scope config; Candidate may later consume only actual policy-required Research definitions | Signal, Strategy action, Fill |
-| Research & Qualification (`market_regime_alpha.research_qualification`) | initially Decision-input Dataset/DatasetSource/FeatureDefinition; later targets, partitions, experiments, models, evaluation, evidence, assessment, qualification | initially Market/PIT and Selection lineage; later Outcomes and Attribution | runtime scheduling, Candidate ownership, physical Position mutation |
+| Selection | Universe revisions, membership, eligibility; approved Candidate Policy/Set/Candidate design | Universe/Eligibility consume only Market/PIT and immutable scope config; Candidate consumes the immutable Decision-input Dataset and policy-bound Feature Definitions through a Selection-owned DTO/port implemented by Infrastructure | Signal, Strategy action, Fill, Model, Target, Outcome, Evidence, Qualification |
+| Research & Qualification (`market_regime_alpha.research_qualification`) | initially Decision-input Dataset/DatasetSource/FeatureDefinition; later owners only in an order approved after Candidate dependency audit | initially Market/PIT and Selection lineage; later inputs remain subject to dependency review | runtime scheduling, Candidate ownership, physical Position mutation, a second realized-label truth beside Outcome |
 | Decision Support | Context assessments, Signal, Forecast, Opportunity, Thesis, Strategy Version, Portfolio/Risk decision | Candidate, Research identities, account query model | observed Fill, broker truth, qualification |
 | Execution & Account | account authority epoch, intents, Fills, allocations, broker observations, reconciliation, non-trade basis events | accepted Portfolio/Risk decisions, Market instrument identity | Candidate, Forecast, model promotion |
 | Outcome & Attribution | factual Outcomes, observations, metrics, reasons and diagnostic Attribution | Decisions, Market/PIT, Fill allocations | qualification, Decision mutation or Position truth |
 | Artifact Store | content-addressed immutable bytes | none | business state, lifecycle, latest pointers |
 
-The business dependency direction is
+The Candidate-time business dependency direction is
 `Market/PIT → Universe → Eligibility → Candidate → Context → Signal/Forecast → Opportunity → Portfolio → Risk`.
 Context cannot feed back into the same Candidate Set, and Opportunity cannot
 carry a Risk Decision. The sole Risk Authority follows Portfolio. Candidate is
 not implemented in the current draft, but its required V1 Dataset and Feature
-Definition identities now exist; Model Version is added only if a concrete
-policy proves it necessary. Candidate Set creation does not require a Decision
-Run, Evidence graph, Assessment, or Qualification; a later Decision Run must
-reference an already-existing Candidate Set.
+Definition identities now exist. V1 has no Model Version, Target, Outcome,
+Context, Evidence, Assessment, or Qualification dependency. Completion triggers
+a real dependency audit across Target/Partition/Experiment/Model/Decision Run/
+Outcome/Evaluation/Evidence/Qualification; it does not pre-authorize their order
+or allow Research to own realized labels independently of future Outcome facts.
 
 ## Allowed dependency direction
 

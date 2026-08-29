@@ -3,7 +3,7 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Documentation navigation and precedence only
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-29
+> **Last Updated:** 2026-08-30
 > **Code Evidence:** `src/market_regime_alpha`, both legacy and target PostgreSQL migration packages, `tests`
 
 Documentation never creates implementation truth, research evidence,
@@ -61,6 +61,9 @@ Checkpoint traceability:
 - [Capability Preservation Matrix](references/WP-ARCHITECTURE-REFOUNDATION-01-Capability-Preservation-Matrix.md)
 - [283 to Target Table Disposition](references/WP-ARCHITECTURE-REFOUNDATION-01-Table-Disposition.md)
 - [Domain Invariant Catalog](references/WP-ARCHITECTURE-REFOUNDATION-01-Domain-Invariant-Catalog.md)
+- [WP-07 Candidate Closure Design](references/WP-ARCHITECTURE-REFOUNDATION-07-Candidate-Closure-Design.md)
+  — approved five-table Candidate Authority, ranking semantics, dependency seam,
+  and implementation proof contract; not implementation or verification evidence.
 
 All documents in this section have Target status. They define the destination,
 not current completion.
@@ -86,6 +89,9 @@ not current completion.
   — exact-SHA engineering proof for strict Decision-input Dataset,
   DatasetSource, FeatureDefinition, and shared deterministic command-failure
   semantics; Candidate code remains absent.
+- [WP-07 Candidate Closure Design](references/WP-ARCHITECTURE-REFOUNDATION-07-Candidate-Closure-Design.md)
+  — approved design checkpoint input. It authorizes Candidate-only TDD and the
+  later dependency review, not a later context, Runtime cutover, or proof claim.
 - [Runtime Runbook](operations/Runtime-Runbook.md) — current 001–106 operator
   procedures only; it will be rewritten at Runtime/CLI Cutover.
 
