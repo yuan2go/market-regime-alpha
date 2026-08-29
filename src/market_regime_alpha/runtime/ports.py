@@ -332,6 +332,57 @@ class AuditRepository(Protocol):
     ) -> None: ...
 
 
+class RuntimeCommandFinalization(Protocol):
+    """Minimum live-fence and terminalization surface for business contexts."""
+
+    def lock_live(self, claim: AttemptClaim) -> None: ...
+
+    def succeed(
+        self,
+        claim: AttemptClaim,
+        *,
+        receipt_id: UUID,
+        result_hash: str,
+    ) -> tuple[int, int]: ...
+
+    def fail(
+        self,
+        claim: AttemptClaim,
+        *,
+        receipt_id: UUID,
+        error_class: str,
+        error_code: str,
+    ) -> tuple[str, int, int]: ...
+
+
+class CommandFailureUnitOfWork(Protocol):
+    """Only the cross-cutting repositories needed to durably reject a command."""
+
+    @property
+    def receipts(self) -> CommandReceiptRepository: ...
+
+    @property
+    def audit(self) -> AuditRepository: ...
+
+    @property
+    def runtime_finalization(self) -> RuntimeCommandFinalization: ...
+
+    def __enter__(self) -> Self: ...
+
+    def __exit__(
+        self,
+        exception_type: type[BaseException] | None,
+        exception: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None: ...
+
+    def commit(self) -> None: ...
+
+
+class CommandFailureUnitOfWorkProvider(Protocol):
+    def __call__(self) -> CommandFailureUnitOfWork: ...
+
+
 class RuntimeUnitOfWork(Protocol):
     @property
     def runtime(self) -> RuntimeRepository: ...
@@ -370,11 +421,14 @@ __all__ = [
     "ArtifactVerificationRecord",
     "AuditRepository",
     "ByteVerification",
+    "CommandFailureUnitOfWork",
+    "CommandFailureUnitOfWorkProvider",
     "CommandReceiptRepository",
     "ReceiptRecord",
     "RecoveryDecision",
     "RunTrace",
     "RuntimeRepository",
+    "RuntimeCommandFinalization",
     "RuntimeUnitOfWork",
     "RuntimeUnitOfWorkProvider",
     "StepTrace",

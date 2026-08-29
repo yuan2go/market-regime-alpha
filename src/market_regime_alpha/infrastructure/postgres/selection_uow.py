@@ -5,46 +5,22 @@ from __future__ import annotations
 from contextlib import AbstractContextManager
 from types import TracebackType
 from typing import Any
-from uuid import UUID
-
 import psycopg
 
 from market_regime_alpha.infrastructure.postgres.pool import TargetPostgresPool
+from market_regime_alpha.infrastructure.postgres.runtime_finalization import (
+    PostgresRuntimeCommandFinalization,
+)
 from market_regime_alpha.infrastructure.postgres.queries.selection_market import (
     PostgresSelectionMarketQueries,
 )
 from market_regime_alpha.infrastructure.postgres.repositories import (
     PostgresAuditRepository,
     PostgresCommandReceiptRepository,
-    PostgresRuntimeRepository,
     PostgresSelectionRepository,
 )
 from market_regime_alpha.runtime.errors import RuntimeStateConflictError
-from market_regime_alpha.runtime.ports import AttemptClaim
 from market_regime_alpha.selection.ports import SelectionUnitOfWork
-
-
-class PostgresSelectionRuntimeFinalization:
-    """Expose only live-fence validation and successful Step finalization."""
-
-    def __init__(self, connection: psycopg.Connection[Any]) -> None:
-        self._runtime = PostgresRuntimeRepository(connection)
-
-    def lock_live(self, claim: AttemptClaim) -> None:
-        self._runtime.lock_live_claim(claim)
-
-    def succeed(
-        self,
-        claim: AttemptClaim,
-        *,
-        receipt_id: UUID,
-        result_hash: str,
-    ) -> tuple[int, int]:
-        return self._runtime.succeed_attempt(
-            claim,
-            receipt_id=receipt_id,
-            result_hash=result_hash,
-        )
 
 
 class PostgresSelectionUnitOfWork:
@@ -60,7 +36,7 @@ class PostgresSelectionUnitOfWork:
         self._market_queries: PostgresSelectionMarketQueries | None = None
         self._receipts: PostgresCommandReceiptRepository | None = None
         self._audit: PostgresAuditRepository | None = None
-        self._runtime_finalization: PostgresSelectionRuntimeFinalization | None = None
+        self._runtime_finalization: PostgresRuntimeCommandFinalization | None = None
 
     def __enter__(self) -> PostgresSelectionUnitOfWork:
         if self._connection is not None or self._used:
@@ -72,7 +48,9 @@ class PostgresSelectionUnitOfWork:
         self._market_queries = PostgresSelectionMarketQueries(self._connection)
         self._receipts = PostgresCommandReceiptRepository(self._connection)
         self._audit = PostgresAuditRepository(self._connection)
-        self._runtime_finalization = PostgresSelectionRuntimeFinalization(self._connection)
+        self._runtime_finalization = PostgresRuntimeCommandFinalization(
+            self._connection
+        )
         return self
 
     @property
@@ -100,7 +78,7 @@ class PostgresSelectionUnitOfWork:
         return self._audit
 
     @property
-    def runtime_finalization(self) -> PostgresSelectionRuntimeFinalization:
+    def runtime_finalization(self) -> PostgresRuntimeCommandFinalization:
         if self._runtime_finalization is None:
             raise RuntimeError("PostgresSelectionUnitOfWork is not active")
         return self._runtime_finalization
@@ -148,7 +126,6 @@ class PostgresSelectionUnitOfWorkProvider:
 
 
 __all__ = [
-    "PostgresSelectionRuntimeFinalization",
     "PostgresSelectionUnitOfWork",
     "PostgresSelectionUnitOfWorkProvider",
 ]

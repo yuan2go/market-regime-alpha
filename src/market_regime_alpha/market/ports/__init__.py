@@ -20,7 +20,6 @@ from market_regime_alpha.market.ports.repository import (
 )
 from market_regime_alpha.market.ports.uow import (
     MarketArtifactRepository,
-    MarketRuntimeFinalization,
     MarketUnitOfWork,
     MarketUnitOfWorkProvider,
 )
@@ -37,7 +36,6 @@ __all__ = [
     "MarketQueries",
     "MarketQueryProvider",
     "MarketRepository",
-    "MarketRuntimeFinalization",
     "MarketUnitOfWork",
     "MarketUnitOfWorkProvider",
     "NormalizerContract",

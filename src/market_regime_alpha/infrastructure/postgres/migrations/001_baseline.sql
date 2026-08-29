@@ -2349,6 +2349,9 @@ CREATE TABLE mra.universe_revision (
     unknown_count integer NOT NULL,
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     CONSTRAINT universe_revision_number_uk UNIQUE (universe_id, revision),
+    CONSTRAINT universe_revision_decision_join_uk UNIQUE (
+        universe_revision_id, decision_time
+    ),
     CONSTRAINT universe_revision_scope_uk UNIQUE (
         universe_id, decision_time, scope_content_sha256
     ),
@@ -2408,6 +2411,10 @@ CREATE TABLE mra.universe_member (
     ),
     CONSTRAINT universe_member_join_uk UNIQUE (
         universe_member_id, universe_revision_id, instrument_id
+    ),
+    CONSTRAINT universe_member_population_join_uk UNIQUE (
+        universe_member_id, universe_revision_id, instrument_id,
+        membership_status
     ),
     CONSTRAINT universe_member_status_ck CHECK (
         membership_status IN ('INCLUDED', 'EXCLUDED', 'UNKNOWN')
@@ -2631,6 +2638,10 @@ CREATE TABLE mra.eligibility_assessment (
     CONSTRAINT eligibility_assessment_identity_uk UNIQUE (
         universe_revision_id, eligibility_policy_id, instrument_id, decision_time
     ),
+    CONSTRAINT eligibility_assessment_population_join_uk UNIQUE (
+        eligibility_assessment_id, universe_member_id, universe_revision_id,
+        eligibility_policy_id, instrument_id, decision_time, result
+    ),
     CONSTRAINT eligibility_assessment_member_fk FOREIGN KEY (
         universe_member_id, universe_revision_id, instrument_id
     ) REFERENCES mra.universe_member(
@@ -2784,6 +2795,456 @@ CREATE INDEX eligibility_reason_gap_lineage_gin
     ON mra.eligibility_reason USING gin (market_gap_ids);
 CREATE INDEX eligibility_reason_capture_lineage_gin
     ON mra.eligibility_reason USING gin (market_capture_ids);
+
+CREATE TABLE mra.feature_definition (
+    feature_definition_id uuid PRIMARY KEY,
+    feature_code text NOT NULL,
+    version integer NOT NULL,
+    value_type text NOT NULL,
+    value_unit text NOT NULL,
+    frequency_value integer NOT NULL,
+    frequency_unit text NOT NULL,
+    window_value integer NOT NULL,
+    window_unit text NOT NULL,
+    lookback_value integer NOT NULL,
+    lookback_unit text NOT NULL,
+    source_requirements text[] NOT NULL,
+    availability_rule text NOT NULL,
+    missingness_policy text NOT NULL,
+    algorithm_code text NOT NULL,
+    algorithm_version text NOT NULL,
+    algorithm_sha256 text NOT NULL,
+    code_artifact_id uuid NOT NULL,
+    code_content_sha256 text NOT NULL,
+    code_size_bytes bigint NOT NULL,
+    config_artifact_id uuid NOT NULL,
+    config_content_sha256 text NOT NULL,
+    config_size_bytes bigint NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT feature_definition_identity_uk UNIQUE (feature_code, version),
+    CONSTRAINT feature_definition_content_uk UNIQUE (content_sha256),
+    CONSTRAINT feature_definition_code_artifact_fk FOREIGN KEY (
+        code_artifact_id, code_content_sha256, code_size_bytes
+    ) REFERENCES mra.artifact(
+        artifact_id, content_sha256, size_bytes
+    ) ON DELETE RESTRICT,
+    CONSTRAINT feature_definition_config_artifact_fk FOREIGN KEY (
+        config_artifact_id, config_content_sha256, config_size_bytes
+    ) REFERENCES mra.artifact(
+        artifact_id, content_sha256, size_bytes
+    ) ON DELETE RESTRICT,
+    CONSTRAINT feature_definition_code_ck CHECK (
+        feature_code ~ '^[a-z][a-z0-9_-]{0,99}$'
+    ),
+    CONSTRAINT feature_definition_version_ck CHECK (version > 0),
+    CONSTRAINT feature_definition_value_type_ck CHECK (
+        value_type IN ('DECIMAL', 'INTEGER', 'BOOLEAN', 'TEXT')
+    ),
+    CONSTRAINT feature_definition_unit_ck CHECK (
+        value_unit ~ '^[A-Z][A-Z0-9_]{0,31}$'
+    ),
+    CONSTRAINT feature_definition_frequency_ck CHECK (
+        frequency_value > 0
+        AND frequency_unit IN ('MINUTE', 'TRADING_SESSION', 'CALENDAR_DAY')
+    ),
+    CONSTRAINT feature_definition_window_ck CHECK (
+        window_value > 0
+        AND window_unit IN ('MINUTE', 'TRADING_SESSION', 'CALENDAR_DAY')
+    ),
+    CONSTRAINT feature_definition_lookback_ck CHECK (
+        lookback_value >= 0
+        AND lookback_unit IN ('MINUTE', 'TRADING_SESSION', 'CALENDAR_DAY')
+    ),
+    CONSTRAINT feature_definition_sources_ck CHECK (
+        cardinality(source_requirements) > 0
+        AND array_position(source_requirements, NULL) IS NULL
+        AND source_requirements <@ ARRAY[
+            'MARKET_BAR_REVISION', 'INSTRUMENT_FACT_REVISION',
+            'TRADING_SESSION', 'UNIVERSE_MEMBER',
+            'ELIGIBILITY_ASSESSMENT'
+        ]::text[]
+    ),
+    CONSTRAINT feature_definition_availability_ck CHECK (
+        availability_rule = 'DECISION_VISIBLE_AT_OR_BEFORE'
+    ),
+    CONSTRAINT feature_definition_missingness_ck CHECK (
+        missingness_policy = 'EXPLICIT_STATUS'
+    ),
+    CONSTRAINT feature_definition_algorithm_code_ck CHECK (
+        algorithm_code ~ '^[a-z][a-z0-9_-]{0,99}$'
+    ),
+    CONSTRAINT feature_definition_algorithm_version_ck CHECK (
+        algorithm_version ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$'
+    ),
+    CONSTRAINT feature_definition_hashes_ck CHECK (
+        algorithm_sha256 ~ '^[0-9a-f]{64}$'
+        AND code_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND config_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    ),
+    CONSTRAINT feature_definition_sizes_ck CHECK (
+        code_size_bytes >= 0 AND config_size_bytes >= 0
+    )
+);
+CREATE INDEX feature_definition_code_artifact_idx
+    ON mra.feature_definition (
+        code_artifact_id, code_content_sha256, code_size_bytes
+    );
+CREATE INDEX feature_definition_config_artifact_idx
+    ON mra.feature_definition (
+        config_artifact_id, config_content_sha256, config_size_bytes
+    );
+
+CREATE TABLE mra.dataset (
+    dataset_id uuid PRIMARY KEY,
+    dataset_code text NOT NULL,
+    version integer NOT NULL,
+    dataset_kind text NOT NULL,
+    decision_time timestamptz NOT NULL,
+    universe_revision_id uuid NOT NULL,
+    eligibility_policy_id uuid NOT NULL
+        REFERENCES mra.eligibility_policy(eligibility_policy_id)
+        ON DELETE RESTRICT,
+    manifest_artifact_id uuid NOT NULL,
+    manifest_content_sha256 text NOT NULL,
+    manifest_size_bytes bigint NOT NULL,
+    code_artifact_id uuid NOT NULL,
+    code_content_sha256 text NOT NULL,
+    code_size_bytes bigint NOT NULL,
+    config_artifact_id uuid NOT NULL,
+    config_content_sha256 text NOT NULL,
+    config_size_bytes bigint NOT NULL,
+    content_sha256 text NOT NULL,
+    row_count integer NOT NULL,
+    feature_count integer NOT NULL,
+    source_count integer NOT NULL,
+    cell_count integer NOT NULL,
+    available_cell_count integer NOT NULL,
+    missing_cell_count integer NOT NULL,
+    unknown_cell_count integer NOT NULL,
+    stale_cell_count integer NOT NULL,
+    conflict_cell_count integer NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT dataset_identity_uk UNIQUE (dataset_code, version),
+    CONSTRAINT dataset_content_uk UNIQUE (content_sha256),
+    CONSTRAINT dataset_scope_join_uk UNIQUE (
+        dataset_id, universe_revision_id, eligibility_policy_id, decision_time
+    ),
+    CONSTRAINT dataset_universe_decision_fk FOREIGN KEY (
+        universe_revision_id, decision_time
+    ) REFERENCES mra.universe_revision(
+        universe_revision_id, decision_time
+    ) ON DELETE RESTRICT,
+    CONSTRAINT dataset_manifest_artifact_fk FOREIGN KEY (
+        manifest_artifact_id, manifest_content_sha256, manifest_size_bytes
+    ) REFERENCES mra.artifact(
+        artifact_id, content_sha256, size_bytes
+    ) ON DELETE RESTRICT,
+    CONSTRAINT dataset_code_artifact_fk FOREIGN KEY (
+        code_artifact_id, code_content_sha256, code_size_bytes
+    ) REFERENCES mra.artifact(
+        artifact_id, content_sha256, size_bytes
+    ) ON DELETE RESTRICT,
+    CONSTRAINT dataset_config_artifact_fk FOREIGN KEY (
+        config_artifact_id, config_content_sha256, config_size_bytes
+    ) REFERENCES mra.artifact(
+        artifact_id, content_sha256, size_bytes
+    ) ON DELETE RESTRICT,
+    CONSTRAINT dataset_code_ck CHECK (
+        dataset_code ~ '^[a-z][a-z0-9_-]{0,99}$'
+    ),
+    CONSTRAINT dataset_version_ck CHECK (version > 0),
+    CONSTRAINT dataset_kind_ck CHECK (dataset_kind = 'DECISION_INPUT'),
+    CONSTRAINT dataset_hashes_ck CHECK (
+        manifest_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND code_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND config_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    ),
+    CONSTRAINT dataset_sizes_ck CHECK (
+        manifest_size_bytes > 0
+        AND code_size_bytes >= 0
+        AND config_size_bytes >= 0
+    ),
+    CONSTRAINT dataset_counts_ck CHECK (
+        row_count >= 0
+        AND feature_count > 0
+        AND source_count >= row_count + feature_count
+        AND cell_count = row_count * feature_count
+        AND available_cell_count >= 0
+        AND missing_cell_count >= 0
+        AND unknown_cell_count >= 0
+        AND stale_cell_count >= 0
+        AND conflict_cell_count >= 0
+        AND cell_count = available_cell_count + missing_cell_count
+            + unknown_cell_count + stale_cell_count + conflict_cell_count
+    )
+);
+CREATE INDEX dataset_decision_scope_idx
+    ON mra.dataset (
+        universe_revision_id, eligibility_policy_id, decision_time, dataset_id
+    );
+CREATE INDEX dataset_universe_decision_idx
+    ON mra.dataset (universe_revision_id, decision_time);
+CREATE INDEX dataset_eligibility_policy_idx
+    ON mra.dataset (eligibility_policy_id, dataset_id);
+CREATE INDEX dataset_manifest_artifact_idx
+    ON mra.dataset (
+        manifest_artifact_id, manifest_content_sha256, manifest_size_bytes
+    );
+CREATE INDEX dataset_code_artifact_idx
+    ON mra.dataset (code_artifact_id, code_content_sha256, code_size_bytes);
+CREATE INDEX dataset_config_artifact_idx
+    ON mra.dataset (
+        config_artifact_id, config_content_sha256, config_size_bytes
+    );
+
+CREATE TABLE mra.dataset_source (
+    dataset_source_id uuid PRIMARY KEY,
+    dataset_id uuid NOT NULL
+        REFERENCES mra.dataset(dataset_id) ON DELETE RESTRICT,
+    source_role text NOT NULL,
+    instrument_id uuid REFERENCES mra.instrument(instrument_id)
+        ON DELETE RESTRICT,
+    universe_revision_id uuid,
+    universe_member_id uuid,
+    eligibility_policy_id uuid,
+    eligibility_assessment_id uuid,
+    decision_time timestamptz,
+    membership_status text,
+    eligibility_result text,
+    feature_definition_id uuid
+        REFERENCES mra.feature_definition(feature_definition_id)
+        ON DELETE RESTRICT,
+    market_bar_revision_id uuid
+        REFERENCES mra.market_bar_revision(bar_revision_id) ON DELETE RESTRICT,
+    market_instrument_fact_revision_id uuid
+        REFERENCES mra.instrument_fact_revision(fact_revision_id)
+        ON DELETE RESTRICT,
+    market_trading_session_id uuid
+        REFERENCES mra.trading_session(session_id) ON DELETE RESTRICT,
+    market_source_gap_id uuid
+        REFERENCES mra.source_gap(gap_id) ON DELETE RESTRICT,
+    market_capture_id uuid
+        REFERENCES mra.data_capture(capture_id) ON DELETE RESTRICT,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT dataset_source_dataset_scope_fk FOREIGN KEY (
+        dataset_id, universe_revision_id, eligibility_policy_id, decision_time
+    ) REFERENCES mra.dataset(
+        dataset_id, universe_revision_id, eligibility_policy_id, decision_time
+    ) ON DELETE RESTRICT,
+    CONSTRAINT dataset_source_population_member_fk FOREIGN KEY (
+        universe_member_id, universe_revision_id, instrument_id,
+        membership_status
+    ) REFERENCES mra.universe_member(
+        universe_member_id, universe_revision_id, instrument_id,
+        membership_status
+    ) ON DELETE RESTRICT,
+    CONSTRAINT dataset_source_population_assessment_fk FOREIGN KEY (
+        eligibility_assessment_id, universe_member_id, universe_revision_id,
+        eligibility_policy_id, instrument_id, decision_time,
+        eligibility_result
+    ) REFERENCES mra.eligibility_assessment(
+        eligibility_assessment_id, universe_member_id, universe_revision_id,
+        eligibility_policy_id, instrument_id, decision_time, result
+    ) ON DELETE RESTRICT,
+    CONSTRAINT dataset_source_role_ck CHECK (
+        source_role IN (
+            'POPULATION', 'FEATURE_DEFINITION', 'MARKET_BAR_REVISION',
+            'MARKET_INSTRUMENT_FACT_REVISION', 'MARKET_TRADING_SESSION',
+            'MARKET_SOURCE_GAP', 'MARKET_CAPTURE'
+        )
+    ),
+    CONSTRAINT dataset_source_shape_ck CHECK (
+        (
+            source_role = 'POPULATION'
+            AND instrument_id IS NOT NULL
+            AND universe_revision_id IS NOT NULL
+            AND universe_member_id IS NOT NULL
+            AND eligibility_policy_id IS NOT NULL
+            AND eligibility_assessment_id IS NOT NULL
+            AND decision_time IS NOT NULL
+            AND membership_status = 'INCLUDED'
+            AND eligibility_result = 'ELIGIBLE'
+            AND feature_definition_id IS NULL
+            AND market_bar_revision_id IS NULL
+            AND market_instrument_fact_revision_id IS NULL
+            AND market_trading_session_id IS NULL
+            AND market_source_gap_id IS NULL
+            AND market_capture_id IS NULL
+        )
+        OR
+        (
+            source_role = 'FEATURE_DEFINITION'
+            AND feature_definition_id IS NOT NULL
+            AND instrument_id IS NULL
+            AND universe_revision_id IS NULL
+            AND universe_member_id IS NULL
+            AND eligibility_policy_id IS NULL
+            AND eligibility_assessment_id IS NULL
+            AND decision_time IS NULL
+            AND membership_status IS NULL
+            AND eligibility_result IS NULL
+            AND market_bar_revision_id IS NULL
+            AND market_instrument_fact_revision_id IS NULL
+            AND market_trading_session_id IS NULL
+            AND market_source_gap_id IS NULL
+            AND market_capture_id IS NULL
+        )
+        OR
+        (
+            source_role = 'MARKET_BAR_REVISION'
+            AND market_bar_revision_id IS NOT NULL
+            AND instrument_id IS NULL
+            AND universe_revision_id IS NULL
+            AND universe_member_id IS NULL
+            AND eligibility_policy_id IS NULL
+            AND eligibility_assessment_id IS NULL
+            AND decision_time IS NULL
+            AND membership_status IS NULL
+            AND eligibility_result IS NULL
+            AND feature_definition_id IS NULL
+            AND market_instrument_fact_revision_id IS NULL
+            AND market_trading_session_id IS NULL
+            AND market_source_gap_id IS NULL
+            AND market_capture_id IS NULL
+        )
+        OR
+        (
+            source_role = 'MARKET_INSTRUMENT_FACT_REVISION'
+            AND market_instrument_fact_revision_id IS NOT NULL
+            AND instrument_id IS NULL
+            AND universe_revision_id IS NULL
+            AND universe_member_id IS NULL
+            AND eligibility_policy_id IS NULL
+            AND eligibility_assessment_id IS NULL
+            AND decision_time IS NULL
+            AND membership_status IS NULL
+            AND eligibility_result IS NULL
+            AND feature_definition_id IS NULL
+            AND market_bar_revision_id IS NULL
+            AND market_trading_session_id IS NULL
+            AND market_source_gap_id IS NULL
+            AND market_capture_id IS NULL
+        )
+        OR
+        (
+            source_role = 'MARKET_TRADING_SESSION'
+            AND market_trading_session_id IS NOT NULL
+            AND instrument_id IS NULL
+            AND universe_revision_id IS NULL
+            AND universe_member_id IS NULL
+            AND eligibility_policy_id IS NULL
+            AND eligibility_assessment_id IS NULL
+            AND decision_time IS NULL
+            AND membership_status IS NULL
+            AND eligibility_result IS NULL
+            AND feature_definition_id IS NULL
+            AND market_bar_revision_id IS NULL
+            AND market_instrument_fact_revision_id IS NULL
+            AND market_source_gap_id IS NULL
+            AND market_capture_id IS NULL
+        )
+        OR
+        (
+            source_role = 'MARKET_SOURCE_GAP'
+            AND market_source_gap_id IS NOT NULL
+            AND instrument_id IS NULL
+            AND universe_revision_id IS NULL
+            AND universe_member_id IS NULL
+            AND eligibility_policy_id IS NULL
+            AND eligibility_assessment_id IS NULL
+            AND decision_time IS NULL
+            AND membership_status IS NULL
+            AND eligibility_result IS NULL
+            AND feature_definition_id IS NULL
+            AND market_bar_revision_id IS NULL
+            AND market_instrument_fact_revision_id IS NULL
+            AND market_trading_session_id IS NULL
+            AND market_capture_id IS NULL
+        )
+        OR
+        (
+            source_role = 'MARKET_CAPTURE'
+            AND market_capture_id IS NOT NULL
+            AND instrument_id IS NULL
+            AND universe_revision_id IS NULL
+            AND universe_member_id IS NULL
+            AND eligibility_policy_id IS NULL
+            AND eligibility_assessment_id IS NULL
+            AND decision_time IS NULL
+            AND membership_status IS NULL
+            AND eligibility_result IS NULL
+            AND feature_definition_id IS NULL
+            AND market_bar_revision_id IS NULL
+            AND market_instrument_fact_revision_id IS NULL
+            AND market_trading_session_id IS NULL
+            AND market_source_gap_id IS NULL
+        )
+    )
+);
+CREATE INDEX dataset_source_dataset_role_idx
+    ON mra.dataset_source (dataset_id, source_role, dataset_source_id);
+CREATE INDEX dataset_source_dataset_scope_idx
+    ON mra.dataset_source (
+        dataset_id, universe_revision_id, eligibility_policy_id, decision_time
+    );
+CREATE UNIQUE INDEX dataset_source_population_uk
+    ON mra.dataset_source (dataset_id, instrument_id)
+    WHERE source_role = 'POPULATION';
+CREATE UNIQUE INDEX dataset_source_feature_uk
+    ON mra.dataset_source (dataset_id, feature_definition_id)
+    WHERE source_role = 'FEATURE_DEFINITION';
+CREATE INDEX dataset_source_feature_fk_idx
+    ON mra.dataset_source (feature_definition_id, dataset_id)
+    WHERE feature_definition_id IS NOT NULL;
+CREATE INDEX dataset_source_instrument_idx
+    ON mra.dataset_source (instrument_id, dataset_id)
+    WHERE instrument_id IS NOT NULL;
+CREATE INDEX dataset_source_population_member_idx
+    ON mra.dataset_source (
+        universe_member_id, universe_revision_id, instrument_id,
+        membership_status
+    )
+    WHERE universe_member_id IS NOT NULL;
+CREATE INDEX dataset_source_population_assessment_idx
+    ON mra.dataset_source (
+        eligibility_assessment_id, universe_member_id, universe_revision_id,
+        eligibility_policy_id, instrument_id, decision_time,
+        eligibility_result
+    )
+    WHERE eligibility_assessment_id IS NOT NULL;
+CREATE INDEX dataset_source_market_bar_idx
+    ON mra.dataset_source (market_bar_revision_id, dataset_id)
+    WHERE market_bar_revision_id IS NOT NULL;
+CREATE UNIQUE INDEX dataset_source_market_bar_uk
+    ON mra.dataset_source (dataset_id, market_bar_revision_id)
+    WHERE source_role = 'MARKET_BAR_REVISION';
+CREATE INDEX dataset_source_instrument_fact_idx
+    ON mra.dataset_source (market_instrument_fact_revision_id, dataset_id)
+    WHERE market_instrument_fact_revision_id IS NOT NULL;
+CREATE UNIQUE INDEX dataset_source_instrument_fact_uk
+    ON mra.dataset_source (dataset_id, market_instrument_fact_revision_id)
+    WHERE source_role = 'MARKET_INSTRUMENT_FACT_REVISION';
+CREATE INDEX dataset_source_session_idx
+    ON mra.dataset_source (market_trading_session_id, dataset_id)
+    WHERE market_trading_session_id IS NOT NULL;
+CREATE UNIQUE INDEX dataset_source_session_uk
+    ON mra.dataset_source (dataset_id, market_trading_session_id)
+    WHERE source_role = 'MARKET_TRADING_SESSION';
+CREATE INDEX dataset_source_gap_idx
+    ON mra.dataset_source (market_source_gap_id, dataset_id)
+    WHERE market_source_gap_id IS NOT NULL;
+CREATE UNIQUE INDEX dataset_source_gap_uk
+    ON mra.dataset_source (dataset_id, market_source_gap_id)
+    WHERE source_role = 'MARKET_SOURCE_GAP';
+CREATE INDEX dataset_source_capture_idx
+    ON mra.dataset_source (market_capture_id, dataset_id)
+    WHERE market_capture_id IS NOT NULL;
+CREATE UNIQUE INDEX dataset_source_capture_uk
+    ON mra.dataset_source (dataset_id, market_capture_id)
+    WHERE source_role = 'MARKET_CAPTURE';
 
 CREATE TABLE mra.runtime_schedule (
     schedule_id uuid PRIMARY KEY,
@@ -3327,6 +3788,15 @@ BEFORE UPDATE OR DELETE ON mra.eligibility_assessment
 FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
 CREATE TRIGGER eligibility_reason_append_only
 BEFORE UPDATE OR DELETE ON mra.eligibility_reason
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER feature_definition_append_only
+BEFORE UPDATE OR DELETE ON mra.feature_definition
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER dataset_append_only
+BEFORE UPDATE OR DELETE ON mra.dataset
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER dataset_source_append_only
+BEFORE UPDATE OR DELETE ON mra.dataset_source
 FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
 
 CREATE VIEW mra.run_trace AS

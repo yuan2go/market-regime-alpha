@@ -2,15 +2,27 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
+from functools import wraps
+from typing import Callable, Iterator, ParamSpec, TypeVar
 from uuid import UUID, uuid4
 
 from market_regime_alpha.market.domain import MembershipStatus
-from market_regime_alpha.runtime.application import CommandContext
+from market_regime_alpha.runtime.application import (
+    CommandContext,
+    CommandFailureDescriptor,
+    ConcurrentCommandSucceeded,
+    RuntimeCommandFailureRecorder,
+)
 from market_regime_alpha.runtime.errors import (
     ArtifactIntegrityError,
+    CommandInProgressError,
     CommandPreviouslyFailedError,
+    IdempotencyKeyReusedError,
+    RuntimeNotFoundError,
     RuntimeStateConflictError,
+    StaleFenceError,
 )
 from market_regime_alpha.runtime.ports import AttemptClaim, ReceiptRecord
 from market_regime_alpha.selection.domain import (
@@ -40,6 +52,23 @@ from market_regime_alpha.shared.hashing import canonical_json_sha256
 from market_regime_alpha.shared.time import DecisionTime
 
 
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+
+
+def _replay_concurrent_success(
+    command: Callable[_P, _R],
+) -> Callable[_P, _R]:
+    @wraps(command)
+    def wrapped(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        try:
+            return command(*args, **kwargs)
+        except ConcurrentCommandSucceeded:
+            return command(*args, **kwargs)
+
+    return wrapped
+
+
 @dataclass(frozen=True, slots=True)
 class SelectionMutationResult:
     aggregate_kind: str
@@ -61,7 +90,12 @@ class SelectionApplication:
     ) -> None:
         self._uow_provider = uow_provider
         self._id_factory = id_factory
+        self._failure_recorder = RuntimeCommandFailureRecorder(
+            uow_provider,
+            id_factory=id_factory,
+        )
 
+    @_replay_concurrent_success
     def register_universe(
         self,
         definition: UniverseDefinition,
@@ -69,7 +103,18 @@ class SelectionApplication:
     ) -> SelectionMutationResult:
         request_hash = canonical_json_sha256(definition)
         result_hash = canonical_json_sha256({"universe_id": definition.universe_id, "version": 1})
-        with self._uow_provider() as uow:
+        with (
+            self._terminal_failure_boundary(
+                operation="REGISTER_UNIVERSE",
+                scope_id=definition.universe_code,
+                request_hash=request_hash,
+                error_class="COMMAND",
+                error_code="REGISTER_UNIVERSE_REJECTED",
+                context=context,
+                runtime_claim=None,
+            ),
+            self._uow_provider() as uow,
+        ):
             receipt = uow.receipts.start(
                 receipt_id=self._id_factory(),
                 command_kind="REGISTER_UNIVERSE",
@@ -100,6 +145,7 @@ class SelectionApplication:
                 replayed=False,
             )
 
+    @_replay_concurrent_success
     def register_eligibility_policy(
         self,
         policy: EligibilityPolicy,
@@ -113,7 +159,18 @@ class SelectionApplication:
                 "version": policy.version,
             }
         )
-        with self._uow_provider() as uow:
+        with (
+            self._terminal_failure_boundary(
+                operation="REGISTER_ELIGIBILITY_POLICY",
+                scope_id=policy.policy_code,
+                request_hash=request_hash,
+                error_class="COMMAND",
+                error_code="REGISTER_ELIGIBILITY_POLICY_REJECTED",
+                context=context,
+                runtime_claim=None,
+            ),
+            self._uow_provider() as uow,
+        ):
             receipt = uow.receipts.start(
                 receipt_id=self._id_factory(),
                 command_kind="REGISTER_ELIGIBILITY_POLICY",
@@ -144,6 +201,7 @@ class SelectionApplication:
                 replayed=False,
             )
 
+    @_replay_concurrent_success
     def freeze_universe(
         self,
         *,
@@ -161,7 +219,18 @@ class SelectionApplication:
                 "universe_id": universe_id,
             }
         )
-        with self._uow_provider() as uow:
+        with (
+            self._terminal_failure_boundary(
+                operation="FREEZE_UNIVERSE",
+                scope_id=str(universe_id),
+                request_hash=request_hash,
+                error_class="COMMAND",
+                error_code="FREEZE_UNIVERSE_REJECTED",
+                context=context,
+                runtime_claim=runtime_claim,
+            ),
+            self._uow_provider() as uow,
+        ):
             if runtime_claim is not None:
                 uow.runtime_finalization.lock_live(runtime_claim)
             receipt = uow.receipts.start(
@@ -260,6 +329,7 @@ class SelectionApplication:
                 replayed=False,
             )
 
+    @_replay_concurrent_success
     def assess_eligibility(
         self,
         *,
@@ -278,7 +348,18 @@ class SelectionApplication:
             }
         )
         scope_id = f"{universe_revision_id}:{eligibility_policy_id}"
-        with self._uow_provider() as uow:
+        with (
+            self._terminal_failure_boundary(
+                operation="ASSESS_ELIGIBILITY",
+                scope_id=scope_id,
+                request_hash=request_hash,
+                error_class="COMMAND",
+                error_code="ASSESS_ELIGIBILITY_REJECTED",
+                context=context,
+                runtime_claim=runtime_claim,
+            ),
+            self._uow_provider() as uow,
+        ):
             if runtime_claim is not None:
                 uow.runtime_finalization.lock_live(runtime_claim)
             receipt = uow.receipts.start(
@@ -369,6 +450,74 @@ class SelectionApplication:
                 receipt_id=receipt.receipt_id,
                 replayed=False,
             )
+
+    @contextmanager
+    def _terminal_failure_boundary(
+        self,
+        *,
+        operation: str,
+        scope_id: str,
+        request_hash: str,
+        error_class: str,
+        error_code: str,
+        context: CommandContext,
+        runtime_claim: AttemptClaim | None,
+    ) -> Iterator[None]:
+        """Select deterministic Selection errors; persistence is shared."""
+        descriptor = self._failure_descriptor(
+            operation=operation,
+            scope_id=scope_id,
+            request_hash=request_hash,
+            error_class=error_class,
+            error_code=error_code,
+        )
+        try:
+            yield
+        except StaleFenceError:
+            raise
+        except (CommandInProgressError, IdempotencyKeyReusedError) as exc:
+            self._failure_recorder.record_idempotency_rejection(
+                descriptor,
+                rejection_code=exc.code,
+                context=context,
+                runtime_claim=runtime_claim,
+            )
+            raise
+        except (
+            ArtifactIntegrityError,
+            CommandPreviouslyFailedError,
+            RuntimeNotFoundError,
+            RuntimeStateConflictError,
+            ValueError,
+        ):
+            self._failure_recorder.record(
+                descriptor,
+                context=context,
+                runtime_claim=runtime_claim,
+            )
+            raise
+
+    @staticmethod
+    def _failure_descriptor(
+        *,
+        operation: str,
+        scope_id: str,
+        request_hash: str,
+        error_class: str,
+        error_code: str,
+    ) -> CommandFailureDescriptor:
+        return CommandFailureDescriptor(
+            command_kind=operation,
+            scope_id=scope_id,
+            request_hash=request_hash,
+            error_class=error_class,
+            error_code=error_code,
+            aggregate_kind="SELECTION_COMMAND",
+            failure_action="SELECTION_COMMAND_FAILED",
+            rejection_command_kind="SELECTION_COMMAND_REJECTION",
+            rejection_action="SELECTION_COMMAND_REJECTED",
+            rejection_key_prefix="selection-command-rejection",
+        )
 
     def _classify_member(
         self,
