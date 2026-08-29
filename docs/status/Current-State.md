@@ -3,14 +3,14 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Non-authoritative exact-SHA implementation read model
 > **Owner:** Market Regime Alpha maintainers
-> **Generated At:** 2026-08-29T02:51:45Z
-> **Repository SHA:** `44caf94aac86c51bb0e69968aadc4dc47ff84907`
+> **Generated At:** 2026-08-29T08:02:16Z
+> **Repository SHA:** `7932fda7f41c44bc29f04672caaef75d6b9b2c69`
 > **Implementation Line Start:** `c3ac21ef1e13f2e8408d30b0481fa9b74c4f9539`
 > **Foundation Source Checkpoint:** `eeff49c7a3995ba6d65045be88d4244617301234`
 > **Legacy Business Implementation Parent:** `0382dad416d6d50d1eea0bda1603d7c359d65274`
 > **Schema Epochs:** canonical business `LEGACY_MIGRATIONS_001_106`; target draft `MRA_REFOUNDATION_1 / DRAFT / NOT_CUT_OVER`
-> **Generator:** `WP-ARCHITECTURE-REFOUNDATION-05 Selection Core implementation audit`
-> **Source Tree IDs:** source `d9f5ff8ac1b6eb736cc0f14f8dc2b8ed1d6d577c`; legacy migrations `6d3730548780ad6244d2cfecb4fb3559064b6f06`; target baseline `f514b18d29f48e730d0bce6c243df774bd2fceeb`; tests `280a3cc898e00bab91d5f7c92acd3f3f9b3a0e4a`
+> **Generator:** `WP-ARCHITECTURE-REFOUNDATION-06 design audit before business-code changes`
+> **Source Tree IDs:** source `d9f5ff8ac1b6eb736cc0f14f8dc2b8ed1d6d577c`; legacy migrations `6d3730548780ad6244d2cfecb4fb3559064b6f06`; target baseline `f514b18d29f48e730d0bce6c243df774bd2fceeb`; tests `be2f694e967acc09bb49b8d11c61c8663df30ab4`
 > **Code Evidence:** target and legacy source/migration packages plus `tests`
 
 This snapshot is invalid after any source, migration, test, or composition
@@ -28,15 +28,15 @@ research, qualification, trading, or Production claims.
 | CLI | Six legacy scripts remain. `mra` exposes target DB bootstrap/verify/recreate and Runtime inspection/recovery, but no Market business cutover command |
 | Market/PIT | The target owner remains authoritative for its draft facts. Its large files are physically split by cohesive Domain/Application/Ports/query/repository responsibilities with stable exports and unchanged WP-04 schema/PIT/Provider semantics; only generic exact/as-of facts remain public |
 | Universe/Eligibility | Permanent target `market_regime_alpha.selection` owns explicit immutable scope, frozen membership, typed policy/rules, complete three-state assessment/reasons, exact Market lineage, and an independent narrow Selection UoW, all test-only |
-| Candidate | Current legacy capabilities remain canonical. Target Candidate is `DEFERRED / NO-GO`; no Candidate or Research placeholder table, future FK, Registry, compatibility adapter, or Decision dependency was added |
-| Research/Qualification | Current legacy capabilities remain. No target Research owner or Provider/PIT qualification/admission framework exists |
+| Candidate | Current legacy capabilities remain canonical. Target Candidate is `DEFERRED / NO-GO`; Candidate Set still has no target table or writer and remains independent of future Decision/Qualification |
+| Research/Qualification | Current legacy capabilities remain. The permanent target namespace is frozen as `market_regime_alpha.research_qualification`, but at this design snapshot it has no package or table yet; only `dataset`, `dataset_source`, and `feature_definition` are approved for implementation, while Model/Evaluation/Evidence/Qualification remain deferred |
 | Decision/Outcome | Current legacy capabilities remain; target single write paths have not started |
 | Execution/Account | Human/manual execution only; observed effective Fill remains the source of trade-caused Position. No target implementation was added |
-| Target epoch | Foundation, Market/PIT, and Selection Core are implemented in the mutable `MRA_REFOUNDATION_1` draft; Candidate and every later target context plus Runtime/CLI Cutover remain absent |
+| Target epoch | Foundation, Market/PIT, and Selection Core are implemented in the mutable `MRA_REFOUNDATION_1` draft; Research Definition Core is design-approved but not implemented; Candidate and every later target context plus Runtime/CLI Cutover remain absent |
 | Legacy | Old source, 001–106 migrations, CLIs, compatibility paths, and tests remain physically present as the current implementation and regression oracle |
 
 The convergence state is therefore
-`FOUNDATION_MERGED_MARKET_AND_SELECTION_IMPLEMENTED_DRAFT / NOT_CUT_OVER`.
+`FOUNDATION_MARKET_SELECTION_IMPLEMENTED_DRAFT / RESEARCH_DEFINITION_DESIGN_FROZEN / NOT_CUT_OVER`.
 Similar legacy vocabulary does not make an old owner part of the target, and
 target test writes do not become canonical business writes.
 
@@ -62,7 +62,9 @@ The two views remain `run_trace` and `artifact_integrity_status`. The verified
 draft catalog contains 166 indexes, 402 constraints, 23 functions, and 74
 non-internal triggers. Selection adds no owner-specific trigger function: its
 seven append-only triggers reuse the Foundation mutation guard. Table count is
-descriptive, not an optimization target.
+descriptive, not an optimization target. These counts describe the merged
+starting baseline; the approved Research Definition tables do not exist at this
+design snapshot.
 
 ## Market/PIT implementation truth
 
@@ -128,6 +130,32 @@ descriptive, not an optimization target.
   indexes. Tests assert executed owner relations/index availability, not fixed
   optimizer costs or node shapes.
 
+## Research Definition design freeze
+
+- The permanent target namespace is
+  `market_regime_alpha.research_qualification`; legacy `research`, `features`,
+  and Candidate persistence remain invariant sources only and cannot be target
+  dependencies or compatibility paths.
+- This work package may add exactly `dataset`, `dataset_source`, and
+  `feature_definition`. Model, ModelVersion, Evaluation, Evidence,
+  Qualification, Candidate, and later contexts remain deferred.
+- A target Dataset is a Decision-input Dataset. At one DecisionTime its
+  instrument rows must equal, without omission or addition, the intersection
+  of `UniverseMember = INCLUDED` and
+  `EligibilityAssessment = ELIGIBLE`. Missing Feature observations remain
+  explicit typed cells and never remove an instrument.
+- The Dataset manifest parser rejects Target, Outcome, return, MFE, MAE,
+  barrier, future-observation, realized-label, and other posterior fields.
+  Dataset source roles are closed, use concrete owner foreign keys, and must
+  reconcile exactly with manifest lineage; no polymorphic string identity,
+  generic business-lineage JSON, future nullable identity, or Registry is
+  permitted.
+- Runtime command failure uses one narrow cross-context contract: the failed
+  business transaction rolls back, then a fresh short owner UoW validates the
+  live fence before atomically writing the failed receipt, audit, and matching
+  Attempt/Step failure. The contract owns no command dispatch or Domain-error
+  interpretation.
+
 ## Exact-SHA verification
 
 The immutable pre-refoundation ledger is
@@ -135,8 +163,8 @@ The immutable pre-refoundation ledger is
 the Foundation ledger is [WP-03](../references/WP-ARCHITECTURE-REFOUNDATION-03-Foundation-Verification.md),
 the Market/PIT ledger is
 [WP-04](../references/WP-ARCHITECTURE-REFOUNDATION-04-Market-PIT-Verification.md),
-and this checkpoint's commands, catalog, non-final attempts, and proof ceilings
-are recorded in
+and the Selection checkpoint's commands, catalog, non-final attempts, and proof
+ceilings are recorded in
 [WP-05](../references/WP-ARCHITECTURE-REFOUNDATION-05-Selection-Core-Verification.md).
 
 At implementation checkpoint `44caf94`, all 3,195 collected repository tests
@@ -166,44 +194,20 @@ Remote CI is therefore `BLOCKED_BY_REPOSITORY_CONFIGURATION / NOT_RUN`, not
 PASS. Local engineering proof does not establish Provider qualification,
 Formal PIT, Alpha/OOS, broker, trading, Production, or Runtime/CLI Cutover.
 
-The earlier governance checkpoints separately established that:
+Between the WP-05 implementation checkpoint and merged starting SHA
+`7932fda7f41c44bc29f04672caaef75d6b9b2c69`, governance-only changes updated
+`CLAUDE.md`, documentation, and reproducible-environment tests. They did not
+change the target source, legacy migrations, or target baseline tree. Their
+focused documentation, reproducibility, Ruff, and diff checks passed; a full
+repository suite was not rerun at that merged SHA. The 3,195-test result above
+therefore remains historical exact-SHA WP-05 evidence, not a claim about the
+current design snapshot. The WP-06 full gate is `NOT_RUN` until implementation
+and verification complete.
 
-- the complete repository gate catalogs in `AGENTS.md` and `README.md` execute
-  every Python command through `uv run`;
-- `CLAUDE.md` delegates to that authoritative gate without copying the command
-  list, states the non-activation boundary, and joins both catalogs in the
-  regression test that rejects bare `python` across all three entry points;
-- the clean, non-activated shell resolves bare `python` to pyenv 3.12.13 while
-  `uv run python` resolves to the worktree `.venv` on Python 3.12.2 with the
-  frozen lock's Ruff 0.16.1, mypy 2.3.0, and pytest 9.1.1;
-- the fresh-PostgreSQL full regression passes with 3,101 tests collected on
-  PostgreSQL 16.14 in a disposable loopback-only cluster and new database OID
-  `515555`;
-- all 61 target Foundation tests, documentation checks, 33 platform tests,
-  focused legacy replay/recovery/concurrency tests, Ruff, mypy over 451 source
-  files, build, and diff checks pass;
-- the legacy 001→106 bootstrap/schema checks still pass without modification;
-- a clean database proves missing-schema fail-closed, explicit bootstrap,
-  idempotent retry, exact checksum/catalog verification, and guarded recreate.
-
-One non-final host-database run was stopped at 58% after catalog autovacuum and
-schema teardown exhausted the host lock table while only 637 MiB of disk
-remained. Its exact disposable database was removed. The unchanged command then
-passed at 100% in the isolated cluster with `max_locks_per_transaction=256`, one
-autovacuum worker, and a 4 GiB RAM volume; no assertion, skip, migration, source,
-or test order was changed. GitHub Actions remain disabled, so remote CI is
-`BLOCKED_BY_REPOSITORY_CONFIGURATION / NOT_RUN`, not PASS.
-
-At governance follow-up `db20693`, the documentation inventory/link checker,
-seven link-checker tests, three reproducible-environment tests, focused Ruff,
-and diff check pass. The full 3,175-test engineering suite, PostgreSQL tests,
-mypy, build, and every Market/research backtest are `NOT_RUN` at this follow-up.
-
-The current follow-up leaves the WP-04 source, legacy-migration, and target-
-baseline tree IDs unchanged. Foundation and Market/PIT therefore retain their
-recorded exit states without rollback or capability promotion. This follow-up
-does not prove Provider, Alpha/OOS, broker, trading, Prospective, Production, or
-Runtime/CLI Cutover evidence, and none of those evidence classes were rerun.
+GitHub Actions remain disabled, so remote CI is
+`BLOCKED_BY_REPOSITORY_CONFIGURATION / NOT_RUN`, not PASS. No current or
+historical local gate proves Provider, Alpha/OOS, broker, trading, Prospective,
+Production, or Runtime/CLI Cutover evidence.
 
 ## Research and production ceiling
 

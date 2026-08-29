@@ -52,7 +52,7 @@ persistence shape that the target removes.
 | `data`, `data_sources`, `market_data`, source-freeze and historical fact acquisition | Provider capture, normalization, calendar, PIT/source lineage | `market/{domain,application,ports}` plus Provider adapters | **MERGE**, one Market/PIT owner |
 | `universe` and Runtime Scope/free Universe operators | Universe policy, membership, Eligibility/orderability | `selection/{domain,application,ports}` | **MERGE**, preserve invariants but do not import the Legacy `universe` Authority |
 | `candidates` and candidate discovery | ranking, tie/missingness/score logic | later `selection` Candidate aggregate and Research Feature definitions | **DEFER / MERGE LATER**, one Candidate write path after real Research definitions exist |
-| `features` | deterministic technical/context Feature calculations | pure Research Feature kernels; definitions owned by `research` | **KEEP LOGIC / MOVE**, no artifact writer inside Feature code |
+| `features` | deterministic technical/context Feature calculations | pure Research Feature kernels; definitions owned by `research_qualification` | **KEEP LOGIC / MOVE**, no artifact writer inside Feature code |
 | `signals` | setup assertions | `decision` Signal aggregate | **MOVE**, remove caller DTO duplicates |
 | `forecasting` and research-model inference | path estimates and model kernels | Model in `research`; Forecast in `decision` | **SPLIT BY OWNER**, one target-bound write path |
 | `strategies` | immutable Strategy semantics and actions | `decision` Strategy/Opportunity handlers | **MERGE**, remove Strategy Shadow duplicate business plane |
@@ -60,7 +60,7 @@ persistence shape that the target removes.
 | `execution` and trading-lifecycle application | human Intent, observed Fill, allocation, reconciliation | `execution/{domain,application,ports}` | **MERGE**, one execution command path |
 | `position` | Fill projection, T+1, Thesis/holding/exit invariants | Position query in `execution`; Thesis/Strategy in `decision` | **SPLIT BY OWNER**, no mutable Position book |
 | Shadow/Prospective settlement, Target labels and Strategy/Path Outcome producers | factual post-Decision observations, metrics and attribution | `outcome/{domain,application,ports}` | **MERGE**, one factual Outcome/Attribution owner |
-| `research`, `evaluation`, research-evaluation/validation/corpus application | Dataset, Target, Experiment, Evaluation, evidence and qualification rules | `research/{domain,application,ports}` | **MERGE**, one evidence/qualification model; reads Outcome through a port |
+| Legacy `research`, `evaluation`, research-evaluation/validation/corpus application | Dataset, Target, Experiment, Evaluation, evidence and qualification rules | permanent target `research_qualification/{domain,application,ports}` | **MERGE BY PROVEN OWNER**, beginning only with Decision-input Dataset/DatasetSource/FeatureDefinition; later evidence/qualification reads Outcome through a port |
 | `evidence` | content identity/envelope logic | `research` Evidence types plus `runtime` Artifact metadata | **SPLIT**, no generic evidence payload registry |
 | `persistence` and repository factory | PostgreSQL adapters and transactions | `infrastructure/postgres/{repositories,queries,migrations}` | **REWRITE**, remove mega-factory/table CRUD |
 | `cli` | operator entry points | `interfaces/cli` | **REWRITE** into one `mra` command tree |

@@ -4,8 +4,8 @@
 > **Authority:** Target business-fact ownership and canonical-write specification
 > **Owner:** Market Regime Alpha maintainers
 > **Last Updated:** 2026-08-29
-> **Implementation State:** `FOUNDATION_AND_MARKET_IMPLEMENTED_DRAFT / REMAINDER_DESIGN_ONLY / NOT_CUT_OVER`
-> **Code Evidence:** target `src/market_regime_alpha/shared`, `src/market_regime_alpha/runtime`, `src/market_regime_alpha/market`, `src/market_regime_alpha/infrastructure`, `src/market_regime_alpha/interfaces`, `src/market_regime_alpha/infrastructure/postgres/migrations/001_baseline.sql`, `tests/refoundation`; legacy source/migrations remain current business implementation
+> **Implementation State:** `FOUNDATION_MARKET_SELECTION_IMPLEMENTED_DRAFT / RESEARCH_DEFINITION_DESIGN_FROZEN / NOT_CUT_OVER`
+> **Code Evidence:** target `src/market_regime_alpha/shared`, `src/market_regime_alpha/runtime`, `src/market_regime_alpha/market`, `src/market_regime_alpha/selection`, `src/market_regime_alpha/infrastructure`, `src/market_regime_alpha/interfaces`, `src/market_regime_alpha/infrastructure/postgres/migrations/001_baseline.sql`, `tests/refoundation`; legacy source/migrations remain current business implementation
 
 This document answers one question for every retained fact: who may create or
 change it? A table, DTO, policy, artifact, snapshot, report, receipt, or query is
@@ -47,6 +47,13 @@ participates, its lock/fence is the first relational lock in the short business
 transaction; the owner never writes first and validates the fence later. No
 caller may write owner tables through a generic repository or raw SQL.
 
+If a deterministic rejection aborts the business transaction, that transaction
+is rolled back before the owning Application opens a new short instance of the
+same bounded-context UoW. That failure transaction locks the live fence first,
+then atomically records the failed receipt, audit, and Attempt/Step failure.
+Stale fences write none of those facts. The shared contract interprets neither
+Domain errors nor commands and is not a command bus or workflow owner.
+
 ## 3. Authority matrix
 
 | Fact / lifecycle | Canonical owner | Canonical command | Relational owner | Authoritative mutation rule | Primary downstream consumers |
@@ -76,13 +83,13 @@ caller may write owner tables through a generic repository or raw SQL.
 | Eligibility assessment | Selection | `AssessEligibility` | `eligibility_assessment`, `eligibility_reason` | every rule evaluated for every scoped instrument; one three-state aggregate with exact Market lineage | Candidate, funnel |
 | Candidate policy | Selection, deferred | `RegisterCandidatePolicy` | `candidate_policy`, `candidate_policy_component` | immutable ranking and actual policy-required Research definition FKs; no future placeholders | Candidate command |
 | Candidate Set/Candidate | Selection, deferred | `BuildCandidateSet` | `candidate_set`, `candidate`, `candidate_score_component` | immutable complete funnel; exists before and independently of Decision Run or Qualification | Decision, research |
-| Dataset | Research & Qualification | `RegisterDataset` | `dataset`, `dataset_source` | content hash plus exact temporal/universe/source lineage | experiments/models |
-| Feature definition | Research & Qualification | `RegisterFeatureDefinition` | `feature_definition` | immutable semantics/code/config identity | Candidate/model |
+| Decision-input Dataset | Research & Qualification | `RegisterDataset` | `dataset`, `dataset_source` | immutable content plus exact DecisionTime, `INCLUDED` + `ELIGIBLE` population, Feature status/value Artifact, and concrete Market/Selection lineage; Target/Outcome/realized labels prohibited | Candidate |
+| Feature definition | Research & Qualification | `RegisterFeatureDefinition` | `feature_definition` | immutable semantic/value/unit/frequency/window/lookback/source/availability/missingness/algorithm/code/config identity; no research conclusion | Candidate |
 | Target/checkpoints | Research & Qualification | `RegisterTargetDefinition` | `target_definition`, `target_checkpoint` | immutable Decision reference, horizon and metric requirements | Forecast/Outcome |
 | Research partition | Research & Qualification | `FreezeResearchPartition` | `research_partition` | immutable time/member boundary and purpose | experiment/evaluation |
 | Experiment and partition binding | Research & Qualification | `RegisterExperiment` | `experiment`, `experiment_partition` | one primary change and frozen protocol/input identities | experiment runs |
 | Experiment Run | Research & Qualification | `RunExperiment` | `experiment_run` | immutable execution identity/status; no claim promotion | evaluation |
-| Model/Model Version | Research & Qualification | `RegisterModelVersion` | `model`, `model_version` | immutable fitted artifact/definition lineage; lifecycle through qualification only | Forecast |
+| Model/Model Version | Research & Qualification, deferred | `RegisterModelVersion` | `model`, `model_version` | absent from Research Definition Core; create only when a concrete fitted-model consumer requires it | Forecast |
 | Evaluation | Research & Qualification | `EvaluateExperiment/Model` | `evaluation_run`, `evaluation_metric` | predeclared metrics and typed estimability | Assessment |
 | Evidence Item/graph | Research & Qualification | `RecordEvidence` | `evidence_item`, `evidence_dependency` | immutable typed evidence; dependency time/hash verified | Assessment/Qualification |
 | Assessment | Research & Qualification | `AssessResearchClaim` | `assessment` | status in closed vocabulary; negative/inconclusive preserved | Qualification, reports |

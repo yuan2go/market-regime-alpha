@@ -1,12 +1,12 @@
 # ADR-015: Hard Cutover and Schema Epoch
 
 > **Status:** CANONICAL_TARGET_ARCHITECTURE
-> **Implementation State:** `FOUNDATION_AND_MARKET_IMPLEMENTED_DRAFT / NOT_CUT_OVER`
+> **Implementation State:** `FOUNDATION_MARKET_SELECTION_IMPLEMENTED_DRAFT / RESEARCH_DEFINITION_DESIGN_FROZEN / NOT_CUT_OVER`
 > **Authority:** Approved-principle target decision for WP-ARCHITECTURE-REFOUNDATION-01
 > **Owner:** Market Regime Alpha maintainers
 > **Decision Date:** 2026-08-27
 > **Starting Main:** `0382dad416d6d50d1eea0bda1603d7c359d65274`
-> **Code Evidence:** target `src/market_regime_alpha/infrastructure/postgres`, `tests/refoundation`; legacy `persistence/postgres` remains the current business schema
+> **Code Evidence:** target `src/market_regime_alpha/{runtime,market,selection,infrastructure}`, `tests/refoundation`; legacy `persistence/postgres` remains the current business schema
 
 ## Context
 

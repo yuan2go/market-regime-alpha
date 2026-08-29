@@ -4,8 +4,8 @@
 > **Authority:** Target research, context, decision, outcome, and qualification lifecycle
 > **Owner:** Market Regime Alpha maintainers
 > **Last Updated:** 2026-08-29
-> **Implementation State:** DESIGN_CHECKPOINT_ONLY
-> **Code Evidence:** `src/market_regime_alpha/research`, `src/market_regime_alpha/candidates`, `src/market_regime_alpha/signals`, `src/market_regime_alpha/forecasting`, `src/market_regime_alpha/strategies`, `tests/research`
+> **Implementation State:** `SELECTION_IMPLEMENTED_DRAFT / RESEARCH_DEFINITION_DESIGN_FROZEN / LATER_RESEARCH_DESIGN_ONLY`
+> **Code Evidence:** target `src/market_regime_alpha/selection`, target draft schema and `tests/refoundation`; existing `src/market_regime_alpha/research`, `src/market_regime_alpha/features`, and `src/market_regime_alpha/candidates` are Legacy invariant sources only, not target Authority
 
 Research is a consumer of Market/PIT facts and a producer of scoped evidence. It
 cannot alter historical inputs, promote its own model, or create a Position.
@@ -98,6 +98,9 @@ filled with defaults.
 9. An empty Candidate Set is a successful, queryable business result.
 10. Downstream Strategy Runs must record terminal disposition for every Candidate
    they received.
+11. Candidate V1 requires real immutable Decision-input Dataset and Feature
+    Definition identities, but no fitted Model Version. Model/Model Version stays
+    deferred until a concrete policy or Forecast consumer proves that dependency.
 
 Eligibility protects tradability and evidence sufficiency. Candidate selection
 answers a research/decision ranking question. Neither can imply Entry.
@@ -206,11 +209,30 @@ diagnosis, not causal proof and not an Outcome/Position writer.
 
 ### Dataset
 
-A Dataset is immutable and content-addressed. It binds exact source facts,
-Universe revision, Eligibility scope where relevant, temporal/PIT basis,
-missingness/exclusions, Feature/Target definitions, code/config, and artifact.
-Materialized values may be artifact-backed; identity/status/lineage remain
-relational.
+A Candidate-consumable Dataset is an immutable, content-addressed
+`DECISION_INPUT` object. Its population is exactly the same-DecisionTime
+intersection of `UniverseMember = INCLUDED` and
+`EligibilityAssessment = ELIGIBLE`; no other instrument may appear and no member
+of that intersection may disappear because a Feature is missing. Every bound
+Feature has an explicit typed cell status.
+
+It binds the exact Universe revision, Eligibility policy/assessments, Feature
+Definitions, Market/PIT and Selection lineage, code/config identities, and
+verified Artifact bytes. A closed Domain parser rejects all unrecognized fields
+and in particular Target, Outcome, return, MFE/MAE, barrier, future observation,
+realized label, and other posterior data. A future Evaluation/Target Dataset is
+a different semantic owner and is not a mode or optional section of the
+Decision-input manifest. PostgreSQL `dataset_source` uses closed roles and real
+FKs; it is validated bidirectionally against the Artifact manifest.
+
+### Feature Definition
+
+A Feature Definition records calculation semantics only: semantic identity,
+typed value/unit, frequency/window/lookback, source requirements, availability
+rule, missingness policy, and deterministic algorithm/code/config identity. It
+cannot store Alpha support, research maturity, external validation, assessment,
+or qualification. Candidate V1 has no proven Feature-to-Feature dependency, so
+this checkpoint creates no dependency abstraction.
 
 ### Experiment
 
