@@ -76,22 +76,31 @@ estimate follows required semantics and is neither a quota nor a cutover claim.
 | `corporate_action_revision` | dividends/splits/rights/conversions revision | action identity/revision unique; ex/record/pay session and factors constrained |
 | `source_gap` | expected observation missing/placeholder/conflict | source/scope/interval/kind unique; typed reason/status |
 
-### Universe, Eligibility, and Candidate — 12 tables
+### Selection Core — 7 tables in the current checkpoint
 
 | Table | Purpose | Lifecycle and key constraints |
 |---|---|---|
-| `universe` | stable Universe definition identity | unique code; immutable purpose |
-| `universe_revision` | frozen policy/source/config revision | universe/revision unique; decision visibility basis and artifact hash |
+| `universe` | stable Universe definition and explicit scope-spec identity | unique code; immutable purpose/config identity; never implicit all-current-instrument scope |
+| `universe_revision` | frozen scope/config revision | universe/revision unique; Decision-time visibility basis and exact config hash |
 | `universe_member` | complete included/excluded/unknown roster | unique revision/instrument; status/reason/evidence required |
 | `eligibility_policy` | immutable typed Eligibility rule version | unique code/version/hash; active interval cannot overlap |
-| `eligibility_rule` | ordered typed criterion within an Eligibility policy | unique policy/code/ordinal; operator, value type and missing behavior constrained |
+| `eligibility_rule` | ordered typed criterion within an Eligibility policy | unique policy/code/ordinal; kind, measure/window/unit/operator/threshold and missing behavior constrained |
 | `eligibility_assessment` | per-instrument Decision-time result | unique universe revision/policy/instrument/decision time |
-| `eligibility_reason` | criterion result and exact evidence | unique assessment/criterion; typed result/observed/threshold/evidence FK |
+| `eligibility_reason` | criterion result and exact Market evidence | unique assessment/rule; typed result/observed/threshold/operator/reason and queryable lineage |
+
+### Selection Candidate closure — 5 deferred tables
+
+These tables are not part of Selection Core. They are created only after the
+minimal Research Definition substrate required by the approved Candidate policy
+exists with real relational Authority and an acyclic dependency graph.
+
+| Table | Purpose | Lifecycle and key constraints |
+|---|---|---|
 | `candidate_policy` | immutable selection/ranking/tie policy | unique code/version/hash; selection cardinality and tie behavior typed |
-| `candidate_policy_component` | ordered Feature/weight/direction policy component | unique policy/feature and ordinal; finite decimal weight |
-| `candidate_set` | frozen complete Candidate funnel | exact Decision Run/universe/policy/dataset/model/config; scope counts reconcile |
+| `candidate_policy_component` | ordered policy component | unique policy/component and ordinal; real Feature Definition/Dataset/Model Version FK only when that component actually requires it; no nullable future identity |
+| `candidate_set` | frozen complete Candidate funnel | exact universe/eligibility/policy/config and actual policy-required Research identities; no Decision Run or Qualification dependency; counts reconcile |
 | `candidate` | admitted eligible instrument/rank/score | unique set/instrument and set/rank; eligibility FK must match instrument |
-| `candidate_score_component` | typed factor contribution and missingness | unique candidate/feature; numeric value/status/source evidence |
+| `candidate_score_component` | typed factor contribution and missingness | unique candidate/component; typed numeric value/status and exact available lineage |
 
 ### Research and Qualification — 20 tables
 
@@ -122,7 +131,7 @@ estimate follows required semantics and is neither a quota nor a cutover claim.
 
 | Table | Purpose | Lifecycle and key constraints |
 |---|---|---|
-| `decision_run` | frozen Decision-time envelope | unique runtime step/request; Candidate/policy/code/config identities |
+| `decision_run` | frozen Decision-time envelope | unique runtime step/request; required FK to an already-existing Candidate Set plus policy/code/config identities |
 | `context_assessment` | typed Regime/ETF/Theme/Capital state | unique decision run/kind/scope; state/status/evidence |
 | `context_metric` | typed metric supporting Context | unique assessment/metric; value/status/evidence |
 | `signal` | setup assertion for one Candidate | unique decision run/candidate/signal kind/version |
@@ -335,17 +344,23 @@ Decision time:
 - status is exactly `ELIGIBLE`, `INELIGIBLE`, or `UNKNOWN`;
 - every `eligibility_rule` creates one `eligibility_reason`;
 - each reason FK-binds that rule and stores its result, typed observed value,
-  typed threshold/operator, and exact `evidence_item_id`;
-- every evidence dependency must be Decision-visible;
-- missing required evidence produces `UNKNOWN`, never silent exclusion;
-- an explicit negative rule produces `INELIGIBLE`;
+  typed threshold/operator, reason, and exact queryable Market revision/gap
+  lineage;
+- every rule executes for every scoped instrument; no short circuit can discard
+  diagnostic evidence;
+- missing, stale, conflicting, or Decision-invisible Market evidence produces
+  `UNKNOWN`, never silent exclusion;
+- an explicit rule failure produces `INELIGIBLE`; otherwise any unknown rule
+  produces `UNKNOWN`; only all-pass produces `ELIGIBLE`;
 - the complete counts reconcile to Universe membership.
 
-`candidate_set` binds the exact Universe revision, Eligibility policy and
-assessments, Candidate policy and ordered components, Dataset, Feature
-definitions, Model Version if used, Decision time, code SHA, and config
-artifact. It records total,
-eligible, ineligible, unknown, selected, and rejected counts.
+Candidate is not implemented in Selection Core. Its later closure binds the
+exact Universe revision, Eligibility policy and assessments, Candidate policy
+and ordered components, Decision time, code SHA, config artifact, and only the
+Dataset, Feature Definition, or Model Version identities the policy actually
+uses. Candidate Set existence does not depend on Decision Run, Evidence,
+Assessment, or Qualification. Qualification is purpose-scoped admission; a
+later Decision Run has a required FK to an already-existing Candidate Set.
 
 A `candidate` must reference a matching `ELIGIBLE` assessment. Rank uniqueness
 and deterministic tie policy are constrained. Each score component is relational
@@ -376,7 +391,12 @@ A horizon is an evaluation interval, never an automatic holding or exit rule.
 
 ### Frozen initial Decision reference
 
-For the retained T+1 10:30 research target, the Decision reference requires one
+Research Target/Outcome, not Market, owns the resolver that applies this rule.
+Market exposes only generic exact/as-of sessions, bars, facts, gaps, and their
+correctness/lineage. It has no permanent `decision_reference_1455` business
+interface.
+
+For the retained T+1 10:30 research target, the future Target resolver requires one
 same-session Asia/Shanghai five-minute bar ending exactly 14:55 with
 `RAW_UNADJUSTED` basis, finite positive OHLC, legal price structure, verified
 source/hash, and non-placeholder/non-suspended status. Zero matches is
@@ -518,9 +538,12 @@ it never leaves a canonical row pointing at a known-missing object.
 
 ### Read verification
 
-Every authoritative read requires a current policy-cadence verification. The
-Foundation/Market draft cadence is 24 hours: relational queries reject stale or
-non-AVAILABLE evidence; an explicit `VerifyArtifact` performs physical
+Every authoritative artifact read requires verified hash, size, existence, and
+integrity. Consumers declare any additional freshness rule at their own narrow
+read seam. Market's current consumer read policy is 24 hours: Market relational
+queries reject stale or non-AVAILABLE capture evidence. That cadence is not a
+permanent Foundation meaning for every future Artifact. An explicit
+`VerifyArtifact` performs physical
 hash/size I/O outside the PostgreSQL transaction, then appends verification and
 refreshes integrity metadata in one short transaction. An exact command retry
 uses the caller's idempotency key and returns the committed observation; a new

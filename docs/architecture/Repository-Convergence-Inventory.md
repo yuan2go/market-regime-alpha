@@ -3,7 +3,7 @@
 > **Status:** CANONICAL_TARGET_ARCHITECTURE
 > **Authority:** Target package, Legacy, documentation, prompt, and Skill disposition
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-28
+> **Last Updated:** 2026-08-29
 > **Code Evidence:** `src/market_regime_alpha`, `pyproject.toml`, `tests/architecture`, `AGENTS.md`, `scripts/reconcile_branches.py`, `.claude/skills/reconcile-branches/SKILL.md`
 
 This inventory freezes what the business implementation phase will converge and
@@ -48,10 +48,10 @@ persistence shape that the target removes.
 | Current package/path | Real retained value | Target location | Disposition after target replacement |
 |---|---|---|---|
 | `application/continuous_research`, `canonical_lifecycle`, `controlled_operation`, `daily_loop`, `free_data_operation`, `historical_research` | scheduling, recovery, bounded use-case order | `runtime/{domain,application}` and context Application handlers | **MERGE**, then delete parallel journals/compositions |
-| `application/state_system` and `research/state_system` | Regime/ETF/Theme/Capital inference and Candidate funnel rules | `decision` Context handlers; `universe` Candidate handlers | **SPLIT BY OWNER**, delete generic State System |
+| `application/state_system` and `research/state_system` | Regime/ETF/Theme/Capital inference and Candidate funnel rules | `decision` Context handlers; later `selection` Candidate handlers | **SPLIT BY OWNER**, delete generic State System |
 | `data`, `data_sources`, `market_data`, source-freeze and historical fact acquisition | Provider capture, normalization, calendar, PIT/source lineage | `market/{domain,application,ports}` plus Provider adapters | **MERGE**, one Market/PIT owner |
-| `universe` and Runtime Scope/free Universe operators | Universe policy, membership, Eligibility/orderability | `universe/{domain,application,ports}` | **MERGE**, preserve three-state evidence |
-| `candidates` and candidate discovery | ranking, tie/missingness/score logic | `universe` Candidate aggregate and pure research Feature definitions | **MERGE**, one Candidate write path |
+| `universe` and Runtime Scope/free Universe operators | Universe policy, membership, Eligibility/orderability | `selection/{domain,application,ports}` | **MERGE**, preserve invariants but do not import the Legacy `universe` Authority |
+| `candidates` and candidate discovery | ranking, tie/missingness/score logic | later `selection` Candidate aggregate and Research Feature definitions | **DEFER / MERGE LATER**, one Candidate write path after real Research definitions exist |
 | `features` | deterministic technical/context Feature calculations | pure Research Feature kernels; definitions owned by `research` | **KEEP LOGIC / MOVE**, no artifact writer inside Feature code |
 | `signals` | setup assertions | `decision` Signal aggregate | **MOVE**, remove caller DTO duplicates |
 | `forecasting` and research-model inference | path estimates and model kernels | Model in `research`; Forecast in `decision` | **SPLIT BY OWNER**, one target-bound write path |

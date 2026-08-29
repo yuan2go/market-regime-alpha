@@ -92,7 +92,7 @@ src/market_regime_alpha/
     domain/
     application/
     ports.py
-  universe/
+  selection/
     domain/
     application/
     ports.py
@@ -154,7 +154,7 @@ composition root.
 |---|---|---|---|
 | Runtime & Provenance | Schedule, Run, Step, Attempt, Command Receipt, Artifact | schedule, claim, heartbeat, finalize, resume, verify artifact | run trace, due work, integrity report |
 | Market & PIT | Capture, Instrument, Trading Session, Fact Revision, Classification Revision, Source Gap | register capture, normalize revision, record gap/correction | as-of fact, exact session grid, source lineage |
-| Universe & Eligibility | Universe Revision, Eligibility Assessment, Candidate Set | freeze universe, assess eligibility, build candidates | scope at Decision time, Candidate evidence |
+| Selection | Universe Revision, Eligibility Assessment; later Candidate Set | freeze universe, assess eligibility; build candidates only after Research definition substrate | scope and eligibility at Decision time; later Candidate evidence |
 | Research & Qualification | Dataset, Target Definition, Experiment, Model Version, Evaluation, Evidence Item, Assessment, Qualification Decision | register immutable definitions, run evaluation, assess, qualify | lineage graph, evidence floor matrix |
 | Decision Support | Decision Run, Context Assessment, Signal, Forecast, Opportunity, Thesis, Strategy Version, Portfolio Proposal, Risk Decision | decide, propose, risk-assess | decision dossier, risk authorization |
 | Outcome & Attribution | Outcome, Observation, Metric, Reason, Attribution Run/Line | settle outcome, attribute | outcome status/path, metric availability, attribution |
@@ -201,6 +201,13 @@ A command transaction:
   quantities, closed enums, and cardinality;
 - emits no best-effort second write after commit.
 
+Selection owns a separate narrow UoW rather than widening Runtime or Market.
+Its Market dependency is a read-only exact/as-of query port; the concrete
+Selection adapter may use the same PostgreSQL connection but cannot import a
+Market repository. If invoked as a Runtime Step, live-fence validation,
+Selection business writes, command receipt, audit event, and Step finalization
+commit together in that one short transaction.
+
 Queries never acquire mutation authority. “Current” values are database views or
 explicit as-of queries over canonical histories. Read models can be rebuilt and
 deleted without losing business facts.
@@ -232,6 +239,10 @@ Eligibility, and Candidate commands never consume that Context result. An
 Opportunity carries Decision input Evidence only; the single authoritative Risk
 evaluation occurs after a complete Portfolio Proposal.
 
+The Selection Core checkpoint proves only `CAPTURE → NORMALIZE_PIT →
+FREEZE_UNIVERSE → ASSESS_ELIGIBILITY`. `BUILD_CANDIDATES` remains absent until
+the minimal Research Definition substrate and Candidate closure checkpoints.
+
 Historical, replay, shadow, and prospective modes reuse Application commands
 and business semantics. They differ only in clock, frozen input resolver,
 execution adapter, and qualification purpose. They are not parallel business
@@ -241,7 +252,7 @@ architectures. Runtime fencing/retry/resume is frozen in
 ## 7. Persistence and artifact boundary
 
 PostgreSQL 16 is the sole relational Authority. The target catalog has 91 tables
-across Runtime/Provenance, Market/PIT, Universe/Eligibility, Research/
+across Runtime/Provenance, Market/PIT, Selection, Research/
 Qualification, Decision/Outcome, and Execution/Account. Large immutable raw
 captures, datasets, matrices, model binaries, and reports are content-addressed
 artifacts; their metadata, hashes, business bindings, verification state, and

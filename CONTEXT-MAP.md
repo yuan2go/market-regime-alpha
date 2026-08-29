@@ -3,7 +3,7 @@
 > **Status:** CANONICAL_TARGET_ARCHITECTURE
 > **Authority:** Target bounded-context vocabulary and dependency map
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-27
+> **Last Updated:** 2026-08-29
 > **Implementation State:** DESIGN_CHECKPOINT_ONLY
 
 This file defines names and relationships only. It does not claim that the target
@@ -49,8 +49,8 @@ tests actually run, and reproducible evidence.
                          commands + frozen inputs|receipts + audit
                                                  v
 +----------------+     +----------------------+     +----------------------+
-| Market & PIT   | --> | Universe/Eligibility | --> | Decision Support     |
-| facts/calendar |     | scope/candidates     |     | context/portfolio/risk |
+| Market & PIT   | --> | Selection            | --> | Decision Support     |
+| facts/calendar |     | scope/eligibility    |     | context/portfolio/risk |
 +-------+--------+     +----------+-----------+     +----------+-----------+
         |                         |                            |
         | immutable evidence      | datasets/candidate facts   | intents
@@ -78,7 +78,7 @@ Python process and one PostgreSQL database. They are not microservices.
 |---|---|---|---|
 | Runtime & Provenance | schedules, Runs, Steps, Attempts, command receipts, audit, artifact metadata/integrity | all application command results by stable ID | Market facts, decisions, qualifications, Positions |
 | Market & PIT | providers, captures, instruments, sessions, classifications, revisions, gaps | raw artifact bytes | Candidates, model assessment, Portfolio |
-| Universe & Eligibility | Universe revisions, membership, eligibility, Candidate Sets | Market/PIT, Dataset/Model identities | Signal, Strategy action, Fill |
+| Selection | Universe revisions, membership, eligibility; later Candidate Sets | Universe/Eligibility consume only Market/PIT and immutable scope config; Candidate may later consume only actual policy-required Research definitions | Signal, Strategy action, Fill |
 | Research & Qualification | datasets, targets, partitions, experiments, models, evaluation, evidence, assessment, qualification | Market/PIT, Outcomes, Attribution | runtime scheduling, physical Position mutation |
 | Decision Support | Context assessments, Signal, Forecast, Opportunity, Thesis, Strategy Version, Portfolio/Risk decision | Candidate, Research identities, account query model | observed Fill, broker truth, qualification |
 | Execution & Account | account authority epoch, intents, Fills, allocations, broker observations, reconciliation, non-trade basis events | accepted Portfolio/Risk decisions, Market instrument identity | Candidate, Forecast, model promotion |
@@ -88,7 +88,11 @@ Python process and one PostgreSQL database. They are not microservices.
 The business dependency direction is
 `Market/PIT → Universe → Eligibility → Candidate → Context → Signal/Forecast → Opportunity → Portfolio → Risk`.
 Context cannot feed back into the same Candidate Set, and Opportunity cannot
-carry a Risk Decision. The sole Risk Authority follows Portfolio.
+carry a Risk Decision. The sole Risk Authority follows Portfolio. Candidate is
+implemented only after its required Dataset, Feature Definition, or Model
+Version identities exist. Candidate Set creation does not require a Decision
+Run, Evidence graph, Assessment, or Qualification; a later Decision Run must
+reference an already-existing Candidate Set.
 
 ## Allowed dependency direction
 
