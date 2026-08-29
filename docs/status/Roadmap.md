@@ -8,6 +8,7 @@
 > **Implementation Line Start:** `c3ac21ef1e13f2e8408d30b0481fa9b74c4f9539`
 > **Foundation Source Checkpoint:** `eeff49c7a3995ba6d65045be88d4244617301234`
 > **Market/PIT Source Checkpoint:** `e7a276a30f71a98b6b32580fa0a4840c2e269b9f`
+> **Selection Core Source Checkpoint:** `44caf94aac86c51bb0e69968aadc4dc47ff84907`
 > **Code Evidence:** `docs/architecture/Canonical-Overall-Design.md`, `docs/status/Current-State.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-01-Domain-Invariant-Catalog.md`
 
 Architecture Re-foundation is the only active engineering program. Historical
@@ -41,7 +42,7 @@ availability-selected fallback.
 |---|---|---|---|
 | **1. Foundation** | `MERGED_MAIN / EXIT_GATE_PASS` at `eeff49c` | target package boundaries and dependency tests; shared value types; sole `bootstrap.py` composition contract; schema epoch/catalog preflight; unreleased `001_baseline.sql` build contract; stable seeds; cross-cutting schema/migration, command receipt, audit and Artifact metadata foundations | empty PostgreSQL → foundational baseline → seed → verify; retry idempotent; wrong/legacy/unknown epoch fails before DDL; foundational PK/FK/unique/check/index obligations verified; no old migration import |
 | **2. Market/PIT** | `IMPLEMENTED_DRAFT / EXIT_GATE_PASS / NOT_CUT_OVER` at `e7a276a` | Provider/Product, Capture, Instrument, Session, Classification, Market/Instrument/Corporate Action revisions, Source Gap; exact temporal and price-basis semantics; artifact binding | capture → normalize → exact/as-of query passes clean-database, revision, missing/placeholder/suspension, concurrency, artifact-integrity and PIT tests |
-| **3. Selection Core: Universe/Eligibility** | `AUTHORIZED / DESIGN_CHECKPOINT` | permanent `market_regime_alpha.selection`; exactly seven Universe revision/member and typed Eligibility policy/rule/assessment/reason tables; independent narrow Selection UoW; behavior-preserving Market physical modularization; generic Market exact/as-of facts and Market-local 24-hour consumer policy | explicit immutable scope config; Market-only query dependency; every scoped instrument and every rule accounted; three-state/count reconciliation; Decision-time lineage, empty-scope, concurrent idempotency, stale-fence and representative-plan tests; no Market Target resolver or global Artifact cadence |
+| **3. Selection Core: Universe/Eligibility** | `IMPLEMENTED_DRAFT / EXIT_GATE_PASS / NOT_CUT_OVER` at `44caf94` | permanent `market_regime_alpha.selection`; exactly seven Universe revision/member and typed Eligibility policy/rule/assessment/reason tables; independent narrow Selection UoW; behavior-preserving Market physical modularization; generic Market exact/as-of facts and Market-local 24-hour consumer policy | explicit immutable scope config; Market-only query dependency; every scoped instrument and every rule accounted; three-state/count reconciliation; Decision-time lineage, empty-scope, concurrent idempotency, stale-fence and representative-plan tests; no Market Target resolver or global Artifact cadence |
 | **4. Minimal Research Definition substrate for Candidate** | `DEFERRED` | only Dataset, Feature Definition, and Model/Model Version identities an approved Candidate policy actually requires | real immutable relational Authority exists; no placeholder, nullable future FK, Registry, compatibility adapter, Evidence/Qualification surrogate, or dependency cycle |
 | **5. Candidate closure** | `DEFERRED / NO-GO` | Candidate policy/components/set/candidate/score components | Candidate Set exists independently of Decision Run and Qualification; deterministic ties and complete funnel; future Decision Run must reference an existing Candidate Set |
 | **6. Research Evaluation/Evidence/Qualification** | `DEFERRED` | Target/Partition/Experiment/Evaluation/Evidence/Assessment/Qualification aggregates and Artifact lineage plus any remaining research owners | Evidence Class, Assessment Status and purpose-scoped proof floors stay independent; negative results immutable; qualification cannot exceed floors; replay/lineage tests pass |
@@ -79,6 +80,25 @@ are implemented. The mutable epoch remains `DRAFT / NOT_CUT_OVER`; no legacy
 writer was adapted or dual-written. The exact ledger is
 [WP-04 Market/PIT Verification](../references/WP-ARCHITECTURE-REFOUNDATION-04-Market-PIT-Verification.md).
 
+## Selection Core checkpoint result
+
+Selection Core passes its engineering exit gate on the test-only line. The
+permanent `market_regime_alpha.selection` package owns exactly seven
+Universe/Eligibility tables, consumes Market/PIT through a narrow query port,
+and commits Selection writes, receipt, audit, live fence, and Step finalization
+through an independent short Selection UoW. Explicit immutable scope Artifacts,
+complete member and rule accounting, exact/as-of lineage, three-state
+aggregation, concurrency/idempotency, stale-fence, empty-scope, Decision-time,
+and representative-plan tests pass. Market was physically split without an
+Authority or PIT redesign; the named Target resolver was removed and 24-hour
+freshness is now a Market consumer policy over unchanged Foundation integrity.
+The exact ledger is
+[WP-05 Selection Core Verification](../references/WP-ARCHITECTURE-REFOUNDATION-05-Selection-Core-Verification.md).
+
+Candidate is not part of this checkpoint. No Candidate table, future FK,
+Registry, Research placeholder, compatibility adapter, or empty future owner
+was added.
+
 ## Dependency-owned unresolved gaps
 
 | Gap | Owning stage | Required resolution |
@@ -93,11 +113,15 @@ writer was adapted or dual-written. The exact ledger is
 
 ## Entry decision for implementation
 
-Foundation is merged and Market/PIT is complete on the current implementation
-line. Selection Core is authorized. Candidate remains `DEFERRED / NO-GO` until
-the minimal real Research Definition substrate exists and the physical
-dependency graph is acyclic. This is not a Runtime/CLI cutover or target
-baseline release.
+Foundation is merged, and Market/PIT plus Selection Core are complete on the
+current test-only implementation line. The next dependency-ready stage is the
+minimal Research Definition substrate required by an approved Candidate policy.
+Candidate remains `DEFERRED / NO-GO` until those real immutable relational
+identities exist and the physical Authority graph is acyclic. Candidate Set
+must then exist independently; a future Decision Run must reference an already
+existing Candidate Set. Full Evidence/Assessment/Qualification is not an
+existence prerequisite and remains purpose-scoped. This is not a Runtime/CLI
+cutover or target baseline release.
 
 No Alpha hypothesis, model optimization, OOS outcome access, Provider
 qualification, broker integration, or destructive database operation belongs to

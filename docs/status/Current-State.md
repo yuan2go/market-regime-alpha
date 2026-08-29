@@ -3,14 +3,14 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Non-authoritative exact-SHA implementation read model
 > **Owner:** Market Regime Alpha maintainers
-> **Generated At:** 2026-08-28T18:46:35Z
-> **Repository SHA:** `e7a276a30f71a98b6b32580fa0a4840c2e269b9f`
+> **Generated At:** 2026-08-29T02:51:45Z
+> **Repository SHA:** `44caf94aac86c51bb0e69968aadc4dc47ff84907`
 > **Implementation Line Start:** `c3ac21ef1e13f2e8408d30b0481fa9b74c4f9539`
 > **Foundation Source Checkpoint:** `eeff49c7a3995ba6d65045be88d4244617301234`
 > **Legacy Business Implementation Parent:** `0382dad416d6d50d1eea0bda1603d7c359d65274`
 > **Schema Epochs:** canonical business `LEGACY_MIGRATIONS_001_106`; target draft `MRA_REFOUNDATION_1 / DRAFT / NOT_CUT_OVER`
-> **Generator:** `WP-ARCHITECTURE-REFOUNDATION-04 Market/PIT implementation audit`
-> **Source Tree IDs:** source `3a8e9f062861f90d26a21c85835021386b662c8e`; legacy migrations `6d3730548780ad6244d2cfecb4fb3559064b6f06`; target baseline `b1d64d2525ee9be7aa1f32861796f148c62095a9`; tests `05faaca3c0282f7aae6f49f6ccefe4824a22ffbb`
+> **Generator:** `WP-ARCHITECTURE-REFOUNDATION-05 Selection Core implementation audit`
+> **Source Tree IDs:** source `d9f5ff8ac1b6eb736cc0f14f8dc2b8ed1d6d577c`; legacy migrations `6d3730548780ad6244d2cfecb4fb3559064b6f06`; target baseline `f514b18d29f48e730d0bce6c243df774bd2fceeb`; tests `280a3cc898e00bab91d5f7c92acd3f3f9b3a0e4a`
 > **Code Evidence:** target and legacy source/migration packages plus `tests`
 
 This snapshot is invalid after any source, migration, test, or composition
@@ -22,22 +22,23 @@ research, qualification, trading, or Production claims.
 
 | Area | Exact current fact at the snapshot SHA |
 |---|---|
-| Package shape | The legacy Python 3.12 modular monolith remains intact. Target `shared`, `runtime`, `market`, `infrastructure`, `interfaces`, and sole target `bootstrap.py` are isolated by dependency tests |
-| PostgreSQL | The canonical business implementation remains legacy 001–106 with 283 tables. The target draft has 25 relations and two read-only views under schema `mra` |
-| Runtime | Continuous Research remains the current all-day business control plane. Target Run/Step/Attempt can execute a test-only `CAPTURE -> NORMALIZE_PIT` slice; it is not a canonical entry point |
+| Package shape | The legacy Python 3.12 modular monolith remains intact. Target `shared`, `runtime`, `market`, permanent `selection`, `infrastructure`, `interfaces`, and sole target `bootstrap.py` are isolated by dependency tests; importing Selection does not execute legacy `universe/__init__.py` |
+| PostgreSQL | The canonical business implementation remains legacy 001–106 with 283 tables. The target draft has 32 tables and two read-only views under schema `mra` |
+| Runtime | Continuous Research remains the current all-day business control plane. Target Run/Step/Attempt can execute a test-only `CAPTURE -> NORMALIZE_PIT -> FREEZE_UNIVERSE -> ASSESS_ELIGIBILITY` slice; it is not a canonical entry point |
 | CLI | Six legacy scripts remain. `mra` exposes target DB bootstrap/verify/recreate and Runtime inspection/recovery, but no Market business cutover command |
-| Market/PIT | A target owner now exists with Domain/Application/Ports, narrow Market UoW, PostgreSQL writer/query adapters, Tencent and BaoStock exploratory adapters, exact/as-of queries, and Artifact lineage |
-| Universe/Candidate | Current legacy capabilities remain; target convergence has not started |
+| Market/PIT | The target owner remains authoritative for its draft facts. Its large files are physically split by cohesive Domain/Application/Ports/query/repository responsibilities with stable exports and unchanged WP-04 schema/PIT/Provider semantics; only generic exact/as-of facts remain public |
+| Universe/Eligibility | Permanent target `market_regime_alpha.selection` owns explicit immutable scope, frozen membership, typed policy/rules, complete three-state assessment/reasons, exact Market lineage, and an independent narrow Selection UoW, all test-only |
+| Candidate | Current legacy capabilities remain canonical. Target Candidate is `DEFERRED / NO-GO`; no Candidate or Research placeholder table, future FK, Registry, compatibility adapter, or Decision dependency was added |
 | Research/Qualification | Current legacy capabilities remain. No target Research owner or Provider/PIT qualification/admission framework exists |
 | Decision/Outcome | Current legacy capabilities remain; target single write paths have not started |
 | Execution/Account | Human/manual execution only; observed effective Fill remains the source of trade-caused Position. No target implementation was added |
-| Target epoch | Foundation plus Market/PIT are implemented in the mutable `MRA_REFOUNDATION_1` draft; every later target context and Runtime/CLI Cutover remain absent |
+| Target epoch | Foundation, Market/PIT, and Selection Core are implemented in the mutable `MRA_REFOUNDATION_1` draft; Candidate and every later target context plus Runtime/CLI Cutover remain absent |
 | Legacy | Old source, 001–106 migrations, CLIs, compatibility paths, and tests remain physically present as the current implementation and regression oracle |
 
 The convergence state is therefore
-`FOUNDATION_MERGED_AND_MARKET_IMPLEMENTED_DRAFT / NOT_CUT_OVER`. Similar legacy
-vocabulary does not make an old owner part of the target, and target test writes
-do not become canonical business writes.
+`FOUNDATION_MERGED_MARKET_AND_SELECTION_IMPLEMENTED_DRAFT / NOT_CUT_OVER`.
+Similar legacy vocabulary does not make an old owner part of the target, and
+target test writes do not become canonical business writes.
 
 ## Target draft catalog
 
@@ -53,9 +54,15 @@ Market/PIT adds exactly the approved 12 relations:
 `classification_membership_revision`, `market_bar_revision`,
 `instrument_fact_revision`, `corporate_action_revision`, and `source_gap`.
 
+Selection Core adds exactly seven tables:
+`universe`, `universe_revision`, `universe_member`, `eligibility_policy`,
+`eligibility_rule`, `eligibility_assessment`, and `eligibility_reason`.
+
 The two views remain `run_trace` and `artifact_integrity_status`. The verified
-draft catalog contains 126 indexes, 322 constraints, 22 functions, and 67
-non-internal triggers. Table count is descriptive, not an optimization target.
+draft catalog contains 166 indexes, 402 constraints, 23 functions, and 74
+non-internal triggers. Selection adds no owner-specific trigger function: its
+seven append-only triggers reuse the Foundation mutation guard. Table count is
+descriptive, not an optimization target.
 
 ## Market/PIT implementation truth
 
@@ -80,69 +87,84 @@ non-internal triggers. Table count is descriptive, not an optimization target.
 - Missing, placeholder, provider failure, conflict, and invalid OHLC are typed
   gaps. A placeholder creates no valid bar. Missing/zero-volume/flat-price do
   not infer suspension.
-- The Decision reference is only the exact same-session Raw five-minute bar
-  ending 14:55. Daily or previous-session prices cannot substitute; current-
-  session typed suspension is distinct from prior-session status.
+- Market exposes only generic exact/as-of bar, fact, classification, lifecycle,
+  gap, and session queries. The named `decision_reference_1455` Target business
+  interface and classifier are absent. The underlying exact same-session Raw
+  five-minute correctness invariant remains tested; a formal Target resolver
+  belongs to a later Research Target/Outcome owner.
 - `data_capture` is a canonical Artifact reference and therefore protects its
-  bytes from orphan classification and garbage collection. Authoritative reads
-  require an AVAILABLE physical hash/size verification no older than 24 hours;
-  stale evidence blocks until an explicit outside-transaction verification is
-  committed.
+  bytes from orphan classification and garbage collection. Foundation retains
+  exact identity plus hash/size/existence/integrity verification. The 24-hour
+  cadence is now explicitly a Market consumer read policy; a Selection scope
+  configuration needs Foundation integrity but does not inherit that Market
+  engineering cadence. Market stale evidence remains unavailable to a Market
+  consumer until an outside-transaction verification is committed.
+
+## Selection Core implementation truth
+
+- `FreezeUniverse` accepts only an explicit immutable scope specification bound
+  by exact Artifact id/hash/size plus Market Product and Classification
+  identity. It never discovers “all current instruments.” Every scoped
+  instrument produces `INCLUDED`, `EXCLUDED`, or `UNKNOWN`; missing, stale,
+  gap, or conflicting PIT membership is persisted rather than dropped.
+- Universe owns research range only. Suspension, special-treatment status,
+  listing age, liquidity, and limit metadata are Eligibility criteria and never
+  Universe exclusions.
+- An immutable Eligibility policy explicitly records each rule's measure,
+  aggregation, window value/unit, typed threshold, operator, value unit, and
+  missing-result behavior. Financial values use PostgreSQL `numeric` and
+  Python `Decimal`; no float/materializer/artifact architecture was copied.
+- Every member executes every rule without short circuit. Every rule produces a
+  typed `PASS`/`FAIL`/`UNKNOWN` reason with the observed typed value, copied
+  criterion semantics, reason code, exact Market revision/bar/gap/session/
+  Capture lineage, and lineage hash. Aggregation is fixed: any FAIL is
+  `INELIGIBLE`; otherwise any UNKNOWN is `UNKNOWN`; otherwise `ELIGIBLE`.
+- A Selection UoW owns only Selection repositories plus a narrow Market query
+  port and minimal receipt/audit/live-fence/finalization ports. A successful
+  business write, receipt, audit, matching fence, and Runtime Step finalization
+  share one short transaction. Runtime and Market UoWs were not expanded.
+- Representative plans execute through the classification membership,
+  instrument fact, Market bar, Universe member status, and Eligibility result
+  indexes. Tests assert executed owner relations/index availability, not fixed
+  optimizer costs or node shapes.
 
 ## Exact-SHA verification
 
 The immutable pre-refoundation ledger is
 [WP-02](../references/WP-ARCHITECTURE-REFOUNDATION-02-Pre-Refoundation-Verification-Baseline.md),
 the Foundation ledger is [WP-03](../references/WP-ARCHITECTURE-REFOUNDATION-03-Foundation-Verification.md),
-and the current results, including every failed attempt, are recorded in
-[WP-04](../references/WP-ARCHITECTURE-REFOUNDATION-04-Market-PIT-Verification.md).
+the Market/PIT ledger is
+[WP-04](../references/WP-ARCHITECTURE-REFOUNDATION-04-Market-PIT-Verification.md),
+and this checkpoint's commands, catalog, non-final attempts, and proof ceilings
+are recorded in
+[WP-05](../references/WP-ARCHITECTURE-REFOUNDATION-05-Selection-Core-Verification.md).
 
-At this source checkpoint, all 3,175 collected tests pass through exhaustive
-resource-bounded batches on a repeatedly recreated isolated PostgreSQL 16
-database. All 136 target tests, including 69 Market tests and focused
-Foundation/PostgreSQL/runtime/artifact/architecture tests, documentation
-checks, Ruff, mypy, build, and diff
-checks pass. The unchanged legacy 001–106 bootstrap and schema tests pass.
-Remote CI was not executed and is `NOT_RUN`.
+At implementation checkpoint `44caf94`, all 3,195 collected repository tests
+pass in five non-overlapping resource-bounded batches of 974 + 324 + 954 + 705
++ 238 against a repeatedly recreated dedicated PostgreSQL 16.14 database. All
+155 target refoundation tests pass, including 19 Selection tests and the
+behavior-preserved 69 Market tests. The unchanged legacy 001–106 bootstrap,
+schema, compatibility, and regression suites pass. The 33 platform tests,
+documentation inventory/link checks, Ruff, mypy over 494 source files, package
+build, PostgreSQL clean bootstrap/verify/exact-OID recreate, representative
+query plans, architecture dependency checks, and diff checks pass.
 
-The monolithic local `pytest -q` attempt is not reported as PASS: it exhausted
-the host filesystem after repeated 283-table test-schema churn and caused a
-PostgreSQL recovery cycle. The complete 3,175-node collection subsequently
-passed in five disjoint batches with an explicit database recreate between
-batches; no assertion, skip, or xfail changed.
+The full 3,195-node run preceded removal of pure formatter-only churn in the
+affected files; all affected Market and complete refoundation suites then passed
+again on the exact checkpoint content. No assertion, fixture meaning,
+skip/xfail marker, schema invariant, or application behavior was relaxed.
 
-The earlier governance-fix checkpoint separately established that:
+Two non-final invocations are not counted as PASS. A Unix-socket test URL was
+rejected because legacy settings require an explicit host; the database was
+rebuilt and the run used `postgresql://localhost/...`. A parallel target/legacy
+attempt against one database was rejected because target bootstrap correctly
+found live legacy temporary schemas; serial, isolated, explicitly recreated
+runs then passed.
 
-- every Python-based repository gate in `AGENTS.md` and `README.md` executes
-  through `uv run`; a regression test rejects a return to bare `python` in
-  either entry point;
-- the clean, non-activated shell resolves bare `python` to pyenv 3.12.13 while
-  `uv run python` resolves to the worktree `.venv` on Python 3.12.2 with the
-  frozen lock's Ruff 0.16.1, mypy 2.3.0, and pytest 9.1.1;
-- the fresh-PostgreSQL full regression passes with 3,101 tests collected on
-  PostgreSQL 16.14 in a disposable loopback-only cluster and new database OID
-  `515555`;
-- all 61 target Foundation tests, documentation checks, 33 platform tests,
-  focused legacy replay/recovery/concurrency tests, Ruff, mypy over 451 source
-  files, build, and diff checks pass;
-- the legacy 001→106 bootstrap/schema checks still pass without modification;
-- a clean database proves missing-schema fail-closed, explicit bootstrap,
-  idempotent retry, exact checksum/catalog verification, and guarded recreate.
-
-One non-final host-database run was stopped at 58% after catalog autovacuum and
-schema teardown exhausted the host lock table while only 637 MiB of disk
-remained. Its exact disposable database was removed. The unchanged command then
-passed at 100% in the isolated cluster with `max_locks_per_transaction=256`, one
-autovacuum worker, and a 4 GiB RAM volume; no assertion, skip, migration, source,
-or test order was changed. GitHub Actions remain disabled, so remote CI is
-`BLOCKED_BY_REPOSITORY_CONFIGURATION / NOT_RUN`, not PASS.
-
-The source, legacy-migration, and target-baseline tree IDs remain identical to
-the Foundation checkpoint. The WP-03-equivalent rerun therefore keeps the
-Foundation exit gate at `GO`; it does not require reverting the mainline merge.
-It does not prove Market/PIT, any later target context, Provider, Alpha, broker,
-Production, or Runtime/CLI Cutover, and none of those evidence classes were
-rerun.
+GitHub's repository Actions permission endpoint reports `enabled=false`.
+Remote CI is therefore `BLOCKED_BY_REPOSITORY_CONFIGURATION / NOT_RUN`, not
+PASS. Local engineering proof does not establish Provider qualification,
+Formal PIT, Alpha/OOS, broker, trading, Production, or Runtime/CLI Cutover.
 
 ## Research and production ceiling
 
