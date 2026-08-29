@@ -205,6 +205,14 @@ event, and Runtime Step finalization commit in one transaction whenever the
 business effect is relational. There is no “write fact then best-effort mark
 done” path.
 
+Each business context owns a narrow unit of work. Selection receives only its
+aggregate repository, a read-only Market/PIT query port, and the minimal
+cross-cutting fence/receipt/audit/finalization ports. It does not extend or
+import the Runtime UoW, Market UoW, a Market PostgreSQL repository, Legacy
+Universe, State System, Candidate, or compatibility persistence. When Runtime
+participates, live-fence validation, Selection writes, receipt, audit, and Step
+finalization share that one short Selection transaction.
+
 ## 7. Transaction and lock invariants
 
 The global lock order is:
@@ -298,7 +306,7 @@ admission.
 Representative commands:
 
 - `CaptureMarketData`, `NormalizeMarketFacts`, `FreezeUniverse`,
-  `AssessEligibility`, `BuildCandidateSet`;
+  `AssessEligibility`; later, after Research definitions, `BuildCandidateSet`;
 - `AssessContext`, `ProduceSignal`, `ProduceForecast`,
   `CreateOpportunity`, `ProposePortfolio`, `AssessRisk`;
 - `ApproveExecutionIntent`, `RecordObservedFill`, `CorrectFill`,
@@ -313,12 +321,14 @@ The command dependency is one-way:
 Same-run Context cannot mutate or filter the already frozen Universe,
 Eligibility, or Candidate Set. `CreateOpportunity` carries no Risk
 authorization; only `AssessRisk` after `ProposePortfolio` creates a Risk
-Decision.
+Decision. The current Selection Core Runtime slice stops after
+`ASSESS_ELIGIBILITY`; it does not create a Candidate or Decision fact.
 
 Representative queries:
 
 - exact/as-of Market facts and source lineage;
-- Universe/Eligibility/Candidate dossier at Decision time;
+- Selection Universe/Eligibility dossier at Decision time; later Candidate
+  dossier after Candidate closure;
 - Decision dossier from Candidate through Risk;
 - current Position and Strategy sleeve projection;
 - Outcome/metric availability;

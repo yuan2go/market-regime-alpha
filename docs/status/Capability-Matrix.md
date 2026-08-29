@@ -3,11 +3,11 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Non-authoritative exact-SHA capability read model
 > **Owner:** Market Regime Alpha maintainers
-> **Generated At:** 2026-08-28T18:46:35Z
-> **Repository SHA:** `e7a276a30f71a98b6b32580fa0a4840c2e269b9f`
+> **Generated At:** 2026-08-29T02:51:45Z
+> **Repository SHA:** `44caf94aac86c51bb0e69968aadc4dc47ff84907`
 > **Schema Epochs:** canonical business `LEGACY_MIGRATIONS_001_106`; target draft `MRA_REFOUNDATION_1 / DRAFT / NOT_CUT_OVER`
-> **Generator:** `WP-ARCHITECTURE-REFOUNDATION-04 Market/PIT implementation audit`
-> **Source Tree IDs:** source `3a8e9f062861f90d26a21c85835021386b662c8e`; legacy migrations `6d3730548780ad6244d2cfecb4fb3559064b6f06`; target baseline `b1d64d2525ee9be7aa1f32861796f148c62095a9`; tests `05faaca3c0282f7aae6f49f6ccefe4824a22ffbb`
+> **Generator:** `WP-ARCHITECTURE-REFOUNDATION-05 Selection Core implementation audit`
+> **Source Tree IDs:** source `d9f5ff8ac1b6eb736cc0f14f8dc2b8ed1d6d577c`; legacy migrations `6d3730548780ad6244d2cfecb4fb3559064b6f06`; target baseline `f514b18d29f48e730d0bce6c243df774bd2fceeb`; tests `280a3cc898e00bab91d5f7c92acd3f3f9b3a0e4a`
 > **Code Evidence:** target and legacy source/migration packages plus `tests`
 
 This view separates current capability from target convergence. It is invalid
@@ -15,17 +15,24 @@ after its source tree changes and cannot promote a capability or research claim.
 The complete preservation contract remains the
 [Capability Preservation Matrix](../references/WP-ARCHITECTURE-REFOUNDATION-01-Capability-Preservation-Matrix.md).
 
-Cross-cutting Foundation is `MERGED_MAIN / EXIT_GATE_PASS`. Market/PIT is
-`IMPLEMENTED_DRAFT / EXIT_GATE_PASS / NOT_CUT_OVER` on the current
-implementation line. Neither state grants canonical business Authority or
+Cross-cutting Foundation is `MERGED_MAIN / EXIT_GATE_PASS`. Market/PIT and
+Selection Core are `IMPLEMENTED_DRAFT / EXIT_GATE_PASS / NOT_CUT_OVER` on the
+current implementation line. No state grants canonical business Authority or
 creates dual write.
 
-The governance-fix checkpoint binds repository Python gates to the frozen
-project environment and passes the WP-03-equivalent engineering gate with 3,101
-tests collected on a fresh isolated PostgreSQL 16 database. Source, legacy
-migration, and target baseline tree IDs are unchanged, so Foundation remains
-`EXIT_GATE_PASS`. This refresh changes no capability row and supplies no Market,
-research, Provider, Alpha, broker, Production, or trading evidence.
+The repository Python gates remain bound to the frozen `uv run` environment.
+At this snapshot all 3,195 collected tests pass against an explicitly recreated
+PostgreSQL 16 database, including 155 target refoundation tests. This refresh
+advances only the test-only Universe and Eligibility convergence rows. It
+supplies no Candidate, Research, Provider qualification, Formal PIT, Alpha,
+broker, Production, or trading evidence.
+
+The earlier governance follow-up adds `CLAUDE.md` to the protected entry points
+without duplicating the authoritative command catalog. Its focused
+documentation, regression, Ruff, and diff checks pass, while its full
+engineering suite, PostgreSQL tests, mypy, build, Market/research backtests, and
+all stronger evidence classes are `NOT_RUN`. That follow-up changes no
+capability row and does not roll back the later Selection checkpoint.
 
 | Capability | Current implementation truth | Approved target owner | Target convergence |
 |---|---|---|---|
@@ -34,9 +41,9 @@ research, Provider, Alpha, broker, Production, or trading evidence.
 | ETF | current instrument/reference and rotation paths; target instrument/classification facts implemented, rotation Context absent | Market classification + Decision Context | `PARTIAL_MARKET_SLICE / NOT_CUT_OVER` |
 | Theme | current reference/state/context paths; target taxonomy/membership facts implemented, Theme Context absent | Market classification + Decision Context | `PARTIAL_MARKET_SLICE / NOT_CUT_OVER` |
 | Capital | current derived public-proxy state | Decision Context `CAPITAL_PROXY` | `NOT_STARTED` |
-| Universe | current Runtime Scope/free/historical owners | Universe & Eligibility | `NOT_STARTED` |
-| Eligibility | current funnel/orderability rules across paths | Universe & Eligibility | `NOT_STARTED` |
-| Candidate | current Candidate/State/daily/historical artifacts | Universe & Eligibility | `NOT_STARTED` |
+| Universe | current Runtime Scope/free/historical owners remain canonical; target explicit immutable scope/revision/member owner is implemented test-only | Selection | `IMPLEMENTED_DRAFT / EXIT_GATE_PASS / NOT_CUT_OVER` |
+| Eligibility | current funnel/orderability rules across paths remain canonical; target typed policy/rule/assessment/reason owner is implemented test-only | Selection | `IMPLEMENTED_DRAFT / EXIT_GATE_PASS / NOT_CUT_OVER` |
+| Candidate | current Candidate/State/daily/historical artifacts; no target Candidate owner or tables | Candidate after minimal Research Definition substrate | `DEFERRED / NO-GO` |
 | Signal | current Signal artifacts and consumers | Decision Support | `NOT_STARTED` |
 | Forecast | current path/conditional/model estimates | Decision Support; definitions in Research | `NOT_STARTED` |
 | Opportunity | current Strategy Opportunity and pre-Strategy risk-era persistence | Decision Support, without pre-Strategy Risk authority | `NOT_STARTED` |

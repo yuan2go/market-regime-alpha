@@ -3,7 +3,7 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Documentation navigation and precedence only
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-28
+> **Last Updated:** 2026-08-29
 > **Code Evidence:** `src/market_regime_alpha`, both legacy and target PostgreSQL migration packages, `tests`
 
 Documentation never creates implementation truth, research evidence,
@@ -18,11 +18,12 @@ qualification, account state, or trading authority.
 
 The approved Target is normative for new implementation. Foundation is merged
 to `main`. The current implementation line extends its mutable
-`MRA_REFOUNDATION_1` draft from 13 Foundation relations to 25 relations by
-adding the isolated Market/PIT owner. The target Runtime exercises only a
-test-scoped `CAPTURE -> NORMALIZE_PIT` slice. Until Runtime/CLI Cutover, the
-existing 283-table system remains the only canonical business implementation;
-there is no dual write or target fallback.
+`MRA_REFOUNDATION_1` draft from 13 Foundation tables to 32 tables by adding the
+isolated Market/PIT and Selection Core owners. The target Runtime exercises only
+a test-scoped `CAPTURE -> NORMALIZE_PIT -> FREEZE_UNIVERSE ->
+ASSESS_ELIGIBILITY` slice. Until Runtime/CLI Cutover, the existing 283-table
+system remains the only canonical business implementation; there is no dual
+write or target fallback.
 
 ## Normative authority order
 
@@ -78,6 +79,9 @@ not current completion.
   — exact-SHA engineering proof for the merged Foundation substrate.
 - [WP-04 Market/PIT Verification](references/WP-ARCHITECTURE-REFOUNDATION-04-Market-PIT-Verification.md)
   — exact-SHA engineering proof for the test-only Market/PIT draft slice.
+- [WP-05 Selection Core Verification](references/WP-ARCHITECTURE-REFOUNDATION-05-Selection-Core-Verification.md)
+  — exact-SHA engineering proof for the test-only Universe/Eligibility draft
+  slice; Candidate remains deferred.
 - [Runtime Runbook](operations/Runtime-Runbook.md) — current 001–106 operator
   procedures only; it will be rewritten at Runtime/CLI Cutover.
 

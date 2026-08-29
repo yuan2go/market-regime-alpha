@@ -70,12 +70,12 @@ caller may write owner tables through a generic repository or raw SQL.
 | Instrument fact revision | Market & PIT | `NormalizeInstrumentFact` | `instrument_fact_revision` | append-only typed status/shares/limit/reference fact | Eligibility, Risk |
 | Corporate action revision | Market & PIT | `NormalizeCorporateAction` | `corporate_action_revision` | append-only source revision; no silent adjustment | Outcome, Position basis |
 | Expected-source gap | Market & PIT | `RecordSourceGap` | `source_gap` | explicit missing/placeholder/conflict interval and reason | PIT query, operators |
-| Universe definition/revision | Universe & Eligibility | `FreezeUniverse` | `universe`, `universe_revision` | immutable policy/config/source binding per revision | membership |
-| Universe membership | Universe & Eligibility | same `FreezeUniverse` command | `universe_member` | every scoped instrument classified included/excluded/unknown with evidence | Eligibility, research |
-| Eligibility policy/rules | Universe & Eligibility | `RegisterEligibilityPolicy` | `eligibility_policy`, `eligibility_rule` | immutable typed policy and complete ordered criteria | assessment |
-| Eligibility assessment | Universe & Eligibility | `AssessEligibility` | `eligibility_assessment`, `eligibility_reason` | one instrument/policy/universe/Decision-time result; exact evidence | Candidate, funnel |
-| Candidate policy | Universe & Eligibility | `RegisterCandidatePolicy` | `candidate_policy`, `candidate_policy_component` | immutable ranking, components and tie/selection rules | Candidate command |
-| Candidate Set/Candidate | Universe & Eligibility | `BuildCandidateSet` | `candidate_set`, `candidate`, `candidate_score_component` | immutable complete funnel; Candidate requires eligible assessment | Decision, research |
+| Universe definition/revision | Selection | `FreezeUniverse` | `universe`, `universe_revision` | immutable explicit scope-spec/config identity; no implicit all-current-instrument scope | membership |
+| Universe membership | Selection | same `FreezeUniverse` command | `universe_member` | every explicitly scoped instrument classified included/excluded/unknown with exact Market lineage | Eligibility, research |
+| Eligibility policy/rules | Selection | `RegisterEligibilityPolicy` | `eligibility_policy`, `eligibility_rule` | immutable typed policy and complete ordered criteria; units/window/operator/threshold explicit | assessment |
+| Eligibility assessment | Selection | `AssessEligibility` | `eligibility_assessment`, `eligibility_reason` | every rule evaluated for every scoped instrument; one three-state aggregate with exact Market lineage | Candidate, funnel |
+| Candidate policy | Selection, deferred | `RegisterCandidatePolicy` | `candidate_policy`, `candidate_policy_component` | immutable ranking and actual policy-required Research definition FKs; no future placeholders | Candidate command |
+| Candidate Set/Candidate | Selection, deferred | `BuildCandidateSet` | `candidate_set`, `candidate`, `candidate_score_component` | immutable complete funnel; exists before and independently of Decision Run or Qualification | Decision, research |
 | Dataset | Research & Qualification | `RegisterDataset` | `dataset`, `dataset_source` | content hash plus exact temporal/universe/source lineage | experiments/models |
 | Feature definition | Research & Qualification | `RegisterFeatureDefinition` | `feature_definition` | immutable semantics/code/config identity | Candidate/model |
 | Target/checkpoints | Research & Qualification | `RegisterTargetDefinition` | `target_definition`, `target_checkpoint` | immutable Decision reference, horizon and metric requirements | Forecast/Outcome |
@@ -88,7 +88,7 @@ caller may write owner tables through a generic repository or raw SQL.
 | Assessment | Research & Qualification | `AssessResearchClaim` | `assessment` | status in closed vocabulary; negative/inconclusive preserved | Qualification, reports |
 | Qualification policy/floors | Research & Qualification | `RegisterQualificationPolicy` | `qualification_policy`, `qualification_policy_floor` | immutable purpose and complete floor/decision-rule revision | qualification command |
 | Qualification | Research & Qualification | `DecideQualification` | `qualification_decision`, `qualification_floor_result` | one purpose/subject/revision; every required floor explicit | runtime admission |
-| Decision Run | Decision Support | `RunDecision` | `decision_run` | freezes Candidate Set, Decision time, policies, code/config | all decision facts |
+| Decision Run | Decision Support | `RunDecision` | `decision_run` | required FK to an already-existing Candidate Set; freezes Decision time, policies, code/config | all decision facts |
 | Context assessment | Decision Support | `AssessContext` | `context_assessment`, `context_metric` | typed Regime/ETF/Theme/Capital kind with evidence and Known Time | Signal/Strategy |
 | Signal | Decision Support | `ProduceSignal` | `signal` | immutable setup assertion; no probability claim | Forecast/Opportunity |
 | Forecast | Decision Support | `ProduceForecast` | `forecast`, `forecast_estimate` | bound to Target/checkpoint/model; calibration state explicit | Opportunity/Outcome |

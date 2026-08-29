@@ -15,6 +15,8 @@ PROJECT_ENVIRONMENT_GATE_COMMANDS = (
     "uv run python -m mypy",
     "uv run python -m build",
 )
+REPOSITORY_GATE_CATALOGS = ("AGENTS.md", "README.md")
+REPOSITORY_ENTRYPOINTS = (*REPOSITORY_GATE_CATALOGS, "CLAUDE.md")
 
 
 def test_uv_lock_and_ci_define_the_frozen_python_312_gate() -> None:
@@ -36,7 +38,7 @@ def test_uv_lock_and_ci_define_the_frozen_python_312_gate() -> None:
 
 
 def test_repository_entrypoint_gates_use_the_project_environment() -> None:
-    for relative_path in ("AGENTS.md", "README.md"):
+    for relative_path in REPOSITORY_GATE_CATALOGS:
         lines = (ROOT / relative_path).read_text(encoding="utf-8").splitlines()
 
         assert "uv sync --frozen --extra dev --extra postgres" in lines
@@ -45,13 +47,20 @@ def test_repository_entrypoint_gates_use_the_project_environment() -> None:
                 line == command or line.endswith(f" {command}") for line in lines
             ), f"{relative_path}: missing project-environment command: {command}"
 
-        bare_commands = [
-            line for line in lines if BARE_PYTHON_COMMAND.match(line)
-        ]
+    for relative_path in REPOSITORY_ENTRYPOINTS:
+        lines = (ROOT / relative_path).read_text(encoding="utf-8").splitlines()
+        bare_commands = [line for line in lines if BARE_PYTHON_COMMAND.match(line)]
         assert bare_commands == [], (
             f"{relative_path}: bare Python commands bypass the uv project environment: "
             f"{bare_commands}"
         )
+
+    claude_entrypoint = " ".join(
+        (ROOT / "CLAUDE.md").read_text(encoding="utf-8").split()
+    )
+    assert "Use the repository gate defined in `AGENTS.md`" in claude_entrypoint
+    assert "`uv sync` does not activate the project environment" in claude_entrypoint
+    assert "every Python-based gate through `uv run`" in claude_entrypoint
 
 
 def test_setuptools_remains_the_build_backend() -> None:

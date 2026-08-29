@@ -30,7 +30,6 @@ from market_regime_alpha.market.domain import (
     ClassificationRevision,
     CorporateActionRevision,
     CorporateActionType,
-    DecisionReferenceStatus,
     GapFactKind,
     GapKind,
     GapReasonCode,
@@ -150,27 +149,18 @@ class BarrierNormalizer(FixedNormalizer):
         return batch
 
 
-class PausingSnapshotQueries(PostgresMarketQueries):
+class PausingExactBarQueries(PostgresMarketQueries):
     def __init__(self, *args, after_session: Event, resume: Event, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._after_session = after_session
         self._resume = resume
 
-    def _bind_snapshot(self, connection):
-        return PausingSnapshotQueries(
-            self._pool,
-            provider_product_id=self._provider_product_id,
-            _connection=connection,
-            after_session=self._after_session,
-            resume=self._resume,
-        )
-
-    def trading_session_as_of(self, **kwargs):
-        session = super().trading_session_as_of(**kwargs)
+    def exact_bar_as_of(self, **kwargs):
+        bar = super().exact_bar_as_of(**kwargs)
         self._after_session.set()
         if not self._resume.wait(timeout=10):
-            raise TimeoutError("test did not release the PIT snapshot")
-        return session
+            raise TimeoutError("test did not release the exact-bar query")
+        return bar
 
 
 @pytest.fixture
@@ -1208,14 +1198,15 @@ def test_normalize_writes_reference_lineage_and_exact_asof_market_authority(
     )
     assert classification_members.status is ClassificationEvidenceStatus.AVAILABLE
     assert classification_members.members == (InstrumentId.parse(instrument_id),)
-    reference = queries.decision_reference_1455(
-        instrument_id=instrument_id,
-        exchange="XSHG",
-        session_date=date(2026, 8, 28),
-        decision_time=normalized.decision_visible_at,
+    assert (
+        queries.security_status_as_of(
+            instrument_id=instrument_id,
+            session_id=session_id,
+            evidence_scope=EvidenceScope.DECISION_SESSION,
+            decision_time=normalized.decision_visible_at,
+        )
+        is SecurityStatus.ACTIVE
     )
-    assert reference.status is DecisionReferenceStatus.AVAILABLE
-    assert reference.bar == bar
     actions = queries.corporate_actions_as_of(
         instrument_id=instrument_id,
         ex_session_id=session_id,
@@ -1469,13 +1460,16 @@ def test_global_session_and_classification_can_feed_another_product(
     )
     assert session is not None
     assert session.source_capture_id == reference_capture.capture.capture_id
-    reference = fact_queries.decision_reference_1455(
+    exact_bar = fact_queries.exact_bar_as_of(
         instrument_id=instrument_id,
-        exchange="XSHG",
-        session_date=date(2026, 8, 28),
+        session_id=session_id,
+        timeframe=BarTimeframe.MINUTE_5,
+        price_basis=PriceBasis.RAW_UNADJUSTED,
+        event_start=event_end - timedelta(minutes=5),
+        event_end=event_end,
         decision_time=fact_result.decision_visible_at,
     )
-    assert reference.status is DecisionReferenceStatus.AVAILABLE
+    assert exact_bar is not None and exact_bar.close == _cny("10.1")
     members = fact_queries.classification_members_as_of(
         classification_scheme="INDEX",
         classification_code="CROSS_PRODUCT",
@@ -1571,7 +1565,7 @@ def test_absent_classification_is_not_a_verified_empty_membership(
     assert result.members == ()
 
 
-def test_decision_reference_does_not_infer_suspension_from_zero_volume_or_flat_price(
+def test_generic_market_facts_do_not_infer_suspension_from_flat_zero_volume_bar(
     market_stack,
 ) -> None:
     application, queries, _, _, _, product, database_url = market_stack
@@ -1636,16 +1630,31 @@ def test_decision_reference_does_not_infer_suspension_from_zero_volume_or_flat_p
         FixedNormalizer(batch),
         _context("normalize-flat-zero", "NORMALIZE_MARKET_PIT"),
     )
-    reference = queries.decision_reference_1455(
+    bar = queries.exact_bar_as_of(
         instrument_id=instrument_id,
-        exchange="XSHG",
-        session_date=date(2026, 8, 28),
+        session_id=session_id,
+        timeframe=BarTimeframe.MINUTE_5,
+        price_basis=PriceBasis.RAW_UNADJUSTED,
+        event_start=end - timedelta(minutes=5),
+        event_end=end,
         decision_time=normalized.decision_visible_at,
     )
-    assert reference.status is DecisionReferenceStatus.AVAILABLE
+    assert bar is not None and bar.close == _cny("4.000")
+    assert bar.volume == _shares("0")
+    assert (
+        queries.security_status_as_of(
+            instrument_id=instrument_id,
+            session_id=session_id,
+            evidence_scope=EvidenceScope.DECISION_SESSION,
+            decision_time=normalized.decision_visible_at,
+        )
+        is None
+    )
 
 
-def test_decision_reference_uses_one_repeatable_read_snapshot(market_stack) -> None:
+def test_completed_exact_bar_query_is_not_retroactively_changed_by_later_gap(
+    market_stack,
+) -> None:
     application, queries, _, pool, _, product, _ = market_stack
     captured = _capture(application, product, "snapshot-bar", b"valid bar")
     instrument_id = uuid4()
@@ -1711,7 +1720,7 @@ def test_decision_reference_uses_one_repeatable_read_snapshot(market_stack) -> N
     assert initial.decision_visible_at is not None
     after_session = Event()
     resume = Event()
-    snapshot_queries = PausingSnapshotQueries(
+    snapshot_queries = PausingExactBarQueries(
         pool,
         provider_product_id=product.provider_product_id,
         after_session=after_session,
@@ -1720,13 +1729,14 @@ def test_decision_reference_uses_one_repeatable_read_snapshot(market_stack) -> N
 
     with ThreadPoolExecutor(max_workers=1) as executor:
         pending = executor.submit(
-            snapshot_queries.decision_reference_1455,
+            snapshot_queries.exact_bar_as_of,
             instrument_id=instrument_id,
-            exchange="XSHG",
-            session_date=date(2026, 8, 28),
-            decision_time=DecisionTime(
-                initial.decision_visible_at.value + timedelta(minutes=1)
-            ),
+            session_id=session_id,
+            timeframe=BarTimeframe.MINUTE_5,
+            price_basis=PriceBasis.RAW_UNADJUSTED,
+            event_start=event_end - timedelta(minutes=5),
+            event_end=event_end,
+            decision_time=DecisionTime(initial.decision_visible_at.value + timedelta(minutes=1)),
         )
         assert after_session.wait(timeout=10)
         missing_capture = _capture(
@@ -1770,19 +1780,22 @@ def test_decision_reference_uses_one_repeatable_read_snapshot(market_stack) -> N
             resume.set()
         in_flight = pending.result(timeout=10)
 
-    assert in_flight.status is DecisionReferenceStatus.AVAILABLE
+    assert in_flight is not None and in_flight.close == _cny("5")
     assert missing.decision_visible_at is not None
-    fresh = queries.decision_reference_1455(
-        instrument_id=instrument_id,
-        exchange="XSHG",
-        session_date=date(2026, 8, 28),
-        decision_time=missing.decision_visible_at,
-    )
-    assert fresh.status is DecisionReferenceStatus.UNAVAILABLE
-    assert fresh.reason_code == "EXACT_BAR_MISSING"
+    with pytest.raises(MarketEvidenceGapError) as gap_error:
+        queries.exact_bar_as_of(
+            instrument_id=instrument_id,
+            session_id=session_id,
+            timeframe=BarTimeframe.MINUTE_5,
+            price_basis=PriceBasis.RAW_UNADJUSTED,
+            event_start=event_end - timedelta(minutes=5),
+            event_end=event_end,
+            decision_time=missing.decision_visible_at,
+        )
+    assert gap_error.value.gap.reason_code is GapReasonCode.EXACT_BAR_MISSING
 
 
-def test_exact_1455_placeholder_blocks_previous_session_and_daily_fallbacks(
+def test_exact_bar_placeholder_blocks_previous_session_and_daily_fallbacks(
     market_stack,
 ) -> None:
     application, queries, _, _, _, product, database_url = market_stack
@@ -1925,14 +1938,6 @@ def test_exact_1455_placeholder_blocks_previous_session_and_daily_fallbacks(
             decision_time=placeholder_normalized.decision_visible_at,
         )
     assert gap_error.value.gap.reason_code is GapReasonCode.NULL_OHLC_PLACEHOLDER
-    reference = queries.decision_reference_1455(
-        instrument_id=instrument_id,
-        exchange="XSHG",
-        session_date=date(2026, 8, 28),
-        decision_time=placeholder_normalized.decision_visible_at,
-    )
-    assert reference.status is DecisionReferenceStatus.UNAVAILABLE
-    assert reference.reason_code == "NULL_OHLC_PLACEHOLDER"
     with psycopg.connect(database_url) as connection:
         assert connection.execute(
             """
@@ -1977,16 +1982,19 @@ def test_exact_1455_placeholder_blocks_previous_session_and_daily_fallbacks(
         FixedNormalizer(corrected_batch),
         _context("normalize-placeholder-corrected", "NORMALIZE_MARKET_PIT"),
     )
-    corrected_reference = queries.decision_reference_1455(
+    corrected_bar = queries.exact_bar_as_of(
         instrument_id=instrument_id,
-        exchange="XSHG",
-        session_date=date(2026, 8, 28),
+        session_id=current_session_id,
+        timeframe=BarTimeframe.MINUTE_5,
+        price_basis=PriceBasis.RAW_UNADJUSTED,
+        event_start=current_end - timedelta(minutes=5),
+        event_end=current_end,
         decision_time=corrected_normalized.decision_visible_at,
     )
-    assert corrected_reference.status is DecisionReferenceStatus.AVAILABLE
+    assert corrected_bar is not None and corrected_bar.close == _cny("15.15")
 
 
-def test_1455_gap_precedence_never_downgrades_conflict_to_missing(
+def test_exact_bar_gap_precedence_never_downgrades_conflict_to_missing(
     market_stack,
 ) -> None:
     application, queries, _, _, _, product, _ = market_stack
@@ -2046,8 +2054,7 @@ def test_1455_gap_precedence_never_downgrades_conflict_to_missing(
                         instrument_fact_kind=None,
                         timeframe=BarTimeframe.MINUTE_5,
                         price_basis=PriceBasis.RAW_UNADJUSTED,
-                        event_start=session.decision_reference_at
-                        - timedelta(minutes=5),
+                        event_start=session.decision_reference_at - timedelta(minutes=5),
                         event_end=session.decision_reference_at,
                         detail="two incompatible exact bars",
                     ),
@@ -2093,14 +2100,17 @@ def test_1455_gap_precedence_never_downgrades_conflict_to_missing(
         _context("normalize-gap-precedence-status", "NORMALIZE_MARKET_PIT"),
     )
 
-    result = queries.decision_reference_1455(
-        instrument_id=instrument_id,
-        exchange="XSHG",
-        session_date=session_date,
-        decision_time=latest.decision_visible_at,
-    )
-    assert result.status is DecisionReferenceStatus.FAILED
-    assert result.reason_code is GapReasonCode.CONFLICTING_SOURCE_REVISIONS
+    with pytest.raises(MarketEvidenceGapError) as gap_error:
+        queries.exact_bar_as_of(
+            instrument_id=instrument_id,
+            session_id=session_id,
+            timeframe=BarTimeframe.MINUTE_5,
+            price_basis=PriceBasis.RAW_UNADJUSTED,
+            event_start=session.decision_reference_at - timedelta(minutes=5),
+            event_end=session.decision_reference_at,
+            decision_time=latest.decision_visible_at,
+        )
+    assert gap_error.value.gap.reason_code is GapReasonCode.CONFLICTING_SOURCE_REVISIONS
 
 
 def test_revision_visibility_basis_separation_and_typed_current_suspension(
@@ -2283,21 +2293,20 @@ def test_revision_visibility_basis_separation_and_typed_current_suspension(
     assert first_visible is not None and first_visible.bar_revision_id == first_bar_id
     assert second_visible is not None and second_visible.bar_revision_id == second_bar_id
     assert forward is not None and forward.close == _cny("3.91")
-    before = queries.decision_reference_1455(
+    before = queries.security_status_as_of(
         instrument_id=instrument_id,
-        exchange="XSHG",
-        session_date=date(2026, 8, 28),
+        session_id=session_id,
+        evidence_scope=EvidenceScope.DECISION_SESSION,
         decision_time=first_normalized.decision_visible_at,
     )
-    after = queries.decision_reference_1455(
+    after = queries.security_status_as_of(
         instrument_id=instrument_id,
-        exchange="XSHG",
-        session_date=date(2026, 8, 28),
+        session_id=session_id,
+        evidence_scope=EvidenceScope.DECISION_SESSION,
         decision_time=second_normalized.decision_visible_at,
     )
-    assert before.status is DecisionReferenceStatus.AVAILABLE
-    assert after.status is DecisionReferenceStatus.UNAVAILABLE
-    assert after.reason_code == "CURRENT_SESSION_SUSPENDED"
+    assert before is SecurityStatus.ACTIVE
+    assert after is SecurityStatus.SUSPENDED
 
     with psycopg.connect(database_url) as connection:
         with pytest.raises(psycopg.errors.ObjectNotInPrerequisiteState, match="append-only"):
@@ -2331,7 +2340,7 @@ def test_revision_visibility_basis_separation_and_typed_current_suspension(
         )
 
 
-def test_corrupt_independent_security_status_blocks_valid_1455_bar(
+def test_corrupt_independent_security_status_does_not_invalidate_exact_bar(
     market_stack,
 ) -> None:
     application, queries, _, _, _, product, database_url = market_stack
@@ -2420,25 +2429,49 @@ def test_corrupt_independent_security_status_blocks_valid_1455_bar(
         FixedNormalizer(status_batch),
         _context("normalize-split-status-fact", "NORMALIZE_MARKET_PIT"),
     )
-    assert queries.decision_reference_1455(
+    exact_bar = queries.exact_bar_as_of(
         instrument_id=instrument_id,
-        exchange="XSHG",
-        session_date=date(2026, 8, 28),
+        session_id=session_id,
+        timeframe=BarTimeframe.MINUTE_5,
+        price_basis=PriceBasis.RAW_UNADJUSTED,
+        event_start=session.decision_reference_at - timedelta(minutes=5),
+        event_end=session.decision_reference_at,
         decision_time=status_result.decision_visible_at,
-    ).status is DecisionReferenceStatus.AVAILABLE
+    )
+    assert exact_bar is not None
+    assert (
+        queries.security_status_as_of(
+            instrument_id=instrument_id,
+            session_id=session_id,
+            evidence_scope=EvidenceScope.DECISION_SESSION,
+            decision_time=status_result.decision_visible_at,
+        )
+        is SecurityStatus.ACTIVE
+    )
     with psycopg.connect(database_url) as connection:
         connection.execute(
-            "UPDATE mra.artifact SET integrity_state = 'CORRUPT' "
-            "WHERE artifact_id = %s",
+            "UPDATE mra.artifact SET integrity_state = 'CORRUPT' WHERE artifact_id = %s",
             (status_capture.capture.artifact_id,),
         )
     with pytest.raises(ArtifactIntegrityError, match="SecurityStatus evidence"):
-        queries.decision_reference_1455(
+        queries.security_status_as_of(
             instrument_id=instrument_id,
-            exchange="XSHG",
-            session_date=date(2026, 8, 28),
+            session_id=session_id,
+            evidence_scope=EvidenceScope.DECISION_SESSION,
             decision_time=status_result.decision_visible_at,
         )
+    assert (
+        queries.exact_bar_as_of(
+            instrument_id=instrument_id,
+            session_id=session_id,
+            timeframe=BarTimeframe.MINUTE_5,
+            price_basis=PriceBasis.RAW_UNADJUSTED,
+            event_start=session.decision_reference_at - timedelta(minutes=5),
+            event_end=session.decision_reference_at,
+            decision_time=status_result.decision_visible_at,
+        )
+        == exact_bar
+    )
 
 
 def test_effective_dated_identifier_and_membership_close_then_replace(

@@ -10,8 +10,6 @@ import pytest
 from market_regime_alpha.market.domain import (
     BarTimeframe,
     CaptureStatus,
-    DecisionReferenceReason,
-    DecisionReferenceStatus,
     EvidenceScope,
     GapFactKind,
     GapKind,
@@ -26,7 +24,6 @@ from market_regime_alpha.market.domain import (
     SourceGap,
     TemporalEnvelope,
     TradingSession,
-    classify_decision_reference,
 )
 from market_regime_alpha.market.ports import CaptureRequest
 from market_regime_alpha.shared.financial import Money, Quantity, QuantityUnit
@@ -265,7 +262,7 @@ def test_placeholder_missing_and_provider_failure_are_typed_gaps_not_bars() -> N
         )
 
 
-def test_exact_1455_reference_never_uses_previous_session_daily_or_adjusted_data() -> None:
+def test_generic_bar_and_status_types_keep_exact_scope_basis_and_session_separate() -> None:
     session = _session()
     raw = _bar(session)
     prior_status = SecurityStatusFactRevision(
@@ -281,95 +278,64 @@ def test_exact_1455_reference_never_uses_previous_session_daily_or_adjusted_data
         revision=1,
         supersedes_revision_id=None,
     )
-    available = classify_decision_reference(
-        session=session,
-        bar=raw,
-        current_session_status=None,
-        gap=None,
+    adjusted = _bar(session, basis=PriceBasis.FORWARD_ADJUSTED)
+    prior = MarketBarRevision(
+        bar_revision_id=uuid4(),
+        provider_product_id=raw.provider_product_id,
+        capture_id=raw.capture_id,
+        instrument_id=raw.instrument_id,
+        session_id=uuid4(),
+        timeframe=BarTimeframe.DAILY,
+        price_basis=PriceBasis.RAW_UNADJUSTED,
+        event_start=session.open_at - timedelta(days=1),
+        event_end=session.close_at - timedelta(days=1),
+        revision=1,
+        supersedes_revision_id=None,
+        open=_cny("10"),
+        high=_cny("10"),
+        low=_cny("10"),
+        close=_cny("10"),
+        volume=_shares("0"),
+        turnover=None,
     )
-    assert available.status is DecisionReferenceStatus.AVAILABLE
-
-    explicit_suspension = classify_decision_reference(
-        session=session,
-        bar=raw,
-        current_session_status=SecurityStatus.SUSPENDED,
-        gap=None,
-    )
-    assert explicit_suspension.status is DecisionReferenceStatus.UNAVAILABLE
-    assert (
-        explicit_suspension.reason_code
-        is DecisionReferenceReason.CURRENT_SESSION_SUSPENDED
-    )
-
-    for invalid in (
-        _bar(session, basis=PriceBasis.FORWARD_ADJUSTED),
-        MarketBarRevision(
-            bar_revision_id=uuid4(),
-            provider_product_id=raw.provider_product_id,
-            capture_id=raw.capture_id,
-            instrument_id=raw.instrument_id,
-            session_id=uuid4(),
-            timeframe=BarTimeframe.DAILY,
-            price_basis=PriceBasis.RAW_UNADJUSTED,
-            event_start=session.open_at - timedelta(days=1),
-            event_end=session.close_at - timedelta(days=1),
-            revision=1,
-            supersedes_revision_id=None,
-            open=_cny("10"),
-            high=_cny("10"),
-            low=_cny("10"),
-            close=_cny("10"),
-            volume=_shares("0"),
-            turnover=None,
-        ),
-    ):
-        result = classify_decision_reference(
-            session=session,
-            bar=invalid,
-            current_session_status=(
-                prior_status.status
-                if prior_status.evidence_scope is EvidenceScope.DECISION_SESSION
-                else None
-            ),
-            gap=None,
-        )
-        assert result.status is DecisionReferenceStatus.FAILED
+    assert raw.timeframe is BarTimeframe.MINUTE_5
+    assert raw.price_basis is PriceBasis.RAW_UNADJUSTED
+    assert raw.session_id == session.session_id
+    assert adjusted.price_basis is PriceBasis.FORWARD_ADJUSTED
+    assert prior.timeframe is BarTimeframe.DAILY
+    assert prior.session_id != session.session_id
+    assert prior_status.evidence_scope is EvidenceScope.PRIOR_SESSION
+    assert prior_status.status is SecurityStatus.SUSPENDED
 
 
 @pytest.mark.parametrize(
-    ("kind", "reason", "expected"),
+    ("kind", "reason"),
     [
         (
             GapKind.MISSING,
             GapReasonCode.EXPECTED_OBSERVATION_MISSING,
-            DecisionReferenceStatus.UNAVAILABLE,
         ),
         (
             GapKind.PLACEHOLDER,
             GapReasonCode.NULL_OHLC_PLACEHOLDER,
-            DecisionReferenceStatus.UNAVAILABLE,
         ),
         (
             GapKind.PROVIDER_FAILURE,
             GapReasonCode.PROVIDER_FAILURE,
-            DecisionReferenceStatus.FAILED,
         ),
         (
             GapKind.CONFLICT,
             GapReasonCode.CONFLICTING_SOURCE_REVISIONS,
-            DecisionReferenceStatus.FAILED,
         ),
         (
             GapKind.INVALID_OHLC,
             GapReasonCode.INVALID_OHLC,
-            DecisionReferenceStatus.FAILED,
         ),
     ],
 )
-def test_gap_class_controls_decision_reference_failure_semantics(
+def test_gap_class_preserves_generic_source_semantics_without_target_resolution(
     kind: GapKind,
     reason: GapReasonCode,
-    expected: DecisionReferenceStatus,
 ) -> None:
     session = _session()
     raw = _bar(session)
@@ -389,13 +355,11 @@ def test_gap_class_controls_decision_reference_failure_semantics(
         event_end=raw.event_end,
         detail=None,
     )
-    result = classify_decision_reference(
-        session=session,
-        bar=None,
-        current_session_status=None,
-        gap=gap,
-    )
-    assert result.status is expected
+    assert gap.gap_kind is kind
+    assert gap.reason_code is reason
+    assert gap.fact_kind is GapFactKind.MARKET_BAR
+    assert gap.timeframe is BarTimeframe.MINUTE_5
+    assert gap.price_basis is PriceBasis.RAW_UNADJUSTED
 
 
 def test_revision_roots_and_normalization_evidence_are_explicit() -> None:

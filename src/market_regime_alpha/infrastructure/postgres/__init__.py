@@ -3,6 +3,7 @@
 from market_regime_alpha.infrastructure.postgres.schema import (
     EXPECTED_FOUNDATION_TABLES,
     EXPECTED_MARKET_TABLES,
+    EXPECTED_SELECTION_TABLES,
     EXPECTED_TARGET_TABLES,
     SCHEMA_EPOCH,
     SchemaManager,
@@ -11,6 +12,7 @@ from market_regime_alpha.infrastructure.postgres.schema import (
 __all__ = [
     "EXPECTED_FOUNDATION_TABLES",
     "EXPECTED_MARKET_TABLES",
+    "EXPECTED_SELECTION_TABLES",
     "EXPECTED_TARGET_TABLES",
     "SCHEMA_EPOCH",
     "SchemaManager",

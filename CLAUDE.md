@@ -26,6 +26,13 @@ Treat the approved Target as the destination, not as evidence that a cutover has
 already occurred. Keep incomplete target modules non-canonical and never create
 dual Authority, fallback, or compatibility write paths.
 
+## Validation
+
+Use the repository gate defined in `AGENTS.md`; do not copy or fork its command
+list here. `uv sync` does not activate the project environment, so invoke every
+Python-based gate through `uv run`, including from a clean or non-activated
+shell.
+
 Project-local persistent reviewer prompts and generic implementation/
 verification Skills are intentionally absent. Use
 `.claude/skills/reconcile-branches/SKILL.md` only when the user explicitly asks

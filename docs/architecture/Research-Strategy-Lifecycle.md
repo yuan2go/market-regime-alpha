@@ -3,7 +3,7 @@
 > **Status:** CANONICAL_TARGET_ARCHITECTURE
 > **Authority:** Target research, context, decision, outcome, and qualification lifecycle
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-28
+> **Last Updated:** 2026-08-29
 > **Implementation State:** DESIGN_CHECKPOINT_ONLY
 > **Code Evidence:** `src/market_regime_alpha/research`, `src/market_regime_alpha/candidates`, `src/market_regime_alpha/signals`, `src/market_regime_alpha/forecasting`, `src/market_regime_alpha/strategies`, `tests/research`
 
@@ -71,20 +71,32 @@ A Context kind survives only while it has a distinct consumer contract or
 research question. Unsupported Context is valid `UNKNOWN` evidence; it is not
 filled with defaults.
 
-## 3. Universe, Eligibility, and Candidate lifecycle
+## 3. Selection lifecycle
 
-1. `FreezeUniverse` resolves one immutable Universe revision from Decision-
-   visible Market/classification/lifecycle evidence.
+1. `FreezeUniverse` resolves one immutable Universe revision from an explicit,
+   immutable, content-identified scope specification and Decision-visible
+   Market classification evidence. It never defaults to all current instruments.
 2. Every scoped instrument receives `INCLUDED`, `EXCLUDED`, or `UNKNOWN`
    membership status; no symbol silently disappears.
-3. `AssessEligibility` applies one policy to every included/unknown member and
-   persists each criterion result.
-4. Missing required data yields `UNKNOWN`; explicit policy failure yields
-   `INELIGIBLE`.
-5. `BuildCandidateSet` accepts only matching `ELIGIBLE` assessments, freezes
-   score components/ties/ranks, and accounts for the full funnel.
-6. An empty Candidate Set is a successful, queryable business result.
-7. Downstream Strategy Runs must record terminal disposition for every Candidate
+3. Universe membership answers research-scope inclusion only. Suspension,
+   special treatment, listing age, liquidity, and limit metadata are Eligibility
+   facts and cannot exclude Universe members.
+4. `AssessEligibility` applies every rule to every scoped member without short
+   circuiting and persists each typed criterion result and exact Market lineage.
+5. A criterion is `FAIL` only on explicit evidence; missing, stale, conflicting,
+   or Decision-invisible evidence is `UNKNOWN`. The aggregate is `INELIGIBLE`
+   when any rule fails, otherwise `UNKNOWN` when any rule is unknown, otherwise
+   `ELIGIBLE`.
+6. Listing-age units and liquidity measure/window/unit/operator/threshold are
+   immutable policy data; there are no inherited defaults.
+7. Candidate is deferred until its actual Research-owned definition identities
+   exist. `BuildCandidateSet` will accept only matching `ELIGIBLE` assessments,
+   freeze score components/ties/ranks, and account for the full funnel.
+8. Candidate Set existence will not depend on Decision Run, Evidence,
+   Assessment, or Qualification. A later Decision Run must reference an existing
+   Candidate Set; Qualification supplies purpose-scoped admission only.
+9. An empty Candidate Set is a successful, queryable business result.
+10. Downstream Strategy Runs must record terminal disposition for every Candidate
    they received.
 
 Eligibility protects tradability and evidence sufficiency. Candidate selection
@@ -174,6 +186,8 @@ The exact T+1 10:30 and 14:55 Raw reference semantics are specified in
 They incorporate the valid semantics originally established by historical
 [ADR-014](decisions/ADR-014-Frozen-Target-Semantics-and-Independent-Correctness.md)
 without retaining its compatibility implementation policy.
+Market supplies generic exact/as-of facts; the later Research Target/Outcome
+owner supplies the named resolver.
 
 ## 7. Attribution
 

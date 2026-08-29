@@ -43,9 +43,7 @@ class PostgresArtifactRepository:
             (published.content_sha256,),
         ).fetchone()
         if candidate is not None and candidate[0] not in {"OBSERVED", "CLEARED"}:
-            raise ArtifactIntegrityError(
-                "artifact identity is already under quarantine or deletion"
-            )
+            raise ArtifactIntegrityError("artifact identity is already under quarantine or deletion")
         self._connection.execute(
             """
             INSERT INTO mra.artifact (
@@ -85,9 +83,7 @@ class PostgresArtifactRepository:
             record.pin_reason_code,
         )
         if actual != expected:
-            raise ArtifactIntegrityError(
-                "same content hash is registered with conflicting metadata"
-            )
+            raise ArtifactIntegrityError("same content hash is registered with conflicting metadata")
         if candidate is not None and candidate[0] == "OBSERVED":
             self._connection.execute(
                 """
@@ -171,9 +167,7 @@ class PostgresArtifactRepository:
             ),
         ).fetchone()
         if updated is None:
-            raise ArtifactIntegrityError(
-                f"Artifact {artifact.artifact_id} changed or entered GC during verification"
-            )
+            raise ArtifactIntegrityError(f"Artifact {artifact.artifact_id} changed or entered GC during verification")
         self._connection.execute(
             """
             INSERT INTO mra.artifact_verification (
@@ -204,9 +198,7 @@ class PostgresArtifactRepository:
             observed_sha256=verification.observed_sha256,
         )
 
-    def verification_for_receipt(
-        self, receipt_id: UUID
-    ) -> ArtifactVerificationRecord:
+    def verification_for_receipt(self, receipt_id: UUID) -> ArtifactVerificationRecord:
         row = self._connection.execute(
             """
             SELECT verification_id, artifact_id, result, observed_exists,
@@ -217,9 +209,7 @@ class PostgresArtifactRepository:
             (receipt_id,),
         ).fetchone()
         if row is None:
-            raise RuntimeNotFoundError(
-                f"Artifact verification for receipt {receipt_id} does not exist"
-            )
+            raise RuntimeNotFoundError(f"Artifact verification for receipt {receipt_id} does not exist")
         return ArtifactVerificationRecord(
             verification_id=UUID(str(row[0])),
             artifact_id=UUID(str(row[1])),
@@ -291,9 +281,7 @@ class PostgresArtifactRepository:
         if status.referenced or status.pinned:
             return False
         if status.state not in {None, "OBSERVED", "CLEARED"}:
-            raise ArtifactIntegrityError(
-                "artifact identity entered GC after orphan observation began"
-            )
+            raise ArtifactIntegrityError("artifact identity entered GC after orphan observation began")
         grace_ms = max(0, int(grace.total_seconds() * 1_000))
         self._connection.execute(
             """
@@ -406,9 +394,7 @@ class PostgresArtifactRepository:
             raise ArtifactIntegrityError("artifact quarantine eligibility changed")
         if artifact_row is not None:
             if artifact_row[1] != "AVAILABLE":
-                raise ArtifactIntegrityError(
-                    "registered Artifact must be AVAILABLE before quarantine"
-                )
+                raise ArtifactIntegrityError("registered Artifact must be AVAILABLE before quarantine")
             updated = self._connection.execute(
                 """
                 UPDATE mra.artifact

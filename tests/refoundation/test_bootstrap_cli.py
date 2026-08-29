@@ -18,6 +18,7 @@ from market_regime_alpha.infrastructure.postgres.schema import (
 )
 from market_regime_alpha.interfaces.cli import main
 from market_regime_alpha.runtime.application import ActorType, CommandContext
+from market_regime_alpha.selection.application import SelectionApplication
 from market_regime_alpha.runtime.domain import (
     RetryPolicy,
     RunSpec,
@@ -100,6 +101,7 @@ def test_mra_db_bootstrap_verify_and_runtime_inspection_smoke(
 
     application = bootstrap_application(TargetSettings.from_environ(environment))
     try:
+        assert isinstance(application.selection, SelectionApplication)
         schedule = ScheduleSpec(
             schedule_id=uuid4(),
             schedule_code="cli-smoke",

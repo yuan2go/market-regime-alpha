@@ -3,7 +3,7 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Sole repository execution, safety, and evidence contract
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-28
+> **Last Updated:** 2026-08-29
 > **Related Documents:** `CLAUDE.md`, `docs/README.md`, `docs/architecture/Canonical-Overall-Design.md`, `docs/status/Roadmap.md`
 
 ## Mission and current program
@@ -23,8 +23,10 @@ The dependency order is:
 ```text
 Foundation
 → Market/PIT
-→ Universe/Eligibility/Candidate
-→ Research/Qualification
+→ Selection Core: Universe/Eligibility
+→ minimal Research Definition substrate required by Candidate
+→ Candidate closure
+→ Research Evaluation/Evidence/Qualification
 → Decision/Outcome
 → Execution/Account
 → Runtime/CLI Cutover
@@ -97,7 +99,9 @@ Authority. They may summarize canonical facts but cannot mutate or promote them.
   Signal, Forecast, Opportunity, Thesis, Portfolio, Risk, Fill, Position,
   Outcome, Attribution, Assessment, and Qualification remain distinct.
 - Universe → Eligibility → Candidate completes before same-run Context. Context
-  cannot feed back into that same Candidate Set.
+  cannot feed back into that same Candidate Set. Candidate remains deferred until
+  its actual Research-owned definition identities exist; Candidate Set existence
+  never depends on a future Decision Run or a Qualification decision.
 - Opportunity contains decision input evidence, not a Risk authorization. The
   sole Risk Decision follows a complete Portfolio Proposal.
 - Target horizon is not a holding or exit time; Exit is not inverse Entry.
