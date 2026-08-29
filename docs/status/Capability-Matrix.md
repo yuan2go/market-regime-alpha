@@ -3,11 +3,11 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Non-authoritative exact-SHA capability read model
 > **Owner:** Market Regime Alpha maintainers
-> **Generated At:** 2026-08-29T08:02:16Z
-> **Repository SHA:** `7932fda7f41c44bc29f04672caaef75d6b9b2c69`
+> **Generated At:** 2026-08-29T09:42:38Z
+> **Repository SHA:** `22a5ec692fcc261182197c2953a0a860d7cd6f94`
 > **Schema Epochs:** canonical business `LEGACY_MIGRATIONS_001_106`; target draft `MRA_REFOUNDATION_1 / DRAFT / NOT_CUT_OVER`
-> **Generator:** `WP-ARCHITECTURE-REFOUNDATION-06 design audit before business-code changes`
-> **Source Tree IDs:** source `d9f5ff8ac1b6eb736cc0f14f8dc2b8ed1d6d577c`; legacy migrations `6d3730548780ad6244d2cfecb4fb3559064b6f06`; target baseline `f514b18d29f48e730d0bce6c243df774bd2fceeb`; tests `be2f694e967acc09bb49b8d11c61c8663df30ab4`
+> **Generator:** `WP-ARCHITECTURE-REFOUNDATION-06 implementation verification`
+> **Source Tree IDs:** source `31acede0e36314c22ff38f60e79d3f10061ea1ca`; legacy migrations `6d3730548780ad6244d2cfecb4fb3559064b6f06`; target baseline `dff1aff6374d2384efd09f9ca981b33e1077bdfe`; tests `9a05c52bd6800359ef7ddd813879f27cde25f296`
 > **Code Evidence:** target and legacy source/migration packages plus `tests`
 
 This view separates current capability from target convergence. It is invalid
@@ -15,26 +15,21 @@ after its source tree changes and cannot promote a capability or research claim.
 The complete preservation contract remains the
 [Capability Preservation Matrix](../references/WP-ARCHITECTURE-REFOUNDATION-01-Capability-Preservation-Matrix.md).
 
-Cross-cutting Foundation is `MERGED_MAIN / EXIT_GATE_PASS`. Market/PIT and
-Selection Core are `IMPLEMENTED_DRAFT / EXIT_GATE_PASS / NOT_CUT_OVER` on the
-current implementation line. Research Definition Core is
-`DESIGN_APPROVED / IMPLEMENTATION_NOT_STARTED`; its permanent package is
-`market_regime_alpha.research_qualification` and only Dataset, DatasetSource,
-and FeatureDefinition are in scope. No state grants canonical business
-Authority or creates dual write.
+Cross-cutting Foundation is `MERGED_MAIN / EXIT_GATE_PASS`. Market/PIT,
+Selection Core, and Research Definition Core are
+`IMPLEMENTED_DRAFT / EXIT_GATE_PASS / NOT_CUT_OVER` on the current
+implementation line. Research owns only Dataset, DatasetSource, and
+FeatureDefinition in permanent `market_regime_alpha.research_qualification`.
+No state grants canonical business Authority or creates dual write.
 
 The repository Python gates remain bound to the frozen `uv run` environment.
-At WP-05 implementation checkpoint `44caf94`, all 3,195 collected tests passed
-against an explicitly recreated PostgreSQL 16 database, including 155 target
-refoundation tests. That exact-SHA evidence establishes the test-only Universe
-and Eligibility convergence rows. It is historical evidence, not a claim that
-the full suite ran at this design snapshot.
-
-The governance-only changes between `44caf94` and merged starting SHA
-`7932fda7` left target source and DDL unchanged. Their focused checks passed;
-the full suite was `NOT_RUN`. WP-06 validation is also `NOT_RUN` until its
-implementation completes. Nothing here supplies Candidate, Provider
-qualification, Formal PIT, Alpha, broker, Production, or trading evidence.
+At WP-06 implementation checkpoint `22a5ec6`, all 3,245 collected tests pass in
+five disjoint fresh-PostgreSQL batches, including all 205 target refoundation
+tests. Clean target bootstrap/verify/recreate, docs, Ruff, mypy, build, query
+plans, constraints, concurrency, recovery, and diff gates pass. Remote CI is
+`BLOCKED / NOT_RUN` because Actions remains disabled. Nothing here supplies
+Candidate capability, Provider qualification, Formal PIT, Alpha, broker,
+Production, or trading evidence.
 
 | Capability | Current implementation truth | Approved target owner | Target convergence |
 |---|---|---|---|
@@ -45,7 +40,7 @@ qualification, Formal PIT, Alpha, broker, Production, or trading evidence.
 | Capital | current derived public-proxy state | Decision Context `CAPITAL_PROXY` | `NOT_STARTED` |
 | Universe | current Runtime Scope/free/historical owners remain canonical; target explicit immutable scope/revision/member owner is implemented test-only | Selection | `IMPLEMENTED_DRAFT / EXIT_GATE_PASS / NOT_CUT_OVER` |
 | Eligibility | current funnel/orderability rules across paths remain canonical; target typed policy/rule/assessment/reason owner is implemented test-only | Selection | `IMPLEMENTED_DRAFT / EXIT_GATE_PASS / NOT_CUT_OVER` |
-| Candidate | current Candidate/State/daily/historical artifacts; no target Candidate owner or tables | Candidate after canonical Research Definition substrate | `DEFERRED / NO-GO` |
+| Candidate | current Candidate/State/daily/historical artifacts remain canonical; no target Candidate owner or table exists, but its real V1 Selection/Research prerequisites now do | Selection Candidate closure | `READY_FOR_IMPLEMENTATION / NOT_STARTED` |
 | Signal | current Signal artifacts and consumers | Decision Support | `NOT_STARTED` |
 | Forecast | current path/conditional/model estimates | Decision Support; definitions in Research | `NOT_STARTED` |
 | Opportunity | current Strategy Opportunity and pre-Strategy risk-era persistence | Decision Support, without pre-Strategy Risk authority | `NOT_STARTED` |
@@ -57,7 +52,7 @@ qualification, Formal PIT, Alpha, broker, Production, or trading evidence.
 | Position | current Fill-derived projections plus account observations | derived Execution & Account query | `NOT_STARTED` |
 | Outcome | historical/shadow/daily/strategy settlements | Outcome & Attribution | `NOT_STARTED` |
 | Attribution | current performance/evaluation diagnostics | Outcome & Attribution | `NOT_STARTED` |
-| Research Definition | many legacy dataset/feature/research owners remain canonical; target namespace and strict Decision-input boundary are design-approved but have no code or tables yet | Research & Qualification | `DESIGN_APPROVED / IMPLEMENTATION_NOT_STARTED` |
+| Research Definition | many legacy dataset/feature/research owners remain canonical; isolated target Decision-input Dataset/DatasetSource/FeatureDefinition Authority is implemented and engineering-verified | Research & Qualification | `IMPLEMENTED_DRAFT / EXIT_GATE_PASS / NOT_CUT_OVER` |
 | Research Evaluation | current experiment/campaign/evaluation owners | Research & Qualification | `DEFERRED / NOT_STARTED` |
 | Qualification | current model/PIT/provider/OOS/calibration owners | Research & Qualification | `NOT_STARTED` |
 | Prospective | current freeze/settlement/attestation mechanics; no sustained proof | ordinary Runtime + Decision/Evidence/Outcome | `NOT_STARTED` |

@@ -4,8 +4,8 @@
 > **Authority:** Target research, context, decision, outcome, and qualification lifecycle
 > **Owner:** Market Regime Alpha maintainers
 > **Last Updated:** 2026-08-29
-> **Implementation State:** `SELECTION_IMPLEMENTED_DRAFT / RESEARCH_DEFINITION_DESIGN_FROZEN / LATER_RESEARCH_DESIGN_ONLY`
-> **Code Evidence:** target `src/market_regime_alpha/selection`, target draft schema and `tests/refoundation`; existing `src/market_regime_alpha/research`, `src/market_regime_alpha/features`, and `src/market_regime_alpha/candidates` are Legacy invariant sources only, not target Authority
+> **Implementation State:** `SELECTION_RESEARCH_DEFINITION_IMPLEMENTED_DRAFT / CANDIDATE_READY_NOT_IMPLEMENTED / LATER_RESEARCH_DESIGN_ONLY`
+> **Code Evidence:** target `src/market_regime_alpha/selection`, `src/market_regime_alpha/research_qualification`, target draft schema and `tests/refoundation`; existing `src/market_regime_alpha/research`, `src/market_regime_alpha/features`, and `src/market_regime_alpha/candidates` are Legacy invariant sources only, not target Authority
 
 Research is a consumer of Market/PIT facts and a producer of scoped evidence. It
 cannot alter historical inputs, promote its own model, or create a Position.
@@ -89,9 +89,11 @@ filled with defaults.
    `ELIGIBLE`.
 6. Listing-age units and liquidity measure/window/unit/operator/threshold are
    immutable policy data; there are no inherited defaults.
-7. Candidate is deferred until its actual Research-owned definition identities
-   exist. `BuildCandidateSet` will accept only matching `ELIGIBLE` assessments,
-   freeze score components/ties/ranks, and account for the full funnel.
+7. Candidate implementation is dependency-ready because its actual
+   Research-owned Dataset and FeatureDefinition identities now exist; Candidate
+   itself remains absent from this checkpoint. `BuildCandidateSet` will accept
+   only matching `ELIGIBLE` assessments, freeze score components/ties/ranks,
+   and account for the full funnel.
 8. Candidate Set existence will not depend on Decision Run, Evidence,
    Assessment, or Qualification. A later Decision Run must reference an existing
    Candidate Set; Qualification supplies purpose-scoped admission only.

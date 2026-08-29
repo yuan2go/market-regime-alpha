@@ -4,12 +4,13 @@
 > **Authority:** Target bounded-context vocabulary and dependency map
 > **Owner:** Market Regime Alpha maintainers
 > **Last Updated:** 2026-08-29
-> **Implementation State:** `FOUNDATION_MARKET_SELECTION_IMPLEMENTED_DRAFT / RESEARCH_DEFINITION_DESIGN_FROZEN / NOT_CUT_OVER`
+> **Implementation State:** `FOUNDATION_MARKET_SELECTION_RESEARCH_DEFINITION_IMPLEMENTED_DRAFT / NOT_CUT_OVER`
 
-This file defines names and relationships only. Foundation, Market/PIT, and
-Selection Core exist in the isolated target draft; Research Definition Core is
-approved but not yet implemented at this checkpoint. Current implementation
-truth remains code, PostgreSQL, tests actually run, and reproducible evidence.
+This file defines names and relationships only. Foundation, Market/PIT,
+Selection Core, and the three-table Research Definition Core exist in the
+isolated target draft. Candidate and later target contexts remain absent.
+Current implementation truth remains code, PostgreSQL, tests actually run, and
+reproducible evidence.
 
 ## Ubiquitous language
 
@@ -92,8 +93,9 @@ The business dependency direction is
 `Market/PIT → Universe → Eligibility → Candidate → Context → Signal/Forecast → Opportunity → Portfolio → Risk`.
 Context cannot feed back into the same Candidate Set, and Opportunity cannot
 carry a Risk Decision. The sole Risk Authority follows Portfolio. Candidate is
-implemented only after its required Dataset, Feature Definition, or Model
-Version identities exist. Candidate Set creation does not require a Decision
+not implemented in the current draft, but its required V1 Dataset and Feature
+Definition identities now exist; Model Version is added only if a concrete
+policy proves it necessary. Candidate Set creation does not require a Decision
 Run, Evidence graph, Assessment, or Qualification; a later Decision Run must
 reference an already-existing Candidate Set.
 

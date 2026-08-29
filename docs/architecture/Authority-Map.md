@@ -4,8 +4,8 @@
 > **Authority:** Target business-fact ownership and canonical-write specification
 > **Owner:** Market Regime Alpha maintainers
 > **Last Updated:** 2026-08-29
-> **Implementation State:** `FOUNDATION_MARKET_SELECTION_IMPLEMENTED_DRAFT / RESEARCH_DEFINITION_DESIGN_FROZEN / NOT_CUT_OVER`
-> **Code Evidence:** target `src/market_regime_alpha/shared`, `src/market_regime_alpha/runtime`, `src/market_regime_alpha/market`, `src/market_regime_alpha/selection`, `src/market_regime_alpha/infrastructure`, `src/market_regime_alpha/interfaces`, `src/market_regime_alpha/infrastructure/postgres/migrations/001_baseline.sql`, `tests/refoundation`; legacy source/migrations remain current business implementation
+> **Implementation State:** `FOUNDATION_MARKET_SELECTION_RESEARCH_DEFINITION_IMPLEMENTED_DRAFT / NOT_CUT_OVER`
+> **Code Evidence:** target `src/market_regime_alpha/shared`, `src/market_regime_alpha/runtime`, `src/market_regime_alpha/market`, `src/market_regime_alpha/selection`, `src/market_regime_alpha/research_qualification`, `src/market_regime_alpha/infrastructure`, `src/market_regime_alpha/interfaces`, `src/market_regime_alpha/infrastructure/postgres/migrations/001_baseline.sql`, `tests/refoundation`; legacy source/migrations remain current business implementation
 
 This document answers one question for every retained fact: who may create or
 change it? A table, DTO, policy, artifact, snapshot, report, receipt, or query is

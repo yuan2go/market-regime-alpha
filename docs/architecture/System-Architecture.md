@@ -4,13 +4,13 @@
 > **Authority:** Target Application, Runtime, concurrency, recovery, and interface specification
 > **Owner:** Market Regime Alpha maintainers
 > **Last Updated:** 2026-08-29
-> **Implementation State:** `FOUNDATION_MARKET_SELECTION_IMPLEMENTED_DRAFT / RESEARCH_DEFINITION_DESIGN_FROZEN / NOT_CUT_OVER`
-> **Code Evidence:** target `src/market_regime_alpha/runtime`, `src/market_regime_alpha/market`, `src/market_regime_alpha/selection`, `src/market_regime_alpha/infrastructure`, `src/market_regime_alpha/interfaces`, `tests/refoundation`; legacy Runtime remains current business implementation
+> **Implementation State:** `FOUNDATION_MARKET_SELECTION_RESEARCH_DEFINITION_IMPLEMENTED_DRAFT / NOT_CUT_OVER`
+> **Code Evidence:** target `src/market_regime_alpha/runtime`, `src/market_regime_alpha/market`, `src/market_regime_alpha/selection`, `src/market_regime_alpha/research_qualification`, `src/market_regime_alpha/infrastructure`, `src/market_regime_alpha/interfaces`, `tests/refoundation`; legacy Runtime remains current business implementation
 
 This is the target specification. Its Foundation Runtime and test-only
-Market/PIT plus Selection Core vertical slice are implemented in the mutable
-target draft, but have not cut over the current business entry points. The
-current nested
+Market/PIT, Selection Core, and Research Definition Core are implemented in the
+mutable target draft, but have not cut over the current business entry points.
+The current nested
 Continuous/Controlled/Lifecycle/State/Historical journals are still to be
 replaced by one Runtime journal. Business owners remain in their bounded
 contexts.

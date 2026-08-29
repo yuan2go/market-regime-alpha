@@ -4,13 +4,13 @@
 > **Authority:** Target logical schema, PIT, evidence, artifact, and cutover specification
 > **Owner:** Market Regime Alpha maintainers
 > **Last Updated:** 2026-08-29
-> **Implementation State:** `FOUNDATION_MARKET_SELECTION_IMPLEMENTED_DRAFT / RESEARCH_DEFINITION_DESIGN_FROZEN / NOT_CUT_OVER`
-> **Code Evidence:** target `src/market_regime_alpha/infrastructure/postgres`, `src/market_regime_alpha/shared`, `src/market_regime_alpha/runtime`, `src/market_regime_alpha/market`, `src/market_regime_alpha/selection`, `tests/refoundation`; legacy `src/market_regime_alpha/persistence/postgres` remains current business implementation
+> **Implementation State:** `FOUNDATION_MARKET_SELECTION_RESEARCH_DEFINITION_IMPLEMENTED_DRAFT / NOT_CUT_OVER`
+> **Code Evidence:** target `src/market_regime_alpha/infrastructure/postgres`, `src/market_regime_alpha/shared`, `src/market_regime_alpha/runtime`, `src/market_regime_alpha/market`, `src/market_regime_alpha/selection`, `src/market_regime_alpha/research_qualification`, `tests/refoundation`; legacy `src/market_regime_alpha/persistence/postgres` remains current business implementation
 
-The current canonical business baseline contains 283 tables. At
-`origin/main@7932fda7f41c44bc29f04672caaef75d6b9b2c69`, the implemented mutable
-target draft contains 13 Foundation, 12 Market/PIT, and seven Selection Core
-relations (32 tables total) in schema `mra`; its physical DDL is
+The current canonical business baseline contains 283 tables. At implementation
+checkpoint `22a5ec692fcc261182197c2953a0a860d7cd6f94`, the mutable target draft
+contains 13 Foundation, 12 Market/PIT, seven Selection Core, and three Research
+Definition relations (35 tables total) in schema `mra`; its physical DDL is
 `src/market_regime_alpha/infrastructure/postgres/migrations/001_baseline.sql`.
 The complete target logical catalog is still estimated at **91 tables**. That
 estimate follows required semantics and is neither a quota nor a cutover claim.
@@ -103,10 +103,10 @@ exists with real relational Authority and an acyclic dependency graph.
 | `candidate` | admitted eligible instrument/rank/score | unique set/instrument and set/rank; eligibility FK must match instrument |
 | `candidate_score_component` | typed factor contribution and missingness | unique candidate/component; typed numeric value/status and exact available lineage |
 
-### Research Definition Core — 3 tables in the approved next checkpoint
+### Research Definition Core — 3 implemented draft tables
 
 This checkpoint creates the permanent
-`market_regime_alpha.research_qualification` owner but implements only the
+`market_regime_alpha.research_qualification` owner and implements only the
 definitions that Candidate V1 demonstrably needs. It creates no Model,
 Evaluation, Evidence, Assessment, Qualification, Target, Candidate, or future
 placeholder relation.
