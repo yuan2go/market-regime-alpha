@@ -60,7 +60,9 @@ Checkpoint traceability:
 - [Domain Invariant Catalog](references/WP-ARCHITECTURE-REFOUNDATION-01-Domain-Invariant-Catalog.md)
 - [WP-07 Candidate Closure Design](references/WP-ARCHITECTURE-REFOUNDATION-07-Candidate-Closure-Design.md)
   — approved five-table Candidate Authority, ranking semantics, dependency seam,
-  and implementation proof contract; not implementation or verification evidence.
+  and implementation proof contract. Its post-Candidate routing question was
+  superseded by WP-08; implementation evidence lives only in the immutable
+  WP-07 Verification.
 - [WP-08 Post-Candidate Authority Design](references/WP-ARCHITECTURE-REFOUNDATION-08-Post-Candidate-Authority-Design.md)
   — approved acyclic Target commitment, Market Target Outcome, Partition,
   Evaluation, Evidence, Assessment, and Research Qualification semantics plus
