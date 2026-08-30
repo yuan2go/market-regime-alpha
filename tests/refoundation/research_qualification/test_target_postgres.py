@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import psycopg
 import pytest
@@ -230,6 +230,110 @@ def test_concurrent_identical_target_registration_has_one_canonical_writer(
         assert connection.execute(
             "SELECT count(*) FROM mra.target_definition"
         ).fetchone() == (1,)
+
+
+def test_target_supersession_appends_complete_next_version_without_mutating_history(
+    target_stack,
+) -> None:
+    application, first, _, database_url = target_stack
+    application.register_target_definition(
+        first,
+        _context("register-target-supersession-v1"),
+    )
+    second_id = UUID("00000000-0000-4000-8000-000000009101")
+    checkpoint_ids = {
+        item.target_checkpoint_id: UUID(
+            f"00000000-0000-4000-8000-0000000091{index:02d}"
+        )
+        for index, item in enumerate(first.checkpoints, start=2)
+    }
+    metric_ids = {
+        item.target_metric_definition_id: UUID(
+            f"00000000-0000-4000-8000-0000000092{index:02d}"
+        )
+        for index, item in enumerate(first.metrics, start=1)
+    }
+    checkpoints = tuple(
+        replace(
+            item,
+            target_checkpoint_id=checkpoint_ids[item.target_checkpoint_id],
+            target_definition_id=second_id,
+        )
+        for item in first.checkpoints
+    )
+    metrics = tuple(
+        replace(
+            item,
+            target_metric_definition_id=metric_ids[
+                item.target_metric_definition_id
+            ],
+            target_definition_id=second_id,
+        )
+        for item in first.metrics
+    )
+    dependencies = tuple(
+        replace(
+            item,
+            target_metric_dependency_id=UUID(
+                f"00000000-0000-4000-8000-0000000093{index:02d}"
+            ),
+            target_definition_id=second_id,
+            target_metric_definition_id=metric_ids[
+                item.target_metric_definition_id
+            ],
+            target_checkpoint_id=checkpoint_ids[item.target_checkpoint_id],
+        )
+        for index, item in enumerate(first.dependencies, start=1)
+    )
+    second = replace(
+        first,
+        target_definition_id=second_id,
+        version=2,
+        supersedes_target_definition_id=first.target_definition_id,
+        checkpoints=checkpoints,
+        metrics=metrics,
+        dependencies=dependencies,
+    )
+
+    application.register_target_definition(
+        second,
+        _context("register-target-supersession-v2"),
+    )
+
+    with psycopg.connect(database_url) as connection:
+        roots = connection.execute(
+            """
+            SELECT target_definition_id, version,
+                   supersedes_target_definition_id, content_sha256
+            FROM mra.target_definition
+            WHERE target_code = %s
+            ORDER BY version
+            """,
+            (first.target_code,),
+        ).fetchall()
+        counts = connection.execute(
+            """
+            SELECT
+              (SELECT count(*) FROM mra.target_checkpoint),
+              (SELECT count(*) FROM mra.target_metric_definition),
+              (SELECT count(*) FROM mra.target_metric_dependency)
+            """
+        ).fetchone()
+    assert roots == [
+        (
+            first.target_definition_id,
+            1,
+            None,
+            str(first.content_sha256),
+        ),
+        (
+            second.target_definition_id,
+            2,
+            first.target_definition_id,
+            str(second.content_sha256),
+        ),
+    ]
+    assert counts == (4, 2, 4)
 
 
 def test_missing_artifact_rolls_back_all_target_rows(target_stack) -> None:

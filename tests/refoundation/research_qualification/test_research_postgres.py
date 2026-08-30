@@ -3,6 +3,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from datetime import datetime, time, timedelta, timezone
+from decimal import Decimal
 import json
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
@@ -54,6 +55,7 @@ from market_regime_alpha.market.domain import (
     Instrument,
     InstrumentFactKind,
     InstrumentType,
+    MarketBarRevision,
     MarketFactKind,
     MembershipStatus,
     NormalizationBatch,
@@ -105,6 +107,7 @@ from market_regime_alpha.selection.domain import (
     UniverseScopeSpecification,
 )
 from market_regime_alpha.shared.identity import InstrumentId
+from market_regime_alpha.shared.financial import Money, Quantity, QuantityUnit
 from market_regime_alpha.shared.time import DecisionTime
 
 
@@ -175,6 +178,7 @@ class _DatasetStack:
     eligibility_assessment_id: UUID
     market_capture_id: UUID
     market_fact_revision_id: UUID
+    market_bar_revision_id: UUID
     market_session_id: UUID
 
 
@@ -239,8 +243,11 @@ def dataset_stack(target_database_url: str, tmp_path, request) -> _DatasetStack:
     classification_id = uuid4()
     membership_revision_id = uuid4()
     fact_revision_id = uuid4()
+    bar_revision_id = uuid4()
     session_id = uuid4()
-    today = datetime.now(SHANGHAI).date()
+    # Keep all synthetic session observations strictly in the past so this
+    # reusable Authority fixture is deterministic across local clock rollovers.
+    today = datetime.now(SHANGHAI).date() - timedelta(days=1)
 
     def instant(hour: int, minute: int) -> datetime:
         return datetime.combine(
@@ -303,6 +310,27 @@ def dataset_stack(target_database_url: str, tmp_path, request) -> _DatasetStack:
                     supersedes_membership_revision_id=None,
                 ),
             ),
+            bars=(
+                MarketBarRevision(
+                    bar_revision_id=bar_revision_id,
+                    provider_product_id=product.provider_product_id,
+                    capture_id=capture.capture_id,
+                    instrument_id=instrument_id,
+                    session_id=session.session_id,
+                    timeframe=BarTimeframe.MINUTE_5,
+                    price_basis=PriceBasis.RAW_UNADJUSTED,
+                    event_start=instant(14, 50),
+                    event_end=instant(14, 55),
+                    revision=1,
+                    supersedes_revision_id=None,
+                    open=Money(Decimal("10.00"), "CNY"),
+                    high=Money(Decimal("10.20"), "CNY"),
+                    low=Money(Decimal("9.90"), "CNY"),
+                    close=Money(Decimal("10.10"), "CNY"),
+                    volume=Quantity(Decimal("1000"), QuantityUnit.SHARES),
+                    turnover=Money(Decimal("10100"), "CNY"),
+                ),
+            ),
             security_status_facts=(
                 SecurityStatusFactRevision(
                     fact_revision_id=fact_revision_id,
@@ -325,6 +353,75 @@ def dataset_stack(target_database_url: str, tmp_path, request) -> _DatasetStack:
         _Normalizer(batch),
         _context("dataset-normalize", "NORMALIZE_MARKET_PIT"),
     )
+    assert normalized.decision_visible_at.value >= instant(15, 0)
+    historical_decision_time = DecisionTime(instant(15, 1))
+    # The reusable integration fixture models a completed historical session.
+    # PostgreSQL's production clock remains authoritative in application code;
+    # only these freshly-created synthetic source rows are rebound before any
+    # downstream Authority observes them. All temporal CHECKs remain enabled.
+    with psycopg.connect(target_database_url) as connection:
+        append_only_triggers = (
+            ("data_capture", "data_capture_append_only"),
+            ("instrument", "instrument_append_only"),
+            ("trading_session", "trading_session_append_only"),
+            ("classification", "classification_append_only"),
+            (
+                "classification_membership_revision",
+                "classification_membership_revision_append_only",
+            ),
+            ("market_bar_revision", "market_bar_revision_append_only"),
+            ("instrument_fact_revision", "instrument_fact_revision_append_only"),
+        )
+        for table_name, trigger_name in append_only_triggers:
+            connection.execute(
+                f"ALTER TABLE mra.{table_name} DISABLE TRIGGER {trigger_name}"
+            )
+        connection.execute(
+            """
+            UPDATE mra.data_capture
+            SET capture_started_at = %s,
+                capture_completed_at = %s,
+                recorded_at = %s,
+                known_at = %s,
+                decision_visible_at = %s
+            WHERE capture_id = %s
+            """,
+            (
+                instant(14, 59),
+                instant(15, 0),
+                instant(15, 1),
+                instant(15, 1),
+                instant(15, 1),
+                captured.capture.capture_id,
+            ),
+        )
+        for table_name, capture_column in (
+            ("instrument", "source_capture_id"),
+            ("trading_session", "source_capture_id"),
+            ("classification", "source_capture_id"),
+            ("classification_membership_revision", "source_capture_id"),
+            ("market_bar_revision", "capture_id"),
+            ("instrument_fact_revision", "capture_id"),
+        ):
+            connection.execute(
+                f"""
+                UPDATE mra.{table_name}
+                SET recorded_at = %s,
+                    known_at = %s,
+                    decision_visible_at = %s
+                WHERE {capture_column} = %s
+                """,
+                (
+                    historical_decision_time.value,
+                    historical_decision_time.value,
+                    historical_decision_time.value,
+                    captured.capture.capture_id,
+                ),
+            )
+        for table_name, trigger_name in append_only_triggers:
+            connection.execute(
+                f"ALTER TABLE mra.{table_name} ENABLE TRIGGER {trigger_name}"
+            )
     scope_payload = {
         "classification_code": "RESEARCH_SCOPE",
         "classification_scheme": "INDEX",
@@ -390,13 +487,13 @@ def dataset_stack(target_database_url: str, tmp_path, request) -> _DatasetStack:
     frozen = selection.freeze_universe(
         universe_id=universe.universe_id,
         scope=scope,
-        decision_time=normalized.decision_visible_at,
+        decision_time=historical_decision_time,
         context=_context("dataset-freeze", "FREEZE_UNIVERSE"),
     )
     assessed = selection.assess_eligibility(
         universe_revision_id=frozen.universe_revision_id,
         eligibility_policy_id=policy.eligibility_policy_id,
-        decision_time=normalized.decision_visible_at,
+        decision_time=historical_decision_time,
         context=_context("dataset-assess", "ASSESS_ELIGIBILITY"),
     )
     assert frozen.included_count == 1
@@ -411,13 +508,14 @@ def dataset_stack(target_database_url: str, tmp_path, request) -> _DatasetStack:
         database_url=target_database_url,
         product=product,
         instrument_id=instrument_id,
-        decision_time=normalized.decision_visible_at,
+        decision_time=historical_decision_time,
         universe_revision_id=frozen.universe_revision_id,
         universe_member_id=frozen.members[0].universe_member_id,
         eligibility_policy_id=policy.eligibility_policy_id,
         eligibility_assessment_id=assessed.assessments[0].eligibility_assessment_id,
         market_capture_id=captured.capture.capture_id,
         market_fact_revision_id=fact_revision_id,
+        market_bar_revision_id=bar_revision_id,
         market_session_id=session_id,
     )
 

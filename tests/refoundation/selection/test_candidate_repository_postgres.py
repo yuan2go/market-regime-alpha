@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from datetime import timedelta
 from decimal import Decimal
+import json
 from uuid import UUID, uuid4
 
 import pytest
@@ -393,11 +394,6 @@ def _seed_two_row_dataset(stack, *, feature) -> _SeededDataset:
 
 
 def _seed_empty_dataset(stack, *, feature) -> _SeededDataset:
-    manifest = stack.artifacts.publish(
-        b'{"schema":"candidate-persistence-empty-dataset"}\n',
-        media_type="application/json",
-        context=_context("candidate-empty-manifest", "REGISTER_DATASET_MANIFEST"),
-    )
     code = stack.artifacts.publish(
         b"candidate-persistence-empty-dataset-builder\n",
         media_type="text/plain",
@@ -411,7 +407,59 @@ def _seed_empty_dataset(stack, *, feature) -> _SeededDataset:
     universe_id = uuid4()
     universe_revision_id = uuid4()
     dataset_id = uuid4()
-    dataset_content_sha256 = "c" * 64
+    feature_source_id = uuid4()
+    manifest_payload = {
+        "schema": "mra-decision-input-dataset-v1",
+        "dataset_id": str(dataset_id),
+        "dataset_code": "candidate_empty_dataset",
+        "dataset_version": 1,
+        "decision_time": stack.decision_time.value.isoformat(),
+        "universe_revision_id": str(universe_revision_id),
+        "eligibility_policy_id": str(stack.eligibility_policy_id),
+        "feature_definition_ids": [str(feature.feature_definition_id)],
+        "code_artifact": {
+            "artifact_id": str(code.artifact_id),
+            "content_sha256": code.content_sha256,
+            "size_bytes": code.size_bytes,
+        },
+        "config_artifact": {
+            "artifact_id": str(config.artifact_id),
+            "content_sha256": config.content_sha256,
+            "size_bytes": config.size_bytes,
+        },
+        "sources": [
+            {
+                "dataset_source_id": str(feature_source_id),
+                "role": "FEATURE_DEFINITION",
+                "feature_definition_id": str(feature.feature_definition_id),
+            }
+        ],
+        "rows": [],
+    }
+    manifest = stack.artifacts.publish(
+        json.dumps(
+            manifest_payload,
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode(),
+        media_type="application/json",
+        context=_context("candidate-empty-manifest", "REGISTER_DATASET_MANIFEST"),
+    )
+    dataset_definition = _research_postgres.DecisionInputDatasetDefinition(
+        dataset_id=dataset_id,
+        dataset_code="candidate_empty_dataset",
+        version=1,
+        decision_time=stack.decision_time,
+        universe_revision_id=universe_revision_id,
+        eligibility_policy_id=stack.eligibility_policy_id,
+        feature_definition_ids=(feature.feature_definition_id,),
+        manifest_artifact=_research_postgres._binding(manifest),
+        code_artifact=_research_postgres._binding(code),
+        config_artifact=_research_postgres._binding(config),
+    )
+    dataset_content_sha256 = str(dataset_definition.content_sha256)
     with stack.pool.connection() as connection:
         revision = connection.execute(
             """
@@ -488,7 +536,7 @@ def _seed_empty_dataset(stack, *, feature) -> _SeededDataset:
             )
             VALUES (%s, %s, 'FEATURE_DEFINITION', %s)
             """,
-            (uuid4(), dataset_id, feature.feature_definition_id),
+            (feature_source_id, dataset_id, feature.feature_definition_id),
         )
         connection.commit()
     return _SeededDataset(

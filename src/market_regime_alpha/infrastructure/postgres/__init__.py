@@ -2,6 +2,7 @@
 
 from market_regime_alpha.infrastructure.postgres.schema import (
     EXPECTED_CANDIDATE_TABLES,
+    EXPECTED_DECISION_SUPPORT_TABLES,
     EXPECTED_FOUNDATION_TABLES,
     EXPECTED_MARKET_TABLES,
     EXPECTED_SELECTION_CORE_TABLES,
@@ -14,6 +15,7 @@ from market_regime_alpha.infrastructure.postgres.schema import (
 
 __all__ = [
     "EXPECTED_CANDIDATE_TABLES",
+    "EXPECTED_DECISION_SUPPORT_TABLES",
     "EXPECTED_FOUNDATION_TABLES",
     "EXPECTED_MARKET_TABLES",
     "EXPECTED_SELECTION_CORE_TABLES",

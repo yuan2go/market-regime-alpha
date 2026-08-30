@@ -476,6 +476,45 @@ def test_dependency_completion_releases_only_the_next_step(
     assert [step.state for step in after.steps] == ["SUCCEEDED", "READY"]
 
 
+def test_database_rejects_candidate_chain_without_mandatory_open_decision_step(
+    runtime_stack: tuple[RuntimeApplication, ArtifactApplication, TargetPostgresPool, str],
+) -> None:
+    application, artifacts, _, database_url = runtime_stack
+    schedule = _schedule(application, key="schedule-decision-chain-guard")
+    run_id = _run(
+        application,
+        artifacts,
+        schedule,
+        steps=(_step("capture", 1),),
+        key="decision-chain-guard",
+    )
+
+    with psycopg.connect(database_url) as connection:
+        # Remove only the generic immutable-row guard inside this disposable
+        # transaction so the dedicated deferred DAG constraint is exercised.
+        connection.execute("DROP TRIGGER runtime_step_guard ON mra.runtime_step")
+        connection.execute(
+            """
+            UPDATE mra.runtime_step
+            SET step_kind = 'BUILD_CANDIDATE_SET'
+            WHERE run_id = %s
+            """,
+            (run_id,),
+        )
+        with pytest.raises(psycopg.errors.CheckViolation):
+            connection.commit()
+        connection.rollback()
+        persisted = connection.execute(
+            """
+            SELECT step_kind
+            FROM mra.runtime_step
+            WHERE run_id = %s
+            """,
+            (run_id,),
+        ).fetchone()
+    assert persisted == ("CAPTURE",)
+
+
 def test_claim_and_heartbeat_retries_return_the_original_receipts(
     runtime_stack: tuple[RuntimeApplication, ArtifactApplication, TargetPostgresPool, str],
 ) -> None:

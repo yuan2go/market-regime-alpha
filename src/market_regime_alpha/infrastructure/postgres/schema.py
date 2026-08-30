@@ -12,6 +12,16 @@ from typing import Any, Final
 
 import psycopg
 
+from market_regime_alpha.decision_support.domain.vocabulary import (
+    CandidateDisposition as DecisionCandidateDisposition,
+    DecisionReferenceAvailabilityStatus,
+    DecisionReferenceFinalityStatus,
+    DecisionReferenceSourceKind,
+    DecisionReferenceValueStatus,
+    DecisionRunMismatchKind,
+    DecisionRunStatus,
+    DecisionRuntimeMode,
+)
 from market_regime_alpha.market.domain import (
     BarTimeframe,
     CaptureStatus,
@@ -160,12 +170,22 @@ EXPECTED_TARGET_DEFINITION_TABLES: Final[frozenset[str]] = frozenset(
     }
 )
 
+EXPECTED_DECISION_SUPPORT_TABLES: Final[frozenset[str]] = frozenset(
+    {
+        "decision_run",
+        "decision_run_target",
+        "decision_target_commitment",
+        "decision_reference_observation",
+    }
+)
+
 EXPECTED_TARGET_TABLES: Final[frozenset[str]] = (
     EXPECTED_FOUNDATION_TABLES
     | EXPECTED_MARKET_TABLES
     | EXPECTED_SELECTION_TABLES
     | EXPECTED_RESEARCH_DEFINITION_TABLES
     | EXPECTED_TARGET_DEFINITION_TABLES
+    | EXPECTED_DECISION_SUPPORT_TABLES
 )
 
 _LEGACY_TABLE_SIGNATURES: Final[frozenset[str]] = frozenset(
@@ -198,6 +218,7 @@ _REFERENCE_VOCABULARY: Final[dict[str, tuple[str, ...]]] = {
         "ASSESS_ELIGIBILITY",
         "REGISTER_DATASET",
         "BUILD_CANDIDATE_SET",
+        "OPEN_DECISION_RUN",
         "ASSESS_CONTEXT",
         "SIGNAL_AND_FORECAST",
         "DECIDE_AND_RISK",
@@ -286,6 +307,26 @@ _REFERENCE_VOCABULARY: Final[dict[str, tuple[str, ...]]] = {
     "target_completion_rule": tuple(item.value for item in TargetCompletionRule),
     "target_barrier_direction": tuple(item.value for item in TargetBarrierDirection),
     "target_dependency_role": tuple(item.value for item in TargetDependencyRole),
+    "decision_run_status": tuple(item.value for item in DecisionRunStatus),
+    "decision_candidate_disposition": tuple(
+        item.value for item in DecisionCandidateDisposition
+    ),
+    "decision_runtime_mode": tuple(item.value for item in DecisionRuntimeMode),
+    "decision_reference_source_kind": tuple(
+        item.value for item in DecisionReferenceSourceKind
+    ),
+    "decision_reference_value_status": tuple(
+        item.value for item in DecisionReferenceValueStatus
+    ),
+    "decision_reference_availability_status": tuple(
+        item.value for item in DecisionReferenceAvailabilityStatus
+    ),
+    "decision_reference_finality_status": tuple(
+        item.value for item in DecisionReferenceFinalityStatus
+    ),
+    "decision_run_mismatch_kind": tuple(
+        item.value for item in DecisionRunMismatchKind
+    ),
 }
 
 
@@ -1354,6 +1395,7 @@ __all__ = [
     "BASELINE_RELEASE_STATE",
     "CatalogDriftError",
     "DatabaseIdentity",
+    "EXPECTED_DECISION_SUPPORT_TABLES",
     "EXPECTED_FOUNDATION_TABLES",
     "EXPECTED_MARKET_TABLES",
     "EXPECTED_RESEARCH_DEFINITION_TABLES",

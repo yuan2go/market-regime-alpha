@@ -22,6 +22,22 @@ AS $$
     SELECT encode(sha256(convert_to(canonical_text, 'UTF8')), 'hex');
 $$;
 
+CREATE FUNCTION mra.canonical_timestamptz_text(value timestamptz)
+RETURNS text
+LANGUAGE sql
+IMMUTABLE
+STRICT
+PARALLEL SAFE
+AS $$
+    SELECT CASE
+        WHEN extract(microseconds FROM value)::bigint % 1000000 = 0
+        THEN to_char(value AT TIME ZONE 'UTC',
+                     'YYYY-MM-DD"T"HH24:MI:SS') || '+00:00'
+        ELSE to_char(value AT TIME ZONE 'UTC',
+                     'YYYY-MM-DD"T"HH24:MI:SS.US') || '+00:00'
+    END;
+$$;
+
 CREATE FUNCTION mra.target_algorithm_binding_sha256(
     algorithm_code text,
     algorithm_version text,
@@ -251,6 +267,189 @@ AS $$
                 'supersedes_target_definition_id', supersedes_target_definition_id,
                 'target_code', target_code,
                 'version', version
+            )::text,
+            ' ',
+            ''
+        )
+    );
+$$;
+
+CREATE FUNCTION mra.decision_run_target_content_sha256(
+    ordinal integer,
+    provider_id uuid,
+    provider_product_id uuid,
+    provider_product_revision integer,
+    target_checkpoint_id uuid,
+    target_checkpoint_sha256 text,
+    target_definition_id uuid,
+    target_definition_sha256 text,
+    target_version integer
+)
+RETURNS text
+LANGUAGE sql
+IMMUTABLE
+STRICT
+PARALLEL SAFE
+AS $$
+    SELECT mra.canonical_sha256(
+        replace(
+            json_build_object(
+                'ordinal', ordinal,
+                'provider_id', provider_id,
+                'provider_product_id', provider_product_id,
+                'provider_product_revision', provider_product_revision,
+                'target_checkpoint_id', target_checkpoint_id,
+                'target_checkpoint_sha256', target_checkpoint_sha256,
+                'target_definition_id', target_definition_id,
+                'target_definition_sha256', target_definition_sha256,
+                'target_version', target_version
+            )::text,
+            ' ',
+            ''
+        )
+    );
+$$;
+
+CREATE FUNCTION mra.decision_reference_content_sha256(
+    availability_status text,
+    bar_revision integer,
+    bar_revision_id uuid,
+    candidate_id uuid,
+    capture_id uuid,
+    decimal_value numeric,
+    decision_run_target_id uuid,
+    event_end timestamptz,
+    event_start timestamptz,
+    finality_status text,
+    instrument_id uuid,
+    known_at timestamptz,
+    observation_time timestamptz,
+    price_basis text,
+    provider_product_id uuid,
+    source_recorded_at timestamptz,
+    session_id uuid,
+    source_gap_id uuid,
+    source_gap_kind text,
+    source_gap_reason_code text,
+    source_kind text,
+    target_checkpoint_id uuid,
+    timeframe text,
+    value_field text,
+    value_status text
+)
+RETURNS text
+LANGUAGE sql
+IMMUTABLE
+PARALLEL SAFE
+AS $$
+    SELECT mra.canonical_sha256(
+        replace(
+            json_build_object(
+                'availability_status', availability_status,
+                'bar_revision', bar_revision,
+                'bar_revision_id', bar_revision_id,
+                'candidate_id', candidate_id,
+                'capture_id', capture_id,
+                'decimal_value', decimal_value::text,
+                'decision_run_target_id', decision_run_target_id,
+                'event_end', mra.canonical_timestamptz_text(event_end),
+                'event_start', mra.canonical_timestamptz_text(event_start),
+                'finality_status', finality_status,
+                'instrument_id', instrument_id,
+                'known_at', mra.canonical_timestamptz_text(known_at),
+                'observation_time',
+                    mra.canonical_timestamptz_text(observation_time),
+                'price_basis', price_basis,
+                'provider_product_id', provider_product_id,
+                'recorded_at',
+                    mra.canonical_timestamptz_text(source_recorded_at),
+                'session_id', session_id,
+                'source_gap_id', source_gap_id,
+                'source_gap_kind', source_gap_kind,
+                'source_gap_reason_code', source_gap_reason_code,
+                'source_kind', source_kind,
+                'target_checkpoint_id', target_checkpoint_id,
+                'timeframe', timeframe,
+                'value_field', value_field,
+                'value_status', value_status
+            )::text,
+            ' ',
+            ''
+        )
+    );
+$$;
+
+CREATE FUNCTION mra.decision_commitment_content_sha256(
+    candidate_disposition text,
+    candidate_id uuid,
+    decision_reference_observation_id uuid,
+    decision_reference_sha256 text,
+    decision_run_target_id uuid,
+    instrument_id uuid,
+    runtime_mode text,
+    target_definition_id uuid
+)
+RETURNS text
+LANGUAGE sql
+IMMUTABLE
+STRICT
+PARALLEL SAFE
+AS $$
+    SELECT mra.canonical_sha256(
+        replace(
+            json_build_object(
+                'candidate_disposition', candidate_disposition,
+                'candidate_id', candidate_id,
+                'decision_reference_observation_id',
+                    decision_reference_observation_id,
+                'decision_reference_sha256', decision_reference_sha256,
+                'decision_run_target_id', decision_run_target_id,
+                'instrument_id', instrument_id,
+                'runtime_mode', runtime_mode,
+                'target_definition_id', target_definition_id
+            )::text,
+            ' ',
+            ''
+        )
+    );
+$$;
+
+CREATE FUNCTION mra.decision_run_definition_summary_sha256(
+    candidate_count integer,
+    candidate_roster_sha256 text,
+    candidate_set_content_sha256 text,
+    candidate_set_id uuid,
+    commitment_count bigint,
+    commitment_roster_sha256 text,
+    decision_time timestamptz,
+    reference_count bigint,
+    request_sha256 text,
+    runtime_mode text,
+    target_count integer,
+    target_roster_sha256 text
+)
+RETURNS text
+LANGUAGE sql
+IMMUTABLE
+STRICT
+PARALLEL SAFE
+AS $$
+    SELECT mra.canonical_sha256(
+        replace(
+            json_build_object(
+                'candidate_count', candidate_count,
+                'candidate_roster_sha256', candidate_roster_sha256,
+                'candidate_set_content_sha256', candidate_set_content_sha256,
+                'candidate_set_id', candidate_set_id,
+                'commitment_count', commitment_count,
+                'commitment_roster_sha256', commitment_roster_sha256,
+                'decision_time',
+                    mra.canonical_timestamptz_text(decision_time),
+                'reference_count', reference_count,
+                'request_sha256', request_sha256,
+                'runtime_mode', runtime_mode,
+                'target_count', target_count,
+                'target_roster_sha256', target_roster_sha256
             )::text,
             ' ',
             ''
@@ -4472,7 +4671,7 @@ CREATE TABLE mra.runtime_step (
     CONSTRAINT runtime_step_run_key_uk UNIQUE (run_id, step_key),
     CONSTRAINT runtime_step_run_ordinal_uk UNIQUE (run_id, ordinal),
     CONSTRAINT runtime_step_key_ck CHECK (step_key ~ '^[a-z][a-z0-9_-]{0,99}$'),
-    CONSTRAINT runtime_step_kind_ck CHECK (step_kind IN ('CAPTURE', 'NORMALIZE_PIT', 'FREEZE_UNIVERSE', 'ASSESS_ELIGIBILITY', 'REGISTER_DATASET', 'BUILD_CANDIDATE_SET', 'ASSESS_CONTEXT', 'SIGNAL_AND_FORECAST', 'DECIDE_AND_RISK', 'PERSIST_DECISION', 'SETTLE_OUTCOME', 'ATTRIBUTE', 'ASSESS_RESEARCH')),
+    CONSTRAINT runtime_step_kind_ck CHECK (step_kind IN ('CAPTURE', 'NORMALIZE_PIT', 'FREEZE_UNIVERSE', 'ASSESS_ELIGIBILITY', 'REGISTER_DATASET', 'BUILD_CANDIDATE_SET', 'OPEN_DECISION_RUN', 'ASSESS_CONTEXT', 'SIGNAL_AND_FORECAST', 'DECIDE_AND_RISK', 'PERSIST_DECISION', 'SETTLE_OUTCOME', 'ATTRIBUTE', 'ASSESS_RESEARCH')),
     CONSTRAINT runtime_step_implementation_ck CHECK (implementation <> '' AND implementation_version <> ''),
     CONSTRAINT runtime_step_ordinal_ck CHECK (ordinal >= 0),
     CONSTRAINT runtime_step_request_hash_ck CHECK (request_hash ~ '^[0-9a-f]{64}$'),
@@ -4520,6 +4719,97 @@ CREATE TABLE mra.runtime_step_dependency (
 );
 CREATE INDEX runtime_step_dependency_predecessor_idx ON mra.runtime_step_dependency (predecessor_step_id, successor_step_id);
 CREATE INDEX runtime_step_dependency_successor_idx ON mra.runtime_step_dependency (run_id, successor_step_id, predecessor_step_id);
+
+CREATE FUNCTION mra.validate_runtime_decision_chain()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    affected_run_id uuid := COALESCE(NEW.run_id, OLD.run_id);
+    chain_count integer;
+    build_step record;
+    open_step record;
+    context_step record;
+BEGIN
+    SELECT count(*)
+    INTO chain_count
+    FROM mra.runtime_step
+    WHERE run_id = affected_run_id
+      AND step_kind IN (
+          'BUILD_CANDIDATE_SET', 'OPEN_DECISION_RUN', 'ASSESS_CONTEXT'
+      );
+    IF chain_count = 0 THEN
+        RETURN COALESCE(NEW, OLD);
+    END IF;
+    IF chain_count <> 3 THEN
+        RAISE EXCEPTION 'Runtime Decision chain requires exactly three steps'
+            USING ERRCODE = '23514';
+    END IF;
+    SELECT step_id, ordinal, required
+    INTO build_step
+    FROM mra.runtime_step
+    WHERE run_id = affected_run_id
+      AND step_kind = 'BUILD_CANDIDATE_SET';
+    SELECT step_id, ordinal, required
+    INTO open_step
+    FROM mra.runtime_step
+    WHERE run_id = affected_run_id
+      AND step_kind = 'OPEN_DECISION_RUN';
+    SELECT step_id, ordinal, required
+    INTO context_step
+    FROM mra.runtime_step
+    WHERE run_id = affected_run_id
+      AND step_kind = 'ASSESS_CONTEXT';
+    IF build_step.step_id IS NULL
+       OR open_step.step_id IS NULL
+       OR context_step.step_id IS NULL
+       OR NOT build_step.required
+       OR NOT open_step.required
+       OR NOT context_step.required
+       OR NOT (
+           build_step.ordinal < open_step.ordinal
+           AND open_step.ordinal < context_step.ordinal
+       ) THEN
+        RAISE EXCEPTION 'Runtime Decision chain shape is invalid'
+            USING ERRCODE = '23514';
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1
+        FROM mra.runtime_step_dependency
+        WHERE run_id = affected_run_id
+          AND predecessor_step_id = build_step.step_id
+          AND successor_step_id = open_step.step_id
+          AND dependency_kind = 'REQUIRED_SUCCESS'
+    ) OR NOT EXISTS (
+        SELECT 1
+        FROM mra.runtime_step_dependency
+        WHERE run_id = affected_run_id
+          AND predecessor_step_id = open_step.step_id
+          AND successor_step_id = context_step.step_id
+          AND dependency_kind = 'REQUIRED_SUCCESS'
+    ) OR EXISTS (
+        SELECT 1
+        FROM mra.runtime_step_dependency
+        WHERE run_id = affected_run_id
+          AND predecessor_step_id = build_step.step_id
+          AND successor_step_id = context_step.step_id
+    ) THEN
+        RAISE EXCEPTION 'Runtime Decision chain edge is invalid'
+            USING ERRCODE = '23514';
+    END IF;
+    RETURN COALESCE(NEW, OLD);
+END;
+$$;
+
+CREATE CONSTRAINT TRIGGER runtime_step_decision_chain_guard
+AFTER INSERT OR UPDATE OR DELETE ON mra.runtime_step
+DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW EXECUTE FUNCTION mra.validate_runtime_decision_chain();
+
+CREATE CONSTRAINT TRIGGER runtime_dependency_decision_chain_guard
+AFTER INSERT OR UPDATE OR DELETE ON mra.runtime_step_dependency
+DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW EXECUTE FUNCTION mra.validate_runtime_decision_chain();
 
 CREATE TABLE mra.command_receipt (
     receipt_id uuid PRIMARY KEY,
@@ -4689,6 +4979,713 @@ CREATE INDEX audit_event_runtime_step_idx ON mra.audit_event (runtime_step_id, r
     WHERE runtime_step_id IS NOT NULL;
 CREATE INDEX audit_event_aggregate_idx ON mra.audit_event (aggregate_kind, aggregate_id, recorded_at);
 
+ALTER TABLE mra.candidate_set
+    ADD CONSTRAINT candidate_set_decision_authority_uk UNIQUE (
+        candidate_set_id, content_sha256, dataset_id, candidate_policy_id,
+        decision_time, population_count, selected_count,
+        ranked_not_selected_count, unrankable_count
+    );
+
+ALTER TABLE mra.candidate
+    ADD CONSTRAINT candidate_decision_scope_uk UNIQUE (
+        candidate_id, candidate_set_id, instrument_id, disposition
+    );
+
+ALTER TABLE mra.target_checkpoint
+    ADD CONSTRAINT target_checkpoint_decision_reference_uk UNIQUE (
+        target_checkpoint_id, target_definition_id, content_sha256,
+        ordinal, checkpoint_role, timeframe, price_basis, value_field,
+        reference_rule, availability_rule, finality_rule
+    );
+
+ALTER TABLE mra.target_definition
+    ADD CONSTRAINT target_definition_decision_authority_uk UNIQUE (
+        target_definition_id, target_code, version, content_sha256
+    );
+
+ALTER TABLE mra.provider_product
+    ADD CONSTRAINT provider_product_decision_authority_uk UNIQUE (
+        provider_product_id, provider_id, product_code, revision,
+        decision_visibility_policy, source_availability_policy
+    );
+
+ALTER TABLE mra.provider_product
+    ADD CONSTRAINT provider_product_decision_scope_uk UNIQUE (
+        provider_product_id, provider_id
+    );
+
+ALTER TABLE mra.market_bar_revision
+    ADD CONSTRAINT market_bar_decision_reference_uk UNIQUE (
+        bar_revision_id, provider_product_id, capture_id, instrument_id,
+        session_id, timeframe, price_basis, event_start, event_end,
+        revision, recorded_at, known_at
+    );
+
+ALTER TABLE mra.source_gap
+    ADD CONSTRAINT source_gap_decision_reference_uk UNIQUE (
+        gap_id, provider_product_id, capture_id, instrument_id, session_id,
+        timeframe, price_basis, event_start, event_end,
+        gap_kind, reason_code, recorded_at, known_at
+    );
+
+ALTER TABLE mra.runtime_run
+    ADD CONSTRAINT runtime_run_decision_authority_uk UNIQUE (
+        run_id, runtime_mode, decision_time, code_sha,
+        config_artifact_id, config_hash
+    );
+
+ALTER TABLE mra.runtime_step
+    ADD CONSTRAINT runtime_step_decision_authority_uk UNIQUE (
+        step_id, run_id, step_key, step_kind
+    );
+
+ALTER TABLE mra.command_receipt
+    ADD CONSTRAINT command_receipt_decision_claim_uk UNIQUE (
+        receipt_id, command_kind, scope_id, idempotency_key, request_hash,
+        runtime_step_id, runtime_attempt_id, fence_token
+    );
+
+CREATE TABLE mra.decision_run (
+    decision_run_id uuid PRIMARY KEY,
+    status text NOT NULL,
+    candidate_set_id uuid NOT NULL,
+    candidate_set_content_sha256 text NOT NULL,
+    dataset_id uuid NOT NULL,
+    candidate_policy_id uuid NOT NULL,
+    candidate_count integer NOT NULL,
+    selected_count integer NOT NULL,
+    ranked_not_selected_count integer NOT NULL,
+    unrankable_count integer NOT NULL,
+    candidate_roster_sha256 text NOT NULL,
+    target_count integer NOT NULL,
+    target_roster_sha256 text NOT NULL,
+    commitment_count bigint NOT NULL,
+    reference_count bigint NOT NULL,
+    commitment_roster_sha256 text NOT NULL,
+    runtime_mode text NOT NULL,
+    decision_time timestamptz NOT NULL,
+    commitment_recorded_at timestamptz NOT NULL,
+    request_received_at timestamptz NOT NULL,
+    runtime_run_id uuid NOT NULL,
+    runtime_step_id uuid NOT NULL,
+    runtime_attempt_id uuid NOT NULL,
+    runtime_fence_token bigint NOT NULL,
+    runtime_step_key text NOT NULL,
+    runtime_step_kind text NOT NULL,
+    code_sha text NOT NULL,
+    config_artifact_id uuid NOT NULL,
+    config_hash text NOT NULL,
+    request_kind text NOT NULL,
+    request_scope_id text NOT NULL,
+    request_identity text NOT NULL,
+    request_sha256 text NOT NULL,
+    command_receipt_id uuid NOT NULL,
+    created_by_actor_type text NOT NULL,
+    created_by_actor_id text NOT NULL,
+    creation_reason_code text NOT NULL,
+    definition_summary_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL,
+    CONSTRAINT decision_run_candidate_set_uk UNIQUE (candidate_set_id),
+    CONSTRAINT decision_run_exact_identity_uk UNIQUE (
+        decision_run_id, candidate_set_id, decision_time, runtime_mode,
+        commitment_recorded_at
+    ),
+    CONSTRAINT decision_run_request_uk UNIQUE (
+        candidate_set_id, request_identity
+    ),
+    CONSTRAINT decision_run_receipt_uk UNIQUE (command_receipt_id),
+    CONSTRAINT decision_run_candidate_set_fk FOREIGN KEY (
+        candidate_set_id, candidate_set_content_sha256,
+        dataset_id, candidate_policy_id, decision_time, candidate_count,
+        selected_count, ranked_not_selected_count, unrankable_count
+    ) REFERENCES mra.candidate_set(
+        candidate_set_id, content_sha256, dataset_id, candidate_policy_id,
+        decision_time, population_count, selected_count,
+        ranked_not_selected_count, unrankable_count
+    ) ON DELETE RESTRICT,
+    CONSTRAINT decision_run_runtime_run_fk FOREIGN KEY (
+        runtime_run_id, runtime_mode, decision_time, code_sha,
+        config_artifact_id, config_hash
+    ) REFERENCES mra.runtime_run(
+        run_id, runtime_mode, decision_time, code_sha,
+        config_artifact_id, config_hash
+    ) ON DELETE RESTRICT,
+    CONSTRAINT decision_run_runtime_step_fk FOREIGN KEY (
+        runtime_step_id, runtime_run_id, runtime_step_key, runtime_step_kind
+    ) REFERENCES mra.runtime_step(
+        step_id, run_id, step_key, step_kind
+    ) ON DELETE RESTRICT,
+    CONSTRAINT decision_run_runtime_attempt_fk FOREIGN KEY (
+        runtime_attempt_id, runtime_step_id, runtime_fence_token
+    ) REFERENCES mra.runtime_attempt(
+        attempt_id, step_id, fence_token
+    ) ON DELETE RESTRICT,
+    CONSTRAINT decision_run_receipt_claim_fk FOREIGN KEY (
+        command_receipt_id, request_kind, request_scope_id,
+        request_identity, request_sha256, runtime_step_id,
+        runtime_attempt_id, runtime_fence_token
+    ) REFERENCES mra.command_receipt(
+        receipt_id, command_kind, scope_id, idempotency_key, request_hash,
+        runtime_step_id, runtime_attempt_id, fence_token
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT decision_run_status_ck CHECK (status = 'OPENED'),
+    CONSTRAINT decision_run_counts_ck CHECK (
+        candidate_count >= 0
+        AND selected_count >= 0
+        AND ranked_not_selected_count >= 0
+        AND unrankable_count >= 0
+        AND candidate_count = selected_count
+            + ranked_not_selected_count + unrankable_count
+        AND target_count > 0
+        AND commitment_count = candidate_count::bigint * target_count::bigint
+        AND reference_count = commitment_count
+    ),
+    CONSTRAINT decision_run_hashes_ck CHECK (
+        candidate_set_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND candidate_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND target_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND commitment_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND request_sha256 ~ '^[0-9a-f]{64}$'
+        AND definition_summary_sha256 ~ '^[0-9a-f]{64}$'
+        AND config_hash ~ '^[0-9a-f]{64}$'
+        AND code_sha ~ '^[0-9a-f]{40}([0-9a-f]{24})?$'
+    ),
+    CONSTRAINT decision_run_runtime_ck CHECK (
+        runtime_mode IN (
+            'OPERATIONAL', 'HISTORICAL', 'REPLAY', 'SHADOW', 'PROSPECTIVE'
+        )
+        AND runtime_step_kind = 'OPEN_DECISION_RUN'
+        AND runtime_step_key ~ '^[a-z][a-z0-9_-]{0,99}$'
+        AND runtime_fence_token > 0
+    ),
+    CONSTRAINT decision_run_request_ck CHECK (
+        request_kind = 'OPEN_DECISION_RUN'
+        AND request_scope_id = candidate_set_id::text
+        AND request_identity ~ '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$'
+        AND created_by_actor_type IN ('SYSTEM', 'OPERATOR', 'WORKER')
+        AND created_by_actor_id <> ''
+        AND creation_reason_code ~ '^[A-Z][A-Z0-9_]{0,99}$'
+    ),
+    CONSTRAINT decision_run_time_ck CHECK (
+        request_received_at <= commitment_recorded_at
+        AND created_at = commitment_recorded_at
+    ),
+    CONSTRAINT decision_run_definition_summary_ck CHECK (
+        definition_summary_sha256 =
+            mra.decision_run_definition_summary_sha256(
+                candidate_count, candidate_roster_sha256,
+                candidate_set_content_sha256, candidate_set_id,
+                commitment_count, commitment_roster_sha256,
+                decision_time, reference_count, request_sha256,
+                runtime_mode, target_count, target_roster_sha256
+            )
+    )
+);
+CREATE INDEX decision_run_candidate_set_idx
+    ON mra.decision_run (candidate_set_id, decision_run_id);
+CREATE INDEX decision_run_request_idx
+    ON mra.decision_run (
+        request_kind, request_scope_id, request_identity, request_sha256
+    );
+CREATE INDEX decision_run_runtime_idx
+    ON mra.decision_run (
+        runtime_run_id, runtime_step_id, runtime_attempt_id,
+        runtime_fence_token
+    );
+CREATE INDEX decision_run_candidate_fk_idx
+    ON mra.decision_run (
+        candidate_set_id, candidate_set_content_sha256,
+        dataset_id, candidate_policy_id, decision_time, candidate_count,
+        selected_count, ranked_not_selected_count, unrankable_count
+    );
+CREATE INDEX decision_run_runtime_run_fk_idx
+    ON mra.decision_run (
+        runtime_run_id, runtime_mode, decision_time, code_sha,
+        config_artifact_id, config_hash
+    );
+CREATE INDEX decision_run_runtime_step_fk_idx
+    ON mra.decision_run (
+        runtime_step_id, runtime_run_id, runtime_step_key, runtime_step_kind
+    );
+CREATE INDEX decision_run_runtime_attempt_fk_idx
+    ON mra.decision_run (
+        runtime_attempt_id, runtime_step_id, runtime_fence_token
+    );
+CREATE INDEX decision_run_receipt_claim_fk_idx
+    ON mra.decision_run (
+        command_receipt_id, request_kind, request_scope_id,
+        request_identity, request_sha256, runtime_step_id,
+        runtime_attempt_id, runtime_fence_token
+    );
+
+CREATE TABLE mra.decision_run_target (
+    decision_run_target_id uuid PRIMARY KEY,
+    decision_run_id uuid NOT NULL,
+    ordinal integer NOT NULL,
+    target_definition_id uuid NOT NULL,
+    target_code text NOT NULL,
+    target_version integer NOT NULL,
+    target_definition_sha256 text NOT NULL,
+    target_checkpoint_id uuid NOT NULL,
+    target_checkpoint_sha256 text NOT NULL,
+    target_checkpoint_ordinal integer NOT NULL,
+    target_checkpoint_role text NOT NULL,
+    timeframe text NOT NULL,
+    price_basis text NOT NULL,
+    value_field text NOT NULL,
+    reference_rule text NOT NULL,
+    availability_rule text NOT NULL,
+    finality_rule text NOT NULL,
+    reference_provider_product_id uuid NOT NULL,
+    reference_provider_id uuid NOT NULL,
+    reference_provider_product_code text NOT NULL,
+    reference_provider_product_revision integer NOT NULL,
+    decision_visibility_policy text NOT NULL,
+    source_availability_policy text NOT NULL,
+    commitment_recorded_at timestamptz NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL,
+    CONSTRAINT decision_run_target_ordinal_uk UNIQUE (
+        decision_run_id, ordinal
+    ),
+    CONSTRAINT decision_run_target_definition_uk UNIQUE (
+        decision_run_id, target_definition_id
+    ),
+    CONSTRAINT decision_run_target_scope_uk UNIQUE (
+        decision_run_target_id, decision_run_id, target_definition_id,
+        target_checkpoint_id, reference_provider_product_id,
+        commitment_recorded_at
+    ),
+    CONSTRAINT decision_run_target_run_fk FOREIGN KEY (
+        decision_run_id
+    ) REFERENCES mra.decision_run(decision_run_id)
+      ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT decision_run_target_definition_fk FOREIGN KEY (
+        target_definition_id, target_code, target_version,
+        target_definition_sha256
+    ) REFERENCES mra.target_definition(
+        target_definition_id, target_code, version, content_sha256
+    ) ON DELETE RESTRICT,
+    CONSTRAINT decision_run_target_checkpoint_fk FOREIGN KEY (
+        target_checkpoint_id, target_definition_id,
+        target_checkpoint_sha256, target_checkpoint_ordinal,
+        target_checkpoint_role, timeframe, price_basis, value_field,
+        reference_rule, availability_rule, finality_rule
+    ) REFERENCES mra.target_checkpoint(
+        target_checkpoint_id, target_definition_id, content_sha256,
+        ordinal, checkpoint_role, timeframe, price_basis, value_field,
+        reference_rule, availability_rule, finality_rule
+    ) ON DELETE RESTRICT,
+    CONSTRAINT decision_run_target_provider_product_fk FOREIGN KEY (
+        reference_provider_product_id, reference_provider_id,
+        reference_provider_product_code,
+        reference_provider_product_revision,
+        decision_visibility_policy, source_availability_policy
+    ) REFERENCES mra.provider_product(
+        provider_product_id, provider_id, product_code, revision,
+        decision_visibility_policy, source_availability_policy
+    ) ON DELETE RESTRICT,
+    CONSTRAINT decision_run_target_shape_ck CHECK (
+        ordinal > 0
+        AND target_code ~ '^[a-z][a-z0-9_]{0,99}$'
+        AND target_version > 0
+        AND target_checkpoint_ordinal > 0
+        AND target_checkpoint_role = 'DECISION_REFERENCE'
+        AND reference_provider_product_revision > 0
+        AND decision_visibility_policy = 'KNOWN_AT'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+        AND target_definition_sha256 ~ '^[0-9a-f]{64}$'
+        AND target_checkpoint_sha256 ~ '^[0-9a-f]{64}$'
+        AND created_at = commitment_recorded_at
+    ),
+    CONSTRAINT decision_run_target_content_ck CHECK (
+        content_sha256 = mra.decision_run_target_content_sha256(
+            ordinal, reference_provider_id,
+            reference_provider_product_id,
+            reference_provider_product_revision,
+            target_checkpoint_id, target_checkpoint_sha256,
+            target_definition_id, target_definition_sha256,
+            target_version
+        )
+    )
+);
+CREATE INDEX decision_run_target_replay_idx
+    ON mra.decision_run_target (
+        decision_run_id, ordinal, decision_run_target_id
+    );
+CREATE INDEX decision_run_target_definition_idx
+    ON mra.decision_run_target (
+        target_definition_id, target_version,
+        target_definition_sha256, decision_run_id
+    );
+CREATE INDEX decision_run_target_definition_fk_idx
+    ON mra.decision_run_target (
+        target_definition_id, target_code, target_version,
+        target_definition_sha256
+    );
+CREATE INDEX decision_run_target_checkpoint_fk_idx
+    ON mra.decision_run_target (
+        target_checkpoint_id, target_definition_id,
+        target_checkpoint_sha256, target_checkpoint_ordinal,
+        target_checkpoint_role, timeframe, price_basis, value_field,
+        reference_rule, availability_rule, finality_rule
+    );
+CREATE INDEX decision_run_target_product_fk_idx
+    ON mra.decision_run_target (
+        reference_provider_product_id, reference_provider_id,
+        reference_provider_product_code,
+        reference_provider_product_revision,
+        decision_visibility_policy, source_availability_policy
+    );
+
+CREATE TABLE mra.decision_target_commitment (
+    commitment_id uuid PRIMARY KEY,
+    decision_run_id uuid NOT NULL,
+    decision_run_target_id uuid NOT NULL,
+    candidate_set_id uuid NOT NULL,
+    candidate_id uuid NOT NULL,
+    instrument_id uuid NOT NULL,
+    candidate_disposition text NOT NULL,
+    target_definition_id uuid NOT NULL,
+    target_checkpoint_id uuid NOT NULL,
+    reference_provider_product_id uuid NOT NULL,
+    decision_time timestamptz NOT NULL,
+    runtime_mode text NOT NULL,
+    commitment_recorded_at timestamptz NOT NULL,
+    decision_reference_observation_id uuid NOT NULL,
+    decision_reference_sha256 text NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL,
+    CONSTRAINT decision_commitment_candidate_target_uk UNIQUE (
+        decision_run_id, candidate_id, target_definition_id
+    ),
+    CONSTRAINT decision_commitment_scope_uk UNIQUE (
+        commitment_id, decision_run_id, decision_run_target_id,
+        candidate_set_id, candidate_id, target_definition_id,
+        target_checkpoint_id, instrument_id,
+        reference_provider_product_id, decision_time, runtime_mode,
+        commitment_recorded_at
+    ),
+    CONSTRAINT decision_commitment_reference_scope_uk UNIQUE (
+        decision_reference_observation_id, commitment_id,
+        decision_run_id, decision_run_target_id, candidate_set_id,
+        candidate_id, target_definition_id, target_checkpoint_id,
+        instrument_id, reference_provider_product_id, decision_time,
+        runtime_mode, commitment_recorded_at, decision_reference_sha256
+    ),
+    CONSTRAINT decision_commitment_candidate_fk FOREIGN KEY (
+        candidate_id, candidate_set_id, instrument_id,
+        candidate_disposition
+    ) REFERENCES mra.candidate(
+        candidate_id, candidate_set_id, instrument_id, disposition
+    ) ON DELETE RESTRICT,
+    CONSTRAINT decision_commitment_run_target_fk FOREIGN KEY (
+        decision_run_target_id, decision_run_id, target_definition_id,
+        target_checkpoint_id, reference_provider_product_id,
+        commitment_recorded_at
+    ) REFERENCES mra.decision_run_target(
+        decision_run_target_id, decision_run_id, target_definition_id,
+        target_checkpoint_id, reference_provider_product_id,
+        commitment_recorded_at
+    ) ON DELETE RESTRICT,
+    CONSTRAINT decision_commitment_run_scope_fk FOREIGN KEY (
+        decision_run_id, candidate_set_id, decision_time,
+        runtime_mode, commitment_recorded_at
+    ) REFERENCES mra.decision_run(
+        decision_run_id, candidate_set_id, decision_time,
+        runtime_mode, commitment_recorded_at
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT decision_commitment_shape_ck CHECK (
+        candidate_disposition IN (
+            'SELECTED', 'RANKED_NOT_SELECTED', 'UNRANKABLE'
+        )
+        AND runtime_mode IN (
+            'OPERATIONAL', 'HISTORICAL', 'REPLAY', 'SHADOW', 'PROSPECTIVE'
+        )
+        AND decision_reference_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+        AND created_at = commitment_recorded_at
+    ),
+    CONSTRAINT decision_commitment_content_ck CHECK (
+        content_sha256 = mra.decision_commitment_content_sha256(
+            candidate_disposition, candidate_id,
+            decision_reference_observation_id,
+            decision_reference_sha256, decision_run_target_id,
+            instrument_id, runtime_mode, target_definition_id
+        )
+    )
+);
+CREATE INDEX decision_commitment_cross_product_idx
+    ON mra.decision_target_commitment (
+        decision_run_id, decision_run_target_id, candidate_id
+    );
+CREATE INDEX decision_commitment_candidate_idx
+    ON mra.decision_target_commitment (
+        candidate_set_id, candidate_id, decision_run_id
+    );
+CREATE INDEX decision_commitment_target_idx
+    ON mra.decision_target_commitment (
+        target_definition_id, decision_run_id, candidate_id
+    );
+CREATE INDEX decision_commitment_candidate_fk_idx
+    ON mra.decision_target_commitment (
+        candidate_id, candidate_set_id, instrument_id,
+        candidate_disposition
+    );
+CREATE INDEX decision_commitment_run_target_fk_idx
+    ON mra.decision_target_commitment (
+        decision_run_target_id, decision_run_id, target_definition_id,
+        target_checkpoint_id, reference_provider_product_id,
+        commitment_recorded_at
+    );
+CREATE INDEX decision_commitment_run_scope_fk_idx
+    ON mra.decision_target_commitment (
+        decision_run_id, candidate_set_id, decision_time,
+        runtime_mode, commitment_recorded_at
+    );
+
+CREATE TABLE mra.decision_reference_observation (
+    decision_reference_observation_id uuid PRIMARY KEY,
+    commitment_id uuid NOT NULL,
+    decision_run_id uuid NOT NULL,
+    decision_run_target_id uuid NOT NULL,
+    candidate_set_id uuid NOT NULL,
+    candidate_id uuid NOT NULL,
+    target_definition_id uuid NOT NULL,
+    target_checkpoint_id uuid NOT NULL,
+    instrument_id uuid NOT NULL,
+    reference_provider_product_id uuid NOT NULL,
+    reference_provider_id uuid NOT NULL,
+    capture_id uuid NOT NULL,
+    session_id uuid NOT NULL,
+    timeframe text NOT NULL,
+    price_basis text NOT NULL,
+    value_field text NOT NULL,
+    event_start timestamptz NOT NULL,
+    event_end timestamptz NOT NULL,
+    observation_time timestamptz NOT NULL,
+    source_recorded_at timestamptz NOT NULL,
+    known_at timestamptz NOT NULL,
+    decision_time timestamptz NOT NULL,
+    runtime_mode text NOT NULL,
+    commitment_recorded_at timestamptz NOT NULL,
+    source_kind text NOT NULL,
+    value_status text NOT NULL,
+    availability_status text NOT NULL,
+    finality_status text NOT NULL,
+    decimal_value numeric,
+    bar_revision_id uuid,
+    bar_revision integer,
+    source_gap_id uuid,
+    source_gap_kind text,
+    source_gap_reason_code text,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL,
+    CONSTRAINT decision_reference_commitment_uk UNIQUE (commitment_id),
+    CONSTRAINT decision_reference_scope_uk UNIQUE (
+        decision_reference_observation_id, commitment_id,
+        decision_run_id, decision_run_target_id, candidate_set_id,
+        candidate_id, target_definition_id, target_checkpoint_id,
+        instrument_id, reference_provider_product_id, decision_time,
+        runtime_mode, commitment_recorded_at, content_sha256
+    ),
+    CONSTRAINT decision_reference_commitment_fk FOREIGN KEY (
+        commitment_id, decision_run_id, decision_run_target_id,
+        candidate_set_id, candidate_id, target_definition_id,
+        target_checkpoint_id, instrument_id,
+        reference_provider_product_id, decision_time,
+        runtime_mode, commitment_recorded_at
+    ) REFERENCES mra.decision_target_commitment(
+        commitment_id, decision_run_id, decision_run_target_id,
+        candidate_set_id, candidate_id, target_definition_id,
+        target_checkpoint_id, instrument_id,
+        reference_provider_product_id, decision_time, runtime_mode,
+        commitment_recorded_at
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT decision_reference_run_target_fk FOREIGN KEY (
+        decision_run_target_id, decision_run_id, target_definition_id,
+        target_checkpoint_id, reference_provider_product_id,
+        commitment_recorded_at
+    ) REFERENCES mra.decision_run_target(
+        decision_run_target_id, decision_run_id, target_definition_id,
+        target_checkpoint_id, reference_provider_product_id,
+        commitment_recorded_at
+    ) ON DELETE RESTRICT,
+    CONSTRAINT decision_reference_provider_fk FOREIGN KEY (
+        reference_provider_product_id, reference_provider_id
+    ) REFERENCES mra.provider_product(provider_product_id, provider_id)
+      ON DELETE RESTRICT,
+    CONSTRAINT decision_reference_bar_fk FOREIGN KEY (
+        bar_revision_id, reference_provider_product_id, capture_id,
+        instrument_id, session_id, timeframe, price_basis,
+        event_start, event_end, bar_revision, source_recorded_at, known_at
+    ) REFERENCES mra.market_bar_revision(
+        bar_revision_id, provider_product_id, capture_id,
+        instrument_id, session_id, timeframe, price_basis,
+        event_start, event_end, revision, recorded_at, known_at
+    ) ON DELETE RESTRICT,
+    CONSTRAINT decision_reference_gap_fk FOREIGN KEY (
+        source_gap_id, reference_provider_product_id, capture_id,
+        instrument_id, session_id, timeframe, price_basis,
+        event_start, event_end, source_gap_kind, source_gap_reason_code,
+        source_recorded_at, known_at
+    ) REFERENCES mra.source_gap(
+        gap_id, provider_product_id, capture_id,
+        instrument_id, session_id, timeframe, price_basis,
+        event_start, event_end, gap_kind, reason_code,
+        recorded_at, known_at
+    ) ON DELETE RESTRICT,
+    CONSTRAINT decision_reference_source_ck CHECK (
+        (
+            source_kind = 'BAR_REVISION'
+            AND bar_revision_id IS NOT NULL AND bar_revision > 0
+            AND source_gap_id IS NULL
+            AND source_gap_kind IS NULL
+            AND source_gap_reason_code IS NULL
+            AND decimal_value IS NOT NULL
+            AND decimal_value > 0
+            AND decimal_value < 'Infinity'::numeric
+        )
+        OR
+        (
+            source_kind = 'SOURCE_GAP'
+            AND source_gap_id IS NOT NULL
+            AND source_gap_kind IN (
+                'MISSING', 'PLACEHOLDER', 'PROVIDER_FAILURE',
+                'CONFLICT', 'INVALID_OHLC'
+            )
+            AND source_gap_reason_code IN (
+                'PROVIDER_FAILURE', 'NO_ROWS_RETURNED',
+                'EXPECTED_OBSERVATION_MISSING', 'EXACT_BAR_MISSING',
+                'NULL_OHLC_PLACEHOLDER',
+                'CONFLICTING_SOURCE_REVISIONS', 'INVALID_OHLC'
+            )
+            AND bar_revision_id IS NULL AND bar_revision IS NULL
+            AND decimal_value IS NULL
+        )
+    ),
+    CONSTRAINT decision_reference_state_ck CHECK (
+        finality_status = 'UNKNOWN'
+        AND (
+            (
+                source_kind = 'BAR_REVISION'
+                AND value_status = 'PRESENT'
+                AND availability_status = 'AVAILABLE'
+            )
+            OR
+            (
+                source_kind = 'SOURCE_GAP'
+                AND source_gap_kind IN ('MISSING', 'PLACEHOLDER')
+                AND value_status = 'UNAVAILABLE'
+                AND availability_status = 'UNAVAILABLE'
+            )
+            OR
+            (
+                source_kind = 'SOURCE_GAP'
+                AND source_gap_kind IN (
+                    'PROVIDER_FAILURE', 'CONFLICT', 'INVALID_OHLC'
+                )
+                AND value_status = 'FAILED'
+                AND availability_status = 'FAILED'
+            )
+        )
+    ),
+    CONSTRAINT decision_reference_known_at_ck CHECK (
+        event_end > event_start
+        AND observation_time = event_end
+        AND known_at >= source_recorded_at
+        AND known_at <= decision_time
+        AND runtime_mode IN (
+            'OPERATIONAL', 'HISTORICAL', 'REPLAY', 'SHADOW', 'PROSPECTIVE'
+        )
+        AND created_at = commitment_recorded_at
+    ),
+    CONSTRAINT decision_reference_value_ck CHECK (
+        timeframe IN (
+            'MINUTE_1', 'MINUTE_5', 'MINUTE_15',
+            'MINUTE_30', 'MINUTE_60', 'DAILY'
+        )
+        AND price_basis IN (
+            'RAW_UNADJUSTED', 'FORWARD_ADJUSTED', 'BACKWARD_ADJUSTED'
+        )
+        AND value_field IN ('OPEN', 'HIGH', 'LOW', 'CLOSE')
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    ),
+    CONSTRAINT decision_reference_content_ck CHECK (
+        content_sha256 = mra.decision_reference_content_sha256(
+            availability_status, bar_revision, bar_revision_id,
+            candidate_id, capture_id, decimal_value,
+            decision_run_target_id, event_end, event_start,
+            finality_status, instrument_id, known_at,
+            observation_time, price_basis,
+            reference_provider_product_id, source_recorded_at,
+            session_id, source_gap_id, source_gap_kind,
+            source_gap_reason_code, source_kind,
+            target_checkpoint_id, timeframe, value_field, value_status
+        )
+    )
+);
+CREATE INDEX decision_reference_replay_idx
+    ON mra.decision_reference_observation (
+        decision_run_id, decision_run_target_id, candidate_id
+    );
+CREATE INDEX decision_reference_bar_idx
+    ON mra.decision_reference_observation (bar_revision_id)
+    WHERE bar_revision_id IS NOT NULL;
+CREATE INDEX decision_reference_gap_idx
+    ON mra.decision_reference_observation (source_gap_id)
+    WHERE source_gap_id IS NOT NULL;
+CREATE INDEX decision_reference_known_at_idx
+    ON mra.decision_reference_observation (
+        decision_run_id, known_at, candidate_id
+    );
+CREATE INDEX decision_reference_commitment_fk_idx
+    ON mra.decision_reference_observation (
+        commitment_id, decision_run_id, decision_run_target_id,
+        candidate_set_id, candidate_id, target_definition_id,
+        target_checkpoint_id, instrument_id,
+        reference_provider_product_id, decision_time,
+        runtime_mode, commitment_recorded_at
+    );
+CREATE INDEX decision_reference_run_target_fk_idx
+    ON mra.decision_reference_observation (
+        decision_run_target_id, decision_run_id, target_definition_id,
+        target_checkpoint_id, reference_provider_product_id,
+        commitment_recorded_at
+    );
+CREATE INDEX decision_reference_provider_fk_idx
+    ON mra.decision_reference_observation (
+        reference_provider_product_id, reference_provider_id
+    );
+CREATE INDEX decision_reference_bar_fk_idx
+    ON mra.decision_reference_observation (
+        bar_revision_id, reference_provider_product_id, capture_id,
+        instrument_id, session_id, timeframe, price_basis,
+        event_start, event_end, bar_revision, source_recorded_at, known_at
+    );
+CREATE INDEX decision_reference_gap_fk_idx
+    ON mra.decision_reference_observation (
+        source_gap_id, reference_provider_product_id, capture_id,
+        instrument_id, session_id, timeframe, price_basis,
+        event_start, event_end, source_gap_kind, source_gap_reason_code,
+        source_recorded_at, known_at
+    );
+
+ALTER TABLE mra.decision_target_commitment
+    ADD CONSTRAINT decision_commitment_reference_fk FOREIGN KEY (
+        decision_reference_observation_id, commitment_id,
+        decision_run_id, decision_run_target_id, candidate_set_id,
+        candidate_id, target_definition_id, target_checkpoint_id,
+        instrument_id, reference_provider_product_id, decision_time,
+        runtime_mode, commitment_recorded_at, decision_reference_sha256
+    ) REFERENCES mra.decision_reference_observation(
+        decision_reference_observation_id, commitment_id,
+        decision_run_id, decision_run_target_id, candidate_set_id,
+        candidate_id, target_definition_id, target_checkpoint_id,
+        instrument_id, reference_provider_product_id, decision_time,
+        runtime_mode, commitment_recorded_at, content_sha256
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED;
+
 CREATE FUNCTION mra.guard_open_target_child_insert()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -4700,6 +5697,208 @@ BEGIN
         WHERE definition.target_definition_id = NEW.target_definition_id
     ) THEN
         RAISE EXCEPTION 'TargetDefinition is already closed'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.guard_open_decision_child_insert()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM mra.decision_run AS decision
+        WHERE decision.decision_run_id = NEW.decision_run_id
+    ) THEN
+        RAISE EXCEPTION 'DecisionRun is already closed'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.validate_decision_run_closure()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    actual_target_count bigint;
+    actual_commitment_count bigint;
+    actual_reference_count bigint;
+    target_min integer;
+    target_max integer;
+    missing_commitment_count bigint;
+    actual_candidate_hash text;
+    actual_target_hash text;
+    actual_commitment_hash text;
+BEGIN
+    SELECT count(*), min(ordinal), max(ordinal)
+    INTO actual_target_count, target_min, target_max
+    FROM mra.decision_run_target
+    WHERE decision_run_id = NEW.decision_run_id;
+
+    SELECT count(*)
+    INTO actual_commitment_count
+    FROM mra.decision_target_commitment
+    WHERE decision_run_id = NEW.decision_run_id;
+
+    SELECT count(*)
+    INTO actual_reference_count
+    FROM mra.decision_reference_observation
+    WHERE decision_run_id = NEW.decision_run_id;
+
+    SELECT count(*)
+    INTO missing_commitment_count
+    FROM mra.candidate AS candidate
+    CROSS JOIN mra.decision_run_target AS target
+    LEFT JOIN mra.decision_target_commitment AS commitment
+      ON commitment.decision_run_id = target.decision_run_id
+     AND commitment.decision_run_target_id = target.decision_run_target_id
+     AND commitment.candidate_id = candidate.candidate_id
+    WHERE candidate.candidate_set_id = NEW.candidate_set_id
+      AND target.decision_run_id = NEW.decision_run_id
+      AND commitment.commitment_id IS NULL;
+
+    IF actual_target_count <> NEW.target_count
+       OR actual_commitment_count <> NEW.commitment_count
+       OR actual_reference_count <> NEW.reference_count
+       OR target_min <> 1
+       OR target_max <> actual_target_count
+       OR missing_commitment_count <> 0 THEN
+        RAISE EXCEPTION 'DecisionRun child roster is incomplete'
+            USING ERRCODE = '55000';
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM mra.decision_target_commitment AS commitment
+        LEFT JOIN mra.decision_reference_observation AS reference
+          ON reference.decision_reference_observation_id =
+             commitment.decision_reference_observation_id
+         AND reference.commitment_id = commitment.commitment_id
+         AND reference.content_sha256 =
+             commitment.decision_reference_sha256
+        WHERE commitment.decision_run_id = NEW.decision_run_id
+          AND reference.decision_reference_observation_id IS NULL
+    ) OR EXISTS (
+        SELECT 1
+        FROM mra.decision_reference_observation AS reference
+        LEFT JOIN mra.decision_target_commitment AS commitment
+          ON commitment.commitment_id = reference.commitment_id
+         AND commitment.decision_reference_observation_id =
+             reference.decision_reference_observation_id
+         AND commitment.decision_reference_sha256 = reference.content_sha256
+        WHERE reference.decision_run_id = NEW.decision_run_id
+          AND commitment.commitment_id IS NULL
+    ) THEN
+        RAISE EXCEPTION 'Decision commitment/reference binding is incomplete'
+            USING ERRCODE = '55000';
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM mra.decision_run_target AS target
+        JOIN mra.provider_product AS product
+          ON product.provider_product_id =
+             target.reference_provider_product_id
+        WHERE target.decision_run_id = NEW.decision_run_id
+          AND (
+              NOT ('MARKET_BAR' = ANY(product.fact_kinds))
+              OR NOT (target.timeframe = ANY(product.bar_timeframes))
+              OR NOT (target.price_basis = ANY(product.price_bases))
+          )
+    ) THEN
+        RAISE EXCEPTION 'Decision reference Provider Product lacks Target capability'
+            USING ERRCODE = '55000';
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM mra.decision_reference_observation AS reference
+        JOIN mra.market_bar_revision AS bar
+          ON bar.bar_revision_id = reference.bar_revision_id
+        WHERE reference.decision_run_id = NEW.decision_run_id
+          AND reference.source_kind = 'BAR_REVISION'
+          AND reference.decimal_value IS DISTINCT FROM
+              CASE reference.value_field
+                  WHEN 'OPEN' THEN bar.open_value
+                  WHEN 'HIGH' THEN bar.high_value
+                  WHEN 'LOW' THEN bar.low_value
+                  WHEN 'CLOSE' THEN bar.close_value
+              END
+    ) THEN
+        RAISE EXCEPTION 'Decision reference value differs from exact Market revision'
+            USING ERRCODE = '55000';
+    END IF;
+
+    SELECT mra.canonical_sha256(
+               replace(
+                   COALESCE(
+                       json_agg(
+                           json_build_object(
+                               'candidate_id', candidate_id,
+                               'disposition', disposition,
+                               'instrument_id', instrument_id
+                           ) ORDER BY candidate_id
+                       )::text,
+                       '[]'
+                   ),
+                   ' ',
+                   ''
+               )
+           )
+    INTO actual_candidate_hash
+    FROM mra.candidate
+    WHERE candidate_set_id = NEW.candidate_set_id;
+
+    SELECT mra.canonical_sha256(
+               replace(
+                   json_agg(
+                       json_build_object(
+                           'content_sha256', content_sha256,
+                           'decision_run_target_id', decision_run_target_id,
+                           'ordinal', ordinal
+                       ) ORDER BY ordinal
+                   )::text,
+                   ' ',
+                   ''
+               )
+           )
+    INTO actual_target_hash
+    FROM mra.decision_run_target
+    WHERE decision_run_id = NEW.decision_run_id;
+
+    SELECT mra.canonical_sha256(
+               replace(
+                   COALESCE(
+                       json_agg(
+                           json_build_object(
+                               'commitment_id', commitment.commitment_id,
+                               'content_sha256', commitment.content_sha256,
+                               'decision_run_target_id',
+                                   commitment.decision_run_target_id
+                           ) ORDER BY target.ordinal,
+                                      commitment.candidate_id
+                       )::text,
+                       '[]'
+                   ),
+                   ' ',
+                   ''
+               )
+           )
+    INTO actual_commitment_hash
+    FROM mra.decision_target_commitment AS commitment
+    JOIN mra.decision_run_target AS target
+      ON target.decision_run_target_id = commitment.decision_run_target_id
+    WHERE commitment.decision_run_id = NEW.decision_run_id;
+
+    IF actual_candidate_hash <> NEW.candidate_roster_sha256
+       OR actual_target_hash <> NEW.target_roster_sha256
+       OR actual_commitment_hash <> NEW.commitment_roster_sha256 THEN
+        RAISE EXCEPTION 'DecisionRun roster hash does not reconcile'
             USING ERRCODE = '55000';
     END IF;
     RETURN NEW;
@@ -5145,6 +6344,30 @@ FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
 CREATE TRIGGER target_metric_dependency_open_guard
 BEFORE INSERT ON mra.target_metric_dependency
 FOR EACH ROW EXECUTE FUNCTION mra.guard_open_target_child_insert();
+CREATE TRIGGER decision_run_append_only
+BEFORE UPDATE OR DELETE ON mra.decision_run
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER decision_run_closure_guard
+BEFORE INSERT ON mra.decision_run
+FOR EACH ROW EXECUTE FUNCTION mra.validate_decision_run_closure();
+CREATE TRIGGER decision_run_target_append_only
+BEFORE UPDATE OR DELETE ON mra.decision_run_target
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER decision_run_target_open_guard
+BEFORE INSERT ON mra.decision_run_target
+FOR EACH ROW EXECUTE FUNCTION mra.guard_open_decision_child_insert();
+CREATE TRIGGER decision_commitment_append_only
+BEFORE UPDATE OR DELETE ON mra.decision_target_commitment
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER decision_commitment_open_guard
+BEFORE INSERT ON mra.decision_target_commitment
+FOR EACH ROW EXECUTE FUNCTION mra.guard_open_decision_child_insert();
+CREATE TRIGGER decision_reference_append_only
+BEFORE UPDATE OR DELETE ON mra.decision_reference_observation
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER decision_reference_open_guard
+BEFORE INSERT ON mra.decision_reference_observation
+FOR EACH ROW EXECUTE FUNCTION mra.guard_open_decision_child_insert();
 
 CREATE VIEW mra.candidate_component_diagnostic AS
 SELECT

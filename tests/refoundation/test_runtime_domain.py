@@ -110,3 +110,42 @@ def test_non_idempotent_remote_command_is_rejected_at_planning_boundary() -> Non
 
     with pytest.raises(ValueError, match="NON_IDEMPOTENT_REMOTE_COMMAND"):
         validate_step_dag((step,), ())
+
+
+def test_candidate_to_context_chain_is_mandatory_and_cannot_bypass_decision() -> None:
+    policy = RetryPolicy(max_attempts=1, backoff=(), retryable_codes=frozenset())
+
+    def step(key: str, kind: str, ordinal: int) -> StepSpec:
+        return StepSpec(
+            step_key=key,
+            step_kind=kind,
+            implementation=f"tests.{key}",
+            implementation_version="1",
+            ordinal=ordinal,
+            required=True,
+            request_hash=str(ordinal) * 64,
+            input_evidence_hash=None,
+            retry_policy=policy,
+        )
+
+    build = step("build-candidates", "BUILD_CANDIDATE_SET", 1)
+    opened = step("open-decision", "OPEN_DECISION_RUN", 2)
+    context = step("assess-context", "ASSESS_CONTEXT", 3)
+    required_edges = (
+        StepDependency("build-candidates", "open-decision"),
+        StepDependency("open-decision", "assess-context"),
+    )
+    validate_step_dag((build, opened, context), required_edges)
+
+    with pytest.raises(ValueError, match="each occur exactly once"):
+        validate_step_dag((build,), ())
+    with pytest.raises(ValueError, match="direct REQUIRED_SUCCESS"):
+        validate_step_dag((build, opened, context), ())
+    with pytest.raises(ValueError, match="cannot bypass"):
+        validate_step_dag(
+            (build, opened, context),
+            (
+                *required_edges,
+                StepDependency("build-candidates", "assess-context"),
+            ),
+        )
