@@ -4,7 +4,7 @@
 > **Authority:** Target business-fact ownership and canonical-write specification
 > **Owner:** Market Regime Alpha maintainers
 > **Last Updated:** 2026-08-30
-> **Implementation State:** `FOUNDATION_MARKET_SELECTION_RESEARCH_DEFINITION_IMPLEMENTED_DRAFT / CANDIDATE_APPROVED_DESIGN_NOT_IMPLEMENTED / NOT_CUT_OVER`
+> **Implementation State:** `FOUNDATION_MARKET_SELECTION_RESEARCH_DEFINITION_CANDIDATE_IMPLEMENTED_DRAFT / CANDIDATE_EXIT_GATE_PASS / NOT_CUT_OVER`
 > **Code Evidence:** target `src/market_regime_alpha/shared`, `src/market_regime_alpha/runtime`, `src/market_regime_alpha/market`, `src/market_regime_alpha/selection`, `src/market_regime_alpha/research_qualification`, `src/market_regime_alpha/infrastructure`, `src/market_regime_alpha/interfaces`, `src/market_regime_alpha/infrastructure/postgres/migrations/001_baseline.sql`, `tests/refoundation`; legacy source/migrations remain current business implementation
 
 This document answers one question for every retained fact: who may create or
@@ -81,8 +81,8 @@ Domain errors nor commands and is not a command bus or workflow owner.
 | Universe membership | Selection | same `FreezeUniverse` command | `universe_member` | every explicitly scoped instrument classified included/excluded/unknown with exact Market lineage | Eligibility, research |
 | Eligibility policy/rules | Selection | `RegisterEligibilityPolicy` | `eligibility_policy`, `eligibility_rule` | immutable typed policy and complete ordered criteria; units/window/operator/threshold explicit | assessment |
 | Eligibility assessment | Selection | `AssessEligibility` | `eligibility_assessment`, `eligibility_reason` | every rule evaluated for every scoped instrument; one three-state aggregate with exact Market lineage | Candidate, funnel |
-| Candidate policy | Selection, approved design/not implemented | `RegisterCandidatePolicy` | `candidate_policy`, `candidate_policy_component` | immutable arithmetic-midrank/competition-rank/strict-complete-case/Top-K/tie/projection contract; components bind only real numeric Feature Definitions and canonical declared weights | Candidate command |
-| Candidate Set/Candidate | Selection, approved design/not implemented | `BuildCandidateSet` | `candidate_set`, `candidate`, `candidate_score_component` | immutable Policy × Decision-input Dataset result; Dataset is sole population; every row terminal; complete typed component matrix and funnel; non-unique equal rank; independent of all later authorities | post-Candidate consumers after dependency review |
+| Candidate policy | Selection | `RegisterCandidatePolicy` | `candidate_policy`, `candidate_policy_component` | immutable arithmetic-midrank/competition-rank/strict-complete-case/Top-K/tie/projection contract; components bind only real numeric Feature Definitions and canonical declared weights | Candidate command |
+| Candidate Set/Candidate | Selection | `BuildCandidateSet` | `candidate_set`, `candidate`, `candidate_score_component` | immutable Policy × Decision-input Dataset result; Dataset is sole population; every row terminal; complete typed component matrix and funnel; non-unique equal rank; independent of all later authorities | post-Candidate consumers after dependency review |
 | Decision-input Dataset | Research & Qualification | `RegisterDataset` | `dataset`, `dataset_source` | immutable content plus exact DecisionTime, `INCLUDED` + `ELIGIBLE` population, Feature status/value Artifact, and concrete Market/Selection lineage; Target/Outcome/realized labels prohibited | Candidate |
 | Feature definition | Research & Qualification | `RegisterFeatureDefinition` | `feature_definition` | immutable semantic/value/unit/frequency/window/lookback/source/availability/missingness/algorithm/code/config identity; no research conclusion | Candidate |
 | Target/checkpoints | Research & Qualification | `RegisterTargetDefinition` | `target_definition`, `target_checkpoint` | immutable Decision reference, horizon and metric requirements | Forecast/Outcome |
@@ -120,12 +120,12 @@ Domain errors nor commands and is not a command bus or workflow owner.
 | Physical Position | Execution & Account query owner | no direct write | `current_position` view over `fill` + `position_basis_event` | always derived as-of; no independent Position table | Risk, inspection |
 | Strategy sleeve | Execution & Account query owner | no direct write | query/view over effective `fill_allocation` and qualified corporate actions | derived; opening/reconciliation quantities stay unallocated | Outcome/Attribution |
 
-Rows after Candidate describe logical target ownership, not an implementation
-sequence or authorization. Candidate completion is followed by a real dependency
-review across Target/Partition/Experiment/Model/Decision Run/Outcome/Evaluation/
-Evidence/Qualification. That review must keep realized factual labels under one
-future Outcome Authority rather than allowing Research to construct a parallel
-truth source.
+Rows after Candidate describe logical target ownership, not current
+implementation, sequence, or authorization. With Candidate's final exit gate
+passed, the next activity is a real dependency review across Target/Partition/
+Experiment/Model/Decision Run/Outcome/Evaluation/Evidence/Qualification. That
+review must keep realized factual labels under one future Outcome Authority
+rather than allowing Research to construct a parallel truth source.
 
 ## 4. Position Authority
 

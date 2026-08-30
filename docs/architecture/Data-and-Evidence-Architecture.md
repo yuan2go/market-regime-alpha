@@ -4,14 +4,17 @@
 > **Authority:** Target logical schema, PIT, evidence, artifact, and cutover specification
 > **Owner:** Market Regime Alpha maintainers
 > **Last Updated:** 2026-08-30
-> **Implementation State:** `FOUNDATION_MARKET_SELECTION_RESEARCH_DEFINITION_IMPLEMENTED_DRAFT / CANDIDATE_APPROVED_DESIGN_NOT_IMPLEMENTED / NOT_CUT_OVER`
+> **Implementation State:** `FOUNDATION_MARKET_SELECTION_RESEARCH_DEFINITION_CANDIDATE_IMPLEMENTED_DRAFT / CANDIDATE_EXIT_GATE_PASS / NOT_CUT_OVER`
 > **Code Evidence:** target `src/market_regime_alpha/infrastructure/postgres`, `src/market_regime_alpha/shared`, `src/market_regime_alpha/runtime`, `src/market_regime_alpha/market`, `src/market_regime_alpha/selection`, `src/market_regime_alpha/research_qualification`, `tests/refoundation`; legacy `src/market_regime_alpha/persistence/postgres` remains current business implementation
 
-The current canonical business baseline contains 283 tables. At implementation
-checkpoint `22a5ec692fcc261182197c2953a0a860d7cd6f94`, the mutable target draft
-contains 13 Foundation, 12 Market/PIT, seven Selection Core, and three Research
-Definition relations (35 tables total) in schema `mra`; its physical DDL is
+The current canonical business baseline contains 283 tables. The mutable target
+draft contains 13 Foundation, 12 Market/PIT, seven Selection Core, three Research
+Definition, and five Candidate relations (40 tables total) in schema `mra`; its
+physical DDL is
 `src/market_regime_alpha/infrastructure/postgres/migrations/001_baseline.sql`.
+Candidate's exact-SHA catalog/checksum engineering proof is recorded in the
+[WP-07 Candidate Closure Verification](../references/WP-ARCHITECTURE-REFOUNDATION-07-Candidate-Closure-Verification.md);
+this Target document does not promote that draft into canonical business use.
 The complete target logical catalog is still estimated at **91 tables**. That
 estimate follows required semantics and is neither a quota nor a cutover claim.
 
@@ -89,13 +92,14 @@ estimate follows required semantics and is neither a quota nor a cutover claim.
 | `eligibility_assessment` | per-instrument Decision-time result | unique universe revision/policy/instrument/decision time |
 | `eligibility_reason` | criterion result and exact Market evidence | unique assessment/rule; typed result/observed/threshold/operator/reason and queryable lineage |
 
-### Selection Candidate closure — 5 approved, not-yet-implemented tables
+### Selection Candidate closure — 5 implemented draft tables
 
 Candidate remains permanently owned by `market_regime_alpha.selection`. These
-tables are not part of the completed Selection Core checkpoint. Candidate uses
-a separate narrow Candidate Application/UoW and a Selection-owned Research-input
-port; an Infrastructure adapter maps the real Research definitions without a
-Selection-to-Research or Research-to-Selection package import.
+tables are implemented by Candidate Closure, not by the earlier Selection Core
+checkpoint. Candidate uses a separate narrow Candidate Application/UoW and a
+Selection-owned Research-input port; an Infrastructure adapter maps the real
+Research definitions without a Selection-to-Research or Research-to-Selection
+package import.
 
 | Table | Purpose | Lifecycle and key constraints |
 |---|---|---|
@@ -121,6 +125,13 @@ decimal precision. Only the projected normalized weight is copied to each score
 row beside its percentile and contribution. Finite PostgreSQL numerics need not
 sum byte-for-byte to one when the exact rational is recurring; the exact
 rational computation and versioned projection contract are semantic Authority.
+
+The persisted `candidate_set.decimal_projection_precision` is restricted in
+both Domain and PostgreSQL to the closed set
+`{64, 128, 256, 512, 1024, 2048, 4096}`; arbitrary values such as 10 or 100 are
+rejected. Candidate `policy_code` and `component_code` share the exact Domain/
+DDL vocabulary `^[a-z][a-z0-9_]{0,99}$`, so hyphens are not legal Candidate
+identities. The existing Eligibility code vocabulary is unchanged.
 
 ### Research Definition Core — 3 implemented draft tables
 
@@ -401,9 +412,10 @@ Decision time:
   produces `UNKNOWN`; only all-pass produces `ELIGIBLE`;
 - the complete counts reconcile to Universe membership.
 
-Candidate is not implemented in Selection Core. The approved closure binds one
-Candidate Policy to one immutable Decision-input Dataset. That Dataset and its
-relational sources already prove the sole Candidate Population:
+Candidate is implemented by its separate Selection-owned closure, not by the
+earlier Selection Core checkpoint. It binds one Candidate Policy to one immutable
+Decision-input Dataset. That Dataset and its relational sources already prove
+the sole Candidate Population:
 
 ```text
 Dataset rows = UniverseMember(INCLUDED) intersection

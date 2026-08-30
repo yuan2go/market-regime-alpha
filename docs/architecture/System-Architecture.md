@@ -4,13 +4,14 @@
 > **Authority:** Target Application, Runtime, concurrency, recovery, and interface specification
 > **Owner:** Market Regime Alpha maintainers
 > **Last Updated:** 2026-08-30
-> **Implementation State:** `FOUNDATION_MARKET_SELECTION_RESEARCH_DEFINITION_IMPLEMENTED_DRAFT / CANDIDATE_APPROVED_DESIGN_NOT_IMPLEMENTED / NOT_CUT_OVER`
+> **Implementation State:** `FOUNDATION_MARKET_SELECTION_RESEARCH_DEFINITION_CANDIDATE_IMPLEMENTED_DRAFT / CANDIDATE_EXIT_GATE_PASS / NOT_CUT_OVER`
 > **Code Evidence:** target `src/market_regime_alpha/runtime`, `src/market_regime_alpha/market`, `src/market_regime_alpha/selection`, `src/market_regime_alpha/research_qualification`, `src/market_regime_alpha/infrastructure`, `src/market_regime_alpha/interfaces`, `tests/refoundation`; legacy Runtime remains current business implementation
 
 This is the target specification. Its Foundation Runtime and test-only
-Market/PIT, Selection Core, and Research Definition Core are implemented in the
-mutable target draft, but have not cut over the current business entry points.
-The current nested
+Market/PIT, Selection Core, Research Definition Core, and Candidate Authority are
+implemented in the mutable target draft; Candidate passed its local WP-07
+engineering exit gate at `029c26928af436d7788da1cce3a53c94b96377bf`.
+None has cut over the current business entry points. The current nested
 Continuous/Controlled/Lifecycle/State/Historical journals are still to be
 replaced by one Runtime journal. Business owners remain in their bounded
 contexts.
@@ -217,7 +218,7 @@ done” path.
 Each business context owns narrow, use-case-specific units of work. The
 implemented Selection Core UoW receives only its Universe/Eligibility aggregate
 repository, a read-only Market/PIT query port, and the minimal cross-cutting
-fence/receipt/audit/finalization ports. Candidate closure adds a separate
+fence/receipt/audit/finalization ports. Candidate closure uses a separate
 Selection-owned `CandidateApplication` and `CandidateUoW`; it does not grow the
 Selection Core, Research, or Runtime UoW into a mega-UoW. Neither Selection UoW
 extends or imports the Runtime UoW, Market UoW, Research UoW, a cross-context
@@ -235,13 +236,25 @@ Candidate. Only an Infrastructure adapter imports both that port and Research
 Definition parser/types. Candidate Dataset Artifact verification/read/parse and
 all ranking computation occur outside a PostgreSQL write transaction.
 `RegisterCandidatePolicy` instead uses a separate short Candidate transaction
-that locks real Feature Definitions and Artifacts, writes only Policy plus
-Policy Components, reconciles them, then writes receipt/audit/finalization and
-commits. The final fresh `BuildCandidateSet` transaction is ordered:
+that locks real Feature Definitions and its deduplicated Artifacts in global
+Artifact-UUID order, writes only Policy plus Policy Components, reconciles them,
+then writes receipt/audit/finalization and commits.
+
+The public `BuildCandidateSet` operation requires a keyword-only real
+`AttemptClaim`. Its preflight, fresh binding transaction, and successful replay
+transaction all lock the live claimed Attempt and validate both the claim's exact
+Step key and the persisted Step kind `BUILD_CANDIDATE_SET`. A live claim for any
+other Step kind fails as a stale fence before Artifact I/O, ranking, Candidate
+writes, receipt, or audit. The final fresh build transaction is ordered:
 
 ```text
-live fence
-→ exact Policy/Dataset/Feature/Artifact/DatasetSource dependency revalidation
+live fence plus exact Step-key/Step-kind validation
+→ CandidateSet identity advisory lock
+→ locked exact Policy/Component/Dataset/Feature/DatasetSource snapshot
+→ deduplicate Policy-code, Policy-config, Dataset-manifest, Dataset-code, and
+  Dataset-config Artifact roles by Artifact UUID; reject conflicting immutable
+  bindings; acquire each distinct UUID once in ascending UUID order with the
+  strongest required mode
 → CandidateSet/Candidate/ScoreComponent writes
 → exact funnel/component/boundary reconciliation
 → terminal receipt and Artifact verification binding
@@ -250,9 +263,23 @@ live fence
 → commit
 ```
 
+For a fresh build, the Dataset-manifest Artifact uses `FOR UPDATE` because that
+transaction records its verification; other distinct Artifacts use `FOR SHARE`.
+If one Artifact fills multiple roles, the strongest mode is selected before its
+single acquisition, preventing a `FOR SHARE` to `FOR UPDATE` lock upgrade. An
+exact successful replay writes no ArtifactVerification and acquires its
+deduplicated Artifact dependencies with `FOR SHARE`. PostgreSQL deadlock
+`40P01` is an operational defect and is not translated into a deterministic
+business rejection.
+
 It never re-executes Universe, Eligibility, or a Market hard gate. A
 deterministic business failure first rolls back and then uses the shared narrow
 failure recorder in a fresh Candidate UoW; a stale fence writes nothing.
+An exact retry of an existing failed Candidate receipt raises the original
+`CommandPreviouslyFailedError` before CandidateSet result lookup, Artifact byte
+I/O, or reranking. The new live Attempt/Step/Run is terminalized against the
+original failed receipt and error; no Candidate Authority, rejection receipt, or
+duplicate audit is written.
 
 ## 7. Transaction and lock invariants
 
@@ -265,9 +292,11 @@ The global lock order is:
 5. Fill / Fill Allocation;
 6. any other aggregate roots ordered by `(aggregate_kind, aggregate_id)`.
 
-Immutable definitions and evidence are verified but not locked for mutation.
-Every multi-root command follows this order. Repository methods do not start or
-commit nested transactions.
+Immutable definitions and evidence are never mutated by their consumers, but a
+command may take stable revalidation locks. Candidate deduplicates those
+Artifact locks and acquires them in ascending Artifact-UUID order as described
+above. Every multi-root command follows the global order. Repository methods do
+not start or commit nested transactions.
 
 Isolation defaults to `READ COMMITTED` with explicit row locks and uniqueness/
 version predicates. Use `SERIALIZABLE` only for a measured invariant that cannot
@@ -371,8 +400,8 @@ dispatcher, business CLI, or cutover authority is created.
 Representative queries:
 
 - exact/as-of Market facts and source lineage;
-- Selection Universe/Eligibility dossier at Decision time; Candidate funnel and
-  Candidate dossier after Candidate closure, including Dataset-manifest/source
+- Selection Universe/Eligibility dossier at Decision time; implemented Candidate
+  funnel and Candidate dossier, including Dataset-manifest/source
   lineage and complete component diagnostics;
 - Decision dossier from Candidate through Risk;
 - current Position and Strategy sleeve projection;

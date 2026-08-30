@@ -18,12 +18,14 @@ qualification, account state, or trading authority.
 
 The approved Target is normative for new implementation. Foundation is merged
 to `main`. The current implementation line extends its mutable
-`MRA_REFOUNDATION_1` draft from 13 Foundation tables to 35 tables by adding the
-isolated Market/PIT, Selection Core, and Research Definition Core owners. The
-target Runtime remains test-scoped; no target business CLI or canonical write
-cutover exists. Until Runtime/CLI Cutover, the existing 283-table system remains
-the only canonical business implementation; there is no dual write or target
-fallback.
+`MRA_REFOUNDATION_1` draft from 13 Foundation tables to 40 tables by adding the
+isolated Market/PIT, Selection Core, Research Definition Core, and five-table
+Selection-owned Candidate Authority. Candidate engineering is implemented and
+passed its local WP-07 exit gate at
+`029c26928af436d7788da1cce3a53c94b96377bf`. The target Runtime remains
+test-scoped; no target business CLI or canonical write cutover exists. Until
+Runtime/CLI Cutover, the existing 283-table system remains the only canonical
+business implementation; there is no dual write or target fallback.
 
 ## Normative authority order
 
@@ -88,10 +90,11 @@ not current completion.
 - [WP-06 Research Definition Core Verification](references/WP-ARCHITECTURE-REFOUNDATION-06-Research-Definition-Core-Verification.md)
   — exact-SHA engineering proof for strict Decision-input Dataset,
   DatasetSource, FeatureDefinition, and shared deterministic command-failure
-  semantics; Candidate code remains absent.
-- [WP-07 Candidate Closure Design](references/WP-ARCHITECTURE-REFOUNDATION-07-Candidate-Closure-Design.md)
-  — approved design checkpoint input. It authorizes Candidate-only TDD and the
-  later dependency review, not a later context, Runtime cutover, or proof claim.
+  semantics; Candidate code was absent at that historical checkpoint.
+- [WP-07 Candidate Closure Verification](references/WP-ARCHITECTURE-REFOUNDATION-07-Candidate-Closure-Verification.md)
+  — exact-SHA local engineering proof for the five-table Selection-owned
+  Candidate draft. It grants no later-context implementation order, Runtime
+  cutover, Provider/Alpha evidence, trading, or Production authority.
 - [Runtime Runbook](operations/Runtime-Runbook.md) — current 001–106 operator
   procedures only; it will be rewritten at Runtime/CLI Cutover.
 

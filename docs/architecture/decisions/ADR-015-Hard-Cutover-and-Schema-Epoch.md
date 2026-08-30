@@ -1,7 +1,7 @@
 # ADR-015: Hard Cutover and Schema Epoch
 
 > **Status:** CANONICAL_TARGET_ARCHITECTURE
-> **Implementation State:** `FOUNDATION_MARKET_SELECTION_RESEARCH_DEFINITION_IMPLEMENTED_DRAFT / NOT_CUT_OVER`
+> **Implementation State:** `FOUNDATION_MARKET_SELECTION_RESEARCH_DEFINITION_CANDIDATE_IMPLEMENTED_DRAFT / CANDIDATE_EXIT_GATE_PASS / NOT_CUT_OVER`
 > **Authority:** Approved-principle target decision for WP-ARCHITECTURE-REFOUNDATION-01
 > **Owner:** Market Regime Alpha maintainers
 > **Decision Date:** 2026-08-27
@@ -36,9 +36,10 @@ compatibility writers/readers = none after cutover
 The target baseline is created incrementally from the frozen logical catalog in
 [PostgreSQL, Temporal and Evidence Architecture](../Data-and-Evidence-Architecture.md).
 The approximate 41-table estimate is not a constraint. The current unreleased
-draft implements 35 tables through Research Definition Core; the larger
-91-table destination remains a design catalog whose later owners are not yet
-implemented.
+draft implements 40 tables through Candidate Closure: 13 Foundation, 12
+Market/PIT, seven Selection Core, three Research Definition, and five Candidate
+relations. The larger 91-table destination remains a design catalog whose later
+owners are not yet implemented.
 
 ## Ordinary startup and bootstrap
 
@@ -152,6 +153,8 @@ Costs:
 
 ## Review status
 
-The Hard Cutover principle is approved. The current 35-table draft remains
-unreleased and not cut over; the remaining 91-table target catalog is design
-only until each bounded owner passes its own implementation exit gate.
+The Hard Cutover principle is approved. Candidate passed its local WP-07
+engineering exit gate at `029c26928af436d7788da1cce3a53c94b96377bf`, while
+the current 40-table draft remains unreleased and not cut over. The remaining
+91-table target catalog is design only until each bounded owner passes its own
+implementation exit gate.

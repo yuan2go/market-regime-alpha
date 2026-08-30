@@ -4,13 +4,15 @@
 > **Authority:** Target bounded-context vocabulary and dependency map
 > **Owner:** Market Regime Alpha maintainers
 > **Last Updated:** 2026-08-30
-> **Implementation State:** `FOUNDATION_MARKET_SELECTION_RESEARCH_DEFINITION_IMPLEMENTED_DRAFT / CANDIDATE_APPROVED_DESIGN_NOT_IMPLEMENTED / NOT_CUT_OVER`
+> **Implementation State:** `FOUNDATION_MARKET_SELECTION_RESEARCH_DEFINITION_CANDIDATE_IMPLEMENTED_DRAFT / CANDIDATE_EXIT_GATE_PASS / NOT_CUT_OVER`
 
 This file defines names and relationships only. Foundation, Market/PIT,
-Selection Core, and the three-table Research Definition Core exist in the
-isolated target draft. Candidate has an approved design but remains absent;
-later target contexts remain absent and their implementation order awaits the
-post-Candidate dependency review.
+Selection Core, the three-table Research Definition Core, and the five-table
+Selection-owned Candidate Authority exist in the isolated target draft.
+Candidate passed its local WP-07 engineering exit gate at implementation
+checkpoint `029c26928af436d7788da1cce3a53c94b96377bf`; later target contexts
+remain absent and their implementation order awaits the post-Candidate
+dependency review.
 Current implementation truth remains code, PostgreSQL, tests actually run, and
 reproducible evidence.
 
@@ -56,7 +58,8 @@ reproducible evidence.
                                                  v
 +----------------+     +----------------------+     +----------------------+
 | Market & PIT   | --> | Selection            | --> | Decision Support     |
-| facts/calendar |     | scope/eligibility    |     | context/portfolio/risk |
+| facts/calendar |     | scope/eligibility/   |     | context/portfolio/risk |
+|                |     | candidate            |     |                      |
 +-------+--------+     +----------+-----------+     +----------+-----------+
         |                         |                            |
         | immutable evidence      | datasets/candidate facts   | intents
@@ -84,7 +87,7 @@ Python process and one PostgreSQL database. They are not microservices.
 |---|---|---|---|
 | Runtime & Provenance | schedules, Runs, Steps, Attempts, command receipts, audit, artifact metadata/integrity | all application command results by stable ID | Market facts, decisions, qualifications, Positions |
 | Market & PIT | providers, captures, instruments, sessions, classifications, revisions, gaps | raw artifact bytes | Candidates, model assessment, Portfolio |
-| Selection | Universe revisions, membership, eligibility; approved Candidate Policy/Set/Candidate design | Universe/Eligibility consume only Market/PIT and immutable scope config; Candidate consumes the immutable Decision-input Dataset and policy-bound Feature Definitions through a Selection-owned DTO/port implemented by Infrastructure | Signal, Strategy action, Fill, Model, Target, Outcome, Evidence, Qualification |
+| Selection | Universe revisions, membership, eligibility, Candidate Policy/Set/Candidate and typed Candidate Score Components | Universe/Eligibility consume only Market/PIT and immutable scope config; Candidate consumes the immutable Decision-input Dataset and policy-bound Feature Definitions through a Selection-owned DTO/port implemented by Infrastructure | Signal, Strategy action, Fill, Model, Target, Outcome, Evidence, Qualification |
 | Research & Qualification (`market_regime_alpha.research_qualification`) | initially Decision-input Dataset/DatasetSource/FeatureDefinition; later owners only in an order approved after Candidate dependency audit | initially Market/PIT and Selection lineage; later inputs remain subject to dependency review | runtime scheduling, Candidate ownership, physical Position mutation, a second realized-label truth beside Outcome |
 | Decision Support | Context assessments, Signal, Forecast, Opportunity, Thesis, Strategy Version, Portfolio/Risk decision | Candidate, Research identities, account query model | observed Fill, broker truth, qualification |
 | Execution & Account | account authority epoch, intents, Fills, allocations, broker observations, reconciliation, non-trade basis events | accepted Portfolio/Risk decisions, Market instrument identity | Candidate, Forecast, model promotion |
@@ -94,13 +97,14 @@ Python process and one PostgreSQL database. They are not microservices.
 The Candidate-time business dependency direction is
 `Market/PIT → Universe → Eligibility → Candidate → Context → Signal/Forecast → Opportunity → Portfolio → Risk`.
 Context cannot feed back into the same Candidate Set, and Opportunity cannot
-carry a Risk Decision. The sole Risk Authority follows Portfolio. Candidate is
-not implemented in the current draft, but its required V1 Dataset and Feature
-Definition identities now exist. V1 has no Model Version, Target, Outcome,
-Context, Evidence, Assessment, or Qualification dependency. Completion triggers
-a real dependency audit across Target/Partition/Experiment/Model/Decision Run/
-Outcome/Evaluation/Evidence/Qualification; it does not pre-authorize their order
-or allow Research to own realized labels independently of future Outcome facts.
+carry a Risk Decision. The sole Risk Authority follows Portfolio. Candidate V1
+is implemented in the isolated draft from the immutable Dataset and real Feature
+Definition identities; it has no Model Version, Target, Outcome, Context,
+Evidence, Assessment, or Qualification dependency. With Candidate's final exit
+gate passed, the next authorized activity is only a real dependency audit across
+Target/Partition/Experiment/Model/Decision Run/Outcome/Evaluation/Evidence/
+Qualification. It does not pre-authorize their order or allow Research to own
+realized labels independently of future Outcome facts.
 
 ## Allowed dependency direction
 

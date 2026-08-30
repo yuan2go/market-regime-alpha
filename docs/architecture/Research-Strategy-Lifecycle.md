@@ -4,7 +4,7 @@
 > **Authority:** Target research, context, decision, outcome, and qualification lifecycle
 > **Owner:** Market Regime Alpha maintainers
 > **Last Updated:** 2026-08-30
-> **Implementation State:** `SELECTION_RESEARCH_DEFINITION_IMPLEMENTED_DRAFT / CANDIDATE_APPROVED_DESIGN_NOT_IMPLEMENTED / LATER_DEPENDENCY_ORDER_NOT_AUTHORIZED`
+> **Implementation State:** `SELECTION_RESEARCH_DEFINITION_CANDIDATE_IMPLEMENTED_DRAFT / CANDIDATE_EXIT_GATE_PASS / LATER_DEPENDENCY_ORDER_NOT_AUTHORIZED / NOT_CUT_OVER`
 > **Code Evidence:** target `src/market_regime_alpha/selection`, `src/market_regime_alpha/research_qualification`, target draft schema and `tests/refoundation`; existing `src/market_regime_alpha/research`, `src/market_regime_alpha/features`, and `src/market_regime_alpha/candidates` are Legacy invariant sources only, not target Authority
 
 Research is a consumer of Market/PIT facts and a producer of scoped evidence. It
@@ -89,10 +89,10 @@ filled with defaults.
    `ELIGIBLE`.
 6. Listing-age units and liquidity measure/window/unit/operator/threshold are
    immutable policy data; there are no inherited defaults.
-7. Candidate has an approved Selection-owned design because its real
-   Research-owned Dataset and FeatureDefinition inputs now exist. Policy
-   components bind only numeric Feature Definitions; Candidate Set binds one
-   immutable Decision-input Dataset, whose rows are the sole population.
+7. Candidate is implemented in permanent Selection ownership from the real
+   Research-owned Dataset and FeatureDefinition inputs. Policy components bind
+   only numeric Feature Definitions; Candidate Set binds one immutable
+   Decision-input Dataset, whose rows are the sole population.
 8. Every Dataset row becomes `SELECTED`, `RANKED_NOT_SELECTED`, or
    `UNRANKABLE`. Any required non-`AVAILABLE` cell is strict complete-case
    `UNRANKABLE`; no imputation, gate rerun, or row deletion is permitted.
@@ -104,7 +104,8 @@ filled with defaults.
 11. Candidate V1 reads no Decision Run, Context, Target, Outcome, Model/Model
     Version, Evidence, Assessment, or Qualification and expresses no probability,
     expected return, MFE/MAE, Forecast, Signal, or Entry authority.
-12. Candidate completion authorizes only a dependency review across Target
+12. With Candidate's final engineering exit gate passed, the only next
+    authorized activity is a dependency review across Target
     Definition/Checkpoint, Research Partition, Experiment, Model, Decision Run,
     Outcome, Evaluation, Evidence, and Qualification. Their implementation order
     is not frozen here, and Research must not create a realized-label Authority
