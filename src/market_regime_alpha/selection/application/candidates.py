@@ -192,9 +192,12 @@ class CandidateApplication:
         dataset_id: UUID,
         context: CommandContext,
         *,
-        runtime_claim: AttemptClaim | None = None,
+        runtime_claim: AttemptClaim,
     ) -> CandidateMutationResult:
         """Prepare and rank outside PostgreSQL, then bind in one short UoW."""
+
+        if runtime_claim is None:
+            raise TypeError("BUILD_CANDIDATE_SET requires a runtime_claim")
 
         identity_request_hash = canonical_json_sha256(
             {
@@ -278,7 +281,7 @@ class CandidateApplication:
         dataset_id: UUID,
         context: CommandContext,
         request_hash_holder: dict[str, str],
-        runtime_claim: AttemptClaim | None,
+        runtime_claim: AttemptClaim,
     ) -> tuple[
         _CandidateReplayProbe | None,
         CandidatePolicy | None,
@@ -333,7 +336,7 @@ class CandidateApplication:
         dataset_id: UUID,
         context: CommandContext,
         request_hash: str,
-        runtime_claim: AttemptClaim | None,
+        runtime_claim: AttemptClaim,
     ) -> CandidateMutationResult:
         try:
             return self._complete_candidate_replay_unchecked(
@@ -378,7 +381,7 @@ class CandidateApplication:
         dataset_id: UUID,
         context: CommandContext,
         request_hash: str,
-        runtime_claim: AttemptClaim | None,
+        runtime_claim: AttemptClaim,
     ) -> CandidateMutationResult:
         with self._uow_provider(read_only=True) as read_uow:
             persisted_plan = read_uow.candidates.persisted_candidate_set(
@@ -398,12 +401,6 @@ class CandidateApplication:
             persisted_plan,
             reconciliation,
         )
-        result = _candidate_set_result_from_receipt(
-            replay.receipt,
-            verified_plan,
-        )
-        if runtime_claim is None:
-            return result
         scope_id = f"{candidate_policy_id}:{dataset_id}"
         with self._uow_provider() as uow:
             _lock_live(uow, runtime_claim)
@@ -495,7 +492,7 @@ class CandidateApplication:
         request_hash: str,
         rejection_code: str,
         context: CommandContext,
-        runtime_claim: AttemptClaim | None,
+        runtime_claim: AttemptClaim,
     ) -> None:
         self._failure_recorder.record_idempotency_rejection(
             _candidate_replay_failure_descriptor(
@@ -516,7 +513,7 @@ class CandidateApplication:
         plan: CandidateRankingPlan,
         context: CommandContext,
         request_hash: str,
-        runtime_claim: AttemptClaim | None,
+        runtime_claim: AttemptClaim,
     ) -> CandidateMutationResult:
         dataset_id = prepared.dataset.dataset_id
         scope_id = f"{policy.candidate_policy_id}:{dataset_id}"
@@ -582,8 +579,7 @@ class CandidateApplication:
                     receipt_id=receipt.receipt_id,
                     result_hash=replay.result_hash,
                 )
-                if runtime_claim is not None:
-                    uow.commit()
+                uow.commit()
                 return replay
             uow.candidate_artifacts.record_verification(
                 verification_id=self._id_factory(),

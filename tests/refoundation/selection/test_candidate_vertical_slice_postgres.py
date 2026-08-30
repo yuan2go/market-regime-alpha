@@ -848,6 +848,24 @@ def test_concurrent_exact_builds_converge_on_one_candidate_set_and_receipt(
         "concurrent-build-candidate-set",
         "BUILD_CANDIDATE_SET",
     )
+    runtime_runs = tuple(
+        _schedule_run(
+            stack,
+            steps=(
+                _step(
+                    key="build-candidate-set",
+                    kind="BUILD_CANDIDATE_SET",
+                    ordinal=1,
+                    request_character=request_character,
+                ),
+            ),
+        )
+        for request_character in ("d", "e")
+    )
+    claims = tuple(
+        _claim(runtime, step_key="build-candidate-set")
+        for runtime, _run_id in runtime_runs
+    )
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         futures = tuple(
@@ -856,8 +874,9 @@ def test_concurrent_exact_builds_converge_on_one_candidate_set_and_receipt(
                 ready.policy.candidate_policy_id,
                 ready.dataset.dataset_id,
                 context,
+                runtime_claim=claim,
             )
-            for _ in range(2)
+            for claim in claims
         )
         results = tuple(item.result(timeout=15) for item in futures)
 
@@ -865,6 +884,11 @@ def test_concurrent_exact_builds_converge_on_one_candidate_set_and_receipt(
     assert len({item.result_hash for item in results}) == 1
     assert loader.prepare_calls == 2
     assert uow_provider.final_bind_calls == 2
+    for runtime, run_id in runtime_runs:
+        trace = runtime.inspect_run(run_id)
+        assert trace.run_state == "SUCCEEDED"
+        assert trace.steps[0].state == "SUCCEEDED"
+        assert trace.steps[0].attempt_states == ("SUCCEEDED",)
     with psycopg.connect(stack.database_url) as connection:
         counts = connection.execute(
             """
@@ -1362,13 +1386,29 @@ def test_candidate_idempotency_key_reuse_with_different_semantic_hash_rejects(
         "candidate-set-authority",
         "BUILD_CANDIDATE_SET",
     )
+    authority_runtime, authority_run_id = _schedule_run(
+        stack,
+        steps=(
+            _step(
+                key="build-candidate-set",
+                kind="BUILD_CANDIDATE_SET",
+                ordinal=1,
+                request_character="a",
+            ),
+        ),
+    )
     original = application.build_candidate_set(
         ready.policy.candidate_policy_id,
         ready.dataset.dataset_id,
         authority_context,
+        runtime_claim=_claim(
+            authority_runtime,
+            step_key="build-candidate-set",
+        ),
     )
     assert original.replayed is False
     assert loader.prepare_calls == 1
+    assert authority_runtime.inspect_run(authority_run_id).run_state == "SUCCEEDED"
     with psycopg.connect(stack.database_url) as connection:
         original_request_hash = connection.execute(
             """
@@ -1493,6 +1533,18 @@ def test_candidate_success_receipt_audit_and_writes_roll_back_together(
 ) -> None:
     stack = candidate_vertical_stack
     ready = _ready_candidate(stack, key_prefix="rollback-candidate")
+    runtime, _run_id = _schedule_run(
+        stack,
+        steps=(
+            _step(
+                key="build-candidate-set",
+                kind="BUILD_CANDIDATE_SET",
+                ordinal=1,
+                request_character="b",
+            ),
+        ),
+    )
+    claim = _claim(runtime, step_key="build-candidate-set")
 
     def fail_audit(*_args: object, **_kwargs: object) -> None:
         raise RuntimeError("injected Candidate audit failure")
@@ -1506,6 +1558,7 @@ def test_candidate_success_receipt_audit_and_writes_roll_back_together(
                 "rollback-build-candidate-set",
                 "BUILD_CANDIDATE_SET",
             ),
+            runtime_claim=claim,
         )
 
     with psycopg.connect(stack.database_url) as connection:

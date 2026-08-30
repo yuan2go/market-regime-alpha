@@ -743,6 +743,33 @@ def test_build_prepares_and_ranks_between_preflight_and_final_uows(
     ]
 
 
+def test_build_requires_runtime_claim_before_opening_any_uow_or_reading_artifacts() -> None:
+    events: list[str] = []
+    prepared = _prepared()
+    provider = _QueuedProvider([])
+    loader = _SpyLoader(events, prepared)
+    app = CandidateApplication(loader, provider, id_factory=_id_factory())
+
+    with pytest.raises(TypeError, match="runtime_claim"):
+        app.build_candidate_set(
+            _policy().candidate_policy_id,
+            prepared.dataset.dataset_id,
+            _context("candidate-build-without-runtime-claim"),
+        )
+    invalid_claim: Any = None
+    with pytest.raises(TypeError, match="runtime_claim"):
+        app.build_candidate_set(
+            _policy().candidate_policy_id,
+            prepared.dataset.dataset_id,
+            _context("candidate-build-with-null-runtime-claim"),
+            runtime_claim=invalid_claim,
+        )
+
+    assert provider.calls == 0
+    assert loader.calls == 0
+    assert events == []
+
+
 def test_unrepresentable_projection_fails_before_final_business_uow() -> None:
     events: list[str] = []
     starts: list[dict[str, Any]] = []
