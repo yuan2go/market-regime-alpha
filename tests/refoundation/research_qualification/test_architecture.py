@@ -87,6 +87,7 @@ def test_research_uses_an_independent_narrow_uow_and_target_composes_it() -> Non
     assert "def research_definitions(" not in selection_uow
     assert "def research_definitions(" in research_uow
     assert "def runtime(" not in research_uow
+    assert "def candidates(" not in research_uow
     assert "research_definitions: ResearchQualificationApplication" in bootstrap
     assert "PostgresResearchUnitOfWorkProvider(pool)" in bootstrap
 

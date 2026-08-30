@@ -3,15 +3,18 @@
 > **Status:** CANONICAL_TARGET_ARCHITECTURE
 > **Authority:** Target logical schema, PIT, evidence, artifact, and cutover specification
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-29
-> **Implementation State:** `FOUNDATION_MARKET_SELECTION_RESEARCH_DEFINITION_IMPLEMENTED_DRAFT / NOT_CUT_OVER`
+> **Last Updated:** 2026-08-30
+> **Implementation State:** `FOUNDATION_MARKET_SELECTION_RESEARCH_DEFINITION_CANDIDATE_IMPLEMENTED_DRAFT / CANDIDATE_EXIT_GATE_PASS / NOT_CUT_OVER`
 > **Code Evidence:** target `src/market_regime_alpha/infrastructure/postgres`, `src/market_regime_alpha/shared`, `src/market_regime_alpha/runtime`, `src/market_regime_alpha/market`, `src/market_regime_alpha/selection`, `src/market_regime_alpha/research_qualification`, `tests/refoundation`; legacy `src/market_regime_alpha/persistence/postgres` remains current business implementation
 
-The current canonical business baseline contains 283 tables. At implementation
-checkpoint `22a5ec692fcc261182197c2953a0a860d7cd6f94`, the mutable target draft
-contains 13 Foundation, 12 Market/PIT, seven Selection Core, and three Research
-Definition relations (35 tables total) in schema `mra`; its physical DDL is
+The current canonical business baseline contains 283 tables. The mutable target
+draft contains 13 Foundation, 12 Market/PIT, seven Selection Core, three Research
+Definition, and five Candidate relations (40 tables total) in schema `mra`; its
+physical DDL is
 `src/market_regime_alpha/infrastructure/postgres/migrations/001_baseline.sql`.
+Candidate's exact-SHA catalog/checksum engineering proof is recorded in the
+[WP-07 Candidate Closure Verification](../references/WP-ARCHITECTURE-REFOUNDATION-07-Candidate-Closure-Verification.md);
+this Target document does not promote that draft into canonical business use.
 The complete target logical catalog is still estimated at **91 tables**. That
 estimate follows required semantics and is neither a quota nor a cutover claim.
 
@@ -89,19 +92,46 @@ estimate follows required semantics and is neither a quota nor a cutover claim.
 | `eligibility_assessment` | per-instrument Decision-time result | unique universe revision/policy/instrument/decision time |
 | `eligibility_reason` | criterion result and exact Market evidence | unique assessment/rule; typed result/observed/threshold/operator/reason and queryable lineage |
 
-### Selection Candidate closure — 5 deferred tables
+### Selection Candidate closure — 5 implemented draft tables
 
-These tables are not part of Selection Core. They are created only after the
-minimal Research Definition substrate required by the approved Candidate policy
-exists with real relational Authority and an acyclic dependency graph.
+Candidate remains permanently owned by `market_regime_alpha.selection`. These
+tables are implemented by Candidate Closure, not by the earlier Selection Core
+checkpoint. Candidate uses a separate narrow Candidate Application/UoW and a
+Selection-owned Research-input port; an Infrastructure adapter maps the real
+Research definitions without a Selection-to-Research or Research-to-Selection
+package import.
 
 | Table | Purpose | Lifecycle and key constraints |
 |---|---|---|
-| `candidate_policy` | immutable selection/ranking/tie policy | unique code/version/hash; selection cardinality and tie behavior typed |
-| `candidate_policy_component` | ordered policy component | unique policy/component and ordinal; real Feature Definition/Dataset/Model Version FK only when that component actually requires it; no nullable future identity |
-| `candidate_set` | frozen complete Candidate funnel | exact universe/eligibility/policy/config and actual policy-required Research identities; no Decision Run or Qualification dependency; counts reconcile |
-| `candidate` | admitted eligible instrument/rank/score | unique set/instrument and set/rank; eligibility FK must match instrument |
-| `candidate_score_component` | typed factor contribution and missingness | unique candidate/component; typed numeric value/status and exact available lineage |
+| `candidate_policy` | immutable V1 ranking policy | unique code/version/hash; `STRICT_COMPLETE_CASE`, arithmetic-midrank percentile, competition rank, `TOP_K`, `INCLUDE_ALL_BOUNDARY_TIES`, requested Top-K, component count, projection contract and exact code/config Artifact identities |
+| `candidate_policy_component` | ordered required Feature component | unique policy/component, ordinal, and Feature Definition; binds one real numeric Feature Definition and stores only the canonical positive `declared_weight`; no Dataset, Model Version, normalized-weight, Target, Evidence, Qualification, or future identity |
+| `candidate_set` | frozen Policy × Decision-input Dataset build and complete funnel | unique Policy/Dataset; Dataset is the only population; copied exact Dataset scope is composite-FK-bound; projection precision, ranking/component diagnostics, composite distinct count, boundary diagnostics and all reconciled counts are immutable; no Decision Run or later-context dependency |
+| `candidate` | one terminal result for every Dataset row | unique Set/instrument and Set/population DatasetSource; disposition is `SELECTED`, `RANKED_NOT_SELECTED`, or `UNRANKABLE`; score/rank shape is constrained; competition rank is deliberately non-unique |
+| `candidate_score_component` | one immutable typed calculation fact for every Candidate × Policy Component | unique Candidate/component; exact Feature/component identity, typed raw status/value/reason, deterministic cell/source-lineage hash, projected normalized weight, percentile and contribution; no DatasetSource array/GIN and no direct Evidence or later-context identity |
+
+The five relations are the complete Candidate Authority. Dataset manifest bytes
+plus relational `dataset_source` remain the sole Dataset lineage owner. A score
+row stores only the Candidate computation facts and a deterministically
+verifiable cell/source-lineage hash. Dossier queries follow
+`candidate_set.dataset_id` to the immutable Dataset manifest and relational
+sources. A direct CandidateComponent-to-DatasetSource relation may be considered
+only after a measured future query profile; WP-07 creates no sixth Authority
+table, business source array, or array-as-lineage index.
+
+`candidate_policy_component.declared_weight` is the only weight Authority.
+Candidate build converts the declared Decimals to exact rationals, normalizes by
+their exact sum, and projects the result at the Candidate Set's versioned
+decimal precision. Only the projected normalized weight is copied to each score
+row beside its percentile and contribution. Finite PostgreSQL numerics need not
+sum byte-for-byte to one when the exact rational is recurring; the exact
+rational computation and versioned projection contract are semantic Authority.
+
+The persisted `candidate_set.decimal_projection_precision` is restricted in
+both Domain and PostgreSQL to the closed set
+`{64, 128, 256, 512, 1024, 2048, 4096}`; arbitrary values such as 10 or 100 are
+rejected. Candidate `policy_code` and `component_code` share the exact Domain/
+DDL vocabulary `^[a-z][a-z0-9_]{0,99}$`, so hyphens are not legal Candidate
+identities. The existing Eligibility code vocabulary is unchanged.
 
 ### Research Definition Core — 3 implemented draft tables
 
@@ -128,8 +158,12 @@ and cannot disagree.
 
 ### Remaining Research and Qualification — 17 deferred tables
 
-These relations remain logical target design only. None is a prerequisite for
-Candidate Set existence unless a later concrete policy proves otherwise.
+These relations remain logical target design only. None is a Candidate V1
+prerequisite, and Candidate Closure creates none of them. Their actual
+dependency order is not authorized here; it is audited after Candidate across
+Target/Partition/Experiment/Model/Decision Run/Outcome/Evaluation/Evidence/
+Qualification, with realized factual labels reserved to the future Outcome
+Authority rather than independently reconstructed by Research.
 
 | Table | Purpose | Lifecycle and key constraints |
 |---|---|---|
@@ -222,7 +256,7 @@ The baseline DDL must include, at minimum:
 | classification PIT | `(classification_id, instrument_id, effective_from, decision_visible_at DESC, revision_no DESC)` |
 | session resolution | unique `(exchange_code, session_date)` plus UTC-boundary lookup |
 | Universe/Eligibility | unique revision/member and assessment policy/instrument/time; indexes for status funnels |
-| Candidate | unique Set/instrument and Set/rank; score-component Feature lookup |
+| Candidate | unique Set/instrument and Set/population-source; non-unique Set/rank and disposition/rank indexes; score-component Candidate and Feature lookups |
 | evidence graph | child/role and parent reverse indexes; no self-edge |
 | qualification | unique subject/purpose/revision; policy-floor/result completeness indexes |
 | Decision dossier | Decision Run foreign keys plus Candidate/instrument indexes |
@@ -378,24 +412,75 @@ Decision time:
   produces `UNKNOWN`; only all-pass produces `ELIGIBLE`;
 - the complete counts reconcile to Universe membership.
 
-Candidate is not implemented in Selection Core. Its later closure binds the
-exact Universe revision, Eligibility policy and assessments, Candidate policy
-and ordered components, Decision time, code SHA, config artifact, and only the
-Dataset, Feature Definition, or Model Version identities the policy actually
-uses. Candidate Set existence does not depend on Decision Run, Evidence,
-Assessment, or Qualification. Qualification is purpose-scoped admission; a
-later Decision Run has a required FK to an already-existing Candidate Set.
+Candidate is implemented by its separate Selection-owned closure, not by the
+earlier Selection Core checkpoint. It binds one Candidate Policy to one immutable
+Decision-input Dataset. That Dataset and its relational sources already prove
+the sole Candidate Population:
 
-A `candidate` must reference a matching `ELIGIBLE` assessment. Rank uniqueness
-and deterministic tie policy are constrained. Each score component is relational
-and FK-bound to its Candidate policy component and Feature definition, with
-numeric/status value, missingness, source Evidence, and direction/weight. A
-score is not a probability. Signal and Forecast remain
-downstream facts with separate owners.
+```text
+Dataset rows = UniverseMember(INCLUDED) intersection
+               EligibilityAssessment(ELIGIBLE)
+```
 
-This model makes empty Candidate Sets valid and auditable and prevents table
-reduction from hiding Eligibility or Candidate evidence in a temporary frame or
-generic JSON payload.
+Candidate neither reloads this population from a broader Universe nor executes
+Eligibility, Market hard gates, Context, Target, Outcome, Model, Evidence, or
+Qualification logic. Every Dataset row produces exactly one `candidate` row.
+Required Feature status `MISSING`, `UNKNOWN`, `STALE`, or `CONFLICT` produces
+`UNRANKABLE`, with null score and rank, while retaining every typed score-
+component row. It is never imputed and no row silently disappears. Complete
+Dataset rows are `SELECTED` or `RANKED_NOT_SELECTED`.
+
+For the common complete rankable cross-section, each required Feature uses an
+identity-neutral arithmetic-midrank percentile. Only an `AVAILABLE` Feature
+with one distinct value in that cross-section receives the special constant
+assignment `0.5` and component status `CONSTANT`; an ordinary nonconstant
+middle rank may naturally evaluate to `0.5` while remaining `AVAILABLE`. A
+singleton rankable population therefore has
+percentile `0.5` for every component, exact composite score `0.5`, and
+competition rank `1`. No-rankable-row sets compute no percentile and have
+ranking status `NOT_ESTIMABLE`. Mixed constant and distinguishing components
+retain their fixed normalized weights and make the Set `AVAILABLE`; all-
+constant components make the Set `CONSTANT`. `composite_distinct_count`
+separately exposes cancellation into a composite tie.
+
+Declared Decimal weights are normalized with exact rational arithmetic. The
+exact component percentiles, normalized weights, contributions, composite
+scores, equality classes, competition ranks, and Top-K boundary are computed
+before a versioned canonical Decimal/PostgreSQL `numeric` projection. Constant
+components contribute their fixed exact normalized weight times `0.5`; weights
+are never redistributed. The stored composite is the projection of the exact
+composite, not a claim that separately projected contributions add byte-exactly
+to it.
+
+Equal exact scores receive equal competition rank. There is no unique Set/rank
+constraint and no instrument code, UUID, row order, or other identity tie-break.
+Top-K selects every score at or above the K-th score boundary under
+`INCLUDE_ALL_BOUNDARY_TIES`; actual selected count may exceed requested Top-K.
+Boundary rank/group/overflow/tie diagnostics are immutable and queryable.
+
+Candidate Set reconciliation is complete:
+
+```text
+population_count = rankable_count + unrankable_count
+rankable_count = selected_count + ranked_not_selected_count
+candidate row count = Dataset row count
+score_component_count = population_count * policy component count
+```
+
+An empty Dataset yields a legal empty Candidate Set with zero Candidates,
+ranking status `NOT_ESTIMABLE`, no percentile/boundary, and selected count zero.
+Component `observed_count`, `distinct_count`, each raw non-available status count,
+and `AVAILABLE`/`CONSTANT`/`NOT_ESTIMABLE` status are deterministically derived
+from immutable Set × Policy Component × score rows, including zero-count rows
+for an empty Set. Funnel and dossier read models expose both declared and actual
+counts and trace source lineage through Candidate Set → Dataset manifest/
+`dataset_source`; they are not new Authority.
+
+A score is descriptive ranking output, not a probability, expected return,
+MFE/MAE, Forecast, Signal, Entry, or authorization. Signal and Forecast remain
+separate downstream facts. Candidate Set existence does not depend on Decision
+Run, Target, Outcome, Model/ModelVersion, Evidence, Assessment, Qualification,
+or a later-context placeholder.
 
 ## 6. Target, Horizon, Outcome, MFE/MAE, and availability
 

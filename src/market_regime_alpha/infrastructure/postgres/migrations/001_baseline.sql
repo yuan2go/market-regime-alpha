@@ -2824,6 +2824,9 @@ CREATE TABLE mra.feature_definition (
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     CONSTRAINT feature_definition_identity_uk UNIQUE (feature_code, version),
     CONSTRAINT feature_definition_content_uk UNIQUE (content_sha256),
+    CONSTRAINT feature_definition_candidate_join_uk UNIQUE (
+        feature_definition_id, content_sha256, value_type
+    ),
     CONSTRAINT feature_definition_code_artifact_fk FOREIGN KEY (
         code_artifact_id, code_content_sha256, code_size_bytes
     ) REFERENCES mra.artifact(
@@ -2931,6 +2934,10 @@ CREATE TABLE mra.dataset (
     CONSTRAINT dataset_scope_join_uk UNIQUE (
         dataset_id, universe_revision_id, eligibility_policy_id, decision_time
     ),
+    CONSTRAINT dataset_candidate_join_uk UNIQUE (
+        dataset_id, content_sha256, universe_revision_id,
+        eligibility_policy_id, decision_time, row_count
+    ),
     CONSTRAINT dataset_universe_decision_fk FOREIGN KEY (
         universe_revision_id, decision_time
     ) REFERENCES mra.universe_revision(
@@ -3029,6 +3036,12 @@ CREATE TABLE mra.dataset_source (
     market_capture_id uuid
         REFERENCES mra.data_capture(capture_id) ON DELETE RESTRICT,
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT dataset_source_candidate_population_uk UNIQUE (
+        dataset_source_id, dataset_id, instrument_id, source_role
+    ),
+    CONSTRAINT dataset_source_candidate_feature_uk UNIQUE (
+        dataset_id, feature_definition_id
+    ),
     CONSTRAINT dataset_source_dataset_scope_fk FOREIGN KEY (
         dataset_id, universe_revision_id, eligibility_policy_id, decision_time
     ) REFERENCES mra.dataset(
@@ -3246,6 +3259,503 @@ CREATE UNIQUE INDEX dataset_source_capture_uk
     ON mra.dataset_source (dataset_id, market_capture_id)
     WHERE source_role = 'MARKET_CAPTURE';
 
+CREATE TABLE mra.candidate_policy (
+    candidate_policy_id uuid PRIMARY KEY,
+    policy_code text NOT NULL,
+    version integer NOT NULL,
+    content_sha256 text NOT NULL,
+    normalization_method text NOT NULL,
+    rank_method text NOT NULL,
+    missing_policy text NOT NULL,
+    selection_method text NOT NULL,
+    tie_policy text NOT NULL,
+    score_semantics text NOT NULL,
+    decimal_projection_method text NOT NULL,
+    decimal_projection_version integer NOT NULL,
+    requested_top_k integer NOT NULL,
+    component_count integer NOT NULL,
+    code_artifact_id uuid NOT NULL,
+    code_content_sha256 text NOT NULL,
+    code_size_bytes bigint NOT NULL,
+    config_artifact_id uuid NOT NULL,
+    config_content_sha256 text NOT NULL,
+    config_size_bytes bigint NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT candidate_policy_identity_uk UNIQUE (policy_code, version),
+    CONSTRAINT candidate_policy_content_uk UNIQUE (content_sha256),
+    CONSTRAINT candidate_policy_scope_uk UNIQUE (
+        candidate_policy_id, content_sha256, requested_top_k, component_count
+    ),
+    CONSTRAINT candidate_policy_code_artifact_fk FOREIGN KEY (
+        code_artifact_id, code_content_sha256, code_size_bytes
+    ) REFERENCES mra.artifact(
+        artifact_id, content_sha256, size_bytes
+    ) ON DELETE RESTRICT,
+    CONSTRAINT candidate_policy_config_artifact_fk FOREIGN KEY (
+        config_artifact_id, config_content_sha256, config_size_bytes
+    ) REFERENCES mra.artifact(
+        artifact_id, content_sha256, size_bytes
+    ) ON DELETE RESTRICT,
+    CONSTRAINT candidate_policy_shape_ck CHECK (
+        policy_code ~ '^[a-z][a-z0-9_]{0,99}$'
+        AND version > 0
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+        AND normalization_method = 'ARITHMETIC_MIDRANK'
+        AND rank_method = 'COMPETITION'
+        AND missing_policy = 'STRICT_COMPLETE_CASE'
+        AND selection_method = 'TOP_K'
+        AND tie_policy = 'INCLUDE_ALL_BOUNDARY_TIES'
+        AND score_semantics = 'DESCRIPTIVE_RANK_SCORE'
+        AND decimal_projection_method =
+            'EXACT_RATIONAL_ADAPTIVE_HALF_EVEN'
+        AND decimal_projection_version = 1
+        AND requested_top_k > 0
+        AND component_count > 0
+        AND code_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND config_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND code_size_bytes >= 0
+        AND config_size_bytes >= 0
+    )
+);
+CREATE INDEX candidate_policy_code_artifact_idx
+    ON mra.candidate_policy (
+        code_artifact_id, code_content_sha256, code_size_bytes
+    );
+CREATE INDEX candidate_policy_config_artifact_idx
+    ON mra.candidate_policy (
+        config_artifact_id, config_content_sha256, config_size_bytes
+    );
+
+CREATE TABLE mra.candidate_policy_component (
+    candidate_policy_component_id uuid PRIMARY KEY,
+    candidate_policy_id uuid NOT NULL
+        REFERENCES mra.candidate_policy(candidate_policy_id)
+        ON DELETE RESTRICT,
+    component_code text NOT NULL,
+    ordinal integer NOT NULL,
+    feature_definition_id uuid NOT NULL,
+    feature_content_sha256 text NOT NULL,
+    feature_value_type text NOT NULL,
+    direction text NOT NULL,
+    declared_weight numeric NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT candidate_policy_component_identity_uk UNIQUE (
+        candidate_policy_id, component_code
+    ),
+    CONSTRAINT candidate_policy_component_ordinal_uk UNIQUE (
+        candidate_policy_id, ordinal
+    ),
+    CONSTRAINT candidate_policy_component_feature_uk UNIQUE (
+        candidate_policy_id, feature_definition_id
+    ),
+    CONSTRAINT candidate_policy_component_scope_uk UNIQUE (
+        candidate_policy_component_id, candidate_policy_id,
+        feature_definition_id, feature_content_sha256, feature_value_type
+    ),
+    CONSTRAINT candidate_policy_component_feature_fk FOREIGN KEY (
+        feature_definition_id, feature_content_sha256, feature_value_type
+    ) REFERENCES mra.feature_definition(
+        feature_definition_id, content_sha256, value_type
+    ) ON DELETE RESTRICT,
+    CONSTRAINT candidate_policy_component_shape_ck CHECK (
+        component_code ~ '^[a-z][a-z0-9_]{0,99}$'
+        AND ordinal > 0
+        AND feature_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND feature_value_type IN ('DECIMAL', 'INTEGER')
+        AND direction IN ('HIGHER_IS_BETTER', 'LOWER_IS_BETTER')
+        AND declared_weight > 0
+        AND declared_weight < 'Infinity'::numeric
+    )
+);
+CREATE INDEX candidate_policy_component_feature_binding_idx
+    ON mra.candidate_policy_component (
+        feature_definition_id, feature_content_sha256, feature_value_type
+    );
+CREATE INDEX candidate_policy_component_feature_idx
+    ON mra.candidate_policy_component (
+        feature_definition_id, candidate_policy_id
+    );
+
+CREATE TABLE mra.candidate_set (
+    candidate_set_id uuid PRIMARY KEY,
+    candidate_policy_id uuid NOT NULL,
+    candidate_policy_content_sha256 text NOT NULL,
+    dataset_id uuid NOT NULL,
+    dataset_content_sha256 text NOT NULL,
+    universe_revision_id uuid NOT NULL,
+    eligibility_policy_id uuid NOT NULL,
+    decision_time timestamptz NOT NULL,
+    requested_top_k integer NOT NULL,
+    component_count integer NOT NULL,
+    decimal_projection_precision integer NOT NULL,
+    population_count integer NOT NULL,
+    rankable_count integer NOT NULL,
+    unrankable_count integer NOT NULL,
+    selected_count integer NOT NULL,
+    ranked_not_selected_count integer NOT NULL,
+    score_component_count bigint NOT NULL,
+    available_component_count integer NOT NULL,
+    constant_component_count integer NOT NULL,
+    not_estimable_component_count integer NOT NULL,
+    ranking_status text NOT NULL,
+    composite_distinct_count integer NOT NULL,
+    boundary_score numeric,
+    boundary_rank integer,
+    strictly_above_boundary_count integer NOT NULL,
+    boundary_group_count integer NOT NULL,
+    selected_overflow_count integer NOT NULL,
+    boundary_has_tie boolean NOT NULL,
+    boundary_tie_expanded boolean NOT NULL,
+    dependency_sha256 text NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT candidate_set_identity_uk UNIQUE (
+        candidate_policy_id, dataset_id
+    ),
+    CONSTRAINT candidate_set_content_uk UNIQUE (content_sha256),
+    CONSTRAINT candidate_set_scope_uk UNIQUE (
+        candidate_set_id, candidate_policy_id, dataset_id
+    ),
+    CONSTRAINT candidate_set_policy_fk FOREIGN KEY (
+        candidate_policy_id, candidate_policy_content_sha256,
+        requested_top_k, component_count
+    ) REFERENCES mra.candidate_policy(
+        candidate_policy_id, content_sha256,
+        requested_top_k, component_count
+    ) ON DELETE RESTRICT,
+    CONSTRAINT candidate_set_dataset_fk FOREIGN KEY (
+        dataset_id, dataset_content_sha256, universe_revision_id,
+        eligibility_policy_id, decision_time, population_count
+    ) REFERENCES mra.dataset(
+        dataset_id, content_sha256, universe_revision_id,
+        eligibility_policy_id, decision_time, row_count
+    ) ON DELETE RESTRICT,
+    CONSTRAINT candidate_set_counts_ck CHECK (
+        population_count >= 0
+        AND rankable_count >= 0
+        AND unrankable_count >= 0
+        AND selected_count >= 0
+        AND ranked_not_selected_count >= 0
+        AND score_component_count >= 0
+        AND population_count = rankable_count + unrankable_count
+        AND rankable_count = selected_count + ranked_not_selected_count
+        AND score_component_count =
+            population_count::bigint * component_count::bigint
+    ),
+    CONSTRAINT candidate_set_component_counts_ck CHECK (
+        available_component_count >= 0
+        AND constant_component_count >= 0
+        AND not_estimable_component_count >= 0
+        AND available_component_count + constant_component_count
+            + not_estimable_component_count = component_count
+    ),
+    CONSTRAINT candidate_set_ranking_ck CHECK (
+        requested_top_k > 0
+        AND component_count > 0
+        AND decimal_projection_precision IN (
+            64, 128, 256, 512, 1024, 2048, 4096
+        )
+        AND dependency_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+        AND (
+            (
+                rankable_count = 0
+                AND ranking_status = 'NOT_ESTIMABLE'
+                AND available_component_count = 0
+                AND constant_component_count = 0
+                AND not_estimable_component_count = component_count
+                AND composite_distinct_count = 0
+            )
+            OR
+            (
+                rankable_count > 0
+                AND ranking_status = 'CONSTANT'
+                AND available_component_count = 0
+                AND constant_component_count = component_count
+                AND not_estimable_component_count = 0
+                AND composite_distinct_count = 1
+            )
+            OR
+            (
+                rankable_count > 0
+                AND ranking_status = 'AVAILABLE'
+                AND available_component_count > 0
+                AND available_component_count + constant_component_count
+                    = component_count
+                AND not_estimable_component_count = 0
+                AND composite_distinct_count BETWEEN 1 AND rankable_count
+            )
+        )
+    ),
+    CONSTRAINT candidate_set_boundary_ck CHECK (
+        (
+            rankable_count = 0
+            AND selected_count = 0
+            AND boundary_score IS NULL
+            AND boundary_rank IS NULL
+            AND strictly_above_boundary_count = 0
+            AND boundary_group_count = 0
+            AND selected_overflow_count = 0
+            AND NOT boundary_has_tie
+            AND NOT boundary_tie_expanded
+        )
+        OR
+        (
+            rankable_count > 0
+            AND boundary_score BETWEEN 0 AND 1
+            AND boundary_rank = strictly_above_boundary_count + 1
+            AND boundary_rank > 0
+            AND boundary_rank <= LEAST(requested_top_k, rankable_count)
+            AND strictly_above_boundary_count >= 0
+            AND boundary_group_count > 0
+            AND selected_count =
+                strictly_above_boundary_count + boundary_group_count
+            AND selected_overflow_count =
+                GREATEST(selected_count - requested_top_k, 0)
+            AND boundary_has_tie = (boundary_group_count > 1)
+            AND boundary_tie_expanded = (selected_overflow_count > 0)
+        )
+    )
+);
+CREATE INDEX candidate_set_policy_binding_idx
+    ON mra.candidate_set (
+        candidate_policy_id, candidate_policy_content_sha256,
+        requested_top_k, component_count
+    );
+CREATE INDEX candidate_set_dataset_binding_idx
+    ON mra.candidate_set (
+        dataset_id, dataset_content_sha256, universe_revision_id,
+        eligibility_policy_id, decision_time, population_count
+    );
+CREATE INDEX candidate_set_dataset_policy_idx
+    ON mra.candidate_set (dataset_id, candidate_policy_id);
+CREATE INDEX candidate_set_decision_time_idx
+    ON mra.candidate_set (decision_time, candidate_set_id);
+
+CREATE TABLE mra.candidate (
+    candidate_id uuid PRIMARY KEY,
+    candidate_set_id uuid NOT NULL,
+    candidate_policy_id uuid NOT NULL,
+    dataset_id uuid NOT NULL,
+    dataset_population_source_id uuid NOT NULL,
+    dataset_source_role text NOT NULL,
+    instrument_id uuid NOT NULL,
+    disposition text NOT NULL,
+    composite_score numeric,
+    competition_rank integer,
+    reason_code text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT candidate_identity_uk UNIQUE (
+        candidate_set_id, instrument_id
+    ),
+    CONSTRAINT candidate_population_source_uk UNIQUE (
+        candidate_set_id, dataset_population_source_id
+    ),
+    CONSTRAINT candidate_scope_uk UNIQUE (
+        candidate_id, candidate_set_id, candidate_policy_id,
+        dataset_id, instrument_id, disposition
+    ),
+    CONSTRAINT candidate_set_scope_fk FOREIGN KEY (
+        candidate_set_id, candidate_policy_id, dataset_id
+    ) REFERENCES mra.candidate_set(
+        candidate_set_id, candidate_policy_id, dataset_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT candidate_population_source_fk FOREIGN KEY (
+        dataset_population_source_id, dataset_id,
+        instrument_id, dataset_source_role
+    ) REFERENCES mra.dataset_source(
+        dataset_source_id, dataset_id, instrument_id, source_role
+    ) ON DELETE RESTRICT,
+    CONSTRAINT candidate_disposition_ck CHECK (
+        dataset_source_role = 'POPULATION'
+        AND (
+            (
+                disposition IN ('SELECTED', 'RANKED_NOT_SELECTED')
+                AND composite_score BETWEEN 0 AND 1
+                AND competition_rank > 0
+            )
+            OR
+            (
+                disposition = 'UNRANKABLE'
+                AND composite_score IS NULL
+                AND competition_rank IS NULL
+            )
+        )
+    ),
+    CONSTRAINT candidate_reason_ck CHECK (
+        reason_code IN (
+            'ALL_RANKABLE_SELECTED', 'ABOVE_BOUNDARY', 'AT_BOUNDARY',
+            'BOUNDARY_TIE_INCLUDED', 'BELOW_BOUNDARY',
+            'STRICT_COMPLETE_CASE_REQUIRED_FEATURE_UNAVAILABLE'
+        )
+        AND (
+            (
+                disposition = 'SELECTED'
+                AND reason_code IN (
+                    'ALL_RANKABLE_SELECTED', 'ABOVE_BOUNDARY', 'AT_BOUNDARY',
+                    'BOUNDARY_TIE_INCLUDED'
+                )
+            )
+            OR
+            (
+                disposition = 'RANKED_NOT_SELECTED'
+                AND reason_code = 'BELOW_BOUNDARY'
+            )
+            OR
+            (
+                disposition = 'UNRANKABLE'
+                AND reason_code =
+                    'STRICT_COMPLETE_CASE_REQUIRED_FEATURE_UNAVAILABLE'
+            )
+        )
+    )
+);
+CREATE INDEX candidate_set_scope_fk_idx
+    ON mra.candidate (
+        candidate_set_id, candidate_policy_id, dataset_id
+    );
+CREATE INDEX candidate_population_source_fk_idx
+    ON mra.candidate (
+        dataset_population_source_id, dataset_id,
+        instrument_id, dataset_source_role
+    );
+CREATE INDEX candidate_set_disposition_idx
+    ON mra.candidate (candidate_set_id, disposition, candidate_id);
+CREATE INDEX candidate_set_rank_idx
+    ON mra.candidate (candidate_set_id, competition_rank)
+    WHERE competition_rank IS NOT NULL;
+CREATE INDEX candidate_set_disposition_rank_idx
+    ON mra.candidate (
+        candidate_set_id, disposition, competition_rank, candidate_id
+    );
+CREATE INDEX candidate_instrument_dossier_idx
+    ON mra.candidate (instrument_id, candidate_set_id);
+
+CREATE TABLE mra.candidate_score_component (
+    candidate_score_component_id uuid PRIMARY KEY,
+    candidate_id uuid NOT NULL,
+    candidate_set_id uuid NOT NULL,
+    candidate_policy_id uuid NOT NULL,
+    dataset_id uuid NOT NULL,
+    instrument_id uuid NOT NULL,
+    candidate_disposition text NOT NULL,
+    candidate_policy_component_id uuid NOT NULL,
+    feature_definition_id uuid NOT NULL,
+    feature_content_sha256 text NOT NULL,
+    feature_value_type text NOT NULL,
+    raw_status text NOT NULL,
+    raw_decimal_value numeric,
+    raw_integer_value numeric,
+    raw_reason_code text NOT NULL,
+    cell_source_lineage_hash text NOT NULL,
+    normalized_weight numeric NOT NULL,
+    percentile numeric,
+    contribution numeric,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT candidate_score_component_identity_uk UNIQUE (
+        candidate_id, candidate_policy_component_id
+    ),
+    CONSTRAINT candidate_score_component_candidate_fk FOREIGN KEY (
+        candidate_id, candidate_set_id, candidate_policy_id,
+        dataset_id, instrument_id, candidate_disposition
+    ) REFERENCES mra.candidate(
+        candidate_id, candidate_set_id, candidate_policy_id,
+        dataset_id, instrument_id, disposition
+    ) ON DELETE RESTRICT,
+    CONSTRAINT candidate_score_component_policy_component_fk FOREIGN KEY (
+        candidate_policy_component_id, candidate_policy_id,
+        feature_definition_id, feature_content_sha256, feature_value_type
+    ) REFERENCES mra.candidate_policy_component(
+        candidate_policy_component_id, candidate_policy_id,
+        feature_definition_id, feature_content_sha256, feature_value_type
+    ) ON DELETE RESTRICT,
+    CONSTRAINT candidate_score_component_dataset_feature_fk FOREIGN KEY (
+        dataset_id, feature_definition_id
+    ) REFERENCES mra.dataset_source(
+        dataset_id, feature_definition_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT candidate_score_component_raw_ck CHECK (
+        raw_status IN (
+            'AVAILABLE', 'MISSING', 'UNKNOWN', 'STALE', 'CONFLICT'
+        )
+        AND raw_reason_code ~ '^[A-Z][A-Z0-9_]{0,99}$'
+        AND cell_source_lineage_hash ~ '^[0-9a-f]{64}$'
+        AND (
+            (
+                raw_status = 'AVAILABLE'
+                AND (
+                    (
+                        feature_value_type = 'DECIMAL'
+                        AND raw_decimal_value IS NOT NULL
+                        AND raw_decimal_value > '-Infinity'::numeric
+                        AND raw_decimal_value < 'Infinity'::numeric
+                        AND scale(raw_decimal_value) <= 12
+                        AND abs(raw_decimal_value) <
+                            100000000000000000000000000::numeric
+                        AND raw_integer_value IS NULL
+                    )
+                    OR
+                    (
+                        feature_value_type = 'INTEGER'
+                        AND raw_decimal_value IS NULL
+                        AND raw_integer_value IS NOT NULL
+                        AND raw_integer_value > '-Infinity'::numeric
+                        AND raw_integer_value < 'Infinity'::numeric
+                        AND scale(raw_integer_value) = 0
+                    )
+                )
+            )
+            OR
+            (
+                raw_status IN ('MISSING', 'UNKNOWN', 'STALE', 'CONFLICT')
+                AND raw_decimal_value IS NULL
+                AND raw_integer_value IS NULL
+            )
+        )
+    ),
+    CONSTRAINT candidate_score_component_ranking_ck CHECK (
+        normalized_weight > 0 AND normalized_weight <= 1
+        AND (
+            (
+                candidate_disposition IN (
+                    'SELECTED', 'RANKED_NOT_SELECTED'
+                )
+                AND raw_status = 'AVAILABLE'
+                AND percentile BETWEEN 0 AND 1
+                AND contribution BETWEEN 0 AND 1
+                AND contribution <= normalized_weight
+            )
+            OR
+            (
+                candidate_disposition = 'UNRANKABLE'
+                AND percentile IS NULL
+                AND contribution IS NULL
+            )
+        )
+    )
+);
+CREATE INDEX candidate_score_component_candidate_fk_idx
+    ON mra.candidate_score_component (
+        candidate_id, candidate_set_id, candidate_policy_id,
+        dataset_id, instrument_id, candidate_disposition
+    );
+CREATE INDEX candidate_score_component_policy_binding_idx
+    ON mra.candidate_score_component (
+        candidate_policy_component_id, candidate_policy_id,
+        feature_definition_id, feature_content_sha256, feature_value_type
+    );
+CREATE INDEX candidate_score_component_dataset_feature_idx
+    ON mra.candidate_score_component (dataset_id, feature_definition_id);
+CREATE INDEX candidate_score_component_set_component_idx
+    ON mra.candidate_score_component (
+        candidate_set_id, candidate_policy_component_id, raw_status,
+        candidate_id
+    );
+CREATE INDEX candidate_score_component_feature_set_idx
+    ON mra.candidate_score_component (
+        feature_definition_id, candidate_set_id, candidate_id
+    );
+
 CREATE TABLE mra.runtime_schedule (
     schedule_id uuid PRIMARY KEY,
     schedule_code text NOT NULL,
@@ -3350,7 +3860,7 @@ CREATE TABLE mra.runtime_step (
     CONSTRAINT runtime_step_run_key_uk UNIQUE (run_id, step_key),
     CONSTRAINT runtime_step_run_ordinal_uk UNIQUE (run_id, ordinal),
     CONSTRAINT runtime_step_key_ck CHECK (step_key ~ '^[a-z][a-z0-9_-]{0,99}$'),
-    CONSTRAINT runtime_step_kind_ck CHECK (step_kind IN ('CAPTURE', 'NORMALIZE_PIT', 'FREEZE_UNIVERSE', 'ASSESS_ELIGIBILITY', 'BUILD_CANDIDATES', 'ASSESS_CONTEXT', 'SIGNAL_AND_FORECAST', 'DECIDE_AND_RISK', 'PERSIST_DECISION', 'SETTLE_OUTCOME', 'ATTRIBUTE', 'ASSESS_RESEARCH')),
+    CONSTRAINT runtime_step_kind_ck CHECK (step_kind IN ('CAPTURE', 'NORMALIZE_PIT', 'FREEZE_UNIVERSE', 'ASSESS_ELIGIBILITY', 'REGISTER_DATASET', 'BUILD_CANDIDATE_SET', 'ASSESS_CONTEXT', 'SIGNAL_AND_FORECAST', 'DECIDE_AND_RISK', 'PERSIST_DECISION', 'SETTLE_OUTCOME', 'ATTRIBUTE', 'ASSESS_RESEARCH')),
     CONSTRAINT runtime_step_implementation_ck CHECK (implementation <> '' AND implementation_version <> ''),
     CONSTRAINT runtime_step_ordinal_ck CHECK (ordinal >= 0),
     CONSTRAINT runtime_step_request_hash_ck CHECK (request_hash ~ '^[0-9a-f]{64}$'),
@@ -3798,6 +4308,144 @@ FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
 CREATE TRIGGER dataset_source_append_only
 BEFORE UPDATE OR DELETE ON mra.dataset_source
 FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER candidate_policy_append_only
+BEFORE UPDATE OR DELETE ON mra.candidate_policy
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER candidate_policy_component_append_only
+BEFORE UPDATE OR DELETE ON mra.candidate_policy_component
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER candidate_set_append_only
+BEFORE UPDATE OR DELETE ON mra.candidate_set
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER candidate_append_only
+BEFORE UPDATE OR DELETE ON mra.candidate
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER candidate_score_component_append_only
+BEFORE UPDATE OR DELETE ON mra.candidate_score_component
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+
+CREATE VIEW mra.candidate_component_diagnostic AS
+SELECT
+    candidate_set.candidate_set_id,
+    component.candidate_policy_component_id,
+    component.feature_definition_id,
+    candidate_set.population_count,
+    count(score.candidate_score_component_id) FILTER (
+        WHERE score.percentile IS NOT NULL
+    ) AS observed_count,
+    count(DISTINCT ROW(
+        score.raw_decimal_value, score.raw_integer_value
+    )) FILTER (
+        WHERE score.percentile IS NOT NULL
+    ) AS distinct_count,
+    count(score.candidate_score_component_id) FILTER (
+        WHERE score.raw_status = 'AVAILABLE'
+    ) AS raw_available_count,
+    count(score.candidate_score_component_id) FILTER (
+        WHERE score.raw_status = 'MISSING'
+    ) AS missing_count,
+    count(score.candidate_score_component_id) FILTER (
+        WHERE score.raw_status = 'UNKNOWN'
+    ) AS unknown_count,
+    count(score.candidate_score_component_id) FILTER (
+        WHERE score.raw_status = 'STALE'
+    ) AS stale_count,
+    count(score.candidate_score_component_id) FILTER (
+        WHERE score.raw_status = 'CONFLICT'
+    ) AS conflict_count,
+    count(score.candidate_score_component_id) FILTER (
+        WHERE score.raw_status = 'AVAILABLE'
+    ) - count(score.candidate_score_component_id) FILTER (
+        WHERE score.percentile IS NOT NULL
+    ) AS available_but_not_observed_count,
+    CASE
+        WHEN candidate_set.rankable_count = 0 THEN 'NOT_ESTIMABLE'
+        WHEN count(DISTINCT ROW(
+            score.raw_decimal_value, score.raw_integer_value
+        )) FILTER (WHERE score.percentile IS NOT NULL) = 1 THEN 'CONSTANT'
+        ELSE 'AVAILABLE'
+    END AS rank_information_status
+FROM mra.candidate_set AS candidate_set
+JOIN mra.candidate_policy_component AS component
+  ON component.candidate_policy_id = candidate_set.candidate_policy_id
+LEFT JOIN mra.candidate_score_component AS score
+  ON score.candidate_set_id = candidate_set.candidate_set_id
+ AND score.candidate_policy_component_id =
+     component.candidate_policy_component_id
+GROUP BY
+    candidate_set.candidate_set_id,
+    component.candidate_policy_component_id,
+    component.feature_definition_id,
+    candidate_set.population_count,
+    candidate_set.rankable_count;
+
+CREATE VIEW mra.candidate_funnel AS
+SELECT
+    candidate_set.candidate_set_id,
+    candidate_set.candidate_policy_id,
+    candidate_set.dataset_id,
+    dataset.row_count AS dataset_population_count,
+    candidate_set.population_count,
+    candidate_set.rankable_count,
+    candidate_set.unrankable_count,
+    candidate_set.selected_count,
+    candidate_set.ranked_not_selected_count,
+    candidate_set.score_component_count,
+    candidate_set.ranking_status,
+    candidate_set.composite_distinct_count,
+    candidate_set.requested_top_k,
+    candidate_set.boundary_score,
+    candidate_set.boundary_rank,
+    candidate_set.strictly_above_boundary_count,
+    candidate_set.boundary_group_count,
+    candidate_set.selected_overflow_count,
+    candidate_set.boundary_has_tie,
+    candidate_set.boundary_tie_expanded,
+    candidate_counts.actual_population_count,
+    candidate_counts.actual_selected_count,
+    candidate_counts.actual_ranked_not_selected_count,
+    candidate_counts.actual_unrankable_count,
+    candidate_counts.strict_complete_case_unrankable_count,
+    score_counts.actual_score_component_count,
+    candidate_set.population_count =
+        candidate_counts.actual_population_count AS population_reconciled,
+    candidate_set.rankable_count =
+        candidate_counts.actual_selected_count
+        + candidate_counts.actual_ranked_not_selected_count
+        AS rankable_reconciled,
+    candidate_set.score_component_count =
+        score_counts.actual_score_component_count
+        AND candidate_set.score_component_count =
+            candidate_set.population_count::bigint
+            * candidate_set.component_count::bigint
+        AS score_matrix_reconciled
+FROM mra.candidate_set AS candidate_set
+JOIN mra.dataset AS dataset
+  ON dataset.dataset_id = candidate_set.dataset_id
+LEFT JOIN LATERAL (
+    SELECT
+        count(*) AS actual_population_count,
+        count(*) FILTER (
+            WHERE candidate.disposition = 'SELECTED'
+        ) AS actual_selected_count,
+        count(*) FILTER (
+            WHERE candidate.disposition = 'RANKED_NOT_SELECTED'
+        ) AS actual_ranked_not_selected_count,
+        count(*) FILTER (
+            WHERE candidate.disposition = 'UNRANKABLE'
+        ) AS actual_unrankable_count,
+        count(*) FILTER (
+            WHERE candidate.reason_code =
+                'STRICT_COMPLETE_CASE_REQUIRED_FEATURE_UNAVAILABLE'
+        ) AS strict_complete_case_unrankable_count
+    FROM mra.candidate AS candidate
+    WHERE candidate.candidate_set_id = candidate_set.candidate_set_id
+) AS candidate_counts ON true
+LEFT JOIN LATERAL (
+    SELECT count(*) AS actual_score_component_count
+    FROM mra.candidate_score_component AS score
+    WHERE score.candidate_set_id = candidate_set.candidate_set_id
+) AS score_counts ON true;
 
 CREATE VIEW mra.run_trace AS
 SELECT

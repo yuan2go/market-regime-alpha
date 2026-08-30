@@ -1,42 +1,46 @@
 # Current State
 
 > **Status:** CURRENT_STATUS
-> **Authority:** Non-authoritative exact-SHA implementation read model
+> **Authority:** Non-authoritative implementation status read model; exact-SHA engineering proof remains in Verification
 > **Owner:** Market Regime Alpha maintainers
-> **Generated At:** 2026-08-29T09:42:38Z
-> **Repository SHA:** `22a5ec692fcc261182197c2953a0a860d7cd6f94`
+> **Generated At:** 2026-08-30 WP-07 Candidate Closure exit reconciliation
+> **Repository Implementation Checkpoint:** `029c26928af436d7788da1cce3a53c94b96377bf`
+> **Containing Documentation Commit:** reported by the final handoff; this read model does not claim a self-referential Git SHA
+> **Previous Verified Snapshot:** WP-06 at `22a5ec692fcc261182197c2953a0a860d7cd6f94`
 > **Implementation Line Start:** `c3ac21ef1e13f2e8408d30b0481fa9b74c4f9539`
 > **Foundation Source Checkpoint:** `eeff49c7a3995ba6d65045be88d4244617301234`
 > **Legacy Business Implementation Parent:** `0382dad416d6d50d1eea0bda1603d7c359d65274`
 > **Schema Epochs:** canonical business `LEGACY_MIGRATIONS_001_106`; target draft `MRA_REFOUNDATION_1 / DRAFT / NOT_CUT_OVER`
-> **Generator:** `WP-ARCHITECTURE-REFOUNDATION-06 implementation verification`
-> **Source Tree IDs:** source `31acede0e36314c22ff38f60e79d3f10061ea1ca`; legacy migrations `6d3730548780ad6244d2cfecb4fb3559064b6f06`; target baseline `dff1aff6374d2384efd09f9ca981b33e1077bdfe`; tests `9a05c52bd6800359ef7ddd813879f27cde25f296`
-> **Code Evidence:** target and legacy source/migration packages plus `tests`
+> **Generator:** `WP-ARCHITECTURE-REFOUNDATION-07 Candidate Closure exit reconciliation; non-authoritative read model`
+> **Source Tree IDs:** root `d77c8540eaae24e5acdc7e85e1c0ef983614d1ed`; source `314b9df317e056196b6ab7962fe6cf36ec308b99`; tests `715b9bccb0618926842ec859fffd9b5e695ab55a`; target baseline blob `f86f5f8623aad758ed6df533fd3b706c09a69b96`; legacy migrations tree `6d3730548780ad6244d2cfecb4fb3559064b6f06`
+> **Code Evidence:** target and legacy source/migration packages, `tests`, and [WP-07 Candidate Closure Verification](../references/WP-ARCHITECTURE-REFOUNDATION-07-Candidate-Closure-Verification.md)
 
-This snapshot is invalid after any source, migration, test, or composition
-change until regenerated. It reports implementation and local engineering
-verification only; it cannot write business state or promote Provider,
-research, qualification, trading, or Production claims.
+This read model records implemented Candidate scope and the local WP-07
+engineering exit result bound to the exact implementation checkpoint above. It
+is invalid after any source, migration, test, or composition change until
+regenerated. It cannot write business state or promote Provider, research,
+qualification, trading, or Production claims.
 
 ## Current implementation truth
 
-| Area | Exact current fact at the snapshot SHA |
+| Area | Current implementation fact at the WP-07 implementation checkpoint |
 |---|---|
 | Package shape | The legacy Python 3.12 modular monolith remains intact. Target `shared`, `runtime`, `market`, permanent `selection`, permanent `research_qualification`, `infrastructure`, `interfaces`, and sole target `bootstrap.py` are isolated by dependency tests; importing target Selection/Research does not execute legacy Universe/Research/Features/Candidates packages |
-| PostgreSQL | The canonical business implementation remains legacy 001–106 with 283 tables. The target draft has 35 tables and two read-only views under schema `mra` |
-| Runtime | Continuous Research remains the current all-day business control plane. Target Run/Step/Attempt can execute a test-only `CAPTURE -> NORMALIZE_PIT -> FREEZE_UNIVERSE -> ASSESS_ELIGIBILITY` slice; it is not a canonical entry point |
+| PostgreSQL | The canonical business implementation remains legacy 001–106 with 283 tables. The target draft defines 40 tables and four read-only views under schema `mra` |
+| Runtime | Continuous Research remains the current all-day business control plane. Target Run/Step/Attempt composes a test-only `CAPTURE -> NORMALIZE_PIT -> FREEZE_UNIVERSE -> ASSESS_ELIGIBILITY -> REGISTER_DATASET -> BUILD_CANDIDATE_SET` slice; it is not a canonical entry point |
 | CLI | Six legacy scripts remain. `mra` exposes target DB bootstrap/verify/recreate and Runtime inspection/recovery, but no Market business cutover command |
-| Market/PIT | The target owner remains authoritative for its draft facts. Its large files are physically split by cohesive Domain/Application/Ports/query/repository responsibilities with stable exports and unchanged WP-04 schema/PIT/Provider semantics; only generic exact/as-of facts remain public |
+| Market/PIT | Within the isolated target draft, the target owner is the sole writer of its draft facts; legacy remains canonical business implementation. Its large files are physically split by cohesive Domain/Application/Ports/query/repository responsibilities with stable exports and unchanged WP-04 schema/PIT/Provider semantics; only generic exact/as-of facts remain public |
 | Universe/Eligibility | Permanent target `market_regime_alpha.selection` owns explicit immutable scope, frozen membership, typed policy/rules, complete three-state assessment/reasons, exact Market lineage, and an independent narrow Selection UoW, all test-only |
-| Candidate | Current legacy capabilities remain canonical. Target Candidate has no table or writer and remains unimplemented. Its real Selection/Research prerequisites now exist, so Candidate Closure is ready for a separate work package; Candidate Set must remain independent of future Decision/Qualification |
-| Research/Qualification | Current legacy capabilities remain canonical. Permanent target `market_regime_alpha.research_qualification` implements only immutable Decision-input `dataset`, closed-FK `dataset_source`, and calculation-only `feature_definition` through an independent narrow UoW; Model/Evaluation/Evidence/Qualification remain deferred |
+| Candidate | Current legacy capabilities remain canonical. The target draft implements the five Selection-owned Candidate relations, deterministic Policy/Set writer, complete score matrix, independent Candidate UoW, Selection-owned Research-input port with Infrastructure adapter, and funnel/dossier queries; its local WP-07 engineering exit gate passes at `029c269` |
+| Research/Qualification | Current legacy capabilities remain canonical. Permanent target `market_regime_alpha.research_qualification` implements only immutable Decision-input `dataset`, closed-FK `dataset_source`, and calculation-only `feature_definition` through an independent narrow UoW; Model/Evaluation/Evidence/Qualification remain absent and their implementation order is not authorized |
 | Decision/Outcome | Current legacy capabilities remain; target single write paths have not started |
 | Execution/Account | Human/manual execution only; observed effective Fill remains the source of trade-caused Position. No target implementation was added |
-| Target epoch | Foundation, Market/PIT, Selection Core, and Research Definition Core are implemented in the mutable `MRA_REFOUNDATION_1` draft; Candidate and every later target context plus Runtime/CLI Cutover remain absent |
+| Target epoch | Foundation, Market/PIT, Selection Core, Research Definition Core, and Candidate are implemented in the mutable `MRA_REFOUNDATION_1` draft; every later target context and Runtime/CLI Cutover remain absent |
 | Legacy | Old source, 001–106 migrations, CLIs, compatibility paths, and tests remain physically present as the current implementation and regression oracle |
 
 The convergence state is therefore
-`FOUNDATION_MARKET_SELECTION_RESEARCH_DEFINITION_IMPLEMENTED_DRAFT / NOT_CUT_OVER`.
+`FOUNDATION_MARKET_SELECTION_RESEARCH_DEFINITION_CANDIDATE_IMPLEMENTED_DRAFT /
+CANDIDATE_EXIT_GATE_PASS / NOT_CUT_OVER`.
 Similar legacy vocabulary does not make an old owner part of the target, and
 target test writes do not become canonical business writes.
 
@@ -61,11 +65,25 @@ Selection Core adds exactly seven tables:
 Research Definition Core adds exactly three tables: `feature_definition`,
 `dataset`, and `dataset_source`.
 
-The two views remain `run_trace` and `artifact_integrity_status`. The verified
-draft catalog contains 203 indexes, 453 constraints, 23 functions, and 77
-non-internal triggers. Selection and Research add no owner-specific trigger
-function: their append-only triggers reuse the Foundation mutation guard. Table
-count is descriptive, not an optimization target.
+Candidate Closure adds exactly five Selection-owned tables: `candidate_policy`,
+`candidate_policy_component`, `candidate_set`, `candidate`, and
+`candidate_score_component`.
+
+The four replaceable views are `candidate_component_diagnostic`,
+`candidate_funnel`, `run_trace`, and `artifact_integrity_status`. The
+implementation-defined draft shape is 40 tables, four views, 245 indexes, 497
+constraints, 23 functions, 82 non-internal triggers, and 892 catalog objects.
+Its baseline checksum is
+`afeb68cb418ceffb4158a4d8d79a75087a30d07777972148e713266951ccaa7b`, its
+seed checksum is
+`9c41cd715e35e1a7bed3a58c52a29f01cc1e9bf950b77344bb56eac6dfa2df11`, and its
+reference-vocabulary checksum is
+`60cbea58a647865fa533845ca8e3b6bd35158deedf0373b2132c94cc27abff76`.
+Clean PostgreSQL 16.14 bootstrap/verify/recreate produced catalog checksum
+`527570a3d0d1e00ec242e57060baa1eb47998a493aa2dd94a2d60841841da6ca`.
+The guarded recreate's disposable database identity is recorded only in the
+linked WP-07 Verification. Table count is descriptive, not an optimization
+target.
 
 ## Market/PIT implementation truth
 
@@ -137,9 +155,10 @@ count is descriptive, not an optimization target.
   `market_regime_alpha.research_qualification`; legacy `research`, `features`,
   and Candidate persistence remain invariant sources only and cannot be target
   dependencies or compatibility paths.
-- This work package adds exactly `dataset`, `dataset_source`, and
-  `feature_definition`. Model, ModelVersion, Evaluation, Evidence,
-  Qualification, Candidate, and later contexts remain absent.
+- Research Definition Core adds exactly `dataset`, `dataset_source`, and
+  `feature_definition`. Model, ModelVersion, Target, Evaluation, Evidence,
+  Qualification, and later Research contexts remain absent; Candidate is a
+  separately implemented Selection owner, not part of this Research UoW.
 - A target Dataset is a Decision-input Dataset. At one DecisionTime its
   instrument rows must equal, without omission or addition, the intersection
   of `UniverseMember = INCLUDED` and
@@ -149,7 +168,7 @@ count is descriptive, not an optimization target.
   barrier, future-observation, realized-label, and other posterior fields.
   Dataset source roles are closed, use concrete owner foreign keys, and must
   reconcile exactly with manifest lineage; no polymorphic string identity,
-  generic business-lineage JSON, future nullable identity, or Registry is
+  generic business-lineage JSON, future nullable identity, or Registry
   exists.
 - Runtime command failure uses one narrow cross-context contract: the failed
   business transaction rolls back, then a fresh short owner UoW validates the
@@ -157,9 +176,55 @@ count is descriptive, not an optimization target.
   Attempt/Step failure. The contract owns no command dispatch or Domain-error
   interpretation.
 
-## Exact-SHA verification
+## Candidate Closure implementation truth
 
-The immutable pre-refoundation ledger is
+- Permanent `market_regime_alpha.selection` owns exactly Candidate Policy,
+  Policy Component, Candidate Set, Candidate, and Candidate Score Component.
+  Candidate uses an independent narrow UoW; Runtime, Selection Core, and Research
+  UoWs were not widened.
+- Policy components bind real numeric Feature Definitions. Candidate Set binds
+  one immutable Decision-input Dataset, which remains the sole population and
+  already proves same-DecisionTime `INCLUDED` plus `ELIGIBLE` membership.
+- Every Dataset row receives `SELECTED`, `RANKED_NOT_SELECTED`, or `UNRANKABLE`
+  and one typed score row per Policy Component. Required unavailable cells remain
+  `UNRANKABLE` without imputation or silent row deletion.
+- V1 converts canonical declared Decimal weights to exact rational normalized
+  weights. Only the projected normalized weight is stored on score rows, with
+  no dynamic redistribution. Arithmetic-midrank normalization, competition
+  rank, explicit Top-K, and `INCLUDE_ALL_BOUNDARY_TIES` never use identity to
+  break a score tie.
+- Selection declares the immutable Research-input DTO/port. Infrastructure maps
+  Dataset/Feature definitions and verifies/reads/parses Dataset Artifact bytes;
+  byte I/O and ranking occur outside the final PostgreSQL write transaction.
+- Public `BuildCandidateSet` requires a real keyword-only Runtime claim.
+  Preflight, fresh binding, and successful replay validate the exact claimed Step
+  key and persisted `BUILD_CANDIDATE_SET` Step kind before any Candidate effect.
+- The final short Candidate transaction owns the live fence, CandidateSet
+  identity advisory lock, exact dependency revalidation, and one globally
+  UUID-ordered acquisition of each distinct Artifact using the strongest
+  required mode. A fresh Dataset manifest is locked for verification; other
+  distinct Artifact dependencies are shared-locked. Candidate writes and
+  reconciliation, receipt, verification binding, audit, matching Attempt/Step
+  finalization, and commit follow in the same transaction.
+- Exact successful replay does not reread Artifact bytes, rerank, append audit,
+  or rewrite Candidate Authority. An existing failed receipt preserves its
+  original error and receipt while terminalizing the new live Attempt; it creates
+  no Candidate result, rejection receipt, or duplicate audit.
+- `candidate_funnel` and Candidate dossier queries expose complete population,
+  rankability, disposition, component, boundary, and Dataset-source lineage
+  facts without becoming Authority.
+- This is an engineering implementation statement only. At `029c269`, all 82
+  Candidate-focused tests and the complete 3,330-node legacy-plus-target
+  collection pass, together with clean PostgreSQL bootstrap/verify/recreate,
+  concurrency/recovery/replay, representative query plans, architecture, docs,
+  Ruff, mypy, build, checksum, and diff gates. The linked WP-07 Verification
+  owns the exact commands and proof ceiling; Remote CI remains
+  `BLOCKED_BY_REPOSITORY_CONFIGURATION / NOT_RUN`.
+
+## Historical exact-SHA verification through WP-06
+
+The following evidence is historical through WP-06 and does not prove WP-07
+Candidate Closure. The immutable pre-refoundation ledger is
 [WP-02](../references/WP-ARCHITECTURE-REFOUNDATION-02-Pre-Refoundation-Verification-Baseline.md),
 the Foundation ledger is [WP-03](../references/WP-ARCHITECTURE-REFOUNDATION-03-Foundation-Verification.md),
 the Market/PIT ledger is
@@ -181,14 +246,14 @@ exact-OID recreate, representative query plans, architecture dependency rules,
 and diff checks pass. No test or assertion was skipped, xfailed, deleted, or
 weakened.
 
-The verified PostgreSQL 16.14 target catalog contains 35 tables and keeps
-`MRA_REFOUNDATION_1 / DRAFT / NOT_CUT_OVER`. Its baseline, seed, vocabulary,
+At that WP-06 snapshot, the verified PostgreSQL 16.14 target catalog contained
+35 tables and kept `MRA_REFOUNDATION_1 / DRAFT / NOT_CUT_OVER`. Its baseline,
+seed, vocabulary,
 and catalog checksums are recorded in WP-06. Candidate V1's real Selection and
 Research definition prerequisites now exist in an acyclic Authority order;
-Candidate capability itself is still absent and belongs to the next work
-package.
+Candidate capability was still absent at that historical checkpoint.
 
-GitHub Actions remain disabled, so remote CI is
+At WP-06, GitHub Actions remained disabled, so remote CI was
 `BLOCKED_BY_REPOSITORY_CONFIGURATION / NOT_RUN`, not PASS. No current or
 historical local gate proves Provider, Alpha/OOS, broker, trading, Prospective,
 Production, or Runtime/CLI Cutover evidence.

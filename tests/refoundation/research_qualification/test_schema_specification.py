@@ -3,6 +3,7 @@ from __future__ import annotations
 import psycopg
 
 from market_regime_alpha.infrastructure.postgres.schema import (
+    EXPECTED_CANDIDATE_TABLES,
     EXPECTED_RESEARCH_DEFINITION_TABLES,
     EXPECTED_TARGET_TABLES,
     SchemaManager,
@@ -27,12 +28,14 @@ def test_research_definition_schema_adds_exactly_three_permanent_relations(
     }
     assert EXPECTED_RESEARCH_DEFINITION_TABLES <= tables
     assert tables == EXPECTED_TARGET_TABLES
+    assert {
+        name for name in tables if name.startswith("candidate")
+    } == EXPECTED_CANDIDATE_TABLES
     assert not {
         name
         for name in tables
         if name.startswith(
             (
-                "candidate",
                 "model",
                 "evaluation",
                 "evidence",

@@ -44,6 +44,7 @@ def test_selection_domain_application_and_ports_do_not_cross_forbidden_boundarie
         "market_regime_alpha.candidate",
         "market_regime_alpha.persistence",
         "market_regime_alpha.infrastructure.postgres",
+        "market_regime_alpha.research_qualification",
     )
     for path in (SRC / "selection").rglob("*.py"):
         imported = _imports(path)
@@ -75,11 +76,18 @@ def test_market_physical_modules_keep_stable_export_files_small() -> None:
     assert "classify_decision_reference" not in target_source
 
 
-def test_candidate_and_future_research_authority_are_not_stubbed_in_target_schema() -> None:
+def test_only_candidate_authority_is_added_before_future_research_authority() -> None:
     baseline = (SRC / "infrastructure" / "postgres" / "migrations" / "001_baseline.sql").read_text(encoding="utf-8")
-    for table in (
+    candidate_tables = {
+        "candidate_policy",
+        "candidate_policy_component",
         "candidate_set",
         "candidate",
+        "candidate_score_component",
+    }
+    for table in candidate_tables:
+        assert f"CREATE TABLE mra.{table}" in baseline
+    for table in (
         "evaluation_dataset",
         "research_evidence",
         "qualification_assessment",
@@ -88,3 +96,73 @@ def test_candidate_and_future_research_authority_are_not_stubbed_in_target_schem
         "decision_run",
     ):
         assert f"CREATE TABLE mra.{table}" not in baseline
+
+
+def test_candidate_uses_an_independent_narrow_uow() -> None:
+    runtime_uow = (SRC / "infrastructure/postgres/uow.py").read_text(
+        encoding="utf-8"
+    )
+    market_uow = (SRC / "infrastructure/postgres/market_uow.py").read_text(
+        encoding="utf-8"
+    )
+    selection_uow = (
+        SRC / "infrastructure/postgres/selection_uow.py"
+    ).read_text(encoding="utf-8")
+    research_uow = (
+        SRC / "infrastructure/postgres/research_uow.py"
+    ).read_text(encoding="utf-8")
+    candidate_uow = (
+        SRC / "infrastructure/postgres/candidate_uow.py"
+    ).read_text(encoding="utf-8")
+    bootstrap = (SRC / "bootstrap.py").read_text(encoding="utf-8")
+    assert "def candidates(" not in runtime_uow
+    assert "def candidates(" not in market_uow
+    assert "def candidates(" not in selection_uow
+    assert "def candidates(" not in research_uow
+    assert "def candidates(" in candidate_uow
+    assert "def research_definitions(" not in candidate_uow
+    assert "candidates: CandidateApplication" in bootstrap
+    assert "candidate_queries: CandidateQueryProvider" in bootstrap
+    assert "PostgresCandidateResearchInputLoader(pool, byte_store)" in bootstrap
+    assert "PostgresCandidateUnitOfWorkProvider(pool)" in bootstrap
+
+
+def test_candidate_surface_contains_no_future_owner_or_framework() -> None:
+    candidate_paths = tuple((SRC / "selection").rglob("*candidate*.py"))
+    source = "\n".join(path.read_text(encoding="utf-8") for path in candidate_paths)
+    prohibited = (
+        "CommandBus",
+        "Mediator",
+        "ServiceLocator",
+        "GenericRegistry",
+        "ModelVersion",
+        "TargetDefinition",
+        "QualificationAssessment",
+        "DecisionRun",
+        "OutcomeAuthority",
+        "ExecutionAuthority",
+    )
+    assert tuple(item for item in prohibited if item in source) == ()
+
+
+def test_candidate_research_input_adapter_does_not_borrow_research_repository() -> None:
+    adapter = (
+        SRC
+        / "infrastructure"
+        / "postgres"
+        / "queries"
+        / "candidate_research_inputs.py"
+    )
+    imported = _imports(adapter)
+    forbidden_imports = (
+        "market_regime_alpha.infrastructure.postgres.repositories.research_definitions",
+        "market_regime_alpha.infrastructure.postgres.research_uow",
+    )
+    assert not {
+        item
+        for item in imported
+        if any(item.startswith(prefix) for prefix in forbidden_imports)
+    }
+    assert "PostgresResearchDefinitionRepository" not in adapter.read_text(
+        encoding="utf-8"
+    )

@@ -3,16 +3,19 @@
 > **Status:** CANONICAL_TARGET_ARCHITECTURE
 > **Authority:** WP-ARCHITECTURE-REFOUNDATION-01 design checkpoint
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-29
+> **Last Updated:** 2026-08-30
 > **Starting Main:** `0382dad416d6d50d1eea0bda1603d7c359d65274`
-> **Implementation State:** `FOUNDATION_MARKET_SELECTION_RESEARCH_DEFINITION_IMPLEMENTED_DRAFT / NOT_CUT_OVER`
+> **Implementation State:** `FOUNDATION_MARKET_SELECTION_RESEARCH_DEFINITION_CANDIDATE_IMPLEMENTED_DRAFT / CANDIDATE_EXIT_GATE_PASS / NOT_CUT_OVER`
 > **Code Evidence:** target `src/market_regime_alpha/shared`, `src/market_regime_alpha/runtime`, `src/market_regime_alpha/market`, `src/market_regime_alpha/selection`, `src/market_regime_alpha/research_qualification`, `src/market_regime_alpha/infrastructure`, `src/market_regime_alpha/interfaces`, target draft `src/market_regime_alpha/infrastructure/postgres/migrations/001_baseline.sql`, `tests/refoundation`; legacy source/migrations remain current business implementation
 
 This document freezes the approved architecture. Foundation, Market/PIT,
-Selection Core, and the three-table Research Definition Core now exist as an
-isolated `MRA_REFOUNDATION_1 / DRAFT / NOT_CUT_OVER` implementation. Candidate
-Closure is dependency-ready but not implemented; all later target contexts
-remain unimplemented. Legacy code and the current
+Selection Core, the three-table Research Definition Core, and the five-table
+Selection-owned Candidate Authority now exist as an isolated
+`MRA_REFOUNDATION_1 / DRAFT / NOT_CUT_OVER` implementation. Candidate passed its
+local WP-07 engineering exit gate at
+`029c26928af436d7788da1cce3a53c94b96377bf`. All later target contexts remain
+unimplemented; the next authorized activity is only a real dependency review,
+not an implementation order. Legacy code and the current
 283-table schema remain canonical business implementation truth until the
 explicit Runtime/CLI Hard Cutover. Neither the design nor the draft creates
 research, Provider, trading, or Production proof.
@@ -156,8 +159,8 @@ composition root.
 |---|---|---|---|
 | Runtime & Provenance | Schedule, Run, Step, Attempt, Command Receipt, Artifact | schedule, claim, heartbeat, finalize, resume, verify artifact | run trace, due work, integrity report |
 | Market & PIT | Capture, Instrument, Trading Session, Fact Revision, Classification Revision, Source Gap | register capture, normalize revision, record gap/correction | as-of fact, exact session grid, source lineage |
-| Selection | Universe Revision, Eligibility Assessment; later Candidate Set | freeze universe, assess eligibility; build candidates only after Research definition substrate | scope and eligibility at Decision time; later Candidate evidence |
-| Research & Qualification | initially Dataset, Dataset Source, and Feature Definition; later Target, Experiment, Model Version, Evaluation, Evidence, Assessment, and Qualification | initially register immutable Decision-input definitions; later run evaluation, assess, and qualify | initially exact Dataset/Feature lineage; later evidence floor matrix |
+| Selection | Universe Revision, Eligibility Assessment, Candidate Policy/Set/Candidate and Candidate Score Component | freeze universe, assess eligibility; register Candidate policy and build Candidate Set only from the immutable Decision-input Dataset | scope and eligibility at Decision time; Candidate funnel and dossier |
+| Research & Qualification | initially Dataset, Dataset Source, and Feature Definition; later owner boundaries subject to post-Candidate dependency review | initially register immutable Decision-input definitions; later commands are not yet ordered or authorized | initially exact Dataset/Feature lineage |
 | Decision Support | Decision Run, Context Assessment, Signal, Forecast, Opportunity, Thesis, Strategy Version, Portfolio Proposal, Risk Decision | decide, propose, risk-assess | decision dossier, risk authorization |
 | Outcome & Attribution | Outcome, Observation, Metric, Reason, Attribution Run/Line | settle outcome, attribute | outcome status/path, metric availability, attribution |
 | Execution & Account | Account Authority Epoch, Execution Intent, Fill, Fill Allocation, Broker Observation, Reconciliation, Position Basis Event | approve intent, record/correct fill, observe broker, reconcile, authorize non-trade adjustment | current position, sleeve, cash/exposure evidence |
@@ -234,7 +237,8 @@ CAPTURE
 → NORMALIZE_PIT
 → FREEZE_UNIVERSE
 → ASSESS_ELIGIBILITY
-→ BUILD_CANDIDATES
+→ REGISTER_DATASET
+→ BUILD_CANDIDATE_SET
 → ASSESS_CONTEXT
 → SIGNAL_AND_FORECAST
 → DECIDE_AND_RISK
@@ -250,9 +254,11 @@ Eligibility, and Candidate commands never consume that Context result. An
 Opportunity carries Decision input Evidence only; the single authoritative Risk
 evaluation occurs after a complete Portfolio Proposal.
 
-The Selection Core checkpoint proves only `CAPTURE → NORMALIZE_PIT →
-FREEZE_UNIVERSE → ASSESS_ELIGIBILITY`. `BUILD_CANDIDATES` remains absent until
-the minimal Research Definition substrate and Candidate closure checkpoints.
+Selection Core and Research Definition together provide the prerequisites
+through `REGISTER_DATASET`; Candidate Closure implements
+`BUILD_CANDIDATE_SET`. `BUILD_CANDIDATES` is not an alias or compatibility name.
+Before Runtime/CLI Cutover this expanded slice is test-only and creates no
+current Runtime dispatch or canonical write authority.
 
 Historical, replay, shadow, and prospective modes reuse Application commands
 and business semantics. They differ only in clock, frozen input resolver,

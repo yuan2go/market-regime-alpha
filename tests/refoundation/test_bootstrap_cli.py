@@ -16,9 +16,15 @@ from market_regime_alpha.infrastructure.postgres.schema import (
     SchemaManager,
     SchemaMissingError,
 )
+from market_regime_alpha.infrastructure.postgres.queries import (
+    PostgresCandidateQueryProvider,
+)
 from market_regime_alpha.interfaces.cli import main
 from market_regime_alpha.runtime.application import ActorType, CommandContext
-from market_regime_alpha.selection.application import SelectionApplication
+from market_regime_alpha.selection.application import (
+    CandidateApplication,
+    SelectionApplication,
+)
 from market_regime_alpha.runtime.domain import (
     RetryPolicy,
     RunSpec,
@@ -102,6 +108,11 @@ def test_mra_db_bootstrap_verify_and_runtime_inspection_smoke(
     application = bootstrap_application(TargetSettings.from_environ(environment))
     try:
         assert isinstance(application.selection, SelectionApplication)
+        assert isinstance(application.candidates, CandidateApplication)
+        assert isinstance(
+            application.candidate_queries,
+            PostgresCandidateQueryProvider,
+        )
         schedule = ScheduleSpec(
             schedule_id=uuid4(),
             schedule_code="cli-smoke",

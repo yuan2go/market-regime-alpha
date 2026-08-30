@@ -158,6 +158,10 @@ def test_bootstrap_is_the_only_target_composition_root() -> None:
         "ArtifactApplication(",
         "PostgresSelectionUnitOfWorkProvider(",
         "SelectionApplication(",
+        "CandidateApplication(",
+        "PostgresCandidateUnitOfWorkProvider(",
+        "PostgresCandidateResearchInputLoader(",
+        "PostgresCandidateQueryProvider(",
         "LocalArtifactStore(",
     )
     violations: list[str] = []

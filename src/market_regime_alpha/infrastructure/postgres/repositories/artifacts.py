@@ -246,6 +246,10 @@ class PostgresArtifactRepository:
                            OR dataset.code_artifact_id = artifact.artifact_id
                            OR dataset.config_artifact_id = artifact.artifact_id
                     ) OR EXISTS (
+                        SELECT 1 FROM mra.candidate_policy AS policy
+                        WHERE policy.code_artifact_id = artifact.artifact_id
+                           OR policy.config_artifact_id = artifact.artifact_id
+                    ) OR EXISTS (
                         SELECT 1 FROM mra.artifact_dependency AS dependency
                         WHERE dependency.child_artifact_id = artifact.artifact_id
                            OR dependency.parent_artifact_id = artifact.artifact_id

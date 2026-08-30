@@ -3,7 +3,7 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Sole repository execution, safety, and evidence contract
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-29
+> **Last Updated:** 2026-08-30
 > **Related Documents:** `CLAUDE.md`, `docs/README.md`, `docs/architecture/Canonical-Overall-Design.md`, `docs/status/Roadmap.md`
 
 ## Mission and current program
@@ -26,12 +26,13 @@ Foundation
 → Selection Core: Universe/Eligibility
 → minimal Research Definition substrate required by Candidate
 → Candidate closure
-→ Research Evaluation/Evidence/Qualification
-→ Decision/Outcome
-→ Execution/Account
-→ Runtime/CLI Cutover
-→ Legacy deletion/qualification
+→ post-Candidate dependency review across Target/Research/Model/Decision/Outcome/Evaluation/Evidence/Qualification
 ```
+
+WP-07 declares no order after that review. Research/Decision/Outcome,
+Execution/Account, Runtime/CLI Cutover, and Legacy deletion/qualification remain
+unauthorized unordered work until the review publishes an approved dependency
+map.
 
 Do not resume the former Alpha Proof Roadmap as an engineering program. Existing
 protocols, results, and negative evidence remain immutable provenance. New
@@ -99,9 +100,15 @@ Authority. They may summarize canonical facts but cannot mutate or promote them.
   Signal, Forecast, Opportunity, Thesis, Portfolio, Risk, Fill, Position,
   Outcome, Attribution, Assessment, and Qualification remain distinct.
 - Universe → Eligibility → Candidate completes before same-run Context. Context
-  cannot feed back into that same Candidate Set. Candidate remains deferred until
-  its actual Research-owned definition identities exist; Candidate Set existence
-  never depends on a future Decision Run or a Qualification decision.
+  cannot feed back into that same Candidate Set. Candidate consumes the immutable
+  Decision-input Dataset and Feature Definition identities through a
+  Selection-owned port; Candidate Set existence never depends on a Decision Run,
+  Model Version, Target, Outcome, Evidence, Assessment, or Qualification.
+- Candidate closure authorizes no later Research or Decision implementation.
+  Before the next checkpoint, audit the real dependency graph across Target
+  Definition/Checkpoint, Research Partition, Experiment, Model, Decision Run,
+  Outcome, Evaluation, Evidence, and Qualification. Research must not construct
+  a second realized-label truth that competes with future Outcome Authority.
 - Opportunity contains decision input evidence, not a Risk authorization. The
   sole Risk Decision follows a complete Portfolio Proposal.
 - Target horizon is not a holding or exit time; Exit is not inverse Entry.

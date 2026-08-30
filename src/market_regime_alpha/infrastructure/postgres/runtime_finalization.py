@@ -18,6 +18,17 @@ class PostgresRuntimeCommandFinalization:
     def lock_live(self, claim: AttemptClaim) -> None:
         self._runtime.lock_live_claim(claim)
 
+    def lock_live_for_step(
+        self,
+        claim: AttemptClaim,
+        *,
+        expected_step_kind: str,
+    ) -> None:
+        self._runtime.lock_live_claim(
+            claim,
+            expected_step_kind=expected_step_kind,
+        )
+
     def succeed(
         self,
         claim: AttemptClaim,

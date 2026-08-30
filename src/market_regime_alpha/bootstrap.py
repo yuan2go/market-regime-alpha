@@ -13,6 +13,9 @@ from market_regime_alpha.infrastructure.postgres.market_uow import (
     PostgresMarketDatabaseClock,
     PostgresMarketUnitOfWorkProvider,
 )
+from market_regime_alpha.infrastructure.postgres.candidate_uow import (
+    PostgresCandidateUnitOfWorkProvider,
+)
 from market_regime_alpha.infrastructure.postgres.selection_uow import (
     PostgresSelectionUnitOfWorkProvider,
 )
@@ -20,6 +23,8 @@ from market_regime_alpha.infrastructure.postgres.research_uow import (
     PostgresResearchUnitOfWorkProvider,
 )
 from market_regime_alpha.infrastructure.postgres.queries import (
+    PostgresCandidateQueryProvider,
+    PostgresCandidateResearchInputLoader,
     PostgresMarketQueryProvider,
 )
 from market_regime_alpha.infrastructure.postgres.schema import (
@@ -35,7 +40,11 @@ from market_regime_alpha.runtime.application import ArtifactApplication, Runtime
 from market_regime_alpha.research_qualification.application import (
     ResearchQualificationApplication,
 )
-from market_regime_alpha.selection.application import SelectionApplication
+from market_regime_alpha.selection.application import (
+    CandidateApplication,
+    SelectionApplication,
+)
+from market_regime_alpha.selection.ports import CandidateQueryProvider
 from market_regime_alpha.market.application import MarketApplication
 from market_regime_alpha.market.ports import MarketQueryProvider
 
@@ -118,6 +127,8 @@ class TargetApplication:
     market_queries: MarketQueryProvider
     selection: SelectionApplication
     research_definitions: ResearchQualificationApplication
+    candidates: CandidateApplication
+    candidate_queries: CandidateQueryProvider
     _pool: TargetPostgresPool
 
     def close(self) -> None:
@@ -156,6 +167,11 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
             byte_store,
             PostgresResearchUnitOfWorkProvider(pool),
         ),
+        candidates=CandidateApplication(
+            PostgresCandidateResearchInputLoader(pool, byte_store),
+            PostgresCandidateUnitOfWorkProvider(pool),
+        ),
+        candidate_queries=PostgresCandidateQueryProvider(pool),
         _pool=pool,
     )
 

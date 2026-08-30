@@ -1,5 +1,35 @@
 """Stable public exports for Selection Core domain."""
 
+from market_regime_alpha.selection.domain.candidate_inputs import (
+    CandidateArtifactBinding,
+    CandidateCellStatus,
+    CandidateDatasetPopulation,
+    CandidatePopulationCell,
+    CandidatePopulationRow,
+)
+from market_regime_alpha.selection.domain.candidate_policy import (
+    CandidateFeatureValueType,
+    CandidatePolicy,
+    CandidatePolicyComponent,
+    DesirabilityDirection,
+)
+from market_regime_alpha.selection.domain.candidate_ranking import (
+    arithmetic_midrank_percentiles,
+    build_candidate_set,
+    normalize_declared_weights,
+    project_exact_values,
+)
+from market_regime_alpha.selection.domain.candidate_results import (
+    CandidateBuildResult,
+    CandidateComponentDiagnostic,
+    CandidateDisposition,
+    CandidateRankingPlan,
+    CandidateRankingStatus,
+    CandidateRecord,
+    CandidateScoreComponentRecord,
+    CandidateSetResult,
+    candidate_result_content_sha256,
+)
 from market_regime_alpha.selection.domain.evidence import (
     CriterionEvidence,
     MarketLineage,
@@ -29,6 +59,23 @@ from market_regime_alpha.selection.domain.vocabulary import (
 )
 
 __all__ = [
+    "CandidateArtifactBinding",
+    "CandidateBuildResult",
+    "CandidateCellStatus",
+    "CandidateComponentDiagnostic",
+    "CandidateDatasetPopulation",
+    "CandidateDisposition",
+    "CandidateFeatureValueType",
+    "CandidatePolicy",
+    "CandidatePolicyComponent",
+    "CandidatePopulationCell",
+    "CandidatePopulationRow",
+    "CandidateRankingPlan",
+    "CandidateRankingStatus",
+    "CandidateRecord",
+    "CandidateScoreComponentRecord",
+    "CandidateSetResult",
+    "candidate_result_content_sha256",
     "CriterionEvidence",
     "CriterionOperator",
     "CriterionResult",
@@ -48,4 +95,9 @@ __all__ = [
     "UniverseMemberDecision",
     "UniverseMembershipStatus",
     "UniverseScopeSpecification",
+    "DesirabilityDirection",
+    "arithmetic_midrank_percentiles",
+    "build_candidate_set",
+    "normalize_declared_weights",
+    "project_exact_values",
 ]

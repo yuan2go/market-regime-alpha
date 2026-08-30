@@ -286,15 +286,15 @@ def selection_stack(target_database_url: str, tmp_path) -> _SelectionStack:
         _context("capture", "CAPTURE_PROVIDER_RESPONSE"),
     )
     instrument_ids = tuple(sorted((InstrumentId(uuid4()), InstrumentId(uuid4()), InstrumentId(uuid4())), key=str))
-    today = datetime.now(SHANGHAI).date()
+    session_date = datetime.now(SHANGHAI).date()
     classification_id = uuid4()
     first_membership_id = uuid4()
 
     def batch(capture) -> NormalizationBatch:
-        current = _session(today, capture.capture_id)
+        current = _session(session_date, capture.capture_id)
         history = (
-            _session(today - timedelta(days=1), capture.capture_id),
-            _session(today - timedelta(days=2), capture.capture_id),
+            _session(session_date - timedelta(days=1), capture.capture_id),
+            _session(session_date - timedelta(days=2), capture.capture_id),
         )
         first, second, third = instrument_ids
         return NormalizationBatch(
@@ -451,6 +451,7 @@ def selection_stack(target_database_url: str, tmp_path) -> _SelectionStack:
                 )
                 for instrument_id, turnover in ((first, "3000"), (second, "1000"))
                 for session in (*history, current)
+                if session.close_at <= capture.temporal.capture_completed_at
             ),
         )
 

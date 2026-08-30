@@ -3,6 +3,8 @@ from __future__ import annotations
 import psycopg
 
 from market_regime_alpha.infrastructure.postgres.schema import (
+    EXPECTED_CANDIDATE_TABLES,
+    EXPECTED_SELECTION_CORE_TABLES,
     EXPECTED_SELECTION_TABLES,
     SchemaManager,
 )
@@ -14,7 +16,7 @@ def test_selection_schema_has_exactly_the_seven_core_authority_relations(
     SchemaManager(target_database_url).bootstrap()
     with psycopg.connect(target_database_url) as connection:
         tables = {str(row[0]) for row in connection.execute("SELECT tablename FROM pg_tables WHERE schemaname = 'mra'").fetchall()}
-    assert EXPECTED_SELECTION_TABLES == {
+    assert EXPECTED_SELECTION_CORE_TABLES == {
         "universe",
         "universe_revision",
         "universe_member",
@@ -24,7 +26,14 @@ def test_selection_schema_has_exactly_the_seven_core_authority_relations(
         "eligibility_reason",
     }
     assert EXPECTED_SELECTION_TABLES <= tables
-    assert not {name for name in tables if name.startswith(("candidate", "decision", "research_definition"))}
+    assert {
+        name for name in tables if name.startswith("candidate")
+    } == EXPECTED_CANDIDATE_TABLES
+    assert not {
+        name
+        for name in tables
+        if name.startswith(("decision", "research_definition"))
+    }
 
 
 def test_selection_counts_three_state_rule_shape_and_scope_identity_are_declarative(
@@ -82,7 +91,7 @@ def test_selection_uses_numeric_lineage_indexes_and_only_append_only_triggers(
                   AND table_name = ANY(%s)
                   AND data_type = 'numeric'
                 """,
-                (list(EXPECTED_SELECTION_TABLES),),
+                (list(EXPECTED_SELECTION_CORE_TABLES),),
             ).fetchall()
         }
         trigger_functions = {
@@ -94,7 +103,7 @@ def test_selection_uses_numeric_lineage_indexes_and_only_append_only_triggers(
                 WHERE trigger_schema = 'mra'
                   AND event_object_table = ANY(%s)
                 """,
-                (list(EXPECTED_SELECTION_TABLES),),
+                (list(EXPECTED_SELECTION_CORE_TABLES),),
             ).fetchall()
         }
         indexes = {
@@ -106,7 +115,7 @@ def test_selection_uses_numeric_lineage_indexes_and_only_append_only_triggers(
                 WHERE schemaname = 'mra'
                   AND tablename = ANY(%s)
                 """,
-                (list(EXPECTED_SELECTION_TABLES),),
+                (list(EXPECTED_SELECTION_CORE_TABLES),),
             ).fetchall()
         }
     assert {
