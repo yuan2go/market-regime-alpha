@@ -2,7 +2,7 @@
 
 > **Status:** CANONICAL_TARGET_ARCHITECTURE
 > **Design State:** `APPROVED_WITH_CONDITIONS`
-> **Implementation State:** `AUTHORIZED / NOT_YET_VERIFIED`
+> **Implementation State:** `IMPLEMENTED_AND_VERIFIED_BY_WP_09`
 > **Runtime/CLI Cutover:** `NO_GO`
 > **Schema Epoch:** `MRA_REFOUNDATION_1`
 > **Release State:** `DRAFT / NOT_CUT_OVER`
@@ -10,14 +10,15 @@
 > **Approved At:** 2026-08-30
 > **Execution Baseline:** `origin/main@03eeb8cdba2f412fc6536a38c4234b12c8552efe`
 > **Execution Branch:** `agent/wp-09-target-commitment-decision-run-authority`
+> **Implementation Evidence:** [WP-09 Target Commitment and Decision Run Verification](WP-ARCHITECTURE-REFOUNDATION-09-Target-Commitment-Decision-Run-Verification.md)
 > **Authority:** Approved implementation contract for WP-09 only; not Outcome,
 > Context, Evaluation, Qualification, Prospective, Production, Legacy deletion,
 > or Runtime/CLI Cutover authority
 
 This record freezes the final WP-09 architecture before business code and DDL.
 It refines, but does not reverse, the approved WP-08 post-Candidate dependency
-direction. Code, PostgreSQL, tests, and the future immutable WP-09 Verification
-remain the only implementation evidence.
+direction. Code, PostgreSQL, tests, and the immutable WP-09 Verification remain
+the only implementation evidence.
 
 ## 1. Execution-time audit and cleanup basis
 
@@ -489,7 +490,8 @@ Thesis, Portfolio, Risk, Execution, Fill, Position, TradeOutcome, Attribution,
 future FK, generic registry, compatibility facade, Legacy dependency, dual
 write, future-stage package/table, or campaign.
 
-Until the complete WP-09 Exit Gate passes:
+At the design checkpoint, and until the complete WP-09 Exit Gate passed, the
+boundary was:
 
 ```text
 WP-10 Market Target Outcome   BLOCKED
@@ -502,3 +504,8 @@ Legacy deletion              NO_GO
 
 After the gate passes, Market Target Outcome is only the next independently
 authorized work package. WP-09 stops and does not start it.
+
+The gate subsequently passed at the exact implementation checkpoint recorded in
+the linked immutable WP-09 Verification. Market Target Outcome is therefore the
+next independent work package but remains unimplemented; every other NO-GO
+above remains in force.
