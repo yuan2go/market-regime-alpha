@@ -12,6 +12,252 @@ BEGIN
 END;
 $$;
 
+CREATE FUNCTION mra.canonical_sha256(canonical_text text)
+RETURNS text
+LANGUAGE sql
+IMMUTABLE
+STRICT
+PARALLEL SAFE
+AS $$
+    SELECT encode(sha256(convert_to(canonical_text, 'UTF8')), 'hex');
+$$;
+
+CREATE FUNCTION mra.target_algorithm_binding_sha256(
+    algorithm_code text,
+    algorithm_version text,
+    algorithm_sha256 text,
+    code_artifact_id uuid,
+    code_content_sha256 text,
+    code_size_bytes bigint,
+    config_artifact_id uuid,
+    config_content_sha256 text,
+    config_size_bytes bigint
+)
+RETURNS text
+LANGUAGE sql
+IMMUTABLE
+STRICT
+PARALLEL SAFE
+AS $$
+    SELECT mra.canonical_sha256(
+        replace(
+            json_build_object(
+                'algorithm_code', algorithm_code,
+                'algorithm_sha256', algorithm_sha256,
+                'algorithm_version', algorithm_version,
+                'code_artifact', json_build_object(
+                    'artifact_id', code_artifact_id,
+                    'content_sha256', code_content_sha256,
+                    'size_bytes', code_size_bytes
+                ),
+                'config_artifact', json_build_object(
+                    'artifact_id', config_artifact_id,
+                    'content_sha256', config_content_sha256,
+                    'size_bytes', config_size_bytes
+                )
+            )::text,
+            ' ',
+            ''
+        )
+    );
+$$;
+
+CREATE FUNCTION mra.target_checkpoint_content_sha256(
+    availability_rule text,
+    checkpoint_code text,
+    finality_rule text,
+    local_time time,
+    ordinal integer,
+    price_basis text,
+    reference_rule text,
+    checkpoint_role text,
+    session_offset integer,
+    timeframe text,
+    timezone_name text,
+    timing_rule text,
+    value_field text
+)
+RETURNS text
+LANGUAGE sql
+IMMUTABLE
+STRICT
+PARALLEL SAFE
+AS $$
+    SELECT mra.canonical_sha256(
+        replace(
+            json_build_object(
+                'availability_rule', availability_rule,
+                'checkpoint_code', checkpoint_code,
+                'finality_rule', finality_rule,
+                'local_time', local_time::text,
+                'ordinal', ordinal,
+                'price_basis', price_basis,
+                'reference_rule', reference_rule,
+                'role', checkpoint_role,
+                'session_offset', session_offset,
+                'timeframe', timeframe,
+                'timezone_name', timezone_name,
+                'timing_rule', timing_rule,
+                'value_field', value_field
+            )::text,
+            ' ',
+            ''
+        )
+    );
+$$;
+
+CREATE FUNCTION mra.target_metric_dependency_content_sha256(
+    ordinal integer,
+    dependency_role text,
+    target_checkpoint_id uuid,
+    target_metric_definition_id uuid
+)
+RETURNS text
+LANGUAGE sql
+IMMUTABLE
+STRICT
+PARALLEL SAFE
+AS $$
+    SELECT mra.canonical_sha256(
+        replace(
+            json_build_object(
+                'ordinal', ordinal,
+                'role', dependency_role,
+                'target_checkpoint_id', target_checkpoint_id,
+                'target_metric_definition_id', target_metric_definition_id
+            )::text,
+            ' ',
+            ''
+        )
+    );
+$$;
+
+CREATE FUNCTION mra.target_metric_content_sha256(
+    algorithm_code text,
+    algorithm_version text,
+    algorithm_sha256 text,
+    algorithm_binding_sha256 text,
+    code_artifact_id uuid,
+    code_content_sha256 text,
+    code_size_bytes bigint,
+    config_artifact_id uuid,
+    config_content_sha256 text,
+    config_size_bytes bigint,
+    barrier_direction text,
+    barrier_threshold numeric,
+    completion_rule text,
+    metric_code text,
+    metric_kind text,
+    ordinal integer,
+    unit text,
+    value_type text
+)
+RETURNS text
+LANGUAGE sql
+IMMUTABLE
+PARALLEL SAFE
+AS $$
+    SELECT mra.canonical_sha256(
+        replace(
+            json_build_object(
+                'algorithm', json_build_object(
+                    'algorithm_code', algorithm_code,
+                    'algorithm_sha256', algorithm_sha256,
+                    'algorithm_version', algorithm_version,
+                    'code_artifact', json_build_object(
+                        'artifact_id', code_artifact_id,
+                        'content_sha256', code_content_sha256,
+                        'size_bytes', code_size_bytes
+                    ),
+                    'config_artifact', json_build_object(
+                        'artifact_id', config_artifact_id,
+                        'content_sha256', config_content_sha256,
+                        'size_bytes', config_size_bytes
+                    ),
+                    'content_sha256', algorithm_binding_sha256
+                ),
+                'barrier_direction', barrier_direction,
+                'barrier_threshold', barrier_threshold::text,
+                'completion_rule', completion_rule,
+                'metric_code', metric_code,
+                'metric_kind', metric_kind,
+                'ordinal', ordinal,
+                'unit', unit,
+                'value_type', value_type
+            )::text,
+            ' ',
+            ''
+        )
+    );
+$$;
+
+CREATE FUNCTION mra.target_definition_content_sha256(
+    algorithm_code text,
+    algorithm_version text,
+    algorithm_sha256 text,
+    algorithm_binding_sha256 text,
+    code_artifact_id uuid,
+    code_content_sha256 text,
+    code_size_bytes bigint,
+    config_artifact_id uuid,
+    config_content_sha256 text,
+    config_size_bytes bigint,
+    checkpoint_count integer,
+    checkpoint_roster_sha256 text,
+    dependency_count integer,
+    dependency_roster_sha256 text,
+    instrument_scope text,
+    market_scope text,
+    metric_count integer,
+    metric_roster_sha256 text,
+    registration_status text,
+    supersedes_target_definition_id uuid,
+    target_code text,
+    version integer
+)
+RETURNS text
+LANGUAGE sql
+IMMUTABLE
+PARALLEL SAFE
+AS $$
+    SELECT mra.canonical_sha256(
+        replace(
+            json_build_object(
+                'algorithm', json_build_object(
+                    'algorithm_code', algorithm_code,
+                    'algorithm_sha256', algorithm_sha256,
+                    'algorithm_version', algorithm_version,
+                    'code_artifact', json_build_object(
+                        'artifact_id', code_artifact_id,
+                        'content_sha256', code_content_sha256,
+                        'size_bytes', code_size_bytes
+                    ),
+                    'config_artifact', json_build_object(
+                        'artifact_id', config_artifact_id,
+                        'content_sha256', config_content_sha256,
+                        'size_bytes', config_size_bytes
+                    ),
+                    'content_sha256', algorithm_binding_sha256
+                ),
+                'checkpoint_count', checkpoint_count,
+                'checkpoint_roster_sha256', checkpoint_roster_sha256,
+                'dependency_count', dependency_count,
+                'dependency_roster_sha256', dependency_roster_sha256,
+                'instrument_scope', instrument_scope,
+                'market_scope', market_scope,
+                'metric_count', metric_count,
+                'metric_roster_sha256', metric_roster_sha256,
+                'registration_status', registration_status,
+                'supersedes_target_definition_id', supersedes_target_definition_id,
+                'target_code', target_code,
+                'version', version
+            )::text,
+            ' ',
+            ''
+        )
+    );
+$$;
+
 CREATE FUNCTION mra.artifact_has_verified_integrity(
     integrity_state text,
     last_verified_at timestamptz
@@ -3756,6 +4002,372 @@ CREATE INDEX candidate_score_component_feature_set_idx
         feature_definition_id, candidate_set_id, candidate_id
     );
 
+CREATE TABLE mra.target_definition (
+    target_definition_id uuid PRIMARY KEY,
+    target_code text NOT NULL,
+    version integer NOT NULL,
+    registration_status text NOT NULL,
+    supersedes_target_definition_id uuid,
+    instrument_scope text NOT NULL,
+    market_scope text NOT NULL,
+    algorithm_code text NOT NULL,
+    algorithm_version text NOT NULL,
+    algorithm_sha256 text NOT NULL,
+    algorithm_binding_sha256 text NOT NULL,
+    code_artifact_id uuid NOT NULL,
+    code_content_sha256 text NOT NULL,
+    code_size_bytes bigint NOT NULL,
+    config_artifact_id uuid NOT NULL,
+    config_content_sha256 text NOT NULL,
+    config_size_bytes bigint NOT NULL,
+    checkpoint_count integer NOT NULL,
+    checkpoint_roster_sha256 text NOT NULL,
+    metric_count integer NOT NULL,
+    metric_roster_sha256 text NOT NULL,
+    dependency_count integer NOT NULL,
+    dependency_roster_sha256 text NOT NULL,
+    content_sha256 text NOT NULL,
+    registration_request_identity text NOT NULL,
+    registration_request_sha256 text NOT NULL,
+    registered_by_actor_type text NOT NULL,
+    registered_by_actor_id text NOT NULL,
+    registered_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT target_definition_identity_uk UNIQUE (target_code, version),
+    CONSTRAINT target_definition_content_uk UNIQUE (content_sha256),
+    CONSTRAINT target_definition_supersedes_uk UNIQUE (supersedes_target_definition_id),
+    CONSTRAINT target_definition_exact_identity_uk UNIQUE (
+        target_definition_id, version, content_sha256
+    ),
+    CONSTRAINT target_definition_request_uk UNIQUE (
+        target_code, registration_request_identity
+    ),
+    CONSTRAINT target_definition_supersedes_fk FOREIGN KEY (
+        supersedes_target_definition_id
+    ) REFERENCES mra.target_definition(target_definition_id) ON DELETE RESTRICT,
+    CONSTRAINT target_definition_code_artifact_fk FOREIGN KEY (
+        code_artifact_id, code_content_sha256, code_size_bytes
+    ) REFERENCES mra.artifact(
+        artifact_id, content_sha256, size_bytes
+    ) ON DELETE RESTRICT,
+    CONSTRAINT target_definition_config_artifact_fk FOREIGN KEY (
+        config_artifact_id, config_content_sha256, config_size_bytes
+    ) REFERENCES mra.artifact(
+        artifact_id, content_sha256, size_bytes
+    ) ON DELETE RESTRICT,
+    CONSTRAINT target_definition_code_ck CHECK (
+        target_code ~ '^[a-z][a-z0-9_]{0,99}$'
+    ),
+    CONSTRAINT target_definition_version_chain_ck CHECK (
+        (version = 1 AND supersedes_target_definition_id IS NULL)
+        OR (version > 1 AND supersedes_target_definition_id IS NOT NULL)
+    ),
+    CONSTRAINT target_definition_status_ck CHECK (
+        registration_status = 'REGISTERED'
+    ),
+    CONSTRAINT target_definition_scope_ck CHECK (
+        instrument_scope = 'A_SHARE_EQUITY'
+        AND market_scope = 'SSE_SZSE'
+    ),
+    CONSTRAINT target_definition_algorithm_ck CHECK (
+        algorithm_code ~ '^[a-z][a-z0-9_]{0,99}$'
+        AND algorithm_version ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$'
+        AND algorithm_sha256 ~ '^[0-9a-f]{64}$'
+        AND algorithm_binding_sha256 =
+            mra.target_algorithm_binding_sha256(
+                algorithm_code, algorithm_version, algorithm_sha256,
+                code_artifact_id, code_content_sha256, code_size_bytes,
+                config_artifact_id, config_content_sha256,
+                config_size_bytes
+            )
+    ),
+    CONSTRAINT target_definition_counts_ck CHECK (
+        checkpoint_count >= 2
+        AND metric_count > 0
+        AND dependency_count > 0
+    ),
+    CONSTRAINT target_definition_hashes_ck CHECK (
+        checkpoint_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND metric_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND dependency_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+        AND registration_request_sha256 ~ '^[0-9a-f]{64}$'
+    ),
+    CONSTRAINT target_definition_request_ck CHECK (
+        registration_request_identity ~
+            '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$'
+        AND registered_by_actor_type IN ('SYSTEM', 'OPERATOR', 'WORKER')
+        AND registered_by_actor_id <> ''
+    ),
+    CONSTRAINT target_definition_content_ck CHECK (
+        content_sha256 = mra.target_definition_content_sha256(
+            algorithm_code, algorithm_version, algorithm_sha256,
+            algorithm_binding_sha256,
+            code_artifact_id, code_content_sha256, code_size_bytes,
+            config_artifact_id, config_content_sha256, config_size_bytes,
+            checkpoint_count, checkpoint_roster_sha256,
+            dependency_count, dependency_roster_sha256,
+            instrument_scope, market_scope, metric_count,
+            metric_roster_sha256, registration_status,
+            supersedes_target_definition_id, target_code, version
+        )
+    )
+);
+CREATE INDEX target_definition_code_version_idx
+    ON mra.target_definition (target_code, version DESC, target_definition_id);
+CREATE INDEX target_definition_supersedes_idx
+    ON mra.target_definition (supersedes_target_definition_id)
+    WHERE supersedes_target_definition_id IS NOT NULL;
+CREATE INDEX target_definition_code_artifact_idx
+    ON mra.target_definition (
+        code_artifact_id, code_content_sha256, code_size_bytes
+    );
+CREATE INDEX target_definition_config_artifact_idx
+    ON mra.target_definition (
+        config_artifact_id, config_content_sha256, config_size_bytes
+    );
+
+CREATE TABLE mra.target_checkpoint (
+    target_checkpoint_id uuid PRIMARY KEY,
+    target_definition_id uuid NOT NULL,
+    checkpoint_code text NOT NULL,
+    ordinal integer NOT NULL,
+    checkpoint_role text NOT NULL,
+    session_offset integer NOT NULL,
+    timing_rule text NOT NULL,
+    local_time time NOT NULL,
+    timezone_name text NOT NULL,
+    timeframe text NOT NULL,
+    price_basis text NOT NULL,
+    value_field text NOT NULL,
+    reference_rule text NOT NULL,
+    availability_rule text NOT NULL,
+    finality_rule text NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT target_checkpoint_definition_fk FOREIGN KEY (
+        target_definition_id
+    ) REFERENCES mra.target_definition(target_definition_id)
+      ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT target_checkpoint_exact_identity_uk UNIQUE (
+        target_checkpoint_id, target_definition_id
+    ),
+    CONSTRAINT target_checkpoint_ordinal_uk UNIQUE (
+        target_definition_id, ordinal
+    ),
+    CONSTRAINT target_checkpoint_code_uk UNIQUE (
+        target_definition_id, checkpoint_code
+    ),
+    CONSTRAINT target_checkpoint_code_ck CHECK (
+        checkpoint_code ~ '^[a-z][a-z0-9_]{0,99}$'
+    ),
+    CONSTRAINT target_checkpoint_vocabulary_ck CHECK (
+        checkpoint_role IN ('DECISION_REFERENCE', 'OUTCOME_OBSERVATION')
+        AND timing_rule = 'SESSION_LOCAL_BAR_END'
+        AND timeframe IN (
+            'MINUTE_1', 'MINUTE_5', 'MINUTE_15',
+            'MINUTE_30', 'MINUTE_60', 'DAILY'
+        )
+        AND price_basis IN (
+            'RAW_UNADJUSTED', 'FORWARD_ADJUSTED', 'BACKWARD_ADJUSTED'
+        )
+        AND value_field IN ('OPEN', 'HIGH', 'LOW', 'CLOSE')
+        AND reference_rule = 'EXACT_SESSION_BAR'
+        AND availability_rule = 'EXACT_REVISION_OR_SOURCE_GAP'
+        AND finality_rule = 'RECORD_UNKNOWN'
+    ),
+    CONSTRAINT target_checkpoint_ordinal_ck CHECK (ordinal > 0),
+    CONSTRAINT target_checkpoint_role_horizon_ck CHECK (
+        (checkpoint_role = 'DECISION_REFERENCE' AND session_offset = 0)
+        OR
+        (checkpoint_role = 'OUTCOME_OBSERVATION' AND session_offset > 0)
+    ),
+    CONSTRAINT target_checkpoint_time_ck CHECK (
+        extract(second FROM local_time) = 0
+        AND timezone_name ~ '^[A-Za-z_]+/[A-Za-z_]+$'
+    ),
+    CONSTRAINT target_checkpoint_content_ck CHECK (
+        content_sha256 = mra.target_checkpoint_content_sha256(
+            availability_rule, checkpoint_code, finality_rule,
+            local_time, ordinal, price_basis, reference_rule,
+            checkpoint_role, session_offset, timeframe, timezone_name,
+            timing_rule, value_field
+        )
+    )
+);
+CREATE INDEX target_checkpoint_definition_idx
+    ON mra.target_checkpoint (
+        target_definition_id, ordinal, target_checkpoint_id
+    );
+
+CREATE TABLE mra.target_metric_definition (
+    target_metric_definition_id uuid PRIMARY KEY,
+    target_definition_id uuid NOT NULL,
+    metric_code text NOT NULL,
+    ordinal integer NOT NULL,
+    metric_kind text NOT NULL,
+    value_type text NOT NULL,
+    unit text NOT NULL,
+    completion_rule text NOT NULL,
+    barrier_direction text,
+    barrier_threshold numeric,
+    algorithm_code text NOT NULL,
+    algorithm_version text NOT NULL,
+    algorithm_sha256 text NOT NULL,
+    algorithm_binding_sha256 text NOT NULL,
+    code_artifact_id uuid NOT NULL,
+    code_content_sha256 text NOT NULL,
+    code_size_bytes bigint NOT NULL,
+    config_artifact_id uuid NOT NULL,
+    config_content_sha256 text NOT NULL,
+    config_size_bytes bigint NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT target_metric_definition_fk FOREIGN KEY (
+        target_definition_id
+    ) REFERENCES mra.target_definition(target_definition_id)
+      ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT target_metric_exact_identity_uk UNIQUE (
+        target_metric_definition_id, target_definition_id
+    ),
+    CONSTRAINT target_metric_ordinal_uk UNIQUE (
+        target_definition_id, ordinal
+    ),
+    CONSTRAINT target_metric_code_uk UNIQUE (
+        target_definition_id, metric_code
+    ),
+    CONSTRAINT target_metric_code_artifact_fk FOREIGN KEY (
+        code_artifact_id, code_content_sha256, code_size_bytes
+    ) REFERENCES mra.artifact(
+        artifact_id, content_sha256, size_bytes
+    ) ON DELETE RESTRICT,
+    CONSTRAINT target_metric_config_artifact_fk FOREIGN KEY (
+        config_artifact_id, config_content_sha256, config_size_bytes
+    ) REFERENCES mra.artifact(
+        artifact_id, content_sha256, size_bytes
+    ) ON DELETE RESTRICT,
+    CONSTRAINT target_metric_vocabulary_ck CHECK (
+        metric_code ~ '^[a-z][a-z0-9_]{0,99}$'
+        AND ordinal > 0
+        AND metric_kind IN (
+            'SIMPLE_RETURN', 'MAX_FAVORABLE_EXCURSION',
+            'MAX_ADVERSE_EXCURSION', 'BARRIER_HIT',
+            'OBSERVATION_VALUE'
+        )
+        AND value_type IN ('DECIMAL', 'BOOLEAN')
+        AND unit IN ('RATIO', 'PRICE', 'BOOLEAN')
+        AND completion_rule IN ('REQUIRED', 'OPTIONAL')
+    ),
+    CONSTRAINT target_metric_value_shape_ck CHECK (
+        (metric_kind IN (
+            'SIMPLE_RETURN', 'MAX_FAVORABLE_EXCURSION',
+            'MAX_ADVERSE_EXCURSION'
+         ) AND value_type = 'DECIMAL' AND unit = 'RATIO')
+        OR
+        (metric_kind = 'OBSERVATION_VALUE'
+         AND value_type = 'DECIMAL' AND unit = 'PRICE')
+        OR
+        (metric_kind = 'BARRIER_HIT'
+         AND value_type = 'BOOLEAN' AND unit = 'BOOLEAN')
+    ),
+    CONSTRAINT target_metric_barrier_shape_ck CHECK (
+        (metric_kind = 'BARRIER_HIT'
+         AND barrier_direction IN ('UP', 'DOWN')
+         AND barrier_threshold > 0
+         AND barrier_threshold < 'Infinity'::numeric)
+        OR
+        (metric_kind <> 'BARRIER_HIT'
+         AND barrier_direction IS NULL
+         AND barrier_threshold IS NULL)
+    ),
+    CONSTRAINT target_metric_algorithm_ck CHECK (
+        algorithm_code ~ '^[a-z][a-z0-9_]{0,99}$'
+        AND algorithm_version ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$'
+        AND algorithm_sha256 ~ '^[0-9a-f]{64}$'
+        AND algorithm_binding_sha256 =
+            mra.target_algorithm_binding_sha256(
+                algorithm_code, algorithm_version, algorithm_sha256,
+                code_artifact_id, code_content_sha256, code_size_bytes,
+                config_artifact_id, config_content_sha256,
+                config_size_bytes
+            )
+    ),
+    CONSTRAINT target_metric_content_ck CHECK (
+        content_sha256 = mra.target_metric_content_sha256(
+            algorithm_code, algorithm_version, algorithm_sha256,
+            algorithm_binding_sha256,
+            code_artifact_id, code_content_sha256, code_size_bytes,
+            config_artifact_id, config_content_sha256, config_size_bytes,
+            barrier_direction, barrier_threshold, completion_rule,
+            metric_code, metric_kind, ordinal, unit, value_type
+        )
+    )
+);
+CREATE INDEX target_metric_definition_target_idx
+    ON mra.target_metric_definition (
+        target_definition_id, ordinal, target_metric_definition_id
+    );
+CREATE INDEX target_metric_code_artifact_idx
+    ON mra.target_metric_definition (
+        code_artifact_id, code_content_sha256, code_size_bytes
+    );
+CREATE INDEX target_metric_config_artifact_idx
+    ON mra.target_metric_definition (
+        config_artifact_id, config_content_sha256, config_size_bytes
+    );
+
+CREATE TABLE mra.target_metric_dependency (
+    target_metric_dependency_id uuid PRIMARY KEY,
+    target_definition_id uuid NOT NULL,
+    target_metric_definition_id uuid NOT NULL,
+    target_checkpoint_id uuid NOT NULL,
+    ordinal integer NOT NULL,
+    dependency_role text NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT target_metric_dependency_definition_fk FOREIGN KEY (
+        target_definition_id
+    ) REFERENCES mra.target_definition(target_definition_id)
+      ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT target_metric_dependency_metric_fk FOREIGN KEY (
+        target_metric_definition_id, target_definition_id
+    ) REFERENCES mra.target_metric_definition(
+        target_metric_definition_id, target_definition_id
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT target_metric_dependency_checkpoint_fk FOREIGN KEY (
+        target_checkpoint_id, target_definition_id
+    ) REFERENCES mra.target_checkpoint(
+        target_checkpoint_id, target_definition_id
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT target_metric_dependency_ordinal_uk UNIQUE (
+        target_definition_id, ordinal
+    ),
+    CONSTRAINT target_metric_dependency_binding_uk UNIQUE (
+        target_metric_definition_id, target_checkpoint_id, dependency_role
+    ),
+    CONSTRAINT target_metric_dependency_vocabulary_ck CHECK (
+        ordinal > 0
+        AND dependency_role IN ('REFERENCE', 'OBSERVATION', 'PATH_MEMBER')
+    ),
+    CONSTRAINT target_metric_dependency_content_ck CHECK (
+        content_sha256 = mra.target_metric_dependency_content_sha256(
+            ordinal, dependency_role, target_checkpoint_id,
+            target_metric_definition_id
+        )
+    )
+);
+CREATE INDEX target_metric_dependency_target_idx
+    ON mra.target_metric_dependency (
+        target_definition_id, ordinal, target_metric_dependency_id
+    );
+CREATE INDEX target_metric_dependency_metric_idx
+    ON mra.target_metric_dependency (
+        target_metric_definition_id, target_definition_id, ordinal
+    );
+CREATE INDEX target_metric_dependency_checkpoint_idx
+    ON mra.target_metric_dependency (
+        target_checkpoint_id, target_definition_id
+    );
+
 CREATE TABLE mra.runtime_schedule (
     schedule_id uuid PRIMARY KEY,
     schedule_code text NOT NULL,
@@ -4077,6 +4689,192 @@ CREATE INDEX audit_event_runtime_step_idx ON mra.audit_event (runtime_step_id, r
     WHERE runtime_step_id IS NOT NULL;
 CREATE INDEX audit_event_aggregate_idx ON mra.audit_event (aggregate_kind, aggregate_id, recorded_at);
 
+CREATE FUNCTION mra.guard_open_target_child_insert()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM mra.target_definition AS definition
+        WHERE definition.target_definition_id = NEW.target_definition_id
+    ) THEN
+        RAISE EXCEPTION 'TargetDefinition is already closed'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.validate_target_definition_closure()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    actual_checkpoint_count bigint;
+    actual_metric_count bigint;
+    actual_dependency_count bigint;
+    reference_count bigint;
+    outcome_count bigint;
+    checkpoint_min integer;
+    checkpoint_max integer;
+    metric_min integer;
+    metric_max integer;
+    dependency_min integer;
+    dependency_max integer;
+    actual_checkpoint_hash text;
+    actual_metric_hash text;
+    actual_dependency_hash text;
+    predecessor record;
+BEGIN
+    SELECT count(*),
+           count(*) FILTER (WHERE checkpoint_role = 'DECISION_REFERENCE'),
+           count(*) FILTER (WHERE checkpoint_role = 'OUTCOME_OBSERVATION'),
+           min(ordinal), max(ordinal)
+    INTO actual_checkpoint_count, reference_count, outcome_count,
+         checkpoint_min, checkpoint_max
+    FROM mra.target_checkpoint
+    WHERE target_definition_id = NEW.target_definition_id;
+
+    SELECT count(*), min(ordinal), max(ordinal)
+    INTO actual_metric_count, metric_min, metric_max
+    FROM mra.target_metric_definition
+    WHERE target_definition_id = NEW.target_definition_id;
+
+    SELECT count(*), min(ordinal), max(ordinal)
+    INTO actual_dependency_count, dependency_min, dependency_max
+    FROM mra.target_metric_dependency
+    WHERE target_definition_id = NEW.target_definition_id;
+
+    IF actual_checkpoint_count <> NEW.checkpoint_count
+       OR actual_metric_count <> NEW.metric_count
+       OR actual_dependency_count <> NEW.dependency_count
+       OR reference_count <> 1
+       OR outcome_count < 1
+       OR checkpoint_min <> 1
+       OR checkpoint_max <> actual_checkpoint_count
+       OR metric_min <> 1
+       OR metric_max <> actual_metric_count
+       OR dependency_min <> 1
+       OR dependency_max <> actual_dependency_count THEN
+        RAISE EXCEPTION 'TargetDefinition child roster is incomplete'
+            USING ERRCODE = '55000';
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM mra.target_metric_definition AS metric
+        LEFT JOIN mra.target_metric_dependency AS dependency
+          ON dependency.target_metric_definition_id =
+             metric.target_metric_definition_id
+         AND dependency.target_definition_id = metric.target_definition_id
+        WHERE metric.target_definition_id = NEW.target_definition_id
+        GROUP BY metric.target_metric_definition_id
+        HAVING count(dependency.target_metric_dependency_id) = 0
+    ) THEN
+        RAISE EXCEPTION 'every Target metric requires a dependency'
+            USING ERRCODE = '55000';
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM mra.target_metric_definition AS metric
+        JOIN mra.target_metric_dependency AS dependency
+          ON dependency.target_metric_definition_id =
+             metric.target_metric_definition_id
+         AND dependency.target_definition_id = metric.target_definition_id
+        WHERE metric.target_definition_id = NEW.target_definition_id
+          AND metric.metric_kind = 'SIMPLE_RETURN'
+        GROUP BY metric.target_metric_definition_id
+        HAVING count(*) <> 2
+            OR count(*) FILTER (
+                WHERE dependency.dependency_role = 'REFERENCE'
+            ) <> 1
+            OR count(*) FILTER (
+                WHERE dependency.dependency_role = 'OBSERVATION'
+            ) <> 1
+    ) THEN
+        RAISE EXCEPTION 'SIMPLE_RETURN dependency shape is incomplete'
+            USING ERRCODE = '55000';
+    END IF;
+
+    IF NEW.version > 1 THEN
+        SELECT target_code, version
+        INTO predecessor
+        FROM mra.target_definition
+        WHERE target_definition_id = NEW.supersedes_target_definition_id
+        FOR SHARE;
+        IF NOT FOUND
+           OR predecessor.target_code <> NEW.target_code
+           OR predecessor.version + 1 <> NEW.version THEN
+            RAISE EXCEPTION 'Target supersession is not the immediate same-code version'
+                USING ERRCODE = '55000';
+        END IF;
+    END IF;
+
+    SELECT mra.canonical_sha256(
+               replace(
+                   json_agg(
+                       json_build_object(
+                           'content_sha256', content_sha256,
+                           'ordinal', ordinal,
+                           'target_checkpoint_id', target_checkpoint_id
+                       ) ORDER BY ordinal
+                   )::text,
+                   ' ',
+                   ''
+               )
+           )
+    INTO actual_checkpoint_hash
+    FROM mra.target_checkpoint
+    WHERE target_definition_id = NEW.target_definition_id;
+
+    SELECT mra.canonical_sha256(
+               replace(
+                   json_agg(
+                       json_build_object(
+                           'content_sha256', content_sha256,
+                           'ordinal', ordinal,
+                           'target_metric_definition_id',
+                               target_metric_definition_id
+                       ) ORDER BY ordinal
+                   )::text,
+                   ' ',
+                   ''
+               )
+           )
+    INTO actual_metric_hash
+    FROM mra.target_metric_definition
+    WHERE target_definition_id = NEW.target_definition_id;
+
+    SELECT mra.canonical_sha256(
+               replace(
+                   json_agg(
+                       json_build_object(
+                           'content_sha256', content_sha256,
+                           'ordinal', ordinal,
+                           'target_metric_dependency_id',
+                               target_metric_dependency_id
+                       ) ORDER BY ordinal
+                   )::text,
+                   ' ',
+                   ''
+               )
+           )
+    INTO actual_dependency_hash
+    FROM mra.target_metric_dependency
+    WHERE target_definition_id = NEW.target_definition_id;
+
+    IF actual_checkpoint_hash <> NEW.checkpoint_roster_sha256
+       OR actual_metric_hash <> NEW.metric_roster_sha256
+       OR actual_dependency_hash <> NEW.dependency_roster_sha256 THEN
+        RAISE EXCEPTION 'TargetDefinition roster hash does not reconcile'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
 CREATE TRIGGER schema_epoch_append_only
 BEFORE UPDATE OR DELETE ON mra.schema_epoch
 FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
@@ -4323,6 +5121,30 @@ FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
 CREATE TRIGGER candidate_score_component_append_only
 BEFORE UPDATE OR DELETE ON mra.candidate_score_component
 FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER target_definition_append_only
+BEFORE UPDATE OR DELETE ON mra.target_definition
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER target_definition_closure_guard
+BEFORE INSERT ON mra.target_definition
+FOR EACH ROW EXECUTE FUNCTION mra.validate_target_definition_closure();
+CREATE TRIGGER target_checkpoint_append_only
+BEFORE UPDATE OR DELETE ON mra.target_checkpoint
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER target_checkpoint_open_guard
+BEFORE INSERT ON mra.target_checkpoint
+FOR EACH ROW EXECUTE FUNCTION mra.guard_open_target_child_insert();
+CREATE TRIGGER target_metric_definition_append_only
+BEFORE UPDATE OR DELETE ON mra.target_metric_definition
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER target_metric_open_guard
+BEFORE INSERT ON mra.target_metric_definition
+FOR EACH ROW EXECUTE FUNCTION mra.guard_open_target_child_insert();
+CREATE TRIGGER target_metric_dependency_append_only
+BEFORE UPDATE OR DELETE ON mra.target_metric_dependency
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER target_metric_dependency_open_guard
+BEFORE INSERT ON mra.target_metric_dependency
+FOR EACH ROW EXECUTE FUNCTION mra.guard_open_target_child_insert();
 
 CREATE VIEW mra.candidate_component_diagnostic AS
 SELECT

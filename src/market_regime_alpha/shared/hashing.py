@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import fields, is_dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from enum import Enum
 import hashlib
@@ -48,6 +48,8 @@ def _normalize(value: object) -> Any:
             raise ValueError("canonical datetimes must be timezone-aware")
         return value.isoformat()
     if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, time):
         return value.isoformat()
     if isinstance(value, timedelta):
         return (

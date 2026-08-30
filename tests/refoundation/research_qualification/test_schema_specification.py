@@ -40,7 +40,6 @@ def test_research_definition_schema_adds_exactly_three_permanent_relations(
                 "evaluation",
                 "evidence",
                 "qualification",
-                "target_definition",
             )
         )
     }

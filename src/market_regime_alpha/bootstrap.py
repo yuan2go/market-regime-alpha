@@ -22,6 +22,9 @@ from market_regime_alpha.infrastructure.postgres.selection_uow import (
 from market_regime_alpha.infrastructure.postgres.research_uow import (
     PostgresResearchUnitOfWorkProvider,
 )
+from market_regime_alpha.infrastructure.postgres.target_uow import (
+    PostgresTargetUnitOfWorkProvider,
+)
 from market_regime_alpha.infrastructure.postgres.queries import (
     PostgresCandidateQueryProvider,
     PostgresCandidateResearchInputLoader,
@@ -166,6 +169,7 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
         research_definitions=ResearchQualificationApplication(
             byte_store,
             PostgresResearchUnitOfWorkProvider(pool),
+            PostgresTargetUnitOfWorkProvider(pool),
         ),
         candidates=CandidateApplication(
             PostgresCandidateResearchInputLoader(pool, byte_store),

@@ -17,6 +17,18 @@ from market_regime_alpha.research_qualification.ports.uow import (
     ResearchUnitOfWork,
     ResearchUnitOfWorkProvider,
 )
+from market_regime_alpha.research_qualification.ports.target_artifacts import (
+    TargetArtifactRepository,
+)
+from market_regime_alpha.research_qualification.ports.target_repository import (
+    TargetDefinitionRecord,
+    TargetDefinitionRepository,
+    TargetRegistrationReconciliation,
+)
+from market_regime_alpha.research_qualification.ports.target_uow import (
+    TargetUnitOfWork,
+    TargetUnitOfWorkProvider,
+)
 
 __all__ = [
     "ResearchArtifactByteStore",
@@ -28,4 +40,10 @@ __all__ = [
     "ResearchSourceQueries",
     "ResearchUnitOfWork",
     "ResearchUnitOfWorkProvider",
+    "TargetArtifactRepository",
+    "TargetDefinitionRecord",
+    "TargetDefinitionRepository",
+    "TargetRegistrationReconciliation",
+    "TargetUnitOfWork",
+    "TargetUnitOfWorkProvider",
 ]

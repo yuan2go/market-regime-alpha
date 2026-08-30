@@ -22,6 +22,9 @@ from market_regime_alpha.infrastructure.postgres.market_uow import (
 from market_regime_alpha.infrastructure.postgres.research_uow import (
     PostgresResearchUnitOfWorkProvider,
 )
+from market_regime_alpha.infrastructure.postgres.target_uow import (
+    PostgresTargetUnitOfWorkProvider,
+)
 from market_regime_alpha.infrastructure.postgres.schema import SchemaManager
 from market_regime_alpha.infrastructure.postgres.selection_uow import (
     PostgresSelectionUnitOfWorkProvider,
@@ -192,6 +195,7 @@ def dataset_stack(target_database_url: str, tmp_path, request) -> _DatasetStack:
     research = ResearchQualificationApplication(
         store,
         PostgresResearchUnitOfWorkProvider(pool),
+        PostgresTargetUnitOfWorkProvider(pool),
     )
     provider = Provider(
         provider_id=uuid4(),
@@ -428,6 +432,7 @@ def research_stack(target_database_url: str, tmp_path, request):
     application = ResearchQualificationApplication(
         store,
         PostgresResearchUnitOfWorkProvider(pool),
+        PostgresTargetUnitOfWorkProvider(pool),
     )
     return application, artifacts, store, pool, target_database_url
 
