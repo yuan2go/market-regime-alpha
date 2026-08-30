@@ -272,12 +272,13 @@ def build_candidate_set(
         minimum_precision=minimum_projection_precision,
         maximum_precision=maximum_projection_precision,
     )
-    for component in components:
-        component_id = component.candidate_policy_component_id
-        projected[("weight", str(component_id), "")] = _project_fraction(
-            exact_weights[component_id],
-            precision=projection_precision,
-        )
+    if dataset.rows:
+        for component in components:
+            component_id = component.candidate_policy_component_id
+            projected[("weight", str(component_id), "")] = _project_fraction(
+                exact_weights[component_id],
+                precision=projection_precision,
+            )
     for (instrument_id, component_id), percentile in exact_percentiles.items():
         key_suffix = (str(instrument_id), str(component_id))
         projected[("percentile", *key_suffix)] = _project_fraction(

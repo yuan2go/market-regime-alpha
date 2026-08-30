@@ -349,6 +349,27 @@ def test_zero_rankable_and_empty_populations_are_not_estimable() -> None:
     )
 
 
+def test_empty_population_does_not_project_unpersisted_normalized_weights() -> None:
+    empty = build_candidate_set(
+        policy=_policy(
+            _component(1, weight="1E+131071"),
+            _component(2, weight="1E-16383"),
+            requested_top_k=1,
+        ),
+        dataset=_population(),
+    )
+
+    assert empty.candidate_set.population_count == 0
+    assert empty.candidate_set.rankable_count == 0
+    assert empty.candidate_set.selected_count == 0
+    assert empty.candidate_set.ranking_status is CandidateRankingStatus.NOT_ESTIMABLE
+    assert empty.candidates == ()
+    assert empty.score_components == ()
+    assert {
+        item.rank_information_status for item in empty.component_diagnostics
+    } == {CandidateRankingStatus.NOT_ESTIMABLE}
+
+
 def test_competition_rank_and_boundary_do_not_break_equal_scores_by_identity() -> None:
     result = build_candidate_set(
         policy=_policy(_component(1), requested_top_k=1),
