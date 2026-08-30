@@ -114,3 +114,33 @@ def test_policy_content_hash_excludes_aggregate_row_identities() -> None:
     )
 
     assert first.content_sha256 == renamed.content_sha256
+
+
+@pytest.mark.parametrize(
+    ("first_weight", "second_weight"),
+    (("1", "1.0"), ("1.00", "1E+0"), ("1000", "1E+3")),
+)
+def test_policy_content_hash_canonicalizes_equal_decimal_spellings(
+    first_weight: str,
+    second_weight: str,
+) -> None:
+    def build(weight: str) -> CandidatePolicy:
+        return CandidatePolicy(
+            candidate_policy_id=_uuid(1),
+            policy_code="candidate_v1",
+            version=1,
+            code_artifact=_artifact(1),
+            config_artifact=_artifact(2),
+            requested_top_k=1,
+            components=(_component(1, weight),),
+        )
+
+    assert build(first_weight).content_sha256 == build(second_weight).content_sha256
+
+
+@pytest.mark.parametrize("weight", ("1E+131072", "1E-16384"))
+def test_policy_rejects_weights_outside_postgresql_numeric_physical_limits(
+    weight: str,
+) -> None:
+    with pytest.raises(ValueError, match="PostgreSQL numeric physical limits"):
+        _component(1, weight)

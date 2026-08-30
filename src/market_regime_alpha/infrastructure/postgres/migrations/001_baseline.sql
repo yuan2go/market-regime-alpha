@@ -3308,7 +3308,7 @@ CREATE TABLE mra.candidate_policy (
         AND score_semantics = 'DESCRIPTIVE_RANK_SCORE'
         AND decimal_projection_method =
             'EXACT_RATIONAL_ADAPTIVE_HALF_EVEN'
-        AND decimal_projection_version > 0
+        AND decimal_projection_version = 1
         AND requested_top_k > 0
         AND component_count > 0
         AND code_content_sha256 ~ '^[0-9a-f]{64}$'
@@ -3364,6 +3364,7 @@ CREATE TABLE mra.candidate_policy_component (
         AND feature_value_type IN ('DECIMAL', 'INTEGER')
         AND direction IN ('HIGHER_IS_BETTER', 'LOWER_IS_BETTER')
         AND declared_weight > 0
+        AND declared_weight < 'Infinity'::numeric
     )
 );
 CREATE INDEX candidate_policy_component_feature_binding_idx
@@ -3528,8 +3529,6 @@ CREATE INDEX candidate_set_dataset_binding_idx
     );
 CREATE INDEX candidate_set_dataset_policy_idx
     ON mra.candidate_set (dataset_id, candidate_policy_id);
-CREATE INDEX candidate_set_policy_dataset_idx
-    ON mra.candidate_set (candidate_policy_id, dataset_id);
 CREATE INDEX candidate_set_decision_time_idx
     ON mra.candidate_set (decision_time, candidate_set_id);
 
@@ -3688,6 +3687,11 @@ CREATE TABLE mra.candidate_score_component (
                     (
                         feature_value_type = 'DECIMAL'
                         AND raw_decimal_value IS NOT NULL
+                        AND raw_decimal_value > '-Infinity'::numeric
+                        AND raw_decimal_value < 'Infinity'::numeric
+                        AND scale(raw_decimal_value) <= 12
+                        AND abs(raw_decimal_value) <
+                            100000000000000000000000000::numeric
                         AND raw_integer_value IS NULL
                     )
                     OR
@@ -3695,6 +3699,8 @@ CREATE TABLE mra.candidate_score_component (
                         feature_value_type = 'INTEGER'
                         AND raw_decimal_value IS NULL
                         AND raw_integer_value IS NOT NULL
+                        AND raw_integer_value > '-Infinity'::numeric
+                        AND raw_integer_value < 'Infinity'::numeric
                         AND scale(raw_integer_value) = 0
                     )
                 )
@@ -3740,10 +3746,6 @@ CREATE INDEX candidate_score_component_policy_binding_idx
     );
 CREATE INDEX candidate_score_component_dataset_feature_idx
     ON mra.candidate_score_component (dataset_id, feature_definition_id);
-CREATE INDEX candidate_score_component_candidate_idx
-    ON mra.candidate_score_component (
-        candidate_id, candidate_policy_component_id
-    );
 CREATE INDEX candidate_score_component_set_component_idx
     ON mra.candidate_score_component (
         candidate_set_id, candidate_policy_component_id, raw_status,

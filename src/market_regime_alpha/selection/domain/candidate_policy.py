@@ -17,6 +17,34 @@ from market_regime_alpha.shared.identity import ContentHash
 
 
 _CODE = re.compile(r"^[a-z][a-z0-9_]{0,99}$")
+_POSTGRES_NUMERIC_MAX_INTEGER_DIGITS = 131_072
+_POSTGRES_NUMERIC_MAX_FRACTIONAL_DIGITS = 16_383
+
+
+def _canonical_decimal_payload(value: Decimal) -> dict[str, object]:
+    """Encode an exact Decimal without ambient context or spelling artifacts."""
+
+    _, digit_tuple, exponent_value = value.as_tuple()
+    if not isinstance(exponent_value, int):  # finite values always have int exponents
+        raise ValueError("declared_weight must be finite")
+    digits = list(digit_tuple)
+    exponent = exponent_value
+    while len(digits) > 1 and digits[-1] == 0:
+        digits.pop()
+        exponent += 1
+    integer_digits = max(len(digits) + exponent, 0)
+    fractional_digits = max(-exponent, 0)
+    if (
+        integer_digits > _POSTGRES_NUMERIC_MAX_INTEGER_DIGITS
+        or fractional_digits > _POSTGRES_NUMERIC_MAX_FRACTIONAL_DIGITS
+    ):
+        raise ValueError(
+            "declared_weight exceeds PostgreSQL numeric physical limits"
+        )
+    return {
+        "coefficient": "".join(str(digit) for digit in digits),
+        "exponent": exponent,
+    }
 
 
 class CandidateFeatureValueType(StrEnum):
@@ -68,6 +96,7 @@ class CandidatePolicyComponent:
             raise TypeError("declared_weight must be Decimal")
         if not self.declared_weight.is_finite() or self.declared_weight <= 0:
             raise ValueError("declared_weight must be finite and positive")
+        _canonical_decimal_payload(self.declared_weight)
 
     @property
     def feature_definition_content_sha256(self) -> ContentHash:
@@ -80,7 +109,7 @@ class CandidatePolicyComponent:
     def semantic_payload(self) -> dict[str, object]:
         return {
             "component_code": self.component_code,
-            "declared_weight": self.declared_weight,
+            "declared_weight": _canonical_decimal_payload(self.declared_weight),
             "direction": self.direction,
             "feature_content_sha256": self.feature_content_sha256,
             "feature_definition_id": self.feature_definition_id,

@@ -33,6 +33,15 @@ class CandidateDatasetDependency:
     universe_revision_id: UUID
     eligibility_policy_id: UUID
     row_count: int
+    feature_count: int
+    source_count: int
+    cell_count: int
+    available_cell_count: int
+    missing_cell_count: int
+    unknown_cell_count: int
+    stale_cell_count: int
+    conflict_cell_count: int
+    dataset_source_lineage_sha256: str
     manifest_artifact: CandidateArtifactBinding
     code_artifact: CandidateArtifactBinding
     config_artifact: CandidateArtifactBinding

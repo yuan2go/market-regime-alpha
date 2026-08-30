@@ -51,10 +51,10 @@ def test_candidate_policy_has_only_declared_weight_and_real_feature_binding(
     SchemaManager(target_database_url).bootstrap()
     with psycopg.connect(target_database_url) as connection:
         columns = {
-            (str(row[0]), str(row[1]), str(row[2]))
+            (str(row[0]), str(row[1]), str(row[2]), str(row[3]))
             for row in connection.execute(
                 """
-                SELECT table_name, column_name, data_type
+                SELECT table_name, column_name, data_type, udt_name
                 FROM information_schema.columns
                 WHERE table_schema = 'mra'
                   AND table_name = ANY(%s)
@@ -93,10 +93,15 @@ def test_candidate_policy_has_only_declared_weight_and_real_feature_binding(
 
     component_names = {
         name
-        for table, name, _ in columns
+        for table, name, _, _ in columns
         if table == "candidate_policy_component"
     }
-    assert ("candidate_policy_component", "declared_weight", "numeric") in columns
+    assert (
+        "candidate_policy_component",
+        "declared_weight",
+        "numeric",
+        "numeric",
+    ) in columns
     assert "normalized_weight" not in component_names
     assert not {
         "dataset_id",
@@ -120,6 +125,12 @@ def test_candidate_policy_has_only_declared_weight_and_real_feature_binding(
     }
     assert "declared_weight > 0::numeric" in constraints[
         "candidate_policy_component_shape_ck"
+    ]
+    assert "declared_weight < 'Infinity'::numeric" in constraints[
+        "candidate_policy_component_shape_ck"
+    ]
+    assert "decimal_projection_version = 1" in constraints[
+        "candidate_policy_shape_ck"
     ]
     assert "feature_value_type = ANY (ARRAY['DECIMAL'::text, 'INTEGER'::text])" in constraints[
         "candidate_policy_component_shape_ck"
@@ -225,10 +236,10 @@ def test_candidate_and_score_matrix_enforce_typed_complete_case_without_unique_r
             ).fetchall()
         }
         score_columns = {
-            (str(row[0]), str(row[1]))
+            (str(row[0]), str(row[1]), str(row[2]))
             for row in connection.execute(
                 """
-                SELECT column_name, data_type
+                SELECT column_name, data_type, udt_name
                 FROM information_schema.columns
                 WHERE table_schema = 'mra'
                   AND table_name = 'candidate_score_component'
@@ -248,13 +259,26 @@ def test_candidate_and_score_matrix_enforce_typed_complete_case_without_unique_r
         "candidate_score_component_ranking_ck"
     ]
     assert {
-        ("raw_decimal_value", "numeric"),
-        ("raw_integer_value", "numeric"),
-        ("normalized_weight", "numeric"),
-        ("percentile", "numeric"),
-        ("contribution", "numeric"),
+        ("raw_decimal_value", "numeric", "numeric"),
+        ("raw_integer_value", "numeric", "numeric"),
+        ("normalized_weight", "numeric", "numeric"),
+        ("percentile", "numeric", "numeric"),
+        ("contribution", "numeric", "numeric"),
     } <= score_columns
-    assert not any("[]" in data_type for _, data_type in score_columns)
+    assert not any(
+        data_type == "ARRAY" or udt_name.startswith("_")
+        for _, data_type, udt_name in score_columns
+    )
+    raw_shape = constraints["candidate_score_component_raw_ck"]
+    assert "raw_decimal_value > '-Infinity'::numeric" in raw_shape
+    assert "raw_decimal_value < 'Infinity'::numeric" in raw_shape
+    assert "scale(raw_decimal_value) <= 12" in raw_shape
+    assert (
+        "abs(raw_decimal_value) < '100000000000000000000000000'::numeric"
+        in raw_shape
+    )
+    assert "raw_integer_value > '-Infinity'::numeric" in raw_shape
+    assert "raw_integer_value < 'Infinity'::numeric" in raw_shape
     assert "candidate_set_rank_idx" in indexes
     assert "CREATE INDEX" in indexes["candidate_set_rank_idx"]
     assert "CREATE UNIQUE INDEX" not in indexes["candidate_set_rank_idx"]
@@ -263,6 +287,8 @@ def test_candidate_and_score_matrix_enforce_typed_complete_case_without_unique_r
         for definition in indexes.values()
     )
     assert not any("USING gin" in definition for definition in indexes.values())
+    assert "candidate_set_policy_dataset_idx" not in indexes
+    assert "candidate_score_component_candidate_idx" not in indexes
 
 
 def test_candidate_views_explain_funnel_component_status_and_complete_matrix(

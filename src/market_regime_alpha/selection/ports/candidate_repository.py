@@ -14,14 +14,6 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True, slots=True)
-class CandidateSetRecord:
-    candidate_set_id: UUID
-    candidate_policy_id: UUID
-    dataset_id: UUID
-    result_sha256: str
-
-
-@dataclass(frozen=True, slots=True)
 class CandidatePersistenceReconciliation:
     population_count: int
     selected_count: int
@@ -39,15 +31,17 @@ class CandidateRepository(Protocol):
 
     def policy(self, candidate_policy_id: UUID, *, lock: bool) -> CandidatePolicy: ...
 
+    def lock_candidate_set_identity(self, candidate_set_id: UUID) -> None: ...
+
     def insert_candidate_set(self, plan: CandidateRankingPlan) -> None: ...
 
-    def find_candidate_set(
+    def verified_candidate_set(
         self,
         *,
         candidate_policy_id: UUID,
         dataset_id: UUID,
         lock: bool,
-    ) -> CandidateSetRecord | None: ...
+    ) -> CandidateRankingPlan | None: ...
 
     def reconciliation(
         self,
@@ -58,5 +52,4 @@ class CandidateRepository(Protocol):
 __all__ = [
     "CandidatePersistenceReconciliation",
     "CandidateRepository",
-    "CandidateSetRecord",
 ]
