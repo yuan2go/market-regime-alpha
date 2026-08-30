@@ -4,7 +4,7 @@
 > **Authority:** Planning and dependency order only; never business, evidence, or qualification Authority
 > **Owner:** Market Regime Alpha maintainers
 > **Last Updated:** 2026-08-30
-> **Code Evidence:** `docs/architecture/Canonical-Overall-Design.md`, `docs/status/Current-State.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-01-Domain-Invariant-Catalog.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-07-Candidate-Closure-Verification.md`
+> **Code Evidence:** `docs/architecture/Canonical-Overall-Design.md`, `docs/status/Current-State.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-01-Domain-Invariant-Catalog.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-07-Candidate-Closure-Verification.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-08-Post-Candidate-Authority-Design.md`
 
 Architecture Re-foundation is the only active engineering program. Historical
 Alpha Proof protocols/results remain evidence provenance, not executable
@@ -19,14 +19,23 @@ Foundation
 → Selection Core: Universe/Eligibility
 → minimal Research Definition substrate required by Candidate
 → Candidate closure
-→ post-Candidate dependency review across Target/Research/Model/Decision/Outcome/Evaluation/Evidence/Qualification
+→ post-Candidate dependency and Outcome Authority design closure
+→ Target commitment and Decision Run
+→ Market Target Outcome revision/settlement and read-only port
+→ Research Partition roster/access and Experiment
+→ Evaluation protocol/run/observation/metric
+→ Evidence, Research Assessment and Research Qualification
+→ optional Model/ModelVersion and Calibration
+→ remaining Decision Support, including optional model-backed Forecast binding
+→ Execution/Account, TradeOutcome and Attribution
+→ Runtime/CLI Cutover → separately authorized Legacy deletion
 ```
 
-WP-07 stops at Candidate Closure. With its local engineering exit gate passed,
-the only next activity is the separate dependency review. Later Research/
-Decision/Outcome, Execution/Account, Runtime/CLI Cutover, and Legacy deletion/
-qualification work remains an unordered, unauthorized backlog until that review
-publishes an approved dependency map.
+WP-08 approves this implementation order without implementing any listed
+post-Candidate owner. WP-09 is the sole next coding work package. Every later
+row remains blocked by its predecessor and retains its own approval/exit gate;
+ordering never grants Runtime cutover, empirical promotion, broker authority, or
+Legacy deletion.
 
 No stage begins canonical writes until its predecessor exit gate passes. Before
 Runtime/CLI Cutover, completed target modules are test-only and the old Runtime
@@ -42,8 +51,16 @@ availability-selected fallback.
 | **3. Selection Core: Universe/Eligibility** | `EXIT_GATE_PASS / NOT_CUT_OVER` | permanent `market_regime_alpha.selection`; Universe revision/member and typed Eligibility policy/rule/assessment/reason owners; independent narrow Selection UoW; behavior-preserving Market physical modularization; generic Market exact/as-of facts and Market-local consumer policy | explicit immutable scope config; Market-only query dependency; every scoped instrument and every rule accounted; three-state/count reconciliation; Decision-time lineage, empty-scope, concurrent idempotency, stale-fence and representative-plan tests; no Market Target resolver or global Artifact cadence |
 | **4. Research Definition Core for Candidate** | `EXIT_GATE_PASS / NOT_CUT_OVER` | permanent `market_regime_alpha.research_qualification`; `dataset`, `dataset_source`, and `feature_definition`; shared deterministic command-failure contract; strict label-free Decision-input Dataset whose rows exactly equal same-time `INCLUDED` + `ELIGIBLE` population | real immutable relational Authority, Artifact/lineage integrity, success/failure/fence atomicity, leakage rejection, concurrency/replay/recovery, and representative-plan tests pass; no Model/ModelVersion, placeholder, nullable future FK, Registry, compatibility adapter, Evidence/Qualification surrogate, or dependency cycle |
 | **5. Candidate closure** | `EXIT_GATE_PASS / NOT_CUT_OVER` | Selection-owned Candidate Policy, Policy Component, Candidate Set, Candidate, and Candidate Score Component; consume the immutable Decision-input Dataset and real Feature Definitions through a Selection-owned Research-input port and Infrastructure adapter | exact WP-07 proof that every Dataset row has one terminal disposition and a complete score-component matrix; STRICT complete case, exact-rational arithmetic-midrank/composite/competition rank, explicit constant/not-estimable diagnostics, include-all boundary ties, independent short Candidate UoW, fenced atomic success/failure/replay/concurrency, dossier/funnel and representative plans; no later-context Authority |
-| **6. Post-Candidate dependency review** | `NEXT_DEPENDENCY_REVIEW / NOT_STARTED / IMPLEMENTATION_ORDER_NOT_AUTHORIZED` | after Stage 5 exit, audit the real code and Authority dependencies among Target Definition/Checkpoint, Research Partition, Experiment, Model, Decision Run, Outcome, Evaluation, Evidence, and Qualification | publish an approved acyclic implementation order; prove that Research does not construct realized labels independently of future Outcome Authority; the review itself implements and authorizes none of the listed contexts |
-| **Unordered later target work** | `ORDER_NOT_AUTHORIZED` | Research/Decision/Outcome, Execution/Account, Runtime/CLI Cutover, and Legacy deletion/qualification retain their target invariants but have no WP-07 stage number or relative implementation order | replace this row with dependency-coherent checkpoints only after Stage 6 review is separately approved; this row grants no implementation authority |
+| **6. WP-08 post-Candidate design closure** | `DESIGN_APPROVED / IMPLEMENTATION_ORDER_AUTHORIZED / NOT_IMPLEMENTED` | whole-repository writer/reader/FK/Artifact/Runtime/replay audit; freeze Target commitment, Market/Trade Outcome split, Partition access, Evaluation, concrete Evidence/Assessment/Research Qualification and cross-generation DAG | canonical documents and WP-08 record agree; no generic subject/JSON Authority, bars-to-label second truth, Model prerequisite, or same-generation cycle; current implementation/DDL unchanged |
+| **7. WP-09 Target commitment and Decision Run** | `READY_FOR_IMPLEMENTATION / NEXT / NOT_CUT_OVER` | TargetDefinition/Checkpoint/Metric; `OpenDecisionRun`; DecisionRun, explicit requested Target roster, full Candidate × Target commitment roster and independent Decision reference; mandatory `OPEN_DECISION_RUN` after Candidate and before Context | exact roster/reference/FK/hash reconciliation including empty Candidate Set, idempotency/concurrency/fence/failure/replay and architecture tests pass; no Outcome/Partition/Evaluation/Model/Evidence placeholder |
+| **8. Market Target Outcome** | `ORDER_AUTHORIZED / BLOCKED_BY_STAGE_7` | one commitment-bound root, append-only full revisions, observation/metric/reason children, correction/supersession, two cutoffs, exact replay and narrow read-only port | partial/complete/correction/finality/idempotency/replay/port isolation proven; every old label consumer disposition remains fail-closed until its own cut |
+| **9. Research Partition and Experiment** | `ORDER_AUTHORIZED / BLOCKED_BY_STAGE_8` | immutable partition/member roster, Decision/Outcome windows, purge/embargo, ordinal first-Outcome-access ledger, Experiment/partition/run | Locked-OOS/Prospective roster and Experiment binding predate ordinal one; reused access is diagnostic only; range/composite-FK/leakage/concurrency/replay gates pass |
+| **10. Evaluation** | `ORDER_AUTHORIZED / BLOCKED_BY_STAGE_9` | predeclared Evaluation Protocol/metrics; Experiment/Partition-bound Run; exact access/Outcome observations and metrics; no Forecast child table yet | no Model requirement, no bar/provider/repository import, no posterior Dataset write, complete input/metric reconciliation or nullable future Forecast FK |
+| **11. Research Evidence and Qualification** | `ORDER_AUTHORIZED / BLOCKED_BY_STAGE_10` | Evaluation-bound EvidenceItem/Dependency, Experiment-bound ResearchAssessment with complete terminal Evaluation/Evidence rosters, ResearchQualification policy/floor/decision/result/evidence | concrete FK closure and Evidence DAG; negative/inconclusive preserved; no polymorphic subject, JSON owner, weak reference or nullable future branch |
+| **12. Optional Model and Calibration** | `ORDER_AUTHORIZED / BLOCKED_BY_STAGE_11` | Model/ModelVersion from completed training Evaluation, calibration Evaluation purpose and subject-specific Model qualification where approved; no Forecast child table yet | Model remains optional; calibrated claims have exact partition/metric/evidence floors; no Candidate/Target/Outcome prerequisite or nullable future Forecast FK |
+| **13. Remaining Decision Support** | `ORDER_AUTHORIZED / BLOCKED_BY_PREDECESSORS` | add concrete Decision Run Research Qualification roster/members only after their real parent; Context, Signal, Forecast, then optional concrete `forecast_model_binding` and `evaluation_forecast_binding`, Opportunity, Thesis, Strategy, Portfolio and Risk | qualification/Forecast binding children follow their real parents; same-generation DAG remains one-way; rule Forecast needs no Model; Risk is sole post-Portfolio authorization; no Outcome feedback into current generation |
+| **14. Execution, TradeOutcome and Attribution** | `ORDER_AUTHORIZED / BLOCKED_BY_PREDECESSORS` | Account/Intent/observed Fill/allocation/reconciliation/Position projection; separate TradeOutcome; Market and Trade Attribution | Fill-only trade mutation, Market/Trade subject separation, reconciliation and human-approval gates pass |
+| **15. Runtime/CLI Cutover and Legacy deletion** | `NO_GO / SEPARATE_AUTHORIZATION_REQUIRED` | complete target composition/CLI/epoch release followed by separately approved removal of old writers/readers/schema | complete catalog and consumer cuts proven; no dual write/fallback; clean bootstrap/replay/recovery; empirical/Provider/Production floors remain independent |
 
 The target `001_baseline.sql` remains an unreleased, reviewable build artifact
 during pre-cutover checkpoints. Foundation establishes its epoch/bootstrap and
@@ -88,12 +105,42 @@ exact source SHA, catalog, commands, results, investigated failures, and proof
 ceiling are retained only in
 [WP-07 Candidate Closure Verification](../references/WP-ARCHITECTURE-REFOUNDATION-07-Candidate-Closure-Verification.md).
 
+## Post-Candidate design result
+
+WP-08 freezes the post-Candidate DAG, concrete FK/port/lock semantics, Legacy
+writer/reader disposition, logical catalog change and small work-package order
+without changing implementation. The authoritative detailed decision is the
+[WP-08 Post-Candidate Authority Design](../references/WP-ARCHITECTURE-REFOUNDATION-08-Post-Candidate-Authority-Design.md).
+
+## WP-09 coding contract
+
+The minimum scope is TargetDefinition/TargetCheckpoint/TargetMetricDefinition
+registration, DecisionRun/DecisionRunTarget/DecisionTargetCommitment/
+DecisionReferenceObservation,
+`OPEN_DECISION_RUN`, and one test-only Candidate-to-commitment vertical slice.
+Outcome and every later owner remain non-scope.
+
+| TDD seam | Exit evidence |
+|---|---|
+| Target/checkpoint/metric identity | immutable hash/order and relational metric/dependency semantics; no JSON |
+| Requested Target and Candidate × Target rosters | non-empty Target roster survives empty Candidate Set; every Candidate disposition exactly once per requested Target; count/hash reconciliation |
+| Decision reference | exact Decision-visible Market revision or explicit Source Gap; no late substitution |
+| Commitment time/mode | freeze Runtime clock mode and PostgreSQL recorded time; historical/replay opening cannot become Prospective |
+| FK/transaction | composite-set/source mismatches rejected; one short fenced transaction with receipt/audit/finalization |
+| Runtime DAG | `BUILD_CANDIDATE_SET → OPEN_DECISION_RUN → ASSESS_CONTEXT`; no bypass or Outcome placeholder |
+| Idempotency/concurrency/recovery | exact retry reuses identities; changed request/stale fence fails; one writer; deterministic failure atomic |
+| Replay/architecture | exact roster/hash with zero mismatches; no Model, Legacy, generic registry, nullable future FK, or reverse package edge |
+| Repository gate | clean PostgreSQL full gate plus source/DDL scope proof at exact checkpoint SHA |
+
+Only that complete gate authorizes the separate Market Target Outcome coding
+package. It never authorizes Runtime/CLI cutover.
+
 ## Dependency-owned unresolved gaps
 
 | Gap | Owning stage | Required resolution |
 |---|---|---|
-| Current live database business-row inventory was unavailable to the design audit role | Runtime/CLI Cutover | use a newly provisioned empty target database; before any canonical database destruction, inspect it and use the implemented exact-OID authorization |
-| Formal Provider availability/finality evidence is absent | Research/Qualification | Market stores `UNKNOWN`/Exploratory and blocks historical visibility inflation; later qualification is purpose-scoped and cannot mutate old captures |
+| The live local database is heterogeneous: default-named Legacy schema is at migration 55, a historical proof schema is at 106, target `mra` is absent, and no configured/active Runtime proved current schema selection | Runtime/CLI Cutover | use a newly provisioned empty target database; bind the explicit database/schema, backup and inspect it, and require implemented exact-OID authorization before any canonical database destruction |
+| Formal Provider availability/finality evidence is absent | purpose-specific Provider Qualification after Outcome engineering | Market/Outcome store `UNKNOWN`/`PROVISIONAL` honestly and block historical visibility inflation; later qualification cannot mutate old captures or Outcome revisions |
 | Corporate-action and broker account semantics vary | Market/PIT / Execution | adapter-specific fixtures and qualification; no inference from adjusted prices or unexplained broker deltas |
 | Later-context physical indexes are not plan-validated | each later persistence stage | repeat the Market representative-plan method before each stage exit; do not hard-code planner shapes |
 | Artifact volume/retention is unmeasured | Runtime/CLI Cutover | no partitioning by aesthetics; measure write volume, vacuum/retention and dominant plans |
@@ -111,14 +158,20 @@ proves INCLUDED plus ELIGIBLE. It introduces no Model/ModelVersion, Target,
 Outcome, Evidence, Assessment, Qualification, or future placeholder. This is not
 a Runtime/CLI cutover or target baseline release.
 
-Only the Stage 6 dependency review is now next. It does not freeze Research
-Evaluation before Decision/Outcome, or the reverse. That review must inspect the
-actual Target, partition, Experiment, Model, Decision Run, Outcome, Evaluation,
-Evidence, and Qualification call chains and must prevent Research-created
-realized labels from becoming a second Authority beside future Outcome facts.
+WP-08 closes the design dependency review. `OPEN_DECISION_RUN` is mandatory
+after Candidate and before Context; it commits the complete Candidate × Target
+roster and Decision-visible references before any Outcome. Market Target Outcome
+then owns one revisioned label truth. Partition/Evaluation consumers use its
+narrow read-only port, and feedback crosses only from generation `n` to
+Decision Run `n+1` through a concrete Research Qualification binding.
 
-No Target, Research Evaluation, Model, Decision/Outcome, Evidence,
-Qualification, Alpha hypothesis, model optimization, OOS outcome access,
-Provider qualification, broker integration, Runtime cutover, or destructive
-database operation is authorized by Candidate implementation or the dependency
-review.
+WP-09 is ready for implementation with only Target Definition/Checkpoint/Metric,
+Decision Run/requested Target/Target Commitment/Reference, and the test-only
+Runtime Step seam.
+It must not create Outcome, Partition, Experiment, Evaluation, Model, Evidence,
+Assessment, Qualification, Context, Signal, Forecast, Portfolio, Risk,
+Execution, Attribution, compatibility reads, dual writes, or placeholders.
+
+No Alpha hypothesis/optimization, Formal OOS access, Provider campaign, broker
+integration, Runtime cutover, Legacy deletion, evidence-ceiling increase, or
+destructive database operation is authorized by WP-08.

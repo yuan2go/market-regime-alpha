@@ -61,6 +61,11 @@ Checkpoint traceability:
 - [WP-07 Candidate Closure Design](references/WP-ARCHITECTURE-REFOUNDATION-07-Candidate-Closure-Design.md)
   — approved five-table Candidate Authority, ranking semantics, dependency seam,
   and implementation proof contract; not implementation or verification evidence.
+- [WP-08 Post-Candidate Authority Design](references/WP-ARCHITECTURE-REFOUNDATION-08-Post-Candidate-Authority-Design.md)
+  — approved acyclic Target commitment, Market Target Outcome, Partition,
+  Evaluation, Evidence, Assessment, and Research Qualification semantics plus
+  the authorized post-Candidate implementation order; design only, not
+  implementation or evidence.
 
 All documents in this section have Target status. They define the destination,
 not current completion.

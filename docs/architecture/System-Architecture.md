@@ -283,11 +283,17 @@ duplicate audit is written.
 The global lock order is:
 
 1. current Runtime Run/Step/Attempt when a Runtime fence participates;
-2. Account and Account Authority Epoch;
-3. Portfolio Proposal / Risk Decision;
-4. Execution Intent;
-5. Fill / Fill Allocation;
-6. any other aggregate roots ordered by `(aggregate_kind, aggregate_id)`.
+2. immutable Artifact/definition/Market-revision rows in `(kind, UUID)` order;
+3. Candidate Set/Candidate;
+4. Decision Run/Decision Target Commitment;
+5. Account and Account Authority Epoch;
+6. Portfolio Proposal / Risk Decision;
+7. Execution Intent;
+8. Fill / Fill Allocation;
+9. Market Target Outcome or TradeOutcome;
+10. Research Partition;
+11. Experiment Run/Evaluation Run;
+12. Evidence Item/Research Assessment/Research Qualification Decision.
 
 Immutable definitions and evidence are never mutated by their consumers, but a
 command may take stable revalidation locks. Candidate deduplicates those
@@ -308,7 +314,8 @@ Database-enforced examples:
 - one command receipt per idempotency scope;
 - immutable business identity and revision uniqueness;
 - non-negative quantities and legal OHLC;
-- exactly one qualification subject/purpose;
+- complete concrete Research Qualification policy-floor/result/evidence FK
+  chain; no generic qualification subject;
 - Fill correction links and allocation totals;
 - allowed lifecycle transitions through guarded repository statements.
 
@@ -349,6 +356,13 @@ hash, and lineage. Replay succeeds only with a terminal report containing
 `matched=true` and zero mismatches; process completion or row counts are not
 proof.
 
+Market Target Outcome replay additionally reloads the exact Decision Target
+Commitment/reference, Target checkpoints, trading calendar, observation cutoff,
+knowledge cutoff, Market/PIT revision and Source Gap roster, algorithm, and
+code/config. Settlement time never replaces original DecisionTime, and a
+Provider correction is a new superseding Outcome revision rather than a replay
+input substitution.
+
 Historical execution is a Run over ordered owner-resolved trading sessions.
 Session order comes only from `trading_session`, never weekday arithmetic.
 Prospective execution cannot read evidence captured after its Decision time.
@@ -375,19 +389,25 @@ Representative commands:
 - `CaptureMarketData`, `NormalizeMarketFacts`, `FreezeUniverse`,
   `AssessEligibility`, `RegisterDataset`, `RegisterFeatureDefinition`,
   `RegisterCandidatePolicy`, and `BuildCandidateSet`;
+- `RegisterTargetDefinition`, `OpenDecisionRun`,
+  `SettleMarketTargetOutcome`, and `FreezeResearchPartition`;
+- `RegisterExperiment`, `OpenEvaluationRun`, `AcquireOutcomeInputs`,
+  `CompleteEvaluationRun`,
+  `RecordEvidence`, `AssessResearch`, and `DecideResearchQualification`;
 - `AssessContext`, `ProduceSignal`, `ProduceForecast`,
   `CreateOpportunity`, `ProposePortfolio`, `AssessRisk`;
 - `ApproveExecutionIntent`, `RecordObservedFill`, `CorrectFill`,
   `RecordBrokerObservation`, `ReconcileAccount`;
-- `SettleOutcome`, `RunAttribution`, `AssessResearchClaim`,
-  `DecideQualification`;
+- `SettleTradeOutcome`, `RunMarketAttribution`, and `RunTradeAttribution`;
 - `ScheduleRun`, `ClaimStep`, `HeartbeatAttempt`, `ResumeRun`,
   `ResolveExternalEffect`, `VerifyArtifact`.
 
-The Candidate command dependency is one-way:
-`FreezeUniverse → AssessEligibility → RegisterDataset → BuildCandidateSet → AssessContext`.
+The Decision command dependency is one-way:
+`FreezeUniverse → AssessEligibility → RegisterDataset → BuildCandidateSet → OpenDecisionRun → AssessContext`.
 Same-run Context cannot mutate or filter the already frozen Universe,
-Eligibility, or Candidate Set. `CreateOpportunity` carries no Risk
+Eligibility, Candidate Set, or Target commitment. `OpenDecisionRun` freezes the
+complete Candidate × requested Target roster and Decision-visible reference
+states; it creates no future Outcome row. `CreateOpportunity` carries no Risk
 authorization; only `AssessRisk` after `ProposePortfolio` creates a Risk
 Decision. Candidate closure extends only the test vertical slice to
 `CAPTURE → NORMALIZE_PIT → FREEZE_UNIVERSE → ASSESS_ELIGIBILITY → REGISTER_DATASET → BUILD_CANDIDATE_SET`.
@@ -403,6 +423,8 @@ Representative queries:
 - Decision dossier from Candidate through Risk;
 - current Position and Strategy sleeve projection;
 - Outcome/metric availability;
+- exact Outcome revision/reason/finality and Research Partition first-access
+  provenance through the read-only Outcome port;
 - evidence graph and qualification-floor matrix;
 - Run trace, stuck leases, artifact integrity, and reconciliation differences.
 

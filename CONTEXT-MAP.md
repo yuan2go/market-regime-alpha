@@ -21,6 +21,7 @@ records.
 | Decision-input Dataset | Immutable content-addressed Feature input whose rows exactly reconcile the same-DecisionTime `INCLUDED` and `ELIGIBLE` population, with explicit missing cells and exact lineage. | An Evaluation Dataset, Target/Outcome container, or posterior-label panel. |
 | Feature Definition | Immutable calculation semantics, type/unit, temporal window, source, availability, missingness, and algorithm/code/config identity. | Alpha evidence, research maturity, external validation, or qualification. |
 | Candidate | The immutable terminal disposition for one row of a Decision-input Dataset under one Candidate Policy: `SELECTED`, `RANKED_NOT_SELECTED`, or `UNRANKABLE`, with complete typed score-component facts. | Only the selected subset; a probability, Forecast, Target, Outcome, Entry, or trade recommendation. |
+| Decision Target Commitment | The immutable pre-Outcome binding of one Candidate row, Decision Run, Target Definition, and Decision-visible reference state; live-clock timing is additionally required for a Prospective claim. | A posterior label selection, Forecast, Outcome value, or proof that a historical replay was prospective. |
 | Signal | A target-independent setup/state assertion produced from frozen inputs. | A calibrated probability or execution instruction. |
 | Forecast | A Target/Checkpoint-bound estimate with explicit uncertainty and calibration status. | A raw score relabelled as probability. |
 | Opportunity | A Decision-time binding of Candidate, Signal, Forecast, Context, Strategy Version, and exact input Evidence. | A Risk authorization, Fill, or Position. |
@@ -30,7 +31,8 @@ records.
 | Execution Intent | A human-approved request bounded by Portfolio and Risk decisions. | An Order acknowledgment, Fill, or Position. |
 | Fill | An observed execution fact, including append-only correction lineage. | A target quantity, intent, or broker snapshot. |
 | Physical Position | Deterministic projection of effective observed Fills plus explicitly authorized non-trade basis events. | A mutable independent ledger or recommendation. |
-| Outcome | Factual post-decision observations and independently stated metric availability. | Qualification, attribution, or an assumed zero return. |
+| Market Target Outcome | Revisioned factual post-decision observations for exactly one Decision Target Commitment, with independent path, checkpoint, metric, availability, finality, and failure state. | A trade result, Evaluation, Qualification, or an assumed zero return. |
+| TradeOutcome | Realized result of effective observed Fills and a closed Fill-derived Position episode. | A market Target label or hypothetical Candidate result. |
 | Attribution | A diagnostic allocation of a realized/observed result to declared dimensions. | A replacement for Outcome or residual-balancing authority. |
 | Evidence Item | Immutable, typed, content-addressed support or counter-evidence with provenance. | A document claim, boolean capability flag, or generic payload registry. |
 | Assessment | A governed conclusion over a declared claim and evidence set. | Automatic promotion because a table or artifact exists. |
@@ -82,22 +84,33 @@ Python process and one PostgreSQL database. They are not microservices.
 | Runtime & Provenance | schedules, Runs, Steps, Attempts, command receipts, audit, artifact metadata/integrity | all application command results by stable ID | Market facts, decisions, qualifications, Positions |
 | Market & PIT | providers, captures, instruments, sessions, classifications, revisions, gaps | raw artifact bytes | Candidates, model assessment, Portfolio |
 | Selection | Universe revisions, membership, eligibility, Candidate Policy/Set/Candidate and typed Candidate Score Components | Universe/Eligibility consume only Market/PIT and immutable scope config; Candidate consumes the immutable Decision-input Dataset and policy-bound Feature Definitions through a Selection-owned DTO/port implemented by Infrastructure | Signal, Strategy action, Fill, Model, Target, Outcome, Evidence, Qualification |
-| Research & Qualification (`market_regime_alpha.research_qualification`) | initially Decision-input Dataset/DatasetSource/FeatureDefinition; later owners only in an order approved after Candidate dependency audit | initially Market/PIT and Selection lineage; later inputs remain subject to dependency review | runtime scheduling, Candidate ownership, physical Position mutation, a second realized-label truth beside Outcome |
-| Decision Support | Context assessments, Signal, Forecast, Opportunity, Thesis, Strategy Version, Portfolio/Risk decision | Candidate, Research identities, account query model | observed Fill, broker truth, qualification |
+| Research & Qualification (`market_regime_alpha.research_qualification`) | Decision-input Dataset/DatasetSource/FeatureDefinition; Target Definition/Checkpoint/Metric; Research Partition/Experiment/Evaluation; optional Model branch; concrete Research Evidence/Assessment/Qualification | Market/PIT and Selection lineage; realized facts only through the Outcome read port | runtime scheduling, Candidate ownership, physical Position mutation, bars-to-label calculation, generic qualification subjects |
+| Decision Support | Decision Run, requested Target roster, Decision Target Commitment/reference, concrete later-generation Research Qualification bindings, Context assessments, Signal, Forecast, Opportunity, Thesis, Strategy Version, Portfolio/Risk decision | Candidate, Target identities, exact Market reference, admitted earlier Research Qualification decisions, optional earlier Model Version and any future subject-specific Model admission, account query model | observed Fill, broker truth, qualification mutation, Market Target Outcome mutation |
 | Execution & Account | account authority epoch, intents, Fills, allocations, broker observations, reconciliation, non-trade basis events | accepted Portfolio/Risk decisions, Market instrument identity | Candidate, Forecast, model promotion |
-| Outcome & Attribution | factual Outcomes, observations, metrics, reasons and diagnostic Attribution | Decisions, Market/PIT, Fill allocations | qualification, Decision mutation or Position truth |
+| Outcome & Attribution | revisioned Market Target Outcomes and observations/metrics/reasons; separate Fill-derived TradeOutcomes; diagnostic Market/Trade Attribution | Decision Target Commitments plus Market/PIT for the Market branch; effective observed Fills for TradeOutcome; Fill Allocations only for Trade Attribution | qualification, Decision mutation, Position truth, generic polymorphic Outcome subjects |
 | Artifact Store | content-addressed immutable bytes | none | business state, lifecycle, latest pointers |
 
-The Candidate-time business dependency direction is
-`Market/PIT → Universe → Eligibility → Candidate → Context → Signal/Forecast → Opportunity → Portfolio → Risk`.
-Context cannot feed back into the same Candidate Set, and Opportunity cannot
-carry a Risk Decision. The sole Risk Authority follows Portfolio. Candidate V1
-depends only on the immutable Dataset and real Feature Definition identities;
-it has no Model Version, Target, Outcome, Context, Evidence, Assessment, or
-Qualification dependency. The only authorized downstream order is the
-dependency-coherent sequence in the
-[Implementation Roadmap](docs/status/Roadmap.md); Research never owns a second
-realized-label truth beside Outcome facts.
+The Decision-time business dependency direction is
+`Market/PIT → Universe → Eligibility → Dataset → Candidate → OPEN_DECISION_RUN/Target commitment → Context → Signal/Forecast → Opportunity → Portfolio → Risk`.
+`OPEN_DECISION_RUN` commits the requested Target roster even for an empty
+Candidate Set, then every Candidate row against every requested Target before
+Context or any Outcome visibility. Context cannot feed back into the
+same Candidate Set, and Opportunity cannot carry a Risk Decision. The sole
+Risk Authority follows Portfolio. Candidate V1 still depends only on the
+immutable Dataset and real Feature Definition identities; Target commitment is
+a downstream binding, not a Candidate prerequisite.
+
+The realized-fact direction is
+`DecisionTargetCommitment → MarketTargetOutcome → Evaluation → Evidence → Assessment → ResearchQualification`.
+Research, Model, Evaluation, Calibration, Forecast evaluation, and
+Qualification use only the narrow read-only Outcome port and may not reread bars
+to construct labels. Feedback is cross-generation only:
+`Outcome(n) → Evaluation(n) → Qualification(n) → DecisionRun(n+1)`.
+The final edge is the concrete
+`decision_run_research_qualification_roster`/member pair, never a string ID or
+a current/latest qualification lookup.
+The authorized downstream work packages are in the
+[Implementation Roadmap](docs/status/Roadmap.md).
 
 ## Allowed dependency direction
 

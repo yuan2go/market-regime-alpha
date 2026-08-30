@@ -39,6 +39,14 @@ semantics and is neither a quota nor a cutover claim.
 
 ## 2. Frozen target table catalog
 
+The semantic relations below are the frozen logical catalog. Current physical
+and design-only counts remain in Current State or the exact WP-08 design record;
+they are not copied into Canonical Architecture and are never a quota,
+physical-release claim, or permission to create placeholders. Deferred
+subject-specific Provider, Model, Strategy, Execution, or Production
+qualification may add concrete relations in their own approved work packages;
+it may not preallocate nullable columns here.
+
 ### Runtime and provenance
 
 | Table | Purpose | Lifecycle and key constraints |
@@ -153,42 +161,57 @@ and cannot disagree.
 ### Remaining Research and Qualification
 
 These relations remain logical target design only. None is a Candidate V1
-prerequisite, and Candidate Closure creates none of them. Their actual
-dependency order is not authorized here; it is audited after Candidate across
-Target/Partition/Experiment/Model/Decision Run/Outcome/Evaluation/Evidence/
-Qualification, with realized factual labels reserved to the future Outcome
-Authority rather than independently reconstructed by Research.
+prerequisite, and Candidate Closure creates none of them. WP-08 freezes their
+acyclic dependency order. Research owns definitions, rosters, protocols,
+Evaluation, and Research Qualification; it never owns a bars-to-label writer.
 
 | Table | Purpose | Lifecycle and key constraints |
 |---|---|---|
-| `target_definition` | immutable Decision reference/horizon/metric protocol | unique code/version/hash; price basis and calendar policy typed |
-| `target_checkpoint` | ordered target path/checkpoint grid | unique target/ordinal and target/session-offset/local-time |
-| `research_partition` | frozen Discovery/OOS/Prospective membership/time slice | unique identity/hash; non-overlap/purge/embargo constraints |
-| `experiment` | predeclared hypothesis and primary change | unique protocol hash; dataset/target/code/config |
-| `experiment_partition` | purpose-specific partition binding | unique experiment/purpose; partition frozen before outcome access |
-| `experiment_run` | one execution of frozen Experiment | unique experiment/run key; status and artifact/result hash |
-| `model` | stable model family identity | deferred; unique code when a real fitted-model consumer exists |
-| `model_version` | immutable fitted/model artifact lineage | deferred; unique model/version/hash and real dataset/feature/partition FKs when required |
-| `evaluation_run` | predeclared evaluation execution | experiment/model/partition/protocol and status |
-| `evaluation_metric` | typed metric value/estimability | unique run/metric/slice; status independent of value |
-| `evidence_item` | immutable typed evidence or counter-evidence | class/origin/scope/time/hash; artifact optional with consistency check |
+| `target_definition` | immutable Decision reference/horizon/path/metric protocol | unique code/version/hash; instrument scope, price basis, reference/session/calendar/horizon, availability/finality, algorithm and code/config Artifacts typed |
+| `target_checkpoint` | ordered observation checkpoint/path grid | unique Target/ordinal/code; role, session offset, local time and required observation shape relational |
+| `target_metric_definition` | typed required/optional Outcome metric semantics | unique Target/metric code; kind/unit/reference/path/checkpoint/barrier shape and completion requirement enforced; no JSON metric contract |
+| `research_partition` | frozen Target-specific Discovery/Fit/Validation/Locked-OOS/Prospective root | unique identity/hash; exact Target Definition, Decision and Outcome-window bounds, exact calendar, purge/embargo, positive roster count/hash |
+| `research_partition_member` | complete non-empty pre-Outcome roster | unique partition/commitment; composite FK preserves and matches the root Decision/Dataset/Candidate/Target chain; no Outcome value |
+| `research_partition_outcome_access` | append-only Outcome visibility ledger | unique member/access ordinal and Evaluation access; exact Outcome revision/cutoff; ordinal one is first-access Authority |
+| `experiment` | predeclared question and one primary change | unique protocol hash; one Target plus code/config/acceptance semantics |
+| `experiment_partition` | purpose-specific partition binding | unique Experiment/purpose/Partition; composite Target FK guarantees every member commitment uses the Experiment Target; partition frozen before Outcome access |
+| `experiment_run` | one execution of frozen Experiment | unique Experiment/run key; exact bound `experiment_partition` roster/config and status; no positive-result implication |
+| `evaluation_protocol` | pre-Outcome evaluation contract | unique code/version/hash; missingness, cost and decision semantics frozen |
+| `evaluation_protocol_metric` | relational metric/slice/rule declaration | unique protocol/metric/slice; direction, unit, estimability and acceptance rule typed |
+| `evaluation_run` | predeclared Evaluation execution | requires Experiment Run, one `experiment_partition` from the same Experiment and Evaluation Protocol; forward-only `OPEN → INPUTS_ACQUIRED → COMPLETED` or `FAILED`; purpose typed; no Model FK |
+| `evaluation_observation` | exact realized input to Evaluation | Evaluation Run + same-Partition member access ordinal + exact Market Target Outcome revision; commitment chain implies Dataset/Candidate/Target |
+| `evaluation_metric` | typed result over declared protocol metric | unique Run/protocol metric/slice; status independent of value; complete input reconciliation |
+| `evaluation_metric_observation` | exact member roster for one Evaluation metric/slice | unique Evaluation metric/observation; included/excluded/not-estimable state and reason relational; complete reconciliation to protocol missingness rule |
+| `evaluation_forecast_binding` | optional Forecast-evaluation branch | concrete Evaluation observation/Forecast FK only when a real Forecast exists; implemented after the Forecast parent, never as a nullable branch placeholder |
+| `model` | stable optional fitted-model family | unique code; no Target/Candidate/Outcome/Evaluation existence dependency |
+| `model_version` | immutable fitted version lineage | requires completed `MODEL_TRAINING` Evaluation Run and fitted/code/config Artifacts; unique Model/version/hash; completion/known time explicit |
+| `evidence_item` | immutable Evaluation evidence or counter-evidence | requires concrete terminal Evaluation Run and Artifact FKs; class/origin/claim direction/time/hash/ceiling plus complete dependency count/hash relational |
 | `evidence_dependency` | exact evidence graph edge | unique child/parent/role; temporal non-decrease |
-| `assessment` | governed conclusion over one claim/evidence set | immutable revision; closed Assessment Status; claim/purpose typed |
-| `qualification_policy` | immutable purpose-specific required-floor contract | unique code/version/hash; required floors and decision rules typed |
-| `qualification_policy_floor` | required/optional floor definition and acceptance rule | unique policy/floor; typed rule, proof class and evidence requirement |
-| `qualification_decision` | sole purpose-scoped admission owner | subject/purpose/revision unique; supersession; decision status |
-| `qualification_floor_result` | complete qualification proof vector | unique decision/floor; every required floor present; evidence FK |
+| `research_assessment` | governed Experiment-bound research claim revision | unique Experiment/claim/revision; non-empty Evaluation/Evidence counts and hashes, closed status and typed supersession; negative/inconclusive preserved |
+| `research_assessment_evaluation` | complete terminal Evaluation roster for one Assessment | unique Assessment/Evaluation Run/role; every Run belongs to the Assessment Experiment; no current/latest lookup |
+| `research_assessment_evidence` | complete concrete Assessment evidence set | unique Assessment/Evidence Item; composite FK requires the item's Evaluation Run in the Assessment roster; typed support/counter-evidence role |
+| `research_qualification_policy` | immutable research-purpose floor contract | unique code/version/hash/purpose; decision rules typed |
+| `research_qualification_policy_floor` | required/optional floor and acceptance rule | unique policy/floor; typed proof class and evidence requirement |
+| `research_qualification_decision` | sole Research admission owner | exact Research Assessment + Policy/revision; typed status/supersession; no generic subject |
+| `research_qualification_floor_result` | complete policy proof vector | unique decision/policy floor; every floor present; typed status/reason |
+| `research_qualification_floor_evidence` | concrete Assessment Evidence for one floor result | unique floor result/Assessment-Evidence binding/role; the binding belongs to the decision's Assessment; no JSON or weak reference |
 
 ### Decision Support
 
 | Table | Purpose | Lifecycle and key constraints |
 |---|---|---|
-| `decision_run` | frozen Decision-time envelope | unique runtime step/request; required FK to an already-existing Candidate Set plus policy/code/config identities |
+| `decision_run` | frozen Decision-time envelope opened before Context | unique Runtime Step/request; required existing Candidate Set, DecisionTime, Runtime clock mode, PostgreSQL commitment-recorded time, requested Target roster and code/config identities |
+| `decision_run_target` | complete non-empty requested Target roster | unique Decision Run/Target and ordinal; positive count/hash reconciles even when Candidate Set is empty |
+| `decision_target_commitment` | ex-ante Candidate × requested-Target contract | unique Candidate/Decision Run Target; composite Candidate Set/Target chain; every Candidate disposition committed before Outcome visibility |
+| `decision_reference_observation` | independent initial-reference fact | unique commitment; value, availability and finality states separate; exactly one Decision-visible Market bar revision or Source Gap shape; `known_at <= DecisionTime` |
+| `decision_run_research_qualification_roster` | complete later-generation Research Qualification input envelope | exactly one per Run after this real branch exists; zero-or-more member count/hash and reconciliation state prove an intentional empty roster |
+| `decision_run_research_qualification_member` | concrete adopted Research Qualification | unique roster/Qualification/role; matching-purpose `ADMITTED` decision effective/known and non-superseded at DecisionTime; every source Outcome generation strictly earlier |
 | `context_assessment` | typed Regime/ETF/Theme/Capital state | unique decision run/kind/scope; state/status/evidence |
 | `context_metric` | typed metric supporting Context | unique assessment/metric; value/status/evidence |
 | `signal` | setup assertion for one Candidate | unique decision run/candidate/signal kind/version |
-| `forecast` | Target/model-bound forecast envelope | unique decision run/candidate/target/model version |
+| `forecast` | Target/checkpoint-bound forecast envelope | unique Decision Run/commitment/forecast kind; no Model requirement |
 | `forecast_estimate` | checkpoint/metric estimate and uncertainty | unique forecast/checkpoint/estimate kind; calibration status |
+| `forecast_model_binding` | optional model-backed Forecast branch | unique Forecast and concrete Model Version known by DecisionTime whose training Outcome generations are strictly earlier; absent for rules/heuristics, never nullable placeholder; later Model admission remains subject-specific |
 | `opportunity` | exact decision evidence binding; never Risk authorization | unique decision run/candidate/strategy version; required FK consistency; no `risk_decision` FK |
 | `thesis` | immutable falsifiable thesis revision | opportunity/revision unique; status follows typed lifecycle |
 | `thesis_condition` | entry/hold/invalidation/exit evidence condition | unique thesis/ordinal; typed condition and evidence requirement |
@@ -202,16 +225,24 @@ Authority rather than independently reconstructed by Research.
 | `risk_decision` | accepted/rejected/unknown authorization | unique proposal/account/policy/decision time; versioned account evidence |
 | `risk_reason` | typed binding/limit result | unique decision/rule/instrument; observed/limit/status/evidence |
 
-### Outcome and Attribution
+### Market Outcome, TradeOutcome and Attribution
 
 | Table | Purpose | Lifecycle and key constraints |
 |---|---|---|
-| `outcome` | Target-bound factual settlement envelope | unique decision subject/target; independent dimension statuses |
-| `outcome_observation` | exact Decision/path/checkpoint observation | unique outcome/checkpoint/role; market revision/evidence/status |
-| `outcome_metric` | return/MFE/MAE/barrier/economic metric | unique outcome/metric; status/value/units and dependency checks |
-| `outcome_reason` | typed unavailable/partial/failed reason | unique outcome/dimension/reason/source |
-| `attribution_run` | declared attribution basis and reconciliation total | unique outcome/policy/revision; status/total |
-| `attribution_line` | dimension contribution | unique run/dimension/member; value/status; sum/remainder rule |
+| `market_target_outcome` | stable subject for one commitment | unique required Decision Target Commitment; created by factual settlement only, never by Decision opening |
+| `market_target_outcome_revision` | append-only full settlement snapshot | unique Outcome/revision ordinal and request hash; observation/knowledge cutoffs, source-roster/hash, aggregate path/availability/finality states; immediate same-Outcome supersession and one leaf only |
+| `market_target_outcome_source` | exact relational source roster for one revision | unique revision/role/ordinal; closed role with exactly one concrete Market bar/fact/corporate-action/session/gap/capture FK shape; no `(kind,id)` or manifest lineage |
+| `market_target_outcome_observation` | exact path/checkpoint observation | unique revision/Target checkpoint/role; value, availability and finality states separate; event/source times and concrete same-revision Outcome source FK |
+| `market_target_outcome_metric` | return/MFE/MAE/barrier metric | unique revision/declared metric/checkpoint; value, availability and finality states separate; typed value/unit and concrete observation dependencies |
+| `market_target_outcome_metric_observation` | exact observation dependencies of a metric | unique metric/observation/role; both rows belong to the same revision; full Target-declared dependency set reconciles |
+| `market_target_outcome_reason` | typed per-dimension unavailable/partial/failed reason | unique revision/dimension/reason/source; binds exact checkpoint/metric/source where applicable |
+| `market_attribution_run` | declared Market Outcome attribution basis | unique Outcome revision/policy; status/total/reconciliation rule |
+| `market_attribution_line` | Market dimension contribution | unique run/dimension/member; value/status; sum/remainder rule |
+| `trade_outcome` | Fill/Position-derived realized trade revision | stable account/instrument episode key; concrete opening/closing effective Fill roots, typed same-episode supersession, fees/cost/path window; no Decision Target Commitment subject |
+| `trade_outcome_fill_binding` | exact effective Fill lineage | unique TradeOutcome/effective Fill revision; complete episode roster and quantity/cost basis reconcile from zero exposure back to zero |
+| `trade_outcome_metric` | typed PnL/return/cost/path metric | unique TradeOutcome/metric; value/status/unit and Fill/path evidence constrained |
+| `trade_attribution_run` | declared TradeOutcome attribution basis | unique TradeOutcome/policy/revision; status/total/reconciliation rule |
+| `trade_attribution_line` | Trade dimension contribution | unique run/dimension/member; concrete Fill Allocation binding where sleeve-scoped; value/status; sum/remainder rule |
 
 ### Execution and Account
 
@@ -234,8 +265,10 @@ Initial views include `current_market_fact`,
 `current_classification_membership`, `current_universe`,
 `candidate_funnel`, `current_position`, `current_strategy_sleeve`,
 `decision_dossier`, `run_trace`, `artifact_integrity_status`, and
-`qualification_floor_matrix`. A view has no independent writer or retention
-contract.
+`research_qualification_floor_matrix`. The unique unsuperseded
+MarketTargetOutcome revision may also be exposed as a convenience view. A view
+has no independent writer or retention contract and never becomes revision
+Authority.
 
 ### Physical key and index baseline
 
@@ -251,10 +284,14 @@ The baseline DDL must include, at minimum:
 | session resolution | unique `(exchange_code, session_date)` plus UTC-boundary lookup |
 | Universe/Eligibility | unique revision/member and assessment policy/instrument/time; indexes for status funnels |
 | Candidate | unique Set/instrument and Set/population-source; non-unique Set/rank and disposition/rank indexes; score-component Candidate and Feature lookups |
+| Target commitment | unique Decision Run/Target roster and Candidate/requested-Target commitment plus composite Candidate Set integrity; reference status/due indexes; later concrete Run/Research-Qualification binding lookup |
+| Partition roster/access | unique partition/commitment and member/access ordinal; Decision and Outcome-window range indexes; Locked-OOS first-access lookup |
+| Evaluation | Run/Partition/protocol lookup; exact access/Outcome-revision observation binding; declared metric/slice and metric-member completeness |
 | evidence graph | child/role and parent reverse indexes; no self-edge |
-| qualification | unique subject/purpose/revision; policy-floor/result completeness indexes |
+| Research Qualification | Assessment/Policy/revision uniqueness; policy-floor/result/evidence completeness indexes |
 | Decision dossier | Decision Run foreign keys plus Candidate/instrument indexes |
-| Outcome settlement | unique decision subject/Target; checkpoint/metric status and unsettled-work indexes |
+| Market Target Outcome settlement | unique commitment and request hash; unsuperseded revision, due checkpoint/metric state, source-roster reverse indexes and metric-observation dependency indexes |
+| TradeOutcome | closed Position-episode and effective Fill/allocation lookup; metric-status indexes |
 | Fill projection | account/instrument/execution-time sequence; unique external execution/revision; correction-root lookup |
 | reconciliation | account/epoch/observation and unresolved-difference partial index |
 | artifact integrity | unique content hash; locator, unverified/mismatch and GC-grace partial indexes |
@@ -267,8 +304,9 @@ table count, determine later covering indexes.
 
 - Immutable/append-only: captures, Market revisions, Universe revisions/members,
   policies/rules, Candidate Sets, definitions, partitions, Experiments, Model
-  Versions, Evidence, Assessments, Qualification decisions/results, Decisions,
-  Outcomes, Attribution, Fills/corrections, basis events, observations,
+  Versions, Evidence, Research Assessments/Qualification decisions/results,
+  Decision Target Commitments/references, Outcome revisions/children,
+  TradeOutcomes, Attribution, Fills/corrections, basis events, observations,
   reconciliation results and audit.
 - Guarded lifecycle mutation: Run, Step, live Attempt lease/heartbeat,
   Command Receipt pending-to-terminal, Execution Intent and schedule enablement.
@@ -476,31 +514,76 @@ separate downstream facts. Candidate Set existence does not depend on Decision
 Run, Target, Outcome, Model/ModelVersion, Evidence, Assessment, Qualification,
 or a later-context placeholder.
 
-## 6. Target, Horizon, Outcome, MFE/MAE, and availability
+## 6. Target commitment, Outcome, Partition access, and realized-fact port
 
 A `target_definition` freezes:
 
-- Decision reference rule;
-- exchange/session resolver;
-- horizon meaning;
-- ordered `target_checkpoint` grid;
-- allowed price basis;
-- path completeness rule;
-- required metrics and units;
-- missing/placeholder/suspension/corporate-action policy;
-- semantic content hash.
+- stable code/version/content hash and instrument scope;
+- Decision-reference role and exact session/time/grid rule;
+- exchange/session resolver, horizon meaning and observation window;
+- ordered `target_checkpoint` observation/path grid;
+- allowed price basis and corporate-action policy;
+- path completeness, required metric/unit, availability and finality rules;
+- missing/placeholder/suspension and ambiguous-barrier policy;
+- deterministic algorithm plus exact code/config Artifact identities.
 
 A horizon is an evaluation interval, never an automatic holding or exit rule.
+All checkpoints, metric definitions, thresholds, roles, units, required
+dimensions and observation-dependency shapes are relational children, not JSON
+or Artifact-manifest business Authority.
 
-### Frozen initial Decision reference
+### Ex-ante Decision Target commitment
 
-Research Target/Outcome, not Market, owns the resolver that applies this rule.
-Market exposes only generic exact/as-of sessions, bars, facts, gaps, and their
-correctness/lineage. It has no permanent `decision_reference_1455` business
-interface.
+`OPEN_DECISION_RUN` is a mandatory Runtime Step after
+`BUILD_CANDIDATE_SET` and before `ASSESS_CONTEXT`. One transaction writes the
+immutable `decision_run`, the complete Candidate × requested Target
+`decision_run_target`/`decision_target_commitment` roster, and one
+`decision_reference_observation` for every commitment. Reconciled counts and a
+roster hash prove the requested Target set even for an empty Candidate Set and
+prove that `SELECTED`, `RANKED_NOT_SELECTED`, and `UNRANKABLE` Candidates all
+receive the same ex-ante treatment.
 
-For the retained T+1 10:30 research target, the future Target resolver requires one
-same-session Asia/Shanghai five-minute bar ending exactly 14:55 with
+Once the real Research Qualification parent exists, the qualified form of this
+command also freezes one `decision_run_research_qualification_roster` and its
+complete zero-or-more members. The root count/hash proves an intentional empty
+roster; every member uses a concrete accepted Qualification decision known by
+DecisionTime and proves that all source Outcome Decision generations are
+strictly earlier. WP-09 creates neither relation nor a future nullable column;
+the later owning work package adds the real parent-dependent relations and
+command behavior together.
+
+The commitment logical identity is
+`(candidate_id, decision_run_target_id)`. `decision_run_target` has the unique
+Decision Run/Target identity; composite FKs also carry Candidate Set so a
+Candidate from another Set or a Target outside the requested roster cannot
+bind. The reference
+observation has independent value, availability and finality states and binds
+exactly one concrete Decision-visible `market_bar_revision` or `source_gap`
+shape. Its `known_at` cannot exceed DecisionTime. A later Provider correction
+never mutates this record of what the Decision used. No future value or Outcome
+placeholder is written while opening the Decision Run.
+
+Reference value status is `COMPLETE`, `UNAVAILABLE`, or `FAILED`; availability
+is `AVAILABLE`, `UNAVAILABLE`, or `FAILED`; finality is independently `UNKNOWN`,
+`PROVISIONAL`, or `FINAL`. State/value/source shape constraints fail closed.
+
+Target Definition owns the rule. `OpenDecisionRun` applies its initial-reference
+part through a narrow Market query; Outcome later applies its path/checkpoint/
+metric part. Market exposes only generic exact/as-of sessions, bars, facts,
+gaps, and lineage; it has no permanent `decision_reference_1455` interface.
+
+Relational creation order proves that no Outcome row predates its commitment,
+but does not by itself prove a prospective decision. Decision Run therefore
+freezes its inherited Runtime clock mode and PostgreSQL
+`commitment_recorded_at`. A `PROSPECTIVE` Partition admits a member only when
+the Run used a live clock, the commitment was recorded before that Target's
+earliest Outcome-window event, and all Decision inputs still satisfy the
+DecisionTime knowledge cutoff. Historical/replay commitments remain valid for
+engineering or declared historical Evaluation but can never acquire a
+Prospective evidence ceiling.
+
+For the retained T+1 10:30 research target, the Target reference rule requires
+one same-session Asia/Shanghai five-minute bar ending exactly 14:55 with
 `RAW_UNADJUSTED` basis, finite positive OHLC, legal price structure, verified
 source/hash, and non-placeholder/non-suspended status. Zero matches is
 `UNAVAILABLE`; conflicting/invalid matches are `FAILED`. Daily bars,
@@ -509,15 +592,42 @@ never supply the value.
 
 ### Independent state dimensions
 
-Every Outcome stores these independently:
+`MarketTargetOutcome` is the sole market-label aggregate. Its subject is exactly
+one `decision_target_commitment`; it is not a trade, Forecast, Model,
+Evaluation, Qualification, or Strategy result. A stable root is created only
+when a due settlement produces a factual complete, partial, unavailable, or
+failed result. Each settlement appends a full
+`market_target_outcome_revision` snapshot.
 
-- `decision_reference_status`;
-- `outcome_window_status`;
-- each `outcome_observation.status`;
-- each `outcome_metric.status`.
+Every revision stores these independently:
 
-Closed status: `COMPLETE`, `PARTIAL`, `UNAVAILABLE`, `FAILED`. `PARTIAL` is
-valid for a path or diagnostic family, not an exact point reference.
+- immutable `decision_reference_observation.status`;
+- aggregate `outcome_window_status`;
+- each `market_target_outcome_observation.status`;
+- each `market_target_outcome_metric.status`;
+- aggregate and per-observation/metric availability/finality;
+- each typed `market_target_outcome_reason` failure or gap.
+
+The revision's complete source roster lives in
+`market_target_outcome_source`, whose closed roles use exactly-one concrete
+Market/PIT FK shapes. Observations bind same-revision source rows. Every metric
+binds one `target_metric_definition`, and
+`market_target_outcome_metric_observation` records and reconciles the exact
+same-revision observations used. Hashes verify these rows; they never replace
+them.
+
+Persisted Outcome-window status is `UNAVAILABLE`, `PARTIAL`, `COMPLETE`, or
+`FAILED`. `NOT_DUE` is a due-work query result over commitment plus Target and
+creates no Outcome row. Checkpoint/metric status is independently typed.
+Finality is `UNKNOWN`, `PROVISIONAL`, or `FINAL` and never aliases completeness.
+`PARTIAL` is valid for a path or declared partial-path metric, not an exact
+point reference. Metric value presence is constrained by its own status;
+missing is never zero.
+
+Observation and metric value status is `COMPLETE`, `PARTIAL`, `UNAVAILABLE`, or
+`FAILED` where its Target shape permits partiality. Availability is separately
+`AVAILABLE`, `UNAVAILABLE`, or `FAILED`; reasons bind the exact dimension they
+explain.
 
 For the initial T+1 path, the next session is calendar-resolved and the exact
 09:30–10:30 five-minute grid is required. Every observation retains the exact
@@ -532,15 +642,104 @@ Decision reference.
 - same-bar barrier ordering may remain partial while MFE/MAE are complete;
 - missing/suspension is not zero; price-limit observation is not fillability.
 
-`outcome_metric` stores typed metric kind, status, numeric value, unit, reference
-observation, path requirement, and calculation version. Value must be null for
-`UNAVAILABLE`/`FAILED`. `outcome_reason` uses a closed reason vocabulary.
-`available_at`/`settled_at` cannot precede required source visibility. No Outcome
-row rewrites a Decision, Forecast, or Target Definition.
+`market_target_outcome_metric` stores typed metric kind, status, numeric value,
+unit, exact observation dependencies and calculation identity. Value must be
+null for `UNAVAILABLE`/`FAILED`. Every observation keeps a same-revision Outcome
+source FK whose closed shape reaches an exact Market revision or Source Gap. No
+Outcome row rewrites a Decision, Forecast, Target Definition, Dataset,
+Candidate, or Feature cell.
+
+### Incremental settlement, correction, and replay
+
+The unique settlement request hash covers commitment, `observation_cutoff`,
+`knowledge_cutoff`, exact Market/PIT source revision roster, calendar,
+algorithm, and code/config identities. Exact retry returns the original
+revision. `PARTIAL → COMPLETE`, Provider correction, changed finality, or repaired
+coverage appends a new full snapshot whose `supersedes_revision_id` references a
+revision of the same root and immediately preceding ordinal. Unique root/ordinal,
+root/request-hash and non-null superseded-revision keys plus root/leaf locking
+permit one linear leaf only; every old revision and child fact remains
+immutable.
+
+An Evaluation observation keeps its exact revision FK. A correction may trigger
+a new Evaluation/Assessment/Qualification revision but never edits or silently
+promotes a result that consumed the older Outcome.
+
+`observation_cutoff` is the latest event time admitted to the Outcome window.
+`knowledge_cutoff` is the latest source `known_at` admitted to that settlement
+or replay. Queries enforce both. The original DecisionTime applies only to the
+already-frozen Decision reference. Settlement or retrieval time is never stored
+as DecisionTime and never invents retrospective source availability.
+
+Replay reloads the exact Target, commitment, reference, calendar, cutoffs,
+Market/PIT revisions/gaps, algorithm, and code/config identities. It cannot call
+a replacement Provider or query current/latest facts. Success requires
+`matched=true` with zero identity, state, value, source, hash, or reason
+mismatches.
+
+### Research Partition and first Outcome access
+
+`FreezeResearchPartition` writes an immutable root and its complete non-empty
+`research_partition_member` commitment roster atomically, before reading any
+Outcome. The root freezes one Target Definition, purpose (`DISCOVERY`, `FIT`, `VALIDATION`,
+`LOCKED_OOS`, or `PROSPECTIVE`), Decision and Outcome-window bounds, exact
+calendar, purge-before/purge-after, embargo end, roster count/hash, and
+code/config Artifacts. Range/exclusion constraints and application
+reconciliation prevent prohibited overlap or leakage after expanding Outcome,
+purge, and embargo windows.
+
+`research_partition_outcome_access` appends every exact Outcome revision exposed
+to an Evaluation Run. Access ordinal is monotonic per member; ordinal one is the
+Authority for first access. Locked-OOS status therefore comes from an immutable
+pre-access roster plus Experiment binding created while the access count is
+zero. A reused already-accessed Partition may support diagnostics but cannot
+regain Locked-OOS/Prospective status. This proof never comes from a mutable
+boolean or Artifact manifest.
+
+The ledger proves system access order, not that a human lacked external
+knowledge of an already-realized period. Formal OOS still requires its separate
+operator/process evidence floor.
+
+### Narrow read-only Outcome port
+
+Research, Model, Evaluation, Calibration, Forecast evaluation, Shadow economics,
+and Qualification consume realized market facts only through the Outcome
+Application query port. Its DTO contains commitment/reference identity, exact
+revision, observation/metric/reason states and values, source revision IDs,
+cutoffs, availability, finality, and hashes. It exposes no bar, Provider,
+repository, SQL, label-builder, or mutation interface. Research records
+Partition access and Evaluation observations in the same short transaction that
+resolves the exact revisions; no DTO leaves the handler before that commit.
+Outcome rows remain read-only, exact retry returns the same access IDs, and pure
+calculation later binds metrics to those committed observations. Research cannot
+recalculate or persist a second label truth.
+
+Input acquisition is complete over the Partition roster: every member receives
+one exact Outcome revision, including a revision whose factual result is
+`UNAVAILABLE` or `FAILED`. `NOT_DUE`, an absent due settlement, ambiguity, or a
+missing member fails acquisition; it cannot become an omitted sample. A
+terminal Evaluation therefore reconciles its observation count to the positive
+Partition member count before any metric may finalize.
+
+Evaluation Run lifecycle is one-way: `OPEN` freezes Experiment/Partition/
+Protocol before access; `INPUTS_ACQUIRED` means the complete access and
+observation rosters committed; `COMPLETED` means every declared metric/slice and
+its full observation roster committed; `FAILED` is terminal from either prior
+state. There is no reopen or input replacement. `NOT_ESTIMABLE` is a typed
+metric result inside a valid completed Run, never a way to omit an input.
 
 ## 7. Evidence, Assessment, and Qualification semantics
 
-These are three separate axes.
+Evaluation composes the label-free Dataset/Candidate/Target chain with a frozen
+Partition and exact Outcome revisions; it never writes posterior values back to
+Dataset, DatasetSource, Candidate, or Feature facts. Every Evaluation Run
+requires an Experiment Run, one bound Research Partition, and one predeclared
+Evaluation Protocol. It does not require a Model. A Model Version can exist only
+after a completed `MODEL_TRAINING` Evaluation Run; model-backed Forecast is a
+concrete optional child branch, not a nullable Model placeholder.
+
+Evidence, Assessment, and Research Qualification are three separate axes with
+concrete FK chains.
 
 ### Evidence Class
 
@@ -566,7 +765,7 @@ fixture cannot become Provider or Prospective proof.
 
 ### Assessment Status
 
-`assessment.status` is exactly:
+`research_assessment.status` is exactly:
 
 - `PENDING`
 - `SUPPORTED`
@@ -591,9 +790,25 @@ Named proof classes are scopes, **not an ordinal scalar**:
 - `PROSPECTIVE` — decisions frozen before later outcomes under a live clock;
 - `PRODUCTION` — purpose-specific operational/risk/admission authorization.
 
-A Qualification Decision declares subject, purpose, requested proof class,
-status, policy revision, evidence cutoff, and supersession. It has one row for
-every required floor:
+`PRODUCTION` is reserved for a later subject-specific admission owner.
+`research_qualification_decision` cannot grant Product, Provider, Model,
+Strategy, Execution, broker, or Production admission; it owns only its declared
+Research purpose.
+
+`research_qualification_decision.status` is terminal and exactly `ADMITTED`,
+`REJECTED`, `BLOCKED`, `NOT_ESTIMABLE`, `INCONCLUSIVE`, or `FAILED`.
+`ADMITTED` requires every required Policy floor satisfied (or explicitly
+not-applicable only where the Policy allows it). Correction or changed evidence
+creates a typed superseding decision; it never mutates the old status or an old
+Decision Run binding.
+
+A `research_qualification_decision` declares one concrete Research Assessment,
+one Research Qualification Policy, requested proof class, status, evidence
+cutoff, and typed supersession. The Assessment binds one Experiment and a
+complete non-empty roster of its terminal Evaluation Runs, so a decision may
+combine declared Validation, Locked-OOS, Calibration, or Prospective results
+without a cross-Experiment or current/latest lookup. It has one row for every
+policy floor:
 
 - `SOFTWARE_CORRECTNESS`
 - `SOURCE_QUALITY`
@@ -609,14 +824,31 @@ every required floor:
 - `RISK_ADMISSION`
 - `OPERATIONS_RECOVERY`
 
-Each result FK-binds one required `qualification_policy_floor`. Floor status
-is `SATISFIED`, `MISSING`, `REJECTED`, `BLOCKED`, or
-`NOT_APPLICABLE` with exact Evidence. Overall qualification cannot exceed its
-weakest required floor. `PIT_INCOMPLETE` is represented explicitly as
-`TEMPORAL_PIT = MISSING/REJECTED` under an Exploratory assessment; it is never
-flattened into “evidence exists.” A Prospective capture can still be
+Each result FK-binds one required `research_qualification_policy_floor`; every
+supporting row FK-binds a concrete `evidence_item`. Floor status is `SATISFIED`,
+`MISSING`, `REJECTED`, `BLOCKED`, or `NOT_APPLICABLE`. Overall qualification
+cannot exceed its weakest required floor. `PIT_INCOMPLETE` is represented
+explicitly as `TEMPORAL_PIT = MISSING/REJECTED` under an Exploratory assessment;
+it is never flattened into “evidence exists.” A Prospective capture can still be
 PIT-incomplete for historical claims. Production is never inferred from a lower
 class or from successful Runtime execution.
+
+Every `evidence_item` requires one Evaluation Run and one immutable Artifact;
+class, origin, claim direction, observation time, hash and proof ceiling are
+relational. `RecordEvidence` freezes the item and its complete dependency
+count/hash/edge roster together; `evidence_dependency` links only concrete
+Evidence Items and is a validated DAG. `AssessResearch` freezes the Assessment
+with its complete Evaluation and Evidence rosters;
+`research_assessment_evaluation` freezes the complete terminal
+Run roster; `research_assessment_evidence` freezes the complete Evidence set
+and requires every item's Run in that roster. Floor-evidence rows bind the
+concrete subset used for each decision floor. `DecideResearchQualification`
+writes its terminal decision, every Policy floor result, and the complete
+floor-evidence vector atomically.
+There is no `(kind, id)`, JSON business Authority, weak reference, or future
+nullable subject column. Future Provider, Model, Strategy, Execution, and
+Production qualification require separate subject-specific relations in their
+own work packages.
 
 ## 8. Artifact/PostgreSQL consistency
 
