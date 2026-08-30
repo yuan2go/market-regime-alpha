@@ -65,7 +65,7 @@ broker, Production, or trading evidence.
 | Outcome | historical/shadow/daily/strategy settlements | Outcome & Attribution | `NOT_STARTED` |
 | Attribution | current performance/evaluation diagnostics | Outcome & Attribution | `NOT_STARTED` |
 | Research Definition | many legacy dataset/feature/research owners remain canonical; isolated target Decision-input Dataset/DatasetSource/FeatureDefinition Authority is implemented and engineering-verified | Research & Qualification | `IMPLEMENTED_DRAFT / EXIT_GATE_PASS / NOT_CUT_OVER` |
-| Research Evaluation | current experiment/campaign/evaluation owners; next target dependency order is not yet authorized | Research & Qualification | `NOT_STARTED / ORDER_NOT_AUTHORIZED` |
+| Research Evaluation | current experiment/campaign/evaluation owners; target implementation remains absent | Research & Qualification | `NOT_STARTED` |
 | Qualification | current model/PIT/provider/OOS/calibration owners | Research & Qualification | `NOT_STARTED` |
 | Prospective | current freeze/settlement/attestation mechanics; no sustained proof | ordinary Runtime + Decision/Evidence/Outcome | `NOT_STARTED` |
 
@@ -75,9 +75,10 @@ capability. Evidence ceilings remain as declared by immutable reports; no row
 in this matrix establishes Formal PIT, qualified Provider data, Formal OOS
 Alpha, Prospective value, Production, or broker authority.
 
-Every target row after Candidate remains unordered pending the separately
-authorized post-Candidate dependency review. This matrix neither selects
-Research Evaluation nor Decision/Outcome as the next implementation stage.
+This exact-SHA implementation matrix does not restate or select future work.
+Post-Candidate dependency order is owned only by the current
+[Roadmap](Roadmap.md); changing design order does not make an absent capability
+implemented.
 
 Future generation must derive current ownership and target acceptance gates
 read-only. A manually changed label is not a promotion mechanism.

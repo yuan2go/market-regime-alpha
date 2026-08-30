@@ -26,13 +26,19 @@ Foundation
 → Selection Core: Universe/Eligibility
 → minimal Research Definition substrate required by Candidate
 → Candidate closure
-→ post-Candidate dependency review across Target/Research/Model/Decision/Outcome/Evaluation/Evidence/Qualification
+→ WP-08 post-Candidate dependency and Outcome Authority design closure
+→ WP-09 Target commitment and Decision Run
+→ Market Target Outcome
+→ Research Partition/Experiment → Evaluation
+→ Evidence/Research Assessment/Research Qualification
+→ optional Model/Calibration → remaining Decision Support
+→ Execution/TradeOutcome/Attribution → Runtime/CLI Cutover
 ```
 
-WP-07 declares no order after that review. Research/Decision/Outcome,
-Execution/Account, Runtime/CLI Cutover, and Legacy deletion/qualification remain
-unauthorized unordered work until the review publishes an approved dependency
-map.
+WP-08 authorizes this dependency order, not concurrent implementation. WP-09 is
+the sole next coding package. Every later stage remains blocked by its
+predecessor and own exit gate. Runtime/CLI Cutover and Legacy deletion require
+separate explicit authorization.
 
 Do not resume the former Alpha Proof Roadmap as an engineering program. Existing
 protocols, results, and negative evidence remain immutable provenance. New
@@ -99,16 +105,30 @@ Authority. They may summarize canonical facts but cannot mutate or promote them.
 - Market fact, inferred Context, Universe membership, Eligibility, Candidate,
   Signal, Forecast, Opportunity, Thesis, Portfolio, Risk, Fill, Position,
   Outcome, Attribution, Assessment, and Qualification remain distinct.
-- Universe → Eligibility → Candidate completes before same-run Context. Context
-  cannot feed back into that same Candidate Set. Candidate consumes the immutable
+- Universe → Eligibility → Dataset → Candidate → `OPEN_DECISION_RUN`
+  completes before same-run Context. Context cannot feed back into that same
+  Candidate Set or Target commitment. Candidate consumes the immutable
   Decision-input Dataset and Feature Definition identities through a
   Selection-owned port; Candidate Set existence never depends on a Decision Run,
   Model Version, Target, Outcome, Evidence, Assessment, or Qualification.
-- Candidate closure authorizes no later Research or Decision implementation.
-  Before the next checkpoint, audit the real dependency graph across Target
-  Definition/Checkpoint, Research Partition, Experiment, Model, Decision Run,
-  Outcome, Evaluation, Evidence, and Qualification. Research must not construct
-  a second realized-label truth that competes with future Outcome Authority.
+- `OPEN_DECISION_RUN` must freeze the explicit requested Target roster, the
+  complete Candidate × Target commitment roster, and independent Decision
+  references before Outcome visibility. It creates no Outcome placeholder.
+- Market Target Outcome is the only market-label Authority. Research, Model,
+  Evaluation, Calibration, Forecast evaluation, Shadow economics, and
+  Qualification may consume realized facts only through its narrow read-only
+  port; they do not reread bars or construct a second label truth.
+- Market Target Outcome and effective-Fill/closed-Position-derived TradeOutcome
+  are different concrete subjects. No generic Outcome or Qualification subject
+  registry is permitted.
+- Feedback crosses generations only:
+  `Outcome(n) → Evaluation(n) → Qualification(n) → DecisionRun(n+1)`.
+  The later Run uses a concrete
+  `decision_run_research_qualification_roster` plus member FK binding whose
+  source is known by the new DecisionTime and whose Outcome generations are
+  strictly earlier; prose or a current/latest lookup is not a binding.
+  Model is an optional post-training branch, never a prerequisite for Candidate,
+  Target, Outcome, ordinary Evaluation, Evidence, or Research Qualification.
 - Opportunity contains decision input evidence, not a Risk authorization. The
   sole Risk Decision follows a complete Portfolio Proposal.
 - Target horizon is not a holding or exit time; Exit is not inverse Entry.

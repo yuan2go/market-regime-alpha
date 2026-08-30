@@ -13,19 +13,20 @@ implemented or changing business source, migrations, fixtures, or test semantics
 
 ## 1. Current structural facts
 
-At starting SHA `0382dad416d6d50d1eea0bda1603d7c359d65274`:
+Exact source-module, test, CLI, migration, relation, and tree-object counts are
+volatile implementation facts and live only in
+[Current State](../status/Current-State.md) or exact-SHA Verification records.
+The durable convergence facts are:
 
-- 673 Python modules and approximately 298,278 source lines;
-- 499 test files and approximately 115,589 test lines;
-- 1,201 dataclasses, 415 enums, and 15 static import cycles;
-- six installed CLIs with approximately 140 subcommands;
-- importing CLI help loads roughly 500 project modules;
-- 67 modules write artifacts and 57 modules control transactions;
-- 106 PostgreSQL migrations and 283 expected tables;
+- the Legacy migration line through 106 and its 283-table disposition remain
+  current business implementation until Hard Cutover;
 - nested Continuous, Controlled Operation, Canonical Lifecycle, State,
-  Decision, Historical, Research Shadow, and Strategy Shadow journals/owners;
+  Decision, Historical, Research Shadow, and Strategy Shadow journals/owners
+  remain reachable;
 - repository-wide factories and compatibility paths still participate in
-  composition and replay.
+  composition and replay;
+- the unreleased target draft physically stops at Candidate and has no
+  post-Candidate owner or Runtime dispatch.
 
 The current all-day call chain is recovered from code, not documentation:
 
@@ -59,8 +60,9 @@ persistence shape that the target removes.
 | `portfolio` and Portfolio parts of Strategy Shadow | allocation and Risk kernels | `decision` Portfolio/Risk | **MERGE**, simulated ledgers become Evaluation artifacts |
 | `execution` and trading-lifecycle application | human Intent, observed Fill, allocation, reconciliation | `execution/{domain,application,ports}` | **MERGE**, one execution command path |
 | `position` | Fill projection, T+1, Thesis/holding/exit invariants | Position query in `execution`; Thesis/Strategy in `decision` | **SPLIT BY OWNER**, no mutable Position book |
-| Shadow/Prospective settlement, Target labels and Strategy/Path Outcome producers | factual post-Decision observations, metrics and attribution | `outcome/{domain,application,ports}` | **MERGE**, one factual Outcome/Attribution owner |
-| Legacy `research`, `evaluation`, research-evaluation/validation/corpus application | Dataset, Target, Experiment, Evaluation, evidence and qualification rules | permanent target `research_qualification/{domain,application,ports}` | **MERGE BY PROVEN OWNER**, beginning only with Decision-input Dataset/DatasetSource/FeatureDefinition; later evidence/qualification reads Outcome through a port |
+| Shadow/Prospective settlement, Target labels and Strategy/Path Outcome producers | factual post-Decision observations and Market attribution | `outcome/{domain,application,ports}` | **MERGE**, one revisioned Market Target Outcome per Decision Target Commitment; all label consumers use its read-only port |
+| `evaluation/lifecycle.py` plus Fill/Position result readers | realized trade PnL/return/path facts | separate TradeOutcome branch in `outcome/{domain,application,ports}` | **KEEP SEMANTICS / MOVE**, concrete effective Fill/allocation and closed Position-episode subject; never merge with Market Target Outcome |
+| Legacy `research`, `evaluation`, research-evaluation/validation/corpus application | Dataset, Target, Partition, Experiment, optional Model, Evaluation, evidence and qualification rules | permanent target `research_qualification/{domain,application,ports}` | **MERGE BY PROVEN OWNER**; Evaluation binds label-free Dataset/Candidate/Partition to exact Outcome revisions through the port; no bars-to-label writer |
 | `evidence` | content identity/envelope logic | `research` Evidence types plus `runtime` Artifact metadata | **SPLIT**, no generic evidence payload registry |
 | `persistence` and repository factory | PostgreSQL adapters and transactions | `infrastructure/postgres/{repositories,queries,migrations}` | **REWRITE**, remove mega-factory/table CRUD |
 | `cli` | operator entry points | `interfaces/cli` | **REWRITE** into one `mra` command tree |
@@ -70,7 +72,92 @@ persistence shape that the target removes.
 | `dividend_t/**` | legacy calculation/characterization fragments | retained Feature/Strategy invariants only | **DELETE** after independent target coverage |
 | old `backtesting`/web/scheduler planes already absent | no current consumer | none | **REMAIN ABSENT** |
 
-## 3. Legacy deletion contract
+## 3. Post-Candidate writer/reader convergence
+
+The WP-08 repository-wide search found every current path that durably or
+transiently derives realized return, MFE, MAE, barrier, path, or trade labels.
+The [WP-08 design record](../references/WP-ARCHITECTURE-REFOUNDATION-08-Post-Candidate-Authority-Design.md)
+retains the call-chain evidence and exact future FK map.
+
+| Current writer/calculator | Current downstream reach | Target owner and deletion condition |
+|---|---|---|
+| `application/controlled_operation/outcome_evidence.py` | Prospective settlement package and replay | **MERGE** Decision reference/checkpoint/return/MFE/MAE into Market Target Outcome; Artifact retains bytes only; delete writer after exact replay parity |
+| `application/controlled_operation/prospective_outcome.py` | Shadow settlement, qualification and Runtime queries | **MERGE** checkpoints/availability/barriers into the same Outcome revision command; delete independent settlement tables/readers after consumer cut |
+| `application/research_evaluation/target_semantics.py` and `targeted_outcome.py` | Evaluation panel, calibration, Formal OOS, model training, Shadow economics | **KEEP ONE PURE KERNEL / MOVE** behind Outcome Application, then delete every Research writer/property label path and bars input |
+| `application/historical_corpus/historical_target_semantics.py` | Historical materializer, correctness comparison and replay | **CHARACTERIZE**, use as replay parity evidence until the Outcome kernel covers exact semantics; never target Authority |
+| `application/historical_corpus/decision_materializer.py` | Historical labels, Forecast samples, strategy economics/performance and evidence | **SPLIT** adapter registration/commitment from Outcome settlement; consumers move to the Outcome port; delete local label/forecast-sample path |
+| `application/historical_corpus/alpha_correctness.py` and `phase_ii_service.py` | independent Target reconstruction, correctness/failure evidence and execution-proxy diagnostics | **MERGE REPLAY / SPLIT DIAGNOSTICS**; exact source-bar recomputation becomes Outcome replay, while execution proxies become Evaluation diagnostics and never Fill proof |
+| `application/historical_corpus/alpha_diagnostics.py` and `external_validation.py` | Target/gross-return diagnostics and external-validation evidence | **DELETE TARGET-RETURN TRUTH**; Evaluation combines exact Outcome with a declared hypothetical-execution proxy |
+| `application/research_validation/free_historical_samples.py` | Historical samples, Forecast and qualification | **DELETE AFTER ADMISSION** of exact archived facts through Outcome; no local return/MFE/MAE/barrier calculation remains |
+| `candidates/rehearsal_targets.py` and `candidates/rehearsal_opportunity_targets.py` | direct next-session close return plus rehearsal Opportunity Target artifacts | **PRESERVE TARGET IDENTITY / DELETE VALUES**; read exact Outcome revisions |
+| `research/tencent_composite_materialization.py` | PRR composite materialization and artifacts | **PRESERVE TARGET IDENTITY / DELETE VALUES**; read exact Outcome revisions |
+| `research/mr1_morning_pop.py` | MR1 research results | **PRESERVE MR1 TARGET CONTRACT / DELETE VALUES**; read exact Outcome revisions |
+| `daily_decision/outcome.py` | daily MR1 Outcome Artifact | **MERGE** into named Target resolver/Outcome command, then delete Artifact-as-label Authority |
+| `strategies/entry/materialization.py` | future-bar/suspension barrier-first, timeout, missing and ambiguous Entry path observations | **PRESERVE ENTRY RULE / DELETE LABEL AUTHORITY**; exact Target barrier facts arrive through Outcome/Evaluation |
+| `strategies/path_outcomes.py` | `strategies/feedback.py`, strategy feedback and `strategy_path_outcome` | **DELETE LABEL AUTHORITY**; Evaluation consumes Market Target Outcome; strategy comparison is diagnostic Attribution |
+| `research/mr1_candidate_baselines.py` | exploratory trade/forward return reports | **REPLACE OR DELETE** under declared Evaluation over Outcome; preserve result ceiling/history only |
+| `research/prr_mvp_1.py` | exploratory PRR forward returns | **REPLACE OR DELETE** under declared Evaluation over Outcome; preserve result ceiling/history only |
+| `research/pit_replication_success_v2.py` | PIT replication portfolio-return report | **REPLACE** with declared Evaluation metrics over exact Outcome observations |
+| `dividend_t/memory.py` | future-close setup-memory labels | **DELETE FUTURE-LABEL PATH**; retain only separately characterized pre-Decision Feature semantics, if any |
+| `application/strategy_shadow/contracts.py` and `strategy_shadow/economics.py` | synthetic Fill/Position/exit returns, caller MFE/MAE and scorecards | **MOVE TO EVALUATION/ATTRIBUTION** over Outcome; synthetic fills never qualify for TradeOutcome |
+| `evaluation/lifecycle.py` | rolling trade scorecards | **MOVE TO TRADEOUTCOME**; retain concrete effective Fill roster, zero-to-zero closed Position episode, fees/costs and trade-path evidence; Fill Allocation belongs only to sleeve attribution; prohibit Market Target subject |
+
+The two currently active settlement compositions are:
+
+```text
+continuous-research CLI
+→ ContinuousOutcomeSettlementService
+→ FreeDataSettlementOperator.settle_day
+→ BaoStock 5m capture + outcome Artifact
+→ ResearchShadowOperations.settle
+→ prospective_outcome_settlement + targeted_shadow_outcome(_label)
+→ Research Evaluation panel/enrichment → Path calibration
+
+HistoricalDecisionMaterializer._outcome_stage
+→ historical normalized-bar windows
+→ historical_target_semantics / targeted_outcome
+→ historical_corpus_outcome_label
+→ PathForecastSample / strategy economics / performance
+→ historical_research_evidence / qualification
+```
+
+Their persistence and reader disposition is complete by family:
+
+| Current SQL/Artifact family | Current consumers | Target disposition |
+|---|---|---|
+| `prospective_outcome_settlement`, `outcome_target_protocol`, `outcome_target_definition`, `targeted_shadow_outcome`, `targeted_shadow_outcome_label` | settlement, Runtime query, Shadow, qualification | **MERGE** Target identity and revisioned Market Target Outcome; no dual write/read |
+| `research_evaluation_dataset`, `research_evaluation_dataset_settlement`, `research_evaluation_panel_v2*`, `historical_path_sample_record` | Evaluation, training, calibration, reports | **SPLIT** label-free Dataset from Evaluation observation; latter binds exact Outcome revision |
+| `calibration_partition_binding`, `locked_oos_evidence_consumption`, `locked_oos_raw_evidence_unlock`, `locked_oos_target_observation_consumption`, `frozen_locked_oos_scope` | Calibration/Formal OOS admission | **MERGE** immutable Research Partition/member roster and ordinal Outcome access; delete mutable unlock state |
+| `historical_corpus_partition`, `historical_corpus_outcome_label`, `historical_corpus_outcome_forecast_index` | Historical materializer/replay/Forecast | **SPLIT** physical corpus partition from Research Partition; Outcome owns label and Evaluation owns observation; forecast index becomes replaceable query |
+| `research_model_training_*`, `research_model_artifact`, `research_model_inference_*`, `model_registrations` and governance tables | training/inference/selection | **MERGE AFTER EVALUATION** into optional Model/ModelVersion; ModelVersion requires training Evaluation and Artifact; no other aggregate requires Model |
+| `formal_evaluation_observation_*`, `formal_oos_qualification_decision`, calibration qualification and historical sample qualification | formal metrics and admission | **MERGE** into Evaluation plus subject-specific qualification; raw labels enter only through Outcome port |
+| `research_validation_artifact`, `historical_research_evidence*` | evidence/replay/qualification | **SPLIT** Artifact bytes from concrete Evaluation-bound Evidence/Assessment/Research Qualification FK chain; delete generic payload/weak subject references |
+| `strategy_path_outcome`, `strategy_realized_outcome` | strategy feedback/economics | **SPLIT** Market Evaluation from Fill-derived TradeOutcome; no polymorphic Outcome table |
+
+`postgres_research_model.py`, `postgres_qualification.py`,
+`postgres_calibration_qualification.py`, `path_calibration.py`,
+`strategy_shadow/postgres_observations.py`, `strategy_shadow/economics.py`,
+`formal_evaluation.py`, `ablation.py`, historical materialization/evidence/
+performance, `forecasting/path.py`, `forecasting/conditional.py`,
+`holding_exit_validation.py`, `strategies/feedback.py`, historical
+multi-strategy, and Runtime query code are direct or caller-built label
+consumers. `application/research_evaluation/targets.py`, `target_semantics.py`,
+and `platform/target_evaluation.py` are definition/DTO sources whose useful
+non-calculation vocabulary moves to TargetDefinition/Checkpoint/Metric without
+writer authority. Each consumer must lose bars/path or caller-label construction and
+accept exact Outcome DTOs before its old writer, reader, table, or Artifact
+binding is deleted. Existing replay that merely reloads stored JSON/payload is
+replaced by exact source-FK/cutoff recomputation with `matched=true` and zero
+mismatches.
+
+Current/past-return arithmetic in Feature code remains Decision input rather
+than Outcome. Open-Position mark-to-cost in `position/assessment.py` and
+`strategies/runtime.py` remains a Fill-derived query for later decisions, not a
+Market label or closed TradeOutcome. Strategy Shadow synthetic fills/results
+are Evaluation inputs, never observed Fill evidence. These exclusions do not
+permit any of those paths to publish Evaluation labels.
+
+## 4. Legacy deletion contract
 
 Hard Cutover has no permanent compatibility phase:
 
@@ -91,7 +178,7 @@ a runtime dependency.
 The correctness rules that survive are frozen in the
 [Domain Invariant Catalog](../references/WP-ARCHITECTURE-REFOUNDATION-01-Domain-Invariant-Catalog.md).
 
-## 4. PostgreSQL convergence result
+## 5. PostgreSQL convergence result
 
 The complete ledger classifies every current table:
 
@@ -102,13 +189,13 @@ The complete ledger classifies every current table:
 | DERIVE | 14 | replaceable current/transition/index/summary query |
 | DELETE | 6 | pseudo-RBAC roots, guard rows, or compatibility replay import |
 | **Total** | **283** | complete current catalog |
-| **Target** | **91** | semantic target catalog; not a quota |
+| **Target** | **see sole logical catalog** | semantic destination in Data and Evidence Architecture; mutable target counts stay in exact checkpoint records and are not quotas or cutover claims |
 
 The detailed writer/reader/owner/reason record is the
 [283-table Disposition](../references/WP-ARCHITECTURE-REFOUNDATION-01-Table-Disposition.md).
 Current rows are not migrated.
 
-## 5. Documentation governance
+## 6. Documentation governance
 
 Documents are classified by what they may authoritatively say, not by how many
 historical claims they contain.
@@ -136,7 +223,7 @@ Every generated document/report must display `generated_at`, code SHA, schema
 epoch, query/tool version, source IDs/hashes, and proof ceiling. A generator reads
 canonical data; it has no write credentials.
 
-## 6. Skill and prompt governance
+## 7. Skill and prompt governance
 
 The approved-design audit found three Skills and three persistent reviewer
 prompts. The required repository dispositions are:
@@ -165,7 +252,7 @@ Target Skill contract for `reconcile-branches`:
 No versioned Skill forks, prompt packs, generic implementation Skill, test wrapper
 Skill, per-domain reviewer prompt, or hidden agent instruction tree remains.
 
-## 7. Composition/entry-point deletion gate
+## 8. Composition/entry-point deletion gate
 
 The target is complete only when:
 
@@ -180,7 +267,7 @@ The target is complete only when:
 - the old 106 migrations and 283-table schema do not appear in the target epoch;
 - the worktree is clean after reviewable commits.
 
-## 8. Governance checkpoint acceptance boundary
+## 9. Governance checkpoint acceptance boundary
 
 A conforming governance checkpoint must apply the instruction, status, Skill,
 and persistent-prompt dispositions while leaving business source, 001–106

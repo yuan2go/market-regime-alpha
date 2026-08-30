@@ -3,27 +3,24 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Repository entry point only
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-28
+> **Last Updated:** 2026-08-30
 > **Related Documents:** `docs/README.md`, `docs/architecture/Canonical-Overall-Design.md`, `docs/status/Current-State.md`, `docs/status/Roadmap.md`
 
 Market Regime Alpha is an A-share research operating system and
 human-in-the-loop decision-support platform. It is not unattended live trading.
 
-The repository is in an approved Hard Cutover Architecture Re-foundation:
+The repository is converging on an approved Hard Cutover Architecture
+Re-foundation:
 
 - **Target:** context-first modular monolith, one PostgreSQL Authority, one
   composition root, one Runtime, and a new `MRA_REFOUNDATION_1` schema epoch.
-- **Current canonical business implementation:** the pre-refoundation Python
-  packages, 001–106 migrations, 283-table PostgreSQL schema, and existing
-  Continuous Research Runtime.
-- **Implemented target draft:** Foundation is merged to `main`; the active
-  implementation line adds the isolated Market/PIT owner and extends the
-  mutable `001_baseline.sql` to 25 relations. It remains test-only with
-  `release_state=DRAFT / NOT_CUT_OVER`.
+- **Current implementation:** read [Current State](docs/status/Current-State.md)
+  and the linked exact-SHA Verification records. Entry-point prose does not
+  duplicate table counts, checkpoint SHAs, or stage status.
 
-The Target is partially implemented but not cut over. No target write is a
-canonical business write, and there is no dual write or fallback. Current
-code/schema/tests decide current behavior until an explicit Runtime/CLI
+The Target is not cut over. No target write is a canonical business write, and
+there is no dual write or fallback. Current code, PostgreSQL, tests, and
+reproducible artifacts decide current behavior until an explicit Runtime/CLI
 cutover.
 
 Start with [Documentation Authority](docs/README.md), then read the

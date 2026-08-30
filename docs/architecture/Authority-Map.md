@@ -4,7 +4,6 @@
 > **Authority:** Target business-fact ownership and canonical-write specification
 > **Owner:** Market Regime Alpha maintainers
 > **Last Updated:** 2026-08-30
-> **Implementation State:** `FOUNDATION_MARKET_SELECTION_RESEARCH_DEFINITION_CANDIDATE_IMPLEMENTED_DRAFT / CANDIDATE_EXIT_GATE_PASS / NOT_CUT_OVER`
 > **Code Evidence:** target `src/market_regime_alpha/shared`, `src/market_regime_alpha/runtime`, `src/market_regime_alpha/market`, `src/market_regime_alpha/selection`, `src/market_regime_alpha/research_qualification`, `src/market_regime_alpha/infrastructure`, `src/market_regime_alpha/interfaces`, `src/market_regime_alpha/infrastructure/postgres/migrations/001_baseline.sql`, `tests/refoundation`; legacy source/migrations remain current business implementation
 
 This document answers one question for every retained fact: who may create or
@@ -33,7 +32,7 @@ authenticated Command
 → when Runtime-owned: lock current Run/Step/Attempt and validate lease/fence
 → idempotency/request-hash check or exact terminal replay
 → load exact immutable dependencies
-→ lock every non-Runtime aggregate in global `(aggregate_kind, aggregate_id)` order
+→ lock every participating root in the explicit global order
 → enforce Domain invariants and expected version
 → write canonical fact/revision
 → write dependency links + command receipt + audit event
@@ -82,23 +81,25 @@ Domain errors nor commands and is not a command bus or workflow owner.
 | Eligibility policy/rules | Selection | `RegisterEligibilityPolicy` | `eligibility_policy`, `eligibility_rule` | immutable typed policy and complete ordered criteria; units/window/operator/threshold explicit | assessment |
 | Eligibility assessment | Selection | `AssessEligibility` | `eligibility_assessment`, `eligibility_reason` | every rule evaluated for every scoped instrument; one three-state aggregate with exact Market lineage | Candidate, funnel |
 | Candidate policy | Selection | `RegisterCandidatePolicy` | `candidate_policy`, `candidate_policy_component` | immutable arithmetic-midrank/competition-rank/strict-complete-case/Top-K/tie/projection contract; components bind only real numeric Feature Definitions and canonical declared weights | Candidate command |
-| Candidate Set/Candidate | Selection | `BuildCandidateSet` | `candidate_set`, `candidate`, `candidate_score_component` | immutable Policy × Decision-input Dataset result; Dataset is sole population; every row terminal; complete typed component matrix and funnel; non-unique equal rank; independent of all later authorities | post-Candidate consumers after dependency review |
+| Candidate Set/Candidate | Selection | `BuildCandidateSet` | `candidate_set`, `candidate`, `candidate_score_component` | immutable Policy × Decision-input Dataset result; Dataset is sole population; every row terminal; complete typed component matrix and funnel; non-unique equal rank; independent of all later authorities | dependency-authorized downstream consumers |
 | Decision-input Dataset | Research & Qualification | `RegisterDataset` | `dataset`, `dataset_source` | immutable content plus exact DecisionTime, `INCLUDED` + `ELIGIBLE` population, Feature status/value Artifact, and concrete Market/Selection lineage; Target/Outcome/realized labels prohibited | Candidate |
 | Feature definition | Research & Qualification | `RegisterFeatureDefinition` | `feature_definition` | immutable semantic/value/unit/frequency/window/lookback/source/availability/missingness/algorithm/code/config identity; no research conclusion | Candidate |
-| Target/checkpoints | Research & Qualification | `RegisterTargetDefinition` | `target_definition`, `target_checkpoint` | immutable Decision reference, horizon and metric requirements | Forecast/Outcome |
-| Research partition | Research & Qualification | `FreezeResearchPartition` | `research_partition` | immutable time/member boundary and purpose | experiment/evaluation |
-| Experiment and partition binding | Research & Qualification | `RegisterExperiment` | `experiment`, `experiment_partition` | one primary change and frozen protocol/input identities | experiment runs |
-| Experiment Run | Research & Qualification | `RunExperiment` | `experiment_run` | immutable execution identity/status; no claim promotion | evaluation |
-| Model/Model Version | Research & Qualification, deferred | `RegisterModelVersion` | `model`, `model_version` | absent from Research Definition Core; create only when a concrete fitted-model consumer requires it | Forecast |
-| Evaluation | Research & Qualification | `EvaluateExperiment/Model` | `evaluation_run`, `evaluation_metric` | predeclared metrics and typed estimability | Assessment |
-| Evidence Item/graph | Research & Qualification | `RecordEvidence` | `evidence_item`, `evidence_dependency` | immutable typed evidence; dependency time/hash verified | Assessment/Qualification |
-| Assessment | Research & Qualification | `AssessResearchClaim` | `assessment` | status in closed vocabulary; negative/inconclusive preserved | Qualification, reports |
-| Qualification policy/floors | Research & Qualification | `RegisterQualificationPolicy` | `qualification_policy`, `qualification_policy_floor` | immutable purpose and complete floor/decision-rule revision | qualification command |
-| Qualification | Research & Qualification | `DecideQualification` | `qualification_decision`, `qualification_floor_result` | one purpose/subject/revision; every required floor explicit | runtime admission |
-| Decision Run | Decision Support | `RunDecision` | `decision_run` | required FK to an already-existing Candidate Set; freezes Decision time, policies, code/config | all decision facts |
+| Target Definition/checkpoints/metrics | Research & Qualification | `RegisterTargetDefinition` | `target_definition`, `target_checkpoint`, `target_metric_definition` | immutable Decision-reference rule, horizon, observation grid, metric/barrier/dependency, price-basis, availability/finality, algorithm/code/config contract; all business semantics relational | requested Target roster, Forecast, Outcome |
+| Research Partition roster/access | Research & Qualification | `FreezeResearchPartition`; Evaluation access recorder | `research_partition`, `research_partition_member`, `research_partition_outcome_access` | Target-specific root and complete non-empty commitment-member roster freeze atomically before Outcome access; purpose/window/purge/embargo explicit; append-only ordinal one is first-access Authority | Experiment/Evaluation/OOS proof |
+| Experiment and partition binding | Research & Qualification | `RegisterExperiment` | `experiment`, `experiment_partition` | one primary change, one Target, frozen protocol/input identities and purpose-specific partitions | Experiment Run |
+| Experiment Run | Research & Qualification | `RunExperiment` | `experiment_run` | immutable execution identity/status; no claim promotion | Evaluation Run |
+| Evaluation protocol | Research & Qualification | `RegisterEvaluationProtocol` | `evaluation_protocol`, `evaluation_protocol_metric` | metrics, slices, missingness, costs and decision rule freeze before any Outcome access | Evaluation Run |
+| Evaluation observation/metric | Research & Qualification | `OpenEvaluationRun`, `AcquireOutcomeInputs`, `CompleteEvaluationRun` | `evaluation_run`, `evaluation_observation`, `evaluation_metric`, `evaluation_metric_observation`, `evaluation_forecast_binding` | Run requires Experiment Run, bound Partition and protocol, never Model; every member gets one exact Outcome observation including unavailable/failed; not-due/missing blocks; access commits before DTO release; each metric has a reconciled member roster; Forecast binding is a concrete optional child | Evidence/Assessment |
+| Model/Model Version | Research & Qualification, optional deferred branch | `RegisterModel`, `RegisterModelVersion` | `model`, `model_version` | Model is stable family only; Version requires a completed `MODEL_TRAINING` Evaluation Run and fitted Artifact; no Candidate/Target/Outcome/ordinary-Evaluation prerequisite | optional model-backed Forecast |
+| Evidence Item/graph | Research & Qualification | `RecordEvidence` | `evidence_item`, `evidence_dependency` | every item requires concrete Evaluation Run and Artifact FKs; immutable typed support/counter-evidence and validated Evidence-to-Evidence DAG | Research Assessment |
+| Research Assessment/evidence | Research & Qualification | `AssessResearch` | `research_assessment`, `research_assessment_evaluation`, `research_assessment_evidence` | one Experiment-bound claim revision with complete non-empty terminal Evaluation and concrete Evidence rosters; every item belongs to a rostered Run; negative/inconclusive/not-estimable preserved | Research Qualification |
+| Research Qualification policy/floors | Research & Qualification | `RegisterResearchQualificationPolicy` | `research_qualification_policy`, `research_qualification_policy_floor` | immutable research purpose and complete floor/decision-rule revision | qualification command |
+| Research Qualification decision | Research & Qualification | `DecideResearchQualification` | `research_qualification_decision`, `research_qualification_floor_result`, `research_qualification_floor_evidence` | concrete Assessment + Policy; every floor and its links to that Assessment's Evidence set complete; typed supersession, no generic subject | later-generation admission |
+| Decision Run/requested Target/commitment/reference | Decision Support | `OpenDecisionRun` | `decision_run`, `decision_run_target`, `decision_target_commitment`, `decision_reference_observation` | mandatory after Candidate and before Context; atomically freezes exact Candidate Set, an ordered Target roster that survives empty population, every Candidate × requested Target, and exact Decision-visible Market revision or Source Gap with separate value/availability/finality states; no Outcome placeholder | all decision facts, Market Target Outcome |
+| Later-generation Research Qualification input | Decision Support | later qualified form of `OpenDecisionRun` | `decision_run_research_qualification_roster`, `decision_run_research_qualification_member` | one Run roster freezes zero-or-more count/hash; each member has a matching-purpose `ADMITTED` decision FK effective/known and non-superseded at DecisionTime with strictly earlier source Outcome generations; implemented only after the real Qualification parent, never as a WP-09 placeholder | later-generation Context/Forecast/Decision policy only |
 | Context assessment | Decision Support | `AssessContext` | `context_assessment`, `context_metric` | typed Regime/ETF/Theme/Capital kind with evidence and Known Time | Signal/Strategy |
 | Signal | Decision Support | `ProduceSignal` | `signal` | immutable setup assertion; no probability claim | Forecast/Opportunity |
-| Forecast | Decision Support | `ProduceForecast` | `forecast`, `forecast_estimate` | bound to Target/checkpoint/model; calibration state explicit | Opportunity/Outcome |
+| Forecast | Decision Support | `ProduceForecast` | `forecast`, `forecast_estimate`, optional `forecast_model_binding` | bound to Decision Target Commitment and checkpoint; calibration explicit; model branch requires Version known by DecisionTime and trained only on earlier Outcome generations | Opportunity/Evaluation |
 | Opportunity | Decision Support | `CreateOpportunity` | `opportunity` | exact Candidate/Signal/Forecast/Context/Strategy input binding; no Risk authorization | Thesis/Portfolio |
 | Thesis/condition | Decision Support | `Create/ReviseThesis` | `thesis`, `thesis_condition` | immutable revision; conditions typed and independently observed | Portfolio, monitoring |
 | Strategy/version | Decision Support | `RegisterStrategyVersion` | `strategy`, `strategy_version` | stable semantics; qualification purpose-scoped | Opportunity/Portfolio |
@@ -106,9 +107,11 @@ Domain errors nor commands and is not a command bus or workflow owner.
 | Portfolio proposal/line | Decision Support | `ProposePortfolio` | `portfolio_proposal`, `portfolio_line` | complete allocation result; no account/Fill mutation | Risk/Execution |
 | Risk policy/rules | Decision Support | `RegisterRiskPolicy` | `risk_policy`, `risk_rule` | immutable typed limits, units and missing behavior | risk assessment |
 | Risk decision/reason | Decision Support | `AssessRisk` | `risk_decision`, `risk_reason` | accept/reject/unknown from exact account/market state; rejection final for scope | Execution |
-| Outcome observations | Outcome & Attribution | `SettleOutcome` | `outcome`, `outcome_observation`, `outcome_reason` | append factual observation/status after availability; never rewrites Decision | metrics/research |
-| Outcome metric | Outcome & Attribution | same settlement command | `outcome_metric` | typed metric/status; MFE/MAE require declared reference/path states | Evaluation/Attribution |
-| Attribution | Outcome & Attribution | `RunAttribution` | `attribution_run`, `attribution_line` | diagnostic, reconciled to declared total or `NOT_ESTIMABLE` | Research |
+| Market Target Outcome root/revision | Outcome & Attribution | `SettleMarketTargetOutcome` | `market_target_outcome`, `market_target_outcome_revision` | one root per Decision Target Commitment; exact request retry reuses revision; partial/completion/correction/finality change appends a full snapshot with direct supersession | Outcome read port |
+| Market Target Outcome facts | Outcome & Attribution | same settlement command | `market_target_outcome_source`, `market_target_outcome_observation`, `market_target_outcome_metric`, `market_target_outcome_metric_observation`, `market_target_outcome_reason` | exact relational source roster and metric-observation dependencies; revision children keep path/checkpoint/return/MFE/MAE/barrier value, availability, finality and failure independent; Decision reference remains separately frozen; two cutoffs; never rewrites Decision | Evaluation/Market Attribution |
+| Market Attribution | Outcome & Attribution | `RunMarketAttribution` | `market_attribution_run`, `market_attribution_line` | diagnostic, reconciled to declared Market Outcome total or `NOT_ESTIMABLE` | Research |
+| TradeOutcome | Outcome & Attribution | `SettleTradeOutcome` | `trade_outcome`, `trade_outcome_fill_binding`, `trade_outcome_metric` | immutable account/instrument episode revision with concrete opening/closing effective Fill roots and complete Fill roster; replay proves zero-to-zero Position; Fill correction supersedes; never uses a Decision Target Commitment | Trade Attribution/Evaluation |
+| Trade Attribution | Outcome & Attribution | `RunTradeAttribution` | `trade_attribution_run`, `trade_attribution_line` | diagnostic over TradeOutcome only; no Market/Trade polymorphic subject | Research |
 | Account | Execution & Account | `RegisterAccount` | `account` | stable external account identity; no secret storage | execution |
 | Account Authority Epoch | Execution & Account | `OpenAccountAuthorityEpoch` | `account_authority_epoch` | explicit cut-in time/opening evidence; one active epoch | Position/Reconciliation |
 | Opening/non-trade basis | Execution & Account | `RecordPositionBasisEvent` | `position_basis_event` | typed opening/corporate-action/reconciliation event under special rules | Position projection |
@@ -120,12 +123,34 @@ Domain errors nor commands and is not a command bus or workflow owner.
 | Physical Position | Execution & Account query owner | no direct write | `current_position` view over `fill` + `position_basis_event` | always derived as-of; no independent Position table | Risk, inspection |
 | Strategy sleeve | Execution & Account query owner | no direct write | query/view over effective `fill_allocation` and qualified corporate actions | derived; opening/reconciliation quantities stay unallocated | Outcome/Attribution |
 
-Rows after Candidate describe logical target ownership, not current
-implementation, sequence, or authorization. With Candidate's final exit gate
-passed, the next activity is a real dependency review across Target/Partition/
-Experiment/Model/Decision Run/Outcome/Evaluation/Evidence/Qualification. That
-review must keep realized factual labels under one future Outcome Authority
-rather than allowing Research to construct a parallel truth source.
+Rows after Candidate describe logical Target ownership, not current
+implementation state. Their sequence is owned only by the Roadmap. Realized
+market labels stay under the Market Target Outcome Authority and realized trade
+economics under TradeOutcome; Research cannot construct a parallel truth source.
+
+The aggregate edge is acyclic:
+
+```text
+Dataset → CandidateSet → DecisionRun → DecisionRunTarget ← TargetDefinition
+             │                            │
+             └────────────────────────────v
+                              DecisionTargetCommitment
+                    ├→ Context/Signal/Forecast/Decision
+                    ├→ MarketTargetOutcome ← Market/PIT
+                    └→ ResearchPartitionMember
+Experiment → ExperimentPartition ← ResearchPartition
+ExperimentPartition → ExperimentRun → EvaluationRun
+MarketTargetOutcome ─ read-only port → OutcomeAccess/EvaluationObservation
+EvaluationRun/Observation → EvaluationMetric → EvidenceItem
+→ ResearchAssessment → ResearchQualification
+```
+
+Feedback may cross generations only:
+`Outcome(n) → Evaluation(n) → Qualification(n) → DecisionRun(n+1)`.
+A Research Qualification crosses the last edge only through the concrete Run
+roster/member pair; a selected Model Version follows the same temporal rule
+through its concrete owning binding. No same-generation FK or command
+returns to Candidate, commitment, Context, Signal, Forecast, or Decision.
 
 ## 4. Position Authority
 
@@ -239,14 +264,19 @@ reconciliation; it is not discarded because its Intent is terminal.
 
 ## 6. Qualification Authority
 
-Qualification is owned only by `qualification_decision` plus the complete set of
-`qualification_floor_result` rows. Evidence Items, Assessments, models,
-prospective runs, passing tests, runtime receipts, and reports are inputs—not
-qualification writers.
+Research Qualification is owned only by a concrete
+`research_qualification_decision` plus its complete
+`research_qualification_floor_result` and
+`research_qualification_floor_evidence` rows. Its required subject is one
+`research_assessment`; its policy is one `research_qualification_policy`.
+Evidence Items, models, prospective runs, passing tests, runtime receipts, and
+reports are inputs—not qualification writers.
 
-A new decision supersedes an earlier decision for the same subject and purpose
-without editing it. Missing floors remain explicit. Production admission is a
-qualification purpose, not a separate boolean or table.
+A new Research decision supersedes an earlier Research decision without editing
+it. Missing floors remain explicit. Future Provider, Model, Strategy, Execution,
+and Production qualification must introduce subject-specific binding/decision
+relations in their owning work packages. They cannot widen Research
+Qualification into `(subject_kind, subject_id)` or add nullable placeholder FKs.
 
 ## 7. Read models and documents
 
