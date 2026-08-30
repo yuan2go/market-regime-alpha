@@ -51,7 +51,11 @@ class CandidateUnitOfWork(Protocol):
 
 
 class CandidateUnitOfWorkProvider(Protocol):
-    def __call__(self) -> CandidateUnitOfWork: ...
+    def __call__(
+        self,
+        *,
+        read_only: bool = False,
+    ) -> CandidateUnitOfWork: ...
 
 
 __all__ = ["CandidateUnitOfWork", "CandidateUnitOfWorkProvider"]

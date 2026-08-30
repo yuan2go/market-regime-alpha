@@ -32,8 +32,14 @@ from market_regime_alpha.selection.ports import CandidateUnitOfWork
 class PostgresCandidateUnitOfWork:
     """Candidate writes plus narrow Research and cross-cutting dependencies."""
 
-    def __init__(self, pool: TargetPostgresPool) -> None:
+    def __init__(
+        self,
+        pool: TargetPostgresPool,
+        *,
+        read_only: bool = False,
+    ) -> None:
         self._pool = pool
+        self._read_only = read_only
         self._scope: AbstractContextManager[psycopg.Connection[Any]] | None = None
         self._connection: psycopg.Connection[Any] | None = None
         self._used = False
@@ -57,7 +63,7 @@ class PostgresCandidateUnitOfWork:
                 "PostgresCandidateUnitOfWork cannot be nested or reused"
             )
         self._used = True
-        self._scope = self._pool.connection()
+        self._scope = self._pool.connection(read_only=self._read_only)
         self._connection = self._scope.__enter__()
         self._candidates = PostgresCandidateRepository(self._connection)
         self._research_dependencies = PostgresCandidateResearchDependencyQueries(
@@ -155,8 +161,15 @@ class PostgresCandidateUnitOfWorkProvider:
     def __init__(self, pool: TargetPostgresPool) -> None:
         self._pool = pool
 
-    def __call__(self) -> CandidateUnitOfWork:
-        return PostgresCandidateUnitOfWork(self._pool)
+    def __call__(
+        self,
+        *,
+        read_only: bool = False,
+    ) -> CandidateUnitOfWork:
+        return PostgresCandidateUnitOfWork(
+            self._pool,
+            read_only=read_only,
+        )
 
 
 __all__ = [

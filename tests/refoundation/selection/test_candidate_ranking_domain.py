@@ -200,6 +200,43 @@ def test_singleton_uses_constant_half_without_claiming_discrimination() -> None:
     assert result.score_components[0].contribution == Decimal("0.5")
 
 
+def test_constant_singleton_does_not_require_explanatory_weight_order_projection() -> None:
+    beyond_projection_cap = "1." + ("0" * 4096) + "1"
+
+    result = build_candidate_set(
+        policy=_policy(
+            _component(1, weight="1"),
+            _component(2, weight=beyond_projection_cap),
+            requested_top_k=1,
+        ),
+        dataset=_population(
+            _row(1, _cell(1, "7"), _cell(2, "11")),
+        ),
+    )
+
+    assert result.candidate_set.decimal_projection_precision == 64
+    assert result.candidate_set.ranking_status is CandidateRankingStatus.CONSTANT
+    assert result.candidate_set.composite_distinct_count == 1
+    assert result.candidates[0].composite_score == Decimal("0.5")
+    assert result.candidates[0].competition_rank == 1
+    assert {item.percentile for item in result.score_components} == {
+        Decimal("0.5")
+    }
+    assert {item.normalized_weight for item in result.score_components} == {
+        Decimal("0.5")
+    }
+    assert {item.contribution for item in result.score_components} == {
+        Decimal("0.25")
+    }
+    assert all(
+        item.normalized_weight.is_finite()
+        and item.contribution is not None
+        and item.contribution.is_finite()
+        and item.contribution <= item.normalized_weight
+        for item in result.score_components
+    )
+
+
 def test_mixed_constant_and_variable_components_keep_fixed_weights() -> None:
     result = build_candidate_set(
         policy=_policy(
@@ -367,6 +404,42 @@ def test_decimal_projection_adapts_and_fails_at_its_closed_cap() -> None:
             {"one": Fraction(1), "almost_one": almost_one},
             minimum_precision=64,
             maximum_precision=64,
+        )
+
+
+def test_candidate_set_projection_adapts_for_close_composite_score_classes() -> None:
+    policy = _policy(
+        _component(1, weight="1"),
+        _component(2, weight="1E-70"),
+        requested_top_k=1,
+    )
+    dataset = _population(
+        _row(1, _cell(1, "9"), _cell(2, "0")),
+        _row(2, _cell(1, "9"), _cell(2, "1")),
+    )
+
+    result = build_candidate_set(
+        policy=policy,
+        dataset=dataset,
+        minimum_projection_precision=64,
+        maximum_projection_precision=128,
+    )
+
+    candidates = {item.instrument_id: item for item in result.candidates}
+    assert result.candidate_set.decimal_projection_precision == 128
+    lower_score = candidates[_uuid(1_001)].composite_score
+    higher_score = candidates[_uuid(1_002)].composite_score
+    assert lower_score is not None
+    assert higher_score is not None
+    assert lower_score < higher_score
+    assert candidates[_uuid(1_001)].competition_rank == 2
+    assert candidates[_uuid(1_002)].competition_rank == 1
+    with pytest.raises(ValueError, match="closed precision cap 64"):
+        build_candidate_set(
+            policy=policy,
+            dataset=dataset,
+            minimum_projection_precision=64,
+            maximum_projection_precision=64,
         )
 
 

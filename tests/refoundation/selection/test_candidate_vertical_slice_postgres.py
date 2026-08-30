@@ -16,6 +16,9 @@ import pytest
 from market_regime_alpha.infrastructure.postgres.candidate_uow import (
     PostgresCandidateUnitOfWorkProvider,
 )
+from market_regime_alpha.infrastructure.postgres.market_uow import (
+    PostgresMarketDatabaseClock,
+)
 from market_regime_alpha.infrastructure.postgres.queries import (
     PostgresCandidateQueryProvider,
     PostgresCandidateResearchInputLoader,
@@ -71,6 +74,7 @@ from market_regime_alpha.selection.domain import (
     UniverseScopeSpecification,
 )
 from market_regime_alpha.shared.hashing import canonical_json_sha256
+from market_regime_alpha.shared.time import DecisionTime
 from tests.refoundation.research_qualification import (
     test_research_postgres as _research,
 )
@@ -134,11 +138,12 @@ class _HookedCandidateUnitOfWorkProvider:
         self._hook = hook
         self.calls = 0
 
-    def __call__(self) -> Any:
-        self.calls += 1
-        if self.calls == self._before_call:
-            self._hook()
-        return self._delegate()
+    def __call__(self, *, read_only: bool = False) -> Any:
+        if not read_only:
+            self.calls += 1
+            if self.calls == self._before_call:
+                self._hook()
+        return self._delegate(read_only=read_only)
 
 
 class _BarrierAtFinalBindUnitOfWorkProvider:
@@ -149,14 +154,15 @@ class _BarrierAtFinalBindUnitOfWorkProvider:
         self._lock = Lock()
         self.final_bind_calls = 0
 
-    def __call__(self) -> Any:
-        calls = getattr(self._local, "calls", 0) + 1
-        self._local.calls = calls
-        if calls == 2:
-            with self._lock:
-                self.final_bind_calls += 1
-            self._barrier.wait(timeout=10)
-        return self._delegate()
+    def __call__(self, *, read_only: bool = False) -> Any:
+        if not read_only:
+            calls = getattr(self._local, "write_calls", 0) + 1
+            self._local.write_calls = calls
+            if calls == 2:
+                with self._lock:
+                    self.final_bind_calls += 1
+                self._barrier.wait(timeout=10)
+        return self._delegate(read_only=read_only)
 
 
 def _install_test_insert_failure_trigger(stack: Any, *, table: str) -> None:
@@ -368,6 +374,7 @@ def _schedule_run(
     stack: Any,
     *,
     steps: tuple[StepSpec, ...],
+    canonical_decision_time: DecisionTime | None = None,
 ) -> tuple[RuntimeApplication, UUID]:
     runtime = RuntimeApplication(PostgresUnitOfWorkProvider(stack.pool))
     schedule = ScheduleSpec(
@@ -410,7 +417,7 @@ def _schedule_run(
             fire_key=f"candidate-run-{uuid4().hex}",
             runtime_mode=RuntimeMode.SHADOW,
             requested_at=datetime.now(UTC),
-            decision_time=stack.decision_time.value,
+            decision_time=(canonical_decision_time or stack.decision_time).value,
             code_sha="8" * 40,
             config_artifact_id=config.artifact_id,
             config_hash=config.content_sha256,
@@ -430,6 +437,17 @@ def _schedule_run(
         ),
     )
     return runtime, run_id
+
+
+def _wait_until_database_time(
+    clock: PostgresMarketDatabaseClock,
+    decision_time: DecisionTime,
+) -> None:
+    while True:
+        remaining = (decision_time.value - clock.now()).total_seconds()
+        if remaining <= 0:
+            return
+        Event().wait(min(remaining, 0.1))
 
 
 def _claim(
@@ -533,7 +551,13 @@ def test_target_runtime_freshly_closes_capture_through_candidate_set_and_replays
             request_character="6",
         ),
     )
-    runtime, run_id = _schedule_run(stack, steps=steps)
+    database_clock = PostgresMarketDatabaseClock(stack.pool)
+    planned_decision_time = DecisionTime(database_clock.now() + timedelta(seconds=5))
+    runtime, run_id = _schedule_run(
+        stack,
+        steps=steps,
+        canonical_decision_time=planned_decision_time,
+    )
 
     capture = stack.market.capture(
         CaptureRequest(
@@ -597,6 +621,7 @@ def test_target_runtime_freshly_closes_capture_through_candidate_set_and_replays
     assert normalized.replayed is False
     assert normalized.decision_visible_at is not None
     assert normalized.decision_visible_at.value > stack.decision_time.value
+    assert capture.capture.temporal.decision_visible_at.value <= normalized.decision_visible_at.value <= planned_decision_time.value
     _, scope = _replay_scope(stack)
     universe = UniverseDefinition(
         universe_id=uuid4(),
@@ -610,10 +635,11 @@ def test_target_runtime_freshly_closes_capture_through_candidate_set_and_replays
             "REGISTER_UNIVERSE",
         ),
     )
+    _wait_until_database_time(database_clock, planned_decision_time)
     frozen = stack.selection.freeze_universe(
         universe_id=universe.universe_id,
         scope=scope,
-        decision_time=normalized.decision_visible_at,
+        decision_time=planned_decision_time,
         context=_research._context(
             "vertical-fresh-freeze",
             "FREEZE_UNIVERSE",
@@ -626,7 +652,7 @@ def test_target_runtime_freshly_closes_capture_through_candidate_set_and_replays
     assessed = stack.selection.assess_eligibility(
         universe_revision_id=frozen.universe_revision_id,
         eligibility_policy_id=stack.eligibility_policy_id,
-        decision_time=normalized.decision_visible_at,
+        decision_time=planned_decision_time,
         context=_research._context(
             "vertical-fresh-assess",
             "ASSESS_ELIGIBILITY",
@@ -637,12 +663,13 @@ def test_target_runtime_freshly_closes_capture_through_candidate_set_and_replays
     assert assessed.eligible_count == 1
     fresh_stack = replace(
         stack,
-        decision_time=normalized.decision_visible_at,
+        decision_time=planned_decision_time,
         universe_revision_id=frozen.universe_revision_id,
         universe_member_id=frozen.members[0].universe_member_id,
         eligibility_assessment_id=(assessed.assessments[0].eligibility_assessment_id),
         market_capture_id=capture.capture.capture_id,
         market_fact_revision_id=fresh_fact_revision_id,
+        market_session_id=UUID(str(previous_fact[0])),
     )
     dataset = _numeric_dataset_definition(
         fresh_stack,
@@ -713,6 +740,27 @@ def test_target_runtime_freshly_closes_capture_through_candidate_set_and_replays
             """,
             (UUID(built.aggregate_id),),
         ).fetchone()
+        decision_times = connection.execute(
+            """
+            SELECT runtime_run.decision_time,
+                   universe_revision.decision_time,
+                   dataset.decision_time,
+                   candidate_set.decision_time
+            FROM mra.runtime_run AS runtime_run
+            JOIN mra.universe_revision AS universe_revision
+              ON universe_revision.universe_revision_id = %s
+            JOIN mra.dataset AS dataset ON dataset.dataset_id = %s
+            JOIN mra.candidate_set AS candidate_set
+              ON candidate_set.candidate_set_id = %s
+            WHERE runtime_run.run_id = %s
+            """,
+            (
+                frozen.universe_revision_id,
+                dataset.dataset_id,
+                UUID(built.aggregate_id),
+                run_id,
+            ),
+        ).fetchone()
     assert lineage == (
         dataset.dataset_id,
         frozen.universe_revision_id,
@@ -723,6 +771,7 @@ def test_target_runtime_freshly_closes_capture_through_candidate_set_and_replays
         stack.market_fact_revision_id,
         int(previous_fact[5]) + 1,
     )
+    assert decision_times == (planned_decision_time.value,) * 4
 
     stack.store.object_path(str(dataset.manifest_artifact.content_sha256)).write_bytes(b"corrupt after committed CandidateSet")
     recovery_runtime, recovery_run_id = _schedule_run(

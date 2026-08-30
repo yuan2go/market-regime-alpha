@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import Decimal
 from typing import Callable
 from uuid import UUID, uuid4
 
@@ -28,22 +27,21 @@ from market_regime_alpha.selection.application._candidate_command_support import
 from market_regime_alpha.selection.domain.candidate_inputs import (
     CandidateCellStatus,
     CandidateDatasetPopulation,
-    CandidatePopulationCell,
-    CandidatePopulationRow,
 )
-from market_regime_alpha.selection.domain.candidate_policy import (
-    CandidateFeatureValueType,
-    CandidatePolicy,
-)
+from market_regime_alpha.selection.domain.candidate_policy import CandidatePolicy
 from market_regime_alpha.selection.domain.candidate_ranking import (
     build_candidate_set as rank_candidate_set,
 )
 from market_regime_alpha.selection.domain.candidate_results import (
+    CandidateDisposition,
     CandidateRankingPlan,
+    CandidateRankingStatus,
     CandidateScoreComponentRecord,
+    candidate_result_content_sha256,
 )
 from market_regime_alpha.selection.ports.candidate_repository import (
     CandidatePersistenceReconciliation,
+    CandidateSetBinding,
 )
 from market_regime_alpha.selection.ports.candidate_uow import (
     CandidateUnitOfWork,
@@ -69,11 +67,11 @@ class CandidateMutationResult:
 
 
 @dataclass(frozen=True, slots=True)
-class _CandidateReplayLoad:
+class _CandidateReplayProbe:
     receipt: ReceiptRecord
     policy: CandidatePolicy
     snapshot: CandidateResearchDependencySnapshot
-    persisted_plan: CandidateRankingPlan | None
+    binding: CandidateSetBinding | None
 
 
 class CandidateApplication:
@@ -207,7 +205,7 @@ class CandidateApplication:
         operation = "BUILD_CANDIDATE_SET"
         scope_id = f"{candidate_policy_id}:{dataset_id}"
         request_hash_holder = {"value": identity_request_hash}
-        replay_load: _CandidateReplayLoad | None = None
+        replay_probe: _CandidateReplayProbe | None = None
         with candidate_failure_boundary(
             self._failure_recorder,
             operation=operation,
@@ -216,7 +214,7 @@ class CandidateApplication:
             context=context,
             runtime_claim=runtime_claim,
         ):
-            replay_load, policy, preflight_snapshot, request_hash = (
+            replay_probe, policy, preflight_snapshot, request_hash = (
                 self._preflight_build(
                     candidate_policy_id=candidate_policy_id,
                     dataset_id=dataset_id,
@@ -226,7 +224,7 @@ class CandidateApplication:
                 )
             )
             request_hash_holder["value"] = request_hash
-            if replay_load is None:
+            if replay_probe is None:
                 assert policy is not None
                 assert preflight_snapshot is not None
                 required_features = _policy_feature_dependencies(policy)
@@ -263,9 +261,9 @@ class CandidateApplication:
                     request_hash=request_hash,
                     runtime_claim=runtime_claim,
                 )
-        assert replay_load is not None
+        assert replay_probe is not None
         return self._complete_candidate_replay(
-            replay_load,
+            replay_probe,
             candidate_policy_id=candidate_policy_id,
             dataset_id=dataset_id,
             context=context,
@@ -282,7 +280,7 @@ class CandidateApplication:
         request_hash_holder: dict[str, str],
         runtime_claim: AttemptClaim | None,
     ) -> tuple[
-        _CandidateReplayLoad | None,
+        _CandidateReplayProbe | None,
         CandidatePolicy | None,
         CandidateResearchDependencySnapshot | None,
         str,
@@ -309,17 +307,17 @@ class CandidateApplication:
                 request_hash=request_hash,
             )
             if not receipt.is_new:
-                persisted_plan = uow.candidates.persisted_candidate_set(
+                binding = uow.candidates.candidate_set_binding(
                     candidate_policy_id=candidate_policy_id,
                     dataset_id=dataset_id,
                     lock=False,
                 )
                 return (
-                    _CandidateReplayLoad(
+                    _CandidateReplayProbe(
                         receipt=receipt,
                         policy=policy,
                         snapshot=snapshot,
-                        persisted_plan=persisted_plan,
+                        binding=binding,
                     ),
                     None,
                     None,
@@ -329,7 +327,7 @@ class CandidateApplication:
 
     def _complete_candidate_replay(
         self,
-        replay: _CandidateReplayLoad,
+        replay: _CandidateReplayProbe,
         *,
         candidate_policy_id: UUID,
         dataset_id: UUID,
@@ -356,6 +354,7 @@ class CandidateApplication:
             )
             raise
         except (
+            ArithmeticError,
             ArtifactIntegrityError,
             CommandPreviouslyFailedError,
             RuntimeNotFoundError,
@@ -373,7 +372,7 @@ class CandidateApplication:
 
     def _complete_candidate_replay_unchecked(
         self,
-        replay: _CandidateReplayLoad,
+        replay: _CandidateReplayProbe,
         *,
         candidate_policy_id: UUID,
         dataset_id: UUID,
@@ -381,9 +380,23 @@ class CandidateApplication:
         request_hash: str,
         runtime_claim: AttemptClaim | None,
     ) -> CandidateMutationResult:
-        verified_plan = _rebuild_persisted_candidate_set(
-            replay.policy,
-            replay.persisted_plan,
+        with self._uow_provider(read_only=True) as read_uow:
+            persisted_plan = read_uow.candidates.persisted_candidate_set(
+                candidate_policy_id=candidate_policy_id,
+                dataset_id=dataset_id,
+                lock=False,
+            )
+            reconciliation = (
+                None
+                if replay.binding is None
+                else read_uow.candidates.reconciliation(
+                    replay.binding.candidate_set_id
+                )
+            )
+        verified_plan = _verify_persisted_candidate_result(
+            replay,
+            persisted_plan,
+            reconciliation,
         )
         result = _candidate_set_result_from_receipt(
             replay.receipt,
@@ -439,12 +452,32 @@ class CandidateApplication:
                 idempotency_key=context.idempotency_key,
                 request_hash=request_hash,
             )
+            if receipt != replay.receipt:
+                raise ArtifactIntegrityError(
+                    "Candidate replay receipt changed before Runtime finalization"
+                )
+            locked_binding = uow.candidates.candidate_set_binding(
+                candidate_policy_id=candidate_policy_id,
+                dataset_id=dataset_id,
+                lock=True,
+            )
+            if (
+                locked_binding != replay.binding
+                or locked_binding != _candidate_set_binding(verified_plan)
+            ):
+                raise ArtifactIntegrityError(
+                    "CandidateSet binding changed before Runtime finalization"
+                )
             persisted_plan = uow.candidates.persisted_candidate_set(
                 candidate_policy_id=candidate_policy_id,
                 dataset_id=dataset_id,
                 lock=True,
             )
             _validate_persisted_candidate_set(persisted_plan, verified_plan)
+            reconciliation = uow.candidates.reconciliation(
+                verified_plan.candidate_set_id
+            )
+            _validate_reconciliation(reconciliation, verified_plan)
             result = _candidate_set_result_from_receipt(receipt, verified_plan)
             _finalize_runtime(
                 uow,
@@ -742,77 +775,439 @@ def _validate_persisted_candidate_set(
         )
 
 
-def _rebuild_persisted_candidate_set(
-    policy: CandidatePolicy,
+def _verify_persisted_candidate_result(
+    replay: _CandidateReplayProbe,
     persisted: CandidateRankingPlan | None,
+    reconciliation: CandidatePersistenceReconciliation | None,
 ) -> CandidateRankingPlan:
-    if persisted is None:
+    if replay.binding is None or persisted is None or reconciliation is None:
         raise ArtifactIntegrityError(
             "CandidateSet receipt has no persisted Candidate Authority"
         )
-    try:
-        population = _population_from_persisted_candidate_set(persisted)
-        rebuilt = rank_candidate_set(policy=policy, dataset=population)
-    except (ArithmeticError, KeyError, TypeError, ValueError) as exception:
-        raise ArtifactIntegrityError(
-            "persisted Candidate raw matrix cannot rebuild ranking"
-        ) from exception
-    _validate_persisted_candidate_set(persisted, rebuilt)
-    return rebuilt
-
-
-def _population_from_persisted_candidate_set(
-    persisted: CandidateRankingPlan,
-) -> CandidateDatasetPopulation:
-    scores_by_candidate: dict[UUID, list[CandidateScoreComponentRecord]] = {
-        candidate.candidate_id: [] for candidate in persisted.candidates
-    }
-    for score in persisted.score_components:
-        try:
-            scores_by_candidate[score.candidate_id].append(score)
-        except KeyError as exception:
-            raise ArtifactIntegrityError(
-                "persisted Candidate score has no Candidate parent"
-            ) from exception
-    rows = tuple(
-        CandidatePopulationRow(
-            instrument_id=candidate.instrument_id,
-            dataset_population_source_id=(
-                candidate.dataset_population_source_id
-            ),
-            cells=tuple(
-                CandidatePopulationCell(
-                    feature_definition_id=score.feature_definition_id,
-                    status=score.raw_status,
-                    value=_persisted_raw_value(score),
-                    reason_code=score.raw_reason_code,
-                    cell_source_lineage_hash=score.cell_source_lineage_hash,
-                )
-                for score in scores_by_candidate[candidate.candidate_id]
-            ),
-        )
-        for candidate in persisted.candidates
-    )
     candidate_set = persisted.candidate_set
-    return CandidateDatasetPopulation(
+    expected_binding = _candidate_set_binding(persisted)
+    if replay.binding != expected_binding:
+        raise ArtifactIntegrityError(
+            "CandidateSet probe binding and persisted Authority diverged"
+        )
+    policy = replay.policy
+    snapshot = replay.snapshot
+    if (
+        candidate_set.candidate_policy_id != policy.candidate_policy_id
+        or str(candidate_set.candidate_policy_content_sha256)
+        != str(policy.content_sha256)
+        or candidate_set.dataset_id != snapshot.dataset.dataset_id
+        or str(candidate_set.dataset_content_sha256)
+        != str(snapshot.dataset.content_sha256)
+        or str(candidate_set.dependency_sha256)
+        != str(snapshot.dependency_sha256)
+        or candidate_set.universe_revision_id
+        != snapshot.dataset.universe_revision_id
+        or candidate_set.eligibility_policy_id
+        != snapshot.dataset.eligibility_policy_id
+        or candidate_set.decision_time != snapshot.dataset.decision_time
+        or candidate_set.requested_top_k != policy.requested_top_k
+        or candidate_set.component_count != policy.component_count
+        or candidate_set.population_count != snapshot.dataset.row_count
+    ):
+        raise ArtifactIntegrityError(
+            "CandidateSet dependencies and persisted Authority diverged"
+        )
+    _validate_persisted_candidate_counts(persisted, policy)
+    _validate_reconciliation(reconciliation, persisted)
+    recomputed_hash = candidate_result_content_sha256(
+        policy=policy,
+        candidate_set_id=candidate_set.candidate_set_id,
         dataset_id=candidate_set.dataset_id,
         dataset_content_sha256=candidate_set.dataset_content_sha256,
-        decision_time=candidate_set.decision_time,
-        universe_revision_id=candidate_set.universe_revision_id,
-        eligibility_policy_id=candidate_set.eligibility_policy_id,
-        rows=rows,
         dependency_sha256=candidate_set.dependency_sha256,
+        projection_precision=candidate_set.decimal_projection_precision,
+        candidates=persisted.candidates,
+        score_components=persisted.score_components,
+        component_diagnostics=persisted.component_diagnostics,
+    )
+    if recomputed_hash != candidate_set.result_sha256:
+        raise ArtifactIntegrityError(
+            "persisted Candidate result content hash does not reconcile"
+        )
+    _candidate_set_result_from_receipt(replay.receipt, persisted)
+    return persisted
+
+
+def _candidate_set_binding(plan: CandidateRankingPlan) -> CandidateSetBinding:
+    candidate_set = plan.candidate_set
+    return CandidateSetBinding(
+        candidate_set_id=candidate_set.candidate_set_id,
+        candidate_policy_id=candidate_set.candidate_policy_id,
+        candidate_policy_content_sha256=str(
+            candidate_set.candidate_policy_content_sha256
+        ),
+        dataset_id=candidate_set.dataset_id,
+        dataset_content_sha256=str(candidate_set.dataset_content_sha256),
+        dependency_sha256=str(candidate_set.dependency_sha256),
+        result_sha256=str(candidate_set.result_sha256),
     )
 
 
-def _persisted_raw_value(
-    score: CandidateScoreComponentRecord,
-) -> Decimal | int | None:
-    if score.raw_status is not CandidateCellStatus.AVAILABLE:
-        return None
-    if score.feature_value_type is CandidateFeatureValueType.DECIMAL:
-        return score.raw_decimal_value
-    return score.raw_integer_value
+def _validate_persisted_candidate_counts(
+    plan: CandidateRankingPlan,
+    policy: CandidatePolicy,
+) -> None:
+    candidate_set = plan.candidate_set
+    component_identities = tuple(
+        (
+            item.candidate_policy_component_id,
+            item.feature_definition_id,
+        )
+        for item in plan.component_diagnostics
+    )
+    expected_component_identities = tuple(
+        (
+            item.candidate_policy_component_id,
+            item.feature_definition_id,
+        )
+        for item in policy.components
+    )
+    if component_identities != expected_component_identities:
+        raise ArtifactIntegrityError(
+            "persisted Candidate diagnostics and Policy components diverged"
+        )
+    candidates_by_id = {item.candidate_id: item for item in plan.candidates}
+    if len(candidates_by_id) != len(plan.candidates):
+        raise ArtifactIntegrityError("persisted Candidate identities are not unique")
+    if (
+        len({item.instrument_id for item in plan.candidates})
+        != len(plan.candidates)
+        or len(
+            {item.dataset_population_source_id for item in plan.candidates}
+        )
+        != len(plan.candidates)
+    ):
+        raise ArtifactIntegrityError(
+            "persisted Candidate population identities are not unique"
+        )
+    for candidate in plan.candidates:
+        if (
+            candidate.candidate_set_id != candidate_set.candidate_set_id
+            or candidate.candidate_policy_id
+            != candidate_set.candidate_policy_id
+            or candidate.dataset_id != candidate_set.dataset_id
+            or candidate.dataset_source_role != "POPULATION"
+        ):
+            raise ArtifactIntegrityError(
+                "persisted Candidate parent bindings do not reconcile"
+            )
+    policy_components = {
+        item.candidate_policy_component_id: item for item in policy.components
+    }
+    scores_by_candidate: dict[
+        UUID, dict[UUID, CandidateScoreComponentRecord]
+    ] = {
+        item.candidate_id: {} for item in plan.candidates
+    }
+    score_ids: set[UUID] = set()
+    for score in plan.score_components:
+        candidate = candidates_by_id.get(score.candidate_id)
+        component = policy_components.get(
+            score.candidate_policy_component_id
+        )
+        if (
+            candidate is None
+            or component is None
+            or score.candidate_set_id != candidate_set.candidate_set_id
+            or score.candidate_policy_id
+            != candidate_set.candidate_policy_id
+            or score.dataset_id != candidate_set.dataset_id
+            or score.instrument_id != candidate.instrument_id
+            or score.candidate_disposition != candidate.disposition
+            or score.feature_definition_id
+            != component.feature_definition_id
+            or str(score.feature_content_sha256)
+            != str(component.feature_content_sha256)
+            or score.feature_value_type != component.feature_value_type
+        ):
+            raise ArtifactIntegrityError(
+                "persisted Candidate score bindings do not reconcile"
+            )
+        if score.candidate_score_component_id in score_ids:
+            raise ArtifactIntegrityError(
+                "persisted Candidate score identities are not unique"
+            )
+        score_ids.add(score.candidate_score_component_id)
+        candidate_scores = scores_by_candidate[score.candidate_id]
+        if score.candidate_policy_component_id in candidate_scores:
+            raise ArtifactIntegrityError(
+                "persisted Candidate score matrix has duplicate cells"
+            )
+        candidate_scores[score.candidate_policy_component_id] = score
+
+    expected_component_ids = set(policy_components)
+    if any(
+        set(candidate_scores) != expected_component_ids
+        for candidate_scores in scores_by_candidate.values()
+    ):
+        raise ArtifactIntegrityError(
+            "persisted Candidate score matrix is incomplete"
+        )
+
+    rankable_candidates = []
+    unrankable_candidates = []
+    for candidate in plan.candidates:
+        candidate_scores = scores_by_candidate[candidate.candidate_id]
+        fact_rankable = all(
+            score.raw_status is CandidateCellStatus.AVAILABLE
+            for score in candidate_scores.values()
+        )
+        if fact_rankable:
+            if (
+                candidate.disposition is CandidateDisposition.UNRANKABLE
+                or candidate.composite_score is None
+                or candidate.competition_rank is None
+                or any(
+                    score.percentile is None or score.contribution is None
+                    for score in candidate_scores.values()
+                )
+            ):
+                raise ArtifactIntegrityError(
+                    "persisted rankable Candidate facts do not reconcile"
+                )
+            rankable_candidates.append(candidate)
+        else:
+            if (
+                candidate.disposition is not CandidateDisposition.UNRANKABLE
+                or candidate.composite_score is not None
+                or candidate.competition_rank is not None
+                or any(
+                    score.percentile is not None
+                    or score.contribution is not None
+                    for score in candidate_scores.values()
+                )
+            ):
+                raise ArtifactIntegrityError(
+                    "persisted STRICT_COMPLETE_CASE facts do not reconcile"
+                )
+            unrankable_candidates.append(candidate)
+
+    expected_diagnostics = []
+    for component in policy.components:
+        component_scores = tuple(
+            scores_by_candidate[candidate.candidate_id][
+                component.candidate_policy_component_id
+            ]
+            for candidate in plan.candidates
+        )
+        observed_scores = tuple(
+            scores_by_candidate[candidate.candidate_id][
+                component.candidate_policy_component_id
+            ]
+            for candidate in rankable_candidates
+        )
+        distinct_count = len(
+            {
+                (score.raw_decimal_value, score.raw_integer_value)
+                for score in observed_scores
+            }
+        )
+        raw_status_counts = {
+            status: sum(score.raw_status is status for score in component_scores)
+            for status in CandidateCellStatus
+        }
+        if not rankable_candidates:
+            information_status = CandidateRankingStatus.NOT_ESTIMABLE
+        elif distinct_count == 1:
+            information_status = CandidateRankingStatus.CONSTANT
+        else:
+            information_status = CandidateRankingStatus.AVAILABLE
+        expected_diagnostics.append(
+            (
+                component.candidate_policy_component_id,
+                component.feature_definition_id,
+                len(rankable_candidates),
+                distinct_count,
+                raw_status_counts[CandidateCellStatus.AVAILABLE],
+                raw_status_counts[CandidateCellStatus.AVAILABLE]
+                - len(rankable_candidates),
+                raw_status_counts[CandidateCellStatus.MISSING],
+                raw_status_counts[CandidateCellStatus.UNKNOWN],
+                raw_status_counts[CandidateCellStatus.STALE],
+                raw_status_counts[CandidateCellStatus.CONFLICT],
+                information_status,
+            )
+        )
+    actual_diagnostics = [
+        (
+            item.candidate_policy_component_id,
+            item.feature_definition_id,
+            item.observed_count,
+            item.distinct_count,
+            item.raw_available_count,
+            item.available_but_not_observed_count,
+            item.missing_count,
+            item.unknown_count,
+            item.stale_count,
+            item.conflict_count,
+            item.ranking_status,
+        )
+        for item in plan.component_diagnostics
+    ]
+    if actual_diagnostics != expected_diagnostics:
+        raise ArtifactIntegrityError(
+            "persisted Candidate component diagnostics do not reconcile"
+        )
+
+    rankable_scores = {
+        item.candidate_id: item.composite_score for item in rankable_candidates
+    }
+    if any(value is None for value in rankable_scores.values()):
+        raise ArtifactIntegrityError(
+            "persisted rankable Candidate scores do not reconcile"
+        )
+    concrete_scores = {
+        identity: value
+        for identity, value in rankable_scores.items()
+        if value is not None
+    }
+    if concrete_scores:
+        ordered_scores = sorted(concrete_scores.values(), reverse=True)
+        boundary_score = ordered_scores[
+            min(candidate_set.requested_top_k, len(ordered_scores)) - 1
+        ]
+        expected_selected_ids = {
+            identity
+            for identity, score in concrete_scores.items()
+            if score >= boundary_score
+        }
+        strictly_above_boundary_count = sum(
+            score > boundary_score for score in concrete_scores.values()
+        )
+        boundary_group_count = sum(
+            score == boundary_score for score in concrete_scores.values()
+        )
+        boundary_rank = strictly_above_boundary_count + 1
+    else:
+        boundary_score = None
+        expected_selected_ids = set()
+        strictly_above_boundary_count = 0
+        boundary_group_count = 0
+        boundary_rank = None
+    selected_candidates = tuple(
+        item
+        for item in rankable_candidates
+        if item.disposition is CandidateDisposition.SELECTED
+    )
+    ranked_not_selected_candidates = tuple(
+        item
+        for item in rankable_candidates
+        if item.disposition is CandidateDisposition.RANKED_NOT_SELECTED
+    )
+    actual_selected_ids = {item.candidate_id for item in selected_candidates}
+    if actual_selected_ids != expected_selected_ids:
+        raise ArtifactIntegrityError(
+            "persisted Candidate boundary dispositions do not reconcile"
+        )
+    for candidate in rankable_candidates:
+        assert candidate.composite_score is not None
+        expected_rank = 1 + sum(
+            other > candidate.composite_score
+            for other in concrete_scores.values()
+        )
+        if candidate.competition_rank != expected_rank:
+            raise ArtifactIntegrityError(
+                "persisted Candidate competition ranks do not reconcile"
+            )
+
+    selected_count = len(selected_candidates)
+    ranked_not_selected_count = len(ranked_not_selected_candidates)
+    unrankable_count = len(unrankable_candidates)
+    diagnostic_status_counts = {
+        status: sum(
+            item.ranking_status is status for item in plan.component_diagnostics
+        )
+        for status in CandidateRankingStatus
+    }
+    if all(
+        item.ranking_status is CandidateRankingStatus.NOT_ESTIMABLE
+        for item in plan.component_diagnostics
+    ):
+        ranking_status = CandidateRankingStatus.NOT_ESTIMABLE
+    elif any(
+        item.ranking_status is CandidateRankingStatus.AVAILABLE
+        for item in plan.component_diagnostics
+    ):
+        ranking_status = CandidateRankingStatus.AVAILABLE
+    else:
+        ranking_status = CandidateRankingStatus.CONSTANT
+    composite_distinct_count = len(set(concrete_scores.values()))
+    expected_summary = (
+        len(plan.candidates),
+        len(rankable_candidates),
+        unrankable_count,
+        selected_count,
+        ranked_not_selected_count,
+        len(plan.score_components),
+        diagnostic_status_counts[CandidateRankingStatus.AVAILABLE],
+        diagnostic_status_counts[CandidateRankingStatus.CONSTANT],
+        diagnostic_status_counts[CandidateRankingStatus.NOT_ESTIMABLE],
+        ranking_status,
+        composite_distinct_count,
+        boundary_score,
+        boundary_rank,
+        strictly_above_boundary_count,
+        boundary_group_count,
+        max(0, selected_count - candidate_set.requested_top_k),
+        boundary_group_count > 1,
+        selected_count > candidate_set.requested_top_k,
+    )
+    actual_summary = (
+        candidate_set.population_count,
+        candidate_set.rankable_count,
+        candidate_set.unrankable_count,
+        candidate_set.selected_count,
+        candidate_set.ranked_not_selected_count,
+        candidate_set.score_component_count,
+        candidate_set.available_component_count,
+        candidate_set.constant_component_count,
+        candidate_set.not_estimable_component_count,
+        candidate_set.ranking_status,
+        candidate_set.composite_distinct_count,
+        candidate_set.boundary_score,
+        candidate_set.boundary_rank,
+        candidate_set.strictly_above_boundary_count,
+        candidate_set.boundary_group_count,
+        candidate_set.selected_overflow_count,
+        candidate_set.boundary_has_tie,
+        candidate_set.boundary_tie_expanded,
+    )
+    if actual_summary != expected_summary:
+        raise ArtifactIntegrityError(
+            "persisted CandidateSet summary facts do not reconcile"
+        )
+
+    all_rankable_selected = (
+        selected_count == len(rankable_candidates)
+        and candidate_set.requested_top_k >= len(rankable_candidates)
+    )
+    boundary_tie_expanded = selected_count > candidate_set.requested_top_k
+    for candidate in plan.candidates:
+        if candidate.disposition is CandidateDisposition.UNRANKABLE:
+            expected_reason = "STRICT_COMPLETE_CASE_REQUIRED_FEATURE_UNAVAILABLE"
+        elif candidate.disposition is CandidateDisposition.RANKED_NOT_SELECTED:
+            expected_reason = "BELOW_BOUNDARY"
+        elif all_rankable_selected:
+            expected_reason = "ALL_RANKABLE_SELECTED"
+        elif candidate.composite_score is not None and (
+            boundary_score is not None
+            and candidate.composite_score > boundary_score
+        ):
+            expected_reason = "ABOVE_BOUNDARY"
+        elif boundary_tie_expanded:
+            expected_reason = "BOUNDARY_TIE_INCLUDED"
+        else:
+            expected_reason = "AT_BOUNDARY"
+        if candidate.reason_code != expected_reason:
+            raise ArtifactIntegrityError(
+                "persisted Candidate disposition reasons do not reconcile"
+            )
 
 
 def _validate_reconciliation(

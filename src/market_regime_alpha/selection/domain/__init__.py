@@ -28,6 +28,7 @@ from market_regime_alpha.selection.domain.candidate_results import (
     CandidateRecord,
     CandidateScoreComponentRecord,
     CandidateSetResult,
+    candidate_result_content_sha256,
 )
 from market_regime_alpha.selection.domain.evidence import (
     CriterionEvidence,
@@ -74,6 +75,7 @@ __all__ = [
     "CandidateRecord",
     "CandidateScoreComponentRecord",
     "CandidateSetResult",
+    "candidate_result_content_sha256",
     "CriterionEvidence",
     "CriterionOperator",
     "CriterionResult",

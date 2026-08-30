@@ -29,8 +29,8 @@ from market_regime_alpha.selection.domain.candidate_results import (
     CandidateRecord,
     CandidateScoreComponentRecord,
     CandidateSetResult,
+    candidate_result_content_sha256,
 )
-from market_regime_alpha.shared.hashing import canonical_json_sha256
 from market_regime_alpha.shared.identity import ContentHash
 
 
@@ -259,27 +259,33 @@ def build_candidate_set(
         else sum(score == boundary_score_exact for score in exact_scores.values())
     )
 
-    exact_projection_inputs: dict[tuple[str, str, str], Fraction] = {}
-    for component in components:
-        component_id_text = str(component.candidate_policy_component_id)
-        exact_projection_inputs[("weight", component_id_text, "")] = exact_weights[
-            component.candidate_policy_component_id
-        ]
-    for (instrument_id, component_uuid), percentile in exact_percentiles.items():
-        key_suffix = (str(instrument_id), str(component_uuid))
-        exact_projection_inputs[("percentile", *key_suffix)] = percentile
-        exact_projection_inputs[("contribution", *key_suffix)] = (
-            exact_contributions[(instrument_id, component_uuid)]
-        )
-    for instrument_id, exact_score in exact_scores.items():
-        exact_projection_inputs[("score", str(instrument_id), "")] = exact_score
+    ranking_projection_inputs = {
+        ("score", str(instrument_id), ""): exact_score
+        for instrument_id, exact_score in exact_scores.items()
+    }
     if boundary_score_exact is not None:
-        exact_projection_inputs[("boundary", "", "")] = boundary_score_exact
+        ranking_projection_inputs[("boundary", "", "")] = boundary_score_exact
     projection_precision, projected = project_exact_values(
-        exact_projection_inputs,
+        ranking_projection_inputs,
         minimum_precision=minimum_projection_precision,
         maximum_precision=maximum_projection_precision,
     )
+    for component in components:
+        component_id = component.candidate_policy_component_id
+        projected[("weight", str(component_id), "")] = _project_fraction(
+            exact_weights[component_id],
+            precision=projection_precision,
+        )
+    for (instrument_id, component_id), percentile in exact_percentiles.items():
+        key_suffix = (str(instrument_id), str(component_id))
+        projected[("percentile", *key_suffix)] = _project_fraction(
+            percentile,
+            precision=projection_precision,
+        )
+        projected[("contribution", *key_suffix)] = _project_fraction(
+            exact_contributions[(instrument_id, component_id)],
+            precision=projection_precision,
+        )
 
     candidate_set_id = uuid5(
         NAMESPACE_URL,
@@ -407,28 +413,20 @@ def build_candidate_set(
         + sum(score > boundary_score_exact for score in exact_scores.values())
     )
     boundary_tie_expanded = selected_count > policy.requested_top_k
-    result_payload = {
-        "algorithm": {
-            "missing_policy": policy.missing_policy,
-            "normalization_method": policy.normalization_method,
-            "decimal_projection_method": policy.decimal_projection_method,
-            "decimal_projection_version": policy.decimal_projection_version,
-            "rank_method": policy.rank_method,
-            "selection_method": policy.selection_method,
-            "tie_policy": policy.tie_policy,
-        },
-        "candidate_set_id": candidate_set_id,
-        "candidates": candidate_records,
-        "component_diagnostics": diagnostics,
-        "dataset_content_sha256": dataset.dataset_content_sha256,
-        "dataset_id": dataset.dataset_id,
-        "dependency_sha256": dataset.dependency_sha256,
-        "policy_content_sha256": policy.content_sha256,
-        "policy_id": policy.candidate_policy_id,
-        "projection_precision": projection_precision,
-        "score_components": score_records,
-    }
-    result_hash = ContentHash(canonical_json_sha256(result_payload))
+    result_hash = candidate_result_content_sha256(
+        policy=policy,
+        candidate_set_id=candidate_set_id,
+        dataset_id=dataset.dataset_id,
+        dataset_content_sha256=cast(
+            ContentHash,
+            dataset.dataset_content_sha256,
+        ),
+        dependency_sha256=cast(ContentHash, dataset.dependency_sha256),
+        projection_precision=projection_precision,
+        candidates=candidate_records,
+        score_components=score_records,
+        component_diagnostics=diagnostics,
+    )
     candidate_set = CandidateSetResult(
         candidate_set_id=candidate_set_id,
         candidate_policy_id=policy.candidate_policy_id,

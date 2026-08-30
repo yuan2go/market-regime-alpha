@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from enum import StrEnum
@@ -10,7 +11,9 @@ from uuid import UUID
 from market_regime_alpha.selection.domain.candidate_inputs import CandidateCellStatus
 from market_regime_alpha.selection.domain.candidate_policy import (
     CandidateFeatureValueType,
+    CandidatePolicy,
 )
+from market_regime_alpha.shared.hashing import canonical_json_sha256
 from market_regime_alpha.shared.identity import ContentHash
 from market_regime_alpha.shared.time import DecisionTime
 
@@ -158,6 +161,51 @@ class CandidateRankingPlan:
 CandidateBuildResult = CandidateRankingPlan
 
 
+def candidate_result_content_sha256(
+    *,
+    policy: CandidatePolicy,
+    candidate_set_id: UUID,
+    dataset_id: UUID,
+    dataset_content_sha256: ContentHash,
+    dependency_sha256: ContentHash,
+    projection_precision: int,
+    candidates: Sequence[CandidateRecord],
+    score_components: Sequence[CandidateScoreComponentRecord],
+    component_diagnostics: Sequence[CandidateComponentDiagnostic],
+) -> ContentHash:
+    """Hash persisted Candidate results without recomputing ranking semantics."""
+
+    return ContentHash(
+        canonical_json_sha256(
+            {
+                "algorithm": {
+                    "missing_policy": policy.missing_policy,
+                    "normalization_method": policy.normalization_method,
+                    "decimal_projection_method": (
+                        policy.decimal_projection_method
+                    ),
+                    "decimal_projection_version": (
+                        policy.decimal_projection_version
+                    ),
+                    "rank_method": policy.rank_method,
+                    "selection_method": policy.selection_method,
+                    "tie_policy": policy.tie_policy,
+                },
+                "candidate_set_id": candidate_set_id,
+                "candidates": list(candidates),
+                "component_diagnostics": list(component_diagnostics),
+                "dataset_content_sha256": dataset_content_sha256,
+                "dataset_id": dataset_id,
+                "dependency_sha256": dependency_sha256,
+                "policy_content_sha256": policy.content_sha256,
+                "policy_id": policy.candidate_policy_id,
+                "projection_precision": projection_precision,
+                "score_components": list(score_components),
+            }
+        )
+    )
+
+
 __all__ = [
     "CandidateBuildResult",
     "CandidateComponentDiagnostic",
@@ -167,4 +215,5 @@ __all__ = [
     "CandidateRecord",
     "CandidateScoreComponentRecord",
     "CandidateSetResult",
+    "candidate_result_content_sha256",
 ]

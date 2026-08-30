@@ -29,6 +29,7 @@ from market_regime_alpha.selection.domain import (
 )
 from market_regime_alpha.selection.ports.candidate_repository import (
     CandidatePersistenceReconciliation,
+    CandidateSetBinding,
 )
 from market_regime_alpha.shared.identity import ContentHash
 from market_regime_alpha.shared.time import DecisionTime
@@ -320,6 +321,40 @@ class PostgresCandidateRepository:
                 ),
             )
 
+    def candidate_set_binding(
+        self,
+        *,
+        candidate_policy_id: UUID,
+        dataset_id: UUID,
+        lock: bool,
+    ) -> CandidateSetBinding | None:
+        """Load only the immutable CandidateSet identity/hash binding."""
+
+        suffix = " FOR SHARE" if lock else ""
+        row = self._connection.execute(
+            """
+            SELECT candidate_set_id, candidate_policy_id,
+                   candidate_policy_content_sha256, dataset_id,
+                   dataset_content_sha256, dependency_sha256,
+                   content_sha256
+            FROM mra.candidate_set
+            WHERE candidate_policy_id = %s AND dataset_id = %s
+            """
+            + suffix,
+            (candidate_policy_id, dataset_id),
+        ).fetchone()
+        if row is None:
+            return None
+        return CandidateSetBinding(
+            candidate_set_id=UUID(str(row[0])),
+            candidate_policy_id=UUID(str(row[1])),
+            candidate_policy_content_sha256=str(row[2]),
+            dataset_id=UUID(str(row[3])),
+            dataset_content_sha256=str(row[4]),
+            dependency_sha256=str(row[5]),
+            result_sha256=str(row[6]),
+        )
+
     def persisted_candidate_set(
         self,
         *,
@@ -479,6 +514,73 @@ class PostgresCandidateRepository:
                              WHERE score.candidate_id = unrankable.candidate_id
                                AND score.raw_status <> 'AVAILABLE'
                          )
+                   )
+                   AND NOT EXISTS (
+                       SELECT 1
+                       FROM mra.candidate AS rankable
+                       WHERE rankable.candidate_set_id =
+                           funnel.candidate_set_id
+                         AND rankable.disposition <> 'UNRANKABLE'
+                         AND EXISTS (
+                             SELECT 1
+                             FROM mra.candidate_score_component AS score
+                             WHERE score.candidate_id = rankable.candidate_id
+                               AND score.raw_status <> 'AVAILABLE'
+                         )
+                   )
+                   AND authority.composite_distinct_count = (
+                       SELECT count(DISTINCT candidate.composite_score)
+                       FROM mra.candidate AS candidate
+                       WHERE candidate.candidate_set_id =
+                           funnel.candidate_set_id
+                         AND candidate.disposition <> 'UNRANKABLE'
+                   )
+                   AND (
+                       (
+                           authority.rankable_count = 0
+                           AND authority.boundary_score IS NULL
+                           AND authority.boundary_rank IS NULL
+                           AND authority.strictly_above_boundary_count = 0
+                           AND authority.boundary_group_count = 0
+                       )
+                       OR
+                       (
+                           authority.rankable_count > 0
+                           AND authority.boundary_score IS NOT DISTINCT FROM (
+                               SELECT min(candidate.composite_score)
+                               FROM mra.candidate AS candidate
+                               WHERE candidate.candidate_set_id =
+                                   funnel.candidate_set_id
+                                 AND candidate.disposition = 'SELECTED'
+                           )
+                           AND authority.boundary_rank = 1 + (
+                               SELECT count(*)
+                               FROM mra.candidate AS candidate
+                               WHERE candidate.candidate_set_id =
+                                   funnel.candidate_set_id
+                                 AND candidate.disposition <> 'UNRANKABLE'
+                                 AND candidate.composite_score >
+                                     authority.boundary_score
+                           )
+                           AND authority.strictly_above_boundary_count = (
+                               SELECT count(*)
+                               FROM mra.candidate AS candidate
+                               WHERE candidate.candidate_set_id =
+                                   funnel.candidate_set_id
+                                 AND candidate.disposition <> 'UNRANKABLE'
+                                 AND candidate.composite_score >
+                                     authority.boundary_score
+                           )
+                           AND authority.boundary_group_count = (
+                               SELECT count(*)
+                               FROM mra.candidate AS candidate
+                               WHERE candidate.candidate_set_id =
+                                   funnel.candidate_set_id
+                                 AND candidate.disposition <> 'UNRANKABLE'
+                                 AND candidate.composite_score =
+                                     authority.boundary_score
+                           )
+                       )
                    )
                    AND (
                        SELECT

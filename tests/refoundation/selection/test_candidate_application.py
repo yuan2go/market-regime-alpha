@@ -45,12 +45,14 @@ from market_regime_alpha.selection.domain.candidate_ranking import (
 )
 from market_regime_alpha.selection.domain.candidate_results import (
     CandidateRankingPlan,
+    candidate_result_content_sha256 as compute_candidate_result_content_sha256,
 )
 from market_regime_alpha.selection.ports.candidate_artifacts import (
     CandidateArtifactBinding,
 )
 from market_regime_alpha.selection.ports.candidate_repository import (
     CandidatePersistenceReconciliation,
+    CandidateSetBinding,
 )
 from market_regime_alpha.selection.ports.research_inputs import (
     CandidateDatasetDependency,
@@ -400,6 +402,29 @@ class _SpyCandidates:
         self._events.append(f"candidates.persisted_candidate_set:{lock}")
         return self._persisted_override or self._plan
 
+    def candidate_set_binding(
+        self,
+        *,
+        candidate_policy_id: UUID,
+        dataset_id: UUID,
+        lock: bool,
+    ) -> CandidateSetBinding | None:
+        self._events.append(f"candidates.candidate_set_binding:{lock}")
+        if self._plan is None:
+            return None
+        candidate_set = self._plan.candidate_set
+        return CandidateSetBinding(
+            candidate_set_id=candidate_set.candidate_set_id,
+            candidate_policy_id=candidate_set.candidate_policy_id,
+            candidate_policy_content_sha256=str(
+                candidate_set.candidate_policy_content_sha256
+            ),
+            dataset_id=candidate_set.dataset_id,
+            dataset_content_sha256=str(candidate_set.dataset_content_sha256),
+            dependency_sha256=str(candidate_set.dependency_sha256),
+            result_sha256=str(candidate_set.result_sha256),
+        )
+
     def reconciliation(
         self,
         candidate_set_id: UUID,
@@ -474,12 +499,14 @@ class _QueuedProvider:
     def __init__(self, uows: list[_SpyUow]) -> None:
         self._uows = uows
         self.calls = 0
+        self.read_only_calls: list[bool] = []
 
-    def __call__(self) -> _SpyUow:
+    def __call__(self, *, read_only: bool = False) -> _SpyUow:
         if self.calls >= len(self._uows):
             raise AssertionError("Candidate application opened an unexpected UoW")
         uow = self._uows[self.calls]
         self.calls += 1
+        self.read_only_calls.append(read_only)
         return uow
 
 
@@ -716,6 +743,42 @@ def test_build_prepares_and_ranks_between_preflight_and_final_uows(
     ]
 
 
+def test_fresh_build_and_replay_share_the_exact_persisted_result_hash_payload() -> None:
+    policy = _policy()
+    prepared = _prepared()
+    plan = _ranking_plan(policy, prepared)
+
+    recomputed = compute_candidate_result_content_sha256(
+        policy=policy,
+        candidate_set_id=plan.candidate_set_id,
+        dataset_id=plan.candidate_set.dataset_id,
+        dataset_content_sha256=plan.candidate_set.dataset_content_sha256,
+        dependency_sha256=plan.candidate_set.dependency_sha256,
+        projection_precision=plan.candidate_set.decimal_projection_precision,
+        candidates=plan.candidates,
+        score_components=plan.score_components,
+        component_diagnostics=plan.component_diagnostics,
+    )
+    drifted_scores = tuple(
+        replace(score, contribution=Decimal("0.4"))
+        for score in plan.score_components
+    )
+    drifted = compute_candidate_result_content_sha256(
+        policy=policy,
+        candidate_set_id=plan.candidate_set_id,
+        dataset_id=plan.candidate_set.dataset_id,
+        dataset_content_sha256=plan.candidate_set.dataset_content_sha256,
+        dependency_sha256=plan.candidate_set.dependency_sha256,
+        projection_precision=plan.candidate_set.decimal_projection_precision,
+        candidates=plan.candidates,
+        score_components=drifted_scores,
+        component_diagnostics=plan.component_diagnostics,
+    )
+
+    assert recomputed == plan.result_sha256
+    assert drifted != plan.result_sha256
+
+
 def test_build_rejects_legal_persisted_contribution_drift_before_receipt() -> None:
     events: list[str] = []
     starts: list[dict[str, Any]] = []
@@ -778,7 +841,7 @@ def test_build_rejects_legal_persisted_contribution_drift_before_receipt() -> No
     assert events.index("final-drift.exit") < events.index("failure.enter")
 
 
-def test_build_replay_rebuilds_outside_uow_then_exactly_finalizes_runtime(
+def test_build_replay_verifies_hash_outside_read_uow_without_ranking_then_finalizes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     events: list[str] = []
@@ -808,6 +871,15 @@ def test_build_replay_rebuilds_outside_uow_then_exactly_finalizes_runtime(
         prepared=prepared,
     )
     replay_uow.candidates._plan = persisted_plan
+    replay_read = _SpyUow(
+        name="replay-read",
+        events=events,
+        starts=starts,
+        receipt=receipt,
+        policy=policy,
+        prepared=prepared,
+    )
+    replay_read.candidates._plan = persisted_plan
     replay_final = _SpyUow(
         name="replay-final",
         events=events,
@@ -818,20 +890,29 @@ def test_build_replay_rebuilds_outside_uow_then_exactly_finalizes_runtime(
     )
     replay_final.candidates._plan = persisted_plan
 
-    def rank_outside_uow(**kwargs: Any) -> Any:
+    def replay_must_not_rank(**kwargs: Any) -> Any:
+        raise AssertionError("exact Candidate replay must not invoke ranking")
+
+    def hash_outside_every_uow(**kwargs: Any) -> Any:
         assert replay_uow.active is False
+        assert replay_read.active is False
         assert replay_final.active is False
-        events.append("ranking.compute")
-        return build_ranking_plan(**kwargs)
+        events.append("result-hash.compute")
+        return compute_candidate_result_content_sha256(**kwargs)
 
     monkeypatch.setattr(
         "market_regime_alpha.selection.application.candidates.rank_candidate_set",
-        rank_outside_uow,
+        replay_must_not_rank,
+    )
+    monkeypatch.setattr(
+        "market_regime_alpha.selection.application.candidates.candidate_result_content_sha256",
+        hash_outside_every_uow,
     )
     loader = _SpyLoader(events, prepared)
+    provider = _QueuedProvider([replay_uow, replay_read, replay_final])
     app = CandidateApplication(
         loader,
-        _QueuedProvider([replay_uow, replay_final]),
+        provider,
         id_factory=_id_factory(),
     )
 
@@ -847,16 +928,22 @@ def test_build_replay_rebuilds_outside_uow_then_exactly_finalizes_runtime(
     assert result.replayed is True
     assert loader.calls == 0
     assert replay_uow.committed is False
+    assert replay_read.committed is False
     assert replay_final.committed is True
+    assert provider.read_only_calls == [False, True, False]
     assert events == [
         "replay.enter",
         "runtime.lock_live",
         "candidates.policy:False",
         "dependencies.snapshot:False",
         "receipts.start",
-        "candidates.persisted_candidate_set:False",
+        "candidates.candidate_set_binding:False",
         "replay.exit",
-        "ranking.compute",
+        "replay-read.enter",
+        "candidates.persisted_candidate_set:False",
+        "candidates.reconciliation",
+        "replay-read.exit",
+        "result-hash.compute",
         "replay-final.enter",
         "runtime.lock_live",
         "candidates.policy:True",
@@ -867,7 +954,9 @@ def test_build_replay_rebuilds_outside_uow_then_exactly_finalizes_runtime(
         "artifacts.require_exact:True",
         "artifacts.require_exact:True",
         "receipts.start",
+        "candidates.candidate_set_binding:True",
         "candidates.persisted_candidate_set:True",
+        "candidates.reconciliation",
         "runtime.succeed",
         "replay-final.commit",
         "replay-final.exit",
@@ -908,7 +997,17 @@ def test_build_replay_rejects_legal_contribution_drift_after_read_uow_exits(
         policy=policy,
         prepared=prepared,
     )
-    replay_uow.candidates._plan = drifted_plan
+    replay_uow.candidates._plan = canonical_plan
+    replay_read = _SpyUow(
+        name="replay-drift-read",
+        events=events,
+        starts=starts,
+        receipt=receipt,
+        policy=policy,
+        prepared=prepared,
+    )
+    replay_read.candidates._plan = canonical_plan
+    replay_read.candidates._persisted_override = drifted_plan
     failure_uow = _SpyUow(
         name="replay-drift-failure",
         events=events,
@@ -918,19 +1017,28 @@ def test_build_replay_rejects_legal_contribution_drift_after_read_uow_exits(
         prepared=prepared,
     )
 
-    def rank_outside_uow(**kwargs: Any) -> Any:
+    def replay_must_not_rank(**kwargs: Any) -> Any:
+        raise AssertionError("exact Candidate replay must not invoke ranking")
+
+    def hash_after_read_rollback(**kwargs: Any) -> Any:
         assert replay_uow.active is False
-        events.append("ranking.compute")
-        return build_ranking_plan(**kwargs)
+        assert replay_read.active is False
+        events.append("result-hash.compute")
+        return compute_candidate_result_content_sha256(**kwargs)
 
     monkeypatch.setattr(
         "market_regime_alpha.selection.application.candidates.rank_candidate_set",
-        rank_outside_uow,
+        replay_must_not_rank,
+    )
+    monkeypatch.setattr(
+        "market_regime_alpha.selection.application.candidates.candidate_result_content_sha256",
+        hash_after_read_rollback,
     )
     loader = _SpyLoader(events, prepared)
+    provider = _QueuedProvider([replay_uow, replay_read, failure_uow])
     app = CandidateApplication(
         loader,
-        _QueuedProvider([replay_uow, failure_uow]),
+        provider,
         id_factory=_id_factory(),
     )
 
@@ -944,16 +1052,22 @@ def test_build_replay_rejects_legal_contribution_drift_after_read_uow_exits(
 
     assert loader.calls == 0
     assert replay_uow.committed is False
+    assert replay_read.committed is False
     assert failure_uow.committed is True
+    assert provider.read_only_calls == [False, True, False]
     assert events == [
         "replay-drift.enter",
         "runtime.lock_live",
         "candidates.policy:False",
         "dependencies.snapshot:False",
         "receipts.start",
-        "candidates.persisted_candidate_set:False",
+        "candidates.candidate_set_binding:False",
         "replay-drift.exit",
-        "ranking.compute",
+        "replay-drift-read.enter",
+        "candidates.persisted_candidate_set:False",
+        "candidates.reconciliation",
+        "replay-drift-read.exit",
+        "result-hash.compute",
         "replay-drift-failure.enter",
         "runtime.lock_live",
         "receipts.start",
@@ -963,6 +1077,80 @@ def test_build_replay_rejects_legal_contribution_drift_after_read_uow_exits(
         "replay-drift-failure.commit",
         "replay-drift-failure.exit",
     ]
+
+
+def test_build_replay_rejects_sql_legal_boundary_summary_drift() -> None:
+    events: list[str] = []
+    starts: list[dict[str, Any]] = []
+    policy = _policy()
+    prepared = _prepared()
+    canonical_plan = _ranking_plan(policy, prepared)
+    drifted_plan = replace(
+        canonical_plan,
+        candidate_set=replace(
+            canonical_plan.candidate_set,
+            boundary_score=Decimal("0.4"),
+        ),
+    )
+    receipt = ReceiptRecord(
+        receipt_id=_uuid(429),
+        status="SUCCEEDED",
+        request_hash=_H1,
+        result_aggregate_kind="CANDIDATE_SET",
+        result_aggregate_id=str(canonical_plan.candidate_set_id),
+        result_aggregate_version=1,
+        result_hash=str(canonical_plan.result_sha256),
+        error_code=None,
+        is_new=False,
+    )
+    replay_probe = _SpyUow(
+        name="replay-boundary",
+        events=events,
+        starts=starts,
+        receipt=receipt,
+        policy=policy,
+        prepared=prepared,
+    )
+    replay_probe.candidates._plan = canonical_plan
+    replay_read = _SpyUow(
+        name="replay-boundary-read",
+        events=events,
+        starts=starts,
+        receipt=receipt,
+        policy=policy,
+        prepared=prepared,
+    )
+    replay_read.candidates._plan = canonical_plan
+    replay_read.candidates._persisted_override = drifted_plan
+    failure = _SpyUow(
+        name="replay-boundary-failure",
+        events=events,
+        starts=starts,
+        receipt=_new_receipt(_uuid(430)),
+        policy=policy,
+        prepared=prepared,
+    )
+    provider = _QueuedProvider([replay_probe, replay_read, failure])
+    app = CandidateApplication(
+        _SpyLoader(events, prepared),
+        provider,
+        id_factory=_id_factory(),
+    )
+
+    with pytest.raises(ArtifactIntegrityError, match="summary"):
+        app.build_candidate_set(
+            policy.candidate_policy_id,
+            prepared.dataset.dataset_id,
+            _context("build-replay-boundary-drift"),
+            runtime_claim=_claim(),
+        )
+
+    assert provider.read_only_calls == [False, True, False]
+    assert replay_probe.committed is False
+    assert replay_read.committed is False
+    assert failure.committed is True
+    assert "candidates.candidate_set_binding:False" in events
+    assert "candidates.persisted_candidate_set:False" in events
 
 
 def test_build_replay_revalidates_preflight_dependencies_before_finalizing(
@@ -993,6 +1181,15 @@ def test_build_replay_revalidates_preflight_dependencies_before_finalizing(
         prepared=prepared,
     )
     replay_uow.candidates._plan = persisted_plan
+    replay_read = _SpyUow(
+        name="replay-preflight-read",
+        events=events,
+        starts=starts,
+        receipt=receipt,
+        policy=policy,
+        prepared=prepared,
+    )
+    replay_read.candidates._plan = persisted_plan
     changed_snapshot = replace(_snapshot(prepared), dependency_sha256=_H5)
     replay_final = _SpyUow(
         name="replay-final-drift",
@@ -1013,19 +1210,19 @@ def test_build_replay_revalidates_preflight_dependencies_before_finalizing(
         prepared=prepared,
     )
 
-    def rank_outside_uow(**kwargs: Any) -> Any:
-        assert replay_uow.active is False
-        assert replay_final.active is False
-        events.append("ranking.compute")
-        return build_ranking_plan(**kwargs)
+    def replay_must_not_rank(**kwargs: Any) -> Any:
+        raise AssertionError("exact Candidate replay must not invoke ranking")
 
     monkeypatch.setattr(
         "market_regime_alpha.selection.application.candidates.rank_candidate_set",
-        rank_outside_uow,
+        replay_must_not_rank,
+    )
+    provider = _QueuedProvider(
+        [replay_uow, replay_read, replay_final, failure_uow]
     )
     app = CandidateApplication(
         _SpyLoader(events, prepared),
-        _QueuedProvider([replay_uow, replay_final, failure_uow]),
+        provider,
         id_factory=_id_factory(),
     )
 
@@ -1038,8 +1235,10 @@ def test_build_replay_revalidates_preflight_dependencies_before_finalizing(
         )
 
     assert replay_uow.committed is False
+    assert replay_read.committed is False
     assert replay_final.committed is False
     assert failure_uow.committed is True
+    assert provider.read_only_calls == [False, True, False, False]
     assert events.index("replay-final-drift.exit") < events.index(
         "replay-final-failure.enter"
     )

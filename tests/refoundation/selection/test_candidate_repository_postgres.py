@@ -617,6 +617,22 @@ def test_candidate_set_bulk_write_preserves_equal_rank_numeric_matrix_and_funnel
             score_components=drifted_scores,
         )
 
+    boundary_drift = replace(
+        plan,
+        candidate_set=replace(
+            plan.candidate_set,
+            boundary_score=Decimal("0.4"),
+        ),
+    )
+    with stack.pool.connection() as boundary_connection:
+        boundary_repository = PostgresCandidateRepository(boundary_connection)
+        boundary_repository.insert_policy(policy)
+        boundary_repository.insert_candidate_set(boundary_drift)
+        boundary_reconciliation = boundary_repository.reconciliation(
+            plan.candidate_set_id
+        )
+        assert boundary_reconciliation.ranking_reconciled is False
+
     with stack.pool.connection() as incomplete_connection:
         incomplete_repository = PostgresCandidateRepository(incomplete_connection)
         incomplete_repository.insert_policy(policy)
@@ -632,6 +648,11 @@ def test_candidate_set_bulk_write_preserves_equal_rank_numeric_matrix_and_funnel
         repository.insert_policy(policy)
         repository.insert_candidate_set(plan)
         persisted = repository.persisted_candidate_set(
+            candidate_policy_id=policy.candidate_policy_id,
+            dataset_id=seeded.dataset_id,
+            lock=True,
+        )
+        binding = repository.candidate_set_binding(
             candidate_policy_id=policy.candidate_policy_id,
             dataset_id=seeded.dataset_id,
             lock=True,
@@ -666,6 +687,14 @@ def test_candidate_set_bulk_write_preserves_equal_rank_numeric_matrix_and_funnel
         connection.commit()
 
     assert persisted == plan
+    assert binding is not None
+    assert binding.candidate_set_id == plan.candidate_set_id
+    assert binding.candidate_policy_id == policy.candidate_policy_id
+    assert binding.candidate_policy_content_sha256 == str(policy.content_sha256)
+    assert binding.dataset_id == seeded.dataset_id
+    assert binding.dataset_content_sha256 == seeded.dataset_content_sha256
+    assert binding.dependency_sha256 == str(plan.candidate_set.dependency_sha256)
+    assert binding.result_sha256 == str(plan.result_sha256)
     assert stored_candidates == [
         (Decimal("0.5"), 1, "SELECTED"),
         (Decimal("0.5"), 1, "SELECTED"),
