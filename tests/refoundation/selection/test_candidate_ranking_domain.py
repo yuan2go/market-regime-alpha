@@ -1,7 +1,7 @@
 """Candidate V1 ranks complete cross-sections with exact, identity-neutral math."""
 
 from datetime import datetime, timezone
-from decimal import Decimal, localcontext
+from decimal import Decimal, Inexact, Underflow, localcontext
 from fractions import Fraction
 from uuid import UUID
 
@@ -467,3 +467,45 @@ def test_row_order_and_ambient_decimal_context_cannot_change_ranking() -> None:
     assert first.candidate_set.content_sha256 == second.candidate_set.content_sha256
     assert first.candidates == second.candidates
     assert first.score_components == second.score_components
+
+
+def test_candidate_projection_ignores_ambient_exponent_and_trap_context() -> None:
+    policy = _policy(
+        _component(1, weight="1"),
+        _component(2, weight="1E-100"),
+        requested_top_k=2,
+    )
+    dataset = _population(
+        _row(1, _cell(1, "1"), _cell(2, "40")),
+        _row(2, _cell(1, "2"), _cell(2, "30")),
+        _row(3, _cell(1, "3"), _cell(2, "20")),
+        _row(4, _cell(1, "4"), _cell(2, "10")),
+    )
+    expected = build_candidate_set(policy=policy, dataset=dataset)
+
+    with localcontext() as context:
+        context.Emin = -9
+        context.Emax = 9
+        context.traps[Underflow] = True
+        context.traps[Inexact] = True
+        actual = build_candidate_set(policy=policy, dataset=dataset)
+
+    assert actual == expected
+    assert actual.candidate_set.content_sha256 == expected.candidate_set.content_sha256
+
+
+def test_build_rejects_projected_weights_outside_postgresql_numeric_limits() -> None:
+    policy = _policy(
+        _component(1, weight="1E+131071"),
+        _component(2, weight="1E-16383"),
+        requested_top_k=1,
+    )
+    dataset = _population(
+        _row(1, _cell(1, "7"), _cell(2, "11")),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="Candidate Decimal projection exceeds PostgreSQL numeric physical limits",
+    ):
+        build_candidate_set(policy=policy, dataset=dataset)

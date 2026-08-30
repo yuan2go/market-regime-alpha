@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from decimal import Decimal, ROUND_HALF_EVEN, localcontext
+from decimal import Context, Decimal, MAX_EMAX, MIN_EMIN, ROUND_HALF_EVEN
 from fractions import Fraction
 from typing import Hashable, TypeVar, cast
 from uuid import NAMESPACE_URL, UUID, uuid5
@@ -37,6 +37,8 @@ from market_regime_alpha.shared.identity import ContentHash
 _ProjectionKey = TypeVar("_ProjectionKey", bound=Hashable)
 _DEFAULT_PROJECTION_PRECISION = 64
 _MAXIMUM_PROJECTION_PRECISION = 4096
+_POSTGRES_NUMERIC_MAX_INTEGER_DIGITS = 131_072
+_POSTGRES_NUMERIC_MAX_FRACTIONAL_DIGITS = 16_383
 
 
 def normalize_declared_weights(
@@ -567,10 +569,33 @@ def _selected_reason(
 
 
 def _project_fraction(value: Fraction, *, precision: int) -> Decimal:
-    with localcontext() as context:
-        context.prec = precision
-        context.rounding = ROUND_HALF_EVEN
-        return Decimal(value.numerator) / Decimal(value.denominator)
+    context = Context(
+        prec=precision,
+        rounding=ROUND_HALF_EVEN,
+        Emin=MIN_EMIN,
+        Emax=MAX_EMAX,
+        capitals=1,
+        clamp=0,
+        flags=[],
+        traps=[],
+    )
+    projected = context.divide(
+        Decimal(value.numerator),
+        Decimal(value.denominator),
+    )
+    _, digits, exponent = projected.as_tuple()
+    if not isinstance(exponent, int):
+        raise ValueError("Candidate Decimal projection must be finite")
+    integer_digits = max(len(digits) + exponent, 0)
+    fractional_digits = max(-exponent, 0)
+    if (
+        integer_digits > _POSTGRES_NUMERIC_MAX_INTEGER_DIGITS
+        or fractional_digits > _POSTGRES_NUMERIC_MAX_FRACTIONAL_DIGITS
+    ):
+        raise ValueError(
+            "Candidate Decimal projection exceeds PostgreSQL numeric physical limits"
+        )
+    return projected
 
 
 __all__ = [

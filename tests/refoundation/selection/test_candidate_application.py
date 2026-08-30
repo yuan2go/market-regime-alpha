@@ -743,6 +743,132 @@ def test_build_prepares_and_ranks_between_preflight_and_final_uows(
     ]
 
 
+def test_unrepresentable_projection_fails_before_final_business_uow() -> None:
+    events: list[str] = []
+    starts: list[dict[str, Any]] = []
+    policy_id = _uuid(150)
+    policy = CandidatePolicy(
+        candidate_policy_id=policy_id,
+        policy_code="candidate_projection_boundary",
+        version=1,
+        code_artifact=PolicyArtifactBinding(_uuid(151), _H1, 10),
+        config_artifact=PolicyArtifactBinding(_uuid(152), _H2, 20),
+        requested_top_k=1,
+        components=(
+            CandidatePolicyComponent(
+                candidate_policy_component_id=_uuid(153),
+                candidate_policy_id=policy_id,
+                component_code="dominant",
+                ordinal=1,
+                feature_definition_id=_uuid(104),
+                feature_content_sha256=_H3,
+                feature_value_type=CandidateFeatureValueType.DECIMAL,
+                direction=DesirabilityDirection.HIGHER_IS_BETTER,
+                declared_weight=Decimal("1E+131071"),
+            ),
+            CandidatePolicyComponent(
+                candidate_policy_component_id=_uuid(154),
+                candidate_policy_id=policy_id,
+                component_code="tiny",
+                ordinal=2,
+                feature_definition_id=_uuid(105),
+                feature_content_sha256=_H4,
+                feature_value_type=CandidateFeatureValueType.DECIMAL,
+                direction=DesirabilityDirection.HIGHER_IS_BETTER,
+                declared_weight=Decimal("1E-16383"),
+            ),
+        ),
+    )
+    base = _prepared()
+    prepared = replace(
+        base,
+        dataset=replace(
+            base.dataset,
+            feature_count=2,
+            cell_count=2,
+            available_cell_count=2,
+        ),
+        features=(
+            *base.features,
+            CandidateFeatureDependency(
+                feature_definition_id=_uuid(105),
+                content_sha256=_H4,
+                value_type="DECIMAL",
+            ),
+        ),
+        rows=(
+            replace(
+                base.rows[0],
+                cells=(
+                    *base.rows[0].cells,
+                    CandidatePopulationCell(
+                        feature_definition_id=_uuid(105),
+                        status=CandidateCellStatus.AVAILABLE,
+                        value=Decimal("11"),
+                        reason_code="OBSERVED",
+                        cell_source_lineage_hash=_H6,
+                    ),
+                ),
+            ),
+        ),
+    )
+    preflight = _SpyUow(
+        name="projection-preflight",
+        events=events,
+        starts=starts,
+        receipt=_new_receipt(_uuid(155)),
+        policy=policy,
+        prepared=prepared,
+    )
+    failure = _SpyUow(
+        name="projection-failure",
+        events=events,
+        starts=starts,
+        receipt=_new_receipt(_uuid(156)),
+        policy=policy,
+        prepared=prepared,
+    )
+    provider = _QueuedProvider([preflight, failure])
+    app = CandidateApplication(
+        _SpyLoader(events, prepared),
+        provider,
+        id_factory=_id_factory(),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="Candidate Decimal projection exceeds PostgreSQL numeric physical limits",
+    ):
+        app.build_candidate_set(
+            policy.candidate_policy_id,
+            prepared.dataset.dataset_id,
+            _context("candidate-projection-boundary"),
+            runtime_claim=_claim(),
+        )
+
+    assert provider.calls == 2
+    assert preflight.committed is False
+    assert failure.committed is True
+    assert not any("candidates.insert_candidate_set" in item for item in events)
+    assert events == [
+        "projection-preflight.enter",
+        "runtime.lock_live",
+        "candidates.policy:False",
+        "dependencies.snapshot:False",
+        "receipts.start",
+        "projection-preflight.exit",
+        "loader.prepare",
+        "projection-failure.enter",
+        "runtime.lock_live",
+        "receipts.start",
+        "receipts.fail",
+        "audit.append",
+        "runtime.fail",
+        "projection-failure.commit",
+        "projection-failure.exit",
+    ]
+
+
 def test_fresh_build_and_replay_share_the_exact_persisted_result_hash_payload() -> None:
     policy = _policy()
     prepared = _prepared()
