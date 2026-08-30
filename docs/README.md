@@ -73,6 +73,11 @@ Checkpoint traceability:
   semantics, one canonical Decision Run per Candidate Set, mandatory Runtime
   edge, and exact replay/reconciliation implementation contract; this remains
   the design-time decision record, not implementation evidence.
+- [WP-10 Market Target Outcome Design](references/WP-ARCHITECTURE-REFOUNDATION-10-Market-Target-Outcome-Design.md)
+  — approved commitment-bound realized-market-fact Authority, append-only full
+  revisions, frozen Decision-reference binding, dual cutoffs, concrete source
+  and metric dependency rosters, pure numerical kernel, and read-only Outcome
+  port; implementation evidence is not claimed before its exact-SHA gate.
 
 All documents in this section have Target status. They define the destination,
 not current completion.

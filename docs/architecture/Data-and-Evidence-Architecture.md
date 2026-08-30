@@ -3,7 +3,7 @@
 > **Status:** CANONICAL_TARGET_ARCHITECTURE
 > **Authority:** Target logical schema, PIT, evidence, artifact, and cutover specification
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-30
+> **Last Updated:** 2026-08-31
 > **Code Evidence:** target `src/market_regime_alpha/infrastructure/postgres`, `src/market_regime_alpha/shared`, `src/market_regime_alpha/runtime`, `src/market_regime_alpha/market`, `src/market_regime_alpha/selection`, `src/market_regime_alpha/research_qualification`, `tests/refoundation`; legacy `src/market_regime_alpha/persistence/postgres` remains current business implementation
 
 This document is the sole Target logical table catalog. Current physical DDL,
@@ -235,7 +235,8 @@ Evaluation, and Research Qualification; it never owns a bars-to-label writer.
 | `market_target_outcome_source` | exact relational source roster for one revision | unique revision/role/ordinal; closed role with exactly one concrete Market bar/fact/corporate-action/session/gap/capture FK shape; no `(kind,id)` or manifest lineage |
 | `market_target_outcome_observation` | exact path/checkpoint observation | unique revision/Target checkpoint/role; value, availability and finality states separate; event/source times and concrete same-revision Outcome source FK |
 | `market_target_outcome_metric` | return/MFE/MAE/barrier metric | unique revision/declared metric/checkpoint; value, availability and finality states separate; typed value/unit and concrete observation dependencies |
-| `market_target_outcome_metric_observation` | exact observation dependencies of a metric | unique metric/observation/role; both rows belong to the same revision; full Target-declared dependency set reconciles |
+| `market_target_outcome_metric_reference` | exact Decision-reference dependency of a metric | unique metric/Target `REFERENCE` dependency; concrete FK to the root's immutable WP-09 `decision_reference_observation`; no recomputation or polymorphic dependency |
+| `market_target_outcome_metric_observation` | exact Outcome-observation dependencies of a metric | unique metric/Target dependency; role limited to `OBSERVATION`/`PATH_MEMBER`; both rows belong to the same revision and matching Target checkpoint |
 | `market_target_outcome_reason` | typed per-dimension unavailable/partial/failed reason | unique revision/dimension/reason/source; binds exact checkpoint/metric/source where applicable |
 | `market_attribution_run` | declared Market Outcome attribution basis | unique Outcome revision/policy; status/total/reconciliation rule |
 | `market_attribution_line` | Market dimension contribution | unique run/dimension/member; value/status; sum/remainder rule |
@@ -612,10 +613,14 @@ Every revision stores these independently:
 The revision's complete source roster lives in
 `market_target_outcome_source`, whose closed roles use exactly-one concrete
 Market/PIT FK shapes. Observations bind same-revision source rows. Every metric
-binds one `target_metric_definition`, and
-`market_target_outcome_metric_observation` records and reconciles the exact
-same-revision observations used. Hashes verify these rows; they never replace
-them.
+binds one `target_metric_definition`.
+`market_target_outcome_metric_reference` binds each declared `REFERENCE`
+dependency directly to the immutable WP-09 Decision reference, while
+`market_target_outcome_metric_observation` binds each declared `OBSERVATION` or
+`PATH_MEMBER` dependency to its exact same-revision Outcome observation. Hashes
+verify these rows; they never replace them. The split is the WP-10 concrete-FK
+normalization of the WP-08 dependency concept and increases the logical catalog
+from 117 to 118 relations without making relation count a quota.
 
 Persisted Outcome-window status is `UNAVAILABLE`, `PARTIAL`, `COMPLETE`, or
 `FAILED`. `NOT_DUE` is a due-work query result over commitment plus Target and
