@@ -4,21 +4,14 @@
 > **Authority:** WP-ARCHITECTURE-REFOUNDATION-01 design checkpoint
 > **Owner:** Market Regime Alpha maintainers
 > **Last Updated:** 2026-08-30
-> **Starting Main:** `0382dad416d6d50d1eea0bda1603d7c359d65274`
-> **Implementation State:** `FOUNDATION_MARKET_SELECTION_RESEARCH_DEFINITION_CANDIDATE_IMPLEMENTED_DRAFT / CANDIDATE_EXIT_GATE_PASS / NOT_CUT_OVER`
 > **Code Evidence:** target `src/market_regime_alpha/shared`, `src/market_regime_alpha/runtime`, `src/market_regime_alpha/market`, `src/market_regime_alpha/selection`, `src/market_regime_alpha/research_qualification`, `src/market_regime_alpha/infrastructure`, `src/market_regime_alpha/interfaces`, target draft `src/market_regime_alpha/infrastructure/postgres/migrations/001_baseline.sql`, `tests/refoundation`; legacy source/migrations remain current business implementation
 
-This document freezes the approved architecture. Foundation, Market/PIT,
-Selection Core, the three-table Research Definition Core, and the five-table
-Selection-owned Candidate Authority now exist as an isolated
-`MRA_REFOUNDATION_1 / DRAFT / NOT_CUT_OVER` implementation. Candidate passed its
-local WP-07 engineering exit gate at
-`029c26928af436d7788da1cce3a53c94b96377bf`. All later target contexts remain
-unimplemented; the next authorized activity is only a real dependency review,
-not an implementation order. Legacy code and the current
-283-table schema remain canonical business implementation truth until the
-explicit Runtime/CLI Hard Cutover. Neither the design nor the draft creates
-research, Provider, trading, or Production proof.
+This document freezes the approved Target architecture. Current implementation
+scope and exact checkpoint evidence live in
+[Current State](../status/Current-State.md) and the linked Verification records.
+Until the explicit Runtime/CLI Hard Cutover, executable code and PostgreSQL
+remain implementation truth. Neither this design nor an isolated target draft
+creates research, Provider, trading, or Production proof.
 
 The approved direction is **Hard Cutover Re-foundation**: preserve real business
 capabilities and correctness invariants, but do not preserve wrong abstractions,
@@ -71,9 +64,8 @@ results.
 - No microservices, message broker, event sourcing, generic workflow framework,
   generic registry framework, AutoML, or broker automation.
 - No preservation of old table identities or historical rows.
-- No table-count target. The frozen logical catalog contains **91 tables**
-  because those relations protect current business semantics; the earlier
-  estimate of approximately 41 is explicitly non-binding.
+- No table-count target. Relations exist only when a concrete key, lifecycle,
+  query, or integrity constraint protects business semantics.
 - No document, report, Evidence Ledger, Current State page, CLI output, or
   artifact directory becomes business Authority.
 - No compatibility package or dual-write period after cutover.
@@ -160,7 +152,7 @@ composition root.
 | Runtime & Provenance | Schedule, Run, Step, Attempt, Command Receipt, Artifact | schedule, claim, heartbeat, finalize, resume, verify artifact | run trace, due work, integrity report |
 | Market & PIT | Capture, Instrument, Trading Session, Fact Revision, Classification Revision, Source Gap | register capture, normalize revision, record gap/correction | as-of fact, exact session grid, source lineage |
 | Selection | Universe Revision, Eligibility Assessment, Candidate Policy/Set/Candidate and Candidate Score Component | freeze universe, assess eligibility; register Candidate policy and build Candidate Set only from the immutable Decision-input Dataset | scope and eligibility at Decision time; Candidate funnel and dossier |
-| Research & Qualification | initially Dataset, Dataset Source, and Feature Definition; later owner boundaries subject to post-Candidate dependency review | initially register immutable Decision-input definitions; later commands are not yet ordered or authorized | initially exact Dataset/Feature lineage |
+| Research & Qualification | Dataset, Dataset Source, Feature Definition, Target, Partition, Experiment, Evaluation, optional Model branch, Evidence, Assessment, and Research Qualification | register immutable definitions; freeze partitions; run experiments/evaluations; record evidence; assess and qualify | exact Dataset/Feature/Target/Partition/Evaluation/Evidence lineage |
 | Decision Support | Decision Run, Context Assessment, Signal, Forecast, Opportunity, Thesis, Strategy Version, Portfolio Proposal, Risk Decision | decide, propose, risk-assess | decision dossier, risk authorization |
 | Outcome & Attribution | Outcome, Observation, Metric, Reason, Attribution Run/Line | settle outcome, attribute | outcome status/path, metric availability, attribution |
 | Execution & Account | Account Authority Epoch, Execution Intent, Fill, Fill Allocation, Broker Observation, Reconciliation, Position Basis Event | approve intent, record/correct fill, observe broker, reconcile, authorize non-trade adjustment | current position, sleeve, cash/exposure evidence |
@@ -254,11 +246,11 @@ Eligibility, and Candidate commands never consume that Context result. An
 Opportunity carries Decision input Evidence only; the single authoritative Risk
 evaluation occurs after a complete Portfolio Proposal.
 
-Selection Core and Research Definition together provide the prerequisites
-through `REGISTER_DATASET`; Candidate Closure implements
-`BUILD_CANDIDATE_SET`. `BUILD_CANDIDATES` is not an alias or compatibility name.
-Before Runtime/CLI Cutover this expanded slice is test-only and creates no
-current Runtime dispatch or canonical write authority.
+Selection Core and Research Definition provide the prerequisites through
+`REGISTER_DATASET`; Candidate owns `BUILD_CANDIDATE_SET`.
+`BUILD_CANDIDATES` is not an alias or compatibility name. Before Runtime/CLI
+Cutover, target slices create no current Runtime dispatch or canonical write
+authority.
 
 Historical, replay, shadow, and prospective modes reuse Application commands
 and business semantics. They differ only in clock, frozen input resolver,
@@ -268,9 +260,9 @@ architectures. Runtime fencing/retry/resume is frozen in
 
 ## 7. Persistence and artifact boundary
 
-PostgreSQL 16 is the sole relational Authority. The target catalog has 91 tables
-across Runtime/Provenance, Market/PIT, Selection, Research/
-Qualification, Decision/Outcome, and Execution/Account. Large immutable raw
+PostgreSQL 16 is the sole relational Authority. The sole logical catalog is in
+[PostgreSQL, Temporal and Evidence Architecture](Data-and-Evidence-Architecture.md).
+Large immutable raw
 captures, datasets, matrices, model binaries, and reports are content-addressed
 artifacts; their metadata, hashes, business bindings, verification state, and
 retention decisions remain in PostgreSQL.
@@ -429,7 +421,7 @@ next checkpoint:
    provider/account and need adapter-specific qualification fixtures.
 4. Unknown external execution effects need a real operator reconciliation
    workflow before any broker adapter is introduced.
-5. The 91-table catalog is frozen semantically, but physical index choices must
+5. The logical catalog is frozen semantically, but physical index choices must
    be confirmed with representative query plans during implementation.
 6. Historical artifact volume and retention are not yet measured; partitioning
    is deliberately deferred until measured.

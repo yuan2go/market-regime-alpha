@@ -4,17 +4,11 @@
 > **Authority:** Target bounded-context vocabulary and dependency map
 > **Owner:** Market Regime Alpha maintainers
 > **Last Updated:** 2026-08-30
-> **Implementation State:** `FOUNDATION_MARKET_SELECTION_RESEARCH_DEFINITION_CANDIDATE_IMPLEMENTED_DRAFT / CANDIDATE_EXIT_GATE_PASS / NOT_CUT_OVER`
 
-This file defines names and relationships only. Foundation, Market/PIT,
-Selection Core, the three-table Research Definition Core, and the five-table
-Selection-owned Candidate Authority exist in the isolated target draft.
-Candidate passed its local WP-07 engineering exit gate at implementation
-checkpoint `029c26928af436d7788da1cce3a53c94b96377bf`; later target contexts
-remain absent and their implementation order awaits the post-Candidate
-dependency review.
-Current implementation truth remains code, PostgreSQL, tests actually run, and
-reproducible evidence.
+This file defines Target names and relationships only. Current implementation
+truth and checkpoint evidence remain in code, PostgreSQL, tests actually run,
+[Current State](docs/status/Current-State.md), and the linked Verification
+records.
 
 ## Ubiquitous language
 
@@ -98,13 +92,12 @@ The Candidate-time business dependency direction is
 `Market/PIT → Universe → Eligibility → Candidate → Context → Signal/Forecast → Opportunity → Portfolio → Risk`.
 Context cannot feed back into the same Candidate Set, and Opportunity cannot
 carry a Risk Decision. The sole Risk Authority follows Portfolio. Candidate V1
-is implemented in the isolated draft from the immutable Dataset and real Feature
-Definition identities; it has no Model Version, Target, Outcome, Context,
-Evidence, Assessment, or Qualification dependency. With Candidate's final exit
-gate passed, the next authorized activity is only a real dependency audit across
-Target/Partition/Experiment/Model/Decision Run/Outcome/Evaluation/Evidence/
-Qualification. It does not pre-authorize their order or allow Research to own
-realized labels independently of future Outcome facts.
+depends only on the immutable Dataset and real Feature Definition identities;
+it has no Model Version, Target, Outcome, Context, Evidence, Assessment, or
+Qualification dependency. The only authorized downstream order is the
+dependency-coherent sequence in the
+[Implementation Roadmap](docs/status/Roadmap.md); Research never owns a second
+realized-label truth beside Outcome facts.
 
 ## Allowed dependency direction
 

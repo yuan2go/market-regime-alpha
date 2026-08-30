@@ -1,11 +1,9 @@
 # ADR-015: Hard Cutover and Schema Epoch
 
 > **Status:** CANONICAL_TARGET_ARCHITECTURE
-> **Implementation State:** `FOUNDATION_MARKET_SELECTION_RESEARCH_DEFINITION_CANDIDATE_IMPLEMENTED_DRAFT / CANDIDATE_EXIT_GATE_PASS / NOT_CUT_OVER`
 > **Authority:** Approved-principle target decision for WP-ARCHITECTURE-REFOUNDATION-01
 > **Owner:** Market Regime Alpha maintainers
 > **Decision Date:** 2026-08-27
-> **Starting Main:** `0382dad416d6d50d1eea0bda1603d7c359d65274`
 > **Code Evidence:** target `src/market_regime_alpha/runtime`, `src/market_regime_alpha/market`, `src/market_regime_alpha/selection`, `src/market_regime_alpha/research_qualification`, `src/market_regime_alpha/infrastructure`, `tests/refoundation`; legacy `src/market_regime_alpha/persistence/postgres` remains the current business schema
 
 ## Context
@@ -33,13 +31,10 @@ legacy data  = not migrated
 compatibility writers/readers = none after cutover
 ```
 
-The target baseline is created incrementally from the frozen logical catalog in
+The target baseline is created incrementally from the sole logical catalog in
 [PostgreSQL, Temporal and Evidence Architecture](../Data-and-Evidence-Architecture.md).
-The approximate 41-table estimate is not a constraint. The current unreleased
-draft implements 40 tables through Candidate Closure: 13 Foundation, 12
-Market/PIT, seven Selection Core, three Research Definition, and five Candidate
-relations. The larger 91-table destination remains a design catalog whose later
-owners are not yet implemented.
+Table count is never a design constraint. Current draft scope, counts, and
+checkpoint proof remain in Current State and immutable Verification records.
 
 ## Ordinary startup and bootstrap
 
@@ -153,8 +148,6 @@ Costs:
 
 ## Review status
 
-The Hard Cutover principle is approved. Candidate passed its local WP-07
-engineering exit gate at `029c26928af436d7788da1cce3a53c94b96377bf`, while
-the current 40-table draft remains unreleased and not cut over. The remaining
-91-table target catalog is design only until each bounded owner passes its own
-implementation exit gate.
+The Hard Cutover principle is approved. The target remains unreleased and not
+cut over until every bounded owner passes its own implementation exit gate and
+the explicit Runtime/CLI Cutover is authorized.

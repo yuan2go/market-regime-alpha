@@ -4,17 +4,14 @@
 > **Authority:** Target Application, Runtime, concurrency, recovery, and interface specification
 > **Owner:** Market Regime Alpha maintainers
 > **Last Updated:** 2026-08-30
-> **Implementation State:** `FOUNDATION_MARKET_SELECTION_RESEARCH_DEFINITION_CANDIDATE_IMPLEMENTED_DRAFT / CANDIDATE_EXIT_GATE_PASS / NOT_CUT_OVER`
 > **Code Evidence:** target `src/market_regime_alpha/runtime`, `src/market_regime_alpha/market`, `src/market_regime_alpha/selection`, `src/market_regime_alpha/research_qualification`, `src/market_regime_alpha/infrastructure`, `src/market_regime_alpha/interfaces`, `tests/refoundation`; legacy Runtime remains current business implementation
 
-This is the target specification. Its Foundation Runtime and test-only
-Market/PIT, Selection Core, Research Definition Core, and Candidate Authority are
-implemented in the mutable target draft; Candidate passed its local WP-07
-engineering exit gate at `029c26928af436d7788da1cce3a53c94b96377bf`.
-None has cut over the current business entry points. The current nested
-Continuous/Controlled/Lifecycle/State/Historical journals are still to be
-replaced by one Runtime journal. Business owners remain in their bounded
-contexts.
+This is the Target specification. Current implementation and exact checkpoint
+state live in [Current State](../status/Current-State.md) and Verification
+records, not here. Until an explicit cutover, the current nested
+Continuous/Controlled/Lifecycle/State/Historical journals remain in service;
+the Target replaces them with one Runtime journal while business owners remain
+in their bounded contexts.
 
 ## 1. Application versus Runtime
 

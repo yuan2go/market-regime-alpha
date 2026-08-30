@@ -4,19 +4,13 @@
 > **Authority:** Target logical schema, PIT, evidence, artifact, and cutover specification
 > **Owner:** Market Regime Alpha maintainers
 > **Last Updated:** 2026-08-30
-> **Implementation State:** `FOUNDATION_MARKET_SELECTION_RESEARCH_DEFINITION_CANDIDATE_IMPLEMENTED_DRAFT / CANDIDATE_EXIT_GATE_PASS / NOT_CUT_OVER`
 > **Code Evidence:** target `src/market_regime_alpha/infrastructure/postgres`, `src/market_regime_alpha/shared`, `src/market_regime_alpha/runtime`, `src/market_regime_alpha/market`, `src/market_regime_alpha/selection`, `src/market_regime_alpha/research_qualification`, `tests/refoundation`; legacy `src/market_regime_alpha/persistence/postgres` remains current business implementation
 
-The current canonical business baseline contains 283 tables. The mutable target
-draft contains 13 Foundation, 12 Market/PIT, seven Selection Core, three Research
-Definition, and five Candidate relations (40 tables total) in schema `mra`; its
-physical DDL is
-`src/market_regime_alpha/infrastructure/postgres/migrations/001_baseline.sql`.
-Candidate's exact-SHA catalog/checksum engineering proof is recorded in the
-[WP-07 Candidate Closure Verification](../references/WP-ARCHITECTURE-REFOUNDATION-07-Candidate-Closure-Verification.md);
-this Target document does not promote that draft into canonical business use.
-The complete target logical catalog is still estimated at **91 tables**. That
-estimate follows required semantics and is neither a quota nor a cutover claim.
+This document is the sole Target logical table catalog. Current physical DDL,
+relation/view counts, checksums, and exact-SHA engineering proof live in
+[Current State](../status/Current-State.md) and the linked Verification records;
+they are not copied into Canonical Architecture. The catalog follows required
+semantics and is neither a quota nor a cutover claim.
 
 ## 1. Database rules
 
@@ -45,7 +39,7 @@ estimate follows required semantics and is neither a quota nor a cutover claim.
 
 ## 2. Frozen target table catalog
 
-### Runtime and provenance — 13 tables
+### Runtime and provenance
 
 | Table | Purpose | Lifecycle and key constraints |
 |---|---|---|
@@ -63,7 +57,7 @@ estimate follows required semantics and is neither a quota nor a cutover claim.
 | `artifact_verification` | append-only hash/size/existence verification | artifact/time/verifier/result; mismatch immutable |
 | `artifact_gc_candidate` | two-pass orphan quarantine | unique artifact; first/second seen and operator disposition |
 
-### Market and PIT — 12 tables
+### Market and PIT
 
 | Table | Purpose | Lifecycle and key constraints |
 |---|---|---|
@@ -80,7 +74,7 @@ estimate follows required semantics and is neither a quota nor a cutover claim.
 | `corporate_action_revision` | dividends/splits/rights/conversions revision | action identity/revision unique; ex/record/pay session and factors constrained |
 | `source_gap` | expected observation missing/placeholder/conflict | source/scope/interval/kind unique; typed reason/status |
 
-### Selection Core — 7 tables in the current checkpoint
+### Selection Core
 
 | Table | Purpose | Lifecycle and key constraints |
 |---|---|---|
@@ -92,11 +86,11 @@ estimate follows required semantics and is neither a quota nor a cutover claim.
 | `eligibility_assessment` | per-instrument Decision-time result | unique universe revision/policy/instrument/decision time |
 | `eligibility_reason` | criterion result and exact Market evidence | unique assessment/rule; typed result/observed/threshold/operator/reason and queryable lineage |
 
-### Selection Candidate closure — 5 implemented draft tables
+### Selection Candidate
 
-Candidate remains permanently owned by `market_regime_alpha.selection`. These
-tables are implemented by Candidate Closure, not by the earlier Selection Core
-checkpoint. Candidate uses a separate narrow Candidate Application/UoW and a
+Candidate remains permanently owned by `market_regime_alpha.selection` and is
+separate from Universe/Eligibility. Candidate uses a separate narrow
+Application/UoW and a
 Selection-owned Research-input port; an Infrastructure adapter maps the real
 Research definitions without a Selection-to-Research or Research-to-Selection
 package import.
@@ -133,7 +127,7 @@ rejected. Candidate `policy_code` and `component_code` share the exact Domain/
 DDL vocabulary `^[a-z][a-z0-9_]{0,99}$`, so hyphens are not legal Candidate
 identities. The existing Eligibility code vocabulary is unchanged.
 
-### Research Definition Core — 3 implemented draft tables
+### Research Definition Core
 
 This checkpoint creates the permanent
 `market_regime_alpha.research_qualification` owner and implements only the
@@ -156,7 +150,7 @@ MFE/MAE, barrier, future observation, realized label, or other posterior values
 are rejected. Artifact and `dataset_source` lineage are validated bidirectionally
 and cannot disagree.
 
-### Remaining Research and Qualification — 17 deferred tables
+### Remaining Research and Qualification
 
 These relations remain logical target design only. None is a Candidate V1
 prerequisite, and Candidate Closure creates none of them. Their actual
@@ -185,7 +179,7 @@ Authority rather than independently reconstructed by Research.
 | `qualification_decision` | sole purpose-scoped admission owner | subject/purpose/revision unique; supersession; decision status |
 | `qualification_floor_result` | complete qualification proof vector | unique decision/floor; every required floor present; evidence FK |
 
-### Decision Support — 18 tables
+### Decision Support
 
 | Table | Purpose | Lifecycle and key constraints |
 |---|---|---|
@@ -208,7 +202,7 @@ Authority rather than independently reconstructed by Research.
 | `risk_decision` | accepted/rejected/unknown authorization | unique proposal/account/policy/decision time; versioned account evidence |
 | `risk_reason` | typed binding/limit result | unique decision/rule/instrument; observed/limit/status/evidence |
 
-### Outcome and Attribution — 6 tables
+### Outcome and Attribution
 
 | Table | Purpose | Lifecycle and key constraints |
 |---|---|---|
@@ -219,7 +213,7 @@ Authority rather than independently reconstructed by Research.
 | `attribution_run` | declared attribution basis and reconciliation total | unique outcome/policy/revision; status/total |
 | `attribution_line` | dimension contribution | unique run/dimension/member; value/status; sum/remainder rule |
 
-### Execution and Account — 10 tables
+### Execution and Account
 
 | Table | Purpose | Lifecycle and key constraints |
 |---|---|---|
@@ -412,8 +406,8 @@ Decision time:
   produces `UNKNOWN`; only all-pass produces `ELIGIBLE`;
 - the complete counts reconcile to Universe membership.
 
-Candidate is implemented by its separate Selection-owned closure, not by the
-earlier Selection Core checkpoint. It binds one Candidate Policy to one immutable
+Candidate is a separate Selection-owned aggregate from Universe/Eligibility. It
+binds one Candidate Policy to one immutable
 Decision-input Dataset. That Dataset and its relational sources already prove
 the sole Candidate Population:
 

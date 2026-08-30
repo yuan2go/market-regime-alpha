@@ -16,16 +16,11 @@ qualification, account state, or trading authority.
 | Approved Target | The Hard Cutover architecture to be implemented | Canonical Overall Design, supporting target documents, ADR-015 |
 | Current implementation | What the checked-out source, legacy 001–106 migrations, draft target baseline, tests, and reproducible evidence actually do | code → PostgreSQL → tests → artifacts |
 
-The approved Target is normative for new implementation. Foundation is merged
-to `main`. The current implementation line extends its mutable
-`MRA_REFOUNDATION_1` draft from 13 Foundation tables to 40 tables by adding the
-isolated Market/PIT, Selection Core, Research Definition Core, and five-table
-Selection-owned Candidate Authority. Candidate engineering is implemented and
-passed its local WP-07 exit gate at
-`029c26928af436d7788da1cce3a53c94b96377bf`. The target Runtime remains
-test-scoped; no target business CLI or canonical write cutover exists. Until
-Runtime/CLI Cutover, the existing 283-table system remains the only canonical
-business implementation; there is no dual write or target fallback.
+The approved Target is normative for new implementation. Current implementation
+scope, exact checkpoint SHAs, schema counts, and verification state live only
+in [Current State](status/Current-State.md) and the linked immutable
+Verification records. The target Runtime has not cut over a business CLI or
+canonical write path; there is no dual write or target fallback.
 
 ## Normative authority order
 
