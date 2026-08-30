@@ -4,6 +4,7 @@ import psycopg
 
 from market_regime_alpha.infrastructure.postgres.schema import (
     EXPECTED_CANDIDATE_TABLES,
+    EXPECTED_DECISION_SUPPORT_TABLES,
     EXPECTED_SELECTION_CORE_TABLES,
     EXPECTED_SELECTION_TABLES,
     SchemaManager,
@@ -29,11 +30,10 @@ def test_selection_schema_has_exactly_the_seven_core_authority_relations(
     assert {
         name for name in tables if name.startswith("candidate")
     } == EXPECTED_CANDIDATE_TABLES
-    assert not {
-        name
-        for name in tables
-        if name.startswith(("decision", "research_definition"))
-    }
+    assert {
+        name for name in tables if name.startswith("decision_")
+    } == EXPECTED_DECISION_SUPPORT_TABLES
+    assert not {name for name in tables if name.startswith("research_definition")}
 
 
 def test_selection_counts_three_state_rule_shape_and_scope_identity_are_declarative(

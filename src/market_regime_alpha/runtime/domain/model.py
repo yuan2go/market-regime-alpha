@@ -300,6 +300,8 @@ def validate_step_dag(
             raise ValueError("Step dependency references an unknown Step")
         graph[dependency.predecessor_key].add(dependency.successor_key)
 
+    _validate_mandatory_decision_chain(steps, dependencies)
+
     visiting: set[str] = set()
     visited: set[str] = set()
 
@@ -316,6 +318,58 @@ def validate_step_dag(
 
     for key in keys:
         visit(key)
+
+
+def _validate_mandatory_decision_chain(
+    steps: tuple[StepSpec, ...],
+    dependencies: tuple[StepDependency, ...],
+) -> None:
+    chain_kinds = (
+        "BUILD_CANDIDATE_SET",
+        "OPEN_DECISION_RUN",
+        "ASSESS_CONTEXT",
+    )
+    matching = tuple(step for step in steps if step.step_kind in chain_kinds)
+    if not matching:
+        return
+    by_kind = {
+        kind: tuple(step for step in matching if step.step_kind == kind)
+        for kind in chain_kinds
+    }
+    if any(len(by_kind[kind]) != 1 for kind in chain_kinds):
+        raise ValueError(
+            "BUILD_CANDIDATE_SET, OPEN_DECISION_RUN, and ASSESS_CONTEXT "
+            "must each occur exactly once"
+        )
+    build, opened, context = (by_kind[kind][0] for kind in chain_kinds)
+    if not all(step.required for step in (build, opened, context)):
+        raise ValueError("the Candidate-to-Context decision chain is mandatory")
+    if not build.ordinal < opened.ordinal < context.ordinal:
+        raise ValueError(
+            "Decision chain ordinals must be BUILD_CANDIDATE_SET before "
+            "OPEN_DECISION_RUN before ASSESS_CONTEXT"
+        )
+    edges = {
+        (
+            dependency.predecessor_key,
+            dependency.successor_key,
+            dependency.dependency_kind,
+        )
+        for dependency in dependencies
+    }
+    if (
+        (build.step_key, opened.step_key, "REQUIRED_SUCCESS") not in edges
+        or (opened.step_key, context.step_key, "REQUIRED_SUCCESS") not in edges
+    ):
+        raise ValueError(
+            "the mandatory Decision chain requires direct REQUIRED_SUCCESS edges"
+        )
+    if any(
+        dependency.predecessor_key == build.step_key
+        and dependency.successor_key == context.step_key
+        for dependency in dependencies
+    ):
+        raise ValueError("BUILD_CANDIDATE_SET cannot bypass OPEN_DECISION_RUN")
 
 
 __all__ = [

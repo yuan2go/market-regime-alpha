@@ -3,7 +3,7 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Documentation navigation and precedence only
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-30
+> **Last Updated:** 2026-08-31
 > **Code Evidence:** `src/market_regime_alpha`, both legacy and target PostgreSQL migration packages, `tests`
 
 Documentation never creates implementation truth, research evidence,
@@ -60,12 +60,19 @@ Checkpoint traceability:
 - [Domain Invariant Catalog](references/WP-ARCHITECTURE-REFOUNDATION-01-Domain-Invariant-Catalog.md)
 - [WP-07 Candidate Closure Design](references/WP-ARCHITECTURE-REFOUNDATION-07-Candidate-Closure-Design.md)
   — approved five-table Candidate Authority, ranking semantics, dependency seam,
-  and implementation proof contract; not implementation or verification evidence.
+  and implementation proof contract. Its post-Candidate routing question was
+  superseded by WP-08; implementation evidence lives only in the immutable
+  WP-07 Verification.
 - [WP-08 Post-Candidate Authority Design](references/WP-ARCHITECTURE-REFOUNDATION-08-Post-Candidate-Authority-Design.md)
   — approved acyclic Target commitment, Market Target Outcome, Partition,
   Evaluation, Evidence, Assessment, and Research Qualification semantics plus
   the authorized post-Candidate implementation order; design only, not
   implementation or evidence.
+- [WP-09 Target Commitment and Decision Run Design](references/WP-ARCHITECTURE-REFOUNDATION-09-Target-Commitment-Decision-Run-Design.md)
+  — approved Target-owned relational closure, provider-neutral Target
+  semantics, one canonical Decision Run per Candidate Set, mandatory Runtime
+  edge, and exact replay/reconciliation implementation contract; this remains
+  the design-time decision record, not implementation evidence.
 
 All documents in this section have Target status. They define the destination,
 not current completion.
@@ -95,6 +102,11 @@ not current completion.
   — exact-SHA local engineering proof for the five-table Selection-owned
   Candidate draft. It grants no later-context implementation order, Runtime
   cutover, Provider/Alpha evidence, trading, or Production authority.
+- [WP-09 Target Commitment and Decision Run Verification](references/WP-ARCHITECTURE-REFOUNDATION-09-Target-Commitment-Decision-Run-Verification.md)
+  — exact-SHA local engineering proof for provider-neutral Target Definition,
+  one Decision Run per Candidate Set, complete Candidate × Target commitments,
+  immutable Decision-visible references, and mandatory test-only Runtime DAG;
+  Market Target Outcome is absent and Runtime/CLI cutover remains NO-GO.
 - [Runtime Runbook](operations/Runtime-Runbook.md) — current 001–106 operator
   procedures only; it will be rewritten at Runtime/CLI Cutover.
 

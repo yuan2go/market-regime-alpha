@@ -127,8 +127,8 @@ def test_research_stable_export_files_remain_small() -> None:
     limits = {
         RESEARCH / "__init__.py": 20,
         RESEARCH / "application/__init__.py": 30,
-        RESEARCH / "domain/__init__.py": 60,
-        RESEARCH / "ports/__init__.py": 45,
+        RESEARCH / "domain/__init__.py": 95,
+        RESEARCH / "ports/__init__.py": 55,
     }
     for path, limit in limits.items():
         assert len(path.read_text(encoding="utf-8").splitlines()) <= limit
@@ -136,8 +136,11 @@ def test_research_stable_export_files_remain_small() -> None:
 
 def test_research_application_facade_does_not_become_a_god_service() -> None:
     facade = (RESEARCH / "application/service.py").read_text(encoding="utf-8")
-    assert len(facade.splitlines()) <= 100
+    assert len(facade.splitlines()) <= 115
     assert "with self._uow_provider()" not in facade
+    assert "target_uow_provider: TargetUnitOfWorkProvider" in facade
+    assert "TargetDefinitionCommands(\n            target_uow_provider" in facade
     assert (RESEARCH / "application/feature_definitions.py").is_file()
     assert (RESEARCH / "application/datasets.py").is_file()
     assert (RESEARCH / "application/_dataset_validation.py").is_file()
+    assert (RESEARCH / "application/target_definitions.py").is_file()

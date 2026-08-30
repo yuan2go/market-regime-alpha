@@ -380,6 +380,27 @@ def _schedule_run(
     steps: tuple[StepSpec, ...],
     canonical_decision_time: DecisionTime | None = None,
 ) -> tuple[RuntimeApplication, UUID]:
+    kinds = {step.step_kind for step in steps}
+    if "BUILD_CANDIDATE_SET" in kinds and not {
+        "OPEN_DECISION_RUN",
+        "ASSESS_CONTEXT",
+    }.issubset(kinds):
+        next_ordinal = max(step.ordinal for step in steps) + 1
+        steps = (
+            *steps,
+            _step(
+                key="open-decision-run",
+                kind="OPEN_DECISION_RUN",
+                ordinal=next_ordinal,
+                request_character="e",
+            ),
+            _step(
+                key="assess-context",
+                kind="ASSESS_CONTEXT",
+                ordinal=next_ordinal + 1,
+                request_character="f",
+            ),
+        )
     runtime = RuntimeApplication(PostgresUnitOfWorkProvider(stack.pool))
     schedule = ScheduleSpec(
         schedule_id=uuid4(),
@@ -582,33 +603,58 @@ def test_target_runtime_freshly_closes_capture_through_candidate_set_and_replays
     with stack.pool.connection(read_only=True) as connection:
         previous_fact = connection.execute(
             """
-            SELECT session_id, evidence_scope, status_value,
-                   event_start, event_end, revision
-            FROM mra.instrument_fact_revision
-            WHERE fact_revision_id = %s
+            SELECT fact.session_id, fact.evidence_scope,
+                   fact.status_value, fact.event_start, fact.event_end,
+                   fact.revision, session.session_date,
+                   session.timezone_name, session.open_at,
+                   session.break_start_at, session.break_end_at,
+                   session.close_at, session.decision_reference_at
+            FROM mra.instrument_fact_revision AS fact
+            JOIN mra.trading_session AS session
+              ON session.session_id = fact.session_id
+            WHERE fact.fact_revision_id = %s
             """,
             (stack.market_fact_revision_id,),
         ).fetchone()
     assert previous_fact is not None
     fresh_fact_revision_id = uuid4()
+    fresh_session_id = uuid4()
+    planned_session_date = planned_decision_time.value.astimezone(
+        _research.SHANGHAI
+    ).date()
+    session_shift = timedelta(days=(planned_session_date - previous_fact[6]).days)
 
     def fresh_batch(source: Any) -> NormalizationBatch:
         return NormalizationBatch(
             source_capture_id=source.capture_id,
             source_provider_product_id=source.provider_product_id,
+            trading_sessions=(
+                _research.TradingSession(
+                    session_id=fresh_session_id,
+                    exchange="XSHG",
+                    session_date=planned_session_date,
+                    timezone_name=str(previous_fact[7]),
+                    open_at=previous_fact[8] + session_shift,
+                    break_start_at=previous_fact[9] + session_shift,
+                    break_end_at=previous_fact[10] + session_shift,
+                    close_at=previous_fact[11] + session_shift,
+                    decision_reference_at=previous_fact[12] + session_shift,
+                    source_capture_id=source.capture_id,
+                ),
+            ),
             security_status_facts=(
                 SecurityStatusFactRevision(
                     fact_revision_id=fresh_fact_revision_id,
                     provider_product_id=stack.product.provider_product_id,
                     capture_id=source.capture_id,
                     instrument_id=stack.instrument_id,
-                    session_id=UUID(str(previous_fact[0])),
+                    session_id=fresh_session_id,
                     evidence_scope=EvidenceScope(str(previous_fact[1])),
                     status=SecurityStatus(str(previous_fact[2])),
-                    event_start=previous_fact[3],
-                    event_end=previous_fact[4],
-                    revision=int(previous_fact[5]) + 1,
-                    supersedes_revision_id=stack.market_fact_revision_id,
+                    event_start=previous_fact[3] + session_shift,
+                    event_end=previous_fact[4] + session_shift,
+                    revision=1,
+                    supersedes_revision_id=None,
                 ),
             ),
         )
@@ -673,7 +719,7 @@ def test_target_runtime_freshly_closes_capture_through_candidate_set_and_replays
         eligibility_assessment_id=(assessed.assessments[0].eligibility_assessment_id),
         market_capture_id=capture.capture.capture_id,
         market_fact_revision_id=fresh_fact_revision_id,
-        market_session_id=UUID(str(previous_fact[0])),
+        market_session_id=fresh_session_id,
     )
     dataset = _numeric_dataset_definition(
         fresh_stack,
@@ -689,6 +735,22 @@ def test_target_runtime_freshly_closes_capture_through_candidate_set_and_replays
         runtime_claim=_claim(runtime, step_key="register-dataset"),
     )
     assert registered.replayed is False
+    recovery_runtime, recovery_run_id = _schedule_run(
+        stack,
+        steps=(
+            _step(
+                key="build-candidate-set",
+                kind="BUILD_CANDIDATE_SET",
+                ordinal=1,
+                request_character="7",
+            ),
+        ),
+    )
+    build_claim = _claim(runtime, step_key="build-candidate-set")
+    recovery_claim = _claim(
+        recovery_runtime,
+        step_key="build-candidate-set",
+    )
     built = application.build_candidate_set(
         policy.candidate_policy_id,
         dataset.dataset_id,
@@ -696,13 +758,17 @@ def test_target_runtime_freshly_closes_capture_through_candidate_set_and_replays
             "vertical-fresh-build-candidate-set",
             "BUILD_CANDIDATE_SET",
         ),
-        runtime_claim=_claim(runtime, step_key="build-candidate-set"),
+        runtime_claim=build_claim,
     )
     assert built.replayed is False
 
     trace = runtime.inspect_run(run_id)
-    assert trace.run_state == "SUCCEEDED"
-    assert tuple(item.state for item in trace.steps) == ("SUCCEEDED",) * 6
+    assert trace.run_state == "RUNNING"
+    assert tuple(item.state for item in trace.steps) == (
+        *("SUCCEEDED",) * 6,
+        "READY",
+        "PENDING",
+    )
     funnel = PostgresCandidateQueryProvider(stack.pool).funnel(UUID(built.aggregate_id))
     assert (
         funnel.dataset_population_count,
@@ -772,23 +838,12 @@ def test_target_runtime_freshly_closes_capture_through_candidate_set_and_replays
         assessed.assessments[0].eligibility_assessment_id,
         fresh_fact_revision_id,
         capture.capture.capture_id,
-        stack.market_fact_revision_id,
-        int(previous_fact[5]) + 1,
+        None,
+        1,
     )
     assert decision_times == (planned_decision_time.value,) * 4
 
     stack.store.object_path(str(dataset.manifest_artifact.content_sha256)).write_bytes(b"corrupt after committed CandidateSet")
-    recovery_runtime, recovery_run_id = _schedule_run(
-        stack,
-        steps=(
-            _step(
-                key="build-candidate-set",
-                kind="BUILD_CANDIDATE_SET",
-                ordinal=1,
-                request_character="7",
-            ),
-        ),
-    )
     replay = application.build_candidate_set(
         policy.candidate_policy_id,
         dataset.dataset_id,
@@ -796,14 +851,11 @@ def test_target_runtime_freshly_closes_capture_through_candidate_set_and_replays
             "vertical-fresh-build-candidate-set",
             "BUILD_CANDIDATE_SET",
         ),
-        runtime_claim=_claim(
-            recovery_runtime,
-            step_key="build-candidate-set",
-        ),
+        runtime_claim=recovery_claim,
     )
     assert replay.replayed is True
     assert replay.result_hash == built.result_hash
-    assert recovery_runtime.inspect_run(recovery_run_id).run_state == "SUCCEEDED"
+    assert recovery_runtime.inspect_run(recovery_run_id).run_state == "RUNNING"
 
     with psycopg.connect(stack.database_url) as connection:
         runtime_facts = connection.execute(
@@ -890,7 +942,7 @@ def test_concurrent_exact_builds_converge_on_one_candidate_set_and_receipt(
     assert uow_provider.final_bind_calls == 2
     for runtime, run_id in runtime_runs:
         trace = runtime.inspect_run(run_id)
-        assert trace.run_state == "SUCCEEDED"
+        assert trace.run_state == "RUNNING"
         assert trace.steps[0].state == "SUCCEEDED"
         assert trace.steps[0].attempt_states == ("SUCCEEDED",)
     with psycopg.connect(stack.database_url) as connection:
@@ -998,7 +1050,7 @@ def test_concurrent_different_policies_share_one_dataset_without_artifact_lock_u
     assert len({item.aggregate_id for item in results}) == 2
     for runtime, run_id in runtime_runs:
         trace = runtime.inspect_run(run_id)
-        assert trace.run_state == "SUCCEEDED"
+        assert trace.run_state == "RUNNING"
         assert trace.steps[0].state == "SUCCEEDED"
         assert trace.steps[0].attempt_states == ("SUCCEEDED",)
     with psycopg.connect(stack.database_url) as connection:
@@ -1659,18 +1711,34 @@ def test_candidate_idempotency_key_reuse_with_different_semantic_hash_rejects(
             ),
         ),
     )
+    second_runtime, second_run_id = _schedule_run(
+        stack,
+        steps=(
+            _step(
+                key="build-candidate-set",
+                kind="BUILD_CANDIDATE_SET",
+                ordinal=1,
+                request_character="f",
+            ),
+        ),
+    )
+    authority_claim = _claim(
+        authority_runtime,
+        step_key="build-candidate-set",
+    )
+    second_claim = _claim(
+        second_runtime,
+        step_key="build-candidate-set",
+    )
     original = application.build_candidate_set(
         ready.policy.candidate_policy_id,
         ready.dataset.dataset_id,
         authority_context,
-        runtime_claim=_claim(
-            authority_runtime,
-            step_key="build-candidate-set",
-        ),
+        runtime_claim=authority_claim,
     )
     assert original.replayed is False
     assert loader.prepare_calls == 1
-    assert authority_runtime.inspect_run(authority_run_id).run_state == "SUCCEEDED"
+    assert authority_runtime.inspect_run(authority_run_id).run_state == "RUNNING"
     with psycopg.connect(stack.database_url) as connection:
         original_request_hash = connection.execute(
             """
@@ -1710,21 +1778,6 @@ def test_candidate_idempotency_key_reuse_with_different_semantic_hash_rejects(
         )
         uow.commit()
 
-    second_runtime, second_run_id = _schedule_run(
-        stack,
-        steps=(
-            _step(
-                key="build-candidate-set",
-                kind="BUILD_CANDIDATE_SET",
-                ordinal=1,
-                request_character="f",
-            ),
-        ),
-    )
-    second_claim = _claim(
-        second_runtime,
-        step_key="build-candidate-set",
-    )
     with pytest.raises(IdempotencyKeyReusedError, match="IDEMPOTENCY_KEY_REUSED"):
         application.build_candidate_set(
             ready.policy.candidate_policy_id,

@@ -17,6 +17,9 @@ from market_regime_alpha.infrastructure.postgres.repositories.candidate_artifact
 from market_regime_alpha.infrastructure.postgres.repositories.market import (
     PostgresMarketRepository,
 )
+from market_regime_alpha.infrastructure.postgres.repositories.decision_runs import (
+    PostgresDecisionRunRepository,
+)
 from market_regime_alpha.infrastructure.postgres.repositories.selection import (
     PostgresSelectionRepository,
 )
@@ -26,6 +29,12 @@ from market_regime_alpha.infrastructure.postgres.repositories.research_artifacts
 from market_regime_alpha.infrastructure.postgres.repositories.research_definitions import (
     PostgresResearchDefinitionRepository,
 )
+from market_regime_alpha.infrastructure.postgres.repositories.target_artifacts import (
+    PostgresTargetArtifactRepository,
+)
+from market_regime_alpha.infrastructure.postgres.repositories.target_definitions import (
+    PostgresTargetDefinitionRepository,
+)
 
 __all__ = [
     "PostgresAuditRepository",
@@ -33,9 +42,12 @@ __all__ = [
     "PostgresCommandReceiptRepository",
     "PostgresCandidateArtifactRepository",
     "PostgresCandidateRepository",
+    "PostgresDecisionRunRepository",
     "PostgresMarketRepository",
     "PostgresRuntimeRepository",
     "PostgresResearchArtifactRepository",
     "PostgresResearchDefinitionRepository",
     "PostgresSelectionRepository",
+    "PostgresTargetArtifactRepository",
+    "PostgresTargetDefinitionRepository",
 ]

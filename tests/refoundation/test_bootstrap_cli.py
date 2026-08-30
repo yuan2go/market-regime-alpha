@@ -12,6 +12,7 @@ from market_regime_alpha.bootstrap import (
     TargetSettings,
     bootstrap_application,
 )
+from market_regime_alpha.decision_support.application import DecisionSupportApplication
 from market_regime_alpha.infrastructure.postgres.schema import (
     SchemaManager,
     SchemaMissingError,
@@ -109,6 +110,7 @@ def test_mra_db_bootstrap_verify_and_runtime_inspection_smoke(
     try:
         assert isinstance(application.selection, SelectionApplication)
         assert isinstance(application.candidates, CandidateApplication)
+        assert isinstance(application.decision_support, DecisionSupportApplication)
         assert isinstance(
             application.candidate_queries,
             PostgresCandidateQueryProvider,

@@ -1,7 +1,7 @@
 # WP-ARCHITECTURE-REFOUNDATION-07 Candidate Closure Design
 
 > **Status:** CANONICAL_TARGET_ARCHITECTURE
-> **Design State:** `APPROVED_DESIGN / IMPLEMENTATION_NOT_STARTED`
+> **Design State:** `APPROVED_DESIGN / IMPLEMENTED_AND_VERIFIED_BY_WP_07`
 > **Schema Epoch:** `MRA_REFOUNDATION_1`
 > **Release State:** `DRAFT`
 > **Cutover State:** `NOT_CUT_OVER`
@@ -10,7 +10,7 @@
 > **Approved At:** 2026-08-30
 > **Starting Main:** `origin/main@d45fe83730a75dfa6083db9b6c929b37838fdd50`
 > **Design Checkpoint:** assigned by the independent pure-document checkpoint commit
-> **Implementation Evidence:** none at this checkpoint
+> **Implementation Evidence:** [WP-07 Candidate Closure Verification](WP-ARCHITECTURE-REFOUNDATION-07-Candidate-Closure-Verification.md)
 
 This document freezes the approved WP-07 design before any Candidate code, DDL,
 seed, test, or Runtime implementation is added. Candidate remains permanently
@@ -679,7 +679,15 @@ reports, retroactively change their scope, or promote their engineering proof.
 This design checkpoint itself changes current architecture/Roadmap/invariant
 prose only. It provides no implementation or passing-test claim.
 
-## 14. Post-Candidate dependency review, not a frozen next stage
+## 14. Superseded post-Candidate dependency-review handoff
+
+> **Supersession notice:** this section records the handoff boundary that was
+> correct when the WP-07 design was approved. WP-08 completed that requested
+> audit and replaced its open routing question with the frozen post-Candidate
+> DAG and implementation order in the
+> [WP-08 Post-Candidate Authority Design](WP-ARCHITECTURE-REFOUNDATION-08-Post-Candidate-Authority-Design.md).
+> The text below remains provenance, not a current plan or unresolved design
+> instruction.
 
 Candidate Closure does not freeze or authorize a rule that complete Research
 Evaluation/Evidence/Qualification must necessarily precede Decision/Outcome.

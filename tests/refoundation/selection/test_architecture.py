@@ -63,20 +63,20 @@ def test_market_physical_modules_keep_stable_export_files_small() -> None:
     }
     for path, limit in limits.items():
         assert len(path.read_text(encoding="utf-8").splitlines()) <= limit
+    market_owned_paths = (
+        *tuple((SRC / "market").rglob("*.py")),
+        SRC / "infrastructure" / "postgres" / "queries" / "market.py",
+        SRC / "infrastructure" / "postgres" / "repositories" / "market.py",
+    )
     target_source = "\n".join(
-        path.read_text(encoding="utf-8")
-        for base in (
-            SRC / "market",
-            SRC / "infrastructure" / "postgres" / "queries",
-        )
-        for path in base.rglob("*.py")
+        path.read_text(encoding="utf-8") for path in market_owned_paths
     )
     assert "decision_reference_1455" not in target_source
     assert "DecisionReference" not in target_source
     assert "classify_decision_reference" not in target_source
 
 
-def test_only_candidate_authority_is_added_before_future_research_authority() -> None:
+def test_wp09_authorities_are_added_without_future_outcome_or_model_authority() -> None:
     baseline = (SRC / "infrastructure" / "postgres" / "migrations" / "001_baseline.sql").read_text(encoding="utf-8")
     candidate_tables = {
         "candidate_policy",
@@ -88,12 +88,24 @@ def test_only_candidate_authority_is_added_before_future_research_authority() ->
     for table in candidate_tables:
         assert f"CREATE TABLE mra.{table}" in baseline
     for table in (
+        "target_definition",
+        "target_checkpoint",
+        "target_metric_definition",
+        "target_metric_dependency",
+        "decision_run",
+        "decision_run_target",
+        "decision_target_commitment",
+        "decision_reference_observation",
+    ):
+        assert f"CREATE TABLE mra.{table}" in baseline
+    for table in (
         "evaluation_dataset",
         "research_evidence",
         "qualification_assessment",
         "model",
         "model_version",
-        "decision_run",
+        "market_target_outcome",
+        "context",
     ):
         assert f"CREATE TABLE mra.{table}" not in baseline
 

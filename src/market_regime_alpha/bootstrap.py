@@ -16,15 +16,23 @@ from market_regime_alpha.infrastructure.postgres.market_uow import (
 from market_regime_alpha.infrastructure.postgres.candidate_uow import (
     PostgresCandidateUnitOfWorkProvider,
 )
+from market_regime_alpha.infrastructure.postgres.decision_uow import (
+    PostgresDecisionSupportUnitOfWorkProvider,
+)
 from market_regime_alpha.infrastructure.postgres.selection_uow import (
     PostgresSelectionUnitOfWorkProvider,
 )
 from market_regime_alpha.infrastructure.postgres.research_uow import (
     PostgresResearchUnitOfWorkProvider,
 )
+from market_regime_alpha.infrastructure.postgres.target_uow import (
+    PostgresTargetUnitOfWorkProvider,
+)
 from market_regime_alpha.infrastructure.postgres.queries import (
     PostgresCandidateQueryProvider,
     PostgresCandidateResearchInputLoader,
+    PostgresDecisionInputPreparationProvider,
+    PostgresDecisionRunQueryProvider,
     PostgresMarketQueryProvider,
 )
 from market_regime_alpha.infrastructure.postgres.schema import (
@@ -37,6 +45,7 @@ from market_regime_alpha.infrastructure.postgres.schema import (
 )
 from market_regime_alpha.infrastructure.postgres.uow import PostgresUnitOfWorkProvider
 from market_regime_alpha.runtime.application import ArtifactApplication, RuntimeApplication
+from market_regime_alpha.decision_support.application import DecisionSupportApplication
 from market_regime_alpha.research_qualification.application import (
     ResearchQualificationApplication,
 )
@@ -129,6 +138,7 @@ class TargetApplication:
     research_definitions: ResearchQualificationApplication
     candidates: CandidateApplication
     candidate_queries: CandidateQueryProvider
+    decision_support: DecisionSupportApplication
     _pool: TargetPostgresPool
 
     def close(self) -> None:
@@ -166,12 +176,18 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
         research_definitions=ResearchQualificationApplication(
             byte_store,
             PostgresResearchUnitOfWorkProvider(pool),
+            PostgresTargetUnitOfWorkProvider(pool),
         ),
         candidates=CandidateApplication(
             PostgresCandidateResearchInputLoader(pool, byte_store),
             PostgresCandidateUnitOfWorkProvider(pool),
         ),
         candidate_queries=PostgresCandidateQueryProvider(pool),
+        decision_support=DecisionSupportApplication(
+            PostgresDecisionInputPreparationProvider(pool),
+            PostgresDecisionSupportUnitOfWorkProvider(pool),
+            PostgresDecisionRunQueryProvider(pool),
+        ),
         _pool=pool,
     )
 
