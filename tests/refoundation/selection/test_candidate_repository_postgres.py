@@ -607,12 +607,15 @@ def test_candidate_set_bulk_write_preserves_equal_rank_numeric_matrix_and_funnel
         drifted_repository.insert_candidate_set(
             replace(plan, score_components=drifted_scores)
         )
-        with pytest.raises(ArtifactIntegrityError, match="reconcile"):
-            drifted_repository.verified_candidate_set(
-                candidate_policy_id=policy.candidate_policy_id,
-                dataset_id=seeded.dataset_id,
-                lock=True,
-            )
+        persisted_drift = drifted_repository.persisted_candidate_set(
+            candidate_policy_id=policy.candidate_policy_id,
+            dataset_id=seeded.dataset_id,
+            lock=True,
+        )
+        assert persisted_drift == replace(
+            plan,
+            score_components=drifted_scores,
+        )
 
     with stack.pool.connection() as incomplete_connection:
         incomplete_repository = PostgresCandidateRepository(incomplete_connection)
@@ -628,7 +631,7 @@ def test_candidate_set_bulk_write_preserves_equal_rank_numeric_matrix_and_funnel
         repository = PostgresCandidateRepository(connection)
         repository.insert_policy(policy)
         repository.insert_candidate_set(plan)
-        verified = repository.verified_candidate_set(
+        persisted = repository.persisted_candidate_set(
             candidate_policy_id=policy.candidate_policy_id,
             dataset_id=seeded.dataset_id,
             lock=True,
@@ -662,7 +665,7 @@ def test_candidate_set_bulk_write_preserves_equal_rank_numeric_matrix_and_funnel
 
         connection.commit()
 
-    assert verified == plan
+    assert persisted == plan
     assert stored_candidates == [
         (Decimal("0.5"), 1, "SELECTED"),
         (Decimal("0.5"), 1, "SELECTED"),
@@ -720,7 +723,7 @@ def test_empty_candidate_set_persists_and_reconciles_without_child_rows(
         repository = PostgresCandidateRepository(connection)
         repository.insert_policy(policy)
         repository.insert_candidate_set(plan)
-        verified = repository.verified_candidate_set(
+        persisted = repository.persisted_candidate_set(
             candidate_policy_id=policy.candidate_policy_id,
             dataset_id=seeded.dataset_id,
             lock=True,
@@ -728,7 +731,7 @@ def test_empty_candidate_set_persists_and_reconciles_without_child_rows(
         reconciliation = repository.reconciliation(plan.candidate_set_id)
         connection.commit()
 
-    assert verified == plan
+    assert persisted == plan
     assert reconciliation.population_count == 0
     assert reconciliation.selected_count == 0
     assert reconciliation.ranked_not_selected_count == 0

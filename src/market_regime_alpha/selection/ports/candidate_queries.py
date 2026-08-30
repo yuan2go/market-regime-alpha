@@ -85,6 +85,23 @@ class CandidateDossierComponent:
 
 
 @dataclass(frozen=True, slots=True)
+class CandidateDatasetSourceLineage:
+    """Narrow relational DatasetSource projection for Candidate explanation."""
+
+    dataset_source_id: UUID
+    source_role: str
+    instrument_id: UUID | None = None
+    universe_member_id: UUID | None = None
+    eligibility_assessment_id: UUID | None = None
+    feature_definition_id: UUID | None = None
+    market_bar_revision_id: UUID | None = None
+    market_instrument_fact_revision_id: UUID | None = None
+    market_trading_session_id: UUID | None = None
+    market_source_gap_id: UUID | None = None
+    market_capture_id: UUID | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class CandidateDossierRecord:
     candidate_set_id: UUID
     candidate_id: UUID
@@ -98,6 +115,7 @@ class CandidateDossierRecord:
     population_dataset_source_id: UUID
     population_universe_member_id: UUID
     population_eligibility_assessment_id: UUID
+    dataset_sources: tuple[CandidateDatasetSourceLineage, ...]
     disposition: str
     reason_code: str
     composite_score: Decimal | None
@@ -117,6 +135,7 @@ class CandidateQueryProvider(Protocol):
 
 
 __all__ = [
+    "CandidateDatasetSourceLineage",
     "CandidateDossierComponent",
     "CandidateDossierRecord",
     "CandidateFunnelComponentDiagnostic",

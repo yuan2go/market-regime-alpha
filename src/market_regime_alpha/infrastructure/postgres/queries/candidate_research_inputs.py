@@ -9,16 +9,18 @@ from uuid import UUID
 import psycopg
 
 from market_regime_alpha.infrastructure.postgres.pool import TargetPostgresPool
-from market_regime_alpha.infrastructure.postgres.repositories.research_definitions import (
-    PostgresResearchDefinitionRepository,
-)
 from market_regime_alpha.research_qualification.domain import (
     ArtifactBinding,
     DatasetSource,
     DecisionInputDatasetDefinition,
     DecisionInputDatasetManifest,
+    FeatureAvailabilityRule,
     FeatureCell,
     FeatureDefinition,
+    FeatureIntervalUnit,
+    FeatureMissingnessPolicy,
+    FeatureSourceRequirement,
+    FeatureValueType,
     parse_decision_input_dataset_manifest,
 )
 from market_regime_alpha.runtime.errors import (
@@ -471,11 +473,72 @@ def _research_dataset_definition(
         raise ArtifactIntegrityError(
             "Candidate Dataset definition content hash does not reconcile"
         )
-    features = PostgresResearchDefinitionRepository(connection).feature_definitions(
-        feature_ids,
-        lock=False,
-    )
+    features = _read_parser_feature_definitions(connection, feature_ids)
     return definition, features
+
+
+def _read_parser_feature_definitions(
+    connection: psycopg.Connection[Any],
+    feature_definition_ids: tuple[UUID, ...],
+) -> tuple[FeatureDefinition, ...]:
+    """Map immutable parser facts without borrowing a Research repository."""
+
+    if not feature_definition_ids:
+        return ()
+    rows = connection.execute(
+        """
+        SELECT feature_definition_id, feature_code, version,
+               value_type, value_unit, frequency_value, frequency_unit,
+               window_value, window_unit, lookback_value, lookback_unit,
+               source_requirements, availability_rule, missingness_policy,
+               algorithm_code, algorithm_version, algorithm_sha256,
+               code_artifact_id, code_content_sha256, code_size_bytes,
+               config_artifact_id, config_content_sha256,
+               config_size_bytes, content_sha256
+        FROM mra.feature_definition
+        WHERE feature_definition_id = ANY(%s)
+        ORDER BY feature_definition_id
+        """,
+        (list(feature_definition_ids),),
+    ).fetchall()
+    definitions = tuple(_parser_feature_definition(row) for row in rows)
+    expected_ids = tuple(sorted(feature_definition_ids, key=str))
+    if tuple(item.feature_definition_id for item in definitions) != expected_ids:
+        raise RuntimeNotFoundError(
+            "one or more Candidate parser FeatureDefinitions do not exist"
+        )
+    return definitions
+
+
+def _parser_feature_definition(row: tuple[Any, ...]) -> FeatureDefinition:
+    definition = FeatureDefinition(
+        feature_definition_id=UUID(str(row[0])),
+        feature_code=str(row[1]),
+        version=int(row[2]),
+        value_type=FeatureValueType(str(row[3])),
+        value_unit=str(row[4]),
+        frequency_value=int(row[5]),
+        frequency_unit=FeatureIntervalUnit(str(row[6])),
+        window_value=int(row[7]),
+        window_unit=FeatureIntervalUnit(str(row[8])),
+        lookback_value=int(row[9]),
+        lookback_unit=FeatureIntervalUnit(str(row[10])),
+        source_requirements=tuple(
+            FeatureSourceRequirement(str(item)) for item in row[11]
+        ),
+        availability_rule=FeatureAvailabilityRule(str(row[12])),
+        missingness_policy=FeatureMissingnessPolicy(str(row[13])),
+        algorithm_code=str(row[14]),
+        algorithm_version=str(row[15]),
+        algorithm_sha256=str(row[16]),
+        code_artifact=_research_artifact(row[17:20]),
+        config_artifact=_research_artifact(row[20:23]),
+    )
+    if str(definition.content_sha256) != str(row[23]):
+        raise ArtifactIntegrityError(
+            "Candidate parser FeatureDefinition content hash does not reconcile"
+        )
+    return definition
 
 
 def _candidate_numeric_value(

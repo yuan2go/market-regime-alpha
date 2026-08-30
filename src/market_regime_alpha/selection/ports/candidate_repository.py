@@ -35,7 +35,7 @@ class CandidateRepository(Protocol):
 
     def insert_candidate_set(self, plan: CandidateRankingPlan) -> None: ...
 
-    def verified_candidate_set(
+    def persisted_candidate_set(
         self,
         *,
         candidate_policy_id: UUID,

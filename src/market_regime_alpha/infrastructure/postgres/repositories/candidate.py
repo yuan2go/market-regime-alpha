@@ -16,20 +16,16 @@ from market_regime_alpha.selection.domain import (
     CandidateArtifactBinding,
     CandidateCellStatus,
     CandidateComponentDiagnostic,
-    CandidateDatasetPopulation,
     CandidateDisposition,
     CandidateFeatureValueType,
     CandidatePolicy,
     CandidatePolicyComponent,
-    CandidatePopulationCell,
-    CandidatePopulationRow,
     CandidateRankingPlan,
     CandidateRankingStatus,
     CandidateRecord,
     CandidateScoreComponentRecord,
     CandidateSetResult,
     DesirabilityDirection,
-    build_candidate_set,
 )
 from market_regime_alpha.selection.ports.candidate_repository import (
     CandidatePersistenceReconciliation,
@@ -324,14 +320,14 @@ class PostgresCandidateRepository:
                 ),
             )
 
-    def verified_candidate_set(
+    def persisted_candidate_set(
         self,
         *,
         candidate_policy_id: UUID,
         dataset_id: UUID,
         lock: bool,
     ) -> CandidateRankingPlan | None:
-        """Rebuild ranking from persisted raw facts and verify every projection."""
+        """Load immutable Candidate Authority facts without ranking computation."""
 
         suffix = " FOR SHARE" if lock else ""
         candidate_set_row = self._connection.execute(
@@ -428,22 +424,12 @@ class PostgresCandidateRepository:
                 (persisted_set.candidate_set_id,),
             ).fetchall()
         )
-        policy = self.policy(candidate_policy_id, lock=lock)
-        persisted_plan = CandidateRankingPlan(
+        return CandidateRankingPlan(
             candidate_set=persisted_set,
             candidates=persisted_candidates,
             score_components=persisted_scores,
             component_diagnostics=persisted_diagnostics,
         )
-        try:
-            population = _population_from_persisted_plan(persisted_plan)
-            rebuilt = build_candidate_set(policy=policy, dataset=population)
-        except (KeyError, TypeError, ValueError) as exception:
-            raise ArtifactIntegrityError(
-                "persisted Candidate raw matrix cannot rebuild ranking"
-            ) from exception
-        _require_verified_ranking_plan(persisted_plan, rebuilt)
-        return rebuilt
 
     def reconciliation(
         self,
@@ -653,83 +639,6 @@ def _candidate_component_diagnostic(
         conflict_count=int(row[9]),
         rank_information_status=CandidateRankingStatus(str(row[10])),
     )
-
-
-def _population_from_persisted_plan(
-    persisted: CandidateRankingPlan,
-) -> CandidateDatasetPopulation:
-    scores_by_candidate: dict[UUID, list[CandidateScoreComponentRecord]] = {
-        candidate.candidate_id: [] for candidate in persisted.candidates
-    }
-    for score in persisted.score_components:
-        try:
-            scores_by_candidate[score.candidate_id].append(score)
-        except KeyError as exception:
-            raise ArtifactIntegrityError(
-                "persisted Candidate score has no Candidate parent"
-            ) from exception
-    rows = tuple(
-        CandidatePopulationRow(
-            instrument_id=candidate.instrument_id,
-            dataset_population_source_id=(
-                candidate.dataset_population_source_id
-            ),
-            cells=tuple(
-                CandidatePopulationCell(
-                    feature_definition_id=score.feature_definition_id,
-                    status=score.raw_status,
-                    value=_persisted_raw_value(score),
-                    reason_code=score.raw_reason_code,
-                    cell_source_lineage_hash=score.cell_source_lineage_hash,
-                )
-                for score in scores_by_candidate[candidate.candidate_id]
-            ),
-        )
-        for candidate in persisted.candidates
-    )
-    candidate_set = persisted.candidate_set
-    return CandidateDatasetPopulation(
-        dataset_id=candidate_set.dataset_id,
-        dataset_content_sha256=candidate_set.dataset_content_sha256,
-        decision_time=candidate_set.decision_time,
-        universe_revision_id=candidate_set.universe_revision_id,
-        eligibility_policy_id=candidate_set.eligibility_policy_id,
-        rows=rows,
-        dependency_sha256=candidate_set.dependency_sha256,
-    )
-
-
-def _persisted_raw_value(
-    score: CandidateScoreComponentRecord,
-) -> Decimal | int | None:
-    if score.raw_status is not CandidateCellStatus.AVAILABLE:
-        return None
-    if score.feature_value_type is CandidateFeatureValueType.DECIMAL:
-        return score.raw_decimal_value
-    return score.raw_integer_value
-
-
-def _require_verified_ranking_plan(
-    persisted: CandidateRankingPlan,
-    rebuilt: CandidateRankingPlan,
-) -> None:
-    comparisons = (
-        ("CandidateSet", persisted.candidate_set, rebuilt.candidate_set),
-        ("Candidate records", persisted.candidates, rebuilt.candidates),
-        (
-            "Candidate score components",
-            persisted.score_components,
-            rebuilt.score_components,
-        ),
-        (
-            "Candidate component diagnostics",
-            persisted.component_diagnostics,
-            rebuilt.component_diagnostics,
-        ),
-    )
-    for label, actual, expected in comparisons:
-        if actual != expected:
-            raise ArtifactIntegrityError(f"{label} do not reconcile")
 
 
 def _policy_component(row: tuple[Any, ...]) -> CandidatePolicyComponent:

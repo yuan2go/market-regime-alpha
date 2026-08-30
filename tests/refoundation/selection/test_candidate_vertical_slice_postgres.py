@@ -10,6 +10,7 @@ from typing import Any, Callable, cast
 from uuid import UUID, uuid4
 
 import psycopg
+from psycopg import sql
 import pytest
 
 from market_regime_alpha.infrastructure.postgres.candidate_uow import (
@@ -21,6 +22,10 @@ from market_regime_alpha.infrastructure.postgres.queries import (
 )
 from market_regime_alpha.infrastructure.postgres.repositories.runtime import (
     PostgresAuditRepository,
+    PostgresCommandReceiptRepository,
+)
+from market_regime_alpha.infrastructure.postgres.runtime_finalization import (
+    PostgresRuntimeCommandFinalization,
 )
 from market_regime_alpha.infrastructure.postgres.repositories.candidate import (
     PostgresCandidateRepository,
@@ -28,7 +33,12 @@ from market_regime_alpha.infrastructure.postgres.repositories.candidate import (
 from market_regime_alpha.infrastructure.postgres.uow import (
     PostgresUnitOfWorkProvider,
 )
-from market_regime_alpha.market.domain import NormalizationBatch
+from market_regime_alpha.market.domain import (
+    EvidenceScope,
+    NormalizationBatch,
+    SecurityStatus,
+    SecurityStatusFactRevision,
+)
 from market_regime_alpha.market.ports import CaptureRequest
 from market_regime_alpha.research_qualification.domain import (
     FeatureCellStatus,
@@ -47,6 +57,7 @@ from market_regime_alpha.runtime.domain import (
 from market_regime_alpha.runtime.errors import (
     ArtifactIntegrityError,
     IdempotencyKeyReusedError,
+    RuntimeStateConflictError,
     StaleFenceError,
 )
 from market_regime_alpha.selection.application import CandidateApplication
@@ -56,6 +67,7 @@ from market_regime_alpha.selection.domain import (
     CandidatePolicy,
     CandidatePolicyComponent,
     DesirabilityDirection,
+    UniverseDefinition,
     UniverseScopeSpecification,
 )
 from market_regime_alpha.shared.hashing import canonical_json_sha256
@@ -145,6 +157,44 @@ class _BarrierAtFinalBindUnitOfWorkProvider:
                 self.final_bind_calls += 1
             self._barrier.wait(timeout=10)
         return self._delegate()
+
+
+def _install_test_insert_failure_trigger(stack: Any, *, table: str) -> None:
+    if table not in {"candidate", "candidate_score_component"}:
+        raise ValueError(f"unsupported Candidate failure table: {table}")
+    function_name = f"test_fail_{table}_insert"
+    trigger_name = f"test_fail_{table}_insert_trigger"
+    with psycopg.connect(stack.database_url) as connection:
+        connection.execute(
+            sql.SQL(
+                """
+                CREATE FUNCTION mra.{}()
+                RETURNS trigger
+                LANGUAGE plpgsql
+                AS $$
+                BEGIN
+                    RAISE EXCEPTION 'injected Candidate atomicity failure'
+                        USING ERRCODE = '23514';
+                END
+                $$
+                """
+            ).format(sql.Identifier(function_name))
+        )
+        connection.execute(
+            sql.SQL(
+                """
+                CREATE TRIGGER {}
+                AFTER INSERT ON mra.{}
+                FOR EACH STATEMENT
+                EXECUTE FUNCTION mra.{}()
+                """
+            ).format(
+                sql.Identifier(trigger_name),
+                sql.Identifier(table),
+                sql.Identifier(function_name),
+            )
+        )
+        connection.commit()
 
 
 def _candidate_binding(artifact: Any) -> CandidateArtifactBinding:
@@ -432,16 +482,11 @@ def _replay_scope(stack: Any) -> tuple[UUID, UniverseScopeSpecification]:
     )
 
 
-def test_target_runtime_closes_capture_through_candidate_set_and_replays_recovery(
+def test_target_runtime_freshly_closes_capture_through_candidate_set_and_replays_recovery(
     candidate_vertical_stack,
 ) -> None:
     stack = candidate_vertical_stack
     feature = _numeric_feature(stack, key_prefix="vertical-feature")
-    dataset = _numeric_dataset_definition(
-        stack,
-        feature=feature,
-        key_prefix="vertical-dataset",
-    )
     application = _candidate_application(stack)
     policy = _candidate_policy(
         stack,
@@ -493,47 +538,123 @@ def test_target_runtime_closes_capture_through_candidate_set_and_replays_recover
     capture = stack.market.capture(
         CaptureRequest(
             provider_product_id=stack.product.provider_product_id,
-            capture_key="research-definition-source",
-            resource="fixture://research-definition-source",
-            request_headers_hash="6" * 64,
+            capture_key="candidate-vertical-fresh-source",
+            resource="fixture://candidate-vertical-fresh-source",
+            request_headers_hash="a" * 64,
         ),
         _research._BytesProvider(),
-        _research._context("dataset-capture", "CAPTURE_PROVIDER_RESPONSE"),
+        _research._context(
+            "vertical-fresh-capture",
+            "CAPTURE_PROVIDER_RESPONSE",
+        ),
         runtime_claim=_claim(runtime, step_key="capture"),
     )
-    assert capture.replayed is True
+    assert capture.replayed is False
+    assert capture.capture.capture_id != stack.market_capture_id
+    with stack.pool.connection(read_only=True) as connection:
+        previous_fact = connection.execute(
+            """
+            SELECT session_id, evidence_scope, status_value,
+                   event_start, event_end, revision
+            FROM mra.instrument_fact_revision
+            WHERE fact_revision_id = %s
+            """,
+            (stack.market_fact_revision_id,),
+        ).fetchone()
+    assert previous_fact is not None
+    fresh_fact_revision_id = uuid4()
+
+    def fresh_batch(source: Any) -> NormalizationBatch:
+        return NormalizationBatch(
+            source_capture_id=source.capture_id,
+            source_provider_product_id=source.provider_product_id,
+            security_status_facts=(
+                SecurityStatusFactRevision(
+                    fact_revision_id=fresh_fact_revision_id,
+                    provider_product_id=stack.product.provider_product_id,
+                    capture_id=source.capture_id,
+                    instrument_id=stack.instrument_id,
+                    session_id=UUID(str(previous_fact[0])),
+                    evidence_scope=EvidenceScope(str(previous_fact[1])),
+                    status=SecurityStatus(str(previous_fact[2])),
+                    event_start=previous_fact[3],
+                    event_end=previous_fact[4],
+                    revision=int(previous_fact[5]) + 1,
+                    supersedes_revision_id=stack.market_fact_revision_id,
+                ),
+            ),
+        )
+
     normalized = stack.market.normalize(
-        stack.market_capture_id,
-        _research._Normalizer(
-            lambda source: NormalizationBatch(
-                source_capture_id=source.capture_id,
-                source_provider_product_id=source.provider_product_id,
-            )
+        capture.capture.capture_id,
+        _research._Normalizer(fresh_batch),
+        _research._context(
+            "vertical-fresh-normalize",
+            "NORMALIZE_MARKET_PIT",
         ),
-        _research._context("dataset-normalize", "NORMALIZE_MARKET_PIT"),
         runtime_claim=_claim(runtime, step_key="normalize-pit"),
     )
-    assert normalized.replayed is True
-    universe_id, scope = _replay_scope(stack)
+    assert normalized.replayed is False
+    assert normalized.decision_visible_at is not None
+    assert normalized.decision_visible_at.value > stack.decision_time.value
+    _, scope = _replay_scope(stack)
+    universe = UniverseDefinition(
+        universe_id=uuid4(),
+        universe_code=f"candidate-vertical-{uuid4().hex[:8]}",
+        purpose="fresh Candidate target Runtime lineage",
+    )
+    stack.selection.register_universe(
+        universe,
+        _research._context(
+            "vertical-fresh-universe",
+            "REGISTER_UNIVERSE",
+        ),
+    )
     frozen = stack.selection.freeze_universe(
-        universe_id=universe_id,
+        universe_id=universe.universe_id,
         scope=scope,
-        decision_time=stack.decision_time,
-        context=_research._context("dataset-freeze", "FREEZE_UNIVERSE"),
+        decision_time=normalized.decision_visible_at,
+        context=_research._context(
+            "vertical-fresh-freeze",
+            "FREEZE_UNIVERSE",
+        ),
         runtime_claim=_claim(runtime, step_key="freeze-universe"),
     )
-    assert frozen.replayed is True
+    assert frozen.replayed is False
+    assert frozen.universe_revision_id != stack.universe_revision_id
+    assert frozen.included_count == 1
     assessed = stack.selection.assess_eligibility(
-        universe_revision_id=stack.universe_revision_id,
+        universe_revision_id=frozen.universe_revision_id,
         eligibility_policy_id=stack.eligibility_policy_id,
-        decision_time=stack.decision_time,
-        context=_research._context("dataset-assess", "ASSESS_ELIGIBILITY"),
+        decision_time=normalized.decision_visible_at,
+        context=_research._context(
+            "vertical-fresh-assess",
+            "ASSESS_ELIGIBILITY",
+        ),
         runtime_claim=_claim(runtime, step_key="assess-eligibility"),
     )
-    assert assessed.replayed is True
-    registered = stack.research.register_dataset(
+    assert assessed.replayed is False
+    assert assessed.eligible_count == 1
+    fresh_stack = replace(
+        stack,
+        decision_time=normalized.decision_visible_at,
+        universe_revision_id=frozen.universe_revision_id,
+        universe_member_id=frozen.members[0].universe_member_id,
+        eligibility_assessment_id=(assessed.assessments[0].eligibility_assessment_id),
+        market_capture_id=capture.capture.capture_id,
+        market_fact_revision_id=fresh_fact_revision_id,
+    )
+    dataset = _numeric_dataset_definition(
+        fresh_stack,
+        feature=feature,
+        key_prefix="vertical-dataset",
+    )
+    registered = fresh_stack.research.register_dataset(
         dataset,
-        _research._context("vertical-register-dataset", "REGISTER_DATASET"),
+        _research._context(
+            "vertical-fresh-register-dataset",
+            "REGISTER_DATASET",
+        ),
         runtime_claim=_claim(runtime, step_key="register-dataset"),
     )
     assert registered.replayed is False
@@ -541,11 +662,12 @@ def test_target_runtime_closes_capture_through_candidate_set_and_replays_recover
         policy.candidate_policy_id,
         dataset.dataset_id,
         _research._context(
-            "vertical-build-candidate-set",
+            "vertical-fresh-build-candidate-set",
             "BUILD_CANDIDATE_SET",
         ),
         runtime_claim=_claim(runtime, step_key="build-candidate-set"),
     )
+    assert built.replayed is False
 
     trace = runtime.inspect_run(run_id)
     assert trace.run_state == "SUCCEEDED"
@@ -566,6 +688,42 @@ def test_target_runtime_closes_capture_through_candidate_set_and_replays_recover
     assert funnel.rankable_reconciled
     assert funnel.component_matrix_reconciled
 
+    with psycopg.connect(stack.database_url) as connection:
+        lineage = connection.execute(
+            """
+            SELECT candidate_set.dataset_id,
+                   candidate_set.universe_revision_id,
+                   population.universe_member_id,
+                   population.eligibility_assessment_id,
+                   market_source.market_instrument_fact_revision_id,
+                   fact.capture_id, fact.supersedes_revision_id,
+                   fact.revision
+            FROM mra.candidate_set AS candidate_set
+            JOIN mra.dataset_source AS population
+              ON population.dataset_id = candidate_set.dataset_id
+             AND population.source_role = 'POPULATION'
+            JOIN mra.dataset_source AS market_source
+              ON market_source.dataset_id = candidate_set.dataset_id
+             AND market_source.source_role =
+                 'MARKET_INSTRUMENT_FACT_REVISION'
+            JOIN mra.instrument_fact_revision AS fact
+              ON fact.fact_revision_id =
+                 market_source.market_instrument_fact_revision_id
+            WHERE candidate_set.candidate_set_id = %s
+            """,
+            (UUID(built.aggregate_id),),
+        ).fetchone()
+    assert lineage == (
+        dataset.dataset_id,
+        frozen.universe_revision_id,
+        frozen.members[0].universe_member_id,
+        assessed.assessments[0].eligibility_assessment_id,
+        fresh_fact_revision_id,
+        capture.capture.capture_id,
+        stack.market_fact_revision_id,
+        int(previous_fact[5]) + 1,
+    )
+
     stack.store.object_path(str(dataset.manifest_artifact.content_sha256)).write_bytes(b"corrupt after committed CandidateSet")
     recovery_runtime, recovery_run_id = _schedule_run(
         stack,
@@ -582,7 +740,7 @@ def test_target_runtime_closes_capture_through_candidate_set_and_replays_recover
         policy.candidate_policy_id,
         dataset.dataset_id,
         _research._context(
-            "vertical-build-candidate-set",
+            "vertical-fresh-build-candidate-set",
             "BUILD_CANDIDATE_SET",
         ),
         runtime_claim=_claim(
@@ -957,6 +1115,187 @@ def test_late_candidate_reconciliation_failure_rolls_back_then_terminalizes_runt
         0,
         0,
         0,
+    )
+
+
+@pytest.mark.parametrize(
+    ("failure_point", "expected_error"),
+    (
+        ("candidate_row", RuntimeStateConflictError),
+        ("score_row", RuntimeStateConflictError),
+        ("receipt", ArtifactIntegrityError),
+        ("audit", ArtifactIntegrityError),
+        ("runtime_finalization", ArtifactIntegrityError),
+    ),
+    ids=(
+        "candidate-row",
+        "score-row",
+        "receipt",
+        "audit",
+        "runtime-finalization",
+    ),
+)
+def test_candidate_failure_points_roll_back_authority_and_terminalize_runtime(
+    candidate_vertical_stack,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_point: str,
+    expected_error: type[Exception],
+) -> None:
+    stack = candidate_vertical_stack
+    ready = _ready_candidate(
+        stack,
+        key_prefix=f"atomic-{failure_point.replace('_', '-')}",
+    )
+    runtime, run_id = _schedule_run(
+        stack,
+        steps=(
+            _step(
+                key="build-candidate-set",
+                kind="BUILD_CANDIDATE_SET",
+                ordinal=1,
+                request_character={
+                    "candidate_row": "1",
+                    "score_row": "2",
+                    "receipt": "3",
+                    "audit": "4",
+                    "runtime_finalization": "5",
+                }[failure_point],
+            ),
+        ),
+    )
+    claim = _claim(runtime, step_key="build-candidate-set")
+    idempotency_key = f"atomic-{failure_point}-build-candidate-set"
+    injected: list[str] = []
+
+    if failure_point in {"candidate_row", "score_row"}:
+        _install_test_insert_failure_trigger(
+            stack,
+            table=("candidate" if failure_point == "candidate_row" else "candidate_score_component"),
+        )
+    elif failure_point == "receipt":
+        original_receipt_start = PostgresCommandReceiptRepository.start
+
+        def fail_receipt_after_candidate_writes(
+            repository: PostgresCommandReceiptRepository,
+            **kwargs: Any,
+        ) -> Any:
+            candidate_count = repository._connection.execute(  # noqa: SLF001
+                "SELECT count(*) FROM mra.candidate"
+            ).fetchone()
+            assert candidate_count is not None
+            if (
+                not injected
+                and kwargs["command_kind"] == "BUILD_CANDIDATE_SET"
+                and kwargs["idempotency_key"] == idempotency_key
+                and int(candidate_count[0]) > 0
+            ):
+                injected.append(failure_point)
+                raise ArtifactIntegrityError("injected Candidate receipt failure")
+            return original_receipt_start(repository, **kwargs)
+
+        monkeypatch.setattr(
+            PostgresCommandReceiptRepository,
+            "start",
+            fail_receipt_after_candidate_writes,
+        )
+    elif failure_point == "audit":
+        original_audit_append = PostgresAuditRepository.append
+
+        def fail_success_audit_once(
+            repository: PostgresAuditRepository,
+            **kwargs: Any,
+        ) -> None:
+            if not injected and kwargs["action"] == "BUILD_CANDIDATE_SET":
+                injected.append(failure_point)
+                raise ArtifactIntegrityError("injected Candidate audit failure")
+            original_audit_append(repository, **kwargs)
+
+        monkeypatch.setattr(
+            PostgresAuditRepository,
+            "append",
+            fail_success_audit_once,
+        )
+    elif failure_point == "runtime_finalization":
+        original_runtime_succeed = PostgresRuntimeCommandFinalization.succeed
+
+        def fail_runtime_success_once(
+            finalization: PostgresRuntimeCommandFinalization,
+            *args: Any,
+            **kwargs: Any,
+        ) -> Any:
+            if not injected:
+                injected.append(failure_point)
+                raise ArtifactIntegrityError("injected Candidate Runtime finalization failure")
+            return original_runtime_succeed(finalization, *args, **kwargs)
+
+        monkeypatch.setattr(
+            PostgresRuntimeCommandFinalization,
+            "succeed",
+            fail_runtime_success_once,
+        )
+    else:
+        raise AssertionError(f"unknown failure point: {failure_point}")
+
+    with pytest.raises(expected_error):
+        ready.application.build_candidate_set(
+            ready.policy.candidate_policy_id,
+            ready.dataset.dataset_id,
+            _research._context(
+                idempotency_key,
+                "BUILD_CANDIDATE_SET",
+            ),
+            runtime_claim=claim,
+        )
+
+    if failure_point not in {"candidate_row", "score_row"}:
+        assert injected == [failure_point]
+    trace = runtime.inspect_run(run_id)
+    assert trace.run_state == "FAILED"
+    assert trace.steps[0].state == "FAILED"
+    assert trace.steps[0].attempt_states == ("FAILED_TERMINAL",)
+    with psycopg.connect(stack.database_url) as connection:
+        facts = connection.execute(
+            """
+            SELECT receipt.status, receipt.error_code,
+                   audit.action, audit.reason_code,
+                   attempt.state, step.state, run.state,
+                   (SELECT count(*) FROM mra.candidate_set),
+                   (SELECT count(*) FROM mra.candidate),
+                   (SELECT count(*) FROM mra.candidate_score_component),
+                   (SELECT count(*) FROM mra.candidate_component_diagnostic),
+                   (SELECT count(*) FROM mra.artifact_verification
+                    WHERE verification_policy =
+                        'CANDIDATE_DATASET_MANIFEST_READ'),
+                   (SELECT count(*) FROM mra.command_receipt
+                    WHERE idempotency_key = %s),
+                   (SELECT count(*) FROM mra.audit_event
+                    WHERE command_receipt_id = receipt.receipt_id)
+            FROM mra.command_receipt AS receipt
+            JOIN mra.audit_event AS audit
+              ON audit.command_receipt_id = receipt.receipt_id
+            JOIN mra.runtime_attempt AS attempt
+              ON attempt.result_receipt_id = receipt.receipt_id
+            JOIN mra.runtime_step AS step ON step.step_id = attempt.step_id
+            JOIN mra.runtime_run AS run ON run.run_id = step.run_id
+            WHERE receipt.idempotency_key = %s
+            """,
+            (idempotency_key, idempotency_key),
+        ).fetchone()
+    assert facts == (
+        "FAILED",
+        "BUILD_CANDIDATE_SET_REJECTED",
+        "CANDIDATE_COMMAND_FAILED",
+        "BUILD_CANDIDATE_SET_REJECTED",
+        "FAILED_TERMINAL",
+        "FAILED",
+        "FAILED",
+        0,
+        0,
+        0,
+        0,
+        0,
+        1,
+        1,
     )
 
 

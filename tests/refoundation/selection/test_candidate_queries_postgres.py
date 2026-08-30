@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from decimal import Decimal
+from hashlib import sha256
 import json
 from typing import Any, cast
 from uuid import UUID, uuid4
@@ -28,6 +29,7 @@ from market_regime_alpha.selection.domain import (
     DesirabilityDirection,
 )
 from market_regime_alpha.selection.ports.candidate_queries import (
+    CandidateDatasetSourceLineage,
     CandidateDossierComponent,
     CandidateDossierRecord,
     CandidateFunnelComponentDiagnostic,
@@ -57,6 +59,7 @@ class _CandidateSeed:
     manifest_size_bytes: int
     population_source_id: UUID
     feature_source_id: UUID
+    market_source_id: UUID
     lineage_hash: str
 
 
@@ -171,10 +174,16 @@ def _insert_candidate_authority(
             if item["role"] == "FEATURE_DEFINITION"
         )
     )
+    market_source = next(
+        item
+        for item in sources
+        if item["role"] not in {"POPULATION", "FEATURE_DEFINITION"}
+    )
     candidate_set_id = uuid4()
     candidate_id = uuid4()
     rankable = status is FeatureCellStatus.AVAILABLE
     lineage_hash = hash_character * 64
+    candidate_set_content_hash = sha256(candidate_set_id.bytes).hexdigest()
     with stack.pool.connection() as connection:
         connection.execute(
             """
@@ -220,7 +229,7 @@ def _insert_candidate_authority(
                 1 if rankable else None,
                 1 if rankable else 0,
                 "d" * 64,
-                hash_character * 64,
+                candidate_set_content_hash,
             ),
         )
         connection.execute(
@@ -297,13 +306,21 @@ def _insert_candidate_authority(
         manifest_size_bytes=definition.manifest_artifact.size_bytes,
         population_source_id=population_source_id,
         feature_source_id=feature_source_id,
+        market_source_id=UUID(market_source["dataset_source_id"]),
         lineage_hash=lineage_hash,
     )
 
 
 def _candidate_query_fixture(
     dataset_stack: Any,
-) -> tuple[Any, CandidatePolicy, _CandidateSeed, _CandidateSeed, _CandidateSeed]:
+) -> tuple[
+    Any,
+    CandidatePolicy,
+    Any,
+    _CandidateSeed,
+    _CandidateSeed,
+    _CandidateSeed,
+]:
     stack = dataset_stack
     feature = replace(
         _feature(stack.artifacts, key_prefix="candidate-query-feature"),
@@ -359,14 +376,38 @@ def _candidate_query_fixture(
         hash_character="c",
         boundary_score=Decimal("0.4"),
     )
-    return stack, policy, available, missing, inconsistent
+    return stack, policy, feature, available, missing, inconsistent
+
+
+def _seed_representative_query_plan_cardinality(
+    stack: Any,
+    *,
+    policy: CandidatePolicy,
+    feature: Any,
+    count: int = 512,
+) -> None:
+    for ordinal in range(count):
+        definition, payload = _register_dataset(
+            stack,
+            feature=feature,
+            key_prefix=f"candidate-query-plan-{ordinal:03d}",
+            status=FeatureCellStatus.AVAILABLE,
+        )
+        _insert_candidate_authority(
+            stack,
+            policy=policy,
+            definition=definition,
+            payload=payload,
+            status=FeatureCellStatus.AVAILABLE,
+            hash_character=format(ordinal % 16, "x"),
+        )
 
 
 def test_funnel_and_dossier_explain_constant_and_unrankable_candidates(
     dataset_stack: Any,
 ) -> None:
-    stack, policy, available, missing, inconsistent = _candidate_query_fixture(
-        dataset_stack
+    stack, policy, _, available, missing, inconsistent = (
+        _candidate_query_fixture(dataset_stack)
     )
     component = policy.components[0]
     provider = PostgresCandidateQueryProvider(stack.pool)
@@ -436,6 +477,54 @@ def test_funnel_and_dossier_explain_constant_and_unrankable_candidates(
         population_dataset_source_id=available.population_source_id,
         population_universe_member_id=stack.universe_member_id,
         population_eligibility_assessment_id=stack.eligibility_assessment_id,
+        dataset_sources=tuple(
+            sorted(
+                (
+                    CandidateDatasetSourceLineage(
+                        dataset_source_id=available.feature_source_id,
+                        source_role="FEATURE_DEFINITION",
+                        instrument_id=None,
+                        universe_member_id=None,
+                        eligibility_assessment_id=None,
+                        feature_definition_id=component.feature_definition_id,
+                        market_bar_revision_id=None,
+                        market_instrument_fact_revision_id=None,
+                        market_trading_session_id=None,
+                        market_source_gap_id=None,
+                        market_capture_id=None,
+                    ),
+                    CandidateDatasetSourceLineage(
+                        dataset_source_id=available.population_source_id,
+                        source_role="POPULATION",
+                        instrument_id=stack.instrument_id.value,
+                        universe_member_id=stack.universe_member_id,
+                        eligibility_assessment_id=stack.eligibility_assessment_id,
+                        feature_definition_id=None,
+                        market_bar_revision_id=None,
+                        market_instrument_fact_revision_id=None,
+                        market_trading_session_id=None,
+                        market_source_gap_id=None,
+                        market_capture_id=None,
+                    ),
+                    CandidateDatasetSourceLineage(
+                        dataset_source_id=available.market_source_id,
+                        source_role="MARKET_INSTRUMENT_FACT_REVISION",
+                        instrument_id=None,
+                        universe_member_id=None,
+                        eligibility_assessment_id=None,
+                        feature_definition_id=None,
+                        market_bar_revision_id=None,
+                        market_instrument_fact_revision_id=(
+                            stack.market_fact_revision_id
+                        ),
+                        market_trading_session_id=None,
+                        market_source_gap_id=None,
+                        market_capture_id=None,
+                    ),
+                ),
+                key=lambda item: item.dataset_source_id,
+            )
+        ),
         disposition="SELECTED",
         reason_code="ALL_RANKABLE_SELECTED",
         composite_score=Decimal("0.5"),
@@ -505,6 +594,19 @@ def test_funnel_and_dossier_explain_constant_and_unrankable_candidates(
         instrument_id=stack.instrument_id.value,
     )
     assert missing_dossier.population_dataset_source_id == missing.population_source_id
+    assert CandidateDatasetSourceLineage(
+        dataset_source_id=missing.market_source_id,
+        source_role="MARKET_CAPTURE",
+        instrument_id=None,
+        universe_member_id=None,
+        eligibility_assessment_id=None,
+        feature_definition_id=None,
+        market_bar_revision_id=None,
+        market_instrument_fact_revision_id=None,
+        market_trading_session_id=None,
+        market_source_gap_id=None,
+        market_capture_id=stack.market_capture_id,
+    ) in missing_dossier.dataset_sources
     assert missing_dossier.disposition == "UNRANKABLE"
     assert (
         missing_dossier.reason_code
@@ -546,11 +648,18 @@ def test_candidate_queries_fail_closed_for_unknown_identity(dataset_stack: Any) 
 
 def _plan_facts(
     node: dict[str, Any],
+    *,
+    owner_relation: str | None = None,
 ) -> tuple[set[str], set[tuple[str, str]], tuple[str, ...]]:
-    relations = {str(node["Relation Name"])} if "Relation Name" in node else set()
+    relation = (
+        str(node["Relation Name"])
+        if "Relation Name" in node
+        else owner_relation
+    )
+    relations = {relation} if relation is not None else set()
     indexes = (
-        {(str(node.get("Relation Name", "")), str(node["Index Name"]))}
-        if "Index Name" in node
+        {(relation, str(node["Index Name"]))}
+        if "Index Name" in node and relation is not None
         else set()
     )
     predicates = tuple(
@@ -559,7 +668,10 @@ def _plan_facts(
         if name in node
     )
     for child in node.get("Plans", ()):
-        child_relations, child_indexes, child_predicates = _plan_facts(child)
+        child_relations, child_indexes, child_predicates = _plan_facts(
+            child,
+            owner_relation=relation,
+        )
         relations.update(child_relations)
         indexes.update(child_indexes)
         predicates += child_predicates
@@ -569,7 +681,12 @@ def _plan_facts(
 def test_candidate_funnel_and_dossier_queries_have_bounded_index_coverage(
     dataset_stack: Any,
 ) -> None:
-    stack, _, available, _, _ = _candidate_query_fixture(dataset_stack)
+    stack, policy, feature, available, _, _ = _candidate_query_fixture(dataset_stack)
+    _seed_representative_query_plan_cardinality(
+        stack,
+        policy=policy,
+        feature=feature,
+    )
     with psycopg.connect(stack.database_url) as connection:
         connection.execute(
             """
@@ -580,8 +697,8 @@ def test_candidate_funnel_and_dossier_queries_have_bounded_index_coverage(
                     mra.artifact
             """
         )
-        plans = (
-            connection.execute(
+        plans = {
+            "funnel": connection.execute(
                 """
                 EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)
                 SELECT candidate_set_id
@@ -590,7 +707,29 @@ def test_candidate_funnel_and_dossier_queries_have_bounded_index_coverage(
                 """,
                 (available.candidate_set_id,),
             ).fetchone()[0][0]["Plan"],
-            connection.execute(
+            "candidate_set_reload": connection.execute(
+                """
+                EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)
+                SELECT candidate_set_id, candidate_policy_id, dataset_id,
+                       content_sha256
+                FROM mra.candidate_set
+                WHERE candidate_set_id = %s
+                """,
+                (available.candidate_set_id,),
+            ).fetchone()[0][0]["Plan"],
+            "rank_disposition": connection.execute(
+                """
+                EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)
+                SELECT candidate_id, disposition, competition_rank
+                FROM mra.candidate
+                WHERE candidate_set_id = %s
+                  AND disposition = 'SELECTED'
+                  AND competition_rank = 1
+                ORDER BY candidate_id
+                """,
+                (available.candidate_set_id,),
+            ).fetchone()[0][0]["Plan"],
+            "dossier_header": connection.execute(
                 """
                 EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)
                 SELECT candidate.candidate_id
@@ -622,7 +761,22 @@ def test_candidate_funnel_and_dossier_queries_have_bounded_index_coverage(
                 """,
                 (available.candidate_set_id, stack.instrument_id.value),
             ).fetchone()[0][0]["Plan"],
-            connection.execute(
+            "dataset_source_lineage": connection.execute(
+                """
+                EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)
+                SELECT dataset_source_id, source_role, instrument_id,
+                       universe_member_id, eligibility_assessment_id,
+                       feature_definition_id, market_bar_revision_id,
+                       market_instrument_fact_revision_id,
+                       market_trading_session_id, market_source_gap_id,
+                       market_capture_id
+                FROM mra.dataset_source
+                WHERE dataset_id = %s
+                ORDER BY dataset_source_id
+                """,
+                (available.dataset_id,),
+            ).fetchone()[0][0]["Plan"],
+            "score_components": connection.execute(
                 """
                 EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)
                 SELECT score.candidate_score_component_id
@@ -658,11 +812,13 @@ def test_candidate_funnel_and_dossier_queries_have_bounded_index_coverage(
                 """,
                 (available.candidate_id, available.candidate_set_id),
             ).fetchone()[0][0]["Plan"],
-        )
-    facts = tuple(_plan_facts(plan) for plan in plans)
-    relations = set().union(*(item[0] for item in facts))
-    indexes = set().union(*(item[1] for item in facts))
-    plan_predicates = tuple(" ".join(item[2]) for item in facts)
+        }
+    facts = {name: _plan_facts(plan) for name, plan in plans.items()}
+    relations = set().union(*(item[0] for item in facts.values()))
+    indexes = set().union(*(item[1] for item in facts.values()))
+    plan_predicates = {
+        name: " ".join(item[2]) for name, item in facts.items()
+    }
     assert {
         "candidate_set",
         "candidate",
@@ -671,9 +827,17 @@ def test_candidate_funnel_and_dossier_queries_have_bounded_index_coverage(
         "dataset",
         "dataset_source",
     } <= relations, relations
-    assert all(str(available.candidate_set_id) in item for item in plan_predicates)
-    assert str(stack.instrument_id.value) in plan_predicates[1]
-    assert str(available.candidate_id) in plan_predicates[2]
+    for name in (
+        "funnel",
+        "candidate_set_reload",
+        "rank_disposition",
+        "dossier_header",
+        "score_components",
+    ):
+        assert str(available.candidate_set_id) in plan_predicates[name]
+    assert str(stack.instrument_id.value) in plan_predicates["dossier_header"]
+    assert str(available.dataset_id) in plan_predicates["dataset_source_lineage"]
+    assert str(available.candidate_id) in plan_predicates["score_components"]
     acceptable_owner_index_prefixes = {
         "artifact": "artifact_",
         "candidate": "candidate_",
@@ -690,3 +854,15 @@ def test_candidate_funnel_and_dossier_queries_have_bounded_index_coverage(
         and name.startswith(acceptable_owner_index_prefixes[relation])
         for relation, name in indexes
     ), indexes
+    index_required_owners = {
+        "candidate_set_reload": "candidate_set",
+        "rank_disposition": "candidate",
+        "dataset_source_lineage": "dataset_source",
+        "score_components": "candidate_score_component",
+    }
+    missing_index_profiles = {
+        name: facts[name]
+        for name, owner in index_required_owners.items()
+        if not any(relation == owner for relation, _ in facts[name][1])
+    }
+    assert not missing_index_profiles, set(missing_index_profiles)

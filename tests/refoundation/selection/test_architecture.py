@@ -143,3 +143,26 @@ def test_candidate_surface_contains_no_future_owner_or_framework() -> None:
         "ExecutionAuthority",
     )
     assert tuple(item for item in prohibited if item in source) == ()
+
+
+def test_candidate_research_input_adapter_does_not_borrow_research_repository() -> None:
+    adapter = (
+        SRC
+        / "infrastructure"
+        / "postgres"
+        / "queries"
+        / "candidate_research_inputs.py"
+    )
+    imported = _imports(adapter)
+    forbidden_imports = (
+        "market_regime_alpha.infrastructure.postgres.repositories.research_definitions",
+        "market_regime_alpha.infrastructure.postgres.research_uow",
+    )
+    assert not {
+        item
+        for item in imported
+        if any(item.startswith(prefix) for prefix in forbidden_imports)
+    }
+    assert "PostgresResearchDefinitionRepository" not in adapter.read_text(
+        encoding="utf-8"
+    )

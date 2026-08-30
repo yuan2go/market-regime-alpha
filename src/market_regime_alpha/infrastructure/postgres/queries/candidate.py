@@ -12,6 +12,7 @@ from market_regime_alpha.runtime.errors import (
     RuntimeNotFoundError,
 )
 from market_regime_alpha.selection.ports.candidate_queries import (
+    CandidateDatasetSourceLineage,
     CandidateDossierComponent,
     CandidateDossierRecord,
     CandidateFunnelComponentDiagnostic,
@@ -200,6 +201,7 @@ class PostgresCandidateQueryProvider:
                        population_source.eligibility_assessment_id,
                        candidate.disposition, candidate.reason_code,
                        candidate.composite_score, candidate.competition_rank,
+                       dataset.source_count,
                        candidate_set.component_count
                 FROM mra.candidate AS candidate
                 JOIN mra.candidate_set AS candidate_set
@@ -234,6 +236,20 @@ class PostgresCandidateQueryProvider:
                     "Candidate dossier does not exist for the exact "
                     f"CandidateSet/Instrument identity {candidate_set_id}/{instrument_id}"
                 )
+            dataset_source_rows = connection.execute(
+                """
+                SELECT dataset_source_id, source_role, instrument_id,
+                       universe_member_id, eligibility_assessment_id,
+                       feature_definition_id, market_bar_revision_id,
+                       market_instrument_fact_revision_id,
+                       market_trading_session_id, market_source_gap_id,
+                       market_capture_id
+                FROM mra.dataset_source
+                WHERE dataset_id = %s
+                ORDER BY dataset_source_id
+                """,
+                (UUID(str(header[3])),),
+            ).fetchall()
             component_rows = connection.execute(
                 """
                 SELECT
@@ -294,8 +310,14 @@ class PostgresCandidateQueryProvider:
                 """,
                 (UUID(str(header[1])), candidate_set_id),
             ).fetchall()
-        expected_count = int(header[16])
-        if len(component_rows) != expected_count:
+        expected_source_count = int(header[16])
+        if len(dataset_source_rows) != expected_source_count:
+            raise ArtifactIntegrityError(
+                "Candidate dossier DatasetSource lineage does not reconcile "
+                "with its immutable Dataset"
+            )
+        expected_component_count = int(header[17])
+        if len(component_rows) != expected_component_count:
             raise ArtifactIntegrityError(
                 "Candidate dossier component matrix does not reconcile with its Policy"
             )
@@ -312,6 +334,9 @@ class PostgresCandidateQueryProvider:
             population_dataset_source_id=UUID(str(header[9])),
             population_universe_member_id=UUID(str(header[10])),
             population_eligibility_assessment_id=UUID(str(header[11])),
+            dataset_sources=tuple(
+                _dataset_source_lineage(row) for row in dataset_source_rows
+            ),
             disposition=str(header[12]),
             reason_code=str(header[13]),
             composite_score=_decimal_or_none(header[14]),
@@ -408,6 +433,28 @@ def _dossier_component(row: tuple[Any, ...]) -> CandidateDossierComponent:
         available_but_not_observed_count=int(row[22]),
         rank_information_status=str(row[23]),
     )
+
+
+def _dataset_source_lineage(
+    row: tuple[Any, ...],
+) -> CandidateDatasetSourceLineage:
+    return CandidateDatasetSourceLineage(
+        dataset_source_id=UUID(str(row[0])),
+        source_role=str(row[1]),
+        instrument_id=_uuid_or_none(row[2]),
+        universe_member_id=_uuid_or_none(row[3]),
+        eligibility_assessment_id=_uuid_or_none(row[4]),
+        feature_definition_id=_uuid_or_none(row[5]),
+        market_bar_revision_id=_uuid_or_none(row[6]),
+        market_instrument_fact_revision_id=_uuid_or_none(row[7]),
+        market_trading_session_id=_uuid_or_none(row[8]),
+        market_source_gap_id=_uuid_or_none(row[9]),
+        market_capture_id=_uuid_or_none(row[10]),
+    )
+
+
+def _uuid_or_none(value: Any) -> UUID | None:
+    return UUID(str(value)) if value is not None else None
 
 
 def _decimal_or_none(value: Any) -> Decimal | None:

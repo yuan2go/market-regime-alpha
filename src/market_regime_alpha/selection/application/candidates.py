@@ -3,16 +3,21 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Callable
 from uuid import UUID, uuid4
 
 from market_regime_alpha.runtime.application import (
     CommandContext,
+    CommandFailureDescriptor,
     RuntimeCommandFailureRecorder,
 )
 from market_regime_alpha.runtime.errors import (
     ArtifactIntegrityError,
+    CommandInProgressError,
     CommandPreviouslyFailedError,
+    IdempotencyKeyReusedError,
+    RuntimeNotFoundError,
     RuntimeStateConflictError,
 )
 from market_regime_alpha.runtime.ports import AttemptClaim, ReceiptRecord
@@ -21,14 +26,21 @@ from market_regime_alpha.selection.application._candidate_command_support import
     replay_concurrent_success,
 )
 from market_regime_alpha.selection.domain.candidate_inputs import (
+    CandidateCellStatus,
     CandidateDatasetPopulation,
+    CandidatePopulationCell,
+    CandidatePopulationRow,
 )
-from market_regime_alpha.selection.domain.candidate_policy import CandidatePolicy
+from market_regime_alpha.selection.domain.candidate_policy import (
+    CandidateFeatureValueType,
+    CandidatePolicy,
+)
 from market_regime_alpha.selection.domain.candidate_ranking import (
     build_candidate_set as rank_candidate_set,
 )
 from market_regime_alpha.selection.domain.candidate_results import (
     CandidateRankingPlan,
+    CandidateScoreComponentRecord,
 )
 from market_regime_alpha.selection.ports.candidate_repository import (
     CandidatePersistenceReconciliation,
@@ -54,6 +66,14 @@ class CandidateMutationResult:
     result_hash: str
     receipt_id: UUID
     replayed: bool
+
+
+@dataclass(frozen=True, slots=True)
+class _CandidateReplayLoad:
+    receipt: ReceiptRecord
+    policy: CandidatePolicy
+    snapshot: CandidateResearchDependencySnapshot
+    persisted_plan: CandidateRankingPlan | None
 
 
 class CandidateApplication:
@@ -187,6 +207,7 @@ class CandidateApplication:
         operation = "BUILD_CANDIDATE_SET"
         scope_id = f"{candidate_policy_id}:{dataset_id}"
         request_hash_holder = {"value": identity_request_hash}
+        replay_load: _CandidateReplayLoad | None = None
         with candidate_failure_boundary(
             self._failure_recorder,
             operation=operation,
@@ -195,51 +216,62 @@ class CandidateApplication:
             context=context,
             runtime_claim=runtime_claim,
         ):
-            replay, policy, preflight_snapshot, request_hash = self._preflight_build(
-                candidate_policy_id=candidate_policy_id,
-                dataset_id=dataset_id,
-                context=context,
-                request_hash_holder=request_hash_holder,
-                runtime_claim=runtime_claim,
+            replay_load, policy, preflight_snapshot, request_hash = (
+                self._preflight_build(
+                    candidate_policy_id=candidate_policy_id,
+                    dataset_id=dataset_id,
+                    context=context,
+                    request_hash_holder=request_hash_holder,
+                    runtime_claim=runtime_claim,
+                )
             )
             request_hash_holder["value"] = request_hash
-            if replay is not None:
-                return replay
-            assert policy is not None
-            assert preflight_snapshot is not None
-            required_features = _policy_feature_dependencies(policy)
-            prepared = self._research_input_loader.prepare(
-                dataset_id=dataset_id,
-                required_features=required_features,
-            )
-            if _prepared_snapshot(prepared) != preflight_snapshot:
-                raise RuntimeStateConflictError(
-                    "Dataset dependencies changed during Candidate input preparation"
+            if replay_load is None:
+                assert policy is not None
+                assert preflight_snapshot is not None
+                required_features = _policy_feature_dependencies(policy)
+                prepared = self._research_input_loader.prepare(
+                    dataset_id=dataset_id,
+                    required_features=required_features,
                 )
-            _validate_prepared_input(
-                prepared,
-                dataset_id=dataset_id,
-                required_features=required_features,
-            )
-            population = CandidateDatasetPopulation(
-                dataset_id=dataset_id,
-                dataset_content_sha256=prepared.dataset.content_sha256,
-                decision_time=prepared.dataset.decision_time,
-                universe_revision_id=prepared.dataset.universe_revision_id,
-                eligibility_policy_id=prepared.dataset.eligibility_policy_id,
-                rows=prepared.rows,
-                dependency_sha256=prepared.dependency_sha256,
-            )
-            plan = rank_candidate_set(policy=policy, dataset=population)
-            return self._bind_candidate_set(
-                policy=policy,
-                prepared=prepared,
-                preflight_snapshot=preflight_snapshot,
-                plan=plan,
-                context=context,
-                request_hash=request_hash,
-                runtime_claim=runtime_claim,
-            )
+                if _prepared_snapshot(prepared) != preflight_snapshot:
+                    raise RuntimeStateConflictError(
+                        "Dataset dependencies changed during Candidate input "
+                        "preparation"
+                    )
+                _validate_prepared_input(
+                    prepared,
+                    dataset_id=dataset_id,
+                    required_features=required_features,
+                )
+                population = CandidateDatasetPopulation(
+                    dataset_id=dataset_id,
+                    dataset_content_sha256=prepared.dataset.content_sha256,
+                    decision_time=prepared.dataset.decision_time,
+                    universe_revision_id=prepared.dataset.universe_revision_id,
+                    eligibility_policy_id=prepared.dataset.eligibility_policy_id,
+                    rows=prepared.rows,
+                    dependency_sha256=prepared.dependency_sha256,
+                )
+                plan = rank_candidate_set(policy=policy, dataset=population)
+                return self._bind_candidate_set(
+                    policy=policy,
+                    prepared=prepared,
+                    preflight_snapshot=preflight_snapshot,
+                    plan=plan,
+                    context=context,
+                    request_hash=request_hash,
+                    runtime_claim=runtime_claim,
+                )
+        assert replay_load is not None
+        return self._complete_candidate_replay(
+            replay_load,
+            candidate_policy_id=candidate_policy_id,
+            dataset_id=dataset_id,
+            context=context,
+            request_hash=request_hash_holder["value"],
+            runtime_claim=runtime_claim,
+        )
 
     def _preflight_build(
         self,
@@ -250,7 +282,7 @@ class CandidateApplication:
         request_hash_holder: dict[str, str],
         runtime_claim: AttemptClaim | None,
     ) -> tuple[
-        CandidateMutationResult | None,
+        _CandidateReplayLoad | None,
         CandidatePolicy | None,
         CandidateResearchDependencySnapshot | None,
         str,
@@ -277,22 +309,170 @@ class CandidateApplication:
                 request_hash=request_hash,
             )
             if not receipt.is_new:
-                replay = _replayed_candidate_set_result(
-                    uow,
-                    receipt,
+                persisted_plan = uow.candidates.persisted_candidate_set(
                     candidate_policy_id=candidate_policy_id,
                     dataset_id=dataset_id,
+                    lock=False,
                 )
-                _finalize_runtime(
-                    uow,
-                    runtime_claim,
-                    receipt_id=receipt.receipt_id,
-                    result_hash=replay.result_hash,
+                return (
+                    _CandidateReplayLoad(
+                        receipt=receipt,
+                        policy=policy,
+                        snapshot=snapshot,
+                        persisted_plan=persisted_plan,
+                    ),
+                    None,
+                    None,
+                    request_hash,
                 )
-                if runtime_claim is not None:
-                    uow.commit()
-                return replay, None, None, request_hash
             return None, policy, snapshot, request_hash
+
+    def _complete_candidate_replay(
+        self,
+        replay: _CandidateReplayLoad,
+        *,
+        candidate_policy_id: UUID,
+        dataset_id: UUID,
+        context: CommandContext,
+        request_hash: str,
+        runtime_claim: AttemptClaim | None,
+    ) -> CandidateMutationResult:
+        try:
+            return self._complete_candidate_replay_unchecked(
+                replay,
+                candidate_policy_id=candidate_policy_id,
+                dataset_id=dataset_id,
+                context=context,
+                request_hash=request_hash,
+                runtime_claim=runtime_claim,
+            )
+        except (CommandInProgressError, IdempotencyKeyReusedError) as exception:
+            self._record_candidate_replay_rejection(
+                scope_id=f"{candidate_policy_id}:{dataset_id}",
+                request_hash=request_hash,
+                rejection_code=exception.code,
+                context=context,
+                runtime_claim=runtime_claim,
+            )
+            raise
+        except (
+            ArtifactIntegrityError,
+            CommandPreviouslyFailedError,
+            RuntimeNotFoundError,
+            RuntimeStateConflictError,
+            ValueError,
+        ):
+            self._record_candidate_replay_rejection(
+                scope_id=f"{candidate_policy_id}:{dataset_id}",
+                request_hash=request_hash,
+                rejection_code="CANDIDATE_REPLAY_INTEGRITY_REJECTED",
+                context=context,
+                runtime_claim=runtime_claim,
+            )
+            raise
+
+    def _complete_candidate_replay_unchecked(
+        self,
+        replay: _CandidateReplayLoad,
+        *,
+        candidate_policy_id: UUID,
+        dataset_id: UUID,
+        context: CommandContext,
+        request_hash: str,
+        runtime_claim: AttemptClaim | None,
+    ) -> CandidateMutationResult:
+        verified_plan = _rebuild_persisted_candidate_set(
+            replay.policy,
+            replay.persisted_plan,
+        )
+        result = _candidate_set_result_from_receipt(
+            replay.receipt,
+            verified_plan,
+        )
+        if runtime_claim is None:
+            return result
+        scope_id = f"{candidate_policy_id}:{dataset_id}"
+        with self._uow_provider() as uow:
+            _lock_live(uow, runtime_claim)
+            persisted_policy = uow.candidates.policy(
+                candidate_policy_id,
+                lock=True,
+            )
+            if persisted_policy != replay.policy:
+                raise RuntimeStateConflictError(
+                    "CandidatePolicy changed during Candidate replay"
+                )
+            uow.candidate_artifacts.require_exact(
+                replay.policy.code_artifact,
+                lock=True,
+            )
+            uow.candidate_artifacts.require_exact(
+                replay.policy.config_artifact,
+                lock=True,
+            )
+            required_features = _policy_feature_dependencies(replay.policy)
+            actual_snapshot = uow.research_dependencies.snapshot(
+                dataset_id=dataset_id,
+                required_features=required_features,
+                lock=True,
+            )
+            if actual_snapshot != replay.snapshot:
+                raise RuntimeStateConflictError(
+                    "Dataset dependencies changed during Candidate replay"
+                )
+            uow.candidate_artifacts.require_exact(
+                replay.snapshot.dataset.manifest_artifact,
+                lock=True,
+            )
+            uow.candidate_artifacts.require_exact(
+                replay.snapshot.dataset.code_artifact,
+                lock=True,
+            )
+            uow.candidate_artifacts.require_exact(
+                replay.snapshot.dataset.config_artifact,
+                lock=True,
+            )
+            receipt = uow.receipts.start(
+                receipt_id=self._id_factory(),
+                command_kind="BUILD_CANDIDATE_SET",
+                scope_id=scope_id,
+                idempotency_key=context.idempotency_key,
+                request_hash=request_hash,
+            )
+            persisted_plan = uow.candidates.persisted_candidate_set(
+                candidate_policy_id=candidate_policy_id,
+                dataset_id=dataset_id,
+                lock=True,
+            )
+            _validate_persisted_candidate_set(persisted_plan, verified_plan)
+            result = _candidate_set_result_from_receipt(receipt, verified_plan)
+            _finalize_runtime(
+                uow,
+                runtime_claim,
+                receipt_id=result.receipt_id,
+                result_hash=result.result_hash,
+            )
+            uow.commit()
+            return result
+
+    def _record_candidate_replay_rejection(
+        self,
+        *,
+        scope_id: str,
+        request_hash: str,
+        rejection_code: str,
+        context: CommandContext,
+        runtime_claim: AttemptClaim | None,
+    ) -> None:
+        self._failure_recorder.record_idempotency_rejection(
+            _candidate_replay_failure_descriptor(
+                scope_id=scope_id,
+                request_hash=request_hash,
+            ),
+            rejection_code=rejection_code,
+            context=context,
+            runtime_claim=runtime_claim,
+        )
 
     def _bind_candidate_set(
         self,
@@ -346,12 +526,12 @@ class CandidateApplication:
                 lock=True,
             )
             uow.candidates.insert_candidate_set(plan)
-            verified = uow.candidates.verified_candidate_set(
+            persisted_plan = uow.candidates.persisted_candidate_set(
                 candidate_policy_id=policy.candidate_policy_id,
                 dataset_id=dataset_id,
                 lock=False,
             )
-            _validate_verified_candidate_set(verified, plan)
+            _validate_persisted_candidate_set(persisted_plan, plan)
             reconciliation = uow.candidates.reconciliation(plan.candidate_set_id)
             _validate_reconciliation(reconciliation, plan)
             receipt = uow.receipts.start(
@@ -362,12 +542,7 @@ class CandidateApplication:
                 request_hash=request_hash,
             )
             if not receipt.is_new:
-                replay = _replayed_candidate_set_result(
-                    uow,
-                    receipt,
-                    candidate_policy_id=policy.candidate_policy_id,
-                    dataset_id=dataset_id,
-                )
+                replay = _candidate_set_result_from_receipt(receipt, plan)
                 _finalize_runtime(
                     uow,
                     runtime_claim,
@@ -493,6 +668,25 @@ def _build_request_hash(
     )
 
 
+def _candidate_replay_failure_descriptor(
+    *,
+    scope_id: str,
+    request_hash: str,
+) -> CommandFailureDescriptor:
+    return CommandFailureDescriptor(
+        command_kind="BUILD_CANDIDATE_SET",
+        scope_id=scope_id,
+        request_hash=request_hash,
+        error_class="COMMAND",
+        error_code="BUILD_CANDIDATE_SET_REJECTED",
+        aggregate_kind="CANDIDATE_COMMAND",
+        failure_action="CANDIDATE_COMMAND_FAILED",
+        rejection_command_kind="CANDIDATE_COMMAND_REJECTION",
+        rejection_action="CANDIDATE_COMMAND_REJECTED",
+        rejection_key_prefix="candidate-command-rejection",
+    )
+
+
 def _validate_prepared_input(
     prepared: CandidatePreparedResearchInput,
     *,
@@ -538,14 +732,87 @@ def _prepared_snapshot(
     )
 
 
-def _validate_verified_candidate_set(
+def _validate_persisted_candidate_set(
     persisted: CandidateRankingPlan | None,
-    plan: CandidateRankingPlan,
+    expected: CandidateRankingPlan,
 ) -> None:
-    if persisted != plan:
+    if persisted != expected:
         raise ArtifactIntegrityError(
-            "verified persisted Candidate ranking does not reconcile"
+            "persisted Candidate Authority does not reconcile"
         )
+
+
+def _rebuild_persisted_candidate_set(
+    policy: CandidatePolicy,
+    persisted: CandidateRankingPlan | None,
+) -> CandidateRankingPlan:
+    if persisted is None:
+        raise ArtifactIntegrityError(
+            "CandidateSet receipt has no persisted Candidate Authority"
+        )
+    try:
+        population = _population_from_persisted_candidate_set(persisted)
+        rebuilt = rank_candidate_set(policy=policy, dataset=population)
+    except (ArithmeticError, KeyError, TypeError, ValueError) as exception:
+        raise ArtifactIntegrityError(
+            "persisted Candidate raw matrix cannot rebuild ranking"
+        ) from exception
+    _validate_persisted_candidate_set(persisted, rebuilt)
+    return rebuilt
+
+
+def _population_from_persisted_candidate_set(
+    persisted: CandidateRankingPlan,
+) -> CandidateDatasetPopulation:
+    scores_by_candidate: dict[UUID, list[CandidateScoreComponentRecord]] = {
+        candidate.candidate_id: [] for candidate in persisted.candidates
+    }
+    for score in persisted.score_components:
+        try:
+            scores_by_candidate[score.candidate_id].append(score)
+        except KeyError as exception:
+            raise ArtifactIntegrityError(
+                "persisted Candidate score has no Candidate parent"
+            ) from exception
+    rows = tuple(
+        CandidatePopulationRow(
+            instrument_id=candidate.instrument_id,
+            dataset_population_source_id=(
+                candidate.dataset_population_source_id
+            ),
+            cells=tuple(
+                CandidatePopulationCell(
+                    feature_definition_id=score.feature_definition_id,
+                    status=score.raw_status,
+                    value=_persisted_raw_value(score),
+                    reason_code=score.raw_reason_code,
+                    cell_source_lineage_hash=score.cell_source_lineage_hash,
+                )
+                for score in scores_by_candidate[candidate.candidate_id]
+            ),
+        )
+        for candidate in persisted.candidates
+    )
+    candidate_set = persisted.candidate_set
+    return CandidateDatasetPopulation(
+        dataset_id=candidate_set.dataset_id,
+        dataset_content_sha256=candidate_set.dataset_content_sha256,
+        decision_time=candidate_set.decision_time,
+        universe_revision_id=candidate_set.universe_revision_id,
+        eligibility_policy_id=candidate_set.eligibility_policy_id,
+        rows=rows,
+        dependency_sha256=candidate_set.dependency_sha256,
+    )
+
+
+def _persisted_raw_value(
+    score: CandidateScoreComponentRecord,
+) -> Decimal | int | None:
+    if score.raw_status is not CandidateCellStatus.AVAILABLE:
+        return None
+    if score.feature_value_type is CandidateFeatureValueType.DECIMAL:
+        return score.raw_decimal_value
+    return score.raw_integer_value
 
 
 def _validate_reconciliation(
@@ -570,22 +837,13 @@ def _validate_reconciliation(
         )
 
 
-def _replayed_candidate_set_result(
-    uow: CandidateUnitOfWork,
+def _candidate_set_result_from_receipt(
     receipt: ReceiptRecord,
-    *,
-    candidate_policy_id: UUID,
-    dataset_id: UUID,
+    plan: CandidateRankingPlan,
 ) -> CandidateMutationResult:
     _ensure_successful_receipt(receipt, aggregate_kind="CANDIDATE_SET")
-    plan = uow.candidates.verified_candidate_set(
-        candidate_policy_id=candidate_policy_id,
-        dataset_id=dataset_id,
-        lock=False,
-    )
     if (
-        plan is None
-        or receipt.result_aggregate_id != str(plan.candidate_set_id)
+        receipt.result_aggregate_id != str(plan.candidate_set_id)
         or receipt.result_aggregate_version != 1
         or receipt.result_hash != str(plan.result_sha256)
     ):
