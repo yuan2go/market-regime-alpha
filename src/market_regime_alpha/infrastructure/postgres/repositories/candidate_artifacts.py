@@ -1,6 +1,6 @@
 """Candidate-facing exact Foundation Artifact adapter."""
 
-from typing import Any
+from typing import Any, Literal
 
 import psycopg
 
@@ -28,7 +28,24 @@ class PostgresCandidateArtifactRepository(PostgresArtifactRepository):
         *,
         lock: bool,
     ) -> ArtifactRecord:
-        record, verified_integrity = self._exact_identity(binding, lock=lock)
+        record, verified_integrity = self._exact_identity(
+            binding,
+            lock_clause=" FOR SHARE" if lock else "",
+        )
+        if not verified_integrity:
+            raise ArtifactIntegrityError(
+                "Candidate Artifact identity or Foundation integrity does not match"
+            )
+        return record
+
+    def require_exact_for_verification(
+        self,
+        binding: CandidateArtifactBinding,
+    ) -> ArtifactRecord:
+        record, verified_integrity = self._exact_identity(
+            binding,
+            lock_clause=" FOR UPDATE",
+        )
         if not verified_integrity:
             raise ArtifactIntegrityError(
                 "Candidate Artifact identity or Foundation integrity does not match"
@@ -39,16 +56,15 @@ class PostgresCandidateArtifactRepository(PostgresArtifactRepository):
         self,
         binding: CandidateArtifactBinding,
     ) -> ArtifactRecord:
-        record, _ = self._exact_identity(binding, lock=True)
+        record, _ = self._exact_identity(binding, lock_clause=" FOR SHARE")
         return record
 
     def _exact_identity(
         self,
         binding: CandidateArtifactBinding,
         *,
-        lock: bool,
+        lock_clause: Literal["", " FOR SHARE", " FOR UPDATE"],
     ) -> tuple[ArtifactRecord, bool]:
-        suffix = " FOR SHARE" if lock else ""
         row = self._candidate_connection.execute(
             """
             SELECT artifact_id, content_sha256, size_bytes, media_type,
@@ -60,7 +76,7 @@ class PostgresCandidateArtifactRepository(PostgresArtifactRepository):
             FROM mra.artifact
             WHERE artifact_id = %s
             """
-            + suffix,
+            + lock_clause,
             (binding.artifact_id,),
         ).fetchone()
         if row is None:

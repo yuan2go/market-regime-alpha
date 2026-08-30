@@ -3297,7 +3297,7 @@ CREATE TABLE mra.candidate_policy (
         artifact_id, content_sha256, size_bytes
     ) ON DELETE RESTRICT,
     CONSTRAINT candidate_policy_shape_ck CHECK (
-        policy_code ~ '^[a-z][a-z0-9_-]{0,99}$'
+        policy_code ~ '^[a-z][a-z0-9_]{0,99}$'
         AND version > 0
         AND content_sha256 ~ '^[0-9a-f]{64}$'
         AND normalization_method = 'ARITHMETIC_MIDRANK'
@@ -3358,7 +3358,7 @@ CREATE TABLE mra.candidate_policy_component (
         feature_definition_id, content_sha256, value_type
     ) ON DELETE RESTRICT,
     CONSTRAINT candidate_policy_component_shape_ck CHECK (
-        component_code ~ '^[a-z][a-z0-9_-]{0,99}$'
+        component_code ~ '^[a-z][a-z0-9_]{0,99}$'
         AND ordinal > 0
         AND feature_content_sha256 ~ '^[0-9a-f]{64}$'
         AND feature_value_type IN ('DECIMAL', 'INTEGER')

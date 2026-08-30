@@ -42,6 +42,13 @@ class CandidateArtifactRepository(Protocol):
         lock: bool,
     ) -> ArtifactRecord: ...
 
+    def require_exact_for_verification(
+        self,
+        binding: CandidateArtifactBinding,
+    ) -> ArtifactRecord:
+        """Lock an exact Artifact before recording verification against it."""
+        ...
+
     def record_verification(
         self,
         *,

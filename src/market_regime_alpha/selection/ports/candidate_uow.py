@@ -4,6 +4,7 @@ from types import TracebackType
 from typing import Protocol, Self
 
 from market_regime_alpha.runtime.ports import (
+    AttemptClaim,
     AuditRepository,
     CommandReceiptRepository,
     RuntimeCommandFinalization,
@@ -17,6 +18,17 @@ from market_regime_alpha.selection.ports.candidate_repository import (
 from market_regime_alpha.selection.ports.research_inputs import (
     CandidateResearchDependencyQueries,
 )
+
+
+class CandidateRuntimeCommandFinalization(RuntimeCommandFinalization, Protocol):
+    """Runtime fence surface narrowed to the Candidate build Step kind."""
+
+    def lock_live_for_step(
+        self,
+        claim: AttemptClaim,
+        *,
+        expected_step_kind: str,
+    ) -> None: ...
 
 
 class CandidateUnitOfWork(Protocol):
@@ -36,7 +48,7 @@ class CandidateUnitOfWork(Protocol):
     def audit(self) -> AuditRepository: ...
 
     @property
-    def runtime_finalization(self) -> RuntimeCommandFinalization: ...
+    def runtime_finalization(self) -> CandidateRuntimeCommandFinalization: ...
 
     def __enter__(self) -> Self: ...
 
@@ -58,4 +70,8 @@ class CandidateUnitOfWorkProvider(Protocol):
     ) -> CandidateUnitOfWork: ...
 
 
-__all__ = ["CandidateUnitOfWork", "CandidateUnitOfWorkProvider"]
+__all__ = [
+    "CandidateRuntimeCommandFinalization",
+    "CandidateUnitOfWork",
+    "CandidateUnitOfWorkProvider",
+]

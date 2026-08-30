@@ -398,10 +398,19 @@ class PostgresRuntimeRepository:
             raise StaleFenceError(f"Attempt {claim.attempt_id} lease is no longer live")
         return row[0]
 
-    def lock_live_claim(self, claim: AttemptClaim) -> None:
+    def lock_live_claim(
+        self,
+        claim: AttemptClaim,
+        *,
+        expected_step_kind: str | None = None,
+    ) -> None:
         """Acquire the global Run/Step/Attempt locks before business aggregates."""
 
-        self._lock_live_claim(claim, required_attempt_state="RUNNING")
+        self._lock_live_claim(
+            claim,
+            required_attempt_state="RUNNING",
+            expected_step_kind=expected_step_kind,
+        )
 
     def succeed_attempt(
         self,
@@ -943,6 +952,7 @@ class PostgresRuntimeRepository:
         claim: AttemptClaim,
         *,
         required_attempt_state: str | None,
+        expected_step_kind: str | None = None,
     ) -> tuple[Any, ...]:
         row = self._connection.execute(
             """
@@ -952,7 +962,8 @@ class PostgresRuntimeRepository:
                 attempt.external_effect_class, step.retryable_error_codes,
                 step.retry_backoff_ms, attempt.state, attempt.fence_token,
                 attempt.lease_owner, attempt.lease_until,
-                step.current_attempt_id, step.current_fence
+                step.current_attempt_id, step.current_fence,
+                step.step_key, step.step_kind
             FROM mra.runtime_run AS run
             JOIN mra.runtime_step AS step ON step.run_id = run.run_id
             JOIN mra.runtime_attempt AS attempt ON attempt.step_id = step.step_id
@@ -973,6 +984,11 @@ class PostgresRuntimeRepository:
             or row[12] != claim.lease_owner
             or UUID(str(row[14])) != claim.attempt_id
             or int(row[15]) != claim.fence_token
+            or str(row[16]) != claim.step_key
+            or (
+                expected_step_kind is not None
+                and str(row[17]) != expected_step_kind
+            )
         ):
             raise StaleFenceError(f"Attempt {claim.attempt_id} does not own the current live fence")
         live = self._connection.execute(

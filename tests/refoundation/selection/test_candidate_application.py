@@ -13,6 +13,7 @@ from market_regime_alpha.runtime.application import CommandContext
 from market_regime_alpha.runtime.application.service import ActorType
 from market_regime_alpha.runtime.errors import (
     ArtifactIntegrityError,
+    CommandPreviouslyFailedError,
     RuntimeStateConflictError,
     StaleFenceError,
 )
@@ -283,6 +284,15 @@ class _SpyRuntimeFinalization:
         if self._stale:
             raise StaleFenceError("stale Candidate fence")
 
+    def lock_live_for_step(
+        self,
+        claim: AttemptClaim,
+        *,
+        expected_step_kind: str,
+    ) -> None:
+        assert expected_step_kind == "BUILD_CANDIDATE_SET"
+        self.lock_live(claim)
+
     def succeed(self, claim: AttemptClaim, **kwargs: Any) -> tuple[int, int]:
         self._events.append("runtime.succeed")
         return 1, 1
@@ -302,6 +312,10 @@ class _SpyArtifacts:
 
     def require_exact(self, binding: Any, *, lock: bool) -> ArtifactRecord:
         self._events.append(f"artifacts.require_exact:{lock}")
+        return self._record(binding)
+
+    def require_exact_for_verification(self, binding: Any) -> ArtifactRecord:
+        self._events.append("artifacts.require_exact_for_verification")
         return self._record(binding)
 
     def record_verification(self, **kwargs: Any) -> ArtifactVerificationRecord:
@@ -724,10 +738,10 @@ def test_build_prepares_and_ranks_between_preflight_and_final_uows(
         "runtime.lock_live",
         "candidates.lock_candidate_set_identity",
         "candidates.policy:True",
-        "artifacts.require_exact:True",
-        "artifacts.require_exact:True",
         "dependencies.snapshot:True",
         "artifacts.require_exact:True",
+        "artifacts.require_exact:True",
+        "artifacts.require_exact_for_verification",
         "artifacts.require_exact:True",
         "artifacts.require_exact:True",
         "candidates.insert_candidate_set",
@@ -994,6 +1008,83 @@ def test_build_rejects_legal_persisted_contribution_drift_before_receipt() -> No
     assert events.index("final-drift.exit") < events.index("failure.enter")
 
 
+def test_build_failed_receipt_short_circuits_before_candidate_authority_lookup() -> None:
+    events: list[str] = []
+    starts: list[dict[str, Any]] = []
+    policy = _policy()
+    prepared = _prepared()
+    failed_receipt = ReceiptRecord(
+        receipt_id=_uuid(420),
+        status="FAILED",
+        request_hash=_H1,
+        result_aggregate_kind=None,
+        result_aggregate_id=None,
+        result_aggregate_version=None,
+        result_hash=None,
+        error_code="BUILD_CANDIDATE_SET_REJECTED",
+        is_new=False,
+    )
+    preflight = _SpyUow(
+        name="failed-replay-preflight",
+        events=events,
+        starts=starts,
+        receipt=failed_receipt,
+        policy=policy,
+        prepared=prepared,
+    )
+    existing_failure = _SpyUow(
+        name="failed-replay-terminalization",
+        events=events,
+        starts=starts,
+        receipt=failed_receipt,
+        policy=policy,
+        prepared=prepared,
+    )
+    unexpected_rejection = _SpyUow(
+        name="unexpected-replay-rejection",
+        events=events,
+        starts=starts,
+        receipt=_new_receipt(_uuid(421)),
+        policy=policy,
+        prepared=prepared,
+    )
+    loader = _SpyLoader(events, prepared)
+    provider = _QueuedProvider(
+        [preflight, existing_failure, unexpected_rejection]
+    )
+    app = CandidateApplication(
+        loader,
+        provider,
+        id_factory=_id_factory(),
+    )
+
+    with pytest.raises(CommandPreviouslyFailedError) as raised:
+        app.build_candidate_set(
+            policy.candidate_policy_id,
+            prepared.dataset.dataset_id,
+            _context("build-failed-receipt-replay"),
+            runtime_claim=_claim(),
+        )
+
+    assert raised.value.error_code == "BUILD_CANDIDATE_SET_REJECTED"
+    assert loader.calls == 0
+    assert provider.read_only_calls == [False, False]
+    assert events == [
+        "failed-replay-preflight.enter",
+        "runtime.lock_live",
+        "candidates.policy:False",
+        "dependencies.snapshot:False",
+        "receipts.start",
+        "failed-replay-preflight.exit",
+        "failed-replay-terminalization.enter",
+        "runtime.lock_live",
+        "receipts.start",
+        "runtime.fail",
+        "failed-replay-terminalization.commit",
+        "failed-replay-terminalization.exit",
+    ]
+
+
 def test_build_replay_verifies_hash_outside_read_uow_without_ranking_then_finalizes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1100,9 +1191,9 @@ def test_build_replay_verifies_hash_outside_read_uow_without_ranking_then_finali
         "replay-final.enter",
         "runtime.lock_live",
         "candidates.policy:True",
-        "artifacts.require_exact:True",
-        "artifacts.require_exact:True",
         "dependencies.snapshot:True",
+        "artifacts.require_exact:True",
+        "artifacts.require_exact:True",
         "artifacts.require_exact:True",
         "artifacts.require_exact:True",
         "artifacts.require_exact:True",

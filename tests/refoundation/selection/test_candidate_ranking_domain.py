@@ -428,6 +428,25 @@ def test_decimal_projection_adapts_and_fails_at_its_closed_cap() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    ("minimum_precision", "maximum_precision"),
+    ((10, 64), (64, 100), (10, 10)),
+)
+def test_decimal_projection_precision_bounds_match_persistence_contract(
+    minimum_precision: int,
+    maximum_precision: int,
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match="invalid Candidate Decimal projection precision bounds",
+    ):
+        project_exact_values(
+            {"half": Fraction(1, 2)},
+            minimum_precision=minimum_precision,
+            maximum_precision=maximum_precision,
+        )
+
+
 def test_candidate_set_projection_adapts_for_close_composite_score_classes() -> None:
     policy = _policy(
         _component(1, weight="1"),

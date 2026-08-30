@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from uuid import UUID, uuid4
+
 import psycopg
+import pytest
 
 from market_regime_alpha.infrastructure.postgres.schema import (
     EXPECTED_CANDIDATE_TABLES,
@@ -135,6 +138,207 @@ def test_candidate_policy_has_only_declared_weight_and_real_feature_binding(
     assert "feature_value_type = ANY (ARRAY['DECIMAL'::text, 'INTEGER'::text])" in constraints[
         "candidate_policy_component_shape_ck"
     ]
+    candidate_code_pattern = "^[a-z][a-z0-9_]{0,99}$"
+    assert candidate_code_pattern in constraints["candidate_policy_shape_ck"]
+    assert candidate_code_pattern in constraints[
+        "candidate_policy_component_shape_ck"
+    ]
+
+
+def _insert_candidate_policy(
+    connection: psycopg.Connection,
+    *,
+    policy_code: str,
+    content_sha256: str,
+    code_artifact_id: UUID,
+    config_artifact_id: UUID,
+) -> UUID:
+    candidate_policy_id = uuid4()
+    connection.execute(
+        """
+        INSERT INTO mra.candidate_policy (
+            candidate_policy_id, policy_code, version, content_sha256,
+            normalization_method, rank_method, missing_policy,
+            selection_method, tie_policy, score_semantics,
+            decimal_projection_method, decimal_projection_version,
+            requested_top_k, component_count,
+            code_artifact_id, code_content_sha256, code_size_bytes,
+            config_artifact_id, config_content_sha256, config_size_bytes
+        )
+        VALUES (
+            %s, %s, 1, %s,
+            'ARITHMETIC_MIDRANK', 'COMPETITION', 'STRICT_COMPLETE_CASE',
+            'TOP_K', 'INCLUDE_ALL_BOUNDARY_TIES', 'DESCRIPTIVE_RANK_SCORE',
+            'EXACT_RATIONAL_ADAPTIVE_HALF_EVEN', 1,
+            1, 1,
+            %s, %s, 1,
+            %s, %s, 1
+        )
+        """,
+        (
+            candidate_policy_id,
+            policy_code,
+            content_sha256,
+            code_artifact_id,
+            "a" * 64,
+            config_artifact_id,
+            "b" * 64,
+        ),
+    )
+    return candidate_policy_id
+
+
+def _seed_candidate_policy_dependencies(
+    connection: psycopg.Connection,
+) -> tuple[UUID, UUID, UUID]:
+    code_artifact_id = uuid4()
+    config_artifact_id = uuid4()
+    connection.execute(
+        """
+        INSERT INTO mra.artifact (
+            artifact_id, content_sha256, size_bytes, media_type,
+            locator, integrity_state
+        )
+        VALUES
+            (%s, %s, 1, 'text/plain', %s, 'AVAILABLE'),
+            (%s, %s, 1, 'application/json', %s, 'AVAILABLE')
+        """,
+        (
+            code_artifact_id,
+            "a" * 64,
+            f"file:///candidate-code-{code_artifact_id}",
+            config_artifact_id,
+            "b" * 64,
+            f"file:///candidate-config-{config_artifact_id}",
+        ),
+    )
+    feature_definition_id = uuid4()
+    connection.execute(
+        """
+        INSERT INTO mra.feature_definition (
+            feature_definition_id, feature_code, version, value_type,
+            value_unit, frequency_value, frequency_unit,
+            window_value, window_unit, lookback_value, lookback_unit,
+            source_requirements, availability_rule, missingness_policy,
+            algorithm_code, algorithm_version, algorithm_sha256,
+            code_artifact_id, code_content_sha256, code_size_bytes,
+            config_artifact_id, config_content_sha256, config_size_bytes,
+            content_sha256
+        )
+        VALUES (
+            %s, 'candidate_feature', 1, 'DECIMAL',
+            'RATIO', 1, 'TRADING_SESSION',
+            1, 'TRADING_SESSION', 0, 'TRADING_SESSION',
+            ARRAY['MARKET_BAR_REVISION'],
+            'DECISION_VISIBLE_AT_OR_BEFORE', 'EXPLICIT_STATUS',
+            'candidate_feature', '1', %s,
+            %s, %s, 1,
+            %s, %s, 1,
+            %s
+        )
+        """,
+        (
+            feature_definition_id,
+            "c" * 64,
+            code_artifact_id,
+            "a" * 64,
+            config_artifact_id,
+            "b" * 64,
+            "d" * 64,
+        ),
+    )
+    return code_artifact_id, config_artifact_id, feature_definition_id
+
+
+def test_candidate_policy_code_constraint_rejects_hyphen_and_accepts_underscore(
+    target_database_url: str,
+) -> None:
+    SchemaManager(target_database_url).bootstrap()
+    with psycopg.connect(target_database_url, autocommit=True) as connection:
+        code_artifact_id, config_artifact_id, _ = (
+            _seed_candidate_policy_dependencies(connection)
+        )
+
+        with pytest.raises(
+            psycopg.errors.CheckViolation,
+            match="candidate_policy_shape_ck",
+        ):
+            _insert_candidate_policy(
+                connection,
+                policy_code="candidate-policy",
+                content_sha256="e" * 64,
+                code_artifact_id=code_artifact_id,
+                config_artifact_id=config_artifact_id,
+            )
+
+        candidate_policy_id = _insert_candidate_policy(
+            connection,
+            policy_code="candidate_policy",
+            content_sha256="f" * 64,
+            code_artifact_id=code_artifact_id,
+            config_artifact_id=config_artifact_id,
+        )
+        assert connection.execute(
+            "SELECT policy_code FROM mra.candidate_policy WHERE candidate_policy_id = %s",
+            (candidate_policy_id,),
+        ).fetchone() == ("candidate_policy",)
+
+
+def test_candidate_component_code_constraint_rejects_hyphen_and_accepts_underscore(
+    target_database_url: str,
+) -> None:
+    SchemaManager(target_database_url).bootstrap()
+    with psycopg.connect(target_database_url, autocommit=True) as connection:
+        code_artifact_id, config_artifact_id, feature_definition_id = (
+            _seed_candidate_policy_dependencies(connection)
+        )
+        candidate_policy_id = _insert_candidate_policy(
+            connection,
+            policy_code="candidate_policy",
+            content_sha256="e" * 64,
+            code_artifact_id=code_artifact_id,
+            config_artifact_id=config_artifact_id,
+        )
+
+        def insert_component(component_code: str, ordinal: int) -> UUID:
+            component_id = uuid4()
+            connection.execute(
+                """
+                INSERT INTO mra.candidate_policy_component (
+                    candidate_policy_component_id, candidate_policy_id,
+                    component_code, ordinal, feature_definition_id,
+                    feature_content_sha256, feature_value_type,
+                    direction, declared_weight
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, 'DECIMAL',
+                        'HIGHER_IS_BETTER', 1)
+                """,
+                (
+                    component_id,
+                    candidate_policy_id,
+                    component_code,
+                    ordinal,
+                    feature_definition_id,
+                    "d" * 64,
+                ),
+            )
+            return component_id
+
+        with pytest.raises(
+            psycopg.errors.CheckViolation,
+            match="candidate_policy_component_shape_ck",
+        ):
+            insert_component("candidate-component", 1)
+
+        component_id = insert_component("candidate_component", 1)
+        assert connection.execute(
+            """
+            SELECT component_code
+            FROM mra.candidate_policy_component
+            WHERE candidate_policy_component_id = %s
+            """,
+            (component_id,),
+        ).fetchone() == ("candidate_component",)
 
 
 def test_candidate_set_funnel_and_boundary_shape_are_declarative(

@@ -19,12 +19,17 @@ from market_regime_alpha.runtime.errors import (
     RuntimeNotFoundError,
     RuntimeStateConflictError,
 )
-from market_regime_alpha.runtime.ports import AttemptClaim, ReceiptRecord
+from market_regime_alpha.runtime.ports import (
+    ArtifactRecord,
+    AttemptClaim,
+    ReceiptRecord,
+)
 from market_regime_alpha.selection.application._candidate_command_support import (
     candidate_failure_boundary,
     replay_concurrent_success,
 )
 from market_regime_alpha.selection.domain.candidate_inputs import (
+    CandidateArtifactBinding,
     CandidateCellStatus,
     CandidateDatasetPopulation,
 )
@@ -136,8 +141,10 @@ class CandidateApplication:
                     uow.commit()
                 return result
 
-            uow.candidate_artifacts.require_exact(policy.code_artifact, lock=True)
-            uow.candidate_artifacts.require_exact(policy.config_artifact, lock=True)
+            _lock_exact_candidate_artifacts(
+                uow,
+                bindings=(policy.code_artifact, policy.config_artifact),
+            )
             required_features = _policy_feature_dependencies(policy)
             actual_features = uow.research_dependencies.feature_dependencies(
                 required_features,
@@ -289,7 +296,7 @@ class CandidateApplication:
         str,
     ]:
         with self._uow_provider() as uow:
-            _lock_live(uow, runtime_claim)
+            _lock_candidate_build_live(uow, runtime_claim)
             policy = uow.candidates.policy(candidate_policy_id, lock=False)
             required_features = _policy_feature_dependencies(policy)
             snapshot = uow.research_dependencies.snapshot(
@@ -310,6 +317,10 @@ class CandidateApplication:
                 request_hash=request_hash,
             )
             if not receipt.is_new:
+                _ensure_successful_receipt(
+                    receipt,
+                    aggregate_kind="CANDIDATE_SET",
+                )
                 binding = uow.candidates.candidate_set_binding(
                     candidate_policy_id=candidate_policy_id,
                     dataset_id=dataset_id,
@@ -403,7 +414,7 @@ class CandidateApplication:
         )
         scope_id = f"{candidate_policy_id}:{dataset_id}"
         with self._uow_provider() as uow:
-            _lock_live(uow, runtime_claim)
+            _lock_candidate_build_live(uow, runtime_claim)
             persisted_policy = uow.candidates.policy(
                 candidate_policy_id,
                 lock=True,
@@ -412,14 +423,6 @@ class CandidateApplication:
                 raise RuntimeStateConflictError(
                     "CandidatePolicy changed during Candidate replay"
                 )
-            uow.candidate_artifacts.require_exact(
-                replay.policy.code_artifact,
-                lock=True,
-            )
-            uow.candidate_artifacts.require_exact(
-                replay.policy.config_artifact,
-                lock=True,
-            )
             required_features = _policy_feature_dependencies(replay.policy)
             actual_snapshot = uow.research_dependencies.snapshot(
                 dataset_id=dataset_id,
@@ -430,17 +433,15 @@ class CandidateApplication:
                 raise RuntimeStateConflictError(
                     "Dataset dependencies changed during Candidate replay"
                 )
-            uow.candidate_artifacts.require_exact(
-                replay.snapshot.dataset.manifest_artifact,
-                lock=True,
-            )
-            uow.candidate_artifacts.require_exact(
-                replay.snapshot.dataset.code_artifact,
-                lock=True,
-            )
-            uow.candidate_artifacts.require_exact(
-                replay.snapshot.dataset.config_artifact,
-                lock=True,
+            _lock_exact_candidate_artifacts(
+                uow,
+                bindings=(
+                    replay.policy.code_artifact,
+                    replay.policy.config_artifact,
+                    replay.snapshot.dataset.manifest_artifact,
+                    replay.snapshot.dataset.code_artifact,
+                    replay.snapshot.dataset.config_artifact,
+                ),
             )
             receipt = uow.receipts.start(
                 receipt_id=self._id_factory(),
@@ -519,7 +520,7 @@ class CandidateApplication:
         scope_id = f"{policy.candidate_policy_id}:{dataset_id}"
         required_features = _policy_feature_dependencies(policy)
         with self._uow_provider() as uow:
-            _lock_live(uow, runtime_claim)
+            _lock_candidate_build_live(uow, runtime_claim)
             uow.candidates.lock_candidate_set_identity(plan.candidate_set_id)
             persisted_policy = uow.candidates.policy(
                 policy.candidate_policy_id,
@@ -529,8 +530,6 @@ class CandidateApplication:
                 raise RuntimeStateConflictError(
                     "CandidatePolicy changed during CandidateSet preparation"
                 )
-            uow.candidate_artifacts.require_exact(policy.code_artifact, lock=True)
-            uow.candidate_artifacts.require_exact(policy.config_artifact, lock=True)
             actual_snapshot = uow.research_dependencies.snapshot(
                 dataset_id=dataset_id,
                 required_features=required_features,
@@ -543,18 +542,18 @@ class CandidateApplication:
                 raise RuntimeStateConflictError(
                     "Dataset dependencies changed during CandidateSet preparation"
                 )
-            manifest_artifact = uow.candidate_artifacts.require_exact(
-                prepared.dataset.manifest_artifact,
-                lock=True,
+            manifest_artifact = _lock_exact_candidate_artifacts(
+                uow,
+                bindings=(
+                    policy.code_artifact,
+                    policy.config_artifact,
+                    prepared.dataset.manifest_artifact,
+                    prepared.dataset.code_artifact,
+                    prepared.dataset.config_artifact,
+                ),
+                verification_binding=prepared.dataset.manifest_artifact,
             )
-            uow.candidate_artifacts.require_exact(
-                prepared.dataset.code_artifact,
-                lock=True,
-            )
-            uow.candidate_artifacts.require_exact(
-                prepared.dataset.config_artifact,
-                lock=True,
-            )
+            assert manifest_artifact is not None
             uow.candidates.insert_candidate_set(plan)
             persisted_plan = uow.candidates.persisted_candidate_set(
                 candidate_policy_id=policy.candidate_policy_id,
@@ -1278,6 +1277,55 @@ def _lock_live(
 ) -> None:
     if claim is not None:
         uow.runtime_finalization.lock_live(claim)
+
+
+def _lock_candidate_build_live(
+    uow: CandidateUnitOfWork,
+    claim: AttemptClaim,
+) -> None:
+    uow.runtime_finalization.lock_live_for_step(
+        claim,
+        expected_step_kind="BUILD_CANDIDATE_SET",
+    )
+
+
+def _lock_exact_candidate_artifacts(
+    uow: CandidateUnitOfWork,
+    *,
+    bindings: tuple[CandidateArtifactBinding, ...],
+    verification_binding: CandidateArtifactBinding | None = None,
+) -> ArtifactRecord | None:
+    """Acquire exact Candidate Artifact locks once in global identity order."""
+
+    unique_bindings: dict[UUID, CandidateArtifactBinding] = {}
+    for binding in bindings:
+        existing = unique_bindings.setdefault(binding.artifact_id, binding)
+        if existing != binding:
+            raise ArtifactIntegrityError(
+                "Candidate Artifact roles bind conflicting immutable identities"
+            )
+    if (
+        verification_binding is not None
+        and unique_bindings.get(verification_binding.artifact_id)
+        != verification_binding
+    ):
+        raise ArtifactIntegrityError(
+            "Candidate verification Artifact is not an exact command dependency"
+        )
+
+    verification_record: ArtifactRecord | None = None
+    for artifact_id in sorted(unique_bindings):
+        binding = unique_bindings[artifact_id]
+        if (
+            verification_binding is not None
+            and artifact_id == verification_binding.artifact_id
+        ):
+            verification_record = (
+                uow.candidate_artifacts.require_exact_for_verification(binding)
+            )
+        else:
+            uow.candidate_artifacts.require_exact(binding, lock=True)
+    return verification_record
 
 
 def _finish_success(

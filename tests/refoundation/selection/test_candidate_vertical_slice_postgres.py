@@ -33,6 +33,9 @@ from market_regime_alpha.infrastructure.postgres.runtime_finalization import (
 from market_regime_alpha.infrastructure.postgres.repositories.candidate import (
     PostgresCandidateRepository,
 )
+from market_regime_alpha.infrastructure.postgres.repositories.candidate_artifacts import (
+    PostgresCandidateArtifactRepository,
+)
 from market_regime_alpha.infrastructure.postgres.uow import (
     PostgresUnitOfWorkProvider,
 )
@@ -59,6 +62,7 @@ from market_regime_alpha.runtime.domain import (
 )
 from market_regime_alpha.runtime.errors import (
     ArtifactIntegrityError,
+    CommandPreviouslyFailedError,
     IdempotencyKeyReusedError,
     RuntimeStateConflictError,
     StaleFenceError,
@@ -903,6 +907,178 @@ def test_concurrent_exact_builds_converge_on_one_candidate_set_and_receipt(
     assert counts == (1, 1, 1, 1)
 
 
+def test_concurrent_different_policies_share_one_dataset_without_artifact_lock_upgrade_deadlock(
+    candidate_vertical_stack,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stack = candidate_vertical_stack
+    ready = _ready_candidate(stack, key_prefix="shared-dataset-candidate")
+    policies = []
+    for suffix in ("first", "second"):
+        policy_id = uuid4()
+        policy = replace(
+            ready.policy,
+            candidate_policy_id=policy_id,
+            policy_code=f"shared_dataset_candidate_policy_{suffix}",
+            config_artifact=_candidate_binding(
+                ready.dataset.manifest_artifact,
+            ),
+            components=(
+                replace(
+                    ready.policy.components[0],
+                    candidate_policy_component_id=uuid4(),
+                    candidate_policy_id=policy_id,
+                ),
+            ),
+        )
+        ready.application.register_candidate_policy(
+            policy,
+            _research._context(
+                f"shared-dataset-register-{suffix}-policy",
+                "REGISTER_CANDIDATE_POLICY",
+            ),
+        )
+        policies.append(policy)
+
+    verification_lock_barrier = Barrier(2)
+    require_exact_for_verification = (
+        PostgresCandidateArtifactRepository.require_exact_for_verification
+    )
+
+    def meet_before_manifest_verification_lock(
+        repository: PostgresCandidateArtifactRepository,
+        binding: CandidateArtifactBinding,
+    ) -> Any:
+        verification_lock_barrier.wait(timeout=10)
+        return require_exact_for_verification(repository, binding)
+
+    monkeypatch.setattr(
+        PostgresCandidateArtifactRepository,
+        "require_exact_for_verification",
+        meet_before_manifest_verification_lock,
+    )
+    runtime_runs = tuple(
+        _schedule_run(
+            stack,
+            steps=(
+                _step(
+                    key="build-candidate-set",
+                    kind="BUILD_CANDIDATE_SET",
+                    ordinal=1,
+                    request_character=request_character,
+                ),
+            ),
+        )
+        for request_character in ("a", "b")
+    )
+    claims = tuple(
+        _claim(runtime, step_key="build-candidate-set")
+        for runtime, _run_id in runtime_runs
+    )
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = tuple(
+            executor.submit(
+                ready.application.build_candidate_set,
+                policy.candidate_policy_id,
+                ready.dataset.dataset_id,
+                _research._context(
+                    f"shared-dataset-build-{index}",
+                    "BUILD_CANDIDATE_SET",
+                ),
+                runtime_claim=claim,
+            )
+            for index, (policy, claim) in enumerate(
+                zip(policies, claims, strict=True),
+                start=1,
+            )
+        )
+        results = tuple(item.result(timeout=15) for item in futures)
+
+    assert all(item.replayed is False for item in results)
+    assert len({item.aggregate_id for item in results}) == 2
+    for runtime, run_id in runtime_runs:
+        trace = runtime.inspect_run(run_id)
+        assert trace.run_state == "SUCCEEDED"
+        assert trace.steps[0].state == "SUCCEEDED"
+        assert trace.steps[0].attempt_states == ("SUCCEEDED",)
+    with psycopg.connect(stack.database_url) as connection:
+        counts = connection.execute(
+            """
+            SELECT
+                (SELECT count(*) FROM mra.candidate_set),
+                (SELECT count(*) FROM mra.candidate),
+                (SELECT count(*) FROM mra.candidate_score_component),
+                (SELECT count(*)
+                   FROM mra.command_receipt
+                      WHERE idempotency_key LIKE 'shared-dataset-build-%%'),
+                (SELECT count(*)
+                   FROM mra.artifact_verification
+                  WHERE artifact_id = %s
+                    AND verification_policy =
+                        'CANDIDATE_DATASET_MANIFEST_READ')
+            """,
+            (ready.dataset.manifest_artifact.artifact_id,),
+        ).fetchone()
+    assert counts == (2, 2, 2, 2, 2)
+
+
+def test_candidate_build_rejects_live_claim_for_a_different_runtime_step_kind(
+    candidate_vertical_stack,
+) -> None:
+    stack = candidate_vertical_stack
+    ready = _ready_candidate(stack, key_prefix="wrong-step-candidate")
+    loader = _RecordingResearchInputLoader(
+        PostgresCandidateResearchInputLoader(stack.pool, stack.store)
+    )
+    application = CandidateApplication(
+        loader,
+        PostgresCandidateUnitOfWorkProvider(stack.pool),
+    )
+    runtime, run_id = _schedule_run(
+        stack,
+        steps=(
+            _step(
+                key="capture",
+                kind="CAPTURE",
+                ordinal=1,
+                request_character="6",
+            ),
+        ),
+    )
+    claim = _claim(runtime, step_key="capture")
+
+    with pytest.raises(StaleFenceError, match="STALE_FENCE"):
+        application.build_candidate_set(
+            ready.policy.candidate_policy_id,
+            ready.dataset.dataset_id,
+            _research._context(
+                "wrong-step-build-candidate-set",
+                "BUILD_CANDIDATE_SET",
+            ),
+            runtime_claim=claim,
+        )
+
+    assert loader.prepare_calls == 0
+    trace = runtime.inspect_run(run_id)
+    assert trace.run_state == "RUNNING"
+    assert trace.steps[0].state == "RUNNING"
+    assert trace.steps[0].attempt_states == ("RUNNING",)
+    with psycopg.connect(stack.database_url) as connection:
+        counts = connection.execute(
+            """
+            SELECT
+                (SELECT count(*) FROM mra.candidate_set),
+                (SELECT count(*) FROM mra.candidate),
+                (SELECT count(*) FROM mra.candidate_score_component),
+                (SELECT count(*) FROM mra.command_receipt
+                 WHERE idempotency_key = 'wrong-step-build-candidate-set'),
+                (SELECT count(*) FROM mra.audit_event
+                 WHERE action = 'BUILD_CANDIDATE_SET')
+            """
+        ).fetchone()
+    assert counts == (0, 0, 0, 0, 0)
+
+
 def test_candidate_final_fence_rejects_lease_that_stales_after_prepare_and_ranking(
     candidate_vertical_stack,
 ) -> None:
@@ -1052,14 +1228,15 @@ def test_candidate_manifest_failure_uses_shared_atomic_failure_contract(
     claim = _claim(runtime, step_key="build-candidate-set")
     stack.store.object_path(str(ready.dataset.manifest_artifact.content_sha256)).write_bytes(b"corrupt before Candidate build")
 
+    command_context = _research._context(
+        "failed-build-candidate-set",
+        "BUILD_CANDIDATE_SET",
+    )
     with pytest.raises(ArtifactIntegrityError):
         ready.application.build_candidate_set(
             ready.policy.candidate_policy_id,
             ready.dataset.dataset_id,
-            _research._context(
-                "failed-build-candidate-set",
-                "BUILD_CANDIDATE_SET",
-            ),
+            command_context,
             runtime_claim=claim,
         )
 
@@ -1080,6 +1257,14 @@ def test_candidate_manifest_failure_uses_shared_atomic_failure_contract(
             WHERE receipt.idempotency_key = 'failed-build-candidate-set'
             """
         ).fetchone()
+        original_receipt_id = connection.execute(
+            """
+            SELECT receipt_id
+            FROM mra.command_receipt
+            WHERE command_kind = 'BUILD_CANDIDATE_SET'
+              AND idempotency_key = 'failed-build-candidate-set'
+            """
+        ).fetchone()
     assert facts == (
         "FAILED",
         "BUILD_CANDIDATE_SET_REJECTED",
@@ -1088,6 +1273,83 @@ def test_candidate_manifest_failure_uses_shared_atomic_failure_contract(
         0,
         0,
         0,
+    )
+    assert original_receipt_id is not None
+
+    replay_runtime, replay_run_id = _schedule_run(
+        stack,
+        steps=(
+            _step(
+                key="build-candidate-set",
+                kind="BUILD_CANDIDATE_SET",
+                ordinal=1,
+                request_character="c",
+            ),
+        ),
+    )
+    replay_claim = _claim(replay_runtime, step_key="build-candidate-set")
+    with pytest.raises(CommandPreviouslyFailedError) as raised:
+        ready.application.build_candidate_set(
+            ready.policy.candidate_policy_id,
+            ready.dataset.dataset_id,
+            command_context,
+            runtime_claim=replay_claim,
+        )
+
+    assert raised.value.error_code == "BUILD_CANDIDATE_SET_REJECTED"
+    replay_trace = replay_runtime.inspect_run(replay_run_id)
+    assert replay_trace.run_state == "FAILED"
+    assert replay_trace.steps[0].state == "FAILED"
+    assert replay_trace.steps[0].attempt_states == ("FAILED_TERMINAL",)
+    with psycopg.connect(stack.database_url) as connection:
+        replay_facts = connection.execute(
+            """
+            SELECT
+                receipt.receipt_id,
+                receipt.status,
+                receipt.error_code,
+                replay_attempt.result_receipt_id,
+                replay_attempt.error_code,
+                replay_step.state,
+                replay_run.state,
+                (SELECT count(*) FROM mra.candidate_set),
+                (SELECT count(*) FROM mra.candidate),
+                (SELECT count(*) FROM mra.candidate_score_component),
+                (SELECT count(*) FROM mra.command_receipt
+                 WHERE command_kind = 'BUILD_CANDIDATE_SET'
+                   AND scope_id = receipt.scope_id
+                   AND idempotency_key = receipt.idempotency_key),
+                (SELECT count(*) FROM mra.command_receipt
+                 WHERE command_kind = 'CANDIDATE_COMMAND_REJECTION'
+                   AND runtime_attempt_id = %s),
+                (SELECT count(*) FROM mra.audit_event
+                 WHERE command_receipt_id = receipt.receipt_id)
+            FROM mra.command_receipt AS receipt
+            JOIN mra.runtime_attempt AS replay_attempt
+              ON replay_attempt.attempt_id = %s
+            JOIN mra.runtime_step AS replay_step
+              ON replay_step.step_id = replay_attempt.step_id
+            JOIN mra.runtime_run AS replay_run
+              ON replay_run.run_id = replay_step.run_id
+            WHERE receipt.command_kind = 'BUILD_CANDIDATE_SET'
+              AND receipt.idempotency_key = 'failed-build-candidate-set'
+            """,
+            (replay_claim.attempt_id, replay_claim.attempt_id),
+        ).fetchone()
+    assert replay_facts == (
+        original_receipt_id[0],
+        "FAILED",
+        "BUILD_CANDIDATE_SET_REJECTED",
+        original_receipt_id[0],
+        "BUILD_CANDIDATE_SET_REJECTED",
+        "FAILED",
+        "FAILED",
+        0,
+        0,
+        0,
+        1,
+        0,
+        1,
     )
 
 

@@ -37,6 +37,9 @@ from market_regime_alpha.shared.identity import ContentHash
 _ProjectionKey = TypeVar("_ProjectionKey", bound=Hashable)
 _DEFAULT_PROJECTION_PRECISION = 64
 _MAXIMUM_PROJECTION_PRECISION = 4096
+_ALLOWED_PROJECTION_PRECISIONS = frozenset(
+    (64, 128, 256, 512, 1024, 2048, 4096)
+)
 _POSTGRES_NUMERIC_MAX_INTEGER_DIGITS = 131_072
 _POSTGRES_NUMERIC_MAX_FRACTIONAL_DIGITS = 16_383
 
@@ -100,9 +103,9 @@ def project_exact_values(
     if (
         isinstance(minimum_precision, bool)
         or isinstance(maximum_precision, bool)
-        or minimum_precision < 1
+        or minimum_precision not in _ALLOWED_PROJECTION_PRECISIONS
+        or maximum_precision not in _ALLOWED_PROJECTION_PRECISIONS
         or maximum_precision < minimum_precision
-        or maximum_precision > _MAXIMUM_PROJECTION_PRECISION
     ):
         raise ValueError("invalid Candidate Decimal projection precision bounds")
     if any(not isinstance(item, Fraction) for item in values.values()):
