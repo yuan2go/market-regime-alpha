@@ -228,6 +228,12 @@ receipt/audit/fence/finalization ports. Artifact byte verification and Dataset
 manifest parsing occur before the relational transaction. Neither the Runtime,
 Market, nor Selection UoW gains Research repositories.
 
+Target registration remains a separate Research-owned command/repository/UoW
+seam exposed through the Research facade. It does not widen the existing
+Dataset/Feature UoW into a future Research-lifecycle UoW. Target checkpoints,
+metrics, and normalized dependencies close under the Target root itself;
+receipt state is never used as business closure.
+
 Selection declares the narrow immutable Research-input DTO/port required by
 Candidate. Only an Infrastructure adapter imports both that port and Research
 Definition parser/types. Candidate Dataset Artifact verification/read/parse and
@@ -300,6 +306,14 @@ command may take stable revalidation locks. Candidate deduplicates those
 Artifact locks and acquires them in ascending Artifact-UUID order as described
 above. Every multi-root command follows the global order. Repository methods do
 not start or commit nested transactions.
+
+`OpenDecisionRun` first locks the live Runtime Run/Step/Attempt fence, then the
+Candidate Set identity, provider-neutral Target versions, explicit Decision-time
+Provider Products and exact Market bar/gap revisions, then Candidates and the
+Decision aggregate. Preparation performs no write and the final transaction
+revalidates every prepared identity. A unique Decision Run Candidate Set key
+permits one canonical Run; exact retry reloads it and changed input fails
+closed.
 
 Isolation defaults to `READ COMMITTED` with explicit row locks and uniqueness/
 version predicates. Use `SERIALIZABLE` only for a measured invariant that cannot
@@ -402,15 +416,17 @@ Representative commands:
 - `ScheduleRun`, `ClaimStep`, `HeartbeatAttempt`, `ResumeRun`,
   `ResolveExternalEffect`, `VerifyArtifact`.
 
-The Decision command dependency is one-way:
+The Decision command dependency is one-way and mandatory in every target plan:
 `FreezeUniverse → AssessEligibility → RegisterDataset → BuildCandidateSet → OpenDecisionRun → AssessContext`.
 Same-run Context cannot mutate or filter the already frozen Universe,
 Eligibility, Candidate Set, or Target commitment. `OpenDecisionRun` freezes the
 complete Candidate × requested Target roster and Decision-visible reference
 states; it creates no future Outcome row. `CreateOpportunity` carries no Risk
 authorization; only `AssessRisk` after `ProposePortfolio` creates a Risk
-Decision. Candidate closure extends only the test vertical slice to
-`CAPTURE → NORMALIZE_PIT → FREEZE_UNIVERSE → ASSESS_ELIGIBILITY → REGISTER_DATASET → BUILD_CANDIDATE_SET`.
+Decision. WP-09 extends only the test vertical slice to
+`CAPTURE → NORMALIZE_PIT → FREEZE_UNIVERSE → ASSESS_ELIGIBILITY → REGISTER_DATASET → BUILD_CANDIDATE_SET → OPEN_DECISION_RUN`,
+leaving `ASSESS_CONTEXT` as the mandatory next logical Step without
+implementing it.
 `BUILD_CANDIDATES` is not an alias or compatibility path. No current Runtime
 dispatcher, business CLI, or cutover authority is created.
 

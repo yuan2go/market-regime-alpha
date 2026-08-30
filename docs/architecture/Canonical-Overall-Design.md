@@ -102,7 +102,7 @@ src/market_regime_alpha/
     domain/
     application/
     ports.py
-  decision/
+  decision_support/
     domain/
     application/
     ports.py
@@ -224,8 +224,10 @@ explicit as-of queries over canonical histories. Read models can be rebuilt and
 deleted without losing business facts.
 
 Post-Candidate dependencies are deliberately asymmetric. `OpenDecisionRun`
-freezes the complete Candidate × requested Target commitment roster before any
-Outcome can be seen. The Outcome context alone derives realized facts from
+creates the sole canonical Decision Run for a Candidate Set and freezes the
+complete Candidate × requested Target commitment roster before any Outcome can
+be seen. Exact retry returns that Run; a changed request for the same Candidate
+Set fails closed. The Outcome context alone derives realized facts from
 Market/PIT and exposes them through a narrow read-only port. Research,
 Evaluation, Calibration, Model, Forecast evaluation, and Qualification cannot
 import Market bars or an Outcome repository to reconstruct labels. Feedback is

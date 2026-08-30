@@ -52,7 +52,7 @@ availability-selected fallback.
 | **4. Research Definition Core for Candidate** | `EXIT_GATE_PASS / NOT_CUT_OVER` | permanent `market_regime_alpha.research_qualification`; `dataset`, `dataset_source`, and `feature_definition`; shared deterministic command-failure contract; strict label-free Decision-input Dataset whose rows exactly equal same-time `INCLUDED` + `ELIGIBLE` population | real immutable relational Authority, Artifact/lineage integrity, success/failure/fence atomicity, leakage rejection, concurrency/replay/recovery, and representative-plan tests pass; no Model/ModelVersion, placeholder, nullable future FK, Registry, compatibility adapter, Evidence/Qualification surrogate, or dependency cycle |
 | **5. Candidate closure** | `EXIT_GATE_PASS / NOT_CUT_OVER` | Selection-owned Candidate Policy, Policy Component, Candidate Set, Candidate, and Candidate Score Component; consume the immutable Decision-input Dataset and real Feature Definitions through a Selection-owned Research-input port and Infrastructure adapter | exact WP-07 proof that every Dataset row has one terminal disposition and a complete score-component matrix; STRICT complete case, exact-rational arithmetic-midrank/composite/competition rank, explicit constant/not-estimable diagnostics, include-all boundary ties, independent short Candidate UoW, fenced atomic success/failure/replay/concurrency, dossier/funnel and representative plans; no later-context Authority |
 | **6. WP-08 post-Candidate design closure** | `DESIGN_APPROVED / IMPLEMENTATION_ORDER_AUTHORIZED / NOT_IMPLEMENTED` | whole-repository writer/reader/FK/Artifact/Runtime/replay audit; freeze Target commitment, Market/Trade Outcome split, Partition access, Evaluation, concrete Evidence/Assessment/Research Qualification and cross-generation DAG | canonical documents and WP-08 record agree; no generic subject/JSON Authority, bars-to-label second truth, Model prerequisite, or same-generation cycle; current implementation/DDL unchanged |
-| **7. WP-09 Target commitment and Decision Run** | `READY_FOR_IMPLEMENTATION / NEXT / NOT_CUT_OVER` | TargetDefinition/Checkpoint/Metric; `OpenDecisionRun`; DecisionRun, explicit requested Target roster, full Candidate × Target commitment roster and independent Decision reference; mandatory `OPEN_DECISION_RUN` after Candidate and before Context | exact roster/reference/FK/hash reconciliation including empty Candidate Set, idempotency/concurrency/fence/failure/replay and architecture tests pass; no Outcome/Partition/Evaluation/Model/Evidence placeholder |
+| **7. WP-09 Target commitment and Decision Run** | `DESIGN_APPROVED_WITH_CONDITIONS / IMPLEMENTATION_AUTHORIZED / IN_PROGRESS / NOT_CUT_OVER` | provider-neutral TargetDefinition/Checkpoint/Metric plus normalized dependency; independent Target registration seam; `OpenDecisionRun`; exactly one canonical DecisionRun per Candidate Set, explicit requested Target/version/reference-source roster, full Candidate × Target commitment roster and independent Decision reference; mandatory `OPEN_DECISION_RUN` after Candidate and before Context | exact roster/reference/FK/hash reconciliation including empty Candidate Set, idempotency/concurrency/fence/failure/replay and architecture tests pass; no Outcome/Partition/Evaluation/Model/Evidence placeholder |
 | **8. Market Target Outcome** | `ORDER_AUTHORIZED / BLOCKED_BY_STAGE_7` | one commitment-bound root, append-only full revisions, observation/metric/reason children, correction/supersession, two cutoffs, exact replay and narrow read-only port | partial/complete/correction/finality/idempotency/replay/port isolation proven; every old label consumer disposition remains fail-closed until its own cut |
 | **9. Research Partition and Experiment** | `ORDER_AUTHORIZED / BLOCKED_BY_STAGE_8` | immutable partition/member roster, Decision/Outcome windows, purge/embargo, ordinal first-Outcome-access ledger, Experiment/partition/run | Locked-OOS/Prospective roster and Experiment binding predate ordinal one; reused access is diagnostic only; range/composite-FK/leakage/concurrency/replay gates pass |
 | **10. Evaluation** | `ORDER_AUTHORIZED / BLOCKED_BY_STAGE_9` | predeclared Evaluation Protocol/metrics; Experiment/Partition-bound Run; exact access/Outcome observations and metrics; no Forecast child table yet | no Model requirement, no bar/provider/repository import, no posterior Dataset write, complete input/metric reconciliation or nullable future Forecast FK |
@@ -114,16 +114,16 @@ without changing implementation. The authoritative detailed decision is the
 
 ## WP-09 coding contract
 
-The minimum scope is TargetDefinition/TargetCheckpoint/TargetMetricDefinition
-registration, DecisionRun/DecisionRunTarget/DecisionTargetCommitment/
+The exact scope is TargetDefinition/TargetCheckpoint/TargetMetricDefinition/
+TargetMetricDependency registration, DecisionRun/DecisionRunTarget/DecisionTargetCommitment/
 DecisionReferenceObservation,
 `OPEN_DECISION_RUN`, and one test-only Candidate-to-commitment vertical slice.
 Outcome and every later owner remain non-scope.
 
 | TDD seam | Exit evidence |
 |---|---|
-| Target/checkpoint/metric identity | immutable hash/order and relational metric/dependency semantics; no JSON |
-| Requested Target and Candidate × Target rosters | non-empty Target roster survives empty Candidate Set; every Candidate disposition exactly once per requested Target; count/hash reconciliation |
+| Target/checkpoint/metric identity | Target-owned root-last closure, append-only supersession, immutable hash/order and normalized relational metric/dependency semantics; no receipt closure and no JSON |
+| Requested Target and Candidate × Target rosters | one canonical Run per Candidate Set; non-empty Target/version/reference-source roster survives empty Candidate Set; every Candidate disposition exactly once per requested Target; count/hash reconciliation |
 | Decision reference | exact Decision-visible Market revision or explicit Source Gap; no late substitution |
 | Commitment time/mode | freeze Runtime clock mode and PostgreSQL recorded time; historical/replay opening cannot become Prospective |
 | FK/transaction | composite-set/source mismatches rejected; one short fenced transaction with receipt/audit/finalization |
@@ -165,13 +165,15 @@ then owns one revisioned label truth. Partition/Evaluation consumers use its
 narrow read-only port, and feedback crosses only from generation `n` to
 Decision Run `n+1` through a concrete Research Qualification binding.
 
-WP-09 is ready for implementation with only Target Definition/Checkpoint/Metric,
+WP-09 design is approved with conditions and implementation is authorized for
+only Target Definition/Checkpoint/Metric/Dependency,
 Decision Run/requested Target/Target Commitment/Reference, and the test-only
 Runtime Step seam.
 It must not create Outcome, Partition, Experiment, Evaluation, Model, Evidence,
 Assessment, Qualification, Context, Signal, Forecast, Portfolio, Risk,
 Execution, Attribution, compatibility reads, dual writes, or placeholders.
 
+WP-10 Market Target Outcome remains blocked until the complete WP-09 Exit Gate.
 No Alpha hypothesis/optimization, Formal OOS access, Provider campaign, broker
 integration, Runtime cutover, Legacy deletion, evidence-ceiling increase, or
 destructive database operation is authorized by WP-08.

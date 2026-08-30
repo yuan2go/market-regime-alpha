@@ -200,7 +200,15 @@ separates:
 3. checkpoint observations;
 4. each derived metric and its exact observation-dependency shape.
 
-Before Context, `OpenDecisionRun` freezes the ordered requested Target roster,
+Target Definition is provider-neutral: it freezes the business observation
+rule, not a data vendor. The ordered Decision Run Target roster explicitly
+selects the reference Provider Product for that Run, and the resulting exact
+Market revision or Source Gap freezes actual Provider/Capture provenance.
+Target registration closes its own relational checkpoint/metric/dependency
+graph; a command receipt is idempotency/audit evidence, not closure Authority.
+
+Before Context, `OpenDecisionRun` creates the sole canonical Decision Run for
+the Candidate Set and freezes the ordered requested Target roster,
 including when the Candidate population is empty, and binds every Candidate row
 to every requested Target Definition. One independent Decision reference
 observation stores the exact Decision-visible Market revision or Source Gap.

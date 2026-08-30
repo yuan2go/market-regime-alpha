@@ -603,7 +603,8 @@ fence writes nothing.
 
 | Child | Required parent chain |
 |---|---|
-| `target_checkpoint`, `target_metric_definition` | `target_definition`; metric shape binds required checkpoints/roles concretely |
+| `target_checkpoint`, `target_metric_definition` | `target_definition`; ordered semantics remain provider-neutral |
+| `target_metric_dependency` | metric + checkpoint from the same Target Definition; ordered dependency role and hash |
 | `decision_run` | Runtime Step + `candidate_set` + code/config Artifacts |
 | `decision_run_target` | Decision Run + Target Definition; complete ordered requested roster |
 | `decision_target_commitment` | `(decision_run, candidate_set)` + `(candidate, candidate_set)` + `(decision_run_target, decision_run, target_definition)` |
@@ -646,22 +647,26 @@ JSON business owners, or future nullable FK placeholders.
 
 ## 13. Logical table catalog change
 
-The previous 91-relation estimate is replaced, not patched around. The sole
-catalog now enumerates 116 semantic relations: the implemented 40-relation
-draft remains physically unchanged, while the design-only destination changes
-as follows.
+The previous 91-relation estimate is replaced, not patched around. WP-08
+originally enumerated 116 semantic relations. The approved WP-09 audit found
+that this document required relational metric dependencies but omitted their
+normalized relation from both the detailed list and the concrete FK map.
+`target_metric_dependency` is therefore an explicit WP-09 normalization
+correction, not a silent catalog drift. The corrected destination has 117
+relations; the implemented 40-relation draft remains physically unchanged at
+this design checkpoint.
 
 | Catalog area | Previous | Frozen WP-08 | Reason |
 |---|---:|---:|---|
 | Runtime/Market/Selection/Research Definition | 40 | 40 | no semantic change |
-| Remaining Research & Qualification | 17 | 28 | explicit Target metrics, partition members/access, Evaluation protocol/metric input rosters and concrete Evidence/Assessment/Qualification bindings, including a multi-Evaluation Assessment roster |
+| Remaining Research & Qualification | 17 | 29 | explicit Target metrics and normalized metric/checkpoint dependencies, partition members/access, Evaluation protocol/metric input rosters and concrete Evidence/Assessment/Qualification bindings, including a multi-Evaluation Assessment roster |
 | Decision Support | 18 | 24 | explicit requested Target roster, pre-Context Target commitment/reference, concrete later-generation Research Qualification roster/members and optional Model-backed Forecast branch |
 | Market Outcome, TradeOutcome and Attribution | 6 | 14 | revision/supersession, relational source/metric dependencies and concrete Market/Trade subject separation |
 | Execution & Account | 10 | 10 | no semantic change in this work package |
-| **Total** | **91** | **116** | semantics, not quota |
+| **Total** | **91** | **117** | semantics, not quota; WP-09 records the one-relation normalization correction |
 
-The 76 design-only relations are not placeholders and are not added to DDL by
-this work package.
+The 77 design-only relations at this WP-08/WP-09 design boundary are not
+placeholders and are not added to DDL by this design checkpoint.
 
 ## 14. Implementation order
 

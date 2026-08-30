@@ -170,6 +170,7 @@ Evaluation, and Research Qualification; it never owns a bars-to-label writer.
 | `target_definition` | immutable Decision reference/horizon/path/metric protocol | unique code/version/hash; instrument scope, price basis, reference/session/calendar/horizon, availability/finality, algorithm and code/config Artifacts typed |
 | `target_checkpoint` | ordered observation checkpoint/path grid | unique Target/ordinal/code; role, session offset, local time and required observation shape relational |
 | `target_metric_definition` | typed required/optional Outcome metric semantics | unique Target/metric code; kind/unit/reference/path/checkpoint/barrier shape and completion requirement enforced; no JSON metric contract |
+| `target_metric_dependency` | ordered metric-to-checkpoint dependency edge | unique Target/metric/dependency ordinal and checkpoint role; same-Target composite FKs, canonical hash and typed dependency semantics; no JSON dependency list |
 | `research_partition` | frozen Target-specific Discovery/Fit/Validation/Locked-OOS/Prospective root | unique identity/hash; exact Target Definition, Decision and Outcome-window bounds, exact calendar, purge/embargo, positive roster count/hash |
 | `research_partition_member` | complete non-empty pre-Outcome roster | unique partition/commitment; composite FK preserves and matches the root Decision/Dataset/Candidate/Target chain; no Outcome value |
 | `research_partition_outcome_access` | append-only Outcome visibility ledger | unique member/access ordinal and Evaluation access; exact Outcome revision/cutoff; ordinal one is first-access Authority |
@@ -200,8 +201,8 @@ Evaluation, and Research Qualification; it never owns a bars-to-label writer.
 
 | Table | Purpose | Lifecycle and key constraints |
 |---|---|---|
-| `decision_run` | frozen Decision-time envelope opened before Context | unique Runtime Step/request; required existing Candidate Set, DecisionTime, Runtime clock mode, PostgreSQL commitment-recorded time, requested Target roster and code/config identities |
-| `decision_run_target` | complete non-empty requested Target roster | unique Decision Run/Target and ordinal; positive count/hash reconciles even when Candidate Set is empty |
+| `decision_run` | frozen Decision-time envelope opened before Context | unique Candidate Set and Runtime Step/request; exact retry returns the sole Run while a changed same-Set request fails; required DecisionTime, Runtime clock mode, PostgreSQL commitment-recorded time, requested Target roster and code/config identities |
+| `decision_run_target` | complete non-empty requested Target roster | unique Decision Run/Target and ordinal; Target remains Provider-neutral while this row explicitly selects and hashes the Decision-time reference Provider Product; positive count/hash reconciles even when Candidate Set is empty |
 | `decision_target_commitment` | ex-ante Candidate × requested-Target contract | unique Candidate/Decision Run Target; composite Candidate Set/Target chain; every Candidate disposition committed before Outcome visibility |
 | `decision_reference_observation` | independent initial-reference fact | unique commitment; value, availability and finality states separate; exactly one Decision-visible Market bar revision or Source Gap shape; `known_at <= DecisionTime` |
 | `decision_run_research_qualification_roster` | complete later-generation Research Qualification input envelope | exactly one per Run after this real branch exists; zero-or-more member count/hash and reconciliation state prove an intentional empty roster |

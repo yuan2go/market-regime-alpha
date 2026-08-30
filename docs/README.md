@@ -68,6 +68,11 @@ Checkpoint traceability:
   Evaluation, Evidence, Assessment, and Research Qualification semantics plus
   the authorized post-Candidate implementation order; design only, not
   implementation or evidence.
+- [WP-09 Target Commitment and Decision Run Design](references/WP-ARCHITECTURE-REFOUNDATION-09-Target-Commitment-Decision-Run-Design.md)
+  — approved Target-owned relational closure, provider-neutral Target
+  semantics, one canonical Decision Run per Candidate Set, mandatory Runtime
+  edge, and exact replay/reconciliation implementation contract; authorized,
+  not yet implementation or verification evidence.
 
 All documents in this section have Target status. They define the destination,
 not current completion.
