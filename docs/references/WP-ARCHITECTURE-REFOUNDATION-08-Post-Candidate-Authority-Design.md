@@ -751,7 +751,10 @@ package, not Runtime cutover.
   deletion and database destruction: separately authorized only.
 - Formal OOS, Alpha optimization, Prospective and Provider campaigns: not run.
 
-## 17. Design exit
+## 17. Historical design exit and completed handoff
+
+The following block records the WP-08 design-exit state at its original
+checkpoint. It is provenance, not the current implementation handoff:
 
 ```text
 WP-08 = DESIGN_APPROVED
@@ -762,3 +765,11 @@ RUNTIME_CUTOVER = NO-GO
 
 These statuses approve only the Target design and ordered engineering work.
 They do not claim any post-Candidate table or Runtime behavior is implemented.
+
+WP-09 subsequently implemented and verified the Target Definition and Decision
+Run/commitment/reference authority described by that first implementation
+stage. Its exact implementation evidence is preserved in
+[WP-09 Target Commitment and Decision Run Verification](WP-ARCHITECTURE-REFOUNDATION-09-Target-Commitment-Decision-Run-Verification.md).
+The remaining Outcome design in this record is the input to the independently
+authorized WP-10 work package; this historical block no longer acts as an
+active Roadmap status.

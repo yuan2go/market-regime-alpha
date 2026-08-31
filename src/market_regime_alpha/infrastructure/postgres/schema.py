@@ -41,6 +41,23 @@ from market_regime_alpha.market.domain import (
     SourceAvailabilityStatus,
     SpecialTreatmentStatus,
 )
+from market_regime_alpha.outcome.domain import (
+    OutcomeAvailabilityStatus,
+    OutcomeBarrierDirection,
+    OutcomeCompletionRule,
+    OutcomeDependencyRole,
+    OutcomeFinalityStatus,
+    OutcomeGapKind,
+    OutcomeMetricKind,
+    OutcomeMismatchKind,
+    OutcomeReasonDimension,
+    OutcomeReferenceValueStatus,
+    OutcomeSourceKind,
+    OutcomeSourceRole,
+    OutcomeStatus,
+    OutcomeValueField,
+    OutcomeValueType,
+)
 from market_regime_alpha.selection.domain import (
     CriterionOperator,
     CriterionResult,
@@ -179,6 +196,19 @@ EXPECTED_DECISION_SUPPORT_TABLES: Final[frozenset[str]] = frozenset(
     }
 )
 
+EXPECTED_OUTCOME_TABLES: Final[frozenset[str]] = frozenset(
+    {
+        "market_target_outcome",
+        "market_target_outcome_revision",
+        "market_target_outcome_source",
+        "market_target_outcome_observation",
+        "market_target_outcome_metric",
+        "market_target_outcome_metric_reference",
+        "market_target_outcome_metric_observation",
+        "market_target_outcome_reason",
+    }
+)
+
 EXPECTED_TARGET_TABLES: Final[frozenset[str]] = (
     EXPECTED_FOUNDATION_TABLES
     | EXPECTED_MARKET_TABLES
@@ -186,6 +216,7 @@ EXPECTED_TARGET_TABLES: Final[frozenset[str]] = (
     | EXPECTED_RESEARCH_DEFINITION_TABLES
     | EXPECTED_TARGET_DEFINITION_TABLES
     | EXPECTED_DECISION_SUPPORT_TABLES
+    | EXPECTED_OUTCOME_TABLES
 )
 
 _LEGACY_TABLE_SIGNATURES: Final[frozenset[str]] = frozenset(
@@ -307,6 +338,27 @@ _REFERENCE_VOCABULARY: Final[dict[str, tuple[str, ...]]] = {
     "target_completion_rule": tuple(item.value for item in TargetCompletionRule),
     "target_barrier_direction": tuple(item.value for item in TargetBarrierDirection),
     "target_dependency_role": tuple(item.value for item in TargetDependencyRole),
+    "outcome_status": tuple(item.value for item in OutcomeStatus),
+    "outcome_availability_status": tuple(
+        item.value for item in OutcomeAvailabilityStatus
+    ),
+    "outcome_finality_status": tuple(item.value for item in OutcomeFinalityStatus),
+    "outcome_reference_value_status": tuple(
+        item.value for item in OutcomeReferenceValueStatus
+    ),
+    "outcome_source_kind": tuple(item.value for item in OutcomeSourceKind),
+    "outcome_source_role": tuple(item.value for item in OutcomeSourceRole),
+    "outcome_gap_kind": tuple(item.value for item in OutcomeGapKind),
+    "outcome_metric_kind": tuple(item.value for item in OutcomeMetricKind),
+    "outcome_value_type": tuple(item.value for item in OutcomeValueType),
+    "outcome_completion_rule": tuple(item.value for item in OutcomeCompletionRule),
+    "outcome_dependency_role": tuple(item.value for item in OutcomeDependencyRole),
+    "outcome_barrier_direction": tuple(
+        item.value for item in OutcomeBarrierDirection
+    ),
+    "outcome_value_field": tuple(item.value for item in OutcomeValueField),
+    "outcome_reason_dimension": tuple(item.value for item in OutcomeReasonDimension),
+    "outcome_mismatch_kind": tuple(item.value for item in OutcomeMismatchKind),
     "decision_run_status": tuple(item.value for item in DecisionRunStatus),
     "decision_candidate_disposition": tuple(
         item.value for item in DecisionCandidateDisposition
@@ -1398,6 +1450,7 @@ __all__ = [
     "EXPECTED_DECISION_SUPPORT_TABLES",
     "EXPECTED_FOUNDATION_TABLES",
     "EXPECTED_MARKET_TABLES",
+    "EXPECTED_OUTCOME_TABLES",
     "EXPECTED_RESEARCH_DEFINITION_TABLES",
     "EXPECTED_SELECTION_TABLES",
     "EXPECTED_TARGET_DEFINITION_TABLES",

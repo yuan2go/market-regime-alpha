@@ -3,18 +3,19 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Non-authoritative capability status read model; exact-SHA engineering proof remains in Verification
 > **Owner:** Market Regime Alpha maintainers
-> **Generated At:** 2026-08-31 WP-09 Target Commitment and Decision Run exit reconciliation
-> **Repository Implementation Checkpoint:** `9a21d5d5384ace9ace987055a131d010e54daf0f`
+> **Generated At:** 2026-08-31 WP-10 Market Target Outcome exit reconciliation
+> **Repository Implementation Checkpoint:** `56812c58ce7b6e601366ffd0a5cfb52fec573227`
 > **Containing Documentation Commit:** reported by the final handoff; this read model does not claim a self-referential Git SHA
-> **Previous Verified Snapshot:** WP-07 at `029c26928af436d7788da1cce3a53c94b96377bf`
+> **Previous Verified Snapshot:** WP-09 at `9a21d5d5384ace9ace987055a131d010e54daf0f`
 > **Schema Epochs:** canonical business `LEGACY_MIGRATIONS_001_106`; target draft `MRA_REFOUNDATION_1 / DRAFT / NOT_CUT_OVER`
-> **Generator:** `WP-ARCHITECTURE-REFOUNDATION-09 exit reconciliation; non-authoritative read model`
-> **Source Tree IDs:** root `f3b51860587541e655743c377ecd05dd2d000ae4`; source `f7fee4f2f8436840dda3a55db4b174f1a49ba105`; tests `480cf2a23aaf8693dbb80289fc65cc38064d7059`; target baseline blob `dc06dd2e6bfb0c68fb73155c71500f556919c1d0`; legacy migrations tree `6d3730548780ad6244d2cfecb4fb3559064b6f06`
-> **Code Evidence:** target and legacy source/migration packages, `tests`, and [WP-09 Target Commitment and Decision Run Verification](../references/WP-ARCHITECTURE-REFOUNDATION-09-Target-Commitment-Decision-Run-Verification.md)
+> **Generator:** `WP-ARCHITECTURE-REFOUNDATION-10 exit reconciliation; non-authoritative read model`
+> **Source Tree IDs:** root `15f3adc2b5a424a81cfa1224dfee4b04b6b422fa`; source `1ad379e67be0960a45d7c1d8f11fb953fd11480e`; tests `b03577799a3b76585b1ec3fe023c2adb3a8ceff3`; Outcome tree `d984bcc66246be0f68d530c46fe3a1c85294a16a`; target baseline blob `37522c256e5bfe0c28d43a48256dfd5aac7f2068`; legacy migrations tree `6d3730548780ad6244d2cfecb4fb3559064b6f06`
+> **Code Evidence:** target and legacy source/migration packages, `tests`, and [WP-10 Market Target Outcome Verification](../references/WP-ARCHITECTURE-REFOUNDATION-10-Market-Target-Outcome-Verification.md)
 
 This view separates current capability from target convergence. It records
-Target Definition and Decision Run commitment engineering implementation at the
-exact checkpoint above and its local WP-09 exit-gate result. It is invalid after
+Target Definition, Decision Run commitment, and Market Target Outcome
+engineering implementation at the exact checkpoint above and its local WP-10
+exit-gate result. It is invalid after
 its source tree changes and cannot
 promote a capability or research claim.
 The complete preservation contract remains the
@@ -26,21 +27,23 @@ Selection Core, and Research Definition Core are
 implementation line. Research owns Dataset, DatasetSource, FeatureDefinition,
 and provider-neutral Target Definition in permanent
 `market_regime_alpha.research_qualification`. Selection-owned Candidate and
-Decision-Support-owned Decision Run/Target Commitment are
+Decision-Support-owned Decision Run/Target Commitment and Outcome-owned Market
+Target Outcome are
 `IMPLEMENTED_DRAFT / EXIT_GATE_PASS / NOT_CUT_OVER`. No state grants canonical
 business Authority or creates dual write.
 
 The repository Python gates remain bound to the frozen `uv run` environment. At
-WP-09 implementation checkpoint `9a21d5d`, 85 WP-09-focused tests, 668
-PostgreSQL owner tests, and the complete 3,389-node legacy-plus-target collection
+WP-10 implementation checkpoint `56812c58`, 43 WP-10-focused tests, 392
+refoundation tests, 33 platform tests, 286 PostgreSQL persistence tests, and the
+complete 3,432-node legacy-plus-target collection
 pass, together with clean
 target bootstrap/verify/exact-OID recreate, concurrency/recovery/replay,
 representative plans, architecture dependencies, documentation, Ruff, mypy,
 build, and diff gates. Exact commands, non-final failures, catalog/checksums, and
-proof ceilings are owned by the linked WP-09 Verification. The clean PostgreSQL
-16.14 proof records 48 tables, four views, 1,129 catalog objects, and catalog
+proof ceilings are owned by the linked WP-10 Verification. The clean PostgreSQL
+16.14 proof records 56 tables, four views, 1,339 catalog objects, and catalog
 checksum
-`1f0218e487ff89f4a53e96445d9b5f1cb6e3e8fd1e01ca8beffe237b12c3b503`.
+`6c3e2732024ae28875df111ad3ef97cd8c8520f40adc168b0ac8951048335888`.
 Remote CI remains
 `BLOCKED_BY_REPOSITORY_CONFIGURATION / NOT_RUN` because repository Actions are
 disabled. Nothing here supplies Provider qualification, Formal PIT, Alpha,
@@ -67,7 +70,7 @@ broker, Production, or trading evidence.
 | Risk | several current pre/post-strategy and account routes | sole post-Portfolio Decision Support Risk owner | `NOT_STARTED` |
 | Execution | manual Intent/Fill and risk-reduction paths | Execution & Account | `NOT_STARTED` |
 | Position | current Fill-derived projections plus account observations | derived Execution & Account query | `NOT_STARTED` |
-| Outcome | historical/shadow/daily/strategy settlements; WP-09 creates no target Outcome relation or calculation | Outcome & Attribution | `NOT_STARTED / NEXT_INDEPENDENT_WORK_PACKAGE` |
+| Outcome | historical/shadow/daily/strategy settlements remain canonical until cutover; permanent target `market_regime_alpha.outcome` implements one root per Decision Target Commitment, append-only full revisions, exact dual-cutoff source/observation/metric/dependency/reason rosters, a pure Decimal kernel, fenced settlement, exact replay/reconciliation and a narrow read-only port | Outcome & Attribution | `IMPLEMENTED_DRAFT / EXIT_GATE_PASS / NOT_CUT_OVER` |
 | Attribution | current performance/evaluation diagnostics | Outcome & Attribution | `NOT_STARTED` |
 | Research Definition | many legacy dataset/feature/research owners remain canonical; isolated target Decision-input Dataset/DatasetSource/FeatureDefinition plus provider-neutral Target Definition Authority is implemented and engineering-verified | Research & Qualification | `IMPLEMENTED_DRAFT / EXIT_GATE_PASS / NOT_CUT_OVER` |
 | Research Evaluation | current experiment/campaign/evaluation owners; target implementation remains absent | Research & Qualification | `NOT_STARTED` |

@@ -20,6 +20,16 @@ from market_regime_alpha.infrastructure.postgres.queries.market import (
     PostgresMarketQueries,
     PostgresMarketQueryProvider,
 )
+from market_regime_alpha.infrastructure.postgres.queries.outcome_inputs import (
+    PostgresOutcomeDependencyRepository,
+    PostgresOutcomeInputPreparationProvider,
+)
+from market_regime_alpha.infrastructure.postgres.queries.outcomes import (
+    PostgresOutcomeQueryProvider,
+)
+from market_regime_alpha.infrastructure.postgres.queries.outcome_verification import (
+    PostgresOutcomeVerificationProvider,
+)
 from market_regime_alpha.infrastructure.postgres.queries.selection_market import (
     PostgresSelectionMarketQueries,
 )
@@ -36,6 +46,10 @@ __all__ = [
     "PostgresDecisionRunVerificationProvider",
     "PostgresMarketQueries",
     "PostgresMarketQueryProvider",
+    "PostgresOutcomeDependencyRepository",
+    "PostgresOutcomeInputPreparationProvider",
+    "PostgresOutcomeQueryProvider",
+    "PostgresOutcomeVerificationProvider",
     "PostgresResearchSourceQueries",
     "PostgresSelectionMarketQueries",
 ]

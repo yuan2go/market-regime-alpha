@@ -8,6 +8,7 @@ import pytest
 from market_regime_alpha.infrastructure.postgres.schema import (
     EXPECTED_CANDIDATE_TABLES,
     EXPECTED_DECISION_SUPPORT_TABLES,
+    EXPECTED_OUTCOME_TABLES,
     EXPECTED_TARGET_DEFINITION_TABLES,
     SchemaManager,
 )
@@ -39,6 +40,9 @@ def test_candidate_schema_adds_exactly_five_selection_authority_tables(
     assert {
         name for name in tables if name.startswith("decision_")
     } == EXPECTED_DECISION_SUPPORT_TABLES
+    assert {
+        name for name in tables if name.startswith("market_target_outcome")
+    } == EXPECTED_OUTCOME_TABLES
     assert not {
         name
         for name in tables
@@ -51,7 +55,6 @@ def test_candidate_schema_adds_exactly_five_selection_authority_tables(
                 "outcome",
                 "context",
                 "experiment",
-                "market_target_outcome",
             )
         )
     }
