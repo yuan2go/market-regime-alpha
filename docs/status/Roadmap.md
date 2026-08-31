@@ -22,8 +22,7 @@ Foundation
 → post-Candidate dependency and Outcome Authority design closure
 → Target commitment and Decision Run
 → Market Target Outcome revision/settlement and read-only port
-→ Research Partition roster/access and Experiment
-→ Evaluation protocol/run/observation/metric
+→ integrated WP-11 Research Partition/Experiment/Evaluation closure
 → Evidence, Research Assessment and Research Qualification
 → optional Model/ModelVersion and Calibration
 → remaining Decision Support, including optional model-backed Forecast binding
@@ -31,13 +30,15 @@ Foundation
 → Runtime/CLI Cutover → separately authorized Legacy deletion
 ```
 
-WP-08 approved this implementation order. WP-09 and WP-10 now pass their
-isolated engineering exit gates without Runtime/CLI cutover. WP-11 Research
-Partition + Experiment is only the next independent work package; it is not
-started or implicitly implementation-authorized by this roadmap update. Every
-later row remains blocked by its predecessor and retains its own approval/exit gate;
-ordering never grants Runtime cutover, empirical promotion, broker authority, or
-Legacy deletion.
+WP-08 approved the dependency order. WP-09 and WP-10 now pass their isolated
+engineering exit gates without Runtime/CLI cutover. The latest explicit
+maintainer decision supersedes WP-08's package split: WP-11 is one integrated
+Research Validity and Evaluation Closure work package covering Target/Outcome
+parity, Partition, Experiment, Evaluation Protocol/Run, controlled Outcome
+access, observations, and metrics. It is authorized for implementation but has
+not passed an exit gate. Every later row remains blocked by its predecessor and
+retains its own approval/exit gate; ordering never grants Runtime cutover,
+empirical promotion, broker authority, or Legacy deletion.
 
 No stage begins canonical writes until its predecessor exit gate passes. Before
 Runtime/CLI Cutover, completed target modules are test-only and the old Runtime
@@ -56,13 +57,12 @@ availability-selected fallback.
 | **6. WP-08 post-Candidate design closure** | `DESIGN_APPROVED / IMPLEMENTATION_ORDER_AUTHORIZED / NOT_IMPLEMENTED` | whole-repository writer/reader/FK/Artifact/Runtime/replay audit; freeze Target commitment, Market/Trade Outcome split, Partition access, Evaluation, concrete Evidence/Assessment/Research Qualification and cross-generation DAG | canonical documents and WP-08 record agree; no generic subject/JSON Authority, bars-to-label second truth, Model prerequisite, or same-generation cycle; current implementation/DDL unchanged |
 | **7. WP-09 Target commitment and Decision Run** | `EXIT_GATE_PASS / NOT_CUT_OVER` | provider-neutral TargetDefinition/Checkpoint/Metric plus normalized dependency; independent Target registration seam; `OpenDecisionRun`; exactly one canonical DecisionRun per Candidate Set, explicit requested Target/version/reference-source roster, full Candidate × Target commitment roster and independent Decision reference; mandatory `OPEN_DECISION_RUN` after Candidate and before Context | exact roster/reference/FK/hash reconciliation including empty Candidate Set, idempotency/concurrency/fence/failure/replay and architecture tests pass; no Outcome/Partition/Evaluation/Model/Evidence placeholder |
 | **8. Market Target Outcome** | `EXIT_GATE_PASS / NOT_CUT_OVER` | one commitment-bound root, append-only full revisions, concrete source/observation/metric/reference-dependency/observation-dependency/reason children, correction/supersession, two cutoffs, exact replay and narrow read-only port | partial/complete/correction/finality/idempotency/replay/port isolation proven; every old label consumer disposition remains fail-closed until its own cut |
-| **9. WP-11 Research Partition and Experiment** | `NEXT_INDEPENDENT_WORK_PACKAGE / NOT_STARTED` | immutable partition/member roster, Decision/Outcome windows, purge/embargo, ordinal first-Outcome-access ledger, Experiment/partition/run | Locked-OOS/Prospective roster and Experiment binding predate ordinal one; reused access is diagnostic only; range/composite-FK/leakage/concurrency/replay gates pass |
-| **10. Evaluation** | `ORDER_AUTHORIZED / BLOCKED_BY_STAGE_9` | predeclared Evaluation Protocol/metrics; Experiment/Partition-bound Run; exact access/Outcome observations and metrics; no Forecast child table yet | no Model requirement, no bar/provider/repository import, no posterior Dataset write, complete input/metric reconciliation or nullable future Forecast FK |
-| **11. Research Evidence and Qualification** | `ORDER_AUTHORIZED / BLOCKED_BY_STAGE_10` | Evaluation-bound EvidenceItem/Dependency, Experiment-bound ResearchAssessment with complete terminal Evaluation/Evidence rosters, ResearchQualification policy/floor/decision/result/evidence | concrete FK closure and Evidence DAG; negative/inconclusive preserved; no polymorphic subject, JSON owner, weak reference or nullable future branch |
-| **12. Optional Model and Calibration** | `ORDER_AUTHORIZED / BLOCKED_BY_STAGE_11` | Model/ModelVersion from completed training Evaluation, calibration Evaluation purpose and subject-specific Model qualification where approved; no Forecast child table yet | Model remains optional; calibrated claims have exact partition/metric/evidence floors; no Candidate/Target/Outcome prerequisite or nullable future Forecast FK |
-| **13. Remaining Decision Support** | `ORDER_AUTHORIZED / BLOCKED_BY_PREDECESSORS` | add concrete Decision Run Research Qualification roster/members only after their real parent; Context, Signal, Forecast, then optional concrete `forecast_model_binding` and `evaluation_forecast_binding`, Opportunity, Thesis, Strategy, Portfolio and Risk | qualification/Forecast binding children follow their real parents; same-generation DAG remains one-way; rule Forecast needs no Model; Risk is sole post-Portfolio authorization; no Outcome feedback into current generation |
-| **14. Execution, TradeOutcome and Attribution** | `ORDER_AUTHORIZED / BLOCKED_BY_PREDECESSORS` | Account/Intent/observed Fill/allocation/reconciliation/Position projection; separate TradeOutcome; Market and Trade Attribution | Fill-only trade mutation, Market/Trade subject separation, reconciliation and human-approval gates pass |
-| **15. Runtime/CLI Cutover and Legacy deletion** | `NO_GO / SEPARATE_AUTHORIZATION_REQUIRED` | complete target composition/CLI/epoch release followed by separately approved removal of old writers/readers/schema | complete catalog and consumer cuts proven; no dual write/fallback; clean bootstrap/replay/recovery; empirical/Provider/Production floors remain independent |
+| **9. WP-11 Research Validity and Evaluation Closure** | `AUTHORIZED_ACTIVE_WORK_PACKAGE / NOT_IMPLEMENTED` | Target/Outcome contract parity; immutable Partition/member roster; Decision/Outcome windows and purpose-specific purge/embargo/overlap policy; global ordinal first-access ledger; Experiment/partition/run; predeclared Evaluation Protocol/metrics; Evaluation Run, exact Outcome access/observations and complete metric-member rosters | focused implementation validation may establish only `WP11_IMPLEMENTED_DRAFT / FOCUSED_VALIDATION_PASS / ENGINEERING_QUALIFICATION_PENDING`; Locked-OOS/Prospective ordering, PIT-safe exact revision access, complete failed/unavailable sample retention and Gate A/B/C correctness are implemented without Model, Forecast, Evidence or Runtime cutover; full concurrency/recovery/replay/regression qualification remains a separate package |
+| **10. Research Evidence and Qualification** | `ORDER_AUTHORIZED / BLOCKED_BY_STAGE_9` | Evaluation-bound EvidenceItem/Dependency, Experiment-bound ResearchAssessment with complete terminal Evaluation/Evidence rosters, ResearchQualification policy/floor/decision/result/evidence | concrete FK closure and Evidence DAG; negative/inconclusive preserved; no polymorphic subject, JSON owner, weak reference or nullable future branch |
+| **11. Optional Model and Calibration** | `ORDER_AUTHORIZED / BLOCKED_BY_STAGE_10` | Model/ModelVersion from completed training Evaluation, calibration Evaluation purpose and subject-specific Model qualification where approved; no Forecast child table yet | Model remains optional; calibrated claims have exact partition/metric/evidence floors; no Candidate/Target/Outcome prerequisite or nullable future Forecast FK |
+| **12. Remaining Decision Support** | `ORDER_AUTHORIZED / BLOCKED_BY_PREDECESSORS` | add concrete Decision Run Research Qualification roster/members only after their real parent; Context, Signal, Forecast, then optional concrete `forecast_model_binding` and `evaluation_forecast_binding`, Opportunity, Thesis, Strategy, Portfolio and Risk | qualification/Forecast binding children follow their real parents; same-generation DAG remains one-way; rule Forecast needs no Model; Risk is sole post-Portfolio authorization; no Outcome feedback into current generation |
+| **13. Execution, TradeOutcome and Attribution** | `ORDER_AUTHORIZED / BLOCKED_BY_PREDECESSORS` | Account/Intent/observed Fill/allocation/reconciliation/Position projection; separate TradeOutcome; Market and Trade Attribution | Fill-only trade mutation, Market/Trade subject separation, reconciliation and human-approval gates pass |
+| **14. Runtime/CLI Cutover and Legacy deletion** | `NO_GO / SEPARATE_AUTHORIZATION_REQUIRED` | complete target composition/CLI/epoch release followed by separately approved removal of old writers/readers/schema | complete catalog and consumer cuts proven; no dual write/fallback; clean bootstrap/replay/recovery; empirical/Provider/Production floors remain independent |
 
 The target `001_baseline.sql` remains an unreleased, reviewable build artifact
 during pre-cutover checkpoints. Foundation establishes its epoch/bootstrap and
@@ -171,9 +171,9 @@ The complete WP-10 gate passes at implementation checkpoint
 catalog/checksums, concurrency/failure/replay evidence, investigated non-final
 failures, and proof ceiling are retained in
 [WP-10 Market Target Outcome Verification](../references/WP-ARCHITECTURE-REFOUNDATION-10-Market-Target-Outcome-Verification.md).
-This closes only stage 8. WP-11 Research Partition + Experiment is the next
-independent work package and remains not started. Runtime/CLI cutover remains
-NO-GO.
+This closes only stage 8. Integrated WP-11 Research Validity and Evaluation
+Closure is the active authorized work package and has not passed an engineering
+exit gate. Runtime/CLI cutover remains NO-GO.
 
 ## Dependency-owned unresolved gaps
 
@@ -204,12 +204,13 @@ then owns one revisioned realized-market-fact truth. Partition/Evaluation consum
 narrow read-only port, and feedback crosses only from generation `n` to
 Decision Run `n+1` through a concrete Research Qualification binding.
 
-WP-10 stops at its passed Exit Gate. WP-11 Research Partition + Experiment is
-now only the next independent work package and remains unimplemented. No
-Partition, Experiment, Evaluation, Model, Evidence, Assessment, Qualification,
-Context, Signal, Forecast, Portfolio, Risk, Execution, TradeOutcome,
-Attribution, compatibility read, dual write, or future placeholder was added by
-WP-10.
+WP-10 stops at its passed Exit Gate. Integrated WP-11 Research Validity and
+Evaluation Closure is now the active authorized package and remains
+unimplemented at this handoff. Its focused implementation validation cannot be
+reported as an engineering exit-gate pass. Model, Evidence, Assessment,
+Qualification, Context, Signal, Forecast, Portfolio, Risk, Execution,
+TradeOutcome, Attribution, compatibility reads, dual writes, and future
+placeholders remain outside WP-11.
 
 No Alpha hypothesis/optimization, Formal OOS access, Provider campaign, broker
 integration, Runtime cutover, Legacy deletion, evidence-ceiling increase, or

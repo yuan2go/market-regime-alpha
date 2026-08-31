@@ -14,6 +14,12 @@
 > target draft under `src/market_regime_alpha/infrastructure/postgres`, legacy
 > migrations 001--106, `tests`, and WP-01--WP-07 Verification records
 
+> **Execution Packaging Note (2026-08-31):** WP-09 and WP-10 supersede this
+> record's pre-implementation inventory. Its architecture semantics remain
+> canonical, while the latest explicit maintainer decision supersedes the
+> separate Partition/Experiment then Evaluation package split with one
+> integrated WP-11 Research Validity and Evaluation Closure package.
+
 This record closes design only. It adds no Python business implementation, DDL,
 migration, seed, checksum, placeholder, Runtime dispatch, campaign, evidence
 claim, or cutover. Current implementation truth remains the checked-out code,

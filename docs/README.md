@@ -66,8 +66,10 @@ Checkpoint traceability:
 - [WP-08 Post-Candidate Authority Design](references/WP-ARCHITECTURE-REFOUNDATION-08-Post-Candidate-Authority-Design.md)
   — approved acyclic Target commitment, Market Target Outcome, Partition,
   Evaluation, Evidence, Assessment, and Research Qualification semantics plus
-  the authorized post-Candidate implementation order; design only, not
-  implementation or evidence.
+  the original post-Candidate implementation order. Its architecture semantics
+  remain applicable, while its separate Partition/Experiment then Evaluation
+  packaging is superseded by the integrated WP-11 work package; design only,
+  not implementation or evidence.
 - [WP-09 Target Commitment and Decision Run Design](references/WP-ARCHITECTURE-REFOUNDATION-09-Target-Commitment-Decision-Run-Design.md)
   — approved Target-owned relational closure, provider-neutral Target
   semantics, one canonical Decision Run per Candidate Set, mandatory Runtime
