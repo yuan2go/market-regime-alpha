@@ -81,6 +81,11 @@ Checkpoint traceability:
   and metric dependency rosters, pure numerical kernel, and read-only Outcome
   port; exact implementation evidence is kept separately in the immutable
   WP-10 Verification.
+- [WP-11 Research Validity and Evaluation Closure Design](references/WP-ARCHITECTURE-REFOUNDATION-11-Research-Validity-Evaluation-Design.md)
+  — approved integrated Target/Outcome parity, database-derived Partition,
+  Experiment, Evaluation Protocol/Run, transactional first-Outcome-access,
+  complete observation, and metric-roster implementation contract; it grants
+  only draft implementation scope and no engineering qualification claim.
 
 All documents in this section have Target status. They define the destination,
 not current completion.
