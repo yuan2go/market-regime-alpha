@@ -3,7 +3,7 @@
 > **Status:** CANONICAL_TARGET_ARCHITECTURE
 > **Authority:** Target research, context, decision, outcome, and qualification lifecycle
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-30
+> **Last Updated:** 2026-09-01
 > **Code Evidence:** target `src/market_regime_alpha/selection`, `src/market_regime_alpha/research_qualification`, target draft schema and `tests/refoundation`; existing `src/market_regime_alpha/research`, `src/market_regime_alpha/features`, and `src/market_regime_alpha/candidates` are Legacy invariant sources only, not target Authority
 
 Research is a consumer of Market/PIT facts and a producer of scoped evidence. It
@@ -294,13 +294,10 @@ this checkpoint creates no dependency abstraction.
 
 An Experiment is registered before result access and freezes:
 
-- hypothesis and one primary research change;
-- one Target and the label-free Dataset/Candidate lineage implied by its
-  Partition members;
-- Features/Model/Strategy variants;
-- partitions and their purposes;
-- metrics, population, costs, multiple-testing and sensitivity rules;
-- evidence ceiling and success/rejection/not-estimable criteria.
+- research question, hypothesis, and one primary research change;
+- one exact Target and one-or-more already-frozen Partition bindings with exact
+  matching Target and declared purposes;
+- protocol, code/config, acceptance semantics, and provenance.
 
 One primary change prevents causal ambiguity. A new change creates a new
 Experiment; it does not mutate the old definition.
@@ -317,26 +314,38 @@ Purposes are distinct:
 
 A Target-specific Partition root and its complete non-empty Decision Target
 Commitment member roster are frozen atomically before any Outcome read.
-Decision/Outcome-window bounds, purge, embargo, calendar, membership and Target
-overlap rules are stored and reconciled. Every exact Outcome revision exposed
+PostgreSQL derives the roster from exact Target, Decision window, and declared
+population scope; the caller cannot submit a chosen member list. Target horizon,
+purge, and embargo expand over exact `trading_session` order, never calendar-day
+arithmetic. Purpose-specific protected ranges prohibit overlap where required
+for `LOCKED_OOS`/`PROSPECTIVE` and declared purged walk-forward folds without
+blocking diagnostic reuse or valid rolling/cross-fold research. Every exact Outcome revision exposed
 to an Evaluation appends a per-member ordinal access row; ordinal one is
 first-access Authority. A Locked
 OOS/Prospective Experiment binding must be committed while access count is zero
 and before every ordinal-one row. Reusing an accessed Partition is diagnostic
 only; no mutable “unlocked” flag or Artifact manifest can restore proof status.
 
-For `PROSPECTIVE`, every member must additionally come from a live-clock Run
-whose PostgreSQL commitment time predates the Target's first Outcome-window
-event. A historical/replay Run can satisfy relational ordering but cannot be
-relabeled Prospective.
+For `PROSPECTIVE`, every member must additionally satisfy the Runtime owner's
+canonical live-clock lineage contract. `HISTORICAL`/`REPLAY` lineage is rejected;
+other modes, including Shadow, qualify only when their complete lineage obeys
+the live-clock timestamp contract. PostgreSQL-recorded commitment time must
+precede the Target's first Outcome-window event. Declared purpose cannot relabel
+historical/replay work as Prospective.
 
 ### Evaluation and Assessment
 
-An Evaluation Protocol freezes metrics, slices, missingness, costs and decision
-rule before Outcome access. Every Evaluation Run requires an Experiment Run,
+An Evaluation Protocol freezes exact Target/purpose, metrics, slices, direction,
+source value type, reducer compatibility, concrete Candidate disposition,
+missingness, inclusion/exclusion, acceptance rule, code/config, and provenance
+before Outcome access. V1 reducers are `MEAN_DECIMAL`, `MEDIAN_DECIMAL`,
+`TRUE_RATE`, and `ESTIMABLE_RATE`. Every Evaluation Run requires an Experiment Run,
 one frozen Partition, and that protocol; it does not require a Model.
 Evaluation observations bind exact Partition access rows and exact Outcome
-revisions returned by the read-only port. Evaluation produces typed metrics
+revisions selected by the private cutoff-aware resolver inside the acquisition
+transaction. The resolver exposes no current/latest, Provider, Market
+repository, bar, or label-construction path, and Outcome values cannot leave
+before access/observation reconciliation commits. Evaluation produces typed metrics
 with estimability; every metric/slice has a reconciled relational
 included/excluded/not-estimable observation roster. Evaluation never writes
 posterior labels into a Decision-input Dataset.

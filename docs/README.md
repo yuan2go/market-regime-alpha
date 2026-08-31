@@ -86,6 +86,10 @@ Checkpoint traceability:
   Experiment, Evaluation Protocol/Run, transactional first-Outcome-access,
   complete observation, and metric-roster implementation contract; it grants
   only draft implementation scope and no engineering qualification claim.
+- [WP-11 Research Validity and Evaluation Closure Implementation Status](references/WP-ARCHITECTURE-REFOUNDATION-11-Research-Validity-Evaluation-Implementation-Status.md)
+  — exact-base draft implementation and focused-validation record. It is not
+  immutable Verification, does not claim `WP11_EXIT_GATE = PASS`, and lists the
+  independent engineering qualification work that remains `NOT_RUN_BY_SCOPE`.
 
 All documents in this section have Target status. They define the destination,
 not current completion.

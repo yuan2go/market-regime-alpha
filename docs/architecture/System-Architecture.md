@@ -3,7 +3,7 @@
 > **Status:** CANONICAL_TARGET_ARCHITECTURE
 > **Authority:** Target Application, Runtime, concurrency, recovery, and interface specification
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-30
+> **Last Updated:** 2026-09-01
 > **Code Evidence:** target `src/market_regime_alpha/runtime`, `src/market_regime_alpha/market`, `src/market_regime_alpha/selection`, `src/market_regime_alpha/research_qualification`, `src/market_regime_alpha/infrastructure`, `src/market_regime_alpha/interfaces`, `tests/refoundation`; legacy Runtime remains current business implementation
 
 This is the Target specification. Current implementation and exact checkpoint
@@ -234,6 +234,22 @@ Dataset/Feature UoW into a future Research-lifecycle UoW. Target checkpoints,
 metrics, and normalized dependencies close under the Target root itself;
 receipt state is never used as business closure.
 
+WP-11 adds three Research-owned short transaction boundaries without creating a
+new bounded context: Partition UoW owns only Partition/member freeze;
+Experiment UoW owns only Experiment/partition binding/Experiment Run; and
+Evaluation UoW exclusively owns Protocol/metric declaration, Evaluation Run,
+Partition Outcome access, Evaluation observations, and Evaluation metrics. An
+Evaluation Run is never created in one UoW and mutated in another. All three use
+typed owner ports with PostgreSQL adapters in Infrastructure and share no generic
+repository or God UoW.
+
+`AcquireOutcomeInputs` follows the global order by locking exact Outcome
+revisions before the Partition/member roster and Evaluation Run. In one short
+transaction it revalidates Gate B zero access, resolves exactly one revision per
+member at the requested knowledge cutoff, appends access/observation rosters,
+reconciles, and advances to `INPUTS_ACQUIRED`. Values are private to that
+transaction and become calculation inputs only after commit.
+
 Selection declares the narrow immutable Research-input DTO/port required by
 Candidate. Only an Infrastructure adapter imports both that port and Research
 Definition parser/types. Candidate Dataset Artifact verification/read/parse and
@@ -405,8 +421,8 @@ Representative commands:
   `RegisterCandidatePolicy`, and `BuildCandidateSet`;
 - `RegisterTargetDefinition`, `OpenDecisionRun`,
   `SettleMarketTargetOutcome`, and `FreezeResearchPartition`;
-- `RegisterExperiment`, `OpenEvaluationRun`, `AcquireOutcomeInputs`,
-  `CompleteEvaluationRun`,
+- `RegisterExperiment`, `OpenExperimentRun`, `RegisterEvaluationProtocol`,
+  `OpenEvaluationRun`, `AcquireOutcomeInputs`, `CompleteEvaluationRun`,
   `RecordEvidence`, `AssessResearch`, and `DecideResearchQualification`;
 - `AssessContext`, `ProduceSignal`, `ProduceForecast`,
   `CreateOpportunity`, `ProposePortfolio`, `AssessRisk`;
