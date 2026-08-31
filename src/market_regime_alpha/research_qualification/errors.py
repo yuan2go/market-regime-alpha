@@ -27,11 +27,20 @@ class EvaluationReconciliationError(ResearchValidityError):
     code = "EVALUATION_RECONCILIATION_FAILED"
 
 
+class ResearchRetryableTransactionError(RuntimeError):
+    """Infrastructure-classified whole-transaction retry signal."""
+
+    def __init__(self, sqlstate: str) -> None:
+        super().__init__(sqlstate)
+        self.sqlstate = sqlstate
+
+
 __all__ = [
     "EvaluationAcquisitionError",
     "EvaluationProtocolError",
     "EvaluationReconciliationError",
     "ExperimentBindingError",
     "PartitionInputError",
+    "ResearchRetryableTransactionError",
     "ResearchValidityError",
 ]

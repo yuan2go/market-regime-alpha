@@ -172,17 +172,29 @@ class PostgresEvaluationRepository:
                 evaluation_protocol_id, target_definition_id,
                 partition_purpose, requested_knowledge_cutoff,
                 expected_member_count, expected_protocol_metric_count,
+                code_artifact_id, code_content_sha256, code_size_bytes,
+                config_artifact_id, config_content_sha256, config_size_bytes,
+                provenance_sha256, content_sha256,
                 status, request_identity, request_sha256
             ) VALUES (
                 %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                %s, %s, 'OPEN', %s, %s
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                'OPEN', %s, %s
             )
             """,
             (
                 plan.evaluation_run_id, plan.experiment_run_id,
                 binding[0], binding[1], binding[2], plan.evaluation_protocol_id,
                 binding[3], binding[4], plan.requested_knowledge_cutoff,
-                binding[5], binding[6], plan.request_identity, request_sha256,
+                binding[5], binding[6],
+                plan.code_artifact.artifact_id,
+                str(plan.code_artifact.content_sha256),
+                plan.code_artifact.size_bytes,
+                plan.config_artifact.artifact_id,
+                str(plan.config_artifact.content_sha256),
+                plan.config_artifact.size_bytes,
+                str(plan.provenance_sha256), str(plan.content_sha256),
+                plan.request_identity, request_sha256,
             ),
         )
         return self.run_record(plan.evaluation_run_id, lock=False)
@@ -353,7 +365,11 @@ class PostgresEvaluationRepository:
             evaluation_run_id, len(metric_rows), expected_inputs, roster_hash
         )
 
-    def fail(self, evaluation_run_id: UUID, reason_code: str) -> None:
+    def fail(
+        self,
+        evaluation_run_id: UUID,
+        reason_code: str,
+    ) -> EvaluationRunRecord:
         changed = self._connection.execute(
             """
             UPDATE mra.evaluation_run
@@ -366,6 +382,7 @@ class PostgresEvaluationRepository:
         ).rowcount
         if changed != 1:
             raise RuntimeStateConflictError("EvaluationRun cannot transition to FAILED")
+        return self.run_record(evaluation_run_id, lock=False)
 
     def protocol_record(self, evaluation_protocol_id: UUID, *, lock: bool) -> EvaluationProtocolRecord:
         row = self._connection.execute(
@@ -390,7 +407,7 @@ class PostgresEvaluationRepository:
             """
             SELECT evaluation_run_id, experiment_run_id,
                    research_partition_id, evaluation_protocol_id,
-                   status, opened_at
+                   status, opened_at, content_sha256, version
             FROM mra.evaluation_run WHERE evaluation_run_id = %s
             """ + (" FOR SHARE" if lock else ""),
             (evaluation_run_id,),
@@ -399,7 +416,7 @@ class PostgresEvaluationRepository:
             raise RuntimeNotFoundError(f"EvaluationRun {evaluation_run_id} does not exist")
         return EvaluationRunRecord(
             UUID(str(row[0])), UUID(str(row[1])), UUID(str(row[2])),
-            UUID(str(row[3])), str(row[4]), row[5],
+            UUID(str(row[3])), str(row[4]), row[5], str(row[6]), int(row[7]),
         )
 
     def _protocol_reconciles(self, record: EvaluationProtocolRecord) -> bool:

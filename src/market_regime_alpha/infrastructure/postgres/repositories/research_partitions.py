@@ -66,7 +66,14 @@ class PostgresResearchPartitionRepository:
             for ordinal, member in enumerate(members, start=1)
         )
         roster_hash = canonical_json_sha256(
-            tuple((ordinal, member.commitment_id, digest) for _, ordinal, member, digest in member_rows)
+            tuple(
+                {
+                    "commitment_id": member.commitment_id,
+                    "content_sha256": digest,
+                    "member_ordinal": ordinal,
+                }
+                for _, ordinal, member, digest in member_rows
+            )
         )
         content_hash = canonical_json_sha256(
             {
@@ -217,7 +224,14 @@ class PostgresResearchPartitionRepository:
             (research_partition_id,),
         ).fetchall()
         actual_hash = canonical_json_sha256(
-            tuple((int(row[0]), UUID(str(row[1])), str(row[2])) for row in rows)
+            tuple(
+                {
+                    "commitment_id": UUID(str(row[1])),
+                    "content_sha256": str(row[2]),
+                    "member_ordinal": int(row[0]),
+                }
+                for row in rows
+            )
         )
         matched = (
             len(rows) == record.member_count

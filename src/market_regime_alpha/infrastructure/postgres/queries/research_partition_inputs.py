@@ -113,6 +113,12 @@ class PostgresPartitionInputQueries:
     def derive_complete_roster(
         self, plan: ResearchPartitionPlan
     ) -> tuple[DerivedPartitionMember, ...]:
+        # Serialize the snapshot with Decision commitment insertion. The
+        # deferred database closure takes the same lock, so raw SQL cannot
+        # bypass complete-population derivation.
+        self._connection.execute(
+            "LOCK TABLE mra.decision_target_commitment IN SHARE MODE"
+        )
         disposition = (
             None
             if plan.population_scope.value == "ALL_COMMITMENTS"

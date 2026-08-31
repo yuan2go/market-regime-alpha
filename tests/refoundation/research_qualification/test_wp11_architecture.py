@@ -35,6 +35,23 @@ def test_three_uows_have_narrow_non_overlapping_business_ownership() -> None:
     assert ExperimentUnitOfWork is not EvaluationUnitOfWork
 
 
+def test_application_has_no_postgres_driver_dependency() -> None:
+    application_source = "\n".join(
+        item.read_text()
+        for item in sorted((PACKAGE / "application").glob("*.py"))
+    )
+    assert "import psycopg" not in application_source
+    assert "from psycopg" not in application_source
+
+
+def test_transactional_outcome_acquisition_is_an_infrastructure_repository() -> None:
+    infrastructure = ROOT / "src/market_regime_alpha/infrastructure/postgres"
+    assert not (infrastructure / "queries/research_evaluation_inputs.py").exists()
+    repository = infrastructure / "repositories/research_evaluation_inputs.py"
+    assert repository.exists()
+    assert "INSERT INTO mra.research_partition_outcome_access" in repository.read_text()
+
+
 def test_partition_command_contract_cannot_accept_selected_member_roster() -> None:
     field_names = {item.name for item in fields(ResearchPartitionPlan)}
     assert not field_names & {"members", "member_ids", "commitment_ids", "roster"}
@@ -60,7 +77,7 @@ def test_evaluation_never_imports_market_provider_or_outcome_current_port() -> N
         PACKAGE / "domain/evaluation.py",
         PACKAGE / "ports/evaluation_inputs.py",
         ROOT
-        / "src/market_regime_alpha/infrastructure/postgres/queries/research_evaluation_inputs.py",
+        / "src/market_regime_alpha/infrastructure/postgres/repositories/research_evaluation_inputs.py",
         ROOT
         / "src/market_regime_alpha/infrastructure/postgres/repositories/research_evaluations.py",
     )

@@ -100,10 +100,34 @@ class EvaluationRunPlan:
     evaluation_protocol_id: UUID
     requested_knowledge_cutoff: datetime
     request_identity: str
+    code_artifact: ArtifactBinding
+    config_artifact: ArtifactBinding
+    provenance_sha256: ContentHash | str
+    content_sha256: ContentHash = field(init=False)
 
     def __post_init__(self) -> None:
         if not self.request_identity.strip():
             raise ValueError("request_identity is required")
+        provenance_hash = ContentHash(str(self.provenance_sha256))
+        object.__setattr__(self, "provenance_sha256", provenance_hash)
+        object.__setattr__(
+            self,
+            "content_sha256",
+            ContentHash(
+                canonical_json_sha256(
+                    {
+                        "code_artifact": self.code_artifact,
+                        "config_artifact": self.config_artifact,
+                        "evaluation_protocol_id": self.evaluation_protocol_id,
+                        "evaluation_run_id": self.evaluation_run_id,
+                        "experiment_run_id": self.experiment_run_id,
+                        "provenance_sha256": provenance_hash,
+                        "request_identity": self.request_identity,
+                        "requested_knowledge_cutoff": self.requested_knowledge_cutoff,
+                    }
+                )
+            ),
+        )
 
 
 @dataclass(frozen=True, slots=True)

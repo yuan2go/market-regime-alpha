@@ -23,11 +23,14 @@ from market_regime_alpha.infrastructure.postgres.repositories.runtime import (
 from market_regime_alpha.infrastructure.postgres.repositories.target_artifacts import (
     PostgresTargetArtifactRepository,
 )
+from market_regime_alpha.infrastructure.postgres.research_transaction import (
+    classify_research_postgres_error,
+    commit_research_transaction,
+)
 from market_regime_alpha.infrastructure.postgres.runtime_finalization import (
     PostgresRuntimeCommandFinalization,
 )
 from market_regime_alpha.research_qualification.ports.partition_uow import PartitionUnitOfWork
-from market_regime_alpha.runtime.errors import RuntimeStateConflictError
 
 
 class PostgresPartitionUnitOfWork:
@@ -77,19 +80,26 @@ class PostgresPartitionUnitOfWork:
         return PostgresRuntimeCommandFinalization(self._active())
 
     def commit(self) -> None:
-        self._active().commit()
+        commit_research_transaction(self._active())
         self._committed = True
 
     def __exit__(self, exception_type: type[BaseException] | None, exception: BaseException | None, traceback: TracebackType | None) -> None:
-        deterministic = isinstance(exception, psycopg.Error) and exception.sqlstate is not None and (exception.sqlstate.startswith(("22", "23")) or exception.sqlstate == "55000")
+        replacement = classify_research_postgres_error(
+            exception,
+            owner="ResearchPartition",
+        )
         if self._connection is not None and not self._committed:
-            self._connection.rollback()
+            try:
+                self._connection.rollback()
+            except psycopg.Error:
+                if exception is None:
+                    raise
         if self._scope is not None:
             self._scope.__exit__(exception_type, exception, traceback)
         self._connection = None
         self._scope = None
-        if deterministic:
-            raise RuntimeStateConflictError("PostgreSQL rejected ResearchPartition invariants") from exception
+        if replacement is not None:
+            raise replacement from exception
 
 
 class PostgresPartitionUnitOfWorkProvider:

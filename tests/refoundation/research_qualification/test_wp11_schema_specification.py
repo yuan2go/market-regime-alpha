@@ -137,7 +137,7 @@ def test_wp11_immutable_and_lifecycle_guards_are_installed(
 def test_research_evaluation_resolver_has_no_current_latest_or_market_path() -> None:
     source = (
         ROOT
-        / "src/market_regime_alpha/infrastructure/postgres/queries/research_evaluation_inputs.py"
+        / "src/market_regime_alpha/infrastructure/postgres/repositories/research_evaluation_inputs.py"
     ).read_text()
     assert "current_for_commitment" not in source
     assert "ORDER BY revision_ordinal DESC LIMIT 1" not in source
@@ -145,3 +145,22 @@ def test_research_evaluation_resolver_has_no_current_latest_or_market_path() -> 
     assert "provider" not in source.lower()
     assert "supersedes_revision_id" in source
     assert "requested_knowledge_cutoff" in source
+
+
+def test_partition_closure_and_overlap_are_database_serialized() -> None:
+    sql = (MIGRATIONS / "001_baseline.sql").read_text()
+    assert "LOCK TABLE mra.decision_target_commitment IN SHARE MODE" in sql
+    assert "actual_count <> declared_population_count" in sql
+    assert "actual_roster_hash <> NEW.member_roster_sha256" in sql
+    assert "research-partition-overlap:" in sql
+    assert "pg_advisory_xact_lock" in sql
+    assert "existing.overlap_policy = 'ISOLATED_PROTECTED'" in sql
+
+
+def test_gate_b_and_pit_leaf_selection_are_database_guards() -> None:
+    sql = (MIGRATIONS / "001_baseline.sql").read_text()
+    assert "protected EvaluationRun requires zero prior Partition access" in sql
+    assert "research-protected-access:" in sql
+    assert "protected Outcome access must remain first access" in sql
+    assert "NEW.settled_at > cutoff" in sql
+    assert "Outcome access revision is not the unique visible leaf" in sql

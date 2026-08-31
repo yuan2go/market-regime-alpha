@@ -7,7 +7,7 @@ from typing import Callable, cast
 from uuid import UUID
 
 from market_regime_alpha.research_qualification.application._results import ensure_replay_succeeded
-from market_regime_alpha.research_qualification.application._command_support import replay_concurrent_success, retry_postgres_transient, terminal_failure_boundary
+from market_regime_alpha.research_qualification.application._command_support import replay_concurrent_success, retry_transient_transaction, terminal_failure_boundary
 from market_regime_alpha.research_qualification.domain.evaluation import EvaluationProtocolPlan, EvaluationRunPlan
 from market_regime_alpha.research_qualification.ports.evaluation_inputs import OutcomeAcquisitionResult
 from market_regime_alpha.research_qualification.ports.evaluation_uow import (
@@ -40,7 +40,7 @@ class EvaluationCommands:
             cast(CommandFailureUnitOfWorkProvider, uow_provider), id_factory=id_factory
         )
 
-    @retry_postgres_transient
+    @retry_transient_transaction
     @replay_concurrent_success
     def register_protocol(self, plan: EvaluationProtocolPlan, context: CommandContext, *, runtime_claim: AttemptClaim | None = None) -> EvaluationMutationResult:
         request_hash = canonical_json_sha256(plan)
@@ -77,7 +77,7 @@ class EvaluationCommands:
             uow.commit()
             return EvaluationMutationResult("EVALUATION_PROTOCOL", None, record.evaluation_protocol_id, record.metric_count, record.metric_roster_sha256, receipt.receipt_id, False)
 
-    @retry_postgres_transient
+    @retry_transient_transaction
     @replay_concurrent_success
     def open_run(self, plan: EvaluationRunPlan, context: CommandContext, *, runtime_claim: AttemptClaim | None = None) -> EvaluationMutationResult:
         request_hash = canonical_json_sha256(plan)
@@ -104,13 +104,104 @@ class EvaluationCommands:
                 _require_result_hash(receipt, canonical_json_sha256(record))
                 self._finish_replay(uow, receipt, runtime_claim)
                 return EvaluationMutationResult("EVALUATION_RUN", run_id, None, 0, canonical_json_sha256(record), receipt.receipt_id, True)
+            uow.artifacts.require_exact(plan.code_artifact, lock=True)
+            uow.artifacts.require_exact(plan.config_artifact, lock=True)
             record = uow.evaluations.open_run(plan, request_sha256=request_hash)
             result_hash = canonical_json_sha256(record)
-            self._finish(uow, receipt, "EVALUATION_RUN", record.evaluation_run_id, 1, result_hash, context, runtime_claim)
+            self._finish(uow, receipt, "EVALUATION_RUN", record.evaluation_run_id, record.version, result_hash, context, runtime_claim)
             uow.commit()
             return EvaluationMutationResult("EVALUATION_RUN", record.evaluation_run_id, None, 0, result_hash, receipt.receipt_id, False)
 
-    @retry_postgres_transient
+    @retry_transient_transaction
+    @replay_concurrent_success
+    def fail_run(
+        self,
+        evaluation_run_id: UUID,
+        reason_code: str,
+        context: CommandContext,
+        *,
+        runtime_claim: AttemptClaim | None = None,
+    ) -> EvaluationMutationResult:
+        request_hash = canonical_json_sha256(
+            {"evaluation_run_id": evaluation_run_id, "reason_code": reason_code}
+        )
+        with terminal_failure_boundary(
+            self._failure_recorder,
+            operation="FAIL_EVALUATION_RUN",
+            scope_id=str(evaluation_run_id),
+            request_hash=request_hash,
+            error_class="COMMAND",
+            error_code="FAIL_EVALUATION_RUN_REJECTED",
+            context=context,
+            runtime_claim=runtime_claim,
+        ):
+            return self._fail_run_once(
+                evaluation_run_id,
+                reason_code,
+                context,
+                runtime_claim=runtime_claim,
+            )
+
+    def _fail_run_once(
+        self,
+        evaluation_run_id: UUID,
+        reason_code: str,
+        context: CommandContext,
+        *,
+        runtime_claim: AttemptClaim | None,
+    ) -> EvaluationMutationResult:
+        request_hash = canonical_json_sha256(
+            {"evaluation_run_id": evaluation_run_id, "reason_code": reason_code}
+        )
+        with self._uow_provider() as uow:
+            receipt = self._start(
+                uow,
+                "FAIL_EVALUATION_RUN",
+                str(evaluation_run_id),
+                request_hash,
+                context,
+                runtime_claim,
+            )
+            if not receipt.is_new:
+                ensure_replay_succeeded(receipt)
+                run_id = _receipt_id(receipt, "EVALUATION_RUN")
+                record = uow.evaluations.run_record(run_id, lock=False)
+                result_hash = canonical_json_sha256(record)
+                _require_result_hash(receipt, result_hash)
+                self._finish_replay(uow, receipt, runtime_claim)
+                return EvaluationMutationResult(
+                    "EVALUATION_RUN",
+                    run_id,
+                    None,
+                    0,
+                    result_hash,
+                    receipt.receipt_id,
+                    True,
+                )
+            record = uow.evaluations.fail(evaluation_run_id, reason_code)
+            result_hash = canonical_json_sha256(record)
+            self._finish(
+                uow,
+                receipt,
+                "EVALUATION_RUN",
+                evaluation_run_id,
+                record.version,
+                result_hash,
+                context,
+                runtime_claim,
+            )
+            uow.commit()
+            return EvaluationMutationResult(
+                "EVALUATION_RUN",
+                evaluation_run_id,
+                None,
+                0,
+                result_hash,
+                receipt.receipt_id,
+                False,
+            )
+
+    @retry_transient_transaction
     @replay_concurrent_success
     def acquire_outcome_inputs(self, evaluation_run_id: UUID, context: CommandContext, *, runtime_claim: AttemptClaim | None = None) -> EvaluationMutationResult:
         request_hash = canonical_json_sha256({"evaluation_run_id": evaluation_run_id})
@@ -144,7 +235,7 @@ class EvaluationCommands:
             uow.commit()
             return _acquisition_result(acquired, receipt.receipt_id, False)
 
-    @retry_postgres_transient
+    @retry_transient_transaction
     @replay_concurrent_success
     def complete(self, evaluation_run_id: UUID, context: CommandContext, *, runtime_claim: AttemptClaim | None = None) -> EvaluationMutationResult:
         request_hash = canonical_json_sha256({"evaluation_run_id": evaluation_run_id})

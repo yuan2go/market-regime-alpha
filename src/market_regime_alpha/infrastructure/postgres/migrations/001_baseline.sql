@@ -8285,7 +8285,7 @@ ALTER TABLE mra.market_target_outcome_revision
     ADD CONSTRAINT outcome_revision_research_authority_uk UNIQUE (
         market_target_outcome_revision_id, market_target_outcome_id,
         revision_ordinal, commitment_id, target_definition_id,
-        observation_cutoff, knowledge_cutoff, outcome_status
+        observation_cutoff, knowledge_cutoff, settled_at, outcome_status
     );
 
 ALTER TABLE mra.market_target_outcome_metric
@@ -8760,6 +8760,14 @@ CREATE TABLE mra.evaluation_run (
     requested_knowledge_cutoff timestamptz NOT NULL,
     expected_member_count integer NOT NULL,
     expected_protocol_metric_count integer NOT NULL,
+    code_artifact_id uuid NOT NULL,
+    code_content_sha256 text NOT NULL,
+    code_size_bytes bigint NOT NULL,
+    config_artifact_id uuid NOT NULL,
+    config_content_sha256 text NOT NULL,
+    config_size_bytes bigint NOT NULL,
+    provenance_sha256 text NOT NULL,
+    content_sha256 text NOT NULL,
     status text NOT NULL,
     request_identity text NOT NULL,
     request_sha256 text NOT NULL,
@@ -8778,7 +8786,7 @@ CREATE TABLE mra.evaluation_run (
     CONSTRAINT evaluation_run_identity_uk UNIQUE (experiment_run_id, request_identity),
     CONSTRAINT evaluation_run_exact_uk UNIQUE (
         evaluation_run_id, experiment_run_id, research_partition_id,
-        evaluation_protocol_id, target_definition_id
+        evaluation_protocol_id, target_definition_id, content_sha256
     ),
     CONSTRAINT evaluation_run_access_authority_uk UNIQUE (
         evaluation_run_id, research_partition_id, target_definition_id
@@ -8812,11 +8820,19 @@ CREATE TABLE mra.evaluation_run (
     ) REFERENCES mra.evaluation_protocol(
         evaluation_protocol_id, target_definition_id, applicable_purpose, metric_count
     ) ON DELETE RESTRICT,
+    CONSTRAINT evaluation_run_code_artifact_fk FOREIGN KEY (
+        code_artifact_id, code_content_sha256, code_size_bytes
+    ) REFERENCES mra.artifact(artifact_id, content_sha256, size_bytes) ON DELETE RESTRICT,
+    CONSTRAINT evaluation_run_config_artifact_fk FOREIGN KEY (
+        config_artifact_id, config_content_sha256, config_size_bytes
+    ) REFERENCES mra.artifact(artifact_id, content_sha256, size_bytes) ON DELETE RESTRICT,
     CONSTRAINT evaluation_run_shape_ck CHECK (
         partition_purpose IN ('DISCOVERY', 'FIT', 'VALIDATION', 'LOCKED_OOS', 'PROSPECTIVE')
         AND expected_member_count > 0 AND expected_protocol_metric_count > 0
         AND status IN ('OPEN', 'INPUTS_ACQUIRED', 'COMPLETED', 'FAILED')
         AND request_sha256 ~ '^[0-9a-f]{64}$' AND version > 0
+        AND provenance_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
         AND access_count >= 0 AND observation_count >= 0
         AND metric_count >= 0 AND metric_observation_count >= 0
         AND (input_roster_sha256 IS NULL OR input_roster_sha256 ~ '^[0-9a-f]{64}$')
@@ -8842,6 +8858,12 @@ CREATE INDEX evaluation_run_protocol_fk_idx ON mra.evaluation_run (
     evaluation_protocol_id, target_definition_id, partition_purpose,
     expected_protocol_metric_count
 );
+CREATE INDEX evaluation_run_code_artifact_fk_idx ON mra.evaluation_run (
+    code_artifact_id, code_content_sha256, code_size_bytes
+);
+CREATE INDEX evaluation_run_config_artifact_fk_idx ON mra.evaluation_run (
+    config_artifact_id, config_content_sha256, config_size_bytes
+);
 
 CREATE TABLE mra.research_partition_outcome_access (
     research_partition_outcome_access_id uuid PRIMARY KEY,
@@ -8855,6 +8877,7 @@ CREATE TABLE mra.research_partition_outcome_access (
     revision_ordinal integer NOT NULL,
     observation_cutoff timestamptz NOT NULL,
     knowledge_cutoff timestamptz NOT NULL,
+    settled_at timestamptz NOT NULL,
     outcome_status text NOT NULL,
     access_ordinal integer NOT NULL,
     accessed_at timestamptz NOT NULL DEFAULT clock_timestamp(),
@@ -8881,16 +8904,17 @@ CREATE TABLE mra.research_partition_outcome_access (
     CONSTRAINT research_outcome_access_revision_fk FOREIGN KEY (
         market_target_outcome_revision_id, market_target_outcome_id,
         revision_ordinal, commitment_id, target_definition_id,
-        observation_cutoff, knowledge_cutoff, outcome_status
+        observation_cutoff, knowledge_cutoff, settled_at, outcome_status
     ) REFERENCES mra.market_target_outcome_revision(
         market_target_outcome_revision_id, market_target_outcome_id,
         revision_ordinal, commitment_id, target_definition_id,
-        observation_cutoff, knowledge_cutoff, outcome_status
+        observation_cutoff, knowledge_cutoff, settled_at, outcome_status
     ) ON DELETE RESTRICT,
     CONSTRAINT research_outcome_access_shape_ck CHECK (
         access_ordinal > 0
         AND outcome_status IN ('PARTIAL', 'COMPLETE', 'UNAVAILABLE', 'FAILED')
         AND observation_cutoff <= knowledge_cutoff
+        AND settled_at <= accessed_at
         AND content_sha256 ~ '^[0-9a-f]{64}$'
     )
 );
@@ -8940,7 +8964,7 @@ CREATE INDEX research_outcome_access_member_fk_idx ON mra.research_partition_out
 CREATE INDEX research_outcome_access_revision_fk_idx ON mra.research_partition_outcome_access (
     market_target_outcome_revision_id, market_target_outcome_id,
     revision_ordinal, commitment_id, target_definition_id,
-    observation_cutoff, knowledge_cutoff, outcome_status
+    observation_cutoff, knowledge_cutoff, settled_at, outcome_status
 );
 CREATE INDEX evaluation_observation_access_fk_idx ON mra.evaluation_observation (
     outcome_access_id, evaluation_run_id, research_partition_member_id,
@@ -9059,10 +9083,19 @@ CREATE INDEX evaluation_metric_observation_source_fk_idx ON mra.evaluation_metri
 CREATE FUNCTION mra.guard_research_partition_overlap()
 RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
-    IF NEW.overlap_policy = 'ISOLATED_PROTECTED' AND EXISTS (
+    PERFORM pg_advisory_xact_lock(
+        hashtextextended(
+            'research-partition-overlap:' || NEW.target_definition_id::text,
+            0
+        )
+    );
+    IF EXISTS (
         SELECT 1 FROM mra.research_partition AS existing
         WHERE existing.target_definition_id = NEW.target_definition_id
-          AND existing.overlap_policy <> 'DIAGNOSTIC_REUSE'
+          AND ((NEW.overlap_policy = 'ISOLATED_PROTECTED'
+                AND existing.overlap_policy <> 'DIAGNOSTIC_REUSE')
+            OR (existing.overlap_policy = 'ISOLATED_PROTECTED'
+                AND NEW.overlap_policy <> 'DIAGNOSTIC_REUSE'))
           AND (existing.population_scope = 'ALL_COMMITMENTS'
                OR NEW.population_scope = 'ALL_COMMITMENTS'
                OR existing.population_scope = NEW.population_scope)
@@ -9077,6 +9110,9 @@ BEGIN
           AND existing.series_code = NEW.series_code
           AND existing.fold_ordinal = NEW.fold_ordinal
           AND existing.overlap_policy = 'PURGED_WALK_FORWARD'
+          AND (existing.population_scope = 'ALL_COMMITMENTS'
+               OR NEW.population_scope = 'ALL_COMMITMENTS'
+               OR existing.population_scope = NEW.population_scope)
           AND daterange(existing.protected_start_date, existing.protected_end_date, '[]')
               && daterange(NEW.protected_start_date, NEW.protected_end_date, '[]')
     ) THEN
@@ -9129,14 +9165,51 @@ $$;
 CREATE FUNCTION mra.validate_research_partition_closure()
 RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE actual_count integer;
+DECLARE declared_population_count integer;
 DECLARE minimum_ordinal integer;
 DECLARE maximum_ordinal integer;
+DECLARE actual_roster_hash text;
 BEGIN
+    LOCK TABLE mra.decision_target_commitment IN SHARE MODE;
     SELECT count(*), min(member_ordinal), max(member_ordinal)
       INTO actual_count, minimum_ordinal, maximum_ordinal
     FROM mra.research_partition_member
     WHERE research_partition_id = NEW.research_partition_id;
-    IF actual_count <> NEW.member_count OR minimum_ordinal <> 1
+
+    SELECT count(*) INTO declared_population_count
+    FROM mra.decision_target_commitment AS commitment
+    JOIN mra.decision_reference_observation AS reference
+      ON reference.decision_reference_observation_id =
+         commitment.decision_reference_observation_id
+    JOIN mra.trading_session AS session
+      ON session.session_id = reference.session_id
+    WHERE commitment.target_definition_id = NEW.target_definition_id
+      AND session.session_date BETWEEN
+          NEW.decision_start_date AND NEW.decision_end_date
+      AND (NEW.population_scope = 'ALL_COMMITMENTS'
+           OR commitment.candidate_disposition = NEW.population_scope);
+
+    SELECT mra.canonical_sha256(
+               replace(
+                   json_agg(
+                       json_build_object(
+                           'commitment_id', commitment_id,
+                           'content_sha256', content_sha256,
+                           'member_ordinal', member_ordinal
+                       ) ORDER BY member_ordinal
+                   )::text,
+                   ' ',
+                   ''
+               )
+           )
+      INTO actual_roster_hash
+    FROM mra.research_partition_member
+    WHERE research_partition_id = NEW.research_partition_id;
+
+    IF actual_count <> NEW.member_count
+       OR actual_count <> declared_population_count
+       OR actual_roster_hash <> NEW.member_roster_sha256
+       OR minimum_ordinal <> 1
        OR maximum_ordinal <> NEW.member_count OR EXISTS (
            SELECT 1 FROM mra.research_partition_member AS member
            JOIN mra.trading_session AS session
@@ -9252,6 +9325,24 @@ BEGIN
     IF experiment_opened_at >= NEW.opened_at OR protocol_frozen_at >= NEW.opened_at THEN
         RAISE EXCEPTION 'ExperimentRun and Protocol must precede EvaluationRun' USING ERRCODE = '55000';
     END IF;
+    IF NEW.partition_purpose IN ('LOCKED_OOS', 'PROSPECTIVE') THEN
+        PERFORM pg_advisory_xact_lock(
+            hashtextextended(
+                'research-protected-access:' || NEW.research_partition_id::text,
+                0
+            )
+        );
+        IF EXISTS (
+            SELECT 1
+            FROM mra.research_partition_outcome_access AS access
+            JOIN mra.research_partition_member AS member
+              ON member.research_partition_member_id =
+                 access.research_partition_member_id
+            WHERE member.research_partition_id = NEW.research_partition_id
+        ) THEN
+            RAISE EXCEPTION 'protected EvaluationRun requires zero prior Partition access' USING ERRCODE = '55000';
+        END IF;
+    END IF;
     RETURN NEW;
 END;
 $$;
@@ -9268,6 +9359,9 @@ BEGIN
            OLD.evaluation_protocol_id, OLD.target_definition_id,
            OLD.partition_purpose, OLD.requested_knowledge_cutoff,
            OLD.expected_member_count, OLD.expected_protocol_metric_count,
+           OLD.code_artifact_id, OLD.code_content_sha256, OLD.code_size_bytes,
+           OLD.config_artifact_id, OLD.config_content_sha256,
+           OLD.config_size_bytes, OLD.provenance_sha256, OLD.content_sha256,
            OLD.request_identity, OLD.request_sha256, OLD.opened_at)
        IS DISTINCT FROM
        ROW(NEW.evaluation_run_id, NEW.experiment_run_id, NEW.experiment_id,
@@ -9275,6 +9369,9 @@ BEGIN
            NEW.evaluation_protocol_id, NEW.target_definition_id,
            NEW.partition_purpose, NEW.requested_knowledge_cutoff,
            NEW.expected_member_count, NEW.expected_protocol_metric_count,
+           NEW.code_artifact_id, NEW.code_content_sha256, NEW.code_size_bytes,
+           NEW.config_artifact_id, NEW.config_content_sha256,
+           NEW.config_size_bytes, NEW.provenance_sha256, NEW.content_sha256,
            NEW.request_identity, NEW.request_sha256, NEW.opened_at) THEN
         RAISE EXCEPTION 'EvaluationRun frozen binding is immutable' USING ERRCODE = '55000';
     END IF;
@@ -9350,23 +9447,83 @@ RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE run_status text;
 DECLARE run_opened_at timestamptz;
 DECLARE cutoff timestamptz;
+DECLARE partition_id uuid;
+DECLARE partition_purpose text;
 DECLARE expected_ordinal integer;
+DECLARE visible_leaf_count integer;
 BEGIN
-    SELECT status, opened_at, requested_knowledge_cutoff
-      INTO run_status, run_opened_at, cutoff
+    SELECT status, opened_at, requested_knowledge_cutoff,
+           research_partition_id, evaluation_run.partition_purpose
+      INTO run_status, run_opened_at, cutoff,
+           partition_id, partition_purpose
     FROM mra.evaluation_run WHERE evaluation_run_id = NEW.evaluation_run_id FOR UPDATE;
     IF run_status <> 'OPEN' THEN
         RAISE EXCEPTION 'Outcome acquisition requires EvaluationRun OPEN' USING ERRCODE = '55000';
     END IF;
     IF NEW.accessed_at <= run_opened_at OR NEW.knowledge_cutoff > cutoff
-       OR NEW.observation_cutoff > cutoff THEN
+       OR NEW.observation_cutoff > cutoff OR NEW.settled_at > cutoff THEN
         RAISE EXCEPTION 'Outcome access ordering/cutoff is invalid' USING ERRCODE = '55000';
+    END IF;
+    IF partition_purpose IN ('LOCKED_OOS', 'PROSPECTIVE') THEN
+        PERFORM pg_advisory_xact_lock(
+            hashtextextended(
+                'research-protected-access:' || partition_id::text,
+                0
+            )
+        );
     END IF;
     SELECT coalesce(max(access_ordinal), 0) + 1 INTO expected_ordinal
     FROM mra.research_partition_outcome_access
     WHERE research_partition_member_id = NEW.research_partition_member_id;
     IF NEW.access_ordinal <> expected_ordinal THEN
         RAISE EXCEPTION 'Outcome access ordinal is not globally sequential for member' USING ERRCODE = '55000';
+    END IF;
+    IF partition_purpose IN ('LOCKED_OOS', 'PROSPECTIVE')
+       AND expected_ordinal <> 1 THEN
+        RAISE EXCEPTION 'protected Outcome access must remain first access' USING ERRCODE = '55000';
+    END IF;
+
+    SELECT count(*) INTO visible_leaf_count
+    FROM mra.market_target_outcome_revision AS candidate
+    WHERE candidate.commitment_id = NEW.commitment_id
+      AND candidate.target_definition_id = NEW.target_definition_id
+      AND candidate.observation_cutoff <= cutoff
+      AND candidate.knowledge_cutoff <= cutoff
+      AND candidate.settled_at <= cutoff
+      AND NOT EXISTS (
+          SELECT 1
+          FROM mra.market_target_outcome_revision AS successor
+          WHERE successor.supersedes_revision_id =
+                candidate.market_target_outcome_revision_id
+            AND successor.commitment_id = NEW.commitment_id
+            AND successor.target_definition_id = NEW.target_definition_id
+            AND successor.observation_cutoff <= cutoff
+            AND successor.knowledge_cutoff <= cutoff
+            AND successor.settled_at <= cutoff
+      );
+    IF visible_leaf_count <> 1 OR NOT EXISTS (
+        SELECT 1
+        FROM mra.market_target_outcome_revision AS candidate
+        WHERE candidate.market_target_outcome_revision_id =
+              NEW.market_target_outcome_revision_id
+          AND candidate.commitment_id = NEW.commitment_id
+          AND candidate.target_definition_id = NEW.target_definition_id
+          AND candidate.observation_cutoff <= cutoff
+          AND candidate.knowledge_cutoff <= cutoff
+          AND candidate.settled_at <= cutoff
+          AND NOT EXISTS (
+              SELECT 1
+              FROM mra.market_target_outcome_revision AS successor
+              WHERE successor.supersedes_revision_id =
+                    candidate.market_target_outcome_revision_id
+                AND successor.commitment_id = NEW.commitment_id
+                AND successor.target_definition_id = NEW.target_definition_id
+                AND successor.observation_cutoff <= cutoff
+                AND successor.knowledge_cutoff <= cutoff
+                AND successor.settled_at <= cutoff
+          )
+    ) THEN
+        RAISE EXCEPTION 'Outcome access revision is not the unique visible leaf' USING ERRCODE = '55000';
     END IF;
     RETURN NEW;
 END;

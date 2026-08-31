@@ -37,6 +37,7 @@ class _VisibleRevision:
     observation_cutoff: datetime
     knowledge_cutoff: datetime
     outcome_status: str
+    settled_at: datetime
 
 
 class PostgresTransactionalOutcomeAcquisition:
@@ -100,6 +101,13 @@ class PostgresTransactionalOutcomeAcquisition:
         ).fetchall()
         if len(locked_outcomes) != len(outcome_ids) or len(locked_revisions) != len(revision_ids):
             raise EvaluationAcquisitionError("exact Outcome revision disappeared before lock")
+        locked_visible = tuple(
+            self._resolve_visible(member, cutoff) for member in members
+        )
+        if locked_visible != revisions:
+            raise EvaluationAcquisitionError(
+                "visible Outcome revision changed before transactional lock"
+            )
 
         self._connection.execute(
             "SELECT research_partition_id FROM mra.research_partition WHERE research_partition_id = %s FOR SHARE",
@@ -163,11 +171,11 @@ class PostgresTransactionalOutcomeAcquisition:
                     target_definition_id,
                     market_target_outcome_revision_id,
                     market_target_outcome_id, revision_ordinal,
-                    observation_cutoff, knowledge_cutoff,
+                    observation_cutoff, knowledge_cutoff, settled_at,
                     outcome_status, access_ordinal, content_sha256
                 ) VALUES (
                     %s, %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s, %s, %s, %s
+                    %s, %s, %s, %s, %s, %s, %s, %s
                 )
                 """,
                 (
@@ -176,7 +184,8 @@ class PostgresTransactionalOutcomeAcquisition:
                     member.target_definition_id, revision.revision_id,
                     revision.outcome_id, revision.revision_ordinal,
                     revision.observation_cutoff, revision.knowledge_cutoff,
-                    revision.outcome_status, access_ordinal, access_hash,
+                    revision.settled_at, revision.outcome_status,
+                    access_ordinal, access_hash,
                 ),
             )
             observation_id = self._id_factory()
@@ -277,7 +286,7 @@ class PostgresTransactionalOutcomeAcquisition:
                    eligible.revision_ordinal, eligible.commitment_id,
                    eligible.target_definition_id,
                    eligible.observation_cutoff, eligible.knowledge_cutoff,
-                   eligible.outcome_status
+                   eligible.outcome_status, eligible.settled_at
             FROM eligible
             WHERE NOT EXISTS (
                 SELECT 1 FROM eligible AS successor
@@ -299,6 +308,7 @@ class PostgresTransactionalOutcomeAcquisition:
         return _VisibleRevision(
             UUID(str(row[0])), UUID(str(row[1])), int(row[2]),
             UUID(str(row[3])), UUID(str(row[4])), row[5], row[6], str(row[7]),
+            row[8],
         )
 
 

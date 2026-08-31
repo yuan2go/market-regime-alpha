@@ -38,6 +38,8 @@ class EvaluationRunRecord:
     evaluation_protocol_id: UUID
     status: str
     opened_at: datetime
+    content_sha256: str
+    version: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,7 +67,7 @@ class EvaluationRepository(Protocol):
 
     def complete(self, evaluation_run_id: UUID) -> EvaluationCompletionResult: ...
 
-    def fail(self, evaluation_run_id: UUID, reason_code: str) -> None: ...
+    def fail(self, evaluation_run_id: UUID, reason_code: str) -> EvaluationRunRecord: ...
 
     def protocol_record(self, evaluation_protocol_id: UUID, *, lock: bool) -> EvaluationProtocolRecord: ...
 

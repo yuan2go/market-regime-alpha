@@ -89,7 +89,13 @@ def _settle_two_visible_revisions(stack):
     return target, first, second, settled
 
 
-def _freeze_and_predeclare(stack, target):
+def _freeze_and_predeclare(
+    stack,
+    target,
+    *,
+    purpose: PartitionPurpose = PartitionPurpose.VALIDATION,
+    overlap_policy: PartitionOverlapPolicy = PartitionOverlapPolicy.DIAGNOSTIC_REUSE,
+):
     ids = uuid4
     partition_commands = ResearchPartitionCommands(
         PostgresPartitionUnitOfWorkProvider(stack.pool, id_factory=ids),
@@ -101,9 +107,9 @@ def _freeze_and_predeclare(stack, target):
         target_definition_id=target.target_definition_id,
         target_version=target.version,
         target_definition_sha256=target.content_sha256,
-        purpose=PartitionPurpose.VALIDATION,
+        purpose=purpose,
         population_scope=PartitionPopulationScope.ALL_COMMITMENTS,
-        overlap_policy=PartitionOverlapPolicy.DIAGNOSTIC_REUSE,
+        overlap_policy=overlap_policy,
         decision_start_session_id=stack.market_session_id,
         decision_end_session_id=stack.market_session_id,
         purge_before_sessions=0,
@@ -142,7 +148,7 @@ def _freeze_and_predeclare(stack, target):
         target_definition_id=target.target_definition_id,
         target_version=target.version,
         target_definition_sha256=target.content_sha256,
-        purpose=PartitionPurpose.VALIDATION,
+        purpose=purpose,
         partition_content_sha256=partition.content_sha256,
     )
     experiment_commands.register(
@@ -172,7 +178,7 @@ def _freeze_and_predeclare(stack, target):
         target_definition_id=target.target_definition_id,
         target_version=target.version,
         target_definition_sha256=target.content_sha256,
-        applicable_purpose=PartitionPurpose.VALIDATION,
+        applicable_purpose=purpose,
         decision_rule="Report the frozen mean without changing membership.",
         metrics=(
             ProtocolMetricDefinition(
@@ -210,6 +216,9 @@ def _run_evaluation(commands, experiment_run_id: UUID, protocol, cutoff, suffix:
             evaluation_protocol_id=protocol.evaluation_protocol_id,
             requested_knowledge_cutoff=cutoff,
             request_identity=f"evaluation-{suffix}",
+            code_artifact=protocol.code_artifact,
+            config_artifact=protocol.config_artifact,
+            provenance_sha256="8" * 64,
         ),
         _wp11_context(f"open-evaluation-{suffix}", "OPEN_EVALUATION_RUN"),
     )
@@ -289,6 +298,143 @@ def test_pit_safe_first_and_repeated_access_close_complete_evaluations(
     assert Decimal(metric_values[1][1]) == Decimal("0.059405940594059406")
 
 
+def test_protected_partition_cannot_open_another_evaluation_after_first_access(
+    wp11_stack,
+) -> None:
+    stack = wp11_stack
+    target, _, _, settled = _settle_two_visible_revisions(stack)
+    commands, _, experiment_run_id, protocol = _freeze_and_predeclare(
+        stack,
+        target,
+        purpose=PartitionPurpose.LOCKED_OOS,
+        overlap_policy=PartitionOverlapPolicy.ISOLATED_PROTECTED,
+    )
+    cutoff = settled[1][1] + timedelta(microseconds=1)
+    _run_evaluation(commands, experiment_run_id, protocol, cutoff, "protected-first")
+
+    with pytest.raises(RuntimeStateConflictError, match="Evaluation"):
+        commands.open_run(
+            EvaluationRunPlan(
+                evaluation_run_id=uuid4(),
+                experiment_run_id=experiment_run_id,
+                evaluation_protocol_id=protocol.evaluation_protocol_id,
+                requested_knowledge_cutoff=cutoff,
+                request_identity="protected-second",
+                code_artifact=protocol.code_artifact,
+                config_artifact=protocol.config_artifact,
+                provenance_sha256="8" * 64,
+            ),
+            _wp11_context("open-protected-second", "OPEN_EVALUATION_RUN"),
+        )
+
+
+def test_evaluation_run_can_fail_once_and_replays_exact_failure(wp11_stack) -> None:
+    stack = wp11_stack
+    target, _, _, settled = _settle_two_visible_revisions(stack)
+    commands, _, experiment_run_id, protocol = _freeze_and_predeclare(stack, target)
+    evaluation_run_id = uuid4()
+    commands.open_run(
+        EvaluationRunPlan(
+            evaluation_run_id=evaluation_run_id,
+            experiment_run_id=experiment_run_id,
+            evaluation_protocol_id=protocol.evaluation_protocol_id,
+            requested_knowledge_cutoff=settled[1][1] + timedelta(microseconds=1),
+            request_identity="failed-run",
+            code_artifact=protocol.code_artifact,
+            config_artifact=protocol.config_artifact,
+            provenance_sha256="8" * 64,
+        ),
+        _wp11_context("open-failed-run", "OPEN_EVALUATION_RUN"),
+    )
+    context = _wp11_context("fail-run", "FAIL_EVALUATION_RUN")
+    first = commands.fail_run(evaluation_run_id, "OPERATOR_ABORTED", context)
+    replay = commands.fail_run(evaluation_run_id, "OPERATOR_ABORTED", context)
+
+    assert first.replayed is False
+    assert replay.replayed is True
+    with psycopg.connect(stack.database_url) as connection:
+        state = connection.execute(
+            """
+            SELECT status, failure_reason_code, version,
+                   code_artifact_id, config_artifact_id, provenance_sha256
+            FROM mra.evaluation_run WHERE evaluation_run_id = %s
+            """,
+            (evaluation_run_id,),
+        ).fetchone()
+    assert state is not None
+    assert state[:3] == ("FAILED", "OPERATOR_ABORTED", 2)
+    assert state[3] == protocol.code_artifact.artifact_id
+    assert state[4] == protocol.config_artifact.artifact_id
+    assert state[5] == "8" * 64
+
+
+def test_database_rejects_a_revision_not_visible_at_run_cutoff(wp11_stack) -> None:
+    stack = wp11_stack
+    target, _, second, settled = _settle_two_visible_revisions(stack)
+    commands, partition, experiment_run_id, protocol = _freeze_and_predeclare(
+        stack, target
+    )
+    first_cutoff = settled[0][1] + (settled[1][1] - settled[0][1]) / 2
+    evaluation_run_id = uuid4()
+    commands.open_run(
+        EvaluationRunPlan(
+            evaluation_run_id=evaluation_run_id,
+            experiment_run_id=experiment_run_id,
+            evaluation_protocol_id=protocol.evaluation_protocol_id,
+            requested_knowledge_cutoff=first_cutoff,
+            request_identity="wrong-pit-revision",
+            code_artifact=protocol.code_artifact,
+            config_artifact=protocol.config_artifact,
+            provenance_sha256="8" * 64,
+        ),
+        _wp11_context("open-wrong-pit", "OPEN_EVALUATION_RUN"),
+    )
+    with psycopg.connect(stack.database_url) as connection:
+        member = connection.execute(
+            """
+            SELECT research_partition_member_id, commitment_id
+            FROM mra.research_partition_member
+            WHERE research_partition_id = %s
+            """,
+            (partition.research_partition_id,),
+        ).fetchone()
+        revision = connection.execute(
+            """
+            SELECT market_target_outcome_revision_id,
+                   market_target_outcome_id, revision_ordinal,
+                   observation_cutoff, knowledge_cutoff, settled_at,
+                   outcome_status
+            FROM mra.market_target_outcome_revision
+            WHERE market_target_outcome_revision_id = %s
+            """,
+            (second.market_target_outcome_revision_id,),
+        ).fetchone()
+        assert member is not None and revision is not None
+        with pytest.raises(psycopg.errors.ObjectNotInPrerequisiteState):
+            connection.execute(
+                """
+                INSERT INTO mra.research_partition_outcome_access (
+                    research_partition_outcome_access_id,
+                    evaluation_run_id, research_partition_member_id,
+                    research_partition_id, commitment_id,
+                    target_definition_id,
+                    market_target_outcome_revision_id,
+                    market_target_outcome_id, revision_ordinal,
+                    observation_cutoff, knowledge_cutoff, settled_at,
+                    outcome_status, access_ordinal, content_sha256
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s, 1, %s
+                )
+                """,
+                (
+                    uuid4(), evaluation_run_id, member[0],
+                    partition.research_partition_id, member[1],
+                    target.target_definition_id, *revision, "a" * 64,
+                ),
+            )
+
+
 def test_not_due_acquisition_fails_without_access_or_observation(wp11_stack) -> None:
     stack = wp11_stack
     target = _outcome._register_midnight_target(stack)
@@ -308,6 +454,9 @@ def test_not_due_acquisition_fails_without_access_or_observation(wp11_stack) -> 
             evaluation_protocol_id=protocol.evaluation_protocol_id,
             requested_knowledge_cutoff=due[0] - timedelta(microseconds=1),
             request_identity="not-due",
+            code_artifact=protocol.code_artifact,
+            config_artifact=protocol.config_artifact,
+            provenance_sha256="8" * 64,
         ),
         _wp11_context("open-not-due", "OPEN_EVALUATION_RUN"),
     )
@@ -428,15 +577,21 @@ def test_partition_uses_session_shift_and_rejects_protected_overlap(
         id_factory=uuid4,
     )
 
-    def plan(code: str, *, purge_after: int) -> ResearchPartitionPlan:
+    def plan(
+        code: str,
+        *,
+        purge_after: int,
+        purpose: PartitionPurpose = PartitionPurpose.LOCKED_OOS,
+        overlap_policy: PartitionOverlapPolicy = PartitionOverlapPolicy.ISOLATED_PROTECTED,
+    ) -> ResearchPartitionPlan:
         return ResearchPartitionPlan(
             research_partition_id=uuid4(), partition_code=code,
             target_definition_id=target.target_definition_id,
             target_version=target.version,
             target_definition_sha256=target.content_sha256,
-            purpose=PartitionPurpose.LOCKED_OOS,
+            purpose=purpose,
             population_scope=PartitionPopulationScope.ALL_COMMITMENTS,
-            overlap_policy=PartitionOverlapPolicy.ISOLATED_PROTECTED,
+            overlap_policy=overlap_policy,
             decision_start_session_id=stack.market_session_id,
             decision_end_session_id=stack.market_session_id,
             purge_before_sessions=0, purge_after_sessions=purge_after,
@@ -465,6 +620,18 @@ def test_partition_uses_session_shift_and_rejects_protected_overlap(
         commands.freeze(
             plan("wp11-locked-overlap", purge_after=0),
             _wp11_context("freeze-locked-overlap", "FREEZE_RESEARCH_PARTITION"),
+        )
+    with pytest.raises(RuntimeStateConflictError, match="Partition"):
+        commands.freeze(
+            plan(
+                "wp11-walk-forward-overlap",
+                purge_after=0,
+                purpose=PartitionPurpose.VALIDATION,
+                overlap_policy=PartitionOverlapPolicy.PURGED_WALK_FORWARD,
+            ),
+            _wp11_context(
+                "freeze-walk-forward-overlap", "FREEZE_RESEARCH_PARTITION"
+            ),
         )
     with psycopg.connect(stack.database_url) as connection:
         assert connection.execute(

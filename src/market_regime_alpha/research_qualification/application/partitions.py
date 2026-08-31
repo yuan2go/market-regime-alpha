@@ -8,7 +8,7 @@ from uuid import UUID
 
 from market_regime_alpha.research_qualification.application._command_support import (
     replay_concurrent_success,
-    retry_postgres_transient,
+    retry_transient_transaction,
     terminal_failure_boundary,
 )
 from market_regime_alpha.research_qualification.application._results import ensure_replay_succeeded
@@ -42,7 +42,7 @@ class ResearchPartitionCommands:
             cast(CommandFailureUnitOfWorkProvider, uow_provider), id_factory=id_factory
         )
 
-    @retry_postgres_transient
+    @retry_transient_transaction
     @replay_concurrent_success
     def freeze(
         self,
