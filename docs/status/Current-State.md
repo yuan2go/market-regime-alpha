@@ -4,7 +4,7 @@
 > **Authority:** Non-authoritative implementation status read model; exact-SHA engineering proof remains in Verification
 > **Owner:** Market Regime Alpha maintainers
 > **Generated At:** 2026-09-01 WP-11 focused implementation reconciliation
-> **Repository Implementation Checkpoint:** `406f55cb0f17f2546c3cbe932642e90035f93b1d`
+> **Repository Implementation Checkpoint:** `b0520ae69ff1879a640f4cee98eb07b82ee3fce7`
 > **Containing Documentation Commit:** reported by the final handoff; this read model does not claim a self-referential Git SHA
 > **Previous Verified Snapshot:** WP-10 at `56812c58ce7b6e601366ffd0a5cfb52fec573227`
 > **Implementation Line Start:** `c3ac21ef1e13f2e8408d30b0481fa9b74c4f9539`
@@ -12,7 +12,7 @@
 > **Legacy Business Implementation Parent:** `0382dad416d6d50d1eea0bda1603d7c359d65274`
 > **Schema Epochs:** canonical business `LEGACY_MIGRATIONS_001_106`; target draft `MRA_REFOUNDATION_1 / DRAFT / NOT_CUT_OVER`
 > **Generator:** `WP-ARCHITECTURE-REFOUNDATION-11 implementation/status reconciliation; non-authoritative read model`
-> **Source Tree IDs:** root `5bf1f9e1b80b7b8085f8f7e60556f236c5ce5b6d`; source `af93a282f4deaf9fb6d54765bc57d788fe03019a`; tests `709476b1f4ac66789d80f618ebe493a2d8c06d05`; Research & Qualification tree `338c56b1457fb25d3c45bb0e805e9f55b6bf12df`; target baseline blob `4e05550dc8287f80efe21c8dbc55972806ad719a`; legacy migrations tree `6d3730548780ad6244d2cfecb4fb3559064b6f06`
+> **Source Tree IDs:** root `d2ac6a06cfd4fb67fdacc120d59f85cd7438902d`; source `0fcd3ec720f2222b14b2c2e4936b44b99c1cea2d`; tests `901d4485d8b65074239afefe62c6ddcd64046d10`; Research & Qualification tree `57dee016d6c98c0197ba122aded1f0f41a5432ce`; target baseline blob `9d4f3f3f180c2b1513c5ad296d0b49082c99af17`; legacy migrations tree `6d3730548780ad6244d2cfecb4fb3559064b6f06`
 > **Code Evidence:** target and legacy source/migration packages, `tests`, [WP-11 canonical design](../references/WP-ARCHITECTURE-REFOUNDATION-11-Research-Validity-Evaluation-Design.md), and [WP-11 implementation status](../references/WP-ARCHITECTURE-REFOUNDATION-11-Research-Validity-Evaluation-Implementation-Status.md)
 
 This read model records the integrated WP-11 Target/Outcome, Partition,
@@ -99,18 +99,18 @@ or placeholder relation is added.
 
 The four replaceable views are `candidate_component_diagnostic`,
 `candidate_funnel`, `run_trace`, and `artifact_integrity_status`. The
-implementation-defined draft shape is 68 tables, four views, 521 indexes, 808
-constraints, 54 functions, 140 non-internal triggers, and 1,596 catalog
+implementation-defined draft shape is 68 tables, four views, 523 indexes, 810
+constraints, 54 functions, 140 non-internal triggers, and 1,600 catalog
 objects.
 Its baseline checksum is
-`6c79ea0da350c01f25362e1f62c281ef2b89e1e6516fde0fa40a7a2454500d72`, its
+`99db3d71fee59ba330cb552509d8231f0628a47b0ae16539363ef3e9d2649486`, its
 seed checksum is
 `9c41cd715e35e1a7bed3a58c52a29f01cc1e9bf950b77344bb56eac6dfa2df11`, and its
 reference-vocabulary checksum is
 `06d6c1f1b8a15c9ae83bc2f0124c003b3fe193f5a4ad5bdf09d3e8a1e3db0dcb`.
 A clean PostgreSQL 16 bootstrap/verify used by focused WP-11 validation produced
 catalog checksum
-`4855265beaff670c69e5722337742de2ca8605c3f671e162a506f5883957b72f`.
+`31d865d1a99f753b39fe34520082f9f0e3deec6993d2599470db445bfa3d1891`.
 This is focused implementation evidence, not the clean recreate/concurrency/
 recovery campaign required for engineering qualification. Table count is
 descriptive, not an optimization target.
@@ -420,7 +420,7 @@ descriptive, not an optimization target.
   compatibility and exact Candidate disposition slices. Completion requires
   the full protocol-metric × observation roster with explicit `INCLUDED`,
   `EXCLUDED`, or `NOT_ESTIMABLE` state and reason.
-- Focused validation at `406f55cb` passes 103 directly affected tests plus
+- Focused validation at `b0520ae6` passes 110 directly affected tests plus
   changed-scope Ruff, mypy, documentation link checks, and diff checks. Full
   PostgreSQL/concurrency/recovery/replay and repository qualification remain
   explicitly not run; the authoritative status is

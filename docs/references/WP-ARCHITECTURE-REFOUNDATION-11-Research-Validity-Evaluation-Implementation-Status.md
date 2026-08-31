@@ -5,9 +5,9 @@
 > **Owner:** Market Regime Alpha maintainers
 > **Recorded At:** 2026-09-01
 > **Execution-Time Main:** `4aaf4eb1c13f42c01dbc0057078f916fd50cf022`
-> **Implementation Checkpoint:** `406f55cb0f17f2546c3cbe932642e90035f93b1d`
+> **Implementation Checkpoint:** `b0520ae69ff1879a640f4cee98eb07b82ee3fce7`
 > **Branch:** `agent/wp-11-research-validity-evaluation-closure`
-> **Worktree:** `/Users/yuan/projects/market-regime-alpha-worktrees/wp-11-research-validity-evaluation-closure`
+> **Worktree:** isolated linked worktree for the branch above; primary checkout untouched
 > **Schema Epoch:** `MRA_REFOUNDATION_1 / DRAFT / NOT_CUT_OVER`
 
 ```text
@@ -38,6 +38,7 @@ an isolated branch/worktree. The original workspace and its pre-existing
 | detailed implementation plan | `eab0cae` | Gate A → Gate B → Gate C sequence and focused validation scope frozen |
 | Gate A | `00f90d0` | Target Domain/PostgreSQL/Outcome contract parity closed |
 | Gate B and Gate C implementation | `406f55c` | Partition, Experiment, Evaluation Protocol/Run, Outcome access, observations, and metric closure implemented |
+| two-axis review corrections | `b0520ae` | Application/Infrastructure dependency boundary, symmetric serialized overlap, database-derived roster closure, protected Gate B, PIT leaf revalidation, EvaluationRun artifacts/provenance and FAILED replay hardened |
 
 ## 2. Gate A — Target/Outcome parity
 
@@ -106,7 +107,8 @@ The resolver is private to the Evaluation transaction. It does not expose a
 general latest/current API, call a Provider or Market repository, access bars,
 or rebuild a label. Outcome values cannot leave before the access rows,
 observations, reconciliation, and lifecycle transition commit. Ordinal one is
-first-access Authority; later Evaluation Runs append ordinal two or greater.
+first-access Authority; non-protected diagnostic/reuse Evaluation Runs append
+ordinal two or greater, while protected purposes reject access reuse.
 
 `UNAVAILABLE` and `FAILED` Outcome revisions remain members and observations.
 `NOT_DUE`, a missing due revision, ambiguous eligible revision, or incomplete
@@ -141,16 +143,16 @@ evaluation_metric
 evaluation_metric_observation
 ```
 
-The clean focused catalog contains 68 tables, four views, 521 indexes, 808
-constraints, 54 functions, 140 non-internal triggers, and 1,596 catalog
+The clean focused catalog contains 68 tables, four views, 523 indexes, 810
+constraints, 54 functions, 140 non-internal triggers, and 1,600 catalog
 objects. Checksums are:
 
 | Artifact | SHA-256 |
 |---|---|
-| baseline | `6c79ea0da350c01f25362e1f62c281ef2b89e1e6516fde0fa40a7a2454500d72` |
+| baseline | `99db3d71fee59ba330cb552509d8231f0628a47b0ae16539363ef3e9d2649486` |
 | seed | `9c41cd715e35e1a7bed3a58c52a29f01cc1e9bf950b77344bb56eac6dfa2df11` |
 | reference vocabulary | `06d6c1f1b8a15c9ae83bc2f0124c003b3fe193f5a4ad5bdf09d3e8a1e3db0dcb` |
-| focused clean catalog | `4855265beaff670c69e5722337742de2ca8605c3f671e162a506f5883957b72f` |
+| focused clean catalog | `31d865d1a99f753b39fe34520082f9f0e3deec6993d2599470db445bfa3d1891` |
 
 Concrete/composite FKs and closure/lifecycle/append-only triggers cover Target
 matching, immutable rosters, Experiment binding, access ordinal, exact Outcome
@@ -161,12 +163,12 @@ replay, and fresh-transaction deterministic failure recording.
 
 ## 6. Focused validation
 
-The following directly affected suite is `PASS` with 103 tests:
+The following directly affected suite is `PASS` with 110 tests:
 
 ```bash
 PYTHONPATH=src \
 MARKET_REGIME_ALPHA_TEST_DATABASE_URL='postgresql://%2Ftmp/mra_wp11_test_20260831' \
-python -m pytest -q \
+uv run python -m pytest -q \
   tests/refoundation/research_qualification/test_target_domain.py \
   tests/refoundation/outcome/test_outcome_kernel.py \
   tests/refoundation/research_qualification/test_target_postgres.py \
@@ -187,7 +189,11 @@ Target/member rejection, exact trading-session shifting across a calendar gap,
 protected overlap rejection, protected ordering, exact cutoff selection across
 Outcome correction, access ordinals one then two, completed observation/metric
 rosters, replay, `NOT_DUE` zero access/observation, and unavailable-member
-retention as `NOT_ESTIMABLE`.
+retention as `NOT_ESTIMABLE`. Review regressions additionally cover symmetric
+protected overlap, protected second-Run rejection after first access, direct
+database rejection of a future Outcome correction at an earlier cutoff,
+EvaluationRun FAILED exact replay, and the Application/PostgreSQL-driver
+dependency boundary.
 
 Changed-scope Ruff, mypy, documentation link checks, and `git diff --check` are
 also `PASS`. Two non-final setup observations are not promoted into evidence:
