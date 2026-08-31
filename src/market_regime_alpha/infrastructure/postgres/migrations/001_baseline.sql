@@ -5686,6 +5686,1656 @@ ALTER TABLE mra.decision_target_commitment
         runtime_mode, commitment_recorded_at, content_sha256
     ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED;
 
+ALTER TABLE mra.trading_session
+    ADD CONSTRAINT trading_session_outcome_authority_uk UNIQUE (
+        session_id, exchange, session_date, timezone_name,
+        open_at, close_at, source_capture_id, recorded_at, known_at
+    );
+
+ALTER TABLE mra.target_checkpoint
+    ADD CONSTRAINT target_checkpoint_outcome_authority_uk UNIQUE (
+        target_checkpoint_id, target_definition_id, ordinal,
+        checkpoint_role, session_offset, local_time, timezone_name,
+        timeframe, price_basis, value_field, content_sha256
+    );
+
+ALTER TABLE mra.target_metric_definition
+    ADD CONSTRAINT target_metric_outcome_authority_uk UNIQUE NULLS NOT DISTINCT (
+        target_metric_definition_id, target_definition_id, ordinal,
+        metric_code, metric_kind, value_type, unit, completion_rule,
+        barrier_direction, barrier_threshold,
+        algorithm_code, algorithm_version, algorithm_sha256,
+        code_artifact_id, code_content_sha256, code_size_bytes,
+        config_artifact_id, config_content_sha256, config_size_bytes,
+        content_sha256
+    );
+
+ALTER TABLE mra.target_metric_dependency
+    ADD CONSTRAINT target_dependency_outcome_authority_uk UNIQUE (
+        target_metric_dependency_id, target_definition_id,
+        target_metric_definition_id, target_checkpoint_id,
+        ordinal, dependency_role, content_sha256
+    );
+
+CREATE TABLE mra.market_target_outcome (
+    market_target_outcome_id uuid PRIMARY KEY,
+    commitment_id uuid NOT NULL,
+    decision_run_id uuid NOT NULL,
+    decision_run_target_id uuid NOT NULL,
+    candidate_set_id uuid NOT NULL,
+    candidate_id uuid NOT NULL,
+    target_definition_id uuid NOT NULL,
+    target_version integer NOT NULL,
+    target_definition_sha256 text NOT NULL,
+    target_checkpoint_id uuid NOT NULL,
+    instrument_id uuid NOT NULL,
+    reference_provider_product_id uuid NOT NULL,
+    decision_time timestamptz NOT NULL,
+    runtime_mode text NOT NULL,
+    commitment_recorded_at timestamptz NOT NULL,
+    decision_reference_observation_id uuid NOT NULL,
+    decision_reference_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT market_target_outcome_commitment_uk UNIQUE (commitment_id),
+    CONSTRAINT market_target_outcome_scope_uk UNIQUE (
+        market_target_outcome_id, commitment_id, decision_run_id,
+        decision_run_target_id, candidate_set_id, candidate_id,
+        target_definition_id, target_checkpoint_id, instrument_id,
+        reference_provider_product_id, decision_time, runtime_mode,
+        commitment_recorded_at, decision_reference_observation_id,
+        decision_reference_sha256
+    ),
+    CONSTRAINT market_target_outcome_reference_scope_uk UNIQUE (
+        market_target_outcome_id, decision_reference_observation_id,
+        commitment_id, target_definition_id, instrument_id,
+        decision_reference_sha256
+    ),
+    CONSTRAINT market_target_outcome_revision_scope_uk UNIQUE (
+        market_target_outcome_id, commitment_id, target_definition_id,
+        decision_reference_observation_id, decision_reference_sha256
+    ),
+    CONSTRAINT market_target_outcome_reference_identity_uk UNIQUE (
+        market_target_outcome_id, decision_reference_observation_id
+    ),
+    CONSTRAINT market_target_outcome_commitment_fk FOREIGN KEY (
+        decision_reference_observation_id, commitment_id,
+        decision_run_id, decision_run_target_id, candidate_set_id,
+        candidate_id, target_definition_id, target_checkpoint_id,
+        instrument_id, reference_provider_product_id, decision_time,
+        runtime_mode, commitment_recorded_at, decision_reference_sha256
+    ) REFERENCES mra.decision_target_commitment(
+        decision_reference_observation_id, commitment_id,
+        decision_run_id, decision_run_target_id, candidate_set_id,
+        candidate_id, target_definition_id, target_checkpoint_id,
+        instrument_id, reference_provider_product_id, decision_time,
+        runtime_mode, commitment_recorded_at, decision_reference_sha256
+    ) ON DELETE RESTRICT,
+    CONSTRAINT market_target_outcome_reference_fk FOREIGN KEY (
+        decision_reference_observation_id, commitment_id,
+        decision_run_id, decision_run_target_id, candidate_set_id,
+        candidate_id, target_definition_id, target_checkpoint_id,
+        instrument_id, reference_provider_product_id, decision_time,
+        runtime_mode, commitment_recorded_at, decision_reference_sha256
+    ) REFERENCES mra.decision_reference_observation(
+        decision_reference_observation_id, commitment_id,
+        decision_run_id, decision_run_target_id, candidate_set_id,
+        candidate_id, target_definition_id, target_checkpoint_id,
+        instrument_id, reference_provider_product_id, decision_time,
+        runtime_mode, commitment_recorded_at, content_sha256
+    ) ON DELETE RESTRICT,
+    CONSTRAINT market_target_outcome_target_fk FOREIGN KEY (
+        target_definition_id, target_version, target_definition_sha256
+    ) REFERENCES mra.target_definition(
+        target_definition_id, version, content_sha256
+    ) ON DELETE RESTRICT,
+    CONSTRAINT market_target_outcome_shape_ck CHECK (
+        target_version > 0
+        AND target_definition_sha256 ~ '^[0-9a-f]{64}$'
+        AND decision_reference_sha256 ~ '^[0-9a-f]{64}$'
+        AND runtime_mode IN (
+            'OPERATIONAL', 'HISTORICAL', 'REPLAY', 'SHADOW', 'PROSPECTIVE'
+        )
+        AND created_at >= commitment_recorded_at
+    )
+);
+CREATE INDEX market_target_outcome_commitment_idx
+    ON mra.market_target_outcome (
+        commitment_id, market_target_outcome_id, target_definition_id
+    );
+CREATE INDEX market_target_outcome_commitment_authority_idx
+    ON mra.market_target_outcome (
+        decision_reference_observation_id, commitment_id,
+        decision_run_id, decision_run_target_id, candidate_set_id,
+        candidate_id, target_definition_id, target_checkpoint_id,
+        instrument_id, reference_provider_product_id, decision_time,
+        runtime_mode, commitment_recorded_at, decision_reference_sha256
+    );
+CREATE INDEX market_target_outcome_reference_idx
+    ON mra.market_target_outcome (
+        decision_reference_observation_id, commitment_id,
+        decision_reference_sha256
+    );
+CREATE INDEX market_target_outcome_target_idx
+    ON mra.market_target_outcome (
+        target_definition_id, target_version, target_definition_sha256
+    );
+
+CREATE TABLE mra.market_target_outcome_revision (
+    market_target_outcome_revision_id uuid PRIMARY KEY,
+    market_target_outcome_id uuid NOT NULL,
+    revision_ordinal integer NOT NULL,
+    supersedes_revision_id uuid,
+    supersedes_revision_ordinal integer,
+    commitment_id uuid NOT NULL,
+    target_definition_id uuid NOT NULL,
+    decision_reference_observation_id uuid NOT NULL,
+    decision_reference_sha256 text NOT NULL,
+    observation_cutoff timestamptz NOT NULL,
+    knowledge_cutoff timestamptz NOT NULL,
+    outcome_status text NOT NULL,
+    availability_status text NOT NULL,
+    finality_status text NOT NULL,
+    source_count integer NOT NULL,
+    source_roster_sha256 text NOT NULL,
+    observation_count integer NOT NULL,
+    observation_roster_sha256 text NOT NULL,
+    metric_count integer NOT NULL,
+    metric_roster_sha256 text NOT NULL,
+    reference_dependency_count integer NOT NULL,
+    reference_dependency_roster_sha256 text NOT NULL,
+    observation_dependency_count integer NOT NULL,
+    observation_dependency_roster_sha256 text NOT NULL,
+    reason_count integer NOT NULL,
+    reason_roster_sha256 text NOT NULL,
+    definition_summary_sha256 text NOT NULL,
+    request_received_at timestamptz NOT NULL,
+    settled_at timestamptz NOT NULL,
+    runtime_run_id uuid NOT NULL,
+    runtime_step_id uuid NOT NULL,
+    runtime_attempt_id uuid NOT NULL,
+    runtime_fence_token bigint NOT NULL,
+    runtime_step_key text NOT NULL,
+    runtime_step_kind text NOT NULL,
+    runtime_mode text NOT NULL,
+    runtime_decision_time timestamptz NOT NULL,
+    runtime_code_sha text NOT NULL,
+    runtime_config_artifact_id uuid NOT NULL,
+    runtime_config_hash text NOT NULL,
+    request_kind text NOT NULL,
+    request_scope_id text NOT NULL,
+    request_identity text NOT NULL,
+    request_sha256 text NOT NULL,
+    command_receipt_id uuid NOT NULL,
+    created_by_actor_type text NOT NULL,
+    created_by_actor_id text NOT NULL,
+    creation_reason_code text NOT NULL,
+    created_at timestamptz NOT NULL,
+    CONSTRAINT outcome_revision_ordinal_uk UNIQUE (
+        market_target_outcome_id, revision_ordinal
+    ),
+    CONSTRAINT outcome_revision_exact_identity_uk UNIQUE (
+        market_target_outcome_revision_id, market_target_outcome_id,
+        revision_ordinal, observation_cutoff, knowledge_cutoff
+    ),
+    CONSTRAINT outcome_revision_chain_identity_uk UNIQUE (
+        market_target_outcome_revision_id, market_target_outcome_id,
+        revision_ordinal
+    ),
+    CONSTRAINT outcome_revision_request_hash_uk UNIQUE (
+        market_target_outcome_id, request_sha256
+    ),
+    CONSTRAINT outcome_revision_request_identity_uk UNIQUE (
+        commitment_id, request_identity
+    ),
+    CONSTRAINT outcome_revision_receipt_uk UNIQUE (command_receipt_id),
+    CONSTRAINT outcome_revision_supersedes_uk UNIQUE (supersedes_revision_id),
+    CONSTRAINT outcome_revision_root_fk FOREIGN KEY (
+        market_target_outcome_id, commitment_id, target_definition_id,
+        decision_reference_observation_id, decision_reference_sha256
+    ) REFERENCES mra.market_target_outcome(
+        market_target_outcome_id, commitment_id, target_definition_id,
+        decision_reference_observation_id, decision_reference_sha256
+    ) ON DELETE RESTRICT,
+    CONSTRAINT outcome_revision_supersedes_fk FOREIGN KEY (
+        supersedes_revision_id, market_target_outcome_id,
+        supersedes_revision_ordinal
+    ) REFERENCES mra.market_target_outcome_revision(
+        market_target_outcome_revision_id, market_target_outcome_id,
+        revision_ordinal
+    ) ON DELETE RESTRICT,
+    CONSTRAINT outcome_revision_runtime_run_fk FOREIGN KEY (
+        runtime_run_id, runtime_mode, runtime_decision_time,
+        runtime_code_sha, runtime_config_artifact_id, runtime_config_hash
+    ) REFERENCES mra.runtime_run(
+        run_id, runtime_mode, decision_time, code_sha,
+        config_artifact_id, config_hash
+    ) ON DELETE RESTRICT,
+    CONSTRAINT outcome_revision_runtime_step_fk FOREIGN KEY (
+        runtime_step_id, runtime_run_id, runtime_step_key, runtime_step_kind
+    ) REFERENCES mra.runtime_step(
+        step_id, run_id, step_key, step_kind
+    ) ON DELETE RESTRICT,
+    CONSTRAINT outcome_revision_runtime_attempt_fk FOREIGN KEY (
+        runtime_attempt_id, runtime_step_id, runtime_fence_token
+    ) REFERENCES mra.runtime_attempt(
+        attempt_id, step_id, fence_token
+    ) ON DELETE RESTRICT,
+    CONSTRAINT outcome_revision_receipt_claim_fk FOREIGN KEY (
+        command_receipt_id, request_kind, request_scope_id,
+        request_identity, request_sha256, runtime_step_id,
+        runtime_attempt_id, runtime_fence_token
+    ) REFERENCES mra.command_receipt(
+        receipt_id, command_kind, scope_id, idempotency_key, request_hash,
+        runtime_step_id, runtime_attempt_id, fence_token
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT outcome_revision_chain_ck CHECK (
+        (revision_ordinal = 1
+         AND supersedes_revision_id IS NULL
+         AND supersedes_revision_ordinal IS NULL)
+        OR
+        (revision_ordinal > 1
+         AND supersedes_revision_id IS NOT NULL
+         AND supersedes_revision_ordinal = revision_ordinal - 1)
+    ),
+    CONSTRAINT outcome_revision_cutoffs_ck CHECK (
+        observation_cutoff > '-infinity'::timestamptz
+        AND observation_cutoff < 'infinity'::timestamptz
+        AND knowledge_cutoff > '-infinity'::timestamptz
+        AND knowledge_cutoff < 'infinity'::timestamptz
+    ),
+    CONSTRAINT outcome_revision_counts_ck CHECK (
+        source_count > 0
+        AND observation_count > 0
+        AND metric_count > 0
+        AND reference_dependency_count >= 0
+        AND observation_dependency_count >= 0
+        AND reference_dependency_count + observation_dependency_count > 0
+        AND reason_count >= 0
+    ),
+    CONSTRAINT outcome_revision_state_ck CHECK (
+        outcome_status IN ('PARTIAL', 'COMPLETE', 'UNAVAILABLE', 'FAILED')
+        AND availability_status IN ('AVAILABLE', 'UNAVAILABLE', 'FAILED')
+        AND finality_status = 'UNKNOWN'
+        AND (
+            (outcome_status = 'COMPLETE' AND availability_status = 'AVAILABLE')
+            OR (outcome_status = 'FAILED' AND availability_status = 'FAILED')
+            OR (outcome_status = 'UNAVAILABLE'
+                AND availability_status = 'UNAVAILABLE')
+            OR (outcome_status = 'PARTIAL'
+                AND availability_status IN ('AVAILABLE', 'UNAVAILABLE'))
+        )
+    ),
+    CONSTRAINT outcome_revision_hashes_ck CHECK (
+        source_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND observation_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND metric_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND reference_dependency_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND observation_dependency_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND reason_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND definition_summary_sha256 ~ '^[0-9a-f]{64}$'
+        AND decision_reference_sha256 ~ '^[0-9a-f]{64}$'
+        AND request_sha256 ~ '^[0-9a-f]{64}$'
+    ),
+    CONSTRAINT outcome_revision_runtime_ck CHECK (
+        runtime_step_kind = 'SETTLE_OUTCOME'
+        AND runtime_mode IN (
+            'OPERATIONAL', 'HISTORICAL', 'REPLAY', 'SHADOW', 'PROSPECTIVE'
+        )
+        AND runtime_code_sha ~ '^[0-9a-f]{40}([0-9a-f]{24})?$'
+        AND runtime_config_hash ~ '^[0-9a-f]{64}$'
+        AND runtime_step_key ~ '^[a-z][a-z0-9_-]{0,99}$'
+        AND runtime_fence_token > 0
+    ),
+    CONSTRAINT outcome_revision_request_ck CHECK (
+        request_kind = 'SETTLE_MARKET_TARGET_OUTCOME'
+        AND request_scope_id = commitment_id::text
+        AND request_identity ~ '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$'
+        AND created_by_actor_type IN ('SYSTEM', 'OPERATOR', 'WORKER')
+        AND created_by_actor_id <> ''
+        AND creation_reason_code ~ '^[A-Z][A-Z0-9_]{0,99}$'
+    ),
+    CONSTRAINT outcome_revision_time_ck CHECK (
+        request_received_at <= settled_at AND created_at = settled_at
+    )
+);
+CREATE INDEX outcome_revision_leaf_idx
+    ON mra.market_target_outcome_revision (
+        market_target_outcome_id, revision_ordinal DESC,
+        market_target_outcome_revision_id
+    );
+CREATE INDEX outcome_revision_request_idx
+    ON mra.market_target_outcome_revision (
+        commitment_id, request_identity, request_sha256
+    );
+CREATE INDEX outcome_revision_runtime_idx
+    ON mra.market_target_outcome_revision (
+        runtime_run_id, runtime_step_id, runtime_attempt_id,
+        runtime_fence_token
+    );
+CREATE INDEX outcome_revision_runtime_run_authority_idx
+    ON mra.market_target_outcome_revision (
+        runtime_run_id, runtime_mode, runtime_decision_time,
+        runtime_code_sha, runtime_config_artifact_id, runtime_config_hash
+    );
+CREATE INDEX outcome_revision_supersedes_idx
+    ON mra.market_target_outcome_revision (supersedes_revision_id)
+    WHERE supersedes_revision_id IS NOT NULL;
+CREATE INDEX outcome_revision_root_authority_idx
+    ON mra.market_target_outcome_revision (
+        market_target_outcome_id, commitment_id, target_definition_id,
+        decision_reference_observation_id, decision_reference_sha256
+    );
+CREATE INDEX outcome_revision_supersedes_authority_idx
+    ON mra.market_target_outcome_revision (
+        supersedes_revision_id, market_target_outcome_id,
+        supersedes_revision_ordinal
+    ) WHERE supersedes_revision_id IS NOT NULL;
+CREATE INDEX outcome_revision_runtime_step_authority_idx
+    ON mra.market_target_outcome_revision (
+        runtime_step_id, runtime_run_id, runtime_step_key, runtime_step_kind
+    );
+CREATE INDEX outcome_revision_runtime_attempt_authority_idx
+    ON mra.market_target_outcome_revision (
+        runtime_attempt_id, runtime_step_id, runtime_fence_token
+    );
+CREATE INDEX outcome_revision_receipt_authority_idx
+    ON mra.market_target_outcome_revision (
+        command_receipt_id, request_kind, request_scope_id,
+        request_identity, request_sha256, runtime_step_id,
+        runtime_attempt_id, runtime_fence_token
+    );
+
+CREATE TABLE mra.market_target_outcome_source (
+    market_target_outcome_source_id uuid PRIMARY KEY,
+    market_target_outcome_revision_id uuid NOT NULL,
+    market_target_outcome_id uuid NOT NULL,
+    revision_ordinal integer NOT NULL,
+    source_ordinal integer NOT NULL,
+    source_role text NOT NULL,
+    source_kind text NOT NULL,
+    target_definition_id uuid NOT NULL,
+    target_checkpoint_id uuid,
+    provider_product_id uuid NOT NULL,
+    capture_id uuid NOT NULL,
+    session_provider_product_id uuid NOT NULL,
+    session_capture_id uuid NOT NULL,
+    instrument_id uuid,
+    trading_session_id uuid NOT NULL,
+    session_offset integer NOT NULL,
+    exchange text,
+    session_date date,
+    timezone_name text,
+    session_open_at timestamptz,
+    session_close_at timestamptz,
+    timeframe text,
+    price_basis text,
+    event_start timestamptz,
+    event_end timestamptz,
+    source_recorded_at timestamptz NOT NULL,
+    known_at timestamptz NOT NULL,
+    session_recorded_at timestamptz NOT NULL,
+    session_known_at timestamptz NOT NULL,
+    bar_revision_id uuid,
+    bar_revision integer,
+    source_gap_id uuid,
+    source_gap_kind text,
+    source_gap_reason_code text,
+    observation_cutoff timestamptz NOT NULL,
+    knowledge_cutoff timestamptz NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL,
+    CONSTRAINT outcome_source_ordinal_uk UNIQUE (
+        market_target_outcome_revision_id, source_ordinal
+    ),
+    CONSTRAINT outcome_source_role_scope_uk UNIQUE NULLS NOT DISTINCT (
+        market_target_outcome_revision_id, source_role,
+        session_offset, target_checkpoint_id
+    ),
+    CONSTRAINT outcome_source_scope_uk UNIQUE NULLS NOT DISTINCT (
+        market_target_outcome_source_id,
+        market_target_outcome_revision_id, market_target_outcome_id,
+        revision_ordinal, target_checkpoint_id, source_kind,
+        event_start, event_end, known_at
+    ),
+    CONSTRAINT outcome_source_revision_fk FOREIGN KEY (
+        market_target_outcome_revision_id, market_target_outcome_id,
+        revision_ordinal, observation_cutoff, knowledge_cutoff
+    ) REFERENCES mra.market_target_outcome_revision(
+        market_target_outcome_revision_id, market_target_outcome_id,
+        revision_ordinal, observation_cutoff, knowledge_cutoff
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT outcome_source_checkpoint_fk FOREIGN KEY (
+        target_checkpoint_id, target_definition_id
+    ) REFERENCES mra.target_checkpoint(
+        target_checkpoint_id, target_definition_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT outcome_source_observation_provenance_fk FOREIGN KEY (
+        capture_id, provider_product_id
+    ) REFERENCES mra.data_capture(
+        capture_id, provider_product_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT outcome_source_session_provenance_fk FOREIGN KEY (
+        session_capture_id, session_provider_product_id
+    ) REFERENCES mra.data_capture(
+        capture_id, provider_product_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT outcome_source_session_fk FOREIGN KEY (
+        trading_session_id, exchange, session_date, timezone_name,
+        session_open_at, session_close_at, session_capture_id,
+        session_recorded_at, session_known_at
+    ) REFERENCES mra.trading_session(
+        session_id, exchange, session_date, timezone_name,
+        open_at, close_at, source_capture_id, recorded_at, known_at
+    ) ON DELETE RESTRICT,
+    CONSTRAINT outcome_source_bar_fk FOREIGN KEY (
+        bar_revision_id, provider_product_id, capture_id,
+        instrument_id, trading_session_id, timeframe, price_basis,
+        event_start, event_end, bar_revision, source_recorded_at, known_at
+    ) REFERENCES mra.market_bar_revision(
+        bar_revision_id, provider_product_id, capture_id,
+        instrument_id, session_id, timeframe, price_basis,
+        event_start, event_end, revision, recorded_at, known_at
+    ) ON DELETE RESTRICT,
+    CONSTRAINT outcome_source_gap_fk FOREIGN KEY (
+        source_gap_id, provider_product_id, capture_id,
+        instrument_id, trading_session_id, timeframe, price_basis,
+        event_start, event_end, source_gap_kind, source_gap_reason_code,
+        source_recorded_at, known_at
+    ) REFERENCES mra.source_gap(
+        gap_id, provider_product_id, capture_id,
+        instrument_id, session_id, timeframe, price_basis,
+        event_start, event_end, gap_kind, reason_code,
+        recorded_at, known_at
+    ) ON DELETE RESTRICT,
+    CONSTRAINT outcome_source_shape_ck CHECK (
+        source_ordinal > 0 AND session_offset > 0
+        AND exchange IS NOT NULL AND session_date IS NOT NULL
+        AND timezone_name IS NOT NULL
+        AND session_open_at IS NOT NULL AND session_close_at IS NOT NULL
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+        AND created_at >= source_recorded_at
+        AND (
+            (source_kind = 'TRADING_SESSION'
+             AND source_role = 'CALENDAR_SESSION'
+             AND provider_product_id = session_provider_product_id
+             AND capture_id = session_capture_id
+             AND source_recorded_at = session_recorded_at
+             AND known_at = session_known_at
+             AND target_checkpoint_id IS NULL
+             AND instrument_id IS NULL
+             AND exchange IS NOT NULL AND session_date IS NOT NULL
+             AND timezone_name IS NOT NULL
+             AND session_open_at IS NOT NULL AND session_close_at IS NOT NULL
+             AND timeframe IS NULL AND price_basis IS NULL
+             AND event_start IS NULL AND event_end IS NULL
+             AND bar_revision_id IS NULL AND bar_revision IS NULL
+             AND source_gap_id IS NULL AND source_gap_kind IS NULL
+             AND source_gap_reason_code IS NULL)
+            OR
+            (source_kind = 'BAR_REVISION'
+             AND source_role = 'OUTCOME_OBSERVATION'
+             AND target_checkpoint_id IS NOT NULL
+             AND instrument_id IS NOT NULL
+             AND timeframe IS NOT NULL AND price_basis IS NOT NULL
+             AND event_start IS NOT NULL AND event_end IS NOT NULL
+             AND bar_revision_id IS NOT NULL AND bar_revision > 0
+             AND source_gap_id IS NULL AND source_gap_kind IS NULL
+             AND source_gap_reason_code IS NULL)
+            OR
+            (source_kind = 'SOURCE_GAP'
+             AND source_role = 'OUTCOME_OBSERVATION'
+             AND target_checkpoint_id IS NOT NULL
+             AND instrument_id IS NOT NULL
+             AND timeframe IS NOT NULL AND price_basis IS NOT NULL
+             AND event_start IS NOT NULL AND event_end IS NOT NULL
+             AND source_gap_id IS NOT NULL
+             AND source_gap_kind IN (
+                 'MISSING', 'PLACEHOLDER', 'PROVIDER_FAILURE',
+                 'CONFLICT', 'INVALID_OHLC'
+             )
+             AND source_gap_reason_code IS NOT NULL
+             AND bar_revision_id IS NULL AND bar_revision IS NULL)
+        )
+    ),
+    CONSTRAINT outcome_source_cutoffs_ck CHECK (
+        known_at >= source_recorded_at
+        AND session_known_at >= session_recorded_at
+        AND known_at <= knowledge_cutoff
+        AND session_known_at <= knowledge_cutoff
+        AND (event_end IS NULL OR event_end <= observation_cutoff)
+        AND created_at >= greatest(known_at, session_known_at)
+    )
+);
+CREATE INDEX outcome_source_revision_idx
+    ON mra.market_target_outcome_source (
+        market_target_outcome_revision_id, source_ordinal
+    );
+CREATE INDEX outcome_source_revision_authority_idx
+    ON mra.market_target_outcome_source (
+        market_target_outcome_revision_id, market_target_outcome_id,
+        revision_ordinal, observation_cutoff, knowledge_cutoff
+    );
+CREATE INDEX outcome_source_bar_idx
+    ON mra.market_target_outcome_source (bar_revision_id)
+    WHERE bar_revision_id IS NOT NULL;
+CREATE INDEX outcome_source_gap_idx
+    ON mra.market_target_outcome_source (source_gap_id)
+    WHERE source_gap_id IS NOT NULL;
+CREATE INDEX outcome_source_session_idx
+    ON mra.market_target_outcome_source (
+        trading_session_id, session_offset,
+        market_target_outcome_revision_id
+    );
+CREATE INDEX outcome_source_capture_product_idx
+    ON mra.market_target_outcome_source (capture_id, provider_product_id);
+CREATE INDEX outcome_source_session_capture_product_idx
+    ON mra.market_target_outcome_source (
+        session_capture_id, session_provider_product_id
+    );
+CREATE INDEX outcome_source_session_authority_idx
+    ON mra.market_target_outcome_source (
+        trading_session_id, exchange, session_date, timezone_name,
+        session_open_at, session_close_at, session_capture_id,
+        session_recorded_at, session_known_at
+    );
+CREATE INDEX outcome_source_bar_authority_idx
+    ON mra.market_target_outcome_source (
+        bar_revision_id, provider_product_id, capture_id,
+        instrument_id, trading_session_id, timeframe, price_basis,
+        event_start, event_end, bar_revision, source_recorded_at, known_at
+    ) WHERE bar_revision_id IS NOT NULL;
+CREATE INDEX outcome_source_gap_authority_idx
+    ON mra.market_target_outcome_source (
+        source_gap_id, provider_product_id, capture_id,
+        instrument_id, trading_session_id, timeframe, price_basis,
+        event_start, event_end, source_gap_kind, source_gap_reason_code,
+        source_recorded_at, known_at
+    ) WHERE source_gap_id IS NOT NULL;
+CREATE INDEX outcome_source_checkpoint_idx
+    ON mra.market_target_outcome_source (
+        target_checkpoint_id, target_definition_id
+    ) WHERE target_checkpoint_id IS NOT NULL;
+
+CREATE TABLE mra.market_target_outcome_observation (
+    market_target_outcome_observation_id uuid PRIMARY KEY,
+    market_target_outcome_revision_id uuid NOT NULL,
+    market_target_outcome_id uuid NOT NULL,
+    revision_ordinal integer NOT NULL,
+    observation_ordinal integer NOT NULL,
+    target_definition_id uuid NOT NULL,
+    target_checkpoint_id uuid NOT NULL,
+    market_target_outcome_source_id uuid NOT NULL,
+    source_kind text NOT NULL,
+    value_status text NOT NULL,
+    availability_status text NOT NULL,
+    finality_status text NOT NULL,
+    selected_value numeric,
+    open_value numeric,
+    high_value numeric,
+    low_value numeric,
+    close_value numeric,
+    event_start timestamptz NOT NULL,
+    event_end timestamptz NOT NULL,
+    known_at timestamptz NOT NULL,
+    observation_cutoff timestamptz NOT NULL,
+    knowledge_cutoff timestamptz NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL,
+    CONSTRAINT outcome_observation_ordinal_uk UNIQUE (
+        market_target_outcome_revision_id, observation_ordinal
+    ),
+    CONSTRAINT outcome_observation_checkpoint_uk UNIQUE (
+        market_target_outcome_revision_id, target_checkpoint_id
+    ),
+    CONSTRAINT outcome_observation_source_uk UNIQUE (
+        market_target_outcome_revision_id, market_target_outcome_source_id
+    ),
+    CONSTRAINT outcome_observation_scope_uk UNIQUE (
+        market_target_outcome_observation_id,
+        market_target_outcome_revision_id, market_target_outcome_id,
+        revision_ordinal, target_definition_id, target_checkpoint_id
+    ),
+    CONSTRAINT outcome_observation_revision_fk FOREIGN KEY (
+        market_target_outcome_revision_id, market_target_outcome_id,
+        revision_ordinal, observation_cutoff, knowledge_cutoff
+    ) REFERENCES mra.market_target_outcome_revision(
+        market_target_outcome_revision_id, market_target_outcome_id,
+        revision_ordinal, observation_cutoff, knowledge_cutoff
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT outcome_observation_checkpoint_fk FOREIGN KEY (
+        target_checkpoint_id, target_definition_id
+    ) REFERENCES mra.target_checkpoint(
+        target_checkpoint_id, target_definition_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT outcome_observation_source_fk FOREIGN KEY (
+        market_target_outcome_source_id,
+        market_target_outcome_revision_id, market_target_outcome_id,
+        revision_ordinal, target_checkpoint_id, source_kind,
+        event_start, event_end, known_at
+    ) REFERENCES mra.market_target_outcome_source(
+        market_target_outcome_source_id,
+        market_target_outcome_revision_id, market_target_outcome_id,
+        revision_ordinal, target_checkpoint_id, source_kind,
+        event_start, event_end, known_at
+    ) ON DELETE RESTRICT,
+    CONSTRAINT outcome_observation_state_ck CHECK (
+        observation_ordinal > 0
+        AND source_kind IN ('BAR_REVISION', 'SOURCE_GAP')
+        AND value_status IN ('PARTIAL', 'COMPLETE', 'UNAVAILABLE', 'FAILED')
+        AND availability_status IN ('AVAILABLE', 'UNAVAILABLE', 'FAILED')
+        AND finality_status = 'UNKNOWN'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+        AND (
+            (value_status IN ('COMPLETE', 'PARTIAL')
+             AND source_kind = 'BAR_REVISION'
+             AND availability_status = 'AVAILABLE'
+             AND selected_value IS NOT NULL
+             AND open_value IS NOT NULL AND high_value IS NOT NULL
+             AND low_value IS NOT NULL AND close_value IS NOT NULL
+             AND selected_value > 0
+             AND high_value >= greatest(open_value, low_value, close_value)
+             AND low_value <= least(open_value, high_value, close_value))
+            OR
+            (value_status = 'UNAVAILABLE'
+             AND source_kind = 'SOURCE_GAP'
+             AND availability_status = 'UNAVAILABLE'
+             AND selected_value IS NULL AND open_value IS NULL
+             AND high_value IS NULL AND low_value IS NULL
+             AND close_value IS NULL)
+            OR
+            (value_status = 'FAILED'
+             AND source_kind = 'SOURCE_GAP'
+             AND availability_status = 'FAILED'
+             AND selected_value IS NULL AND open_value IS NULL
+             AND high_value IS NULL AND low_value IS NULL
+             AND close_value IS NULL)
+        )
+        AND event_end > event_start
+        AND event_end <= observation_cutoff
+        AND known_at <= knowledge_cutoff
+        AND created_at >= known_at
+    )
+);
+CREATE INDEX outcome_observation_revision_idx
+    ON mra.market_target_outcome_observation (
+        market_target_outcome_revision_id, observation_ordinal
+    );
+CREATE INDEX outcome_observation_revision_authority_idx
+    ON mra.market_target_outcome_observation (
+        market_target_outcome_revision_id, market_target_outcome_id,
+        revision_ordinal, observation_cutoff, knowledge_cutoff
+    );
+CREATE INDEX outcome_observation_source_idx
+    ON mra.market_target_outcome_observation (
+        market_target_outcome_source_id,
+        market_target_outcome_revision_id
+    );
+CREATE INDEX outcome_observation_source_authority_idx
+    ON mra.market_target_outcome_observation (
+        market_target_outcome_source_id,
+        market_target_outcome_revision_id, market_target_outcome_id,
+        revision_ordinal, target_checkpoint_id, source_kind,
+        event_start, event_end, known_at
+    );
+CREATE INDEX outcome_observation_checkpoint_idx
+    ON mra.market_target_outcome_observation (
+        target_checkpoint_id, target_definition_id
+    );
+
+CREATE TABLE mra.market_target_outcome_metric (
+    market_target_outcome_metric_id uuid PRIMARY KEY,
+    market_target_outcome_revision_id uuid NOT NULL,
+    market_target_outcome_id uuid NOT NULL,
+    revision_ordinal integer NOT NULL,
+    target_definition_id uuid NOT NULL,
+    target_metric_definition_id uuid NOT NULL,
+    metric_ordinal integer NOT NULL,
+    metric_code text NOT NULL,
+    metric_kind text NOT NULL,
+    value_type text NOT NULL,
+    unit text NOT NULL,
+    completion_rule text NOT NULL,
+    barrier_direction text,
+    barrier_threshold numeric,
+    value_status text NOT NULL,
+    availability_status text NOT NULL,
+    finality_status text NOT NULL,
+    decimal_value numeric,
+    boolean_value boolean,
+    first_passage_at timestamptz,
+    algorithm_code text NOT NULL,
+    algorithm_version text NOT NULL,
+    algorithm_sha256 text NOT NULL,
+    code_artifact_id uuid NOT NULL,
+    code_content_sha256 text NOT NULL,
+    code_size_bytes bigint NOT NULL,
+    config_artifact_id uuid NOT NULL,
+    config_content_sha256 text NOT NULL,
+    config_size_bytes bigint NOT NULL,
+    target_metric_sha256 text NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL,
+    CONSTRAINT outcome_metric_ordinal_uk UNIQUE (
+        market_target_outcome_revision_id, metric_ordinal
+    ),
+    CONSTRAINT outcome_metric_definition_uk UNIQUE (
+        market_target_outcome_revision_id, target_metric_definition_id
+    ),
+    CONSTRAINT outcome_metric_scope_uk UNIQUE (
+        market_target_outcome_metric_id,
+        market_target_outcome_revision_id, market_target_outcome_id,
+        revision_ordinal, target_definition_id,
+        target_metric_definition_id
+    ),
+    CONSTRAINT outcome_metric_revision_fk FOREIGN KEY (
+        market_target_outcome_revision_id, market_target_outcome_id,
+        revision_ordinal
+    ) REFERENCES mra.market_target_outcome_revision(
+        market_target_outcome_revision_id, market_target_outcome_id,
+        revision_ordinal
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT outcome_metric_definition_fk FOREIGN KEY (
+        target_metric_definition_id, target_definition_id,
+        metric_ordinal, metric_code, metric_kind, value_type, unit,
+        completion_rule, barrier_direction, barrier_threshold,
+        algorithm_code, algorithm_version, algorithm_sha256,
+        code_artifact_id, code_content_sha256, code_size_bytes,
+        config_artifact_id, config_content_sha256, config_size_bytes,
+        target_metric_sha256
+    ) REFERENCES mra.target_metric_definition(
+        target_metric_definition_id, target_definition_id,
+        ordinal, metric_code, metric_kind, value_type, unit,
+        completion_rule, barrier_direction, barrier_threshold,
+        algorithm_code, algorithm_version, algorithm_sha256,
+        code_artifact_id, code_content_sha256, code_size_bytes,
+        config_artifact_id, config_content_sha256, config_size_bytes,
+        content_sha256
+    ) ON DELETE RESTRICT,
+    CONSTRAINT outcome_metric_state_ck CHECK (
+        metric_ordinal > 0
+        AND metric_kind IN (
+            'SIMPLE_RETURN', 'MAX_FAVORABLE_EXCURSION',
+            'MAX_ADVERSE_EXCURSION', 'BARRIER_HIT',
+            'OBSERVATION_VALUE'
+        )
+        AND value_type IN ('DECIMAL', 'BOOLEAN')
+        AND unit IN ('RATIO', 'PRICE', 'BOOLEAN')
+        AND completion_rule IN ('REQUIRED', 'OPTIONAL')
+        AND value_status IN ('PARTIAL', 'COMPLETE', 'UNAVAILABLE', 'FAILED')
+        AND availability_status IN ('AVAILABLE', 'UNAVAILABLE', 'FAILED')
+        AND finality_status = 'UNKNOWN'
+        AND target_metric_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+        AND (
+            (value_status IN ('COMPLETE', 'PARTIAL')
+             AND availability_status = 'AVAILABLE'
+             AND ((value_type = 'DECIMAL'
+                   AND decimal_value IS NOT NULL AND boolean_value IS NULL)
+                  OR
+                  (value_type = 'BOOLEAN'
+                   AND decimal_value IS NULL AND boolean_value IS NOT NULL)))
+            OR
+            (value_status = 'UNAVAILABLE'
+             AND availability_status = 'UNAVAILABLE'
+             AND decimal_value IS NULL AND boolean_value IS NULL
+             AND first_passage_at IS NULL)
+            OR
+            (value_status = 'FAILED'
+             AND availability_status = 'FAILED'
+             AND decimal_value IS NULL AND boolean_value IS NULL
+             AND first_passage_at IS NULL)
+        )
+        AND (first_passage_at IS NULL OR metric_kind = 'BARRIER_HIT')
+        AND created_at >= first_passage_at
+    )
+);
+CREATE INDEX outcome_metric_revision_idx
+    ON mra.market_target_outcome_metric (
+        market_target_outcome_revision_id, metric_ordinal
+    );
+CREATE INDEX outcome_metric_revision_authority_idx
+    ON mra.market_target_outcome_metric (
+        market_target_outcome_revision_id, market_target_outcome_id,
+        revision_ordinal
+    );
+CREATE INDEX outcome_metric_definition_idx
+    ON mra.market_target_outcome_metric (
+        target_metric_definition_id, target_definition_id
+    );
+CREATE INDEX outcome_metric_definition_authority_idx
+    ON mra.market_target_outcome_metric (
+        target_metric_definition_id, target_definition_id,
+        metric_ordinal, metric_code, metric_kind, value_type, unit,
+        completion_rule, barrier_direction, barrier_threshold,
+        algorithm_code, algorithm_version, algorithm_sha256,
+        code_artifact_id, code_content_sha256, code_size_bytes,
+        config_artifact_id, config_content_sha256, config_size_bytes,
+        target_metric_sha256
+    );
+
+CREATE TABLE mra.market_target_outcome_metric_reference (
+    market_target_outcome_metric_reference_id uuid PRIMARY KEY,
+    market_target_outcome_revision_id uuid NOT NULL,
+    market_target_outcome_id uuid NOT NULL,
+    revision_ordinal integer NOT NULL,
+    dependency_ordinal integer NOT NULL,
+    target_definition_id uuid NOT NULL,
+    target_metric_definition_id uuid NOT NULL,
+    market_target_outcome_metric_id uuid NOT NULL,
+    target_metric_dependency_id uuid NOT NULL,
+    target_checkpoint_id uuid NOT NULL,
+    dependency_role text NOT NULL,
+    target_dependency_sha256 text NOT NULL,
+    decision_reference_observation_id uuid NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL,
+    CONSTRAINT outcome_metric_reference_ordinal_uk UNIQUE (
+        market_target_outcome_revision_id, dependency_ordinal
+    ),
+    CONSTRAINT outcome_metric_reference_dependency_uk UNIQUE (
+        market_target_outcome_revision_id, target_metric_dependency_id
+    ),
+    CONSTRAINT outcome_metric_reference_revision_fk FOREIGN KEY (
+        market_target_outcome_revision_id, market_target_outcome_id,
+        revision_ordinal
+    ) REFERENCES mra.market_target_outcome_revision(
+        market_target_outcome_revision_id, market_target_outcome_id,
+        revision_ordinal
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT outcome_metric_reference_metric_fk FOREIGN KEY (
+        market_target_outcome_metric_id,
+        market_target_outcome_revision_id, market_target_outcome_id,
+        revision_ordinal, target_definition_id,
+        target_metric_definition_id
+    ) REFERENCES mra.market_target_outcome_metric(
+        market_target_outcome_metric_id,
+        market_target_outcome_revision_id, market_target_outcome_id,
+        revision_ordinal, target_definition_id,
+        target_metric_definition_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT outcome_metric_reference_dependency_fk FOREIGN KEY (
+        target_metric_dependency_id, target_definition_id,
+        target_metric_definition_id, target_checkpoint_id,
+        dependency_ordinal, dependency_role, target_dependency_sha256
+    ) REFERENCES mra.target_metric_dependency(
+        target_metric_dependency_id, target_definition_id,
+        target_metric_definition_id, target_checkpoint_id,
+        ordinal, dependency_role, content_sha256
+    ) ON DELETE RESTRICT,
+    CONSTRAINT outcome_metric_reference_root_fk FOREIGN KEY (
+        market_target_outcome_id, decision_reference_observation_id
+    ) REFERENCES mra.market_target_outcome(
+        market_target_outcome_id, decision_reference_observation_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT outcome_metric_reference_observation_fk FOREIGN KEY (
+        decision_reference_observation_id
+    ) REFERENCES mra.decision_reference_observation(
+        decision_reference_observation_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT outcome_metric_reference_role_ck CHECK (
+        dependency_ordinal > 0
+        AND dependency_role = 'REFERENCE'
+        AND target_dependency_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+CREATE INDEX outcome_metric_reference_revision_idx
+    ON mra.market_target_outcome_metric_reference (
+        market_target_outcome_revision_id, dependency_ordinal
+    );
+CREATE INDEX outcome_metric_reference_revision_authority_idx
+    ON mra.market_target_outcome_metric_reference (
+        market_target_outcome_revision_id, market_target_outcome_id,
+        revision_ordinal
+    );
+CREATE INDEX outcome_metric_reference_observation_idx
+    ON mra.market_target_outcome_metric_reference (
+        decision_reference_observation_id, market_target_outcome_id
+    );
+CREATE INDEX outcome_metric_reference_metric_idx
+    ON mra.market_target_outcome_metric_reference (
+        market_target_outcome_metric_id,
+        market_target_outcome_revision_id
+    );
+CREATE INDEX outcome_metric_reference_metric_authority_idx
+    ON mra.market_target_outcome_metric_reference (
+        market_target_outcome_metric_id,
+        market_target_outcome_revision_id, market_target_outcome_id,
+        revision_ordinal, target_definition_id,
+        target_metric_definition_id
+    );
+CREATE INDEX outcome_metric_reference_dependency_authority_idx
+    ON mra.market_target_outcome_metric_reference (
+        target_metric_dependency_id, target_definition_id,
+        target_metric_definition_id, target_checkpoint_id,
+        dependency_ordinal, dependency_role, target_dependency_sha256
+    );
+CREATE INDEX outcome_metric_reference_root_authority_idx
+    ON mra.market_target_outcome_metric_reference (
+        market_target_outcome_id, decision_reference_observation_id
+    );
+
+CREATE TABLE mra.market_target_outcome_metric_observation (
+    market_target_outcome_metric_observation_id uuid PRIMARY KEY,
+    market_target_outcome_revision_id uuid NOT NULL,
+    market_target_outcome_id uuid NOT NULL,
+    revision_ordinal integer NOT NULL,
+    dependency_ordinal integer NOT NULL,
+    target_definition_id uuid NOT NULL,
+    target_metric_definition_id uuid NOT NULL,
+    market_target_outcome_metric_id uuid NOT NULL,
+    target_metric_dependency_id uuid NOT NULL,
+    target_checkpoint_id uuid NOT NULL,
+    dependency_role text NOT NULL,
+    target_dependency_sha256 text NOT NULL,
+    market_target_outcome_observation_id uuid NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL,
+    CONSTRAINT outcome_metric_observation_ordinal_uk UNIQUE (
+        market_target_outcome_revision_id, dependency_ordinal
+    ),
+    CONSTRAINT outcome_metric_observation_dependency_uk UNIQUE (
+        market_target_outcome_revision_id, target_metric_dependency_id
+    ),
+    CONSTRAINT outcome_metric_observation_revision_fk FOREIGN KEY (
+        market_target_outcome_revision_id, market_target_outcome_id,
+        revision_ordinal
+    ) REFERENCES mra.market_target_outcome_revision(
+        market_target_outcome_revision_id, market_target_outcome_id,
+        revision_ordinal
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT outcome_metric_observation_metric_fk FOREIGN KEY (
+        market_target_outcome_metric_id,
+        market_target_outcome_revision_id, market_target_outcome_id,
+        revision_ordinal, target_definition_id,
+        target_metric_definition_id
+    ) REFERENCES mra.market_target_outcome_metric(
+        market_target_outcome_metric_id,
+        market_target_outcome_revision_id, market_target_outcome_id,
+        revision_ordinal, target_definition_id,
+        target_metric_definition_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT outcome_metric_observation_dependency_fk FOREIGN KEY (
+        target_metric_dependency_id, target_definition_id,
+        target_metric_definition_id, target_checkpoint_id,
+        dependency_ordinal, dependency_role, target_dependency_sha256
+    ) REFERENCES mra.target_metric_dependency(
+        target_metric_dependency_id, target_definition_id,
+        target_metric_definition_id, target_checkpoint_id,
+        ordinal, dependency_role, content_sha256
+    ) ON DELETE RESTRICT,
+    CONSTRAINT outcome_metric_observation_fact_fk FOREIGN KEY (
+        market_target_outcome_observation_id,
+        market_target_outcome_revision_id, market_target_outcome_id,
+        revision_ordinal, target_definition_id, target_checkpoint_id
+    ) REFERENCES mra.market_target_outcome_observation(
+        market_target_outcome_observation_id,
+        market_target_outcome_revision_id, market_target_outcome_id,
+        revision_ordinal, target_definition_id, target_checkpoint_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT outcome_metric_observation_role_ck CHECK (
+        dependency_ordinal > 0
+        AND dependency_role IN ('OBSERVATION', 'PATH_MEMBER')
+        AND target_dependency_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+CREATE INDEX outcome_metric_observation_revision_idx
+    ON mra.market_target_outcome_metric_observation (
+        market_target_outcome_revision_id, dependency_ordinal
+    );
+CREATE INDEX outcome_metric_observation_revision_authority_idx
+    ON mra.market_target_outcome_metric_observation (
+        market_target_outcome_revision_id, market_target_outcome_id,
+        revision_ordinal
+    );
+CREATE INDEX outcome_metric_observation_fact_idx
+    ON mra.market_target_outcome_metric_observation (
+        market_target_outcome_observation_id,
+        market_target_outcome_revision_id
+    );
+CREATE INDEX outcome_metric_observation_fact_authority_idx
+    ON mra.market_target_outcome_metric_observation (
+        market_target_outcome_observation_id,
+        market_target_outcome_revision_id, market_target_outcome_id,
+        revision_ordinal, target_definition_id, target_checkpoint_id
+    );
+CREATE INDEX outcome_metric_observation_metric_idx
+    ON mra.market_target_outcome_metric_observation (
+        market_target_outcome_metric_id,
+        market_target_outcome_revision_id
+    );
+CREATE INDEX outcome_metric_observation_metric_authority_idx
+    ON mra.market_target_outcome_metric_observation (
+        market_target_outcome_metric_id,
+        market_target_outcome_revision_id, market_target_outcome_id,
+        revision_ordinal, target_definition_id,
+        target_metric_definition_id
+    );
+CREATE INDEX outcome_metric_observation_dependency_authority_idx
+    ON mra.market_target_outcome_metric_observation (
+        target_metric_dependency_id, target_definition_id,
+        target_metric_definition_id, target_checkpoint_id,
+        dependency_ordinal, dependency_role, target_dependency_sha256
+    );
+
+CREATE TABLE mra.market_target_outcome_reason (
+    market_target_outcome_reason_id uuid PRIMARY KEY,
+    market_target_outcome_revision_id uuid NOT NULL,
+    market_target_outcome_id uuid NOT NULL,
+    revision_ordinal integer NOT NULL,
+    reason_ordinal integer NOT NULL,
+    reason_dimension text NOT NULL,
+    reason_code text NOT NULL,
+    market_target_outcome_source_id uuid,
+    market_target_outcome_observation_id uuid,
+    market_target_outcome_metric_id uuid,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL,
+    CONSTRAINT outcome_reason_ordinal_uk UNIQUE (
+        market_target_outcome_revision_id, reason_ordinal
+    ),
+    CONSTRAINT outcome_reason_identity_uk UNIQUE NULLS NOT DISTINCT (
+        market_target_outcome_revision_id, reason_dimension, reason_code,
+        market_target_outcome_source_id,
+        market_target_outcome_observation_id,
+        market_target_outcome_metric_id
+    ),
+    CONSTRAINT outcome_reason_revision_fk FOREIGN KEY (
+        market_target_outcome_revision_id, market_target_outcome_id,
+        revision_ordinal
+    ) REFERENCES mra.market_target_outcome_revision(
+        market_target_outcome_revision_id, market_target_outcome_id,
+        revision_ordinal
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT outcome_reason_source_fk FOREIGN KEY (
+        market_target_outcome_source_id
+    ) REFERENCES mra.market_target_outcome_source(
+        market_target_outcome_source_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT outcome_reason_observation_fk FOREIGN KEY (
+        market_target_outcome_observation_id
+    ) REFERENCES mra.market_target_outcome_observation(
+        market_target_outcome_observation_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT outcome_reason_metric_fk FOREIGN KEY (
+        market_target_outcome_metric_id
+    ) REFERENCES mra.market_target_outcome_metric(
+        market_target_outcome_metric_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT outcome_reason_shape_ck CHECK (
+        reason_ordinal > 0
+        AND reason_dimension IN ('REVISION', 'SOURCE', 'OBSERVATION', 'METRIC')
+        AND reason_code ~ '^[A-Z][A-Z0-9_]{0,99}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+        AND (
+            (reason_dimension = 'REVISION'
+             AND market_target_outcome_source_id IS NULL
+             AND market_target_outcome_observation_id IS NULL
+             AND market_target_outcome_metric_id IS NULL)
+            OR
+            (reason_dimension = 'SOURCE'
+             AND market_target_outcome_source_id IS NOT NULL
+             AND market_target_outcome_observation_id IS NULL
+             AND market_target_outcome_metric_id IS NULL)
+            OR
+            (reason_dimension = 'OBSERVATION'
+             AND market_target_outcome_source_id IS NULL
+             AND market_target_outcome_observation_id IS NOT NULL
+             AND market_target_outcome_metric_id IS NULL)
+            OR
+            (reason_dimension = 'METRIC'
+             AND market_target_outcome_source_id IS NULL
+             AND market_target_outcome_observation_id IS NULL
+             AND market_target_outcome_metric_id IS NOT NULL)
+        )
+    )
+);
+CREATE INDEX outcome_reason_revision_idx
+    ON mra.market_target_outcome_reason (
+        market_target_outcome_revision_id, reason_ordinal
+    );
+CREATE INDEX outcome_reason_revision_authority_idx
+    ON mra.market_target_outcome_reason (
+        market_target_outcome_revision_id, market_target_outcome_id,
+        revision_ordinal
+    );
+CREATE INDEX outcome_reason_source_idx
+    ON mra.market_target_outcome_reason (market_target_outcome_source_id)
+    WHERE market_target_outcome_source_id IS NOT NULL;
+CREATE INDEX outcome_reason_observation_idx
+    ON mra.market_target_outcome_reason (market_target_outcome_observation_id)
+    WHERE market_target_outcome_observation_id IS NOT NULL;
+CREATE INDEX outcome_reason_metric_idx
+    ON mra.market_target_outcome_reason (market_target_outcome_metric_id)
+    WHERE market_target_outcome_metric_id IS NOT NULL;
+
+CREATE FUNCTION mra.guard_open_outcome_child_insert()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM mra.market_target_outcome_revision AS revision
+        WHERE revision.market_target_outcome_revision_id =
+              NEW.market_target_outcome_revision_id
+    ) THEN
+        RAISE EXCEPTION 'MarketTargetOutcomeRevision is already closed'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.validate_outcome_revision_predecessor()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    leaf_revision_id uuid;
+    leaf_revision_ordinal integer;
+BEGIN
+    PERFORM 1
+    FROM mra.market_target_outcome
+    WHERE market_target_outcome_id = NEW.market_target_outcome_id
+    FOR UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'MarketTargetOutcome root is absent'
+            USING ERRCODE = '23503';
+    END IF;
+
+    SELECT revision.market_target_outcome_revision_id,
+           revision.revision_ordinal
+    INTO leaf_revision_id, leaf_revision_ordinal
+    FROM mra.market_target_outcome_revision AS revision
+    WHERE revision.market_target_outcome_id = NEW.market_target_outcome_id
+      AND NOT EXISTS (
+          SELECT 1
+          FROM mra.market_target_outcome_revision AS successor
+          WHERE successor.supersedes_revision_id =
+                revision.market_target_outcome_revision_id
+      )
+    ORDER BY revision.revision_ordinal DESC
+    LIMIT 1
+    ;
+
+    IF NEW.revision_ordinal = 1 THEN
+        IF leaf_revision_id IS NOT NULL
+           OR NEW.supersedes_revision_id IS NOT NULL THEN
+            RAISE EXCEPTION 'Outcome revision one requires an empty root'
+                USING ERRCODE = '55000';
+        END IF;
+    ELSIF leaf_revision_id IS NULL
+       OR NEW.supersedes_revision_id <>
+          leaf_revision_id
+       OR NEW.supersedes_revision_ordinal <> leaf_revision_ordinal
+       OR NEW.revision_ordinal <> leaf_revision_ordinal + 1 THEN
+        RAISE EXCEPTION 'Outcome revision must directly supersede the current leaf'
+            USING ERRCODE = '40001';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.validate_outcome_revision_closure()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    actual_source_count bigint;
+    actual_observation_count bigint;
+    actual_metric_count bigint;
+    actual_reference_dependency_count bigint;
+    actual_observation_dependency_count bigint;
+    actual_reason_count bigint;
+    expected_observation_count bigint;
+    expected_session_count bigint;
+    expected_metric_count bigint;
+    expected_reference_dependency_count bigint;
+    expected_observation_dependency_count bigint;
+    source_min integer;
+    source_max integer;
+    observation_min integer;
+    observation_max integer;
+    metric_min integer;
+    metric_max integer;
+    reason_min integer;
+    reason_max integer;
+    actual_source_hash text;
+    actual_observation_hash text;
+    actual_metric_hash text;
+    actual_reference_dependency_hash text;
+    actual_observation_dependency_hash text;
+    actual_reason_hash text;
+    actual_definition_summary_hash text;
+    required_count bigint;
+    required_complete_count bigint;
+    required_unavailable_count bigint;
+    required_failed_count bigint;
+BEGIN
+    SELECT count(*), min(source_ordinal), max(source_ordinal),
+           mra.canonical_sha256(
+               replace(
+                   COALESCE(
+                       json_agg(
+                           json_build_object(
+                               'content_sha256', content_sha256,
+                               'market_target_outcome_source_id',
+                                   market_target_outcome_source_id,
+                               'ordinal', source_ordinal
+                           ) ORDER BY source_ordinal
+                       )::text,
+                       '[]'
+                   ),
+                   ' ', ''
+               )
+           )
+    INTO actual_source_count, source_min, source_max, actual_source_hash
+    FROM mra.market_target_outcome_source
+    WHERE market_target_outcome_revision_id =
+          NEW.market_target_outcome_revision_id;
+
+    SELECT count(*), min(observation_ordinal), max(observation_ordinal),
+           mra.canonical_sha256(
+               replace(
+                   COALESCE(
+                       json_agg(
+                           json_build_object(
+                               'content_sha256', content_sha256,
+                               'market_target_outcome_observation_id',
+                                   market_target_outcome_observation_id,
+                               'ordinal', observation_ordinal
+                           ) ORDER BY observation_ordinal
+                       )::text,
+                       '[]'
+                   ),
+                   ' ', ''
+               )
+           )
+    INTO actual_observation_count, observation_min, observation_max,
+         actual_observation_hash
+    FROM mra.market_target_outcome_observation
+    WHERE market_target_outcome_revision_id =
+          NEW.market_target_outcome_revision_id;
+
+    SELECT count(*), min(metric_ordinal), max(metric_ordinal),
+           mra.canonical_sha256(
+               replace(
+                   COALESCE(
+                       json_agg(
+                           json_build_object(
+                               'content_sha256', content_sha256,
+                               'market_target_outcome_metric_id',
+                                   market_target_outcome_metric_id,
+                               'ordinal', metric_ordinal
+                           ) ORDER BY metric_ordinal
+                       )::text,
+                       '[]'
+                   ),
+                   ' ', ''
+               )
+           )
+    INTO actual_metric_count, metric_min, metric_max, actual_metric_hash
+    FROM mra.market_target_outcome_metric
+    WHERE market_target_outcome_revision_id =
+          NEW.market_target_outcome_revision_id;
+
+    SELECT count(*),
+           mra.canonical_sha256(
+               replace(
+                   COALESCE(
+                       json_agg(
+                           json_build_object(
+                               'content_sha256', content_sha256,
+                               'market_target_outcome_metric_reference_id',
+                                   market_target_outcome_metric_reference_id,
+                               'ordinal', dependency_ordinal
+                           ) ORDER BY dependency_ordinal
+                       )::text,
+                       '[]'
+                   ),
+                   ' ', ''
+               )
+           )
+    INTO actual_reference_dependency_count,
+         actual_reference_dependency_hash
+    FROM mra.market_target_outcome_metric_reference
+    WHERE market_target_outcome_revision_id =
+          NEW.market_target_outcome_revision_id;
+
+    SELECT count(*),
+           mra.canonical_sha256(
+               replace(
+                   COALESCE(
+                       json_agg(
+                           json_build_object(
+                               'content_sha256', content_sha256,
+                               'market_target_outcome_metric_observation_id',
+                                   market_target_outcome_metric_observation_id,
+                               'ordinal', dependency_ordinal
+                           ) ORDER BY dependency_ordinal
+                       )::text,
+                       '[]'
+                   ),
+                   ' ', ''
+               )
+           )
+    INTO actual_observation_dependency_count,
+         actual_observation_dependency_hash
+    FROM mra.market_target_outcome_metric_observation
+    WHERE market_target_outcome_revision_id =
+          NEW.market_target_outcome_revision_id;
+
+    SELECT count(*), min(reason_ordinal), max(reason_ordinal),
+           mra.canonical_sha256(
+               replace(
+                   COALESCE(
+                       json_agg(
+                           json_build_object(
+                               'content_sha256', content_sha256,
+                               'market_target_outcome_reason_id',
+                                   market_target_outcome_reason_id,
+                               'ordinal', reason_ordinal
+                           ) ORDER BY reason_ordinal
+                       )::text,
+                       '[]'
+                   ),
+                   ' ', ''
+               )
+           )
+    INTO actual_reason_count, reason_min, reason_max, actual_reason_hash
+    FROM mra.market_target_outcome_reason
+    WHERE market_target_outcome_revision_id =
+          NEW.market_target_outcome_revision_id;
+
+    SELECT count(*) FILTER (
+               WHERE checkpoint_role = 'OUTCOME_OBSERVATION'
+           ),
+           count(DISTINCT session_offset) FILTER (
+               WHERE checkpoint_role = 'OUTCOME_OBSERVATION'
+           )
+    INTO expected_observation_count, expected_session_count
+    FROM mra.target_checkpoint
+    WHERE target_definition_id = NEW.target_definition_id;
+
+    SELECT count(*)
+    INTO expected_metric_count
+    FROM mra.target_metric_definition
+    WHERE target_definition_id = NEW.target_definition_id;
+
+    SELECT count(*) FILTER (WHERE dependency_role = 'REFERENCE'),
+           count(*) FILTER (
+               WHERE dependency_role IN ('OBSERVATION', 'PATH_MEMBER')
+           )
+    INTO expected_reference_dependency_count,
+         expected_observation_dependency_count
+    FROM mra.target_metric_dependency
+    WHERE target_definition_id = NEW.target_definition_id;
+
+    IF actual_source_count <> NEW.source_count
+       OR actual_observation_count <> NEW.observation_count
+       OR actual_metric_count <> NEW.metric_count
+       OR actual_reference_dependency_count <>
+          NEW.reference_dependency_count
+       OR actual_observation_dependency_count <>
+          NEW.observation_dependency_count
+       OR actual_reason_count <> NEW.reason_count
+       OR actual_source_count <>
+          expected_observation_count + expected_session_count
+       OR actual_observation_count <> expected_observation_count
+       OR actual_metric_count <> expected_metric_count
+       OR actual_reference_dependency_count <>
+          expected_reference_dependency_count
+       OR actual_observation_dependency_count <>
+          expected_observation_dependency_count
+       OR source_min <> 1 OR source_max <> actual_source_count
+       OR observation_min <> 1
+       OR observation_max <> actual_observation_count
+       OR metric_min <> 1 OR metric_max <> actual_metric_count
+       OR (actual_reason_count > 0
+           AND (reason_min <> 1 OR reason_max <> actual_reason_count)) THEN
+        RAISE EXCEPTION 'Outcome revision child roster is incomplete'
+            USING ERRCODE = '55000';
+    END IF;
+
+    IF actual_source_hash <> NEW.source_roster_sha256
+       OR actual_observation_hash <> NEW.observation_roster_sha256
+       OR actual_metric_hash <> NEW.metric_roster_sha256
+       OR actual_reference_dependency_hash <>
+          NEW.reference_dependency_roster_sha256
+       OR actual_observation_dependency_hash <>
+          NEW.observation_dependency_roster_sha256
+       OR actual_reason_hash <> NEW.reason_roster_sha256 THEN
+        RAISE EXCEPTION 'Outcome revision roster hash does not reconcile'
+            USING ERRCODE = '55000';
+    END IF;
+
+    SELECT mra.canonical_sha256(
+        replace(
+            json_build_object(
+                'availability_status', NEW.availability_status,
+                'decision_reference_observation_id',
+                    NEW.decision_reference_observation_id,
+                'decision_reference_sha256', NEW.decision_reference_sha256,
+                'finality_status', NEW.finality_status,
+                'knowledge_cutoff',
+                    mra.canonical_timestamptz_text(NEW.knowledge_cutoff),
+                'metric_count', NEW.metric_count,
+                'metric_roster_sha256', NEW.metric_roster_sha256,
+                'observation_count', NEW.observation_count,
+                'observation_cutoff',
+                    mra.canonical_timestamptz_text(NEW.observation_cutoff),
+                'observation_dependency_count',
+                    NEW.observation_dependency_count,
+                'observation_dependency_roster_sha256',
+                    NEW.observation_dependency_roster_sha256,
+                'observation_roster_sha256',
+                    NEW.observation_roster_sha256,
+                'outcome_status', NEW.outcome_status,
+                'reason_count', NEW.reason_count,
+                'reason_roster_sha256', NEW.reason_roster_sha256,
+                'reference_dependency_count',
+                    NEW.reference_dependency_count,
+                'reference_dependency_roster_sha256',
+                    NEW.reference_dependency_roster_sha256,
+                'source_count', NEW.source_count,
+                'source_roster_sha256', NEW.source_roster_sha256,
+                'target_definition_id', NEW.target_definition_id,
+                'target_definition_sha256',
+                    (SELECT definition.content_sha256
+                     FROM mra.target_definition AS definition
+                     WHERE definition.target_definition_id =
+                           NEW.target_definition_id)
+            )::text,
+            ' ', ''
+        )
+    ) INTO actual_definition_summary_hash;
+    IF actual_definition_summary_hash <> NEW.definition_summary_sha256 THEN
+        RAISE EXCEPTION 'Outcome definition summary hash does not reconcile'
+            USING ERRCODE = '55000';
+    END IF;
+
+    IF EXISTS (
+        SELECT checkpoint.session_offset
+        FROM mra.target_checkpoint AS checkpoint
+        WHERE checkpoint.target_definition_id = NEW.target_definition_id
+          AND checkpoint.checkpoint_role = 'OUTCOME_OBSERVATION'
+        GROUP BY checkpoint.session_offset
+        EXCEPT
+        SELECT source.session_offset
+        FROM mra.market_target_outcome_source AS source
+        WHERE source.market_target_outcome_revision_id =
+              NEW.market_target_outcome_revision_id
+          AND source.source_kind = 'TRADING_SESSION'
+          AND source.source_role = 'CALENDAR_SESSION'
+    ) OR EXISTS (
+        SELECT 1
+        FROM mra.market_target_outcome_source AS source
+        WHERE source.market_target_outcome_revision_id =
+              NEW.market_target_outcome_revision_id
+          AND (
+              (source.source_kind = 'TRADING_SESSION'
+               AND source.source_role <> 'CALENDAR_SESSION')
+              OR
+              (source.source_kind IN ('BAR_REVISION', 'SOURCE_GAP')
+               AND source.source_role <> 'OUTCOME_OBSERVATION')
+          )
+    ) THEN
+        RAISE EXCEPTION 'Outcome exact Session/source coverage is incomplete'
+            USING ERRCODE = '55000';
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM mra.target_checkpoint AS checkpoint
+        LEFT JOIN mra.market_target_outcome_observation AS observation
+          ON observation.market_target_outcome_revision_id =
+             NEW.market_target_outcome_revision_id
+         AND observation.target_checkpoint_id =
+             checkpoint.target_checkpoint_id
+        WHERE checkpoint.target_definition_id = NEW.target_definition_id
+          AND checkpoint.checkpoint_role = 'OUTCOME_OBSERVATION'
+          AND observation.market_target_outcome_observation_id IS NULL
+    ) OR EXISTS (
+        SELECT 1
+        FROM mra.target_metric_definition AS definition
+        LEFT JOIN mra.market_target_outcome_metric AS metric
+          ON metric.market_target_outcome_revision_id =
+             NEW.market_target_outcome_revision_id
+         AND metric.target_metric_definition_id =
+             definition.target_metric_definition_id
+        WHERE definition.target_definition_id = NEW.target_definition_id
+          AND metric.market_target_outcome_metric_id IS NULL
+    ) OR EXISTS (
+        SELECT 1
+        FROM mra.target_metric_dependency AS dependency
+        LEFT JOIN mra.market_target_outcome_metric_reference AS reference
+          ON reference.market_target_outcome_revision_id =
+             NEW.market_target_outcome_revision_id
+         AND reference.target_metric_dependency_id =
+             dependency.target_metric_dependency_id
+        LEFT JOIN mra.market_target_outcome_metric_observation AS observation
+          ON observation.market_target_outcome_revision_id =
+             NEW.market_target_outcome_revision_id
+         AND observation.target_metric_dependency_id =
+             dependency.target_metric_dependency_id
+        WHERE dependency.target_definition_id = NEW.target_definition_id
+          AND (
+              (dependency.dependency_role = 'REFERENCE'
+               AND reference.market_target_outcome_metric_reference_id IS NULL)
+              OR
+              (dependency.dependency_role IN ('OBSERVATION', 'PATH_MEMBER')
+               AND observation.market_target_outcome_metric_observation_id IS NULL)
+          )
+    ) THEN
+        RAISE EXCEPTION 'Outcome Target fact/dependency closure is incomplete'
+            USING ERRCODE = '55000';
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM mra.market_target_outcome_observation AS observation
+        JOIN mra.market_target_outcome_source AS source
+          ON source.market_target_outcome_source_id =
+             observation.market_target_outcome_source_id
+        JOIN mra.market_bar_revision AS bar
+          ON bar.bar_revision_id = source.bar_revision_id
+        JOIN mra.target_checkpoint AS checkpoint
+          ON checkpoint.target_checkpoint_id =
+             observation.target_checkpoint_id
+        WHERE observation.market_target_outcome_revision_id =
+              NEW.market_target_outcome_revision_id
+          AND observation.source_kind = 'BAR_REVISION'
+          AND (
+              observation.open_value IS DISTINCT FROM bar.open_value
+              OR observation.high_value IS DISTINCT FROM bar.high_value
+              OR observation.low_value IS DISTINCT FROM bar.low_value
+              OR observation.close_value IS DISTINCT FROM bar.close_value
+              OR observation.selected_value IS DISTINCT FROM
+                 CASE checkpoint.value_field
+                     WHEN 'OPEN' THEN bar.open_value
+                     WHEN 'HIGH' THEN bar.high_value
+                     WHEN 'LOW' THEN bar.low_value
+                     WHEN 'CLOSE' THEN bar.close_value
+                 END
+          )
+    ) THEN
+        RAISE EXCEPTION 'Outcome observation differs from exact Market revision'
+            USING ERRCODE = '55000';
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM mra.market_target_outcome_reason AS reason
+        LEFT JOIN mra.market_target_outcome_source AS source
+          ON source.market_target_outcome_source_id =
+             reason.market_target_outcome_source_id
+        LEFT JOIN mra.market_target_outcome_observation AS observation
+          ON observation.market_target_outcome_observation_id =
+             reason.market_target_outcome_observation_id
+        LEFT JOIN mra.market_target_outcome_metric AS metric
+          ON metric.market_target_outcome_metric_id =
+             reason.market_target_outcome_metric_id
+        WHERE reason.market_target_outcome_revision_id =
+              NEW.market_target_outcome_revision_id
+          AND (
+              (source.market_target_outcome_source_id IS NOT NULL
+               AND source.market_target_outcome_revision_id <>
+                   NEW.market_target_outcome_revision_id)
+              OR
+              (observation.market_target_outcome_observation_id IS NOT NULL
+               AND observation.market_target_outcome_revision_id <>
+                   NEW.market_target_outcome_revision_id)
+              OR
+              (metric.market_target_outcome_metric_id IS NOT NULL
+               AND metric.market_target_outcome_revision_id <>
+                   NEW.market_target_outcome_revision_id)
+          )
+    ) THEN
+        RAISE EXCEPTION 'Outcome reason crosses revision boundary'
+            USING ERRCODE = '55000';
+    END IF;
+
+    SELECT count(*),
+           count(*) FILTER (WHERE metric.value_status = 'COMPLETE'),
+           count(*) FILTER (WHERE metric.value_status = 'UNAVAILABLE'),
+           count(*) FILTER (WHERE metric.value_status = 'FAILED')
+    INTO required_count, required_complete_count,
+         required_unavailable_count, required_failed_count
+    FROM mra.market_target_outcome_metric AS metric
+    WHERE metric.market_target_outcome_revision_id =
+          NEW.market_target_outcome_revision_id
+      AND metric.completion_rule = 'REQUIRED';
+
+    IF required_count = 0
+       OR (required_failed_count > 0
+           AND (NEW.outcome_status <> 'FAILED'
+                OR NEW.availability_status <> 'FAILED'))
+       OR (required_failed_count = 0
+           AND required_complete_count = required_count
+           AND (NEW.outcome_status <> 'COMPLETE'
+                OR NEW.availability_status <> 'AVAILABLE'))
+       OR (required_failed_count = 0
+           AND required_unavailable_count = required_count
+           AND (NEW.outcome_status <> 'UNAVAILABLE'
+                OR NEW.availability_status <> 'UNAVAILABLE'))
+       OR (required_failed_count = 0
+           AND required_complete_count <> required_count
+           AND required_unavailable_count <> required_count
+           AND (
+               NEW.outcome_status <> 'PARTIAL'
+               OR NEW.availability_status <>
+                  CASE WHEN required_unavailable_count > 0
+                       THEN 'UNAVAILABLE' ELSE 'AVAILABLE' END
+           )) THEN
+        RAISE EXCEPTION 'Outcome aggregate state does not reconcile'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
 CREATE FUNCTION mra.guard_open_target_child_insert()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -6368,6 +8018,54 @@ FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
 CREATE TRIGGER decision_reference_open_guard
 BEFORE INSERT ON mra.decision_reference_observation
 FOR EACH ROW EXECUTE FUNCTION mra.guard_open_decision_child_insert();
+CREATE TRIGGER market_target_outcome_append_only
+BEFORE UPDATE OR DELETE ON mra.market_target_outcome
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER market_target_outcome_revision_append_only
+BEFORE UPDATE OR DELETE ON mra.market_target_outcome_revision
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER outcome_revision_predecessor_guard
+BEFORE INSERT ON mra.market_target_outcome_revision
+FOR EACH ROW EXECUTE FUNCTION mra.validate_outcome_revision_predecessor();
+CREATE TRIGGER outcome_revision_closure_guard
+BEFORE INSERT ON mra.market_target_outcome_revision
+FOR EACH ROW EXECUTE FUNCTION mra.validate_outcome_revision_closure();
+CREATE TRIGGER market_target_outcome_source_append_only
+BEFORE UPDATE OR DELETE ON mra.market_target_outcome_source
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER outcome_source_open_guard
+BEFORE INSERT ON mra.market_target_outcome_source
+FOR EACH ROW EXECUTE FUNCTION mra.guard_open_outcome_child_insert();
+CREATE TRIGGER market_target_outcome_observation_append_only
+BEFORE UPDATE OR DELETE ON mra.market_target_outcome_observation
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER outcome_observation_open_guard
+BEFORE INSERT ON mra.market_target_outcome_observation
+FOR EACH ROW EXECUTE FUNCTION mra.guard_open_outcome_child_insert();
+CREATE TRIGGER market_target_outcome_metric_append_only
+BEFORE UPDATE OR DELETE ON mra.market_target_outcome_metric
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER outcome_metric_open_guard
+BEFORE INSERT ON mra.market_target_outcome_metric
+FOR EACH ROW EXECUTE FUNCTION mra.guard_open_outcome_child_insert();
+CREATE TRIGGER market_target_outcome_metric_reference_append_only
+BEFORE UPDATE OR DELETE ON mra.market_target_outcome_metric_reference
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER outcome_metric_reference_open_guard
+BEFORE INSERT ON mra.market_target_outcome_metric_reference
+FOR EACH ROW EXECUTE FUNCTION mra.guard_open_outcome_child_insert();
+CREATE TRIGGER market_target_outcome_metric_observation_append_only
+BEFORE UPDATE OR DELETE ON mra.market_target_outcome_metric_observation
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER outcome_metric_observation_open_guard
+BEFORE INSERT ON mra.market_target_outcome_metric_observation
+FOR EACH ROW EXECUTE FUNCTION mra.guard_open_outcome_child_insert();
+CREATE TRIGGER market_target_outcome_reason_append_only
+BEFORE UPDATE OR DELETE ON mra.market_target_outcome_reason
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER outcome_reason_open_guard
+BEFORE INSERT ON mra.market_target_outcome_reason
+FOR EACH ROW EXECUTE FUNCTION mra.guard_open_outcome_child_insert();
 
 CREATE VIEW mra.candidate_component_diagnostic AS
 SELECT

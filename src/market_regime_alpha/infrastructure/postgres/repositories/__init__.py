@@ -17,6 +17,9 @@ from market_regime_alpha.infrastructure.postgres.repositories.candidate_artifact
 from market_regime_alpha.infrastructure.postgres.repositories.market import (
     PostgresMarketRepository,
 )
+from market_regime_alpha.infrastructure.postgres.repositories.outcomes import (
+    PostgresOutcomeRepository,
+)
 from market_regime_alpha.infrastructure.postgres.repositories.decision_runs import (
     PostgresDecisionRunRepository,
 )
@@ -44,6 +47,7 @@ __all__ = [
     "PostgresCandidateRepository",
     "PostgresDecisionRunRepository",
     "PostgresMarketRepository",
+    "PostgresOutcomeRepository",
     "PostgresRuntimeRepository",
     "PostgresResearchArtifactRepository",
     "PostgresResearchDefinitionRepository",

@@ -19,6 +19,9 @@ from market_regime_alpha.infrastructure.postgres.candidate_uow import (
 from market_regime_alpha.infrastructure.postgres.decision_uow import (
     PostgresDecisionSupportUnitOfWorkProvider,
 )
+from market_regime_alpha.infrastructure.postgres.outcome_uow import (
+    PostgresOutcomeUnitOfWorkProvider,
+)
 from market_regime_alpha.infrastructure.postgres.selection_uow import (
     PostgresSelectionUnitOfWorkProvider,
 )
@@ -34,6 +37,9 @@ from market_regime_alpha.infrastructure.postgres.queries import (
     PostgresDecisionInputPreparationProvider,
     PostgresDecisionRunQueryProvider,
     PostgresMarketQueryProvider,
+    PostgresOutcomeInputPreparationProvider,
+    PostgresOutcomeQueryProvider,
+    PostgresOutcomeVerificationProvider,
 )
 from market_regime_alpha.infrastructure.postgres.schema import (
     DatabaseIdentity,
@@ -46,6 +52,8 @@ from market_regime_alpha.infrastructure.postgres.schema import (
 from market_regime_alpha.infrastructure.postgres.uow import PostgresUnitOfWorkProvider
 from market_regime_alpha.runtime.application import ArtifactApplication, RuntimeApplication
 from market_regime_alpha.decision_support.application import DecisionSupportApplication
+from market_regime_alpha.outcome.application import OutcomeApplication, OutcomeVerifier
+from market_regime_alpha.outcome.ports import OutcomeReadPort
 from market_regime_alpha.research_qualification.application import (
     ResearchQualificationApplication,
 )
@@ -139,6 +147,9 @@ class TargetApplication:
     candidates: CandidateApplication
     candidate_queries: CandidateQueryProvider
     decision_support: DecisionSupportApplication
+    outcomes: OutcomeApplication
+    outcome_queries: OutcomeReadPort
+    outcome_verifier: OutcomeVerifier
     _pool: TargetPostgresPool
 
     def close(self) -> None:
@@ -187,6 +198,16 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
             PostgresDecisionInputPreparationProvider(pool),
             PostgresDecisionSupportUnitOfWorkProvider(pool),
             PostgresDecisionRunQueryProvider(pool),
+        ),
+        outcomes=OutcomeApplication(
+            PostgresOutcomeInputPreparationProvider(pool),
+            PostgresOutcomeUnitOfWorkProvider(pool),
+            PostgresOutcomeQueryProvider(pool),
+        ),
+        outcome_queries=PostgresOutcomeQueryProvider(pool),
+        outcome_verifier=OutcomeVerifier(
+            PostgresOutcomeQueryProvider(pool),
+            PostgresOutcomeVerificationProvider(pool),
         ),
         _pool=pool,
     )
