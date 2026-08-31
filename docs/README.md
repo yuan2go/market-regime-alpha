@@ -77,7 +77,8 @@ Checkpoint traceability:
   — approved commitment-bound realized-market-fact Authority, append-only full
   revisions, frozen Decision-reference binding, dual cutoffs, concrete source
   and metric dependency rosters, pure numerical kernel, and read-only Outcome
-  port; implementation evidence is not claimed before its exact-SHA gate.
+  port; exact implementation evidence is kept separately in the immutable
+  WP-10 Verification.
 
 All documents in this section have Target status. They define the destination,
 not current completion.
@@ -112,6 +113,11 @@ not current completion.
   one Decision Run per Candidate Set, complete Candidate × Target commitments,
   immutable Decision-visible references, and mandatory test-only Runtime DAG;
   Market Target Outcome is absent and Runtime/CLI cutover remains NO-GO.
+- [WP-10 Market Target Outcome Verification](references/WP-ARCHITECTURE-REFOUNDATION-10-Market-Target-Outcome-Verification.md)
+  — exact-SHA local engineering proof for the commitment-bound, append-only,
+  dual-cutoff Market Target Outcome Authority, pure Decimal kernel, concrete
+  source/observation/metric dependencies, replay/reconciliation and read-only
+  consumer port; Partition/Experiment and Runtime/CLI cutover remain absent.
 - [Runtime Runbook](operations/Runtime-Runbook.md) — current 001–106 operator
   procedures only; it will be rewritten at Runtime/CLI Cutover.
 

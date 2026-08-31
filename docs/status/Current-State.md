@@ -3,45 +3,45 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Non-authoritative implementation status read model; exact-SHA engineering proof remains in Verification
 > **Owner:** Market Regime Alpha maintainers
-> **Generated At:** 2026-08-31 WP-09 Target Commitment and Decision Run exit reconciliation
-> **Repository Implementation Checkpoint:** `9a21d5d5384ace9ace987055a131d010e54daf0f`
+> **Generated At:** 2026-08-31 WP-10 Market Target Outcome exit reconciliation
+> **Repository Implementation Checkpoint:** `56812c58ce7b6e601366ffd0a5cfb52fec573227`
 > **Containing Documentation Commit:** reported by the final handoff; this read model does not claim a self-referential Git SHA
-> **Previous Verified Snapshot:** WP-07 at `029c26928af436d7788da1cce3a53c94b96377bf`
+> **Previous Verified Snapshot:** WP-09 at `9a21d5d5384ace9ace987055a131d010e54daf0f`
 > **Implementation Line Start:** `c3ac21ef1e13f2e8408d30b0481fa9b74c4f9539`
 > **Foundation Source Checkpoint:** `eeff49c7a3995ba6d65045be88d4244617301234`
 > **Legacy Business Implementation Parent:** `0382dad416d6d50d1eea0bda1603d7c359d65274`
 > **Schema Epochs:** canonical business `LEGACY_MIGRATIONS_001_106`; target draft `MRA_REFOUNDATION_1 / DRAFT / NOT_CUT_OVER`
-> **Generator:** `WP-ARCHITECTURE-REFOUNDATION-09 exit reconciliation; non-authoritative read model`
-> **Source Tree IDs:** root `f3b51860587541e655743c377ecd05dd2d000ae4`; source `f7fee4f2f8436840dda3a55db4b174f1a49ba105`; tests `480cf2a23aaf8693dbb80289fc65cc38064d7059`; target baseline blob `dc06dd2e6bfb0c68fb73155c71500f556919c1d0`; legacy migrations tree `6d3730548780ad6244d2cfecb4fb3559064b6f06`
-> **Code Evidence:** target and legacy source/migration packages, `tests`, and [WP-09 Target Commitment and Decision Run Verification](../references/WP-ARCHITECTURE-REFOUNDATION-09-Target-Commitment-Decision-Run-Verification.md)
+> **Generator:** `WP-ARCHITECTURE-REFOUNDATION-10 exit reconciliation; non-authoritative read model`
+> **Source Tree IDs:** root `15f3adc2b5a424a81cfa1224dfee4b04b6b422fa`; source `1ad379e67be0960a45d7c1d8f11fb953fd11480e`; tests `b03577799a3b76585b1ec3fe023c2adb3a8ceff3`; Outcome tree `d984bcc66246be0f68d530c46fe3a1c85294a16a`; target baseline blob `37522c256e5bfe0c28d43a48256dfd5aac7f2068`; legacy migrations tree `6d3730548780ad6244d2cfecb4fb3559064b6f06`
+> **Code Evidence:** target and legacy source/migration packages, `tests`, and [WP-10 Market Target Outcome Verification](../references/WP-ARCHITECTURE-REFOUNDATION-10-Market-Target-Outcome-Verification.md)
 
-This read model records implemented Target Definition and Decision Run scope and
-the local WP-09 engineering exit result bound to the exact implementation
-checkpoint above. It
+This read model records the implemented Target Definition, Decision Run, and
+Market Target Outcome scope plus the local WP-10 engineering exit result bound
+to the exact implementation checkpoint above. It
 is invalid after any source, migration, test, or composition change until
 regenerated. It cannot write business state or promote Provider, research,
 qualification, trading, or Production claims.
 
 ## Current implementation truth
 
-| Area | Current implementation fact at the WP-09 implementation checkpoint |
+| Area | Current implementation fact at the WP-10 implementation checkpoint |
 |---|---|
-| Package shape | The legacy Python 3.12 modular monolith remains intact. Target `shared`, `runtime`, `market`, permanent `selection`, permanent `research_qualification`, permanent `decision_support`, `infrastructure`, `interfaces`, and sole target `bootstrap.py` are isolated by dependency tests; Decision Support owns its Domain/Application/ports while PostgreSQL adapters remain in Infrastructure |
-| PostgreSQL | The canonical business implementation remains legacy 001–106 with 283 tables. The target draft defines 48 tables and four read-only views under schema `mra` |
+| Package shape | The legacy Python 3.12 modular monolith remains intact. Target `shared`, `runtime`, `market`, permanent `selection`, permanent `research_qualification`, permanent `decision_support`, permanent `outcome`, `infrastructure`, `interfaces`, and sole target `bootstrap.py` are isolated by dependency tests; each owner keeps Domain/Application/ports while PostgreSQL adapters remain in Infrastructure |
+| PostgreSQL | The canonical business implementation remains legacy 001–106 with 283 tables. The target draft defines 56 tables and four read-only views under schema `mra` |
 | Runtime | Continuous Research remains the current all-day business control plane. The target test-only DAG requires `CAPTURE -> NORMALIZE_PIT -> FREEZE_UNIVERSE -> ASSESS_ELIGIBILITY -> REGISTER_DATASET -> BUILD_CANDIDATE_SET -> OPEN_DECISION_RUN`; its next logical Step is `ASSESS_CONTEXT`, which is vocabulary only and has no Context implementation |
 | CLI | Six legacy scripts remain. `mra` exposes target DB bootstrap/verify/recreate and Runtime inspection/recovery, but no Market business cutover command |
 | Market/PIT | Within the isolated target draft, the target owner is the sole writer of its draft facts; legacy remains canonical business implementation. Its large files are physically split by cohesive Domain/Application/Ports/query/repository responsibilities with stable exports and unchanged WP-04 schema/PIT/Provider semantics; only generic exact/as-of facts remain public |
 | Universe/Eligibility | Permanent target `market_regime_alpha.selection` owns explicit immutable scope, frozen membership, typed policy/rules, complete three-state assessment/reasons, exact Market lineage, and an independent narrow Selection UoW, all test-only |
 | Candidate | Current legacy capabilities remain canonical. The target draft implements the five Selection-owned Candidate relations, deterministic Policy/Set writer, complete score matrix, independent Candidate UoW, Selection-owned Research-input port with Infrastructure adapter, and funnel/dossier queries; its local WP-07 engineering exit gate passes at `029c269` |
 | Research/Qualification | Current legacy capabilities remain canonical. Permanent target `market_regime_alpha.research_qualification` implements immutable Decision-input Dataset/Source/Feature plus provider-neutral Target Definition/Checkpoint/Metric/Dependency Authority; Target registration has an independent narrow UoW and append-only supersession. Partition/Experiment/Evaluation/Model/Evidence/Qualification remain absent |
-| Decision/Outcome | Current legacy capabilities remain canonical. Permanent target `market_regime_alpha.decision_support` now implements the sole immutable Decision Run per Candidate Set, ordered requested Target roster, full Candidate × Target commitment roster, exact Market revision/SourceGap reference, and read-only replay/reconciliation; Market Target Outcome remains absent |
+| Decision/Outcome | Current legacy capabilities remain canonical. Permanent target `market_regime_alpha.decision_support` implements the sole immutable Decision Run per Candidate Set and frozen reference. Permanent `market_regime_alpha.outcome` implements one commitment-bound Market Target Outcome root, append-only full revisions, exact source/observation/metric/dependency/reason rosters, dual cutoffs, pure Decimal settlement, typed replay/reconciliation, and a narrow read-only port; all remain test-only before cutover |
 | Execution/Account | Human/manual execution only; observed effective Fill remains the source of trade-caused Position. No target implementation was added |
-| Target epoch | Foundation, Market/PIT, Selection Core, Research Definition Core, Candidate, Target Definition, and Decision Run commitment are implemented in the mutable `MRA_REFOUNDATION_1` draft; Market Target Outcome and every later target context plus Runtime/CLI Cutover remain absent |
+| Target epoch | Foundation, Market/PIT, Selection Core, Research Definition Core, Candidate, Target Definition, Decision Run commitment, and Market Target Outcome are implemented in the mutable `MRA_REFOUNDATION_1` draft; Partition/Experiment and every later target context plus Runtime/CLI Cutover remain absent |
 | Legacy | Old source, 001–106 migrations, CLIs, compatibility paths, and tests remain physically present as the current implementation and regression oracle |
 
 The convergence state is therefore
-`FOUNDATION_MARKET_SELECTION_RESEARCH_DEFINITION_CANDIDATE_TARGET_DECISION_RUN_IMPLEMENTED_DRAFT /
-WP09_EXIT_GATE_PASS / NOT_CUT_OVER`.
+`FOUNDATION_MARKET_SELECTION_RESEARCH_DEFINITION_CANDIDATE_TARGET_DECISION_RUN_OUTCOME_IMPLEMENTED_DRAFT /
+WP10_EXIT_GATE_PASS / NOT_CUT_OVER`.
 Similar legacy vocabulary does not make an old owner part of the target, and
 target test writes do not become canonical business writes.
 
@@ -76,21 +76,31 @@ explicit normalization correction `target_metric_dependency`. Decision Support
 adds exactly four tables: `decision_run`, `decision_run_target`,
 `decision_target_commitment`, and `decision_reference_observation`.
 
+Market Target Outcome adds exactly eight Outcome-owned tables:
+`market_target_outcome`, `market_target_outcome_revision`,
+`market_target_outcome_source`, `market_target_outcome_observation`,
+`market_target_outcome_metric`, `market_target_outcome_metric_reference`,
+`market_target_outcome_metric_observation`, and
+`market_target_outcome_reason`. The split between reference and observation
+dependencies is the explicit WP-10 relational normalization correction; it
+raises the WP-08 logical destination catalog from 117 to 118 relations without
+moving dependency semantics into JSON.
+
 The four replaceable views are `candidate_component_diagnostic`,
 `candidate_funnel`, `run_trace`, and `artifact_integrity_status`. The
-implementation-defined draft shape is 48 tables, four views, 328 indexes, 609
-constraints, 39 functions, 100 non-internal triggers, and 1,129 catalog
+implementation-defined draft shape is 56 tables, four views, 421 indexes, 699
+constraints, 42 functions, 116 non-internal triggers, and 1,339 catalog
 objects.
 Its baseline checksum is
-`317b7cec1b06ac19a2a6564ea6bed34ae6277b09354f83cf61e5527e51308787`, its
+`7a8d641140f855a4e6dd15e0bcad6430dbb715e224a00603d437d058d6a63baf`, its
 seed checksum is
 `9c41cd715e35e1a7bed3a58c52a29f01cc1e9bf950b77344bb56eac6dfa2df11`, and its
 reference-vocabulary checksum is
-`be0cdec326edbb4df947be2b83357b6a9a371d26db2cb83c75cd9f0f7e31926c`.
+`37dae1c30c2c37a30b810af2f7a70d9198f6ec0f4245981211618144eb9bebe6`.
 Clean PostgreSQL 16.14 bootstrap/verify/recreate produced catalog checksum
-`1f0218e487ff89f4a53e96445d9b5f1cb6e3e8fd1e01ca8beffe237b12c3b503`.
+`6c3e2732024ae28875df111ad3ef97cd8c8520f40adc168b0ac8951048335888`.
 The guarded recreate's disposable database identity is recorded only in the
-linked WP-09 Verification. Table count is descriptive, not an optimization
+linked WP-10 Verification. Table count is descriptive, not an optimization
 target.
 
 ## Market/PIT implementation truth
@@ -307,9 +317,67 @@ target.
   ceilings; Remote CI is
   `BLOCKED_BY_REPOSITORY_CONFIGURATION / NOT_RUN`.
 
-## Historical exact-SHA verification through WP-07
+## Market Target Outcome implementation truth
 
-The following evidence is historical through WP-07 and does not prove WP-09.
+- Permanent `market_regime_alpha.outcome` owns the only
+  `SettleMarketTargetOutcome` writer. Its Application depends on immutable
+  Decision/Target/Market/Runtime facts only through Outcome-owned typed ports;
+  PostgreSQL adapters live in Infrastructure. The package's public consumer
+  surface exports only `OutcomeReadPort` and `OutcomeSnapshot`.
+- One Decision Target Commitment has at most one stable Outcome root. A due
+  settlement appends one complete revision snapshot; correction, source
+  improvement, coverage change, or finality change names the current leaf and
+  appends the next contiguous ordinal. Unique direct supersession, root/head
+  locking, predecessor validation, and append-only guards prevent a fork or
+  historical mutation.
+- `NOT_DUE` is a query result with `database_writes=0`; it is not persisted as
+  an unavailable placeholder. Due revisions keep aggregate status
+  `PARTIAL`/`COMPLETE`/`UNAVAILABLE`/`FAILED`, availability, and finality as
+  independent axes. Current source finality is honestly `UNKNOWN`.
+- Every revision freezes separate `observation_cutoff` and `knowledge_cutoff`.
+  Exact Session/bar/SourceGap rows must satisfy
+  `event_end <= observation_cutoff` and `known_at <= knowledge_cutoff`.
+  Target checkpoint order and scope, exact Product/Capture provenance, source
+  roster, and every count/hash are revalidated before relational closure.
+- `REFERENCE` dependencies concrete-FK the immutable WP-09
+  `decision_reference_observation`; `OBSERVATION` and `PATH_MEMBER`
+  dependencies concrete-FK an observation in the same Outcome revision. No
+  generic dependency table, polymorphic subject, JSON roster, reference
+  recomputation, latest lookup, Provider repair, or previous-session fallback
+  exists.
+- One pure I/O-free Decimal kernel is the only target bars-to-realized-fact
+  calculator. It produces checkpoint observations, simple return, MFE, MAE,
+  barrier/first-passage state, explicit same-bar ambiguity, source/metric
+  reasons, and required/optional roll-up. Legacy algorithms are imported only
+  by a characterization test and never by target runtime code.
+- Provider/network/filesystem work is absent from settlement. Preparation is
+  outside the short transaction; the transaction locks the live Runtime fence
+  first, revalidates immutable Target/Market/Candidate/Decision dependencies,
+  serializes the Outcome root/head, writes one full root-last closure plus
+  receipt/audit/Runtime finalization, reconciles it, and commits.
+- Exact retry returns the original revision and appends no facts or audit.
+  Changed reuse of an idempotency identity fails closed. Corrections require
+  the exact current leaf. Concurrent same requests have one writer and replay;
+  concurrent corrections cannot fork. SQLSTATE `40001`/`40P01` retries the
+  whole transaction at most three times; unknown commit state is resolved only
+  by exact replay; stale fence causes zero business and zero failure writes.
+- The verifier is read-only and reconstructs the root, full revision chain,
+  cutoffs, exact commitment/reference/Target, all rosters/dependencies,
+  counts/hashes, Runtime identity, receipt, and kernel result only from frozen
+  rows. Success is `matched=true`, `mismatch_count=0`; no Provider/latest read
+  or Authority mutation occurs.
+- At `56812c58`, all 43 WP-10 focused nodes, 392 refoundation nodes, 33 platform
+  nodes, 286 PostgreSQL persistence nodes, and the complete 3,432-node
+  repository collection pass. Clean PostgreSQL bootstrap/verify/guarded
+  recreate, representative `EXPLAIN (ANALYZE)`, concurrency, failure/recovery,
+  replay/reconciliation, architecture/import, docs, Ruff, mypy, build, and diff
+  gates pass. The linked WP-10 Verification owns exact commands and proof
+  ceilings; Remote CI remains
+  `BLOCKED_BY_REPOSITORY_CONFIGURATION / NOT_RUN`.
+
+## Historical exact-SHA verification through WP-09
+
+The following evidence is historical through WP-09 and does not prove WP-10.
 The immutable pre-refoundation ledger is
 [WP-02](../references/WP-ARCHITECTURE-REFOUNDATION-02-Pre-Refoundation-Verification-Baseline.md),
 the Foundation ledger is [WP-03](../references/WP-ARCHITECTURE-REFOUNDATION-03-Foundation-Verification.md),
@@ -322,6 +390,8 @@ non-final attempts, and proof ceilings are recorded in
 [WP-06](../references/WP-ARCHITECTURE-REFOUNDATION-06-Research-Definition-Core-Verification.md).
 Candidate closure and its own exact ceiling are recorded in
 [WP-07](../references/WP-ARCHITECTURE-REFOUNDATION-07-Candidate-Closure-Verification.md).
+Target commitment and Decision Run closure are recorded in
+[WP-09](../references/WP-ARCHITECTURE-REFOUNDATION-09-Target-Commitment-Decision-Run-Verification.md).
 
 At implementation checkpoint
 `22a5ec692fcc261182197c2953a0a860d7cd6f94`, all 3,245 collected repository

@@ -2,7 +2,7 @@
 
 > **Status:** CANONICAL_TARGET_ARCHITECTURE
 > **Design State:** `APPROVED`
-> **Implementation State:** `AUTHORIZED / IN_PROGRESS`
+> **Implementation State:** `IMPLEMENTED / EXIT_GATE_PASS`
 > **Runtime/CLI Cutover:** `NO_GO`
 > **Schema Epoch:** `MRA_REFOUNDATION_1`
 > **Release State:** `DRAFT / NOT_CUT_OVER`
@@ -11,6 +11,8 @@
 > **Execution Baseline:** `origin/main@a5e1c1b1cac9563582ad71abfbad7ecbe53075c2`
 > **Execution Branch:** `agent/wp-10-market-target-outcome-authority`
 > **Execution Worktree:** `/Users/yuan/projects/market-regime-alpha-worktrees/wp-10-market-target-outcome-authority`
+> **Implementation Checkpoint:** `56812c58ce7b6e601366ffd0a5cfb52fec573227`
+> **Implementation Evidence:** [WP-10 Market Target Outcome Verification](WP-ARCHITECTURE-REFOUNDATION-10-Market-Target-Outcome-Verification.md)
 > **Authority:** Approved implementation contract for WP-10 only; not
 > Partition, Experiment, Evaluation, Evidence, Qualification, Model, Context,
 > Decision Support expansion, Execution, Prospective, Production, Legacy
@@ -459,10 +461,11 @@ and dependency rosters, two cutoffs, zero-write NOT_DUE, independent states,
 the single pure kernel, transaction/fence/failure/recovery semantics, exact
 idempotency/concurrency, zero-mismatch replay, and the narrow read-only port.
 
-Until then, and after the gate except where separately authorized:
+Before the gate, WP-11 was blocked. At the implementation checkpoint recorded
+above, the WP-10 gate passes, so only its planning handoff changes:
 
 ```text
-WP-11 Research Partition + Experiment = BLOCKED
+WP-11 Research Partition + Experiment = NEXT_INDEPENDENT_WORK_PACKAGE / NOT_STARTED
 Runtime/CLI Cutover                   = NO_GO
 Formal PIT / Formal OOS               = NO_GO
 Prospective                           = NO_GO
