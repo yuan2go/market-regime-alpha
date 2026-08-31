@@ -128,6 +128,35 @@ def test_target_definition_relational_closure_and_supersession_are_database_enfo
     )
 
 
+def test_target_closure_enforces_outcome_metric_parity_and_a_required_metric(
+    target_database_url: str,
+) -> None:
+    SchemaManager(target_database_url).bootstrap()
+    with psycopg.connect(target_database_url) as connection:
+        definition = connection.execute(
+            """
+            SELECT pg_get_functiondef(
+                'mra.validate_target_definition_closure()'::regprocedure
+            )
+            """
+        ).fetchone()
+    assert definition is not None
+    function_sql = str(definition[0])
+    assert "required_metric_count" in function_sql
+    assert "completion_rule = 'REQUIRED'" in function_sql
+    for metric_kind in (
+        "SIMPLE_RETURN",
+        "OBSERVATION_VALUE",
+        "MAX_FAVORABLE_EXCURSION",
+        "MAX_ADVERSE_EXCURSION",
+        "BARRIER_HIT",
+    ):
+        assert metric_kind in function_sql
+    assert "dependency.dependency_role = 'PATH_MEMBER'" in function_sql
+    assert "checkpoint.checkpoint_role <> 'DECISION_REFERENCE'" in function_sql
+    assert "checkpoint.checkpoint_role <> 'OUTCOME_OBSERVATION'" in function_sql
+
+
 def test_target_definition_has_fk_and_replay_indexes(
     target_database_url: str,
 ) -> None:

@@ -7565,6 +7565,7 @@ DECLARE
     actual_dependency_count bigint;
     reference_count bigint;
     outcome_count bigint;
+    required_metric_count bigint;
     checkpoint_min integer;
     checkpoint_max integer;
     metric_min integer;
@@ -7585,8 +7586,10 @@ BEGIN
     FROM mra.target_checkpoint
     WHERE target_definition_id = NEW.target_definition_id;
 
-    SELECT count(*), min(ordinal), max(ordinal)
-    INTO actual_metric_count, metric_min, metric_max
+    SELECT count(*),
+           count(*) FILTER (WHERE completion_rule = 'REQUIRED'),
+           min(ordinal), max(ordinal)
+    INTO actual_metric_count, required_metric_count, metric_min, metric_max
     FROM mra.target_metric_definition
     WHERE target_definition_id = NEW.target_definition_id;
 
@@ -7605,7 +7608,8 @@ BEGIN
        OR metric_min <> 1
        OR metric_max <> actual_metric_count
        OR dependency_min <> 1
-       OR dependency_max <> actual_dependency_count THEN
+       OR dependency_max <> actual_dependency_count
+       OR required_metric_count < 1 THEN
         RAISE EXCEPTION 'TargetDefinition child roster is incomplete'
             USING ERRCODE = '55000';
     END IF;
@@ -7633,17 +7637,60 @@ BEGIN
              metric.target_metric_definition_id
          AND dependency.target_definition_id = metric.target_definition_id
         WHERE metric.target_definition_id = NEW.target_definition_id
-          AND metric.metric_kind = 'SIMPLE_RETURN'
-        GROUP BY metric.target_metric_definition_id
-        HAVING count(*) <> 2
-            OR count(*) FILTER (
-                WHERE dependency.dependency_role = 'REFERENCE'
-            ) <> 1
-            OR count(*) FILTER (
-                WHERE dependency.dependency_role = 'OBSERVATION'
-            ) <> 1
+        GROUP BY metric.target_metric_definition_id, metric.metric_kind
+        HAVING
+            (metric.metric_kind = 'SIMPLE_RETURN'
+             AND (count(*) <> 2
+                  OR count(*) FILTER (
+                      WHERE dependency.dependency_role = 'REFERENCE'
+                  ) <> 1
+                  OR count(*) FILTER (
+                      WHERE dependency.dependency_role = 'OBSERVATION'
+                  ) <> 1))
+            OR
+            (metric.metric_kind = 'OBSERVATION_VALUE'
+             AND (count(*) <> 1
+                  OR count(*) FILTER (
+                      WHERE dependency.dependency_role = 'OBSERVATION'
+                  ) <> 1))
+            OR
+            (metric.metric_kind IN (
+                 'MAX_FAVORABLE_EXCURSION',
+                 'MAX_ADVERSE_EXCURSION',
+                 'BARRIER_HIT'
+             )
+             AND (count(*) FILTER (
+                      WHERE dependency.dependency_role = 'REFERENCE'
+                  ) <> 1
+                  OR count(*) FILTER (
+                      WHERE dependency.dependency_role = 'PATH_MEMBER'
+                  ) < 1
+                  OR count(*) FILTER (
+                      WHERE dependency.dependency_role NOT IN (
+                          'REFERENCE', 'PATH_MEMBER'
+                      )
+                  ) <> 0))
     ) THEN
-        RAISE EXCEPTION 'SIMPLE_RETURN dependency shape is incomplete'
+        RAISE EXCEPTION 'Target metric dependency shape is Outcome-incompatible'
+            USING ERRCODE = '55000';
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM mra.target_metric_dependency AS dependency
+        JOIN mra.target_checkpoint AS checkpoint
+          ON checkpoint.target_checkpoint_id = dependency.target_checkpoint_id
+         AND checkpoint.target_definition_id = dependency.target_definition_id
+        WHERE dependency.target_definition_id = NEW.target_definition_id
+          AND (
+              (dependency.dependency_role = 'REFERENCE'
+               AND checkpoint.checkpoint_role <> 'DECISION_REFERENCE')
+              OR
+              (dependency.dependency_role IN ('OBSERVATION', 'PATH_MEMBER')
+               AND checkpoint.checkpoint_role <> 'OUTCOME_OBSERVATION')
+          )
+    ) THEN
+        RAISE EXCEPTION 'Target dependency role/checkpoint shape is invalid'
             USING ERRCODE = '55000';
     END IF;
 

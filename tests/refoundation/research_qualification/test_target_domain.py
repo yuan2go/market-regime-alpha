@@ -7,6 +7,18 @@ from uuid import UUID
 
 import pytest
 
+from market_regime_alpha.outcome.domain import (
+    OutcomeBarrierDirection,
+    OutcomeCheckpoint,
+    OutcomeCompletionRule,
+    OutcomeDependencyRole,
+    OutcomeMetricDefinition,
+    OutcomeMetricDependency,
+    OutcomeMetricKind,
+    OutcomeTargetDefinition,
+    OutcomeValueField,
+    OutcomeValueType,
+)
 from market_regime_alpha.research_qualification.domain import ArtifactBinding
 from market_regime_alpha.research_qualification.domain.targets import (
     TargetAlgorithmBinding,
@@ -18,6 +30,7 @@ from market_regime_alpha.research_qualification.domain.targets import (
 from market_regime_alpha.research_qualification.domain.target_vocabulary import (
     TargetAvailabilityRule,
     TargetBarTimeframe,
+    TargetBarrierDirection,
     TargetCheckpointRole,
     TargetCompletionRule,
     TargetDependencyRole,
@@ -153,6 +166,138 @@ def valid_target() -> TargetDefinition:
     )
 
 
+def _target_for_metric_kind(
+    metric_kind: TargetMetricKind,
+    roles: tuple[TargetDependencyRole, ...],
+    *,
+    completion_rule: TargetCompletionRule = TargetCompletionRule.REQUIRED,
+) -> TargetDefinition:
+    definition = valid_target()
+    barrier = metric_kind is TargetMetricKind.BARRIER_HIT
+    observation_value = metric_kind is TargetMetricKind.OBSERVATION_VALUE
+    metric = replace(
+        definition.metrics[0],
+        metric_kind=metric_kind,
+        value_type=(
+            TargetValueType.BOOLEAN if barrier else TargetValueType.DECIMAL
+        ),
+        unit=(
+            TargetMetricUnit.BOOLEAN
+            if barrier
+            else TargetMetricUnit.PRICE
+            if observation_value
+            else TargetMetricUnit.RATIO
+        ),
+        completion_rule=completion_rule,
+        barrier_direction=(
+            TargetBarrierDirection.UP if barrier else None
+        ),
+        barrier_threshold=Decimal("0.05") if barrier else None,
+    )
+    checkpoints = {
+        TargetDependencyRole.REFERENCE: REFERENCE_ID,
+        TargetDependencyRole.OBSERVATION: OUTCOME_ID,
+        TargetDependencyRole.PATH_MEMBER: OUTCOME_ID,
+    }
+    dependencies = tuple(
+        TargetMetricDependency(
+            target_metric_dependency_id=UUID(
+                f"00000000-0000-4000-8000-{930 + ordinal:012d}"
+            ),
+            target_definition_id=TARGET_ID,
+            target_metric_definition_id=METRIC_ID,
+            target_checkpoint_id=checkpoints[role],
+            ordinal=ordinal,
+            role=role,
+        )
+        for ordinal, role in enumerate(roles, start=1)
+    )
+    return replace(definition, metrics=(metric,), dependencies=dependencies)
+
+
+def _as_outcome_target(definition: TargetDefinition) -> OutcomeTargetDefinition:
+    reference = next(
+        item
+        for item in definition.checkpoints
+        if item.role is TargetCheckpointRole.DECISION_REFERENCE
+    )
+    checkpoints = tuple(
+        OutcomeCheckpoint(
+            target_checkpoint_id=item.target_checkpoint_id,
+            content_sha256=str(item.content_sha256),
+            ordinal=item.ordinal,
+            checkpoint_code=item.checkpoint_code,
+            session_offset=item.session_offset,
+            local_time=item.local_time,
+            timezone_name=item.timezone_name,
+            timeframe=item.timeframe.value,
+            price_basis=item.price_basis.value,
+            value_field=OutcomeValueField(item.value_field.value),
+        )
+        for item in definition.checkpoints
+        if item.role is TargetCheckpointRole.OUTCOME_OBSERVATION
+    )
+    metrics = tuple(
+        OutcomeMetricDefinition(
+            target_metric_definition_id=item.target_metric_definition_id,
+            ordinal=item.ordinal,
+            metric_code=item.metric_code,
+            metric_kind=OutcomeMetricKind(item.metric_kind.value),
+            value_type=OutcomeValueType(item.value_type.value),
+            unit=item.unit.value,
+            completion_rule=OutcomeCompletionRule(item.completion_rule.value),
+            algorithm_code=item.algorithm.algorithm_code,
+            algorithm_version=item.algorithm.algorithm_version,
+            algorithm_sha256=str(item.algorithm.algorithm_sha256),
+            code_artifact_id=item.algorithm.code_artifact.artifact_id,
+            code_content_sha256=str(item.algorithm.code_artifact.content_sha256),
+            code_size_bytes=item.algorithm.code_artifact.size_bytes,
+            config_artifact_id=item.algorithm.config_artifact.artifact_id,
+            config_content_sha256=str(item.algorithm.config_artifact.content_sha256),
+            config_size_bytes=item.algorithm.config_artifact.size_bytes,
+            content_sha256=str(item.content_sha256),
+            barrier_direction=(
+                OutcomeBarrierDirection(item.barrier_direction.value)
+                if item.barrier_direction is not None
+                else None
+            ),
+            barrier_threshold=item.barrier_threshold,
+        )
+        for item in definition.metrics
+    )
+    dependencies = tuple(
+        OutcomeMetricDependency(
+            target_metric_dependency_id=item.target_metric_dependency_id,
+            ordinal=item.ordinal,
+            target_metric_definition_id=item.target_metric_definition_id,
+            target_checkpoint_id=item.target_checkpoint_id,
+            role=OutcomeDependencyRole(item.role.value),
+            content_sha256=str(item.content_sha256),
+        )
+        for item in definition.dependencies
+    )
+    algorithm = definition.algorithm
+    return OutcomeTargetDefinition(
+        target_definition_id=definition.target_definition_id,
+        target_code=definition.target_code,
+        version=definition.version,
+        content_sha256=str(definition.content_sha256),
+        reference_checkpoint_id=reference.target_checkpoint_id,
+        algorithm_code=algorithm.algorithm_code,
+        algorithm_version=algorithm.algorithm_version,
+        algorithm_sha256=str(algorithm.algorithm_sha256),
+        code_artifact_id=algorithm.code_artifact.artifact_id,
+        code_content_sha256=str(algorithm.code_artifact.content_sha256),
+        code_size_bytes=algorithm.code_artifact.size_bytes,
+        config_artifact_id=algorithm.config_artifact.artifact_id,
+        config_content_sha256=str(algorithm.config_artifact.content_sha256),
+        config_size_bytes=algorithm.config_artifact.size_bytes,
+        checkpoints=checkpoints,
+        metrics=metrics,
+        dependencies=dependencies,
+    )
+
+
 def test_target_definition_is_provider_neutral_and_hashes_complete_relational_semantics() -> None:
     definition = valid_target()
     assert str(definition.content_sha256) == (
@@ -241,6 +386,101 @@ def test_target_definition_requires_typed_same_target_metric_dependencies() -> N
                     role=TargetDependencyRole.PATH_MEMBER,
                 ),
             ),
+        )
+
+
+@pytest.mark.parametrize(
+    ("metric_kind", "roles"),
+    (
+        (
+            TargetMetricKind.SIMPLE_RETURN,
+            (TargetDependencyRole.REFERENCE, TargetDependencyRole.OBSERVATION),
+        ),
+        (
+            TargetMetricKind.OBSERVATION_VALUE,
+            (TargetDependencyRole.OBSERVATION,),
+        ),
+        (
+            TargetMetricKind.MAX_FAVORABLE_EXCURSION,
+            (TargetDependencyRole.REFERENCE, TargetDependencyRole.PATH_MEMBER),
+        ),
+        (
+            TargetMetricKind.MAX_ADVERSE_EXCURSION,
+            (TargetDependencyRole.REFERENCE, TargetDependencyRole.PATH_MEMBER),
+        ),
+        (
+            TargetMetricKind.BARRIER_HIT,
+            (TargetDependencyRole.REFERENCE, TargetDependencyRole.PATH_MEMBER),
+        ),
+    ),
+)
+def test_every_registered_metric_shape_reconstructs_as_an_outcome_contract(
+    metric_kind: TargetMetricKind,
+    roles: tuple[TargetDependencyRole, ...],
+) -> None:
+    definition = _target_for_metric_kind(metric_kind, roles)
+    reconstructed = _as_outcome_target(definition)
+    assert reconstructed.target_definition_id == definition.target_definition_id
+    assert reconstructed.metrics[0].metric_kind.value == metric_kind.value
+
+
+@pytest.mark.parametrize(
+    ("metric_kind", "roles"),
+    (
+        (TargetMetricKind.SIMPLE_RETURN, (TargetDependencyRole.REFERENCE,)),
+        (TargetMetricKind.SIMPLE_RETURN, (TargetDependencyRole.OBSERVATION,)),
+        (
+            TargetMetricKind.SIMPLE_RETURN,
+            (TargetDependencyRole.REFERENCE, TargetDependencyRole.PATH_MEMBER),
+        ),
+        (
+            TargetMetricKind.SIMPLE_RETURN,
+            (
+                TargetDependencyRole.REFERENCE,
+                TargetDependencyRole.OBSERVATION,
+                TargetDependencyRole.PATH_MEMBER,
+            ),
+        ),
+        (
+            TargetMetricKind.OBSERVATION_VALUE,
+            (TargetDependencyRole.REFERENCE, TargetDependencyRole.OBSERVATION),
+        ),
+        (
+            TargetMetricKind.OBSERVATION_VALUE,
+            (TargetDependencyRole.PATH_MEMBER,),
+        ),
+        (
+            TargetMetricKind.MAX_FAVORABLE_EXCURSION,
+            (TargetDependencyRole.PATH_MEMBER,),
+        ),
+        (
+            TargetMetricKind.MAX_ADVERSE_EXCURSION,
+            (TargetDependencyRole.REFERENCE,),
+        ),
+        (
+            TargetMetricKind.BARRIER_HIT,
+            (
+                TargetDependencyRole.REFERENCE,
+                TargetDependencyRole.PATH_MEMBER,
+                TargetDependencyRole.OBSERVATION,
+            ),
+        ),
+    ),
+)
+def test_target_rejects_every_outcome_incompatible_metric_dependency_shape(
+    metric_kind: TargetMetricKind,
+    roles: tuple[TargetDependencyRole, ...],
+) -> None:
+    with pytest.raises(ValueError, match="dependency shape"):
+        _target_for_metric_kind(metric_kind, roles)
+
+
+def test_target_definition_requires_at_least_one_required_metric() -> None:
+    with pytest.raises(ValueError, match="REQUIRED metric"):
+        _target_for_metric_kind(
+            TargetMetricKind.SIMPLE_RETURN,
+            (TargetDependencyRole.REFERENCE, TargetDependencyRole.OBSERVATION),
+            completion_rule=TargetCompletionRule.OPTIONAL,
         )
 
 
