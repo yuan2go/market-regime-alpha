@@ -658,7 +658,7 @@ def _source_parameters(authority, item):
         source_gap_kind = None
         source_gap_reason = None
         source_kind = "TRADING_SESSION"
-        source_role = "CALENDAR_SESSION"
+        source_role = item.source_role.value
     else:
         provider_product_id = source.provider_product_id
         capture_id = source.capture_id
@@ -670,7 +670,7 @@ def _source_parameters(authority, item):
         source_recorded_at = source.recorded_at
         known_at = source.known_at
         source_kind = source.source_kind.value
-        source_role = "OUTCOME_OBSERVATION"
+        source_role = item.source_role.value
         if isinstance(source, OutcomeBarSource):
             bar_revision_id = source.bar_revision_id
             bar_revision = source.revision

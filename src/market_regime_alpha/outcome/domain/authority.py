@@ -17,6 +17,7 @@ from market_regime_alpha.outcome.domain.model import (
 )
 from market_regime_alpha.outcome.domain.vocabulary import (
     OutcomeReasonDimension,
+    OutcomeSourceRole,
 )
 from market_regime_alpha.shared.hashing import canonical_json_sha256
 from market_regime_alpha.shared.time import require_utc
@@ -152,6 +153,14 @@ class OutcomeSourceAuthority:
     observation_cutoff: datetime
     knowledge_cutoff: datetime
     content_sha256: str = field(init=False)
+
+    @property
+    def source_role(self) -> OutcomeSourceRole:
+        return (
+            OutcomeSourceRole.CALENDAR_SESSION
+            if self.observation_source is None
+            else OutcomeSourceRole.OUTCOME_OBSERVATION
+        )
 
     def __post_init__(self) -> None:
         object.__setattr__(

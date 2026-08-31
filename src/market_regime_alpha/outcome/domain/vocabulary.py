@@ -32,6 +32,11 @@ class OutcomeSourceKind(StrEnum):
     SOURCE_GAP = "SOURCE_GAP"
 
 
+class OutcomeSourceRole(StrEnum):
+    CALENDAR_SESSION = "CALENDAR_SESSION"
+    OUTCOME_OBSERVATION = "OUTCOME_OBSERVATION"
+
+
 class OutcomeGapKind(StrEnum):
     MISSING = "MISSING"
     PLACEHOLDER = "PLACEHOLDER"
@@ -114,6 +119,7 @@ __all__ = [
     "OutcomeReasonDimension",
     "OutcomeReferenceValueStatus",
     "OutcomeSourceKind",
+    "OutcomeSourceRole",
     "OutcomeStatus",
     "OutcomeValueField",
     "OutcomeValueType",

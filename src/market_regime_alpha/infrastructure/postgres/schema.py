@@ -53,6 +53,7 @@ from market_regime_alpha.outcome.domain import (
     OutcomeReasonDimension,
     OutcomeReferenceValueStatus,
     OutcomeSourceKind,
+    OutcomeSourceRole,
     OutcomeStatus,
     OutcomeValueField,
     OutcomeValueType,
@@ -346,6 +347,7 @@ _REFERENCE_VOCABULARY: Final[dict[str, tuple[str, ...]]] = {
         item.value for item in OutcomeReferenceValueStatus
     ),
     "outcome_source_kind": tuple(item.value for item in OutcomeSourceKind),
+    "outcome_source_role": tuple(item.value for item in OutcomeSourceRole),
     "outcome_gap_kind": tuple(item.value for item in OutcomeGapKind),
     "outcome_metric_kind": tuple(item.value for item in OutcomeMetricKind),
     "outcome_value_type": tuple(item.value for item in OutcomeValueType),

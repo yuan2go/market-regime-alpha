@@ -26,6 +26,7 @@ from market_regime_alpha.outcome.domain import (
     OutcomeMetricKind,
     OutcomeReferenceValueStatus,
     OutcomeSessionSource,
+    OutcomeSourceRole,
     OutcomeStatus,
     OutcomeTargetDefinition,
     OutcomeValueField,
@@ -479,6 +480,10 @@ def test_authority_builder_closes_id_bearing_rosters_and_runtime_identity() -> N
     assert authority.revision.metric_count == 1
     assert authority.revision.reference_dependency_count == 1
     assert authority.revision.observation_dependency_count == 1
+    assert tuple(item.source_role for item in authority.revision.sources) == (
+        OutcomeSourceRole.CALENDAR_SESSION,
+        OutcomeSourceRole.OUTCOME_OBSERVATION,
+    )
     assert authority.revision.source_roster_sha256 != draft.source_roster_sha256
     assert authority.revision.definition_summary_sha256 != HASH_A
     assert authority.revision.runtime == runtime
