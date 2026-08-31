@@ -29,7 +29,6 @@ from market_regime_alpha.research_qualification.ports.target_uow import (
     TargetUnitOfWork,
     TargetUnitOfWorkProvider,
 )
-
 __all__ = [
     "ResearchArtifactByteStore",
     "ResearchArtifactRepository",

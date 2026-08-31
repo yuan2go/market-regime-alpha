@@ -95,6 +95,27 @@ from market_regime_alpha.research_qualification.domain.target_vocabulary import 
     TargetValueField,
     TargetValueType,
 )
+from market_regime_alpha.research_qualification.domain.research_vocabulary import (
+    AcceptanceOperator,
+    AcceptanceState,
+    CandidateDisposition as ResearchCandidateDisposition,
+    EvaluationInclusionPolicy,
+    EvaluationInputState,
+    EvaluationMetricState,
+    EvaluationMissingnessPolicy,
+    EvaluationProtocolStatus,
+    EvaluationReducer,
+    EvaluationRunStatus,
+    EvaluationSliceKind,
+    ExperimentRunStatus,
+    ExperimentStatus,
+    MetricDirection,
+    PartitionOverlapPolicy,
+    PartitionPopulationScope,
+    PartitionPurpose,
+    PartitionStatus,
+    SourceMetricValueType,
+)
 from market_regime_alpha.shared.errors import MraError
 from market_regime_alpha.shared.hashing import canonical_json_sha256, sha256_bytes
 
@@ -209,6 +230,23 @@ EXPECTED_OUTCOME_TABLES: Final[frozenset[str]] = frozenset(
     }
 )
 
+EXPECTED_RESEARCH_VALIDITY_TABLES: Final[frozenset[str]] = frozenset(
+    {
+        "research_partition",
+        "research_partition_member",
+        "experiment",
+        "experiment_partition",
+        "experiment_run",
+        "evaluation_protocol",
+        "evaluation_protocol_metric",
+        "evaluation_run",
+        "research_partition_outcome_access",
+        "evaluation_observation",
+        "evaluation_metric",
+        "evaluation_metric_observation",
+    }
+)
+
 EXPECTED_TARGET_TABLES: Final[frozenset[str]] = (
     EXPECTED_FOUNDATION_TABLES
     | EXPECTED_MARKET_TABLES
@@ -217,6 +255,7 @@ EXPECTED_TARGET_TABLES: Final[frozenset[str]] = (
     | EXPECTED_TARGET_DEFINITION_TABLES
     | EXPECTED_DECISION_SUPPORT_TABLES
     | EXPECTED_OUTCOME_TABLES
+    | EXPECTED_RESEARCH_VALIDITY_TABLES
 )
 
 _LEGACY_TABLE_SIGNATURES: Final[frozenset[str]] = frozenset(
@@ -379,6 +418,43 @@ _REFERENCE_VOCABULARY: Final[dict[str, tuple[str, ...]]] = {
     "decision_run_mismatch_kind": tuple(
         item.value for item in DecisionRunMismatchKind
     ),
+    "research_partition_purpose": tuple(item.value for item in PartitionPurpose),
+    "research_partition_population_scope": tuple(
+        item.value for item in PartitionPopulationScope
+    ),
+    "research_partition_overlap_policy": tuple(
+        item.value for item in PartitionOverlapPolicy
+    ),
+    "research_partition_status": tuple(item.value for item in PartitionStatus),
+    "research_experiment_status": tuple(item.value for item in ExperimentStatus),
+    "research_experiment_run_status": tuple(
+        item.value for item in ExperimentRunStatus
+    ),
+    "evaluation_protocol_status": tuple(
+        item.value for item in EvaluationProtocolStatus
+    ),
+    "evaluation_run_status": tuple(item.value for item in EvaluationRunStatus),
+    "evaluation_reducer": tuple(item.value for item in EvaluationReducer),
+    "evaluation_source_value_type": tuple(
+        item.value for item in SourceMetricValueType
+    ),
+    "evaluation_slice_kind": tuple(item.value for item in EvaluationSliceKind),
+    "evaluation_candidate_disposition": tuple(
+        item.value for item in ResearchCandidateDisposition
+    ),
+    "evaluation_metric_direction": tuple(item.value for item in MetricDirection),
+    "evaluation_missingness_policy": tuple(
+        item.value for item in EvaluationMissingnessPolicy
+    ),
+    "evaluation_inclusion_policy": tuple(
+        item.value for item in EvaluationInclusionPolicy
+    ),
+    "evaluation_acceptance_operator": tuple(
+        item.value for item in AcceptanceOperator
+    ),
+    "evaluation_acceptance_state": tuple(item.value for item in AcceptanceState),
+    "evaluation_metric_state": tuple(item.value for item in EvaluationMetricState),
+    "evaluation_input_state": tuple(item.value for item in EvaluationInputState),
 }
 
 
@@ -1452,6 +1528,7 @@ __all__ = [
     "EXPECTED_MARKET_TABLES",
     "EXPECTED_OUTCOME_TABLES",
     "EXPECTED_RESEARCH_DEFINITION_TABLES",
+    "EXPECTED_RESEARCH_VALIDITY_TABLES",
     "EXPECTED_SELECTION_TABLES",
     "EXPECTED_TARGET_DEFINITION_TABLES",
     "EXPECTED_TARGET_TABLES",

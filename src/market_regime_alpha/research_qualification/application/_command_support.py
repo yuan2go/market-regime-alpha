@@ -7,7 +7,10 @@ from functools import wraps
 from typing import Callable, Iterator, ParamSpec, TypeVar
 from uuid import UUID
 
+import psycopg
+
 from market_regime_alpha.research_qualification.ports import ResearchUnitOfWork
+from market_regime_alpha.research_qualification.errors import ResearchValidityError
 from market_regime_alpha.runtime.application import (
     CommandContext,
     CommandFailureDescriptor,
@@ -44,6 +47,26 @@ def replay_concurrent_success(
             return command(*args, **kwargs)
         except ConcurrentCommandSucceeded:
             return command(*args, **kwargs)
+
+    return wrapped
+
+
+def retry_postgres_transient(
+    command: Callable[_P, _R],
+) -> Callable[_P, _R]:
+    """Bound retries; the semantic receipt makes every retry an exact replay."""
+
+    @wraps(command)
+    def wrapped(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        for attempt in range(3):
+            try:
+                return command(*args, **kwargs)
+            except psycopg.Error as exc:
+                sqlstate = exc.sqlstate or ""
+                transient = sqlstate in {"40001", "40P01", "55P03"} or sqlstate.startswith("08")
+                if not transient or attempt == 2:
+                    raise
+        raise AssertionError("bounded PostgreSQL retry loop did not terminate")
 
     return wrapped
 
@@ -87,6 +110,7 @@ def terminal_failure_boundary(
         CommandPreviouslyFailedError,
         RuntimeNotFoundError,
         RuntimeStateConflictError,
+        ResearchValidityError,
         ValueError,
     ):
         failure_recorder.record(
@@ -176,5 +200,6 @@ __all__ = [
     "finalize_runtime",
     "finish_success",
     "replay_concurrent_success",
+    "retry_postgres_transient",
     "terminal_failure_boundary",
 ]

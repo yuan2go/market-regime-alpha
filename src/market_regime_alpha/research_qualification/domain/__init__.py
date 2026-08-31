@@ -47,7 +47,6 @@ from market_regime_alpha.research_qualification.domain.vocabulary import (
     FeatureSourceRequirement,
     FeatureValueType,
 )
-
 __all__ = [
     "ArtifactBinding",
     "DatasetSource",
