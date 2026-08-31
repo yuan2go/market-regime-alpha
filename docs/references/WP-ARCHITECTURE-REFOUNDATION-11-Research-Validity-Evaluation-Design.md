@@ -189,10 +189,12 @@ AND disposition satisfies the declared population scope
 ```
 
 The application independently reconstructs the ordered typed roster and hash;
-the database closure function recomputes count, contiguous ordinals, Target
-match, scope match, session membership, and roster hash. Zero members or any
-caller/database reconciliation mismatch fails closed. No Outcome table or
-Outcome port is read while freezing a Partition.
+each member concrete-FKs its exact DecisionReference session, and the database
+closure function recomputes count, contiguous ordinals, Target/scope/session
+match, roster hash, and a bidirectional set difference against the entire
+declared commitment population. Zero members, omission, substitution, extra
+membership, or any caller/database reconciliation mismatch fails closed. No
+Outcome table or Outcome port is read while freezing a Partition.
 
 ### 5.3 Trading-session horizon, purge, and embargo
 
@@ -230,8 +232,10 @@ the earlier access ledger.
 
 `ISOLATED_PROTECTED` checks all existing non-diagnostic partitions for the same
 Target whose population scopes can intersect. It is not bypassed by changing a
-series code. Reusing the same frozen Partition through another Evaluation Run
-does not create another Partition; access ordinal 2+ makes that use diagnostic.
+series code. A non-protected diagnostic/reuse Partition may be evaluated again
+without changing its roster; that run receives access ordinal 2+. A protected
+Partition rejects every later EvaluationRun after its first access, so an OOS
+or Prospective result cannot be relabeled as an independent second look.
 
 The PostgreSQL insertion guard serializes the relevant Target/range policy,
 recomputes session-derived boundaries, and rejects prohibited overlap. The
@@ -364,6 +368,11 @@ revision.knowledge_cutoff <= requested_knowledge_cutoff
 revision.settled_at <= requested_knowledge_cutoff
 ```
 
+The requested cutoff cannot be later than PostgreSQL's authoritative Run/access
+time. The access trigger locks the exact Outcome root in conflict with Outcome
+correction before it revalidates the visible leaf, so a concurrent correction
+cannot change which revision was visible at the frozen cutoff.
+
 The selected row is the unique eligible revision with no eligible successor at
 that cutoff. The query never uses unrestricted current/latest state. Zero or
 multiple visible leaves fail closed. If the Target's canonical maximum due time
@@ -425,7 +434,8 @@ Constraints enforce:
 - unique `(evaluation_run_id, research_partition_member_id)`;
 - `access_ordinal = previous maximum + 1` under a member lock;
 - ordinal one has no predecessor and is the sole first-access Authority;
-- later EvaluationRuns receive ordinal 2+ and are diagnostic/reuse accesses;
+- later non-protected EvaluationRuns receive ordinal 2+ and are
+  diagnostic/reuse accesses; protected purposes reject a later Run;
 - exact Target/commitment/Partition/Evaluation binding;
 - no nullable EvaluationRun FK, polymorphic owner, JSON subject, placeholder,
   registry, replacement, update, or delete.

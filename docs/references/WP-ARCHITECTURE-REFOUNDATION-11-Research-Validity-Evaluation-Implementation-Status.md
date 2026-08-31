@@ -5,7 +5,7 @@
 > **Owner:** Market Regime Alpha maintainers
 > **Recorded At:** 2026-09-01
 > **Execution-Time Main:** `4aaf4eb1c13f42c01dbc0057078f916fd50cf022`
-> **Implementation Checkpoint:** `b0520ae69ff1879a640f4cee98eb07b82ee3fce7`
+> **Implementation Checkpoint:** `59ac3a35c46d60d179d62898de054c608831f54c`
 > **Branch:** `agent/wp-11-research-validity-evaluation-closure`
 > **Worktree:** isolated linked worktree for the branch above; primary checkout untouched
 > **Schema Epoch:** `MRA_REFOUNDATION_1 / DRAFT / NOT_CUT_OVER`
@@ -39,6 +39,7 @@ an isolated branch/worktree. The original workspace and its pre-existing
 | Gate A | `00f90d0` | Target Domain/PostgreSQL/Outcome contract parity closed |
 | Gate B and Gate C implementation | `406f55c` | Partition, Experiment, Evaluation Protocol/Run, Outcome access, observations, and metric closure implemented |
 | two-axis review corrections | `b0520ae` | Application/Infrastructure dependency boundary, symmetric serialized overlap, database-derived roster closure, protected Gate B, PIT leaf revalidation, EvaluationRun artifacts/provenance and FAILED replay hardened |
+| review closure | `59ac3a3` | exact DecisionReference/session FK plus bidirectional declared-population set closure seal the roster; exact Outcome-root lock and non-future cutoff seal PIT access against concurrent correction |
 
 ## 2. Gate A — Target/Outcome parity
 
@@ -143,16 +144,16 @@ evaluation_metric
 evaluation_metric_observation
 ```
 
-The clean focused catalog contains 68 tables, four views, 523 indexes, 810
-constraints, 54 functions, 140 non-internal triggers, and 1,600 catalog
+The clean focused catalog contains 68 tables, four views, 525 indexes, 812
+constraints, 54 functions, 140 non-internal triggers, and 1,604 catalog
 objects. Checksums are:
 
 | Artifact | SHA-256 |
 |---|---|
-| baseline | `99db3d71fee59ba330cb552509d8231f0628a47b0ae16539363ef3e9d2649486` |
+| baseline | `591f7c41a06bd02bc7e77e75628c6b0828f05e2b9425ebe685f6c96aa2150600` |
 | seed | `9c41cd715e35e1a7bed3a58c52a29f01cc1e9bf950b77344bb56eac6dfa2df11` |
 | reference vocabulary | `06d6c1f1b8a15c9ae83bc2f0124c003b3fe193f5a4ad5bdf09d3e8a1e3db0dcb` |
-| focused clean catalog | `31d865d1a99f753b39fe34520082f9f0e3deec6993d2599470db445bfa3d1891` |
+| focused clean catalog | `0737ad5a29cd8a3d3847d2b2f20dbb81bd5510e44916d6e08f8a9f150995bda6` |
 
 Concrete/composite FKs and closure/lifecycle/append-only triggers cover Target
 matching, immutable rosters, Experiment binding, access ordinal, exact Outcome
@@ -163,7 +164,7 @@ replay, and fresh-transaction deterministic failure recording.
 
 ## 6. Focused validation
 
-The following directly affected suite is `PASS` with 110 tests:
+The following directly affected suite is `PASS` with 111 tests:
 
 ```bash
 PYTHONPATH=src \
@@ -193,10 +194,50 @@ retention as `NOT_ESTIMABLE`. Review regressions additionally cover symmetric
 protected overlap, protected second-Run rejection after first access, direct
 database rejection of a future Outcome correction at an earlier cutoff,
 EvaluationRun FAILED exact replay, and the Application/PostgreSQL-driver
-dependency boundary.
+dependency boundary. The final PIT regression also rejects a future requested
+knowledge cutoff before acquisition.
 
-Changed-scope Ruff, mypy, documentation link checks, and `git diff --check` are
-also `PASS`. Two non-final setup observations are not promoted into evidence:
+### Validation command ledger
+
+| Result | Command / scope |
+|---|---|
+| `PASS` | `uv sync --frozen --extra dev --extra postgres` |
+| `PASS (111)` | the focused pytest command above, with the disposable PostgreSQL 16 database URL shown there |
+| `PASS` | changed-scope Ruff command below |
+| `PASS` | changed-scope mypy command below |
+| `PASS` | `uv run python scripts/check_docs_links.py` |
+| `PASS (7)` | `uv run python -m pytest -q tests/scripts/test_check_docs_links.py` |
+| `PASS` | `git diff --check origin/main..HEAD` |
+
+```bash
+uv run ruff check \
+  src/market_regime_alpha/research_qualification \
+  src/market_regime_alpha/infrastructure/postgres/research_transaction.py \
+  src/market_regime_alpha/infrastructure/postgres/partition_uow.py \
+  src/market_regime_alpha/infrastructure/postgres/experiment_uow.py \
+  src/market_regime_alpha/infrastructure/postgres/evaluation_uow.py \
+  src/market_regime_alpha/infrastructure/postgres/queries/research_partition_inputs.py \
+  src/market_regime_alpha/infrastructure/postgres/repositories/research_partitions.py \
+  src/market_regime_alpha/infrastructure/postgres/repositories/research_evaluations.py \
+  src/market_regime_alpha/infrastructure/postgres/repositories/research_evaluation_inputs.py \
+  tests/refoundation/research_qualification/test_wp11_architecture.py \
+  tests/refoundation/research_qualification/test_wp11_schema_specification.py \
+  tests/refoundation/research_qualification/test_evaluation_closure_postgres.py
+
+uv run mypy \
+  src/market_regime_alpha/research_qualification \
+  src/market_regime_alpha/infrastructure/postgres/research_transaction.py \
+  src/market_regime_alpha/infrastructure/postgres/partition_uow.py \
+  src/market_regime_alpha/infrastructure/postgres/experiment_uow.py \
+  src/market_regime_alpha/infrastructure/postgres/evaluation_uow.py \
+  src/market_regime_alpha/infrastructure/postgres/queries/research_partition_inputs.py \
+  src/market_regime_alpha/infrastructure/postgres/repositories/research_partitions.py \
+  src/market_regime_alpha/infrastructure/postgres/repositories/research_evaluations.py \
+  src/market_regime_alpha/infrastructure/postgres/repositories/research_evaluation_inputs.py
+```
+
+The final changed-scope commands include the review corrections through
+`59ac3a3`. Two non-final setup observations are not promoted into evidence:
 an initial PostgreSQL invocation without the test database environment was
 blocked, and an inherited helper with a next-day 00:05 wall-clock fixture failed
 during the few minutes before 00:05 then passed unchanged after its due time.

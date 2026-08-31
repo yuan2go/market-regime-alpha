@@ -4,12 +4,12 @@
 > **Authority:** Non-authoritative capability status read model; exact-SHA engineering proof remains in Verification
 > **Owner:** Market Regime Alpha maintainers
 > **Generated At:** 2026-09-01 WP-11 focused implementation reconciliation
-> **Repository Implementation Checkpoint:** `b0520ae69ff1879a640f4cee98eb07b82ee3fce7`
+> **Repository Implementation Checkpoint:** `59ac3a35c46d60d179d62898de054c608831f54c`
 > **Containing Documentation Commit:** reported by the final handoff; this read model does not claim a self-referential Git SHA
 > **Previous Verified Snapshot:** WP-10 at `56812c58ce7b6e601366ffd0a5cfb52fec573227`
 > **Schema Epochs:** canonical business `LEGACY_MIGRATIONS_001_106`; target draft `MRA_REFOUNDATION_1 / DRAFT / NOT_CUT_OVER`
 > **Generator:** `WP-ARCHITECTURE-REFOUNDATION-11 implementation/status reconciliation; non-authoritative read model`
-> **Source Tree IDs:** root `d2ac6a06cfd4fb67fdacc120d59f85cd7438902d`; source `0fcd3ec720f2222b14b2c2e4936b44b99c1cea2d`; tests `901d4485d8b65074239afefe62c6ddcd64046d10`; Research & Qualification tree `57dee016d6c98c0197ba122aded1f0f41a5432ce`; target baseline blob `9d4f3f3f180c2b1513c5ad296d0b49082c99af17`; legacy migrations tree `6d3730548780ad6244d2cfecb4fb3559064b6f06`
+> **Source Tree IDs:** root `3701b9ec527096cce13d3000d7d7bc2b56e74677`; source `2dd5e31479a6da637ffcf21b248a4ad45c5b4aad`; tests `59de085bf3d87617b68491161e0d7f37f8883397`; Research & Qualification tree `79ef8c310f663bf698d97faa555b67c7d811e197`; target baseline blob `cdec4ef409e4da625f41cca46174f722053c8fc1`; legacy migrations tree `6d3730548780ad6244d2cfecb4fb3559064b6f06`
 > **Code Evidence:** target and legacy source/migration packages, `tests`, [WP-11 canonical design](../references/WP-ARCHITECTURE-REFOUNDATION-11-Research-Validity-Evaluation-Design.md), and [WP-11 implementation status](../references/WP-ARCHITECTURE-REFOUNDATION-11-Research-Validity-Evaluation-Implementation-Status.md)
 
 This view separates current capability from target convergence. It records the
@@ -32,11 +32,11 @@ Target Outcome are
 `IMPLEMENTED_DRAFT / EXIT_GATE_PASS / NOT_CUT_OVER`. No state grants canonical
 business Authority or creates dual write.
 
-WP-11 focused validation passes 110 directly affected tests, changed-scope Ruff
+WP-11 focused validation passes 111 directly affected tests, changed-scope Ruff
 and mypy, documentation links, and diff checks. The focused clean PostgreSQL 16
-catalog records 68 tables, four views, 1,600 catalog objects, and catalog
+catalog records 68 tables, four views, 1,604 catalog objects, and catalog
 checksum
-`31d865d1a99f753b39fe34520082f9f0e3deec6993d2599470db445bfa3d1891`.
+`0737ad5a29cd8a3d3847d2b2f20dbb81bd5510e44916d6e08f8a9f150995bda6`.
 Full PostgreSQL concurrency/recovery/replay, complete regression, build, and
 engineering qualification are `NOT_RUN_BY_SCOPE`; exact commands and ceilings
 are recorded in the linked WP-11 implementation status. The immutable WP-10

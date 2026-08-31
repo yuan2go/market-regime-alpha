@@ -186,7 +186,7 @@ ordinals, complete Evaluation observations, and complete metric-input rosters.
 The implementation stays inside `market_regime_alpha.research_qualification`
 and uses separate Partition, Experiment, and Evaluation UoWs.
 
-The focused checkpoint is `b0520ae69ff1879a640f4cee98eb07b82ee3fce7`.
+The focused checkpoint is `59ac3a35c46d60d179d62898de054c608831f54c`.
 Directly affected Domain, PostgreSQL correctness/specification, architecture,
 Target/Outcome parity, and Evaluation-closure tests pass. The status is exactly:
 
