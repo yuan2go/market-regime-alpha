@@ -152,6 +152,9 @@ def test_partition_closure_and_overlap_are_database_serialized() -> None:
     assert "LOCK TABLE mra.decision_target_commitment IN SHARE MODE" in sql
     assert "actual_count <> declared_population_count" in sql
     assert "actual_roster_hash <> NEW.member_roster_sha256" in sql
+    assert "decision_reference_research_session_uk" in sql
+    assert "research_partition_member_reference_session_fk" in sql
+    assert "EXCEPT" in sql
     assert "research-partition-overlap:" in sql
     assert "pg_advisory_xact_lock" in sql
     assert "existing.overlap_policy = 'ISOLATED_PROTECTED'" in sql
@@ -164,3 +167,10 @@ def test_gate_b_and_pit_leaf_selection_are_database_guards() -> None:
     assert "protected Outcome access must remain first access" in sql
     assert "NEW.settled_at > cutoff" in sql
     assert "Outcome access revision is not the unique visible leaf" in sql
+    access_guard = sql.split(
+        "CREATE FUNCTION mra.guard_research_outcome_access()", maxsplit=1
+    )[1].split("$$;", maxsplit=1)[0]
+    assert "FROM mra.market_target_outcome AS root" in access_guard
+    assert "FOR SHARE" in access_guard
+    assert "cutoff > NEW.accessed_at" in access_guard
+    assert "EvaluationRun knowledge cutoff cannot be in the future" in sql

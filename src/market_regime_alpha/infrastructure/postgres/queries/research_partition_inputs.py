@@ -155,6 +155,7 @@ class PostgresPartitionInputQueries:
             """
             WITH base AS (
                 SELECT commitment.commitment_id,
+                       reference.decision_reference_observation_id,
                        commitment.target_definition_id,
                        commitment.decision_time,
                        commitment.candidate_disposition,
@@ -178,7 +179,9 @@ class PostgresPartitionInputQueries:
                       start_session.session_date AND end_session.session_date
                   AND (%s::text IS NULL OR commitment.candidate_disposition = %s)
             )
-            SELECT base.commitment_id, base.target_definition_id,
+            SELECT base.commitment_id,
+                   base.decision_reference_observation_id,
+                   base.target_definition_id,
                    base.decision_time, base.candidate_disposition,
                    base.commitment_recorded_at, base.runtime_mode,
                    base.decision_session_id,
@@ -198,7 +201,9 @@ class PostgresPartitionInputQueries:
                 ORDER BY session.session_date, session.session_id
                 OFFSET checkpoint.session_offset - 1 LIMIT 1
             ) AS future ON true
-            GROUP BY base.commitment_id, base.target_definition_id,
+            GROUP BY base.commitment_id,
+                     base.decision_reference_observation_id,
+                     base.target_definition_id,
                      base.decision_time, base.candidate_disposition,
                      base.commitment_recorded_at, base.runtime_mode,
                      base.decision_session_id
@@ -221,14 +226,15 @@ class PostgresPartitionInputQueries:
         result = tuple(
             DerivedPartitionMember(
                 commitment_id=UUID(str(row[0])),
-                target_definition_id=UUID(str(row[1])),
-                decision_time=row[2],
-                candidate_disposition=str(row[3]),
-                commitment_recorded_at=row[4],
-                runtime_mode=str(row[5]),
-                decision_session_id=UUID(str(row[6])),
-                earliest_outcome_event_at=row[7],
-                outcome_due_at=row[8],
+                decision_reference_observation_id=UUID(str(row[1])),
+                target_definition_id=UUID(str(row[2])),
+                decision_time=row[3],
+                candidate_disposition=str(row[4]),
+                commitment_recorded_at=row[5],
+                runtime_mode=str(row[6]),
+                decision_session_id=UUID(str(row[7])),
+                earliest_outcome_event_at=row[8],
+                outcome_due_at=row[9],
             )
             for row in rows
         )

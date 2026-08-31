@@ -24,6 +24,7 @@ class PartitionCalendarBounds:
 @dataclass(frozen=True, slots=True)
 class DerivedPartitionMember:
     commitment_id: UUID
+    decision_reference_observation_id: UUID
     target_definition_id: UUID
     decision_time: datetime
     candidate_disposition: str

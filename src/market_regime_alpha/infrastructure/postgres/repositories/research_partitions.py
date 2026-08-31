@@ -54,6 +54,7 @@ class PostgresResearchPartitionRepository:
                         "candidate_disposition": member.candidate_disposition,
                         "commitment_id": member.commitment_id,
                         "commitment_recorded_at": member.commitment_recorded_at,
+                        "decision_reference_observation_id": member.decision_reference_observation_id,
                         "decision_session_id": member.decision_session_id,
                         "decision_time": member.decision_time,
                         "earliest_outcome_event_at": member.earliest_outcome_event_at,
@@ -150,14 +151,16 @@ class PostgresResearchPartitionRepository:
                 """
                 INSERT INTO mra.research_partition_member (
                     research_partition_member_id, research_partition_id,
-                    member_ordinal, commitment_id, target_definition_id,
+                    member_ordinal, commitment_id,
+                    decision_reference_observation_id,
+                    target_definition_id,
                     decision_time, candidate_disposition,
                     commitment_recorded_at, runtime_mode,
                     decision_session_id, earliest_outcome_event_at,
                     outcome_due_at, content_sha256
                 ) VALUES (
                     %s, %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s, %s, %s
+                    %s, %s, %s, %s, %s, %s, %s
                 )
                 """,
                 (
@@ -166,6 +169,7 @@ class PostgresResearchPartitionRepository:
                         plan.research_partition_id,
                         ordinal,
                         member.commitment_id,
+                        member.decision_reference_observation_id,
                         member.target_definition_id,
                         member.decision_time,
                         member.candidate_disposition,

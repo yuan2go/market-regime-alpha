@@ -8281,6 +8281,13 @@ ALTER TABLE mra.decision_target_commitment
         candidate_disposition, commitment_recorded_at, runtime_mode
     );
 
+ALTER TABLE mra.decision_reference_observation
+    ADD CONSTRAINT decision_reference_research_session_uk UNIQUE (
+        decision_reference_observation_id, commitment_id,
+        target_definition_id, session_id, decision_time,
+        runtime_mode, commitment_recorded_at
+    );
+
 ALTER TABLE mra.market_target_outcome_revision
     ADD CONSTRAINT outcome_revision_research_authority_uk UNIQUE (
         market_target_outcome_revision_id, market_target_outcome_id,
@@ -8405,6 +8412,7 @@ CREATE TABLE mra.research_partition_member (
     research_partition_id uuid NOT NULL,
     member_ordinal integer NOT NULL,
     commitment_id uuid NOT NULL,
+    decision_reference_observation_id uuid NOT NULL,
     target_definition_id uuid NOT NULL,
     decision_time timestamptz NOT NULL,
     candidate_disposition text NOT NULL,
@@ -8440,6 +8448,15 @@ CREATE TABLE mra.research_partition_member (
         commitment_id, target_definition_id, decision_time,
         candidate_disposition, commitment_recorded_at, runtime_mode
     ) ON DELETE RESTRICT,
+    CONSTRAINT research_partition_member_reference_session_fk FOREIGN KEY (
+        decision_reference_observation_id, commitment_id,
+        target_definition_id, decision_session_id, decision_time,
+        runtime_mode, commitment_recorded_at
+    ) REFERENCES mra.decision_reference_observation(
+        decision_reference_observation_id, commitment_id,
+        target_definition_id, session_id, decision_time,
+        runtime_mode, commitment_recorded_at
+    ) ON DELETE RESTRICT,
     CONSTRAINT research_partition_member_shape_ck CHECK (
         member_ordinal > 0
         AND candidate_disposition IN ('SELECTED', 'RANKED_NOT_SELECTED', 'UNRANKABLE')
@@ -8459,6 +8476,12 @@ CREATE INDEX research_partition_member_commitment_fk_idx ON mra.research_partiti
     candidate_disposition, commitment_recorded_at, runtime_mode
 );
 CREATE INDEX research_partition_member_session_fk_idx ON mra.research_partition_member (decision_session_id);
+CREATE INDEX research_partition_member_reference_session_fk_idx
+    ON mra.research_partition_member (
+        decision_reference_observation_id, commitment_id,
+        target_definition_id, decision_session_id, decision_time,
+        runtime_mode, commitment_recorded_at
+    );
 
 CREATE TABLE mra.experiment (
     experiment_id uuid PRIMARY KEY,
@@ -9218,6 +9241,54 @@ BEGIN
              AND (member.target_definition_id <> NEW.target_definition_id
                   OR session.session_date NOT BETWEEN
                      NEW.decision_start_date AND NEW.decision_end_date)
+       ) OR EXISTS (
+           (
+               SELECT commitment.commitment_id
+               FROM mra.decision_target_commitment AS commitment
+               JOIN mra.decision_reference_observation AS reference
+                 ON reference.decision_reference_observation_id =
+                    commitment.decision_reference_observation_id
+               JOIN mra.trading_session AS session
+                 ON session.session_id = reference.session_id
+               WHERE commitment.target_definition_id =
+                     NEW.target_definition_id
+                 AND session.session_date BETWEEN
+                     NEW.decision_start_date AND NEW.decision_end_date
+                 AND (NEW.population_scope = 'ALL_COMMITMENTS'
+                      OR commitment.candidate_disposition =
+                         NEW.population_scope)
+           )
+           EXCEPT
+           (
+               SELECT member.commitment_id
+               FROM mra.research_partition_member AS member
+               WHERE member.research_partition_id =
+                     NEW.research_partition_id
+           )
+       ) OR EXISTS (
+           (
+               SELECT member.commitment_id
+               FROM mra.research_partition_member AS member
+               WHERE member.research_partition_id =
+                     NEW.research_partition_id
+           )
+           EXCEPT
+           (
+               SELECT commitment.commitment_id
+               FROM mra.decision_target_commitment AS commitment
+               JOIN mra.decision_reference_observation AS reference
+                 ON reference.decision_reference_observation_id =
+                    commitment.decision_reference_observation_id
+               JOIN mra.trading_session AS session
+                 ON session.session_id = reference.session_id
+               WHERE commitment.target_definition_id =
+                     NEW.target_definition_id
+                 AND session.session_date BETWEEN
+                     NEW.decision_start_date AND NEW.decision_end_date
+                 AND (NEW.population_scope = 'ALL_COMMITMENTS'
+                      OR commitment.candidate_disposition =
+                         NEW.population_scope)
+           )
        ) THEN
         RAISE EXCEPTION 'ResearchPartition member roster is incomplete or outside declaration' USING ERRCODE = '55000';
     END IF;
@@ -9322,6 +9393,10 @@ BEGIN
     WHERE experiment_run_id = NEW.experiment_run_id FOR SHARE;
     SELECT frozen_at INTO protocol_frozen_at FROM mra.evaluation_protocol
     WHERE evaluation_protocol_id = NEW.evaluation_protocol_id FOR SHARE;
+    IF NEW.requested_knowledge_cutoff > NEW.opened_at THEN
+        RAISE EXCEPTION 'EvaluationRun knowledge cutoff cannot be in the future'
+            USING ERRCODE = '55000';
+    END IF;
     IF experiment_opened_at >= NEW.opened_at OR protocol_frozen_at >= NEW.opened_at THEN
         RAISE EXCEPTION 'ExperimentRun and Protocol must precede EvaluationRun' USING ERRCODE = '55000';
     END IF;
@@ -9452,6 +9527,16 @@ DECLARE partition_purpose text;
 DECLARE expected_ordinal integer;
 DECLARE visible_leaf_count integer;
 BEGIN
+    PERFORM 1
+    FROM mra.market_target_outcome AS root
+    WHERE root.market_target_outcome_id = NEW.market_target_outcome_id
+      AND root.commitment_id = NEW.commitment_id
+      AND root.target_definition_id = NEW.target_definition_id
+    FOR SHARE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Outcome access root is absent or mismatched'
+            USING ERRCODE = '23503';
+    END IF;
     SELECT status, opened_at, requested_knowledge_cutoff,
            research_partition_id, evaluation_run.partition_purpose
       INTO run_status, run_opened_at, cutoff,
@@ -9460,7 +9545,8 @@ BEGIN
     IF run_status <> 'OPEN' THEN
         RAISE EXCEPTION 'Outcome acquisition requires EvaluationRun OPEN' USING ERRCODE = '55000';
     END IF;
-    IF NEW.accessed_at <= run_opened_at OR NEW.knowledge_cutoff > cutoff
+    IF cutoff > NEW.accessed_at
+       OR NEW.accessed_at <= run_opened_at OR NEW.knowledge_cutoff > cutoff
        OR NEW.observation_cutoff > cutoff OR NEW.settled_at > cutoff THEN
         RAISE EXCEPTION 'Outcome access ordering/cutoff is invalid' USING ERRCODE = '55000';
     END IF;

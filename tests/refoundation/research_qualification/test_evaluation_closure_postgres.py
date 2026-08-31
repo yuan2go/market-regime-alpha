@@ -368,6 +368,27 @@ def test_evaluation_run_can_fail_once_and_replays_exact_failure(wp11_stack) -> N
     assert state[5] == "8" * 64
 
 
+def test_evaluation_run_rejects_a_future_knowledge_cutoff(wp11_stack) -> None:
+    stack = wp11_stack
+    target, _, _, _ = _settle_two_visible_revisions(stack)
+    commands, _, experiment_run_id, protocol = _freeze_and_predeclare(stack, target)
+
+    with pytest.raises(RuntimeStateConflictError, match="Evaluation"):
+        commands.open_run(
+            EvaluationRunPlan(
+                evaluation_run_id=uuid4(),
+                experiment_run_id=experiment_run_id,
+                evaluation_protocol_id=protocol.evaluation_protocol_id,
+                requested_knowledge_cutoff=datetime.now(UTC) + timedelta(days=1),
+                request_identity="future-knowledge-cutoff",
+                code_artifact=protocol.code_artifact,
+                config_artifact=protocol.config_artifact,
+                provenance_sha256="8" * 64,
+            ),
+            _wp11_context("open-future-cutoff", "OPEN_EVALUATION_RUN"),
+        )
+
+
 def test_database_rejects_a_revision_not_visible_at_run_cutoff(wp11_stack) -> None:
     stack = wp11_stack
     target, _, second, settled = _settle_two_visible_revisions(stack)
