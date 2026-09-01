@@ -245,9 +245,9 @@ def dataset_stack(target_database_url: str, tmp_path, request) -> _DatasetStack:
     fact_revision_id = uuid4()
     bar_revision_id = uuid4()
     session_id = uuid4()
-    # Keep all synthetic session observations strictly in the past so this
-    # reusable Authority fixture is deterministic across local clock rollovers.
-    today = datetime.now(SHANGHAI).date() - timedelta(days=1)
+    # Keep both the Decision session and its next-session Outcome horizon
+    # strictly in the past, including during Shanghai's 00:00-00:05 rollover.
+    today = datetime.now(SHANGHAI).date() - timedelta(days=2)
 
     def instant(hour: int, minute: int) -> datetime:
         return datetime.combine(

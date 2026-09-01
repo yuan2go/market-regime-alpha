@@ -26,14 +26,18 @@ def _required(name: str, value: str) -> None:
 class ExperimentPartitionBinding:
     experiment_partition_id: UUID
     experiment_id: UUID
+    binding_ordinal: int
     research_partition_id: UUID
     target_definition_id: UUID
     target_version: int
     target_definition_sha256: ContentHash | str
     purpose: PartitionPurpose
     partition_content_sha256: ContentHash | str
+    content_sha256: ContentHash = field(init=False)
 
     def __post_init__(self) -> None:
+        if isinstance(self.binding_ordinal, bool) or self.binding_ordinal < 1:
+            raise ValueError("binding_ordinal must be positive")
         if isinstance(self.target_version, bool) or self.target_version < 1:
             raise ValueError("target_version must be positive")
         object.__setattr__(
@@ -41,6 +45,29 @@ class ExperimentPartitionBinding:
         )
         object.__setattr__(
             self, "partition_content_sha256", ContentHash(str(self.partition_content_sha256))
+        )
+        object.__setattr__(
+            self,
+            "content_sha256",
+            ContentHash(
+                canonical_json_sha256(
+                    {
+                        "binding_ordinal": self.binding_ordinal,
+                        "experiment_id": self.experiment_id,
+                        "experiment_partition_id": self.experiment_partition_id,
+                        "partition_content_sha256": str(
+                            self.partition_content_sha256
+                        ),
+                        "partition_purpose": self.purpose,
+                        "research_partition_id": self.research_partition_id,
+                        "target_definition_id": self.target_definition_id,
+                        "target_definition_sha256": str(
+                            self.target_definition_sha256
+                        ),
+                        "target_version": self.target_version,
+                    }
+                )
+            ),
         )
 
 
@@ -116,6 +143,42 @@ class ExperimentDefinition:
         )
         if actual != expected:
             raise ValueError("Experiment and Partition Target do not match exactly")
+
+    def validate_partition_roster(
+        self, bindings: tuple[ExperimentPartitionBinding, ...]
+    ) -> None:
+        if not bindings:
+            raise ValueError("Experiment Partition roster must be non-empty")
+        expected_ordinals = tuple(range(1, len(bindings) + 1))
+        actual_ordinals = tuple(binding.binding_ordinal for binding in bindings)
+        if actual_ordinals != expected_ordinals:
+            raise ValueError("Experiment Partition binding ordinals must be contiguous")
+        partition_ids = tuple(binding.research_partition_id for binding in bindings)
+        binding_ids = tuple(binding.experiment_partition_id for binding in bindings)
+        if len(set(partition_ids)) != len(partition_ids) or len(set(binding_ids)) != len(
+            binding_ids
+        ):
+            raise ValueError("Experiment Partition roster contains a duplicate binding")
+        for binding in bindings:
+            self.validate_partition_binding(binding)
+
+    def partition_roster_sha256(
+        self, bindings: tuple[ExperimentPartitionBinding, ...]
+    ) -> ContentHash:
+        self.validate_partition_roster(bindings)
+        return ContentHash(
+            canonical_json_sha256(
+                tuple(
+                    {
+                        "binding_ordinal": binding.binding_ordinal,
+                        "content_sha256": str(binding.content_sha256),
+                        "experiment_partition_id": binding.experiment_partition_id,
+                        "research_partition_id": binding.research_partition_id,
+                    }
+                    for binding in bindings
+                )
+            )
+        )
 
 
 @dataclass(frozen=True, slots=True)

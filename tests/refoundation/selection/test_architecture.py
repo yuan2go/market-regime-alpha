@@ -5,6 +5,10 @@ from pathlib import Path
 import subprocess
 import sys
 
+from market_regime_alpha.infrastructure.postgres.schema import (
+    EXPECTED_RESEARCH_VALIDITY_TABLES,
+)
+
 
 ROOT = Path(__file__).resolve().parents[3]
 SRC = ROOT / "src" / "market_regime_alpha"
@@ -110,16 +114,24 @@ def test_wp10_adds_exact_outcome_authority_without_later_authorities() -> None:
     ):
         assert f"CREATE TABLE mra.{table}" in baseline
     for table in (
-        "research_partition",
-        "experiment",
         "evaluation_dataset",
-        "research_evidence",
-        "qualification_assessment",
+        "evidence_item",
+        "evidence_dependency",
+        "research_assessment",
+        "research_assessment_evaluation",
+        "research_assessment_evidence",
+        "research_qualification_policy",
+        "research_qualification_policy_floor",
+        "research_qualification_decision",
+        "research_qualification_floor_result",
+        "research_qualification_floor_evidence",
         "model",
         "model_version",
         "context",
     ):
         assert f"CREATE TABLE mra.{table}" not in baseline
+    for table in EXPECTED_RESEARCH_VALIDITY_TABLES:
+        assert f"CREATE TABLE mra.{table}" in baseline
 
 
 def test_candidate_uses_an_independent_narrow_uow() -> None:

@@ -35,6 +35,14 @@ class ResearchRetryableTransactionError(RuntimeError):
         self.sqlstate = sqlstate
 
 
+class ResearchUnknownCommitResultError(RuntimeError):
+    """Commit acknowledgement was lost; only exact receipt replay is safe."""
+
+    def __init__(self, sqlstate: str) -> None:
+        super().__init__(sqlstate)
+        self.sqlstate = sqlstate
+
+
 __all__ = [
     "EvaluationAcquisitionError",
     "EvaluationProtocolError",
@@ -42,5 +50,6 @@ __all__ = [
     "ExperimentBindingError",
     "PartitionInputError",
     "ResearchRetryableTransactionError",
+    "ResearchUnknownCommitResultError",
     "ResearchValidityError",
 ]

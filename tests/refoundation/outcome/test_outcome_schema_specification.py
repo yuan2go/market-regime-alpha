@@ -4,6 +4,7 @@ import psycopg
 
 from market_regime_alpha.infrastructure.postgres.schema import (
     EXPECTED_OUTCOME_TABLES,
+    EXPECTED_RESEARCH_VALIDITY_TABLES,
     EXPECTED_TARGET_TABLES,
     SchemaManager,
 )
@@ -42,18 +43,19 @@ def test_wp10_adds_exactly_eight_outcome_authority_relations(
     }
     assert tables == EXPECTED_TARGET_TABLES
     assert EXPECTED_OUTCOME_TABLES <= tables
+    assert EXPECTED_RESEARCH_VALIDITY_TABLES <= tables
     assert json_columns == []
     assert not {
         table
         for table in tables
         if table.startswith(
             (
-                "research_partition",
-                "experiment",
-                "evaluation",
+                "evidence_",
                 "model",
                 "qualification",
                 "context",
+                "research_assessment",
+                "research_qualification",
                 "trade_outcome",
             )
         )

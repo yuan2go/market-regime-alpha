@@ -12,6 +12,14 @@
 > `src/market_regime_alpha/infrastructure/postgres/migrations/001_baseline.sql`,
 > `tests`, and the immutable WP-09/WP-10 Verification records
 
+> **WP-11Q supersession notice (2026-09-01):** the execution-time
+> [WP-11Q Qualification Design](WP-ARCHITECTURE-REFOUNDATION-11Q-Research-Validity-Evaluation-Qualification-Design.md)
+> supersedes this record's implementation details for canonical composition,
+> explicit exchange-calendar closure, complete multi-Partition Experiment
+> roster closure, formal verification, and exact-SHA engineering
+> qualification. The integrated ownership, Gate A/B/C order, PIT-safe access,
+> complete sample preservation, and all NO-GO boundaries remain unchanged.
+
 ## 1. Decision and evidence ceiling
 
 WP-11 is one integrated implementation package inside the existing canonical

@@ -35,6 +35,18 @@ def test_three_uows_have_narrow_non_overlapping_business_ownership() -> None:
     assert ExperimentUnitOfWork is not EvaluationUnitOfWork
 
 
+def test_sole_target_composition_constructs_wp11_commands() -> None:
+    bootstrap = (ROOT / "src/market_regime_alpha/bootstrap.py").read_text()
+    assert "research_partitions: ResearchPartitionCommands" in bootstrap
+    assert "research_experiments: ExperimentCommands" in bootstrap
+    assert "research_evaluations: EvaluationCommands" in bootstrap
+    assert "research_evaluation_verifier: ResearchEvaluationVerifier" in bootstrap
+    assert "PostgresPartitionUnitOfWorkProvider" in bootstrap
+    assert "PostgresExperimentUnitOfWorkProvider" in bootstrap
+    assert "PostgresEvaluationUnitOfWorkProvider" in bootstrap
+    assert "PostgresResearchEvaluationVerificationProvider" in bootstrap
+
+
 def test_application_has_no_postgres_driver_dependency() -> None:
     application_source = "\n".join(
         item.read_text()

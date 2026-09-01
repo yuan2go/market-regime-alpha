@@ -48,6 +48,7 @@ def test_experiment_partition_requires_exact_target_and_declared_purpose() -> No
     binding = ExperimentPartitionBinding(
         experiment_partition_id=uuid4(),
         experiment_id=experiment.experiment_id,
+        binding_ordinal=1,
         research_partition_id=uuid4(),
         target_definition_id=experiment.target_definition_id,
         target_version=experiment.target_version,
@@ -61,6 +62,7 @@ def test_experiment_partition_requires_exact_target_and_declared_purpose() -> No
             ExperimentPartitionBinding(
                 experiment_partition_id=uuid4(),
                 experiment_id=experiment.experiment_id,
+                binding_ordinal=1,
                 research_partition_id=uuid4(),
                 target_definition_id=uuid4(),
                 target_version=1,
@@ -69,6 +71,64 @@ def test_experiment_partition_requires_exact_target_and_declared_purpose() -> No
                 partition_content_sha256="d" * 64,
             )
         )
+
+
+def test_experiment_freezes_complete_ordered_non_empty_partition_roster() -> None:
+    experiment = _experiment()
+
+    def binding(ordinal: int, purpose: PartitionPurpose) -> ExperimentPartitionBinding:
+        return ExperimentPartitionBinding(
+            experiment_partition_id=uuid4(),
+            experiment_id=experiment.experiment_id,
+            binding_ordinal=ordinal,
+            research_partition_id=uuid4(),
+            target_definition_id=experiment.target_definition_id,
+            target_version=experiment.target_version,
+            target_definition_sha256=experiment.target_definition_sha256,
+            purpose=purpose,
+            partition_content_sha256=f"{ordinal}" * 64,
+        )
+
+    roster = (
+        binding(1, PartitionPurpose.FIT),
+        binding(2, PartitionPurpose.VALIDATION),
+        binding(3, PartitionPurpose.LOCKED_OOS),
+    )
+    experiment.validate_partition_roster(roster)
+    assert len(str(experiment.partition_roster_sha256(roster))) == 64
+    with pytest.raises(ValueError, match="non-empty"):
+        experiment.validate_partition_roster(())
+    with pytest.raises(ValueError, match="contiguous"):
+        experiment.validate_partition_roster((roster[0], roster[2]))
+
+
+def test_experiment_partition_roster_rejects_duplicate_binding() -> None:
+    experiment = _experiment()
+    partition_id = uuid4()
+    first = ExperimentPartitionBinding(
+        experiment_partition_id=uuid4(),
+        experiment_id=experiment.experiment_id,
+        binding_ordinal=1,
+        research_partition_id=partition_id,
+        target_definition_id=experiment.target_definition_id,
+        target_version=experiment.target_version,
+        target_definition_sha256=experiment.target_definition_sha256,
+        purpose=PartitionPurpose.FIT,
+        partition_content_sha256="d" * 64,
+    )
+    duplicate = ExperimentPartitionBinding(
+        experiment_partition_id=uuid4(),
+        experiment_id=experiment.experiment_id,
+        binding_ordinal=2,
+        research_partition_id=partition_id,
+        target_definition_id=experiment.target_definition_id,
+        target_version=experiment.target_version,
+        target_definition_sha256=experiment.target_definition_sha256,
+        purpose=PartitionPurpose.VALIDATION,
+        partition_content_sha256="e" * 64,
+    )
+    with pytest.raises(ValueError, match="duplicate"):
+        experiment.validate_partition_roster((first, duplicate))
 
 
 def test_experiment_run_is_execution_identity_not_result() -> None:

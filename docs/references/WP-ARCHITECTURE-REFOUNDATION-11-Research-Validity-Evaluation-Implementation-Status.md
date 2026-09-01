@@ -25,6 +25,23 @@ This record is deliberately not named Verification and does not establish
 focused validation authorized for this work package. Independent full
 engineering qualification remains the next work package.
 
+> **Superseded by exact-SHA qualification (2026-09-02):** this file preserves
+> the original WP-11 implementation/focused-validation facts and its then-valid
+> ceiling. WP-11Q subsequently closed all three audited correctness blockers
+> and passed the full engineering gate at
+> `07151542f12a66d6e7da3e228e2dbf1d7d7771bb`. Current exit-gate Authority is
+> the immutable [WP-11 Verification](WP-ARCHITECTURE-REFOUNDATION-11-Research-Validity-Evaluation-Verification.md),
+> which records `WP11_EXIT_GATE = PASS`. The historical statements below are
+> not active status.
+
+> **WP-11Q audit notice (2026-09-01):** later execution-time audit of the
+> merged implementation found that the sole target composition root does not
+> construct these commands, Partition closure is not isolated to one explicit
+> SSE/SZSE exchange calendar, and Experiment registration persists only one
+> binding rather than the design's complete ordered multi-Partition roster.
+> The focused results below remain historical execution facts, but
+> `CORRECTNESS_CLOSURE_REQUIRED` now precedes engineering qualification.
+
 ## 1. Execution and document checkpoints
 
 The implementation started from the execution-time `origin/main` SHA above in

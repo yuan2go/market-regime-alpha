@@ -27,10 +27,14 @@ from market_regime_alpha.runtime.ports import (
 @dataclass(frozen=True, slots=True)
 class ResearchPartitionRecord:
     research_partition_id: UUID
+    exchange_code: str
+    timezone_name: str
     target_definition_id: UUID
     target_version: int
     target_definition_sha256: str
     purpose: str
+    calendar_session_count: int
+    calendar_roster_sha256: str
     member_count: int
     member_roster_sha256: str
     content_sha256: str

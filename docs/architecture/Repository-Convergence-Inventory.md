@@ -3,7 +3,7 @@
 > **Status:** CANONICAL_TARGET_ARCHITECTURE
 > **Authority:** Target package, Legacy, documentation, prompt, and Skill disposition
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-30
+> **Last Updated:** 2026-09-01
 > **Code Evidence:** `src/market_regime_alpha`, `pyproject.toml`, `tests/architecture`, `AGENTS.md`, `scripts/reconcile_branches.py`, `.claude/skills/reconcile-branches/SKILL.md`
 
 This inventory freezes what the business implementation phase will converge and
@@ -25,8 +25,15 @@ The durable convergence facts are:
   remain reachable;
 - repository-wide factories and compatibility paths still participate in
   composition and replay;
-- the unreleased target draft physically stops at Candidate and has no
-  post-Candidate owner or Runtime dispatch.
+- the unreleased target draft now contains Target/Decision commitment, Market
+  Target Outcome, and the focused-validated WP-11 Partition/Experiment/
+  Evaluation implementation. Runtime dispatch remains absent, and the WP-11Q
+  audit found that the three WP-11 command modules are not yet composed by the
+  sole `bootstrap.py` target application;
+- WP-11 remains below its engineering exit gate: Partition does not yet freeze
+  one explicit exchange-calendar identity, and Experiment persistence does not
+  yet close a complete ordered multi-Partition binding roster. Those are
+  correctness blockers, not deferred cutover work.
 
 The current all-day call chain is recovered from code, not documentation:
 

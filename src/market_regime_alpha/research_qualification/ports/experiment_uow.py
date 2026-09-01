@@ -20,12 +20,12 @@ from market_regime_alpha.runtime.ports import AuditRepository, CommandReceiptRep
 @dataclass(frozen=True, slots=True)
 class ExperimentRecord:
     experiment_id: UUID
-    experiment_partition_id: UUID
-    research_partition_id: UUID
     target_definition_id: UUID
-    partition_purpose: str
+    definition_sha256: str
+    partition_count: int
+    partition_roster_sha256: str
+    content_sha256: str
     registered_at: datetime
-    bound_at: datetime
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,7 +43,7 @@ class ExperimentRepository(Protocol):
     def register(
         self,
         definition: ExperimentDefinition,
-        binding: ExperimentPartitionBinding,
+        bindings: tuple[ExperimentPartitionBinding, ...],
         *,
         request_identity: str,
         request_sha256: str,
