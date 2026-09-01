@@ -111,6 +111,10 @@ Checkpoint traceability:
   floors, explicit floor results/Evidence, append-only supersession, and
   generation-safe qualification reads; design only until its exact-SHA
   engineering gate passes.
+- [WP-12 Research Evidence, Assessment and Qualification Implementation Plan](references/WP-ARCHITECTURE-REFOUNDATION-12-Research-Evidence-Assessment-Qualification-Implementation-Plan.md)
+  — file-level TDD slices for Evidence, Assessment, Policy/Decision,
+  generation-safe reads, reconciliation, real PostgreSQL campaigns, and the
+  final exact-SHA engineering gate.
 
 Design documents in this section define the Target destination. Status and
 Verification records report their explicitly bounded implementation evidence;
