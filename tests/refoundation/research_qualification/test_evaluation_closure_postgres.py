@@ -33,8 +33,14 @@ from market_regime_alpha.research_qualification.domain.research_vocabulary impor
     PartitionPurpose,
     SourceMetricValueType,
 )
-from market_regime_alpha.research_qualification.errors import EvaluationAcquisitionError
-from market_regime_alpha.runtime.errors import RuntimeStateConflictError
+from market_regime_alpha.research_qualification.errors import (
+    EvaluationAcquisitionError,
+    PartitionInputError,
+)
+from market_regime_alpha.runtime.errors import (
+    IdempotencyKeyReusedError,
+    RuntimeStateConflictError,
+)
 from market_regime_alpha.outcome.application import SettleMarketTargetOutcomeRequest
 from tests.refoundation.outcome import test_outcome_postgres as _outcome
 
@@ -110,6 +116,7 @@ def _freeze_and_predeclare(
         purpose=purpose,
         population_scope=PartitionPopulationScope.ALL_COMMITMENTS,
         overlap_policy=overlap_policy,
+        exchange_code="XSHG",
         decision_start_session_id=stack.market_session_id,
         decision_end_session_id=stack.market_session_id,
         purge_before_sessions=0,
@@ -144,6 +151,7 @@ def _freeze_and_predeclare(
     )
     binding = ExperimentPartitionBinding(
         experiment_partition_id=uuid4(), experiment_id=experiment.experiment_id,
+        binding_ordinal=1,
         research_partition_id=partition.research_partition_id,
         target_definition_id=target.target_definition_id,
         target_version=target.version,
@@ -152,7 +160,7 @@ def _freeze_and_predeclare(
         partition_content_sha256=partition.content_sha256,
     )
     experiment_commands.register(
-        experiment, binding,
+        experiment, (binding,),
         _wp11_context("register-experiment", "REGISTER_EXPERIMENT"),
     )
     experiment_run_id = uuid4()
@@ -296,6 +304,251 @@ def test_pit_safe_first_and_repeated_access_close_complete_evaluations(
     assert all(row[1:] == ("COMPLETED", 1, 1, 1, 1) for row in run_states)
     assert Decimal(metric_values[0][1]) == Decimal("0.049504950495049505")
     assert Decimal(metric_values[1][1]) == Decimal("0.059405940594059406")
+
+
+def test_partition_freezes_one_exact_exchange_calendar_and_excludes_other_roster(
+    wp11_stack,
+) -> None:
+    stack = wp11_stack
+    target, _, _, _ = _settle_two_visible_revisions(stack)
+    other_session_id = uuid4()
+    with psycopg.connect(stack.database_url) as connection:
+        connection.execute(
+            """
+            INSERT INTO mra.trading_session (
+                session_id, exchange, session_date, timezone_name,
+                open_at, break_start_at, break_end_at, close_at,
+                decision_reference_at, source_capture_id,
+                recorded_at, known_at, decision_visible_at
+            )
+            SELECT %s, 'XSHE', session_date, timezone_name,
+                   open_at, break_start_at, break_end_at, close_at,
+                   decision_reference_at, source_capture_id,
+                   recorded_at, known_at, decision_visible_at
+            FROM mra.trading_session
+            WHERE session_id = %s
+            """,
+            (other_session_id, stack.market_session_id),
+        )
+        connection.commit()
+
+    _, partition, _, _ = _freeze_and_predeclare(stack, target)
+    with psycopg.connect(stack.database_url) as connection:
+        root = connection.execute(
+            """
+            SELECT exchange_code, timezone_name, calendar_session_count,
+                   calendar_roster_sha256, protected_start_date,
+                   protected_end_date
+            FROM mra.research_partition
+            WHERE research_partition_id = %s
+            """,
+            (partition.research_partition_id,),
+        ).fetchone()
+        assert root is not None
+        counts = dict(
+            connection.execute(
+                """
+                SELECT exchange, count(*)
+                FROM mra.trading_session
+                WHERE exchange IN ('XSHG', 'XSHE')
+                  AND session_date BETWEEN %s AND %s
+                GROUP BY exchange
+                """,
+                (root[4], root[5]),
+            ).fetchall()
+        )
+        member_exchanges = connection.execute(
+            """
+            SELECT DISTINCT exchange_code
+            FROM mra.research_partition_member
+            WHERE research_partition_id = %s
+            """,
+            (partition.research_partition_id,),
+        ).fetchall()
+    assert root[0:2] == ("XSHG", "Asia/Shanghai")
+    assert root[2] == counts["XSHG"]
+    assert len(str(root[3])) == 64
+    assert counts["XSHG"] != counts["XSHE"]
+    assert member_exchanges == [("XSHG",)]
+
+    wrong_exchange_plan = ResearchPartitionPlan(
+        research_partition_id=uuid4(),
+        partition_code=f"wp11-wrong-exchange-{uuid4().hex[:8]}",
+        target_definition_id=target.target_definition_id,
+        target_version=target.version,
+        target_definition_sha256=target.content_sha256,
+        purpose=PartitionPurpose.VALIDATION,
+        population_scope=PartitionPopulationScope.ALL_COMMITMENTS,
+        overlap_policy=PartitionOverlapPolicy.DIAGNOSTIC_REUSE,
+        exchange_code="XSHE",
+        decision_start_session_id=stack.market_session_id,
+        decision_end_session_id=stack.market_session_id,
+        purge_before_sessions=0,
+        purge_after_sessions=0,
+        embargo_sessions=0,
+        series_code="wp11-wrong-exchange-series",
+        fold_ordinal=1,
+        code_artifact=target.algorithm.code_artifact,
+        config_artifact=target.algorithm.config_artifact,
+        provenance_sha256="5" * 64,
+    )
+    commands = ResearchPartitionCommands(
+        PostgresPartitionUnitOfWorkProvider(stack.pool, id_factory=uuid4),
+        id_factory=uuid4,
+    )
+    with pytest.raises(PartitionInputError, match="declared exchange calendar"):
+        commands.freeze(
+            wrong_exchange_plan,
+            _wp11_context("freeze-wrong-exchange", "FREEZE_RESEARCH_PARTITION"),
+        )
+
+
+def test_experiment_registration_freezes_complete_ordered_partition_roster(
+    wp11_stack,
+) -> None:
+    stack = wp11_stack
+    target, _, _, _ = _settle_two_visible_revisions(stack)
+    partition_commands = ResearchPartitionCommands(
+        PostgresPartitionUnitOfWorkProvider(stack.pool, id_factory=uuid4),
+        id_factory=uuid4,
+    )
+    declared = (
+        (PartitionPurpose.FIT, PartitionOverlapPolicy.DIAGNOSTIC_REUSE),
+        (PartitionPurpose.VALIDATION, PartitionOverlapPolicy.DIAGNOSTIC_REUSE),
+        (PartitionPurpose.LOCKED_OOS, PartitionOverlapPolicy.ISOLATED_PROTECTED),
+    )
+    partitions = []
+    for ordinal, (purpose, policy) in enumerate(declared, start=1):
+        plan = ResearchPartitionPlan(
+            research_partition_id=uuid4(),
+            partition_code=f"wp11-roster-{ordinal}-{uuid4().hex[:8]}",
+            target_definition_id=target.target_definition_id,
+            target_version=target.version,
+            target_definition_sha256=target.content_sha256,
+            purpose=purpose,
+            population_scope=PartitionPopulationScope.ALL_COMMITMENTS,
+            overlap_policy=policy,
+            exchange_code="XSHG",
+            decision_start_session_id=stack.market_session_id,
+            decision_end_session_id=stack.market_session_id,
+            purge_before_sessions=0,
+            purge_after_sessions=0,
+            embargo_sessions=0,
+            series_code=f"wp11-roster-series-{ordinal}",
+            fold_ordinal=1,
+            code_artifact=target.algorithm.code_artifact,
+            config_artifact=target.algorithm.config_artifact,
+            provenance_sha256=f"{ordinal}" * 64,
+        )
+        partitions.append(
+            partition_commands.freeze(
+                plan,
+                _wp11_context(
+                    f"freeze-roster-{ordinal}", "FREEZE_RESEARCH_PARTITION"
+                ),
+            )
+        )
+
+    definition = ExperimentDefinition(
+        experiment_id=uuid4(),
+        experiment_code=f"wp11-roster-exp-{uuid4().hex[:8]}",
+        research_question="Can one experiment predeclare all purpose partitions?",
+        primary_change="Freeze one exact ordered Partition binding roster.",
+        hypothesis="All declared partitions remain relationally complete.",
+        target_definition_id=target.target_definition_id,
+        target_version=target.version,
+        target_definition_sha256=target.content_sha256,
+        protocol_identity="wp11-roster-protocol-v1",
+        acceptance_semantics="No posterior Partition binding is permitted.",
+        code_artifact=target.algorithm.code_artifact,
+        config_artifact=target.algorithm.config_artifact,
+        provenance_sha256="4" * 64,
+    )
+    bindings = tuple(
+        ExperimentPartitionBinding(
+            experiment_partition_id=uuid4(),
+            experiment_id=definition.experiment_id,
+            binding_ordinal=ordinal,
+            research_partition_id=partition.research_partition_id,
+            target_definition_id=target.target_definition_id,
+            target_version=target.version,
+            target_definition_sha256=target.content_sha256,
+            purpose=purpose,
+            partition_content_sha256=partition.content_sha256,
+        )
+        for ordinal, ((purpose, _), partition) in enumerate(
+            zip(declared, partitions, strict=True), start=1
+        )
+    )
+    commands = ExperimentCommands(
+        PostgresExperimentUnitOfWorkProvider(stack.pool), id_factory=uuid4
+    )
+    context = _wp11_context("register-roster-experiment", "REGISTER_EXPERIMENT")
+    registered = commands.register(definition, bindings, context)
+    replay = commands.register(definition, bindings, context)
+    assert registered.replayed is False
+    assert replay.replayed is True
+
+    with psycopg.connect(stack.database_url) as connection:
+        root = connection.execute(
+            """
+            SELECT partition_count, partition_roster_sha256,
+                   definition_sha256, content_sha256
+            FROM mra.experiment
+            WHERE experiment_id = %s
+            """,
+            (definition.experiment_id,),
+        ).fetchone()
+        children = connection.execute(
+            """
+            SELECT binding_ordinal, research_partition_id,
+                   partition_purpose, content_sha256
+            FROM mra.experiment_partition
+            WHERE experiment_id = %s
+            ORDER BY binding_ordinal
+            """,
+            (definition.experiment_id,),
+        ).fetchall()
+        assert root is not None
+        assert root[0] == len(bindings) == 3
+        assert root[1] == str(definition.partition_roster_sha256(bindings))
+        assert root[2] == str(definition.content_sha256)
+        assert len(str(root[3])) == 64
+        assert [row[0] for row in children] == [1, 2, 3]
+        assert [row[2] for row in children] == [
+            "FIT",
+            "VALIDATION",
+            "LOCKED_OOS",
+        ]
+        with pytest.raises(
+            psycopg.errors.ObjectNotInPrerequisiteState,
+            match="already frozen",
+        ):
+            connection.execute(
+                """
+                INSERT INTO mra.experiment_partition (
+                    experiment_partition_id, experiment_id,
+                    binding_ordinal, research_partition_id,
+                    target_definition_id, target_version,
+                    target_definition_sha256, partition_purpose,
+                    partition_content_sha256, content_sha256
+                ) VALUES (%s, %s, 4, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    uuid4(),
+                    definition.experiment_id,
+                    partitions[0].research_partition_id,
+                    target.target_definition_id,
+                    target.version,
+                    str(target.content_sha256),
+                    PartitionPurpose.FIT.value,
+                    partitions[0].content_sha256,
+                    "f" * 64,
+                ),
+            )
+
+    with pytest.raises(IdempotencyKeyReusedError):
+        commands.register(definition, bindings[:-1], context)
 
 
 def test_protected_partition_cannot_open_another_evaluation_after_first_access(
@@ -613,6 +866,7 @@ def test_partition_uses_session_shift_and_rejects_protected_overlap(
             purpose=purpose,
             population_scope=PartitionPopulationScope.ALL_COMMITMENTS,
             overlap_policy=overlap_policy,
+            exchange_code="XSHG",
             decision_start_session_id=stack.market_session_id,
             decision_end_session_id=stack.market_session_id,
             purge_before_sessions=0, purge_after_sessions=purge_after,

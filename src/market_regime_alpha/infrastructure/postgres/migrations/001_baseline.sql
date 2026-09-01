@@ -5692,6 +5692,11 @@ ALTER TABLE mra.trading_session
         open_at, close_at, source_capture_id, recorded_at, known_at
     );
 
+ALTER TABLE mra.trading_session
+    ADD CONSTRAINT trading_session_calendar_authority_uk UNIQUE (
+        session_id, exchange, session_date, timezone_name
+    );
+
 ALTER TABLE mra.target_checkpoint
     ADD CONSTRAINT target_checkpoint_outcome_authority_uk UNIQUE (
         target_checkpoint_id, target_definition_id, ordinal,
@@ -8311,6 +8316,10 @@ CREATE TABLE mra.research_partition (
     purpose text NOT NULL,
     population_scope text NOT NULL,
     overlap_policy text NOT NULL,
+    exchange_code text NOT NULL,
+    timezone_name text NOT NULL,
+    calendar_session_count integer NOT NULL,
+    calendar_roster_sha256 text NOT NULL,
     decision_start_session_id uuid NOT NULL REFERENCES mra.trading_session(session_id) ON DELETE RESTRICT,
     decision_end_session_id uuid NOT NULL REFERENCES mra.trading_session(session_id) ON DELETE RESTRICT,
     decision_start_date date NOT NULL,
@@ -8346,6 +8355,10 @@ CREATE TABLE mra.research_partition (
     CONSTRAINT research_partition_member_authority_uk UNIQUE (
         research_partition_id, target_definition_id
     ),
+    CONSTRAINT research_partition_calendar_authority_uk UNIQUE (
+        research_partition_id, target_definition_id,
+        exchange_code, timezone_name
+    ),
     CONSTRAINT research_partition_experiment_authority_uk UNIQUE (
         research_partition_id, target_definition_id, target_version,
         target_definition_sha256, purpose, content_sha256
@@ -8358,6 +8371,30 @@ CREATE TABLE mra.research_partition (
         target_definition_id, target_version, target_definition_sha256
     ) REFERENCES mra.target_definition(
         target_definition_id, version, content_sha256
+    ) ON DELETE RESTRICT,
+    CONSTRAINT research_partition_decision_start_calendar_fk FOREIGN KEY (
+        decision_start_session_id, exchange_code,
+        decision_start_date, timezone_name
+    ) REFERENCES mra.trading_session(
+        session_id, exchange, session_date, timezone_name
+    ) ON DELETE RESTRICT,
+    CONSTRAINT research_partition_decision_end_calendar_fk FOREIGN KEY (
+        decision_end_session_id, exchange_code,
+        decision_end_date, timezone_name
+    ) REFERENCES mra.trading_session(
+        session_id, exchange, session_date, timezone_name
+    ) ON DELETE RESTRICT,
+    CONSTRAINT research_partition_protected_start_calendar_fk FOREIGN KEY (
+        protected_start_session_id, exchange_code,
+        protected_start_date, timezone_name
+    ) REFERENCES mra.trading_session(
+        session_id, exchange, session_date, timezone_name
+    ) ON DELETE RESTRICT,
+    CONSTRAINT research_partition_protected_end_calendar_fk FOREIGN KEY (
+        protected_end_session_id, exchange_code,
+        protected_end_date, timezone_name
+    ) REFERENCES mra.trading_session(
+        session_id, exchange, session_date, timezone_name
     ) ON DELETE RESTRICT,
     CONSTRAINT research_partition_code_artifact_fk FOREIGN KEY (
         code_artifact_id, code_content_sha256, code_size_bytes
@@ -8375,6 +8412,10 @@ CREATE TABLE mra.research_partition (
           OR (purpose IN ('LOCKED_OOS', 'PROSPECTIVE') AND overlap_policy = 'ISOLATED_PROTECTED'))
         AND partition_code ~ '^[a-z][a-z0-9_-]{0,99}$'
         AND series_code ~ '^[a-z][a-z0-9_-]{0,99}$'
+        AND exchange_code ~ '^[A-Z][A-Z0-9]{1,15}$'
+        AND timezone_name = 'Asia/Shanghai'
+        AND calendar_session_count > 0
+        AND calendar_roster_sha256 ~ '^[0-9a-f]{64}$'
         AND target_version > 0 AND outcome_horizon_sessions >= 0
         AND purge_before_sessions >= 0 AND purge_after_sessions >= 0
         AND embargo_sessions >= 0 AND fold_ordinal > 0 AND member_count > 0
@@ -8388,7 +8429,8 @@ CREATE TABLE mra.research_partition (
     )
 );
 CREATE INDEX research_partition_target_window_idx ON mra.research_partition (
-    target_definition_id, purpose, protected_start_date, protected_end_date
+    target_definition_id, exchange_code, purpose,
+    protected_start_date, protected_end_date
 );
 CREATE INDEX research_partition_series_fold_idx ON mra.research_partition (
     series_code, fold_ordinal, purpose
@@ -8400,6 +8442,26 @@ CREATE INDEX research_partition_decision_start_fk_idx ON mra.research_partition 
 CREATE INDEX research_partition_decision_end_fk_idx ON mra.research_partition (decision_end_session_id);
 CREATE INDEX research_partition_protected_start_fk_idx ON mra.research_partition (protected_start_session_id);
 CREATE INDEX research_partition_protected_end_fk_idx ON mra.research_partition (protected_end_session_id);
+CREATE INDEX research_partition_decision_start_calendar_fk_idx
+    ON mra.research_partition (
+        decision_start_session_id, exchange_code,
+        decision_start_date, timezone_name
+    );
+CREATE INDEX research_partition_decision_end_calendar_fk_idx
+    ON mra.research_partition (
+        decision_end_session_id, exchange_code,
+        decision_end_date, timezone_name
+    );
+CREATE INDEX research_partition_protected_start_calendar_fk_idx
+    ON mra.research_partition (
+        protected_start_session_id, exchange_code,
+        protected_start_date, timezone_name
+    );
+CREATE INDEX research_partition_protected_end_calendar_fk_idx
+    ON mra.research_partition (
+        protected_end_session_id, exchange_code,
+        protected_end_date, timezone_name
+    );
 CREATE INDEX research_partition_code_artifact_fk_idx ON mra.research_partition (
     code_artifact_id, code_content_sha256, code_size_bytes
 );
@@ -8419,6 +8481,9 @@ CREATE TABLE mra.research_partition_member (
     commitment_recorded_at timestamptz NOT NULL,
     runtime_mode text NOT NULL,
     decision_session_id uuid NOT NULL REFERENCES mra.trading_session(session_id) ON DELETE RESTRICT,
+    decision_session_date date NOT NULL,
+    exchange_code text NOT NULL,
+    timezone_name text NOT NULL,
     earliest_outcome_event_at timestamptz NOT NULL,
     outcome_due_at timestamptz NOT NULL,
     content_sha256 text NOT NULL,
@@ -8441,6 +8506,19 @@ CREATE TABLE mra.research_partition_member (
     ) REFERENCES mra.research_partition(
         research_partition_id, target_definition_id
     ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT research_partition_member_calendar_fk FOREIGN KEY (
+        research_partition_id, target_definition_id,
+        exchange_code, timezone_name
+    ) REFERENCES mra.research_partition(
+        research_partition_id, target_definition_id,
+        exchange_code, timezone_name
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT research_partition_member_session_calendar_fk FOREIGN KEY (
+        decision_session_id, exchange_code,
+        decision_session_date, timezone_name
+    ) REFERENCES mra.trading_session(
+        session_id, exchange, session_date, timezone_name
+    ) ON DELETE RESTRICT,
     CONSTRAINT research_partition_member_commitment_fk FOREIGN KEY (
         commitment_id, target_definition_id, decision_time,
         candidate_disposition, commitment_recorded_at, runtime_mode
@@ -8461,6 +8539,8 @@ CREATE TABLE mra.research_partition_member (
         member_ordinal > 0
         AND candidate_disposition IN ('SELECTED', 'RANKED_NOT_SELECTED', 'UNRANKABLE')
         AND runtime_mode IN ('OPERATIONAL', 'HISTORICAL', 'REPLAY', 'SHADOW', 'PROSPECTIVE')
+        AND exchange_code ~ '^[A-Z][A-Z0-9]{1,15}$'
+        AND timezone_name = 'Asia/Shanghai'
         AND earliest_outcome_event_at <= outcome_due_at
         AND content_sha256 ~ '^[0-9a-f]{64}$'
     )
@@ -8471,11 +8551,21 @@ CREATE INDEX research_partition_member_commitment_idx ON mra.research_partition_
 CREATE INDEX research_partition_member_partition_fk_idx ON mra.research_partition_member (
     research_partition_id, target_definition_id
 );
+CREATE INDEX research_partition_member_calendar_fk_idx
+    ON mra.research_partition_member (
+        research_partition_id, target_definition_id,
+        exchange_code, timezone_name
+    );
 CREATE INDEX research_partition_member_commitment_fk_idx ON mra.research_partition_member (
     commitment_id, target_definition_id, decision_time,
     candidate_disposition, commitment_recorded_at, runtime_mode
 );
 CREATE INDEX research_partition_member_session_fk_idx ON mra.research_partition_member (decision_session_id);
+CREATE INDEX research_partition_member_session_calendar_fk_idx
+    ON mra.research_partition_member (
+        decision_session_id, exchange_code,
+        decision_session_date, timezone_name
+    );
 CREATE INDEX research_partition_member_reference_session_fk_idx
     ON mra.research_partition_member (
         decision_reference_observation_id, commitment_id,
@@ -8502,13 +8592,18 @@ CREATE TABLE mra.experiment (
     config_content_sha256 text NOT NULL,
     config_size_bytes bigint NOT NULL,
     provenance_sha256 text NOT NULL,
+    definition_sha256 text NOT NULL,
+    partition_count integer NOT NULL,
+    partition_roster_sha256 text NOT NULL,
     content_sha256 text NOT NULL,
     request_identity text NOT NULL,
     request_sha256 text NOT NULL,
     registered_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     CONSTRAINT experiment_exact_uk UNIQUE (
         experiment_id, target_definition_id, target_version,
-        target_definition_sha256, content_sha256, registered_at
+        target_definition_sha256, definition_sha256,
+        partition_count, partition_roster_sha256,
+        content_sha256, registered_at
     ),
     CONSTRAINT experiment_partition_authority_uk UNIQUE (
         experiment_id, target_definition_id, target_version,
@@ -8529,6 +8624,9 @@ CREATE TABLE mra.experiment (
         AND research_question <> '' AND primary_change <> '' AND hypothesis <> ''
         AND protocol_identity <> '' AND acceptance_semantics <> ''
         AND provenance_sha256 ~ '^[0-9a-f]{64}$'
+        AND definition_sha256 ~ '^[0-9a-f]{64}$'
+        AND partition_count > 0
+        AND partition_roster_sha256 ~ '^[0-9a-f]{64}$'
         AND content_sha256 ~ '^[0-9a-f]{64}$'
         AND request_sha256 ~ '^[0-9a-f]{64}$'
     )
@@ -8537,13 +8635,18 @@ CREATE TABLE mra.experiment (
 CREATE TABLE mra.experiment_partition (
     experiment_partition_id uuid PRIMARY KEY,
     experiment_id uuid NOT NULL,
+    binding_ordinal integer NOT NULL,
     research_partition_id uuid NOT NULL,
     target_definition_id uuid NOT NULL,
     target_version integer NOT NULL,
     target_definition_sha256 text NOT NULL,
     partition_purpose text NOT NULL,
     partition_content_sha256 text NOT NULL,
+    content_sha256 text NOT NULL,
     bound_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT experiment_partition_ordinal_uk UNIQUE (
+        experiment_id, binding_ordinal
+    ),
     CONSTRAINT experiment_partition_pair_uk UNIQUE (experiment_id, research_partition_id),
     CONSTRAINT experiment_partition_exact_uk UNIQUE (
         experiment_partition_id, experiment_id, research_partition_id,
@@ -8570,8 +8673,10 @@ CREATE TABLE mra.experiment_partition (
         target_definition_sha256, purpose, content_sha256
     ) ON DELETE RESTRICT,
     CONSTRAINT experiment_partition_shape_ck CHECK (
-        partition_purpose IN ('DISCOVERY', 'FIT', 'VALIDATION', 'LOCKED_OOS', 'PROSPECTIVE')
+        binding_ordinal > 0
+        AND partition_purpose IN ('DISCOVERY', 'FIT', 'VALIDATION', 'LOCKED_OOS', 'PROSPECTIVE')
         AND partition_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
     )
 );
 CREATE INDEX experiment_target_fk_idx ON mra.experiment (
@@ -9108,13 +9213,15 @@ RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     PERFORM pg_advisory_xact_lock(
         hashtextextended(
-            'research-partition-overlap:' || NEW.target_definition_id::text,
+            'research-partition-overlap:' || NEW.target_definition_id::text
+            || ':' || NEW.exchange_code,
             0
         )
     );
     IF EXISTS (
         SELECT 1 FROM mra.research_partition AS existing
         WHERE existing.target_definition_id = NEW.target_definition_id
+          AND existing.exchange_code = NEW.exchange_code
           AND ((NEW.overlap_policy = 'ISOLATED_PROTECTED'
                 AND existing.overlap_policy <> 'DIAGNOSTIC_REUSE')
             OR (existing.overlap_policy = 'ISOLATED_PROTECTED'
@@ -9130,6 +9237,7 @@ BEGIN
     IF NEW.overlap_policy = 'PURGED_WALK_FORWARD' AND EXISTS (
         SELECT 1 FROM mra.research_partition AS existing
         WHERE existing.target_definition_id = NEW.target_definition_id
+          AND existing.exchange_code = NEW.exchange_code
           AND existing.series_code = NEW.series_code
           AND existing.fold_ordinal = NEW.fold_ordinal
           AND existing.overlap_policy = 'PURGED_WALK_FORWARD'
@@ -9192,12 +9300,44 @@ DECLARE declared_population_count integer;
 DECLARE minimum_ordinal integer;
 DECLARE maximum_ordinal integer;
 DECLARE actual_roster_hash text;
+DECLARE actual_calendar_count integer;
+DECLARE actual_calendar_hash text;
 BEGIN
     LOCK TABLE mra.decision_target_commitment IN SHARE MODE;
     SELECT count(*), min(member_ordinal), max(member_ordinal)
       INTO actual_count, minimum_ordinal, maximum_ordinal
     FROM mra.research_partition_member
     WHERE research_partition_id = NEW.research_partition_id;
+
+    SELECT count(*),
+           mra.canonical_sha256(
+               replace(
+                   json_agg(
+                       json_build_object(
+                           'break_end_at', break_end_at,
+                           'break_start_at', break_start_at,
+                           'close_at', close_at,
+                           'decision_reference_at', decision_reference_at,
+                           'decision_visible_at', decision_visible_at,
+                           'exchange_code', exchange,
+                           'known_at', known_at,
+                           'open_at', open_at,
+                           'recorded_at', recorded_at,
+                           'session_date', session_date,
+                           'session_id', session_id,
+                           'source_capture_id', source_capture_id,
+                           'timezone_name', timezone_name
+                       ) ORDER BY session_date, session_id
+                   )::text,
+                   ' ',
+                   ''
+               )
+           )
+      INTO actual_calendar_count, actual_calendar_hash
+    FROM mra.trading_session
+    WHERE exchange = NEW.exchange_code
+      AND session_date BETWEEN
+          NEW.protected_start_date AND NEW.protected_end_date;
 
     SELECT count(*) INTO declared_population_count
     FROM mra.decision_target_commitment AS commitment
@@ -9207,6 +9347,7 @@ BEGIN
     JOIN mra.trading_session AS session
       ON session.session_id = reference.session_id
     WHERE commitment.target_definition_id = NEW.target_definition_id
+      AND session.exchange = NEW.exchange_code
       AND session.session_date BETWEEN
           NEW.decision_start_date AND NEW.decision_end_date
       AND (NEW.population_scope = 'ALL_COMMITMENTS'
@@ -9229,7 +9370,9 @@ BEGIN
     FROM mra.research_partition_member
     WHERE research_partition_id = NEW.research_partition_id;
 
-    IF actual_count <> NEW.member_count
+    IF actual_calendar_count <> NEW.calendar_session_count
+       OR actual_calendar_hash <> NEW.calendar_roster_sha256
+       OR actual_count <> NEW.member_count
        OR actual_count <> declared_population_count
        OR actual_roster_hash <> NEW.member_roster_sha256
        OR minimum_ordinal <> 1
@@ -9239,6 +9382,9 @@ BEGIN
              ON session.session_id = member.decision_session_id
            WHERE member.research_partition_id = NEW.research_partition_id
              AND (member.target_definition_id <> NEW.target_definition_id
+                  OR member.exchange_code <> NEW.exchange_code
+                  OR member.timezone_name <> NEW.timezone_name
+                  OR member.decision_session_date <> session.session_date
                   OR session.session_date NOT BETWEEN
                      NEW.decision_start_date AND NEW.decision_end_date)
        ) OR EXISTS (
@@ -9252,6 +9398,7 @@ BEGIN
                  ON session.session_id = reference.session_id
                WHERE commitment.target_definition_id =
                      NEW.target_definition_id
+                 AND session.exchange = NEW.exchange_code
                  AND session.session_date BETWEEN
                      NEW.decision_start_date AND NEW.decision_end_date
                  AND (NEW.population_scope = 'ALL_COMMITMENTS'
@@ -9283,6 +9430,7 @@ BEGIN
                  ON session.session_id = reference.session_id
                WHERE commitment.target_definition_id =
                      NEW.target_definition_id
+                 AND session.exchange = NEW.exchange_code
                  AND session.session_date BETWEEN
                      NEW.decision_start_date AND NEW.decision_end_date
                  AND (NEW.population_scope = 'ALL_COMMITMENTS'
@@ -9306,7 +9454,14 @@ BEGIN
     SELECT frozen_at, purpose INTO partition_frozen_at, protected_purpose
     FROM mra.research_partition WHERE research_partition_id = NEW.research_partition_id FOR SHARE;
     SELECT registered_at INTO experiment_registered_at
-    FROM mra.experiment WHERE experiment_id = NEW.experiment_id FOR SHARE;
+    FROM mra.experiment
+    WHERE experiment_id = NEW.experiment_id
+      AND xmin::text = pg_current_xact_id()::text
+    FOR SHARE;
+    IF experiment_registered_at IS NULL THEN
+        RAISE EXCEPTION 'Experiment Partition roster is already frozen'
+            USING ERRCODE = '55000';
+    END IF;
     IF NOT (partition_frozen_at < experiment_registered_at AND experiment_registered_at <= NEW.bound_at) THEN
         RAISE EXCEPTION 'Partition must precede Experiment registration and binding' USING ERRCODE = '55000';
     END IF;
@@ -9323,6 +9478,85 @@ BEGIN
         WHERE member.research_partition_id = NEW.research_partition_id
     ) THEN
         RAISE EXCEPTION 'protected Partition was already accessed' USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.validate_experiment_partition_closure()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE actual_count integer;
+DECLARE minimum_ordinal integer;
+DECLARE maximum_ordinal integer;
+DECLARE actual_roster_hash text;
+DECLARE actual_content_hash text;
+BEGIN
+    SELECT count(*), min(binding_ordinal), max(binding_ordinal),
+           mra.canonical_sha256(
+               replace(
+                   json_agg(
+                       json_build_object(
+                           'binding_ordinal', binding_ordinal,
+                           'content_sha256', content_sha256,
+                           'experiment_partition_id', experiment_partition_id,
+                           'research_partition_id', research_partition_id
+                       ) ORDER BY binding_ordinal
+                   )::text,
+                   ' ',
+                   ''
+               )
+           )
+      INTO actual_count, minimum_ordinal, maximum_ordinal,
+           actual_roster_hash
+    FROM mra.experiment_partition
+    WHERE experiment_id = NEW.experiment_id;
+
+    actual_content_hash := mra.canonical_sha256(
+        replace(
+            json_build_object(
+                'definition_sha256', NEW.definition_sha256,
+                'partition_count', NEW.partition_count,
+                'partition_roster_sha256', NEW.partition_roster_sha256
+            )::text,
+            ' ',
+            ''
+        )
+    );
+
+    IF actual_count <> NEW.partition_count
+       OR minimum_ordinal <> 1
+       OR maximum_ordinal <> NEW.partition_count
+       OR actual_roster_hash <> NEW.partition_roster_sha256
+       OR actual_content_hash <> NEW.content_sha256
+       OR EXISTS (
+           SELECT 1
+           FROM mra.experiment_partition AS binding
+           WHERE binding.experiment_id = NEW.experiment_id
+             AND binding.content_sha256 <> mra.canonical_sha256(
+                 replace(
+                     json_build_object(
+                         'binding_ordinal', binding.binding_ordinal,
+                         'experiment_id', binding.experiment_id,
+                         'experiment_partition_id',
+                             binding.experiment_partition_id,
+                         'partition_content_sha256',
+                             binding.partition_content_sha256,
+                         'partition_purpose', binding.partition_purpose,
+                         'research_partition_id',
+                             binding.research_partition_id,
+                         'target_definition_id',
+                             binding.target_definition_id,
+                         'target_definition_sha256',
+                             binding.target_definition_sha256,
+                         'target_version', binding.target_version
+                     )::text,
+                     ' ',
+                     ''
+                 )
+             )
+       ) THEN
+        RAISE EXCEPTION 'Experiment Partition roster is incomplete or mismatched'
+            USING ERRCODE = '55000';
     END IF;
     RETURN NEW;
 END;
@@ -9634,6 +9868,10 @@ FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
 CREATE TRIGGER experiment_append_only
 BEFORE UPDATE OR DELETE ON mra.experiment
 FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE CONSTRAINT TRIGGER experiment_partition_closure_guard
+AFTER INSERT ON mra.experiment
+DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW EXECUTE FUNCTION mra.validate_experiment_partition_closure();
 CREATE TRIGGER experiment_partition_order_guard
 BEFORE INSERT ON mra.experiment_partition
 FOR EACH ROW EXECUTE FUNCTION mra.guard_experiment_partition_order();

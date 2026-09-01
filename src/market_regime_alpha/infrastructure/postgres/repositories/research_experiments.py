@@ -18,6 +18,7 @@ from market_regime_alpha.research_qualification.ports.experiment_uow import (
     ExperimentRunRecord,
 )
 from market_regime_alpha.runtime.errors import RuntimeNotFoundError
+from market_regime_alpha.shared.hashing import canonical_json_sha256
 
 
 class PostgresExperimentRepository:
@@ -33,34 +34,53 @@ class PostgresExperimentRepository:
     def register(
         self,
         definition: ExperimentDefinition,
-        binding: ExperimentPartitionBinding,
+        bindings: tuple[ExperimentPartitionBinding, ...],
         *,
         request_identity: str,
         request_sha256: str,
     ) -> ExperimentRecord:
-        definition.validate_partition_binding(binding)
-        partition = self._connection.execute(
+        definition.validate_partition_roster(bindings)
+        roster_hash = str(definition.partition_roster_sha256(bindings))
+        partitions = self._connection.execute(
             """
-            SELECT target_definition_id, target_version,
+            SELECT research_partition_id, target_definition_id, target_version,
                    target_definition_sha256, purpose, content_sha256
             FROM mra.research_partition
-            WHERE research_partition_id = %s
+            WHERE research_partition_id = ANY(%s::uuid[])
             FOR SHARE
             """,
-            (binding.research_partition_id,),
-        ).fetchone()
-        if partition is None:
-            raise ExperimentBindingError("ResearchPartition does not exist")
-        actual = (UUID(str(partition[0])), int(partition[1]), str(partition[2]), str(partition[3]), str(partition[4]))
-        expected = (
-            binding.target_definition_id,
-            binding.target_version,
-            str(binding.target_definition_sha256),
-            binding.purpose.value,
-            str(binding.partition_content_sha256),
+            ([binding.research_partition_id for binding in bindings],),
+        ).fetchall()
+        by_id = {UUID(str(row[0])): row[1:] for row in partitions}
+        if len(by_id) != len(bindings):
+            raise ExperimentBindingError("ResearchPartition roster is incomplete")
+        for binding in bindings:
+            actual = by_id[binding.research_partition_id]
+            expected = (
+                binding.target_definition_id,
+                binding.target_version,
+                str(binding.target_definition_sha256),
+                binding.purpose.value,
+                str(binding.partition_content_sha256),
+            )
+            normalized_actual = (
+                UUID(str(actual[0])),
+                int(actual[1]),
+                str(actual[2]),
+                str(actual[3]),
+                str(actual[4]),
+            )
+            if normalized_actual != expected:
+                raise ExperimentBindingError(
+                    "Experiment binding does not match exact Partition Authority"
+                )
+        content_hash = canonical_json_sha256(
+            {
+                "definition_sha256": str(definition.content_sha256),
+                "partition_count": len(bindings),
+                "partition_roster_sha256": roster_hash,
+            }
         )
-        if actual != expected:
-            raise ExperimentBindingError("Experiment binding does not match exact Partition Authority")
         algorithm = definition
         self._connection.execute(
             """
@@ -71,11 +91,13 @@ class PostgresExperimentRepository:
                 protocol_identity, acceptance_semantics,
                 code_artifact_id, code_content_sha256, code_size_bytes,
                 config_artifact_id, config_content_sha256, config_size_bytes,
-                provenance_sha256, content_sha256,
+                provenance_sha256, definition_sha256,
+                partition_count, partition_roster_sha256, content_sha256,
                 request_identity, request_sha256
             ) VALUES (
                 %s, %s, 'REGISTERED', %s, %s, %s, %s, %s, %s,
-                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s
             )
             """,
             (
@@ -89,25 +111,37 @@ class PostgresExperimentRepository:
                 algorithm.config_artifact.artifact_id,
                 str(algorithm.config_artifact.content_sha256), algorithm.config_artifact.size_bytes,
                 str(definition.provenance_sha256), str(definition.content_sha256),
+                len(bindings), roster_hash, content_hash,
                 request_identity, request_sha256,
             ),
         )
-        self._connection.execute(
-            """
-            INSERT INTO mra.experiment_partition (
-                experiment_partition_id, experiment_id,
-                research_partition_id, target_definition_id,
-                target_version, target_definition_sha256,
-                partition_purpose, partition_content_sha256
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            """,
-            (
-                binding.experiment_partition_id, binding.experiment_id,
-                binding.research_partition_id, binding.target_definition_id,
-                binding.target_version, str(binding.target_definition_sha256),
-                binding.purpose.value, str(binding.partition_content_sha256),
-            ),
-        )
+        with self._connection.cursor() as cursor:
+            cursor.executemany(
+                """
+                INSERT INTO mra.experiment_partition (
+                    experiment_partition_id, experiment_id,
+                    binding_ordinal, research_partition_id,
+                    target_definition_id, target_version,
+                    target_definition_sha256, partition_purpose,
+                    partition_content_sha256, content_sha256
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    (
+                        binding.experiment_partition_id,
+                        binding.experiment_id,
+                        binding.binding_ordinal,
+                        binding.research_partition_id,
+                        binding.target_definition_id,
+                        binding.target_version,
+                        str(binding.target_definition_sha256),
+                        binding.purpose.value,
+                        str(binding.partition_content_sha256),
+                        str(binding.content_sha256),
+                    )
+                    for binding in bindings
+                ),
+            )
         return self.record(definition.experiment_id, lock=False)
 
     def open_run(self, plan: ExperimentRunPlan) -> ExperimentRunRecord:
@@ -141,28 +175,25 @@ class PostgresExperimentRepository:
     def record(self, experiment_id: UUID, *, lock: bool) -> ExperimentRecord:
         row = self._connection.execute(
             """
-            SELECT experiment.experiment_id,
-                   binding.experiment_partition_id,
-                   binding.research_partition_id,
-                   experiment.target_definition_id,
-                   binding.partition_purpose,
-                   experiment.registered_at, binding.bound_at
-            FROM mra.experiment AS experiment
-            JOIN mra.experiment_partition AS binding
-              ON binding.experiment_id = experiment.experiment_id
-            WHERE experiment.experiment_id = %s
-            """ + (" FOR SHARE OF experiment, binding" if lock else ""),
+            SELECT experiment_id, target_definition_id,
+                   definition_sha256, partition_count,
+                   partition_roster_sha256, content_sha256,
+                   registered_at
+            FROM mra.experiment
+            WHERE experiment_id = %s
+            """ + (" FOR SHARE" if lock else ""),
             (experiment_id,),
         ).fetchone()
         if row is None:
             raise RuntimeNotFoundError(f"Experiment {experiment_id} does not exist")
         return ExperimentRecord(
             experiment_id=UUID(str(row[0])),
-            experiment_partition_id=UUID(str(row[1])),
-            research_partition_id=UUID(str(row[2])),
-            target_definition_id=UUID(str(row[3])),
-            partition_purpose=str(row[4]),
-            registered_at=row[5], bound_at=row[6],
+            target_definition_id=UUID(str(row[1])),
+            definition_sha256=str(row[2]),
+            partition_count=int(row[3]),
+            partition_roster_sha256=str(row[4]),
+            content_sha256=str(row[5]),
+            registered_at=row[6],
         )
 
     def run_record(self, experiment_run_id: UUID, *, lock: bool) -> ExperimentRunRecord:

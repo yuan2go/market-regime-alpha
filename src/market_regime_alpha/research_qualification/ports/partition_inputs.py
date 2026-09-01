@@ -12,6 +12,8 @@ from market_regime_alpha.research_qualification.domain.partition import Research
 
 @dataclass(frozen=True, slots=True)
 class PartitionCalendarBounds:
+    exchange_code: str
+    timezone_name: str
     decision_start_date: date
     decision_end_date: date
     protected_start_session_id: UUID
@@ -19,6 +21,8 @@ class PartitionCalendarBounds:
     protected_start_date: date
     protected_end_date: date
     outcome_horizon_sessions: int
+    calendar_session_count: int
+    calendar_roster_sha256: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,6 +35,9 @@ class DerivedPartitionMember:
     commitment_recorded_at: datetime
     runtime_mode: str
     decision_session_id: UUID
+    decision_session_date: date
+    exchange_code: str
+    timezone_name: str
     earliest_outcome_event_at: datetime
     outcome_due_at: datetime
 

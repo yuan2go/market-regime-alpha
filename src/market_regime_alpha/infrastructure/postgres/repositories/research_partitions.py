@@ -56,11 +56,14 @@ class PostgresResearchPartitionRepository:
                         "commitment_recorded_at": member.commitment_recorded_at,
                         "decision_reference_observation_id": member.decision_reference_observation_id,
                         "decision_session_id": member.decision_session_id,
+                        "decision_session_date": member.decision_session_date,
                         "decision_time": member.decision_time,
                         "earliest_outcome_event_at": member.earliest_outcome_event_at,
                         "outcome_due_at": member.outcome_due_at,
                         "runtime_mode": member.runtime_mode,
+                        "exchange_code": member.exchange_code,
                         "target_definition_id": member.target_definition_id,
+                        "timezone_name": member.timezone_name,
                     }
                 ),
             )
@@ -90,7 +93,9 @@ class PostgresResearchPartitionRepository:
                 research_partition_id, partition_code, status,
                 target_definition_id, target_version,
                 target_definition_sha256, purpose, population_scope,
-                overlap_policy, decision_start_session_id,
+                overlap_policy, exchange_code, timezone_name,
+                calendar_session_count, calendar_roster_sha256,
+                decision_start_session_id,
                 decision_end_session_id, decision_start_date,
                 decision_end_date, outcome_horizon_sessions,
                 purge_before_sessions, purge_after_sessions,
@@ -106,7 +111,7 @@ class PostgresResearchPartitionRepository:
                 %s, %s, 'FROZEN', %s, %s, %s, %s, %s, %s,
                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                %s, %s, %s, %s, %s, %s
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
             )
             """,
             (
@@ -118,6 +123,10 @@ class PostgresResearchPartitionRepository:
                 plan.purpose.value,
                 plan.population_scope.value,
                 plan.overlap_policy.value,
+                bounds.exchange_code,
+                bounds.timezone_name,
+                bounds.calendar_session_count,
+                bounds.calendar_roster_sha256,
                 plan.decision_start_session_id,
                 plan.decision_end_session_id,
                 bounds.decision_start_date,
@@ -156,11 +165,13 @@ class PostgresResearchPartitionRepository:
                     target_definition_id,
                     decision_time, candidate_disposition,
                     commitment_recorded_at, runtime_mode,
-                    decision_session_id, earliest_outcome_event_at,
+                    decision_session_id, decision_session_date,
+                    exchange_code, timezone_name, earliest_outcome_event_at,
                     outcome_due_at, content_sha256
                 ) VALUES (
                     %s, %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s, %s, %s, %s
+                    %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s
                 )
                 """,
                 (
@@ -176,6 +187,9 @@ class PostgresResearchPartitionRepository:
                         member.commitment_recorded_at,
                         member.runtime_mode,
                         member.decision_session_id,
+                        member.decision_session_date,
+                        member.exchange_code,
+                        member.timezone_name,
                         member.earliest_outcome_event_at,
                         member.outcome_due_at,
                         digest,
@@ -190,8 +204,10 @@ class PostgresResearchPartitionRepository:
     ) -> ResearchPartitionRecord:
         row = self._connection.execute(
             """
-            SELECT research_partition_id, target_definition_id,
+            SELECT research_partition_id, exchange_code, timezone_name,
+                   target_definition_id,
                    target_version, target_definition_sha256, purpose,
+                   calendar_session_count, calendar_roster_sha256,
                    member_count, member_roster_sha256, content_sha256,
                    frozen_at
             FROM mra.research_partition
@@ -205,14 +221,18 @@ class PostgresResearchPartitionRepository:
             )
         return ResearchPartitionRecord(
             research_partition_id=UUID(str(row[0])),
-            target_definition_id=UUID(str(row[1])),
-            target_version=int(row[2]),
-            target_definition_sha256=str(row[3]),
-            purpose=str(row[4]),
-            member_count=int(row[5]),
-            member_roster_sha256=str(row[6]),
-            content_sha256=str(row[7]),
-            frozen_at=row[8],
+            exchange_code=str(row[1]),
+            timezone_name=str(row[2]),
+            target_definition_id=UUID(str(row[3])),
+            target_version=int(row[4]),
+            target_definition_sha256=str(row[5]),
+            purpose=str(row[6]),
+            calendar_session_count=int(row[7]),
+            calendar_roster_sha256=str(row[8]),
+            member_count=int(row[9]),
+            member_roster_sha256=str(row[10]),
+            content_sha256=str(row[11]),
+            frozen_at=row[12],
         )
 
     def reconcile(self, research_partition_id: UUID) -> bool:

@@ -45,12 +45,13 @@ class ExperimentCommands:
     def register(
         self,
         definition: ExperimentDefinition,
-        binding: ExperimentPartitionBinding,
+        bindings: tuple[ExperimentPartitionBinding, ...],
         context: CommandContext,
         *,
         runtime_claim: AttemptClaim | None = None,
     ) -> ExperimentMutationResult:
-        request_hash = canonical_json_sha256((definition, binding))
+        definition.validate_partition_roster(bindings)
+        request_hash = canonical_json_sha256((definition, bindings))
         with terminal_failure_boundary(
             self._failure_recorder,
             operation="REGISTER_EXPERIMENT",
@@ -62,18 +63,18 @@ class ExperimentCommands:
             runtime_claim=runtime_claim,
         ):
             return self._register_once(
-                definition, binding, context, runtime_claim=runtime_claim
+                definition, bindings, context, runtime_claim=runtime_claim
             )
 
     def _register_once(
         self,
         definition: ExperimentDefinition,
-        binding: ExperimentPartitionBinding,
+        bindings: tuple[ExperimentPartitionBinding, ...],
         context: CommandContext,
         *,
         runtime_claim: AttemptClaim | None,
     ) -> ExperimentMutationResult:
-        request_hash = canonical_json_sha256((definition, binding))
+        request_hash = canonical_json_sha256((definition, bindings))
         with self._uow_provider() as uow:
             if runtime_claim is not None:
                 uow.runtime_finalization.lock_live(runtime_claim)
@@ -88,7 +89,7 @@ class ExperimentCommands:
             uow.artifacts.require_exact(definition.code_artifact, lock=True)
             uow.artifacts.require_exact(definition.config_artifact, lock=True)
             record = uow.experiments.register(
-                definition, binding, request_identity=context.idempotency_key,
+                definition, bindings, request_identity=context.idempotency_key,
                 request_sha256=request_hash,
             )
             result_hash = canonical_json_sha256(record)

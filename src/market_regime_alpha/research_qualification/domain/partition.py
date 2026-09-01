@@ -17,6 +17,7 @@ from market_regime_alpha.shared.identity import ContentHash
 
 
 _CODE = re.compile(r"^[a-z][a-z0-9_-]{0,99}$")
+_EXCHANGE_CODE = re.compile(r"^[A-Z][A-Z0-9]{1,15}$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,6 +32,7 @@ class ResearchPartitionPlan:
     purpose: PartitionPurpose
     population_scope: PartitionPopulationScope
     overlap_policy: PartitionOverlapPolicy
+    exchange_code: str
     decision_start_session_id: UUID
     decision_end_session_id: UUID
     purge_before_sessions: int
@@ -48,6 +50,8 @@ class ResearchPartitionPlan:
             raise ValueError("partition_code has an invalid format")
         if not _CODE.fullmatch(self.series_code):
             raise ValueError("series_code has an invalid format")
+        if not _EXCHANGE_CODE.fullmatch(self.exchange_code):
+            raise ValueError("exchange_code has an invalid format")
         if isinstance(self.target_version, bool) or self.target_version < 1:
             raise ValueError("target_version must be positive")
         for name in (
@@ -94,6 +98,7 @@ class ResearchPartitionPlan:
                         "decision_end_session_id": self.decision_end_session_id,
                         "decision_start_session_id": self.decision_start_session_id,
                         "embargo_sessions": self.embargo_sessions,
+                        "exchange_code": self.exchange_code,
                         "fold_ordinal": self.fold_ordinal,
                         "overlap_policy": self.overlap_policy,
                         "partition_code": self.partition_code,

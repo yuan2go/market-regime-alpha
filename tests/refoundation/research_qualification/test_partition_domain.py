@@ -27,6 +27,7 @@ def _plan(**changes: object) -> ResearchPartitionPlan:
         "purpose": PartitionPurpose.VALIDATION,
         "population_scope": PartitionPopulationScope.ALL_COMMITMENTS,
         "overlap_policy": PartitionOverlapPolicy.PURGED_WALK_FORWARD,
+        "exchange_code": "SSE",
         "decision_start_session_id": uuid4(),
         "decision_end_session_id": uuid4(),
         "purge_before_sessions": 1,
@@ -45,6 +46,14 @@ def _plan(**changes: object) -> ResearchPartitionPlan:
 def test_partition_plan_has_no_caller_roster_field() -> None:
     names = {item.name for item in fields(ResearchPartitionPlan)}
     assert not names & {"members", "member_ids", "commitment_ids", "roster"}
+    assert "exchange_code" in names
+    assert not names & {"calendar_roster_sha256", "calendar_session_count"}
+
+
+@pytest.mark.parametrize("exchange_code", ["", "sse", "S$E", "SSE-SZSE"])
+def test_partition_requires_one_explicit_exchange_code(exchange_code: str) -> None:
+    with pytest.raises(ValueError, match="exchange_code"):
+        _plan(exchange_code=exchange_code)
 
 
 @pytest.mark.parametrize(
@@ -92,5 +101,7 @@ def test_partition_hash_is_stable_and_semantic() -> None:
     first = _plan()
     same = replace(first)
     changed = replace(first, population_scope=PartitionPopulationScope.SELECTED)
+    changed_exchange = replace(first, exchange_code="SZSE")
     assert first.content_sha256 == same.content_sha256
     assert changed.content_sha256 != first.content_sha256
+    assert changed_exchange.content_sha256 != first.content_sha256

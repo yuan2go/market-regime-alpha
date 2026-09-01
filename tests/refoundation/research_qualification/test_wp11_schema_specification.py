@@ -122,6 +122,7 @@ def test_wp11_immutable_and_lifecycle_guards_are_installed(
         assert {
             "research_partition_overlap_guard",
             "research_partition_member_validate",
+            "experiment_partition_closure_guard",
             "experiment_partition_order_guard",
             "experiment_run_order_guard",
             "evaluation_run_open_guard",
@@ -158,6 +159,40 @@ def test_partition_closure_and_overlap_are_database_serialized() -> None:
     assert "research-partition-overlap:" in sql
     assert "pg_advisory_xact_lock" in sql
     assert "existing.overlap_policy = 'ISOLATED_PROTECTED'" in sql
+    assert "research_partition_decision_start_calendar_fk" in sql
+    assert "research_partition_member_session_calendar_fk" in sql
+    assert "actual_calendar_count <> NEW.calendar_session_count" in sql
+    assert "actual_calendar_hash <> NEW.calendar_roster_sha256" in sql
+    assert "session.exchange = NEW.exchange_code" in sql
+    assert "existing.exchange_code = NEW.exchange_code" in sql
+
+
+def test_partition_calendar_authority_is_relational_and_non_nullable(
+    target_database_url: str,
+) -> None:
+    SchemaManager(target_database_url).bootstrap()
+    with psycopg.connect(target_database_url) as connection:
+        columns = {
+            row[0]: row[1]
+            for row in connection.execute(
+                """
+                SELECT column_name, is_nullable
+                FROM information_schema.columns
+                WHERE table_schema = 'mra'
+                  AND table_name = 'research_partition'
+                  AND column_name IN (
+                      'exchange_code', 'timezone_name',
+                      'calendar_session_count', 'calendar_roster_sha256'
+                  )
+                """
+            ).fetchall()
+        }
+        assert columns == {
+            "exchange_code": "NO",
+            "timezone_name": "NO",
+            "calendar_session_count": "NO",
+            "calendar_roster_sha256": "NO",
+        }
 
 
 def test_gate_b_and_pit_leaf_selection_are_database_guards() -> None:
@@ -174,3 +209,16 @@ def test_gate_b_and_pit_leaf_selection_are_database_guards() -> None:
     assert "FOR SHARE" in access_guard
     assert "cutoff > NEW.accessed_at" in access_guard
     assert "EvaluationRun knowledge cutoff cannot be in the future" in sql
+
+
+def test_experiment_partition_roster_has_deferred_relational_closure() -> None:
+    sql = (MIGRATIONS / "001_baseline.sql").read_text()
+    assert "partition_count integer NOT NULL" in sql
+    assert "partition_roster_sha256 text NOT NULL" in sql
+    assert "binding_ordinal integer NOT NULL" in sql
+    assert "experiment_partition_ordinal_uk" in sql
+    assert "validate_experiment_partition_closure" in sql
+    assert "actual_count <> NEW.partition_count" in sql
+    assert "actual_roster_hash <> NEW.partition_roster_sha256" in sql
+    assert "Experiment Partition roster is already frozen" in sql
+    assert "DEFERRABLE INITIALLY DEFERRED" in sql

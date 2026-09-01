@@ -55,7 +55,7 @@ class PostgresPartitionInputQueries:
         horizon = int(horizon_row[0])
         session_rows = self._connection.execute(
             """
-            SELECT session_id, exchange, session_date
+            SELECT session_id, exchange, session_date, timezone_name
             FROM mra.trading_session
             WHERE session_id IN (%s, %s)
             ORDER BY session_date, session_id
@@ -71,8 +71,15 @@ class PostgresPartitionInputQueries:
             raise PartitionInputError("Decision window Session identity is incomplete")
         start = by_id[plan.decision_start_session_id]
         end = by_id[plan.decision_end_session_id]
-        if start[1] != end[1] or start[2] > end[2]:
-            raise PartitionInputError("Decision window must be ordered on one calendar")
+        if (
+            str(start[1]) != plan.exchange_code
+            or str(end[1]) != plan.exchange_code
+            or start[3] != end[3]
+            or start[2] > end[2]
+        ):
+            raise PartitionInputError(
+                "Decision window must be ordered on the declared exchange calendar"
+            )
         exchange = str(start[1])
         start_shift = plan.purge_before_sessions
         end_shift = horizon + plan.purge_after_sessions + plan.embargo_sessions
@@ -100,7 +107,59 @@ class PostgresPartitionInputQueries:
             raise PartitionInputError(
                 "exact TradingSession roster cannot satisfy purge/horizon/embargo"
             )
+        calendar_rows = self._connection.execute(
+            """
+            SELECT session_id
+            FROM mra.trading_session
+            WHERE exchange = %s
+              AND session_date BETWEEN %s AND %s
+            ORDER BY session_date, session_id
+            FOR SHARE
+            """,
+            (exchange, protected_start[1], protected_end[1]),
+        ).fetchall()
+        calendar_identity = self._connection.execute(
+            """
+            SELECT count(*),
+                   mra.canonical_sha256(
+                       replace(
+                           json_agg(
+                               json_build_object(
+                                   'break_end_at', break_end_at,
+                                   'break_start_at', break_start_at,
+                                   'close_at', close_at,
+                                   'decision_reference_at', decision_reference_at,
+                                   'decision_visible_at', decision_visible_at,
+                                   'exchange_code', exchange,
+                                   'known_at', known_at,
+                                   'open_at', open_at,
+                                   'recorded_at', recorded_at,
+                                   'session_date', session_date,
+                                   'session_id', session_id,
+                                   'source_capture_id', source_capture_id,
+                                   'timezone_name', timezone_name
+                               ) ORDER BY session_date, session_id
+                           )::text,
+                           ' ',
+                           ''
+                       )
+                   )
+            FROM mra.trading_session
+            WHERE exchange = %s
+              AND session_date BETWEEN %s AND %s
+            """,
+            (exchange, protected_start[1], protected_end[1]),
+        ).fetchone()
+        if (
+            calendar_identity is None
+            or not calendar_rows
+            or int(calendar_identity[0]) != len(calendar_rows)
+            or calendar_identity[1] is None
+        ):
+            raise PartitionInputError("declared exchange calendar roster is incomplete")
         return PartitionCalendarBounds(
+            exchange_code=exchange,
+            timezone_name=str(start[3]),
             decision_start_date=start[2],
             decision_end_date=end[2],
             protected_start_session_id=UUID(str(protected_start[0])),
@@ -108,6 +167,8 @@ class PostgresPartitionInputQueries:
             protected_start_date=protected_start[1],
             protected_end_date=protected_end[1],
             outcome_horizon_sessions=horizon,
+            calendar_session_count=int(calendar_identity[0]),
+            calendar_roster_sha256=str(calendar_identity[1]),
         )
 
     def derive_complete_roster(
@@ -138,6 +199,9 @@ class PostgresPartitionInputQueries:
             JOIN mra.trading_session AS end_session
               ON end_session.session_id = %s
             WHERE commitment.target_definition_id = %s
+              AND decision_session.exchange = %s
+              AND start_session.exchange = %s
+              AND end_session.exchange = %s
               AND decision_session.session_date BETWEEN
                   start_session.session_date AND end_session.session_date
               AND (%s::text IS NULL OR commitment.candidate_disposition = %s)
@@ -146,6 +210,9 @@ class PostgresPartitionInputQueries:
                 plan.decision_start_session_id,
                 plan.decision_end_session_id,
                 plan.target_definition_id,
+                plan.exchange_code,
+                plan.exchange_code,
+                plan.exchange_code,
                 disposition,
                 disposition,
             ),
@@ -163,7 +230,8 @@ class PostgresPartitionInputQueries:
                        commitment.runtime_mode,
                        reference.session_id AS decision_session_id,
                        decision_session.exchange,
-                       decision_session.session_date
+                       decision_session.session_date,
+                       decision_session.timezone_name
                 FROM mra.decision_target_commitment AS commitment
                 JOIN mra.decision_reference_observation AS reference
                   ON reference.decision_reference_observation_id =
@@ -175,6 +243,9 @@ class PostgresPartitionInputQueries:
                 JOIN mra.trading_session AS end_session
                   ON end_session.session_id = %s
                 WHERE commitment.target_definition_id = %s
+                  AND decision_session.exchange = %s
+                  AND start_session.exchange = %s
+                  AND end_session.exchange = %s
                   AND decision_session.session_date BETWEEN
                       start_session.session_date AND end_session.session_date
                   AND (%s::text IS NULL OR commitment.candidate_disposition = %s)
@@ -185,6 +256,9 @@ class PostgresPartitionInputQueries:
                    base.decision_time, base.candidate_disposition,
                    base.commitment_recorded_at, base.runtime_mode,
                    base.decision_session_id,
+                   base.session_date,
+                   base.exchange,
+                   base.timezone_name,
                    min((future.session_date + checkpoint.local_time)
                        AT TIME ZONE checkpoint.timezone_name),
                    max((future.session_date + checkpoint.local_time)
@@ -206,13 +280,17 @@ class PostgresPartitionInputQueries:
                      base.target_definition_id,
                      base.decision_time, base.candidate_disposition,
                      base.commitment_recorded_at, base.runtime_mode,
-                     base.decision_session_id
+                     base.decision_session_id, base.session_date,
+                     base.exchange, base.timezone_name
             ORDER BY base.decision_time, base.commitment_id
             """,
             (
                 plan.decision_start_session_id,
                 plan.decision_end_session_id,
                 plan.target_definition_id,
+                plan.exchange_code,
+                plan.exchange_code,
+                plan.exchange_code,
                 disposition,
                 disposition,
             ),
@@ -233,8 +311,11 @@ class PostgresPartitionInputQueries:
                 commitment_recorded_at=row[5],
                 runtime_mode=str(row[6]),
                 decision_session_id=UUID(str(row[7])),
-                earliest_outcome_event_at=row[8],
-                outcome_due_at=row[9],
+                decision_session_date=row[8],
+                exchange_code=str(row[9]),
+                timezone_name=str(row[10]),
+                earliest_outcome_event_at=row[11],
+                outcome_due_at=row[12],
             )
             for row in rows
         )
