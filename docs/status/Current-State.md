@@ -3,23 +3,22 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Non-authoritative implementation status read model; exact-SHA engineering proof remains in Verification
 > **Owner:** Market Regime Alpha maintainers
-> **Generated At:** 2026-09-01 WP-11 focused implementation reconciliation
-> **Repository Implementation Checkpoint:** `59ac3a35c46d60d179d62898de054c608831f54c`
+> **Generated At:** 2026-09-02 WP-11 exact-SHA engineering qualification reconciliation
+> **Repository Implementation Checkpoint:** `07151542f12a66d6e7da3e228e2dbf1d7d7771bb`
 > **Containing Documentation Commit:** reported by the final handoff; this read model does not claim a self-referential Git SHA
-> **Previous Verified Snapshot:** WP-10 at `56812c58ce7b6e601366ffd0a5cfb52fec573227`
+> **Previous Verified Snapshot:** WP-11 at `07151542f12a66d6e7da3e228e2dbf1d7d7771bb`
 > **Implementation Line Start:** `c3ac21ef1e13f2e8408d30b0481fa9b74c4f9539`
 > **Foundation Source Checkpoint:** `eeff49c7a3995ba6d65045be88d4244617301234`
 > **Legacy Business Implementation Parent:** `0382dad416d6d50d1eea0bda1603d7c359d65274`
 > **Schema Epochs:** canonical business `LEGACY_MIGRATIONS_001_106`; target draft `MRA_REFOUNDATION_1 / DRAFT / NOT_CUT_OVER`
-> **Generator:** `WP-ARCHITECTURE-REFOUNDATION-11 implementation/status reconciliation; non-authoritative read model`
-> **Source Tree IDs:** root `3701b9ec527096cce13d3000d7d7bc2b56e74677`; source `2dd5e31479a6da637ffcf21b248a4ad45c5b4aad`; tests `59de085bf3d87617b68491161e0d7f37f8883397`; Research & Qualification tree `79ef8c310f663bf698d97faa555b67c7d811e197`; target baseline blob `cdec4ef409e4da625f41cca46174f722053c8fc1`; legacy migrations tree `6d3730548780ad6244d2cfecb4fb3559064b6f06`
-> **Code Evidence:** target and legacy source/migration packages, `tests`, [WP-11 canonical design](../references/WP-ARCHITECTURE-REFOUNDATION-11-Research-Validity-Evaluation-Design.md), and [WP-11 implementation status](../references/WP-ARCHITECTURE-REFOUNDATION-11-Research-Validity-Evaluation-Implementation-Status.md)
+> **Generator:** `WP-ARCHITECTURE-REFOUNDATION-11Q engineering qualification reconciliation; non-authoritative read model`
+> **Source Tree IDs:** root `688181c0edb24f8d8a98d6cb1540152bcfce4be9`; source `09e629410fedf065a99a9b1b27cf9fee28fadbd9`; tests `0b840065a4316742847849ccaf40d88fb0c0bf5b`; Research & Qualification tree `bcaa1eb8dc8917457f5688a1640a76e532de83cc`; target baseline blob `07228e64040c97207f0146ea61c7b21689f45432`; legacy migrations tree `6d3730548780ad6244d2cfecb4fb3559064b6f06`
+> **Code Evidence:** target and legacy source/migration packages, `tests`, [WP-11 canonical design](../references/WP-ARCHITECTURE-REFOUNDATION-11-Research-Validity-Evaluation-Design.md), and [WP-11 immutable Verification](../references/WP-ARCHITECTURE-REFOUNDATION-11-Research-Validity-Evaluation-Verification.md)
 
 This read model records the integrated WP-11 Target/Outcome, Partition,
-Experiment, and Evaluation implementation plus focused validation bound to the
-exact implementation checkpoint above. It does not claim a WP-11 engineering
-exit gate. It
-is invalid after any source, migration, test, or composition change until
+Experiment, and Evaluation implementation and exact-SHA engineering
+qualification. The linked immutable Verification establishes the exit gate.
+This read model is invalid after any source, migration, test, or composition change until
 regenerated. It cannot write business state or promote Provider, research,
 qualification, trading, or Production claims.
 
@@ -41,9 +40,7 @@ qualification, trading, or Production claims.
 | Legacy | Old source, 001–106 migrations, CLIs, compatibility paths, and tests remain physically present as the current implementation and regression oracle |
 
 The convergence state is therefore
-`WP11_IMPLEMENTED_DRAFT / FOCUSED_VALIDATION_PASS /
-ENGINEERING_QUALIFICATION_PENDING / NOT_CUT_OVER`.
-This is not `WP11_EXIT_GATE_PASS`.
+`WP11_EXIT_GATE_PASS / NOT_CUT_OVER`.
 Similar legacy vocabulary does not make an old owner part of the target, and
 target test writes do not become canonical business writes.
 
@@ -99,21 +96,22 @@ or placeholder relation is added.
 
 The four replaceable views are `candidate_component_diagnostic`,
 `candidate_funnel`, `run_trace`, and `artifact_integrity_status`. The
-implementation-defined draft shape is 68 tables, four views, 525 indexes, 812
-constraints, 54 functions, 140 non-internal triggers, and 1,604 catalog
+implementation-defined draft shape is 68 tables, four views, 534 indexes, 822
+constraints, 55 functions, 141 non-internal triggers, and 1,625 catalog
 objects.
 Its baseline checksum is
-`591f7c41a06bd02bc7e77e75628c6b0828f05e2b9425ebe685f6c96aa2150600`, its
+`6e63db66e69a50969d8fe5d6ca116454ead284427e54b04270673756e51936b1`, its
 seed checksum is
 `9c41cd715e35e1a7bed3a58c52a29f01cc1e9bf950b77344bb56eac6dfa2df11`, and its
 reference-vocabulary checksum is
 `06d6c1f1b8a15c9ae83bc2f0124c003b3fe193f5a4ad5bdf09d3e8a1e3db0dcb`.
-A clean PostgreSQL 16 bootstrap/verify used by focused WP-11 validation produced
+A clean PostgreSQL 16 bootstrap/verify used by exact-SHA WP-11 qualification produced
 catalog checksum
-`0737ad5a29cd8a3d3847d2b2f20dbb81bd5510e44916d6e08f8a9f150995bda6`.
-This is focused implementation evidence, not the clean recreate/concurrency/
-recovery campaign required for engineering qualification. Table count is
-descriptive, not an optimization target.
+`ae08facaf68885a39a9c5a6a54c3a660e299f516cc415f891f2682d19995c14c`.
+Clean bootstrap, exact-OID recreate, concurrency, failure/recovery, replay,
+representative plans, full regression, static and build gates pass at the
+linked WP-11 Verification. Table count is descriptive, not an optimization
+target.
 
 ## Market/PIT implementation truth
 
@@ -390,15 +388,10 @@ descriptive, not an optimization target.
 
 ## WP-11 Research Validity and Evaluation implementation truth
 
-The execution-time WP-11Q audit against merged main found three correctness
-gaps that the earlier focused suite did not close: the sole target composition
-root does not construct the Partition/Experiment/Evaluation command modules;
-Partition roster derivation and closure do not freeze or filter one explicit
-exchange calendar and can therefore mix same-date SSE/SZSE commitments; and
-Experiment registration accepts and persists only one Partition binding even
-though the canonical design requires a complete ordered non-empty roster. The
-facts below describe the implemented draft, not an exit-gate-qualified
-Authority. WP-11Q must correct all three and requalify an exact new SHA.
+WP-11 is engineering-qualified at
+`07151542f12a66d6e7da3e228e2dbf1d7d7771bb`. The sole target composition root
+constructs the Partition, Experiment, Evaluation, and read-only verification
+Application modules. Runtime dispatch and CLI cutover remain absent.
 
 - Gate A makes successful Target registration sufficient for Outcome contract
   reconstruction: all five metric kinds have the exact dependency shape and
@@ -406,20 +399,23 @@ Authority. WP-11Q must correct all three and requalify an exact new SHA.
   closure. WP-10 numerical and revision semantics are unchanged.
 - The Partition UoW derives a commitment roster in PostgreSQL from exact
   Target, Decision window, and declared population scope without an Outcome
-  read or caller-selected member list. Its session-based horizon,
-  purge/embargo, purpose-specific overlap, code/config, provenance, count and
-  hash mechanics are implemented, but exchange-calendar isolation is a known
-  WP-11Q blocker.
+  read or caller-selected member list. One Partition freezes one explicit
+  exchange calendar, exact boundary/protected Sessions, complete calendar
+  count/hash, session-based horizon/purge/embargo, purpose-compatible overlap,
+  code/config, provenance, and complete member count/hash. Divergent XSHG/XSHE
+  same-date rosters cannot mix.
 - `PROSPECTIVE` validates the canonical Runtime live-clock lineage instead of a
   hard-coded allow-list, explicitly rejects Historical/Replay lineage, and
   requires PostgreSQL-recorded commitment time before the earliest Outcome
   event. Purpose alone is not prospective proof.
-- The Experiment UoW owns only immutable Experiment, its currently singular
-  partition binding, and Experiment Run identity. Complete atomic
-  multi-Partition roster closure is a known WP-11Q blocker. The Evaluation UoW owns Protocol/metrics,
-  Evaluation Run, Outcome access, observations, and metrics. Exact Target and
-  protected-purpose ordering are guarded by concrete FKs, lifecycle checks,
-  zero-access guards, and PostgreSQL authoritative time.
+- The Experiment UoW atomically freezes a complete ordered non-empty Partition
+  binding roster with exact Target/version/hash, typed purpose, contiguous
+  order, count/hash, root/child reconciliation, exact replay, no duplicates,
+  and no late binding. An Experiment Run binds one concrete roster child.
+- The Evaluation UoW alone owns Protocol/metrics, Evaluation Run, Outcome
+  access, observations, and metrics. Exact Target and protected-purpose
+  ordering are guarded by concrete FKs, lifecycle checks, zero-access guards,
+  PostgreSQL authoritative time, and transaction locks.
 - `AcquireOutcomeInputs` privately resolves one exact revision visible at the
   requested knowledge cutoff. It locks the complete roster, appends globally
   monotonic member access ordinals, writes one observation per member,
@@ -432,16 +428,20 @@ Authority. WP-11Q must correct all three and requalify an exact new SHA.
   compatibility and exact Candidate disposition slices. Completion requires
   the full protocol-metric × observation roster with explicit `INCLUDED`,
   `EXCLUDED`, or `NOT_ESTIMABLE` state and reason.
-- Focused validation at `59ac3a35` passes 111 directly affected tests plus
-  changed-scope Ruff, mypy, documentation link checks, and diff checks. Full
-  PostgreSQL/concurrency/recovery/replay and repository qualification remain
-  explicitly not run; the authoritative status is
-  `WP11_IMPLEMENTED_DRAFT / FOCUSED_VALIDATION_PASS /
-  ENGINEERING_QUALIFICATION_PENDING`.
+- The permanent read-only verifier recomputes Target parity, Partition
+  roster/calendar/bounds, complete Experiment bindings, Protocol metrics,
+  Evaluation lifecycle, global access ordinal chain, exact revisions,
+  observation and metric rosters, Cartesian inputs, receipt/audit/fence, and
+  provenance. Passing is `matched=true`, `mismatch_count=0`; it uses no
+  Provider, current/latest, Market reconstruction, or mutation.
+- Exact-SHA qualification passes 163 focused, 492 refoundation, 33 platform,
+  286 PostgreSQL persistence, and all 3,532 repository tests, plus clean
+  bootstrap/recreate, real concurrency/failure/recovery/unknown-commit replay,
+  representative plans, Ruff, mypy, build, docs, architecture/import, and diff
+  gates. Remote CI is `BLOCKED_BY_REPOSITORY_CONFIGURATION / NOT_RUN`.
 
-## Historical exact-SHA verification through WP-10
+## Historical exact-SHA verification through WP-11
 
-The following immutable evidence ends at WP-10 and does not prove WP-11.
 The immutable pre-refoundation ledger is
 [WP-02](../references/WP-ARCHITECTURE-REFOUNDATION-02-Pre-Refoundation-Verification-Baseline.md),
 the Foundation ledger is [WP-03](../references/WP-ARCHITECTURE-REFOUNDATION-03-Foundation-Verification.md),
@@ -458,29 +458,16 @@ Target commitment and Decision Run closure are recorded in
 [WP-09](../references/WP-ARCHITECTURE-REFOUNDATION-09-Target-Commitment-Decision-Run-Verification.md).
 Market Target Outcome closure and its proof ceiling are recorded in
 [WP-10](../references/WP-ARCHITECTURE-REFOUNDATION-10-Market-Target-Outcome-Verification.md).
+Research Validity and Evaluation closure and its proof ceiling are recorded in
+[WP-11](../references/WP-ARCHITECTURE-REFOUNDATION-11-Research-Validity-Evaluation-Verification.md).
 
-At implementation checkpoint
-`22a5ec692fcc261182197c2953a0a860d7cd6f94`, all 3,245 collected repository
-tests pass in five non-overlapping fresh-database batches of 1,298 + 291 + 29 +
-684 + 943. All 205 target refoundation tests pass, including 46 Research, 21
-Selection, and 69 Market tests. The unchanged legacy 001–106 migration/schema
-and business suites, 33 platform tests, documentation inventory/link checks,
-Ruff, mypy over 500 source files, package build, clean bootstrap/verify/
-exact-OID recreate, representative query plans, architecture dependency rules,
-and diff checks pass. No test or assertion was skipped, xfailed, deleted, or
-weakened.
-
-At that WP-06 snapshot, the verified PostgreSQL 16.14 target catalog contained
-35 tables and kept `MRA_REFOUNDATION_1 / DRAFT / NOT_CUT_OVER`. Its baseline,
-seed, vocabulary,
-and catalog checksums are recorded in WP-06. Candidate V1's real Selection and
-Research definition prerequisites now exist in an acyclic Authority order;
-Candidate capability was still absent at that historical checkpoint.
-
-At WP-06, GitHub Actions remained disabled, so remote CI was
+Each immutable ledger owns only its recorded exact-SHA evidence. Earlier
+checkpoint counts and checksums remain historical facts inside those ledgers;
+they are not current catalog or regression claims. At WP-11, GitHub Actions
+remains disabled, so remote CI is
 `BLOCKED_BY_REPOSITORY_CONFIGURATION / NOT_RUN`, not PASS. No current or
-historical local gate proves Provider, Alpha/OOS, broker, trading, Prospective,
-Production, or Runtime/CLI Cutover evidence.
+historical local gate proves Provider, Alpha/OOS, broker, trading, sustained
+Prospective value, Production, or Runtime/CLI Cutover evidence.
 
 ## Research and production ceiling
 

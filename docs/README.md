@@ -87,9 +87,9 @@ Checkpoint traceability:
   complete observation, and metric-roster implementation contract; it grants
   only draft implementation scope and no engineering qualification claim.
 - [WP-11 Research Validity and Evaluation Closure Implementation Status](references/WP-ARCHITECTURE-REFOUNDATION-11-Research-Validity-Evaluation-Implementation-Status.md)
-  — exact-base draft implementation and focused-validation record. It is not
-  immutable Verification, does not claim `WP11_EXIT_GATE = PASS`, and lists the
-  independent engineering qualification work that remains `NOT_RUN_BY_SCOPE`.
+  — historical exact-base draft implementation and focused-validation record.
+  Its original ceiling is preserved and superseded by the immutable WP-11
+  Verification below.
 - [WP-11Q Research Validity and Evaluation Qualification Design](references/WP-ARCHITECTURE-REFOUNDATION-11Q-Research-Validity-Evaluation-Qualification-Design.md)
   — execution-time correctness and exact-SHA qualification contract that
   closes sole composition, single-exchange Partition calendar Authority,
@@ -99,9 +99,16 @@ Checkpoint traceability:
   — file-level TDD slices, checkpoint boundaries, PostgreSQL campaigns, full
   exact-SHA gate and merge-stop procedure for executing the approved WP-11Q
   design without entering WP-12 early.
+- [WP-11 Research Validity and Evaluation Verification](references/WP-ARCHITECTURE-REFOUNDATION-11-Research-Validity-Evaluation-Verification.md)
+  — immutable exact-SHA engineering proof for sole composition,
+  single-exchange Partition calendar Authority, complete ordered Experiment
+  rosters, controlled Outcome access, full Evaluation closure, PostgreSQL
+  qualification, concurrency/recovery/replay, full regression, static/build,
+  and `WP11_EXIT_GATE = PASS` without Runtime/CLI cutover.
 
-All documents in this section have Target status. They define the destination,
-not current completion.
+Design documents in this section define the Target destination. Status and
+Verification records report their explicitly bounded implementation evidence;
+they do not grant canonical business write or research-promotion Authority.
 
 ## Current implementation and forward plan
 

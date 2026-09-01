@@ -3,7 +3,7 @@
 > **Status:** CANONICAL_TARGET_ARCHITECTURE
 > **Authority:** Target business-fact ownership and canonical-write specification
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-09-01
+> **Last Updated:** 2026-09-02
 > **Code Evidence:** target `src/market_regime_alpha/shared`, `src/market_regime_alpha/runtime`, `src/market_regime_alpha/market`, `src/market_regime_alpha/selection`, `src/market_regime_alpha/research_qualification`, `src/market_regime_alpha/infrastructure`, `src/market_regime_alpha/interfaces`, `src/market_regime_alpha/infrastructure/postgres/migrations/001_baseline.sql`, `tests/refoundation`; legacy source/migrations remain current business implementation
 
 This document answers one question for every retained fact: who may create or
@@ -124,8 +124,9 @@ Domain errors nor commands and is not a command bus or workflow owner.
 | Physical Position | Execution & Account query owner | no direct write | `current_position` view over `fill` + `position_basis_event` | always derived as-of; no independent Position table | Risk, inspection |
 | Strategy sleeve | Execution & Account query owner | no direct write | query/view over effective `fill_allocation` and qualified corporate actions | derived; opening/reconciliation quantities stay unallocated | Outcome/Attribution |
 
-Rows through Market Target Outcome and Research Evaluation describe implemented
-draft ownership; rows for Evidence, Assessment, Qualification, Model, later
+Rows through Market Target Outcome and Research Evaluation describe implemented,
+engineering-qualified target-draft ownership without Runtime/CLI cutover; rows
+for Evidence, Assessment, Qualification, Model, later
 Decision Support, Execution, TradeOutcome, and Attribution remain logical
 Target design only. Their sequence is owned only by the Roadmap. Realized
 market labels stay under the Market Target Outcome Authority and realized trade
