@@ -1870,3 +1870,194 @@ def test_partition_uses_session_shift_and_rejects_protected_overlap(
         assert connection.execute(
             "SELECT count(*) FROM mra.research_partition"
         ).fetchone() == (1,)
+
+
+def _plan_index_names(node: dict) -> set[str]:
+    names = {str(node["Index Name"])} if "Index Name" in node else set()
+    for child in node.get("Plans", ()):
+        names.update(_plan_index_names(child))
+    return names
+
+
+def test_wp11_core_queries_have_bounded_fk_leading_plans(wp11_stack) -> None:
+    stack = wp11_stack
+    target, _, _, settled = _settle_two_visible_revisions(stack)
+    commands, partition, experiment_run_id, protocol = _freeze_and_predeclare(
+        stack, target
+    )
+    cutoff = settled[1][1] + timedelta(microseconds=1)
+    evaluation_run_id, _, _ = _run_evaluation(
+        commands,
+        experiment_run_id,
+        protocol,
+        cutoff,
+        "query-plans",
+    )
+
+    with psycopg.connect(stack.database_url) as connection:
+        scope = connection.execute(
+            """
+            SELECT exchange_code, decision_start_date, decision_end_date,
+                   protected_start_date, protected_end_date
+            FROM mra.research_partition
+            WHERE research_partition_id = %s
+            """,
+            (partition.research_partition_id,),
+        ).fetchone()
+        member = connection.execute(
+            """
+            SELECT research_partition_member_id, commitment_id
+            FROM mra.research_partition_member
+            WHERE research_partition_id = %s
+            """,
+            (partition.research_partition_id,),
+        ).fetchone()
+        assert scope is not None and member is not None
+        connection.execute("SET LOCAL enable_seqscan = off")
+        plans = {
+            "commitment_partition_roster": connection.execute(
+                """
+                EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)
+                SELECT commitment.commitment_id
+                FROM mra.decision_target_commitment AS commitment
+                JOIN mra.decision_reference_observation AS reference
+                  ON reference.decision_reference_observation_id =
+                     commitment.decision_reference_observation_id
+                JOIN mra.trading_session AS decision_session
+                  ON decision_session.session_id = reference.session_id
+                WHERE commitment.target_definition_id = %s
+                  AND decision_session.exchange = %s
+                  AND decision_session.session_date BETWEEN %s AND %s
+                ORDER BY commitment.commitment_id
+                """,
+                (target.target_definition_id, scope[0], scope[1], scope[2]),
+            ).fetchone()[0][0],
+            "protected_overlap": connection.execute(
+                """
+                EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)
+                SELECT research_partition_id
+                FROM mra.research_partition
+                WHERE target_definition_id = %s
+                  AND exchange_code = %s
+                  AND overlap_policy <> 'DIAGNOSTIC_REUSE'
+                  AND daterange(
+                        protected_start_date, protected_end_date, '[]'
+                      ) && daterange(%s, %s, '[]')
+                """,
+                (target.target_definition_id, scope[0], scope[3], scope[4]),
+            ).fetchone()[0][0],
+            "cutoff_visible_outcome_revision": connection.execute(
+                """
+                EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)
+                WITH eligible AS (
+                    SELECT revision.*
+                    FROM mra.market_target_outcome_revision AS revision
+                    WHERE revision.commitment_id = %s
+                      AND revision.target_definition_id = %s
+                      AND revision.observation_cutoff <= %s
+                      AND revision.knowledge_cutoff <= %s
+                      AND revision.settled_at <= %s
+                )
+                SELECT eligible.market_target_outcome_revision_id
+                FROM eligible
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM eligible AS successor
+                    WHERE successor.supersedes_revision_id =
+                          eligible.market_target_outcome_revision_id
+                )
+                """,
+                (member[1], target.target_definition_id, cutoff, cutoff, cutoff),
+            ).fetchone()[0][0],
+            "member_access_ordinal": connection.execute(
+                """
+                EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)
+                SELECT coalesce(max(access_ordinal), 0) + 1
+                FROM mra.research_partition_outcome_access
+                WHERE research_partition_member_id = %s
+                """,
+                (member[0],),
+            ).fetchone()[0][0],
+            "observation_exact_outcome_metric": connection.execute(
+                """
+                EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)
+                SELECT source.market_target_outcome_metric_id
+                FROM mra.evaluation_observation AS observation
+                JOIN mra.evaluation_protocol_metric AS protocol_metric
+                  ON protocol_metric.evaluation_protocol_id = %s
+                JOIN mra.market_target_outcome_metric AS source
+                  ON source.market_target_outcome_revision_id =
+                     observation.market_target_outcome_revision_id
+                 AND source.target_metric_definition_id =
+                     protocol_metric.source_target_metric_definition_id
+                WHERE observation.evaluation_run_id = %s
+                """,
+                (protocol.evaluation_protocol_id, evaluation_run_id),
+            ).fetchone()[0][0],
+            "metric_member_cartesian": connection.execute(
+                """
+                EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)
+                SELECT metric.evaluation_metric_id,
+                       observation.research_partition_member_id,
+                       input.evaluation_metric_observation_id
+                FROM mra.evaluation_metric AS metric
+                CROSS JOIN mra.evaluation_observation AS observation
+                LEFT JOIN mra.evaluation_metric_observation AS input
+                  ON input.evaluation_metric_id = metric.evaluation_metric_id
+                 AND input.evaluation_observation_id =
+                     observation.evaluation_observation_id
+                WHERE metric.evaluation_run_id = %s
+                  AND observation.evaluation_run_id = %s
+                """,
+                (evaluation_run_id, evaluation_run_id),
+            ).fetchone()[0][0],
+        }
+
+    expected_index_groups = {
+        "commitment_partition_roster": (
+            {"decision_commitment_target_idx"},
+        ),
+        "protected_overlap": (
+            {
+                "research_partition_target_window_idx",
+                "research_partition_target_fk_idx",
+            },
+        ),
+        "cutoff_visible_outcome_revision": (
+            {"outcome_revision_request_idx"},
+        ),
+        "member_access_ordinal": (
+            {
+                "research_outcome_access_member_ordinal_uk",
+                "research_outcome_access_member_fk_idx",
+            },
+        ),
+        "observation_exact_outcome_metric": (
+            {
+                "evaluation_observation_run_member_uk",
+                "evaluation_observation_access_fk_idx",
+            },
+            {
+                "outcome_metric_revision_idx",
+                "outcome_metric_definition_idx",
+                "outcome_metric_definition_authority_idx",
+            },
+        ),
+        "metric_member_cartesian": (
+            {
+                "evaluation_metric_run_protocol_metric_uk",
+                "evaluation_metric_run_fk_idx",
+            },
+            {"evaluation_observation_run_member_uk"},
+            {
+                "evaluation_metric_observation_matrix_uk",
+                "evaluation_metric_observation_observation_fk_idx",
+            },
+        ),
+    }
+    for label, explanation in plans.items():
+        plan = explanation["Plan"]
+        names = _plan_index_names(plan)
+        for alternatives in expected_index_groups[label]:
+            assert alternatives & names, (label, alternatives, names, plan)
+        assert int(plan["Actual Rows"]) <= 1, (label, plan)
+        assert float(explanation["Execution Time"]) < 100.0, (label, explanation)
