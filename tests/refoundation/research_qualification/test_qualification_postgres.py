@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
+from datetime import timedelta
 from decimal import Decimal
 from uuid import uuid4
 
@@ -64,7 +65,10 @@ from market_regime_alpha.research_qualification.domain.research_vocabulary impor
     PartitionPurpose,
     SourceMetricValueType,
 )
-from market_regime_alpha.runtime.errors import IdempotencyKeyReusedError
+from market_regime_alpha.runtime.errors import (
+    IdempotencyKeyReusedError,
+    RuntimeStateConflictError,
+)
 from tests.refoundation.research_qualification import (
     test_assessment_postgres as _assessment,
 )
@@ -79,9 +83,7 @@ def wp12_qualification_stack(target_database_url, tmp_path, request):
 
 
 def _assessment_authority(stack, *, counter=False):
-    target, experiment_id, evaluation_run_id, completed_at = (
-        _assessment._completed_authority(stack)
-    )
+    target, experiment_id, evaluation_run_id, completed_at = _assessment._completed_authority(stack)
     _assessment._record_evidence(
         stack,
         target,
@@ -208,20 +210,14 @@ def test_qualification_evaluates_every_floor_and_binds_exact_evidence(
     wp12_qualification_stack,
 ) -> None:
     stack = wp12_qualification_stack
-    target, evaluation_run_id, assessment, assessment_result = _assessment_authority(
-        stack
-    )
+    target, evaluation_run_id, assessment, assessment_result = _assessment_authority(stack)
     floor = _floor(stack, evaluation_run_id)
-    policy = _policy(
-        target, floor, code=f"wp12-policy-{uuid4().hex[:8]}"
-    )
+    policy = _policy(target, floor, code=f"wp12-policy-{uuid4().hex[:8]}")
     commands = QualificationCommands(
         PostgresQualificationUnitOfWorkProvider(stack.pool, id_factory=uuid4),
         id_factory=uuid4,
     )
-    policy_context = _wp11._wp11_context(
-        "register-qualification-policy", "REGISTER_RESEARCH_QUALIFICATION_POLICY"
-    )
+    policy_context = _wp11._wp11_context("register-qualification-policy", "REGISTER_RESEARCH_QUALIFICATION_POLICY")
     policy_result = commands.register_policy(policy, policy_context)
     policy_replay = commands.register_policy(policy, policy_context)
     assert policy_result.replayed is False
@@ -234,9 +230,7 @@ def test_qualification_evaluates_every_floor_and_binds_exact_evidence(
         target,
         code=f"wp12-decision-{uuid4().hex[:8]}",
     )
-    decision_context = _wp11._wp11_context(
-        "decide-qualification", "DECIDE_RESEARCH_QUALIFICATION"
-    )
+    decision_context = _wp11._wp11_context("decide-qualification", "DECIDE_RESEARCH_QUALIFICATION")
     result = commands.decide(decision, decision_context)
     replay = commands.decide(decision, decision_context)
 
@@ -263,9 +257,7 @@ def test_qualification_evaluates_every_floor_and_binds_exact_evidence(
         ).fetchone()
     assert floor_rows == [("SATISFIED", 1, 0)]
     assert evidence_count == (1,)
-    admission = PostgresResearchQualificationAdmissionReadPort(
-        stack.pool
-    ).admitted_by_id(
+    admission = PostgresResearchQualificationAdmissionReadPort(stack.pool).admitted_by_id(
         decision.research_qualification_decision_id,
         requested_knowledge_cutoff=decision.known_at,
         consumer_generation_time=decision.effective_at,
@@ -288,24 +280,16 @@ def test_qualification_evaluates_every_floor_and_binds_exact_evidence(
             """,
             (assessment.research_assessment_id,),
         ).fetchone()[0]
-    verifier = ResearchQualificationVerifier(
-        PostgresResearchQualificationVerificationProvider(stack.pool)
-    )
+    verifier = ResearchQualificationVerifier(PostgresResearchQualificationVerificationProvider(stack.pool))
     reports = (
         verifier.verify_evidence(evidence_item_id),
         verifier.verify_assessment(assessment.research_assessment_id),
         verifier.verify_policy(policy.research_qualification_policy_id),
         verifier.verify_decision(decision.research_qualification_decision_id),
     )
-    failures = [
-        (report.authority_kind, report.mismatches)
-        for report in reports
-        if not report.matched
-    ]
+    failures = [(report.authority_kind, report.mismatches) for report in reports if not report.matched]
     assert not failures, "\n".join(
-        f"{kind}:{mismatch.path}:{mismatch.expected}:{mismatch.actual}"
-        for kind, mismatches in failures
-        for mismatch in mismatches
+        f"{kind}:{mismatch.path}:{mismatch.expected}:{mismatch.actual}" for kind, mismatches in failures for mismatch in mismatches
     )
     assert all(report.mismatch_count == 0 for report in reports)
     with psycopg.connect(stack.database_url) as connection:
@@ -320,9 +304,7 @@ def test_qualification_evaluates_every_floor_and_binds_exact_evidence(
         connection.commit()
     drift = verifier.verify_evidence(evidence_item_id)
     assert drift.matched is False
-    assert "evidence.content_sha256" in {
-        mismatch.path for mismatch in drift.mismatches
-    }
+    assert "evidence.content_sha256" in {mismatch.path for mismatch in drift.mismatches}
     with pytest.raises(IdempotencyKeyReusedError):
         commands.decide(
             replace(decision, research_qualification_decision_id=uuid4()),
@@ -346,17 +328,13 @@ def test_qualification_preserves_counter_and_insufficient_sample(
     expected_decision,
 ) -> None:
     stack = wp12_qualification_stack
-    target, evaluation_run_id, assessment, assessment_result = _assessment_authority(
-        stack, counter=counter
-    )
+    target, evaluation_run_id, assessment, assessment_result = _assessment_authority(stack, counter=counter)
     floor = _floor(
         stack,
         evaluation_run_id,
         minimum_member_count=minimum_member_count,
     )
-    policy = _policy(
-        target, floor, code=f"wp12-policy-{uuid4().hex[:8]}"
-    )
+    policy = _policy(target, floor, code=f"wp12-policy-{uuid4().hex[:8]}")
     commands = QualificationCommands(
         PostgresQualificationUnitOfWorkProvider(stack.pool, id_factory=uuid4),
         id_factory=uuid4,
@@ -377,9 +355,7 @@ def test_qualification_preserves_counter_and_insufficient_sample(
     )
     result = commands.decide(
         decision,
-        _wp11._wp11_context(
-            f"decide-{uuid4().hex[:8]}", "DECIDE_RESEARCH_QUALIFICATION"
-        ),
+        _wp11._wp11_context(f"decide-{uuid4().hex[:8]}", "DECIDE_RESEARCH_QUALIFICATION"),
     )
     with psycopg.connect(stack.database_url) as connection:
         floor_status = connection.execute(
@@ -408,12 +384,15 @@ def test_qualification_concurrent_identical_decision_has_one_root(
         PostgresQualificationUnitOfWorkProvider(stack.pool, id_factory=uuid4),
         id_factory=uuid4,
     )
-    commands.register_policy(
-        policy,
-        _wp11._wp11_context(
-            "register-race-policy", "REGISTER_RESEARCH_QUALIFICATION_POLICY"
-        ),
-    )
+    policy_context = _wp11._wp11_context("register-race-policy", "REGISTER_RESEARCH_QUALIFICATION_POLICY")
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        policy_results = list(
+            executor.map(
+                lambda _: commands.register_policy(policy, policy_context),
+                range(2),
+            )
+        )
+    assert sorted(result.replayed for result in policy_results) == [False, True]
     decision = _decision(
         stack,
         assessment.research_assessment_id,
@@ -421,9 +400,7 @@ def test_qualification_concurrent_identical_decision_has_one_root(
         target,
         code=f"wp12-race-decision-{uuid4().hex[:8]}",
     )
-    context = _wp11._wp11_context(
-        "decide-race", "DECIDE_RESEARCH_QUALIFICATION"
-    )
+    context = _wp11._wp11_context("decide-race", "DECIDE_RESEARCH_QUALIFICATION")
     with ThreadPoolExecutor(max_workers=2) as executor:
         results = list(executor.map(lambda _: commands.decide(decision, context), range(2)))
     assert sorted(result.replayed for result in results) == [False, True]
@@ -457,9 +434,7 @@ def test_qualification_records_missing_floor_instead_of_skipping_it(
                 evaluation_protocol_metric_id=uuid4(),
                 metric_code=f"missing-{uuid4().hex[:8]}",
                 ordinal=1,
-                source_target_metric_definition_id=(
-                    source_metric.target_metric_definition_id
-                ),
+                source_target_metric_definition_id=(source_metric.target_metric_definition_id),
                 source_metric_code=source_metric.metric_code,
                 source_value_type=SourceMetricValueType.DECIMAL,
                 reducer=EvaluationReducer.MEAN_DECIMAL,
@@ -480,9 +455,7 @@ def test_qualification_records_missing_floor_instead_of_skipping_it(
         id_factory=uuid4,
     ).register_protocol(
         protocol,
-        _wp11._wp11_context(
-            "register-missing-floor-protocol", "REGISTER_EVALUATION_PROTOCOL"
-        ),
+        _wp11._wp11_context("register-missing-floor-protocol", "REGISTER_EVALUATION_PROTOCOL"),
     )
     metric = protocol.metrics[0]
     floor = QualificationPolicyFloorPlan(
@@ -513,9 +486,7 @@ def test_qualification_records_missing_floor_instead_of_skipping_it(
         maximum_counter_evidence_count=0,
         required=True,
     )
-    policy = _policy(
-        target, floor, code=f"wp12-missing-policy-{uuid4().hex[:8]}"
-    )
+    policy = _policy(target, floor, code=f"wp12-missing-policy-{uuid4().hex[:8]}")
     commands = QualificationCommands(
         PostgresQualificationUnitOfWorkProvider(stack.pool, id_factory=uuid4),
         id_factory=uuid4,
@@ -536,9 +507,7 @@ def test_qualification_records_missing_floor_instead_of_skipping_it(
     )
     result = commands.decide(
         decision,
-        _wp11._wp11_context(
-            "decide-missing-floor", "DECIDE_RESEARCH_QUALIFICATION"
-        ),
+        _wp11._wp11_context("decide-missing-floor", "DECIDE_RESEARCH_QUALIFICATION"),
     )
     with psycopg.connect(stack.database_url) as connection:
         floor_result = connection.execute(
@@ -551,3 +520,219 @@ def test_qualification_records_missing_floor_instead_of_skipping_it(
         ).fetchone()
     assert floor_result == ("MISSING", None, None)
     assert result.decision_status == "INCONCLUSIVE"
+
+
+def test_policy_rejects_floor_whose_purpose_differs_from_protocol(
+    wp12_qualification_stack,
+) -> None:
+    stack = wp12_qualification_stack
+    target, evaluation_run_id, _, _ = _assessment_authority(stack)
+    floor = replace(
+        _floor(stack, evaluation_run_id),
+        required_partition_purpose=PartitionPurpose.FIT,
+    )
+    policy = _policy(
+        target,
+        floor,
+        code=f"wp12-wrong-protocol-purpose-{uuid4().hex[:8]}",
+    )
+    commands = QualificationCommands(
+        PostgresQualificationUnitOfWorkProvider(stack.pool, id_factory=uuid4),
+        id_factory=uuid4,
+    )
+
+    with pytest.raises(RuntimeStateConflictError, match="Qualification"):
+        commands.register_policy(
+            policy,
+            _wp11._wp11_context(
+                "reject-wrong-protocol-purpose",
+                "REGISTER_RESEARCH_QUALIFICATION_POLICY",
+            ),
+        )
+
+    with psycopg.connect(stack.database_url) as connection:
+        assert connection.execute(
+            """
+            SELECT count(*) FROM mra.research_qualification_policy_floor
+            WHERE research_qualification_policy_id = %s
+            """,
+            (policy.research_qualification_policy_id,),
+        ).fetchone() == (0,)
+
+
+def test_qualification_preserves_not_estimable_floor(
+    wp12_qualification_stack,
+) -> None:
+    stack = wp12_qualification_stack
+    target, _, _, settled = _wp11._settle_two_visible_revisions(stack)
+    evaluation_commands, _, experiment_run_id, protocol = _wp11._freeze_and_predeclare(stack, target)
+    not_estimable_protocol = replace(
+        protocol,
+        evaluation_protocol_id=uuid4(),
+        protocol_code=f"wp12-floor-not-estimable-{uuid4().hex[:8]}",
+        metrics=(
+            replace(
+                protocol.metrics[0],
+                evaluation_protocol_metric_id=uuid4(),
+                minimum_estimable_count=2,
+            ),
+        ),
+    )
+    evaluation_commands.register_protocol(
+        not_estimable_protocol,
+        _wp11._wp11_context("register-floor-not-estimable", "REGISTER_EVALUATION_PROTOCOL"),
+    )
+    evaluation_run_id, _, _ = _wp11._run_evaluation(
+        evaluation_commands,
+        experiment_run_id,
+        not_estimable_protocol,
+        settled[1][1] + timedelta(microseconds=1),
+        "wp12-floor-not-estimable",
+    )
+    with psycopg.connect(stack.database_url) as connection:
+        experiment_id, completed_at = connection.execute(
+            """
+            SELECT experiment_id, completed_at FROM mra.evaluation_run
+            WHERE evaluation_run_id = %s
+            """,
+            (evaluation_run_id,),
+        ).fetchone()
+    _assessment._record_evidence(
+        stack,
+        target,
+        evaluation_run_id,
+        completed_at + timedelta(microseconds=1),
+        direction=EvidenceDirection.SUPPORT,
+        code=f"wp12-floor-not-estimable-evidence-{uuid4().hex[:8]}",
+    )
+    assessment = _assessment._assessment_plan(
+        target,
+        experiment_id,
+        _assessment._cutoff(stack),
+        code=f"wp12-floor-not-estimable-assessment-{uuid4().hex[:8]}",
+    )
+    assessment_result = AssessmentCommands(
+        PostgresAssessmentUnitOfWorkProvider(stack.pool, id_factory=uuid4),
+        id_factory=uuid4,
+    ).assess(
+        assessment,
+        _wp11._wp11_context("assess-floor-not-estimable", "ASSESS_RESEARCH_EXPERIMENT"),
+    )
+    assert assessment_result.assessment_status == "NOT_ESTIMABLE"
+    policy = replace(
+        _policy(
+            target,
+            _floor(stack, evaluation_run_id),
+            code=f"wp12-not-estimable-policy-{uuid4().hex[:8]}",
+        ),
+        required_assessment_status=AssessmentStatus.NOT_ESTIMABLE,
+    )
+    commands = QualificationCommands(
+        PostgresQualificationUnitOfWorkProvider(stack.pool, id_factory=uuid4),
+        id_factory=uuid4,
+    )
+    commands.register_policy(
+        policy,
+        _wp11._wp11_context(
+            "register-not-estimable-policy",
+            "REGISTER_RESEARCH_QUALIFICATION_POLICY",
+        ),
+    )
+    decision = _decision(
+        stack,
+        assessment.research_assessment_id,
+        policy,
+        target,
+        code=f"wp12-not-estimable-decision-{uuid4().hex[:8]}",
+    )
+    result = commands.decide(
+        decision,
+        _wp11._wp11_context("decide-not-estimable", "DECIDE_RESEARCH_QUALIFICATION"),
+    )
+    with psycopg.connect(stack.database_url) as connection:
+        floor_status = connection.execute(
+            """
+            SELECT result_status FROM mra.research_qualification_floor_result
+            WHERE research_qualification_decision_id = %s
+            """,
+            (decision.research_qualification_decision_id,),
+        ).fetchone()[0]
+    assert floor_status == "NOT_ESTIMABLE"
+    assert result.decision_status == "INCONCLUSIVE"
+
+
+def test_policy_and_decision_supersession_are_append_only(
+    wp12_qualification_stack,
+) -> None:
+    stack = wp12_qualification_stack
+    target, evaluation_run_id, assessment, _ = _assessment_authority(stack)
+    policy_code = f"wp12-policy-series-{uuid4().hex[:8]}"
+    first_policy = _policy(
+        target,
+        _floor(stack, evaluation_run_id),
+        code=policy_code,
+    )
+    commands = QualificationCommands(
+        PostgresQualificationUnitOfWorkProvider(stack.pool, id_factory=uuid4),
+        id_factory=uuid4,
+    )
+    commands.register_policy(
+        first_policy,
+        _wp11._wp11_context("register-policy-v1", "REGISTER_RESEARCH_QUALIFICATION_POLICY"),
+    )
+    second_policy = replace(
+        first_policy,
+        research_qualification_policy_id=uuid4(),
+        version=2,
+        supersedes_policy_id=first_policy.research_qualification_policy_id,
+        floors=(
+            replace(
+                first_policy.floors[0],
+                research_qualification_policy_floor_id=uuid4(),
+            ),
+        ),
+    )
+    commands.register_policy(
+        second_policy,
+        _wp11._wp11_context("register-policy-v2", "REGISTER_RESEARCH_QUALIFICATION_POLICY"),
+    )
+    decision_code = f"wp12-decision-series-{uuid4().hex[:8]}"
+    first_decision = _decision(
+        stack,
+        assessment.research_assessment_id,
+        second_policy,
+        target,
+        code=decision_code,
+    )
+    commands.decide(
+        first_decision,
+        _wp11._wp11_context("decide-v1", "DECIDE_RESEARCH_QUALIFICATION"),
+    )
+    with psycopg.connect(stack.database_url) as connection:
+        authority_time = connection.execute("SELECT clock_timestamp()").fetchone()[0]
+    second_decision = replace(
+        first_decision,
+        research_qualification_decision_id=uuid4(),
+        revision=2,
+        supersedes_decision_id=first_decision.research_qualification_decision_id,
+        effective_at=authority_time,
+        known_at=authority_time,
+    )
+    commands.decide(
+        second_decision,
+        _wp11._wp11_context("decide-v2", "DECIDE_RESEARCH_QUALIFICATION"),
+    )
+
+    verifier = ResearchQualificationVerifier(PostgresResearchQualificationVerificationProvider(stack.pool))
+    assert verifier.verify_policy(second_policy.research_qualification_policy_id).matched
+    assert verifier.verify_decision(second_decision.research_qualification_decision_id).matched
+    with psycopg.connect(stack.database_url) as connection:
+        with pytest.raises(psycopg.errors.ObjectNotInPrerequisiteState):
+            connection.execute(
+                """
+                UPDATE mra.research_qualification_decision
+                SET decision_status = 'REJECTED'
+                WHERE research_qualification_decision_id = %s
+                """,
+                (first_decision.research_qualification_decision_id,),
+            )

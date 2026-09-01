@@ -41,9 +41,7 @@ def wp12_evidence_stack(target_database_url, tmp_path, request):
 
 def _completed_evaluation(stack):
     target, _, _, settled = _wp11._settle_two_visible_revisions(stack)
-    commands, _, experiment_run_id, protocol = _wp11._freeze_and_predeclare(
-        stack, target
-    )
+    commands, _, experiment_run_id, protocol = _wp11._freeze_and_predeclare(stack, target)
     evaluation_run_id, _, _ = _wp11._run_evaluation(
         commands,
         experiment_run_id,
@@ -89,9 +87,7 @@ def test_evidence_is_evaluation_bound_append_only_and_exactly_replayable(
 ) -> None:
     stack = wp12_evidence_stack
     target, _, evaluation_run_id, completed_at = _completed_evaluation(stack)
-    commands = EvidenceCommands(
-        PostgresEvidenceUnitOfWorkProvider(stack.pool), id_factory=uuid4
-    )
+    commands = EvidenceCommands(PostgresEvidenceUnitOfWorkProvider(stack.pool), id_factory=uuid4)
     parent = _plan(
         target,
         evaluation_run_id,
@@ -115,9 +111,7 @@ def test_evidence_is_evaluation_bound_append_only_and_exactly_replayable(
         code=f"wp12-child-{uuid4().hex[:8]}",
         dependencies=(dependency,),
     )
-    context = _wp11._wp11_context(
-        "record-child-evidence", "RECORD_RESEARCH_EVIDENCE"
-    )
+    context = _wp11._wp11_context("record-child-evidence", "RECORD_RESEARCH_EVIDENCE")
     result = commands.record(child, context)
     replay = commands.record(child, context)
 
@@ -160,18 +154,14 @@ def test_evidence_concurrency_has_one_authority_and_changed_request_fails(
 ) -> None:
     stack = wp12_evidence_stack
     target, _, evaluation_run_id, completed_at = _completed_evaluation(stack)
-    commands = EvidenceCommands(
-        PostgresEvidenceUnitOfWorkProvider(stack.pool), id_factory=uuid4
-    )
+    commands = EvidenceCommands(PostgresEvidenceUnitOfWorkProvider(stack.pool), id_factory=uuid4)
     plan = _plan(
         target,
         evaluation_run_id,
         completed_at + timedelta(microseconds=1),
         code=f"wp12-concurrent-{uuid4().hex[:8]}",
     )
-    context = _wp11._wp11_context(
-        "record-concurrent-evidence", "RECORD_RESEARCH_EVIDENCE"
-    )
+    context = _wp11._wp11_context("record-concurrent-evidence", "RECORD_RESEARCH_EVIDENCE")
     with ThreadPoolExecutor(max_workers=2) as executor:
         results = list(executor.map(lambda _: commands.record(plan, context), range(2)))
     assert sorted(result.replayed for result in results) == [False, True]
@@ -185,9 +175,7 @@ def test_evidence_concurrency_has_one_authority_and_changed_request_fails(
 def test_evidence_rejects_nonterminal_evaluation(wp12_evidence_stack) -> None:
     stack = wp12_evidence_stack
     target, _, _, settled = _wp11._settle_two_visible_revisions(stack)
-    commands, _, experiment_run_id, protocol = _wp11._freeze_and_predeclare(
-        stack, target
-    )
+    commands, _, experiment_run_id, protocol = _wp11._freeze_and_predeclare(stack, target)
     evaluation_run_id = uuid4()
     from market_regime_alpha.research_qualification.domain.evaluation import (
         EvaluationRunPlan,
@@ -206,9 +194,7 @@ def test_evidence_rejects_nonterminal_evaluation(wp12_evidence_stack) -> None:
         ),
         _wp11._wp11_context("open-nonterminal", "OPEN_EVALUATION_RUN"),
     )
-    evidence = EvidenceCommands(
-        PostgresEvidenceUnitOfWorkProvider(stack.pool), id_factory=uuid4
-    )
+    evidence = EvidenceCommands(PostgresEvidenceUnitOfWorkProvider(stack.pool), id_factory=uuid4)
     plan = _plan(
         target,
         evaluation_run_id,
@@ -218,7 +204,41 @@ def test_evidence_rejects_nonterminal_evaluation(wp12_evidence_stack) -> None:
     with pytest.raises(RuntimeStateConflictError):
         evidence.record(
             plan,
-            _wp11._wp11_context(
-                "record-nonterminal-evidence", "RECORD_RESEARCH_EVIDENCE"
-            ),
+            _wp11._wp11_context("record-nonterminal-evidence", "RECORD_RESEARCH_EVIDENCE"),
         )
+
+
+def test_evidence_rejects_self_cycle_without_partial_authority(
+    wp12_evidence_stack,
+) -> None:
+    stack = wp12_evidence_stack
+    target, _, evaluation_run_id, completed_at = _completed_evaluation(stack)
+    evidence_item_id = uuid4()
+    dependency = EvidenceDependencyPlan(
+        evidence_dependency_id=uuid4(),
+        parent_evidence_item_id=evidence_item_id,
+        ordinal=1,
+        dependency_role=EvidenceDependencyRole.DERIVED_FROM,
+    )
+    with pytest.raises(ValueError, match="depend on itself"):
+        replace(
+            _plan(
+                target,
+                evaluation_run_id,
+                completed_at + timedelta(microseconds=1),
+                code=f"wp12-self-cycle-{uuid4().hex[:8]}",
+                dependencies=(dependency,),
+            ),
+            evidence_item_id=evidence_item_id,
+        )
+    with psycopg.connect(stack.database_url) as connection:
+        assert connection.execute(
+            """
+            SELECT
+              (SELECT count(*) FROM mra.evidence_item
+               WHERE evidence_item_id = %s),
+              (SELECT count(*) FROM mra.evidence_dependency
+               WHERE child_evidence_item_id = %s)
+            """,
+            (evidence_item_id, evidence_item_id),
+        ).fetchone() == (0, 0)

@@ -10348,10 +10348,14 @@ BEGIN
            JOIN mra.evaluation_protocol_metric AS metric
              ON metric.evaluation_protocol_metric_id =
                 floor.evaluation_protocol_metric_id
+           JOIN mra.evaluation_protocol AS protocol
+             ON protocol.evaluation_protocol_id = floor.evaluation_protocol_id
            WHERE floor.research_qualification_policy_id =
                  NEW.research_qualification_policy_id
              AND (
-                 metric.content_sha256 <> floor.evaluation_protocol_metric_sha256
+                 protocol.target_definition_id <> NEW.target_definition_id
+                 OR protocol.applicable_purpose <> floor.required_partition_purpose
+                 OR metric.content_sha256 <> floor.evaluation_protocol_metric_sha256
                  OR metric.metric_code <> floor.metric_code
                  OR metric.source_value_type <> floor.source_value_type
                  OR metric.reducer <> floor.reducer

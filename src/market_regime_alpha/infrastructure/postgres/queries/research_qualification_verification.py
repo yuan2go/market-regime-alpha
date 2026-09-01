@@ -9,6 +9,7 @@ from market_regime_alpha.infrastructure.postgres.pool import TargetPostgresPool
 from market_regime_alpha.research_qualification.domain.assessment import (
     AssessmentEvaluationSummary,
     AssessmentStatus,
+    ResearchAssessmentPlan,
     derive_assessment_status,
 )
 from market_regime_alpha.research_qualification.domain.evidence import (
@@ -29,6 +30,7 @@ from market_regime_alpha.research_qualification.domain.qualification import (
     QualificationOperator,
     QualificationPolicyFloorPlan,
     QualificationPurpose,
+    ResearchQualificationDecisionPlan,
     ResearchQualificationPolicyPlan,
     qualification_decision_status,
 )
@@ -110,9 +112,7 @@ class PostgresResearchQualificationVerificationProvider:
                 evidence_plan = EvidenceItemPlan(
                     evidence_item_id=evidence_item_id,
                     evaluation_run_id=UUID(str(root[0])),
-                    evaluation_metric_id=(
-                        UUID(str(root[1])) if root[1] is not None else None
-                    ),
+                    evaluation_metric_id=(UUID(str(root[1])) if root[1] is not None else None),
                     evidence_code=str(root[2]),
                     scope=EvidenceScope(str(root[3])),
                     evidence_class=EvidenceClass(str(root[4])),
@@ -121,15 +121,9 @@ class PostgresResearchQualificationVerificationProvider:
                     direction=EvidenceDirection(str(root[7])),
                     proof_ceiling=ResearchProofClass(str(root[8])),
                     observed_at=root[9],
-                    evidence_artifact=ArtifactBinding(
-                        UUID(str(root[10])), str(root[11]), int(root[12])
-                    ),
-                    code_artifact=ArtifactBinding(
-                        UUID(str(root[13])), str(root[14]), int(root[15])
-                    ),
-                    config_artifact=ArtifactBinding(
-                        UUID(str(root[16])), str(root[17]), int(root[18])
-                    ),
+                    evidence_artifact=ArtifactBinding(UUID(str(root[10])), str(root[11]), int(root[12])),
+                    code_artifact=ArtifactBinding(UUID(str(root[13])), str(root[14]), int(root[15])),
+                    config_artifact=ArtifactBinding(UUID(str(root[16])), str(root[17]), int(root[18])),
                     provenance_sha256=str(root[19]),
                     dependencies=plans,
                 )
@@ -165,12 +159,7 @@ class PostgresResearchQualificationVerificationProvider:
                 """,
                 (root[0],),
             ).fetchone()
-            if (
-                evaluation is None
-                or evaluation[2] not in {"COMPLETED", "FAILED"}
-                or evaluation[0] != root[23]
-                or evaluation[1] != root[24]
-            ):
+            if evaluation is None or evaluation[2] not in {"COMPLETED", "FAILED"} or evaluation[0] != root[23] or evaluation[1] != root[24]:
                 mismatches.append(
                     _identity(
                         "evidence.evaluation_binding",
@@ -190,9 +179,7 @@ class PostgresResearchQualificationVerificationProvider:
                 (evidence_item_id, root[25]),
             ).fetchone()
             if chronological is not None and int(chronological[0]):
-                mismatches.append(
-                    _temporal("evidence.dependency_dag", "strict prior parents", str(chronological[0]))
-                )
+                mismatches.append(_temporal("evidence.dependency_dag", "strict prior parents", str(chronological[0])))
             _inspect_provenance(
                 connection,
                 "EVIDENCE_ITEM",
@@ -202,9 +189,7 @@ class PostgresResearchQualificationVerificationProvider:
             )
         return tuple(mismatches)
 
-    def inspect_assessment(
-        self, research_assessment_id: UUID
-    ) -> tuple[Mismatch, ...]:
+    def inspect_assessment(self, research_assessment_id: UUID) -> tuple[Mismatch, ...]:
         mismatches: list[Mismatch] = []
         with self._pool.connection(read_only=True) as connection:
             root = connection.execute(
@@ -215,7 +200,12 @@ class PostgresResearchQualificationVerificationProvider:
                        source_generation_min_decision_time,
                        source_generation_max_decision_time,
                        terminal_evaluation_ceiling, revision,
-                       supersedes_assessment_id, assessment_code, recorded_at
+                       supersedes_assessment_id, assessment_code, recorded_at,
+                       target_definition_id, target_version,
+                       target_definition_sha256, code_artifact_id,
+                       code_content_sha256, code_size_bytes,
+                       config_artifact_id, config_content_sha256,
+                       config_size_bytes, provenance_sha256, content_sha256
                 FROM mra.research_assessment
                 WHERE research_assessment_id = %s
                 """,
@@ -270,6 +260,45 @@ class PostgresResearchQualificationVerificationProvider:
                     for row in evidence
                 )
             )
+            for row in evaluations:
+                child_hash = canonical_json_sha256(
+                    {
+                        "evaluation_protocol_id": UUID(str(row[3])),
+                        "evaluation_run_id": UUID(str(row[2])),
+                        "evaluation_status": str(row[5]),
+                        "metric_count": int(row[7]),
+                        "not_estimable_metric_count": int(row[9]),
+                        "partition_purpose": str(row[4]),
+                        "rejected_metric_count": int(row[8]),
+                        "source_generation_max_decision_time": row[11],
+                        "source_generation_min_decision_time": row[10],
+                        "terminal_at": row[6],
+                    }
+                )
+                _compare(
+                    mismatches,
+                    "assessment.evaluation_content_sha256",
+                    child_hash,
+                    str(row[12]),
+                )
+            for row in evidence:
+                child_hash = canonical_json_sha256(
+                    {
+                        "evidence_class": str(row[5]),
+                        "evidence_direction": str(row[8]),
+                        "evidence_item_id": UUID(str(row[3])),
+                        "evidence_role": str(row[7]),
+                        "evaluation_run_id": UUID(str(row[4])),
+                        "origin_class": str(row[6]),
+                        "research_assessment_evaluation_id": UUID(str(row[2])),
+                    }
+                )
+                _compare(
+                    mismatches,
+                    "assessment.evidence_content_sha256",
+                    child_hash,
+                    str(row[9]),
+                )
             _roster(mismatches, "assessment.evaluation", int(root[3]), str(root[4]), evaluations, evaluation_hash)
             _roster(mismatches, "assessment.evidence", int(root[5]), str(root[6]), evidence, evidence_hash)
             summaries = tuple(
@@ -286,8 +315,103 @@ class PostgresResearchQualificationVerificationProvider:
             try:
                 derived = derive_assessment_status(summaries, directions).value
                 _compare(mismatches, "assessment.status", derived, str(root[2]))
-            except ValueError as exc:
+                definition = ResearchAssessmentPlan(
+                    research_assessment_id=research_assessment_id,
+                    assessment_code=str(root[12]),
+                    revision=int(root[10]),
+                    supersedes_assessment_id=(UUID(str(root[11])) if root[11] is not None else None),
+                    experiment_id=UUID(str(root[0])),
+                    knowledge_cutoff=root[1],
+                    code_artifact=ArtifactBinding(UUID(str(root[17])), str(root[18]), int(root[19])),
+                    config_artifact=ArtifactBinding(UUID(str(root[20])), str(root[21]), int(root[22])),
+                    provenance_sha256=str(root[23]),
+                )
+                root_hash = canonical_json_sha256(
+                    {
+                        "assessment_definition_sha256": str(definition.content_sha256),
+                        "assessment_status": AssessmentStatus(str(root[2])),
+                        "evaluation_count": len(evaluations),
+                        "evaluation_roster_sha256": evaluation_hash,
+                        "evidence_count": len(evidence),
+                        "evidence_roster_sha256": evidence_hash,
+                        "source_generation_max_decision_time": max(row[11] for row in evaluations),
+                        "source_generation_min_decision_time": min(row[10] for row in evaluations),
+                        "terminal_evaluation_ceiling": max(row[6] for row in evaluations),
+                    }
+                )
+                _compare(
+                    mismatches,
+                    "assessment.content_sha256",
+                    root_hash,
+                    str(root[24]),
+                )
+            except (TypeError, ValueError) as exc:
                 mismatches.append(_identity("assessment.domain", "valid", str(exc)))
+            authority_drift = connection.execute(
+                """
+                SELECT count(*)
+                FROM mra.research_assessment_evaluation AS item
+                JOIN mra.evaluation_run AS run
+                  ON run.evaluation_run_id = item.evaluation_run_id
+                WHERE item.research_assessment_id = %s
+                  AND (run.experiment_id <> %s
+                    OR run.evaluation_protocol_id <> item.evaluation_protocol_id
+                    OR run.partition_purpose <> item.partition_purpose
+                    OR run.status <> item.evaluation_status
+                    OR coalesce(run.completed_at, run.failed_at) <> item.terminal_at
+                    OR item.metric_count <> (
+                        SELECT count(*) FROM mra.evaluation_metric AS metric
+                        WHERE metric.evaluation_run_id = run.evaluation_run_id)
+                    OR item.rejected_metric_count <> (
+                        SELECT count(*) FROM mra.evaluation_metric AS metric
+                        WHERE metric.evaluation_run_id = run.evaluation_run_id
+                          AND metric.acceptance_state = 'REJECTED')
+                    OR item.not_estimable_metric_count <> (
+                        SELECT count(*) FROM mra.evaluation_metric AS metric
+                        WHERE metric.evaluation_run_id = run.evaluation_run_id
+                          AND metric.metric_state = 'NOT_ESTIMABLE')
+                    OR item.source_generation_min_decision_time <> (
+                        SELECT min(member.decision_time)
+                        FROM mra.research_partition_member AS member
+                        WHERE member.research_partition_id = run.research_partition_id)
+                    OR item.source_generation_max_decision_time <> (
+                        SELECT max(member.decision_time)
+                        FROM mra.research_partition_member AS member
+                        WHERE member.research_partition_id = run.research_partition_id))
+                """,
+                (research_assessment_id, root[0]),
+            ).fetchone()
+            evidence_drift = connection.execute(
+                """
+                SELECT count(*)
+                FROM mra.research_assessment_evidence AS item
+                JOIN mra.evidence_item AS evidence
+                  ON evidence.evidence_item_id = item.evidence_item_id
+                WHERE item.research_assessment_id = %s
+                  AND (evidence.evaluation_run_id <> item.evaluation_run_id
+                    OR evidence.evidence_class <> item.evidence_class
+                    OR evidence.origin_class <> item.origin_class
+                    OR evidence.evidence_role <> item.evidence_role
+                    OR evidence.evidence_direction <> item.evidence_direction)
+                """,
+                (research_assessment_id,),
+            ).fetchone()
+            if authority_drift and int(authority_drift[0]):
+                mismatches.append(
+                    _identity(
+                        "assessment.evaluation_authority",
+                        "all exact",
+                        str(authority_drift[0]),
+                    )
+                )
+            if evidence_drift and int(evidence_drift[0]):
+                mismatches.append(
+                    _identity(
+                        "assessment.evidence_authority",
+                        "all exact",
+                        str(evidence_drift[0]),
+                    )
+                )
             expected_evaluations = connection.execute(
                 """
                 SELECT count(*) FROM (
@@ -322,6 +446,29 @@ class PostgresResearchQualificationVerificationProvider:
                 mismatches.append(_identity("assessment.complete_evaluations", "0 missing", str(expected_evaluations[0])))
             if missing_evidence and int(missing_evidence[0]):
                 mismatches.append(_identity("assessment.complete_evidence", "0 missing", str(missing_evidence[0])))
+            if int(root[10]) > 1:
+                predecessor = connection.execute(
+                    """
+                    SELECT assessment_code, experiment_id, revision, recorded_at
+                    FROM mra.research_assessment
+                    WHERE research_assessment_id = %s
+                    """,
+                    (root[11],),
+                ).fetchone()
+                if (
+                    predecessor is None
+                    or predecessor[0] != root[12]
+                    or predecessor[1] != root[0]
+                    or int(predecessor[2]) + 1 != int(root[10])
+                    or predecessor[3] >= root[13]
+                ):
+                    mismatches.append(
+                        _identity(
+                            "assessment.supersession",
+                            "contiguous same-Experiment predecessor",
+                            str(predecessor),
+                        )
+                    )
             _inspect_provenance(
                 connection,
                 "RESEARCH_ASSESSMENT",
@@ -331,9 +478,7 @@ class PostgresResearchQualificationVerificationProvider:
             )
         return tuple(mismatches)
 
-    def inspect_policy(
-        self, research_qualification_policy_id: UUID
-    ) -> tuple[Mismatch, ...]:
+    def inspect_policy(self, research_qualification_policy_id: UUID) -> tuple[Mismatch, ...]:
         mismatches: list[Mismatch] = []
         with self._pool.connection(read_only=True) as connection:
             root = connection.execute(
@@ -346,7 +491,7 @@ class PostgresResearchQualificationVerificationProvider:
                        code_artifact_id, code_content_sha256,
                        code_size_bytes, config_artifact_id,
                        config_content_sha256, config_size_bytes,
-                       provenance_sha256, content_sha256
+                       provenance_sha256, content_sha256, frozen_at
                 FROM mra.research_qualification_policy
                 WHERE research_qualification_policy_id = %s
                 """,
@@ -403,6 +548,65 @@ class PostgresResearchQualificationVerificationProvider:
                     _compare(mismatches, "policy.floor_content_sha256", str(floor.content_sha256), str(row[26]))
             except (TypeError, ValueError) as exc:
                 mismatches.append(_identity("policy.domain", "valid", str(exc)))
+            metric_drift = connection.execute(
+                """
+                SELECT count(*)
+                FROM mra.research_qualification_policy_floor AS floor
+                JOIN mra.evaluation_protocol_metric AS metric
+                  ON metric.evaluation_protocol_metric_id =
+                     floor.evaluation_protocol_metric_id
+                 AND metric.evaluation_protocol_id = floor.evaluation_protocol_id
+                JOIN mra.evaluation_protocol AS protocol
+                  ON protocol.evaluation_protocol_id = floor.evaluation_protocol_id
+                WHERE floor.research_qualification_policy_id = %s
+                  AND (protocol.target_definition_id <> %s
+                    OR protocol.applicable_purpose <>
+                       floor.required_partition_purpose
+                    OR metric.content_sha256 <>
+                       floor.evaluation_protocol_metric_sha256
+                    OR metric.metric_code <> floor.metric_code
+                    OR metric.source_value_type <> floor.source_value_type
+                    OR metric.reducer <> floor.reducer
+                    OR metric.slice_kind <> floor.slice_kind
+                    OR metric.candidate_disposition IS DISTINCT FROM
+                       floor.candidate_disposition
+                    OR metric.direction <> floor.direction)
+                """,
+                (research_qualification_policy_id, root[3]),
+            ).fetchone()
+            if metric_drift and int(metric_drift[0]):
+                mismatches.append(
+                    _identity(
+                        "policy.metric_authority",
+                        "all exact Target/Protocol metrics",
+                        str(metric_drift[0]),
+                    )
+                )
+            if int(root[1]) > 1:
+                predecessor = connection.execute(
+                    """
+                    SELECT policy_code, version, target_definition_id,
+                           qualification_purpose, frozen_at
+                    FROM mra.research_qualification_policy
+                    WHERE research_qualification_policy_id = %s
+                    """,
+                    (root[2],),
+                ).fetchone()
+                if (
+                    predecessor is None
+                    or predecessor[0] != root[0]
+                    or int(predecessor[1]) + 1 != int(root[1])
+                    or predecessor[2] != root[3]
+                    or predecessor[3] != root[6]
+                    or predecessor[4] >= root[19]
+                ):
+                    mismatches.append(
+                        _identity(
+                            "policy.supersession",
+                            "contiguous same-series predecessor",
+                            str(predecessor),
+                        )
+                    )
             _inspect_provenance(
                 connection,
                 "RESEARCH_QUALIFICATION_POLICY",
@@ -412,9 +616,7 @@ class PostgresResearchQualificationVerificationProvider:
             )
         return tuple(mismatches)
 
-    def inspect_decision(
-        self, research_qualification_decision_id: UUID
-    ) -> tuple[Mismatch, ...]:
+    def inspect_decision(self, research_qualification_decision_id: UUID) -> tuple[Mismatch, ...]:
         mismatches: list[Mismatch] = []
         with self._pool.connection(read_only=True) as connection:
             root = connection.execute(
@@ -424,7 +626,12 @@ class PostgresResearchQualificationVerificationProvider:
                        assessment_status, decision_status, floor_count,
                        floor_result_roster_sha256,
                        source_generation_max_decision_time,
-                       effective_at, known_at, recorded_at
+                       effective_at, known_at, recorded_at,
+                       decision_code, revision, supersedes_decision_id,
+                       code_artifact_id, code_content_sha256,
+                       code_size_bytes, config_artifact_id,
+                       config_content_sha256, config_size_bytes,
+                       provenance_sha256, content_sha256
                 FROM mra.research_qualification_decision
                 WHERE research_qualification_decision_id = %s
                 """,
@@ -437,7 +644,18 @@ class PostgresResearchQualificationVerificationProvider:
                 SELECT result.research_qualification_floor_result_id,
                        result.research_qualification_policy_floor_id,
                        result.result_ordinal, result.result_status,
-                       result.content_sha256, floor.required
+                       result.content_sha256, floor.required,
+                       result.research_assessment_evaluation_id,
+                       result.evaluation_run_id,
+                       result.evaluation_metric_id,
+                       result.observed_decimal_value,
+                       result.observed_boolean_value,
+                       result.member_count, result.estimable_count,
+                       result.not_estimable_count,
+                       result.support_evidence_count,
+                       result.counter_evidence_count,
+                       result.evidence_roster_sha256,
+                       result.reason_code
                 FROM mra.research_qualification_floor_result AS result
                 JOIN mra.research_qualification_policy_floor AS floor
                   ON floor.research_qualification_policy_floor_id =
@@ -447,17 +665,84 @@ class PostgresResearchQualificationVerificationProvider:
                 """,
                 (research_qualification_decision_id,),
             ).fetchall()
-            roster_hash = canonical_json_sha256(
-                tuple(
+            recomputed_results: list[dict[str, object]] = []
+            for row in results:
+                bindings = connection.execute(
+                    """
+                    SELECT research_qualification_floor_evidence_id,
+                           research_assessment_evidence_id,
+                           evidence_item_id, evidence_ordinal,
+                           evidence_direction, content_sha256
+                    FROM mra.research_qualification_floor_evidence
+                    WHERE research_qualification_floor_result_id = %s
+                    ORDER BY evidence_ordinal
+                    """,
+                    (row[0],),
+                ).fetchall()
+                for binding in bindings:
+                    binding_hash = canonical_json_sha256(
+                        {
+                            "evidence_direction": str(binding[4]),
+                            "evidence_item_id": UUID(str(binding[2])),
+                            "research_assessment_evidence_id": UUID(str(binding[1])),
+                            "research_qualification_floor_result_id": UUID(str(row[0])),
+                        }
+                    )
+                    _compare(
+                        mismatches,
+                        "decision.floor_evidence_content_sha256",
+                        binding_hash,
+                        str(binding[5]),
+                    )
+                evidence_hash = canonical_json_sha256(
+                    tuple(
+                        {
+                            "content_sha256": str(binding[5]),
+                            "evidence_ordinal": int(binding[3]),
+                            "research_assessment_evidence_id": UUID(str(binding[1])),
+                            "research_qualification_floor_evidence_id": UUID(str(binding[0])),
+                        }
+                        for binding in bindings
+                    )
+                )
+                _compare(
+                    mismatches,
+                    "decision.floor_evidence_roster_sha256",
+                    evidence_hash,
+                    str(row[16]),
+                )
+                result_hash = canonical_json_sha256(
                     {
-                        "content_sha256": str(row[4]),
+                        "counter_evidence_count": int(row[15]),
+                        "estimable_count": int(row[12]),
+                        "evidence_roster_sha256": evidence_hash,
+                        "evaluation_metric_id": (UUID(str(row[8])) if row[8] is not None else None),
+                        "evaluation_run_id": (UUID(str(row[7])) if row[7] is not None else None),
+                        "member_count": int(row[11]),
+                        "not_estimable_count": int(row[13]),
+                        "observed_boolean_value": row[10],
+                        "observed_decimal_value": row[9],
+                        "reason_code": str(row[17]),
+                        "research_qualification_policy_floor_id": UUID(str(row[1])),
+                        "result_status": FloorResultStatus(str(row[3])),
+                        "support_evidence_count": int(row[14]),
+                    }
+                )
+                _compare(
+                    mismatches,
+                    "decision.floor_result_content_sha256",
+                    result_hash,
+                    str(row[4]),
+                )
+                recomputed_results.append(
+                    {
+                        "content_sha256": result_hash,
                         "research_qualification_floor_result_id": UUID(str(row[0])),
                         "research_qualification_policy_floor_id": UUID(str(row[1])),
                         "result_ordinal": int(row[2]),
                     }
-                    for row in results
                 )
-            )
+            roster_hash = canonical_json_sha256(tuple(recomputed_results))
             _roster(mismatches, "decision.floor_result", int(root[4]), str(root[5]), results, roster_hash)
             policy_status = connection.execute(
                 """
@@ -470,9 +755,7 @@ class PostgresResearchQualificationVerificationProvider:
             if policy_status is None:
                 mismatches.append(_missing("decision.policy", UUID(str(root[1]))))
             else:
-                required = tuple(
-                    FloorResultStatus(str(row[3])) for row in results if row[5]
-                )
+                required = tuple(FloorResultStatus(str(row[3])) for row in results if row[5])
                 try:
                     status = qualification_decision_status(
                         assessment_status=AssessmentStatus(str(root[2])),
@@ -480,6 +763,34 @@ class PostgresResearchQualificationVerificationProvider:
                         required_floor_statuses=required,
                     ).value
                     _compare(mismatches, "decision.status", status, str(root[3]))
+                    definition = ResearchQualificationDecisionPlan(
+                        research_qualification_decision_id=(research_qualification_decision_id),
+                        decision_code=str(root[10]),
+                        revision=int(root[11]),
+                        supersedes_decision_id=(UUID(str(root[12])) if root[12] is not None else None),
+                        research_assessment_id=UUID(str(root[0])),
+                        research_qualification_policy_id=UUID(str(root[1])),
+                        effective_at=root[7],
+                        known_at=root[8],
+                        code_artifact=ArtifactBinding(UUID(str(root[13])), str(root[14]), int(root[15])),
+                        config_artifact=ArtifactBinding(UUID(str(root[16])), str(root[17]), int(root[18])),
+                        provenance_sha256=str(root[19]),
+                    )
+                    root_hash = canonical_json_sha256(
+                        {
+                            "decision_definition_sha256": str(definition.content_sha256),
+                            "decision_status": status,
+                            "floor_count": len(results),
+                            "floor_result_roster_sha256": roster_hash,
+                            "source_generation_max_decision_time": root[6],
+                        }
+                    )
+                    _compare(
+                        mismatches,
+                        "decision.content_sha256",
+                        root_hash,
+                        str(root[20]),
+                    )
                 except ValueError as exc:
                     mismatches.append(_identity("decision.domain", "valid", str(exc)))
             policy_difference = connection.execute(
@@ -498,6 +809,130 @@ class PostgresResearchQualificationVerificationProvider:
             ).fetchone()
             if policy_difference and int(policy_difference[0]):
                 mismatches.append(_identity("decision.complete_floors", "0 missing", str(policy_difference[0])))
+            source_drift = connection.execute(
+                """
+                SELECT count(*)
+                FROM mra.research_qualification_floor_result AS result
+                JOIN mra.research_qualification_policy_floor AS floor
+                  ON floor.research_qualification_policy_floor_id =
+                     result.research_qualification_policy_floor_id
+                LEFT JOIN mra.research_assessment_evaluation AS assessment
+                  ON assessment.research_assessment_evaluation_id =
+                     result.research_assessment_evaluation_id
+                LEFT JOIN mra.evaluation_metric AS metric
+                  ON metric.evaluation_metric_id = result.evaluation_metric_id
+                 AND metric.evaluation_run_id = result.evaluation_run_id
+                WHERE result.research_qualification_decision_id = %s
+                  AND ((result.evaluation_metric_id IS NULL AND (
+                         result.result_status <> 'MISSING'
+                         OR EXISTS (
+                             SELECT 1
+                             FROM mra.research_assessment_evaluation AS candidate
+                             JOIN mra.evaluation_metric AS candidate_metric
+                               ON candidate_metric.evaluation_run_id =
+                                  candidate.evaluation_run_id
+                              AND candidate_metric.evaluation_protocol_metric_id =
+                                  floor.evaluation_protocol_metric_id
+                             WHERE candidate.research_assessment_id = %s
+                               AND candidate.evaluation_protocol_id =
+                                  floor.evaluation_protocol_id
+                               AND candidate.partition_purpose =
+                                  floor.required_partition_purpose
+                               AND candidate.evaluation_status =
+                                  floor.required_evaluation_status)))
+                    OR (result.evaluation_metric_id IS NOT NULL AND (
+                         assessment.research_assessment_id <> %s
+                         OR assessment.evaluation_protocol_id <>
+                            floor.evaluation_protocol_id
+                         OR assessment.partition_purpose <>
+                            floor.required_partition_purpose
+                         OR assessment.evaluation_status <>
+                            floor.required_evaluation_status
+                         OR metric.evaluation_protocol_metric_id <>
+                            floor.evaluation_protocol_metric_id
+                         OR result.observed_decimal_value IS DISTINCT FROM
+                            metric.decimal_value
+                         OR result.observed_boolean_value IS DISTINCT FROM
+                            metric.boolean_value
+                         OR result.estimable_count <> metric.estimable_count
+                         OR result.member_count <> (
+                             SELECT count(*)
+                             FROM mra.evaluation_metric_observation AS input
+                             WHERE input.evaluation_metric_id =
+                                   metric.evaluation_metric_id
+                               AND input.input_state <> 'EXCLUDED')
+                         OR result.not_estimable_count <> (
+                             SELECT count(*)
+                             FROM mra.evaluation_metric_observation AS input
+                             WHERE input.evaluation_metric_id =
+                                   metric.evaluation_metric_id
+                               AND input.input_state = 'NOT_ESTIMABLE'))))
+                """,
+                (
+                    research_qualification_decision_id,
+                    root[0],
+                    root[0],
+                ),
+            ).fetchone()
+            evidence_set_drift = connection.execute(
+                """
+                SELECT count(*)
+                FROM mra.research_qualification_floor_result AS result
+                JOIN mra.research_qualification_policy_floor AS floor
+                  ON floor.research_qualification_policy_floor_id =
+                     result.research_qualification_policy_floor_id
+                WHERE result.research_qualification_decision_id = %s
+                  AND (EXISTS (
+                       (SELECT evidence.research_assessment_evidence_id
+                        FROM mra.research_assessment_evidence AS evidence
+                        WHERE result.research_assessment_evaluation_id IS NOT NULL
+                          AND evidence.research_assessment_id = %s
+                          AND evidence.research_assessment_evaluation_id =
+                              result.research_assessment_evaluation_id
+                          AND evidence.evidence_class =
+                              floor.required_evidence_class
+                          AND evidence.origin_class = floor.required_origin_class
+                          AND evidence.evidence_role = floor.required_evidence_role)
+                       EXCEPT
+                       (SELECT binding.research_assessment_evidence_id
+                        FROM mra.research_qualification_floor_evidence AS binding
+                        WHERE binding.research_qualification_floor_result_id =
+                              result.research_qualification_floor_result_id))
+                    OR EXISTS (
+                       (SELECT binding.research_assessment_evidence_id
+                        FROM mra.research_qualification_floor_evidence AS binding
+                        WHERE binding.research_qualification_floor_result_id =
+                              result.research_qualification_floor_result_id)
+                       EXCEPT
+                       (SELECT evidence.research_assessment_evidence_id
+                        FROM mra.research_assessment_evidence AS evidence
+                        WHERE result.research_assessment_evaluation_id IS NOT NULL
+                          AND evidence.research_assessment_id = %s
+                          AND evidence.research_assessment_evaluation_id =
+                              result.research_assessment_evaluation_id
+                          AND evidence.evidence_class =
+                              floor.required_evidence_class
+                          AND evidence.origin_class = floor.required_origin_class
+                          AND evidence.evidence_role = floor.required_evidence_role)))
+                """,
+                (research_qualification_decision_id, root[0], root[0]),
+            ).fetchone()
+            if source_drift and int(source_drift[0]):
+                mismatches.append(
+                    _identity(
+                        "decision.exact_metric_inputs",
+                        "all exact",
+                        str(source_drift[0]),
+                    )
+                )
+            if evidence_set_drift and int(evidence_set_drift[0]):
+                mismatches.append(
+                    _identity(
+                        "decision.exact_floor_evidence",
+                        "all exact",
+                        str(evidence_set_drift[0]),
+                    )
+                )
             evidence_drift = connection.execute(
                 """
                 SELECT count(*)
@@ -523,6 +958,28 @@ class PostgresResearchQualificationVerificationProvider:
                 mismatches.append(_hash("decision.floor_evidence_rosters", "all matched", str(evidence_drift[0])))
             if not (root[6] < root[7] <= root[8] <= root[9]):
                 mismatches.append(_temporal("decision.generation_order", "source < effective <= known <= recorded", str(root[6:10])))
+            if int(root[11]) > 1:
+                predecessor = connection.execute(
+                    """
+                    SELECT decision_code, revision, recorded_at
+                    FROM mra.research_qualification_decision
+                    WHERE research_qualification_decision_id = %s
+                    """,
+                    (root[12],),
+                ).fetchone()
+                if (
+                    predecessor is None
+                    or predecessor[0] != root[10]
+                    or int(predecessor[1]) + 1 != int(root[11])
+                    or predecessor[2] >= root[9]
+                ):
+                    mismatches.append(
+                        _identity(
+                            "decision.supersession",
+                            "contiguous same-series predecessor",
+                            str(predecessor),
+                        )
+                    )
             _inspect_provenance(
                 connection,
                 "RESEARCH_QUALIFICATION_DECISION",

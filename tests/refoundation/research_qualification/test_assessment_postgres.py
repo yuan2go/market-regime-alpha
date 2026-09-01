@@ -23,6 +23,9 @@ from market_regime_alpha.research_qualification.application.evidence import (
 from market_regime_alpha.research_qualification.domain.assessment import (
     ResearchAssessmentPlan,
 )
+from market_regime_alpha.research_qualification.domain.evaluation import (
+    EvaluationRunPlan,
+)
 from market_regime_alpha.research_qualification.domain.evidence import (
     EvidenceClass,
     EvidenceDirection,
@@ -293,3 +296,153 @@ def test_assessment_concurrent_identical_request_has_one_root(
             "SELECT count(*) FROM mra.research_assessment WHERE assessment_code = %s",
             (plan.assessment_code,),
         ).fetchone() == (1,)
+
+
+def test_assessment_preserves_failed_evaluation_as_blocked(
+    wp12_assessment_stack,
+) -> None:
+    stack = wp12_assessment_stack
+    target, _, _, settled = _wp11._settle_two_visible_revisions(stack)
+    evaluation_commands, _, experiment_run_id, protocol = (
+        _wp11._freeze_and_predeclare(stack, target)
+    )
+    evaluation_run_id = uuid4()
+    evaluation_commands.open_run(
+        EvaluationRunPlan(
+            evaluation_run_id=evaluation_run_id,
+            experiment_run_id=experiment_run_id,
+            evaluation_protocol_id=protocol.evaluation_protocol_id,
+            requested_knowledge_cutoff=settled[1][1] + timedelta(microseconds=1),
+            request_identity="wp12-failed-evaluation",
+            code_artifact=protocol.code_artifact,
+            config_artifact=protocol.config_artifact,
+            provenance_sha256="8" * 64,
+        ),
+        _wp11._wp11_context("open-failed-evaluation", "OPEN_EVALUATION_RUN"),
+    )
+    evaluation_commands.fail_run(
+        evaluation_run_id,
+        "INJECTED_RESEARCH_FAILURE",
+        _wp11._wp11_context("fail-evaluation", "FAIL_EVALUATION_RUN"),
+    )
+    with psycopg.connect(stack.database_url) as connection:
+        experiment_id, failed_at = connection.execute(
+            """
+            SELECT experiment_id, failed_at FROM mra.evaluation_run
+            WHERE evaluation_run_id = %s
+            """,
+            (evaluation_run_id,),
+        ).fetchone()
+    _record_evidence(
+        stack,
+        target,
+        evaluation_run_id,
+        failed_at + timedelta(microseconds=1),
+        direction=EvidenceDirection.NEUTRAL,
+        code=f"wp12-failed-run-evidence-{uuid4().hex[:8]}",
+    )
+    plan = _assessment_plan(
+        target,
+        experiment_id,
+        _cutoff(stack),
+        code=f"wp12-failed-run-assessment-{uuid4().hex[:8]}",
+    )
+    result = AssessmentCommands(
+        PostgresAssessmentUnitOfWorkProvider(stack.pool, id_factory=uuid4),
+        id_factory=uuid4,
+    ).assess(
+        plan,
+        _wp11._wp11_context("assess-failed-run", "ASSESS_RESEARCH_EXPERIMENT"),
+    )
+
+    assert result.assessment_status == "BLOCKED"
+    with psycopg.connect(stack.database_url) as connection:
+        assert connection.execute(
+            """
+            SELECT evaluation_status, metric_count
+            FROM mra.research_assessment_evaluation
+            WHERE research_assessment_id = %s
+            """,
+            (plan.research_assessment_id,),
+        ).fetchone() == ("FAILED", 0)
+
+
+def test_assessment_preserves_all_not_estimable_metrics(
+    wp12_assessment_stack,
+) -> None:
+    stack = wp12_assessment_stack
+    target, _, _, settled = _wp11._settle_two_visible_revisions(stack)
+    evaluation_commands, _, experiment_run_id, protocol = (
+        _wp11._freeze_and_predeclare(stack, target)
+    )
+    not_estimable_protocol = replace(
+        protocol,
+        evaluation_protocol_id=uuid4(),
+        protocol_code=f"wp12-not-estimable-{uuid4().hex[:8]}",
+        metrics=(
+            replace(
+                protocol.metrics[0],
+                evaluation_protocol_metric_id=uuid4(),
+                minimum_estimable_count=2,
+            ),
+        ),
+    )
+    evaluation_commands.register_protocol(
+        not_estimable_protocol,
+        _wp11._wp11_context(
+            "register-not-estimable-protocol", "REGISTER_EVALUATION_PROTOCOL"
+        ),
+    )
+    evaluation_run_id, _, _ = _wp11._run_evaluation(
+        evaluation_commands,
+        experiment_run_id,
+        not_estimable_protocol,
+        settled[1][1] + timedelta(microseconds=1),
+        "wp12-not-estimable",
+    )
+    with psycopg.connect(stack.database_url) as connection:
+        experiment_id, completed_at, metric_state = connection.execute(
+            """
+            SELECT run.experiment_id, run.completed_at, metric.metric_state
+            FROM mra.evaluation_run AS run
+            JOIN mra.evaluation_metric AS metric
+              ON metric.evaluation_run_id = run.evaluation_run_id
+            WHERE run.evaluation_run_id = %s
+            """,
+            (evaluation_run_id,),
+        ).fetchone()
+    assert metric_state == "NOT_ESTIMABLE"
+    _record_evidence(
+        stack,
+        target,
+        evaluation_run_id,
+        completed_at + timedelta(microseconds=1),
+        direction=EvidenceDirection.NEUTRAL,
+        code=f"wp12-not-estimable-evidence-{uuid4().hex[:8]}",
+    )
+    plan = _assessment_plan(
+        target,
+        experiment_id,
+        _cutoff(stack),
+        code=f"wp12-not-estimable-assessment-{uuid4().hex[:8]}",
+    )
+    result = AssessmentCommands(
+        PostgresAssessmentUnitOfWorkProvider(stack.pool, id_factory=uuid4),
+        id_factory=uuid4,
+    ).assess(
+        plan,
+        _wp11._wp11_context(
+            "assess-not-estimable", "ASSESS_RESEARCH_EXPERIMENT"
+        ),
+    )
+
+    assert result.assessment_status == "NOT_ESTIMABLE"
+    with psycopg.connect(stack.database_url) as connection:
+        assert connection.execute(
+            """
+            SELECT metric_count, not_estimable_metric_count
+            FROM mra.research_assessment_evaluation
+            WHERE research_assessment_id = %s
+            """,
+            (plan.research_assessment_id,),
+        ).fetchone() == (1, 1)
