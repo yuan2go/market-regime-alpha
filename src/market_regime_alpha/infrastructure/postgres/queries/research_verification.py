@@ -675,38 +675,39 @@ class PostgresResearchEvaluationVerificationProvider:
                     str(run[12]),
                     actual_metric_hash,
                 )
-            cartesian_difference = connection.execute(
-                """
-                WITH expected AS (
-                    SELECT metric.evaluation_protocol_metric_id,
-                           observation.evaluation_observation_id
-                    FROM mra.evaluation_protocol_metric AS metric
-                    CROSS JOIN mra.evaluation_observation AS observation
-                    WHERE metric.evaluation_protocol_id = %s
-                      AND observation.evaluation_run_id = %s
-                ), actual AS (
-                    SELECT evaluation_protocol_metric_id,
-                           evaluation_observation_id
-                    FROM mra.evaluation_metric_observation
-                    WHERE evaluation_run_id = %s
-                )
-                SELECT count(*) FROM (
-                    (SELECT * FROM expected EXCEPT SELECT * FROM actual)
-                    UNION ALL
-                    (SELECT * FROM actual EXCEPT SELECT * FROM expected)
-                ) AS difference
-                """,
-                (run[1], evaluation_run_id, evaluation_run_id),
-            ).fetchone()
-            assert cartesian_difference is not None
-            if int(cartesian_difference[0]):
-                mismatches.append(
-                    _identity(
-                        "evaluation_run.metric_member_cartesian",
-                        "complete protocol metric x member roster",
-                        str(cartesian_difference[0]),
+            if status == "COMPLETED":
+                cartesian_difference = connection.execute(
+                    """
+                    WITH expected AS (
+                        SELECT metric.evaluation_protocol_metric_id,
+                               observation.evaluation_observation_id
+                        FROM mra.evaluation_protocol_metric AS metric
+                        CROSS JOIN mra.evaluation_observation AS observation
+                        WHERE metric.evaluation_protocol_id = %s
+                          AND observation.evaluation_run_id = %s
+                    ), actual AS (
+                        SELECT evaluation_protocol_metric_id,
+                               evaluation_observation_id
+                        FROM mra.evaluation_metric_observation
+                        WHERE evaluation_run_id = %s
                     )
-                )
+                    SELECT count(*) FROM (
+                        (SELECT * FROM expected EXCEPT SELECT * FROM actual)
+                        UNION ALL
+                        (SELECT * FROM actual EXCEPT SELECT * FROM expected)
+                    ) AS difference
+                    """,
+                    (run[1], evaluation_run_id, evaluation_run_id),
+                ).fetchone()
+                assert cartesian_difference is not None
+                if int(cartesian_difference[0]):
+                    mismatches.append(
+                        _identity(
+                            "evaluation_run.metric_member_cartesian",
+                            "complete protocol metric x member roster",
+                            str(cartesian_difference[0]),
+                        )
+                    )
             self._inspect_lifecycle(run, mismatches)
             required_commands = ["OPEN_EVALUATION_RUN"]
             if status in {"INPUTS_ACQUIRED", "COMPLETED"}:
