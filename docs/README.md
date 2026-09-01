@@ -105,6 +105,12 @@ Checkpoint traceability:
   rosters, controlled Outcome access, full Evaluation closure, PostgreSQL
   qualification, concurrency/recovery/replay, full regression, static/build,
   and `WP11_EXIT_GATE = PASS` without Runtime/CLI cutover.
+- [WP-12 Research Evidence, Assessment and Qualification Closure Design](references/WP-ARCHITECTURE-REFOUNDATION-12-Research-Evidence-Assessment-Qualification-Design.md)
+  — canonical implementation contract for Evaluation-bound immutable Evidence,
+  complete Experiment Assessment rosters, purpose-specific relational Policy
+  floors, explicit floor results/Evidence, append-only supersession, and
+  generation-safe qualification reads; design only until its exact-SHA
+  engineering gate passes.
 
 Design documents in this section define the Target destination. Status and
 Verification records report their explicitly bounded implementation evidence;
