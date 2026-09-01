@@ -90,6 +90,11 @@ Checkpoint traceability:
   — exact-base draft implementation and focused-validation record. It is not
   immutable Verification, does not claim `WP11_EXIT_GATE = PASS`, and lists the
   independent engineering qualification work that remains `NOT_RUN_BY_SCOPE`.
+- [WP-11Q Research Validity and Evaluation Qualification Design](references/WP-ARCHITECTURE-REFOUNDATION-11Q-Research-Validity-Evaluation-Qualification-Design.md)
+  — execution-time correctness and exact-SHA qualification contract that
+  closes sole composition, single-exchange Partition calendar Authority,
+  complete Experiment binding rosters, formal reconciliation, concurrency and
+  recovery before any WP-11 exit-gate decision.
 
 All documents in this section have Target status. They define the destination,
 not current completion.
