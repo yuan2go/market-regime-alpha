@@ -1,4 +1,4 @@
-"""Shared mechanics for the two explicit Research Definition commands."""
+"""Shared owner-level mechanics for explicit Research commands."""
 
 from __future__ import annotations
 
@@ -8,6 +8,10 @@ from typing import Callable, Iterator, ParamSpec, TypeVar
 from uuid import UUID
 
 from market_regime_alpha.research_qualification.ports import ResearchUnitOfWork
+from market_regime_alpha.research_qualification.errors import (
+    ResearchRetryableTransactionError,
+    ResearchValidityError,
+)
 from market_regime_alpha.runtime.application import (
     CommandContext,
     CommandFailureDescriptor,
@@ -44,6 +48,24 @@ def replay_concurrent_success(
             return command(*args, **kwargs)
         except ConcurrentCommandSucceeded:
             return command(*args, **kwargs)
+
+    return wrapped
+
+
+def retry_transient_transaction(
+    command: Callable[_P, _R],
+) -> Callable[_P, _R]:
+    """Bound typed retries; the semantic receipt makes each attempt an exact replay."""
+
+    @wraps(command)
+    def wrapped(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        for attempt in range(3):
+            try:
+                return command(*args, **kwargs)
+            except ResearchRetryableTransactionError:
+                if attempt == 2:
+                    raise
+        raise AssertionError("bounded transaction retry loop did not terminate")
 
     return wrapped
 
@@ -87,6 +109,7 @@ def terminal_failure_boundary(
         CommandPreviouslyFailedError,
         RuntimeNotFoundError,
         RuntimeStateConflictError,
+        ResearchValidityError,
         ValueError,
     ):
         failure_recorder.record(
@@ -176,5 +199,6 @@ __all__ = [
     "finalize_runtime",
     "finish_success",
     "replay_concurrent_success",
+    "retry_transient_transaction",
     "terminal_failure_boundary",
 ]

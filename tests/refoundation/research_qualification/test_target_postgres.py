@@ -21,6 +21,10 @@ from market_regime_alpha.research_qualification.application import (
     ResearchQualificationApplication,
 )
 from market_regime_alpha.research_qualification.domain import ArtifactBinding
+from market_regime_alpha.research_qualification.domain.target_vocabulary import (
+    TargetDependencyRole,
+    TargetMetricKind,
+)
 from market_regime_alpha.runtime.application import (
     ActorType,
     ArtifactApplication,
@@ -30,7 +34,10 @@ from market_regime_alpha.runtime.errors import (
     IdempotencyKeyReusedError,
     RuntimeNotFoundError,
 )
-from tests.refoundation.research_qualification.test_target_domain import valid_target
+from tests.refoundation.research_qualification.test_target_domain import (
+    _target_for_metric_kind,
+    valid_target,
+)
 
 
 def _context(key: str) -> CommandContext:
@@ -124,6 +131,54 @@ def test_register_target_definition_closes_complete_relational_authority_and_exa
             """
         ).fetchone()
     assert counts == (1, 2, 1, 2, 1, 1)
+
+
+@pytest.mark.parametrize(
+    ("metric_kind", "roles"),
+    (
+        (
+            TargetMetricKind.SIMPLE_RETURN,
+            (TargetDependencyRole.REFERENCE, TargetDependencyRole.OBSERVATION),
+        ),
+        (
+            TargetMetricKind.OBSERVATION_VALUE,
+            (TargetDependencyRole.OBSERVATION,),
+        ),
+        (
+            TargetMetricKind.MAX_FAVORABLE_EXCURSION,
+            (TargetDependencyRole.REFERENCE, TargetDependencyRole.PATH_MEMBER),
+        ),
+        (
+            TargetMetricKind.MAX_ADVERSE_EXCURSION,
+            (TargetDependencyRole.REFERENCE, TargetDependencyRole.PATH_MEMBER),
+        ),
+        (
+            TargetMetricKind.BARRIER_HIT,
+            (TargetDependencyRole.REFERENCE, TargetDependencyRole.PATH_MEMBER),
+        ),
+    ),
+)
+def test_postgres_accepts_every_outcome_compatible_target_metric_shape(
+    target_stack,
+    metric_kind: TargetMetricKind,
+    roles: tuple[TargetDependencyRole, ...],
+) -> None:
+    application, fixture_definition, _, _ = target_stack
+    definition = _target_for_metric_kind(metric_kind, roles)
+    algorithm = fixture_definition.algorithm
+    definition = replace(
+        definition,
+        algorithm=algorithm,
+        metrics=tuple(
+            replace(metric, algorithm=algorithm) for metric in definition.metrics
+        ),
+    )
+    result = application.register_target_definition(
+        definition,
+        _context(f"register-{metric_kind.value.lower()}"),
+    )
+    assert result.metric_count == 1
+    assert result.dependency_count == len(roles)
 
 
 def test_register_target_definition_rejects_changed_exact_identity_and_keeps_original(

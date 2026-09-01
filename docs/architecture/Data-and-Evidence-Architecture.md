@@ -3,7 +3,7 @@
 > **Status:** CANONICAL_TARGET_ARCHITECTURE
 > **Authority:** Target logical schema, PIT, evidence, artifact, and cutover specification
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-31
+> **Last Updated:** 2026-09-01
 > **Code Evidence:** target `src/market_regime_alpha/infrastructure/postgres`, `src/market_regime_alpha/shared`, `src/market_regime_alpha/runtime`, `src/market_regime_alpha/market`, `src/market_regime_alpha/selection`, `src/market_regime_alpha/research_qualification`, `tests/refoundation`; legacy `src/market_regime_alpha/persistence/postgres` remains current business implementation
 
 This document is the sole Target logical table catalog. Current physical DDL,
@@ -137,11 +137,10 @@ identities. The existing Eligibility code vocabulary is unchanged.
 
 ### Research Definition Core
 
-This checkpoint creates the permanent
-`market_regime_alpha.research_qualification` owner and implements only the
-definitions that Candidate V1 demonstrably needs. It creates no Model,
-Evaluation, Evidence, Assessment, Qualification, Target, Candidate, or future
-placeholder relation.
+The Research Definition Core checkpoint created the permanent
+`market_regime_alpha.research_qualification` owner and only the definitions
+that Candidate V1 demonstrably needed. Later WP-09 and WP-11 relations remain
+in that same bounded context; no parallel Research Validity owner exists.
 
 | Table | Purpose | Lifecycle and key constraints |
 |---|---|---|
@@ -158,31 +157,40 @@ MFE/MAE, barrier, future observation, realized label, or other posterior values
 are rejected. Artifact and `dataset_source` lineage are validated bidirectionally
 and cannot disagree.
 
-### Remaining Research and Qualification
+### Target and Research Evaluation
 
-These relations remain logical target design only. None is a Candidate V1
-prerequisite, and Candidate Closure creates none of them. WP-08 freezes their
-acyclic dependency order. Research owns definitions, rosters, protocols,
-Evaluation, and Research Qualification; it never owns a bars-to-label writer.
+The relations through `evaluation_metric_observation` are implemented in the
+unreleased target baseline. They are not Candidate V1 prerequisites. Research
+owns definitions, rosters, protocols, and Evaluation but never a bars-to-label
+writer.
 
 | Table | Purpose | Lifecycle and key constraints |
 |---|---|---|
 | `target_definition` | immutable Decision reference/horizon/path/metric protocol | unique code/version/hash; instrument scope, price basis, reference/session/calendar/horizon, availability/finality, algorithm and code/config Artifacts typed |
 | `target_checkpoint` | ordered observation checkpoint/path grid | unique Target/ordinal/code; role, session offset, local time and required observation shape relational |
-| `target_metric_definition` | typed required/optional Outcome metric semantics | unique Target/metric code; kind/unit/reference/path/checkpoint/barrier shape and completion requirement enforced; no JSON metric contract |
+| `target_metric_definition` | typed required/optional Outcome metric semantics | unique Target/metric code; Target root requires at least one `REQUIRED` metric; each of the five kinds has exactly its Outcome-consumable reference/observation/path dependency shape; no JSON metric contract |
 | `target_metric_dependency` | ordered metric-to-checkpoint dependency edge | unique Target/metric/dependency ordinal and checkpoint role; same-Target composite FKs, canonical hash and typed dependency semantics; no JSON dependency list |
-| `research_partition` | frozen Target-specific Discovery/Fit/Validation/Locked-OOS/Prospective root | unique identity/hash; exact Target Definition, Decision and Outcome-window bounds, exact calendar, purge/embargo, positive roster count/hash |
-| `research_partition_member` | complete non-empty pre-Outcome roster | unique partition/commitment; composite FK preserves and matches the root Decision/Dataset/Candidate/Target chain; no Outcome value |
-| `research_partition_outcome_access` | append-only Outcome visibility ledger | unique member/access ordinal and Evaluation access; exact Outcome revision/cutoff; ordinal one is first-access Authority |
+| `research_partition` | frozen Target-specific Discovery/Fit/Validation/Locked-OOS/Prospective root | unique identity/hash; exact Target, Decision window, population scope, exact calendar, session-expanded Target horizon/purge/embargo protected range, purpose-specific overlap policy, positive roster count/hash, code/config and provenance |
+| `research_partition_member` | complete non-empty pre-Outcome roster | PostgreSQL derives it from Target + Decision window + population scope; unique partition/commitment; composite FK matches the root Target chain; no caller roster and no Outcome value |
 | `experiment` | predeclared question and one primary change | unique protocol hash; one Target plus code/config/acceptance semantics |
 | `experiment_partition` | purpose-specific partition binding | unique Experiment/purpose/Partition; composite Target FK guarantees every member commitment uses the Experiment Target; partition frozen before Outcome access |
 | `experiment_run` | one execution of frozen Experiment | unique Experiment/run key; exact bound `experiment_partition` roster/config and status; no positive-result implication |
-| `evaluation_protocol` | pre-Outcome evaluation contract | unique code/version/hash; missingness, cost and decision semantics frozen |
-| `evaluation_protocol_metric` | relational metric/slice/rule declaration | unique protocol/metric/slice; direction, unit, estimability and acceptance rule typed |
+| `evaluation_protocol` | pre-Outcome evaluation contract | unique code/version/hash; exact Target/purpose plus missingness, inclusion/exclusion and decision semantics frozen |
+| `evaluation_protocol_metric` | relational metric/slice/rule declaration | unique protocol/metric/slice; direction, source value type, reducer compatibility, exact Candidate disposition when sliced, estimability and acceptance rule typed |
 | `evaluation_run` | predeclared Evaluation execution | requires Experiment Run, one `experiment_partition` from the same Experiment and Evaluation Protocol; forward-only `OPEN → INPUTS_ACQUIRED → COMPLETED` or `FAILED`; purpose typed; no Model FK |
-| `evaluation_observation` | exact realized input to Evaluation | Evaluation Run + same-Partition member access ordinal + exact Market Target Outcome revision; commitment chain implies Dataset/Candidate/Target |
+| `research_partition_outcome_access` | append-only Outcome visibility ledger owned by the Evaluation UoW | concrete Evaluation Run + member + exact Outcome revision; globally monotonic per-member access ordinal; ordinal one is first-access Authority; same transaction as observation/reconciliation |
+| `evaluation_observation` | exact realized input to Evaluation | exactly one per Evaluation Run/member; binds same-Partition access and exact Market Target Outcome revision; commitment chain implies Dataset/Candidate/Target; unavailable/failed revisions remain present |
 | `evaluation_metric` | typed result over declared protocol metric | unique Run/protocol metric/slice; status independent of value; complete input reconciliation |
 | `evaluation_metric_observation` | exact member roster for one Evaluation metric/slice | unique Evaluation metric/observation; included/excluded/not-estimable state and reason relational; complete reconciliation to protocol missingness rule |
+
+#### Deferred Research and Qualification
+
+The following relations remain logical target design only and are not present
+in the WP-11 baseline. Their dependency order remains frozen by WP-08; none may
+be introduced as a placeholder or nullable future branch.
+
+| Table | Purpose | Lifecycle and key constraints |
+|---|---|---|
 | `evaluation_forecast_binding` | optional Forecast-evaluation branch | concrete Evaluation observation/Forecast FK only when a real Forecast exists; implemented after the Forecast parent, never as a nullable branch placeholder |
 | `model` | stable optional fitted-model family | unique code; no Target/Candidate/Outcome/Evaluation existence dependency |
 | `model_version` | immutable fitted version lineage | requires completed `MODEL_TRAINING` Evaluation Run and fitted/code/config Artifacts; unique Model/version/hash; completion/known time explicit |

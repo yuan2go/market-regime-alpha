@@ -66,8 +66,10 @@ Checkpoint traceability:
 - [WP-08 Post-Candidate Authority Design](references/WP-ARCHITECTURE-REFOUNDATION-08-Post-Candidate-Authority-Design.md)
   — approved acyclic Target commitment, Market Target Outcome, Partition,
   Evaluation, Evidence, Assessment, and Research Qualification semantics plus
-  the authorized post-Candidate implementation order; design only, not
-  implementation or evidence.
+  the original post-Candidate implementation order. Its architecture semantics
+  remain applicable, while its separate Partition/Experiment then Evaluation
+  packaging is superseded by the integrated WP-11 work package; design only,
+  not implementation or evidence.
 - [WP-09 Target Commitment and Decision Run Design](references/WP-ARCHITECTURE-REFOUNDATION-09-Target-Commitment-Decision-Run-Design.md)
   — approved Target-owned relational closure, provider-neutral Target
   semantics, one canonical Decision Run per Candidate Set, mandatory Runtime
@@ -79,6 +81,15 @@ Checkpoint traceability:
   and metric dependency rosters, pure numerical kernel, and read-only Outcome
   port; exact implementation evidence is kept separately in the immutable
   WP-10 Verification.
+- [WP-11 Research Validity and Evaluation Closure Design](references/WP-ARCHITECTURE-REFOUNDATION-11-Research-Validity-Evaluation-Design.md)
+  — approved integrated Target/Outcome parity, database-derived Partition,
+  Experiment, Evaluation Protocol/Run, transactional first-Outcome-access,
+  complete observation, and metric-roster implementation contract; it grants
+  only draft implementation scope and no engineering qualification claim.
+- [WP-11 Research Validity and Evaluation Closure Implementation Status](references/WP-ARCHITECTURE-REFOUNDATION-11-Research-Validity-Evaluation-Implementation-Status.md)
+  — exact-base draft implementation and focused-validation record. It is not
+  immutable Verification, does not claim `WP11_EXIT_GATE = PASS`, and lists the
+  independent engineering qualification work that remains `NOT_RUN_BY_SCOPE`.
 
 All documents in this section have Target status. They define the destination,
 not current completion.

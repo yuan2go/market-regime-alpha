@@ -478,6 +478,11 @@ class TargetDefinition:
             for item in self.checkpoints
         ):
             raise ValueError("TargetDefinition requires an OUTCOME_OBSERVATION")
+        if not any(
+            item.completion_rule is TargetCompletionRule.REQUIRED
+            for item in self.metrics
+        ):
+            raise ValueError("TargetDefinition requires at least one REQUIRED metric")
 
         checkpoints = {
             item.target_checkpoint_id: item for item in self.checkpoints
@@ -490,6 +495,16 @@ class TargetDefinition:
                 raise ValueError("dependency references an unknown checkpoint")
             if dependency.target_metric_definition_id not in metrics:
                 raise ValueError("dependency references an unknown metric")
+        dependency_bindings = {
+            (
+                item.target_metric_definition_id,
+                item.target_checkpoint_id,
+                item.role,
+            )
+            for item in self.dependencies
+        }
+        if len(dependency_bindings) != len(self.dependencies):
+            raise ValueError("metric dependency bindings must be unique")
         for metric_id, metric in metrics.items():
             metric_dependencies = tuple(
                 item
@@ -498,15 +513,7 @@ class TargetDefinition:
             )
             if not metric_dependencies:
                 raise ValueError("every metric requires dependencies")
-            if metric.metric_kind is TargetMetricKind.SIMPLE_RETURN and {
-                item.role for item in metric_dependencies
-            } != {
-                TargetDependencyRole.REFERENCE,
-                TargetDependencyRole.OBSERVATION,
-            }:
-                raise ValueError(
-                    "SIMPLE_RETURN requires REFERENCE and OBSERVATION dependencies"
-                )
+            _validate_metric_dependency_shape(metric, metric_dependencies)
             for dependency in metric_dependencies:
                 checkpoint = checkpoints[dependency.target_checkpoint_id]
                 if (
@@ -515,10 +522,55 @@ class TargetDefinition:
                 ):
                     raise ValueError("REFERENCE dependency must bind the reference checkpoint")
                 if (
-                    dependency.role is TargetDependencyRole.OBSERVATION
+                    dependency.role in {
+                        TargetDependencyRole.OBSERVATION,
+                        TargetDependencyRole.PATH_MEMBER,
+                    }
                     and checkpoint.role is not TargetCheckpointRole.OUTCOME_OBSERVATION
                 ):
-                    raise ValueError("OBSERVATION dependency must bind an outcome checkpoint")
+                    raise ValueError(
+                        "OBSERVATION/PATH_MEMBER dependency must bind an outcome checkpoint"
+                    )
+
+
+def _validate_metric_dependency_shape(
+    metric: TargetMetricDefinition,
+    dependencies: tuple[TargetMetricDependency, ...],
+) -> None:
+    roles = tuple(item.role for item in dependencies)
+    if metric.metric_kind is TargetMetricKind.SIMPLE_RETURN:
+        if (
+            len(roles) != 2
+            or roles.count(TargetDependencyRole.REFERENCE) != 1
+            or roles.count(TargetDependencyRole.OBSERVATION) != 1
+        ):
+            raise ValueError(
+                "SIMPLE_RETURN requires REFERENCE and OBSERVATION dependencies; "
+                "dependency shape is exactly one of each"
+            )
+        return
+    if metric.metric_kind is TargetMetricKind.OBSERVATION_VALUE:
+        if roles != (TargetDependencyRole.OBSERVATION,):
+            raise ValueError(
+                "OBSERVATION_VALUE dependency shape requires exactly one OBSERVATION"
+            )
+        return
+    if (
+        roles.count(TargetDependencyRole.REFERENCE) != 1
+        or roles.count(TargetDependencyRole.PATH_MEMBER) < 1
+        or any(
+            role
+            not in {
+                TargetDependencyRole.REFERENCE,
+                TargetDependencyRole.PATH_MEMBER,
+            }
+            for role in roles
+        )
+    ):
+        raise ValueError(
+            f"{metric.metric_kind.value} dependency shape requires exactly one "
+            "REFERENCE and at least one PATH_MEMBER"
+        )
 
 
 def _require_contiguous(values: tuple[int, ...], field_name: str) -> None:

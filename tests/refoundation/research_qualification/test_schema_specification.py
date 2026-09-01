@@ -5,12 +5,13 @@ import psycopg
 from market_regime_alpha.infrastructure.postgres.schema import (
     EXPECTED_CANDIDATE_TABLES,
     EXPECTED_RESEARCH_DEFINITION_TABLES,
+    EXPECTED_RESEARCH_VALIDITY_TABLES,
     EXPECTED_TARGET_TABLES,
     SchemaManager,
 )
 
 
-def test_research_definition_schema_adds_exactly_three_permanent_relations(
+def test_research_and_qualification_schema_has_exact_owned_relations(
     target_database_url: str,
 ) -> None:
     SchemaManager(target_database_url).bootstrap()
@@ -27,6 +28,7 @@ def test_research_definition_schema_adds_exactly_three_permanent_relations(
         "feature_definition",
     }
     assert EXPECTED_RESEARCH_DEFINITION_TABLES <= tables
+    assert EXPECTED_RESEARCH_VALIDITY_TABLES <= tables
     assert tables == EXPECTED_TARGET_TABLES
     assert {
         name for name in tables if name.startswith("candidate")
@@ -37,7 +39,6 @@ def test_research_definition_schema_adds_exactly_three_permanent_relations(
         if name.startswith(
             (
                 "model",
-                "evaluation",
                 "evidence",
                 "qualification",
             )

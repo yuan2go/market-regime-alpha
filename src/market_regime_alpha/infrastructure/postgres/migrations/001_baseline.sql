@@ -7565,6 +7565,7 @@ DECLARE
     actual_dependency_count bigint;
     reference_count bigint;
     outcome_count bigint;
+    required_metric_count bigint;
     checkpoint_min integer;
     checkpoint_max integer;
     metric_min integer;
@@ -7585,8 +7586,10 @@ BEGIN
     FROM mra.target_checkpoint
     WHERE target_definition_id = NEW.target_definition_id;
 
-    SELECT count(*), min(ordinal), max(ordinal)
-    INTO actual_metric_count, metric_min, metric_max
+    SELECT count(*),
+           count(*) FILTER (WHERE completion_rule = 'REQUIRED'),
+           min(ordinal), max(ordinal)
+    INTO actual_metric_count, required_metric_count, metric_min, metric_max
     FROM mra.target_metric_definition
     WHERE target_definition_id = NEW.target_definition_id;
 
@@ -7605,7 +7608,8 @@ BEGIN
        OR metric_min <> 1
        OR metric_max <> actual_metric_count
        OR dependency_min <> 1
-       OR dependency_max <> actual_dependency_count THEN
+       OR dependency_max <> actual_dependency_count
+       OR required_metric_count < 1 THEN
         RAISE EXCEPTION 'TargetDefinition child roster is incomplete'
             USING ERRCODE = '55000';
     END IF;
@@ -7633,17 +7637,60 @@ BEGIN
              metric.target_metric_definition_id
          AND dependency.target_definition_id = metric.target_definition_id
         WHERE metric.target_definition_id = NEW.target_definition_id
-          AND metric.metric_kind = 'SIMPLE_RETURN'
-        GROUP BY metric.target_metric_definition_id
-        HAVING count(*) <> 2
-            OR count(*) FILTER (
-                WHERE dependency.dependency_role = 'REFERENCE'
-            ) <> 1
-            OR count(*) FILTER (
-                WHERE dependency.dependency_role = 'OBSERVATION'
-            ) <> 1
+        GROUP BY metric.target_metric_definition_id, metric.metric_kind
+        HAVING
+            (metric.metric_kind = 'SIMPLE_RETURN'
+             AND (count(*) <> 2
+                  OR count(*) FILTER (
+                      WHERE dependency.dependency_role = 'REFERENCE'
+                  ) <> 1
+                  OR count(*) FILTER (
+                      WHERE dependency.dependency_role = 'OBSERVATION'
+                  ) <> 1))
+            OR
+            (metric.metric_kind = 'OBSERVATION_VALUE'
+             AND (count(*) <> 1
+                  OR count(*) FILTER (
+                      WHERE dependency.dependency_role = 'OBSERVATION'
+                  ) <> 1))
+            OR
+            (metric.metric_kind IN (
+                 'MAX_FAVORABLE_EXCURSION',
+                 'MAX_ADVERSE_EXCURSION',
+                 'BARRIER_HIT'
+             )
+             AND (count(*) FILTER (
+                      WHERE dependency.dependency_role = 'REFERENCE'
+                  ) <> 1
+                  OR count(*) FILTER (
+                      WHERE dependency.dependency_role = 'PATH_MEMBER'
+                  ) < 1
+                  OR count(*) FILTER (
+                      WHERE dependency.dependency_role NOT IN (
+                          'REFERENCE', 'PATH_MEMBER'
+                      )
+                  ) <> 0))
     ) THEN
-        RAISE EXCEPTION 'SIMPLE_RETURN dependency shape is incomplete'
+        RAISE EXCEPTION 'Target metric dependency shape is Outcome-incompatible'
+            USING ERRCODE = '55000';
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM mra.target_metric_dependency AS dependency
+        JOIN mra.target_checkpoint AS checkpoint
+          ON checkpoint.target_checkpoint_id = dependency.target_checkpoint_id
+         AND checkpoint.target_definition_id = dependency.target_definition_id
+        WHERE dependency.target_definition_id = NEW.target_definition_id
+          AND (
+              (dependency.dependency_role = 'REFERENCE'
+               AND checkpoint.checkpoint_role <> 'DECISION_REFERENCE')
+              OR
+              (dependency.dependency_role IN ('OBSERVATION', 'PATH_MEMBER')
+               AND checkpoint.checkpoint_role <> 'OUTCOME_OBSERVATION')
+          )
+    ) THEN
+        RAISE EXCEPTION 'Target dependency role/checkpoint shape is invalid'
             USING ERRCODE = '55000';
     END IF;
 
@@ -8223,3 +8270,1421 @@ LEFT JOIN LATERAL (
     ORDER BY item.verified_at DESC, item.verification_id DESC
     LIMIT 1
 ) AS verification ON true;
+
+-- WP-11: integrated Research & Qualification validity/evaluation Authority.
+-- The schema epoch is still unreleased, so these permanent relations extend
+-- this baseline instead of introducing a later migration.
+
+ALTER TABLE mra.decision_target_commitment
+    ADD CONSTRAINT decision_commitment_research_authority_uk UNIQUE (
+        commitment_id, target_definition_id, decision_time,
+        candidate_disposition, commitment_recorded_at, runtime_mode
+    );
+
+ALTER TABLE mra.decision_reference_observation
+    ADD CONSTRAINT decision_reference_research_session_uk UNIQUE (
+        decision_reference_observation_id, commitment_id,
+        target_definition_id, session_id, decision_time,
+        runtime_mode, commitment_recorded_at
+    );
+
+ALTER TABLE mra.market_target_outcome_revision
+    ADD CONSTRAINT outcome_revision_research_authority_uk UNIQUE (
+        market_target_outcome_revision_id, market_target_outcome_id,
+        revision_ordinal, commitment_id, target_definition_id,
+        observation_cutoff, knowledge_cutoff, settled_at, outcome_status
+    );
+
+ALTER TABLE mra.market_target_outcome_metric
+    ADD CONSTRAINT outcome_metric_research_authority_uk UNIQUE (
+        market_target_outcome_metric_id, market_target_outcome_revision_id,
+        target_metric_definition_id, value_type, value_status
+    );
+
+CREATE TABLE mra.research_partition (
+    research_partition_id uuid PRIMARY KEY,
+    partition_code text NOT NULL UNIQUE,
+    status text NOT NULL,
+    target_definition_id uuid NOT NULL,
+    target_version integer NOT NULL,
+    target_definition_sha256 text NOT NULL,
+    purpose text NOT NULL,
+    population_scope text NOT NULL,
+    overlap_policy text NOT NULL,
+    decision_start_session_id uuid NOT NULL REFERENCES mra.trading_session(session_id) ON DELETE RESTRICT,
+    decision_end_session_id uuid NOT NULL REFERENCES mra.trading_session(session_id) ON DELETE RESTRICT,
+    decision_start_date date NOT NULL,
+    decision_end_date date NOT NULL,
+    outcome_horizon_sessions integer NOT NULL,
+    purge_before_sessions integer NOT NULL,
+    purge_after_sessions integer NOT NULL,
+    embargo_sessions integer NOT NULL,
+    protected_start_session_id uuid NOT NULL REFERENCES mra.trading_session(session_id) ON DELETE RESTRICT,
+    protected_end_session_id uuid NOT NULL REFERENCES mra.trading_session(session_id) ON DELETE RESTRICT,
+    protected_start_date date NOT NULL,
+    protected_end_date date NOT NULL,
+    series_code text NOT NULL,
+    fold_ordinal integer NOT NULL,
+    member_count integer NOT NULL,
+    member_roster_sha256 text NOT NULL,
+    code_artifact_id uuid NOT NULL,
+    code_content_sha256 text NOT NULL,
+    code_size_bytes bigint NOT NULL,
+    config_artifact_id uuid NOT NULL,
+    config_content_sha256 text NOT NULL,
+    config_size_bytes bigint NOT NULL,
+    provenance_sha256 text NOT NULL,
+    content_sha256 text NOT NULL,
+    request_identity text NOT NULL,
+    request_sha256 text NOT NULL,
+    frozen_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT research_partition_exact_uk UNIQUE (
+        research_partition_id, target_definition_id, target_version,
+        target_definition_sha256, purpose, member_count,
+        member_roster_sha256, content_sha256, frozen_at
+    ),
+    CONSTRAINT research_partition_member_authority_uk UNIQUE (
+        research_partition_id, target_definition_id
+    ),
+    CONSTRAINT research_partition_experiment_authority_uk UNIQUE (
+        research_partition_id, target_definition_id, target_version,
+        target_definition_sha256, purpose, content_sha256
+    ),
+    CONSTRAINT research_partition_evaluation_authority_uk UNIQUE (
+        research_partition_id, target_definition_id, purpose, member_count
+    ),
+    CONSTRAINT research_partition_request_uk UNIQUE (partition_code, request_identity),
+    CONSTRAINT research_partition_target_fk FOREIGN KEY (
+        target_definition_id, target_version, target_definition_sha256
+    ) REFERENCES mra.target_definition(
+        target_definition_id, version, content_sha256
+    ) ON DELETE RESTRICT,
+    CONSTRAINT research_partition_code_artifact_fk FOREIGN KEY (
+        code_artifact_id, code_content_sha256, code_size_bytes
+    ) REFERENCES mra.artifact(artifact_id, content_sha256, size_bytes) ON DELETE RESTRICT,
+    CONSTRAINT research_partition_config_artifact_fk FOREIGN KEY (
+        config_artifact_id, config_content_sha256, config_size_bytes
+    ) REFERENCES mra.artifact(artifact_id, content_sha256, size_bytes) ON DELETE RESTRICT,
+    CONSTRAINT research_partition_shape_ck CHECK (
+        status = 'FROZEN'
+        AND purpose IN ('DISCOVERY', 'FIT', 'VALIDATION', 'LOCKED_OOS', 'PROSPECTIVE')
+        AND population_scope IN ('ALL_COMMITMENTS', 'SELECTED', 'RANKED_NOT_SELECTED', 'UNRANKABLE')
+        AND overlap_policy IN ('DIAGNOSTIC_REUSE', 'PURGED_WALK_FORWARD', 'ISOLATED_PROTECTED')
+        AND ((purpose = 'DISCOVERY' AND overlap_policy = 'DIAGNOSTIC_REUSE')
+          OR (purpose IN ('FIT', 'VALIDATION') AND overlap_policy IN ('DIAGNOSTIC_REUSE', 'PURGED_WALK_FORWARD'))
+          OR (purpose IN ('LOCKED_OOS', 'PROSPECTIVE') AND overlap_policy = 'ISOLATED_PROTECTED'))
+        AND partition_code ~ '^[a-z][a-z0-9_-]{0,99}$'
+        AND series_code ~ '^[a-z][a-z0-9_-]{0,99}$'
+        AND target_version > 0 AND outcome_horizon_sessions >= 0
+        AND purge_before_sessions >= 0 AND purge_after_sessions >= 0
+        AND embargo_sessions >= 0 AND fold_ordinal > 0 AND member_count > 0
+        AND decision_start_date <= decision_end_date
+        AND protected_start_date <= decision_start_date
+        AND protected_end_date >= decision_end_date
+        AND member_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND provenance_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+        AND request_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+CREATE INDEX research_partition_target_window_idx ON mra.research_partition (
+    target_definition_id, purpose, protected_start_date, protected_end_date
+);
+CREATE INDEX research_partition_series_fold_idx ON mra.research_partition (
+    series_code, fold_ordinal, purpose
+);
+CREATE INDEX research_partition_target_fk_idx ON mra.research_partition (
+    target_definition_id, target_version, target_definition_sha256
+);
+CREATE INDEX research_partition_decision_start_fk_idx ON mra.research_partition (decision_start_session_id);
+CREATE INDEX research_partition_decision_end_fk_idx ON mra.research_partition (decision_end_session_id);
+CREATE INDEX research_partition_protected_start_fk_idx ON mra.research_partition (protected_start_session_id);
+CREATE INDEX research_partition_protected_end_fk_idx ON mra.research_partition (protected_end_session_id);
+CREATE INDEX research_partition_code_artifact_fk_idx ON mra.research_partition (
+    code_artifact_id, code_content_sha256, code_size_bytes
+);
+CREATE INDEX research_partition_config_artifact_fk_idx ON mra.research_partition (
+    config_artifact_id, config_content_sha256, config_size_bytes
+);
+
+CREATE TABLE mra.research_partition_member (
+    research_partition_member_id uuid PRIMARY KEY,
+    research_partition_id uuid NOT NULL,
+    member_ordinal integer NOT NULL,
+    commitment_id uuid NOT NULL,
+    decision_reference_observation_id uuid NOT NULL,
+    target_definition_id uuid NOT NULL,
+    decision_time timestamptz NOT NULL,
+    candidate_disposition text NOT NULL,
+    commitment_recorded_at timestamptz NOT NULL,
+    runtime_mode text NOT NULL,
+    decision_session_id uuid NOT NULL REFERENCES mra.trading_session(session_id) ON DELETE RESTRICT,
+    earliest_outcome_event_at timestamptz NOT NULL,
+    outcome_due_at timestamptz NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT research_partition_member_ordinal_uk UNIQUE (research_partition_id, member_ordinal),
+    CONSTRAINT research_partition_member_commitment_uk UNIQUE (research_partition_id, commitment_id),
+    CONSTRAINT research_partition_member_exact_uk UNIQUE (
+        research_partition_member_id, research_partition_id, commitment_id,
+        target_definition_id, candidate_disposition, outcome_due_at
+    ),
+    CONSTRAINT research_partition_member_access_authority_uk UNIQUE (
+        research_partition_member_id, research_partition_id, commitment_id,
+        target_definition_id
+    ),
+    CONSTRAINT research_partition_member_observation_authority_uk UNIQUE (
+        research_partition_member_id, research_partition_id
+    ),
+    CONSTRAINT research_partition_member_partition_fk FOREIGN KEY (
+        research_partition_id, target_definition_id
+    ) REFERENCES mra.research_partition(
+        research_partition_id, target_definition_id
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT research_partition_member_commitment_fk FOREIGN KEY (
+        commitment_id, target_definition_id, decision_time,
+        candidate_disposition, commitment_recorded_at, runtime_mode
+    ) REFERENCES mra.decision_target_commitment(
+        commitment_id, target_definition_id, decision_time,
+        candidate_disposition, commitment_recorded_at, runtime_mode
+    ) ON DELETE RESTRICT,
+    CONSTRAINT research_partition_member_reference_session_fk FOREIGN KEY (
+        decision_reference_observation_id, commitment_id,
+        target_definition_id, decision_session_id, decision_time,
+        runtime_mode, commitment_recorded_at
+    ) REFERENCES mra.decision_reference_observation(
+        decision_reference_observation_id, commitment_id,
+        target_definition_id, session_id, decision_time,
+        runtime_mode, commitment_recorded_at
+    ) ON DELETE RESTRICT,
+    CONSTRAINT research_partition_member_shape_ck CHECK (
+        member_ordinal > 0
+        AND candidate_disposition IN ('SELECTED', 'RANKED_NOT_SELECTED', 'UNRANKABLE')
+        AND runtime_mode IN ('OPERATIONAL', 'HISTORICAL', 'REPLAY', 'SHADOW', 'PROSPECTIVE')
+        AND earliest_outcome_event_at <= outcome_due_at
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+CREATE INDEX research_partition_member_commitment_idx ON mra.research_partition_member (
+    commitment_id, research_partition_id
+);
+CREATE INDEX research_partition_member_partition_fk_idx ON mra.research_partition_member (
+    research_partition_id, target_definition_id
+);
+CREATE INDEX research_partition_member_commitment_fk_idx ON mra.research_partition_member (
+    commitment_id, target_definition_id, decision_time,
+    candidate_disposition, commitment_recorded_at, runtime_mode
+);
+CREATE INDEX research_partition_member_session_fk_idx ON mra.research_partition_member (decision_session_id);
+CREATE INDEX research_partition_member_reference_session_fk_idx
+    ON mra.research_partition_member (
+        decision_reference_observation_id, commitment_id,
+        target_definition_id, decision_session_id, decision_time,
+        runtime_mode, commitment_recorded_at
+    );
+
+CREATE TABLE mra.experiment (
+    experiment_id uuid PRIMARY KEY,
+    experiment_code text NOT NULL UNIQUE,
+    status text NOT NULL,
+    research_question text NOT NULL,
+    primary_change text NOT NULL,
+    hypothesis text NOT NULL,
+    target_definition_id uuid NOT NULL,
+    target_version integer NOT NULL,
+    target_definition_sha256 text NOT NULL,
+    protocol_identity text NOT NULL,
+    acceptance_semantics text NOT NULL,
+    code_artifact_id uuid NOT NULL,
+    code_content_sha256 text NOT NULL,
+    code_size_bytes bigint NOT NULL,
+    config_artifact_id uuid NOT NULL,
+    config_content_sha256 text NOT NULL,
+    config_size_bytes bigint NOT NULL,
+    provenance_sha256 text NOT NULL,
+    content_sha256 text NOT NULL,
+    request_identity text NOT NULL,
+    request_sha256 text NOT NULL,
+    registered_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT experiment_exact_uk UNIQUE (
+        experiment_id, target_definition_id, target_version,
+        target_definition_sha256, content_sha256, registered_at
+    ),
+    CONSTRAINT experiment_partition_authority_uk UNIQUE (
+        experiment_id, target_definition_id, target_version,
+        target_definition_sha256
+    ),
+    CONSTRAINT experiment_request_uk UNIQUE (experiment_code, request_identity),
+    CONSTRAINT experiment_target_fk FOREIGN KEY (
+        target_definition_id, target_version, target_definition_sha256
+    ) REFERENCES mra.target_definition(target_definition_id, version, content_sha256) ON DELETE RESTRICT,
+    CONSTRAINT experiment_code_artifact_fk FOREIGN KEY (
+        code_artifact_id, code_content_sha256, code_size_bytes
+    ) REFERENCES mra.artifact(artifact_id, content_sha256, size_bytes) ON DELETE RESTRICT,
+    CONSTRAINT experiment_config_artifact_fk FOREIGN KEY (
+        config_artifact_id, config_content_sha256, config_size_bytes
+    ) REFERENCES mra.artifact(artifact_id, content_sha256, size_bytes) ON DELETE RESTRICT,
+    CONSTRAINT experiment_shape_ck CHECK (
+        status = 'REGISTERED' AND experiment_code ~ '^[a-z][a-z0-9_-]{0,99}$'
+        AND research_question <> '' AND primary_change <> '' AND hypothesis <> ''
+        AND protocol_identity <> '' AND acceptance_semantics <> ''
+        AND provenance_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+        AND request_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE TABLE mra.experiment_partition (
+    experiment_partition_id uuid PRIMARY KEY,
+    experiment_id uuid NOT NULL,
+    research_partition_id uuid NOT NULL,
+    target_definition_id uuid NOT NULL,
+    target_version integer NOT NULL,
+    target_definition_sha256 text NOT NULL,
+    partition_purpose text NOT NULL,
+    partition_content_sha256 text NOT NULL,
+    bound_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT experiment_partition_pair_uk UNIQUE (experiment_id, research_partition_id),
+    CONSTRAINT experiment_partition_exact_uk UNIQUE (
+        experiment_partition_id, experiment_id, research_partition_id,
+        target_definition_id, partition_purpose, bound_at
+    ),
+    CONSTRAINT experiment_partition_run_authority_uk UNIQUE (
+        experiment_partition_id, experiment_id, research_partition_id
+    ),
+    CONSTRAINT experiment_partition_evaluation_authority_uk UNIQUE (
+        experiment_partition_id, experiment_id, research_partition_id,
+        target_definition_id, partition_purpose
+    ),
+    CONSTRAINT experiment_partition_experiment_fk FOREIGN KEY (
+        experiment_id, target_definition_id, target_version, target_definition_sha256
+    ) REFERENCES mra.experiment(
+        experiment_id, target_definition_id, target_version, target_definition_sha256
+    ) ON DELETE RESTRICT,
+    CONSTRAINT experiment_partition_partition_fk FOREIGN KEY (
+        research_partition_id, target_definition_id, target_version,
+        target_definition_sha256, partition_purpose,
+        partition_content_sha256
+    ) REFERENCES mra.research_partition(
+        research_partition_id, target_definition_id, target_version,
+        target_definition_sha256, purpose, content_sha256
+    ) ON DELETE RESTRICT,
+    CONSTRAINT experiment_partition_shape_ck CHECK (
+        partition_purpose IN ('DISCOVERY', 'FIT', 'VALIDATION', 'LOCKED_OOS', 'PROSPECTIVE')
+        AND partition_content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+CREATE INDEX experiment_target_fk_idx ON mra.experiment (
+    target_definition_id, target_version, target_definition_sha256
+);
+CREATE INDEX experiment_code_artifact_fk_idx ON mra.experiment (
+    code_artifact_id, code_content_sha256, code_size_bytes
+);
+CREATE INDEX experiment_config_artifact_fk_idx ON mra.experiment (
+    config_artifact_id, config_content_sha256, config_size_bytes
+);
+CREATE INDEX experiment_partition_experiment_fk_idx ON mra.experiment_partition (
+    experiment_id, target_definition_id, target_version, target_definition_sha256
+);
+CREATE INDEX experiment_partition_partition_fk_idx ON mra.experiment_partition (
+    research_partition_id, target_definition_id, target_version,
+    target_definition_sha256, partition_purpose, partition_content_sha256
+);
+
+CREATE TABLE mra.experiment_run (
+    experiment_run_id uuid PRIMARY KEY,
+    experiment_id uuid NOT NULL,
+    experiment_partition_id uuid NOT NULL,
+    research_partition_id uuid NOT NULL,
+    status text NOT NULL,
+    run_identity text NOT NULL,
+    content_sha256 text NOT NULL,
+    opened_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT experiment_run_identity_uk UNIQUE (experiment_id, run_identity),
+    CONSTRAINT experiment_run_exact_uk UNIQUE (
+        experiment_run_id, experiment_id, experiment_partition_id,
+        research_partition_id, opened_at
+    ),
+    CONSTRAINT experiment_run_evaluation_authority_uk UNIQUE (
+        experiment_run_id, experiment_id, experiment_partition_id,
+        research_partition_id
+    ),
+    CONSTRAINT experiment_run_partition_fk FOREIGN KEY (
+        experiment_partition_id, experiment_id, research_partition_id
+    ) REFERENCES mra.experiment_partition(
+        experiment_partition_id, experiment_id, research_partition_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT experiment_run_shape_ck CHECK (
+        status = 'OPENED' AND run_identity <> ''
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+CREATE INDEX experiment_run_partition_fk_idx ON mra.experiment_run (
+    experiment_partition_id, experiment_id, research_partition_id
+);
+
+CREATE TABLE mra.evaluation_protocol (
+    evaluation_protocol_id uuid PRIMARY KEY,
+    protocol_code text NOT NULL,
+    protocol_version integer NOT NULL,
+    status text NOT NULL,
+    target_definition_id uuid NOT NULL,
+    target_version integer NOT NULL,
+    target_definition_sha256 text NOT NULL,
+    applicable_purpose text NOT NULL,
+    decision_rule text NOT NULL,
+    metric_count integer NOT NULL,
+    metric_roster_sha256 text NOT NULL,
+    code_artifact_id uuid NOT NULL,
+    code_content_sha256 text NOT NULL,
+    code_size_bytes bigint NOT NULL,
+    config_artifact_id uuid NOT NULL,
+    config_content_sha256 text NOT NULL,
+    config_size_bytes bigint NOT NULL,
+    provenance_sha256 text NOT NULL,
+    content_sha256 text NOT NULL,
+    request_identity text NOT NULL,
+    request_sha256 text NOT NULL,
+    frozen_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT evaluation_protocol_exact_uk UNIQUE (
+        evaluation_protocol_id, target_definition_id, target_version,
+        target_definition_sha256, applicable_purpose, metric_count,
+        metric_roster_sha256, content_sha256, frozen_at
+    ),
+    CONSTRAINT evaluation_protocol_identity_uk UNIQUE (
+        protocol_code, protocol_version
+    ),
+    CONSTRAINT evaluation_protocol_metric_authority_uk UNIQUE (
+        evaluation_protocol_id, target_definition_id
+    ),
+    CONSTRAINT evaluation_protocol_run_authority_uk UNIQUE (
+        evaluation_protocol_id, target_definition_id,
+        applicable_purpose, metric_count
+    ),
+    CONSTRAINT evaluation_protocol_request_uk UNIQUE (protocol_code, request_identity),
+    CONSTRAINT evaluation_protocol_target_fk FOREIGN KEY (
+        target_definition_id, target_version, target_definition_sha256
+    ) REFERENCES mra.target_definition(target_definition_id, version, content_sha256) ON DELETE RESTRICT,
+    CONSTRAINT evaluation_protocol_code_artifact_fk FOREIGN KEY (
+        code_artifact_id, code_content_sha256, code_size_bytes
+    ) REFERENCES mra.artifact(artifact_id, content_sha256, size_bytes) ON DELETE RESTRICT,
+    CONSTRAINT evaluation_protocol_config_artifact_fk FOREIGN KEY (
+        config_artifact_id, config_content_sha256, config_size_bytes
+    ) REFERENCES mra.artifact(artifact_id, content_sha256, size_bytes) ON DELETE RESTRICT,
+    CONSTRAINT evaluation_protocol_shape_ck CHECK (
+        status = 'FROZEN' AND protocol_code ~ '^[a-z][a-z0-9_-]{0,99}$'
+        AND protocol_version > 0
+        AND applicable_purpose IN ('DISCOVERY', 'FIT', 'VALIDATION', 'LOCKED_OOS', 'PROSPECTIVE')
+        AND decision_rule <> '' AND metric_count > 0
+        AND metric_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND provenance_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+        AND request_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+ALTER TABLE mra.target_metric_definition
+    ADD CONSTRAINT target_metric_evaluation_authority_uk UNIQUE (
+        target_metric_definition_id, target_definition_id, value_type
+    ),
+    ADD CONSTRAINT target_metric_evaluation_code_authority_uk UNIQUE (
+        target_metric_definition_id, target_definition_id,
+        value_type, metric_code
+    );
+
+CREATE TABLE mra.evaluation_protocol_metric (
+    evaluation_protocol_metric_id uuid PRIMARY KEY,
+    evaluation_protocol_id uuid NOT NULL,
+    target_definition_id uuid NOT NULL,
+    ordinal integer NOT NULL,
+    metric_code text NOT NULL,
+    source_target_metric_definition_id uuid NOT NULL,
+    source_metric_code text NOT NULL,
+    source_value_type text NOT NULL,
+    reducer text NOT NULL,
+    slice_kind text NOT NULL,
+    candidate_disposition text,
+    direction text NOT NULL,
+    inclusion_policy text NOT NULL,
+    missingness_policy text NOT NULL,
+    minimum_estimable_count integer NOT NULL,
+    acceptance_operator text NOT NULL,
+    acceptance_threshold numeric,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT evaluation_protocol_metric_ordinal_uk UNIQUE (evaluation_protocol_id, ordinal),
+    CONSTRAINT evaluation_protocol_metric_code_uk UNIQUE (evaluation_protocol_id, metric_code),
+    CONSTRAINT evaluation_protocol_metric_exact_uk UNIQUE (
+        evaluation_protocol_metric_id, evaluation_protocol_id,
+        source_target_metric_definition_id, source_value_type
+    ),
+    CONSTRAINT evaluation_protocol_metric_metric_authority_uk UNIQUE (
+        evaluation_protocol_metric_id, evaluation_protocol_id
+    ),
+    CONSTRAINT evaluation_protocol_metric_protocol_fk FOREIGN KEY (
+        evaluation_protocol_id, target_definition_id
+    ) REFERENCES mra.evaluation_protocol(
+        evaluation_protocol_id, target_definition_id
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT evaluation_protocol_metric_source_fk FOREIGN KEY (
+        source_target_metric_definition_id, target_definition_id,
+        source_value_type, source_metric_code
+    ) REFERENCES mra.target_metric_definition(
+        target_metric_definition_id, target_definition_id,
+        value_type, metric_code
+    ) ON DELETE RESTRICT,
+    CONSTRAINT evaluation_protocol_metric_shape_ck CHECK (
+        ordinal > 0 AND metric_code ~ '^[a-z][a-z0-9_-]{0,99}$'
+        AND source_metric_code ~ '^[a-z][a-z0-9_-]{0,99}$'
+        AND source_value_type IN ('DECIMAL', 'BOOLEAN')
+        AND reducer IN ('MEAN_DECIMAL', 'MEDIAN_DECIMAL', 'TRUE_RATE', 'ESTIMABLE_RATE')
+        AND ((reducer IN ('MEAN_DECIMAL', 'MEDIAN_DECIMAL') AND source_value_type = 'DECIMAL')
+          OR (reducer = 'TRUE_RATE' AND source_value_type = 'BOOLEAN')
+          OR reducer = 'ESTIMABLE_RATE')
+        AND slice_kind IN ('ALL_MEMBERS', 'CANDIDATE_DISPOSITION')
+        AND ((slice_kind = 'ALL_MEMBERS' AND candidate_disposition IS NULL)
+          OR (slice_kind = 'CANDIDATE_DISPOSITION' AND candidate_disposition IN ('SELECTED', 'RANKED_NOT_SELECTED', 'UNRANKABLE')))
+        AND direction IN ('HIGHER', 'LOWER', 'DESCRIPTIVE')
+        AND inclusion_policy IN ('COMPLETE_ONLY', 'AVAILABLE_VALUE')
+        AND missingness_policy IN ('RETAIN_AND_ESTIMATE', 'REQUIRE_COMPLETE_ROSTER')
+        AND minimum_estimable_count > 0
+        AND acceptance_operator IN ('NONE', 'AT_LEAST', 'AT_MOST')
+        AND ((acceptance_operator = 'NONE' AND acceptance_threshold IS NULL AND direction = 'DESCRIPTIVE')
+          OR (acceptance_operator <> 'NONE' AND acceptance_threshold IS NOT NULL AND direction <> 'DESCRIPTIVE'))
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+CREATE INDEX evaluation_protocol_target_fk_idx ON mra.evaluation_protocol (
+    target_definition_id, target_version, target_definition_sha256
+);
+CREATE INDEX evaluation_protocol_code_artifact_fk_idx ON mra.evaluation_protocol (
+    code_artifact_id, code_content_sha256, code_size_bytes
+);
+CREATE INDEX evaluation_protocol_config_artifact_fk_idx ON mra.evaluation_protocol (
+    config_artifact_id, config_content_sha256, config_size_bytes
+);
+CREATE INDEX evaluation_protocol_metric_protocol_fk_idx ON mra.evaluation_protocol_metric (
+    evaluation_protocol_id, target_definition_id
+);
+CREATE INDEX evaluation_protocol_metric_source_fk_idx ON mra.evaluation_protocol_metric (
+    source_target_metric_definition_id, target_definition_id,
+    source_value_type, source_metric_code
+);
+
+CREATE TABLE mra.evaluation_run (
+    evaluation_run_id uuid PRIMARY KEY,
+    experiment_run_id uuid NOT NULL,
+    experiment_id uuid NOT NULL,
+    experiment_partition_id uuid NOT NULL,
+    research_partition_id uuid NOT NULL,
+    evaluation_protocol_id uuid NOT NULL,
+    target_definition_id uuid NOT NULL,
+    partition_purpose text NOT NULL,
+    requested_knowledge_cutoff timestamptz NOT NULL,
+    expected_member_count integer NOT NULL,
+    expected_protocol_metric_count integer NOT NULL,
+    code_artifact_id uuid NOT NULL,
+    code_content_sha256 text NOT NULL,
+    code_size_bytes bigint NOT NULL,
+    config_artifact_id uuid NOT NULL,
+    config_content_sha256 text NOT NULL,
+    config_size_bytes bigint NOT NULL,
+    provenance_sha256 text NOT NULL,
+    content_sha256 text NOT NULL,
+    status text NOT NULL,
+    request_identity text NOT NULL,
+    request_sha256 text NOT NULL,
+    opened_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    inputs_acquired_at timestamptz,
+    completed_at timestamptz,
+    failed_at timestamptz,
+    failure_reason_code text,
+    access_count integer NOT NULL DEFAULT 0,
+    observation_count integer NOT NULL DEFAULT 0,
+    metric_count integer NOT NULL DEFAULT 0,
+    metric_observation_count bigint NOT NULL DEFAULT 0,
+    input_roster_sha256 text,
+    metric_roster_sha256 text,
+    version bigint NOT NULL DEFAULT 1,
+    CONSTRAINT evaluation_run_identity_uk UNIQUE (experiment_run_id, request_identity),
+    CONSTRAINT evaluation_run_exact_uk UNIQUE (
+        evaluation_run_id, experiment_run_id, research_partition_id,
+        evaluation_protocol_id, target_definition_id, content_sha256
+    ),
+    CONSTRAINT evaluation_run_access_authority_uk UNIQUE (
+        evaluation_run_id, research_partition_id, target_definition_id
+    ),
+    CONSTRAINT evaluation_run_metric_authority_uk UNIQUE (
+        evaluation_run_id, evaluation_protocol_id
+    ),
+    CONSTRAINT evaluation_run_experiment_fk FOREIGN KEY (
+        experiment_run_id, experiment_id, experiment_partition_id,
+        research_partition_id
+    ) REFERENCES mra.experiment_run(
+        experiment_run_id, experiment_id, experiment_partition_id,
+        research_partition_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT evaluation_run_experiment_partition_fk FOREIGN KEY (
+        experiment_partition_id, experiment_id, research_partition_id,
+        target_definition_id, partition_purpose
+    ) REFERENCES mra.experiment_partition(
+        experiment_partition_id, experiment_id, research_partition_id,
+        target_definition_id, partition_purpose
+    ) ON DELETE RESTRICT,
+    CONSTRAINT evaluation_run_partition_fk FOREIGN KEY (
+        research_partition_id, target_definition_id, partition_purpose,
+        expected_member_count
+    ) REFERENCES mra.research_partition(
+        research_partition_id, target_definition_id, purpose, member_count
+    ) ON DELETE RESTRICT,
+    CONSTRAINT evaluation_run_protocol_fk FOREIGN KEY (
+        evaluation_protocol_id, target_definition_id, partition_purpose,
+        expected_protocol_metric_count
+    ) REFERENCES mra.evaluation_protocol(
+        evaluation_protocol_id, target_definition_id, applicable_purpose, metric_count
+    ) ON DELETE RESTRICT,
+    CONSTRAINT evaluation_run_code_artifact_fk FOREIGN KEY (
+        code_artifact_id, code_content_sha256, code_size_bytes
+    ) REFERENCES mra.artifact(artifact_id, content_sha256, size_bytes) ON DELETE RESTRICT,
+    CONSTRAINT evaluation_run_config_artifact_fk FOREIGN KEY (
+        config_artifact_id, config_content_sha256, config_size_bytes
+    ) REFERENCES mra.artifact(artifact_id, content_sha256, size_bytes) ON DELETE RESTRICT,
+    CONSTRAINT evaluation_run_shape_ck CHECK (
+        partition_purpose IN ('DISCOVERY', 'FIT', 'VALIDATION', 'LOCKED_OOS', 'PROSPECTIVE')
+        AND expected_member_count > 0 AND expected_protocol_metric_count > 0
+        AND status IN ('OPEN', 'INPUTS_ACQUIRED', 'COMPLETED', 'FAILED')
+        AND request_sha256 ~ '^[0-9a-f]{64}$' AND version > 0
+        AND provenance_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+        AND access_count >= 0 AND observation_count >= 0
+        AND metric_count >= 0 AND metric_observation_count >= 0
+        AND (input_roster_sha256 IS NULL OR input_roster_sha256 ~ '^[0-9a-f]{64}$')
+        AND (metric_roster_sha256 IS NULL OR metric_roster_sha256 ~ '^[0-9a-f]{64}$')
+        AND ((status = 'OPEN' AND inputs_acquired_at IS NULL AND completed_at IS NULL AND failed_at IS NULL AND failure_reason_code IS NULL)
+          OR (status = 'INPUTS_ACQUIRED' AND inputs_acquired_at IS NOT NULL AND completed_at IS NULL AND failed_at IS NULL AND failure_reason_code IS NULL)
+          OR (status = 'COMPLETED' AND inputs_acquired_at IS NOT NULL AND completed_at IS NOT NULL AND failed_at IS NULL AND failure_reason_code IS NULL)
+          OR (status = 'FAILED' AND failed_at IS NOT NULL AND completed_at IS NULL AND failure_reason_code ~ '^[A-Z][A-Z0-9_]{0,99}$'))
+    )
+);
+CREATE INDEX evaluation_run_state_idx ON mra.evaluation_run(status, opened_at);
+CREATE INDEX evaluation_run_experiment_fk_idx ON mra.evaluation_run (
+    experiment_run_id, experiment_id, experiment_partition_id, research_partition_id
+);
+CREATE INDEX evaluation_run_experiment_partition_fk_idx ON mra.evaluation_run (
+    experiment_partition_id, experiment_id, research_partition_id,
+    target_definition_id, partition_purpose
+);
+CREATE INDEX evaluation_run_partition_fk_idx ON mra.evaluation_run (
+    research_partition_id, target_definition_id, partition_purpose, expected_member_count
+);
+CREATE INDEX evaluation_run_protocol_fk_idx ON mra.evaluation_run (
+    evaluation_protocol_id, target_definition_id, partition_purpose,
+    expected_protocol_metric_count
+);
+CREATE INDEX evaluation_run_code_artifact_fk_idx ON mra.evaluation_run (
+    code_artifact_id, code_content_sha256, code_size_bytes
+);
+CREATE INDEX evaluation_run_config_artifact_fk_idx ON mra.evaluation_run (
+    config_artifact_id, config_content_sha256, config_size_bytes
+);
+
+CREATE TABLE mra.research_partition_outcome_access (
+    research_partition_outcome_access_id uuid PRIMARY KEY,
+    evaluation_run_id uuid NOT NULL,
+    research_partition_member_id uuid NOT NULL,
+    research_partition_id uuid NOT NULL,
+    commitment_id uuid NOT NULL,
+    target_definition_id uuid NOT NULL,
+    market_target_outcome_revision_id uuid NOT NULL,
+    market_target_outcome_id uuid NOT NULL,
+    revision_ordinal integer NOT NULL,
+    observation_cutoff timestamptz NOT NULL,
+    knowledge_cutoff timestamptz NOT NULL,
+    settled_at timestamptz NOT NULL,
+    outcome_status text NOT NULL,
+    access_ordinal integer NOT NULL,
+    accessed_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    content_sha256 text NOT NULL,
+    CONSTRAINT research_outcome_access_run_member_uk UNIQUE (evaluation_run_id, research_partition_member_id),
+    CONSTRAINT research_outcome_access_member_ordinal_uk UNIQUE (research_partition_member_id, access_ordinal),
+    CONSTRAINT research_outcome_access_exact_uk UNIQUE (
+        research_partition_outcome_access_id, evaluation_run_id,
+        research_partition_member_id, research_partition_id,
+        market_target_outcome_revision_id
+    ),
+    CONSTRAINT research_outcome_access_run_fk FOREIGN KEY (
+        evaluation_run_id, research_partition_id, target_definition_id
+    ) REFERENCES mra.evaluation_run(
+        evaluation_run_id, research_partition_id, target_definition_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT research_outcome_access_member_fk FOREIGN KEY (
+        research_partition_member_id, research_partition_id, commitment_id,
+        target_definition_id
+    ) REFERENCES mra.research_partition_member(
+        research_partition_member_id, research_partition_id, commitment_id,
+        target_definition_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT research_outcome_access_revision_fk FOREIGN KEY (
+        market_target_outcome_revision_id, market_target_outcome_id,
+        revision_ordinal, commitment_id, target_definition_id,
+        observation_cutoff, knowledge_cutoff, settled_at, outcome_status
+    ) REFERENCES mra.market_target_outcome_revision(
+        market_target_outcome_revision_id, market_target_outcome_id,
+        revision_ordinal, commitment_id, target_definition_id,
+        observation_cutoff, knowledge_cutoff, settled_at, outcome_status
+    ) ON DELETE RESTRICT,
+    CONSTRAINT research_outcome_access_shape_ck CHECK (
+        access_ordinal > 0
+        AND outcome_status IN ('PARTIAL', 'COMPLETE', 'UNAVAILABLE', 'FAILED')
+        AND observation_cutoff <= knowledge_cutoff
+        AND settled_at <= accessed_at
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE TABLE mra.evaluation_observation (
+    evaluation_observation_id uuid PRIMARY KEY,
+    evaluation_run_id uuid NOT NULL,
+    research_partition_member_id uuid NOT NULL,
+    research_partition_id uuid NOT NULL,
+    outcome_access_id uuid NOT NULL,
+    market_target_outcome_revision_id uuid NOT NULL,
+    candidate_disposition text NOT NULL,
+    outcome_status text NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT evaluation_observation_run_member_uk UNIQUE (evaluation_run_id, research_partition_member_id),
+    CONSTRAINT evaluation_observation_exact_uk UNIQUE (
+        evaluation_observation_id, evaluation_run_id,
+        research_partition_member_id, market_target_outcome_revision_id
+    ),
+    CONSTRAINT evaluation_observation_access_fk FOREIGN KEY (
+        outcome_access_id, evaluation_run_id, research_partition_member_id,
+        research_partition_id, market_target_outcome_revision_id
+    ) REFERENCES mra.research_partition_outcome_access(
+        research_partition_outcome_access_id, evaluation_run_id,
+        research_partition_member_id, research_partition_id,
+        market_target_outcome_revision_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT evaluation_observation_member_fk FOREIGN KEY (
+        research_partition_member_id, research_partition_id
+    ) REFERENCES mra.research_partition_member(
+        research_partition_member_id, research_partition_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT evaluation_observation_shape_ck CHECK (
+        candidate_disposition IN ('SELECTED', 'RANKED_NOT_SELECTED', 'UNRANKABLE')
+        AND outcome_status IN ('PARTIAL', 'COMPLETE', 'UNAVAILABLE', 'FAILED')
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+CREATE INDEX research_outcome_access_run_fk_idx ON mra.research_partition_outcome_access (
+    evaluation_run_id, research_partition_id, target_definition_id
+);
+CREATE INDEX research_outcome_access_member_fk_idx ON mra.research_partition_outcome_access (
+    research_partition_member_id, research_partition_id, commitment_id,
+    target_definition_id
+);
+CREATE INDEX research_outcome_access_revision_fk_idx ON mra.research_partition_outcome_access (
+    market_target_outcome_revision_id, market_target_outcome_id,
+    revision_ordinal, commitment_id, target_definition_id,
+    observation_cutoff, knowledge_cutoff, settled_at, outcome_status
+);
+CREATE INDEX evaluation_observation_access_fk_idx ON mra.evaluation_observation (
+    outcome_access_id, evaluation_run_id, research_partition_member_id,
+    research_partition_id, market_target_outcome_revision_id
+);
+CREATE INDEX evaluation_observation_member_fk_idx ON mra.evaluation_observation (
+    research_partition_member_id, research_partition_id
+);
+
+CREATE TABLE mra.evaluation_metric (
+    evaluation_metric_id uuid PRIMARY KEY,
+    evaluation_run_id uuid NOT NULL,
+    evaluation_protocol_metric_id uuid NOT NULL,
+    evaluation_protocol_id uuid NOT NULL,
+    metric_state text NOT NULL,
+    decimal_value numeric,
+    boolean_value boolean,
+    estimable_count integer NOT NULL,
+    acceptance_state text NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT evaluation_metric_run_protocol_metric_uk UNIQUE (evaluation_run_id, evaluation_protocol_metric_id),
+    CONSTRAINT evaluation_metric_exact_uk UNIQUE (
+        evaluation_metric_id, evaluation_run_id,
+        evaluation_protocol_metric_id
+    ),
+    CONSTRAINT evaluation_metric_run_fk FOREIGN KEY (
+        evaluation_run_id, evaluation_protocol_id
+    ) REFERENCES mra.evaluation_run(
+        evaluation_run_id, evaluation_protocol_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT evaluation_metric_protocol_fk FOREIGN KEY (
+        evaluation_protocol_metric_id, evaluation_protocol_id
+    ) REFERENCES mra.evaluation_protocol_metric(
+        evaluation_protocol_metric_id, evaluation_protocol_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT evaluation_metric_shape_ck CHECK (
+        metric_state IN ('ESTIMATED', 'NOT_ESTIMABLE')
+        AND estimable_count >= 0
+        AND acceptance_state IN ('ACCEPTED', 'REJECTED', 'NOT_APPLICABLE', 'NOT_ESTIMABLE')
+        AND ((metric_state = 'NOT_ESTIMABLE' AND decimal_value IS NULL AND boolean_value IS NULL AND acceptance_state = 'NOT_ESTIMABLE')
+          OR (metric_state = 'ESTIMATED' AND (decimal_value IS NOT NULL OR boolean_value IS NOT NULL)))
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE TABLE mra.evaluation_metric_observation (
+    evaluation_metric_observation_id uuid PRIMARY KEY,
+    evaluation_metric_id uuid NOT NULL,
+    evaluation_run_id uuid NOT NULL,
+    evaluation_protocol_metric_id uuid NOT NULL,
+    evaluation_observation_id uuid NOT NULL,
+    research_partition_member_id uuid NOT NULL,
+    market_target_outcome_revision_id uuid NOT NULL,
+    source_outcome_metric_id uuid NOT NULL,
+    source_target_metric_definition_id uuid NOT NULL,
+    source_value_type text NOT NULL,
+    source_value_status text NOT NULL,
+    input_state text NOT NULL,
+    reason_code text NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT evaluation_metric_observation_matrix_uk UNIQUE (evaluation_metric_id, evaluation_observation_id),
+    CONSTRAINT evaluation_metric_observation_run_matrix_uk UNIQUE (
+        evaluation_run_id, evaluation_protocol_metric_id,
+        research_partition_member_id
+    ),
+    CONSTRAINT evaluation_metric_observation_metric_fk FOREIGN KEY (
+        evaluation_metric_id, evaluation_run_id,
+        evaluation_protocol_metric_id
+    ) REFERENCES mra.evaluation_metric(
+        evaluation_metric_id, evaluation_run_id,
+        evaluation_protocol_metric_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT evaluation_metric_observation_observation_fk FOREIGN KEY (
+        evaluation_observation_id, evaluation_run_id,
+        research_partition_member_id, market_target_outcome_revision_id
+    ) REFERENCES mra.evaluation_observation(
+        evaluation_observation_id, evaluation_run_id,
+        research_partition_member_id, market_target_outcome_revision_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT evaluation_metric_observation_source_fk FOREIGN KEY (
+        source_outcome_metric_id, market_target_outcome_revision_id,
+        source_target_metric_definition_id, source_value_type,
+        source_value_status
+    ) REFERENCES mra.market_target_outcome_metric(
+        market_target_outcome_metric_id, market_target_outcome_revision_id,
+        target_metric_definition_id, value_type, value_status
+    ) ON DELETE RESTRICT,
+    CONSTRAINT evaluation_metric_observation_shape_ck CHECK (
+        source_value_type IN ('DECIMAL', 'BOOLEAN')
+        AND source_value_status IN ('PARTIAL', 'COMPLETE', 'UNAVAILABLE', 'FAILED')
+        AND input_state IN ('INCLUDED', 'EXCLUDED', 'NOT_ESTIMABLE')
+        AND reason_code ~ '^[A-Z][A-Z0-9_]{0,99}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+CREATE INDEX evaluation_metric_run_fk_idx ON mra.evaluation_metric (
+    evaluation_run_id, evaluation_protocol_id
+);
+CREATE INDEX evaluation_metric_protocol_fk_idx ON mra.evaluation_metric (
+    evaluation_protocol_metric_id, evaluation_protocol_id
+);
+CREATE INDEX evaluation_metric_observation_metric_fk_idx ON mra.evaluation_metric_observation (
+    evaluation_metric_id, evaluation_run_id, evaluation_protocol_metric_id
+);
+CREATE INDEX evaluation_metric_observation_observation_fk_idx ON mra.evaluation_metric_observation (
+    evaluation_observation_id, evaluation_run_id,
+    research_partition_member_id, market_target_outcome_revision_id
+);
+CREATE INDEX evaluation_metric_observation_source_fk_idx ON mra.evaluation_metric_observation (
+    source_outcome_metric_id, market_target_outcome_revision_id,
+    source_target_metric_definition_id, source_value_type, source_value_status
+);
+
+CREATE FUNCTION mra.guard_research_partition_overlap()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    PERFORM pg_advisory_xact_lock(
+        hashtextextended(
+            'research-partition-overlap:' || NEW.target_definition_id::text,
+            0
+        )
+    );
+    IF EXISTS (
+        SELECT 1 FROM mra.research_partition AS existing
+        WHERE existing.target_definition_id = NEW.target_definition_id
+          AND ((NEW.overlap_policy = 'ISOLATED_PROTECTED'
+                AND existing.overlap_policy <> 'DIAGNOSTIC_REUSE')
+            OR (existing.overlap_policy = 'ISOLATED_PROTECTED'
+                AND NEW.overlap_policy <> 'DIAGNOSTIC_REUSE'))
+          AND (existing.population_scope = 'ALL_COMMITMENTS'
+               OR NEW.population_scope = 'ALL_COMMITMENTS'
+               OR existing.population_scope = NEW.population_scope)
+          AND daterange(existing.protected_start_date, existing.protected_end_date, '[]')
+              && daterange(NEW.protected_start_date, NEW.protected_end_date, '[]')
+    ) THEN
+        RAISE EXCEPTION 'protected ResearchPartition overlap is forbidden' USING ERRCODE = '55000';
+    END IF;
+    IF NEW.overlap_policy = 'PURGED_WALK_FORWARD' AND EXISTS (
+        SELECT 1 FROM mra.research_partition AS existing
+        WHERE existing.target_definition_id = NEW.target_definition_id
+          AND existing.series_code = NEW.series_code
+          AND existing.fold_ordinal = NEW.fold_ordinal
+          AND existing.overlap_policy = 'PURGED_WALK_FORWARD'
+          AND (existing.population_scope = 'ALL_COMMITMENTS'
+               OR NEW.population_scope = 'ALL_COMMITMENTS'
+               OR existing.population_scope = NEW.population_scope)
+          AND daterange(existing.protected_start_date, existing.protected_end_date, '[]')
+              && daterange(NEW.protected_start_date, NEW.protected_end_date, '[]')
+    ) THEN
+        RAISE EXCEPTION 'same-fold protected range overlap is forbidden' USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.validate_research_partition_member()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+    partition_purpose text;
+    partition_scope text;
+    runtime_requested_at timestamptz;
+    runtime_created_at timestamptz;
+BEGIN
+    SELECT partition.purpose, partition.population_scope
+      INTO partition_purpose, partition_scope
+    FROM mra.research_partition AS partition
+    WHERE partition.research_partition_id = NEW.research_partition_id
+      AND partition.xmin::text = pg_current_xact_id()::text;
+    IF partition_purpose IS NULL THEN
+        RAISE EXCEPTION 'ResearchPartition roster is already frozen' USING ERRCODE = '55000';
+    END IF;
+    IF partition_scope <> 'ALL_COMMITMENTS' AND partition_scope <> NEW.candidate_disposition THEN
+        RAISE EXCEPTION 'Partition member is outside declared population scope' USING ERRCODE = '55000';
+    END IF;
+    IF partition_purpose = 'PROSPECTIVE' THEN
+        IF NEW.commitment_recorded_at >= NEW.earliest_outcome_event_at THEN
+            RAISE EXCEPTION 'Prospective commitment must precede earliest Outcome event' USING ERRCODE = '55000';
+        END IF;
+        IF NEW.runtime_mode IN ('HISTORICAL', 'REPLAY') THEN
+            RAISE EXCEPTION 'retrospective commitment cannot be Prospective' USING ERRCODE = '55000';
+        END IF;
+        SELECT runtime.requested_at, runtime.created_at
+          INTO runtime_requested_at, runtime_created_at
+        FROM mra.decision_target_commitment AS commitment
+        JOIN mra.decision_run AS decision ON decision.decision_run_id = commitment.decision_run_id
+        JOIN mra.runtime_run AS runtime ON runtime.run_id = decision.runtime_run_id
+        WHERE commitment.commitment_id = NEW.commitment_id;
+        IF runtime_requested_at > NEW.decision_time OR runtime_created_at > NEW.decision_time THEN
+            RAISE EXCEPTION 'commitment does not satisfy canonical live-clock facts' USING ERRCODE = '55000';
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.validate_research_partition_closure()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE actual_count integer;
+DECLARE declared_population_count integer;
+DECLARE minimum_ordinal integer;
+DECLARE maximum_ordinal integer;
+DECLARE actual_roster_hash text;
+BEGIN
+    LOCK TABLE mra.decision_target_commitment IN SHARE MODE;
+    SELECT count(*), min(member_ordinal), max(member_ordinal)
+      INTO actual_count, minimum_ordinal, maximum_ordinal
+    FROM mra.research_partition_member
+    WHERE research_partition_id = NEW.research_partition_id;
+
+    SELECT count(*) INTO declared_population_count
+    FROM mra.decision_target_commitment AS commitment
+    JOIN mra.decision_reference_observation AS reference
+      ON reference.decision_reference_observation_id =
+         commitment.decision_reference_observation_id
+    JOIN mra.trading_session AS session
+      ON session.session_id = reference.session_id
+    WHERE commitment.target_definition_id = NEW.target_definition_id
+      AND session.session_date BETWEEN
+          NEW.decision_start_date AND NEW.decision_end_date
+      AND (NEW.population_scope = 'ALL_COMMITMENTS'
+           OR commitment.candidate_disposition = NEW.population_scope);
+
+    SELECT mra.canonical_sha256(
+               replace(
+                   json_agg(
+                       json_build_object(
+                           'commitment_id', commitment_id,
+                           'content_sha256', content_sha256,
+                           'member_ordinal', member_ordinal
+                       ) ORDER BY member_ordinal
+                   )::text,
+                   ' ',
+                   ''
+               )
+           )
+      INTO actual_roster_hash
+    FROM mra.research_partition_member
+    WHERE research_partition_id = NEW.research_partition_id;
+
+    IF actual_count <> NEW.member_count
+       OR actual_count <> declared_population_count
+       OR actual_roster_hash <> NEW.member_roster_sha256
+       OR minimum_ordinal <> 1
+       OR maximum_ordinal <> NEW.member_count OR EXISTS (
+           SELECT 1 FROM mra.research_partition_member AS member
+           JOIN mra.trading_session AS session
+             ON session.session_id = member.decision_session_id
+           WHERE member.research_partition_id = NEW.research_partition_id
+             AND (member.target_definition_id <> NEW.target_definition_id
+                  OR session.session_date NOT BETWEEN
+                     NEW.decision_start_date AND NEW.decision_end_date)
+       ) OR EXISTS (
+           (
+               SELECT commitment.commitment_id
+               FROM mra.decision_target_commitment AS commitment
+               JOIN mra.decision_reference_observation AS reference
+                 ON reference.decision_reference_observation_id =
+                    commitment.decision_reference_observation_id
+               JOIN mra.trading_session AS session
+                 ON session.session_id = reference.session_id
+               WHERE commitment.target_definition_id =
+                     NEW.target_definition_id
+                 AND session.session_date BETWEEN
+                     NEW.decision_start_date AND NEW.decision_end_date
+                 AND (NEW.population_scope = 'ALL_COMMITMENTS'
+                      OR commitment.candidate_disposition =
+                         NEW.population_scope)
+           )
+           EXCEPT
+           (
+               SELECT member.commitment_id
+               FROM mra.research_partition_member AS member
+               WHERE member.research_partition_id =
+                     NEW.research_partition_id
+           )
+       ) OR EXISTS (
+           (
+               SELECT member.commitment_id
+               FROM mra.research_partition_member AS member
+               WHERE member.research_partition_id =
+                     NEW.research_partition_id
+           )
+           EXCEPT
+           (
+               SELECT commitment.commitment_id
+               FROM mra.decision_target_commitment AS commitment
+               JOIN mra.decision_reference_observation AS reference
+                 ON reference.decision_reference_observation_id =
+                    commitment.decision_reference_observation_id
+               JOIN mra.trading_session AS session
+                 ON session.session_id = reference.session_id
+               WHERE commitment.target_definition_id =
+                     NEW.target_definition_id
+                 AND session.session_date BETWEEN
+                     NEW.decision_start_date AND NEW.decision_end_date
+                 AND (NEW.population_scope = 'ALL_COMMITMENTS'
+                      OR commitment.candidate_disposition =
+                         NEW.population_scope)
+           )
+       ) THEN
+        RAISE EXCEPTION 'ResearchPartition member roster is incomplete or outside declaration' USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.guard_experiment_partition_order()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+    partition_frozen_at timestamptz;
+    experiment_registered_at timestamptz;
+    protected_purpose text;
+BEGIN
+    SELECT frozen_at, purpose INTO partition_frozen_at, protected_purpose
+    FROM mra.research_partition WHERE research_partition_id = NEW.research_partition_id FOR SHARE;
+    SELECT registered_at INTO experiment_registered_at
+    FROM mra.experiment WHERE experiment_id = NEW.experiment_id FOR SHARE;
+    IF NOT (partition_frozen_at < experiment_registered_at AND experiment_registered_at <= NEW.bound_at) THEN
+        RAISE EXCEPTION 'Partition must precede Experiment registration and binding' USING ERRCODE = '55000';
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM mra.experiment_run
+        WHERE experiment_id = NEW.experiment_id
+    ) THEN
+        RAISE EXCEPTION 'ExperimentPartition cannot be bound after an ExperimentRun opens' USING ERRCODE = '55000';
+    END IF;
+    IF protected_purpose IN ('LOCKED_OOS', 'PROSPECTIVE') AND EXISTS (
+        SELECT 1 FROM mra.research_partition_outcome_access AS access
+        JOIN mra.research_partition_member AS member
+          ON member.research_partition_member_id = access.research_partition_member_id
+        WHERE member.research_partition_id = NEW.research_partition_id
+    ) THEN
+        RAISE EXCEPTION 'protected Partition was already accessed' USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.guard_open_evaluation_protocol_metric()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM mra.evaluation_protocol
+        WHERE evaluation_protocol_id = NEW.evaluation_protocol_id
+    ) THEN
+        RAISE EXCEPTION 'EvaluationProtocol is already frozen' USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.validate_evaluation_protocol_closure()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE actual_count integer;
+DECLARE minimum_ordinal integer;
+DECLARE maximum_ordinal integer;
+BEGIN
+    SELECT count(*), min(ordinal), max(ordinal)
+      INTO actual_count, minimum_ordinal, maximum_ordinal
+    FROM mra.evaluation_protocol_metric
+    WHERE evaluation_protocol_id = NEW.evaluation_protocol_id;
+    IF actual_count <> NEW.metric_count OR minimum_ordinal <> 1
+       OR maximum_ordinal <> NEW.metric_count THEN
+        RAISE EXCEPTION 'EvaluationProtocol metric roster is incomplete' USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.guard_experiment_run_order()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE registration_time timestamptz;
+DECLARE protected_purpose text;
+BEGIN
+    SELECT registered_at INTO registration_time FROM mra.experiment
+    WHERE experiment_id = NEW.experiment_id FOR SHARE;
+    IF registration_time >= NEW.opened_at THEN
+        RAISE EXCEPTION 'Experiment registration must precede ExperimentRun' USING ERRCODE = '55000';
+    END IF;
+    SELECT partition_purpose INTO protected_purpose
+    FROM mra.experiment_partition
+    WHERE experiment_partition_id = NEW.experiment_partition_id;
+    IF protected_purpose IN ('LOCKED_OOS', 'PROSPECTIVE') AND EXISTS (
+        SELECT 1 FROM mra.research_partition_outcome_access AS access
+        JOIN mra.research_partition_member AS member
+          ON member.research_partition_member_id = access.research_partition_member_id
+        WHERE member.research_partition_id = NEW.research_partition_id
+    ) THEN
+        RAISE EXCEPTION 'protected ExperimentRun must open before first Outcome access' USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.guard_evaluation_run_open()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE experiment_opened_at timestamptz;
+DECLARE protocol_frozen_at timestamptz;
+BEGIN
+    SELECT opened_at INTO experiment_opened_at FROM mra.experiment_run
+    WHERE experiment_run_id = NEW.experiment_run_id FOR SHARE;
+    SELECT frozen_at INTO protocol_frozen_at FROM mra.evaluation_protocol
+    WHERE evaluation_protocol_id = NEW.evaluation_protocol_id FOR SHARE;
+    IF NEW.requested_knowledge_cutoff > NEW.opened_at THEN
+        RAISE EXCEPTION 'EvaluationRun knowledge cutoff cannot be in the future'
+            USING ERRCODE = '55000';
+    END IF;
+    IF experiment_opened_at >= NEW.opened_at OR protocol_frozen_at >= NEW.opened_at THEN
+        RAISE EXCEPTION 'ExperimentRun and Protocol must precede EvaluationRun' USING ERRCODE = '55000';
+    END IF;
+    IF NEW.partition_purpose IN ('LOCKED_OOS', 'PROSPECTIVE') THEN
+        PERFORM pg_advisory_xact_lock(
+            hashtextextended(
+                'research-protected-access:' || NEW.research_partition_id::text,
+                0
+            )
+        );
+        IF EXISTS (
+            SELECT 1
+            FROM mra.research_partition_outcome_access AS access
+            JOIN mra.research_partition_member AS member
+              ON member.research_partition_member_id =
+                 access.research_partition_member_id
+            WHERE member.research_partition_id = NEW.research_partition_id
+        ) THEN
+            RAISE EXCEPTION 'protected EvaluationRun requires zero prior Partition access' USING ERRCODE = '55000';
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.guard_evaluation_run_transition()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE actual_access_count integer;
+DECLARE actual_observation_count integer;
+DECLARE actual_metric_count integer;
+DECLARE actual_metric_input_count bigint;
+BEGIN
+    IF ROW(OLD.evaluation_run_id, OLD.experiment_run_id, OLD.experiment_id,
+           OLD.experiment_partition_id, OLD.research_partition_id,
+           OLD.evaluation_protocol_id, OLD.target_definition_id,
+           OLD.partition_purpose, OLD.requested_knowledge_cutoff,
+           OLD.expected_member_count, OLD.expected_protocol_metric_count,
+           OLD.code_artifact_id, OLD.code_content_sha256, OLD.code_size_bytes,
+           OLD.config_artifact_id, OLD.config_content_sha256,
+           OLD.config_size_bytes, OLD.provenance_sha256, OLD.content_sha256,
+           OLD.request_identity, OLD.request_sha256, OLD.opened_at)
+       IS DISTINCT FROM
+       ROW(NEW.evaluation_run_id, NEW.experiment_run_id, NEW.experiment_id,
+           NEW.experiment_partition_id, NEW.research_partition_id,
+           NEW.evaluation_protocol_id, NEW.target_definition_id,
+           NEW.partition_purpose, NEW.requested_knowledge_cutoff,
+           NEW.expected_member_count, NEW.expected_protocol_metric_count,
+           NEW.code_artifact_id, NEW.code_content_sha256, NEW.code_size_bytes,
+           NEW.config_artifact_id, NEW.config_content_sha256,
+           NEW.config_size_bytes, NEW.provenance_sha256, NEW.content_sha256,
+           NEW.request_identity, NEW.request_sha256, NEW.opened_at) THEN
+        RAISE EXCEPTION 'EvaluationRun frozen binding is immutable' USING ERRCODE = '55000';
+    END IF;
+    IF NOT ((OLD.status = 'OPEN' AND NEW.status IN ('INPUTS_ACQUIRED', 'FAILED'))
+         OR (OLD.status = 'INPUTS_ACQUIRED' AND NEW.status IN ('COMPLETED', 'FAILED'))) THEN
+        RAISE EXCEPTION 'invalid EvaluationRun lifecycle transition' USING ERRCODE = '55000';
+    END IF;
+    IF NEW.version <> OLD.version + 1 THEN
+        RAISE EXCEPTION 'EvaluationRun version must increment exactly once' USING ERRCODE = '55000';
+    END IF;
+    IF NEW.status = 'INPUTS_ACQUIRED' THEN
+        SELECT count(*) INTO actual_access_count
+        FROM mra.research_partition_outcome_access
+        WHERE evaluation_run_id = NEW.evaluation_run_id;
+        SELECT count(*) INTO actual_observation_count
+        FROM mra.evaluation_observation
+        WHERE evaluation_run_id = NEW.evaluation_run_id;
+        IF actual_access_count <> NEW.expected_member_count
+           OR actual_observation_count <> NEW.expected_member_count
+           OR NEW.access_count <> actual_access_count
+           OR NEW.observation_count <> actual_observation_count
+           OR NEW.input_roster_sha256 IS NULL THEN
+            RAISE EXCEPTION 'Evaluation input roster does not reconcile' USING ERRCODE = '55000';
+        END IF;
+    END IF;
+    IF NEW.status = 'COMPLETED' THEN
+        SELECT count(*) INTO actual_metric_count
+        FROM mra.evaluation_metric WHERE evaluation_run_id = NEW.evaluation_run_id;
+        SELECT count(*) INTO actual_metric_input_count
+        FROM mra.evaluation_metric_observation WHERE evaluation_run_id = NEW.evaluation_run_id;
+        IF actual_metric_count <> NEW.expected_protocol_metric_count
+           OR actual_metric_input_count <>
+              NEW.expected_member_count::bigint * NEW.expected_protocol_metric_count::bigint
+           OR NEW.metric_count <> actual_metric_count
+           OR NEW.metric_observation_count <> actual_metric_input_count
+           OR NEW.metric_roster_sha256 IS NULL THEN
+            RAISE EXCEPTION 'Evaluation metric Cartesian roster does not reconcile' USING ERRCODE = '55000';
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.guard_evaluation_observation_insert()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM mra.evaluation_run
+        WHERE evaluation_run_id = NEW.evaluation_run_id AND status = 'OPEN'
+    ) THEN
+        RAISE EXCEPTION 'EvaluationObservation requires OPEN acquisition transaction' USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.guard_evaluation_metric_insert()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM mra.evaluation_run
+        WHERE evaluation_run_id = NEW.evaluation_run_id
+          AND status = 'INPUTS_ACQUIRED'
+    ) THEN
+        RAISE EXCEPTION 'EvaluationMetric requires INPUTS_ACQUIRED run' USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.guard_research_outcome_access()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE run_status text;
+DECLARE run_opened_at timestamptz;
+DECLARE cutoff timestamptz;
+DECLARE partition_id uuid;
+DECLARE partition_purpose text;
+DECLARE expected_ordinal integer;
+DECLARE visible_leaf_count integer;
+BEGIN
+    PERFORM 1
+    FROM mra.market_target_outcome AS root
+    WHERE root.market_target_outcome_id = NEW.market_target_outcome_id
+      AND root.commitment_id = NEW.commitment_id
+      AND root.target_definition_id = NEW.target_definition_id
+    FOR SHARE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Outcome access root is absent or mismatched'
+            USING ERRCODE = '23503';
+    END IF;
+    SELECT status, opened_at, requested_knowledge_cutoff,
+           research_partition_id, evaluation_run.partition_purpose
+      INTO run_status, run_opened_at, cutoff,
+           partition_id, partition_purpose
+    FROM mra.evaluation_run WHERE evaluation_run_id = NEW.evaluation_run_id FOR UPDATE;
+    IF run_status <> 'OPEN' THEN
+        RAISE EXCEPTION 'Outcome acquisition requires EvaluationRun OPEN' USING ERRCODE = '55000';
+    END IF;
+    IF cutoff > NEW.accessed_at
+       OR NEW.accessed_at <= run_opened_at OR NEW.knowledge_cutoff > cutoff
+       OR NEW.observation_cutoff > cutoff OR NEW.settled_at > cutoff THEN
+        RAISE EXCEPTION 'Outcome access ordering/cutoff is invalid' USING ERRCODE = '55000';
+    END IF;
+    IF partition_purpose IN ('LOCKED_OOS', 'PROSPECTIVE') THEN
+        PERFORM pg_advisory_xact_lock(
+            hashtextextended(
+                'research-protected-access:' || partition_id::text,
+                0
+            )
+        );
+    END IF;
+    SELECT coalesce(max(access_ordinal), 0) + 1 INTO expected_ordinal
+    FROM mra.research_partition_outcome_access
+    WHERE research_partition_member_id = NEW.research_partition_member_id;
+    IF NEW.access_ordinal <> expected_ordinal THEN
+        RAISE EXCEPTION 'Outcome access ordinal is not globally sequential for member' USING ERRCODE = '55000';
+    END IF;
+    IF partition_purpose IN ('LOCKED_OOS', 'PROSPECTIVE')
+       AND expected_ordinal <> 1 THEN
+        RAISE EXCEPTION 'protected Outcome access must remain first access' USING ERRCODE = '55000';
+    END IF;
+
+    SELECT count(*) INTO visible_leaf_count
+    FROM mra.market_target_outcome_revision AS candidate
+    WHERE candidate.commitment_id = NEW.commitment_id
+      AND candidate.target_definition_id = NEW.target_definition_id
+      AND candidate.observation_cutoff <= cutoff
+      AND candidate.knowledge_cutoff <= cutoff
+      AND candidate.settled_at <= cutoff
+      AND NOT EXISTS (
+          SELECT 1
+          FROM mra.market_target_outcome_revision AS successor
+          WHERE successor.supersedes_revision_id =
+                candidate.market_target_outcome_revision_id
+            AND successor.commitment_id = NEW.commitment_id
+            AND successor.target_definition_id = NEW.target_definition_id
+            AND successor.observation_cutoff <= cutoff
+            AND successor.knowledge_cutoff <= cutoff
+            AND successor.settled_at <= cutoff
+      );
+    IF visible_leaf_count <> 1 OR NOT EXISTS (
+        SELECT 1
+        FROM mra.market_target_outcome_revision AS candidate
+        WHERE candidate.market_target_outcome_revision_id =
+              NEW.market_target_outcome_revision_id
+          AND candidate.commitment_id = NEW.commitment_id
+          AND candidate.target_definition_id = NEW.target_definition_id
+          AND candidate.observation_cutoff <= cutoff
+          AND candidate.knowledge_cutoff <= cutoff
+          AND candidate.settled_at <= cutoff
+          AND NOT EXISTS (
+              SELECT 1
+              FROM mra.market_target_outcome_revision AS successor
+              WHERE successor.supersedes_revision_id =
+                    candidate.market_target_outcome_revision_id
+                AND successor.commitment_id = NEW.commitment_id
+                AND successor.target_definition_id = NEW.target_definition_id
+                AND successor.observation_cutoff <= cutoff
+                AND successor.knowledge_cutoff <= cutoff
+                AND successor.settled_at <= cutoff
+          )
+    ) THEN
+        RAISE EXCEPTION 'Outcome access revision is not the unique visible leaf' USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER research_partition_overlap_guard
+BEFORE INSERT ON mra.research_partition
+FOR EACH ROW EXECUTE FUNCTION mra.guard_research_partition_overlap();
+CREATE TRIGGER research_partition_append_only
+BEFORE UPDATE OR DELETE ON mra.research_partition
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE CONSTRAINT TRIGGER research_partition_closure_guard
+AFTER INSERT ON mra.research_partition
+DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW EXECUTE FUNCTION mra.validate_research_partition_closure();
+CREATE TRIGGER research_partition_member_validate
+BEFORE INSERT ON mra.research_partition_member
+FOR EACH ROW EXECUTE FUNCTION mra.validate_research_partition_member();
+CREATE TRIGGER research_partition_member_append_only
+BEFORE UPDATE OR DELETE ON mra.research_partition_member
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER experiment_append_only
+BEFORE UPDATE OR DELETE ON mra.experiment
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER experiment_partition_order_guard
+BEFORE INSERT ON mra.experiment_partition
+FOR EACH ROW EXECUTE FUNCTION mra.guard_experiment_partition_order();
+CREATE TRIGGER experiment_partition_append_only
+BEFORE UPDATE OR DELETE ON mra.experiment_partition
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER experiment_run_order_guard
+BEFORE INSERT ON mra.experiment_run
+FOR EACH ROW EXECUTE FUNCTION mra.guard_experiment_run_order();
+CREATE TRIGGER experiment_run_append_only
+BEFORE UPDATE OR DELETE ON mra.experiment_run
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER evaluation_protocol_append_only
+BEFORE UPDATE OR DELETE ON mra.evaluation_protocol
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER evaluation_protocol_closure_guard
+BEFORE INSERT ON mra.evaluation_protocol
+FOR EACH ROW EXECUTE FUNCTION mra.validate_evaluation_protocol_closure();
+CREATE TRIGGER evaluation_protocol_metric_append_only
+BEFORE UPDATE OR DELETE ON mra.evaluation_protocol_metric
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER evaluation_protocol_metric_open_guard
+BEFORE INSERT ON mra.evaluation_protocol_metric
+FOR EACH ROW EXECUTE FUNCTION mra.guard_open_evaluation_protocol_metric();
+CREATE TRIGGER evaluation_run_open_guard
+BEFORE INSERT ON mra.evaluation_run
+FOR EACH ROW EXECUTE FUNCTION mra.guard_evaluation_run_open();
+CREATE TRIGGER evaluation_run_transition_guard
+BEFORE UPDATE OR DELETE ON mra.evaluation_run
+FOR EACH ROW EXECUTE FUNCTION mra.guard_evaluation_run_transition();
+CREATE TRIGGER research_outcome_access_guard
+BEFORE INSERT ON mra.research_partition_outcome_access
+FOR EACH ROW EXECUTE FUNCTION mra.guard_research_outcome_access();
+CREATE TRIGGER research_outcome_access_append_only
+BEFORE UPDATE OR DELETE ON mra.research_partition_outcome_access
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER evaluation_observation_append_only
+BEFORE UPDATE OR DELETE ON mra.evaluation_observation
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER evaluation_observation_insert_guard
+BEFORE INSERT ON mra.evaluation_observation
+FOR EACH ROW EXECUTE FUNCTION mra.guard_evaluation_observation_insert();
+CREATE TRIGGER evaluation_metric_append_only
+BEFORE UPDATE OR DELETE ON mra.evaluation_metric
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER evaluation_metric_insert_guard
+BEFORE INSERT ON mra.evaluation_metric
+FOR EACH ROW EXECUTE FUNCTION mra.guard_evaluation_metric_insert();
+CREATE TRIGGER evaluation_metric_observation_append_only
+BEFORE UPDATE OR DELETE ON mra.evaluation_metric_observation
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER evaluation_metric_observation_insert_guard
+BEFORE INSERT ON mra.evaluation_metric_observation
+FOR EACH ROW EXECUTE FUNCTION mra.guard_evaluation_metric_insert();
