@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import StrEnum
 import re
 from uuid import UUID
@@ -45,6 +45,9 @@ class ResearchAssessmentPlan:
             raise ValueError("assessment_code has an invalid format")
         if self.knowledge_cutoff.tzinfo is None or self.knowledge_cutoff.utcoffset() is None:
             raise ValueError("knowledge_cutoff must be timezone-aware")
+        object.__setattr__(
+            self, "knowledge_cutoff", self.knowledge_cutoff.astimezone(UTC)
+        )
         if isinstance(self.revision, bool) or self.revision < 1:
             raise ValueError("Assessment revision must be positive")
         if (self.revision == 1) != (self.supersedes_assessment_id is None):

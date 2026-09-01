@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 from enum import StrEnum
 import re
@@ -286,6 +286,8 @@ class ResearchQualificationDecisionPlan:
                 raise ValueError(f"{name} must be timezone-aware")
         if self.effective_at > self.known_at:
             raise ValueError("effective_at cannot follow known_at")
+        object.__setattr__(self, "effective_at", self.effective_at.astimezone(UTC))
+        object.__setattr__(self, "known_at", self.known_at.astimezone(UTC))
         provenance_hash = ContentHash(str(self.provenance_sha256))
         object.__setattr__(self, "provenance_sha256", provenance_hash)
         object.__setattr__(

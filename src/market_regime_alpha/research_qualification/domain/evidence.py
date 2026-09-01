@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 import re
 from enum import StrEnum
 from uuid import UUID
@@ -128,6 +128,7 @@ class EvidenceItemPlan:
             raise ValueError("evidence_code has an invalid format")
         if self.observed_at.tzinfo is None or self.observed_at.utcoffset() is None:
             raise ValueError("observed_at must be timezone-aware")
+        object.__setattr__(self, "observed_at", self.observed_at.astimezone(UTC))
         if self.scope is EvidenceScope.RUN and self.evaluation_metric_id is not None:
             raise ValueError("RUN-scoped Evidence forbids an EvaluationMetric")
         if self.scope is EvidenceScope.METRIC and self.evaluation_metric_id is None:

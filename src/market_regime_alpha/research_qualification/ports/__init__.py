@@ -29,6 +29,10 @@ from market_regime_alpha.research_qualification.ports.target_uow import (
     TargetUnitOfWork,
     TargetUnitOfWorkProvider,
 )
+from market_regime_alpha.research_qualification.ports.qualification_read import (
+    AdmittedResearchQualification,
+    ResearchQualificationAdmissionReadPort,
+)
 __all__ = [
     "ResearchArtifactByteStore",
     "ResearchArtifactRepository",
@@ -45,4 +49,6 @@ __all__ = [
     "TargetRegistrationReconciliation",
     "TargetUnitOfWork",
     "TargetUnitOfWorkProvider",
+    "AdmittedResearchQualification",
+    "ResearchQualificationAdmissionReadPort",
 ]

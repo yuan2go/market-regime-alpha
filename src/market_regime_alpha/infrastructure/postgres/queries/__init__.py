@@ -39,6 +39,12 @@ from market_regime_alpha.infrastructure.postgres.queries.research_sources import
 from market_regime_alpha.infrastructure.postgres.queries.research_verification import (
     PostgresResearchEvaluationVerificationProvider,
 )
+from market_regime_alpha.infrastructure.postgres.queries.research_qualification import (
+    PostgresResearchQualificationAdmissionReadPort,
+)
+from market_regime_alpha.infrastructure.postgres.queries.research_qualification_verification import (
+    PostgresResearchQualificationVerificationProvider,
+)
 
 __all__ = [
     "PostgresCandidateQueryProvider",
@@ -55,5 +61,7 @@ __all__ = [
     "PostgresOutcomeVerificationProvider",
     "PostgresResearchSourceQueries",
     "PostgresResearchEvaluationVerificationProvider",
+    "PostgresResearchQualificationAdmissionReadPort",
+    "PostgresResearchQualificationVerificationProvider",
     "PostgresSelectionMarketQueries",
 ]

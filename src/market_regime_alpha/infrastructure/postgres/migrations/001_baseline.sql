@@ -9208,6 +9208,7 @@ CREATE INDEX evaluation_metric_observation_source_fk_idx ON mra.evaluation_metri
     source_target_metric_definition_id, source_value_type, source_value_status
 );
 
+-- WP-12: integrated Research Evidence, Assessment, and Qualification Authority.
 ALTER TABLE mra.evaluation_run
     ADD CONSTRAINT evaluation_run_evidence_authority_uk UNIQUE (
         evaluation_run_id, experiment_id, evaluation_protocol_id,

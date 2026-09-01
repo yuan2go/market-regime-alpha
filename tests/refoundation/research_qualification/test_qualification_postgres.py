@@ -17,6 +17,12 @@ from market_regime_alpha.infrastructure.postgres.evaluation_uow import (
 from market_regime_alpha.infrastructure.postgres.qualification_uow import (
     PostgresQualificationUnitOfWorkProvider,
 )
+from market_regime_alpha.infrastructure.postgres.queries.research_qualification import (
+    PostgresResearchQualificationAdmissionReadPort,
+)
+from market_regime_alpha.infrastructure.postgres.queries.research_qualification_verification import (
+    PostgresResearchQualificationVerificationProvider,
+)
 from market_regime_alpha.research_qualification.application.assessment import (
     AssessmentCommands,
 )
@@ -25,6 +31,9 @@ from market_regime_alpha.research_qualification.application.evaluations import (
 )
 from market_regime_alpha.research_qualification.application.qualification import (
     QualificationCommands,
+)
+from market_regime_alpha.research_qualification.application.qualification_verification import (
+    ResearchQualificationVerifier,
 )
 from market_regime_alpha.research_qualification.domain.assessment import (
     AssessmentStatus,
@@ -254,6 +263,66 @@ def test_qualification_evaluates_every_floor_and_binds_exact_evidence(
         ).fetchone()
     assert floor_rows == [("SATISFIED", 1, 0)]
     assert evidence_count == (1,)
+    admission = PostgresResearchQualificationAdmissionReadPort(
+        stack.pool
+    ).admitted_by_id(
+        decision.research_qualification_decision_id,
+        requested_knowledge_cutoff=decision.known_at,
+        consumer_generation_time=decision.effective_at,
+    )
+    assert admission is not None
+    assert admission.qualification_purpose == "VALIDATION"
+    assert (
+        PostgresResearchQualificationAdmissionReadPort(stack.pool).admitted_by_id(
+            decision.research_qualification_decision_id,
+            requested_knowledge_cutoff=decision.known_at,
+            consumer_generation_time=admission.source_generation_max_decision_time,
+        )
+        is None
+    )
+    with psycopg.connect(stack.database_url) as connection:
+        evidence_item_id = connection.execute(
+            """
+            SELECT evidence_item_id FROM mra.research_assessment_evidence
+            WHERE research_assessment_id = %s ORDER BY evidence_ordinal LIMIT 1
+            """,
+            (assessment.research_assessment_id,),
+        ).fetchone()[0]
+    verifier = ResearchQualificationVerifier(
+        PostgresResearchQualificationVerificationProvider(stack.pool)
+    )
+    reports = (
+        verifier.verify_evidence(evidence_item_id),
+        verifier.verify_assessment(assessment.research_assessment_id),
+        verifier.verify_policy(policy.research_qualification_policy_id),
+        verifier.verify_decision(decision.research_qualification_decision_id),
+    )
+    failures = [
+        (report.authority_kind, report.mismatches)
+        for report in reports
+        if not report.matched
+    ]
+    assert not failures, "\n".join(
+        f"{kind}:{mismatch.path}:{mismatch.expected}:{mismatch.actual}"
+        for kind, mismatches in failures
+        for mismatch in mismatches
+    )
+    assert all(report.mismatch_count == 0 for report in reports)
+    with psycopg.connect(stack.database_url) as connection:
+        connection.execute("SET LOCAL session_replication_role = replica")
+        connection.execute(
+            """
+            UPDATE mra.evidence_item SET content_sha256 = %s
+            WHERE evidence_item_id = %s
+            """,
+            ("0" * 64, evidence_item_id),
+        )
+        connection.commit()
+    drift = verifier.verify_evidence(evidence_item_id)
+    assert drift.matched is False
+    assert "evidence.content_sha256" in {
+        mismatch.path for mismatch in drift.mismatches
+    }
     with pytest.raises(IdempotencyKeyReusedError):
         commands.decide(
             replace(decision, research_qualification_decision_id=uuid4()),
