@@ -3,7 +3,7 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Documentation navigation and precedence only
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-31
+> **Last Updated:** 2026-09-02
 > **Code Evidence:** `src/market_regime_alpha`, both legacy and target PostgreSQL migration packages, `tests`
 
 Documentation never creates implementation truth, research evidence,
@@ -115,6 +115,13 @@ Checkpoint traceability:
   — file-level TDD slices for Evidence, Assessment, Policy/Decision,
   generation-safe reads, reconciliation, real PostgreSQL campaigns, and the
   final exact-SHA engineering gate.
+- [WP-12 Research Evidence, Assessment and Qualification Implementation Status](references/WP-ARCHITECTURE-REFOUNDATION-12-Research-Evidence-Assessment-Qualification-Implementation-Status.md)
+  — current handoff read model for the qualified implementation and its strict
+  non-cutover/evidence ceiling.
+- [WP-12 Research Evidence, Assessment and Qualification Verification](references/WP-ARCHITECTURE-REFOUNDATION-12-Research-Evidence-Assessment-Qualification-Verification.md)
+  — immutable exact-SHA engineering proof for Evaluation-bound Evidence,
+  complete Assessment, purpose-specific Qualification, generation safety,
+  PostgreSQL qualification, full regression, and `WP12_EXIT_GATE = PASS`.
 
 Design documents in this section define the Target destination. Status and
 Verification records report their explicitly bounded implementation evidence;
