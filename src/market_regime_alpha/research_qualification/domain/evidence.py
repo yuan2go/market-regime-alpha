@@ -141,7 +141,20 @@ class EvidenceItemPlan:
         if self.evidence_item_id in parent_ids:
             raise ValueError("Evidence cannot depend on itself")
         provenance_hash = ContentHash(str(self.provenance_sha256))
-        roster_hash = ContentHash(canonical_json_sha256(self.dependencies))
+        roster_hash = ContentHash(
+            canonical_json_sha256(
+                tuple(
+                    {
+                        "content_sha256": str(item.content_sha256),
+                        "dependency_role": item.dependency_role,
+                        "evidence_dependency_id": item.evidence_dependency_id,
+                        "ordinal": item.ordinal,
+                        "parent_evidence_item_id": item.parent_evidence_item_id,
+                    }
+                    for item in self.dependencies
+                )
+            )
+        )
         object.__setattr__(self, "provenance_sha256", provenance_hash)
         object.__setattr__(self, "dependency_count", len(self.dependencies))
         object.__setattr__(self, "dependency_roster_sha256", roster_hash)
