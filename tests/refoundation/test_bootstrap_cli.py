@@ -22,6 +22,11 @@ from market_regime_alpha.infrastructure.postgres.queries import (
 )
 from market_regime_alpha.interfaces.cli import main
 from market_regime_alpha.runtime.application import ActorType, CommandContext
+from market_regime_alpha.research_qualification.application import (
+    EvaluationCommands,
+    ExperimentCommands,
+    ResearchPartitionCommands,
+)
 from market_regime_alpha.selection.application import (
     CandidateApplication,
     SelectionApplication,
@@ -111,6 +116,9 @@ def test_mra_db_bootstrap_verify_and_runtime_inspection_smoke(
         assert isinstance(application.selection, SelectionApplication)
         assert isinstance(application.candidates, CandidateApplication)
         assert isinstance(application.decision_support, DecisionSupportApplication)
+        assert isinstance(application.research_partitions, ResearchPartitionCommands)
+        assert isinstance(application.research_experiments, ExperimentCommands)
+        assert isinstance(application.research_evaluations, EvaluationCommands)
         assert isinstance(
             application.candidate_queries,
             PostgresCandidateQueryProvider,

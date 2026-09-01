@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import os
 from pathlib import Path
 from typing import Mapping
+from uuid import uuid4
 
 from market_regime_alpha.infrastructure.artifacts import LocalArtifactStore
 from market_regime_alpha.infrastructure.postgres.pool import TargetPostgresPool
@@ -21,6 +22,15 @@ from market_regime_alpha.infrastructure.postgres.decision_uow import (
 )
 from market_regime_alpha.infrastructure.postgres.outcome_uow import (
     PostgresOutcomeUnitOfWorkProvider,
+)
+from market_regime_alpha.infrastructure.postgres.partition_uow import (
+    PostgresPartitionUnitOfWorkProvider,
+)
+from market_regime_alpha.infrastructure.postgres.experiment_uow import (
+    PostgresExperimentUnitOfWorkProvider,
+)
+from market_regime_alpha.infrastructure.postgres.evaluation_uow import (
+    PostgresEvaluationUnitOfWorkProvider,
 )
 from market_regime_alpha.infrastructure.postgres.selection_uow import (
     PostgresSelectionUnitOfWorkProvider,
@@ -55,6 +65,9 @@ from market_regime_alpha.decision_support.application import DecisionSupportAppl
 from market_regime_alpha.outcome.application import OutcomeApplication, OutcomeVerifier
 from market_regime_alpha.outcome.ports import OutcomeReadPort
 from market_regime_alpha.research_qualification.application import (
+    EvaluationCommands,
+    ExperimentCommands,
+    ResearchPartitionCommands,
     ResearchQualificationApplication,
 )
 from market_regime_alpha.selection.application import (
@@ -144,6 +157,9 @@ class TargetApplication:
     market_queries: MarketQueryProvider
     selection: SelectionApplication
     research_definitions: ResearchQualificationApplication
+    research_partitions: ResearchPartitionCommands
+    research_experiments: ExperimentCommands
+    research_evaluations: EvaluationCommands
     candidates: CandidateApplication
     candidate_queries: CandidateQueryProvider
     decision_support: DecisionSupportApplication
@@ -188,6 +204,18 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
             byte_store,
             PostgresResearchUnitOfWorkProvider(pool),
             PostgresTargetUnitOfWorkProvider(pool),
+        ),
+        research_partitions=ResearchPartitionCommands(
+            PostgresPartitionUnitOfWorkProvider(pool, id_factory=uuid4),
+            id_factory=uuid4,
+        ),
+        research_experiments=ExperimentCommands(
+            PostgresExperimentUnitOfWorkProvider(pool),
+            id_factory=uuid4,
+        ),
+        research_evaluations=EvaluationCommands(
+            PostgresEvaluationUnitOfWorkProvider(pool, id_factory=uuid4),
+            id_factory=uuid4,
         ),
         candidates=CandidateApplication(
             PostgresCandidateResearchInputLoader(pool, byte_store),
