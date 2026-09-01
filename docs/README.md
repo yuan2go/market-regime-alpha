@@ -95,6 +95,10 @@ Checkpoint traceability:
   closes sole composition, single-exchange Partition calendar Authority,
   complete Experiment binding rosters, formal reconciliation, concurrency and
   recovery before any WP-11 exit-gate decision.
+- [WP-11Q Research Validity and Evaluation Qualification Implementation Plan](references/WP-ARCHITECTURE-REFOUNDATION-11Q-Research-Validity-Evaluation-Qualification-Implementation-Plan.md)
+  — file-level TDD slices, checkpoint boundaries, PostgreSQL campaigns, full
+  exact-SHA gate and merge-stop procedure for executing the approved WP-11Q
+  design without entering WP-12 early.
 
 All documents in this section have Target status. They define the destination,
 not current completion.
