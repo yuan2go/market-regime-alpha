@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
 import re
@@ -172,11 +173,60 @@ class ResearchQualificationPolicyPlan:
             raise ValueError("Qualification floor ordinals must be contiguous")
         if len({item.floor_code for item in self.floors}) != len(self.floors):
             raise ValueError("Qualification floor codes must be unique")
+        floor_bindings = tuple(
+            (
+                item.evaluation_protocol_metric_id,
+                item.required_partition_purpose,
+            )
+            for item in self.floors
+        )
+        if len(set(floor_bindings)) != len(floor_bindings):
+            raise ValueError("Qualification floor metric bindings must be unique")
+        if not any(item.required for item in self.floors):
+            raise ValueError("Qualification Policy requires a required floor")
         if self.qualification_purpose in {QualificationPurpose.LOCKED_OOS, QualificationPurpose.PROSPECTIVE} and not self.require_preaccess_freeze:
             raise ValueError("protected Qualification requires pre-access Policy freeze")
         target_hash = ContentHash(str(self.target_definition_sha256))
         provenance_hash = ContentHash(str(self.provenance_sha256))
-        roster_hash = ContentHash(canonical_json_sha256(self.floors))
+        roster_hash = ContentHash(
+            canonical_json_sha256(
+                tuple(
+                    {
+                        "boolean_threshold": item.boolean_threshold,
+                        "candidate_disposition": item.candidate_disposition,
+                        "content_sha256": str(item.content_sha256),
+                        "decimal_threshold": item.decimal_threshold,
+                        "direction": item.direction,
+                        "evaluation_protocol_id": item.evaluation_protocol_id,
+                        "evaluation_protocol_metric_id": item.evaluation_protocol_metric_id,
+                        "evaluation_protocol_metric_sha256": str(
+                            item.evaluation_protocol_metric_sha256
+                        ),
+                        "floor_code": item.floor_code,
+                        "maximum_counter_evidence_count": item.maximum_counter_evidence_count,
+                        "minimum_estimable_count": item.minimum_estimable_count,
+                        "minimum_member_count": item.minimum_member_count,
+                        "minimum_support_evidence_count": item.minimum_support_evidence_count,
+                        "missingness_policy": item.missingness_policy,
+                        "operator": item.operator,
+                        "ordinal": item.ordinal,
+                        "reducer": item.reducer,
+                        "required": item.required,
+                        "required_evaluation_status": item.required_evaluation_status,
+                        "required_evidence_class": item.required_evidence_class,
+                        "required_evidence_role": item.required_evidence_role,
+                        "required_origin_class": item.required_origin_class,
+                        "required_partition_purpose": item.required_partition_purpose,
+                        "research_qualification_policy_floor_id": (
+                            item.research_qualification_policy_floor_id
+                        ),
+                        "slice_kind": item.slice_kind,
+                        "source_value_type": item.source_value_type,
+                    }
+                    for item in self.floors
+                )
+            )
+        )
         object.__setattr__(self, "target_definition_sha256", target_hash)
         object.__setattr__(self, "provenance_sha256", provenance_hash)
         object.__setattr__(self, "floor_count", len(self.floors))
@@ -202,6 +252,60 @@ class ResearchQualificationPolicyPlan:
                         "target_definition_sha256": target_hash,
                         "target_version": self.target_version,
                         "version": self.version,
+                    }
+                )
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ResearchQualificationDecisionPlan:
+    research_qualification_decision_id: UUID
+    decision_code: str
+    revision: int
+    supersedes_decision_id: UUID | None
+    research_assessment_id: UUID
+    research_qualification_policy_id: UUID
+    effective_at: datetime
+    known_at: datetime
+    code_artifact: ArtifactBinding
+    config_artifact: ArtifactBinding
+    provenance_sha256: ContentHash | str
+    content_sha256: ContentHash = field(init=False)
+
+    def __post_init__(self) -> None:
+        if not _CODE.fullmatch(self.decision_code):
+            raise ValueError("decision_code has an invalid format")
+        if isinstance(self.revision, bool) or self.revision < 1:
+            raise ValueError("Qualification Decision revision must be positive")
+        if (self.revision == 1) != (self.supersedes_decision_id is None):
+            raise ValueError("Qualification Decision supersession shape is invalid")
+        for name in ("effective_at", "known_at"):
+            value = getattr(self, name)
+            if value.tzinfo is None or value.utcoffset() is None:
+                raise ValueError(f"{name} must be timezone-aware")
+        if self.effective_at > self.known_at:
+            raise ValueError("effective_at cannot follow known_at")
+        provenance_hash = ContentHash(str(self.provenance_sha256))
+        object.__setattr__(self, "provenance_sha256", provenance_hash)
+        object.__setattr__(
+            self,
+            "content_sha256",
+            ContentHash(
+                canonical_json_sha256(
+                    {
+                        "code_artifact": self.code_artifact,
+                        "config_artifact": self.config_artifact,
+                        "decision_code": self.decision_code,
+                        "effective_at": self.effective_at,
+                        "known_at": self.known_at,
+                        "provenance_sha256": provenance_hash,
+                        "research_assessment_id": self.research_assessment_id,
+                        "research_qualification_policy_id": (
+                            self.research_qualification_policy_id
+                        ),
+                        "revision": self.revision,
+                        "supersedes_decision_id": self.supersedes_decision_id,
                     }
                 )
             ),
@@ -234,6 +338,7 @@ __all__ = [
     "QualificationOperator",
     "QualificationPolicyFloorPlan",
     "QualificationPurpose",
+    "ResearchQualificationDecisionPlan",
     "ResearchQualificationPolicyPlan",
     "qualification_decision_status",
 ]

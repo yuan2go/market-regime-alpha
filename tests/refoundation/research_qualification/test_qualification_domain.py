@@ -123,6 +123,38 @@ def test_policy_requires_contiguous_non_empty_floors_and_protected_preaccess() -
         )
 
 
+def test_policy_rejects_duplicate_metric_floor_and_requires_one_required_floor() -> None:
+    floor = _floor()
+    duplicate = _floor(
+        floor_code="duplicate-primary",
+        ordinal=2,
+        evaluation_protocol_id=floor.evaluation_protocol_id,
+        evaluation_protocol_metric_id=floor.evaluation_protocol_metric_id,
+    )
+    common = {
+        "research_qualification_policy_id": uuid4(),
+        "policy_code": "validation-admission",
+        "version": 1,
+        "supersedes_policy_id": None,
+        "target_definition_id": uuid4(),
+        "target_version": 1,
+        "target_definition_sha256": "b" * 64,
+        "qualification_purpose": QualificationPurpose.VALIDATION,
+        "required_assessment_status": AssessmentStatus.SUPPORTED,
+        "require_preaccess_freeze": False,
+        "code_artifact": ArtifactBinding(uuid4(), "c" * 64, 12),
+        "config_artifact": ArtifactBinding(uuid4(), "d" * 64, 13),
+        "provenance_sha256": "e" * 64,
+    }
+    with pytest.raises(ValueError, match="bindings"):
+        ResearchQualificationPolicyPlan(floors=(floor, duplicate), **common)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="required floor"):
+        ResearchQualificationPolicyPlan(
+            floors=(_floor(required=False),),
+            **common,  # type: ignore[arg-type]
+        )
+
+
 @pytest.mark.parametrize(
     ("assessment", "floors", "expected"),
     [

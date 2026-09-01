@@ -9611,6 +9611,10 @@ CREATE TABLE mra.research_qualification_policy_floor (
     CONSTRAINT research_qualification_policy_floor_code_uk UNIQUE (
         research_qualification_policy_id, floor_code
     ),
+    CONSTRAINT research_qualification_policy_floor_binding_uk UNIQUE (
+        research_qualification_policy_id,
+        evaluation_protocol_metric_id, required_partition_purpose
+    ),
     CONSTRAINT research_qualification_policy_floor_exact_uk UNIQUE (
         research_qualification_policy_floor_id,
         research_qualification_policy_id
@@ -9644,6 +9648,9 @@ CREATE TABLE mra.research_qualification_policy_floor (
           OR (source_value_type = 'BOOLEAN' AND decimal_threshold IS NULL AND boolean_threshold IS NOT NULL AND qualification_operator = 'EQUALS'))
         AND minimum_member_count > 0 AND minimum_estimable_count > 0
         AND missingness_policy IN ('REJECT', 'INCONCLUSIVE')
+        AND required_evidence_class IN ('SOFTWARE_VERIFICATION', 'SOURCE_CAPTURE', 'TEMPORAL_LINEAGE', 'DATASET_LINEAGE', 'RESEARCH_RESULT', 'OUTCOME_OBSERVATION', 'REPLAY_COMPARISON', 'OPERATOR_ATTESTATION')
+        AND required_origin_class IN ('FIXTURE', 'RECORDED_PROVIDER', 'QUALIFIED_ARCHIVE', 'PROSPECTIVE_CAPTURE', 'DERIVED_CANONICAL', 'OPERATOR_ATTESTED')
+        AND required_evidence_role IN ('PRIMARY_RESULT', 'ROBUSTNESS', 'LINEAGE', 'MISSINGNESS', 'LIMITATION', 'REPLAY', 'PROCESS_CONTROL')
         AND minimum_support_evidence_count >= 0
         AND maximum_counter_evidence_count >= 0
         AND content_sha256 ~ '^[0-9a-f]{64}$'
@@ -10314,18 +10321,26 @@ BEGIN
         FROM mra.research_qualification_policy
         WHERE research_qualification_policy_id = NEW.supersedes_policy_id
         FOR SHARE;
+        IF predecessor.policy_code IS DISTINCT FROM NEW.policy_code
+           OR predecessor.version + 1 <> NEW.version
+           OR predecessor.target_definition_id IS DISTINCT FROM NEW.target_definition_id
+           OR predecessor.qualification_purpose IS DISTINCT FROM NEW.qualification_purpose
+           OR predecessor.frozen_at >= NEW.frozen_at THEN
+            RAISE EXCEPTION 'ResearchQualificationPolicy supersession chain is invalid'
+                USING ERRCODE = '55000';
+        END IF;
     END IF;
 
     IF actual_count <> NEW.floor_count
        OR minimum_ordinal <> 1 OR maximum_ordinal <> NEW.floor_count
        OR actual_roster_hash <> NEW.floor_roster_sha256
-       OR (NEW.version > 1 AND (
-           predecessor.policy_code IS DISTINCT FROM NEW.policy_code
-           OR predecessor.version + 1 <> NEW.version
-           OR predecessor.target_definition_id IS DISTINCT FROM NEW.target_definition_id
-           OR predecessor.qualification_purpose IS DISTINCT FROM NEW.qualification_purpose
-           OR predecessor.frozen_at >= NEW.frozen_at
-       ))
+       OR NOT EXISTS (
+           SELECT 1
+           FROM mra.research_qualification_policy_floor
+           WHERE research_qualification_policy_id =
+                 NEW.research_qualification_policy_id
+             AND required
+       )
        OR EXISTS (
            SELECT 1
            FROM mra.research_qualification_policy_floor AS floor
@@ -10439,6 +10454,24 @@ DECLARE actual_roster_hash text;
 DECLARE required_count integer;
 DECLARE derived_status text;
 DECLARE first_access_at timestamptz;
+DECLARE item record;
+DECLARE match_count integer;
+DECLARE actual_assessment_evaluation_id uuid;
+DECLARE actual_evaluation_run_id uuid;
+DECLARE actual_evaluation_metric_id uuid;
+DECLARE actual_metric_state text;
+DECLARE actual_decimal numeric;
+DECLARE actual_boolean boolean;
+DECLARE actual_estimable_count integer;
+DECLARE actual_member_count integer;
+DECLARE actual_not_estimable_count integer;
+DECLARE actual_support_count integer;
+DECLARE actual_counter_count integer;
+DECLARE actual_evidence_count integer;
+DECLARE actual_evidence_min_ordinal integer;
+DECLARE actual_evidence_max_ordinal integer;
+DECLARE actual_evidence_hash text;
+DECLARE expected_result_status text;
 BEGIN
     SELECT count(*), min(result_ordinal), max(result_ordinal),
            mra.canonical_sha256(
@@ -10502,12 +10535,220 @@ BEGIN
     END INTO derived_status;
 
     SELECT min(access.accessed_at) INTO first_access_at
-    FROM mra.research_assessment_evaluation AS item
+    FROM mra.research_assessment_evaluation AS assessment_item
     JOIN mra.evaluation_run AS run
-      ON run.evaluation_run_id = item.evaluation_run_id
+      ON run.evaluation_run_id = assessment_item.evaluation_run_id
     JOIN mra.research_partition_outcome_access AS access
       ON access.evaluation_run_id = run.evaluation_run_id
-    WHERE item.research_assessment_id = NEW.research_assessment_id;
+    WHERE assessment_item.research_assessment_id = NEW.research_assessment_id;
+
+    FOR item IN
+        SELECT result.*, floor.evaluation_protocol_id,
+               floor.evaluation_protocol_metric_id,
+               floor.required_partition_purpose,
+               floor.required_evaluation_status,
+               floor.source_value_type, floor.qualification_operator,
+               floor.decimal_threshold, floor.boolean_threshold,
+               floor.minimum_member_count, floor.minimum_estimable_count,
+               floor.missingness_policy, floor.required_evidence_class,
+               floor.required_origin_class, floor.required_evidence_role,
+               floor.minimum_support_evidence_count,
+               floor.maximum_counter_evidence_count
+        FROM mra.research_qualification_floor_result AS result
+        JOIN mra.research_qualification_policy_floor AS floor
+          ON floor.research_qualification_policy_floor_id =
+             result.research_qualification_policy_floor_id
+        WHERE result.research_qualification_decision_id =
+              NEW.research_qualification_decision_id
+        ORDER BY result.result_ordinal
+    LOOP
+        SELECT count(*) INTO match_count
+        FROM mra.research_assessment_evaluation AS assessment_evaluation
+        JOIN mra.evaluation_metric AS metric
+          ON metric.evaluation_run_id = assessment_evaluation.evaluation_run_id
+         AND metric.evaluation_protocol_metric_id =
+             item.evaluation_protocol_metric_id
+        WHERE assessment_evaluation.research_assessment_id =
+              NEW.research_assessment_id
+          AND assessment_evaluation.evaluation_protocol_id =
+              item.evaluation_protocol_id
+          AND assessment_evaluation.partition_purpose =
+              item.required_partition_purpose
+          AND assessment_evaluation.evaluation_status =
+              item.required_evaluation_status;
+
+        IF match_count > 1 THEN
+            RAISE EXCEPTION 'Qualification floor input is ambiguous'
+                USING ERRCODE = '55000';
+        ELSIF match_count = 0 THEN
+            IF item.research_assessment_evaluation_id IS NOT NULL
+               OR item.evaluation_run_id IS NOT NULL
+               OR item.evaluation_metric_id IS NOT NULL
+               OR item.result_status <> 'MISSING'
+               OR item.observed_decimal_value IS NOT NULL
+               OR item.observed_boolean_value IS NOT NULL
+               OR item.member_count <> 0 OR item.estimable_count <> 0
+               OR item.not_estimable_count <> 0
+               OR item.support_evidence_count <> 0
+               OR item.counter_evidence_count <> 0 THEN
+                RAISE EXCEPTION 'Missing Qualification floor was not preserved'
+                    USING ERRCODE = '55000';
+            END IF;
+        ELSE
+            SELECT assessment_evaluation.research_assessment_evaluation_id,
+                   assessment_evaluation.evaluation_run_id,
+                   metric.evaluation_metric_id, metric.metric_state,
+                   metric.decimal_value, metric.boolean_value,
+                   metric.estimable_count,
+                   (SELECT count(*)
+                    FROM mra.evaluation_metric_observation AS input
+                    WHERE input.evaluation_metric_id = metric.evaluation_metric_id
+                      AND input.input_state <> 'EXCLUDED'),
+                   (SELECT count(*)
+                    FROM mra.evaluation_metric_observation AS input
+                    WHERE input.evaluation_metric_id = metric.evaluation_metric_id
+                      AND input.input_state = 'NOT_ESTIMABLE')
+              INTO actual_assessment_evaluation_id,
+                   actual_evaluation_run_id, actual_evaluation_metric_id,
+                   actual_metric_state, actual_decimal, actual_boolean,
+                   actual_estimable_count, actual_member_count,
+                   actual_not_estimable_count
+            FROM mra.research_assessment_evaluation AS assessment_evaluation
+            JOIN mra.evaluation_metric AS metric
+              ON metric.evaluation_run_id =
+                 assessment_evaluation.evaluation_run_id
+             AND metric.evaluation_protocol_metric_id =
+                 item.evaluation_protocol_metric_id
+            WHERE assessment_evaluation.research_assessment_id =
+                  NEW.research_assessment_id
+              AND assessment_evaluation.evaluation_protocol_id =
+                  item.evaluation_protocol_id
+              AND assessment_evaluation.partition_purpose =
+                  item.required_partition_purpose
+              AND assessment_evaluation.evaluation_status =
+                  item.required_evaluation_status;
+
+            SELECT count(*) FILTER (WHERE evidence_direction = 'SUPPORT'),
+                   count(*) FILTER (WHERE evidence_direction = 'COUNTER')
+              INTO actual_support_count, actual_counter_count
+            FROM mra.research_assessment_evidence
+            WHERE research_assessment_id = NEW.research_assessment_id
+              AND research_assessment_evaluation_id =
+                  actual_assessment_evaluation_id
+              AND evidence_class = item.required_evidence_class
+              AND origin_class = item.required_origin_class
+              AND evidence_role = item.required_evidence_role;
+
+            expected_result_status := CASE
+                WHEN actual_metric_state = 'NOT_ESTIMABLE'
+                  THEN 'NOT_ESTIMABLE'
+                WHEN actual_member_count < item.minimum_member_count
+                  OR actual_estimable_count < item.minimum_estimable_count
+                  THEN CASE WHEN item.missingness_policy = 'REJECT'
+                            THEN 'REJECTED' ELSE 'INCONCLUSIVE' END
+                WHEN actual_support_count < item.minimum_support_evidence_count
+                  OR actual_counter_count > item.maximum_counter_evidence_count
+                  THEN 'REJECTED'
+                WHEN item.source_value_type = 'DECIMAL'
+                 AND ((item.qualification_operator = 'AT_LEAST'
+                       AND actual_decimal >= item.decimal_threshold)
+                   OR (item.qualification_operator = 'AT_MOST'
+                       AND actual_decimal <= item.decimal_threshold))
+                  THEN 'SATISFIED'
+                WHEN item.source_value_type = 'BOOLEAN'
+                 AND actual_boolean IS NOT DISTINCT FROM item.boolean_threshold
+                  THEN 'SATISFIED'
+                ELSE 'REJECTED'
+            END;
+
+            IF item.research_assessment_evaluation_id IS DISTINCT FROM
+                   actual_assessment_evaluation_id
+               OR item.evaluation_run_id IS DISTINCT FROM
+                  actual_evaluation_run_id
+               OR item.evaluation_metric_id IS DISTINCT FROM
+                  actual_evaluation_metric_id
+               OR item.observed_decimal_value IS DISTINCT FROM actual_decimal
+               OR item.observed_boolean_value IS DISTINCT FROM actual_boolean
+               OR item.member_count <> actual_member_count
+               OR item.estimable_count <> actual_estimable_count
+               OR item.not_estimable_count <> actual_not_estimable_count
+               OR item.support_evidence_count <> actual_support_count
+               OR item.counter_evidence_count <> actual_counter_count
+               OR item.result_status <> expected_result_status THEN
+                RAISE EXCEPTION 'Qualification floor result does not match exact inputs'
+                    USING ERRCODE = '55000';
+            END IF;
+        END IF;
+
+        SELECT count(*), min(evidence_ordinal), max(evidence_ordinal),
+               mra.canonical_sha256(
+                   replace(
+                       coalesce(
+                           json_agg(
+                               json_build_object(
+                                   'content_sha256', content_sha256,
+                                   'evidence_ordinal', evidence_ordinal,
+                                   'research_assessment_evidence_id',
+                                       research_assessment_evidence_id,
+                                   'research_qualification_floor_evidence_id',
+                                       research_qualification_floor_evidence_id
+                               ) ORDER BY evidence_ordinal
+                           ),
+                           '[]'::json
+                       )::text,
+                       ' ',
+                       ''
+                   )
+               )
+          INTO actual_evidence_count, actual_evidence_min_ordinal,
+               actual_evidence_max_ordinal, actual_evidence_hash
+        FROM mra.research_qualification_floor_evidence
+        WHERE research_qualification_floor_result_id =
+              item.research_qualification_floor_result_id;
+
+        IF actual_evidence_hash <> item.evidence_roster_sha256
+           OR (actual_evidence_count > 0 AND (
+               actual_evidence_min_ordinal <> 1
+               OR actual_evidence_max_ordinal <> actual_evidence_count
+           ))
+           OR EXISTS (
+               (SELECT evidence.research_assessment_evidence_id
+                FROM mra.research_assessment_evidence AS evidence
+                WHERE match_count = 1
+                  AND evidence.research_assessment_id =
+                      NEW.research_assessment_id
+                  AND evidence.research_assessment_evaluation_id =
+                      actual_assessment_evaluation_id
+                  AND evidence.evidence_class = item.required_evidence_class
+                  AND evidence.origin_class = item.required_origin_class
+                  AND evidence.evidence_role = item.required_evidence_role)
+               EXCEPT
+               (SELECT binding.research_assessment_evidence_id
+                FROM mra.research_qualification_floor_evidence AS binding
+                WHERE binding.research_qualification_floor_result_id =
+                      item.research_qualification_floor_result_id)
+           )
+           OR EXISTS (
+               (SELECT binding.research_assessment_evidence_id
+                FROM mra.research_qualification_floor_evidence AS binding
+                WHERE binding.research_qualification_floor_result_id =
+                      item.research_qualification_floor_result_id)
+               EXCEPT
+               (SELECT evidence.research_assessment_evidence_id
+                FROM mra.research_assessment_evidence AS evidence
+                WHERE match_count = 1
+                  AND evidence.research_assessment_id =
+                      NEW.research_assessment_id
+                  AND evidence.research_assessment_evaluation_id =
+                      actual_assessment_evaluation_id
+                  AND evidence.evidence_class = item.required_evidence_class
+                  AND evidence.origin_class = item.required_origin_class
+                  AND evidence.evidence_role = item.required_evidence_role)
+           ) THEN
+            RAISE EXCEPTION 'Qualification floor Evidence roster is incomplete'
+                USING ERRCODE = '55000';
+        END IF;
+    END LOOP;
 
     IF actual_count <> NEW.floor_count
        OR minimum_ordinal <> 1 OR maximum_ordinal <> NEW.floor_count
