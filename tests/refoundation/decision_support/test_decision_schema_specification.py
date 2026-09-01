@@ -5,6 +5,7 @@ import psycopg
 from market_regime_alpha.infrastructure.postgres.schema import (
     EXPECTED_DECISION_SUPPORT_TABLES,
     EXPECTED_OUTCOME_TABLES,
+    EXPECTED_RESEARCH_QUALIFICATION_TABLES,
     EXPECTED_RESEARCH_VALIDITY_TABLES,
     EXPECTED_TARGET_TABLES,
     SchemaManager,
@@ -46,6 +47,7 @@ def test_decision_support_schema_adds_exactly_four_authority_relations(
         table for table in tables if table.startswith("market_target_outcome")
     } == EXPECTED_OUTCOME_TABLES
     assert EXPECTED_RESEARCH_VALIDITY_TABLES <= tables
+    assert EXPECTED_RESEARCH_QUALIFICATION_TABLES <= tables
     assert not {data_type for _, _, data_type in columns if data_type == "jsonb"}
     assert not {
         table
@@ -55,10 +57,7 @@ def test_decision_support_schema_adds_exactly_four_authority_relations(
                 "outcome",
                 "context",
                 "qualification",
-                "evidence_",
                 "model",
-                "research_assessment",
-                "research_qualification",
                 "trade_outcome",
             )
         )
