@@ -5,6 +5,7 @@
 > **Owner:** Market Regime Alpha maintainers
 > **Generated At:** 2026-09-02 WP-11 exact-SHA engineering qualification reconciliation
 > **Repository Implementation Checkpoint:** `07151542f12a66d6e7da3e228e2dbf1d7d7771bb`
+> **Merged Main Checkpoint:** `883f35835671ebbd7d977b35b36c59528d536990`
 > **Containing Documentation Commit:** reported by the final handoff; this read model does not claim a self-referential Git SHA
 > **Previous Verified Snapshot:** WP-11 at `07151542f12a66d6e7da3e228e2dbf1d7d7771bb`
 > **Implementation Line Start:** `c3ac21ef1e13f2e8408d30b0481fa9b74c4f9539`
@@ -18,6 +19,9 @@
 This read model records the integrated WP-11 Target/Outcome, Partition,
 Experiment, and Evaluation implementation and exact-SHA engineering
 qualification. The linked immutable Verification establishes the exit gate.
+That checkpoint is merged into the main SHA above; WP-12 is dependency-ready
+but its Evidence, Assessment, and Qualification owners remain absent at this
+snapshot.
 This read model is invalid after any source, migration, test, or composition change until
 regenerated. It cannot write business state or promote Provider, research,
 qualification, trading, or Production claims.
