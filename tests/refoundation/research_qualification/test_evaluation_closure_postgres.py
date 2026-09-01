@@ -47,6 +47,7 @@ from market_regime_alpha.research_qualification.errors import (
     EvaluationAcquisitionError,
     PartitionInputError,
     ResearchRetryableTransactionError,
+    ResearchUnknownCommitResultError,
 )
 from market_regime_alpha.runtime.errors import (
     IdempotencyKeyReusedError,
@@ -102,6 +103,37 @@ def _attempt(callable_):
         return "SUCCEEDED", callable_()
     except BaseException as exc:  # qualification captures the losing transaction
         return "FAILED", exc
+
+
+class _CommitAckLostOnce:
+    def __init__(self, delegate_provider) -> None:
+        self._delegate_provider = delegate_provider
+        self.lost = False
+
+    def __call__(self):
+        return _CommitAckLostUnitOfWork(self._delegate_provider(), self)
+
+
+class _CommitAckLostUnitOfWork:
+    def __init__(self, delegate, owner: _CommitAckLostOnce) -> None:
+        self._delegate = delegate
+        self._owner = owner
+
+    def __enter__(self):
+        self._delegate.__enter__()
+        return self
+
+    def __exit__(self, exception_type, exception, traceback):
+        return self._delegate.__exit__(exception_type, exception, traceback)
+
+    def __getattr__(self, name: str):
+        return getattr(self._delegate, name)
+
+    def commit(self) -> None:
+        self._delegate.commit()
+        if not self._owner.lost:
+            self._owner.lost = True
+            raise ResearchUnknownCommitResultError("08006")
 
 
 def _settle_two_visible_revisions(stack):
@@ -1537,6 +1569,61 @@ def test_failure_recorder_failure_cannot_resurrect_rolled_back_partition(
             ),
         ).fetchone()
     assert counts == (0, 0, 0)
+
+
+def test_unknown_commit_result_probes_exact_partition_receipt_without_rewrite(
+    wp11_stack,
+) -> None:
+    stack = wp11_stack
+    target, _, _, _ = _settle_two_visible_revisions(stack)
+    provider = _CommitAckLostOnce(
+        PostgresPartitionUnitOfWorkProvider(stack.pool, id_factory=uuid4)
+    )
+    commands = ResearchPartitionCommands(provider, id_factory=uuid4)
+    plan = _partition_plan(
+        stack,
+        target,
+        code=f"wp11-unknown-commit-{uuid4().hex[:8]}",
+    )
+
+    result = commands.freeze(
+        plan,
+        _wp11_context("unknown-commit-partition", "FREEZE_RESEARCH_PARTITION"),
+    )
+
+    assert provider.lost is True
+    assert result.replayed is True
+    assert result.research_partition_id == plan.research_partition_id
+    with psycopg.connect(stack.database_url) as connection:
+        counts = connection.execute(
+            """
+            SELECT
+                (SELECT count(*) FROM mra.research_partition
+                 WHERE research_partition_id = %s),
+                (SELECT count(*) FROM mra.research_partition_member
+                 WHERE research_partition_id = %s),
+                (SELECT count(*) FROM mra.command_receipt
+                 WHERE command_kind = 'FREEZE_RESEARCH_PARTITION'
+                   AND scope_id = %s
+                   AND idempotency_key = 'wp11-unknown-commit-partition'),
+                (SELECT count(*) FROM mra.audit_event
+                 WHERE action = 'FREEZE_RESEARCH_PARTITION'
+                   AND aggregate_id = %s)
+            """,
+            (
+                plan.research_partition_id,
+                plan.research_partition_id,
+                plan.partition_code,
+                str(plan.research_partition_id),
+            ),
+        ).fetchone()
+    assert counts == (1, result.member_count, 1, 1)
+    verifier = ResearchEvaluationVerifier(
+        PostgresResearchEvaluationVerificationProvider(stack.pool)
+    )
+    report = verifier.verify_partition(plan.research_partition_id)
+    assert report.matched is True
+    assert report.mismatch_count == 0
 
 
 def test_evaluation_run_can_fail_once_and_replays_exact_failure(wp11_stack) -> None:
