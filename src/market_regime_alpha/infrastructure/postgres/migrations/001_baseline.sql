@@ -10227,6 +10227,14 @@ BEGIN
            (SELECT item.evidence_item_id
             FROM mra.research_assessment_evidence AS item
             WHERE item.research_assessment_id = NEW.research_assessment_id)
+       )
+       OR EXISTS (
+           SELECT 1
+           FROM mra.research_assessment_evidence AS item
+           JOIN mra.evidence_item AS evidence
+             ON evidence.evidence_item_id = item.evidence_item_id
+           WHERE item.research_assessment_id = NEW.research_assessment_id
+             AND evidence.recorded_at > NEW.knowledge_cutoff
        ) THEN
         RAISE EXCEPTION 'ResearchAssessment roster or derived conclusion is incomplete'
             USING ERRCODE = '55000';

@@ -2,12 +2,20 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime
 from enum import StrEnum
+import re
 from uuid import UUID
 
 from market_regime_alpha.research_qualification.domain.evidence import EvidenceDirection
+from market_regime_alpha.research_qualification.domain.model import ArtifactBinding
 from market_regime_alpha.research_qualification.domain.research_vocabulary import EvaluationRunStatus
+from market_regime_alpha.shared.hashing import canonical_json_sha256
+from market_regime_alpha.shared.identity import ContentHash
+
+
+_CODE = re.compile(r"^[a-z][a-z0-9_-]{0,99}$")
 
 
 class AssessmentStatus(StrEnum):
@@ -17,6 +25,50 @@ class AssessmentStatus(StrEnum):
     INCONCLUSIVE = "INCONCLUSIVE"
     BLOCKED = "BLOCKED"
     FAILED = "FAILED"
+
+
+@dataclass(frozen=True, slots=True)
+class ResearchAssessmentPlan:
+    research_assessment_id: UUID
+    assessment_code: str
+    revision: int
+    supersedes_assessment_id: UUID | None
+    experiment_id: UUID
+    knowledge_cutoff: datetime
+    code_artifact: ArtifactBinding
+    config_artifact: ArtifactBinding
+    provenance_sha256: ContentHash | str
+    content_sha256: ContentHash = field(init=False)
+
+    def __post_init__(self) -> None:
+        if not _CODE.fullmatch(self.assessment_code):
+            raise ValueError("assessment_code has an invalid format")
+        if self.knowledge_cutoff.tzinfo is None or self.knowledge_cutoff.utcoffset() is None:
+            raise ValueError("knowledge_cutoff must be timezone-aware")
+        if isinstance(self.revision, bool) or self.revision < 1:
+            raise ValueError("Assessment revision must be positive")
+        if (self.revision == 1) != (self.supersedes_assessment_id is None):
+            raise ValueError("Assessment supersession shape is invalid")
+        provenance_hash = ContentHash(str(self.provenance_sha256))
+        object.__setattr__(self, "provenance_sha256", provenance_hash)
+        object.__setattr__(
+            self,
+            "content_sha256",
+            ContentHash(
+                canonical_json_sha256(
+                    {
+                        "assessment_code": self.assessment_code,
+                        "code_artifact": self.code_artifact,
+                        "config_artifact": self.config_artifact,
+                        "experiment_id": self.experiment_id,
+                        "knowledge_cutoff": self.knowledge_cutoff,
+                        "provenance_sha256": provenance_hash,
+                        "revision": self.revision,
+                        "supersedes_assessment_id": self.supersedes_assessment_id,
+                    }
+                )
+            ),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,6 +149,7 @@ def validate_assessment_revision(
 __all__ = [
     "AssessmentEvaluationSummary",
     "AssessmentStatus",
+    "ResearchAssessmentPlan",
     "derive_assessment_status",
     "validate_assessment_revision",
 ]
