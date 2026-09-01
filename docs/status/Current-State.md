@@ -390,21 +390,33 @@ descriptive, not an optimization target.
 
 ## WP-11 Research Validity and Evaluation implementation truth
 
+The execution-time WP-11Q audit against merged main found three correctness
+gaps that the earlier focused suite did not close: the sole target composition
+root does not construct the Partition/Experiment/Evaluation command modules;
+Partition roster derivation and closure do not freeze or filter one explicit
+exchange calendar and can therefore mix same-date SSE/SZSE commitments; and
+Experiment registration accepts and persists only one Partition binding even
+though the canonical design requires a complete ordered non-empty roster. The
+facts below describe the implemented draft, not an exit-gate-qualified
+Authority. WP-11Q must correct all three and requalify an exact new SHA.
+
 - Gate A makes successful Target registration sufficient for Outcome contract
   reconstruction: all five metric kinds have the exact dependency shape and
   every Target has at least one `REQUIRED` metric in both Domain and PostgreSQL
   closure. WP-10 numerical and revision semantics are unchanged.
-- The Partition UoW derives the complete commitment roster in PostgreSQL from
-  exact Target, Decision window, and declared population scope. It freezes the
-  calendar, Target horizon, session-expanded purge/embargo ranges, purpose-
-  specific overlap policy, code/config, provenance, count, and hash without an
-  Outcome read or caller-selected member list.
+- The Partition UoW derives a commitment roster in PostgreSQL from exact
+  Target, Decision window, and declared population scope without an Outcome
+  read or caller-selected member list. Its session-based horizon,
+  purge/embargo, purpose-specific overlap, code/config, provenance, count and
+  hash mechanics are implemented, but exchange-calendar isolation is a known
+  WP-11Q blocker.
 - `PROSPECTIVE` validates the canonical Runtime live-clock lineage instead of a
   hard-coded allow-list, explicitly rejects Historical/Replay lineage, and
   requires PostgreSQL-recorded commitment time before the earliest Outcome
   event. Purpose alone is not prospective proof.
-- The Experiment UoW owns only immutable Experiment, partition binding, and
-  Experiment Run identity. The Evaluation UoW owns Protocol/metrics,
+- The Experiment UoW owns only immutable Experiment, its currently singular
+  partition binding, and Experiment Run identity. Complete atomic
+  multi-Partition roster closure is a known WP-11Q blocker. The Evaluation UoW owns Protocol/metrics,
   Evaluation Run, Outcome access, observations, and metrics. Exact Target and
   protected-purpose ordering are guarded by concrete FKs, lifecycle checks,
   zero-access guards, and PostgreSQL authoritative time.

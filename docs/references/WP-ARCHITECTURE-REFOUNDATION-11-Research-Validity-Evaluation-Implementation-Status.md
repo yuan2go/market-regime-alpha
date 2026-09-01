@@ -25,6 +25,14 @@ This record is deliberately not named Verification and does not establish
 focused validation authorized for this work package. Independent full
 engineering qualification remains the next work package.
 
+> **WP-11Q audit notice (2026-09-01):** later execution-time audit of the
+> merged implementation found that the sole target composition root does not
+> construct these commands, Partition closure is not isolated to one explicit
+> SSE/SZSE exchange calendar, and Experiment registration persists only one
+> binding rather than the design's complete ordered multi-Partition roster.
+> The focused results below remain historical execution facts, but
+> `CORRECTNESS_CLOSURE_REQUIRED` now precedes engineering qualification.
+
 ## 1. Execution and document checkpoints
 
 The implementation started from the execution-time `origin/main` SHA above in
