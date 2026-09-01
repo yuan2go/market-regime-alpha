@@ -36,6 +36,9 @@ from market_regime_alpha.infrastructure.postgres.queries.selection_market import
 from market_regime_alpha.infrastructure.postgres.queries.research_sources import (
     PostgresResearchSourceQueries,
 )
+from market_regime_alpha.infrastructure.postgres.queries.research_verification import (
+    PostgresResearchEvaluationVerificationProvider,
+)
 
 __all__ = [
     "PostgresCandidateQueryProvider",
@@ -51,5 +54,6 @@ __all__ = [
     "PostgresOutcomeQueryProvider",
     "PostgresOutcomeVerificationProvider",
     "PostgresResearchSourceQueries",
+    "PostgresResearchEvaluationVerificationProvider",
     "PostgresSelectionMarketQueries",
 ]

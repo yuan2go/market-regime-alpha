@@ -40,9 +40,11 @@ def test_sole_target_composition_constructs_wp11_commands() -> None:
     assert "research_partitions: ResearchPartitionCommands" in bootstrap
     assert "research_experiments: ExperimentCommands" in bootstrap
     assert "research_evaluations: EvaluationCommands" in bootstrap
+    assert "research_evaluation_verifier: ResearchEvaluationVerifier" in bootstrap
     assert "PostgresPartitionUnitOfWorkProvider" in bootstrap
     assert "PostgresExperimentUnitOfWorkProvider" in bootstrap
     assert "PostgresEvaluationUnitOfWorkProvider" in bootstrap
+    assert "PostgresResearchEvaluationVerificationProvider" in bootstrap
 
 
 def test_application_has_no_postgres_driver_dependency() -> None:

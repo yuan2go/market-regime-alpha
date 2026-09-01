@@ -47,6 +47,11 @@ from market_regime_alpha.research_qualification.domain.vocabulary import (
     FeatureSourceRequirement,
     FeatureValueType,
 )
+from market_regime_alpha.research_qualification.domain.verification import (
+    ResearchVerificationMismatch,
+    ResearchVerificationMismatchKind,
+    ResearchVerificationReport,
+)
 __all__ = [
     "ArtifactBinding",
     "DatasetSource",
@@ -62,6 +67,9 @@ __all__ = [
     "FeatureMissingnessPolicy",
     "FeatureSourceRequirement",
     "FeatureValueType",
+    "ResearchVerificationMismatch",
+    "ResearchVerificationMismatchKind",
+    "ResearchVerificationReport",
     "TargetAlgorithmBinding",
     "TargetAvailabilityRule",
     "TargetBarTimeframe",

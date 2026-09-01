@@ -10,6 +10,7 @@ from uuid import UUID
 from market_regime_alpha.research_qualification.ports import ResearchUnitOfWork
 from market_regime_alpha.research_qualification.errors import (
     ResearchRetryableTransactionError,
+    ResearchUnknownCommitResultError,
     ResearchValidityError,
 )
 from market_regime_alpha.runtime.application import (
@@ -62,7 +63,10 @@ def retry_transient_transaction(
         for attempt in range(3):
             try:
                 return command(*args, **kwargs)
-            except ResearchRetryableTransactionError:
+            except (
+                ResearchRetryableTransactionError,
+                ResearchUnknownCommitResultError,
+            ):
                 if attempt == 2:
                     raise
         raise AssertionError("bounded transaction retry loop did not terminate")

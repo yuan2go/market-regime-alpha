@@ -11,7 +11,15 @@ import pytest
 from market_regime_alpha.infrastructure.postgres.evaluation_uow import PostgresEvaluationUnitOfWorkProvider
 from market_regime_alpha.infrastructure.postgres.experiment_uow import PostgresExperimentUnitOfWorkProvider
 from market_regime_alpha.infrastructure.postgres.partition_uow import PostgresPartitionUnitOfWorkProvider
-from market_regime_alpha.research_qualification.application import EvaluationCommands, ExperimentCommands, ResearchPartitionCommands
+from market_regime_alpha.infrastructure.postgres.queries.research_verification import (
+    PostgresResearchEvaluationVerificationProvider,
+)
+from market_regime_alpha.research_qualification.application import (
+    EvaluationCommands,
+    ExperimentCommands,
+    ResearchEvaluationVerifier,
+    ResearchPartitionCommands,
+)
 from market_regime_alpha.research_qualification.domain.evaluation import (
     EvaluationProtocolPlan,
     EvaluationRunPlan,
@@ -579,6 +587,74 @@ def test_protected_partition_cannot_open_another_evaluation_after_first_access(
             ),
             _wp11_context("open-protected-second", "OPEN_EVALUATION_RUN"),
         )
+
+
+def test_read_only_verifier_reconciles_partition_experiment_and_evaluation(
+    wp11_stack,
+) -> None:
+    stack = wp11_stack
+    target, _, _, settled = _settle_two_visible_revisions(stack)
+    commands, partition, experiment_run_id, protocol = _freeze_and_predeclare(
+        stack, target
+    )
+    evaluation_run_id, _, _ = _run_evaluation(
+        commands,
+        experiment_run_id,
+        protocol,
+        settled[1][1] + timedelta(microseconds=1),
+        "verification",
+    )
+    with psycopg.connect(stack.database_url) as connection:
+        experiment_id = connection.execute(
+            """
+            SELECT experiment_id FROM mra.experiment_run
+            WHERE experiment_run_id = %s
+            """,
+            (experiment_run_id,),
+        ).fetchone()
+    assert experiment_id is not None
+    verifier = ResearchEvaluationVerifier(
+        PostgresResearchEvaluationVerificationProvider(stack.pool)
+    )
+    reports = (
+        verifier.verify_partition(partition.research_partition_id),
+        verifier.verify_experiment(UUID(str(experiment_id[0]))),
+        verifier.verify_evaluation_run(evaluation_run_id),
+    )
+    assert all(report.matched for report in reports)
+    assert all(report.mismatch_count == 0 for report in reports)
+    missing = verifier.verify_evaluation_run(uuid4())
+    assert missing.matched is False
+    assert missing.mismatch_count == 1
+
+
+def test_read_only_verifier_detects_fault_injected_partition_drift(
+    wp11_stack,
+) -> None:
+    stack = wp11_stack
+    target, _, _, _ = _settle_two_visible_revisions(stack)
+    _, partition, _, _ = _freeze_and_predeclare(stack, target)
+    with psycopg.connect(stack.database_url) as connection:
+        connection.execute("SET LOCAL session_replication_role = replica")
+        connection.execute(
+            """
+            UPDATE mra.research_partition_member
+            SET content_sha256 = %s
+            WHERE research_partition_id = %s
+            """,
+            ("f" * 64, partition.research_partition_id),
+        )
+        connection.commit()
+    verifier = ResearchEvaluationVerifier(
+        PostgresResearchEvaluationVerificationProvider(stack.pool)
+    )
+    report = verifier.verify_partition(partition.research_partition_id)
+    assert report.matched is False
+    assert report.mismatch_count >= 2
+    assert {mismatch.path for mismatch in report.mismatches} >= {
+        "partition.member_content_sha256",
+        "partition.member_roster_sha256",
+    }
 
 
 def test_evaluation_run_can_fail_once_and_replays_exact_failure(wp11_stack) -> None:

@@ -50,6 +50,7 @@ from market_regime_alpha.infrastructure.postgres.queries import (
     PostgresOutcomeInputPreparationProvider,
     PostgresOutcomeQueryProvider,
     PostgresOutcomeVerificationProvider,
+    PostgresResearchEvaluationVerificationProvider,
 )
 from market_regime_alpha.infrastructure.postgres.schema import (
     DatabaseIdentity,
@@ -68,6 +69,7 @@ from market_regime_alpha.research_qualification.application import (
     EvaluationCommands,
     ExperimentCommands,
     ResearchPartitionCommands,
+    ResearchEvaluationVerifier,
     ResearchQualificationApplication,
 )
 from market_regime_alpha.selection.application import (
@@ -160,6 +162,7 @@ class TargetApplication:
     research_partitions: ResearchPartitionCommands
     research_experiments: ExperimentCommands
     research_evaluations: EvaluationCommands
+    research_evaluation_verifier: ResearchEvaluationVerifier
     candidates: CandidateApplication
     candidate_queries: CandidateQueryProvider
     decision_support: DecisionSupportApplication
@@ -216,6 +219,9 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
         research_evaluations=EvaluationCommands(
             PostgresEvaluationUnitOfWorkProvider(pool, id_factory=uuid4),
             id_factory=uuid4,
+        ),
+        research_evaluation_verifier=ResearchEvaluationVerifier(
+            PostgresResearchEvaluationVerificationProvider(pool)
         ),
         candidates=CandidateApplication(
             PostgresCandidateResearchInputLoader(pool, byte_store),

@@ -8,6 +8,7 @@ import psycopg
 
 from market_regime_alpha.research_qualification.errors import (
     ResearchRetryableTransactionError,
+    ResearchUnknownCommitResultError,
 )
 from market_regime_alpha.runtime.errors import RuntimeStateConflictError
 
@@ -22,12 +23,12 @@ def commit_research_transaction(connection: psycopg.Connection[Any]) -> None:
         connection.commit()
     except psycopg.Error as exc:
         sqlstate = exc.sqlstate or ""
-        if (
-            sqlstate in _TRANSIENT_SQLSTATES
-            or sqlstate.startswith("08")
-            or (not sqlstate and isinstance(exc, psycopg.OperationalError))
-        ):
+        if sqlstate in _TRANSIENT_SQLSTATES:
             raise ResearchRetryableTransactionError(sqlstate or "08000") from exc
+        if sqlstate.startswith("08") or (
+            not sqlstate and isinstance(exc, psycopg.OperationalError)
+        ):
+            raise ResearchUnknownCommitResultError(sqlstate or "08000") from exc
         raise
 
 
