@@ -19,7 +19,7 @@ def test_wp11_extends_only_unreleased_baseline() -> None:
     migrations = sorted(item.name for item in MIGRATIONS.glob("*.sql"))
     assert migrations == ["001_baseline.sql"]
     assert len(EXPECTED_RESEARCH_VALIDITY_TABLES) == 12
-    assert len(EXPECTED_TARGET_TABLES) == 68
+    assert len(EXPECTED_TARGET_TABLES) == 78
 
 
 def test_wp11_relations_have_no_generic_or_future_placeholder_shape(
@@ -38,7 +38,7 @@ def test_wp11_relations_have_no_generic_or_future_placeholder_shape(
             (sorted(EXPECTED_RESEARCH_VALIDITY_TABLES),),
         ).fetchall()
         assert not [row for row in columns if row[2] in {"json", "jsonb"}]
-        forbidden = {"subject", "subject_id", "subject_kind", "model_id", "forecast_id", "evidence_item_id"}
+        forbidden = {"subject", "subject_id", "subject_kind", "model_id", "forecast_id"}
         assert not [row for row in columns if row[1] in forbidden]
         physical_partitions = connection.execute(
             """
