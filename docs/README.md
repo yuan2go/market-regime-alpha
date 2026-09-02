@@ -126,6 +126,9 @@ Checkpoint traceability:
   — canonical contract for next-generation Qualification binding, Context,
   Signal, rule-based Forecast, Opportunity, Thesis, Strategy, Portfolio and
   Decision-Support-only Risk without Model, Execution or empirical promotion.
+- [WP-13 Remaining Decision Support Implementation Plan](references/WP-ARCHITECTURE-REFOUNDATION-13-Remaining-Decision-Support-Implementation-Plan.md)
+  — public-seam TDD slices, narrow UoWs, schema closure, composition,
+  verification, exact-SHA qualification and merge sequence for that contract.
 
 Design documents in this section define the Target destination. Status and
 Verification records report their explicitly bounded implementation evidence;
