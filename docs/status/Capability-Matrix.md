@@ -3,17 +3,17 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Non-authoritative capability status read model; exact-SHA engineering proof remains in Verification
 > **Owner:** Market Regime Alpha maintainers
-> **Generated At:** 2026-09-02 WP-13 exact-SHA engineering qualification reconciliation
-> **Repository Implementation Checkpoint:** `fc5993e5d9e05dbe2845659140108e1051cf3704`
+> **Generated At:** 2026-09-02 WP-14 exact-SHA engineering qualification reconciliation
+> **Repository Implementation Checkpoint:** `ca6f66b50ec2c55250cd82d2fa1ed6c5f35c29b8`
 > **Containing Documentation Commit:** reported by the final handoff; this read model does not claim a self-referential Git SHA
-> **Previous Verified Snapshot:** merged WP-12 at `48949c87ad0241a8d60031137bc3aa8eb9887525`
+> **Previous Verified Snapshot:** merged WP-13 implementation `fc5993e5d9e05dbe2845659140108e1051cf3704` on `origin/main@eb7970b4833228a2faba6715c65c26dae88f6ee5`
 > **Schema Epochs:** canonical business `LEGACY_MIGRATIONS_001_106`; target draft `MRA_REFOUNDATION_1 / DRAFT / NOT_CUT_OVER`
-> **Generator:** `WP-ARCHITECTURE-REFOUNDATION-13 engineering qualification reconciliation; non-authoritative read model`
-> **Source Tree IDs:** root `a6e6286ff15cc46e75ece116763e6c35d014f4fd`; source `03b785fa3ff39040e15e068228ad37ce50a33dbc`; tests `4a09d6ef845f4c38d8e34f36564b3d3b408595d4`; Decision Support tree `c1ba668614144b6bc0ed8f29adfd1996d506d0a1`; target baseline blob `047e5d1271958a5dcd2b3a4ec776d0fbe4929d5d`; legacy migrations tree `6d3730548780ad6244d2cfecb4fb3559064b6f06`
-> **Code Evidence:** target and legacy source/migration packages, `tests`, [WP-13 canonical design](../references/WP-ARCHITECTURE-REFOUNDATION-13-Remaining-Decision-Support-Design.md), and [WP-13 immutable Verification](../references/WP-ARCHITECTURE-REFOUNDATION-13-Remaining-Decision-Support-Verification.md)
+> **Generator:** `WP-ARCHITECTURE-REFOUNDATION-14 engineering qualification reconciliation; non-authoritative read model`
+> **Source Tree IDs:** root `c1198fa61e432d46a416e863d32a7b253abdf67e`; source `ccc42e2a732f0738c560d762ce3c61a1418c475e`; tests `4a2148ff361c057db68d4ee3e758266246b010dd`; Research Qualification tree `453e0f4f81d62a27ebd1e8237fae1627901c95b8`; Market tree `d0efafaa99e7cc575b619f1a3791112e432bb5f0`; Runtime tree `b01c45b9ca7009fe8ddc9cba227f2f656473c6c1`; target baseline blob `2b4f587da1f616ef6b0eeaf15621cbe1c116be50`; legacy migrations tree `6d3730548780ad6244d2cfecb4fb3559064b6f06`
+> **Code Evidence:** target and legacy source/migration packages, `tests`, [WP-14 canonical design](../references/WP-ARCHITECTURE-REFOUNDATION-14-Formal-Research-Engineering-Readiness-Design.md), and [WP-14 immutable Verification](../references/WP-ARCHITECTURE-REFOUNDATION-14-Formal-Research-Engineering-Readiness-Verification.md)
 
 This view separates current capability from target convergence. It records the
-integrated WP-13 Remaining Decision Support closure
+integrated WP-14 Formal Research engineering readiness closure
 at the exact checkpoint above. Independent exact-SHA engineering qualification
 passed and is owned by the immutable Verification. This read model is invalid
 after its source tree changes and cannot promote a capability or research
@@ -33,14 +33,14 @@ Target Outcome are
 `IMPLEMENTED_DRAFT / EXIT_GATE_PASS / NOT_CUT_OVER`. No state grants canonical
 business Authority or creates dual write.
 
-WP-13 qualification passes 51 focused, 585 refoundation, 33 platform, 286
-PostgreSQL persistence, and all 3,625 repository tests plus clean bootstrap and
+WP-14 qualification passes 19 focused, 604 refoundation, 33 platform, 286
+PostgreSQL persistence, and all 3,644 repository tests plus clean bootstrap and
 exact-OID recreate, real concurrency/failure/recovery/replay, representative
 plans, Ruff, mypy, documentation, architecture/import, build, and diff gates.
-The PostgreSQL 16 catalog records 108 tables, four views, 2,467 catalog objects,
+The PostgreSQL 16 catalog records 129 tables, four views, 2,819 catalog objects,
 and catalog checksum
-`d47fb0bc99fcec99a92e1f8353e528e4e1cd4b9eb350b609260d35f11209e60d`.
-Exact commands and ceilings are recorded in the linked immutable WP-13
+`1d58cbace3120fb0c7048900bb5e162df8dfc40c2b4a26337b2e562093f03714`.
+Exact commands and ceilings are recorded in the linked immutable WP-14
 Verification.
 Remote CI remains
 `BLOCKED_BY_REPOSITORY_CONFIGURATION / NOT_RUN` because repository Actions are
@@ -50,6 +50,8 @@ broker, Production, or trading evidence.
 | Capability | Current implementation truth | Approved target owner | Target convergence |
 |---|---|---|---|
 | Market | legacy owners remain canonical; isolated target capture/revision/gap/as-of owner is implemented test-only | Market & PIT | `IMPLEMENTED_DRAFT / EXIT_GATE_PASS / NOT_CUT_OVER` |
+| Provider qualification | Market owns immutable purpose-specific Protocol/requirements/finality/Decision/Capture/Result rosters and source-specific qualified visibility; engineering rehearsals cannot admit and no real Provider is qualified | Market & PIT | `MECHANICS_READY / WP14_EXIT_GATE_PASS / PROVIDER_QUALIFIED_NO` |
+| Formal PIT/Dataset | exact Campaign-bound admitted recorded-provider Decision plus typed cutoff-visible sources are mandatory; no current/latest, caller assertion, or reconstruction path exists | Market & PIT + Research & Qualification | `MECHANICS_READY / FORMAL_PIT_NOT_PROVEN / NOT_CUT_OVER` |
 | Regime | current State System inference remains canonical; target implements PIT `MARKET_REGIME` Context policy/assessment/metric/source rosters | Decision Support Context | `IMPLEMENTED_DRAFT / WP13_EXIT_GATE_PASS / NOT_CUT_OVER` |
 | ETF | current instrument/reference and rotation paths remain canonical; target implements PIT `ETF_ROTATION` Context over exact Market lineage | Market classification + Decision Context | `IMPLEMENTED_DRAFT / WP13_EXIT_GATE_PASS / NOT_CUT_OVER` |
 | Theme | current reference/state/context paths remain canonical; target implements PIT `THEME_ROTATION` Context over exact classification/Market lineage | Market classification + Decision Context | `IMPLEMENTED_DRAFT / WP13_EXIT_GATE_PASS / NOT_CUT_OVER` |
@@ -73,7 +75,8 @@ broker, Production, or trading evidence.
 | Research Definition | many legacy dataset/feature/research owners remain canonical; isolated target Decision-input Dataset/DatasetSource/FeatureDefinition plus provider-neutral Outcome-compatible Target Definition Authority is implemented | Research & Qualification | `IMPLEMENTED_DRAFT / PRIOR_EXIT_GATES_PASS / NOT_CUT_OVER` |
 | Research Evaluation | legacy experiment/campaign/evaluation owners remain canonical until cutover; the target draft is present in sole composition and implements three narrow UoWs, explicit single-exchange Partition calendars, session-based purge/embargo, atomic complete ordered Experiment binding rosters, PIT-safe exact revision acquisition, global first-access ordinals, complete observations and metric-member rosters, and read-only reconciliation | Research & Qualification | `IMPLEMENTED_DRAFT / WP11_EXIT_GATE_PASS / NOT_CUT_OVER` |
 | Qualification | current legacy model/PIT/provider/OOS/calibration owners remain canonical until cutover; target Evidence binds exact terminal Evaluations and immutable Artifacts in a validated DAG, Assessment derives complete Experiment Evaluation/Evidence rosters with negative/inconclusive/not-estimable preservation, and purpose-specific Policies/Decisions explicitly evaluate every floor with exact Evidence bindings and strict later-generation reads | Research & Qualification | `IMPLEMENTED_DRAFT / WP12_EXIT_GATE_PASS / NOT_CUT_OVER` |
-| Prospective | target WP-11 implements engineering-qualified declared-purpose eligibility from canonical live-clock lineage, rejects Historical/Replay, and requires commitment before earliest Outcome event; no formal campaign, operator evidence, promotion, or sustained value proof exists | ordinary Runtime + Decision/Outcome/Research | `PARTIAL_MECHANICS / ENGINEERING_QUALIFIED / NO_PROMOTION` |
+| Formal Research Campaign | immutable Target/hypothesis/baseline/Provider/FIT/VALIDATION/LOCKED_OOS/Evaluation/Qualification/cost predeclaration; actual complete Partition/Experiment binding; exact Decision and Due Runtime profiles; protected PostgreSQL-time zero-access opening; read-only inspection/reconciliation | Research & Qualification using existing Runtime/owners | `FORMAL_RESEARCH_ENGINEERING_READY / WP14_EXIT_GATE_PASS / NO_EMPIRICAL_PROMOTION` |
+| Prospective | target requires canonical live-clock eligibility, commitment before earliest Outcome event, exact Due Proof Runtime profile, database-clock due states, and protected zero-access opening; Historical/Replay fixture masquerade is rejected; no real future campaign or sustained value proof exists | ordinary Runtime + Decision/Outcome/Research | `MECHANICS_READY / WP14_EXIT_GATE_PASS / PROSPECTIVE_PROVEN_NO` |
 
 `IMPLEMENTED` in the current column never means the target Authority is cut
 over. `NOT_STARTED` refers only to target convergence, not loss of the current

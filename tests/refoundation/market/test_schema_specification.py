@@ -8,7 +8,7 @@ from market_regime_alpha.infrastructure.postgres.schema import (
 )
 
 
-def test_market_schema_has_the_twelve_approved_authority_relations(
+def test_market_schema_has_the_approved_authority_relations(
     target_database_url: str,
 ) -> None:
     SchemaManager(target_database_url).bootstrap()
@@ -32,6 +32,17 @@ def test_market_schema_has_the_twelve_approved_authority_relations(
         "instrument_fact_revision",
         "corporate_action_revision",
         "source_gap",
+        "provider_qualification_protocol",
+        "provider_qualification_requirement",
+        "provider_finality_observation",
+        "provider_qualification_decision",
+        "provider_qualification_capture_member",
+        "provider_qualification_requirement_result",
+        "qualified_market_bar_visibility",
+        "qualified_instrument_fact_visibility",
+        "qualified_classification_membership_visibility",
+        "qualified_trading_session_visibility",
+        "qualified_source_gap_visibility",
     }
     assert EXPECTED_MARKET_TABLES <= tables
 

@@ -258,5 +258,129 @@ class PostgresResearchSourceQueries:
             for row in rows
         )
 
+    def formal_market_source_observations(
+        self,
+        sources: tuple[DatasetSource, ...],
+        *,
+        formal_research_campaign_id: UUID,
+        provider_qualification_decision_id: UUID,
+        lock: bool,
+    ) -> tuple[DatasetMarketSourceObservation, ...]:
+        if not self._connection.execute(
+            """
+            SELECT 1 FROM mra.formal_research_campaign AS campaign
+            JOIN mra.formal_research_campaign_provider_decision AS binding
+              ON binding.formal_research_campaign_id = campaign.formal_research_campaign_id
+            WHERE campaign.formal_research_campaign_id = %s
+              AND campaign.campaign_class = 'FORMAL_RESEARCH'
+              AND binding.provider_qualification_decision_id = %s
+            """ + (" FOR SHARE OF campaign, binding" if lock else ""),
+            (formal_research_campaign_id, provider_qualification_decision_id),
+        ).fetchone():
+            raise RuntimeStateConflictError(
+                "Formal Dataset campaign Provider binding is not eligible"
+            )
+        by_role: dict[DatasetSourceRole, list[DatasetSource]] = defaultdict(list)
+        for source in sources:
+            if source.role in _MARKET_ROLES:
+                by_role[source.role].append(source)
+        observations: list[DatasetMarketSourceObservation] = []
+        mapping = {
+            DatasetSourceRole.MARKET_BAR_REVISION: (
+                "market_bar_revision_id", "qualified_market_bar_visibility",
+                "bar_revision_id", "market_bar_revision", "bar_revision_id",
+                "instrument_id",
+            ),
+            DatasetSourceRole.MARKET_INSTRUMENT_FACT_REVISION: (
+                "market_instrument_fact_revision_id",
+                "qualified_instrument_fact_visibility", "fact_revision_id",
+                "instrument_fact_revision", "fact_revision_id", "instrument_id",
+            ),
+            DatasetSourceRole.MARKET_TRADING_SESSION: (
+                "market_trading_session_id", "qualified_trading_session_visibility",
+                "session_id", "trading_session", "session_id", None,
+            ),
+            DatasetSourceRole.MARKET_SOURCE_GAP: (
+                "market_source_gap_id", "qualified_source_gap_visibility",
+                "gap_id", "source_gap", "gap_id", "instrument_id",
+            ),
+        }
+        for role, role_sources in by_role.items():
+            if role is DatasetSourceRole.MARKET_CAPTURE:
+                capture_source_by_id: dict[UUID, DatasetSource] = {}
+                for source in role_sources:
+                    identity = source.market_capture_id
+                    if identity is None or identity in capture_source_by_id:
+                        raise RuntimeStateConflictError(
+                            "Formal Dataset Capture identities must be exact and unique"
+                        )
+                    capture_source_by_id[identity] = source
+                rows = self._connection.execute(
+                    """
+                    SELECT member.capture_id, member.source_available_at
+                    FROM mra.provider_qualification_capture_member AS member
+                    WHERE member.provider_qualification_decision_id = %s
+                      AND member.capture_id = ANY(%s::uuid[])
+                      AND member.artifact_verified AND member.runtime_capture_lineage
+                    """ + (" FOR SHARE OF member" if lock else ""),
+                    (provider_qualification_decision_id, list(capture_source_by_id)),
+                ).fetchall()
+                observations.extend(
+                    DatasetMarketSourceObservation(
+                        dataset_source_id=capture_source_by_id[
+                            UUID(str(row[0]))
+                        ].dataset_source_id,
+                        role=role, source_identity=UUID(str(row[0])),
+                        instrument_id=None, decision_visible_at=row[1],
+                        foundation_integrity=True,
+                    )
+                    for row in rows if row[1] is not None
+                )
+                continue
+            target = mapping.get(role)
+            if target is None:
+                continue
+            attribute, visibility_table, visibility_identity, source_table, source_identity, instrument_column = target
+            source_by_id: dict[UUID, DatasetSource] = {}
+            for source in role_sources:
+                identity = getattr(source, attribute)
+                if identity is None or identity in source_by_id:
+                    raise RuntimeStateConflictError(
+                        "Formal Dataset source identities must be exact and unique"
+                    )
+                source_by_id[identity] = source
+            instrument_select = (
+                f"source.{instrument_column}" if instrument_column else "NULL::uuid"
+            )
+            rows = self._connection.execute(
+                f"""
+                SELECT visibility.{visibility_identity}, {instrument_select},
+                       visibility.qualified_decision_visible_at
+                FROM mra.{visibility_table} AS visibility
+                JOIN mra.{source_table} AS source
+                  ON source.{source_identity} = visibility.{visibility_identity}
+                WHERE visibility.provider_qualification_decision_id = %s
+                  AND visibility.{visibility_identity} = ANY(%s::uuid[])
+                """ + (" FOR SHARE OF visibility, source" if lock else ""),  # noqa: S608 -- closed mapping
+                (provider_qualification_decision_id, list(source_by_id)),
+            ).fetchall()
+            observations.extend(
+                DatasetMarketSourceObservation(
+                    dataset_source_id=source_by_id[UUID(str(row[0]))].dataset_source_id,
+                    role=role, source_identity=UUID(str(row[0])),
+                    instrument_id=(UUID(str(row[1])) if row[1] is not None else None),
+                    decision_visible_at=row[2], foundation_integrity=True,
+                )
+                for row in rows
+            )
+        expected = {
+            source.dataset_source_id for source in sources if source.role in _MARKET_ROLES
+        }
+        if {item.dataset_source_id for item in observations} != expected:
+            raise RuntimeNotFoundError(
+                "one or more Formal Dataset sources lack qualified visibility"
+            )
+        return tuple(sorted(observations, key=lambda item: str(item.dataset_source_id)))
+
 
 __all__ = ["PostgresResearchSourceQueries"]

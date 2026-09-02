@@ -46,6 +46,15 @@ class ResearchSourceQueries(Protocol):
         lock: bool,
     ) -> tuple[DatasetMarketSourceObservation, ...]: ...
 
+    def formal_market_source_observations(
+        self,
+        sources: tuple[DatasetSource, ...],
+        *,
+        formal_research_campaign_id: UUID,
+        provider_qualification_decision_id: UUID,
+        lock: bool,
+    ) -> tuple[DatasetMarketSourceObservation, ...]: ...
+
 
 __all__ = [
     "DatasetMarketSourceObservation",

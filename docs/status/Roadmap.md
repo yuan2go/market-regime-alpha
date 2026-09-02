@@ -4,7 +4,7 @@
 > **Authority:** Planning and dependency order only; never business, evidence, or qualification Authority
 > **Owner:** Market Regime Alpha maintainers
 > **Last Updated:** 2026-09-02
-> **Code Evidence:** `docs/architecture/Canonical-Overall-Design.md`, `docs/status/Current-State.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-01-Domain-Invariant-Catalog.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-08-Post-Candidate-Authority-Design.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-09-Target-Commitment-Decision-Run-Verification.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-10-Market-Target-Outcome-Verification.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-11-Research-Validity-Evaluation-Verification.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-12-Research-Evidence-Assessment-Qualification-Verification.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-13-Remaining-Decision-Support-Verification.md`
+> **Code Evidence:** `docs/architecture/Canonical-Overall-Design.md`, `docs/status/Current-State.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-01-Domain-Invariant-Catalog.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-08-Post-Candidate-Authority-Design.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-09-Target-Commitment-Decision-Run-Verification.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-10-Market-Target-Outcome-Verification.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-11-Research-Validity-Evaluation-Verification.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-12-Research-Evidence-Assessment-Qualification-Verification.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-13-Remaining-Decision-Support-Verification.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-14-Formal-Research-Engineering-Readiness-Verification.md`
 
 Architecture Re-foundation is the only active engineering program. Historical
 Alpha Proof protocols/results remain evidence provenance, not executable
@@ -44,8 +44,12 @@ WP-11Q and WP-12 are merged in
 independent exact-SHA engineering exit gate at
 `48949c87ad0241a8d60031137bc3aa8eb9887525`. WP-13 Remaining Decision
 Support passes its independent exact-SHA engineering exit gate at
-`fc5993e5d9e05dbe2845659140108e1051cf3704`. WP-14 is dependency-ready only
-after the WP-13 merge gate and fresh main preflight. The optional
+`fc5993e5d9e05dbe2845659140108e1051cf3704`, and that checkpoint is contained in
+merged `origin/main@eb7970b4833228a2faba6715c65c26dae88f6ee5`. WP-14 is the
+implemented and exact-SHA engineering-qualified readiness checkpoint at
+`ca6f66b50ec2c55250cd82d2fa1ed6c5f35c29b8`. WP-15 remains blocked until
+WP-14 is pushed, reviewed, merged, fetched again, and rechecked on latest main.
+The optional
 Model/Calibration branch is skipped, not started, and not required for
 rule-based Forecast. Every later row retains its own approval/exit gate;
 ordering never grants Runtime cutover, empirical promotion, broker authority,
@@ -71,8 +75,8 @@ availability-selected fallback.
 | **9. WP-11 Research Validity and Evaluation Closure** | `WP11_EXIT_GATE_PASS / NOT_CUT_OVER` | Target/Outcome contract parity; immutable single-exchange-calendar Partition/member roster; Decision/Outcome windows and purpose-specific purge/embargo/overlap policy; global ordinal first-access ledger; Experiment with a complete ordered non-empty Partition binding roster and partition-specific Run; predeclared Evaluation Protocol/metrics; Evaluation Run, exact Outcome access/observations and complete metric-member rosters; canonical composition and read-only reconciliation | exact-SHA clean PostgreSQL/recreate, real concurrency/failure/recovery, replay/reconciliation, representative plans, full regression, static/build/docs/architecture gates pass; remote CI is disabled and not claimed; no Runtime/CLI cutover or research promotion |
 | **10. WP-12 Research Evidence, Assessment and Qualification Closure** | `WP12_EXIT_GATE_PASS / NOT_CUT_OVER` | Evaluation-bound EvidenceItem/Dependency, Experiment-bound ResearchAssessment with complete terminal Evaluation/Evidence rosters, ResearchQualification policy/floor/decision/result/evidence | exact-SHA concrete FK/DAG/roster closure, negative/inconclusive/not-estimable preservation, every floor and exact Evidence binding, generation safety, idempotency/concurrency/recovery/replay, clean PostgreSQL, plans, full regression, static/build/docs gates pass; remote CI disabled and not claimed |
 | **11. WP-13 Remaining Decision Support Closure** | `WP13_EXIT_GATE_PASS / NOT_CUT_OVER` | concrete complete Decision Run Research Qualification roster/members; Context, Signal, rule-based Forecast, Opportunity, Thesis, Strategy, Portfolio and Risk | exact-SHA complete qualification/Context/Signal/Forecast/Opportunity/Portfolio/Risk rosters; one-way generation DAG; uncalibrated Forecast without Model; sole post-Portfolio Decision-Support Risk; composition, concurrency/failure/recovery/replay, clean PostgreSQL/plans/full regression/static/build/docs gates pass; no Runtime dispatch, Execution, broker, or empirical promotion |
-| **12. WP-14 Formal Research/OOS/Prospective Engineering Readiness** | `DEPENDENCY_READY_AFTER_WP13_MERGE / NOT_STARTED` | compose existing Runtime and Authorities into controlled research/shadow proof orchestration; immutable campaign predeclaration if required; locked-OOS freeze protection; live-clock prospective due/settlement workflow; Provider-qualification mechanics and inspection | engineering mechanics and full exact-SHA qualification only; must retain `FORMAL_PIT/OOS/PROSPECTIVE/PROVIDER/ALPHA = NOT_PROVEN`; fixtures cannot promote claims |
-| **13. WP-15 Formal Research Proof and Provider Qualification Campaign** | `BLOCKED_BY_WP14_MERGE / NOT_STARTED` | real Provider/Product qualification and one frozen transparent A-share hypothesis through PIT, FIT, VALIDATION, LOCKED_OOS and optional genuinely live Prospective start | only real Provider/data/recorded timestamps; report each Provider/PIT/OOS/Research Qualification/Prospective/Alpha result independently; negative/inconclusive/not-estimable is valid; no synthetic replacement |
+| **12. WP-14 Formal Research/OOS/Prospective Engineering Readiness** | `WP14_EXIT_GATE_PASS / NOT_CUT_OVER / NO_EMPIRICAL_PROMOTION` | exact controlled Runtime profiles; immutable campaign predeclaration; protected zero-access opening; database-clock due mechanics; Market-owned Provider qualification and source-specific Formal PIT/Dataset visibility; inspection/reconciliation | exact-SHA PostgreSQL, concurrency/failure/recovery/replay, plans, full regression/static/build/docs gates pass; `FORMAL_RESEARCH_ENGINEERING_READY=true` while `FORMAL_PIT/OOS/PROSPECTIVE/PROVIDER/ALPHA=NOT_PROVEN`; fixtures cannot promote claims |
+| **13. WP-15 Formal Research Proof and Provider Qualification Campaign** | `BLOCKED_BY_WP14_MERGE / DEPENDENCY_READY_AFTER_MERGE` | real Provider/Product qualification and one frozen transparent A-share hypothesis through PIT, FIT, VALIDATION, LOCKED_OOS and optional genuinely live Prospective start | only real Provider/data/recorded timestamps; report each Provider/PIT/OOS/Research Qualification/Prospective/Alpha result independently; negative/inconclusive/not-estimable is valid; no synthetic replacement |
 | **14. Optional Model and Calibration** | `OPTIONAL / NOT_STARTED` | Model/ModelVersion from completed training Evaluation, calibration Evaluation purpose and subject-specific Model qualification where separately approved; concrete model/Forecast children only after both real parents | Model remains optional; calibrated claims require exact partition/metric/evidence floors; no Candidate/Target/Outcome prerequisite or nullable future Forecast FK |
 | **15. Execution, TradeOutcome and Attribution** | `NO_GO / SEPARATE_AUTHORIZATION_REQUIRED` | Account/Intent/observed Fill/allocation/reconciliation/Position projection; separate TradeOutcome; Market and Trade Attribution | Fill-only trade mutation, Market/Trade subject separation, reconciliation and human-approval gates pass |
 | **16. Runtime/CLI Cutover and Legacy deletion** | `NO_GO / SEPARATE_AUTHORIZATION_REQUIRED` | complete target composition/CLI/epoch release followed by separately approved removal of old writers/readers/schema | complete catalog and consumer cuts proven; no dual write/fallback; clean bootstrap/replay/recovery; empirical/Provider/Production floors remain independent |
@@ -286,8 +290,44 @@ GitHub Actions is disabled, so remote CI is
 catalog/checksums, investigated failures, and proof ceiling are retained in the
 immutable
 [WP-13 Verification](../references/WP-ARCHITECTURE-REFOUNDATION-13-Remaining-Decision-Support-Verification.md).
-WP-14 remains blocked until the WP-13 branch is merged and latest main is
-fetched and rechecked.
+WP-13 was merged as `origin/main@eb7970b4833228a2faba6715c65c26dae88f6ee5`.
+WP-14 began only after that latest-main dependency gate was fetched and
+rechecked. WP-15 remains blocked until WP-14 has its own passing immutable
+Verification and merged-main gate.
+
+## WP-14 engineering readiness result
+
+WP-14 composes exact Decision Proof and Due Proof Runtime DAGs, immutable
+Formal Campaign predeclaration, complete actual Partition/Experiment binding,
+protected PostgreSQL-time zero-access opening, database-clock due inspection,
+Market-owned purpose-specific Provider qualification, source-specific Formal
+PIT/Dataset seams, inspection, and read-only reconciliation. It adds no second
+Runtime, Runtime business dispatcher, CLI cutover, Model, Calibration,
+Execution, or empirical promotion.
+
+The exact qualified implementation checkpoint is
+`ca6f66b50ec2c55250cd82d2fa1ed6c5f35c29b8`. Its status is:
+
+```text
+WP14 = IMPLEMENTED_AND_QUALIFIED
+WP14_EXIT_GATE = PASS
+FORMAL_RESEARCH_ENGINEERING_READY = true
+FORMAL_PIT / FORMAL_OOS = NOT_PROVEN
+PROSPECTIVE_PROVEN / PROVIDER_QUALIFIED / ALPHA_PROVEN = NO
+Runtime dispatch / CLI Cutover = NO-GO
+```
+
+Qualification passes 19 focused, 604 refoundation, 33 platform, 286
+PostgreSQL persistence, and all 3,644 repository tests, plus clean bootstrap,
+guarded exact-OID recreate, concurrency/failure/recovery/replay, read-only
+reconciliation, six representative plans, Ruff, mypy, build, documentation,
+architecture/import, and diff gates. GitHub Actions is disabled, so remote CI
+is `BLOCKED_BY_REPOSITORY_CONFIGURATION / NOT_RUN`, not PASS. Exact commands,
+catalog/checksums, operator-command corrections, and proof ceiling are retained
+in the immutable
+[WP-14 Verification](../references/WP-ARCHITECTURE-REFOUNDATION-14-Formal-Research-Engineering-Readiness-Verification.md).
+WP-15 remains blocked until the WP-14 branch is pushed, reviewed, merged, and
+freshly fetched main is proved to contain that Verification and implementation.
 
 ## Dependency-owned unresolved gaps
 
@@ -296,7 +336,7 @@ fetched and rechecked.
 | The live local database is heterogeneous: default-named Legacy schema is at migration 55, a historical proof schema is at 106, target `mra` is absent, and no configured/active Runtime proved current schema selection | Runtime/CLI Cutover | use a newly provisioned empty target database; bind the explicit database/schema, backup and inspect it, and require implemented exact-OID authorization before any canonical database destruction |
 | Formal Provider availability/finality evidence is absent | purpose-specific Provider Qualification after Outcome engineering | Market/Outcome store `UNKNOWN`/`PROVISIONAL` honestly and block historical visibility inflation; later qualification cannot mutate old captures or Outcome revisions |
 | Corporate-action and broker account semantics vary | Market/PIT / Execution | adapter-specific fixtures and qualification; no inference from adjusted prices or unexplained broker deltas |
-| Formal proof orchestration, due scheduling, locked-OOS policy freeze and Provider-qualification mechanics are absent | WP-14 | compose existing Runtime/Authorities and qualify the mechanics without turning fixtures into empirical claims |
+| Real recorded-provider availability/finality/known-time evidence and one frozen empirical campaign are absent | WP-15 | use WP-14 mechanics with real Provider data; fail closed and stop if the external evidence gate cannot be proved |
 | Artifact volume/retention is unmeasured | Runtime/CLI Cutover | no partitioning by aesthetics; measure write volume, vacuum/retention and dominant plans |
 | Unknown external broker effects lack an operator workflow | Execution / Runtime | remain reconciliation-required; no broker adapter or blind retry before workflow proof |
 | Formal PIT/OOS, sustained Prospective value, Production, and broker evidence are absent | Qualification | remain blocked/unsupported; engineering cutover cannot promote them |
@@ -312,8 +352,9 @@ Outcome access/observations, Evaluation metrics, Evidence DAG, complete
 Assessment revisions, purpose-specific Research Qualification, exact later-
 generation Decision inputs, PIT Context, Strategy, Signal, uncalibrated rule
 Forecast, Opportunity, Thesis, complete Portfolio, and Decision-Support-only
-Risk. Model, Calibration, Formal Research orchestration, Execution, Account,
-and broker owners remain absent. This is not a
+Risk. WP-14 Formal Research orchestration and Provider-qualification mechanics
+are present, but no real campaign claim is admitted. Model, Calibration,
+Execution, Account, and broker owners remain absent. This is not a
 Runtime/CLI cutover or target baseline release.
 
 WP-08 closes the design dependency review. `OPEN_DECISION_RUN` is mandatory
@@ -323,10 +364,11 @@ then owns one revisioned realized-market-fact truth. Partition/Evaluation
 consumers use its narrow read-only port, and feedback crosses only from generation `n` to
 Decision Run `n+1` through a concrete Research Qualification binding.
 
-WP-13 is the latest passed Exit Gate at
-`fc5993e5d9e05dbe2845659140108e1051cf3704`. Its branch must still complete the
-push/PR/merge/fetch gate before WP-14 starts. Optional Model/Calibration remains
-unstarted and skipped. Formal proof orchestration, Provider qualification,
+WP-14 is the latest passed local Exit Gate at
+`ca6f66b50ec2c55250cd82d2fa1ed6c5f35c29b8`, based on merged WP-13 main
+`eb7970b4833228a2faba6715c65c26dae88f6ee5`. WP-15 remains blocked until the
+WP-14 merge gate completes. Optional Model/Calibration remains unstarted and
+skipped. Real Provider qualification and Formal PIT/OOS/Prospective evidence,
 Execution, TradeOutcome, Attribution, compatibility writes, dual writes, and
 future placeholders remain absent.
 

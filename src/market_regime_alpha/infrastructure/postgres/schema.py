@@ -36,7 +36,13 @@ from market_regime_alpha.market.domain import (
     MarketFactKind,
     MembershipStatus,
     PriceBasis,
+    ProviderEvidenceClass,
+    ProviderFinalityStatus,
     ProviderKind,
+    ProviderQualificationDecisionStatus,
+    ProviderQualificationPurpose,
+    ProviderRequirementKind,
+    ProviderRequirementResult,
     SecurityStatus,
     SourceAvailabilityStatus,
     SpecialTreatmentStatus,
@@ -77,6 +83,10 @@ from market_regime_alpha.research_qualification.domain import (
     FeatureValueType,
 )
 from market_regime_alpha.research_qualification.domain.assessment import AssessmentStatus
+from market_regime_alpha.research_qualification.domain.formal_campaign import (
+    CampaignClass,
+    CampaignCostKind,
+)
 from market_regime_alpha.research_qualification.domain.evidence import (
     EvidenceClass as ResearchEvidenceClass,
     EvidenceDependencyRole,
@@ -179,6 +189,17 @@ EXPECTED_MARKET_TABLES: Final[frozenset[str]] = frozenset(
         "instrument_fact_revision",
         "corporate_action_revision",
         "source_gap",
+        "provider_qualification_protocol",
+        "provider_qualification_requirement",
+        "provider_finality_observation",
+        "provider_qualification_decision",
+        "provider_qualification_capture_member",
+        "provider_qualification_requirement_result",
+        "qualified_market_bar_visibility",
+        "qualified_instrument_fact_visibility",
+        "qualified_classification_membership_visibility",
+        "qualified_trading_session_visibility",
+        "qualified_source_gap_visibility",
     }
 )
 
@@ -213,6 +234,7 @@ EXPECTED_RESEARCH_DEFINITION_TABLES: Final[frozenset[str]] = frozenset(
         "dataset",
         "dataset_source",
         "feature_definition",
+        "formal_research_dataset",
     }
 )
 
@@ -327,6 +349,15 @@ EXPECTED_RESEARCH_QUALIFICATION_TABLES: Final[frozenset[str]] = frozenset(
         "research_qualification_decision",
         "research_qualification_floor_result",
         "research_qualification_floor_evidence",
+        "formal_research_campaign",
+        "formal_research_campaign_partition_plan",
+        "formal_research_campaign_evaluation_protocol",
+        "formal_research_campaign_cost_assumption",
+        "formal_research_campaign_provider_decision",
+        "formal_research_campaign_partition_binding",
+        "formal_research_campaign_experiment",
+        "formal_research_campaign_protected_open",
+        "formal_research_campaign_runtime_run",
     }
 )
 
@@ -363,6 +394,20 @@ _LEGACY_TABLE_SIGNATURES: Final[frozenset[str]] = frozenset(
 
 _REFERENCE_VOCABULARY: Final[dict[str, tuple[str, ...]]] = {
     "provider_kind": tuple(item.value for item in ProviderKind),
+    "provider_qualification_purpose": tuple(
+        item.value for item in ProviderQualificationPurpose
+    ),
+    "provider_evidence_class": tuple(item.value for item in ProviderEvidenceClass),
+    "provider_requirement_kind": tuple(item.value for item in ProviderRequirementKind),
+    "provider_requirement_result": tuple(
+        item.value for item in ProviderRequirementResult
+    ),
+    "provider_qualification_decision_status": tuple(
+        item.value for item in ProviderQualificationDecisionStatus
+    ),
+    "provider_finality_status": tuple(item.value for item in ProviderFinalityStatus),
+    "formal_campaign_class": tuple(item.value for item in CampaignClass),
+    "formal_campaign_cost_kind": tuple(item.value for item in CampaignCostKind),
     "instrument_type": tuple(item.value for item in InstrumentType),
     "market_fact_kind": tuple(item.value for item in MarketFactKind),
     "instrument_fact_kind": tuple(item.value for item in InstrumentFactKind),
@@ -384,8 +429,12 @@ _REFERENCE_VOCABULARY: Final[dict[str, tuple[str, ...]]] = {
         "DECIDE_AND_RISK",
         "PERSIST_DECISION",
         "SETTLE_OUTCOME",
+        "ACQUIRE_OUTCOME_INPUTS",
+        "EVALUATE",
+        "RECORD_EVIDENCE",
         "ATTRIBUTE",
         "ASSESS_RESEARCH",
+        "QUALIFY",
     ),
     "runtime_mode": (
         "OPERATIONAL",

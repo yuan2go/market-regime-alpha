@@ -31,18 +31,23 @@ Foundation
 → Market Target Outcome
 → WP-11 Research Partition/Experiment/Evaluation closure
 → Evidence/Research Assessment/Research Qualification
-→ remaining Decision Support
+→ WP-13 remaining Decision Support
+→ WP-14 Formal Research/OOS/Prospective engineering readiness
+→ WP-15 real Provider qualification and frozen research proof campaign
 → optional Model/Calibration only when separately justified
 → Execution/TradeOutcome/Attribution → Runtime/CLI Cutover
 ```
 
 WP-08 authorizes this dependency order, not concurrent implementation. WP-09
-through WP-12 have passed their immutable local engineering gates; WP-12 is
-merged in `origin/main@6e0ad150057e43a89843eb4fb307e0373d5572ac`. The active
-authorized package is WP-13 Remaining Decision Support Closure. The optional
-Model/Calibration branch is deliberately skipped and remains optional. WP-13
-does not authorize Execution, Runtime/CLI Cutover, Legacy deletion, formal
-research promotion, or Production qualification. Every later stage remains
+through WP-13 have passed their immutable local engineering gates; WP-13 is
+merged in `origin/main@eb7970b4833228a2faba6715c65c26dae88f6ee5`. The active
+authorized package is WP-14 Formal Research/OOS/Prospective Engineering
+Readiness Closure. It may prove mechanics only and cannot establish Formal PIT,
+Formal OOS, Prospective, Provider, Alpha, trading, or Production evidence. The
+optional Model/Calibration branch is deliberately skipped and remains optional.
+WP-15 remains blocked until WP-14 independently passes, is merged, and latest
+main is fetched and rechecked. Execution, Runtime/CLI Cutover, Legacy deletion,
+and Production qualification remain unauthorized. Every later stage remains
 blocked by its predecessor and own exit gate.
 
 Do not resume the former Alpha Proof Roadmap as an engineering program. Existing

@@ -301,6 +301,7 @@ def validate_step_dag(
         graph[dependency.predecessor_key].add(dependency.successor_key)
 
     _validate_mandatory_decision_chain(steps, dependencies)
+    _validate_formal_profile(steps, dependencies)
 
     visiting: set[str] = set()
     visited: set[str] = set()
@@ -370,6 +371,80 @@ def _validate_mandatory_decision_chain(
         for dependency in dependencies
     ):
         raise ValueError("BUILD_CANDIDATE_SET cannot bypass OPEN_DECISION_RUN")
+
+
+def _validate_formal_profile(
+    steps: tuple[StepSpec, ...],
+    dependencies: tuple[StepDependency, ...],
+) -> None:
+    profiles = {
+        "formal-decision-": (
+            "CAPTURE",
+            "NORMALIZE_PIT",
+            "FREEZE_UNIVERSE",
+            "ASSESS_ELIGIBILITY",
+            "REGISTER_DATASET",
+            "BUILD_CANDIDATE_SET",
+            "OPEN_DECISION_RUN",
+            "ASSESS_CONTEXT",
+            "SIGNAL_AND_FORECAST",
+            "DECIDE_AND_RISK",
+        ),
+        "formal-due-": (
+            "SETTLE_OUTCOME",
+            "ACQUIRE_OUTCOME_INPUTS",
+            "EVALUATE",
+            "RECORD_EVIDENCE",
+            "ASSESS_RESEARCH",
+            "QUALIFY",
+        ),
+    }
+    matching_profiles = tuple(
+        prefix
+        for prefix in profiles
+        if any(step.step_key.startswith(prefix) for step in steps)
+    )
+    if not matching_profiles:
+        return
+    if len(matching_profiles) != 1:
+        raise ValueError("a Runtime Run cannot mix formal proof profiles")
+    prefix = matching_profiles[0]
+    expected_kinds = profiles[prefix]
+    ordered = tuple(sorted(steps, key=lambda item: item.ordinal))
+    if len(steps) != len(expected_kinds):
+        raise ValueError("formal Runtime profile has an incomplete step roster")
+    if not all(step.required for step in ordered):
+        raise ValueError("formal Runtime profile steps are mandatory")
+    if tuple(step.ordinal for step in ordered) != tuple(
+        range(1, len(ordered) + 1)
+    ):
+        raise ValueError("formal Runtime profile ordinals must be contiguous")
+    if tuple(step.step_kind for step in ordered) != expected_kinds:
+        raise ValueError("formal Runtime profile has an incomplete step roster")
+    expected_edges = {
+        (left.step_key, right.step_key, "REQUIRED_SUCCESS")
+        for left, right in zip(ordered, ordered[1:])
+    }
+    actual_edges = {
+        (
+            dependency.predecessor_key,
+            dependency.successor_key,
+            dependency.dependency_kind,
+        )
+        for dependency in dependencies
+    }
+    if not expected_edges.issubset(actual_edges):
+        raise ValueError(
+            "formal Runtime profile requires every direct REQUIRED_SUCCESS edge"
+        )
+    positions = {step.step_key: index for index, step in enumerate(ordered)}
+    if any(
+        positions[dependency.successor_key]
+        - positions[dependency.predecessor_key]
+        > 1
+        for dependency in dependencies
+    ):
+        raise ValueError("formal Runtime profile cannot contain a bypass edge")
 
 
 __all__ = [

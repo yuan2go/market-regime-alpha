@@ -15,11 +15,11 @@ ROOT = Path(__file__).resolve().parents[3]
 MIGRATIONS = ROOT / "src/market_regime_alpha/infrastructure/postgres/migrations"
 
 
-def test_wp11_extends_only_unreleased_baseline() -> None:
+def test_refoundation_extends_only_unreleased_baseline() -> None:
     migrations = sorted(item.name for item in MIGRATIONS.glob("*.sql"))
     assert migrations == ["001_baseline.sql"]
     assert len(EXPECTED_RESEARCH_VALIDITY_TABLES) == 12
-    assert len(EXPECTED_TARGET_TABLES) == 108
+    assert len(EXPECTED_TARGET_TABLES) == 129
 
 
 def test_wp11_relations_have_no_generic_or_future_placeholder_shape(

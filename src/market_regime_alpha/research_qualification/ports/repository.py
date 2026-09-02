@@ -9,6 +9,7 @@ from market_regime_alpha.research_qualification.domain import (
     DecisionInputDatasetDefinition,
     DecisionInputDatasetManifest,
     FeatureDefinition,
+    FormalDatasetScope,
 )
 
 
@@ -52,6 +53,14 @@ class ResearchDefinitionRepository(Protocol):
         *,
         lock: bool,
     ) -> tuple[DatasetSource, ...]: ...
+
+    def bind_formal_dataset(
+        self, dataset_id: UUID, scope: FormalDatasetScope
+    ) -> str: ...
+
+    def formal_dataset_matches(
+        self, dataset_id: UUID, scope: FormalDatasetScope
+    ) -> bool: ...
 
 
 __all__ = ["DatasetRecord", "ResearchDefinitionRepository"]
