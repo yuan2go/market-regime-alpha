@@ -41,6 +41,7 @@ def test_research_and_qualification_schema_has_exact_owned_relations(
         "exploratory_backtest_fold",
         "exploratory_backtest_fold_session",
         "exploratory_backtest_cost_assumption",
+        "exploratory_backtest_dataset",
     }
     assert EXPECTED_EXPLORATORY_BACKTEST_TABLES <= tables
     assert tables == EXPECTED_TARGET_TABLES

@@ -392,6 +392,7 @@ EXPECTED_EXPLORATORY_BACKTEST_TABLES: Final[frozenset[str]] = frozenset(
         "exploratory_backtest_fold",
         "exploratory_backtest_fold_session",
         "exploratory_backtest_cost_assumption",
+        "exploratory_backtest_dataset",
     }
 )
 

@@ -33,6 +33,9 @@ from market_regime_alpha.research_qualification.domain import (
 from market_regime_alpha.research_qualification.domain.exploratory import (
     ExploratoryRetrospectiveDatasetScope,
 )
+from market_regime_alpha.research_qualification.domain.exploratory_backtest import (
+    ExploratoryBacktestDatasetScope,
+)
 from market_regime_alpha.research_qualification.ports import (
     ResearchArtifactByteStore,
     ResearchUnitOfWorkProvider,
@@ -77,19 +80,30 @@ class DatasetCommands:
         *,
         formal_scope: FormalDatasetScope | None = None,
         exploratory_scope: ExploratoryRetrospectiveDatasetScope | None = None,
+        backtest_scope: ExploratoryBacktestDatasetScope | None = None,
         runtime_claim: AttemptClaim | None = None,
     ) -> DatasetRegistrationResult:
-        if formal_scope is not None and exploratory_scope is not None:
-            raise ValueError("Dataset cannot be both Formal and exploratory retrospective")
-        scope_payload = formal_scope or exploratory_scope
+        if sum(
+            item is not None
+            for item in (formal_scope, exploratory_scope, backtest_scope)
+        ) > 1:
+            raise ValueError("Dataset evidence scopes are mutually exclusive")
+        resolved_exploratory = (
+            backtest_scope.retrospective
+            if backtest_scope is not None
+            else exploratory_scope
+        )
+        scope_payload = formal_scope or backtest_scope or exploratory_scope
         request_hash = canonical_json_sha256(definition) if scope_payload is None else canonical_json_sha256(
             {"definition": definition, "scope": scope_payload}
         )
         command_kind = (
             "REGISTER_FORMAL_DATASET"
             if formal_scope is not None
+            else "REGISTER_EXPLORATORY_BACKTEST_DATASET"
+            if backtest_scope is not None
             else "REGISTER_EXPLORATORY_RETROSPECTIVE_DATASET"
-            if exploratory_scope is not None
+            if resolved_exploratory is not None
             else "REGISTER_DATASET"
         )
         with terminal_failure_boundary(
@@ -109,7 +123,8 @@ class DatasetCommands:
                 runtime_claim=runtime_claim,
                 command_kind=command_kind,
                 formal_scope=formal_scope,
-                exploratory_scope=exploratory_scope,
+                exploratory_scope=resolved_exploratory,
+                backtest_scope=backtest_scope,
             )
             if replay is not None:
                 return replay
@@ -169,7 +184,8 @@ class DatasetCommands:
                 runtime_claim=runtime_claim,
                 command_kind=command_kind,
                 formal_scope=formal_scope,
-                exploratory_scope=exploratory_scope,
+                exploratory_scope=resolved_exploratory,
+                backtest_scope=backtest_scope,
             )
 
     def _manifest_read_failure_observation(
@@ -252,6 +268,7 @@ class DatasetCommands:
         command_kind: str,
         formal_scope: FormalDatasetScope | None,
         exploratory_scope: ExploratoryRetrospectiveDatasetScope | None,
+        backtest_scope: ExploratoryBacktestDatasetScope | None,
     ) -> tuple[DatasetRegistrationResult | None, tuple[FeatureDefinition, ...]]:
         with self._uow_provider() as uow:
             if runtime_claim is not None:
@@ -276,6 +293,12 @@ class DatasetCommands:
                 ):
                     raise ArtifactIntegrityError(
                         "Exploratory Dataset receipt lost its archive dual-clock binding"
+                    )
+                if backtest_scope is not None and not uow.research_definitions.exploratory_backtest_dataset_matches(
+                    UUID(replay.aggregate_id), backtest_scope
+                ):
+                    raise ArtifactIntegrityError(
+                        "Exploratory Dataset receipt lost its backtest member binding"
                     )
                 finalize_runtime(
                     uow,
@@ -317,6 +340,7 @@ class DatasetCommands:
         command_kind: str,
         formal_scope: FormalDatasetScope | None,
         exploratory_scope: ExploratoryRetrospectiveDatasetScope | None,
+        backtest_scope: ExploratoryBacktestDatasetScope | None,
     ) -> DatasetRegistrationResult:
         with self._uow_provider() as uow:
             if runtime_claim is not None:
@@ -341,6 +365,12 @@ class DatasetCommands:
                 ):
                     raise ArtifactIntegrityError(
                         "Exploratory Dataset receipt lost its archive dual-clock binding"
+                    )
+                if backtest_scope is not None and not uow.research_definitions.exploratory_backtest_dataset_matches(
+                    UUID(replay.aggregate_id), backtest_scope
+                ):
+                    raise ArtifactIntegrityError(
+                        "Exploratory Dataset receipt lost its backtest member binding"
                     )
                 finalize_runtime(
                     uow,
@@ -438,6 +468,11 @@ class DatasetCommands:
                 uow.research_definitions.bind_exploratory_retrospective_dataset(
                     definition.dataset_id,
                     exploratory_scope,
+                )
+            if backtest_scope is not None:
+                uow.research_definitions.bind_exploratory_backtest_dataset(
+                    definition.dataset_id,
+                    backtest_scope,
                 )
             persisted = uow.research_definitions.dataset_record(
                 definition.dataset_id,

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from uuid import UUID
 
@@ -15,7 +15,11 @@ from market_regime_alpha.research_qualification.domain.exploratory_backtest impo
     BacktestFoldPlan,
     BacktestFoldSessionPlan,
     BacktestSessionRole,
+    ExploratoryBacktestDatasetScope,
     ExploratoryBacktestRunPlan,
+)
+from market_regime_alpha.research_qualification.domain.exploratory import (
+    ExploratoryRetrospectiveDatasetScope,
 )
 from market_regime_alpha.research_qualification.domain.model import ArtifactBinding
 from market_regime_alpha.research_qualification.domain.research_vocabulary import (
@@ -170,3 +174,21 @@ def test_fold_requires_relational_purge_and_embargo_rosters() -> None:
                 *fold.sessions[2:],
             ),
         )
+
+
+def test_backtest_dataset_scope_freezes_archive_and_exact_member_identity() -> None:
+    retrospective = ExploratoryRetrospectiveDatasetScope(
+        market_archive_id=_id(80),
+        market_archive_seal_id=_id(81),
+        knowledge_cutoff=datetime(2026, 9, 3, tzinfo=timezone.utc),
+        simulated_event_cutoff=datetime(2026, 1, 8, tzinfo=timezone.utc),
+    )
+    scope = ExploratoryBacktestDatasetScope(
+        retrospective=retrospective,
+        exploratory_backtest_run_id=_id(82),
+        exploratory_backtest_arm_id=_id(83),
+        exploratory_backtest_fold_id=_id(84),
+        exploratory_backtest_fold_session_id=_id(85),
+    )
+
+    assert scope.content_sha256

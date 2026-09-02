@@ -18448,3 +18448,136 @@ CREATE TRIGGER exploratory_backtest_arm_append_only BEFORE UPDATE OR DELETE ON m
 CREATE TRIGGER exploratory_backtest_fold_append_only BEFORE UPDATE OR DELETE ON mra.exploratory_backtest_fold FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
 CREATE TRIGGER exploratory_backtest_fold_session_append_only BEFORE UPDATE OR DELETE ON mra.exploratory_backtest_fold_session FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
 CREATE TRIGGER exploratory_backtest_cost_append_only BEFORE UPDATE OR DELETE ON mra.exploratory_backtest_cost_assumption FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+
+-- Exact Dataset member of a frozen exploratory arm/fold/session. The generic
+-- retrospective binding remains the sole dual-clock source Authority.
+CREATE TABLE mra.exploratory_backtest_dataset (
+    dataset_id uuid PRIMARY KEY
+        REFERENCES mra.exploratory_retrospective_dataset(dataset_id)
+        ON DELETE RESTRICT,
+    exploratory_backtest_run_id uuid NOT NULL
+        REFERENCES mra.exploratory_backtest_run(exploratory_backtest_run_id)
+        ON DELETE RESTRICT,
+    exploratory_backtest_arm_id uuid NOT NULL
+        REFERENCES mra.exploratory_backtest_arm(exploratory_backtest_arm_id)
+        ON DELETE RESTRICT,
+    exploratory_backtest_fold_id uuid NOT NULL
+        REFERENCES mra.exploratory_backtest_fold(exploratory_backtest_fold_id)
+        ON DELETE RESTRICT,
+    exploratory_backtest_fold_session_id uuid NOT NULL
+        REFERENCES mra.exploratory_backtest_fold_session(
+            exploratory_backtest_fold_session_id
+        ) ON DELETE RESTRICT,
+    evidence_lane text NOT NULL,
+    scope_content_sha256 text NOT NULL,
+    content_sha256 text NOT NULL,
+    registered_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT exploratory_backtest_dataset_member_uk UNIQUE (
+        exploratory_backtest_run_id, exploratory_backtest_arm_id,
+        exploratory_backtest_fold_session_id
+    ),
+    CONSTRAINT exploratory_backtest_dataset_shape_ck CHECK (
+        evidence_lane = 'EXPLORATORY_RETROSPECTIVE'
+        AND scope_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+CREATE INDEX exploratory_backtest_dataset_run_idx
+    ON mra.exploratory_backtest_dataset(
+        exploratory_backtest_run_id, exploratory_backtest_fold_id,
+        exploratory_backtest_fold_session_id
+    );
+CREATE INDEX exploratory_backtest_dataset_arm_idx
+    ON mra.exploratory_backtest_dataset(
+        exploratory_backtest_arm_id, exploratory_backtest_run_id
+    );
+CREATE INDEX exploratory_backtest_dataset_fold_idx
+    ON mra.exploratory_backtest_dataset(
+        exploratory_backtest_fold_id, exploratory_backtest_run_id
+    );
+CREATE INDEX exploratory_backtest_dataset_session_idx
+    ON mra.exploratory_backtest_dataset(
+        exploratory_backtest_fold_session_id, exploratory_backtest_fold_id
+    );
+
+CREATE FUNCTION mra.validate_exploratory_backtest_dataset()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE expected_scope text;
+DECLARE expected_content text;
+BEGIN
+    SELECT mra.canonical_sha256(mra.canonical_json_text(jsonb_build_object(
+               'exploratory_backtest_arm_id', NEW.exploratory_backtest_arm_id,
+               'exploratory_backtest_fold_id', NEW.exploratory_backtest_fold_id,
+               'exploratory_backtest_fold_session_id',
+                   NEW.exploratory_backtest_fold_session_id,
+               'exploratory_backtest_run_id', NEW.exploratory_backtest_run_id,
+               'retrospective_scope_sha256', retrospective.scope_content_sha256
+           )))
+      INTO expected_scope
+      FROM mra.exploratory_retrospective_dataset AS retrospective
+      JOIN mra.dataset AS dataset ON dataset.dataset_id = retrospective.dataset_id
+      JOIN mra.exploratory_backtest_run AS backtest
+        ON backtest.exploratory_backtest_run_id = NEW.exploratory_backtest_run_id
+       AND backtest.market_archive_id = retrospective.market_archive_id
+       AND backtest.market_archive_seal_id = retrospective.market_archive_seal_id
+      JOIN mra.exploratory_backtest_arm AS arm
+        ON arm.exploratory_backtest_arm_id = NEW.exploratory_backtest_arm_id
+       AND arm.exploratory_backtest_run_id = backtest.exploratory_backtest_run_id
+      JOIN mra.exploratory_backtest_fold AS fold
+        ON fold.exploratory_backtest_fold_id = NEW.exploratory_backtest_fold_id
+       AND fold.exploratory_backtest_run_id = backtest.exploratory_backtest_run_id
+      JOIN mra.exploratory_backtest_fold_session AS member
+        ON member.exploratory_backtest_fold_session_id =
+             NEW.exploratory_backtest_fold_session_id
+       AND member.exploratory_backtest_fold_id = fold.exploratory_backtest_fold_id
+       AND member.exploratory_backtest_run_id = backtest.exploratory_backtest_run_id
+      JOIN mra.trading_session AS session
+        ON session.session_id = member.trading_session_id
+       AND session.session_date = member.session_date
+       AND session.exchange = fold.exchange_code
+     WHERE retrospective.dataset_id = NEW.dataset_id
+       AND retrospective.evidence_lane = NEW.evidence_lane
+       AND member.session_role IN ('FIT_INPUT', 'EVALUATION')
+       AND (dataset.decision_time AT TIME ZONE session.timezone_name)::date =
+           member.session_date
+       AND dataset.decision_time = retrospective.simulated_event_cutoff
+       AND dataset.feature_count = backtest.feature_count
+       AND (
+           SELECT count(*)
+           FROM mra.dataset_source AS source
+           JOIN mra.exploratory_backtest_feature AS feature
+             ON feature.exploratory_backtest_run_id =
+                  backtest.exploratory_backtest_run_id
+            AND feature.feature_definition_id = source.feature_definition_id
+           WHERE source.dataset_id = dataset.dataset_id
+             AND source.source_role = 'FEATURE_DEFINITION'
+       ) = backtest.feature_count;
+    IF expected_scope IS NULL OR NEW.scope_content_sha256 <> expected_scope THEN
+        RAISE EXCEPTION 'Exploratory backtest Dataset member binding is invalid'
+            USING ERRCODE = '55000';
+    END IF;
+    expected_content := mra.canonical_sha256(mra.canonical_json_text(
+        jsonb_build_object(
+            'dataset_id', NEW.dataset_id,
+            'evidence_lane', NEW.evidence_lane,
+            'exploratory_backtest_arm_id', NEW.exploratory_backtest_arm_id,
+            'exploratory_backtest_fold_id', NEW.exploratory_backtest_fold_id,
+            'exploratory_backtest_fold_session_id',
+                NEW.exploratory_backtest_fold_session_id,
+            'exploratory_backtest_run_id', NEW.exploratory_backtest_run_id,
+            'scope_content_sha256', NEW.scope_content_sha256
+        )
+    ));
+    IF NEW.content_sha256 <> expected_content THEN
+        RAISE EXCEPTION 'Exploratory backtest Dataset content hash is invalid'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+CREATE TRIGGER exploratory_backtest_dataset_guard
+BEFORE INSERT ON mra.exploratory_backtest_dataset
+FOR EACH ROW EXECUTE FUNCTION mra.validate_exploratory_backtest_dataset();
+CREATE TRIGGER exploratory_backtest_dataset_append_only
+BEFORE UPDATE OR DELETE ON mra.exploratory_backtest_dataset
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();

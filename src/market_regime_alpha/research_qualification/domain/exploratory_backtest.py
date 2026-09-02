@@ -10,6 +10,9 @@ import re
 from uuid import UUID
 
 from market_regime_alpha.research_qualification.domain.model import ArtifactBinding
+from market_regime_alpha.research_qualification.domain.exploratory import (
+    ExploratoryRetrospectiveDatasetScope,
+)
 from market_regime_alpha.research_qualification.domain.research_vocabulary import (
     PartitionPurpose,
 )
@@ -333,8 +336,30 @@ class ExploratoryBacktestRunPlan:
         })))
 
 
+@dataclass(frozen=True, slots=True)
+class ExploratoryBacktestDatasetScope:
+    retrospective: ExploratoryRetrospectiveDatasetScope
+    exploratory_backtest_run_id: UUID
+    exploratory_backtest_arm_id: UUID
+    exploratory_backtest_fold_id: UUID
+    exploratory_backtest_fold_session_id: UUID
+    content_sha256: ContentHash = field(init=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "content_sha256", ContentHash(canonical_json_sha256({
+            "exploratory_backtest_arm_id": self.exploratory_backtest_arm_id,
+            "exploratory_backtest_fold_id": self.exploratory_backtest_fold_id,
+            "exploratory_backtest_fold_session_id": (
+                self.exploratory_backtest_fold_session_id
+            ),
+            "exploratory_backtest_run_id": self.exploratory_backtest_run_id,
+            "retrospective_scope_sha256": str(self.retrospective.content_sha256),
+        })))
+
+
 __all__ = [
     "BacktestArmKind", "BacktestArmPlan", "BacktestCostAssumption",
     "BacktestCostKind", "BacktestFoldPlan", "BacktestFoldSessionPlan",
-    "BacktestSessionRole", "ExploratoryBacktestRunPlan",
+    "BacktestSessionRole", "ExploratoryBacktestDatasetScope",
+    "ExploratoryBacktestRunPlan",
 ]

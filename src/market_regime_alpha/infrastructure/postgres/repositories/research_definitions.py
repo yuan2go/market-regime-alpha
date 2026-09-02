@@ -20,6 +20,9 @@ from market_regime_alpha.research_qualification.domain import (
     FormalDatasetScope,
 )
 from market_regime_alpha.research_qualification.domain.exploratory import ExploratoryRetrospectiveDatasetScope
+from market_regime_alpha.research_qualification.domain.exploratory_backtest import (
+    ExploratoryBacktestDatasetScope,
+)
 from market_regime_alpha.research_qualification.ports.repository import DatasetRecord
 from market_regime_alpha.runtime.errors import (
     ArtifactIntegrityError,
@@ -452,6 +455,73 @@ class PostgresResearchDefinitionRepository:
                 scope.market_archive_seal_id,
                 scope.knowledge_cutoff,
                 scope.simulated_event_cutoff,
+                str(scope.content_sha256),
+            ),
+        ).fetchone()
+        return row is not None
+
+    def bind_exploratory_backtest_dataset(
+        self,
+        dataset_id: UUID,
+        scope: ExploratoryBacktestDatasetScope,
+    ) -> str:
+        content_hash = canonical_json_sha256(
+            {
+                "dataset_id": dataset_id,
+                "evidence_lane": scope.retrospective.evidence_lane,
+                "exploratory_backtest_arm_id": scope.exploratory_backtest_arm_id,
+                "exploratory_backtest_fold_id": scope.exploratory_backtest_fold_id,
+                "exploratory_backtest_fold_session_id": (
+                    scope.exploratory_backtest_fold_session_id
+                ),
+                "exploratory_backtest_run_id": scope.exploratory_backtest_run_id,
+                "scope_content_sha256": str(scope.content_sha256),
+            }
+        )
+        self._connection.execute(
+            """
+            INSERT INTO mra.exploratory_backtest_dataset (
+                dataset_id, exploratory_backtest_run_id,
+                exploratory_backtest_arm_id, exploratory_backtest_fold_id,
+                exploratory_backtest_fold_session_id, evidence_lane,
+                scope_content_sha256, content_sha256
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                dataset_id,
+                scope.exploratory_backtest_run_id,
+                scope.exploratory_backtest_arm_id,
+                scope.exploratory_backtest_fold_id,
+                scope.exploratory_backtest_fold_session_id,
+                scope.retrospective.evidence_lane.value,
+                str(scope.content_sha256),
+                content_hash,
+            ),
+        )
+        return content_hash
+
+    def exploratory_backtest_dataset_matches(
+        self,
+        dataset_id: UUID,
+        scope: ExploratoryBacktestDatasetScope,
+    ) -> bool:
+        row = self._connection.execute(
+            """
+            SELECT 1 FROM mra.exploratory_backtest_dataset
+            WHERE dataset_id = %s
+              AND exploratory_backtest_run_id = %s
+              AND exploratory_backtest_arm_id = %s
+              AND exploratory_backtest_fold_id = %s
+              AND exploratory_backtest_fold_session_id = %s
+              AND evidence_lane = 'EXPLORATORY_RETROSPECTIVE'
+              AND scope_content_sha256 = %s
+            """,
+            (
+                dataset_id,
+                scope.exploratory_backtest_run_id,
+                scope.exploratory_backtest_arm_id,
+                scope.exploratory_backtest_fold_id,
+                scope.exploratory_backtest_fold_session_id,
                 str(scope.content_sha256),
             ),
         ).fetchone()
