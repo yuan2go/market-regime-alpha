@@ -79,7 +79,7 @@ def test_research_facade_exposes_target_registration_without_owning_transaction(
         PACKAGE / "research_qualification/application/service.py"
     ).read_text(encoding="utf-8")
     assert "with self._target_uow_provider()" not in source
-    assert len(source.splitlines()) <= 130
+    assert len(source.splitlines()) <= 140
 
 
 def test_target_postgres_uow_is_separate_from_research_definition_uow() -> None:

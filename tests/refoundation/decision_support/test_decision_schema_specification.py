@@ -59,7 +59,6 @@ def test_decision_support_schema_includes_qualification_roster_authority(
             (
                 "outcome",
                 "qualification",
-                "model",
                 "trade_outcome",
             )
         )

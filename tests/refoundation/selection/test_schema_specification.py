@@ -34,7 +34,9 @@ def test_selection_schema_has_exactly_the_seven_core_authority_relations(
     } == EXPECTED_CANDIDATE_TABLES
     assert {
         name for name in tables if name.startswith("decision_")
-    } == EXPECTED_DECISION_SUPPORT_TABLES
+    } == EXPECTED_DECISION_SUPPORT_TABLES - {
+        "exploratory_retrospective_decision_run"
+    }
     assert not {name for name in tables if name.startswith("research_definition")}
 
 
@@ -126,7 +128,19 @@ def test_selection_uses_numeric_lineage_indexes_and_only_append_only_triggers(
         ("eligibility_reason", "threshold_decimal"),
     } <= numeric_columns
     assert trigger_functions
-    assert all("reject_append_only_mutation" in statement for _, statement in trigger_functions)
+    assert {
+        table
+        for table, statement in trigger_functions
+        if "reject_append_only_mutation" in statement
+    } == EXPECTED_SELECTION_CORE_TABLES
+    assert {
+        statement
+        for _, statement in trigger_functions
+        if "reject_append_only_mutation" not in statement
+    } == {
+        "EXECUTE FUNCTION mra.validate_exploratory_retrospective_eligibility()",
+        "EXECUTE FUNCTION mra.validate_exploratory_retrospective_universe()",
+    }
     assert "USING gin (market_fact_revision_ids)" in indexes["eligibility_reason_fact_lineage_gin"]
     assert "USING gin (market_bar_revision_ids)" in indexes["eligibility_reason_bar_lineage_gin"]
 

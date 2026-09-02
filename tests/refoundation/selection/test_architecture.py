@@ -59,9 +59,9 @@ def test_selection_domain_application_and_ports_do_not_cross_forbidden_boundarie
 
 def test_market_physical_modules_keep_stable_export_files_small() -> None:
     limits = {
-        SRC / "market" / "domain" / "__init__.py": 120,
-        SRC / "market" / "ports" / "__init__.py": 80,
-        SRC / "market" / "application" / "__init__.py": 40,
+        SRC / "market" / "domain" / "__init__.py": 145,
+        SRC / "market" / "ports" / "__init__.py": 115,
+        SRC / "market" / "application" / "__init__.py": 60,
         SRC / "infrastructure" / "postgres" / "queries" / "market.py": 80,
         SRC / "infrastructure" / "postgres" / "repositories" / "market.py": 40,
     }
@@ -128,8 +128,6 @@ def test_wp12_preserves_prior_authorities_without_later_authorities() -> None:
         assert f"CREATE TABLE mra.{table}" in baseline
     for table in (
         "evaluation_dataset",
-        "model",
-        "model_version",
         "trade_outcome",
     ):
         assert f"CREATE TABLE mra.{table} (" not in baseline

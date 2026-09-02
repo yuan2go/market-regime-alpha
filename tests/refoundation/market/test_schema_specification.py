@@ -47,6 +47,7 @@ def test_market_schema_has_the_approved_authority_relations(
         "market_archive_slice",
         "market_archive_capture_observation",
         "market_archive_slice_gap",
+        "market_archive_resource_stop",
         "market_archive_seal",
     }
     assert EXPECTED_MARKET_TABLES <= tables
