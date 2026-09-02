@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import Callable
+from typing import Callable, cast
 from uuid import UUID, uuid4
 
 from market_regime_alpha.decision_support.domain import (
@@ -25,9 +25,25 @@ from market_regime_alpha.decision_support.ports import (
     OpportunityUnitOfWorkProvider,
     ThesisRecord,
 )
-from market_regime_alpha.runtime.application import CommandContext
-from market_regime_alpha.runtime.errors import CommandInProgressError, CommandPreviouslyFailedError, IdempotencyKeyReusedError
-from market_regime_alpha.runtime.ports import AttemptClaim, ReceiptRecord
+from market_regime_alpha.decision_support.application._command_support import (
+    failure_descriptor,
+    record_failures,
+)
+from market_regime_alpha.runtime.application import (
+    CommandContext,
+    RuntimeCommandFailureRecorder,
+)
+from market_regime_alpha.runtime.errors import (
+    CommandInProgressError,
+    CommandPreviouslyFailedError,
+    IdempotencyKeyReusedError,
+    StaleFenceError,
+)
+from market_regime_alpha.runtime.ports import (
+    AttemptClaim,
+    CommandFailureUnitOfWorkProvider,
+    ReceiptRecord,
+)
 from market_regime_alpha.shared.hashing import canonical_json_sha256
 
 
@@ -59,6 +75,10 @@ class OpportunityCommands:
         self._uow_provider = uow_provider
         self._queries = queries
         self._id_factory = id_factory
+        self._failure_recorder = RuntimeCommandFailureRecorder(
+            cast(CommandFailureUnitOfWorkProvider, uow_provider),
+            id_factory=id_factory,
+        )
 
     def create_opportunities(
         self,
@@ -132,7 +152,24 @@ class OpportunityCommands:
                 uow.commit()
                 return _set_result(record, result_hash=result_hash, replayed=False)
 
-        return self._retry(operation, lambda: self._probe_set(decision_run_id, strategy_version_id, context, request_hash))
+        descriptor = failure_descriptor(
+            operation="CREATE_OPPORTUNITIES",
+            scope_id=f"{decision_run_id}:{strategy_version_id}",
+            request_hash=request_hash,
+        )
+        try:
+            with record_failures(
+                self._failure_recorder,
+                descriptor,
+                context=context,
+                runtime_claim=runtime_claim,
+            ):
+                return self._retry(operation, lambda: self._probe_set(decision_run_id, strategy_version_id, context, request_hash))
+        except StaleFenceError:
+            replay = self._probe_set(decision_run_id, strategy_version_id, context, request_hash)
+            if replay is not None:
+                return replay
+            raise
 
     def create_thesis(self, plan: ThesisPlan, context: CommandContext) -> OpportunityMutationResult:
         request_hash = _request_hash(context, {"plan": plan})
@@ -171,7 +208,18 @@ class OpportunityCommands:
                 uow.commit()
                 return _thesis_result(record, result_hash=result_hash, replayed=False)
 
-        return self._retry(operation, lambda: self._probe_thesis(plan, context, request_hash))
+        descriptor = failure_descriptor(
+            operation="CREATE_THESIS",
+            scope_id=str(plan.opportunity_id),
+            request_hash=request_hash,
+        )
+        with record_failures(
+            self._failure_recorder,
+            descriptor,
+            context=context,
+            runtime_claim=None,
+        ):
+            return self._retry(operation, lambda: self._probe_thesis(plan, context, request_hash))
 
     def _replay_set_in_transaction(
         self, uow: OpportunityUnitOfWork, receipt: ReceiptRecord, request_hash: str

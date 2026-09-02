@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import Callable
+from typing import Callable, cast
 from uuid import UUID, uuid4
 
 from market_regime_alpha.decision_support.domain import RiskPolicyPlan, build_risk_decision
@@ -20,9 +20,25 @@ from market_regime_alpha.decision_support.ports import (
     RiskUnitOfWork,
     RiskUnitOfWorkProvider,
 )
-from market_regime_alpha.runtime.application import CommandContext
-from market_regime_alpha.runtime.errors import CommandInProgressError, CommandPreviouslyFailedError, IdempotencyKeyReusedError
-from market_regime_alpha.runtime.ports import AttemptClaim, ReceiptRecord
+from market_regime_alpha.decision_support.application._command_support import (
+    failure_descriptor,
+    record_failures,
+)
+from market_regime_alpha.runtime.application import (
+    CommandContext,
+    RuntimeCommandFailureRecorder,
+)
+from market_regime_alpha.runtime.errors import (
+    CommandInProgressError,
+    CommandPreviouslyFailedError,
+    IdempotencyKeyReusedError,
+    StaleFenceError,
+)
+from market_regime_alpha.runtime.ports import (
+    AttemptClaim,
+    CommandFailureUnitOfWorkProvider,
+    ReceiptRecord,
+)
 from market_regime_alpha.shared.hashing import canonical_json_sha256
 
 
@@ -49,6 +65,10 @@ class RiskCommands:
         self._uow_provider = uow_provider
         self._queries = queries
         self._id_factory = id_factory
+        self._failure_recorder = RuntimeCommandFailureRecorder(
+            cast(CommandFailureUnitOfWorkProvider, uow_provider),
+            id_factory=id_factory,
+        )
 
     def register_policy(self, plan: RiskPolicyPlan, context: CommandContext) -> RiskMutationResult:
         request_hash = _request_hash(context, plan)
@@ -88,7 +108,18 @@ class RiskCommands:
                 uow.commit()
                 return _policy_result(record, result_hash=result_hash, replayed=False)
 
-        return self._retry(operation, lambda: self._probe_policy(plan, context, request_hash))
+        descriptor = failure_descriptor(
+            operation="REGISTER_RISK_POLICY",
+            scope_id=plan.policy_code,
+            request_hash=request_hash,
+        )
+        with record_failures(
+            self._failure_recorder,
+            descriptor,
+            context=context,
+            runtime_claim=None,
+        ):
+            return self._retry(operation, lambda: self._probe_policy(plan, context, request_hash))
 
     def assess(
         self, portfolio_proposal_id: UUID, risk_policy_id: UUID, context: CommandContext, *, runtime_claim: AttemptClaim
@@ -154,7 +185,24 @@ class RiskCommands:
                 uow.commit()
                 return _decision_result(record, result_hash=result_hash, replayed=False)
 
-        return self._retry(operation, lambda: self._probe_decision(portfolio_proposal_id, risk_policy_id, context, request_hash))
+        descriptor = failure_descriptor(
+            operation="ASSESS_RISK",
+            scope_id=f"{portfolio_proposal_id}:{risk_policy_id}",
+            request_hash=request_hash,
+        )
+        try:
+            with record_failures(
+                self._failure_recorder,
+                descriptor,
+                context=context,
+                runtime_claim=runtime_claim,
+            ):
+                return self._retry(operation, lambda: self._probe_decision(portfolio_proposal_id, risk_policy_id, context, request_hash))
+        except StaleFenceError:
+            replay = self._probe_decision(portfolio_proposal_id, risk_policy_id, context, request_hash)
+            if replay is not None:
+                return replay
+            raise
 
     def _replay_policy_tx(self, uow: RiskUnitOfWork, receipt: ReceiptRecord, plan, request_hash):
         _require_succeeded(receipt, request_hash)

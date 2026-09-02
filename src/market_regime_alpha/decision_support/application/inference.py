@@ -30,6 +30,7 @@ from market_regime_alpha.runtime.errors import (
     CommandInProgressError,
     CommandPreviouslyFailedError,
     IdempotencyKeyReusedError,
+    StaleFenceError,
 )
 from market_regime_alpha.runtime.ports import AttemptClaim, ReceiptRecord
 from market_regime_alpha.shared.hashing import canonical_json_sha256
@@ -99,12 +100,9 @@ class InferenceCommands:
         prepared = self._preparation.prepare(decision_run_id, strategy_version_id)
         if (
             prepared.signal_inputs.decision_run_id != decision_run_id
-            or prepared.signal_inputs.strategy_version.strategy_version_id
-            != strategy_version_id
+            or prepared.signal_inputs.strategy_version.strategy_version_id != strategy_version_id
         ):
-            raise InferenceAuthorityIntegrityError(
-                "Inference preparation returned a different Authority identity"
-            )
+            raise InferenceAuthorityIntegrityError("Inference preparation returned a different Authority identity")
         identities = _InferenceIdentities.create(prepared, self._id_factory)
         for attempt in range(_MAX_TRANSACTION_ATTEMPTS):
             try:
@@ -123,16 +121,23 @@ class InferenceCommands:
                 )
                 if existing is not None:
                     if existing.request_sha256 != request_hash:
-                        raise IdempotencyKeyReusedError(
-                            "Inference replay inputs differ"
-                        ) from exc
+                        raise IdempotencyKeyReusedError("Inference replay inputs differ") from exc
                     return _result(existing, replayed=True)
                 if attempt == _MAX_TRANSACTION_ATTEMPTS - 1:
                     if isinstance(exc, DecisionRetryableTransactionError):
-                        raise DecisionTransactionRetryExhaustedError(
-                            "Inference exhausted transaction retries"
-                        ) from exc
+                        raise DecisionTransactionRetryExhaustedError("Inference exhausted transaction retries") from exc
                     raise
+            except StaleFenceError as exc:
+                existing = self._queries.find_request(
+                    decision_run_id,
+                    strategy_version_id,
+                    context.idempotency_key,
+                )
+                if existing is not None:
+                    if existing.request_sha256 != request_hash:
+                        raise IdempotencyKeyReusedError("Inference replay inputs differ") from exc
+                    return _result(existing, replayed=True)
+                raise
         raise AssertionError("Inference bounded retry loop did not terminate")
 
     def _produce_once(
@@ -153,10 +158,7 @@ class InferenceCommands:
             receipt = uow.receipts.start(
                 receipt_id=identities.receipt_id,
                 command_kind="PRODUCE_SIGNAL_AND_FORECAST",
-                scope_id=(
-                    f"{signal_inputs.decision_run_id}:"
-                    f"{signal_inputs.strategy_version.strategy_version_id}"
-                ),
+                scope_id=(f"{signal_inputs.decision_run_id}:{signal_inputs.strategy_version.strategy_version_id}"),
                 idempotency_key=context.idempotency_key,
                 request_hash=request_hash,
             )
@@ -207,14 +209,11 @@ class InferenceCommands:
             if (
                 not reconciliation.matched
                 or reconciliation.signal_count != signal.signal_count
-                or reconciliation.context_binding_count
-                != signal.context_binding_count
+                or reconciliation.context_binding_count != signal.context_binding_count
                 or reconciliation.forecast_count != forecast.forecast_count
                 or reconciliation.estimate_count != forecast.estimate_count
             ):
-                raise InferenceAuthorityIntegrityError(
-                    "Signal/Forecast relational closure did not reconcile"
-                )
+                raise InferenceAuthorityIntegrityError("Signal/Forecast relational closure did not reconcile")
             result_hash = _record_hash(record)
             uow.receipts.succeed(
                 receipt_id=receipt.receipt_id,
@@ -265,9 +264,7 @@ class InferenceCommands:
             lock=False,
         )
         if _record_hash(record) != receipt.result_hash:
-            raise InferenceAuthorityIntegrityError(
-                "Inference receipt and Authority differ"
-            )
+            raise InferenceAuthorityIntegrityError("Inference receipt and Authority differ")
         uow.runtime_finalization.succeed(
             runtime_claim,
             receipt_id=receipt.receipt_id,
@@ -294,19 +291,13 @@ class _InferenceIdentities:
         prepared: PreparedInferenceInputs,
         factory: Callable[[], UUID],
     ) -> _InferenceIdentities:
-        signal_ids = {
-            candidate.candidate_id: factory()
-            for candidate in prepared.signal_inputs.candidates
-        }
+        signal_ids = {candidate.candidate_id: factory() for candidate in prepared.signal_inputs.candidates}
         binding_ids = {
             (candidate.candidate_id, item.strategy_context_requirement_id): factory()
             for candidate in prepared.signal_inputs.candidates
             for item in candidate.contexts
         }
-        forecast_ids = {
-            (commitment.candidate_id, commitment.commitment_id): factory()
-            for commitment in prepared.commitments
-        }
+        forecast_ids = {(commitment.candidate_id, commitment.commitment_id): factory() for commitment in prepared.commitments}
         estimate_ids = {
             (commitment.commitment_id, rule.strategy_forecast_rule_id): factory()
             for commitment in prepared.commitments
@@ -329,26 +320,18 @@ class _InferenceIdentities:
         return self.signal_ids[candidate.candidate_id]
 
     def binding_id(self, candidate, item) -> UUID:
-        return self.binding_ids[
-            (candidate.candidate_id, item.strategy_context_requirement_id)
-        ]
+        return self.binding_ids[(candidate.candidate_id, item.strategy_context_requirement_id)]
 
     def forecast_id(self, signal, commitment) -> UUID:
-        return self.forecast_ids[
-            (signal.candidate.candidate_id, commitment.commitment_id)
-        ]
+        return self.forecast_ids[(signal.candidate.candidate_id, commitment.commitment_id)]
 
     def estimate_id(self, rule, forecast) -> UUID:
-        return self.estimate_ids[
-            (forecast.commitment.commitment_id, rule.strategy_forecast_rule_id)
-        ]
+        return self.estimate_ids[(forecast.commitment.commitment_id, rule.strategy_forecast_rule_id)]
 
 
 def _require_succeeded(receipt: ReceiptRecord) -> None:
     if receipt.status == "FAILED":
-        raise CommandPreviouslyFailedError(
-            receipt.error_code or "PRODUCE_SIGNAL_AND_FORECAST_FAILED"
-        )
+        raise CommandPreviouslyFailedError(receipt.error_code or "PRODUCE_SIGNAL_AND_FORECAST_FAILED")
     if receipt.status != "SUCCEEDED":
         raise CommandInProgressError("Inference command is in progress")
     if receipt.result_aggregate_id is None or receipt.result_hash is None:

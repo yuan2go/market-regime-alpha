@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
+from threading import Barrier
 from uuid import UUID
 
 import psycopg
@@ -68,6 +70,17 @@ def _published_policy_artifacts(stack, plan, prefix):
     return replace(plan, code_artifact=_binding(code), config_artifact=_binding(config))
 
 
+class _BarrierPreparation:
+    def __init__(self, delegate) -> None:
+        self._delegate = delegate
+        self._barrier = Barrier(2)
+
+    def prepare(self, *args):
+        prepared = self._delegate.prepare(*args)
+        self._barrier.wait(timeout=10)
+        return prepared
+
+
 @pytest.fixture
 def wp13_closure_stack(target_database_url, tmp_path, request):
     return _inference.wp13_inference_stack.__wrapped__(target_database_url, tmp_path, request)
@@ -90,16 +103,26 @@ def test_postgres_closes_opportunity_thesis_portfolio_and_risk(wp13_closure_stac
     )
     claim = _candidate._claim(runtime, step_key="decide-and-risk")
     opportunities = OpportunityCommands(
-        PostgresOpportunityInputPreparationProvider(stack.pool),
+        _BarrierPreparation(PostgresOpportunityInputPreparationProvider(stack.pool)),
         PostgresOpportunityUnitOfWorkProvider(stack.pool),
         PostgresOpportunityQueryProvider(stack.pool),
     )
-    opportunity = opportunities.create_opportunities(
-        decision.decision_run_id,
-        strategy.strategy_version_id,
-        _research._context("wp13-closure-opportunity", "CREATE_OPPORTUNITIES"),
-        runtime_claim=claim,
-    )
+    opportunity_context = _research._context("wp13-closure-opportunity", "CREATE_OPPORTUNITIES")
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        opportunity_results = tuple(
+            executor.map(
+                lambda _: opportunities.create_opportunities(
+                    decision.decision_run_id,
+                    strategy.strategy_version_id,
+                    opportunity_context,
+                    runtime_claim=claim,
+                ),
+                range(2),
+            )
+        )
+    assert {item.aggregate_id for item in opportunity_results} == {opportunity_results[0].aggregate_id}
+    assert sum(item.replayed for item in opportunity_results) == 1
+    opportunity = opportunity_results[0]
     with stack.pool.connection(read_only=True) as connection:
         exact = connection.execute(
             "SELECT opportunity_id, content_sha256 FROM mra.opportunity WHERE opportunity_set_id = %s ORDER BY ordinal LIMIT 1",
@@ -144,38 +167,50 @@ def test_postgres_closes_opportunity_thesis_portfolio_and_risk(wp13_closure_stac
 
     portfolio_policy = _published_policy_artifacts(stack, _portfolio_policy(), "portfolio_policy")
     portfolios = PortfolioCommands(
-        PostgresPortfolioInputPreparationProvider(stack.pool),
+        _BarrierPreparation(PostgresPortfolioInputPreparationProvider(stack.pool)),
         PostgresPortfolioUnitOfWorkProvider(stack.pool),
         PostgresPortfolioQueryProvider(stack.pool),
     )
     portfolios.register_policy(portfolio_policy, _research._context("wp13-portfolio-policy", "REGISTER_PORTFOLIO_POLICY"))
-    proposal = portfolios.propose(
-        opportunity.aggregate_id,
-        portfolio_policy.portfolio_policy_id,
-        _research._context("wp13-portfolio-propose", "PROPOSE_PORTFOLIO"),
-        runtime_claim=claim,
-    )
+    portfolio_context = _research._context("wp13-portfolio-propose", "PROPOSE_PORTFOLIO")
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        proposal_results = tuple(
+            executor.map(
+                lambda _: portfolios.propose(
+                    opportunity.aggregate_id,
+                    portfolio_policy.portfolio_policy_id,
+                    portfolio_context,
+                    runtime_claim=claim,
+                ),
+                range(2),
+            )
+        )
+    assert {item.aggregate_id for item in proposal_results} == {proposal_results[0].aggregate_id}
+    assert sum(item.replayed for item in proposal_results) == 1
+    proposal = proposal_results[0]
     risk_policy = _published_policy_artifacts(stack, _risk_policy(), "risk_policy")
     risks = RiskCommands(
-        PostgresRiskInputPreparationProvider(stack.pool),
+        _BarrierPreparation(PostgresRiskInputPreparationProvider(stack.pool)),
         PostgresRiskUnitOfWorkProvider(stack.pool),
         PostgresRiskQueryProvider(stack.pool),
     )
     risks.register_policy(risk_policy, _research._context("wp13-risk-policy", "REGISTER_RISK_POLICY"))
-    assessed = risks.assess(
-        proposal.aggregate_id,
-        risk_policy.risk_policy_id,
-        _research._context("wp13-risk-assess", "ASSESS_RISK"),
-        runtime_claim=claim,
-    )
-    replay = risks.assess(
-        proposal.aggregate_id,
-        risk_policy.risk_policy_id,
-        _research._context("wp13-risk-assess", "ASSESS_RISK"),
-        runtime_claim=claim,
-    )
-
-    assert replay == assessed.as_replay()
+    risk_context = _research._context("wp13-risk-assess", "ASSESS_RISK")
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        risk_results = tuple(
+            executor.map(
+                lambda _: risks.assess(
+                    proposal.aggregate_id,
+                    risk_policy.risk_policy_id,
+                    risk_context,
+                    runtime_claim=claim,
+                ),
+                range(2),
+            )
+        )
+    assert {item.aggregate_id for item in risk_results} == {risk_results[0].aggregate_id}
+    assert sum(item.replayed for item in risk_results) == 1
+    assessed = risk_results[0]
     assert assessed.status == "REJECTED"
     verification = PostgresDecisionRunVerificationProvider(stack.pool).verify(decision.decision_run_id)
     assert verification.matched is True

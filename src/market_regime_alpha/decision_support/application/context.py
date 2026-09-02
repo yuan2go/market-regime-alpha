@@ -159,13 +159,8 @@ class ContextCommands:
         if existing is not None:
             return _assessment_result(existing, replayed=True)
         prepared = self._preparation.prepare(decision_run_id, context_policy_id)
-        if (
-            prepared.decision_run_id != decision_run_id
-            or prepared.policy.context_policy_id != context_policy_id
-        ):
-            raise ContextAuthorityIntegrityError(
-                "Context preparation returned a different Authority identity"
-            )
+        if prepared.decision_run_id != decision_run_id or prepared.policy.context_policy_id != context_policy_id:
+            raise ContextAuthorityIntegrityError("Context preparation returned a different Authority identity")
         request_hash = canonical_json_sha256(
             {
                 "actor_id": context.actor_id,
@@ -214,6 +209,14 @@ class ContextCommands:
                 ),
             )
         except StaleFenceError:
+            replay = self._probe_assessment(
+                decision_run_id,
+                context_policy_id,
+                context,
+                request_hash=request_hash,
+            )
+            if replay is not None:
+                return replay
             raise
         except (CommandInProgressError, IdempotencyKeyReusedError) as exc:
             self._failure_recorder.record_idempotency_rejection(
@@ -304,9 +307,7 @@ class ContextCommands:
             receipt = uow.receipts.start(
                 receipt_id=receipt_id,
                 command_kind="ASSESS_CONTEXT",
-                scope_id=(
-                    f"{authority.decision_run_id}:{authority.context_policy_id}"
-                ),
+                scope_id=(f"{authority.decision_run_id}:{authority.context_policy_id}"),
                 idempotency_key=context.idempotency_key,
                 request_hash=authority.request_sha256,
             )
@@ -328,16 +329,12 @@ class ContextCommands:
             )
             if (
                 not reconciliation.matched
-                or reconciliation.actual_assessment_count
-                != authority.assessment_count
+                or reconciliation.actual_assessment_count != authority.assessment_count
                 or reconciliation.actual_metric_count != authority.metric_count
                 or reconciliation.actual_source_count != authority.source_count
-                or reconciliation.assessment_roster_sha256
-                != authority.assessment_roster_sha256
+                or reconciliation.assessment_roster_sha256 != authority.assessment_roster_sha256
             ):
-                raise ContextAuthorityIntegrityError(
-                    "Context relational closure did not reconcile"
-                )
+                raise ContextAuthorityIntegrityError("Context relational closure did not reconcile")
             result_hash = canonical_json_sha256(record)
             self._finish(
                 uow,
@@ -415,13 +412,9 @@ class ContextCommands:
             lock=False,
         )
         if record.content_sha256 != plan.content_sha256:
-            raise IdempotencyKeyReusedError(
-                "ContextPolicy replay content differs from request"
-            )
+            raise IdempotencyKeyReusedError("ContextPolicy replay content differs from request")
         if canonical_json_sha256(record) != receipt.result_hash:
-            raise ContextAuthorityIntegrityError(
-                "ContextPolicy receipt and Authority differ"
-            )
+            raise ContextAuthorityIntegrityError("ContextPolicy receipt and Authority differ")
         self._finish_replay_runtime(uow, receipt, runtime_claim)
         return _policy_result(
             record,
@@ -443,9 +436,7 @@ class ContextCommands:
             lock=False,
         )
         if canonical_json_sha256(record) != receipt.result_hash:
-            raise ContextAuthorityIntegrityError(
-                "ContextAssessment receipt and Authority differ"
-            )
+            raise ContextAuthorityIntegrityError("ContextAssessment receipt and Authority differ")
         self._finish_replay_runtime(uow, receipt, runtime_claim)
         return _assessment_result(
             record,
@@ -485,9 +476,7 @@ class ContextCommands:
         plan: ContextPolicyPlan,
     ) -> ContextMutationResult:
         if record.content_sha256 != plan.content_sha256:
-            raise IdempotencyKeyReusedError(
-                "ContextPolicy replay content differs from request"
-            )
+            raise IdempotencyKeyReusedError("ContextPolicy replay content differs from request")
         return _policy_result(
             record,
             result_hash=canonical_json_sha256(record),
@@ -510,9 +499,7 @@ class ContextCommands:
         if record is None:
             return None
         if record.request_sha256 != request_hash:
-            raise IdempotencyKeyReusedError(
-                "ContextAssessment replay inputs differ from request"
-            )
+            raise IdempotencyKeyReusedError("ContextAssessment replay inputs differ from request")
         return _assessment_result(record, replayed=True)
 
     def _retry(
@@ -539,9 +526,7 @@ class ContextCommands:
                     return existing
                 if attempt == _MAX_TRANSACTION_ATTEMPTS - 1:
                     if isinstance(exc, DecisionRetryableTransactionError):
-                        raise DecisionTransactionRetryExhaustedError(
-                            "Context command exhausted whole-transaction retries"
-                        ) from exc
+                        raise DecisionTransactionRetryExhaustedError("Context command exhausted whole-transaction retries") from exc
                     raise
         raise AssertionError("Context bounded retry loop did not terminate")
 
@@ -557,25 +542,14 @@ class _ContextIdentities:
 
     @classmethod
     def create(cls, prepared, factory: Callable[[], UUID]) -> _ContextIdentities:
-        assessment_ids = {
-            kind: factory()
-            for kind in dict.fromkeys(
-                metric.context_kind for metric in prepared.policy.metrics
-            )
-        }
+        assessment_ids = {kind: factory() for kind in dict.fromkeys(metric.context_kind for metric in prepared.policy.metrics)}
         return cls(
             assessment_group_id=factory(),
             receipt_id=factory(),
             audit_event_id=factory(),
             assessment_ids=assessment_ids,
-            metric_ids={
-                metric.context_policy_metric_id: factory()
-                for metric in prepared.policy.metrics
-            },
-            source_ids={
-                (source.context_policy_metric_id, source.source_ordinal): factory()
-                for source in prepared.sources
-            },
+            metric_ids={metric.context_policy_metric_id: factory() for metric in prepared.policy.metrics},
+            source_ids={(source.context_policy_metric_id, source.source_ordinal): factory() for source in prepared.sources},
         )
 
     def assessment_id(self, kind, ordinal: int) -> UUID:
@@ -586,9 +560,7 @@ class _ContextIdentities:
         return self.metric_ids[metric.context_policy_metric_id]
 
     def source_id(self, metric, source) -> UUID:
-        return self.source_ids[
-            (metric.context_policy_metric_id, source.source_ordinal)
-        ]
+        return self.source_ids[(metric.context_policy_metric_id, source.source_ordinal)]
 
 
 def _policy_result(

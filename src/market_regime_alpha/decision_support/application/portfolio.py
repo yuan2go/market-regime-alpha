@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import Callable
+from typing import Callable, cast
 from uuid import UUID, uuid4
 
 from market_regime_alpha.decision_support.domain import PortfolioPolicyPlan, build_portfolio_proposal
@@ -20,9 +20,25 @@ from market_regime_alpha.decision_support.ports import (
     PortfolioUnitOfWork,
     PortfolioUnitOfWorkProvider,
 )
-from market_regime_alpha.runtime.application import CommandContext
-from market_regime_alpha.runtime.errors import CommandInProgressError, CommandPreviouslyFailedError, IdempotencyKeyReusedError
-from market_regime_alpha.runtime.ports import AttemptClaim, ReceiptRecord
+from market_regime_alpha.decision_support.application._command_support import (
+    failure_descriptor,
+    record_failures,
+)
+from market_regime_alpha.runtime.application import (
+    CommandContext,
+    RuntimeCommandFailureRecorder,
+)
+from market_regime_alpha.runtime.errors import (
+    CommandInProgressError,
+    CommandPreviouslyFailedError,
+    IdempotencyKeyReusedError,
+    StaleFenceError,
+)
+from market_regime_alpha.runtime.ports import (
+    AttemptClaim,
+    CommandFailureUnitOfWorkProvider,
+    ReceiptRecord,
+)
 from market_regime_alpha.shared.hashing import canonical_json_sha256
 
 
@@ -54,6 +70,10 @@ class PortfolioCommands:
         self._uow_provider = uow_provider
         self._queries = queries
         self._id_factory = id_factory
+        self._failure_recorder = RuntimeCommandFailureRecorder(
+            cast(CommandFailureUnitOfWorkProvider, uow_provider),
+            id_factory=id_factory,
+        )
 
     def register_policy(self, plan: PortfolioPolicyPlan, context: CommandContext) -> PortfolioMutationResult:
         request_hash = _request_hash(context, plan)
@@ -93,7 +113,18 @@ class PortfolioCommands:
                 uow.commit()
                 return _policy_result(record, result_hash=result_hash, replayed=False)
 
-        return self._retry(operation, lambda: self._probe_policy(plan, context, request_hash))
+        descriptor = failure_descriptor(
+            operation="REGISTER_PORTFOLIO_POLICY",
+            scope_id=plan.policy_code,
+            request_hash=request_hash,
+        )
+        with record_failures(
+            self._failure_recorder,
+            descriptor,
+            context=context,
+            runtime_claim=None,
+        ):
+            return self._retry(operation, lambda: self._probe_policy(plan, context, request_hash))
 
     def propose(
         self, opportunity_set_id: UUID, portfolio_policy_id: UUID, context: CommandContext, *, runtime_claim: AttemptClaim
@@ -155,7 +186,24 @@ class PortfolioCommands:
                 uow.commit()
                 return _proposal_result(record, result_hash=result_hash, replayed=False)
 
-        return self._retry(operation, lambda: self._probe_proposal(opportunity_set_id, portfolio_policy_id, context, request_hash))
+        descriptor = failure_descriptor(
+            operation="PROPOSE_PORTFOLIO",
+            scope_id=f"{opportunity_set_id}:{portfolio_policy_id}",
+            request_hash=request_hash,
+        )
+        try:
+            with record_failures(
+                self._failure_recorder,
+                descriptor,
+                context=context,
+                runtime_claim=runtime_claim,
+            ):
+                return self._retry(operation, lambda: self._probe_proposal(opportunity_set_id, portfolio_policy_id, context, request_hash))
+        except StaleFenceError:
+            replay = self._probe_proposal(opportunity_set_id, portfolio_policy_id, context, request_hash)
+            if replay is not None:
+                return replay
+            raise
 
     def _replay_policy_tx(self, uow: PortfolioUnitOfWork, receipt: ReceiptRecord, plan, request_hash):
         _require_succeeded(receipt, request_hash)
