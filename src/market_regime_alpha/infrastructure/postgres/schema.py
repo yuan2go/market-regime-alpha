@@ -362,6 +362,18 @@ EXPECTED_RESEARCH_VALIDITY_TABLES: Final[frozenset[str]] = frozenset(
     }
 )
 
+EXPECTED_EXPLORATORY_EVALUATION_SOURCE_TABLES: Final[frozenset[str]] = frozenset(
+    {
+        "evaluation_backtest_arm_source",
+        "evaluation_candidate_source",
+        "evaluation_signal_source",
+        "evaluation_forecast_source",
+        "evaluation_portfolio_source",
+        "evaluation_portfolio_cost_source",
+        "evaluation_risk_source",
+    }
+)
+
 EXPECTED_RESEARCH_QUALIFICATION_TABLES: Final[frozenset[str]] = frozenset(
     {
         "evidence_item",
@@ -423,6 +435,7 @@ EXPECTED_TARGET_TABLES: Final[frozenset[str]] = (
     | EXPECTED_RISK_TABLES
     | EXPECTED_OUTCOME_TABLES
     | EXPECTED_RESEARCH_VALIDITY_TABLES
+    | EXPECTED_EXPLORATORY_EVALUATION_SOURCE_TABLES
     | EXPECTED_RESEARCH_QUALIFICATION_TABLES
     | EXPECTED_EXPLORATORY_BACKTEST_TABLES
     | EXPECTED_MODEL_TABLES
@@ -1753,6 +1766,7 @@ __all__ = [
     "DatabaseIdentity",
     "EXPECTED_DECISION_SUPPORT_TABLES",
     "EXPECTED_EXPLORATORY_BACKTEST_TABLES",
+    "EXPECTED_EXPLORATORY_EVALUATION_SOURCE_TABLES",
     "EXPECTED_CONTEXT_TABLES",
     "EXPECTED_FOUNDATION_TABLES",
     "EXPECTED_MARKET_TABLES",

@@ -11298,9 +11298,12 @@ CREATE TABLE mra.evaluation_protocol_metric (
     source_target_metric_definition_id uuid NOT NULL,
     source_metric_code text NOT NULL,
     source_value_type text NOT NULL,
+    source_kind text NOT NULL,
+    source_measure text NOT NULL,
     reducer text NOT NULL,
     slice_kind text NOT NULL,
     candidate_disposition text,
+    backtest_arm_kind text,
     direction text NOT NULL,
     inclusion_policy text NOT NULL,
     missingness_policy text NOT NULL,
@@ -11334,13 +11337,43 @@ CREATE TABLE mra.evaluation_protocol_metric (
         ordinal > 0 AND metric_code ~ '^[a-z][a-z0-9_-]{0,99}$'
         AND source_metric_code ~ '^[a-z][a-z0-9_-]{0,99}$'
         AND source_value_type IN ('DECIMAL', 'BOOLEAN')
-        AND reducer IN ('MEAN_DECIMAL', 'MEDIAN_DECIMAL', 'TRUE_RATE', 'ESTIMABLE_RATE')
-        AND ((reducer IN ('MEAN_DECIMAL', 'MEDIAN_DECIMAL') AND source_value_type = 'DECIMAL')
+        AND source_kind IN ('OUTCOME_METRIC', 'FORECAST_OUTCOME_PAIR',
+            'CANDIDATE_DISPOSITION', 'SIGNAL_STATUS', 'PORTFOLIO_LINE',
+            'PORTFOLIO_OUTCOME', 'RISK_DECISION')
+        AND source_measure IN ('TARGET_VALUE', 'FORECAST_POINT_VS_TARGET',
+            'CANDIDATE_SELECTED', 'SIGNAL_PRESENT', 'TARGET_WEIGHT',
+            'TURNOVER', 'GROSS_PORTFOLIO_RETURN',
+            'NET_PORTFOLIO_RETURN_ASSUMED_COST', 'RISK_REJECTED')
+        AND ((source_kind = 'OUTCOME_METRIC' AND source_measure = 'TARGET_VALUE')
+          OR (source_kind = 'FORECAST_OUTCOME_PAIR' AND source_measure = 'FORECAST_POINT_VS_TARGET')
+          OR (source_kind = 'CANDIDATE_DISPOSITION' AND source_measure = 'CANDIDATE_SELECTED')
+          OR (source_kind = 'SIGNAL_STATUS' AND source_measure = 'SIGNAL_PRESENT')
+          OR (source_kind = 'PORTFOLIO_LINE' AND source_measure IN ('TARGET_WEIGHT', 'TURNOVER'))
+          OR (source_kind = 'PORTFOLIO_OUTCOME' AND source_measure IN ('GROSS_PORTFOLIO_RETURN', 'NET_PORTFOLIO_RETURN_ASSUMED_COST'))
+          OR (source_kind = 'RISK_DECISION' AND source_measure = 'RISK_REJECTED'))
+        AND reducer IN ('MEAN_DECIMAL', 'MEDIAN_DECIMAL', 'TRUE_RATE',
+            'ESTIMABLE_RATE', 'SUM_DECIMAL', 'ABSOLUTE_MEAN_DECIMAL',
+            'SPEARMAN_RANK_CORRELATION', 'MAX_DRAWDOWN')
+        AND ((reducer IN ('MEAN_DECIMAL', 'MEDIAN_DECIMAL', 'SUM_DECIMAL',
+                          'ABSOLUTE_MEAN_DECIMAL', 'SPEARMAN_RANK_CORRELATION',
+                          'MAX_DRAWDOWN') AND source_value_type = 'DECIMAL')
           OR (reducer = 'TRUE_RATE' AND source_value_type = 'BOOLEAN')
           OR reducer = 'ESTIMABLE_RATE')
-        AND slice_kind IN ('ALL_MEMBERS', 'CANDIDATE_DISPOSITION')
-        AND ((slice_kind = 'ALL_MEMBERS' AND candidate_disposition IS NULL)
-          OR (slice_kind = 'CANDIDATE_DISPOSITION' AND candidate_disposition IN ('SELECTED', 'RANKED_NOT_SELECTED', 'UNRANKABLE')))
+        AND (reducer <> 'SPEARMAN_RANK_CORRELATION'
+             OR source_kind = 'FORECAST_OUTCOME_PAIR')
+        AND (reducer <> 'MAX_DRAWDOWN'
+             OR source_measure IN ('GROSS_PORTFOLIO_RETURN',
+                                   'NET_PORTFOLIO_RETURN_ASSUMED_COST'))
+        AND slice_kind IN ('ALL_MEMBERS', 'CANDIDATE_DISPOSITION',
+                           'EXPLORATORY_BACKTEST_ARM')
+        AND ((slice_kind = 'ALL_MEMBERS' AND candidate_disposition IS NULL
+              AND backtest_arm_kind IS NULL)
+          OR (slice_kind = 'CANDIDATE_DISPOSITION'
+              AND candidate_disposition IN ('SELECTED', 'RANKED_NOT_SELECTED', 'UNRANKABLE')
+              AND backtest_arm_kind IS NULL)
+          OR (slice_kind = 'EXPLORATORY_BACKTEST_ARM'
+              AND candidate_disposition IS NULL
+              AND backtest_arm_kind IN ('RULE_BASELINE', 'MODEL_CHALLENGER')))
         AND direction IN ('HIGHER', 'LOWER', 'DESCRIPTIVE')
         AND inclusion_policy IN ('COMPLETE_ONLY', 'AVAILABLE_VALUE')
         AND missingness_policy IN ('RETAIN_AND_ESTIMATE', 'REQUIRE_COMPLETE_ROSTER')
@@ -13837,6 +13870,263 @@ BEGIN
            OR NEW.metric_observation_count <> actual_metric_input_count
            OR NEW.metric_roster_sha256 IS NULL THEN
             RAISE EXCEPTION 'Evaluation metric Cartesian roster does not reconcile' USING ERRCODE = '55000';
+        END IF;
+        IF EXISTS (
+            SELECT 1
+            FROM mra.evaluation_protocol_metric AS protocol_metric
+            WHERE protocol_metric.evaluation_protocol_id =
+                  NEW.evaluation_protocol_id
+              AND (
+                  ((protocol_metric.slice_kind = 'EXPLORATORY_BACKTEST_ARM'
+                    OR protocol_metric.source_kind <> 'OUTCOME_METRIC')
+                   AND (SELECT count(*)
+                        FROM mra.evaluation_backtest_arm_source AS source
+                        WHERE source.evaluation_run_id = NEW.evaluation_run_id
+                          AND source.evaluation_protocol_metric_id =
+                              protocol_metric.evaluation_protocol_metric_id)
+                       <> NEW.expected_member_count)
+               OR (protocol_metric.source_kind = 'CANDIDATE_DISPOSITION'
+                   AND (SELECT count(*)
+                        FROM mra.evaluation_candidate_source AS source
+                        WHERE source.evaluation_run_id = NEW.evaluation_run_id
+                          AND source.evaluation_protocol_metric_id =
+                              protocol_metric.evaluation_protocol_metric_id)
+                       <> NEW.expected_member_count)
+               OR (protocol_metric.source_kind = 'SIGNAL_STATUS'
+                   AND (SELECT count(*)
+                        FROM mra.evaluation_signal_source AS source
+                        WHERE source.evaluation_run_id = NEW.evaluation_run_id
+                          AND source.evaluation_protocol_metric_id =
+                              protocol_metric.evaluation_protocol_metric_id)
+                       <> NEW.expected_member_count)
+               OR (protocol_metric.source_kind = 'FORECAST_OUTCOME_PAIR'
+                   AND (SELECT count(*)
+                        FROM mra.evaluation_forecast_source AS source
+                        WHERE source.evaluation_run_id = NEW.evaluation_run_id
+                          AND source.evaluation_protocol_metric_id =
+                              protocol_metric.evaluation_protocol_metric_id)
+                       <> NEW.expected_member_count)
+               OR (protocol_metric.source_kind IN ('PORTFOLIO_LINE',
+                                                    'PORTFOLIO_OUTCOME')
+                   AND (SELECT count(*)
+                        FROM mra.evaluation_portfolio_source AS source
+                        WHERE source.evaluation_run_id = NEW.evaluation_run_id
+                          AND source.evaluation_protocol_metric_id =
+                              protocol_metric.evaluation_protocol_metric_id)
+                       <> NEW.expected_member_count)
+               OR (protocol_metric.source_kind = 'RISK_DECISION'
+                   AND (SELECT count(*)
+                        FROM mra.evaluation_risk_source AS source
+                        WHERE source.evaluation_run_id = NEW.evaluation_run_id
+                          AND source.evaluation_protocol_metric_id =
+                              protocol_metric.evaluation_protocol_metric_id)
+                       <> NEW.expected_member_count)
+              )
+        ) THEN
+            RAISE EXCEPTION 'Evaluation canonical source roster does not reconcile'
+                USING ERRCODE = '55000';
+        END IF;
+        IF EXISTS (
+            SELECT 1
+            FROM mra.evaluation_portfolio_source AS source
+            WHERE source.evaluation_run_id = NEW.evaluation_run_id
+              AND source.source_measure =
+                  'NET_PORTFOLIO_RETURN_ASSUMED_COST'
+              AND (
+                  source.cost_count IS NULL
+                  OR source.cost_roster_sha256 IS NULL
+                  OR (SELECT count(*)
+                      FROM mra.evaluation_portfolio_cost_source AS cost
+                      WHERE cost.evaluation_metric_observation_id =
+                            source.evaluation_metric_observation_id)
+                     <> source.cost_count
+              )
+        ) THEN
+            RAISE EXCEPTION 'Evaluation assumed-cost source roster does not reconcile'
+                USING ERRCODE = '55000';
+        END IF;
+        IF EXISTS (
+            SELECT 1 FROM (
+                SELECT source.evaluation_protocol_metric_id,
+                       source.source_measure
+                FROM mra.evaluation_candidate_source AS source
+                WHERE source.evaluation_run_id = NEW.evaluation_run_id
+                UNION ALL
+                SELECT source.evaluation_protocol_metric_id,
+                       source.source_measure
+                FROM mra.evaluation_signal_source AS source
+                WHERE source.evaluation_run_id = NEW.evaluation_run_id
+                UNION ALL
+                SELECT source.evaluation_protocol_metric_id,
+                       source.source_measure
+                FROM mra.evaluation_forecast_source AS source
+                WHERE source.evaluation_run_id = NEW.evaluation_run_id
+                UNION ALL
+                SELECT source.evaluation_protocol_metric_id,
+                       source.source_measure
+                FROM mra.evaluation_portfolio_source AS source
+                WHERE source.evaluation_run_id = NEW.evaluation_run_id
+                UNION ALL
+                SELECT source.evaluation_protocol_metric_id,
+                       source.source_measure
+                FROM mra.evaluation_risk_source AS source
+                WHERE source.evaluation_run_id = NEW.evaluation_run_id
+            ) AS source
+            JOIN mra.evaluation_protocol_metric AS metric
+              ON metric.evaluation_protocol_metric_id =
+                 source.evaluation_protocol_metric_id
+            WHERE source.source_measure <> metric.source_measure
+        ) THEN
+            RAISE EXCEPTION 'Evaluation canonical source measure is mismatched'
+                USING ERRCODE = '55000';
+        END IF;
+        IF EXISTS (
+            SELECT 1
+            FROM mra.evaluation_backtest_arm_source AS source
+            JOIN mra.evaluation_metric_observation AS input
+              ON input.evaluation_metric_observation_id =
+                 source.evaluation_metric_observation_id
+            JOIN mra.evaluation_observation AS observation
+              ON observation.evaluation_observation_id =
+                 input.evaluation_observation_id
+            JOIN mra.research_partition_member AS member
+              ON member.research_partition_member_id =
+                 observation.research_partition_member_id
+            JOIN mra.decision_target_commitment AS commitment
+              ON commitment.commitment_id = member.commitment_id
+            LEFT JOIN mra.exploratory_retrospective_decision_run AS decision
+              ON decision.decision_run_id = commitment.decision_run_id
+             AND decision.exploratory_backtest_run_id =
+                 source.exploratory_backtest_run_id
+             AND decision.exploratory_backtest_arm_id =
+                 source.exploratory_backtest_arm_id
+             AND decision.exploratory_backtest_fold_id =
+                 source.exploratory_backtest_fold_id
+             AND decision.exploratory_backtest_fold_session_id =
+                 source.exploratory_backtest_fold_session_id
+            LEFT JOIN mra.exploratory_backtest_arm AS arm
+              ON arm.exploratory_backtest_arm_id =
+                 source.exploratory_backtest_arm_id
+             AND arm.exploratory_backtest_run_id =
+                 source.exploratory_backtest_run_id
+             AND arm.arm_kind = source.arm_kind
+            WHERE source.evaluation_run_id = NEW.evaluation_run_id
+              AND (decision.decision_run_id IS NULL OR arm.exploratory_backtest_arm_id IS NULL)
+        ) THEN
+            RAISE EXCEPTION 'Evaluation Backtest arm source is not exact'
+                USING ERRCODE = '55000';
+        END IF;
+        IF EXISTS (
+            SELECT 1
+            FROM mra.evaluation_candidate_source AS source
+            JOIN mra.evaluation_metric_observation AS input
+              ON input.evaluation_metric_observation_id =
+                 source.evaluation_metric_observation_id
+            JOIN mra.evaluation_observation AS observation
+              ON observation.evaluation_observation_id =
+                 input.evaluation_observation_id
+            JOIN mra.research_partition_member AS member
+              ON member.research_partition_member_id =
+                 observation.research_partition_member_id
+            LEFT JOIN mra.decision_target_commitment AS commitment
+              ON commitment.commitment_id = member.commitment_id
+             AND commitment.commitment_id = source.commitment_id
+             AND commitment.candidate_id = source.candidate_id
+             AND commitment.candidate_disposition = source.disposition
+            WHERE source.evaluation_run_id = NEW.evaluation_run_id
+              AND commitment.commitment_id IS NULL
+        ) THEN
+            RAISE EXCEPTION 'Evaluation Candidate source is not exact'
+                USING ERRCODE = '55000';
+        END IF;
+        IF EXISTS (
+            SELECT 1
+            FROM mra.evaluation_signal_source AS source
+            JOIN mra.evaluation_backtest_arm_source AS backtest
+              ON backtest.evaluation_metric_observation_id =
+                 source.evaluation_metric_observation_id
+            LEFT JOIN mra.signal AS signal
+              ON signal.signal_id = source.signal_id
+             AND signal.decision_run_id = source.decision_run_id
+             AND signal.decision_run_id = backtest.decision_run_id
+             AND signal.candidate_id = source.candidate_id
+             AND signal.status = source.signal_status
+            WHERE source.evaluation_run_id = NEW.evaluation_run_id
+              AND signal.signal_id IS NULL
+        ) THEN
+            RAISE EXCEPTION 'Evaluation Signal source is not exact'
+                USING ERRCODE = '55000';
+        END IF;
+        IF EXISTS (
+            SELECT 1
+            FROM mra.evaluation_forecast_source AS source
+            JOIN mra.evaluation_backtest_arm_source AS backtest
+              ON backtest.evaluation_metric_observation_id =
+                 source.evaluation_metric_observation_id
+            LEFT JOIN mra.forecast AS forecast
+              ON forecast.forecast_id = source.forecast_id
+             AND forecast.commitment_id = source.commitment_id
+             AND forecast.decision_run_id = source.decision_run_id
+             AND forecast.decision_run_id = backtest.decision_run_id
+             AND forecast.status = source.forecast_status
+            LEFT JOIN mra.forecast_estimate AS estimate
+              ON estimate.forecast_estimate_id = source.forecast_estimate_id
+             AND estimate.forecast_id = forecast.forecast_id
+             AND estimate.point_estimate IS NOT DISTINCT FROM
+                 source.point_estimate
+            WHERE source.evaluation_run_id = NEW.evaluation_run_id
+              AND (forecast.forecast_id IS NULL
+                   OR estimate.forecast_estimate_id IS NULL)
+        ) THEN
+            RAISE EXCEPTION 'Evaluation Forecast source is not exact'
+                USING ERRCODE = '55000';
+        END IF;
+        IF EXISTS (
+            SELECT 1
+            FROM mra.evaluation_portfolio_source AS source
+            JOIN mra.evaluation_backtest_arm_source AS backtest
+              ON backtest.evaluation_metric_observation_id =
+                 source.evaluation_metric_observation_id
+            LEFT JOIN mra.portfolio_proposal AS proposal
+              ON proposal.portfolio_proposal_id =
+                 source.portfolio_proposal_id
+             AND proposal.decision_run_id = source.decision_run_id
+             AND proposal.decision_run_id = backtest.decision_run_id
+            LEFT JOIN mra.portfolio_line AS line
+              ON line.portfolio_line_id = source.portfolio_line_id
+             AND line.portfolio_proposal_id = proposal.portfolio_proposal_id
+             AND line.candidate_id = source.candidate_id
+             AND line.status = source.line_status
+             AND line.proposed_weight = source.proposed_weight
+            LEFT JOIN mra.risk_decision AS risk
+              ON risk.risk_decision_id = source.risk_decision_id
+             AND risk.portfolio_proposal_id = proposal.portfolio_proposal_id
+             AND risk.status = source.risk_status
+            WHERE source.evaluation_run_id = NEW.evaluation_run_id
+              AND (proposal.portfolio_proposal_id IS NULL
+                   OR line.portfolio_line_id IS NULL
+                   OR risk.risk_decision_id IS NULL)
+        ) THEN
+            RAISE EXCEPTION 'Evaluation Portfolio source is not exact'
+                USING ERRCODE = '55000';
+        END IF;
+        IF EXISTS (
+            SELECT 1
+            FROM mra.evaluation_risk_source AS source
+            JOIN mra.evaluation_backtest_arm_source AS backtest
+              ON backtest.evaluation_metric_observation_id =
+                 source.evaluation_metric_observation_id
+            LEFT JOIN mra.risk_decision AS risk
+              ON risk.risk_decision_id = source.risk_decision_id
+             AND risk.portfolio_proposal_id = source.portfolio_proposal_id
+             AND risk.decision_run_id = source.decision_run_id
+             AND risk.decision_run_id = backtest.decision_run_id
+             AND risk.status = source.risk_status
+            WHERE source.evaluation_run_id = NEW.evaluation_run_id
+              AND risk.risk_decision_id IS NULL
+        ) THEN
+            RAISE EXCEPTION 'Evaluation Risk source is not exact'
+                USING ERRCODE = '55000';
         END IF;
     END IF;
     RETURN NEW;
@@ -19852,3 +20142,405 @@ FOR EACH ROW EXECUTE FUNCTION mra.validate_forecast_model_binding();
 CREATE TRIGGER forecast_model_binding_append_only
 BEFORE UPDATE OR DELETE ON mra.forecast_model_binding
 FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+
+-- WP-17P: exact canonical-source lineage for exploratory Evaluation metrics.
+-- The existing EvaluationMetricObservation remains the complete metric x
+-- PartitionMember roster and exact Outcome anchor. These typed children bind
+-- each non-Outcome reducer to its owning Decision Support fact; no report or
+-- polymorphic subject becomes a second metric-input authority.
+ALTER TABLE mra.evaluation_metric_observation
+    ADD CONSTRAINT evaluation_metric_observation_source_scope_uk UNIQUE (
+        evaluation_metric_observation_id, evaluation_run_id,
+        evaluation_protocol_metric_id
+    );
+
+CREATE TABLE mra.evaluation_backtest_arm_source (
+    evaluation_metric_observation_id uuid PRIMARY KEY,
+    evaluation_run_id uuid NOT NULL,
+    evaluation_protocol_metric_id uuid NOT NULL,
+    decision_run_id uuid NOT NULL,
+    exploratory_backtest_run_id uuid NOT NULL,
+    exploratory_backtest_arm_id uuid NOT NULL,
+    exploratory_backtest_fold_id uuid NOT NULL,
+    exploratory_backtest_fold_session_id uuid NOT NULL,
+    arm_kind text NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT evaluation_backtest_input_fk FOREIGN KEY (
+        evaluation_metric_observation_id, evaluation_run_id,
+        evaluation_protocol_metric_id
+    ) REFERENCES mra.evaluation_metric_observation(
+        evaluation_metric_observation_id, evaluation_run_id,
+        evaluation_protocol_metric_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT evaluation_backtest_decision_fk FOREIGN KEY (decision_run_id)
+        REFERENCES mra.exploratory_retrospective_decision_run(decision_run_id)
+        ON DELETE RESTRICT,
+    CONSTRAINT evaluation_backtest_arm_fk FOREIGN KEY (
+        exploratory_backtest_arm_id, exploratory_backtest_run_id
+    ) REFERENCES mra.exploratory_backtest_arm(
+        exploratory_backtest_arm_id, exploratory_backtest_run_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT evaluation_backtest_fold_fk FOREIGN KEY (
+        exploratory_backtest_fold_id, exploratory_backtest_run_id
+    ) REFERENCES mra.exploratory_backtest_fold(
+        exploratory_backtest_fold_id, exploratory_backtest_run_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT evaluation_backtest_session_fk FOREIGN KEY (
+        exploratory_backtest_fold_session_id
+    ) REFERENCES mra.exploratory_backtest_fold_session(
+        exploratory_backtest_fold_session_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT evaluation_backtest_source_shape_ck CHECK (
+        arm_kind IN ('RULE_BASELINE', 'MODEL_CHALLENGER')
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+CREATE INDEX evaluation_backtest_source_run_idx ON mra.evaluation_backtest_arm_source(
+    evaluation_run_id, evaluation_protocol_metric_id
+);
+CREATE INDEX evaluation_backtest_source_input_idx ON mra.evaluation_backtest_arm_source(
+    evaluation_metric_observation_id, evaluation_run_id,
+    evaluation_protocol_metric_id
+);
+CREATE INDEX evaluation_backtest_source_decision_idx ON mra.evaluation_backtest_arm_source(
+    decision_run_id
+);
+CREATE INDEX evaluation_backtest_source_arm_idx ON mra.evaluation_backtest_arm_source(
+    exploratory_backtest_arm_id, exploratory_backtest_run_id
+);
+CREATE INDEX evaluation_backtest_source_fold_idx ON mra.evaluation_backtest_arm_source(
+    exploratory_backtest_fold_id, exploratory_backtest_run_id
+);
+CREATE INDEX evaluation_backtest_source_session_idx ON mra.evaluation_backtest_arm_source(
+    exploratory_backtest_fold_session_id
+);
+
+CREATE TABLE mra.evaluation_candidate_source (
+    evaluation_metric_observation_id uuid PRIMARY KEY,
+    evaluation_run_id uuid NOT NULL,
+    evaluation_protocol_metric_id uuid NOT NULL,
+    source_measure text NOT NULL,
+    commitment_id uuid NOT NULL REFERENCES mra.decision_target_commitment(commitment_id) ON DELETE RESTRICT,
+    candidate_id uuid NOT NULL REFERENCES mra.candidate(candidate_id) ON DELETE RESTRICT,
+    disposition text NOT NULL,
+    decimal_value numeric NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT evaluation_candidate_input_fk FOREIGN KEY (
+        evaluation_metric_observation_id, evaluation_run_id,
+        evaluation_protocol_metric_id
+    ) REFERENCES mra.evaluation_metric_observation(
+        evaluation_metric_observation_id, evaluation_run_id,
+        evaluation_protocol_metric_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT evaluation_candidate_source_shape_ck CHECK (
+        source_measure = 'CANDIDATE_SELECTED'
+        AND disposition IN ('SELECTED', 'RANKED_NOT_SELECTED', 'UNRANKABLE')
+        AND decimal_value IN (0, 1)
+        AND decimal_value = (disposition = 'SELECTED')::integer
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+CREATE INDEX evaluation_candidate_source_run_idx ON mra.evaluation_candidate_source(
+    evaluation_run_id, evaluation_protocol_metric_id
+);
+CREATE INDEX evaluation_candidate_source_input_idx ON mra.evaluation_candidate_source(
+    evaluation_metric_observation_id, evaluation_run_id,
+    evaluation_protocol_metric_id
+);
+CREATE INDEX evaluation_candidate_source_commitment_idx ON mra.evaluation_candidate_source(
+    commitment_id, candidate_id
+);
+CREATE INDEX evaluation_candidate_source_candidate_idx ON mra.evaluation_candidate_source(
+    candidate_id
+);
+
+CREATE TABLE mra.evaluation_signal_source (
+    evaluation_metric_observation_id uuid PRIMARY KEY,
+    evaluation_run_id uuid NOT NULL,
+    evaluation_protocol_metric_id uuid NOT NULL,
+    source_measure text NOT NULL,
+    decision_run_id uuid NOT NULL REFERENCES mra.decision_run(decision_run_id) ON DELETE RESTRICT,
+    candidate_id uuid NOT NULL REFERENCES mra.candidate(candidate_id) ON DELETE RESTRICT,
+    signal_id uuid NOT NULL REFERENCES mra.signal(signal_id) ON DELETE RESTRICT,
+    signal_status text NOT NULL,
+    decimal_value numeric,
+    source_status text NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT evaluation_signal_input_fk FOREIGN KEY (
+        evaluation_metric_observation_id, evaluation_run_id,
+        evaluation_protocol_metric_id
+    ) REFERENCES mra.evaluation_metric_observation(
+        evaluation_metric_observation_id, evaluation_run_id,
+        evaluation_protocol_metric_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT evaluation_signal_source_shape_ck CHECK (
+        source_measure = 'SIGNAL_PRESENT'
+        AND signal_status IN ('PRESENT', 'NO_SIGNAL', 'WAIT', 'UNKNOWN', 'NOT_ESTIMABLE')
+        AND source_status IN ('COMPLETE', 'UNAVAILABLE')
+        AND ((source_status = 'COMPLETE' AND decimal_value IN (0, 1))
+          OR (source_status = 'UNAVAILABLE' AND decimal_value IS NULL))
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+CREATE INDEX evaluation_signal_source_run_idx ON mra.evaluation_signal_source(
+    evaluation_run_id, evaluation_protocol_metric_id
+);
+CREATE INDEX evaluation_signal_source_input_idx ON mra.evaluation_signal_source(
+    evaluation_metric_observation_id, evaluation_run_id,
+    evaluation_protocol_metric_id
+);
+CREATE INDEX evaluation_signal_source_fact_idx ON mra.evaluation_signal_source(
+    signal_id, decision_run_id, candidate_id
+);
+CREATE INDEX evaluation_signal_source_decision_idx ON mra.evaluation_signal_source(
+    decision_run_id
+);
+CREATE INDEX evaluation_signal_source_candidate_idx ON mra.evaluation_signal_source(
+    candidate_id
+);
+
+CREATE TABLE mra.evaluation_forecast_source (
+    evaluation_metric_observation_id uuid PRIMARY KEY,
+    evaluation_run_id uuid NOT NULL,
+    evaluation_protocol_metric_id uuid NOT NULL,
+    source_measure text NOT NULL,
+    commitment_id uuid NOT NULL REFERENCES mra.decision_target_commitment(commitment_id) ON DELETE RESTRICT,
+    decision_run_id uuid NOT NULL REFERENCES mra.decision_run(decision_run_id) ON DELETE RESTRICT,
+    forecast_id uuid NOT NULL REFERENCES mra.forecast(forecast_id) ON DELETE RESTRICT,
+    forecast_estimate_id uuid NOT NULL REFERENCES mra.forecast_estimate(forecast_estimate_id) ON DELETE RESTRICT,
+    forecast_status text NOT NULL,
+    point_estimate numeric,
+    outcome_decimal_value numeric,
+    source_status text NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT evaluation_forecast_input_fk FOREIGN KEY (
+        evaluation_metric_observation_id, evaluation_run_id,
+        evaluation_protocol_metric_id
+    ) REFERENCES mra.evaluation_metric_observation(
+        evaluation_metric_observation_id, evaluation_run_id,
+        evaluation_protocol_metric_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT evaluation_forecast_source_shape_ck CHECK (
+        source_measure = 'FORECAST_POINT_VS_TARGET'
+        AND forecast_status IN ('AVAILABLE', 'NOT_APPLICABLE', 'NOT_ESTIMABLE')
+        AND source_status IN ('PARTIAL', 'COMPLETE', 'UNAVAILABLE')
+        AND ((source_status IN ('PARTIAL', 'COMPLETE')
+              AND point_estimate IS NOT NULL AND outcome_decimal_value IS NOT NULL)
+          OR (source_status = 'UNAVAILABLE'))
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+CREATE INDEX evaluation_forecast_source_run_idx ON mra.evaluation_forecast_source(
+    evaluation_run_id, evaluation_protocol_metric_id
+);
+CREATE INDEX evaluation_forecast_source_input_idx ON mra.evaluation_forecast_source(
+    evaluation_metric_observation_id, evaluation_run_id,
+    evaluation_protocol_metric_id
+);
+CREATE INDEX evaluation_forecast_source_fact_idx ON mra.evaluation_forecast_source(
+    forecast_id, forecast_estimate_id, commitment_id
+);
+CREATE INDEX evaluation_forecast_source_estimate_idx ON mra.evaluation_forecast_source(
+    forecast_estimate_id
+);
+CREATE INDEX evaluation_forecast_source_commitment_idx ON mra.evaluation_forecast_source(
+    commitment_id
+);
+CREATE INDEX evaluation_forecast_source_decision_idx ON mra.evaluation_forecast_source(
+    decision_run_id
+);
+
+CREATE TABLE mra.evaluation_portfolio_source (
+    evaluation_metric_observation_id uuid PRIMARY KEY,
+    evaluation_run_id uuid NOT NULL,
+    evaluation_protocol_metric_id uuid NOT NULL,
+    source_measure text NOT NULL,
+    decision_run_id uuid NOT NULL REFERENCES mra.decision_run(decision_run_id) ON DELETE RESTRICT,
+    candidate_id uuid NOT NULL REFERENCES mra.candidate(candidate_id) ON DELETE RESTRICT,
+    portfolio_proposal_id uuid NOT NULL REFERENCES mra.portfolio_proposal(portfolio_proposal_id) ON DELETE RESTRICT,
+    portfolio_line_id uuid NOT NULL REFERENCES mra.portfolio_line(portfolio_line_id) ON DELETE RESTRICT,
+    risk_decision_id uuid NOT NULL REFERENCES mra.risk_decision(risk_decision_id) ON DELETE RESTRICT,
+    line_status text NOT NULL,
+    risk_status text NOT NULL,
+    proposed_weight numeric NOT NULL,
+    turnover numeric NOT NULL,
+    effective_weight numeric,
+    gross_return numeric,
+    net_return numeric,
+    source_status text NOT NULL,
+    cost_count integer,
+    cost_roster_sha256 text,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT evaluation_portfolio_input_fk FOREIGN KEY (
+        evaluation_metric_observation_id, evaluation_run_id,
+        evaluation_protocol_metric_id
+    ) REFERENCES mra.evaluation_metric_observation(
+        evaluation_metric_observation_id, evaluation_run_id,
+        evaluation_protocol_metric_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT evaluation_portfolio_source_shape_ck CHECK (
+        source_measure IN ('TARGET_WEIGHT', 'TURNOVER',
+            'GROSS_PORTFOLIO_RETURN', 'NET_PORTFOLIO_RETURN_ASSUMED_COST')
+        AND line_status IN ('INCLUDED', 'EXCLUDED', 'NOT_ESTIMABLE')
+        AND proposed_weight BETWEEN 0 AND 1 AND turnover >= 0
+        AND source_status IN ('PARTIAL', 'COMPLETE', 'UNAVAILABLE')
+        AND ((source_measure IN ('TARGET_WEIGHT', 'TURNOVER')
+              AND source_status = 'COMPLETE')
+          OR (source_measure IN ('GROSS_PORTFOLIO_RETURN',
+                                 'NET_PORTFOLIO_RETURN_ASSUMED_COST')
+              AND risk_status IN ('AUTHORIZED', 'REJECTED', 'UNKNOWN', 'NO_ACTION')))
+        AND (cost_roster_sha256 IS NULL
+             OR cost_roster_sha256 ~ '^[0-9a-f]{64}$')
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+CREATE INDEX evaluation_portfolio_source_run_idx ON mra.evaluation_portfolio_source(
+    evaluation_run_id, evaluation_protocol_metric_id
+);
+CREATE INDEX evaluation_portfolio_source_input_idx ON mra.evaluation_portfolio_source(
+    evaluation_metric_observation_id, evaluation_run_id,
+    evaluation_protocol_metric_id
+);
+CREATE INDEX evaluation_portfolio_source_fact_idx ON mra.evaluation_portfolio_source(
+    portfolio_proposal_id, portfolio_line_id, risk_decision_id
+);
+CREATE INDEX evaluation_portfolio_source_line_idx ON mra.evaluation_portfolio_source(
+    portfolio_line_id
+);
+CREATE INDEX evaluation_portfolio_source_risk_idx ON mra.evaluation_portfolio_source(
+    risk_decision_id
+);
+CREATE INDEX evaluation_portfolio_source_decision_idx ON mra.evaluation_portfolio_source(
+    decision_run_id
+);
+CREATE INDEX evaluation_portfolio_source_candidate_idx ON mra.evaluation_portfolio_source(
+    candidate_id
+);
+
+CREATE TABLE mra.evaluation_portfolio_cost_source (
+    evaluation_metric_observation_id uuid NOT NULL
+        REFERENCES mra.evaluation_portfolio_source(evaluation_metric_observation_id)
+        ON DELETE RESTRICT,
+    exploratory_backtest_cost_assumption_id uuid NOT NULL,
+    exploratory_backtest_run_id uuid NOT NULL,
+    ordinal integer NOT NULL,
+    cost_kind text NOT NULL,
+    amount_bps numeric NOT NULL,
+    evidence_class text NOT NULL,
+    assumption_content_sha256 text NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    PRIMARY KEY (
+        evaluation_metric_observation_id,
+        exploratory_backtest_cost_assumption_id
+    ),
+    CONSTRAINT evaluation_portfolio_cost_ordinal_uk UNIQUE (
+        evaluation_metric_observation_id, ordinal
+    ),
+    CONSTRAINT evaluation_portfolio_cost_fact_fk FOREIGN KEY (
+        exploratory_backtest_cost_assumption_id,
+        exploratory_backtest_run_id, assumption_content_sha256
+    ) REFERENCES mra.exploratory_backtest_cost_assumption(
+        exploratory_backtest_cost_assumption_id,
+        exploratory_backtest_run_id, content_sha256
+    ) ON DELETE RESTRICT,
+    CONSTRAINT evaluation_portfolio_cost_shape_ck CHECK (
+        ordinal > 0
+        AND cost_kind IN ('COMMISSION_BPS', 'SLIPPAGE_BPS', 'STAMP_DUTY_BPS')
+        AND amount_bps >= 0 AND evidence_class = 'ASSUMED_COST'
+        AND assumption_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+CREATE INDEX evaluation_portfolio_cost_run_idx ON mra.evaluation_portfolio_cost_source(
+    exploratory_backtest_run_id, evaluation_metric_observation_id
+);
+CREATE INDEX evaluation_portfolio_cost_fact_idx ON mra.evaluation_portfolio_cost_source(
+    exploratory_backtest_cost_assumption_id,
+    exploratory_backtest_run_id, assumption_content_sha256
+);
+
+CREATE TABLE mra.evaluation_risk_source (
+    evaluation_metric_observation_id uuid PRIMARY KEY,
+    evaluation_run_id uuid NOT NULL,
+    evaluation_protocol_metric_id uuid NOT NULL,
+    source_measure text NOT NULL,
+    decision_run_id uuid NOT NULL REFERENCES mra.decision_run(decision_run_id) ON DELETE RESTRICT,
+    portfolio_proposal_id uuid NOT NULL REFERENCES mra.portfolio_proposal(portfolio_proposal_id) ON DELETE RESTRICT,
+    risk_decision_id uuid NOT NULL REFERENCES mra.risk_decision(risk_decision_id) ON DELETE RESTRICT,
+    risk_status text NOT NULL,
+    decimal_value numeric,
+    source_status text NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT evaluation_risk_input_fk FOREIGN KEY (
+        evaluation_metric_observation_id, evaluation_run_id,
+        evaluation_protocol_metric_id
+    ) REFERENCES mra.evaluation_metric_observation(
+        evaluation_metric_observation_id, evaluation_run_id,
+        evaluation_protocol_metric_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT evaluation_risk_source_shape_ck CHECK (
+        source_measure = 'RISK_REJECTED'
+        AND risk_status IN ('AUTHORIZED', 'REJECTED', 'UNKNOWN', 'NO_ACTION')
+        AND source_status IN ('COMPLETE', 'UNAVAILABLE')
+        AND ((source_status = 'COMPLETE' AND decimal_value IN (0, 1))
+          OR (source_status = 'UNAVAILABLE' AND decimal_value IS NULL))
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+CREATE INDEX evaluation_risk_source_run_idx ON mra.evaluation_risk_source(
+    evaluation_run_id, evaluation_protocol_metric_id
+);
+CREATE INDEX evaluation_risk_source_input_idx ON mra.evaluation_risk_source(
+    evaluation_metric_observation_id, evaluation_run_id,
+    evaluation_protocol_metric_id
+);
+CREATE INDEX evaluation_risk_source_fact_idx ON mra.evaluation_risk_source(
+    risk_decision_id, portfolio_proposal_id, decision_run_id
+);
+CREATE INDEX evaluation_risk_source_proposal_idx ON mra.evaluation_risk_source(
+    portfolio_proposal_id
+);
+CREATE INDEX evaluation_risk_source_decision_idx ON mra.evaluation_risk_source(
+    decision_run_id
+);
+
+CREATE FUNCTION mra.guard_evaluation_portfolio_cost_source_insert()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM mra.evaluation_portfolio_source AS source
+        JOIN mra.evaluation_run AS run
+          ON run.evaluation_run_id = source.evaluation_run_id
+         AND run.status = 'INPUTS_ACQUIRED'
+        WHERE source.evaluation_metric_observation_id =
+              NEW.evaluation_metric_observation_id
+    ) THEN
+        RAISE EXCEPTION 'Evaluation assumed-cost source requires INPUTS_ACQUIRED run'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER evaluation_backtest_arm_source_append_only BEFORE UPDATE OR DELETE ON mra.evaluation_backtest_arm_source FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER evaluation_backtest_arm_source_insert_guard BEFORE INSERT ON mra.evaluation_backtest_arm_source FOR EACH ROW EXECUTE FUNCTION mra.guard_evaluation_metric_insert();
+CREATE TRIGGER evaluation_candidate_source_append_only BEFORE UPDATE OR DELETE ON mra.evaluation_candidate_source FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER evaluation_candidate_source_insert_guard BEFORE INSERT ON mra.evaluation_candidate_source FOR EACH ROW EXECUTE FUNCTION mra.guard_evaluation_metric_insert();
+CREATE TRIGGER evaluation_signal_source_append_only BEFORE UPDATE OR DELETE ON mra.evaluation_signal_source FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER evaluation_signal_source_insert_guard BEFORE INSERT ON mra.evaluation_signal_source FOR EACH ROW EXECUTE FUNCTION mra.guard_evaluation_metric_insert();
+CREATE TRIGGER evaluation_forecast_source_append_only BEFORE UPDATE OR DELETE ON mra.evaluation_forecast_source FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER evaluation_forecast_source_insert_guard BEFORE INSERT ON mra.evaluation_forecast_source FOR EACH ROW EXECUTE FUNCTION mra.guard_evaluation_metric_insert();
+CREATE TRIGGER evaluation_portfolio_source_append_only BEFORE UPDATE OR DELETE ON mra.evaluation_portfolio_source FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER evaluation_portfolio_source_insert_guard BEFORE INSERT ON mra.evaluation_portfolio_source FOR EACH ROW EXECUTE FUNCTION mra.guard_evaluation_metric_insert();
+CREATE TRIGGER evaluation_portfolio_cost_source_append_only BEFORE UPDATE OR DELETE ON mra.evaluation_portfolio_cost_source FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER evaluation_portfolio_cost_source_insert_guard BEFORE INSERT ON mra.evaluation_portfolio_cost_source FOR EACH ROW EXECUTE FUNCTION mra.guard_evaluation_portfolio_cost_source_insert();
+CREATE TRIGGER evaluation_risk_source_append_only BEFORE UPDATE OR DELETE ON mra.evaluation_risk_source FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER evaluation_risk_source_insert_guard BEFORE INSERT ON mra.evaluation_risk_source FOR EACH ROW EXECUTE FUNCTION mra.guard_evaluation_metric_insert();

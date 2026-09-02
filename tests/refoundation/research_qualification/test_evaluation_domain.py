@@ -18,8 +18,11 @@ from market_regime_alpha.research_qualification.domain.research_vocabulary impor
     EvaluationInputState,
     EvaluationMetricState,
     EvaluationReducer,
+    EvaluationSourceKind,
+    EvaluationSourceMeasure,
     EvaluationRunStatus,
     EvaluationSliceKind,
+    ExploratoryBacktestArmKind,
     MetricDirection,
     SourceMetricValueType,
 )
@@ -74,6 +77,16 @@ def test_candidate_disposition_slice_freezes_exact_disposition() -> None:
 def test_all_members_slice_forbids_disposition() -> None:
     with pytest.raises(ValueError, match="candidate_disposition"):
         _metric(candidate_disposition=CandidateDisposition.UNRANKABLE)
+
+
+def test_exploratory_arm_slice_freezes_exact_arm() -> None:
+    with pytest.raises(ValueError, match="backtest_arm_kind"):
+        _metric(slice_kind=EvaluationSliceKind.EXPLORATORY_BACKTEST_ARM)
+    metric = _metric(
+        slice_kind=EvaluationSliceKind.EXPLORATORY_BACKTEST_ARM,
+        backtest_arm_kind=ExploratoryBacktestArmKind.MODEL_CHALLENGER,
+    )
+    assert metric.backtest_arm_kind is ExploratoryBacktestArmKind.MODEL_CHALLENGER
 
 
 @pytest.mark.parametrize(
@@ -153,3 +166,91 @@ def test_disposition_slice_records_out_of_slice_exclusions() -> None:
         EvaluationInputState.INCLUDED,
         EvaluationInputState.EXCLUDED,
     ]
+
+
+def test_forecast_outcome_rank_correlation_handles_ties_deterministically() -> None:
+    metric = _metric(
+        metric_code="rank-ic",
+        reducer=EvaluationReducer.SPEARMAN_RANK_CORRELATION,
+        source_kind=EvaluationSourceKind.FORECAST_OUTCOME_PAIR,
+        source_measure=EvaluationSourceMeasure.FORECAST_POINT_VS_TARGET,
+        acceptance_threshold=Decimal("0"),
+    )
+    inputs = (
+        EvaluationInput(uuid4(), CandidateDisposition.SELECTED, "COMPLETE", Decimal("1"), None, Decimal("1")),
+        EvaluationInput(uuid4(), CandidateDisposition.SELECTED, "COMPLETE", Decimal("2"), None, Decimal("2")),
+        EvaluationInput(uuid4(), CandidateDisposition.SELECTED, "COMPLETE", Decimal("2"), None, Decimal("3")),
+        EvaluationInput(uuid4(), CandidateDisposition.SELECTED, "COMPLETE", Decimal("4"), None, Decimal("4")),
+    )
+
+    result = evaluate_metric(metric, inputs)
+
+    assert result.state is EvaluationMetricState.ESTIMATED
+    assert result.decimal_value == Decimal("0.9486832980505137995996680633")
+    assert len(result.observations) == 4
+
+
+def test_rank_ic_averages_cross_sectional_session_correlations() -> None:
+    metric = _metric(
+        metric_code="rank-ic",
+        reducer=EvaluationReducer.SPEARMAN_RANK_CORRELATION,
+        source_kind=EvaluationSourceKind.FORECAST_OUTCOME_PAIR,
+        source_measure=EvaluationSourceMeasure.FORECAST_POINT_VS_TARGET,
+        acceptance_threshold=Decimal("0"),
+    )
+    inputs = (
+        EvaluationInput(uuid4(), CandidateDisposition.SELECTED, "COMPLETE", Decimal("1"), None, Decimal("1"), group_key="s1"),
+        EvaluationInput(uuid4(), CandidateDisposition.SELECTED, "COMPLETE", Decimal("2"), None, Decimal("2"), group_key="s1"),
+        EvaluationInput(uuid4(), CandidateDisposition.SELECTED, "COMPLETE", Decimal("1"), None, Decimal("2"), group_key="s2"),
+        EvaluationInput(uuid4(), CandidateDisposition.SELECTED, "COMPLETE", Decimal("2"), None, Decimal("1"), group_key="s2"),
+    )
+
+    result = evaluate_metric(metric, inputs)
+
+    assert result.decimal_value == Decimal("0")
+
+
+def test_arm_slice_keeps_complete_roster_as_explicit_exclusions() -> None:
+    metric = _metric(
+        slice_kind=EvaluationSliceKind.EXPLORATORY_BACKTEST_ARM,
+        backtest_arm_kind=ExploratoryBacktestArmKind.RULE_BASELINE,
+    )
+    inputs = (
+        EvaluationInput(uuid4(), CandidateDisposition.SELECTED, "COMPLETE", Decimal("0.1"), None, backtest_arm_kind=ExploratoryBacktestArmKind.RULE_BASELINE),
+        EvaluationInput(uuid4(), CandidateDisposition.SELECTED, "COMPLETE", Decimal("0.2"), None, backtest_arm_kind=ExploratoryBacktestArmKind.MODEL_CHALLENGER),
+    )
+
+    result = evaluate_metric(metric, inputs)
+
+    assert [item.state for item in result.observations] == [
+        EvaluationInputState.INCLUDED,
+        EvaluationInputState.EXCLUDED,
+    ]
+
+
+def test_drawdown_reducer_uses_declared_chronological_roster() -> None:
+    metric = _metric(
+        metric_code="max-drawdown",
+        reducer=EvaluationReducer.MAX_DRAWDOWN,
+        source_kind=EvaluationSourceKind.PORTFOLIO_OUTCOME,
+        source_measure=EvaluationSourceMeasure.GROSS_PORTFOLIO_RETURN,
+        direction=MetricDirection.LOWER,
+        acceptance_operator=AcceptanceOperator.AT_MOST,
+        acceptance_threshold=Decimal("0.25"),
+    )
+    inputs = tuple(
+        EvaluationInput(uuid4(), CandidateDisposition.SELECTED, "COMPLETE", value, None)
+        for value in (Decimal("0.10"), Decimal("-0.20"), Decimal("0.05"))
+    )
+
+    result = evaluate_metric(metric, inputs)
+
+    assert result.decimal_value == Decimal("0.20")
+
+
+def test_source_kind_and_measure_are_frozen_compatibly() -> None:
+    with pytest.raises(ValueError, match="source measure"):
+        _metric(
+            source_kind=EvaluationSourceKind.SIGNAL_STATUS,
+            source_measure=EvaluationSourceMeasure.FORECAST_POINT_VS_TARGET,
+        )

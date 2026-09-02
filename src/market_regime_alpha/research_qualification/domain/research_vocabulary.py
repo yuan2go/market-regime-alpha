@@ -52,6 +52,32 @@ class EvaluationReducer(StrEnum):
     MEDIAN_DECIMAL = "MEDIAN_DECIMAL"
     TRUE_RATE = "TRUE_RATE"
     ESTIMABLE_RATE = "ESTIMABLE_RATE"
+    SUM_DECIMAL = "SUM_DECIMAL"
+    ABSOLUTE_MEAN_DECIMAL = "ABSOLUTE_MEAN_DECIMAL"
+    SPEARMAN_RANK_CORRELATION = "SPEARMAN_RANK_CORRELATION"
+    MAX_DRAWDOWN = "MAX_DRAWDOWN"
+
+
+class EvaluationSourceKind(StrEnum):
+    OUTCOME_METRIC = "OUTCOME_METRIC"
+    FORECAST_OUTCOME_PAIR = "FORECAST_OUTCOME_PAIR"
+    CANDIDATE_DISPOSITION = "CANDIDATE_DISPOSITION"
+    SIGNAL_STATUS = "SIGNAL_STATUS"
+    PORTFOLIO_LINE = "PORTFOLIO_LINE"
+    PORTFOLIO_OUTCOME = "PORTFOLIO_OUTCOME"
+    RISK_DECISION = "RISK_DECISION"
+
+
+class EvaluationSourceMeasure(StrEnum):
+    TARGET_VALUE = "TARGET_VALUE"
+    FORECAST_POINT_VS_TARGET = "FORECAST_POINT_VS_TARGET"
+    CANDIDATE_SELECTED = "CANDIDATE_SELECTED"
+    SIGNAL_PRESENT = "SIGNAL_PRESENT"
+    TARGET_WEIGHT = "TARGET_WEIGHT"
+    TURNOVER = "TURNOVER"
+    GROSS_PORTFOLIO_RETURN = "GROSS_PORTFOLIO_RETURN"
+    NET_PORTFOLIO_RETURN_ASSUMED_COST = "NET_PORTFOLIO_RETURN_ASSUMED_COST"
+    RISK_REJECTED = "RISK_REJECTED"
 
 
 class SourceMetricValueType(StrEnum):
@@ -62,6 +88,12 @@ class SourceMetricValueType(StrEnum):
 class EvaluationSliceKind(StrEnum):
     ALL_MEMBERS = "ALL_MEMBERS"
     CANDIDATE_DISPOSITION = "CANDIDATE_DISPOSITION"
+    EXPLORATORY_BACKTEST_ARM = "EXPLORATORY_BACKTEST_ARM"
+
+
+class ExploratoryBacktestArmKind(StrEnum):
+    RULE_BASELINE = "RULE_BASELINE"
+    MODEL_CHALLENGER = "MODEL_CHALLENGER"
 
 
 class CandidateDisposition(StrEnum):
@@ -121,7 +153,10 @@ __all__ = [
     "EvaluationProtocolStatus",
     "EvaluationReducer",
     "EvaluationRunStatus",
+    "EvaluationSourceKind",
+    "EvaluationSourceMeasure",
     "EvaluationSliceKind",
+    "ExploratoryBacktestArmKind",
     "ExperimentRunStatus",
     "ExperimentStatus",
     "MetricDirection",

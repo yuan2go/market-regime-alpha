@@ -17,7 +17,10 @@ from market_regime_alpha.research_qualification.domain.research_vocabulary impor
     EvaluationInclusionPolicy,
     EvaluationMissingnessPolicy,
     EvaluationReducer,
+    EvaluationSourceKind,
+    EvaluationSourceMeasure,
     EvaluationSliceKind,
+    ExploratoryBacktestArmKind,
     MetricDirection,
     SourceMetricValueType,
 )
@@ -708,6 +711,61 @@ class PostgresResearchEvaluationVerificationProvider:
                             str(cartesian_difference[0]),
                         )
                     )
+                canonical_source_difference = connection.execute(
+                    """
+                    SELECT count(*)
+                    FROM mra.evaluation_protocol_metric AS metric
+                    WHERE metric.evaluation_protocol_id = %s
+                      AND (
+                        ((metric.slice_kind = 'EXPLORATORY_BACKTEST_ARM'
+                          OR metric.source_kind <> 'OUTCOME_METRIC')
+                         AND (SELECT count(*)
+                              FROM mra.evaluation_backtest_arm_source AS source
+                              WHERE source.evaluation_run_id = %s
+                                AND source.evaluation_protocol_metric_id =
+                                    metric.evaluation_protocol_metric_id)
+                             <> %s)
+                        OR (metric.source_kind = 'CANDIDATE_DISPOSITION'
+                            AND (SELECT count(*) FROM mra.evaluation_candidate_source AS source
+                                 WHERE source.evaluation_run_id = %s
+                                   AND source.evaluation_protocol_metric_id = metric.evaluation_protocol_metric_id) <> %s)
+                        OR (metric.source_kind = 'SIGNAL_STATUS'
+                            AND (SELECT count(*) FROM mra.evaluation_signal_source AS source
+                                 WHERE source.evaluation_run_id = %s
+                                   AND source.evaluation_protocol_metric_id = metric.evaluation_protocol_metric_id) <> %s)
+                        OR (metric.source_kind = 'FORECAST_OUTCOME_PAIR'
+                            AND (SELECT count(*) FROM mra.evaluation_forecast_source AS source
+                                 WHERE source.evaluation_run_id = %s
+                                   AND source.evaluation_protocol_metric_id = metric.evaluation_protocol_metric_id) <> %s)
+                        OR (metric.source_kind IN ('PORTFOLIO_LINE', 'PORTFOLIO_OUTCOME')
+                            AND (SELECT count(*) FROM mra.evaluation_portfolio_source AS source
+                                 WHERE source.evaluation_run_id = %s
+                                   AND source.evaluation_protocol_metric_id = metric.evaluation_protocol_metric_id) <> %s)
+                        OR (metric.source_kind = 'RISK_DECISION'
+                            AND (SELECT count(*) FROM mra.evaluation_risk_source AS source
+                                 WHERE source.evaluation_run_id = %s
+                                   AND source.evaluation_protocol_metric_id = metric.evaluation_protocol_metric_id) <> %s)
+                      )
+                    """,
+                    (
+                        run[1],
+                        evaluation_run_id, int(run[5]),
+                        evaluation_run_id, int(run[5]),
+                        evaluation_run_id, int(run[5]),
+                        evaluation_run_id, int(run[5]),
+                        evaluation_run_id, int(run[5]),
+                        evaluation_run_id, int(run[5]),
+                    ),
+                ).fetchone()
+                assert canonical_source_difference is not None
+                if int(canonical_source_difference[0]):
+                    mismatches.append(
+                        _identity(
+                            "evaluation_run.canonical_source_rosters",
+                            "complete typed source roster for every metric",
+                            str(canonical_source_difference[0]),
+                        )
+                    )
             self._inspect_lifecycle(run, mismatches)
             required_commands = ["OPEN_EVALUATION_RUN"]
             if status in {"INPUTS_ACQUIRED", "COMPLETED"}:
@@ -834,8 +892,9 @@ class PostgresResearchEvaluationVerificationProvider:
             """
             SELECT evaluation_protocol_metric_id, metric_code, ordinal,
                    source_target_metric_definition_id, source_metric_code,
-                   source_value_type, reducer, slice_kind,
-                   candidate_disposition, direction,
+                   source_value_type, source_kind, source_measure,
+                   reducer, slice_kind, candidate_disposition,
+                   backtest_arm_kind, direction,
                    minimum_estimable_count, acceptance_operator,
                    acceptance_threshold, inclusion_policy,
                    missingness_policy
@@ -957,17 +1016,24 @@ def _protocol_metric(row: tuple[Any, ...]) -> ProtocolMetricDefinition:
         source_target_metric_definition_id=UUID(str(row[3])),
         source_metric_code=str(row[4]),
         source_value_type=SourceMetricValueType(str(row[5])),
-        reducer=EvaluationReducer(str(row[6])),
-        slice_kind=EvaluationSliceKind(str(row[7])),
+        source_kind=EvaluationSourceKind(str(row[6])),
+        source_measure=EvaluationSourceMeasure(str(row[7])),
+        reducer=EvaluationReducer(str(row[8])),
+        slice_kind=EvaluationSliceKind(str(row[9])),
         candidate_disposition=(
-            CandidateDisposition(str(row[8])) if row[8] is not None else None
+            CandidateDisposition(str(row[10])) if row[10] is not None else None
         ),
-        direction=MetricDirection(str(row[9])),
-        minimum_estimable_count=int(row[10]),
-        acceptance_operator=AcceptanceOperator(str(row[11])),
-        acceptance_threshold=row[12],
-        inclusion_policy=EvaluationInclusionPolicy(str(row[13])),
-        missingness_policy=EvaluationMissingnessPolicy(str(row[14])),
+        backtest_arm_kind=(
+            ExploratoryBacktestArmKind(str(row[11]))
+            if row[11] is not None
+            else None
+        ),
+        direction=MetricDirection(str(row[12])),
+        minimum_estimable_count=int(row[13]),
+        acceptance_operator=AcceptanceOperator(str(row[14])),
+        acceptance_threshold=row[15],
+        inclusion_policy=EvaluationInclusionPolicy(str(row[16])),
+        missingness_policy=EvaluationMissingnessPolicy(str(row[17])),
     )
 
 
