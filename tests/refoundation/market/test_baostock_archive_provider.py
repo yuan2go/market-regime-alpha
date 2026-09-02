@@ -71,6 +71,18 @@ class _Sdk:
         return self.result
 
 
+class _FlakySdk(_Sdk):
+    def __init__(self, result: _SdkResult) -> None:
+        super().__init__(result)
+        self.history_attempts = 0
+
+    def query_history_k_data_plus(self, *args: Any, **kwargs: Any) -> _SdkResult:
+        self.history_attempts += 1
+        if self.history_attempts == 1:
+            raise TimeoutError("fixture timeout")
+        return super().query_history_k_data_plus(*args, **kwargs)
+
+
 def _capture_request(query: BaoStockArchiveQuery) -> CaptureRequest:
     return CaptureRequest(
         provider_product_id=uuid4(),
@@ -166,3 +178,43 @@ def test_unsupported_or_tampered_resource_never_reaches_sdk() -> None:
 
     assert error.value.code == "BAOSTOCK_QUERY_INVALID"
     assert [call[0] for call in sdk.calls] == ["login", "logout"]
+
+
+def test_transport_failure_has_bounded_retry_without_secret_output() -> None:
+    result = _SdkResult(
+        fields=["date", "code", "open", "high", "low", "close", "preclose", "volume", "amount", "adjustflag", "turn", "tradestatus", "pctChg", "isST"],
+        rows=[],
+    )
+    sdk = _FlakySdk(result)
+    query = BaoStockArchiveQuery(
+        kind=BaoStockArchiveQueryKind.HISTORY_DAILY_RAW,
+        start_date=date(2026, 1, 5),
+        end_date=date(2026, 1, 5),
+        code="sh.600000",
+    )
+
+    with BaoStockSession(sdk, maximum_attempts=2) as session:
+        response = BaoStockArchiveProvider(session).capture(_capture_request(query))
+
+    assert sdk.history_attempts == 2
+    assert response.content
+
+
+def test_transport_failure_stops_after_exact_attempt_bound() -> None:
+    class _DownSdk(_Sdk):
+        def query_trade_dates(self, *args: Any, **kwargs: Any) -> _SdkResult:
+            raise ConnectionError("credential=must-not-escape")
+
+    query = BaoStockArchiveQuery(
+        kind=BaoStockArchiveQueryKind.TRADE_DATES,
+        start_date=date(2026, 1, 1),
+        end_date=date(2026, 1, 5),
+    )
+    with BaoStockSession(
+        _DownSdk(_SdkResult(fields=[], rows=[])),
+        maximum_attempts=2,
+    ) as session, pytest.raises(MarketProviderError) as error:
+        BaoStockArchiveProvider(session).capture(_capture_request(query))
+
+    assert error.value.code == "BAOSTOCK_TRANSPORT_FAILED"
+    assert "must-not-escape" not in str(error.value)

@@ -6,6 +6,9 @@ from dataclasses import dataclass
 from datetime import date
 from enum import Enum
 import json
+from contextlib import contextmanager
+import signal
+import threading
 from typing import Any, Protocol, Self
 
 from market_regime_alpha.market.domain import SourceAvailabilityStatus
@@ -132,18 +135,30 @@ class BaoStockArchiveResult:
 class BaoStockSession:
     """One explicit SDK session; login/query/logout remain outside database UoWs."""
 
-    def __init__(self, sdk: _BaoStockSdk) -> None:
+    def __init__(
+        self,
+        sdk: _BaoStockSdk,
+        *,
+        timeout_seconds: float = 30.0,
+        maximum_attempts: int = 2,
+    ) -> None:
+        if timeout_seconds <= 0:
+            raise ValueError("BaoStock timeout_seconds must be positive")
+        if maximum_attempts < 1 or maximum_attempts > 3:
+            raise ValueError("BaoStock maximum_attempts must be between 1 and 3")
         self._sdk = sdk
+        self._timeout_seconds = timeout_seconds
+        self._maximum_attempts = maximum_attempts
         self._active = False
 
     def __enter__(self) -> Self:
         try:
-            status = self._sdk.login()
+            status = self._transport_call("login", self._sdk.login)
         except Exception as exc:
             raise MarketProviderError("BAOSTOCK_LOGIN_TRANSPORT_FAILED", "BaoStock login failed") from exc
         if str(status.error_code) != "0":
             try:
-                self._sdk.logout()
+                self._transport_call("logout", self._sdk.logout)
             finally:
                 raise MarketProviderError("BAOSTOCK_LOGIN_FAILED", f"BaoStock login failed: {status.error_msg}")
         self._active = True
@@ -153,7 +168,7 @@ class BaoStockSession:
         if self._active:
             self._active = False
             try:
-                self._sdk.logout()
+                self._transport_call("logout", self._sdk.logout)
             except Exception as logout_error:
                 if exc is None:
                     raise MarketProviderError("BAOSTOCK_LOGOUT_FAILED", "BaoStock logout failed") from logout_error
@@ -161,21 +176,28 @@ class BaoStockSession:
     def execute(self, query: BaoStockArchiveQuery) -> BaoStockArchiveResult:
         if not self._active:
             raise MarketProviderError("BAOSTOCK_SESSION_NOT_ACTIVE", "BaoStock session is not active")
-        try:
-            result = self._dispatch(query)
-            fields = tuple(str(item) for item in result.fields)
-            rows: list[tuple[str, ...]] = []
-            while result.error_code == "0" and result.next():
-                rows.append(tuple(str(item) for item in result.get_row_data()))
-        except MarketProviderError:
-            raise
-        except Exception as exc:
-            raise MarketProviderError("BAOSTOCK_TRANSPORT_FAILED", "BaoStock query failed") from exc
+        result = self._transport_call("query", self._dispatch, query)
         if str(result.error_code) != "0":
             raise MarketProviderError(
                 "BAOSTOCK_PROVIDER_ERROR",
                 f"BaoStock returned error {result.error_code}: {result.error_msg}",
             )
+        fields = tuple(str(item) for item in result.fields)
+        rows: list[tuple[str, ...]] = []
+        try:
+            while self._transport_call("row-iteration", result.next, retry=False):
+                rows.append(
+                    tuple(
+                        str(item)
+                        for item in self._transport_call(
+                            "row-read",
+                            result.get_row_data,
+                            retry=False,
+                        )
+                    )
+                )
+        except MarketProviderError:
+            raise
         if any(len(row) != len(fields) for row in rows):
             raise MarketProviderError("BAOSTOCK_ROW_SHAPE_INVALID", "BaoStock row width differs from its field roster")
         return BaoStockArchiveResult(
@@ -184,6 +206,28 @@ class BaoStockSession:
             error_code=str(result.error_code),
             error_message=str(result.error_msg),
         )
+
+    def _transport_call(
+        self,
+        label: str,
+        operation: Any,
+        *args: Any,
+        retry: bool = True,
+    ) -> Any:
+        last_error: Exception | None = None
+        attempts = self._maximum_attempts if retry else 1
+        for _ in range(attempts):
+            try:
+                with _timeout_guard(label, self._timeout_seconds):
+                    return operation(*args)
+            except MarketProviderError:
+                raise
+            except Exception as exc:
+                last_error = exc
+        raise MarketProviderError(
+            "BAOSTOCK_TRANSPORT_FAILED",
+            f"BaoStock {label} failed after {attempts} bounded attempt(s)",
+        ) from last_error
 
     def _dispatch(self, query: BaoStockArchiveQuery) -> _BaoStockResult:
         if query.kind is BaoStockArchiveQueryKind.STOCK_BASIC:
@@ -249,6 +293,28 @@ class BaoStockArchiveProvider:
             source_available_at=None,
             limitation_code="HISTORICAL_AVAILABILITY_AND_FINALITY_UNKNOWN",
         )
+
+
+@contextmanager
+def _timeout_guard(label: str, timeout_seconds: float):
+    if (
+        threading.current_thread() is not threading.main_thread()
+        or not hasattr(signal, "setitimer")
+    ):
+        yield
+        return
+
+    def _raise_timeout(_signum: int, _frame: object) -> None:
+        raise TimeoutError(f"BaoStock {label} timed out")
+
+    previous_handler = signal.getsignal(signal.SIGALRM)
+    signal.signal(signal.SIGALRM, _raise_timeout)
+    signal.setitimer(signal.ITIMER_REAL, timeout_seconds)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous_handler)
 
 
 __all__ = [
