@@ -18803,3 +18803,689 @@ CREATE CONSTRAINT TRIGGER decision_reference_visibility_guard
 AFTER INSERT ON mra.decision_reference_observation
 DEFERRABLE INITIALLY DEFERRED
 FOR EACH ROW EXECUTE FUNCTION mra.validate_decision_reference_visibility();
+
+-- WP-17P optional Model Authority. Training samples are the complete roster
+-- derived from one completed FIT Evaluation; model bytes remain immutable
+-- content-addressed Artifacts and never become a Dataset/Evaluation surrogate.
+ALTER TABLE mra.dataset
+    ADD CONSTRAINT dataset_model_source_uk UNIQUE (
+        dataset_id, manifest_artifact_id, manifest_content_sha256,
+        manifest_size_bytes
+    );
+ALTER TABLE mra.evaluation_metric_observation
+    ADD CONSTRAINT evaluation_metric_observation_model_source_uk UNIQUE (
+        evaluation_metric_observation_id, evaluation_run_id,
+        evaluation_protocol_metric_id, evaluation_observation_id,
+        research_partition_member_id, market_target_outcome_revision_id,
+        source_outcome_metric_id, input_state
+    );
+ALTER TABLE mra.exploratory_backtest_arm
+    ADD CONSTRAINT exploratory_backtest_arm_scope_uk UNIQUE (
+        exploratory_backtest_arm_id, exploratory_backtest_run_id
+    );
+
+CREATE TABLE mra.model (
+    model_id uuid PRIMARY KEY,
+    model_code text NOT NULL UNIQUE,
+    target_definition_id uuid NOT NULL,
+    target_version integer NOT NULL,
+    target_definition_sha256 text NOT NULL,
+    feature_count integer NOT NULL,
+    feature_roster_sha256 text NOT NULL,
+    code_artifact_id uuid NOT NULL,
+    code_content_sha256 text NOT NULL,
+    code_size_bytes bigint NOT NULL,
+    config_artifact_id uuid NOT NULL,
+    config_content_sha256 text NOT NULL,
+    config_size_bytes bigint NOT NULL,
+    provenance_sha256 text NOT NULL,
+    content_sha256 text NOT NULL UNIQUE,
+    request_identity text NOT NULL,
+    request_sha256 text NOT NULL,
+    registered_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT model_exact_uk UNIQUE (
+        model_id, target_definition_id, target_version,
+        target_definition_sha256, feature_count, feature_roster_sha256,
+        content_sha256
+    ),
+    CONSTRAINT model_request_uk UNIQUE (model_code, request_identity),
+    CONSTRAINT model_target_fk FOREIGN KEY (
+        target_definition_id, target_version, target_definition_sha256
+    ) REFERENCES mra.target_definition(
+        target_definition_id, version, content_sha256
+    ) ON DELETE RESTRICT,
+    CONSTRAINT model_code_artifact_fk FOREIGN KEY (
+        code_artifact_id, code_content_sha256, code_size_bytes
+    ) REFERENCES mra.artifact(
+        artifact_id, content_sha256, size_bytes
+    ) ON DELETE RESTRICT,
+    CONSTRAINT model_config_artifact_fk FOREIGN KEY (
+        config_artifact_id, config_content_sha256, config_size_bytes
+    ) REFERENCES mra.artifact(
+        artifact_id, content_sha256, size_bytes
+    ) ON DELETE RESTRICT,
+    CONSTRAINT model_shape_ck CHECK (
+        model_code ~ '^[a-z][a-z0-9_-]{0,99}$'
+        AND target_version > 0 AND feature_count > 0
+        AND target_definition_sha256 ~ '^[0-9a-f]{64}$'
+        AND feature_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND provenance_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+        AND request_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+CREATE INDEX model_target_idx ON mra.model(
+    target_definition_id, target_version, target_definition_sha256
+);
+CREATE INDEX model_code_artifact_idx ON mra.model(
+    code_artifact_id, code_content_sha256, code_size_bytes
+);
+CREATE INDEX model_config_artifact_idx ON mra.model(
+    config_artifact_id, config_content_sha256, config_size_bytes
+);
+
+CREATE TABLE mra.model_feature_definition (
+    model_id uuid NOT NULL
+        REFERENCES mra.model(model_id) ON DELETE RESTRICT,
+    ordinal integer NOT NULL,
+    feature_definition_id uuid NOT NULL,
+    feature_definition_sha256 text NOT NULL,
+    feature_value_type text NOT NULL,
+    PRIMARY KEY (model_id, ordinal),
+    CONSTRAINT model_feature_identity_uk UNIQUE (
+        model_id, feature_definition_id
+    ),
+    CONSTRAINT model_feature_definition_fk FOREIGN KEY (
+        feature_definition_id, feature_definition_sha256,
+        feature_value_type
+    ) REFERENCES mra.feature_definition(
+        feature_definition_id, content_sha256, value_type
+    ) ON DELETE RESTRICT,
+    CONSTRAINT model_feature_shape_ck CHECK (
+        ordinal > 0
+        AND feature_definition_sha256 ~ '^[0-9a-f]{64}$'
+        AND feature_value_type IN ('DECIMAL', 'INTEGER')
+    )
+);
+CREATE INDEX model_feature_definition_idx ON mra.model_feature_definition(
+    feature_definition_id, feature_definition_sha256, feature_value_type
+);
+
+CREATE FUNCTION mra.validate_model() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE actual_count integer;
+DECLARE actual_roster text;
+BEGIN
+    SELECT count(*)::integer,
+           mra.canonical_sha256(mra.canonical_json_text(jsonb_agg(
+               jsonb_build_object(
+                   'feature_definition_id', feature_definition_id,
+                   'feature_definition_sha256', feature_definition_sha256,
+                   'ordinal', ordinal
+               ) ORDER BY ordinal
+           )))
+      INTO actual_count, actual_roster
+      FROM mra.model_feature_definition
+     WHERE model_id = NEW.model_id;
+    IF actual_count <> NEW.feature_count
+       OR actual_roster IS DISTINCT FROM NEW.feature_roster_sha256 THEN
+        RAISE EXCEPTION 'Model Feature roster is incomplete or changed'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+CREATE CONSTRAINT TRIGGER model_reconcile_guard
+AFTER INSERT ON mra.model DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW EXECUTE FUNCTION mra.validate_model();
+CREATE TRIGGER model_append_only BEFORE UPDATE OR DELETE ON mra.model
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER model_feature_definition_append_only
+BEFORE UPDATE OR DELETE ON mra.model_feature_definition
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+
+ALTER TABLE mra.model ADD CONSTRAINT model_training_parent_uk UNIQUE (
+    model_id, target_definition_id
+);
+
+CREATE TABLE mra.model_training_run (
+    model_training_run_id uuid PRIMARY KEY,
+    model_id uuid NOT NULL,
+    evaluation_run_id uuid NOT NULL,
+    evaluation_protocol_metric_id uuid NOT NULL,
+    exploratory_backtest_run_id uuid NOT NULL,
+    exploratory_backtest_arm_id uuid NOT NULL,
+    exploratory_backtest_fold_id uuid NOT NULL,
+    target_definition_id uuid NOT NULL,
+    algorithm_code text NOT NULL,
+    algorithm_version text NOT NULL,
+    algorithm_sha256 text NOT NULL,
+    ridge_alpha numeric(24, 12) NOT NULL,
+    random_seed bigint NOT NULL,
+    sample_count integer NOT NULL,
+    estimable_count integer NOT NULL,
+    sample_roster_sha256 text NOT NULL,
+    training_input_artifact_id uuid NOT NULL,
+    training_input_content_sha256 text NOT NULL,
+    training_input_size_bytes bigint NOT NULL,
+    code_artifact_id uuid NOT NULL,
+    code_content_sha256 text NOT NULL,
+    code_size_bytes bigint NOT NULL,
+    config_artifact_id uuid NOT NULL,
+    config_content_sha256 text NOT NULL,
+    config_size_bytes bigint NOT NULL,
+    provenance_sha256 text NOT NULL,
+    content_sha256 text NOT NULL UNIQUE,
+    request_identity text NOT NULL,
+    request_sha256 text NOT NULL,
+    opened_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT model_training_identity_uk UNIQUE (
+        model_id, evaluation_run_id, evaluation_protocol_metric_id,
+        exploratory_backtest_fold_id
+    ),
+    CONSTRAINT model_training_request_uk UNIQUE (
+        model_id, request_identity
+    ),
+    CONSTRAINT model_training_exact_uk UNIQUE (
+        model_training_run_id, model_id, training_input_artifact_id,
+        training_input_content_sha256, training_input_size_bytes,
+        sample_count, estimable_count, sample_roster_sha256
+    ),
+    CONSTRAINT model_training_version_authority_uk UNIQUE (
+        model_training_run_id, model_id, training_input_artifact_id,
+        training_input_content_sha256, training_input_size_bytes
+    ),
+    CONSTRAINT model_training_model_fk FOREIGN KEY (
+        model_id, target_definition_id
+    ) REFERENCES mra.model(model_id, target_definition_id)
+        ON DELETE RESTRICT,
+    CONSTRAINT model_training_evaluation_fk FOREIGN KEY (
+        evaluation_run_id
+    ) REFERENCES mra.evaluation_run(evaluation_run_id) ON DELETE RESTRICT,
+    CONSTRAINT model_training_protocol_metric_fk FOREIGN KEY (
+        evaluation_protocol_metric_id
+    ) REFERENCES mra.evaluation_protocol_metric(
+        evaluation_protocol_metric_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT model_training_backtest_fk FOREIGN KEY (
+        exploratory_backtest_run_id
+    ) REFERENCES mra.exploratory_backtest_run(
+        exploratory_backtest_run_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT model_training_backtest_arm_fk FOREIGN KEY (
+        exploratory_backtest_arm_id, exploratory_backtest_run_id
+    ) REFERENCES mra.exploratory_backtest_arm(
+        exploratory_backtest_arm_id, exploratory_backtest_run_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT model_training_backtest_fold_fk FOREIGN KEY (
+        exploratory_backtest_fold_id, exploratory_backtest_run_id
+    ) REFERENCES mra.exploratory_backtest_fold(
+        exploratory_backtest_fold_id, exploratory_backtest_run_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT model_training_input_artifact_fk FOREIGN KEY (
+        training_input_artifact_id, training_input_content_sha256,
+        training_input_size_bytes
+    ) REFERENCES mra.artifact(
+        artifact_id, content_sha256, size_bytes
+    ) ON DELETE RESTRICT,
+    CONSTRAINT model_training_code_artifact_fk FOREIGN KEY (
+        code_artifact_id, code_content_sha256, code_size_bytes
+    ) REFERENCES mra.artifact(
+        artifact_id, content_sha256, size_bytes
+    ) ON DELETE RESTRICT,
+    CONSTRAINT model_training_config_artifact_fk FOREIGN KEY (
+        config_artifact_id, config_content_sha256, config_size_bytes
+    ) REFERENCES mra.artifact(
+        artifact_id, content_sha256, size_bytes
+    ) ON DELETE RESTRICT,
+    CONSTRAINT model_training_shape_ck CHECK (
+        algorithm_code ~ '^[a-z][a-z0-9_-]{0,99}$'
+        AND algorithm_version ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$'
+        AND algorithm_sha256 ~ '^[0-9a-f]{64}$'
+        AND ridge_alpha >= 0 AND random_seed >= 0
+        AND sample_count > 0 AND estimable_count >= 2
+        AND estimable_count <= sample_count
+        AND sample_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND provenance_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+        AND request_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+CREATE INDEX model_training_evaluation_idx ON mra.model_training_run(
+    evaluation_run_id, evaluation_protocol_metric_id
+);
+CREATE INDEX model_training_model_idx ON mra.model_training_run(
+    model_id, target_definition_id
+);
+CREATE INDEX model_training_protocol_metric_idx ON mra.model_training_run(
+    evaluation_protocol_metric_id
+);
+CREATE INDEX model_training_backtest_idx ON mra.model_training_run(
+    exploratory_backtest_run_id
+);
+CREATE INDEX model_training_arm_idx ON mra.model_training_run(
+    exploratory_backtest_arm_id, exploratory_backtest_run_id
+);
+CREATE INDEX model_training_fold_idx ON mra.model_training_run(
+    exploratory_backtest_fold_id, exploratory_backtest_run_id
+);
+CREATE INDEX model_training_input_artifact_idx ON mra.model_training_run(
+    training_input_artifact_id, training_input_content_sha256,
+    training_input_size_bytes
+);
+CREATE INDEX model_training_code_artifact_idx ON mra.model_training_run(
+    code_artifact_id, code_content_sha256, code_size_bytes
+);
+CREATE INDEX model_training_config_artifact_idx ON mra.model_training_run(
+    config_artifact_id, config_content_sha256, config_size_bytes
+);
+
+CREATE TABLE mra.model_training_sample (
+    model_training_sample_id uuid PRIMARY KEY,
+    model_training_run_id uuid NOT NULL,
+    evaluation_run_id uuid NOT NULL,
+    evaluation_protocol_metric_id uuid NOT NULL,
+    ordinal integer NOT NULL,
+    evaluation_observation_id uuid NOT NULL,
+    evaluation_metric_observation_id uuid NOT NULL,
+    research_partition_member_id uuid NOT NULL,
+    commitment_id uuid NOT NULL,
+    decision_run_id uuid NOT NULL,
+    candidate_id uuid NOT NULL,
+    instrument_id uuid NOT NULL,
+    dataset_id uuid NOT NULL,
+    dataset_manifest_artifact_id uuid NOT NULL,
+    dataset_manifest_content_sha256 text NOT NULL,
+    dataset_manifest_size_bytes bigint NOT NULL,
+    market_target_outcome_revision_id uuid NOT NULL,
+    source_outcome_metric_id uuid NOT NULL,
+    evaluation_input_state text NOT NULL,
+    sample_state text NOT NULL,
+    reason_code text NOT NULL,
+    target_value numeric(48, 18),
+    feature_vector_sha256 text,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT model_training_sample_ordinal_uk UNIQUE (
+        model_training_run_id, ordinal
+    ),
+    CONSTRAINT model_training_sample_observation_uk UNIQUE (
+        model_training_run_id, evaluation_observation_id
+    ),
+    CONSTRAINT model_training_sample_run_fk FOREIGN KEY (
+        model_training_run_id
+    ) REFERENCES mra.model_training_run(model_training_run_id)
+        ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT model_training_sample_observation_fk FOREIGN KEY (
+        evaluation_observation_id, evaluation_run_id,
+        research_partition_member_id, market_target_outcome_revision_id
+    ) REFERENCES mra.evaluation_observation(
+        evaluation_observation_id, evaluation_run_id,
+        research_partition_member_id, market_target_outcome_revision_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT model_training_sample_metric_observation_fk FOREIGN KEY (
+        evaluation_metric_observation_id, evaluation_run_id,
+        evaluation_protocol_metric_id, evaluation_observation_id,
+        research_partition_member_id, market_target_outcome_revision_id,
+        source_outcome_metric_id, evaluation_input_state
+    ) REFERENCES mra.evaluation_metric_observation(
+        evaluation_metric_observation_id, evaluation_run_id,
+        evaluation_protocol_metric_id, evaluation_observation_id,
+        research_partition_member_id, market_target_outcome_revision_id,
+        source_outcome_metric_id, input_state
+    ) ON DELETE RESTRICT,
+    CONSTRAINT model_training_sample_member_fk FOREIGN KEY (
+        research_partition_member_id
+    ) REFERENCES mra.research_partition_member(
+        research_partition_member_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT model_training_sample_commitment_fk FOREIGN KEY (
+        commitment_id
+    ) REFERENCES mra.decision_target_commitment(commitment_id)
+        ON DELETE RESTRICT,
+    CONSTRAINT model_training_sample_decision_fk FOREIGN KEY (
+        decision_run_id
+    ) REFERENCES mra.decision_run(decision_run_id) ON DELETE RESTRICT,
+    CONSTRAINT model_training_sample_candidate_fk FOREIGN KEY (
+        candidate_id
+    ) REFERENCES mra.candidate(candidate_id) ON DELETE RESTRICT,
+    CONSTRAINT model_training_sample_dataset_fk FOREIGN KEY (
+        dataset_id, dataset_manifest_artifact_id,
+        dataset_manifest_content_sha256, dataset_manifest_size_bytes
+    ) REFERENCES mra.dataset(
+        dataset_id, manifest_artifact_id,
+        manifest_content_sha256, manifest_size_bytes
+    ) ON DELETE RESTRICT,
+    CONSTRAINT model_training_sample_outcome_metric_fk FOREIGN KEY (
+        source_outcome_metric_id
+    ) REFERENCES mra.market_target_outcome_metric(
+        market_target_outcome_metric_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT model_training_sample_shape_ck CHECK (
+        ordinal > 0
+        AND sample_state IN ('ESTIMABLE', 'NOT_ESTIMABLE')
+        AND evaluation_input_state IN (
+            'INCLUDED', 'EXCLUDED', 'NOT_ESTIMABLE'
+        )
+        AND reason_code ~ '^[A-Z][A-Z0-9_]{0,99}$'
+        AND dataset_manifest_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+        AND (
+            (sample_state = 'ESTIMABLE'
+             AND evaluation_input_state = 'INCLUDED'
+             AND target_value IS NOT NULL
+             AND feature_vector_sha256 ~ '^[0-9a-f]{64}$')
+            OR
+            (sample_state = 'NOT_ESTIMABLE'
+             AND target_value IS NULL AND feature_vector_sha256 IS NULL)
+        )
+    )
+);
+CREATE INDEX model_training_sample_observation_idx
+    ON mra.model_training_sample(
+        evaluation_observation_id, evaluation_run_id,
+        research_partition_member_id, market_target_outcome_revision_id
+    );
+CREATE INDEX model_training_sample_metric_observation_idx
+    ON mra.model_training_sample(
+        evaluation_metric_observation_id, evaluation_run_id,
+        evaluation_protocol_metric_id, evaluation_observation_id,
+        research_partition_member_id, market_target_outcome_revision_id,
+        source_outcome_metric_id, evaluation_input_state
+    );
+CREATE INDEX model_training_sample_dataset_idx
+    ON mra.model_training_sample(
+        dataset_id, dataset_manifest_artifact_id,
+        dataset_manifest_content_sha256, dataset_manifest_size_bytes
+    );
+CREATE INDEX model_training_sample_member_idx
+    ON mra.model_training_sample(research_partition_member_id);
+CREATE INDEX model_training_sample_commitment_idx
+    ON mra.model_training_sample(commitment_id);
+CREATE INDEX model_training_sample_decision_idx
+    ON mra.model_training_sample(decision_run_id);
+CREATE INDEX model_training_sample_candidate_idx
+    ON mra.model_training_sample(candidate_id);
+CREATE INDEX model_training_sample_outcome_metric_idx
+    ON mra.model_training_sample(source_outcome_metric_id);
+
+CREATE FUNCTION mra.validate_model_training_run()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE actual_count integer;
+DECLARE actual_estimable integer;
+DECLARE actual_roster text;
+DECLARE derived_count integer;
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM mra.model AS model
+        JOIN mra.evaluation_run AS evaluation
+          ON evaluation.evaluation_run_id = NEW.evaluation_run_id
+         AND evaluation.target_definition_id = model.target_definition_id
+         AND evaluation.status = 'COMPLETED'
+         AND evaluation.partition_purpose = 'FIT'
+         AND evaluation.completed_at < NEW.opened_at
+        JOIN mra.evaluation_protocol_metric AS metric
+          ON metric.evaluation_protocol_metric_id =
+             NEW.evaluation_protocol_metric_id
+         AND metric.evaluation_protocol_id = evaluation.evaluation_protocol_id
+         AND metric.source_value_type = 'DECIMAL'
+        JOIN mra.exploratory_backtest_run AS backtest
+          ON backtest.exploratory_backtest_run_id =
+             NEW.exploratory_backtest_run_id
+         AND backtest.target_definition_id = model.target_definition_id
+         AND backtest.evidence_lane = 'EXPLORATORY_RETROSPECTIVE'
+         AND backtest.feature_count = model.feature_count
+         AND backtest.feature_roster_sha256 = model.feature_roster_sha256
+        JOIN mra.exploratory_backtest_arm AS arm
+          ON arm.exploratory_backtest_arm_id = NEW.exploratory_backtest_arm_id
+         AND arm.exploratory_backtest_run_id =
+             backtest.exploratory_backtest_run_id
+         AND arm.arm_kind = 'MODEL_CHALLENGER'
+        JOIN mra.exploratory_backtest_fold AS fold
+          ON fold.exploratory_backtest_fold_id = NEW.exploratory_backtest_fold_id
+         AND fold.exploratory_backtest_run_id =
+             backtest.exploratory_backtest_run_id
+         AND fold.purpose = 'FIT'
+         AND fold.evaluation_protocol_id = evaluation.evaluation_protocol_id
+        WHERE model.model_id = NEW.model_id
+          AND model.target_definition_id = NEW.target_definition_id
+    ) THEN
+        RAISE EXCEPTION 'Model training parent graph is invalid'
+            USING ERRCODE = '55000';
+    END IF;
+
+    SELECT count(*)::integer,
+           count(*) FILTER (WHERE sample_state = 'ESTIMABLE')::integer,
+           mra.canonical_sha256(mra.canonical_json_text(jsonb_agg(
+               jsonb_build_object(
+                   'content_sha256', content_sha256,
+                   'model_training_sample_id', model_training_sample_id,
+                   'ordinal', ordinal
+               ) ORDER BY ordinal
+           )))
+      INTO actual_count, actual_estimable, actual_roster
+      FROM mra.model_training_sample
+     WHERE model_training_run_id = NEW.model_training_run_id;
+    IF actual_count <> NEW.sample_count
+       OR actual_estimable <> NEW.estimable_count
+       OR actual_roster IS DISTINCT FROM NEW.sample_roster_sha256 THEN
+        RAISE EXCEPTION 'Model training sample roster is incomplete or changed'
+            USING ERRCODE = '55000';
+    END IF;
+
+    SELECT count(*)::integer INTO derived_count
+      FROM mra.evaluation_observation AS observation
+      JOIN mra.evaluation_metric_observation AS input
+        ON input.evaluation_run_id = observation.evaluation_run_id
+       AND input.evaluation_observation_id =
+           observation.evaluation_observation_id
+       AND input.evaluation_protocol_metric_id =
+           NEW.evaluation_protocol_metric_id
+     WHERE observation.evaluation_run_id = NEW.evaluation_run_id;
+    IF derived_count <> NEW.sample_count OR EXISTS (
+        SELECT 1
+        FROM mra.evaluation_observation AS observation
+        JOIN mra.evaluation_metric_observation AS input
+          ON input.evaluation_run_id = observation.evaluation_run_id
+         AND input.evaluation_observation_id =
+             observation.evaluation_observation_id
+         AND input.evaluation_protocol_metric_id =
+             NEW.evaluation_protocol_metric_id
+        LEFT JOIN mra.model_training_sample AS sample
+          ON sample.model_training_run_id = NEW.model_training_run_id
+         AND sample.evaluation_observation_id =
+             observation.evaluation_observation_id
+         AND sample.evaluation_metric_observation_id =
+             input.evaluation_metric_observation_id
+       WHERE observation.evaluation_run_id = NEW.evaluation_run_id
+         AND sample.model_training_sample_id IS NULL
+    ) THEN
+        RAISE EXCEPTION 'Model training omitted a FIT Evaluation member'
+            USING ERRCODE = '55000';
+    END IF;
+
+    IF EXISTS (
+        SELECT 1 FROM mra.model_training_sample AS sample
+        WHERE sample.model_training_run_id = NEW.model_training_run_id
+          AND NOT EXISTS (
+              SELECT 1
+              FROM mra.research_partition_member AS member
+              JOIN mra.decision_target_commitment AS commitment
+                ON commitment.commitment_id = member.commitment_id
+              JOIN mra.candidate_set AS candidate_set
+                ON candidate_set.candidate_set_id = commitment.candidate_set_id
+               AND candidate_set.dataset_id = sample.dataset_id
+              JOIN mra.exploratory_backtest_dataset AS dataset
+                ON dataset.dataset_id = sample.dataset_id
+               AND dataset.exploratory_backtest_run_id =
+                   NEW.exploratory_backtest_run_id
+               AND dataset.exploratory_backtest_arm_id =
+                   NEW.exploratory_backtest_arm_id
+               AND dataset.exploratory_backtest_fold_id =
+                   NEW.exploratory_backtest_fold_id
+              JOIN mra.exploratory_backtest_fold_session AS session
+                ON session.exploratory_backtest_fold_session_id =
+                   dataset.exploratory_backtest_fold_session_id
+               AND session.session_role = 'FIT_INPUT'
+              JOIN mra.market_target_outcome_metric AS outcome_metric
+                ON outcome_metric.market_target_outcome_metric_id =
+                   sample.source_outcome_metric_id
+               AND outcome_metric.market_target_outcome_revision_id =
+                   sample.market_target_outcome_revision_id
+              JOIN mra.evaluation_protocol_metric AS protocol_metric
+                ON protocol_metric.evaluation_protocol_metric_id =
+                   NEW.evaluation_protocol_metric_id
+               AND protocol_metric.source_target_metric_definition_id =
+                   outcome_metric.target_metric_definition_id
+              WHERE member.research_partition_member_id =
+                    sample.research_partition_member_id
+                AND member.commitment_id = sample.commitment_id
+                AND commitment.commitment_id = sample.commitment_id
+                AND commitment.decision_run_id = sample.decision_run_id
+                AND commitment.candidate_id = sample.candidate_id
+                AND commitment.instrument_id = sample.instrument_id
+          )
+    ) THEN
+        RAISE EXCEPTION 'Model training sample lineage is invalid'
+            USING ERRCODE = '55000';
+    END IF;
+    IF EXISTS (
+        SELECT 1
+        FROM mra.model_training_sample AS sample
+        JOIN mra.market_target_outcome_metric AS outcome_metric
+          ON outcome_metric.market_target_outcome_metric_id =
+             sample.source_outcome_metric_id
+        WHERE sample.model_training_run_id = NEW.model_training_run_id
+          AND sample.sample_state = 'ESTIMABLE'
+          AND (
+              sample.evaluation_input_state <> 'INCLUDED'
+              OR outcome_metric.value_status NOT IN ('COMPLETE', 'PARTIAL')
+              OR outcome_metric.decimal_value IS DISTINCT FROM
+                 sample.target_value
+          )
+    ) THEN
+        RAISE EXCEPTION 'Model training target value differs from Evaluation input'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+CREATE CONSTRAINT TRIGGER model_training_run_reconcile_guard
+AFTER INSERT ON mra.model_training_run DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW EXECUTE FUNCTION mra.validate_model_training_run();
+CREATE TRIGGER model_training_run_append_only
+BEFORE UPDATE OR DELETE ON mra.model_training_run
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER model_training_sample_append_only
+BEFORE UPDATE OR DELETE ON mra.model_training_sample
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+
+CREATE TABLE mra.model_version (
+    model_version_id uuid PRIMARY KEY,
+    model_id uuid NOT NULL,
+    version integer NOT NULL,
+    model_training_run_id uuid NOT NULL UNIQUE,
+    training_input_artifact_id uuid NOT NULL,
+    training_input_content_sha256 text NOT NULL,
+    training_input_size_bytes bigint NOT NULL,
+    fitted_model_artifact_id uuid NOT NULL,
+    fitted_model_content_sha256 text NOT NULL,
+    fitted_model_size_bytes bigint NOT NULL,
+    coefficient_count integer NOT NULL,
+    code_artifact_id uuid NOT NULL,
+    code_content_sha256 text NOT NULL,
+    code_size_bytes bigint NOT NULL,
+    config_artifact_id uuid NOT NULL,
+    config_content_sha256 text NOT NULL,
+    config_size_bytes bigint NOT NULL,
+    provenance_sha256 text NOT NULL,
+    content_sha256 text NOT NULL UNIQUE,
+    request_identity text NOT NULL,
+    request_sha256 text NOT NULL,
+    registered_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT model_version_identity_uk UNIQUE (model_id, version),
+    CONSTRAINT model_version_request_uk UNIQUE (model_id, request_identity),
+    CONSTRAINT model_version_exact_uk UNIQUE (
+        model_version_id, model_id, version, model_training_run_id,
+        registered_at, content_sha256
+    ),
+    CONSTRAINT model_version_model_fk FOREIGN KEY (model_id)
+        REFERENCES mra.model(model_id) ON DELETE RESTRICT,
+    CONSTRAINT model_version_training_fk FOREIGN KEY (
+        model_training_run_id, model_id, training_input_artifact_id,
+        training_input_content_sha256, training_input_size_bytes
+    ) REFERENCES mra.model_training_run(
+        model_training_run_id, model_id, training_input_artifact_id,
+        training_input_content_sha256, training_input_size_bytes
+    ) ON DELETE RESTRICT,
+    CONSTRAINT model_version_fitted_artifact_fk FOREIGN KEY (
+        fitted_model_artifact_id, fitted_model_content_sha256,
+        fitted_model_size_bytes
+    ) REFERENCES mra.artifact(
+        artifact_id, content_sha256, size_bytes
+    ) ON DELETE RESTRICT,
+    CONSTRAINT model_version_code_artifact_fk FOREIGN KEY (
+        code_artifact_id, code_content_sha256, code_size_bytes
+    ) REFERENCES mra.artifact(
+        artifact_id, content_sha256, size_bytes
+    ) ON DELETE RESTRICT,
+    CONSTRAINT model_version_config_artifact_fk FOREIGN KEY (
+        config_artifact_id, config_content_sha256, config_size_bytes
+    ) REFERENCES mra.artifact(
+        artifact_id, content_sha256, size_bytes
+    ) ON DELETE RESTRICT,
+    CONSTRAINT model_version_shape_ck CHECK (
+        version > 0 AND coefficient_count > 0
+        AND fitted_model_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND provenance_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+        AND request_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+CREATE INDEX model_version_training_idx ON mra.model_version(
+    model_training_run_id, model_id, training_input_artifact_id,
+    training_input_content_sha256, training_input_size_bytes
+);
+CREATE INDEX model_version_fitted_artifact_idx ON mra.model_version(
+    fitted_model_artifact_id, fitted_model_content_sha256,
+    fitted_model_size_bytes
+);
+CREATE INDEX model_version_code_artifact_idx ON mra.model_version(
+    code_artifact_id, code_content_sha256, code_size_bytes
+);
+CREATE INDEX model_version_config_artifact_idx ON mra.model_version(
+    config_artifact_id, config_content_sha256, config_size_bytes
+);
+
+CREATE FUNCTION mra.validate_model_version()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM mra.model_training_run AS training
+        WHERE training.model_training_run_id = NEW.model_training_run_id
+          AND training.model_id = NEW.model_id
+          AND training.training_input_artifact_id =
+              NEW.training_input_artifact_id
+          AND training.training_input_content_sha256 =
+              NEW.training_input_content_sha256
+          AND training.training_input_size_bytes =
+              NEW.training_input_size_bytes
+          AND training.code_artifact_id = NEW.code_artifact_id
+          AND training.code_content_sha256 = NEW.code_content_sha256
+          AND training.code_size_bytes = NEW.code_size_bytes
+          AND training.config_artifact_id = NEW.config_artifact_id
+          AND training.config_content_sha256 = NEW.config_content_sha256
+          AND training.config_size_bytes = NEW.config_size_bytes
+          AND training.opened_at < NEW.registered_at
+    ) THEN
+        RAISE EXCEPTION 'ModelVersion does not match completed training lineage'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+CREATE TRIGGER model_version_guard BEFORE INSERT ON mra.model_version
+FOR EACH ROW EXECUTE FUNCTION mra.validate_model_version();
+CREATE TRIGGER model_version_append_only
+BEFORE UPDATE OR DELETE ON mra.model_version
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();

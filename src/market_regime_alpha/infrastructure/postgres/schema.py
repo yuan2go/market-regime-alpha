@@ -397,6 +397,16 @@ EXPECTED_EXPLORATORY_BACKTEST_TABLES: Final[frozenset[str]] = frozenset(
     }
 )
 
+EXPECTED_MODEL_TABLES: Final[frozenset[str]] = frozenset(
+    {
+        "model",
+        "model_feature_definition",
+        "model_training_run",
+        "model_training_sample",
+        "model_version",
+    }
+)
+
 EXPECTED_TARGET_TABLES: Final[frozenset[str]] = (
     EXPECTED_FOUNDATION_TABLES
     | EXPECTED_MARKET_TABLES
@@ -414,6 +424,7 @@ EXPECTED_TARGET_TABLES: Final[frozenset[str]] = (
     | EXPECTED_RESEARCH_VALIDITY_TABLES
     | EXPECTED_RESEARCH_QUALIFICATION_TABLES
     | EXPECTED_EXPLORATORY_BACKTEST_TABLES
+    | EXPECTED_MODEL_TABLES
 )
 
 _LEGACY_TABLE_SIGNATURES: Final[frozenset[str]] = frozenset(
@@ -1744,6 +1755,7 @@ __all__ = [
     "EXPECTED_CONTEXT_TABLES",
     "EXPECTED_FOUNDATION_TABLES",
     "EXPECTED_MARKET_TABLES",
+    "EXPECTED_MODEL_TABLES",
     "EXPECTED_OUTCOME_TABLES",
     "EXPECTED_RESEARCH_DEFINITION_TABLES",
     "EXPECTED_RESEARCH_QUALIFICATION_TABLES",

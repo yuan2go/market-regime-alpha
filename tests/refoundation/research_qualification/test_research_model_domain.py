@@ -53,6 +53,7 @@ def _sample(ordinal: int, *, estimable: bool = True) -> ModelTrainingSamplePlan:
         dataset_manifest_artifact=_artifact(base + 10),
         market_target_outcome_revision_id=_id(base + 11),
         source_outcome_metric_id=_id(base + 12),
+        evaluation_input_state="INCLUDED" if estimable else "NOT_ESTIMABLE",
         state=(
             ModelTrainingSampleState.ESTIMABLE
             if estimable

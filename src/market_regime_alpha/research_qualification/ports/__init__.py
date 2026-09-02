@@ -34,6 +34,13 @@ from market_regime_alpha.research_qualification.ports.formal_campaign_queries im
     FormalCampaignQueryPort,
     FormalCampaignVerification,
 )
+from market_regime_alpha.research_qualification.ports.model_inputs import (
+    ModelArtifactPublisher,
+    ModelTrainingInputProvider,
+    OpenModelTrainingRunRequest,
+    PreparedModelTrainingInputs,
+    RegisteredModelTrainingInputs,
+)
 __all__ = [
     "AdmittedResearchQualification", "DatasetMarketSourceObservation", "DatasetPopulationMember",
     "DatasetRecord", "DueOutcomeMember", "DueOutcomeState", "FormalCampaignBindingRecord",
@@ -42,6 +49,8 @@ __all__ = [
     "FormalCampaignVerification", "FormalPitSource", "FormalPitSourceKind", "FormalPitSourceReadPort",
     "ResearchArtifactByteStore", "ResearchArtifactRepository", "ResearchDefinitionRepository",
     "ResearchQualificationAdmissionReadPort", "ResearchSourceQueries", "ResearchUnitOfWork",
+    "ModelArtifactPublisher", "ModelTrainingInputProvider", "OpenModelTrainingRunRequest",
+    "PreparedModelTrainingInputs", "RegisteredModelTrainingInputs",
     "ResearchUnitOfWorkProvider", "TargetArtifactRepository", "TargetDefinitionRecord",
     "TargetDefinitionRepository", "TargetRegistrationReconciliation", "TargetUnitOfWork", "TargetUnitOfWorkProvider",
 ]

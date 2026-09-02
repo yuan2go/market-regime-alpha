@@ -371,7 +371,7 @@ class PostgresCandidateResearchInputLoader:
                 required_features=required_features,
                 lock=False,
             )
-            definition, feature_definitions = _research_dataset_definition(
+            definition, feature_definitions = load_research_dataset_definition(
                 connection,
                 dataset_id=dataset_id,
             )
@@ -424,7 +424,7 @@ class PostgresCandidateResearchInputLoader:
         )
 
 
-def _research_dataset_definition(
+def load_research_dataset_definition(
     connection: psycopg.Connection[Any],
     *,
     dataset_id: UUID,
@@ -473,11 +473,11 @@ def _research_dataset_definition(
         raise ArtifactIntegrityError(
             "Candidate Dataset definition content hash does not reconcile"
         )
-    features = _read_parser_feature_definitions(connection, feature_ids)
+    features = load_parser_feature_definitions(connection, feature_ids)
     return definition, features
 
 
-def _read_parser_feature_definitions(
+def load_parser_feature_definitions(
     connection: psycopg.Connection[Any],
     feature_definition_ids: tuple[UUID, ...],
 ) -> tuple[FeatureDefinition, ...]:
@@ -630,4 +630,6 @@ __all__ = [
     "PostgresCandidateResearchInputLoader",
     "candidate_population_from_manifest",
     "dataset_source_lineage_sha256",
+    "load_parser_feature_definitions",
+    "load_research_dataset_definition",
 ]

@@ -25,6 +25,13 @@ class ModelTrainingSampleState(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
+class LinearTrainingRow:
+    model_training_sample_id: UUID
+    features: tuple[Decimal, ...]
+    target: Decimal
+
+
+@dataclass(frozen=True, slots=True)
 class ResearchModelPlan:
     """Stable family identity; versions remain optional children."""
 
@@ -61,7 +68,7 @@ class ResearchModelPlan:
                 tuple(
                     {
                         "feature_definition_id": identity,
-                        "feature_definition_sha256": content_hash,
+                        "feature_definition_sha256": str(content_hash),
                         "ordinal": ordinal,
                     }
                     for ordinal, (identity, content_hash) in enumerate(
@@ -112,6 +119,7 @@ class ModelTrainingSamplePlan:
     dataset_manifest_artifact: ArtifactBinding
     market_target_outcome_revision_id: UUID
     source_outcome_metric_id: UUID
+    evaluation_input_state: str
     state: ModelTrainingSampleState
     reason_code: str
     target_value: Decimal | None
@@ -125,6 +133,12 @@ class ModelTrainingSamplePlan:
             raise TypeError("state must be ModelTrainingSampleState")
         if not _REASON.fullmatch(self.reason_code):
             raise ValueError("reason_code has an invalid format")
+        if self.evaluation_input_state not in {
+            "INCLUDED",
+            "EXCLUDED",
+            "NOT_ESTIMABLE",
+        }:
+            raise ValueError("evaluation_input_state is invalid")
         vector_hash = (
             None
             if self.feature_vector_sha256 is None
@@ -132,13 +146,15 @@ class ModelTrainingSamplePlan:
         )
         target_value = self.target_value
         if self.state is ModelTrainingSampleState.ESTIMABLE:
+            if self.evaluation_input_state != "INCLUDED":
+                raise ValueError("ESTIMABLE sample requires INCLUDED Evaluation input")
             if target_value is None or vector_hash is None:
                 raise ValueError("ESTIMABLE sample requires target and feature values")
             target_value = bounded_decimal(
                 target_value,
                 field="target_value",
-                precision=38,
-                scale=12,
+                precision=48,
+                scale=18,
             )
         elif target_value is not None or vector_hash is not None:
             raise ValueError(
@@ -158,6 +174,7 @@ class ModelTrainingSamplePlan:
                         "dataset_manifest_artifact": self.dataset_manifest_artifact,
                         "decision_run_id": self.decision_run_id,
                         "evaluation_metric_observation_id": self.evaluation_metric_observation_id,
+                        "evaluation_input_state": self.evaluation_input_state,
                         "evaluation_observation_id": self.evaluation_observation_id,
                         "feature_vector_sha256": vector_hash,
                         "instrument_id": self.instrument_id,
@@ -234,7 +251,7 @@ class ModelTrainingRunPlan:
             canonical_json_sha256(
                 tuple(
                     {
-                        "content_sha256": item.content_sha256,
+                        "content_sha256": str(item.content_sha256),
                         "model_training_sample_id": item.model_training_sample_id,
                         "ordinal": item.ordinal,
                     }
@@ -325,6 +342,7 @@ class ModelVersionPlan:
 
 
 __all__ = [
+    "LinearTrainingRow",
     "ModelTrainingRunPlan",
     "ModelTrainingSamplePlan",
     "ModelTrainingSampleState",

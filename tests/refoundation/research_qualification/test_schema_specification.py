@@ -5,6 +5,7 @@ import psycopg
 from market_regime_alpha.infrastructure.postgres.schema import (
     EXPECTED_CANDIDATE_TABLES,
     EXPECTED_EXPLORATORY_BACKTEST_TABLES,
+    EXPECTED_MODEL_TABLES,
     EXPECTED_RESEARCH_DEFINITION_TABLES,
     EXPECTED_RESEARCH_QUALIFICATION_TABLES,
     EXPECTED_RESEARCH_VALIDITY_TABLES,
@@ -48,7 +49,7 @@ def test_research_and_qualification_schema_has_exact_owned_relations(
     assert {
         name for name in tables if name.startswith("candidate")
     } == EXPECTED_CANDIDATE_TABLES
-    assert not {name for name in tables if name.startswith("model")}
+    assert {name for name in tables if name.startswith("model")} == EXPECTED_MODEL_TABLES
 
 
 def test_research_definition_identity_population_and_role_shape_are_declarative(

@@ -44,6 +44,9 @@ from market_regime_alpha.infrastructure.postgres.experiment_uow import (
 from market_regime_alpha.infrastructure.postgres.exploratory_backtest_uow import (
     PostgresExploratoryBacktestUnitOfWorkProvider,
 )
+from market_regime_alpha.infrastructure.postgres.research_model_uow import (
+    PostgresResearchModelUnitOfWorkProvider,
+)
 from market_regime_alpha.infrastructure.postgres.evaluation_uow import (
     PostgresEvaluationUnitOfWorkProvider,
 )
@@ -119,6 +122,9 @@ from market_regime_alpha.infrastructure.postgres.queries.provider_qualification 
 from market_regime_alpha.infrastructure.postgres.queries.exploratory_backtests import (
     PostgresExploratoryBacktestVerificationPort,
 )
+from market_regime_alpha.infrastructure.postgres.queries.model_training_inputs import (
+    PostgresModelTrainingInputProvider,
+)
 from market_regime_alpha.infrastructure.postgres.schema import (
     DatabaseIdentity,
     RecreateAuthorization,
@@ -147,6 +153,8 @@ from market_regime_alpha.research_qualification.application import (
     EvidenceCommands,
     ExperimentCommands,
     ExploratoryBacktestCommands,
+    ModelCommands,
+    ResearchModelApplication,
     ResearchPartitionCommands,
     FormalCampaignCommands,
     ResearchEvaluationVerifier,
@@ -255,6 +263,7 @@ class TargetApplication:
     research_experiments: ExperimentCommands
     exploratory_backtests: ExploratoryBacktestCommands
     exploratory_backtest_verifier: ExploratoryBacktestVerificationPort
+    research_models: ResearchModelApplication
     research_evaluations: EvaluationCommands
     research_evaluation_verifier: ResearchEvaluationVerifier
     research_evidence: EvidenceCommands
@@ -302,6 +311,7 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
     )
     uow_provider = PostgresUnitOfWorkProvider(pool)
     byte_store = LocalArtifactStore(settings.artifact_root)
+    artifact_application = ArtifactApplication(byte_store, uow_provider)
     market_application = MarketApplication(
         byte_store,
         PostgresMarketUnitOfWorkProvider(pool),
@@ -313,7 +323,7 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
     )
     return TargetApplication(
         runtime=RuntimeApplication(uow_provider),
-        artifacts=ArtifactApplication(byte_store, uow_provider),
+        artifacts=artifact_application,
         market=market_application,
         market_archives=archive_commands,
         archive_operations=MarketArchiveOperations(
@@ -351,6 +361,14 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
         ),
         exploratory_backtest_verifier=(
             PostgresExploratoryBacktestVerificationPort(pool)
+        ),
+        research_models=ResearchModelApplication(
+            ModelCommands(
+                PostgresResearchModelUnitOfWorkProvider(pool),
+                id_factory=uuid4,
+            ),
+            PostgresModelTrainingInputProvider(pool, byte_store),
+            artifact_application,
         ),
         research_evaluations=EvaluationCommands(
             PostgresEvaluationUnitOfWorkProvider(pool, id_factory=uuid4),

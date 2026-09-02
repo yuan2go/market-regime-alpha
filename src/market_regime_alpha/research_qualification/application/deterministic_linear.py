@@ -9,17 +9,13 @@ from uuid import UUID
 
 import numpy as np
 
+from market_regime_alpha.research_qualification.domain.research_models import (
+    LinearTrainingRow,
+)
 from market_regime_alpha.shared.hashing import canonical_json_sha256, sha256_bytes
 
 
 _QUANTUM = Decimal("0.000000000001")
-
-
-@dataclass(frozen=True, slots=True)
-class LinearTrainingRow:
-    model_training_sample_id: UUID
-    features: tuple[Decimal, ...]
-    target: Decimal
 
 
 @dataclass(frozen=True, slots=True)

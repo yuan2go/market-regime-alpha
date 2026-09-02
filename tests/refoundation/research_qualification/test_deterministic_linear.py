@@ -6,9 +6,11 @@ from uuid import UUID
 import pytest
 
 from market_regime_alpha.research_qualification.application.deterministic_linear import (
-    LinearTrainingRow,
     fit_deterministic_ridge,
     predict_deterministic_ridge,
+)
+from market_regime_alpha.research_qualification.domain.research_models import (
+    LinearTrainingRow,
 )
 
 
