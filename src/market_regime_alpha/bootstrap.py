@@ -47,6 +47,12 @@ from market_regime_alpha.infrastructure.postgres.assessment_uow import (
 from market_regime_alpha.infrastructure.postgres.qualification_uow import (
     PostgresQualificationUnitOfWorkProvider,
 )
+from market_regime_alpha.infrastructure.postgres.provider_qualification_uow import (
+    PostgresProviderQualificationUnitOfWorkProvider,
+)
+from market_regime_alpha.infrastructure.postgres.formal_campaign_uow import (
+    PostgresFormalCampaignUnitOfWorkProvider,
+)
 from market_regime_alpha.infrastructure.postgres.selection_uow import (
     PostgresSelectionUnitOfWorkProvider,
 )
@@ -91,6 +97,15 @@ from market_regime_alpha.infrastructure.postgres.queries.decision_risk_inputs im
 )
 from market_regime_alpha.infrastructure.postgres.queries.decision_strategy import PostgresStrategyQueryProvider
 from market_regime_alpha.infrastructure.postgres.queries.decision_verification import PostgresDecisionRunVerificationProvider
+from market_regime_alpha.infrastructure.postgres.queries.formal_pit import (
+    PostgresFormalPitSourceReadPort,
+)
+from market_regime_alpha.infrastructure.postgres.queries.formal_campaigns import (
+    PostgresFormalCampaignQueryPort,
+)
+from market_regime_alpha.infrastructure.postgres.queries.provider_qualification import (
+    PostgresProviderQualificationQueryPort,
+)
 from market_regime_alpha.infrastructure.postgres.schema import (
     DatabaseIdentity,
     RecreateAuthorization,
@@ -119,12 +134,15 @@ from market_regime_alpha.research_qualification.application import (
     EvidenceCommands,
     ExperimentCommands,
     ResearchPartitionCommands,
+    FormalCampaignCommands,
     ResearchEvaluationVerifier,
     ResearchQualificationApplication,
     ResearchQualificationVerifier,
     QualificationCommands,
 )
 from market_regime_alpha.research_qualification.ports import (
+    FormalPitSourceReadPort,
+    FormalCampaignQueryPort,
     ResearchQualificationAdmissionReadPort,
 )
 from market_regime_alpha.selection.application import (
@@ -133,7 +151,11 @@ from market_regime_alpha.selection.application import (
 )
 from market_regime_alpha.selection.ports import CandidateQueryProvider
 from market_regime_alpha.market.application import MarketApplication
-from market_regime_alpha.market.ports import MarketQueryProvider
+from market_regime_alpha.market.application import ProviderQualificationCommands
+from market_regime_alpha.market.ports import (
+    MarketQueryProvider,
+    ProviderQualificationQueryPort,
+)
 
 
 _ALLOWED_ENVIRONMENT_KEYS = frozenset(
@@ -201,6 +223,8 @@ class TargetApplication:
     runtime: RuntimeApplication
     artifacts: ArtifactApplication
     market: MarketApplication
+    provider_qualifications: ProviderQualificationCommands
+    provider_qualification_queries: ProviderQualificationQueryPort
     market_queries: MarketQueryProvider
     selection: SelectionApplication
     research_definitions: ResearchQualificationApplication
@@ -211,6 +235,9 @@ class TargetApplication:
     research_evidence: EvidenceCommands
     research_assessments: AssessmentCommands
     research_qualifications: QualificationCommands
+    formal_research_campaigns: FormalCampaignCommands
+    formal_pit_sources: FormalPitSourceReadPort
+    formal_research_queries: FormalCampaignQueryPort
     research_qualification_admissions: ResearchQualificationAdmissionReadPort
     research_qualification_verifier: ResearchQualificationVerifier
     candidates: CandidateApplication
@@ -258,6 +285,13 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
             PostgresMarketUnitOfWorkProvider(pool),
             PostgresMarketDatabaseClock(pool),
         ),
+        provider_qualifications=ProviderQualificationCommands(
+            PostgresProviderQualificationUnitOfWorkProvider(
+                pool, id_factory=uuid4
+            ),
+            id_factory=uuid4,
+        ),
+        provider_qualification_queries=PostgresProviderQualificationQueryPort(pool),
         market_queries=PostgresMarketQueryProvider(pool),
         selection=SelectionApplication(PostgresSelectionUnitOfWorkProvider(pool)),
         research_definitions=ResearchQualificationApplication(
@@ -292,6 +326,12 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
         ),
         research_qualification_admissions=(PostgresResearchQualificationAdmissionReadPort(pool)),
         research_qualification_verifier=ResearchQualificationVerifier(PostgresResearchQualificationVerificationProvider(pool)),
+        formal_research_campaigns=FormalCampaignCommands(
+            PostgresFormalCampaignUnitOfWorkProvider(pool),
+            id_factory=uuid4,
+        ),
+        formal_pit_sources=PostgresFormalPitSourceReadPort(pool),
+        formal_research_queries=PostgresFormalCampaignQueryPort(pool),
         candidates=CandidateApplication(
             PostgresCandidateResearchInputLoader(pool, byte_store),
             PostgresCandidateUnitOfWorkProvider(pool),

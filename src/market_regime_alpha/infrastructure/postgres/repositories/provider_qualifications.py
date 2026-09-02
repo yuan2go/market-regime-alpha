@@ -17,6 +17,7 @@ from market_regime_alpha.market.ports.provider_qualification import (
     ProviderQualificationCaptureMember,
     ProviderQualificationDecisionRecord,
     ProviderQualificationProtocolRecord,
+    QualifiedHistoricalVisibilityRecord,
     ProviderRequirementEvaluation,
 )
 from market_regime_alpha.runtime.errors import (
@@ -24,6 +25,7 @@ from market_regime_alpha.runtime.errors import (
     RuntimeNotFoundError,
     RuntimeStateConflictError,
 )
+from market_regime_alpha.runtime.ports import ReceiptRecord
 from market_regime_alpha.shared.hashing import canonical_json_sha256
 
 
@@ -36,6 +38,86 @@ class PostgresProviderQualificationRepository:
     ) -> None:
         self._connection = connection
         self._id_factory = id_factory
+
+    def protocol_request_receipt(
+        self, protocol_code: str, request_identity: str
+    ) -> ReceiptRecord | None:
+        return self._request_receipt(
+            command_kind="REGISTER_PROVIDER_QUALIFICATION_PROTOCOL",
+            scope_id=protocol_code,
+            request_identity=request_identity,
+        )
+
+    def finality_request_receipt(
+        self, capture_id: UUID, request_identity: str
+    ) -> ReceiptRecord | None:
+        return self._request_receipt(
+            command_kind="RECORD_PROVIDER_FINALITY_OBSERVATION",
+            scope_id=str(capture_id),
+            request_identity=request_identity,
+        )
+
+    def decision_request_receipt(
+        self, provider_qualification_protocol_id: UUID, request_identity: str
+    ) -> ReceiptRecord | None:
+        return self._request_receipt(
+            command_kind="COMPLETE_PROVIDER_QUALIFICATION",
+            scope_id=str(provider_qualification_protocol_id),
+            request_identity=request_identity,
+        )
+
+    def visibility_request_receipt(
+        self,
+        provider_qualification_decision_id: UUID,
+        source_kind: str,
+        request_identity: str,
+    ) -> ReceiptRecord | None:
+        if source_kind not in {
+            "MARKET_BAR_REVISION",
+            "INSTRUMENT_FACT_REVISION",
+            "CLASSIFICATION_MEMBERSHIP_REVISION",
+            "TRADING_SESSION",
+            "SOURCE_GAP",
+        }:
+            raise ValueError("unsupported qualified visibility source kind")
+        return self._request_receipt(
+            command_kind=f"ADMIT_QUALIFIED_{source_kind}",
+            scope_id=str(provider_qualification_decision_id),
+            request_identity=request_identity,
+        )
+
+    def _request_receipt(
+        self,
+        *,
+        command_kind: str,
+        scope_id: str,
+        request_identity: str,
+    ) -> ReceiptRecord | None:
+        row = self._connection.execute(
+            """
+            SELECT receipt_id, status, request_hash,
+                   result_aggregate_kind, result_aggregate_id,
+                   result_aggregate_version, result_hash, error_code
+            FROM mra.command_receipt
+            WHERE command_kind = %s
+              AND scope_id = %s
+              AND idempotency_key = %s
+            """,
+            (command_kind, scope_id, request_identity),
+        ).fetchone()
+        if row is None:
+            return None
+        return ReceiptRecord(
+            receipt_id=UUID(str(row[0])),
+            status=str(row[1]),
+            request_hash=str(row[2]),
+            result_aggregate_kind=(str(row[3]) if row[3] is not None else None),
+            result_aggregate_id=(str(row[4]) if row[4] is not None else None),
+            result_aggregate_version=(int(row[5]) if row[5] is not None else None),
+            result_hash=(str(row[6]) if row[6] is not None else None),
+            error_code=(str(row[7]) if row[7] is not None else None),
+            is_new=False,
+        )
 
     def insert_protocol(
         self,
@@ -741,6 +823,233 @@ class PostgresProviderQualificationRepository:
                 member.source_gap_count,
                 member.content_sha256,
             ),
+        )
+
+    def admit_market_bar_visibility(
+        self,
+        qualified_visibility_id: UUID,
+        provider_decision_id: UUID,
+        bar_revision_id: UUID,
+    ) -> QualifiedHistoricalVisibilityRecord:
+        return self._admit_visibility(
+            qualified_visibility_id,
+            provider_decision_id,
+            source_kind="MARKET_BAR_REVISION",
+            source_identity=bar_revision_id,
+        )
+
+    def admit_instrument_fact_visibility(
+        self,
+        qualified_visibility_id: UUID,
+        provider_decision_id: UUID,
+        fact_revision_id: UUID,
+    ) -> QualifiedHistoricalVisibilityRecord:
+        return self._admit_visibility(
+            qualified_visibility_id,
+            provider_decision_id,
+            source_kind="INSTRUMENT_FACT_REVISION",
+            source_identity=fact_revision_id,
+        )
+
+    def admit_classification_membership_visibility(
+        self,
+        qualified_visibility_id: UUID,
+        provider_decision_id: UUID,
+        membership_revision_id: UUID,
+    ) -> QualifiedHistoricalVisibilityRecord:
+        return self._admit_visibility(
+            qualified_visibility_id,
+            provider_decision_id,
+            source_kind="CLASSIFICATION_MEMBERSHIP_REVISION",
+            source_identity=membership_revision_id,
+        )
+
+    def admit_trading_session_visibility(
+        self,
+        qualified_visibility_id: UUID,
+        provider_decision_id: UUID,
+        session_id: UUID,
+    ) -> QualifiedHistoricalVisibilityRecord:
+        return self._admit_visibility(
+            qualified_visibility_id,
+            provider_decision_id,
+            source_kind="TRADING_SESSION",
+            source_identity=session_id,
+        )
+
+    def admit_source_gap_visibility(
+        self,
+        qualified_visibility_id: UUID,
+        provider_decision_id: UUID,
+        gap_id: UUID,
+    ) -> QualifiedHistoricalVisibilityRecord:
+        return self._admit_visibility(
+            qualified_visibility_id,
+            provider_decision_id,
+            source_kind="SOURCE_GAP",
+            source_identity=gap_id,
+        )
+
+    def _admit_visibility(
+        self,
+        qualified_visibility_id: UUID,
+        provider_decision_id: UUID,
+        *,
+        source_kind: str,
+        source_identity: UUID,
+    ) -> QualifiedHistoricalVisibilityRecord:
+        mapping = {
+            "MARKET_BAR_REVISION": (
+                "qualified_market_bar_visibility",
+                "qualified_market_bar_visibility_id",
+                "market_bar_revision",
+                "bar_revision_id",
+                "capture_id",
+            ),
+            "INSTRUMENT_FACT_REVISION": (
+                "qualified_instrument_fact_visibility",
+                "qualified_instrument_fact_visibility_id",
+                "instrument_fact_revision",
+                "fact_revision_id",
+                "capture_id",
+            ),
+            "CLASSIFICATION_MEMBERSHIP_REVISION": (
+                "qualified_classification_membership_visibility",
+                "qualified_classification_membership_visibility_id",
+                "classification_membership_revision",
+                "membership_revision_id",
+                "source_capture_id",
+            ),
+            "TRADING_SESSION": (
+                "qualified_trading_session_visibility",
+                "qualified_trading_session_visibility_id",
+                "trading_session",
+                "session_id",
+                "source_capture_id",
+            ),
+            "SOURCE_GAP": (
+                "qualified_source_gap_visibility",
+                "qualified_source_gap_visibility_id",
+                "source_gap",
+                "gap_id",
+                "capture_id",
+            ),
+        }
+        target = mapping.get(source_kind)
+        if target is None:
+            raise AssertionError("unknown qualified visibility kind")
+        table, visibility_column, source_table, source_column, capture_column = target
+        source = self._connection.execute(
+            f"""
+            SELECT source.{capture_column},
+                   mra.canonical_sha256(
+                       mra.canonical_json_text(to_jsonb(source))),
+                   member.source_available_at
+            FROM mra.{source_table} AS source
+            JOIN mra.provider_qualification_capture_member AS member
+              ON member.capture_id = source.{capture_column}
+             AND member.provider_qualification_decision_id = %s
+            WHERE source.{source_column} = %s
+            FOR SHARE OF source, member
+            """,  # noqa: S608 -- closed source-specific mapping above
+            (provider_decision_id, source_identity),
+        ).fetchone()
+        if source is None or source[2] is None:
+            raise RuntimeStateConflictError(
+                "source is absent from the qualified complete Capture roster"
+            )
+        capture_id = UUID(str(source[0]))
+        source_hash = str(source[1])
+        available_at = source[2]
+        content = canonical_json_sha256(
+            {
+                "capture_id": capture_id,
+                "provider_qualification_decision_id": provider_decision_id,
+                "qualified_decision_visible_at": available_at,
+                "source_content_sha256": source_hash,
+                "source_identity": source_identity,
+                "source_kind": source_kind,
+            }
+        )
+        self._connection.execute(
+            f"""
+            INSERT INTO mra.{table} (
+                {visibility_column}, provider_qualification_decision_id,
+                {source_column}, capture_id, source_content_sha256,
+                source_available_at, qualified_decision_visible_at,
+                content_sha256
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """,  # noqa: S608 -- closed source-specific mapping above
+            (
+                qualified_visibility_id,
+                provider_decision_id,
+                source_identity,
+                capture_id,
+                source_hash,
+                available_at,
+                available_at,
+                content,
+            ),
+        )
+        return self.visibility_record(
+            qualified_visibility_id, source_kind=source_kind
+        )
+
+    def visibility_record(
+        self, qualified_visibility_id: UUID, *, source_kind: str
+    ) -> QualifiedHistoricalVisibilityRecord:
+        mapping = {
+            "MARKET_BAR_REVISION": (
+                "qualified_market_bar_visibility",
+                "qualified_market_bar_visibility_id",
+                "bar_revision_id",
+            ),
+            "INSTRUMENT_FACT_REVISION": (
+                "qualified_instrument_fact_visibility",
+                "qualified_instrument_fact_visibility_id",
+                "fact_revision_id",
+            ),
+            "CLASSIFICATION_MEMBERSHIP_REVISION": (
+                "qualified_classification_membership_visibility",
+                "qualified_classification_membership_visibility_id",
+                "membership_revision_id",
+            ),
+            "TRADING_SESSION": (
+                "qualified_trading_session_visibility",
+                "qualified_trading_session_visibility_id",
+                "session_id",
+            ),
+            "SOURCE_GAP": (
+                "qualified_source_gap_visibility",
+                "qualified_source_gap_visibility_id",
+                "gap_id",
+            ),
+        }
+        target = mapping.get(source_kind)
+        if target is None:
+            raise AssertionError("unknown qualified visibility kind")
+        table, visibility_column, source_column = target
+        row = self._connection.execute(
+            f"""
+            SELECT {visibility_column}, provider_qualification_decision_id,
+                   {source_column}, capture_id, source_content_sha256,
+                   qualified_decision_visible_at, content_sha256, admitted_at
+            FROM mra.{table} WHERE {visibility_column} = %s
+            """,  # noqa: S608 -- closed source-specific mapping above
+            (qualified_visibility_id,),
+        ).fetchone()
+        if row is None:
+            raise RuntimeNotFoundError("qualified historical visibility does not exist")
+        return QualifiedHistoricalVisibilityRecord(
+            qualified_visibility_id=UUID(str(row[0])),
+            provider_qualification_decision_id=UUID(str(row[1])),
+            source_kind=source_kind,
+            source_identity=UUID(str(row[2])),
+            capture_id=UUID(str(row[3])),
+            source_content_sha256=str(row[4]),
+            qualified_decision_visible_at=row[5],
+            content_sha256=str(row[6]),
+            admitted_at=row[7],
         )
 
     def _insert_requirement_result(

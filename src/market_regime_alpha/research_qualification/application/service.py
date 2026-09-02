@@ -5,13 +5,8 @@ from __future__ import annotations
 from typing import Callable
 from uuid import UUID, uuid4
 
-from market_regime_alpha.research_qualification.application._results import (
-    DatasetRegistrationResult,
-    ResearchMutationResult,
-)
-from market_regime_alpha.research_qualification.application.datasets import (
-    DatasetCommands,
-)
+from market_regime_alpha.research_qualification.application._results import DatasetRegistrationResult, ResearchMutationResult
+from market_regime_alpha.research_qualification.application.datasets import DatasetCommands
 from market_regime_alpha.research_qualification.application.feature_definitions import (
     FeatureDefinitionCommands,
 )
@@ -22,15 +17,14 @@ from market_regime_alpha.research_qualification.application.target_definitions i
 from market_regime_alpha.research_qualification.domain import (
     DecisionInputDatasetDefinition,
     FeatureDefinition,
+    FormalDatasetScope,
 )
 from market_regime_alpha.research_qualification.domain.targets import TargetDefinition
 from market_regime_alpha.research_qualification.ports import (
     ResearchArtifactByteStore,
     ResearchUnitOfWorkProvider,
 )
-from market_regime_alpha.research_qualification.ports.target_uow import (
-    TargetUnitOfWorkProvider,
-)
+from market_regime_alpha.research_qualification.ports.target_uow import TargetUnitOfWorkProvider
 from market_regime_alpha.runtime.application import CommandContext
 from market_regime_alpha.runtime.ports import AttemptClaim
 
@@ -86,6 +80,21 @@ class ResearchQualificationApplication:
             runtime_claim=runtime_claim,
         )
 
+    def register_formal_dataset(
+        self,
+        definition: DecisionInputDatasetDefinition,
+        formal_scope: FormalDatasetScope,
+        context: CommandContext,
+        *,
+        runtime_claim: AttemptClaim | None = None,
+    ) -> DatasetRegistrationResult:
+        return self._datasets.register(
+            definition,
+            context,
+            formal_scope=formal_scope,
+            runtime_claim=runtime_claim,
+        )
+
     def register_target_definition(
         self,
         definition: TargetDefinition,
@@ -100,9 +109,4 @@ class ResearchQualificationApplication:
         )
 
 
-__all__ = [
-    "DatasetRegistrationResult",
-    "ResearchMutationResult",
-    "ResearchQualificationApplication",
-    "TargetRegistrationResult",
-]
+__all__ = ["DatasetRegistrationResult", "ResearchMutationResult", "ResearchQualificationApplication", "TargetRegistrationResult"]

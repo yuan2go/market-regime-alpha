@@ -17,6 +17,7 @@ from market_regime_alpha.runtime.ports import (
     AuditRepository,
     CommandReceiptRepository,
     RuntimeCommandFinalization,
+    ReceiptRecord,
 )
 
 
@@ -83,7 +84,39 @@ class ProviderQualificationDecisionRecord:
     decided_at: datetime
 
 
+@dataclass(frozen=True, slots=True)
+class QualifiedHistoricalVisibilityRecord:
+    qualified_visibility_id: UUID
+    provider_qualification_decision_id: UUID
+    source_kind: str
+    source_identity: UUID
+    capture_id: UUID
+    source_content_sha256: str
+    qualified_decision_visible_at: datetime
+    content_sha256: str
+    admitted_at: datetime
+
+
 class ProviderQualificationRepository(Protocol):
+    def protocol_request_receipt(
+        self, protocol_code: str, request_identity: str
+    ) -> ReceiptRecord | None: ...
+
+    def finality_request_receipt(
+        self, capture_id: UUID, request_identity: str
+    ) -> ReceiptRecord | None: ...
+
+    def decision_request_receipt(
+        self, provider_qualification_protocol_id: UUID, request_identity: str
+    ) -> ReceiptRecord | None: ...
+
+    def visibility_request_receipt(
+        self,
+        provider_qualification_decision_id: UUID,
+        source_kind: str,
+        request_identity: str,
+    ) -> ReceiptRecord | None: ...
+
     def insert_protocol(
         self,
         protocol: ProviderQualificationProtocol,
@@ -117,6 +150,35 @@ class ProviderQualificationRepository(Protocol):
     def reconcile_protocol(self, provider_qualification_protocol_id: UUID) -> bool: ...
 
     def reconcile_decision(self, provider_qualification_decision_id: UUID) -> bool: ...
+
+    def admit_market_bar_visibility(
+        self, qualified_visibility_id: UUID, provider_decision_id: UUID,
+        bar_revision_id: UUID,
+    ) -> QualifiedHistoricalVisibilityRecord: ...
+
+    def admit_instrument_fact_visibility(
+        self, qualified_visibility_id: UUID, provider_decision_id: UUID,
+        fact_revision_id: UUID,
+    ) -> QualifiedHistoricalVisibilityRecord: ...
+
+    def admit_classification_membership_visibility(
+        self, qualified_visibility_id: UUID, provider_decision_id: UUID,
+        membership_revision_id: UUID,
+    ) -> QualifiedHistoricalVisibilityRecord: ...
+
+    def admit_trading_session_visibility(
+        self, qualified_visibility_id: UUID, provider_decision_id: UUID,
+        session_id: UUID,
+    ) -> QualifiedHistoricalVisibilityRecord: ...
+
+    def admit_source_gap_visibility(
+        self, qualified_visibility_id: UUID, provider_decision_id: UUID,
+        gap_id: UUID,
+    ) -> QualifiedHistoricalVisibilityRecord: ...
+
+    def visibility_record(
+        self, qualified_visibility_id: UUID, *, source_kind: str,
+    ) -> QualifiedHistoricalVisibilityRecord: ...
 
 
 class ProviderQualificationUnitOfWork(Protocol):
@@ -152,6 +214,7 @@ __all__ = [
     "ProviderQualificationCaptureMember",
     "ProviderQualificationDecisionRecord",
     "ProviderQualificationProtocolRecord",
+    "QualifiedHistoricalVisibilityRecord",
     "ProviderQualificationRepository",
     "ProviderQualificationUnitOfWork",
     "ProviderQualificationUnitOfWorkProvider",

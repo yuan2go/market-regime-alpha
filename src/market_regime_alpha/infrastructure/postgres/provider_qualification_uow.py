@@ -17,10 +17,11 @@ from market_regime_alpha.infrastructure.postgres.repositories.runtime import (
     PostgresAuditRepository,
     PostgresCommandReceiptRepository,
 )
-from market_regime_alpha.infrastructure.postgres.research_transaction import (
-    classify_research_postgres_error,
-    commit_research_transaction,
+from market_regime_alpha.market.errors import (
+    MarketCommitOutcomeUnknownError,
+    MarketRetryableTransactionError,
 )
+from market_regime_alpha.runtime.errors import RuntimeStateConflictError
 from market_regime_alpha.infrastructure.postgres.runtime_finalization import (
     PostgresRuntimeCommandFinalization,
 )
@@ -76,7 +77,19 @@ class PostgresProviderQualificationUnitOfWork:
         return PostgresRuntimeCommandFinalization(self._active())
 
     def commit(self) -> None:
-        commit_research_transaction(self._active())
+        try:
+            self._active().commit()
+        except psycopg.Error as exc:
+            sqlstate = exc.sqlstate or ""
+            if sqlstate in {"40001", "40P01", "55P03"}:
+                raise MarketRetryableTransactionError(sqlstate) from exc
+            if (
+                sqlstate in {"57P01", "57P02", "57P03"}
+                or sqlstate.startswith("08")
+                or (not sqlstate and isinstance(exc, psycopg.OperationalError))
+            ):
+                raise MarketCommitOutcomeUnknownError from exc
+            raise
         self._committed = True
 
     def __exit__(
@@ -85,10 +98,19 @@ class PostgresProviderQualificationUnitOfWork:
         exception: BaseException | None,
         traceback: TracebackType | None,
     ) -> None:
-        replacement = classify_research_postgres_error(
-            exception,
-            owner="ProviderQualification",
-        )
+        replacement: BaseException | None = None
+        if isinstance(exception, psycopg.Error):
+            sqlstate = exception.sqlstate or ""
+            if (
+                sqlstate in {"40001", "40P01", "55P03", "57P01", "57P02", "57P03"}
+                or sqlstate.startswith("08")
+                or (not sqlstate and isinstance(exception, psycopg.OperationalError))
+            ):
+                replacement = MarketRetryableTransactionError(sqlstate or "08000")
+            elif sqlstate.startswith(("22", "23")) or sqlstate == "55000":
+                replacement = RuntimeStateConflictError(
+                    "PostgreSQL rejected ProviderQualification invariants"
+                )
         if self._connection is not None and not self._committed:
             try:
                 self._connection.rollback()

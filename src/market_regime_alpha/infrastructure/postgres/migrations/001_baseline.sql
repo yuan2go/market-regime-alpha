@@ -22,6 +22,41 @@ AS $$
     SELECT encode(sha256(convert_to(canonical_text, 'UTF8')), 'hex');
 $$;
 
+CREATE FUNCTION mra.canonical_json_text(value jsonb)
+RETURNS text
+LANGUAGE plpgsql
+IMMUTABLE
+STRICT
+PARALLEL SAFE
+AS $$
+DECLARE kind text;
+DECLARE result text;
+BEGIN
+    kind := jsonb_typeof(value);
+    IF kind = 'object' THEN
+        SELECT '{' || coalesce(string_agg(
+            to_jsonb(entry.key)::text || ':' ||
+            mra.canonical_json_text(entry.value),
+            ',' ORDER BY entry.key
+        ), '') || '}'
+        INTO result
+        FROM jsonb_each(value) AS entry;
+        RETURN result;
+    ELSIF kind = 'array' THEN
+        SELECT '[' || coalesce(string_agg(
+            mra.canonical_json_text(entry.value),
+            ',' ORDER BY entry.ordinality
+        ), '') || ']'
+        INTO result
+        FROM jsonb_array_elements(value) WITH ORDINALITY AS entry(value, ordinality);
+        RETURN result;
+    ELSIF kind = 'string' THEN
+        RETURN to_jsonb(value #>> '{}')::text;
+    END IF;
+    RETURN value::text;
+END;
+$$;
+
 CREATE FUNCTION mra.canonical_timestamptz_text(value timestamptz)
 RETURNS text
 LANGUAGE sql
@@ -15771,15 +15806,67 @@ DECLARE actual_count integer;
 DECLARE minimum_ordinal integer;
 DECLARE maximum_ordinal integer;
 DECLARE kind_count integer;
+DECLARE roster_hash text;
+DECLARE expected_content text;
 DECLARE predecessor record;
 BEGIN
-    SELECT count(*), min(ordinal), max(ordinal), count(DISTINCT requirement_kind)
-      INTO actual_count, minimum_ordinal, maximum_ordinal, kind_count
+    SELECT count(*), min(ordinal), max(ordinal),
+           count(DISTINCT requirement_kind),
+           mra.canonical_sha256(mra.canonical_json_text(json_agg(json_build_object(
+               'content_sha256', content_sha256,
+               'ordinal', ordinal,
+               'requirement_kind', requirement_kind
+           ) ORDER BY ordinal)::jsonb))
+      INTO actual_count, minimum_ordinal, maximum_ordinal, kind_count, roster_hash
     FROM mra.provider_qualification_requirement
     WHERE provider_qualification_protocol_id = NEW.provider_qualification_protocol_id;
     IF actual_count <> NEW.requirement_count OR actual_count <> 10
-       OR minimum_ordinal <> 1 OR maximum_ordinal <> 10 OR kind_count <> 10 THEN
+       OR minimum_ordinal <> 1 OR maximum_ordinal <> 10 OR kind_count <> 10
+       OR roster_hash <> NEW.requirement_roster_sha256
+       OR EXISTS (
+           SELECT 1 FROM mra.provider_qualification_requirement AS requirement
+           WHERE requirement.provider_qualification_protocol_id = NEW.provider_qualification_protocol_id
+             AND requirement.content_sha256 <> mra.canonical_sha256(
+                 mra.canonical_json_text(json_build_object(
+                     'minimum_observation_count', requirement.minimum_observation_count,
+                     'minimum_ratio', requirement.minimum_ratio::text,
+                     'ordinal', requirement.ordinal,
+                     'requirement_kind', requirement.requirement_kind
+                 )::jsonb))
+       ) THEN
         RAISE EXCEPTION 'Provider qualification Protocol requirement roster is incomplete'
+            USING ERRCODE = '55000';
+    END IF;
+    expected_content := mra.canonical_sha256(mra.canonical_json_text(json_build_object(
+        'capture_window_end', mra.canonical_timestamptz_text(NEW.capture_window_end),
+        'capture_window_start', mra.canonical_timestamptz_text(NEW.capture_window_start),
+        'code_artifact', json_build_object(
+            'artifact_id', NEW.code_artifact_id,
+            'content_sha256', json_build_object('value', NEW.code_content_sha256),
+            'size_bytes', NEW.code_size_bytes),
+        'config_artifact', json_build_object(
+            'artifact_id', NEW.config_artifact_id,
+            'content_sha256', json_build_object('value', NEW.config_content_sha256),
+            'size_bytes', NEW.config_size_bytes),
+        'decision_time_rule', NEW.decision_time_rule,
+        'evidence_class', NEW.evidence_class,
+        'evidence_cutoff', mra.canonical_timestamptz_text(NEW.evidence_cutoff),
+        'exchange_code', NEW.exchange_code,
+        'instrument_scope', NEW.instrument_scope,
+        'market_scope', NEW.market_scope,
+        'outcome_path_sessions', NEW.outcome_path_sessions,
+        'price_basis', NEW.price_basis,
+        'provider_product_id', NEW.provider_product_id,
+        'provenance_sha256', NEW.provenance_sha256,
+        'purpose', NEW.purpose,
+        'requirement_count', NEW.requirement_count,
+        'requirement_roster_sha256', NEW.requirement_roster_sha256,
+        'revision', NEW.revision,
+        'supersedes_protocol_id', NEW.supersedes_protocol_id,
+        'timeframe', NEW.timeframe
+    )::jsonb));
+    IF expected_content <> NEW.content_sha256 THEN
+        RAISE EXCEPTION 'Provider qualification Protocol content hash is invalid'
             USING ERRCODE = '55000';
     END IF;
     IF NEW.revision > 1 THEN
@@ -15793,6 +15880,48 @@ BEGIN
            OR predecessor.provider_product_id IS DISTINCT FROM NEW.provider_product_id
            OR predecessor.registered_at >= NEW.registered_at THEN
             RAISE EXCEPTION 'Provider qualification Protocol supersession is invalid'
+                USING ERRCODE = '55000';
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.validate_provider_finality_observation()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE predecessor record;
+DECLARE expected_content text;
+BEGIN
+    expected_content := mra.canonical_sha256(mra.canonical_json_text(json_build_object(
+        'capture_id', NEW.capture_id,
+        'code_artifact', json_build_object(
+            'artifact_id', NEW.code_artifact_id,
+            'content_sha256', json_build_object('value', NEW.code_content_sha256),
+            'size_bytes', NEW.code_size_bytes),
+        'config_artifact', json_build_object(
+            'artifact_id', NEW.config_artifact_id,
+            'content_sha256', json_build_object('value', NEW.config_content_sha256),
+            'size_bytes', NEW.config_size_bytes),
+        'finality_status', NEW.finality_status,
+        'observation_ordinal', NEW.observation_ordinal,
+        'provenance_sha256', NEW.provenance_sha256,
+        'publication_observed_at', mra.canonical_timestamptz_text(NEW.publication_observed_at),
+        'supersedes_observation_id', NEW.supersedes_observation_id
+    )::jsonb));
+    IF expected_content <> NEW.content_sha256 THEN
+        RAISE EXCEPTION 'Provider finality observation content hash is invalid'
+            USING ERRCODE = '55000';
+    END IF;
+    IF NEW.observation_ordinal > 1 THEN
+        SELECT capture_id, observation_ordinal, publication_observed_at
+          INTO predecessor
+        FROM mra.provider_finality_observation
+        WHERE provider_finality_observation_id = NEW.supersedes_observation_id
+        FOR SHARE;
+        IF predecessor.capture_id IS DISTINCT FROM NEW.capture_id
+           OR predecessor.observation_ordinal + 1 <> NEW.observation_ordinal
+           OR predecessor.publication_observed_at >= NEW.publication_observed_at THEN
+            RAISE EXCEPTION 'Provider finality observation predecessor is invalid'
                 USING ERRCODE = '55000';
         END IF;
     END IF;
@@ -15824,14 +15953,24 @@ DECLARE expected_capture_count integer;
 DECLARE actual_result_count integer;
 DECLARE minimum_result_ordinal integer;
 DECLARE maximum_result_ordinal integer;
+DECLARE capture_roster_hash text;
+DECLARE result_roster_hash text;
 DECLARE derived_status text;
+DECLARE derived_reason text;
+DECLARE expected_content text;
 BEGIN
     SELECT * INTO protocol
     FROM mra.provider_qualification_protocol
     WHERE provider_qualification_protocol_id = NEW.provider_qualification_protocol_id
     FOR SHARE;
-    SELECT count(*), min(member_ordinal), max(member_ordinal)
-      INTO actual_capture_count, minimum_capture_ordinal, maximum_capture_ordinal
+    SELECT count(*), min(member_ordinal), max(member_ordinal),
+           mra.canonical_sha256(mra.canonical_json_text(json_agg(json_build_object(
+               'capture_id', capture_id,
+               'content_sha256', content_sha256,
+               'ordinal', member_ordinal
+           ) ORDER BY member_ordinal)::jsonb))
+      INTO actual_capture_count, minimum_capture_ordinal, maximum_capture_ordinal,
+           capture_roster_hash
     FROM mra.provider_qualification_capture_member
     WHERE provider_qualification_decision_id = NEW.provider_qualification_decision_id;
     SELECT count(*) INTO expected_capture_count
@@ -15840,8 +15979,14 @@ BEGIN
       AND capture_started_at >= protocol.capture_window_start
       AND capture_started_at < protocol.capture_window_end
       AND known_at <= protocol.evidence_cutoff;
-    SELECT count(*), min(result_ordinal), max(result_ordinal)
-      INTO actual_result_count, minimum_result_ordinal, maximum_result_ordinal
+    SELECT count(*), min(result_ordinal), max(result_ordinal),
+           mra.canonical_sha256(mra.canonical_json_text(json_agg(json_build_object(
+               'content_sha256', content_sha256,
+               'ordinal', result_ordinal,
+               'requirement_kind', requirement_kind
+           ) ORDER BY result_ordinal)::jsonb))
+      INTO actual_result_count, minimum_result_ordinal, maximum_result_ordinal,
+           result_roster_hash
     FROM mra.provider_qualification_requirement_result
     WHERE provider_qualification_decision_id = NEW.provider_qualification_decision_id;
     IF actual_capture_count <> NEW.capture_count
@@ -15849,10 +15994,42 @@ BEGIN
        OR actual_capture_count = 0
        OR minimum_capture_ordinal <> 1
        OR maximum_capture_ordinal <> actual_capture_count
+       OR capture_roster_hash <> NEW.capture_roster_sha256
        OR actual_result_count <> NEW.requirement_result_count
        OR actual_result_count <> protocol.requirement_count
        OR minimum_result_ordinal <> 1
        OR maximum_result_ordinal <> protocol.requirement_count
+       OR result_roster_hash <> NEW.requirement_result_roster_sha256
+       OR EXISTS (
+           SELECT 1 FROM mra.provider_qualification_capture_member AS member
+           WHERE member.provider_qualification_decision_id = NEW.provider_qualification_decision_id
+             AND member.content_sha256 <> mra.canonical_sha256(mra.canonical_json_text(json_build_object(
+                 'artifact_id', member.artifact_id,
+                 'artifact_verified', member.artifact_verified,
+                 'capture_id', member.capture_id,
+                 'capture_status', member.capture_status,
+                 'known_at', mra.canonical_timestamptz_text(member.known_at),
+                 'member_ordinal', member.member_ordinal,
+                 'provider_product_id', member.provider_product_id,
+                 'runtime_capture_lineage', member.runtime_capture_lineage,
+                 'source_availability_status', member.source_availability_status,
+                 'source_available_at', CASE WHEN member.source_available_at IS NULL
+                     THEN NULL ELSE mra.canonical_timestamptz_text(member.source_available_at) END,
+                 'source_gap_count', member.source_gap_count
+             )::jsonb))
+       ) OR EXISTS (
+           SELECT 1 FROM mra.provider_qualification_requirement_result AS result
+           WHERE result.provider_qualification_decision_id = NEW.provider_qualification_decision_id
+             AND result.content_sha256 <> mra.canonical_sha256(mra.canonical_json_text(json_build_object(
+                 'observation_count', result.observation_count,
+                 'observed_ratio', result.observed_ratio::text,
+                 'reason_code', result.reason_code,
+                 'requirement_kind', result.requirement_kind,
+                 'result_ordinal', result.result_ordinal,
+                 'result_status', result.result_status,
+                 'satisfied_count', result.satisfied_count
+             )::jsonb))
+       )
        OR EXISTS (
            SELECT 1 FROM mra.data_capture capture
            WHERE capture.provider_product_id = NEW.provider_product_id
@@ -15891,7 +16068,27 @@ BEGIN
              ) THEN 'INCONCLUSIVE'
              ELSE 'ADMITTED'
            END INTO derived_status;
-    IF NEW.decision_status <> derived_status THEN
+    derived_reason := CASE derived_status
+        WHEN 'REJECTED' THEN 'PROVIDER_REQUIREMENT_REJECTED'
+        WHEN 'INCONCLUSIVE' THEN 'PROVIDER_EVIDENCE_INCONCLUSIVE'
+        ELSE 'ALL_PROVIDER_REQUIREMENTS_SATISFIED'
+    END;
+    expected_content := mra.canonical_sha256(mra.canonical_json_text(json_build_object(
+        'capture_count', NEW.capture_count,
+        'capture_roster_sha256', NEW.capture_roster_sha256,
+        'decision_code', NEW.decision_code,
+        'decision_status', NEW.decision_status,
+        'evidence_class', NEW.evidence_class,
+        'protocol_content_sha256', NEW.protocol_content_sha256,
+        'provider_product_id', NEW.provider_product_id,
+        'purpose', NEW.purpose,
+        'reason_code', NEW.reason_code,
+        'requirement_result_count', NEW.requirement_result_count,
+        'requirement_result_roster_sha256', NEW.requirement_result_roster_sha256
+    )::jsonb));
+    IF NEW.decision_status <> derived_status
+       OR NEW.reason_code <> derived_reason
+       OR NEW.content_sha256 <> expected_content THEN
         RAISE EXCEPTION 'Provider qualification Decision status is not derived'
             USING ERRCODE = '55000';
     END IF;
@@ -15902,6 +16099,9 @@ $$;
 CREATE TRIGGER provider_qualification_requirement_insert_guard
 BEFORE INSERT ON mra.provider_qualification_requirement
 FOR EACH ROW EXECUTE FUNCTION mra.guard_provider_qualification_requirement_insert();
+CREATE TRIGGER provider_finality_observation_insert_guard
+BEFORE INSERT ON mra.provider_finality_observation
+FOR EACH ROW EXECUTE FUNCTION mra.validate_provider_finality_observation();
 CREATE CONSTRAINT TRIGGER provider_qualification_protocol_closure_guard
 AFTER INSERT ON mra.provider_qualification_protocol DEFERRABLE INITIALLY DEFERRED
 FOR EACH ROW EXECUTE FUNCTION mra.validate_provider_qualification_protocol_closure();
@@ -15932,3 +16132,1138 @@ FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
 CREATE TRIGGER provider_qualification_requirement_result_append_only
 BEFORE UPDATE OR DELETE ON mra.provider_qualification_requirement_result
 FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+
+-- WP-14 formal-research campaign predeclaration.  Children are inserted before
+-- the immutable root and the deferred root trigger proves complete closure.
+CREATE TABLE mra.formal_research_campaign (
+    formal_research_campaign_id uuid PRIMARY KEY,
+    campaign_code text NOT NULL,
+    revision integer NOT NULL,
+    supersedes_campaign_id uuid REFERENCES mra.formal_research_campaign(formal_research_campaign_id) ON DELETE RESTRICT,
+    campaign_class text NOT NULL,
+    hypothesis text NOT NULL,
+    experiment_code text NOT NULL,
+    research_question text NOT NULL,
+    primary_change text NOT NULL,
+    protocol_identity text NOT NULL,
+    acceptance_semantics text NOT NULL,
+    target_definition_id uuid NOT NULL,
+    target_version integer NOT NULL,
+    target_definition_sha256 text NOT NULL,
+    provider_product_id uuid NOT NULL REFERENCES mra.provider_product(provider_product_id) ON DELETE RESTRICT,
+    provider_qualification_protocol_id uuid NOT NULL REFERENCES mra.provider_qualification_protocol(provider_qualification_protocol_id) ON DELETE RESTRICT,
+    provider_qualification_protocol_sha256 text NOT NULL,
+    candidate_policy_id uuid NOT NULL REFERENCES mra.candidate_policy(candidate_policy_id) ON DELETE RESTRICT,
+    candidate_policy_sha256 text NOT NULL,
+    context_policy_id uuid NOT NULL REFERENCES mra.context_policy(context_policy_id) ON DELETE RESTRICT,
+    context_policy_sha256 text NOT NULL,
+    strategy_version_id uuid NOT NULL REFERENCES mra.strategy_version(strategy_version_id) ON DELETE RESTRICT,
+    strategy_version_sha256 text NOT NULL,
+    portfolio_policy_id uuid NOT NULL REFERENCES mra.portfolio_policy(portfolio_policy_id) ON DELETE RESTRICT,
+    portfolio_policy_sha256 text NOT NULL,
+    risk_policy_id uuid NOT NULL REFERENCES mra.risk_policy(risk_policy_id) ON DELETE RESTRICT,
+    risk_policy_sha256 text NOT NULL,
+    research_qualification_policy_id uuid NOT NULL REFERENCES mra.research_qualification_policy(research_qualification_policy_id) ON DELETE RESTRICT,
+    research_qualification_policy_sha256 text NOT NULL,
+    partition_plan_count integer NOT NULL,
+    partition_plan_roster_sha256 text NOT NULL,
+    evaluation_protocol_count integer NOT NULL,
+    evaluation_protocol_roster_sha256 text NOT NULL,
+    cost_assumption_count integer NOT NULL,
+    cost_assumption_roster_sha256 text NOT NULL,
+    code_artifact_id uuid NOT NULL,
+    code_content_sha256 text NOT NULL,
+    code_size_bytes bigint NOT NULL,
+    config_artifact_id uuid NOT NULL,
+    config_content_sha256 text NOT NULL,
+    config_size_bytes bigint NOT NULL,
+    provenance_sha256 text NOT NULL,
+    content_sha256 text NOT NULL,
+    request_identity text NOT NULL,
+    request_sha256 text NOT NULL,
+    predeclared_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT formal_research_campaign_series_uk UNIQUE (campaign_code, revision),
+    CONSTRAINT formal_research_campaign_supersedes_uk UNIQUE (supersedes_campaign_id),
+    CONSTRAINT formal_research_campaign_request_uk UNIQUE (campaign_code, request_identity),
+    CONSTRAINT formal_research_campaign_exact_uk UNIQUE (
+        formal_research_campaign_id, target_definition_id, content_sha256,
+        predeclared_at
+    ),
+    CONSTRAINT formal_research_campaign_target_fk FOREIGN KEY (
+        target_definition_id, target_version, target_definition_sha256
+    ) REFERENCES mra.target_definition(target_definition_id, version, content_sha256) ON DELETE RESTRICT,
+    CONSTRAINT formal_research_campaign_code_artifact_fk FOREIGN KEY (
+        code_artifact_id, code_content_sha256, code_size_bytes
+    ) REFERENCES mra.artifact(artifact_id, content_sha256, size_bytes) ON DELETE RESTRICT,
+    CONSTRAINT formal_research_campaign_config_artifact_fk FOREIGN KEY (
+        config_artifact_id, config_content_sha256, config_size_bytes
+    ) REFERENCES mra.artifact(artifact_id, content_sha256, size_bytes) ON DELETE RESTRICT,
+    CONSTRAINT formal_research_campaign_shape_ck CHECK (
+        campaign_code ~ '^[a-z][a-z0-9_-]{0,99}$'
+        AND experiment_code ~ '^[a-z][a-z0-9_-]{0,99}$'
+        AND ((revision = 1 AND supersedes_campaign_id IS NULL)
+          OR (revision > 1 AND supersedes_campaign_id IS NOT NULL))
+        AND campaign_class IN ('ENGINEERING_REHEARSAL', 'FORMAL_RESEARCH')
+        AND hypothesis <> '' AND research_question <> ''
+        AND primary_change <> '' AND protocol_identity <> ''
+        AND acceptance_semantics <> '' AND target_version > 0
+        AND partition_plan_count >= 3
+        AND evaluation_protocol_count = partition_plan_count
+        AND cost_assumption_count = 3
+        AND partition_plan_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND evaluation_protocol_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND cost_assumption_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND provider_qualification_protocol_sha256 ~ '^[0-9a-f]{64}$'
+        AND candidate_policy_sha256 ~ '^[0-9a-f]{64}$'
+        AND context_policy_sha256 ~ '^[0-9a-f]{64}$'
+        AND strategy_version_sha256 ~ '^[0-9a-f]{64}$'
+        AND portfolio_policy_sha256 ~ '^[0-9a-f]{64}$'
+        AND risk_policy_sha256 ~ '^[0-9a-f]{64}$'
+        AND research_qualification_policy_sha256 ~ '^[0-9a-f]{64}$'
+        AND provenance_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+        AND request_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE TABLE mra.formal_research_campaign_partition_plan (
+    formal_research_campaign_id uuid NOT NULL,
+    plan_ordinal integer NOT NULL,
+    research_partition_id uuid NOT NULL,
+    partition_code text NOT NULL,
+    target_definition_id uuid NOT NULL,
+    target_version integer NOT NULL,
+    target_definition_sha256 text NOT NULL,
+    purpose text NOT NULL,
+    population_scope text NOT NULL,
+    overlap_policy text NOT NULL,
+    exchange_code text NOT NULL,
+    decision_start_session_id uuid NOT NULL REFERENCES mra.trading_session(session_id) ON DELETE RESTRICT,
+    decision_end_session_id uuid NOT NULL REFERENCES mra.trading_session(session_id) ON DELETE RESTRICT,
+    purge_before_sessions integer NOT NULL,
+    purge_after_sessions integer NOT NULL,
+    embargo_sessions integer NOT NULL,
+    series_code text NOT NULL,
+    fold_ordinal integer NOT NULL,
+    code_artifact_id uuid NOT NULL,
+    code_content_sha256 text NOT NULL,
+    code_size_bytes bigint NOT NULL,
+    config_artifact_id uuid NOT NULL,
+    config_content_sha256 text NOT NULL,
+    config_size_bytes bigint NOT NULL,
+    provenance_sha256 text NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    PRIMARY KEY (formal_research_campaign_id, plan_ordinal),
+    CONSTRAINT formal_campaign_partition_plan_partition_uk UNIQUE (formal_research_campaign_id, research_partition_id),
+    CONSTRAINT formal_campaign_partition_plan_purpose_uk UNIQUE (formal_research_campaign_id, purpose),
+    CONSTRAINT formal_campaign_partition_plan_exact_uk UNIQUE (
+        formal_research_campaign_id, research_partition_id, purpose,
+        content_sha256
+    ),
+    CONSTRAINT formal_campaign_partition_plan_campaign_fk FOREIGN KEY (
+        formal_research_campaign_id
+    ) REFERENCES mra.formal_research_campaign(formal_research_campaign_id)
+      ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT formal_campaign_partition_plan_target_fk FOREIGN KEY (
+        target_definition_id, target_version, target_definition_sha256
+    ) REFERENCES mra.target_definition(target_definition_id, version, content_sha256) ON DELETE RESTRICT,
+    CONSTRAINT formal_campaign_partition_plan_code_artifact_fk FOREIGN KEY (
+        code_artifact_id, code_content_sha256, code_size_bytes
+    ) REFERENCES mra.artifact(artifact_id, content_sha256, size_bytes) ON DELETE RESTRICT,
+    CONSTRAINT formal_campaign_partition_plan_config_artifact_fk FOREIGN KEY (
+        config_artifact_id, config_content_sha256, config_size_bytes
+    ) REFERENCES mra.artifact(artifact_id, content_sha256, size_bytes) ON DELETE RESTRICT,
+    CONSTRAINT formal_campaign_partition_plan_shape_ck CHECK (
+        plan_ordinal > 0
+        AND purpose IN ('DISCOVERY', 'FIT', 'VALIDATION', 'LOCKED_OOS', 'PROSPECTIVE')
+        AND population_scope IN ('ALL_COMMITMENTS', 'SELECTED', 'RANKED_NOT_SELECTED', 'UNRANKABLE')
+        AND overlap_policy IN ('DIAGNOSTIC_REUSE', 'PURGED_WALK_FORWARD', 'ISOLATED_PROTECTED')
+        AND ((purpose = 'DISCOVERY' AND overlap_policy = 'DIAGNOSTIC_REUSE')
+          OR (purpose IN ('FIT', 'VALIDATION') AND overlap_policy IN ('DIAGNOSTIC_REUSE', 'PURGED_WALK_FORWARD'))
+          OR (purpose IN ('LOCKED_OOS', 'PROSPECTIVE') AND overlap_policy = 'ISOLATED_PROTECTED'))
+        AND partition_code ~ '^[a-z][a-z0-9_-]{0,99}$'
+        AND series_code ~ '^[a-z][a-z0-9_-]{0,99}$'
+        AND exchange_code ~ '^[A-Z][A-Z0-9]{1,15}$'
+        AND purge_before_sessions >= 0 AND purge_after_sessions >= 0
+        AND embargo_sessions >= 0 AND fold_ordinal > 0
+        AND provenance_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE TABLE mra.formal_research_campaign_evaluation_protocol (
+    formal_research_campaign_id uuid NOT NULL,
+    formal_campaign_evaluation_binding_id uuid NOT NULL UNIQUE,
+    binding_ordinal integer NOT NULL,
+    purpose text NOT NULL,
+    evaluation_protocol_id uuid NOT NULL REFERENCES mra.evaluation_protocol(evaluation_protocol_id) ON DELETE RESTRICT,
+    evaluation_protocol_sha256 text NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    PRIMARY KEY (formal_research_campaign_id, binding_ordinal),
+    CONSTRAINT formal_campaign_evaluation_purpose_uk UNIQUE (formal_research_campaign_id, purpose),
+    CONSTRAINT formal_campaign_evaluation_exact_uk UNIQUE (
+        formal_research_campaign_id, purpose, evaluation_protocol_id,
+        content_sha256
+    ),
+    CONSTRAINT formal_campaign_evaluation_campaign_fk FOREIGN KEY (
+        formal_research_campaign_id
+    ) REFERENCES mra.formal_research_campaign(formal_research_campaign_id)
+      ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT formal_campaign_evaluation_shape_ck CHECK (
+        binding_ordinal > 0
+        AND purpose IN ('DISCOVERY', 'FIT', 'VALIDATION', 'LOCKED_OOS', 'PROSPECTIVE')
+        AND evaluation_protocol_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE TABLE mra.formal_research_campaign_cost_assumption (
+    formal_research_campaign_id uuid NOT NULL,
+    formal_campaign_cost_assumption_id uuid NOT NULL UNIQUE,
+    assumption_ordinal integer NOT NULL,
+    cost_kind text NOT NULL,
+    amount_bps numeric(20,10) NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    PRIMARY KEY (formal_research_campaign_id, assumption_ordinal),
+    CONSTRAINT formal_campaign_cost_kind_uk UNIQUE (formal_research_campaign_id, cost_kind),
+    CONSTRAINT formal_campaign_cost_campaign_fk FOREIGN KEY (
+        formal_research_campaign_id
+    ) REFERENCES mra.formal_research_campaign(formal_research_campaign_id)
+      ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT formal_campaign_cost_shape_ck CHECK (
+        assumption_ordinal > 0
+        AND cost_kind IN ('COMMISSION', 'SLIPPAGE', 'MARKET_IMPACT')
+        AND amount_bps >= 0
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE TABLE mra.formal_research_campaign_provider_decision (
+    formal_research_campaign_id uuid PRIMARY KEY REFERENCES mra.formal_research_campaign(formal_research_campaign_id) ON DELETE RESTRICT,
+    provider_qualification_decision_id uuid NOT NULL REFERENCES mra.provider_qualification_decision(provider_qualification_decision_id) ON DELETE RESTRICT,
+    provider_qualification_decision_sha256 text NOT NULL,
+    bound_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    content_sha256 text NOT NULL,
+    CONSTRAINT formal_campaign_provider_decision_shape_ck CHECK (
+        provider_qualification_decision_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE TABLE mra.formal_research_campaign_partition_binding (
+    formal_research_campaign_id uuid NOT NULL REFERENCES mra.formal_research_campaign(formal_research_campaign_id) ON DELETE RESTRICT,
+    binding_ordinal integer NOT NULL,
+    research_partition_id uuid NOT NULL REFERENCES mra.research_partition(research_partition_id) ON DELETE RESTRICT,
+    purpose text NOT NULL,
+    partition_content_sha256 text NOT NULL,
+    bound_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    content_sha256 text NOT NULL,
+    PRIMARY KEY (formal_research_campaign_id, binding_ordinal),
+    CONSTRAINT formal_campaign_partition_binding_pair_uk UNIQUE (formal_research_campaign_id, research_partition_id),
+    CONSTRAINT formal_campaign_partition_binding_purpose_uk UNIQUE (formal_research_campaign_id, purpose),
+    CONSTRAINT formal_campaign_partition_binding_shape_ck CHECK (
+        binding_ordinal > 0
+        AND purpose IN ('DISCOVERY', 'FIT', 'VALIDATION', 'LOCKED_OOS', 'PROSPECTIVE')
+        AND partition_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE TABLE mra.formal_research_campaign_experiment (
+    formal_research_campaign_id uuid PRIMARY KEY REFERENCES mra.formal_research_campaign(formal_research_campaign_id) ON DELETE RESTRICT,
+    experiment_id uuid NOT NULL UNIQUE REFERENCES mra.experiment(experiment_id) ON DELETE RESTRICT,
+    experiment_content_sha256 text NOT NULL,
+    partition_count integer NOT NULL,
+    partition_roster_sha256 text NOT NULL,
+    bound_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    content_sha256 text NOT NULL,
+    CONSTRAINT formal_campaign_experiment_shape_ck CHECK (
+        partition_count > 0
+        AND experiment_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND partition_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE TABLE mra.formal_research_campaign_protected_open (
+    formal_research_campaign_id uuid PRIMARY KEY REFERENCES mra.formal_research_campaign(formal_research_campaign_id) ON DELETE RESTRICT,
+    purpose text NOT NULL,
+    experiment_run_id uuid NOT NULL UNIQUE REFERENCES mra.experiment_run(experiment_run_id) ON DELETE RESTRICT,
+    evaluation_run_id uuid NOT NULL UNIQUE REFERENCES mra.evaluation_run(evaluation_run_id) ON DELETE RESTRICT,
+    opened_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    content_sha256 text NOT NULL,
+    CONSTRAINT formal_campaign_protected_open_shape_ck CHECK (
+        purpose IN ('LOCKED_OOS', 'PROSPECTIVE')
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE TABLE mra.formal_research_campaign_runtime_run (
+    formal_research_campaign_id uuid NOT NULL REFERENCES mra.formal_research_campaign(formal_research_campaign_id) ON DELETE RESTRICT,
+    runtime_profile text NOT NULL,
+    runtime_run_id uuid NOT NULL UNIQUE REFERENCES mra.runtime_run(run_id) ON DELETE RESTRICT,
+    bound_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    content_sha256 text NOT NULL,
+    PRIMARY KEY (formal_research_campaign_id, runtime_profile),
+    CONSTRAINT formal_campaign_runtime_profile_ck CHECK (
+        runtime_profile IN ('DECISION_PROOF', 'DUE_PROOF')
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE INDEX formal_campaign_supersedes_idx ON mra.formal_research_campaign(supersedes_campaign_id) WHERE supersedes_campaign_id IS NOT NULL;
+CREATE INDEX formal_campaign_target_idx ON mra.formal_research_campaign(target_definition_id, target_version, target_definition_sha256);
+CREATE INDEX formal_campaign_provider_product_idx ON mra.formal_research_campaign(provider_product_id);
+CREATE INDEX formal_campaign_provider_protocol_idx ON mra.formal_research_campaign(provider_qualification_protocol_id, provider_product_id);
+CREATE INDEX formal_campaign_candidate_policy_idx ON mra.formal_research_campaign(candidate_policy_id);
+CREATE INDEX formal_campaign_context_policy_idx ON mra.formal_research_campaign(context_policy_id);
+CREATE INDEX formal_campaign_strategy_version_idx ON mra.formal_research_campaign(strategy_version_id);
+CREATE INDEX formal_campaign_portfolio_policy_idx ON mra.formal_research_campaign(portfolio_policy_id);
+CREATE INDEX formal_campaign_risk_policy_idx ON mra.formal_research_campaign(risk_policy_id);
+CREATE INDEX formal_campaign_qualification_policy_idx ON mra.formal_research_campaign(research_qualification_policy_id);
+CREATE INDEX formal_campaign_code_artifact_idx ON mra.formal_research_campaign(code_artifact_id, code_content_sha256, code_size_bytes);
+CREATE INDEX formal_campaign_config_artifact_idx ON mra.formal_research_campaign(config_artifact_id, config_content_sha256, config_size_bytes);
+CREATE INDEX formal_campaign_partition_plan_target_idx ON mra.formal_research_campaign_partition_plan(target_definition_id, target_version, target_definition_sha256);
+CREATE INDEX formal_campaign_partition_plan_start_session_idx ON mra.formal_research_campaign_partition_plan(decision_start_session_id);
+CREATE INDEX formal_campaign_partition_plan_end_session_idx ON mra.formal_research_campaign_partition_plan(decision_end_session_id);
+CREATE INDEX formal_campaign_partition_plan_code_artifact_idx ON mra.formal_research_campaign_partition_plan(code_artifact_id, code_content_sha256, code_size_bytes);
+CREATE INDEX formal_campaign_partition_plan_config_artifact_idx ON mra.formal_research_campaign_partition_plan(config_artifact_id, config_content_sha256, config_size_bytes);
+CREATE INDEX formal_campaign_evaluation_protocol_idx ON mra.formal_research_campaign_evaluation_protocol(evaluation_protocol_id);
+CREATE INDEX formal_campaign_provider_decision_idx ON mra.formal_research_campaign_provider_decision(provider_qualification_decision_id);
+CREATE INDEX formal_campaign_partition_binding_partition_idx ON mra.formal_research_campaign_partition_binding(research_partition_id);
+CREATE INDEX formal_campaign_experiment_idx ON mra.formal_research_campaign_experiment(experiment_id);
+CREATE INDEX formal_campaign_protected_experiment_run_idx ON mra.formal_research_campaign_protected_open(experiment_run_id);
+CREATE INDEX formal_campaign_protected_evaluation_run_idx ON mra.formal_research_campaign_protected_open(evaluation_run_id);
+CREATE INDEX formal_campaign_runtime_run_idx ON mra.formal_research_campaign_runtime_run(runtime_run_id);
+
+CREATE FUNCTION mra.guard_formal_campaign_predeclaration_child()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM mra.formal_research_campaign
+        WHERE formal_research_campaign_id = NEW.formal_research_campaign_id
+    ) THEN
+        RAISE EXCEPTION 'Formal campaign predeclaration roster is already frozen'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.validate_formal_research_campaign_closure()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE plan_count integer;
+DECLARE plan_min integer;
+DECLARE plan_max integer;
+DECLARE plan_hash text;
+DECLARE evaluation_count integer;
+DECLARE evaluation_min integer;
+DECLARE evaluation_max integer;
+DECLARE evaluation_hash text;
+DECLARE cost_count integer;
+DECLARE cost_min integer;
+DECLARE cost_max integer;
+DECLARE cost_hash text;
+DECLARE expected_content text;
+DECLARE expected_payload text;
+DECLARE predecessor record;
+BEGIN
+    SELECT count(*), min(plan_ordinal), max(plan_ordinal),
+           mra.canonical_sha256(mra.canonical_json_text(json_agg(json_build_object(
+               'content_sha256', content_sha256,
+               'ordinal', plan_ordinal,
+               'purpose', purpose,
+               'research_partition_id', research_partition_id
+           ) ORDER BY plan_ordinal)::jsonb))
+      INTO plan_count, plan_min, plan_max, plan_hash
+    FROM mra.formal_research_campaign_partition_plan
+    WHERE formal_research_campaign_id = NEW.formal_research_campaign_id;
+    SELECT count(*), min(binding_ordinal), max(binding_ordinal),
+           mra.canonical_sha256(mra.canonical_json_text(json_agg(json_build_object(
+               'content_sha256', content_sha256,
+               'ordinal', binding_ordinal,
+               'purpose', purpose
+           ) ORDER BY binding_ordinal)::jsonb))
+      INTO evaluation_count, evaluation_min, evaluation_max, evaluation_hash
+    FROM mra.formal_research_campaign_evaluation_protocol
+    WHERE formal_research_campaign_id = NEW.formal_research_campaign_id;
+    SELECT count(*), min(assumption_ordinal), max(assumption_ordinal),
+           mra.canonical_sha256(mra.canonical_json_text(json_agg(json_build_object(
+               'content_sha256', content_sha256,
+               'cost_kind', cost_kind,
+               'ordinal', assumption_ordinal
+           ) ORDER BY assumption_ordinal)::jsonb))
+      INTO cost_count, cost_min, cost_max, cost_hash
+    FROM mra.formal_research_campaign_cost_assumption
+    WHERE formal_research_campaign_id = NEW.formal_research_campaign_id;
+
+    IF plan_count <> NEW.partition_plan_count OR plan_min <> 1
+       OR plan_max <> NEW.partition_plan_count
+       OR plan_hash <> NEW.partition_plan_roster_sha256
+       OR evaluation_count <> NEW.evaluation_protocol_count
+       OR evaluation_min <> 1 OR evaluation_max <> NEW.evaluation_protocol_count
+       OR evaluation_hash <> NEW.evaluation_protocol_roster_sha256
+       OR cost_count <> NEW.cost_assumption_count OR cost_min <> 1
+       OR cost_max <> NEW.cost_assumption_count
+       OR cost_hash <> NEW.cost_assumption_roster_sha256
+       OR NOT EXISTS (
+           SELECT 1 FROM mra.formal_research_campaign_partition_plan
+           WHERE formal_research_campaign_id = NEW.formal_research_campaign_id
+             AND purpose = 'FIT'
+       ) OR NOT EXISTS (
+           SELECT 1 FROM mra.formal_research_campaign_partition_plan
+           WHERE formal_research_campaign_id = NEW.formal_research_campaign_id
+             AND purpose = 'VALIDATION'
+       ) OR NOT EXISTS (
+           SELECT 1 FROM mra.formal_research_campaign_partition_plan
+           WHERE formal_research_campaign_id = NEW.formal_research_campaign_id
+             AND purpose = 'LOCKED_OOS'
+       ) OR EXISTS (
+           SELECT 1 FROM mra.formal_research_campaign_partition_plan AS plan
+           WHERE plan.formal_research_campaign_id = NEW.formal_research_campaign_id
+             AND (plan.target_definition_id <> NEW.target_definition_id
+               OR plan.target_version <> NEW.target_version
+               OR plan.target_definition_sha256 <> NEW.target_definition_sha256)
+       ) OR EXISTS (
+           (SELECT purpose FROM mra.formal_research_campaign_partition_plan
+            WHERE formal_research_campaign_id = NEW.formal_research_campaign_id)
+           EXCEPT
+           (SELECT purpose FROM mra.formal_research_campaign_evaluation_protocol
+            WHERE formal_research_campaign_id = NEW.formal_research_campaign_id)
+       ) OR EXISTS (
+           (SELECT purpose FROM mra.formal_research_campaign_evaluation_protocol
+            WHERE formal_research_campaign_id = NEW.formal_research_campaign_id)
+           EXCEPT
+           (SELECT purpose FROM mra.formal_research_campaign_partition_plan
+            WHERE formal_research_campaign_id = NEW.formal_research_campaign_id)
+       ) OR EXISTS (
+           SELECT 1 FROM mra.formal_research_campaign_partition_plan AS plan
+           WHERE plan.formal_research_campaign_id = NEW.formal_research_campaign_id
+             AND plan.content_sha256 <> mra.canonical_sha256(mra.canonical_json_text(json_build_object(
+                 'code_artifact', json_build_object(
+                     'artifact_id', plan.code_artifact_id,
+                     'content_sha256', json_build_object(
+                         'value', plan.code_content_sha256),
+                     'size_bytes', plan.code_size_bytes),
+                 'config_artifact', json_build_object(
+                     'artifact_id', plan.config_artifact_id,
+                     'content_sha256', json_build_object(
+                         'value', plan.config_content_sha256),
+                     'size_bytes', plan.config_size_bytes),
+                 'decision_end_session_id', plan.decision_end_session_id,
+                 'decision_start_session_id', plan.decision_start_session_id,
+                 'embargo_sessions', plan.embargo_sessions,
+                 'exchange_code', plan.exchange_code,
+                 'fold_ordinal', plan.fold_ordinal,
+                 'overlap_policy', plan.overlap_policy,
+                 'partition_code', plan.partition_code,
+                 'population_scope', plan.population_scope,
+                 'provenance_sha256', json_build_object(
+                     'value', plan.provenance_sha256),
+                 'purge_after_sessions', plan.purge_after_sessions,
+                 'purge_before_sessions', plan.purge_before_sessions,
+                 'purpose', plan.purpose,
+                 'series_code', plan.series_code,
+                 'target_definition_id', plan.target_definition_id,
+                 'target_definition_sha256', json_build_object(
+                     'value', plan.target_definition_sha256),
+                 'target_version', plan.target_version
+             )::jsonb))
+       ) OR EXISTS (
+           SELECT 1 FROM mra.formal_research_campaign_evaluation_protocol AS binding
+           JOIN mra.evaluation_protocol AS protocol
+             ON protocol.evaluation_protocol_id = binding.evaluation_protocol_id
+           WHERE binding.formal_research_campaign_id = NEW.formal_research_campaign_id
+             AND (protocol.target_definition_id <> NEW.target_definition_id
+               OR protocol.target_version <> NEW.target_version
+               OR protocol.target_definition_sha256 <> NEW.target_definition_sha256
+               OR protocol.applicable_purpose <> binding.purpose
+               OR protocol.content_sha256 <> binding.evaluation_protocol_sha256
+               OR protocol.frozen_at >= NEW.predeclared_at
+               OR binding.content_sha256 <> mra.canonical_sha256(mra.canonical_json_text(json_build_object(
+                   'evaluation_protocol_id', binding.evaluation_protocol_id,
+                   'evaluation_protocol_sha256', binding.evaluation_protocol_sha256,
+                   'ordinal', binding.binding_ordinal,
+                   'purpose', binding.purpose
+               )::jsonb)))
+       ) OR EXISTS (
+           SELECT 1 FROM mra.formal_research_campaign_cost_assumption AS cost
+           WHERE cost.formal_research_campaign_id = NEW.formal_research_campaign_id
+             AND cost.content_sha256 <> mra.canonical_sha256(mra.canonical_json_text(json_build_object(
+                 'amount_bps', cost.amount_bps::text,
+                 'cost_kind', cost.cost_kind,
+                 'ordinal', cost.assumption_ordinal
+             )::jsonb))
+       ) THEN
+        RAISE EXCEPTION 'Formal campaign predeclaration roster is incomplete or mismatched'
+            USING ERRCODE = '55000';
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM mra.provider_qualification_protocol AS protocol
+        WHERE protocol.provider_qualification_protocol_id = NEW.provider_qualification_protocol_id
+          AND protocol.provider_product_id = NEW.provider_product_id
+          AND protocol.content_sha256 = NEW.provider_qualification_protocol_sha256
+          AND ((NEW.campaign_class = 'ENGINEERING_REHEARSAL'
+                AND protocol.evidence_class = 'ENGINEERING_REHEARSAL')
+            OR (NEW.campaign_class = 'FORMAL_RESEARCH'
+                AND protocol.evidence_class = 'RECORDED_PROVIDER'))
+          AND protocol.registered_at < NEW.predeclared_at
+    ) OR NOT EXISTS (
+        SELECT 1 FROM mra.candidate_policy
+        WHERE candidate_policy_id = NEW.candidate_policy_id
+          AND content_sha256 = NEW.candidate_policy_sha256
+          AND created_at < NEW.predeclared_at
+    ) OR NOT EXISTS (
+        SELECT 1 FROM mra.context_policy
+        WHERE context_policy_id = NEW.context_policy_id
+          AND content_sha256 = NEW.context_policy_sha256
+          AND frozen_at < NEW.predeclared_at
+    ) OR NOT EXISTS (
+        SELECT 1 FROM mra.strategy_version
+        WHERE strategy_version_id = NEW.strategy_version_id
+          AND content_sha256 = NEW.strategy_version_sha256
+          AND frozen_at < NEW.predeclared_at
+    ) OR NOT EXISTS (
+        SELECT 1 FROM mra.portfolio_policy
+        WHERE portfolio_policy_id = NEW.portfolio_policy_id
+          AND content_sha256 = NEW.portfolio_policy_sha256
+          AND frozen_at < NEW.predeclared_at
+    ) OR NOT EXISTS (
+        SELECT 1 FROM mra.risk_policy
+        WHERE risk_policy_id = NEW.risk_policy_id
+          AND content_sha256 = NEW.risk_policy_sha256
+          AND frozen_at < NEW.predeclared_at
+    ) OR NOT EXISTS (
+        SELECT 1 FROM mra.research_qualification_policy
+        WHERE research_qualification_policy_id = NEW.research_qualification_policy_id
+          AND target_definition_id = NEW.target_definition_id
+          AND target_version = NEW.target_version
+          AND target_definition_sha256 = NEW.target_definition_sha256
+          AND content_sha256 = NEW.research_qualification_policy_sha256
+          AND frozen_at < NEW.predeclared_at
+    ) THEN
+        RAISE EXCEPTION 'Formal campaign exact policy or Provider binding is invalid'
+            USING ERRCODE = '55000';
+    END IF;
+
+    expected_payload := mra.canonical_json_text(json_build_object(
+        'acceptance_semantics', NEW.acceptance_semantics,
+        'campaign_class', NEW.campaign_class,
+        'candidate_policy_id', NEW.candidate_policy_id,
+        'candidate_policy_sha256', NEW.candidate_policy_sha256,
+        'code_artifact', json_build_object(
+            'artifact_id', NEW.code_artifact_id,
+            'content_sha256', json_build_object(
+                'value', NEW.code_content_sha256),
+            'size_bytes', NEW.code_size_bytes),
+        'config_artifact', json_build_object(
+            'artifact_id', NEW.config_artifact_id,
+            'content_sha256', json_build_object(
+                'value', NEW.config_content_sha256),
+            'size_bytes', NEW.config_size_bytes),
+        'context_policy_id', NEW.context_policy_id,
+        'context_policy_sha256', NEW.context_policy_sha256,
+        'cost_assumption_count', NEW.cost_assumption_count,
+        'cost_assumption_roster_sha256', NEW.cost_assumption_roster_sha256,
+        'evaluation_protocol_count', NEW.evaluation_protocol_count,
+        'evaluation_protocol_roster_sha256', NEW.evaluation_protocol_roster_sha256,
+        'experiment_code', NEW.experiment_code,
+        'hypothesis', NEW.hypothesis,
+        'partition_plan_count', NEW.partition_plan_count,
+        'partition_plan_roster_sha256', NEW.partition_plan_roster_sha256,
+        'portfolio_policy_id', NEW.portfolio_policy_id,
+        'portfolio_policy_sha256', NEW.portfolio_policy_sha256,
+        'primary_change', NEW.primary_change,
+        'protocol_identity', NEW.protocol_identity,
+        'provider_product_id', NEW.provider_product_id,
+        'provider_qualification_protocol_id', NEW.provider_qualification_protocol_id,
+        'provider_qualification_protocol_sha256', NEW.provider_qualification_protocol_sha256,
+        'provenance_sha256', NEW.provenance_sha256,
+        'research_qualification_policy_id', NEW.research_qualification_policy_id,
+        'research_qualification_policy_sha256', NEW.research_qualification_policy_sha256,
+        'research_question', NEW.research_question,
+        'risk_policy_id', NEW.risk_policy_id,
+        'risk_policy_sha256', NEW.risk_policy_sha256,
+        'strategy_version_id', NEW.strategy_version_id,
+        'strategy_version_sha256', NEW.strategy_version_sha256,
+        'target_definition_id', NEW.target_definition_id,
+        'target_definition_sha256', NEW.target_definition_sha256,
+        'target_version', NEW.target_version
+    )::jsonb);
+    expected_content := mra.canonical_sha256(expected_payload);
+    IF expected_content <> NEW.content_sha256 THEN
+        RAISE EXCEPTION 'Formal campaign root content hash is invalid'
+            USING ERRCODE = '55000',
+                  DETAIL = format(
+                      'recomputed=%s declared=%s',
+                      expected_content,
+                      NEW.content_sha256
+                  );
+    END IF;
+    IF NEW.revision > 1 THEN
+        SELECT campaign_code, revision, target_definition_id, predeclared_at
+          INTO predecessor FROM mra.formal_research_campaign
+        WHERE formal_research_campaign_id = NEW.supersedes_campaign_id FOR SHARE;
+        IF predecessor.campaign_code IS DISTINCT FROM NEW.campaign_code
+           OR predecessor.revision + 1 <> NEW.revision
+           OR predecessor.target_definition_id IS DISTINCT FROM NEW.target_definition_id
+           OR predecessor.predeclared_at >= NEW.predeclared_at THEN
+            RAISE EXCEPTION 'Formal campaign supersession chain is invalid'
+                USING ERRCODE = '55000';
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.validate_formal_campaign_provider_decision()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE campaign record;
+DECLARE decision record;
+BEGIN
+    SELECT * INTO campaign FROM mra.formal_research_campaign
+    WHERE formal_research_campaign_id = NEW.formal_research_campaign_id FOR SHARE;
+    SELECT * INTO decision FROM mra.provider_qualification_decision
+    WHERE provider_qualification_decision_id = NEW.provider_qualification_decision_id FOR SHARE;
+    IF EXISTS (SELECT 1 FROM mra.formal_research_campaign_protected_open
+               WHERE formal_research_campaign_id = NEW.formal_research_campaign_id)
+       OR decision.provider_qualification_protocol_id <> campaign.provider_qualification_protocol_id
+       OR decision.provider_product_id <> campaign.provider_product_id
+       OR decision.protocol_content_sha256 <> campaign.provider_qualification_protocol_sha256
+       OR decision.content_sha256 <> NEW.provider_qualification_decision_sha256
+       OR NEW.bound_at <= campaign.predeclared_at
+       OR (campaign.campaign_class = 'FORMAL_RESEARCH'
+           AND (decision.evidence_class <> 'RECORDED_PROVIDER'
+             OR decision.decision_status <> 'ADMITTED'))
+       OR (campaign.campaign_class = 'ENGINEERING_REHEARSAL'
+           AND decision.evidence_class <> 'ENGINEERING_REHEARSAL') THEN
+        RAISE EXCEPTION 'Provider decision is not eligible for Formal campaign'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.validate_formal_campaign_partition_binding()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE campaign record;
+DECLARE plan record;
+DECLARE partition record;
+BEGIN
+    SELECT * INTO campaign FROM mra.formal_research_campaign
+    WHERE formal_research_campaign_id = NEW.formal_research_campaign_id FOR SHARE;
+    SELECT * INTO plan FROM mra.formal_research_campaign_partition_plan
+    WHERE formal_research_campaign_id = NEW.formal_research_campaign_id
+      AND plan_ordinal = NEW.binding_ordinal;
+    SELECT * INTO partition FROM mra.research_partition
+    WHERE research_partition_id = NEW.research_partition_id FOR SHARE;
+    IF NOT EXISTS (
+           SELECT 1 FROM mra.formal_research_campaign_provider_decision
+           WHERE formal_research_campaign_id = NEW.formal_research_campaign_id
+       ) OR EXISTS (SELECT 1 FROM mra.formal_research_campaign_protected_open
+               WHERE formal_research_campaign_id = NEW.formal_research_campaign_id)
+       OR plan.research_partition_id IS NULL
+       OR plan.research_partition_id <> NEW.research_partition_id
+       OR plan.purpose <> NEW.purpose OR partition.purpose <> plan.purpose
+       OR partition.target_definition_id <> plan.target_definition_id
+       OR partition.target_version <> plan.target_version
+       OR partition.target_definition_sha256 <> plan.target_definition_sha256
+       OR partition.partition_code <> plan.partition_code
+       OR partition.population_scope <> plan.population_scope
+       OR partition.overlap_policy <> plan.overlap_policy
+       OR partition.exchange_code <> plan.exchange_code
+       OR partition.decision_start_session_id <> plan.decision_start_session_id
+       OR partition.decision_end_session_id <> plan.decision_end_session_id
+       OR partition.purge_before_sessions <> plan.purge_before_sessions
+       OR partition.purge_after_sessions <> plan.purge_after_sessions
+       OR partition.embargo_sessions <> plan.embargo_sessions
+       OR partition.series_code <> plan.series_code
+       OR partition.fold_ordinal <> plan.fold_ordinal
+       OR partition.code_artifact_id <> plan.code_artifact_id
+       OR partition.code_content_sha256 <> plan.code_content_sha256
+       OR partition.code_size_bytes <> plan.code_size_bytes
+       OR partition.config_artifact_id <> plan.config_artifact_id
+       OR partition.config_content_sha256 <> plan.config_content_sha256
+       OR partition.config_size_bytes <> plan.config_size_bytes
+       OR partition.provenance_sha256 <> plan.provenance_sha256
+       OR partition.content_sha256 <> NEW.partition_content_sha256
+       OR partition.frozen_at <= campaign.predeclared_at
+       OR NEW.bound_at < partition.frozen_at THEN
+        RAISE EXCEPTION 'actual Partition does not match frozen campaign plan'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.validate_formal_campaign_runtime_run()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE expected_prefix text;
+DECLARE expected_count integer;
+DECLARE actual_count integer;
+BEGIN
+    IF EXISTS (SELECT 1 FROM mra.formal_research_campaign_protected_open
+               WHERE formal_research_campaign_id = NEW.formal_research_campaign_id) THEN
+        RAISE EXCEPTION 'Runtime Run cannot be bound after protected OPEN'
+            USING ERRCODE = '55000';
+    END IF;
+    IF NEW.runtime_profile = 'DECISION_PROOF' THEN
+        expected_prefix := 'formal-decision-%';
+        expected_count := 10;
+    ELSE
+        expected_prefix := 'formal-due-%';
+        expected_count := 6;
+    END IF;
+    SELECT count(*) INTO actual_count FROM mra.runtime_step
+    WHERE run_id = NEW.runtime_run_id
+      AND step_key LIKE expected_prefix;
+    IF actual_count <> expected_count OR EXISTS (
+        SELECT 1 FROM mra.runtime_step
+        WHERE run_id = NEW.runtime_run_id AND step_key NOT LIKE expected_prefix
+    ) THEN
+        RAISE EXCEPTION 'Runtime Run does not match declared formal profile'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.validate_formal_campaign_experiment()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE campaign record;
+DECLARE experiment record;
+DECLARE binding_count integer;
+BEGIN
+    SELECT * INTO campaign FROM mra.formal_research_campaign
+    WHERE formal_research_campaign_id = NEW.formal_research_campaign_id FOR SHARE;
+    SELECT * INTO experiment FROM mra.experiment
+    WHERE experiment_id = NEW.experiment_id FOR SHARE;
+    SELECT count(*) INTO binding_count
+    FROM mra.formal_research_campaign_partition_binding
+    WHERE formal_research_campaign_id = NEW.formal_research_campaign_id;
+    IF EXISTS (SELECT 1 FROM mra.formal_research_campaign_protected_open
+               WHERE formal_research_campaign_id = NEW.formal_research_campaign_id)
+       OR binding_count <> campaign.partition_plan_count
+       OR experiment.experiment_code <> campaign.experiment_code
+       OR experiment.research_question <> campaign.research_question
+       OR experiment.primary_change <> campaign.primary_change
+       OR experiment.hypothesis <> campaign.hypothesis
+       OR experiment.protocol_identity <> campaign.protocol_identity
+       OR experiment.acceptance_semantics <> campaign.acceptance_semantics
+       OR experiment.target_definition_id <> campaign.target_definition_id
+       OR experiment.target_version <> campaign.target_version
+       OR experiment.target_definition_sha256 <> campaign.target_definition_sha256
+       OR experiment.code_artifact_id <> campaign.code_artifact_id
+       OR experiment.code_content_sha256 <> campaign.code_content_sha256
+       OR experiment.code_size_bytes <> campaign.code_size_bytes
+       OR experiment.config_artifact_id <> campaign.config_artifact_id
+       OR experiment.config_content_sha256 <> campaign.config_content_sha256
+       OR experiment.config_size_bytes <> campaign.config_size_bytes
+       OR experiment.provenance_sha256 <> campaign.provenance_sha256
+       OR experiment.content_sha256 <> NEW.experiment_content_sha256
+       OR experiment.partition_count <> NEW.partition_count
+       OR experiment.partition_roster_sha256 <> NEW.partition_roster_sha256
+       OR experiment.registered_at <= campaign.predeclared_at
+       OR NEW.bound_at < experiment.registered_at
+       OR EXISTS (
+           SELECT binding.research_partition_id
+           FROM mra.formal_research_campaign_partition_binding AS binding
+           WHERE binding.formal_research_campaign_id = NEW.formal_research_campaign_id
+           EXCEPT
+           SELECT binding.research_partition_id FROM mra.experiment_partition AS binding
+           WHERE binding.experiment_id = NEW.experiment_id
+       ) OR EXISTS (
+           SELECT binding.research_partition_id FROM mra.experiment_partition AS binding
+           WHERE binding.experiment_id = NEW.experiment_id
+           EXCEPT
+           SELECT binding.research_partition_id
+           FROM mra.formal_research_campaign_partition_binding AS binding
+           WHERE binding.formal_research_campaign_id = NEW.formal_research_campaign_id
+       ) OR EXISTS (
+           SELECT 1 FROM mra.experiment_partition AS binding
+           JOIN mra.formal_research_campaign_partition_binding AS campaign_binding
+             ON campaign_binding.formal_research_campaign_id = NEW.formal_research_campaign_id
+            AND campaign_binding.binding_ordinal = binding.binding_ordinal
+           WHERE binding.experiment_id = NEW.experiment_id
+             AND (binding.research_partition_id <> campaign_binding.research_partition_id
+               OR binding.partition_purpose <> campaign_binding.purpose
+               OR binding.partition_content_sha256 <> campaign_binding.partition_content_sha256)
+       ) THEN
+        RAISE EXCEPTION 'Experiment does not close the complete campaign Partition roster'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.validate_formal_campaign_protected_open()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE campaign record;
+DECLARE experiment_binding record;
+DECLARE experiment_run record;
+DECLARE evaluation_run record;
+DECLARE access_count integer;
+BEGIN
+    PERFORM pg_advisory_xact_lock(hashtextextended(
+        'formal-campaign-protected:' || NEW.formal_research_campaign_id::text, 0));
+    SELECT * INTO campaign FROM mra.formal_research_campaign
+    WHERE formal_research_campaign_id = NEW.formal_research_campaign_id FOR SHARE;
+    SELECT * INTO experiment_binding FROM mra.formal_research_campaign_experiment
+    WHERE formal_research_campaign_id = NEW.formal_research_campaign_id FOR SHARE;
+    SELECT * INTO experiment_run FROM mra.experiment_run
+    WHERE experiment_run_id = NEW.experiment_run_id FOR SHARE;
+    SELECT * INTO evaluation_run FROM mra.evaluation_run
+    WHERE evaluation_run_id = NEW.evaluation_run_id FOR UPDATE;
+    SELECT count(*) INTO access_count
+    FROM mra.research_partition_outcome_access AS access
+    JOIN mra.research_partition_member AS member
+      ON member.research_partition_member_id = access.research_partition_member_id
+    WHERE member.research_partition_id = evaluation_run.research_partition_id;
+    IF experiment_binding.experiment_id IS NULL
+       OR experiment_run.experiment_id <> experiment_binding.experiment_id
+       OR evaluation_run.experiment_run_id <> NEW.experiment_run_id
+       OR evaluation_run.experiment_id <> experiment_binding.experiment_id
+       OR evaluation_run.partition_purpose <> NEW.purpose
+       OR evaluation_run.status <> 'OPEN'
+       OR access_count <> 0
+       OR NOT EXISTS (
+           SELECT 1 FROM mra.formal_research_campaign_partition_binding
+           WHERE formal_research_campaign_id = NEW.formal_research_campaign_id
+             AND research_partition_id = evaluation_run.research_partition_id
+             AND purpose = NEW.purpose
+       ) OR NOT (campaign.predeclared_at < experiment_binding.bound_at
+             AND experiment_binding.bound_at <= experiment_run.opened_at
+             AND experiment_run.opened_at < evaluation_run.opened_at
+             AND evaluation_run.opened_at < NEW.opened_at) THEN
+        RAISE EXCEPTION 'protected campaign OPEN ordering or zero-access proof failed'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER formal_campaign_partition_plan_insert_guard
+BEFORE INSERT ON mra.formal_research_campaign_partition_plan
+FOR EACH ROW EXECUTE FUNCTION mra.guard_formal_campaign_predeclaration_child();
+CREATE TRIGGER formal_campaign_evaluation_insert_guard
+BEFORE INSERT ON mra.formal_research_campaign_evaluation_protocol
+FOR EACH ROW EXECUTE FUNCTION mra.guard_formal_campaign_predeclaration_child();
+CREATE TRIGGER formal_campaign_cost_insert_guard
+BEFORE INSERT ON mra.formal_research_campaign_cost_assumption
+FOR EACH ROW EXECUTE FUNCTION mra.guard_formal_campaign_predeclaration_child();
+CREATE CONSTRAINT TRIGGER formal_campaign_closure_guard
+AFTER INSERT ON mra.formal_research_campaign DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW EXECUTE FUNCTION mra.validate_formal_research_campaign_closure();
+CREATE TRIGGER formal_campaign_provider_decision_guard
+BEFORE INSERT ON mra.formal_research_campaign_provider_decision
+FOR EACH ROW EXECUTE FUNCTION mra.validate_formal_campaign_provider_decision();
+CREATE TRIGGER formal_campaign_partition_binding_guard
+BEFORE INSERT ON mra.formal_research_campaign_partition_binding
+FOR EACH ROW EXECUTE FUNCTION mra.validate_formal_campaign_partition_binding();
+CREATE TRIGGER formal_campaign_experiment_guard
+BEFORE INSERT ON mra.formal_research_campaign_experiment
+FOR EACH ROW EXECUTE FUNCTION mra.validate_formal_campaign_experiment();
+CREATE TRIGGER formal_campaign_protected_open_guard
+BEFORE INSERT ON mra.formal_research_campaign_protected_open
+FOR EACH ROW EXECUTE FUNCTION mra.validate_formal_campaign_protected_open();
+CREATE TRIGGER formal_campaign_runtime_run_guard
+BEFORE INSERT ON mra.formal_research_campaign_runtime_run
+FOR EACH ROW EXECUTE FUNCTION mra.validate_formal_campaign_runtime_run();
+
+CREATE TRIGGER formal_research_campaign_append_only BEFORE UPDATE OR DELETE ON mra.formal_research_campaign FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER formal_campaign_partition_plan_append_only BEFORE UPDATE OR DELETE ON mra.formal_research_campaign_partition_plan FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER formal_campaign_evaluation_append_only BEFORE UPDATE OR DELETE ON mra.formal_research_campaign_evaluation_protocol FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER formal_campaign_cost_append_only BEFORE UPDATE OR DELETE ON mra.formal_research_campaign_cost_assumption FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER formal_campaign_provider_decision_append_only BEFORE UPDATE OR DELETE ON mra.formal_research_campaign_provider_decision FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER formal_campaign_partition_binding_append_only BEFORE UPDATE OR DELETE ON mra.formal_research_campaign_partition_binding FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER formal_campaign_experiment_append_only BEFORE UPDATE OR DELETE ON mra.formal_research_campaign_experiment FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER formal_campaign_protected_open_append_only BEFORE UPDATE OR DELETE ON mra.formal_research_campaign_protected_open FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER formal_campaign_runtime_run_append_only BEFORE UPDATE OR DELETE ON mra.formal_research_campaign_runtime_run FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+
+-- Source-specific historical visibility companions.  These never mutate the
+-- native Market fact or its conservative decision_visible_at.
+CREATE TABLE mra.qualified_market_bar_visibility (
+    qualified_market_bar_visibility_id uuid PRIMARY KEY,
+    provider_qualification_decision_id uuid NOT NULL REFERENCES mra.provider_qualification_decision(provider_qualification_decision_id) ON DELETE RESTRICT,
+    bar_revision_id uuid NOT NULL REFERENCES mra.market_bar_revision(bar_revision_id) ON DELETE RESTRICT,
+    capture_id uuid NOT NULL REFERENCES mra.data_capture(capture_id) ON DELETE RESTRICT,
+    source_content_sha256 text NOT NULL,
+    source_available_at timestamptz NOT NULL,
+    qualified_decision_visible_at timestamptz NOT NULL,
+    content_sha256 text NOT NULL,
+    admitted_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    UNIQUE (provider_qualification_decision_id, bar_revision_id),
+    CHECK (source_content_sha256 ~ '^[0-9a-f]{64}$' AND content_sha256 ~ '^[0-9a-f]{64}$')
+);
+CREATE TABLE mra.qualified_instrument_fact_visibility (
+    qualified_instrument_fact_visibility_id uuid PRIMARY KEY,
+    provider_qualification_decision_id uuid NOT NULL REFERENCES mra.provider_qualification_decision(provider_qualification_decision_id) ON DELETE RESTRICT,
+    fact_revision_id uuid NOT NULL REFERENCES mra.instrument_fact_revision(fact_revision_id) ON DELETE RESTRICT,
+    capture_id uuid NOT NULL REFERENCES mra.data_capture(capture_id) ON DELETE RESTRICT,
+    source_content_sha256 text NOT NULL,
+    source_available_at timestamptz NOT NULL,
+    qualified_decision_visible_at timestamptz NOT NULL,
+    content_sha256 text NOT NULL,
+    admitted_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    UNIQUE (provider_qualification_decision_id, fact_revision_id),
+    CHECK (source_content_sha256 ~ '^[0-9a-f]{64}$' AND content_sha256 ~ '^[0-9a-f]{64}$')
+);
+CREATE TABLE mra.qualified_classification_membership_visibility (
+    qualified_classification_membership_visibility_id uuid PRIMARY KEY,
+    provider_qualification_decision_id uuid NOT NULL REFERENCES mra.provider_qualification_decision(provider_qualification_decision_id) ON DELETE RESTRICT,
+    membership_revision_id uuid NOT NULL REFERENCES mra.classification_membership_revision(membership_revision_id) ON DELETE RESTRICT,
+    capture_id uuid NOT NULL REFERENCES mra.data_capture(capture_id) ON DELETE RESTRICT,
+    source_content_sha256 text NOT NULL,
+    source_available_at timestamptz NOT NULL,
+    qualified_decision_visible_at timestamptz NOT NULL,
+    content_sha256 text NOT NULL,
+    admitted_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    UNIQUE (provider_qualification_decision_id, membership_revision_id),
+    CHECK (source_content_sha256 ~ '^[0-9a-f]{64}$' AND content_sha256 ~ '^[0-9a-f]{64}$')
+);
+CREATE TABLE mra.qualified_trading_session_visibility (
+    qualified_trading_session_visibility_id uuid PRIMARY KEY,
+    provider_qualification_decision_id uuid NOT NULL REFERENCES mra.provider_qualification_decision(provider_qualification_decision_id) ON DELETE RESTRICT,
+    session_id uuid NOT NULL REFERENCES mra.trading_session(session_id) ON DELETE RESTRICT,
+    capture_id uuid NOT NULL REFERENCES mra.data_capture(capture_id) ON DELETE RESTRICT,
+    source_content_sha256 text NOT NULL,
+    source_available_at timestamptz NOT NULL,
+    qualified_decision_visible_at timestamptz NOT NULL,
+    content_sha256 text NOT NULL,
+    admitted_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    UNIQUE (provider_qualification_decision_id, session_id),
+    CHECK (source_content_sha256 ~ '^[0-9a-f]{64}$' AND content_sha256 ~ '^[0-9a-f]{64}$')
+);
+CREATE TABLE mra.qualified_source_gap_visibility (
+    qualified_source_gap_visibility_id uuid PRIMARY KEY,
+    provider_qualification_decision_id uuid NOT NULL REFERENCES mra.provider_qualification_decision(provider_qualification_decision_id) ON DELETE RESTRICT,
+    gap_id uuid NOT NULL REFERENCES mra.source_gap(gap_id) ON DELETE RESTRICT,
+    capture_id uuid NOT NULL REFERENCES mra.data_capture(capture_id) ON DELETE RESTRICT,
+    source_content_sha256 text NOT NULL,
+    source_available_at timestamptz NOT NULL,
+    qualified_decision_visible_at timestamptz NOT NULL,
+    content_sha256 text NOT NULL,
+    admitted_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    UNIQUE (provider_qualification_decision_id, gap_id),
+    CHECK (source_content_sha256 ~ '^[0-9a-f]{64}$' AND content_sha256 ~ '^[0-9a-f]{64}$')
+);
+
+CREATE INDEX qualified_bar_decision_idx ON mra.qualified_market_bar_visibility(provider_qualification_decision_id, qualified_decision_visible_at, bar_revision_id);
+CREATE INDEX qualified_bar_source_idx ON mra.qualified_market_bar_visibility(bar_revision_id);
+CREATE INDEX qualified_bar_capture_idx ON mra.qualified_market_bar_visibility(capture_id);
+CREATE INDEX qualified_fact_decision_idx ON mra.qualified_instrument_fact_visibility(provider_qualification_decision_id, qualified_decision_visible_at, fact_revision_id);
+CREATE INDEX qualified_fact_source_idx ON mra.qualified_instrument_fact_visibility(fact_revision_id);
+CREATE INDEX qualified_fact_capture_idx ON mra.qualified_instrument_fact_visibility(capture_id);
+CREATE INDEX qualified_membership_decision_idx ON mra.qualified_classification_membership_visibility(provider_qualification_decision_id, qualified_decision_visible_at, membership_revision_id);
+CREATE INDEX qualified_membership_source_idx ON mra.qualified_classification_membership_visibility(membership_revision_id);
+CREATE INDEX qualified_membership_capture_idx ON mra.qualified_classification_membership_visibility(capture_id);
+CREATE INDEX qualified_session_decision_idx ON mra.qualified_trading_session_visibility(provider_qualification_decision_id, qualified_decision_visible_at, session_id);
+CREATE INDEX qualified_session_source_idx ON mra.qualified_trading_session_visibility(session_id);
+CREATE INDEX qualified_session_capture_idx ON mra.qualified_trading_session_visibility(capture_id);
+CREATE INDEX qualified_gap_decision_idx ON mra.qualified_source_gap_visibility(provider_qualification_decision_id, qualified_decision_visible_at, gap_id);
+CREATE INDEX qualified_gap_source_idx ON mra.qualified_source_gap_visibility(gap_id);
+CREATE INDEX qualified_gap_capture_idx ON mra.qualified_source_gap_visibility(capture_id);
+
+CREATE FUNCTION mra.validate_qualified_historical_visibility()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE decision record;
+DECLARE source_capture uuid;
+DECLARE expected_source_hash text;
+DECLARE member record;
+DECLARE source_identity uuid;
+DECLARE source_kind text;
+DECLARE expected_content text;
+BEGIN
+    SELECT * INTO decision FROM mra.provider_qualification_decision
+    WHERE provider_qualification_decision_id = NEW.provider_qualification_decision_id
+    FOR SHARE;
+    IF decision.decision_status <> 'ADMITTED'
+       OR decision.evidence_class <> 'RECORDED_PROVIDER'
+       OR decision.purpose <> 'HISTORICAL_PIT' THEN
+        RAISE EXCEPTION 'qualified historical visibility requires admitted recorded-provider PIT decision'
+            USING ERRCODE = '55000';
+    END IF;
+    IF TG_TABLE_NAME = 'qualified_market_bar_visibility' THEN
+        source_identity := NEW.bar_revision_id;
+        source_kind := 'MARKET_BAR_REVISION';
+        SELECT capture_id, mra.canonical_sha256(
+            mra.canonical_json_text(to_jsonb(source)))
+          INTO source_capture, expected_source_hash
+        FROM mra.market_bar_revision AS source WHERE bar_revision_id = NEW.bar_revision_id FOR SHARE;
+    ELSIF TG_TABLE_NAME = 'qualified_instrument_fact_visibility' THEN
+        source_identity := NEW.fact_revision_id;
+        source_kind := 'INSTRUMENT_FACT_REVISION';
+        SELECT capture_id, mra.canonical_sha256(
+            mra.canonical_json_text(to_jsonb(source)))
+          INTO source_capture, expected_source_hash
+        FROM mra.instrument_fact_revision AS source WHERE fact_revision_id = NEW.fact_revision_id FOR SHARE;
+    ELSIF TG_TABLE_NAME = 'qualified_classification_membership_visibility' THEN
+        source_identity := NEW.membership_revision_id;
+        source_kind := 'CLASSIFICATION_MEMBERSHIP_REVISION';
+        SELECT source_capture_id, mra.canonical_sha256(
+            mra.canonical_json_text(to_jsonb(source)))
+          INTO source_capture, expected_source_hash
+        FROM mra.classification_membership_revision AS source WHERE membership_revision_id = NEW.membership_revision_id FOR SHARE;
+    ELSIF TG_TABLE_NAME = 'qualified_trading_session_visibility' THEN
+        source_identity := NEW.session_id;
+        source_kind := 'TRADING_SESSION';
+        SELECT source_capture_id, mra.canonical_sha256(
+            mra.canonical_json_text(to_jsonb(source)))
+          INTO source_capture, expected_source_hash
+        FROM mra.trading_session AS source WHERE session_id = NEW.session_id FOR SHARE;
+    ELSE
+        source_identity := NEW.gap_id;
+        source_kind := 'SOURCE_GAP';
+        SELECT capture_id, mra.canonical_sha256(
+            mra.canonical_json_text(to_jsonb(source)))
+          INTO source_capture, expected_source_hash
+        FROM mra.source_gap AS source WHERE gap_id = NEW.gap_id FOR SHARE;
+    END IF;
+    SELECT source_available_at, artifact_verified, runtime_capture_lineage
+      INTO member FROM mra.provider_qualification_capture_member
+    WHERE provider_qualification_decision_id = NEW.provider_qualification_decision_id
+      AND capture_id = source_capture;
+    expected_content := mra.canonical_sha256(mra.canonical_json_text(json_build_object(
+        'capture_id', source_capture,
+        'provider_qualification_decision_id', NEW.provider_qualification_decision_id,
+        'qualified_decision_visible_at', member.source_available_at,
+        'source_content_sha256', expected_source_hash,
+        'source_identity', source_identity,
+        'source_kind', source_kind
+    )::jsonb));
+    IF source_capture IS NULL OR member.source_available_at IS NULL
+       OR NOT member.artifact_verified OR NOT member.runtime_capture_lineage
+       OR NEW.capture_id <> source_capture
+       OR NEW.source_available_at <> member.source_available_at
+       OR NEW.qualified_decision_visible_at <> member.source_available_at
+       OR NEW.source_content_sha256 <> expected_source_hash
+       OR NEW.content_sha256 <> expected_content
+       OR NEW.admitted_at <= decision.decided_at THEN
+        RAISE EXCEPTION 'qualified historical source lineage or time is invalid'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER qualified_bar_visibility_guard BEFORE INSERT ON mra.qualified_market_bar_visibility FOR EACH ROW EXECUTE FUNCTION mra.validate_qualified_historical_visibility();
+CREATE TRIGGER qualified_fact_visibility_guard BEFORE INSERT ON mra.qualified_instrument_fact_visibility FOR EACH ROW EXECUTE FUNCTION mra.validate_qualified_historical_visibility();
+CREATE TRIGGER qualified_membership_visibility_guard BEFORE INSERT ON mra.qualified_classification_membership_visibility FOR EACH ROW EXECUTE FUNCTION mra.validate_qualified_historical_visibility();
+CREATE TRIGGER qualified_session_visibility_guard BEFORE INSERT ON mra.qualified_trading_session_visibility FOR EACH ROW EXECUTE FUNCTION mra.validate_qualified_historical_visibility();
+CREATE TRIGGER qualified_gap_visibility_guard BEFORE INSERT ON mra.qualified_source_gap_visibility FOR EACH ROW EXECUTE FUNCTION mra.validate_qualified_historical_visibility();
+CREATE TRIGGER qualified_bar_visibility_append_only BEFORE UPDATE OR DELETE ON mra.qualified_market_bar_visibility FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER qualified_fact_visibility_append_only BEFORE UPDATE OR DELETE ON mra.qualified_instrument_fact_visibility FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER qualified_membership_visibility_append_only BEFORE UPDATE OR DELETE ON mra.qualified_classification_membership_visibility FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER qualified_session_visibility_append_only BEFORE UPDATE OR DELETE ON mra.qualified_trading_session_visibility FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER qualified_gap_visibility_append_only BEFORE UPDATE OR DELETE ON mra.qualified_source_gap_visibility FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+
+CREATE TABLE mra.formal_research_dataset (
+    formal_research_campaign_id uuid NOT NULL REFERENCES mra.formal_research_campaign(formal_research_campaign_id) ON DELETE RESTRICT,
+    dataset_id uuid NOT NULL REFERENCES mra.dataset(dataset_id) ON DELETE RESTRICT,
+    provider_qualification_decision_id uuid NOT NULL REFERENCES mra.provider_qualification_decision(provider_qualification_decision_id) ON DELETE RESTRICT,
+    qualified_source_count integer NOT NULL,
+    qualified_source_roster_sha256 text NOT NULL,
+    content_sha256 text NOT NULL,
+    bound_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    PRIMARY KEY (formal_research_campaign_id, dataset_id),
+    CONSTRAINT formal_research_dataset_unique_dataset UNIQUE (dataset_id),
+    CONSTRAINT formal_research_dataset_shape_ck CHECK (
+        qualified_source_count > 0
+        AND qualified_source_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+CREATE INDEX formal_research_dataset_campaign_idx ON mra.formal_research_dataset(formal_research_campaign_id, dataset_id);
+CREATE INDEX formal_research_dataset_decision_idx ON mra.formal_research_dataset(provider_qualification_decision_id);
+
+CREATE FUNCTION mra.validate_formal_research_dataset()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE dataset_row record;
+DECLARE expected_count integer;
+DECLARE expected_hash text;
+DECLARE expected_content text;
+BEGIN
+    SELECT * INTO dataset_row FROM mra.dataset
+    WHERE dataset_id = NEW.dataset_id FOR SHARE;
+    IF NOT EXISTS (
+        SELECT 1 FROM mra.formal_research_campaign_provider_decision
+        WHERE formal_research_campaign_id = NEW.formal_research_campaign_id
+          AND provider_qualification_decision_id = NEW.provider_qualification_decision_id
+    ) THEN
+        RAISE EXCEPTION 'Formal Dataset requires exact campaign Provider decision binding'
+            USING ERRCODE = '55000';
+    END IF;
+    WITH qualified AS (
+        SELECT source.dataset_source_id,
+               coalesce(bar.content_sha256, fact.content_sha256,
+                        session.content_sha256, gap.content_sha256,
+                        capture.content_sha256) AS visibility_sha256
+        FROM mra.dataset_source AS source
+        LEFT JOIN mra.qualified_market_bar_visibility AS bar
+          ON source.source_role = 'MARKET_BAR_REVISION'
+         AND bar.bar_revision_id = source.market_bar_revision_id
+         AND bar.provider_qualification_decision_id = NEW.provider_qualification_decision_id
+         AND bar.qualified_decision_visible_at <= dataset_row.decision_time
+        LEFT JOIN mra.qualified_instrument_fact_visibility AS fact
+          ON source.source_role = 'MARKET_INSTRUMENT_FACT_REVISION'
+         AND fact.fact_revision_id = source.market_instrument_fact_revision_id
+         AND fact.provider_qualification_decision_id = NEW.provider_qualification_decision_id
+         AND fact.qualified_decision_visible_at <= dataset_row.decision_time
+        LEFT JOIN mra.qualified_trading_session_visibility AS session
+          ON source.source_role = 'MARKET_TRADING_SESSION'
+         AND session.session_id = source.market_trading_session_id
+         AND session.provider_qualification_decision_id = NEW.provider_qualification_decision_id
+         AND session.qualified_decision_visible_at <= dataset_row.decision_time
+        LEFT JOIN mra.qualified_source_gap_visibility AS gap
+          ON source.source_role = 'MARKET_SOURCE_GAP'
+         AND gap.gap_id = source.market_source_gap_id
+         AND gap.provider_qualification_decision_id = NEW.provider_qualification_decision_id
+         AND gap.qualified_decision_visible_at <= dataset_row.decision_time
+        LEFT JOIN mra.provider_qualification_capture_member AS capture
+          ON source.source_role = 'MARKET_CAPTURE'
+         AND capture.capture_id = source.market_capture_id
+         AND capture.provider_qualification_decision_id = NEW.provider_qualification_decision_id
+         AND capture.source_available_at <= dataset_row.decision_time
+        WHERE source.dataset_id = NEW.dataset_id
+          AND source.source_role IN (
+              'MARKET_BAR_REVISION', 'MARKET_INSTRUMENT_FACT_REVISION',
+              'MARKET_TRADING_SESSION', 'MARKET_SOURCE_GAP', 'MARKET_CAPTURE'
+          )
+    )
+    SELECT count(*), mra.canonical_sha256(mra.canonical_json_text(json_agg(json_build_object(
+               'dataset_source_id', dataset_source_id,
+               'visibility_sha256', visibility_sha256
+           ) ORDER BY dataset_source_id)::jsonb))
+      INTO expected_count, expected_hash FROM qualified
+    WHERE visibility_sha256 IS NOT NULL;
+    IF expected_count <> NEW.qualified_source_count
+       OR expected_count <> (
+           SELECT count(*) FROM mra.dataset_source
+           WHERE dataset_id = NEW.dataset_id
+             AND source_role IN (
+                 'MARKET_BAR_REVISION', 'MARKET_INSTRUMENT_FACT_REVISION',
+                 'MARKET_TRADING_SESSION', 'MARKET_SOURCE_GAP', 'MARKET_CAPTURE'
+             )
+       ) OR expected_hash <> NEW.qualified_source_roster_sha256 THEN
+        RAISE EXCEPTION 'Formal Dataset qualified source roster is incomplete'
+            USING ERRCODE = '55000';
+    END IF;
+    expected_content := mra.canonical_sha256(mra.canonical_json_text(json_build_object(
+        'dataset_id', NEW.dataset_id,
+        'formal_research_campaign_id', NEW.formal_research_campaign_id,
+        'provider_qualification_decision_id', NEW.provider_qualification_decision_id,
+        'qualified_source_count', NEW.qualified_source_count,
+        'qualified_source_roster_sha256', NEW.qualified_source_roster_sha256
+    )::jsonb));
+    IF expected_content <> NEW.content_sha256 THEN
+        RAISE EXCEPTION 'Formal Dataset binding hash is invalid' USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+CREATE TRIGGER formal_research_dataset_guard BEFORE INSERT ON mra.formal_research_dataset FOR EACH ROW EXECUTE FUNCTION mra.validate_formal_research_dataset();
+CREATE TRIGGER formal_research_dataset_append_only BEFORE UPDATE OR DELETE ON mra.formal_research_dataset FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();

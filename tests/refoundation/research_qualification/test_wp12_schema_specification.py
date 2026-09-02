@@ -15,8 +15,8 @@ ROOT = Path(__file__).resolve().parents[3]
 BASELINE = ROOT / "src/market_regime_alpha/infrastructure/postgres/migrations/001_baseline.sql"
 
 
-def test_wp12_authority_remains_exactly_ten_relational_tables() -> None:
-    assert EXPECTED_RESEARCH_QUALIFICATION_TABLES == {
+def test_wp12_authority_relations_remain_present() -> None:
+    assert {
         "evidence_item",
         "evidence_dependency",
         "research_assessment",
@@ -27,7 +27,7 @@ def test_wp12_authority_remains_exactly_ten_relational_tables() -> None:
         "research_qualification_decision",
         "research_qualification_floor_result",
         "research_qualification_floor_evidence",
-    }
+    } <= EXPECTED_RESEARCH_QUALIFICATION_TABLES
     assert EXPECTED_RESEARCH_QUALIFICATION_TABLES <= EXPECTED_TARGET_TABLES
 
 

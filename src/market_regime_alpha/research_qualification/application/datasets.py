@@ -27,6 +27,7 @@ from market_regime_alpha.research_qualification.domain import (
     DecisionInputDatasetDefinition,
     DecisionInputDatasetManifest,
     FeatureDefinition,
+    FormalDatasetScope,
     parse_decision_input_dataset_manifest,
 )
 from market_regime_alpha.research_qualification.ports import (
@@ -71,12 +72,22 @@ class DatasetCommands:
         definition: DecisionInputDatasetDefinition,
         context: CommandContext,
         *,
+        formal_scope: FormalDatasetScope | None = None,
         runtime_claim: AttemptClaim | None = None,
     ) -> DatasetRegistrationResult:
-        request_hash = canonical_json_sha256(definition)
+        request_hash = (
+            canonical_json_sha256(definition)
+            if formal_scope is None
+            else canonical_json_sha256(
+                {"definition": definition, "formal_scope": formal_scope}
+            )
+        )
+        command_kind = (
+            "REGISTER_DATASET" if formal_scope is None else "REGISTER_FORMAL_DATASET"
+        )
         with terminal_failure_boundary(
             self._failure_recorder,
-            operation="REGISTER_DATASET",
+            operation=command_kind,
             scope_id=definition.dataset_code,
             request_hash=request_hash,
             error_class="COMMAND",
@@ -89,6 +100,8 @@ class DatasetCommands:
                 context=context,
                 request_hash=request_hash,
                 runtime_claim=runtime_claim,
+                command_kind=command_kind,
+                formal_scope=formal_scope,
             )
             if replay is not None:
                 return replay
@@ -103,6 +116,7 @@ class DatasetCommands:
                     context=context,
                     request_hash=request_hash,
                     runtime_claim=runtime_claim,
+                    command_kind=command_kind,
                 )
                 raise ResearchFailureAlreadyRecorded(
                     "Decision-input Dataset manifest bytes failed exact verification"
@@ -123,6 +137,7 @@ class DatasetCommands:
                     context=context,
                     request_hash=request_hash,
                     runtime_claim=runtime_claim,
+                    command_kind=command_kind,
                 )
                 raise ResearchFailureAlreadyRecorded(
                     "Decision-input Dataset manifest bytes changed during read"
@@ -144,6 +159,8 @@ class DatasetCommands:
                 context=context,
                 request_hash=request_hash,
                 runtime_claim=runtime_claim,
+                command_kind=command_kind,
+                formal_scope=formal_scope,
             )
 
     def _manifest_read_failure_observation(
@@ -181,9 +198,10 @@ class DatasetCommands:
         context: CommandContext,
         request_hash: str,
         runtime_claim: AttemptClaim | None,
+        command_kind: str,
     ) -> None:
         descriptor = failure_descriptor(
-            operation="REGISTER_DATASET",
+            operation=command_kind,
             scope_id=definition.dataset_code,
             request_hash=request_hash,
             error_class="DATA_INTEGRITY",
@@ -222,19 +240,27 @@ class DatasetCommands:
         context: CommandContext,
         request_hash: str,
         runtime_claim: AttemptClaim | None,
+        command_kind: str,
+        formal_scope: FormalDatasetScope | None,
     ) -> tuple[DatasetRegistrationResult | None, tuple[FeatureDefinition, ...]]:
         with self._uow_provider() as uow:
             if runtime_claim is not None:
                 uow.runtime_finalization.lock_live(runtime_claim)
             receipt = uow.receipts.start(
                 receipt_id=self._id_factory(),
-                command_kind="REGISTER_DATASET",
+                command_kind=command_kind,
                 scope_id=definition.dataset_code,
                 idempotency_key=context.idempotency_key,
                 request_hash=request_hash,
             )
             if not receipt.is_new:
                 replay = replayed_dataset_result(uow, receipt)
+                if formal_scope is not None and not uow.research_definitions.formal_dataset_matches(
+                    UUID(replay.aggregate_id), formal_scope
+                ):
+                    raise ArtifactIntegrityError(
+                        "Formal Dataset receipt lost its campaign binding"
+                    )
                 finalize_runtime(
                     uow,
                     runtime_claim,
@@ -272,19 +298,27 @@ class DatasetCommands:
         context: CommandContext,
         request_hash: str,
         runtime_claim: AttemptClaim | None,
+        command_kind: str,
+        formal_scope: FormalDatasetScope | None,
     ) -> DatasetRegistrationResult:
         with self._uow_provider() as uow:
             if runtime_claim is not None:
                 uow.runtime_finalization.lock_live(runtime_claim)
             receipt = uow.receipts.start(
                 receipt_id=self._id_factory(),
-                command_kind="REGISTER_DATASET",
+                command_kind=command_kind,
                 scope_id=definition.dataset_code,
                 idempotency_key=context.idempotency_key,
                 request_hash=request_hash,
             )
             if not receipt.is_new:
                 replay = replayed_dataset_result(uow, receipt)
+                if formal_scope is not None and not uow.research_definitions.formal_dataset_matches(
+                    UUID(replay.aggregate_id), formal_scope
+                ):
+                    raise ArtifactIntegrityError(
+                        "Formal Dataset receipt lost its campaign binding"
+                    )
                 finalize_runtime(
                     uow,
                     runtime_claim,
@@ -321,9 +355,21 @@ class DatasetCommands:
                 lock=True,
             )
             validate_population(manifest, expected_population)
-            observations = uow.source_queries.market_source_observations(
-                manifest.sources,
-                lock=True,
+            observations = (
+                uow.source_queries.market_source_observations(
+                    manifest.sources, lock=True
+                )
+                if formal_scope is None
+                else uow.source_queries.formal_market_source_observations(
+                    manifest.sources,
+                    formal_research_campaign_id=(
+                        formal_scope.formal_research_campaign_id
+                    ),
+                    provider_qualification_decision_id=(
+                        formal_scope.provider_qualification_decision_id
+                    ),
+                    lock=True,
+                )
             )
             validate_market_lineage(
                 manifest,
@@ -342,6 +388,10 @@ class DatasetCommands:
                 definition,
                 manifest,
             )
+            if formal_scope is not None:
+                uow.research_definitions.bind_formal_dataset(
+                    definition.dataset_id, formal_scope
+                )
             persisted = uow.research_definitions.dataset_record(
                 definition.dataset_id,
                 lock=False,

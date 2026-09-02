@@ -10,6 +10,7 @@ from market_regime_alpha.market.application.provider_qualification import (
     ProviderProtocolRegistrationResult,
     ProviderQualificationCommands,
     ProviderQualificationCompletionResult,
+    QualifiedHistoricalVisibilityResult,
 )
 
 __all__ = [
@@ -20,4 +21,5 @@ __all__ = [
     "ProviderProtocolRegistrationResult",
     "ProviderQualificationCommands",
     "ProviderQualificationCompletionResult",
+    "QualifiedHistoricalVisibilityResult",
 ]

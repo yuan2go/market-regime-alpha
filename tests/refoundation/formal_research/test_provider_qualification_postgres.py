@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from datetime import timedelta
 from decimal import Decimal
+from threading import Lock
 from uuid import uuid4
 
 import psycopg
@@ -14,7 +17,11 @@ from market_regime_alpha.infrastructure.postgres.market_uow import (
 )
 from market_regime_alpha.infrastructure.postgres.pool import TargetPostgresPool
 from market_regime_alpha.infrastructure.postgres.provider_qualification_uow import (
+    PostgresProviderQualificationUnitOfWork,
     PostgresProviderQualificationUnitOfWorkProvider,
+)
+from market_regime_alpha.infrastructure.postgres.queries.provider_qualification import (
+    PostgresProviderQualificationQueryPort,
 )
 from market_regime_alpha.infrastructure.postgres.schema import SchemaManager
 from market_regime_alpha.infrastructure.postgres.uow import PostgresUnitOfWorkProvider
@@ -22,6 +29,7 @@ from market_regime_alpha.market.application import (
     MarketApplication,
     ProviderQualificationCommands,
 )
+from market_regime_alpha.market.errors import MarketCommitOutcomeUnknownError
 from market_regime_alpha.market.domain import (
     BarTimeframe,
     InstrumentFactKind,
@@ -29,6 +37,8 @@ from market_regime_alpha.market.domain import (
     PriceBasis,
     Provider,
     ProviderEvidenceClass,
+    ProviderFinalityObservation,
+    ProviderFinalityStatus,
     ProviderKind,
     ProviderProduct,
     ProviderQualificationArtifact,
@@ -44,6 +54,32 @@ from market_regime_alpha.runtime.application import (
     ArtifactApplication,
     CommandContext,
 )
+from market_regime_alpha.runtime.errors import (
+    IdempotencyKeyReusedError,
+    RuntimeStateConflictError,
+)
+
+
+class _UnknownCommitProvider:
+    def __init__(self, pool: TargetPostgresPool) -> None:
+        self._pool = pool
+        self._lock = Lock()
+        self._raised = False
+
+    def __call__(self):
+        provider = self
+
+        class _UnknownCommitUow(PostgresProviderQualificationUnitOfWork):
+            def commit(self) -> None:
+                super().commit()
+                with provider._lock:
+                    if not provider._raised:
+                        provider._raised = True
+                        raise MarketCommitOutcomeUnknownError(
+                            "injected lost Provider commit acknowledgement"
+                        )
+
+        return _UnknownCommitUow(self._pool, id_factory=uuid4)
 
 
 class _RecordedBytesProvider:
@@ -172,14 +208,61 @@ def test_complete_provider_qualification_derives_full_rosters_and_caps_rehearsal
             ),
             provenance_sha256="2" * 64,
         )
-        registered = commands.register_protocol(protocol, _context("protocol"))
-        assert registered.requirement_count == 10
-        completed = commands.complete(
-            provider_qualification_decision_id=uuid4(),
-            decision_code="wp14-fixture-decision",
-            provider_qualification_protocol_id=protocol_id,
-            context=_context("complete"),
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            registrations = tuple(
+                executor.map(
+                    lambda _: commands.register_protocol(
+                        protocol, _context("protocol")
+                    ),
+                    range(2),
+                )
+            )
+        assert {item.requirement_count for item in registrations} == {10}
+        assert {item.replayed for item in registrations} == {False, True}
+        with pytest.raises(IdempotencyKeyReusedError):
+            commands.register_protocol(
+                replace(protocol, market_scope="CHANGED_SCOPE"),
+                _context("protocol"),
+            )
+
+        finality = ProviderFinalityObservation(
+            provider_finality_observation_id=uuid4(),
+            capture_id=capture.capture.capture_id,
+            observation_ordinal=1,
+            supersedes_observation_id=None,
+            finality_status=ProviderFinalityStatus.FINAL,
+            publication_observed_at=available_at,
+            code_artifact=protocol.code_artifact,
+            config_artifact=protocol.config_artifact,
+            provenance_sha256="3" * 64,
         )
+        observed = commands.record_finality_observation(
+            finality,
+            _context("finality"),
+        )
+        observed_replay = commands.record_finality_observation(
+            finality,
+            _context("finality"),
+        )
+        assert observed.replayed is False
+        assert observed_replay.replayed is True
+        assert observed_replay.result_hash == observed.result_hash
+
+        decision_id = uuid4()
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            completions = tuple(
+                executor.map(
+                    lambda _: commands.complete(
+                        provider_qualification_decision_id=decision_id,
+                        decision_code="wp14-fixture-decision",
+                        provider_qualification_protocol_id=protocol_id,
+                        context=_context("complete"),
+                    ),
+                    range(2),
+                )
+            )
+        assert {item.replayed for item in completions} == {False, True}
+        completed = completions[0]
 
         assert completed.decision_status == "REJECTED"
         assert completed.evidence_class == "ENGINEERING_REHEARSAL"
@@ -194,6 +277,15 @@ def test_complete_provider_qualification_derives_full_rosters_and_caps_rehearsal
         assert replay.replayed is True
         assert replay.provider_qualification_decision_id == completed.provider_qualification_decision_id
         assert replay.result_hash == completed.result_hash
+        verifier = PostgresProviderQualificationQueryPort(pool)
+        protocol_verification = verifier.verify_protocol(protocol_id)
+        decision_verification = verifier.verify_decision(
+            completed.provider_qualification_decision_id
+        )
+        assert protocol_verification.matched is True
+        assert protocol_verification.mismatch_count == 0
+        assert decision_verification.matched is True
+        assert decision_verification.mismatch_count == 0
 
         with psycopg.connect(target_database_url) as connection:
             counts = connection.execute(
@@ -228,5 +320,97 @@ def test_complete_provider_qualification_derives_full_rosters_and_caps_rehearsal
                         "c" * 64, "d" * 64,
                     ),
                 )
+
+        unknown_protocol_id = uuid4()
+        unknown_protocol = replace(
+            protocol,
+            provider_qualification_protocol_id=unknown_protocol_id,
+            protocol_code="wp14-unknown-commit-protocol",
+            requirements=tuple(
+                replace(
+                    requirement,
+                    provider_qualification_requirement_id=uuid4(),
+                    provider_qualification_protocol_id=unknown_protocol_id,
+                )
+                for requirement in protocol.requirements
+            ),
+        )
+        recovered = ProviderQualificationCommands(
+            _UnknownCommitProvider(pool),
+            id_factory=uuid4,
+        ).register_protocol(
+            unknown_protocol,
+            _context("unknown-commit-protocol"),
+        )
+        assert recovered.replayed is True
+        assert recovered.provider_qualification_protocol_id == unknown_protocol_id
+        assert PostgresProviderQualificationQueryPort(pool).verify_protocol(
+            unknown_protocol_id
+        ).matched is True
+
+        with psycopg.connect(target_database_url) as connection:
+            connection.execute(
+                """
+                CREATE FUNCTION mra.test_fail_provider_requirement_result()
+                RETURNS trigger LANGUAGE plpgsql AS $$
+                BEGIN
+                  IF NEW.result_ordinal = 5 THEN
+                    RAISE EXCEPTION 'injected Provider result failure'
+                      USING ERRCODE = '23514';
+                  END IF;
+                  RETURN NEW;
+                END
+                $$
+                """
+            )
+            connection.execute(
+                """
+                CREATE TRIGGER test_fail_provider_requirement_result_trigger
+                AFTER INSERT ON mra.provider_qualification_requirement_result
+                FOR EACH ROW EXECUTE FUNCTION mra.test_fail_provider_requirement_result()
+                """
+            )
+            connection.commit()
+        recovery_decision_id = uuid4()
+        with pytest.raises(RuntimeStateConflictError) as failure:
+            commands.complete(
+                provider_qualification_decision_id=recovery_decision_id,
+                decision_code="wp14-mid-result-recovery",
+                provider_qualification_protocol_id=unknown_protocol_id,
+                context=_context("mid-result-failure"),
+            )
+        assert "injected Provider result failure" in str(failure.value.__cause__)
+        with psycopg.connect(target_database_url) as connection:
+            partial = connection.execute(
+                """
+                SELECT
+                  (SELECT count(*) FROM mra.provider_qualification_decision
+                   WHERE provider_qualification_decision_id = %s),
+                  (SELECT count(*) FROM mra.provider_qualification_capture_member
+                   WHERE provider_qualification_decision_id = %s),
+                  (SELECT count(*) FROM mra.provider_qualification_requirement_result
+                   WHERE provider_qualification_decision_id = %s)
+                """,
+                (recovery_decision_id,) * 3,
+            ).fetchone()
+            connection.execute(
+                "DROP TRIGGER test_fail_provider_requirement_result_trigger "
+                "ON mra.provider_qualification_requirement_result"
+            )
+            connection.execute(
+                "DROP FUNCTION mra.test_fail_provider_requirement_result()"
+            )
+            connection.commit()
+        assert partial == (0, 0, 0)
+        recovered_decision = commands.complete(
+            provider_qualification_decision_id=recovery_decision_id,
+            decision_code="wp14-mid-result-recovery",
+            provider_qualification_protocol_id=unknown_protocol_id,
+            context=_context("mid-result-recovery"),
+        )
+        assert recovered_decision.provider_qualification_decision_id == recovery_decision_id
+        assert PostgresProviderQualificationQueryPort(pool).verify_decision(
+            recovery_decision_id
+        ).matched is True
     finally:
         pool.close()

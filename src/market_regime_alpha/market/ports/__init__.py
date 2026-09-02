@@ -29,6 +29,11 @@ from market_regime_alpha.market.ports.provider_qualification import (
     ProviderQualificationRepository,
     ProviderQualificationUnitOfWork,
     ProviderQualificationUnitOfWorkProvider,
+    QualifiedHistoricalVisibilityRecord,
+)
+from market_regime_alpha.market.ports.provider_qualification_queries import (
+    ProviderQualificationQueryPort,
+    ProviderQualificationVerification,
 )
 
 __all__ = [
@@ -47,9 +52,12 @@ __all__ = [
     "MarketUnitOfWorkProvider",
     "NormalizerContract",
     "ProviderQualificationDecisionRecord",
+    "ProviderQualificationQueryPort",
     "ProviderQualificationProtocolRecord",
     "ProviderQualificationRepository",
     "ProviderQualificationUnitOfWork",
     "ProviderQualificationUnitOfWorkProvider",
+    "ProviderQualificationVerification",
+    "QualifiedHistoricalVisibilityRecord",
     "ProviderResponse",
 ]

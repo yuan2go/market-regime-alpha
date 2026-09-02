@@ -17,12 +17,14 @@ from market_regime_alpha.research_qualification.domain import (
     FeatureMissingnessPolicy,
     FeatureSourceRequirement,
     FeatureValueType,
+    FormalDatasetScope,
 )
 from market_regime_alpha.research_qualification.ports.repository import DatasetRecord
 from market_regime_alpha.runtime.errors import (
     ArtifactIntegrityError,
     RuntimeNotFoundError,
 )
+from market_regime_alpha.shared.hashing import canonical_json_sha256
 
 
 class PostgresResearchDefinitionRepository:
@@ -245,6 +247,116 @@ class PostgresResearchDefinitionRepository:
             (dataset_id,),
         ).fetchall()
         return tuple(_dataset_source(row) for row in rows)
+
+    def bind_formal_dataset(
+        self, dataset_id: UUID, scope: FormalDatasetScope
+    ) -> str:
+        row = self._connection.execute(
+            """
+            WITH qualified AS (
+                SELECT source.dataset_source_id,
+                       coalesce(bar.content_sha256, fact.content_sha256,
+                                session.content_sha256, gap.content_sha256,
+                                capture.content_sha256) AS visibility_sha256
+                FROM mra.dataset AS dataset
+                JOIN mra.dataset_source AS source
+                  ON source.dataset_id = dataset.dataset_id
+                LEFT JOIN mra.qualified_market_bar_visibility AS bar
+                  ON source.source_role = 'MARKET_BAR_REVISION'
+                 AND bar.bar_revision_id = source.market_bar_revision_id
+                 AND bar.provider_qualification_decision_id = %s
+                 AND bar.qualified_decision_visible_at <= dataset.decision_time
+                LEFT JOIN mra.qualified_instrument_fact_visibility AS fact
+                  ON source.source_role = 'MARKET_INSTRUMENT_FACT_REVISION'
+                 AND fact.fact_revision_id = source.market_instrument_fact_revision_id
+                 AND fact.provider_qualification_decision_id = %s
+                 AND fact.qualified_decision_visible_at <= dataset.decision_time
+                LEFT JOIN mra.qualified_trading_session_visibility AS session
+                  ON source.source_role = 'MARKET_TRADING_SESSION'
+                 AND session.session_id = source.market_trading_session_id
+                 AND session.provider_qualification_decision_id = %s
+                 AND session.qualified_decision_visible_at <= dataset.decision_time
+                LEFT JOIN mra.qualified_source_gap_visibility AS gap
+                  ON source.source_role = 'MARKET_SOURCE_GAP'
+                 AND gap.gap_id = source.market_source_gap_id
+                 AND gap.provider_qualification_decision_id = %s
+                 AND gap.qualified_decision_visible_at <= dataset.decision_time
+                LEFT JOIN mra.provider_qualification_capture_member AS capture
+                  ON source.source_role = 'MARKET_CAPTURE'
+                 AND capture.capture_id = source.market_capture_id
+                 AND capture.provider_qualification_decision_id = %s
+                 AND capture.source_available_at <= dataset.decision_time
+                WHERE dataset.dataset_id = %s
+                  AND source.source_role IN (
+                      'MARKET_BAR_REVISION', 'MARKET_INSTRUMENT_FACT_REVISION',
+                      'MARKET_TRADING_SESSION', 'MARKET_SOURCE_GAP', 'MARKET_CAPTURE'
+                  )
+            )
+            SELECT count(*), mra.canonical_sha256(mra.canonical_json_text(json_agg(json_build_object(
+                       'dataset_source_id', dataset_source_id,
+                       'visibility_sha256', visibility_sha256
+                   ) ORDER BY dataset_source_id)::jsonb))
+            FROM qualified WHERE visibility_sha256 IS NOT NULL
+            """,
+            (
+                scope.provider_qualification_decision_id,
+                scope.provider_qualification_decision_id,
+                scope.provider_qualification_decision_id,
+                scope.provider_qualification_decision_id,
+                scope.provider_qualification_decision_id,
+                dataset_id,
+            ),
+        ).fetchone()
+        if row is None or int(row[0]) < 1 or row[1] is None:
+            raise ArtifactIntegrityError("Formal Dataset has no qualified source roster")
+        source_count = int(row[0])
+        roster_hash = str(row[1])
+        content = canonical_json_sha256(
+            {
+                "dataset_id": dataset_id,
+                "formal_research_campaign_id": scope.formal_research_campaign_id,
+                "provider_qualification_decision_id": scope.provider_qualification_decision_id,
+                "qualified_source_count": source_count,
+                "qualified_source_roster_sha256": roster_hash,
+            }
+        )
+        self._connection.execute(
+            """
+            INSERT INTO mra.formal_research_dataset (
+                formal_research_campaign_id, dataset_id,
+                provider_qualification_decision_id,
+                qualified_source_count, qualified_source_roster_sha256,
+                content_sha256
+            ) VALUES (%s, %s, %s, %s, %s, %s)
+            """,
+            (
+                scope.formal_research_campaign_id,
+                dataset_id,
+                scope.provider_qualification_decision_id,
+                source_count,
+                roster_hash,
+                content,
+            ),
+        )
+        return content
+
+    def formal_dataset_matches(
+        self, dataset_id: UUID, scope: FormalDatasetScope
+    ) -> bool:
+        row = self._connection.execute(
+            """
+            SELECT 1 FROM mra.formal_research_dataset
+            WHERE formal_research_campaign_id = %s
+              AND dataset_id = %s
+              AND provider_qualification_decision_id = %s
+            """,
+            (
+                scope.formal_research_campaign_id,
+                dataset_id,
+                scope.provider_qualification_decision_id,
+            ),
+        ).fetchone()
+        return row is not None
 
 
 def _feature_definition(row: tuple[Any, ...]) -> FeatureDefinition:

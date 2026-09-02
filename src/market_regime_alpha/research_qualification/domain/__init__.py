@@ -1,5 +1,4 @@
 """Stable Research Definition Domain exports."""
-
 from market_regime_alpha.research_qualification.domain.manifest import (
     DatasetSource,
     DecisionInputDatasetManifest,
@@ -47,6 +46,11 @@ from market_regime_alpha.research_qualification.domain.vocabulary import (
     FeatureSourceRequirement,
     FeatureValueType,
 )
+from market_regime_alpha.research_qualification.domain.formal_campaign import (
+    CampaignClass, CampaignCostAssumption, CampaignCostKind,
+    CampaignEvaluationProtocolBinding, FormalDatasetScope,
+    FormalResearchCampaignDefinition,
+)
 __all__ = [
     "ArtifactBinding",
     "DatasetSource",
@@ -62,6 +66,9 @@ __all__ = [
     "FeatureMissingnessPolicy",
     "FeatureSourceRequirement",
     "FeatureValueType",
+    "CampaignClass", "CampaignCostAssumption", "CampaignCostKind",
+    "CampaignEvaluationProtocolBinding", "FormalDatasetScope",
+    "FormalResearchCampaignDefinition",
     "TargetAlgorithmBinding",
     "TargetAvailabilityRule",
     "TargetBarTimeframe",

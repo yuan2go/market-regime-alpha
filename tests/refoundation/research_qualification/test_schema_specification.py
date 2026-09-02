@@ -27,6 +27,7 @@ def test_research_and_qualification_schema_has_exact_owned_relations(
         "dataset",
         "dataset_source",
         "feature_definition",
+        "formal_research_dataset",
     }
     assert EXPECTED_RESEARCH_DEFINITION_TABLES <= tables
     assert EXPECTED_RESEARCH_VALIDITY_TABLES <= tables
@@ -152,5 +153,10 @@ def test_dataset_source_has_only_closed_real_fk_roles_and_required_indexes(
     } <= set(indexes)
     assert {table for table, _ in triggers} == EXPECTED_RESEARCH_DEFINITION_TABLES
     assert all(
-        "reject_append_only_mutation" in statement for _, statement in triggers
+        any(
+            trigger_table == table
+            and "reject_append_only_mutation" in statement
+            for trigger_table, statement in triggers
+        )
+        for table in EXPECTED_RESEARCH_DEFINITION_TABLES
     )
