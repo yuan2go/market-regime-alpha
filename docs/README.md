@@ -129,6 +129,14 @@ Checkpoint traceability:
 - [WP-13 Remaining Decision Support Implementation Plan](references/WP-ARCHITECTURE-REFOUNDATION-13-Remaining-Decision-Support-Implementation-Plan.md)
   — public-seam TDD slices, narrow UoWs, schema closure, composition,
   verification, exact-SHA qualification and merge sequence for that contract.
+- [WP-13 Remaining Decision Support Implementation Status](references/WP-ARCHITECTURE-REFOUNDATION-13-Remaining-Decision-Support-Implementation-Status.md)
+  — current handoff read model for the qualified implementation and its strict
+  non-cutover and non-empirical evidence ceiling.
+- [WP-13 Remaining Decision Support Verification](references/WP-ARCHITECTURE-REFOUNDATION-13-Remaining-Decision-Support-Verification.md)
+  — immutable exact-SHA engineering proof for later-generation Qualification
+  binding, PIT Context, Strategy, Signal, rule-based Forecast, Opportunity,
+  Thesis, complete Portfolio/Risk, PostgreSQL qualification, full regression,
+  and `WP13_EXIT_GATE = PASS`.
 
 Design documents in this section define the Target destination. Status and
 Verification records report their explicitly bounded implementation evidence;

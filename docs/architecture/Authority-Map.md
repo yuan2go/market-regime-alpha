@@ -4,7 +4,7 @@
 > **Authority:** Target business-fact ownership and canonical-write specification
 > **Owner:** Market Regime Alpha maintainers
 > **Last Updated:** 2026-09-02
-> **Code Evidence:** target `src/market_regime_alpha/shared`, `src/market_regime_alpha/runtime`, `src/market_regime_alpha/market`, `src/market_regime_alpha/selection`, `src/market_regime_alpha/research_qualification`, `src/market_regime_alpha/infrastructure`, `src/market_regime_alpha/interfaces`, `src/market_regime_alpha/infrastructure/postgres/migrations/001_baseline.sql`, `tests/refoundation`; legacy source/migrations remain current business implementation
+> **Code Evidence:** target `src/market_regime_alpha/shared`, `src/market_regime_alpha/runtime`, `src/market_regime_alpha/market`, `src/market_regime_alpha/selection`, `src/market_regime_alpha/research_qualification`, `src/market_regime_alpha/decision_support`, `src/market_regime_alpha/infrastructure`, `src/market_regime_alpha/interfaces`, `src/market_regime_alpha/infrastructure/postgres/migrations/001_baseline.sql`, `tests/refoundation`; legacy source/migrations remain current business implementation
 
 This document answers one question for every retained fact: who may create or
 change it? A table, DTO, policy, artifact, snapshot, report, receipt, or query is
@@ -101,8 +101,8 @@ Domain errors nor commands and is not a command bus or workflow owner.
 | Context assessment | Decision Support | `RegisterContextPolicy`, `AssessContext` | `context_policy`, `context_policy_metric`, `context_assessment`, `context_metric`, `context_metric_source` | immutable typed Regime/ETF/Theme/Capital/Breadth rules; complete Market/PIT source lineage, Known Time, availability and missingness; never Outcome | Signal/Strategy |
 | Signal | Decision Support | `ProduceSignal` | `signal`, `signal_context_binding` | one immutable typed assertion for every Candidate under exact Context/Strategy inputs; explicit no-signal/wait/unknown/not-estimable; no probability claim | Forecast/Opportunity |
 | Forecast | Decision Support | `ProduceForecast` | `forecast`, `forecast_estimate` | complete rule-based Target/commitment/checkpoint estimates; uncalibrated semantics explicit; no Model prerequisite or placeholder | Opportunity/Evaluation |
-| Opportunity | Decision Support | `CreateOpportunity` | `opportunity` | exact Candidate/Signal/Forecast/Context/Strategy input binding; no Risk authorization | Thesis/Portfolio |
-| Thesis/condition | Decision Support | `Create/ReviseThesis` | `thesis`, `thesis_condition` | immutable revision; conditions typed and independently observed | Portfolio, monitoring |
+| Opportunity | Decision Support | `CreateOpportunities` | `opportunity_set`, `opportunity`, `opportunity_context` | complete Forecast roster with exact Candidate/Signal/Forecast/Context/Strategy input bindings; no Risk authorization | Thesis/Portfolio |
+| Thesis/condition | Decision Support | `CreateThesis` | `thesis`, `thesis_condition` | immutable append-only revision; conditions typed and independently observed | Portfolio, monitoring |
 | Strategy/version | Decision Support | `RegisterStrategyVersion` | `strategy`, `strategy_version` | stable semantics; qualification purpose-scoped | Opportunity/Portfolio |
 | Portfolio policy | Decision Support | `RegisterPortfolioPolicy` | `portfolio_policy` | immutable allocation constraints | proposal |
 | Portfolio proposal/line | Decision Support | `ProposePortfolio` | `portfolio_proposal`, `portfolio_line` | complete allocation result; no account/Fill mutation | Risk/Execution |
@@ -124,11 +124,10 @@ Domain errors nor commands and is not a command bus or workflow owner.
 | Physical Position | Execution & Account query owner | no direct write | `current_position` view over `fill` + `position_basis_event` | always derived as-of; no independent Position table | Risk, inspection |
 | Strategy sleeve | Execution & Account query owner | no direct write | query/view over effective `fill_allocation` and qualified corporate actions | derived; opening/reconciliation quantities stay unallocated | Outcome/Attribution |
 
-Rows through Market Target Outcome and Research Evaluation describe implemented,
-engineering-qualified target-draft ownership without Runtime/CLI cutover; rows
-for Evidence, Assessment, Qualification, Model, later
-Decision Support, Execution, TradeOutcome, and Attribution remain logical
-Target design only. Their sequence is owned only by the Roadmap. Realized
+Rows through Research Qualification and WP-13 Decision Support describe
+implemented, engineering-qualified target-draft ownership without Runtime/CLI
+cutover. Rows for Model, Execution, TradeOutcome, and Attribution remain
+logical Target design only. Their sequence is owned only by the Roadmap. Realized
 market labels stay under the Market Target Outcome Authority and realized trade
 economics under TradeOutcome; Research cannot construct a parallel truth source.
 
