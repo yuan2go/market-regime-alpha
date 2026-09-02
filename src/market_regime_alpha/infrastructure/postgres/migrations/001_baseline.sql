@@ -17267,3 +17267,365 @@ END;
 $$;
 CREATE TRIGGER formal_research_dataset_guard BEFORE INSERT ON mra.formal_research_dataset FOR EACH ROW EXECUTE FUNCTION mra.validate_formal_research_dataset();
 CREATE TRIGGER formal_research_dataset_append_only BEFORE UPDATE OR DELETE ON mra.formal_research_dataset FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+
+-- WP-17P Market-owned retrospective/prospective archive Authority.
+CREATE TABLE mra.market_archive (
+    market_archive_id uuid PRIMARY KEY,
+    archive_code text NOT NULL UNIQUE,
+    request_identity text NOT NULL UNIQUE,
+    request_sha256 text NOT NULL,
+    lane text NOT NULL,
+    evidence_class text NOT NULL,
+    provider_product_id uuid NOT NULL REFERENCES mra.provider_product(provider_product_id) ON DELETE RESTRICT,
+    exchange_code text NOT NULL,
+    timeframe text NOT NULL,
+    price_basis text NOT NULL,
+    instrument_scope text NOT NULL,
+    instrument_scope_sha256 text NOT NULL,
+    event_window_start timestamptz NOT NULL,
+    event_window_end timestamptz NOT NULL,
+    archive_start_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    reserved_free_bytes bigint NOT NULL,
+    maximum_archive_bytes bigint NOT NULL,
+    maximum_slice_bytes bigint NOT NULL,
+    code_artifact_id uuid NOT NULL REFERENCES mra.artifact(artifact_id) ON DELETE RESTRICT,
+    config_artifact_id uuid NOT NULL REFERENCES mra.artifact(artifact_id) ON DELETE RESTRICT,
+    provenance_sha256 text NOT NULL,
+    slice_count integer NOT NULL,
+    slice_roster_sha256 text NOT NULL,
+    content_sha256 text NOT NULL,
+    registered_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT market_archive_shape_ck CHECK (
+        archive_code ~ '^[a-z][a-z0-9_-]{0,99}$'
+        AND request_sha256 ~ '^[0-9a-f]{64}$'
+        AND lane IN ('RETROSPECTIVE_BACKFILL', 'PROSPECTIVE_CONTEMPORANEOUS')
+        AND evidence_class IN ('EXPLORATORY_RETROSPECTIVE', 'FIRST_PARTY_CONTEMPORANEOUS')
+        AND exchange_code ~ '^[A-Z][A-Z0-9]{1,15}$'
+        AND timeframe IN ('MINUTE_1', 'MINUTE_5', 'MINUTE_15', 'MINUTE_30', 'MINUTE_60', 'DAILY')
+        AND price_basis IN ('RAW_UNADJUSTED', 'FORWARD_ADJUSTED', 'BACKWARD_ADJUSTED')
+        AND instrument_scope <> ''
+        AND instrument_scope_sha256 ~ '^[0-9a-f]{64}$'
+        AND event_window_end >= event_window_start
+        AND reserved_free_bytes > 0
+        AND maximum_archive_bytes > 0
+        AND maximum_slice_bytes > 0
+        AND maximum_slice_bytes <= maximum_archive_bytes
+        AND provenance_sha256 ~ '^[0-9a-f]{64}$'
+        AND slice_count > 0
+        AND slice_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE TABLE mra.market_archive_slice (
+    market_archive_slice_id uuid PRIMARY KEY,
+    market_archive_id uuid NOT NULL REFERENCES mra.market_archive(market_archive_id) ON DELETE RESTRICT,
+    ordinal integer NOT NULL,
+    scope_key text NOT NULL,
+    event_window_start timestamptz NOT NULL,
+    event_window_end timestamptz NOT NULL,
+    request_sha256 text NOT NULL,
+    expected_fact_kind text NOT NULL,
+    content_sha256 text NOT NULL,
+    planned_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT market_archive_slice_archive_identity_uk UNIQUE (market_archive_id, market_archive_slice_id),
+    CONSTRAINT market_archive_slice_ordinal_uk UNIQUE (market_archive_id, ordinal),
+    CONSTRAINT market_archive_slice_request_uk UNIQUE (market_archive_id, request_sha256),
+    CONSTRAINT market_archive_slice_shape_ck CHECK (
+        ordinal > 0
+        AND scope_key <> ''
+        AND event_window_end >= event_window_start
+        AND request_sha256 ~ '^[0-9a-f]{64}$'
+        AND expected_fact_kind ~ '^[A-Z][A-Z0-9_]{0,63}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE TABLE mra.market_archive_capture_observation (
+    market_archive_capture_observation_id uuid PRIMARY KEY,
+    market_archive_id uuid NOT NULL REFERENCES mra.market_archive(market_archive_id) ON DELETE RESTRICT,
+    market_archive_slice_id uuid NOT NULL,
+    capture_id uuid NOT NULL REFERENCES mra.data_capture(capture_id) ON DELETE RESTRICT,
+    observation_ordinal integer NOT NULL,
+    previous_observation_id uuid REFERENCES mra.market_archive_capture_observation(market_archive_capture_observation_id) ON DELETE RESTRICT,
+    schedule_slot text NOT NULL,
+    requested_at timestamptz NOT NULL,
+    capture_started_at timestamptz NOT NULL,
+    capture_completed_at timestamptz NOT NULL,
+    recorded_at timestamptz NOT NULL,
+    known_at timestamptz NOT NULL,
+    event_window_start timestamptz NOT NULL,
+    event_window_end timestamptz NOT NULL,
+    artifact_sha256 text NOT NULL,
+    artifact_size_bytes bigint NOT NULL,
+    normalized_revision_count integer NOT NULL,
+    normalized_revision_roster_sha256 text NOT NULL,
+    relation text NOT NULL,
+    timeliness text NOT NULL,
+    content_sha256 text NOT NULL,
+    observed_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT market_archive_observation_slice_fk FOREIGN KEY (market_archive_id, market_archive_slice_id)
+        REFERENCES mra.market_archive_slice(market_archive_id, market_archive_slice_id) ON DELETE RESTRICT,
+    CONSTRAINT market_archive_observation_ordinal_uk UNIQUE (market_archive_slice_id, observation_ordinal),
+    CONSTRAINT market_archive_observation_capture_uk UNIQUE (market_archive_id, capture_id),
+    CONSTRAINT market_archive_observation_shape_ck CHECK (
+        observation_ordinal > 0
+        AND schedule_slot ~ '^[A-Z][A-Z0-9_]{0,63}$'
+        AND requested_at <= capture_started_at
+        AND capture_started_at <= capture_completed_at
+        AND capture_completed_at <= recorded_at
+        AND known_at = greatest(capture_completed_at, recorded_at)
+        AND event_window_end >= event_window_start
+        AND artifact_sha256 ~ '^[0-9a-f]{64}$'
+        AND artifact_size_bytes >= 0
+        AND normalized_revision_count >= 0
+        AND normalized_revision_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND relation IN ('FIRST', 'IDENTICAL', 'CHANGED', 'FAILED')
+        AND timeliness IN ('ON_TIME', 'LATE', 'MISSED', 'NOT_APPLICABLE')
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+        AND ((observation_ordinal = 1) = (previous_observation_id IS NULL))
+        AND ((observation_ordinal = 1) = (relation = 'FIRST'))
+    )
+);
+
+CREATE TABLE mra.market_archive_slice_gap (
+    market_archive_slice_gap_id uuid PRIMARY KEY,
+    market_archive_id uuid NOT NULL REFERENCES mra.market_archive(market_archive_id) ON DELETE RESTRICT,
+    market_archive_slice_id uuid NOT NULL,
+    gap_id uuid NOT NULL REFERENCES mra.source_gap(gap_id) ON DELETE RESTRICT,
+    terminal_status text NOT NULL,
+    content_sha256 text NOT NULL,
+    recorded_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT market_archive_slice_gap_slice_fk FOREIGN KEY (market_archive_id, market_archive_slice_id)
+        REFERENCES mra.market_archive_slice(market_archive_id, market_archive_slice_id) ON DELETE RESTRICT,
+    CONSTRAINT market_archive_slice_gap_slice_uk UNIQUE (market_archive_slice_id),
+    CONSTRAINT market_archive_slice_gap_gap_uk UNIQUE (market_archive_id, gap_id),
+    CONSTRAINT market_archive_slice_gap_shape_ck CHECK (
+        terminal_status IN ('GAP_RECORDED', 'RESOURCE_LIMIT')
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE TABLE mra.market_archive_seal (
+    market_archive_seal_id uuid PRIMARY KEY,
+    market_archive_id uuid NOT NULL UNIQUE REFERENCES mra.market_archive(market_archive_id) ON DELETE RESTRICT,
+    sealed_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    knowledge_cutoff timestamptz NOT NULL,
+    disposition text NOT NULL,
+    slice_count integer NOT NULL,
+    slice_roster_sha256 text NOT NULL,
+    capture_count integer NOT NULL,
+    capture_roster_sha256 text NOT NULL,
+    artifact_count integer NOT NULL,
+    artifact_roster_sha256 text NOT NULL,
+    normalized_revision_count integer NOT NULL,
+    normalized_revision_roster_sha256 text NOT NULL,
+    gap_count integer NOT NULL,
+    gap_roster_sha256 text NOT NULL,
+    content_sha256 text NOT NULL,
+    CONSTRAINT market_archive_seal_shape_ck CHECK (
+        knowledge_cutoff = sealed_at
+        AND disposition IN ('COMPLETE', 'PARTIAL_WITH_GAPS', 'PARTIAL_WITH_RESOURCE_LIMIT')
+        AND slice_count > 0
+        AND capture_count >= 0
+        AND artifact_count >= 0
+        AND normalized_revision_count >= 0
+        AND gap_count >= 0
+        AND slice_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND capture_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND artifact_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND normalized_revision_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND gap_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE INDEX market_archive_product_idx ON mra.market_archive(provider_product_id, lane, archive_start_at);
+CREATE INDEX market_archive_code_artifact_idx ON mra.market_archive(code_artifact_id);
+CREATE INDEX market_archive_config_artifact_idx ON mra.market_archive(config_artifact_id);
+CREATE INDEX market_archive_slice_archive_idx ON mra.market_archive_slice(market_archive_id, ordinal);
+CREATE INDEX market_archive_observation_slice_idx ON mra.market_archive_capture_observation(market_archive_slice_id, observation_ordinal);
+CREATE INDEX market_archive_observation_archive_slice_idx ON mra.market_archive_capture_observation(market_archive_id, market_archive_slice_id);
+CREATE INDEX market_archive_observation_capture_idx ON mra.market_archive_capture_observation(capture_id);
+CREATE INDEX market_archive_observation_previous_idx ON mra.market_archive_capture_observation(previous_observation_id);
+CREATE INDEX market_archive_slice_gap_slice_idx ON mra.market_archive_slice_gap(market_archive_slice_id);
+CREATE INDEX market_archive_slice_gap_archive_slice_idx ON mra.market_archive_slice_gap(market_archive_id, market_archive_slice_id);
+CREATE INDEX market_archive_slice_gap_gap_idx ON mra.market_archive_slice_gap(gap_id);
+CREATE INDEX market_archive_seal_archive_idx ON mra.market_archive_seal(market_archive_id);
+
+CREATE FUNCTION mra.validate_market_archive()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF (NEW.lane = 'RETROSPECTIVE_BACKFILL') <> (NEW.evidence_class = 'EXPLORATORY_RETROSPECTIVE')
+       OR (NEW.lane = 'PROSPECTIVE_CONTEMPORANEOUS') <> (NEW.evidence_class = 'FIRST_PARTY_CONTEMPORANEOUS') THEN
+        RAISE EXCEPTION 'Market archive lane/evidence class mismatch' USING ERRCODE = '55000';
+    END IF;
+    IF NEW.lane = 'PROSPECTIVE_CONTEMPORANEOUS'
+       AND NEW.event_window_start < NEW.archive_start_at THEN
+        RAISE EXCEPTION 'Prospective archive event window precedes archive_start_at' USING ERRCODE = '55000';
+    END IF;
+    IF NEW.registered_at < NEW.archive_start_at THEN
+        RAISE EXCEPTION 'Market archive registration precedes archive_start_at' USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.validate_market_archive_slice()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE root mra.market_archive%ROWTYPE;
+BEGIN
+    SELECT * INTO root FROM mra.market_archive WHERE market_archive_id = NEW.market_archive_id FOR SHARE;
+    IF NEW.event_window_start < root.event_window_start
+       OR NEW.event_window_end > root.event_window_end
+       OR (root.lane = 'PROSPECTIVE_CONTEMPORANEOUS' AND NEW.event_window_start < root.archive_start_at) THEN
+        RAISE EXCEPTION 'Market archive slice lies outside its frozen window' USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.validate_market_archive_roster()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE archive_id uuid;
+DECLARE root mra.market_archive%ROWTYPE;
+DECLARE actual_count integer;
+DECLARE actual_hash text;
+DECLARE actual_ordinals integer[];
+BEGIN
+    archive_id := CASE WHEN TG_TABLE_NAME = 'market_archive' THEN NEW.market_archive_id ELSE NEW.market_archive_id END;
+    SELECT * INTO root FROM mra.market_archive WHERE market_archive_id = archive_id;
+    SELECT count(*), array_agg(ordinal ORDER BY ordinal),
+           mra.canonical_sha256(mra.canonical_json_text(jsonb_agg(
+               jsonb_build_object('content_sha256', content_sha256, 'ordinal', ordinal)
+               ORDER BY ordinal
+           )))
+      INTO actual_count, actual_ordinals, actual_hash
+    FROM mra.market_archive_slice WHERE market_archive_id = archive_id;
+    IF actual_count <> root.slice_count
+       OR actual_ordinals <> ARRAY(SELECT generate_series(1, root.slice_count))
+       OR actual_hash <> root.slice_roster_sha256 THEN
+        RAISE EXCEPTION 'Market archive slice roster is incomplete' USING ERRCODE = '55000';
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+CREATE FUNCTION mra.validate_market_archive_observation()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE root mra.market_archive%ROWTYPE;
+DECLARE slice_row mra.market_archive_slice%ROWTYPE;
+DECLARE capture_row mra.data_capture%ROWTYPE;
+DECLARE artifact_row mra.artifact%ROWTYPE;
+DECLARE prior mra.market_archive_capture_observation%ROWTYPE;
+DECLARE expected_relation text;
+DECLARE expected_timeliness text;
+BEGIN
+    SELECT * INTO root FROM mra.market_archive WHERE market_archive_id = NEW.market_archive_id FOR SHARE;
+    SELECT * INTO slice_row FROM mra.market_archive_slice WHERE market_archive_slice_id = NEW.market_archive_slice_id FOR SHARE;
+    SELECT * INTO capture_row FROM mra.data_capture WHERE capture_id = NEW.capture_id FOR SHARE;
+    SELECT * INTO artifact_row FROM mra.artifact WHERE artifact_id = capture_row.artifact_id FOR SHARE;
+    IF slice_row.market_archive_id <> root.market_archive_id
+       OR capture_row.provider_product_id <> root.provider_product_id
+       OR capture_row.status <> 'CAPTURED'
+       OR artifact_row.integrity_state <> 'AVAILABLE'
+       OR NEW.capture_started_at <> capture_row.capture_started_at
+       OR NEW.capture_completed_at <> capture_row.capture_completed_at
+       OR NEW.recorded_at <> capture_row.recorded_at
+       OR NEW.known_at <> capture_row.known_at
+       OR NEW.artifact_sha256 <> artifact_row.content_sha256
+       OR NEW.artifact_size_bytes <> artifact_row.size_bytes
+       OR EXISTS (SELECT 1 FROM mra.market_archive_slice_gap WHERE market_archive_slice_id = NEW.market_archive_slice_id) THEN
+        RAISE EXCEPTION 'Market archive observation lineage is invalid' USING ERRCODE = '55000';
+    END IF;
+    SELECT * INTO prior FROM mra.market_archive_capture_observation
+    WHERE market_archive_slice_id = NEW.market_archive_slice_id
+    ORDER BY observation_ordinal DESC LIMIT 1 FOR SHARE;
+    IF prior.market_archive_capture_observation_id IS NULL THEN
+        expected_relation := 'FIRST';
+        IF NEW.observation_ordinal <> 1 OR NEW.previous_observation_id IS NOT NULL THEN
+            RAISE EXCEPTION 'Market archive first observation ordinal is invalid' USING ERRCODE = '55000';
+        END IF;
+    ELSE
+        expected_relation := CASE WHEN prior.artifact_sha256 = NEW.artifact_sha256 THEN 'IDENTICAL' ELSE 'CHANGED' END;
+        IF NEW.observation_ordinal <> prior.observation_ordinal + 1
+           OR NEW.previous_observation_id <> prior.market_archive_capture_observation_id THEN
+            RAISE EXCEPTION 'Market archive observation_ordinal chain is invalid' USING ERRCODE = '55000';
+        END IF;
+    END IF;
+    expected_timeliness := CASE
+        WHEN root.lane = 'RETROSPECTIVE_BACKFILL' THEN 'NOT_APPLICABLE'
+        WHEN NEW.known_at <= NEW.event_window_end THEN 'ON_TIME'
+        ELSE 'LATE'
+    END;
+    IF NEW.relation <> expected_relation OR NEW.timeliness <> expected_timeliness
+       OR (root.lane = 'PROSPECTIVE_CONTEMPORANEOUS' AND NEW.requested_at < root.archive_start_at) THEN
+        RAISE EXCEPTION 'Market archive observation relation/timeliness is invalid' USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.validate_market_archive_slice_gap()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE root mra.market_archive%ROWTYPE;
+DECLARE gap_row mra.source_gap%ROWTYPE;
+DECLARE capture_product uuid;
+BEGIN
+    SELECT * INTO root FROM mra.market_archive WHERE market_archive_id = NEW.market_archive_id FOR SHARE;
+    SELECT * INTO gap_row FROM mra.source_gap WHERE gap_id = NEW.gap_id FOR SHARE;
+    SELECT provider_product_id INTO capture_product FROM mra.data_capture WHERE capture_id = gap_row.capture_id FOR SHARE;
+    IF capture_product <> root.provider_product_id
+       OR EXISTS (SELECT 1 FROM mra.market_archive_capture_observation WHERE market_archive_slice_id = NEW.market_archive_slice_id) THEN
+        RAISE EXCEPTION 'Market archive slice gap lineage is invalid' USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.validate_market_archive_seal()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE root mra.market_archive%ROWTYPE;
+DECLARE terminal_count integer;
+DECLARE resource_count integer;
+BEGIN
+    SELECT * INTO root FROM mra.market_archive WHERE market_archive_id = NEW.market_archive_id FOR SHARE;
+    SELECT count(*), count(*) FILTER (WHERE terminal_status = 'RESOURCE_LIMIT')
+      INTO terminal_count, resource_count
+    FROM (
+        SELECT market_archive_slice_id, 'CAPTURED'::text AS terminal_status
+        FROM mra.market_archive_capture_observation
+        WHERE market_archive_id = NEW.market_archive_id
+        GROUP BY market_archive_slice_id
+        UNION ALL
+        SELECT market_archive_slice_id, terminal_status
+        FROM mra.market_archive_slice_gap
+        WHERE market_archive_id = NEW.market_archive_id
+    ) AS terminal;
+    IF root.lane <> 'RETROSPECTIVE_BACKFILL'
+       OR NEW.sealed_at < root.archive_start_at
+       OR NEW.knowledge_cutoff <> NEW.sealed_at
+       OR terminal_count <> root.slice_count
+       OR NEW.slice_count <> root.slice_count
+       OR NEW.slice_roster_sha256 <> root.slice_roster_sha256
+       OR (NEW.disposition = 'COMPLETE' AND (NEW.gap_count <> 0 OR terminal_count <> NEW.capture_count))
+       OR (NEW.disposition = 'PARTIAL_WITH_GAPS' AND NEW.gap_count < 1)
+       OR (NEW.disposition = 'PARTIAL_WITH_RESOURCE_LIMIT' AND resource_count < 1) THEN
+        RAISE EXCEPTION 'Retrospective archive seal roster/disposition is invalid' USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER market_archive_guard BEFORE INSERT ON mra.market_archive FOR EACH ROW EXECUTE FUNCTION mra.validate_market_archive();
+CREATE TRIGGER market_archive_slice_guard BEFORE INSERT ON mra.market_archive_slice FOR EACH ROW EXECUTE FUNCTION mra.validate_market_archive_slice();
+CREATE CONSTRAINT TRIGGER market_archive_roster_root_guard AFTER INSERT ON mra.market_archive DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION mra.validate_market_archive_roster();
+CREATE CONSTRAINT TRIGGER market_archive_roster_slice_guard AFTER INSERT ON mra.market_archive_slice DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION mra.validate_market_archive_roster();
+CREATE TRIGGER market_archive_observation_guard BEFORE INSERT ON mra.market_archive_capture_observation FOR EACH ROW EXECUTE FUNCTION mra.validate_market_archive_observation();
+CREATE TRIGGER market_archive_slice_gap_guard BEFORE INSERT ON mra.market_archive_slice_gap FOR EACH ROW EXECUTE FUNCTION mra.validate_market_archive_slice_gap();
+CREATE TRIGGER market_archive_seal_guard BEFORE INSERT ON mra.market_archive_seal FOR EACH ROW EXECUTE FUNCTION mra.validate_market_archive_seal();
+CREATE TRIGGER market_archive_append_only BEFORE UPDATE OR DELETE ON mra.market_archive FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER market_archive_slice_append_only BEFORE UPDATE OR DELETE ON mra.market_archive_slice FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER market_archive_observation_append_only BEFORE UPDATE OR DELETE ON mra.market_archive_capture_observation FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER market_archive_slice_gap_append_only BEFORE UPDATE OR DELETE ON mra.market_archive_slice_gap FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER market_archive_seal_append_only BEFORE UPDATE OR DELETE ON mra.market_archive_seal FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();

@@ -1,5 +1,15 @@
 """Stable public exports for Market/PIT commands."""
 
+from market_regime_alpha.market.application.archive import (
+    ArchiveCaptureObservationResult,
+    ArchiveCommands,
+    ArchiveSealResult,
+    ArchiveSlicePlan,
+    ArchiveSliceGapResult,
+    MarketArchiveResult,
+    RecordArchiveCaptureObservationRequest,
+    StartMarketArchiveRequest,
+)
 from market_regime_alpha.market.application.results import (
     CaptureMutationResult,
     MarketMutationResult,
@@ -14,12 +24,20 @@ from market_regime_alpha.market.application.provider_qualification import (
 )
 
 __all__ = [
+    "ArchiveCaptureObservationResult",
+    "ArchiveCommands",
+    "ArchiveSealResult",
+    "ArchiveSlicePlan",
+    "ArchiveSliceGapResult",
     "CaptureMutationResult",
     "MarketApplication",
+    "MarketArchiveResult",
     "MarketMutationResult",
     "ProviderFinalityObservationResult",
     "ProviderProtocolRegistrationResult",
     "ProviderQualificationCommands",
     "ProviderQualificationCompletionResult",
     "QualifiedHistoricalVisibilityResult",
+    "RecordArchiveCaptureObservationRequest",
+    "StartMarketArchiveRequest",
 ]

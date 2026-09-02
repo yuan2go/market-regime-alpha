@@ -1,5 +1,11 @@
 """Stable public ports for the Market/PIT bounded context."""
 
+from market_regime_alpha.market.ports.archive import (
+    ArchiveRepository,
+    ArchiveSliceGapRecord,
+    ArchiveUnitOfWork,
+    ArchiveUnitOfWorkProvider,
+)
 from market_regime_alpha.market.ports.provider import (
     CaptureRequest,
     MarketArtifactByteStore,
@@ -37,6 +43,10 @@ from market_regime_alpha.market.ports.provider_qualification_queries import (
 )
 
 __all__ = [
+    "ArchiveRepository",
+    "ArchiveSliceGapRecord",
+    "ArchiveUnitOfWork",
+    "ArchiveUnitOfWorkProvider",
     "CaptureRequest",
     "CaptureSource",
     "MarketArtifactByteStore",

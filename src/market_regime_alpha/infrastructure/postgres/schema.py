@@ -23,6 +23,11 @@ from market_regime_alpha.decision_support.domain.vocabulary import (
     DecisionRuntimeMode,
 )
 from market_regime_alpha.market.domain import (
+    ArchiveEvidenceClass,
+    ArchiveLane,
+    ArchiveObservationRelation,
+    ArchiveObservationTimeliness,
+    ArchiveSealDisposition,
     BarTimeframe,
     CaptureStatus,
     CorporateActionType,
@@ -200,6 +205,21 @@ EXPECTED_MARKET_TABLES: Final[frozenset[str]] = frozenset(
         "qualified_classification_membership_visibility",
         "qualified_trading_session_visibility",
         "qualified_source_gap_visibility",
+        "market_archive",
+        "market_archive_slice",
+        "market_archive_capture_observation",
+        "market_archive_slice_gap",
+        "market_archive_seal",
+    }
+)
+
+EXPECTED_MARKET_ARCHIVE_TABLES: Final[frozenset[str]] = frozenset(
+    {
+        "market_archive",
+        "market_archive_slice",
+        "market_archive_capture_observation",
+        "market_archive_slice_gap",
+        "market_archive_seal",
     }
 )
 
@@ -393,6 +413,19 @@ _LEGACY_TABLE_SIGNATURES: Final[frozenset[str]] = frozenset(
 )
 
 _REFERENCE_VOCABULARY: Final[dict[str, tuple[str, ...]]] = {
+    "market_archive_lane": tuple(item.value for item in ArchiveLane),
+    "market_archive_evidence_class": tuple(
+        item.value for item in ArchiveEvidenceClass
+    ),
+    "market_archive_observation_relation": tuple(
+        item.value for item in ArchiveObservationRelation
+    ),
+    "market_archive_observation_timeliness": tuple(
+        item.value for item in ArchiveObservationTimeliness
+    ),
+    "market_archive_seal_disposition": tuple(
+        item.value for item in ArchiveSealDisposition
+    ),
     "provider_kind": tuple(item.value for item in ProviderKind),
     "provider_qualification_purpose": tuple(
         item.value for item in ProviderQualificationPurpose

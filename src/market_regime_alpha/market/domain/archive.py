@@ -103,7 +103,6 @@ class MarketArchiveSlice:
                         "ordinal": self.ordinal,
                         "request_sha256": str(request_hash),
                         "scope_key": self.scope_key,
-                        "status": self.status,
                     }
                 )
             ),
