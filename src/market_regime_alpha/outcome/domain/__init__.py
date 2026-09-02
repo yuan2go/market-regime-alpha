@@ -1,6 +1,7 @@
 """Public Market Target Outcome domain API."""
 
 from market_regime_alpha.outcome.domain.authority import (
+    ExploratoryRetrospectiveOutcomeScope,
     MarketTargetOutcomeAuthority,
     MarketTargetOutcomeIdentityPlan,
     OutcomeCommitmentSnapshot,
@@ -51,6 +52,7 @@ from market_regime_alpha.outcome.domain.verification import (
 )
 
 __all__ = [
+    "ExploratoryRetrospectiveOutcomeScope",
     "MarketTargetOutcomeAuthority",
     "MarketTargetOutcomeIdentityPlan",
     "OutcomeCommitmentSnapshot",

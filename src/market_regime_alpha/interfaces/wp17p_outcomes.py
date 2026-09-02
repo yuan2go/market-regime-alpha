@@ -44,6 +44,7 @@ class Wp17pSettledOutcome:
     outcome_revision_id: UUID
     status: OutcomeStatus
     result_hash: str
+    settled_at: datetime
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,8 +121,7 @@ class Wp17pOutcomeOperations:
                 revision.draft.observation_cutoff != observation_cutoff
                 or revision.draft.knowledge_cutoff != knowledge_cutoff
                 or revision.supersedes_revision_id is not None
-                or existing.authority.commitment.target_definition_id
-                != catalog.target.target_definition_id
+                or existing.authority.commitment.target_definition_id != catalog.target.target_definition_id
             ):
                 raise ValueError("persisted Outcome replay differs from frozen request")
             return self._verified(existing)
@@ -140,7 +140,7 @@ class Wp17pOutcomeOperations:
             code_sha=self._code_sha,
         )
         claim = _claim(self._application, runtime_run_id)
-        result = self._application.outcomes.settle_market_target_outcome(
+        result = self._application.outcomes.settle_exploratory_retrospective_market_target_outcome(
             SettleMarketTargetOutcomeRequest(
                 commitment_id,
                 observation_cutoff,
@@ -152,9 +152,7 @@ class Wp17pOutcomeOperations:
         )
         if isinstance(result, OutcomeNotDueResult):
             raise ValueError("predeclared retrospective Outcome is unexpectedly NOT_DUE")
-        snapshot = self._application.outcome_queries.load(
-            result.market_target_outcome_revision_id
-        )
+        snapshot = self._application.outcome_queries.load(result.market_target_outcome_revision_id)
         return self._verified(snapshot)
 
     def _verified(self, snapshot) -> Wp17pSettledOutcome:
@@ -167,6 +165,7 @@ class Wp17pOutcomeOperations:
             revision_id,
             snapshot.authority.revision.draft.status,
             snapshot.result_hash,
+            snapshot.authority.revision.settled_at,
         )
 
 
@@ -178,28 +177,17 @@ def outcome_observation_cutoff(
 
     sessions = tuple(
         sorted(
-            (
-                item
-                for fold in catalog.backtest.folds
-                for item in fold.sessions
-            ),
+            (item for fold in catalog.backtest.folds for item in fold.sessions),
             key=lambda item: (item.session_date, str(item.trading_session_id)),
         )
     )
     if len({item.trading_session_id for item in sessions}) != len(sessions):
         raise ValueError("backtest trading-session roster contains duplicates")
-    indexes = {
-        item.exploratory_backtest_fold_session_id: index
-        for index, item in enumerate(sessions)
-    }
+    indexes = {item.exploratory_backtest_fold_session_id: index for index, item in enumerate(sessions)}
     if fold_session_id not in indexes:
         raise ValueError("fold session is not declared by the backtest")
     reference_index = indexes[fold_session_id]
-    observations = tuple(
-        item
-        for item in catalog.target.checkpoints
-        if item.role is TargetCheckpointRole.OUTCOME_OBSERVATION
-    )
+    observations = tuple(item for item in catalog.target.checkpoints if item.role is TargetCheckpointRole.OUTCOME_OBSERVATION)
     if not observations:
         raise ValueError("Target has no Outcome observation checkpoint")
     cutoffs: list[datetime] = []
@@ -234,9 +222,7 @@ def _schedule_outcome_runtime(
     step = StepSpec(
         step_key="settle-outcome",
         step_kind="SETTLE_OUTCOME",
-        implementation=(
-            "market_regime_alpha.interfaces.wp17p_outcomes:SETTLE_OUTCOME"
-        ),
+        implementation=("market_regime_alpha.interfaces.wp17p_outcomes:SETTLE_OUTCOME"),
         implementation_version="1",
         ordinal=1,
         required=True,
@@ -292,11 +278,7 @@ def _claim(application: TargetApplication, runtime_run_id: UUID) -> AttemptClaim
         lease_duration=timedelta(minutes=5),
         context=_context(f"outcome-claim-{runtime_run_id}"),
     )
-    if (
-        claim is None
-        or claim.run_id != runtime_run_id
-        or claim.step_key != "settle-outcome"
-    ):
+    if claim is None or claim.run_id != runtime_run_id or claim.step_key != "settle-outcome":
         raise ValueError("Runtime ready queue returned an unexpected Outcome Step")
     application.runtime.start_attempt(
         claim,

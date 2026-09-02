@@ -103,7 +103,7 @@ class _ModelForecasts:
         roster = canonical_json_sha256(
             tuple(
                 {
-                    "content_sha256": item.content_sha256,
+                    "content_sha256": str(item.content_sha256),
                     "forecast_model_binding_id": item.forecast_model_binding_id,
                     "ordinal": ordinal,
                 }
@@ -169,7 +169,7 @@ class _ModelQueries:
         roster = canonical_json_sha256(
             tuple(
                 {
-                    "content_sha256": item.content_sha256,
+                    "content_sha256": str(item.content_sha256),
                     "forecast_model_binding_id": item.forecast_model_binding_id,
                     "ordinal": ordinal,
                 }

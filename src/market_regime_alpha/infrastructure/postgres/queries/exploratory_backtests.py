@@ -33,17 +33,17 @@ class PostgresExploratoryBacktestVerificationPort:
                 (exploratory_backtest_run_id,),
             ).fetchone()
             if root is None:
-                raise RuntimeNotFoundError(
-                    f"ExploratoryBacktestRun {exploratory_backtest_run_id} does not exist"
-                )
+                raise RuntimeNotFoundError(f"ExploratoryBacktestRun {exploratory_backtest_run_id} does not exist")
             actual = connection.execute(
                 """
                 SELECT
                   (SELECT count(*) FROM mra.exploratory_backtest_feature
                    WHERE exploratory_backtest_run_id = %s),
                   (SELECT mra.canonical_sha256(mra.canonical_json_text(coalesce(jsonb_agg(
-                       jsonb_build_object('content_sha256', feature_definition_sha256,
-                           'feature_definition_id', feature_definition_id)
+                       jsonb_build_object(
+                           'feature_definition_id', feature_definition_id,
+                           'feature_definition_sha256', feature_definition_sha256,
+                           'ordinal', feature_ordinal)
                        ORDER BY feature_ordinal), '[]'::jsonb)))
                    FROM mra.exploratory_backtest_feature
                    WHERE exploratory_backtest_run_id = %s),
@@ -79,8 +79,14 @@ class PostgresExploratoryBacktestVerificationPort:
             assert actual is not None
             mismatches: list[str] = []
             labels = (
-                "FEATURE_COUNT", "FEATURE_ROSTER", "ARM_COUNT", "ARM_ROSTER",
-                "FOLD_COUNT", "FOLD_ROSTER", "SESSION_COUNT", "COST_COUNT",
+                "FEATURE_COUNT",
+                "FEATURE_ROSTER",
+                "ARM_COUNT",
+                "ARM_ROSTER",
+                "FOLD_COUNT",
+                "FOLD_ROSTER",
+                "SESSION_COUNT",
+                "COST_COUNT",
                 "COST_ROSTER",
             )
             for label, expected, observed in zip(

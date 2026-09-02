@@ -12,6 +12,7 @@ import psycopg
 
 from market_regime_alpha.infrastructure.postgres.pool import TargetPostgresPool
 from market_regime_alpha.outcome.domain import (
+    ExploratoryRetrospectiveOutcomeScope,
     FrozenDecisionReference,
     OutcomeAvailabilityStatus,
     OutcomeBarSource,
@@ -63,11 +64,46 @@ class PostgresOutcomeInputPreparationProvider:
         request: OutcomeSettlementRequest,
         runtime_claim: AttemptClaim,
     ) -> PreparedOutcomeInputs:
+        return self._prepare(
+            request,
+            runtime_claim,
+            exploratory_retrospective=False,
+        )
+
+    def prepare_exploratory_retrospective(
+        self,
+        request: OutcomeSettlementRequest,
+        runtime_claim: AttemptClaim,
+    ) -> PreparedOutcomeInputs:
+        return self._prepare(
+            request,
+            runtime_claim,
+            exploratory_retrospective=True,
+        )
+
+    def _prepare(
+        self,
+        request: OutcomeSettlementRequest,
+        runtime_claim: AttemptClaim,
+        *,
+        exploratory_retrospective: bool,
+    ) -> PreparedOutcomeInputs:
         with self._pool.connection(read_only=True) as connection:
             runtime = _load_runtime(connection, runtime_claim)
+            retrospective_scope = (
+                _load_retrospective_scope(
+                    connection,
+                    request.commitment_id,
+                    observation_cutoff=request.observation_cutoff,
+                    knowledge_cutoff=request.knowledge_cutoff,
+                )
+                if exploratory_retrospective
+                else None
+            )
             commitment = _load_commitment(
                 connection,
                 request.commitment_id,
+                retrospective_scope=retrospective_scope,
             )
             target = _load_target(
                 connection,
@@ -120,9 +156,20 @@ class PostgresOutcomeDependencyRepository:
         self._lock_market(prepared)
         self._lock_candidate_and_decision(prepared)
 
+        retrospective_scope = prepared.commitment.exploratory_retrospective_scope
+        if retrospective_scope is not None:
+            actual_scope = _load_retrospective_scope(
+                self._connection,
+                prepared.commitment.commitment_id,
+                observation_cutoff=prepared.observation_cutoff,
+                knowledge_cutoff=prepared.knowledge_cutoff,
+            )
+            if actual_scope != retrospective_scope:
+                raise OutcomeAuthorityIntegrityError("retrospective Outcome scope changed before closure")
         commitment = _load_commitment(
             self._connection,
             prepared.commitment.commitment_id,
+            retrospective_scope=retrospective_scope,
         )
         target = _load_target(
             self._connection,
@@ -155,9 +202,7 @@ class PostgresOutcomeDependencyRepository:
             or sources != prepared.sources
             or _due_at(target, sessions) != prepared.due_at
         ):
-            raise OutcomeAuthorityIntegrityError(
-                "prepared Outcome dependencies changed before closure"
-            )
+            raise OutcomeAuthorityIntegrityError("prepared Outcome dependencies changed before closure")
 
     def _lock_artifacts(self, prepared: PreparedOutcomeInputs) -> None:
         artifact_ids = {
@@ -180,12 +225,8 @@ class PostgresOutcomeDependencyRepository:
             """,
             (sorted(artifact_ids, key=str),),
         ).fetchall()
-        if tuple(UUID(str(row[0])) for row in rows) != tuple(
-            sorted(artifact_ids, key=str)
-        ):
-            raise OutcomeAuthorityIntegrityError(
-                "Outcome algorithm/Runtime Artifact is not readable"
-            )
+        if tuple(UUID(str(row[0])) for row in rows) != tuple(sorted(artifact_ids, key=str)):
+            raise OutcomeAuthorityIntegrityError("Outcome algorithm/Runtime Artifact is not readable")
 
     def _lock_target(self, prepared: PreparedOutcomeInputs) -> None:
         target_id = prepared.target.target_definition_id
@@ -206,9 +247,7 @@ class PostgresOutcomeDependencyRepository:
                 (target_id,),
             ).fetchall()
             if not rows:
-                raise OutcomeAuthorityIntegrityError(
-                    f"Outcome Target dependency {table} is absent"
-                )
+                raise OutcomeAuthorityIntegrityError(f"Outcome Target dependency {table} is absent")
 
     def _lock_market(self, prepared: PreparedOutcomeInputs) -> None:
         capture_ids = {
@@ -241,11 +280,7 @@ class PostgresOutcomeDependencyRepository:
             (sorted(session_ids, key=str),),
         ).fetchall()
         bar_ids = sorted(
-            (
-                item.bar_revision_id
-                for item in prepared.sources
-                if isinstance(item, OutcomeBarSource)
-            ),
+            (item.bar_revision_id for item in prepared.sources if isinstance(item, OutcomeBarSource)),
             key=str,
         )
         if bar_ids:
@@ -260,11 +295,7 @@ class PostgresOutcomeDependencyRepository:
                 (bar_ids,),
             ).fetchall()
         gap_ids = sorted(
-            (
-                item.gap_id
-                for item in prepared.sources
-                if isinstance(item, OutcomeGapSource)
-            ),
+            (item.gap_id for item in prepared.sources if isinstance(item, OutcomeGapSource)),
             key=str,
         )
         if gap_ids:
@@ -384,9 +415,7 @@ def _load_runtime(
     if not exact or not live:
         raise StaleFenceError("SETTLE_OUTCOME Runtime claim is no longer live")
     if row[7] is None:
-        raise OutcomeAuthorityIntegrityError(
-            "Outcome Runtime requires a canonical DecisionTime"
-        )
+        raise OutcomeAuthorityIntegrityError("Outcome Runtime requires a canonical DecisionTime")
     return OutcomeRuntimeSnapshot(
         run_id=UUID(str(row[0])),
         step_id=UUID(str(row[1])),
@@ -405,6 +434,8 @@ def _load_runtime(
 def _load_commitment(
     connection: psycopg.Connection[Any],
     commitment_id: UUID,
+    *,
+    retrospective_scope: ExploratoryRetrospectiveOutcomeScope | None = None,
 ) -> OutcomeCommitmentSnapshot:
     row = connection.execute(
         """
@@ -437,9 +468,7 @@ def _load_commitment(
         (commitment_id,),
     ).fetchone()
     if row is None:
-        raise OutcomeInputResolutionError(
-            f"DecisionTargetCommitment {commitment_id} does not exist"
-        )
+        raise OutcomeInputResolutionError(f"DecisionTargetCommitment {commitment_id} does not exist")
     return OutcomeCommitmentSnapshot(
         commitment_id=UUID(str(row[0])),
         decision_run_id=UUID(str(row[1])),
@@ -468,6 +497,73 @@ def _load_commitment(
             finality_status=OutcomeFinalityStatus(str(row[23])),
             decimal_value=None if row[24] is None else Decimal(row[24]),
         ),
+        exploratory_retrospective_scope=retrospective_scope,
+    )
+
+
+def _load_retrospective_scope(
+    connection: psycopg.Connection[Any],
+    commitment_id: UUID,
+    *,
+    observation_cutoff: datetime,
+    knowledge_cutoff: datetime,
+) -> ExploratoryRetrospectiveOutcomeScope:
+    scope = _find_retrospective_scope(
+        connection,
+        commitment_id,
+        observation_cutoff=observation_cutoff,
+        knowledge_cutoff=knowledge_cutoff,
+    )
+    if scope is None:
+        raise OutcomeInputResolutionError("exact retrospective Decision/archive binding is absent or ambiguous")
+    return scope
+
+
+def _find_retrospective_scope(
+    connection: psycopg.Connection[Any],
+    commitment_id: UUID,
+    *,
+    observation_cutoff: datetime,
+    knowledge_cutoff: datetime,
+) -> ExploratoryRetrospectiveOutcomeScope | None:
+    rows = connection.execute(
+        """
+        SELECT binding.decision_run_id, binding.market_archive_id,
+               binding.market_archive_seal_id, binding.knowledge_cutoff,
+               binding.simulated_event_cutoff, binding.content_sha256
+        FROM mra.decision_target_commitment AS commitment
+        JOIN mra.decision_reference_observation AS reference
+          ON reference.decision_reference_observation_id =
+             commitment.decision_reference_observation_id
+         AND reference.commitment_id = commitment.commitment_id
+        JOIN mra.exploratory_retrospective_decision_run AS binding
+          ON binding.decision_run_id = commitment.decision_run_id
+         AND binding.evidence_lane = 'EXPLORATORY_RETROSPECTIVE'
+        JOIN mra.market_archive_capture_observation AS observation
+          ON observation.market_archive_id = binding.market_archive_id
+         AND observation.capture_id = reference.capture_id
+        JOIN mra.market_archive_seal AS seal
+          ON seal.market_archive_seal_id = binding.market_archive_seal_id
+         AND seal.market_archive_id = binding.market_archive_id
+         AND seal.knowledge_cutoff = binding.knowledge_cutoff
+        WHERE commitment.commitment_id = %s
+          AND binding.knowledge_cutoff = %s
+          AND %s <= binding.knowledge_cutoff
+        """,
+        (commitment_id, knowledge_cutoff, observation_cutoff),
+    ).fetchall()
+    if len(rows) > 1:
+        raise OutcomeInputResolutionError("exact retrospective Decision/archive binding is ambiguous")
+    if not rows:
+        return None
+    item = rows[0]
+    return ExploratoryRetrospectiveOutcomeScope(
+        decision_run_id=UUID(str(item[0])),
+        market_archive_id=UUID(str(item[1])),
+        market_archive_seal_id=UUID(str(item[2])),
+        knowledge_cutoff=item[3],
+        simulated_event_cutoff=item[4],
+        decision_binding_sha256=str(item[5]),
     )
 
 
@@ -582,14 +678,8 @@ def _load_target(
                 config_content_sha256=str(row[14]),
                 config_size_bytes=int(row[15]),
                 content_sha256=str(row[16]),
-                barrier_direction=(
-                    None
-                    if row[17] is None
-                    else OutcomeBarrierDirection(str(row[17]))
-                ),
-                barrier_threshold=(
-                    None if row[18] is None else Decimal(row[18])
-                ),
+                barrier_direction=(None if row[17] is None else OutcomeBarrierDirection(str(row[17]))),
+                barrier_threshold=(None if row[18] is None else Decimal(row[18])),
             )
             for row in metric_rows
         ),
@@ -644,9 +734,7 @@ def _load_sessions(
         (str(reference[0]), reference[1], knowledge_cutoff, maximum),
     ).fetchall()
     if len(rows) < maximum:
-        raise OutcomeInputResolutionError(
-            "exact future TradingSession roster is incomplete"
-        )
+        raise OutcomeInputResolutionError("exact future TradingSession roster is incomplete")
     return tuple(
         OutcomeSessionSource(
             session_id=UUID(str(rows[offset - 1][0])),
@@ -698,15 +786,9 @@ def _load_sources(
             checkpoint.local_time,
             ZoneInfo(checkpoint.timezone_name),
         ).astimezone(UTC)
-        event_start = (
-            session.open_at
-            if checkpoint.timeframe == "DAILY"
-            else event_end - _MINUTE_WIDTHS[checkpoint.timeframe]
-        )
+        event_start = session.open_at if checkpoint.timeframe == "DAILY" else event_end - _MINUTE_WIDTHS[checkpoint.timeframe]
         if event_start < session.open_at or event_end > session.close_at:
-            raise OutcomeInputResolutionError(
-                "Target Outcome checkpoint falls outside exact Session"
-            )
+            raise OutcomeInputResolutionError("Target Outcome checkpoint falls outside exact Session")
         rows = connection.execute(
             """
             WITH exact AS (
@@ -784,19 +866,13 @@ def _load_sources(
             },
         ).fetchall()
         if not rows:
-            raise OutcomeInputResolutionError(
-                "Market Authority has neither exact bar nor exact SourceGap"
-            )
+            raise OutcomeInputResolutionError("Market Authority has neither exact bar nor exact SourceGap")
         newest = tuple(row for row in rows if row[12] == rows[0][12])
         if len(newest) != 1:
-            raise OutcomeInputResolutionError(
-                "Market Authority has ambiguous exact Outcome observations"
-            )
+            raise OutcomeInputResolutionError("Market Authority has ambiguous exact Outcome observations")
         row = newest[0]
         if row[20] is not True:
-            raise OutcomeInputResolutionError(
-                "Outcome source provenance is not readable"
-            )
+            raise OutcomeInputResolutionError("Outcome source provenance is not readable")
         common = {
             "target_checkpoint_id": checkpoint.target_checkpoint_id,
             "source_ordinal": source_ordinal,
@@ -813,9 +889,7 @@ def _load_sources(
         }
         if str(row[0]) == "BAR_REVISION":
             if str(row[19]) != "CAPTURED":
-                raise OutcomeInputResolutionError(
-                    "Outcome bar does not belong to a captured source"
-                )
+                raise OutcomeInputResolutionError("Outcome bar does not belong to a captured source")
             values.append(
                 OutcomeBarSource(
                     bar_revision_id=UUID(str(row[1])),

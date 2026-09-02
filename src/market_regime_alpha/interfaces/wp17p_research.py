@@ -126,7 +126,7 @@ def materialize_wp17p_dataset(
                 "universe_member_id": str(member.universe_member_id),
             }
         )
-        lineage = {
+        lineage: dict[str, object] = {
             "dataset_source_id": str(lineage_source_id),
             "role": ("MARKET_BAR_REVISION" if member.lineage_kind is Wp17pFeatureLineageKind.BAR_REVISION else "MARKET_SOURCE_GAP"),
         }
@@ -142,7 +142,11 @@ def materialize_wp17p_dataset(
                         "reason_code": member.reason_code,
                         "source_ids": sorted((str(feature_source_id), str(lineage_source_id))),
                         "status": member.status.value,
-                        "value": None if member.value is None else str(member.value),
+                        "value": (
+                            None
+                            if member.value is None
+                            else format(member.value, "f")
+                        ),
                     }
                 ],
                 "instrument_id": str(member.instrument_id),

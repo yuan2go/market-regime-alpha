@@ -416,7 +416,8 @@ class PostgresEvaluationRepository:
                    line.status,
                    line.proposed_weight,
                    risk.risk_decision_id,
-                   risk.status
+                   risk.status,
+                   outcome_metric.value_type
             FROM mra.evaluation_observation AS observation
             JOIN mra.research_partition_member AS member
               ON member.research_partition_member_id =
@@ -687,11 +688,11 @@ class PostgresEvaluationRepository:
     ) -> None:
         self._insert_simple_sources(
             "evaluation_candidate_source",
-            "commitment_id, candidate_id, disposition, decimal_value",
+            "commitment_id, candidate_id, disposition, boolean_value",
             evaluation_run_id, metric, resolved, input_ids,
             lambda item: (
                 item.source[8], item.source[10], item.source[3],
-                item.input.decimal_value,
+                item.input.boolean_value,
             ),
         )
 
@@ -701,11 +702,11 @@ class PostgresEvaluationRepository:
     ) -> None:
         self._insert_simple_sources(
             "evaluation_signal_source",
-            "decision_run_id, candidate_id, signal_id, signal_status, decimal_value, source_status",
+            "decision_run_id, candidate_id, signal_id, signal_status, boolean_value, source_status",
             evaluation_run_id, metric, resolved, input_ids,
             lambda item: (
                 item.source[9], item.source[10], item.source[24], item.source[25],
-                item.input.decimal_value, item.input.source_value_status,
+                item.input.boolean_value, item.input.source_value_status,
             ),
         )
 
@@ -787,11 +788,11 @@ class PostgresEvaluationRepository:
     ) -> None:
         self._insert_simple_sources(
             "evaluation_risk_source",
-            "decision_run_id, portfolio_proposal_id, risk_decision_id, risk_status, decimal_value, source_status",
+            "decision_run_id, portfolio_proposal_id, risk_decision_id, risk_status, boolean_value, source_status",
             evaluation_run_id, metric, resolved, input_ids,
             lambda item: (
                 item.source[9], item.source[30], item.source[34], item.source[35],
-                item.input.decimal_value, item.input.source_value_status,
+                item.input.boolean_value, item.input.source_value_status,
             ),
         )
 
@@ -946,7 +947,7 @@ def _metric_observation_values(
         identity, evaluation_metric_id, evaluation_run_id,
         metric.evaluation_protocol_metric_id, source[0], source[1], source[2],
         source[4], metric.source_target_metric_definition_id,
-        metric.source_value_type.value, source[5], classification.state.value,
+        source[36], source[5], classification.state.value,
         classification.reason_code, content_hash,
     )
 

@@ -89,7 +89,7 @@ class PostgresModelForecastInputPreparationProvider:
         fitted = load_deterministic_ridge_artifact(fitted_bytes)
         if (
             fitted.feature_definition_ids != model_features
-            or len(fitted.coefficients) != int(root[19])
+            or len(fitted.coefficients) + 1 != int(root[19])
             or fitted.alpha != Decimal(str(root[20]))
             or fitted.seed != int(root[21])
         ):

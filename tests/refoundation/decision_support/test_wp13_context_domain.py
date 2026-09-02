@@ -23,6 +23,9 @@ from market_regime_alpha.decision_support.domain.context import (
     PreparedContextSource,
     build_context_assessment_authority,
 )
+from market_regime_alpha.decision_support.domain.retrospective import (
+    ExploratoryRetrospectiveDecisionScope,
+)
 from tests.refoundation.decision_support.test_decision_domain import _uuid
 
 
@@ -238,3 +241,46 @@ def test_context_assessment_rejects_posterior_candidate_omission_and_late_source
             one_source,
             known_at=datetime(2026, 9, 1, 7, 2, tzinfo=UTC),
         ).validate_for_decision_time(DECISION_TIME)
+
+
+def test_retrospective_context_uses_explicit_archive_knowledge_cutoff() -> None:
+    policy = replace(_policy(), metrics=(_policy().metrics[0],))
+    source = replace(
+        _source(policy.metrics[0], 1, boolean_value=True),
+        known_at=datetime(2026, 9, 1, 8, tzinfo=UTC),
+    )
+    scope = ExploratoryRetrospectiveDecisionScope(
+        _uuid(950),
+        _uuid(951),
+        _uuid(952),
+        _uuid(953),
+        _uuid(954),
+        _uuid(955),
+        _uuid(956),
+        datetime(2026, 9, 1, 9, tzinfo=UTC),
+        DECISION_TIME,
+    )
+
+    prepared = PreparedContextInputs(
+        decision_run_id=_uuid(957),
+        candidate_set_id=_uuid(958),
+        candidate_set_content_sha256="8" * 64,
+        candidate_roster_sha256="f" * 64,
+        decision_time=DECISION_TIME,
+        candidate_count=1,
+        policy=policy,
+        sources=(source,),
+        exploratory_retrospective_scope=scope,
+    )
+
+    assert prepared.exploratory_retrospective_scope == scope
+    with pytest.raises(ValueError, match="Context source was not known"):
+        replace(
+            prepared,
+            sources=(
+                replace(
+                    source,
+                    known_at=datetime(2026, 9, 1, 10, tzinfo=UTC),
+                ),
+            ),
+        )

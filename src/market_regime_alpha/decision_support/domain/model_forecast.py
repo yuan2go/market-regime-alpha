@@ -157,12 +157,12 @@ class ForecastModelBindingPlan:
             canonical_json_sha256(
                 {
                     "dataset_id": self.dataset_id,
-                    "feature_vector_sha256": vector_hash,
+                    "feature_vector_sha256": str(vector_hash),
                     "fitted_model_artifact_id": self.fitted_model_artifact_id,
-                    "fitted_model_content_sha256": fitted_hash,
+                    "fitted_model_content_sha256": str(fitted_hash),
                     "fitted_model_size_bytes": self.fitted_model_size_bytes,
                     "model_version_id": self.model_version_id,
-                    "model_version_sha256": version_hash,
+                    "model_version_sha256": str(version_hash),
                 }
             )
         )
@@ -200,16 +200,16 @@ class ForecastModelBindingPlan:
                         "exploratory_backtest_run_id": self.exploratory_backtest_run_id,
                         "forecast_group_id": self.forecast_group_id,
                         "forecast_id": self.forecast_id,
-                        "forecast_estimate_content_sha256": estimate_hash,
+                        "forecast_estimate_content_sha256": str(estimate_hash),
                         "forecast_model_binding_id": self.forecast_model_binding_id,
                         "inference_fold_ordinal": self.inference_fold_ordinal,
-                        "inference_input_sha256": input_hash,
-                        "inference_output_sha256": output_hash,
+                        "inference_input_sha256": str(input_hash),
+                        "inference_output_sha256": str(output_hash),
                         "model_id": self.model_id,
                         "model_registered_at": registered,
                         "model_training_run_id": self.model_training_run_id,
                         "model_version_id": self.model_version_id,
-                        "model_version_sha256": version_hash,
+                        "model_version_sha256": str(version_hash),
                         "prediction_state": self.prediction_state,
                         "reason_code": self.reason_code,
                         "training_fold_id": self.training_fold_id,

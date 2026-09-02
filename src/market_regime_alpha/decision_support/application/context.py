@@ -8,6 +8,8 @@ from uuid import UUID, uuid4
 
 from market_regime_alpha.decision_support.domain import (
     ContextPolicyPlan,
+    ExploratoryRetrospectiveDecisionScope,
+    PreparedContextInputs,
     build_context_assessment_authority,
 )
 from market_regime_alpha.decision_support.errors import (
@@ -151,6 +153,40 @@ class ContextCommands:
         *,
         runtime_claim: AttemptClaim,
     ) -> ContextMutationResult:
+        return self._assess_context(
+            decision_run_id,
+            context_policy_id,
+            context,
+            runtime_claim=runtime_claim,
+            retrospective_scope=None,
+        )
+
+    def assess_exploratory_retrospective_context(
+        self,
+        decision_run_id: UUID,
+        context_policy_id: UUID,
+        retrospective_scope: ExploratoryRetrospectiveDecisionScope,
+        context: CommandContext,
+        *,
+        runtime_claim: AttemptClaim,
+    ) -> ContextMutationResult:
+        return self._assess_context(
+            decision_run_id,
+            context_policy_id,
+            context,
+            runtime_claim=runtime_claim,
+            retrospective_scope=retrospective_scope,
+        )
+
+    def _assess_context(
+        self,
+        decision_run_id: UUID,
+        context_policy_id: UUID,
+        context: CommandContext,
+        *,
+        runtime_claim: AttemptClaim,
+        retrospective_scope: ExploratoryRetrospectiveDecisionScope | None,
+    ) -> ContextMutationResult:
         existing = self._queries.find_assessment_request(
             decision_run_id,
             context_policy_id,
@@ -158,7 +194,15 @@ class ContextCommands:
         )
         if existing is not None:
             return _assessment_result(existing, replayed=True)
-        prepared = self._preparation.prepare(decision_run_id, context_policy_id)
+        prepared: PreparedContextInputs
+        if retrospective_scope is None:
+            prepared = self._preparation.prepare(decision_run_id, context_policy_id)
+        else:
+            prepared = self._preparation.prepare_exploratory_retrospective(
+                decision_run_id,
+                context_policy_id,
+                retrospective_scope,
+            )
         if prepared.decision_run_id != decision_run_id or prepared.policy.context_policy_id != context_policy_id:
             raise ContextAuthorityIntegrityError("Context preparation returned a different Authority identity")
         request_hash = canonical_json_sha256(
@@ -170,6 +214,7 @@ class ContextCommands:
                 "decision_run_id": decision_run_id,
                 "policy_content_sha256": prepared.policy.content_sha256,
                 "reason_code": context.reason_code,
+                "retrospective_scope": retrospective_scope,
                 "source_roster_sha256": prepared.source_roster_sha256,
             }
         )

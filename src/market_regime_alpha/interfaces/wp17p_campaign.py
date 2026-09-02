@@ -16,6 +16,7 @@ from market_regime_alpha.interfaces.wp17p_evaluation import (
     Wp17pCompletedEvaluation,
     Wp17pEvaluationOperations,
     Wp17pOpenEvaluation,
+    Wp17pPreparedEvaluation,
 )
 from market_regime_alpha.interfaces.wp17p_models import (
     Wp17pModelExecution,
@@ -65,12 +66,20 @@ class _DecisionOperations(Protocol):
 
 
 class _EvaluationOperations(Protocol):
-    def open(
+    def predeclare(
         self,
         *,
         catalog: Wp17pAuthorityCatalog,
         datasets: tuple[Wp17pDatasetAuthority, ...],
         decisions: tuple[Wp17pDecisionExecution, ...],
+    ) -> Wp17pPreparedEvaluation: ...
+
+    def open(
+        self,
+        *,
+        catalog: Wp17pAuthorityCatalog,
+        prepared: Wp17pPreparedEvaluation,
+        outcomes: tuple[Wp17pOutcomeExecution, ...],
     ) -> Wp17pOpenEvaluation: ...
 
     def complete(
@@ -158,16 +167,14 @@ class Wp17pCampaignOperations:
             pilot_instrument_ids=pilot_instrument_ids,
             exploratory_backtest_arm_id=challenger.exploratory_backtest_arm_id,
             exploratory_backtest_fold_id=fit_fold.exploratory_backtest_fold_id,
-            exploratory_backtest_fold_session_id=(
-                fit_session.exploratory_backtest_fold_session_id
-            ),
+            exploratory_backtest_fold_session_id=(fit_session.exploratory_backtest_fold_session_id),
         )
         fit_decision = self._decisions.execute(
             catalog=catalog,
             dataset=fit_dataset,
             complete_decision_support=False,
         )
-        fit_open = self._evaluations.open(
+        fit_predeclared = self._evaluations.predeclare(
             catalog=catalog,
             datasets=(fit_dataset,),
             decisions=(fit_decision,),
@@ -176,6 +183,11 @@ class Wp17pCampaignOperations:
             catalog=catalog,
             dataset=fit_dataset,
             decision=fit_decision,
+        )
+        fit_open = self._evaluations.open(
+            catalog=catalog,
+            prepared=fit_predeclared,
+            outcomes=(fit_outcome,),
         )
         fit_evaluation = self._evaluations.complete(
             opened=fit_open,
@@ -191,12 +203,8 @@ class Wp17pCampaignOperations:
                 catalog=catalog,
                 pilot_instrument_ids=pilot_instrument_ids,
                 exploratory_backtest_arm_id=arm.exploratory_backtest_arm_id,
-                exploratory_backtest_fold_id=(
-                    validation_fold.exploratory_backtest_fold_id
-                ),
-                exploratory_backtest_fold_session_id=(
-                    validation_session.exploratory_backtest_fold_session_id
-                ),
+                exploratory_backtest_fold_id=(validation_fold.exploratory_backtest_fold_id),
+                exploratory_backtest_fold_session_id=(validation_session.exploratory_backtest_fold_session_id),
             )
             for arm in (baseline, challenger)
         )
@@ -205,11 +213,7 @@ class Wp17pCampaignOperations:
                 catalog=catalog,
                 dataset=dataset,
                 complete_decision_support=True,
-                model_version_id=(
-                    None
-                    if arm.kind is BacktestArmKind.RULE_BASELINE
-                    else model.model_version_id
-                ),
+                model_version_id=(None if arm.kind is BacktestArmKind.RULE_BASELINE else model.model_version_id),
             )
             for arm, dataset in zip(
                 (baseline, challenger),
@@ -217,7 +221,7 @@ class Wp17pCampaignOperations:
                 strict=True,
             )
         )
-        validation_open = self._evaluations.open(
+        validation_predeclared = self._evaluations.predeclare(
             catalog=catalog,
             datasets=validation_datasets,
             decisions=validation_decisions,
@@ -233,6 +237,11 @@ class Wp17pCampaignOperations:
                 validation_decisions,
                 strict=True,
             )
+        )
+        validation_open = self._evaluations.open(
+            catalog=catalog,
+            prepared=validation_predeclared,
+            outcomes=validation_outcomes,
         )
         validation_evaluation = self._evaluations.complete(
             opened=validation_open,
@@ -256,9 +265,7 @@ def _one_arm(catalog: Wp17pAuthorityCatalog, kind: BacktestArmKind):
 
 
 def _one_fold(catalog: Wp17pAuthorityCatalog, purpose: PartitionPurpose):
-    matches = tuple(
-        item for item in catalog.backtest.folds if item.purpose is purpose
-    )
+    matches = tuple(item for item in catalog.backtest.folds if item.purpose is purpose)
     if len(matches) != 1:
         raise ValueError(f"WP-17P requires exactly one {purpose.value} fold")
     return matches[0]

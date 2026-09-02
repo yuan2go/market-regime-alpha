@@ -51,11 +51,19 @@ class BacktestArmPlan:
     def __post_init__(self) -> None:
         if isinstance(self.ordinal, bool) or self.ordinal < 1:
             raise ValueError("arm ordinal must be positive")
-        object.__setattr__(self, "content_sha256", ContentHash(canonical_json_sha256({
-            "exploratory_backtest_arm_id": self.exploratory_backtest_arm_id,
-            "kind": self.kind,
-            "ordinal": self.ordinal,
-        })))
+        object.__setattr__(
+            self,
+            "content_sha256",
+            ContentHash(
+                canonical_json_sha256(
+                    {
+                        "exploratory_backtest_arm_id": self.exploratory_backtest_arm_id,
+                        "kind": self.kind,
+                        "ordinal": self.ordinal,
+                    }
+                )
+            ),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,13 +78,21 @@ class BacktestFoldSessionPlan:
     def __post_init__(self) -> None:
         if isinstance(self.ordinal, bool) or self.ordinal < 1:
             raise ValueError("fold session ordinal must be positive")
-        object.__setattr__(self, "content_sha256", ContentHash(canonical_json_sha256({
-            "exploratory_backtest_fold_session_id": self.exploratory_backtest_fold_session_id,
-            "ordinal": self.ordinal,
-            "role": self.role,
-            "session_date": self.session_date,
-            "trading_session_id": self.trading_session_id,
-        })))
+        object.__setattr__(
+            self,
+            "content_sha256",
+            ContentHash(
+                canonical_json_sha256(
+                    {
+                        "exploratory_backtest_fold_session_id": self.exploratory_backtest_fold_session_id,
+                        "ordinal": self.ordinal,
+                        "role": self.role,
+                        "session_date": self.session_date,
+                        "trading_session_id": self.trading_session_id,
+                    }
+                )
+            ),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,29 +145,39 @@ class BacktestFoldPlan:
         if not any(item.role is BacktestSessionRole.EVALUATION for item in self.sessions):
             raise ValueError("fold requires at least one Evaluation session")
         protocol_hash = ContentHash(str(self.evaluation_protocol_sha256))
-        roster_hash = ContentHash(canonical_json_sha256(tuple(
-            {
-                "content_sha256": str(item.content_sha256),
-                "exploratory_backtest_fold_session_id": (
-                    item.exploratory_backtest_fold_session_id
-                ),
-                "ordinal": item.ordinal,
-            }
-            for item in self.sessions
-        )))
+        roster_hash = ContentHash(
+            canonical_json_sha256(
+                tuple(
+                    {
+                        "content_sha256": str(item.content_sha256),
+                        "exploratory_backtest_fold_session_id": (item.exploratory_backtest_fold_session_id),
+                        "ordinal": item.ordinal,
+                    }
+                    for item in self.sessions
+                )
+            )
+        )
         object.__setattr__(self, "evaluation_protocol_sha256", protocol_hash)
         object.__setattr__(self, "session_roster_sha256", roster_hash)
-        object.__setattr__(self, "content_sha256", ContentHash(canonical_json_sha256({
-            "embargo_sessions": self.embargo_sessions,
-            "evaluation_protocol_id": self.evaluation_protocol_id,
-            "evaluation_protocol_sha256": str(protocol_hash),
-            "exchange_code": self.exchange_code,
-            "exploratory_backtest_fold_id": self.exploratory_backtest_fold_id,
-            "ordinal": self.ordinal,
-            "purge_sessions": self.purge_sessions,
-            "purpose": self.purpose,
-            "session_roster_sha256": str(roster_hash),
-        })))
+        object.__setattr__(
+            self,
+            "content_sha256",
+            ContentHash(
+                canonical_json_sha256(
+                    {
+                        "embargo_sessions": self.embargo_sessions,
+                        "evaluation_protocol_id": self.evaluation_protocol_id,
+                        "evaluation_protocol_sha256": str(protocol_hash),
+                        "exchange_code": self.exchange_code,
+                        "exploratory_backtest_fold_id": self.exploratory_backtest_fold_id,
+                        "ordinal": self.ordinal,
+                        "purge_sessions": self.purge_sessions,
+                        "purpose": self.purpose,
+                        "session_roster_sha256": str(roster_hash),
+                    }
+                )
+            ),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -167,12 +193,20 @@ class BacktestCostAssumption:
             raise ValueError("cost ordinal must be positive")
         if self.amount_bps < 0:
             raise ValueError("cost amount_bps must be non-negative")
-        object.__setattr__(self, "content_sha256", ContentHash(canonical_json_sha256({
-            "amount_bps": self.amount_bps,
-            "cost_kind": self.cost_kind,
-            "exploratory_backtest_cost_assumption_id": self.exploratory_backtest_cost_assumption_id,
-            "ordinal": self.ordinal,
-        })))
+        object.__setattr__(
+            self,
+            "content_sha256",
+            ContentHash(
+                canonical_json_sha256(
+                    {
+                        "amount_bps": self.amount_bps,
+                        "cost_kind": self.cost_kind,
+                        "exploratory_backtest_cost_assumption_id": self.exploratory_backtest_cost_assumption_id,
+                        "ordinal": self.ordinal,
+                    }
+                )
+            ),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -250,90 +284,120 @@ class ExploratoryBacktestRunPlan:
         if len({item.cost_kind for item in self.cost_assumptions}) != len(self.cost_assumptions):
             raise ValueError("cost assumption kinds must be unique")
         for name in (
-            "target_definition_sha256", "candidate_policy_sha256",
-            "context_policy_sha256", "strategy_version_sha256",
-            "portfolio_policy_sha256", "risk_policy_sha256", "provenance_sha256",
+            "target_definition_sha256",
+            "candidate_policy_sha256",
+            "context_policy_sha256",
+            "strategy_version_sha256",
+            "portfolio_policy_sha256",
+            "risk_policy_sha256",
+            "provenance_sha256",
         ):
             object.__setattr__(self, name, ContentHash(str(getattr(self, name))))
-        normalized_features = tuple(
-            (identity, ContentHash(str(content_hash)))
-            for identity, content_hash in self.feature_definitions
-        )
+        normalized_features = tuple((identity, ContentHash(str(content_hash))) for identity, content_hash in self.feature_definitions)
         object.__setattr__(self, "feature_definitions", normalized_features)
-        feature_hash = ContentHash(canonical_json_sha256(tuple(
-            {"content_sha256": str(content_hash), "feature_definition_id": identity}
-            for identity, content_hash in normalized_features
-        )))
-        arm_hash = ContentHash(canonical_json_sha256(tuple(
-            {
-                "content_sha256": str(item.content_sha256),
-                "exploratory_backtest_arm_id": item.exploratory_backtest_arm_id,
-                "ordinal": item.ordinal,
-            }
-            for item in self.arms
-        )))
-        fold_hash = ContentHash(canonical_json_sha256(tuple(
-            {
-                "content_sha256": str(item.content_sha256),
-                "exploratory_backtest_fold_id": item.exploratory_backtest_fold_id,
-                "ordinal": item.ordinal,
-            }
-            for item in self.folds
-        )))
-        cost_hash = ContentHash(canonical_json_sha256(tuple(
-            {
-                "content_sha256": str(item.content_sha256),
-                "exploratory_backtest_cost_assumption_id": (
-                    item.exploratory_backtest_cost_assumption_id
-                ),
-                "ordinal": item.ordinal,
-            }
-            for item in self.cost_assumptions
-        )))
+        feature_hash = ContentHash(
+            canonical_json_sha256(
+                tuple(
+                    {
+                        "feature_definition_id": identity,
+                        "feature_definition_sha256": str(content_hash),
+                        "ordinal": ordinal,
+                    }
+                    for ordinal, (identity, content_hash) in enumerate(
+                        normalized_features,
+                        start=1,
+                    )
+                )
+            )
+        )
+        arm_hash = ContentHash(
+            canonical_json_sha256(
+                tuple(
+                    {
+                        "content_sha256": str(item.content_sha256),
+                        "exploratory_backtest_arm_id": item.exploratory_backtest_arm_id,
+                        "ordinal": item.ordinal,
+                    }
+                    for item in self.arms
+                )
+            )
+        )
+        fold_hash = ContentHash(
+            canonical_json_sha256(
+                tuple(
+                    {
+                        "content_sha256": str(item.content_sha256),
+                        "exploratory_backtest_fold_id": item.exploratory_backtest_fold_id,
+                        "ordinal": item.ordinal,
+                    }
+                    for item in self.folds
+                )
+            )
+        )
+        cost_hash = ContentHash(
+            canonical_json_sha256(
+                tuple(
+                    {
+                        "content_sha256": str(item.content_sha256),
+                        "exploratory_backtest_cost_assumption_id": (item.exploratory_backtest_cost_assumption_id),
+                        "ordinal": item.ordinal,
+                    }
+                    for item in self.cost_assumptions
+                )
+            )
+        )
         session_count = sum(len(fold.sessions) for fold in self.folds)
         object.__setattr__(self, "feature_roster_sha256", feature_hash)
         object.__setattr__(self, "arm_roster_sha256", arm_hash)
         object.__setattr__(self, "fold_roster_sha256", fold_hash)
         object.__setattr__(self, "cost_roster_sha256", cost_hash)
         object.__setattr__(self, "session_count", session_count)
-        object.__setattr__(self, "content_sha256", ContentHash(canonical_json_sha256({
-            "arm_roster_sha256": str(arm_hash),
-            "candidate_policy_id": self.candidate_policy_id,
-            "candidate_policy_sha256": str(self.candidate_policy_sha256),
-            "code_artifact": {
-                "artifact_id": self.code_artifact.artifact_id,
-                "content_sha256": str(self.code_artifact.content_sha256),
-                "size_bytes": self.code_artifact.size_bytes,
-            },
-            "config_artifact": {
-                "artifact_id": self.config_artifact.artifact_id,
-                "content_sha256": str(self.config_artifact.content_sha256),
-                "size_bytes": self.config_artifact.size_bytes,
-            },
-            "context_policy_id": self.context_policy_id,
-            "context_policy_sha256": str(self.context_policy_sha256),
-            "cost_roster_sha256": str(cost_hash),
-            "evidence_lane": self.evidence_lane,
-            "exploratory_backtest_run_id": self.exploratory_backtest_run_id,
-            "feature_roster_sha256": str(feature_hash),
-            "fold_roster_sha256": str(fold_hash),
-            "generation": self.generation,
-            "hypothesis": self.hypothesis,
-            "market_archive_id": self.market_archive_id,
-            "market_archive_seal_id": self.market_archive_seal_id,
-            "portfolio_policy_id": self.portfolio_policy_id,
-            "portfolio_policy_sha256": str(self.portfolio_policy_sha256),
-            "provenance_sha256": str(self.provenance_sha256),
-            "random_seed": self.random_seed,
-            "risk_policy_id": self.risk_policy_id,
-            "risk_policy_sha256": str(self.risk_policy_sha256),
-            "session_count": session_count,
-            "strategy_version_id": self.strategy_version_id,
-            "strategy_version_sha256": str(self.strategy_version_sha256),
-            "target_definition_id": self.target_definition_id,
-            "target_definition_sha256": str(self.target_definition_sha256),
-            "target_version": self.target_version,
-        })))
+        object.__setattr__(
+            self,
+            "content_sha256",
+            ContentHash(
+                canonical_json_sha256(
+                    {
+                        "arm_roster_sha256": str(arm_hash),
+                        "candidate_policy_id": self.candidate_policy_id,
+                        "candidate_policy_sha256": str(self.candidate_policy_sha256),
+                        "code_artifact": {
+                            "artifact_id": self.code_artifact.artifact_id,
+                            "content_sha256": str(self.code_artifact.content_sha256),
+                            "size_bytes": self.code_artifact.size_bytes,
+                        },
+                        "config_artifact": {
+                            "artifact_id": self.config_artifact.artifact_id,
+                            "content_sha256": str(self.config_artifact.content_sha256),
+                            "size_bytes": self.config_artifact.size_bytes,
+                        },
+                        "context_policy_id": self.context_policy_id,
+                        "context_policy_sha256": str(self.context_policy_sha256),
+                        "cost_roster_sha256": str(cost_hash),
+                        "evidence_lane": self.evidence_lane,
+                        "exploratory_backtest_run_id": self.exploratory_backtest_run_id,
+                        "feature_roster_sha256": str(feature_hash),
+                        "fold_roster_sha256": str(fold_hash),
+                        "generation": self.generation,
+                        "hypothesis": self.hypothesis,
+                        "market_archive_id": self.market_archive_id,
+                        "market_archive_seal_id": self.market_archive_seal_id,
+                        "portfolio_policy_id": self.portfolio_policy_id,
+                        "portfolio_policy_sha256": str(self.portfolio_policy_sha256),
+                        "provenance_sha256": str(self.provenance_sha256),
+                        "random_seed": self.random_seed,
+                        "risk_policy_id": self.risk_policy_id,
+                        "risk_policy_sha256": str(self.risk_policy_sha256),
+                        "session_count": session_count,
+                        "strategy_version_id": self.strategy_version_id,
+                        "strategy_version_sha256": str(self.strategy_version_sha256),
+                        "target_definition_id": self.target_definition_id,
+                        "target_definition_sha256": str(self.target_definition_sha256),
+                        "target_version": self.target_version,
+                    }
+                )
+            ),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -346,20 +410,31 @@ class ExploratoryBacktestDatasetScope:
     content_sha256: ContentHash = field(init=False)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "content_sha256", ContentHash(canonical_json_sha256({
-            "exploratory_backtest_arm_id": self.exploratory_backtest_arm_id,
-            "exploratory_backtest_fold_id": self.exploratory_backtest_fold_id,
-            "exploratory_backtest_fold_session_id": (
-                self.exploratory_backtest_fold_session_id
+        object.__setattr__(
+            self,
+            "content_sha256",
+            ContentHash(
+                canonical_json_sha256(
+                    {
+                        "exploratory_backtest_arm_id": self.exploratory_backtest_arm_id,
+                        "exploratory_backtest_fold_id": self.exploratory_backtest_fold_id,
+                        "exploratory_backtest_fold_session_id": (self.exploratory_backtest_fold_session_id),
+                        "exploratory_backtest_run_id": self.exploratory_backtest_run_id,
+                        "retrospective_scope_sha256": str(self.retrospective.content_sha256),
+                    }
+                )
             ),
-            "exploratory_backtest_run_id": self.exploratory_backtest_run_id,
-            "retrospective_scope_sha256": str(self.retrospective.content_sha256),
-        })))
+        )
 
 
 __all__ = [
-    "BacktestArmKind", "BacktestArmPlan", "BacktestCostAssumption",
-    "BacktestCostKind", "BacktestFoldPlan", "BacktestFoldSessionPlan",
-    "BacktestSessionRole", "ExploratoryBacktestDatasetScope",
+    "BacktestArmKind",
+    "BacktestArmPlan",
+    "BacktestCostAssumption",
+    "BacktestCostKind",
+    "BacktestFoldPlan",
+    "BacktestFoldSessionPlan",
+    "BacktestSessionRole",
+    "ExploratoryBacktestDatasetScope",
     "ExploratoryBacktestRunPlan",
 ]

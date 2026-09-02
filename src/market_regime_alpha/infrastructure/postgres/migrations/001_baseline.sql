@@ -14647,7 +14647,21 @@ BEGIN
        OR reference.source_kind <> NEW.reference_source_kind
        OR reference.bar_revision_id IS DISTINCT FROM NEW.bar_revision_id
        OR reference.source_gap_id IS DISTINCT FROM NEW.source_gap_id
-       OR reference.known_at > decision_cutoff THEN
+       OR (
+           reference.known_at > decision_cutoff
+           AND NOT EXISTS (
+               SELECT 1
+               FROM mra.exploratory_retrospective_decision_run AS binding
+               JOIN mra.market_archive_capture_observation AS observation
+                 ON observation.market_archive_id = binding.market_archive_id
+                AND observation.capture_id = reference.capture_id
+               WHERE binding.decision_run_id = NEW.decision_run_id
+                 AND binding.evidence_lane = 'EXPLORATORY_RETROSPECTIVE'
+                 AND binding.simulated_event_cutoff = decision_cutoff
+                 AND reference.event_end <= binding.simulated_event_cutoff
+                 AND reference.known_at <= binding.knowledge_cutoff
+           )
+       ) THEN
         RAISE EXCEPTION 'Context source is not the exact primary Decision reference'
             USING ERRCODE = '55000';
     END IF;
@@ -18289,18 +18303,22 @@ BEGIN
     END IF;
     expected_scope := mra.canonical_sha256(mra.canonical_json_text(jsonb_build_object(
         'evidence_lane', NEW.evidence_lane,
-        'knowledge_cutoff', NEW.knowledge_cutoff,
+        'knowledge_cutoff',
+            mra.canonical_timestamptz_text(NEW.knowledge_cutoff),
         'market_archive_id', NEW.market_archive_id,
         'market_archive_seal_id', NEW.market_archive_seal_id,
-        'simulated_event_cutoff', NEW.simulated_event_cutoff
+        'simulated_event_cutoff',
+            mra.canonical_timestamptz_text(NEW.simulated_event_cutoff)
     )));
     expected_content := mra.canonical_sha256(mra.canonical_json_text(jsonb_build_object(
         'evidence_lane', NEW.evidence_lane,
-        'knowledge_cutoff', NEW.knowledge_cutoff,
+        'knowledge_cutoff',
+            mra.canonical_timestamptz_text(NEW.knowledge_cutoff),
         'market_archive_id', NEW.market_archive_id,
         'market_archive_seal_id', NEW.market_archive_seal_id,
         'scope_content_sha256', NEW.scope_content_sha256,
-        'simulated_event_cutoff', NEW.simulated_event_cutoff,
+        'simulated_event_cutoff',
+            mra.canonical_timestamptz_text(NEW.simulated_event_cutoff),
         'universe_revision_id', NEW.universe_revision_id
     )));
     IF NEW.scope_content_sha256 <> expected_scope
@@ -18362,11 +18380,13 @@ BEGIN
         'assessment_count', NEW.assessment_count,
         'eligibility_policy_id', NEW.eligibility_policy_id,
         'evidence_lane', NEW.evidence_lane,
-        'knowledge_cutoff', NEW.knowledge_cutoff,
+        'knowledge_cutoff',
+            mra.canonical_timestamptz_text(NEW.knowledge_cutoff),
         'market_archive_id', NEW.market_archive_id,
         'market_archive_seal_id', NEW.market_archive_seal_id,
         'scope_content_sha256', NEW.scope_content_sha256,
-        'simulated_event_cutoff', NEW.simulated_event_cutoff,
+        'simulated_event_cutoff',
+            mra.canonical_timestamptz_text(NEW.simulated_event_cutoff),
         'universe_revision_id', NEW.universe_revision_id
     )));
     IF NEW.content_sha256 <> expected_content THEN
@@ -18526,19 +18546,23 @@ BEGIN
     END IF;
     expected_scope := mra.canonical_sha256(mra.canonical_json_text(jsonb_build_object(
         'evidence_lane', NEW.evidence_lane,
-        'knowledge_cutoff', NEW.knowledge_cutoff,
+        'knowledge_cutoff',
+            mra.canonical_timestamptz_text(NEW.knowledge_cutoff),
         'market_archive_id', NEW.market_archive_id,
         'market_archive_seal_id', NEW.market_archive_seal_id,
-        'simulated_event_cutoff', NEW.simulated_event_cutoff
+        'simulated_event_cutoff',
+            mra.canonical_timestamptz_text(NEW.simulated_event_cutoff)
     )));
     expected_content := mra.canonical_sha256(mra.canonical_json_text(jsonb_build_object(
         'dataset_id', NEW.dataset_id,
         'evidence_lane', NEW.evidence_lane,
-        'knowledge_cutoff', NEW.knowledge_cutoff,
+        'knowledge_cutoff',
+            mra.canonical_timestamptz_text(NEW.knowledge_cutoff),
         'market_archive_id', NEW.market_archive_id,
         'market_archive_seal_id', NEW.market_archive_seal_id,
         'scope_content_sha256', NEW.scope_content_sha256,
-        'simulated_event_cutoff', NEW.simulated_event_cutoff,
+        'simulated_event_cutoff',
+            mra.canonical_timestamptz_text(NEW.simulated_event_cutoff),
         'source_count', NEW.source_count,
         'source_roster_sha256', NEW.source_roster_sha256
     )));
@@ -18809,8 +18833,11 @@ BEGIN
         RAISE EXCEPTION 'Exploratory backtest parent or archive binding is invalid' USING ERRCODE = '55000';
     END IF;
     SELECT count(*), mra.canonical_sha256(mra.canonical_json_text(coalesce(jsonb_agg(
-        jsonb_build_object('content_sha256', feature_definition_sha256,
-                           'feature_definition_id', feature_definition_id)
+        jsonb_build_object(
+            'feature_definition_id', feature_definition_id,
+            'feature_definition_sha256', feature_definition_sha256,
+            'ordinal', feature_ordinal
+        )
         ORDER BY feature_ordinal
     ), '[]'::jsonb)))
       INTO actual_feature_count, actual_feature_hash
@@ -19232,10 +19259,12 @@ BEGIN
                'exploratory_backtest_fold_session_id',
                    NEW.exploratory_backtest_fold_session_id,
                'exploratory_backtest_run_id', NEW.exploratory_backtest_run_id,
-               'knowledge_cutoff', NEW.knowledge_cutoff,
+               'knowledge_cutoff',
+                   mra.canonical_timestamptz_text(NEW.knowledge_cutoff),
                'market_archive_id', NEW.market_archive_id,
                'market_archive_seal_id', NEW.market_archive_seal_id,
-               'simulated_event_cutoff', NEW.simulated_event_cutoff
+               'simulated_event_cutoff',
+                   mra.canonical_timestamptz_text(NEW.simulated_event_cutoff)
            )))
       INTO expected_scope
       FROM mra.decision_run AS decision
@@ -19301,7 +19330,8 @@ BEGIN
     END IF;
     expected_content := mra.canonical_sha256(mra.canonical_json_text(
         jsonb_build_object(
-            'bound_at', NEW.bound_at, 'dataset_id', NEW.dataset_id,
+            'bound_at', mra.canonical_timestamptz_text(NEW.bound_at),
+            'dataset_id', NEW.dataset_id,
             'decision_run_id', NEW.decision_run_id,
             'evidence_lane', NEW.evidence_lane,
             'exploratory_backtest_arm_id', NEW.exploratory_backtest_arm_id,
@@ -19309,11 +19339,13 @@ BEGIN
             'exploratory_backtest_fold_session_id',
                 NEW.exploratory_backtest_fold_session_id,
             'exploratory_backtest_run_id', NEW.exploratory_backtest_run_id,
-            'knowledge_cutoff', NEW.knowledge_cutoff,
+            'knowledge_cutoff',
+                mra.canonical_timestamptz_text(NEW.knowledge_cutoff),
             'market_archive_id', NEW.market_archive_id,
             'market_archive_seal_id', NEW.market_archive_seal_id,
             'scope_content_sha256', NEW.scope_content_sha256,
-            'simulated_event_cutoff', NEW.simulated_event_cutoff
+            'simulated_event_cutoff',
+                mra.canonical_timestamptz_text(NEW.simulated_event_cutoff)
         )
     ));
     IF NEW.content_sha256 <> expected_content THEN
@@ -20382,7 +20414,8 @@ BEGIN
             'inference_input_sha256', NEW.inference_input_sha256,
             'inference_output_sha256', NEW.inference_output_sha256,
             'model_id', NEW.model_id,
-            'model_registered_at', NEW.model_registered_at,
+            'model_registered_at',
+                mra.canonical_timestamptz_text(NEW.model_registered_at),
             'model_training_run_id', NEW.model_training_run_id,
             'model_version_id', NEW.model_version_id,
             'model_version_sha256', NEW.model_version_sha256,
@@ -20491,7 +20524,7 @@ CREATE TABLE mra.evaluation_candidate_source (
     commitment_id uuid NOT NULL REFERENCES mra.decision_target_commitment(commitment_id) ON DELETE RESTRICT,
     candidate_id uuid NOT NULL REFERENCES mra.candidate(candidate_id) ON DELETE RESTRICT,
     disposition text NOT NULL,
-    decimal_value numeric NOT NULL,
+    boolean_value boolean NOT NULL,
     content_sha256 text NOT NULL,
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     CONSTRAINT evaluation_candidate_input_fk FOREIGN KEY (
@@ -20504,8 +20537,7 @@ CREATE TABLE mra.evaluation_candidate_source (
     CONSTRAINT evaluation_candidate_source_shape_ck CHECK (
         source_measure = 'CANDIDATE_SELECTED'
         AND disposition IN ('SELECTED', 'RANKED_NOT_SELECTED', 'UNRANKABLE')
-        AND decimal_value IN (0, 1)
-        AND decimal_value = (disposition = 'SELECTED')::integer
+        AND boolean_value = (disposition = 'SELECTED')
         AND content_sha256 ~ '^[0-9a-f]{64}$'
     )
 );
@@ -20532,7 +20564,7 @@ CREATE TABLE mra.evaluation_signal_source (
     candidate_id uuid NOT NULL REFERENCES mra.candidate(candidate_id) ON DELETE RESTRICT,
     signal_id uuid NOT NULL REFERENCES mra.signal(signal_id) ON DELETE RESTRICT,
     signal_status text NOT NULL,
-    decimal_value numeric,
+    boolean_value boolean,
     source_status text NOT NULL,
     content_sha256 text NOT NULL,
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
@@ -20547,8 +20579,8 @@ CREATE TABLE mra.evaluation_signal_source (
         source_measure = 'SIGNAL_PRESENT'
         AND signal_status IN ('PRESENT', 'NO_SIGNAL', 'WAIT', 'UNKNOWN', 'NOT_ESTIMABLE')
         AND source_status IN ('COMPLETE', 'UNAVAILABLE')
-        AND ((source_status = 'COMPLETE' AND decimal_value IN (0, 1))
-          OR (source_status = 'UNAVAILABLE' AND decimal_value IS NULL))
+        AND ((source_status = 'COMPLETE' AND boolean_value IS NOT NULL)
+          OR (source_status = 'UNAVAILABLE' AND boolean_value IS NULL))
         AND content_sha256 ~ '^[0-9a-f]{64}$'
     )
 );
@@ -20741,7 +20773,7 @@ CREATE TABLE mra.evaluation_risk_source (
     portfolio_proposal_id uuid NOT NULL REFERENCES mra.portfolio_proposal(portfolio_proposal_id) ON DELETE RESTRICT,
     risk_decision_id uuid NOT NULL REFERENCES mra.risk_decision(risk_decision_id) ON DELETE RESTRICT,
     risk_status text NOT NULL,
-    decimal_value numeric,
+    boolean_value boolean,
     source_status text NOT NULL,
     content_sha256 text NOT NULL,
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
@@ -20756,8 +20788,8 @@ CREATE TABLE mra.evaluation_risk_source (
         source_measure = 'RISK_REJECTED'
         AND risk_status IN ('AUTHORIZED', 'REJECTED', 'UNKNOWN', 'NO_ACTION')
         AND source_status IN ('COMPLETE', 'UNAVAILABLE')
-        AND ((source_status = 'COMPLETE' AND decimal_value IN (0, 1))
-          OR (source_status = 'UNAVAILABLE' AND decimal_value IS NULL))
+        AND ((source_status = 'COMPLETE' AND boolean_value IS NOT NULL)
+          OR (source_status = 'UNAVAILABLE' AND boolean_value IS NULL))
         AND content_sha256 ~ '^[0-9a-f]{64}$'
     )
 );

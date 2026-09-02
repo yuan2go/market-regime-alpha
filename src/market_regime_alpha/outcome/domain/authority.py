@@ -20,6 +20,7 @@ from market_regime_alpha.outcome.domain.vocabulary import (
     OutcomeSourceRole,
 )
 from market_regime_alpha.shared.hashing import canonical_json_sha256
+from market_regime_alpha.shared.identity import ContentHash
 from market_regime_alpha.shared.time import require_utc
 
 
@@ -27,9 +28,52 @@ _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _CODE_SHA = re.compile(r"^[0-9a-f]{40}([0-9a-f]{24})?$")
 _IDEMPOTENCY_KEY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$")
 _REASON_CODE = re.compile(r"^[A-Z][A-Z0-9_]{0,99}$")
-_RUNTIME_MODES = frozenset(
-    {"OPERATIONAL", "HISTORICAL", "REPLAY", "SHADOW", "PROSPECTIVE"}
-)
+_RUNTIME_MODES = frozenset({"OPERATIONAL", "HISTORICAL", "REPLAY", "SHADOW", "PROSPECTIVE"})
+
+
+@dataclass(frozen=True, slots=True)
+class ExploratoryRetrospectiveOutcomeScope:
+    """Exact Decision/archive proof authorizing a retrospective Outcome read."""
+
+    decision_run_id: UUID
+    market_archive_id: UUID
+    market_archive_seal_id: UUID
+    knowledge_cutoff: datetime
+    simulated_event_cutoff: datetime
+    decision_binding_sha256: str
+    evidence_lane: str = field(default="EXPLORATORY_RETROSPECTIVE", init=False)
+    content_sha256: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        knowledge = require_utc(self.knowledge_cutoff, field="knowledge_cutoff")
+        simulated = require_utc(
+            self.simulated_event_cutoff,
+            field="simulated_event_cutoff",
+        )
+        if simulated >= knowledge:
+            raise ValueError("retrospective Outcome cutoffs are out of order")
+        object.__setattr__(self, "knowledge_cutoff", knowledge)
+        object.__setattr__(self, "simulated_event_cutoff", simulated)
+        object.__setattr__(
+            self,
+            "decision_binding_sha256",
+            str(ContentHash(self.decision_binding_sha256)),
+        )
+        object.__setattr__(
+            self,
+            "content_sha256",
+            canonical_json_sha256(
+                {
+                    "decision_binding_sha256": self.decision_binding_sha256,
+                    "decision_run_id": self.decision_run_id,
+                    "evidence_lane": self.evidence_lane,
+                    "knowledge_cutoff": knowledge,
+                    "market_archive_id": self.market_archive_id,
+                    "market_archive_seal_id": self.market_archive_seal_id,
+                    "simulated_event_cutoff": simulated,
+                }
+            ),
+        )
 
 
 def _sha(value: str, label: str) -> str:
@@ -60,6 +104,7 @@ class OutcomeCommitmentSnapshot:
     runtime_mode: str
     commitment_recorded_at: datetime
     reference: FrozenDecisionReference
+    exploratory_retrospective_scope: ExploratoryRetrospectiveOutcomeScope | None = None
 
     def __post_init__(self) -> None:
         if self.target_version < 1:
@@ -87,8 +132,18 @@ class OutcomeCommitmentSnapshot:
             raise ValueError("Outcome commitment Runtime mode is invalid")
         if self.commitment_recorded_at < self.decision_time:
             raise ValueError("Outcome commitment cannot precede DecisionTime")
-        if self.reference_known_at > self.decision_time:
-            raise ValueError("Outcome Decision reference was not known by DecisionTime")
+        visibility_cutoff = self.decision_time
+        scope = self.exploratory_retrospective_scope
+        if scope is not None:
+            if (
+                scope.decision_run_id != self.decision_run_id
+                or scope.simulated_event_cutoff != self.decision_time
+                or self.runtime_mode not in {"HISTORICAL", "REPLAY"}
+            ):
+                raise ValueError("retrospective Outcome scope differs from its Decision")
+            visibility_cutoff = scope.knowledge_cutoff
+        if self.reference_known_at > visibility_cutoff:
+            raise ValueError("Outcome Decision reference was not visible at its authorized cutoff")
         if self.reference_source_kind not in {"BAR_REVISION", "SOURCE_GAP"}:
             raise ValueError("Outcome Decision reference source kind is invalid")
 
@@ -156,11 +211,7 @@ class OutcomeSourceAuthority:
 
     @property
     def source_role(self) -> OutcomeSourceRole:
-        return (
-            OutcomeSourceRole.CALENDAR_SESSION
-            if self.observation_source is None
-            else OutcomeSourceRole.OUTCOME_OBSERVATION
-        )
+        return OutcomeSourceRole.CALENDAR_SESSION if self.observation_source is None else OutcomeSourceRole.OUTCOME_OBSERVATION
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -260,12 +311,8 @@ class OutcomeRevisionAuthority:
     definition_summary_sha256: str = field(init=False)
 
     def __post_init__(self) -> None:
-        expected_supersedes_ordinal = (
-            None if self.revision_ordinal == 1 else self.revision_ordinal - 1
-        )
-        if self.revision_ordinal < 1 or (
-            (self.revision_ordinal == 1) != (self.supersedes_revision_id is None)
-        ):
+        expected_supersedes_ordinal = None if self.revision_ordinal == 1 else self.revision_ordinal - 1
+        if self.revision_ordinal < 1 or ((self.revision_ordinal == 1) != (self.supersedes_revision_id is None)):
             raise ValueError("Outcome revision predecessor shape is invalid")
         if self.supersedes_revision_ordinal != expected_supersedes_ordinal:
             raise ValueError("Outcome revision predecessor ordinal is invalid")
@@ -336,40 +383,26 @@ class OutcomeRevisionAuthority:
             canonical_json_sha256(
                 {
                     "availability_status": self.draft.availability_status,
-                    "decision_reference_observation_id": (
-                        self.draft.decision_reference_observation_id
-                    ),
-                    "decision_reference_sha256": (
-                        self.draft.decision_reference_sha256
-                    ),
+                    "decision_reference_observation_id": (self.draft.decision_reference_observation_id),
+                    "decision_reference_sha256": (self.draft.decision_reference_sha256),
                     "finality_status": self.draft.finality_status,
                     "knowledge_cutoff": self.draft.knowledge_cutoff,
                     "metric_count": self.metric_count,
                     "metric_roster_sha256": self.metric_roster_sha256,
                     "observation_count": self.observation_count,
                     "observation_cutoff": self.draft.observation_cutoff,
-                    "observation_dependency_count": (
-                        self.observation_dependency_count
-                    ),
-                    "observation_dependency_roster_sha256": (
-                        self.observation_dependency_roster_sha256
-                    ),
+                    "observation_dependency_count": (self.observation_dependency_count),
+                    "observation_dependency_roster_sha256": (self.observation_dependency_roster_sha256),
                     "observation_roster_sha256": self.observation_roster_sha256,
                     "outcome_status": self.draft.status,
                     "reason_count": self.reason_count,
                     "reason_roster_sha256": self.reason_roster_sha256,
-                    "reference_dependency_count": (
-                        self.reference_dependency_count
-                    ),
-                    "reference_dependency_roster_sha256": (
-                        self.reference_dependency_roster_sha256
-                    ),
+                    "reference_dependency_count": (self.reference_dependency_count),
+                    "reference_dependency_roster_sha256": (self.reference_dependency_roster_sha256),
                     "source_count": self.source_count,
                     "source_roster_sha256": self.source_roster_sha256,
                     "target_definition_id": self.draft.target_definition_id,
-                    "target_definition_sha256": (
-                        self.draft.target_definition_sha256
-                    ),
+                    "target_definition_sha256": (self.draft.target_definition_sha256),
                 }
             ),
         )
@@ -429,17 +462,11 @@ class MarketTargetOutcomeIdentityPlan:
         return cls(
             market_target_outcome_id=market_target_outcome_id or id_factory(),
             market_target_outcome_revision_id=id_factory(),
-            source_ids=tuple(
-                id_factory() for _ in (*draft.sessions, *draft.sources)
-            ),
+            source_ids=tuple(id_factory() for _ in (*draft.sessions, *draft.sources)),
             observation_ids=tuple(id_factory() for _ in draft.observations),
             metric_ids=tuple(id_factory() for _ in draft.metrics),
-            reference_dependency_ids=tuple(
-                id_factory() for _ in draft.reference_dependencies
-            ),
-            observation_dependency_ids=tuple(
-                id_factory() for _ in draft.observation_dependencies
-            ),
+            reference_dependency_ids=tuple(id_factory() for _ in draft.reference_dependencies),
+            observation_dependency_ids=tuple(id_factory() for _ in draft.observation_dependencies),
             reason_ids=tuple(id_factory() for _ in draft.reasons),
         )
 
@@ -489,9 +516,7 @@ def build_market_target_outcome_authority(
                 knowledge_cutoff=draft.knowledge_cutoff,
             )
         )
-    checkpoint_by_id = {
-        item.target_checkpoint_id: item for item in target.checkpoints
-    }
+    checkpoint_by_id = {item.target_checkpoint_id: item for item in target.checkpoints}
     observation_source_ids: dict[UUID, UUID] = {}
     offset = len(draft.sessions)
     for index, source in enumerate(draft.sources):
@@ -516,24 +541,18 @@ def build_market_target_outcome_authority(
         OutcomeObservationAuthority(
             market_target_outcome_observation_id=observation_id,
             ordinal=index + 1,
-            market_target_outcome_source_id=observation_source_ids[
-                observation.target_checkpoint_id
-            ],
+            market_target_outcome_source_id=observation_source_ids[observation.target_checkpoint_id],
             draft_index=index,
             content_sha256=canonical_json_sha256(
                 {
                     "draft_sha256": observation.content_sha256,
-                    "market_target_outcome_source_id": observation_source_ids[
-                        observation.target_checkpoint_id
-                    ],
+                    "market_target_outcome_source_id": observation_source_ids[observation.target_checkpoint_id],
                     "observation_cutoff": draft.observation_cutoff,
                     "knowledge_cutoff": draft.knowledge_cutoff,
                 }
             ),
         )
-        for index, (observation_id, observation) in enumerate(
-            zip(identities.observation_ids, draft.observations, strict=True)
-        )
+        for index, (observation_id, observation) in enumerate(zip(identities.observation_ids, draft.observations, strict=True))
     )
     metrics = tuple(
         OutcomeMetricAuthority(
@@ -547,56 +566,29 @@ def build_market_target_outcome_authority(
                 }
             ),
         )
-        for index, (metric_id, metric) in enumerate(
-            zip(identities.metric_ids, draft.metrics, strict=True)
-        )
+        for index, (metric_id, metric) in enumerate(zip(identities.metric_ids, draft.metrics, strict=True))
     )
     metric_id_by_definition = {
-        draft.metrics[item.draft_index].target_metric_definition_id: (
-            item.market_target_outcome_metric_id
-        )
-        for item in metrics
+        draft.metrics[item.draft_index].target_metric_definition_id: (item.market_target_outcome_metric_id) for item in metrics
     }
     observation_id_by_checkpoint = {
-        draft.observations[item.draft_index].target_checkpoint_id: (
-            item.market_target_outcome_observation_id
-        )
-        for item in observations
+        draft.observations[item.draft_index].target_checkpoint_id: (item.market_target_outcome_observation_id) for item in observations
     }
-    dependency_hash_by_id = {
-        item.target_metric_dependency_id: item.content_sha256
-        for item in target.dependencies
-    }
-    dependency_ordinal_by_id = {
-        item.target_metric_dependency_id: item.ordinal for item in target.dependencies
-    }
+    dependency_hash_by_id = {item.target_metric_dependency_id: item.content_sha256 for item in target.dependencies}
+    dependency_ordinal_by_id = {item.target_metric_dependency_id: item.ordinal for item in target.dependencies}
     reference_dependencies = tuple(
         OutcomeReferenceDependencyAuthority(
             market_target_outcome_metric_reference_id=dependency_id,
-            ordinal=dependency_ordinal_by_id[
-                dependency.target_metric_dependency_id
-            ],
+            ordinal=dependency_ordinal_by_id[dependency.target_metric_dependency_id],
             draft_index=item_index,
-            market_target_outcome_metric_id=metric_id_by_definition[
-                dependency.target_metric_definition_id
-            ],
-            target_dependency_sha256=dependency_hash_by_id[
-                dependency.target_metric_dependency_id
-            ],
+            market_target_outcome_metric_id=metric_id_by_definition[dependency.target_metric_definition_id],
+            target_dependency_sha256=dependency_hash_by_id[dependency.target_metric_dependency_id],
             content_sha256=canonical_json_sha256(
                 {
-                    "decision_reference_observation_id": (
-                        dependency.decision_reference_observation_id
-                    ),
-                    "market_target_outcome_metric_id": metric_id_by_definition[
-                        dependency.target_metric_definition_id
-                    ],
-                    "target_dependency_sha256": dependency_hash_by_id[
-                        dependency.target_metric_dependency_id
-                    ],
-                    "target_metric_dependency_id": (
-                        dependency.target_metric_dependency_id
-                    ),
+                    "decision_reference_observation_id": (dependency.decision_reference_observation_id),
+                    "market_target_outcome_metric_id": metric_id_by_definition[dependency.target_metric_definition_id],
+                    "target_dependency_sha256": dependency_hash_by_id[dependency.target_metric_dependency_id],
+                    "target_metric_dependency_id": (dependency.target_metric_dependency_id),
                 }
             ),
         )
@@ -611,33 +603,17 @@ def build_market_target_outcome_authority(
     observation_dependencies = tuple(
         OutcomeObservationDependencyAuthority(
             market_target_outcome_metric_observation_id=dependency_id,
-            ordinal=dependency_ordinal_by_id[
-                dependency.target_metric_dependency_id
-            ],
+            ordinal=dependency_ordinal_by_id[dependency.target_metric_dependency_id],
             draft_index=item_index,
-            market_target_outcome_metric_id=metric_id_by_definition[
-                dependency.target_metric_definition_id
-            ],
-            market_target_outcome_observation_id=observation_id_by_checkpoint[
-                dependency.target_checkpoint_id
-            ],
-            target_dependency_sha256=dependency_hash_by_id[
-                dependency.target_metric_dependency_id
-            ],
+            market_target_outcome_metric_id=metric_id_by_definition[dependency.target_metric_definition_id],
+            market_target_outcome_observation_id=observation_id_by_checkpoint[dependency.target_checkpoint_id],
+            target_dependency_sha256=dependency_hash_by_id[dependency.target_metric_dependency_id],
             content_sha256=canonical_json_sha256(
                 {
-                    "market_target_outcome_metric_id": metric_id_by_definition[
-                        dependency.target_metric_definition_id
-                    ],
-                    "market_target_outcome_observation_id": (
-                        observation_id_by_checkpoint[dependency.target_checkpoint_id]
-                    ),
-                    "target_dependency_sha256": dependency_hash_by_id[
-                        dependency.target_metric_dependency_id
-                    ],
-                    "target_metric_dependency_id": (
-                        dependency.target_metric_dependency_id
-                    ),
+                    "market_target_outcome_metric_id": metric_id_by_definition[dependency.target_metric_definition_id],
+                    "market_target_outcome_observation_id": (observation_id_by_checkpoint[dependency.target_checkpoint_id]),
+                    "target_dependency_sha256": dependency_hash_by_id[dependency.target_metric_dependency_id],
+                    "target_metric_dependency_id": (dependency.target_metric_dependency_id),
                 }
             ),
         )
@@ -651,9 +627,7 @@ def build_market_target_outcome_authority(
     )
     source_id_by_checkpoint = observation_source_ids
     reasons: list[OutcomeReasonAuthority] = []
-    for index, (reason_id, reason) in enumerate(
-        zip(identities.reason_ids, draft.reasons, strict=True)
-    ):
+    for index, (reason_id, reason) in enumerate(zip(identities.reason_ids, draft.reasons, strict=True)):
         reason_source_id: UUID | None = None
         reason_observation_id: UUID | None = None
         reason_metric_id: UUID | None = None
@@ -664,15 +638,11 @@ def build_market_target_outcome_authority(
         elif reason.dimension is OutcomeReasonDimension.OBSERVATION:
             if reason.target_checkpoint_id is None:
                 raise ValueError("Outcome OBSERVATION reason lacks a checkpoint")
-            reason_observation_id = observation_id_by_checkpoint[
-                reason.target_checkpoint_id
-            ]
+            reason_observation_id = observation_id_by_checkpoint[reason.target_checkpoint_id]
         elif reason.dimension is OutcomeReasonDimension.METRIC:
             if reason.target_metric_definition_id is None:
                 raise ValueError("Outcome METRIC reason lacks a metric")
-            reason_metric_id = metric_id_by_definition[
-                reason.target_metric_definition_id
-            ]
+            reason_metric_id = metric_id_by_definition[reason.target_metric_definition_id]
         reasons.append(
             OutcomeReasonAuthority(
                 market_target_outcome_reason_id=reason_id,
@@ -684,9 +654,7 @@ def build_market_target_outcome_authority(
                 content_sha256=canonical_json_sha256(
                     {
                         "market_target_outcome_metric_id": reason_metric_id,
-                        "market_target_outcome_observation_id": (
-                            reason_observation_id
-                        ),
+                        "market_target_outcome_observation_id": (reason_observation_id),
                         "market_target_outcome_source_id": reason_source_id,
                         "reason_code": reason.reason_code,
                         "reason_dimension": reason.dimension,
@@ -695,15 +663,11 @@ def build_market_target_outcome_authority(
             )
         )
     revision = OutcomeRevisionAuthority(
-        market_target_outcome_revision_id=(
-            identities.market_target_outcome_revision_id
-        ),
+        market_target_outcome_revision_id=(identities.market_target_outcome_revision_id),
         market_target_outcome_id=identities.market_target_outcome_id,
         revision_ordinal=revision_ordinal,
         supersedes_revision_id=supersedes_revision_id,
-        supersedes_revision_ordinal=(
-            None if supersedes_revision_id is None else revision_ordinal - 1
-        ),
+        supersedes_revision_ordinal=(None if supersedes_revision_id is None else revision_ordinal - 1),
         draft=draft,
         sources=tuple(sources),
         observations=observations,
@@ -738,8 +702,7 @@ def _reference_from_draft(
     draft: OutcomeRevisionDraft,
 ) -> FrozenDecisionReference:
     if (
-        reference.decision_reference_observation_id
-        != draft.decision_reference_observation_id
+        reference.decision_reference_observation_id != draft.decision_reference_observation_id
         or reference.content_sha256 != draft.decision_reference_sha256
     ):
         raise ValueError("Outcome draft did not preserve the frozen Decision reference")

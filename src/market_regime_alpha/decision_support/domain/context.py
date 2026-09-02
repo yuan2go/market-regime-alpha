@@ -19,6 +19,9 @@ from uuid import UUID
 from market_regime_alpha.shared.hashing import canonical_json_sha256
 from market_regime_alpha.shared.identity import ContentHash
 from market_regime_alpha.shared.time import require_utc
+from market_regime_alpha.decision_support.domain.retrospective import (
+    ExploratoryRetrospectiveDecisionScope,
+)
 
 
 _CODE = re.compile(r"^[a-z][a-z0-9_.-]{0,99}$")
@@ -347,6 +350,9 @@ class PreparedContextInputs:
     candidate_count: int
     policy: ContextPolicyPlan
     sources: tuple[PreparedContextSource, ...]
+    exploratory_retrospective_scope: (
+        ExploratoryRetrospectiveDecisionScope | None
+    ) = None
     source_roster_sha256: str = field(init=False)
 
     def __post_init__(self) -> None:
@@ -367,6 +373,14 @@ class PreparedContextInputs:
         )
         if isinstance(self.candidate_count, bool) or self.candidate_count < 0:
             raise ValueError("Candidate count must be non-negative")
+        scope = self.exploratory_retrospective_scope
+        visibility_cutoff = self.decision_time
+        if scope is not None:
+            if scope.simulated_event_cutoff != self.decision_time:
+                raise ValueError(
+                    "retrospective Context simulation cutoff differs from DecisionTime"
+                )
+            visibility_cutoff = scope.knowledge_cutoff
         expected_total = self.candidate_count * self.policy.metric_count
         if len(self.sources) != expected_total:
             raise ValueError("Context requires the complete Candidate roster per metric")
@@ -394,7 +408,7 @@ class PreparedContextInputs:
             elif candidates != expected_candidates:
                 raise ValueError("Context requires the complete Candidate roster per metric")
             for source in roster:
-                source.validate_for_decision_time(self.decision_time)
+                source.validate_for_decision_time(visibility_cutoff)
                 if source.value_status is ContextSourceValueStatus.AVAILABLE:
                     is_boolean = source.boolean_value is not None
                     if (metric.value_type == "BOOLEAN") != is_boolean:

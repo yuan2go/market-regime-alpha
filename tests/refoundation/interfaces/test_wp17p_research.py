@@ -149,3 +149,31 @@ def test_materializer_is_order_independent_and_contains_no_label_fields() -> Non
     assert first.manifest_content == replay.manifest_content
     assert b'"target"' not in first.manifest_content
     assert b'"outcome"' not in first.manifest_content
+
+
+def test_materializer_serializes_decimal_zero_without_exponent() -> None:
+    feature = _feature()
+    materialized = materialize_wp17p_dataset(
+        dataset_id=_id(400),
+        dataset_code="wp17p_decimal_zero",
+        simulated_decision_time=datetime(2026, 1, 5, 7, 1, tzinfo=UTC),
+        universe_revision_id=_id(401),
+        eligibility_policy_id=_id(402),
+        feature_definition_id=feature.feature_definition_id,
+        code_artifact=_artifact(403),
+        config_artifact=_artifact(404),
+        members=(
+            Wp17pDatasetMember(
+                _id(405),
+                _id(406),
+                _id(407),
+                FeatureCellStatus.AVAILABLE,
+                "EXACT_ARCHIVED_BAR",
+                Wp17pFeatureLineageKind.BAR_REVISION,
+                _id(408),
+                Decimal("0E-12"),
+            ),
+        ),
+    )
+
+    assert b'"value":"0.000000000000"' in materialized.manifest_content

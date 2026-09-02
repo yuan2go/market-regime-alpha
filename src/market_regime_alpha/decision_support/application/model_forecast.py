@@ -275,7 +275,7 @@ class ModelForecastCommands:
             expected_roster = canonical_json_sha256(
                 tuple(
                     {
-                        "content_sha256": item.content_sha256,
+                        "content_sha256": str(item.content_sha256),
                         "forecast_model_binding_id": (
                             item.forecast_model_binding_id
                         ),

@@ -140,6 +140,17 @@ class Wp17pDecisionOperations:
         )
         candidate_set_id = UUID(candidate.aggregate_id)
         decision_claim = _claim(app, runtime_run_id, "open-decision-run")
+        retrospective_scope = ExploratoryRetrospectiveDecisionScope(
+            dataset.dataset_id,
+            dataset.backtest_scope.exploratory_backtest_run_id,
+            dataset.backtest_scope.exploratory_backtest_arm_id,
+            dataset.backtest_scope.exploratory_backtest_fold_id,
+            dataset.backtest_scope.exploratory_backtest_fold_session_id,
+            dataset.retrospective_scope.market_archive_id,
+            dataset.retrospective_scope.market_archive_seal_id,
+            dataset.retrospective_scope.knowledge_cutoff,
+            dataset.retrospective_scope.simulated_event_cutoff,
+        )
         decision = app.decision_support.open_exploratory_retrospective_decision_run(
             OpenDecisionRunRequest(
                 candidate_set_id=candidate_set_id,
@@ -156,24 +167,15 @@ class Wp17pDecisionOperations:
                 ),
                 research_qualifications=(),
             ),
-            ExploratoryRetrospectiveDecisionScope(
-                dataset.dataset_id,
-                dataset.backtest_scope.exploratory_backtest_run_id,
-                dataset.backtest_scope.exploratory_backtest_arm_id,
-                dataset.backtest_scope.exploratory_backtest_fold_id,
-                dataset.backtest_scope.exploratory_backtest_fold_session_id,
-                dataset.retrospective_scope.market_archive_id,
-                dataset.retrospective_scope.market_archive_seal_id,
-                dataset.retrospective_scope.knowledge_cutoff,
-                dataset.retrospective_scope.simulated_event_cutoff,
-            ),
+            retrospective_scope,
             _context(f"decision-{dataset.dataset_id}"),
             runtime_claim=decision_claim,
         )
         context_claim = _claim(app, runtime_run_id, "assess-context")
-        app.decision_contexts.assess_context(
+        app.decision_contexts.assess_exploratory_retrospective_context(
             decision.decision_run_id,
             catalog.context_policy.context_policy_id,
+            retrospective_scope,
             _context(f"context-{dataset.dataset_id}"),
             runtime_claim=context_claim,
         )

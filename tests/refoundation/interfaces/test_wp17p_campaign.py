@@ -13,14 +13,10 @@ from market_regime_alpha.research_qualification.domain.research_vocabulary impor
 )
 
 
-def test_campaign_orders_preaccess_freeze_before_fit_and_validation_outcomes() -> None:
+def test_campaign_predeclares_before_settlement_and_opens_before_acquisition() -> None:
     calls: list[str] = []
-    baseline = SimpleNamespace(
-        exploratory_backtest_arm_id=uuid4(), kind=BacktestArmKind.RULE_BASELINE
-    )
-    challenger = SimpleNamespace(
-        exploratory_backtest_arm_id=uuid4(), kind=BacktestArmKind.MODEL_CHALLENGER
-    )
+    baseline = SimpleNamespace(exploratory_backtest_arm_id=uuid4(), kind=BacktestArmKind.RULE_BASELINE)
+    challenger = SimpleNamespace(exploratory_backtest_arm_id=uuid4(), kind=BacktestArmKind.MODEL_CHALLENGER)
     fit_session = SimpleNamespace(
         exploratory_backtest_fold_session_id=uuid4(),
         role=BacktestSessionRole.FIT_INPUT,
@@ -39,11 +35,7 @@ def test_campaign_orders_preaccess_freeze_before_fit_and_validation_outcomes() -
         purpose=PartitionPurpose.VALIDATION,
         sessions=(validation_session,),
     )
-    catalog = SimpleNamespace(
-        backtest=SimpleNamespace(
-            arms=(baseline, challenger), folds=(fit_fold, validation_fold)
-        )
-    )
+    catalog = SimpleNamespace(backtest=SimpleNamespace(arms=(baseline, challenger), folds=(fit_fold, validation_fold)))
 
     class Research:
         def register_catalog(self, catalog) -> None:
@@ -64,9 +56,13 @@ def test_campaign_orders_preaccess_freeze_before_fit_and_validation_outcomes() -
             return SimpleNamespace(dataset_id=dataset.dataset_id, decision_run_id=uuid4())
 
     class Evaluations:
-        def open(self, *, datasets, **kwargs):
+        def predeclare(self, *, datasets, **kwargs):
             phase = "fit" if len(datasets) == 1 else "validation"
-            calls.append(f"open:{phase}")
+            calls.append(f"predeclare:{phase}")
+            return SimpleNamespace(phase=phase)
+
+        def open(self, *, prepared, **kwargs):
+            calls.append(f"open:{prepared.phase}")
             return SimpleNamespace(evaluation_run_id=uuid4())
 
         def complete(self, *, opened, **kwargs):
@@ -76,7 +72,7 @@ def test_campaign_orders_preaccess_freeze_before_fit_and_validation_outcomes() -
 
     class Outcomes:
         def settle(self, *, decision, **kwargs):
-            phase = "fit" if calls.count("open:validation") == 0 else "validation"
+            phase = "fit" if calls.count("predeclare:validation") == 0 else "validation"
             calls.append(f"outcome:{phase}")
             return SimpleNamespace(decision_run_id=decision.dataset_id)
 
@@ -97,7 +93,9 @@ def test_campaign_orders_preaccess_freeze_before_fit_and_validation_outcomes() -
 
     operations.run(catalog=catalog, pilot_instrument_ids=tuple(uuid4() for _ in range(32)))
 
-    assert calls.index("open:fit") < calls.index("outcome:fit")
+    assert calls.index("predeclare:fit") < calls.index("outcome:fit")
+    assert calls.index("outcome:fit") < calls.index("open:fit")
     assert calls.index("complete:fit") < calls.index("model")
     assert calls.index("model") < calls.index("decision:validation:model")
-    assert calls.index("open:validation") < calls.index("outcome:validation")
+    assert calls.index("predeclare:validation") < calls.index("outcome:validation")
+    assert calls.index("outcome:validation") < calls.index("open:validation")

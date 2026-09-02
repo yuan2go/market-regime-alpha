@@ -117,7 +117,7 @@ class PostgresModelForecastRepository:
                     ),
                     item.reason_code,
                     item.target_metric_definition_id,
-                    item.forecast_estimate_content_sha256,
+                    str(item.forecast_estimate_content_sha256),
                     item.dataset_id,
                     item.exploratory_backtest_run_id,
                     item.exploratory_backtest_arm_id,
@@ -129,17 +129,17 @@ class PostgresModelForecastRepository:
                     item.model_training_run_id,
                     item.training_fold_id,
                     item.training_fold_ordinal,
-                    item.model_version_sha256,
+                    str(item.model_version_sha256),
                     item.fitted_model_artifact_id,
-                    item.fitted_model_content_sha256,
+                    str(item.fitted_model_content_sha256),
                     item.fitted_model_size_bytes,
-                    item.feature_vector_sha256,
+                    str(item.feature_vector_sha256),
                     item.point_estimate,
                     item.model_registered_at,
                     item.forecast_recorded_at,
-                    item.inference_input_sha256,
-                    item.inference_output_sha256,
-                    item.content_sha256,
+                    str(item.inference_input_sha256),
+                    str(item.inference_output_sha256),
+                    str(item.content_sha256),
                 )
                 for item in bindings
             ),
@@ -152,7 +152,10 @@ class PostgresModelForecastRepository:
         *,
         lock: bool,
     ) -> ModelForecastReconciliation:
-        suffix = " FOR SHARE OF forecast, binding" if lock else ""
+        # ``binding`` is the nullable side so PostgreSQL cannot apply a row lock
+        # to it. Forecast rows are the stable parent roster; binding rows are
+        # append-only and protected by their exact unique/FK identities.
+        suffix = " FOR SHARE OF forecast" if lock else ""
         rows = self._connection.execute(
             """
             SELECT forecast.forecast_count, forecast.forecast_id,

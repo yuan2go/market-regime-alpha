@@ -34,7 +34,7 @@ from market_regime_alpha.runtime.application import ActorType, CommandContext
 
 
 @dataclass(frozen=True, slots=True)
-class Wp17pOpenEvaluation:
+class Wp17pPreparedEvaluation:
     research_partition_id: UUID
     partition_member_count: int
     partition_content_sha256: str
@@ -42,8 +42,12 @@ class Wp17pOpenEvaluation:
     experiment_partition_id: UUID
     experiment_run_id: UUID
     evaluation_protocol_id: UUID
-    evaluation_run_id: UUID
     purpose: PartitionPurpose
+
+
+@dataclass(frozen=True, slots=True)
+class Wp17pOpenEvaluation(Wp17pPreparedEvaluation):
+    evaluation_run_id: UUID
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,20 +65,17 @@ class Wp17pEvaluationOperations:
     def __init__(self, application: TargetApplication) -> None:
         self._application = application
 
-    def open(
+    def predeclare(
         self,
         *,
         catalog: Wp17pAuthorityCatalog,
         datasets: tuple[Wp17pDatasetAuthority, ...],
         decisions: tuple[Wp17pDecisionExecution, ...],
-    ) -> Wp17pOpenEvaluation:
+    ) -> Wp17pPreparedEvaluation:
         if not datasets or len(datasets) != len(decisions):
             raise ValueError("Evaluation requires matching Dataset and Decision rosters")
         dataset_by_id = {item.dataset_id: item for item in datasets}
-        if (
-            len(dataset_by_id) != len(datasets)
-            or {item.dataset_id for item in decisions} != set(dataset_by_id)
-        ):
+        if len(dataset_by_id) != len(datasets) or {item.dataset_id for item in decisions} != set(dataset_by_id):
             raise ValueError("Evaluation Decisions must bind the exact Dataset roster")
         dataset = datasets[0]
         fold_scope = (
@@ -100,31 +101,18 @@ class Wp17pEvaluationOperations:
             raise ValueError("Evaluation Dataset roster crosses a frozen fold/session")
         plan = wp17p_partition_plan(catalog, dataset)
         fold, session = _fold_and_session(catalog, dataset)
-        arm_by_id = {
-            item.exploratory_backtest_arm_id: item
-            for item in catalog.backtest.arms
-        }
-        dataset_arm_ids = {
-            item.backtest_scope.exploratory_backtest_arm_id for item in datasets
-        }
+        arm_by_id = {item.exploratory_backtest_arm_id: item for item in catalog.backtest.arms}
+        dataset_arm_ids = {item.backtest_scope.exploratory_backtest_arm_id for item in datasets}
         if not dataset_arm_ids.issubset(arm_by_id):
             raise ValueError("Evaluation Dataset arm is not declared")
         expected_arm_ids = (
-            {
-                item.exploratory_backtest_arm_id
-                for item in catalog.backtest.arms
-                if item.kind is BacktestArmKind.MODEL_CHALLENGER
-            }
+            {item.exploratory_backtest_arm_id for item in catalog.backtest.arms if item.kind is BacktestArmKind.MODEL_CHALLENGER}
             if fold.purpose is PartitionPurpose.FIT
             else set(arm_by_id)
         )
         if dataset_arm_ids != expected_arm_ids:
             raise ValueError("Evaluation Dataset roster omits a predeclared arm")
-        expected_role = (
-            BacktestSessionRole.FIT_INPUT
-            if fold.purpose is PartitionPurpose.FIT
-            else BacktestSessionRole.EVALUATION
-        )
+        expected_role = BacktestSessionRole.FIT_INPUT if fold.purpose is PartitionPurpose.FIT else BacktestSessionRole.EVALUATION
         if session.role is not expected_role:
             raise ValueError("Evaluation Dataset uses the wrong fold session role")
 
@@ -134,9 +122,7 @@ class Wp17pEvaluationOperations:
             _context(f"partition-{fold.ordinal}"),
         )
         _require_matched(
-            app.research_evaluation_verifier.verify_partition(
-                frozen.research_partition_id
-            ),
+            app.research_evaluation_verifier.verify_partition(frozen.research_partition_id),
             "ResearchPartition",
         )
         experiment_id = uuid5(
@@ -189,37 +175,10 @@ class Wp17pEvaluationOperations:
             ),
             _context(f"experiment-run-{fold.ordinal}"),
         )
-        protocol = (
-            catalog.fit_evaluation_protocol
-            if fold.purpose is PartitionPurpose.FIT
-            else catalog.validation_evaluation_protocol
-        )
-        if (
-            protocol.evaluation_protocol_id != fold.evaluation_protocol_id
-            or protocol.content_sha256 != fold.evaluation_protocol_sha256
-        ):
+        protocol = catalog.fit_evaluation_protocol if fold.purpose is PartitionPurpose.FIT else catalog.validation_evaluation_protocol
+        if protocol.evaluation_protocol_id != fold.evaluation_protocol_id or protocol.content_sha256 != fold.evaluation_protocol_sha256:
             raise ValueError("fold and EvaluationProtocol differ")
-        evaluation_run_id = uuid5(experiment_run_id, "evaluation:1")
-        app.research_evaluations.open_run(
-            EvaluationRunPlan(
-                evaluation_run_id,
-                experiment_run_id,
-                protocol.evaluation_protocol_id,
-                dataset.retrospective_scope.knowledge_cutoff,
-                f"wp17p-{fold.purpose.value.lower()}-evaluation-1",
-                catalog.backtest.code_artifact,
-                catalog.backtest.config_artifact,
-                catalog.backtest.provenance_sha256,
-            ),
-            _context(f"evaluation-open-{fold.ordinal}"),
-        )
-        _require_matched(
-            app.research_evaluation_verifier.verify_evaluation_run(
-                evaluation_run_id
-            ),
-            "open EvaluationRun",
-        )
-        return Wp17pOpenEvaluation(
+        return Wp17pPreparedEvaluation(
             frozen.research_partition_id,
             frozen.member_count,
             frozen.content_sha256,
@@ -227,8 +186,49 @@ class Wp17pEvaluationOperations:
             experiment_partition_id,
             experiment_run_id,
             protocol.evaluation_protocol_id,
-            evaluation_run_id,
             fold.purpose,
+        )
+
+    def open(
+        self,
+        *,
+        catalog: Wp17pAuthorityCatalog,
+        prepared: Wp17pPreparedEvaluation,
+        outcomes: tuple[Wp17pOutcomeExecution, ...],
+    ) -> Wp17pOpenEvaluation:
+        settled = tuple(item for execution in outcomes for item in execution.outcomes)
+        commitment_ids = tuple(item.commitment_id for item in settled)
+        if not settled or len(commitment_ids) != prepared.partition_member_count or len(set(commitment_ids)) != len(commitment_ids):
+            raise ValueError("settled Outcome roster differs from frozen Partition")
+        requested_knowledge_cutoff = max(item.settled_at for item in settled)
+        evaluation_run_id = uuid5(prepared.experiment_run_id, "evaluation:1")
+        self._application.research_evaluations.open_run(
+            EvaluationRunPlan(
+                evaluation_run_id,
+                prepared.experiment_run_id,
+                prepared.evaluation_protocol_id,
+                requested_knowledge_cutoff,
+                f"wp17p-{prepared.purpose.value.lower()}-evaluation-1",
+                catalog.backtest.code_artifact,
+                catalog.backtest.config_artifact,
+                catalog.backtest.provenance_sha256,
+            ),
+            _context(f"evaluation-open-{prepared.purpose.value.lower()}"),
+        )
+        _require_matched(
+            self._application.research_evaluation_verifier.verify_evaluation_run(evaluation_run_id),
+            "open EvaluationRun",
+        )
+        return Wp17pOpenEvaluation(
+            prepared.research_partition_id,
+            prepared.partition_member_count,
+            prepared.partition_content_sha256,
+            prepared.experiment_id,
+            prepared.experiment_partition_id,
+            prepared.experiment_run_id,
+            prepared.evaluation_protocol_id,
+            prepared.purpose,
+            evaluation_run_id,
         )
 
     def complete(
@@ -237,15 +237,8 @@ class Wp17pEvaluationOperations:
         opened: Wp17pOpenEvaluation,
         outcomes: tuple[Wp17pOutcomeExecution, ...],
     ) -> Wp17pCompletedEvaluation:
-        commitment_ids = tuple(
-            item.commitment_id
-            for execution in outcomes
-            for item in execution.outcomes
-        )
-        if (
-            len(commitment_ids) != opened.partition_member_count
-            or len(set(commitment_ids)) != len(commitment_ids)
-        ):
+        commitment_ids = tuple(item.commitment_id for execution in outcomes for item in execution.outcomes)
+        if len(commitment_ids) != opened.partition_member_count or len(set(commitment_ids)) != len(commitment_ids):
             raise ValueError("settled Outcome roster differs from frozen Partition")
         acquired = self._application.research_evaluations.acquire_outcome_inputs(
             opened.evaluation_run_id,
@@ -258,9 +251,7 @@ class Wp17pEvaluationOperations:
             _context(f"evaluation-complete-{opened.evaluation_run_id}"),
         )
         _require_matched(
-            self._application.research_evaluation_verifier.verify_evaluation_run(
-                opened.evaluation_run_id
-            ),
+            self._application.research_evaluation_verifier.verify_evaluation_run(opened.evaluation_run_id),
             "completed EvaluationRun",
         )
         return Wp17pCompletedEvaluation(
@@ -311,10 +302,8 @@ def _fold_and_session(catalog, dataset):
         for fold in catalog.backtest.folds
         for session in fold.sessions
         if (
-            fold.exploratory_backtest_fold_id
-            == dataset.backtest_scope.exploratory_backtest_fold_id
-            and session.exploratory_backtest_fold_session_id
-            == dataset.backtest_scope.exploratory_backtest_fold_session_id
+            fold.exploratory_backtest_fold_id == dataset.backtest_scope.exploratory_backtest_fold_id
+            and session.exploratory_backtest_fold_session_id == dataset.backtest_scope.exploratory_backtest_fold_session_id
         )
     )
     if len(matches) != 1:
