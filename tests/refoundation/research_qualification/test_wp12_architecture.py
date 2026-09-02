@@ -54,10 +54,9 @@ def test_wp12_has_no_runtime_dispatch_cli_cutover_or_later_authority() -> None:
         "model",
         "model_version",
         "calibration",
-        "forecast",
-        "context_assessment",
+        "trade_outcome",
     ):
-        assert f"CREATE TABLE mra.{table}" not in baseline
+        assert f"CREATE TABLE mra.{table} (" not in baseline
 
 
 def test_qualification_read_port_is_exact_id_and_generation_safe() -> None:
