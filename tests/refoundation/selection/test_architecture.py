@@ -130,10 +130,9 @@ def test_wp12_preserves_prior_authorities_without_later_authorities() -> None:
         "evaluation_dataset",
         "model",
         "model_version",
-        "context",
         "trade_outcome",
     ):
-        assert f"CREATE TABLE mra.{table}" not in baseline
+        assert f"CREATE TABLE mra.{table} (" not in baseline
     for table in EXPECTED_RESEARCH_VALIDITY_TABLES:
         assert f"CREATE TABLE mra.{table}" in baseline
 

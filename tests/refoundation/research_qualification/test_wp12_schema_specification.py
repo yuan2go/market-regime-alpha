@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[3]
 BASELINE = ROOT / "src/market_regime_alpha/infrastructure/postgres/migrations/001_baseline.sql"
 
 
-def test_wp12_adds_exactly_ten_relational_authority_tables() -> None:
+def test_wp12_authority_remains_exactly_ten_relational_tables() -> None:
     assert EXPECTED_RESEARCH_QUALIFICATION_TABLES == {
         "evidence_item",
         "evidence_dependency",
@@ -28,7 +28,7 @@ def test_wp12_adds_exactly_ten_relational_authority_tables() -> None:
         "research_qualification_floor_result",
         "research_qualification_floor_evidence",
     }
-    assert len(EXPECTED_TARGET_TABLES) == 78
+    assert EXPECTED_RESEARCH_QUALIFICATION_TABLES <= EXPECTED_TARGET_TABLES
 
 
 def test_wp12_uses_only_unreleased_baseline_and_no_generic_subject() -> None:
@@ -40,7 +40,7 @@ def test_wp12_uses_only_unreleased_baseline_and_no_generic_subject() -> None:
     assert "subject_kind" not in sql
     assert "subject_id" not in sql
     assert "business_payload json" not in sql
-    for table in ("model", "model_version", "forecast", "context_assessment"):
+    for table in ("model", "model_version"):
         assert f"CREATE TABLE mra.{table}" not in sql
 
 

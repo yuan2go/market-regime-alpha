@@ -23,12 +23,18 @@ from market_regime_alpha.decision_support.domain import (
     OpenDecisionRunRequest,
     PreparedDecisionInputs,
     PreparedDecisionReference,
+    PreparedResearchQualification,
     ProviderProductDecisionSnapshot,
     RuntimeDecisionSnapshot,
     TargetDecisionSnapshot,
+    RequestedResearchQualification,
+)
+from market_regime_alpha.decision_support.domain.vocabulary import (
+    ResearchPurpose,
 )
 from market_regime_alpha.decision_support.errors import (
     DecisionAuthorityIntegrityError,
+    DecisionQualificationResolutionError,
     DecisionReferenceResolutionError,
 )
 from market_regime_alpha.infrastructure.postgres.pool import TargetPostgresPool
@@ -82,12 +88,42 @@ class PostgresDecisionInputPreparationProvider:
                     target,
                 )
             )
+            research_qualifications = _load_research_qualifications(
+                connection,
+                request,
+                decision_time=runtime.decision_time,
+                lock=False,
+            )
         return PreparedDecisionInputs(
             candidate_set=candidate_set,
             targets=targets,
             references=references,
             runtime=runtime,
+            research_qualifications=research_qualifications,
         )
+
+
+class PostgresDecisionResearchQualificationInputProvider:
+    """Exact-ID, cutoff-aware, non-current Qualification read adapter."""
+
+    def __init__(self, pool: TargetPostgresPool) -> None:
+        self._pool = pool
+
+    def resolve_exact(
+        self,
+        requested: tuple[RequestedResearchQualification, ...],
+        *,
+        research_purpose: ResearchPurpose,
+        decision_time: datetime,
+    ) -> tuple[PreparedResearchQualification, ...]:
+        with self._pool.connection(read_only=True) as connection:
+            return _load_research_qualifications_from_requested(
+                connection,
+                requested,
+                research_purpose=research_purpose,
+                decision_time=decision_time,
+                lock=False,
+            )
 
 
 class PostgresDecisionDependencyRepository:
@@ -100,6 +136,29 @@ class PostgresDecisionDependencyRepository:
         # Runtime is already locked by the application. Immutable dependency
         # locks follow stable kind/UUID order; Candidate rows are deliberately
         # last, matching the canonical cross-context lock order.
+        for decision_code in sorted(
+            item.decision_code for item in prepared.research_qualifications
+        ):
+            self._connection.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                (f"research-qualification-decision:{decision_code}",),
+            )
+        actual_qualifications = _load_research_qualifications_from_prepared(
+            self._connection,
+            prepared.research_qualifications,
+            research_purpose=(
+                prepared.research_qualifications[0].qualification_purpose
+                if prepared.research_qualifications
+                else None
+            ),
+            decision_time=prepared.runtime.decision_time,
+            lock=True,
+        )
+        if actual_qualifications != prepared.research_qualifications:
+            raise DecisionAuthorityIntegrityError(
+                "prepared Research Qualification changed before Decision closure"
+            )
+
         for target in sorted(
             prepared.targets,
             key=lambda item: str(item.target_definition_id),
@@ -126,6 +185,133 @@ class PostgresDecisionDependencyRepository:
             raise DecisionAuthorityIntegrityError(
                 "prepared CandidateSet changed before Decision closure"
             )
+
+
+def _load_research_qualifications(
+    connection: psycopg.Connection[Any],
+    request: OpenDecisionRunRequest,
+    *,
+    decision_time: datetime,
+    lock: bool,
+) -> tuple[PreparedResearchQualification, ...]:
+    requested = request.validated_research_qualifications()
+    return _load_research_qualifications_from_requested(
+        connection,
+        requested,
+        research_purpose=request.research_purpose,
+        decision_time=decision_time,
+        lock=lock,
+    )
+
+
+def _load_research_qualifications_from_prepared(
+    connection: psycopg.Connection[Any],
+    prepared: tuple[PreparedResearchQualification, ...],
+    *,
+    research_purpose: ResearchPurpose | None,
+    decision_time: datetime,
+    lock: bool,
+) -> tuple[PreparedResearchQualification, ...]:
+    if not prepared:
+        return ()
+    if research_purpose is None:
+        raise DecisionQualificationResolutionError(
+            "Research Qualification purpose is absent"
+        )
+    requested = tuple(
+        RequestedResearchQualification(
+            research_qualification_decision_id=(
+                item.research_qualification_decision_id
+            ),
+            role=item.role,
+        )
+        for item in prepared
+    )
+    return _load_research_qualifications_from_requested(
+        connection,
+        requested,
+        research_purpose=research_purpose,
+        decision_time=decision_time,
+        lock=lock,
+    )
+
+
+def _load_research_qualifications_from_requested(
+    connection: psycopg.Connection[Any],
+    requested,
+    *,
+    research_purpose: ResearchPurpose,
+    decision_time: datetime,
+    lock: bool,
+) -> tuple[PreparedResearchQualification, ...]:
+    rows: list[PreparedResearchQualification] = []
+    suffix = " FOR SHARE OF qualification" if lock else ""
+    for item in requested:
+        row = connection.execute(
+            """
+            SELECT qualification.research_qualification_decision_id,
+                   qualification.decision_code, qualification.revision,
+                   qualification.supersedes_decision_id,
+                   qualification.research_assessment_id,
+                   qualification.research_qualification_policy_id,
+                   qualification.experiment_id,
+                   qualification.target_definition_id,
+                   qualification.qualification_purpose,
+                   qualification.source_generation_max_decision_time,
+                   qualification.effective_at, qualification.known_at,
+                   qualification.content_sha256
+            FROM mra.research_qualification_decision AS qualification
+            WHERE qualification.research_qualification_decision_id = %s
+              AND qualification.decision_status = 'ADMITTED'
+              AND qualification.qualification_purpose = %s
+              AND qualification.effective_at <= %s
+              AND qualification.known_at <= %s
+              AND qualification.source_generation_max_decision_time < %s
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM mra.research_qualification_decision AS successor
+                  WHERE successor.supersedes_decision_id =
+                        qualification.research_qualification_decision_id
+                    AND successor.effective_at <= %s
+                    AND successor.known_at <= %s
+              )
+            """
+            + suffix,
+            (
+                item.research_qualification_decision_id,
+                research_purpose.value,
+                decision_time,
+                decision_time,
+                decision_time,
+                decision_time,
+                decision_time,
+            ),
+        ).fetchone()
+        if row is None:
+            raise DecisionQualificationResolutionError(
+                "exact admitted Research Qualification is not visible at DecisionTime"
+            )
+        rows.append(
+            PreparedResearchQualification(
+                research_qualification_decision_id=UUID(str(row[0])),
+                role=item.role,
+                decision_code=str(row[1]),
+                revision=int(row[2]),
+                supersedes_decision_id=(
+                    UUID(str(row[3])) if row[3] is not None else None
+                ),
+                research_assessment_id=UUID(str(row[4])),
+                research_qualification_policy_id=UUID(str(row[5])),
+                experiment_id=UUID(str(row[6])),
+                target_definition_id=UUID(str(row[7])),
+                qualification_purpose=ResearchPurpose(str(row[8])),
+                source_generation_max_decision_time=row[9],
+                effective_at=row[10],
+                known_at=row[11],
+                content_sha256=str(row[12]),
+            )
+        )
+    return tuple(rows)
 
 
 def _load_runtime(
@@ -759,4 +945,5 @@ def _lock_exact_reference_dependencies(
 __all__ = [
     "PostgresDecisionDependencyRepository",
     "PostgresDecisionInputPreparationProvider",
+    "PostgresDecisionResearchQualificationInputProvider",
 ]

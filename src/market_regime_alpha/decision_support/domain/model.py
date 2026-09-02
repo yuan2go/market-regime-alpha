@@ -17,6 +17,8 @@ from market_regime_alpha.decision_support.domain.vocabulary import (
     DecisionReferenceValueStatus,
     DecisionRunStatus,
     DecisionRuntimeMode,
+    QualificationInputRole,
+    ResearchPurpose,
 )
 from market_regime_alpha.shared.hashing import canonical_json_sha256
 from market_regime_alpha.shared.identity import ContentHash
@@ -78,27 +80,178 @@ class RequestedDecisionTarget:
 
 
 @dataclass(frozen=True, slots=True)
+class RequestedResearchQualification:
+    research_qualification_decision_id: UUID
+    role: QualificationInputRole
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.role, QualificationInputRole):
+            raise TypeError("Research Qualification input role must be typed")
+
+    @staticmethod
+    def roster(
+        qualifications: tuple[RequestedResearchQualification, ...],
+    ) -> tuple[RequestedResearchQualification, ...]:
+        identities = tuple(
+            item.research_qualification_decision_id for item in qualifications
+        )
+        if len(set(identities)) != len(identities):
+            raise ValueError("Research Qualification roster contains a duplicate decision")
+        primary_count = sum(
+            item.role is QualificationInputRole.PRIMARY for item in qualifications
+        )
+        if qualifications and primary_count != 1:
+            raise ValueError(
+                "non-empty Research Qualification roster requires exactly one PRIMARY"
+            )
+        return qualifications
+
+
+@dataclass(frozen=True, slots=True)
 class OpenDecisionRunRequest:
     candidate_set_id: UUID
     targets: tuple[RequestedDecisionTarget, ...]
+    research_purpose: ResearchPurpose
+    research_qualifications: tuple[RequestedResearchQualification, ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.research_purpose, ResearchPurpose):
+            raise TypeError("Decision research purpose must be typed")
+        self.validated_targets()
+        self.validated_research_qualifications()
 
     def validated_targets(self) -> tuple[RequestedDecisionTarget, ...]:
         return RequestedDecisionTarget.roster(self.targets)
 
+    def validated_research_qualifications(
+        self,
+    ) -> tuple[RequestedResearchQualification, ...]:
+        return RequestedResearchQualification.roster(self.research_qualifications)
+
     @property
-    def request_roster_sha256(self) -> str:
+    def research_qualification_count(self) -> int:
+        return len(self.research_qualifications)
+
+    @property
+    def research_qualification_roster_sha256(self) -> str:
         return canonical_json_sha256(
             tuple(
                 {
                     "ordinal": ordinal,
-                    "reference_provider_product_id": (
-                        target.reference_provider_product_id
+                    "research_qualification_decision_id": (
+                        item.research_qualification_decision_id
                     ),
-                    "target_definition_id": target.target_definition_id,
+                    "role": item.role,
                 }
-                for ordinal, target in enumerate(self.targets, start=1)
+                for ordinal, item in enumerate(
+                    self.research_qualifications,
+                    start=1,
+                )
             )
         )
+
+    @property
+    def request_roster_sha256(self) -> str:
+        return canonical_json_sha256(
+            {
+                "research_purpose": self.research_purpose,
+                "research_qualification_roster": tuple(
+                    {
+                        "ordinal": ordinal,
+                        "research_qualification_decision_id": (
+                            qualification.research_qualification_decision_id
+                        ),
+                        "role": qualification.role,
+                    }
+                    for ordinal, qualification in enumerate(
+                        self.research_qualifications,
+                        start=1,
+                    )
+                ),
+                "target_roster": tuple(
+                    {
+                        "ordinal": ordinal,
+                        "reference_provider_product_id": (
+                            target.reference_provider_product_id
+                        ),
+                        "target_definition_id": target.target_definition_id,
+                    }
+                    for ordinal, target in enumerate(self.targets, start=1)
+                ),
+            }
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedResearchQualification:
+    research_qualification_decision_id: UUID
+    role: QualificationInputRole
+    decision_code: str
+    revision: int
+    supersedes_decision_id: UUID | None
+    research_assessment_id: UUID
+    research_qualification_policy_id: UUID
+    experiment_id: UUID
+    target_definition_id: UUID
+    qualification_purpose: ResearchPurpose
+    source_generation_max_decision_time: datetime
+    effective_at: datetime
+    known_at: datetime
+    content_sha256: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.role, QualificationInputRole):
+            raise TypeError("Research Qualification input role must be typed")
+        if not isinstance(self.qualification_purpose, ResearchPurpose):
+            raise TypeError("Research Qualification purpose must be typed")
+        if not _CODE.fullmatch(self.decision_code):
+            raise ValueError("Research Qualification decision code is invalid")
+        if isinstance(self.revision, bool) or self.revision < 1:
+            raise ValueError("Research Qualification revision must be positive")
+        if (self.revision == 1) != (self.supersedes_decision_id is None):
+            raise ValueError(
+                "Research Qualification predecessor shape is invalid"
+            )
+        object.__setattr__(
+            self,
+            "source_generation_max_decision_time",
+            _utc(
+                self.source_generation_max_decision_time,
+                "Research Qualification source generation time",
+            ),
+        )
+        object.__setattr__(
+            self,
+            "effective_at",
+            _utc(self.effective_at, "Research Qualification effective_at"),
+        )
+        object.__setattr__(
+            self,
+            "known_at",
+            _utc(self.known_at, "Research Qualification known_at"),
+        )
+        object.__setattr__(
+            self,
+            "content_sha256",
+            _hash(self.content_sha256, "Research Qualification hash"),
+        )
+
+    @staticmethod
+    def roster(
+        qualifications: tuple[PreparedResearchQualification, ...],
+    ) -> tuple[PreparedResearchQualification, ...]:
+        RequestedResearchQualification.roster(
+            tuple(
+                RequestedResearchQualification(
+                    research_qualification_decision_id=(
+                        item.research_qualification_decision_id
+                    ),
+                    role=item.role,
+                )
+                for item in qualifications
+            )
+        )
+        return qualifications
 
 
 @dataclass(frozen=True, slots=True)
@@ -277,6 +430,7 @@ class PreparedDecisionInputs:
     targets: tuple[TargetDecisionSnapshot, ...]
     references: tuple[PreparedDecisionReference, ...]
     runtime: RuntimeDecisionSnapshot
+    research_qualifications: tuple[PreparedResearchQualification, ...]
 
     def __post_init__(self) -> None:
         RequestedDecisionTarget.roster(
@@ -292,6 +446,7 @@ class PreparedDecisionInputs:
         )
         if self.candidate_set.decision_time != self.runtime.decision_time:
             raise ValueError("prepared CandidateSet and Runtime DecisionTime differ")
+        PreparedResearchQualification.roster(self.research_qualifications)
 
     def semantic_request_sha256(
         self,
@@ -315,6 +470,27 @@ class PreparedDecisionInputs:
         )
         if requested != actual:
             raise ValueError("prepared Target roster differs from request")
+        requested_qualifications = request.validated_research_qualifications()
+        actual_qualifications = tuple(
+            RequestedResearchQualification(
+                research_qualification_decision_id=(
+                    item.research_qualification_decision_id
+                ),
+                role=item.role,
+            )
+            for item in self.research_qualifications
+        )
+        if requested_qualifications != actual_qualifications:
+            raise ValueError(
+                "prepared Research Qualification roster differs from request"
+            )
+        if any(
+            item.qualification_purpose is not request.research_purpose
+            for item in self.research_qualifications
+        ):
+            raise ValueError(
+                "prepared Research Qualification purpose differs from request"
+            )
         return canonical_json_sha256(
             {
                 "actor_id": actor_id,
@@ -329,6 +505,35 @@ class PreparedDecisionInputs:
                 "config_hash": self.runtime.config_hash,
                 "decision_time": self.runtime.decision_time,
                 "reason_code": reason_code,
+                "research_purpose": request.research_purpose,
+                "research_qualifications": tuple(
+                    {
+                        "content_sha256": item.content_sha256,
+                        "decision_code": item.decision_code,
+                        "effective_at": item.effective_at,
+                        "experiment_id": item.experiment_id,
+                        "known_at": item.known_at,
+                        "ordinal": ordinal,
+                        "revision": item.revision,
+                        "research_assessment_id": item.research_assessment_id,
+                        "research_qualification_decision_id": (
+                            item.research_qualification_decision_id
+                        ),
+                        "research_qualification_policy_id": (
+                            item.research_qualification_policy_id
+                        ),
+                        "role": item.role,
+                        "source_generation_max_decision_time": (
+                            item.source_generation_max_decision_time
+                        ),
+                        "supersedes_decision_id": item.supersedes_decision_id,
+                        "target_definition_id": item.target_definition_id,
+                    }
+                    for ordinal, item in enumerate(
+                        self.research_qualifications,
+                        start=1,
+                    )
+                ),
                 "runtime_mode": self.runtime.runtime_mode,
                 "runtime_run_id": self.runtime.run_id,
                 "targets": tuple(
@@ -582,12 +787,105 @@ class DecisionTargetCommitmentPlan:
 
 
 @dataclass(frozen=True, slots=True)
+class DecisionRunResearchQualificationMemberPlan:
+    member_id: UUID
+    roster_id: UUID
+    decision_run_id: UUID
+    ordinal: int
+    source: PreparedResearchQualification
+    content_sha256: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        if isinstance(self.ordinal, bool) or self.ordinal < 1:
+            raise ValueError("Research Qualification member ordinal must be positive")
+        object.__setattr__(
+            self,
+            "content_sha256",
+            canonical_json_sha256(
+                {
+                    "decision_code": self.source.decision_code,
+                    "experiment_id": self.source.experiment_id,
+                    "qualification_content_sha256": self.source.content_sha256,
+                    "qualification_purpose": self.source.qualification_purpose,
+                    "revision": self.source.revision,
+                    "research_assessment_id": self.source.research_assessment_id,
+                    "research_qualification_decision_id": (
+                        self.source.research_qualification_decision_id
+                    ),
+                    "research_qualification_policy_id": (
+                        self.source.research_qualification_policy_id
+                    ),
+                    "role": self.source.role,
+                    "source_generation_max_decision_time": (
+                        self.source.source_generation_max_decision_time
+                    ),
+                    "supersedes_decision_id": self.source.supersedes_decision_id,
+                    "target_definition_id": self.source.target_definition_id,
+                }
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class DecisionRunResearchQualificationRosterPlan:
+    roster_id: UUID
+    decision_run_id: UUID
+    research_purpose: ResearchPurpose
+    members: tuple[DecisionRunResearchQualificationMemberPlan, ...]
+    member_count: int = field(init=False)
+    roster_sha256: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.research_purpose, ResearchPurpose):
+            raise TypeError("Decision research purpose must be typed")
+        PreparedResearchQualification.roster(tuple(item.source for item in self.members))
+        if tuple(item.ordinal for item in self.members) != tuple(
+            range(1, len(self.members) + 1)
+        ):
+            raise ValueError(
+                "Research Qualification member ordinals must be contiguous"
+            )
+        if any(
+            item.roster_id != self.roster_id
+            or item.decision_run_id != self.decision_run_id
+            for item in self.members
+        ):
+            raise ValueError("Research Qualification member belongs to another roster")
+        if any(
+            item.source.qualification_purpose is not self.research_purpose
+            for item in self.members
+        ):
+            raise ValueError("Research Qualification member has the wrong purpose")
+        object.__setattr__(self, "member_count", len(self.members))
+        object.__setattr__(
+            self,
+            "roster_sha256",
+            canonical_json_sha256(
+                tuple(
+                    {
+                        "content_sha256": item.content_sha256,
+                        "member_id": item.member_id,
+                        "ordinal": item.ordinal,
+                        "research_qualification_decision_id": (
+                            item.source.research_qualification_decision_id
+                        ),
+                        "role": item.source.role,
+                    }
+                    for item in self.members
+                )
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class DecisionRunAuthority:
     decision_run_id: UUID
     command_receipt_id: UUID
     candidate_set: CandidateSetDecisionSnapshot
     targets: tuple[DecisionRunTargetPlan, ...]
     commitments: tuple[DecisionTargetCommitmentPlan, ...]
+    research_purpose: ResearchPurpose
+    research_qualification_roster: DecisionRunResearchQualificationRosterPlan
     runtime: RuntimeDecisionSnapshot
     request_identity: str
     request_sha256: str
@@ -604,6 +902,8 @@ class DecisionRunAuthority:
     candidate_roster_sha256: str = field(init=False)
     target_roster_sha256: str = field(init=False)
     commitment_roster_sha256: str = field(init=False)
+    research_qualification_count: int = field(init=False)
+    research_qualification_roster_sha256: str = field(init=False)
     definition_summary_sha256: str = field(init=False)
 
     def __post_init__(self) -> None:
@@ -620,6 +920,17 @@ class DecisionRunAuthority:
             raise ValueError("Decision creation actor provenance is invalid")
         if not re.fullmatch(r"[A-Z][A-Z0-9_]{0,99}", self.reason_code):
             raise ValueError("Decision creation reason code is invalid")
+        if not isinstance(self.research_purpose, ResearchPurpose):
+            raise TypeError("Decision research purpose must be typed")
+        if (
+            self.research_qualification_roster.decision_run_id
+            != self.decision_run_id
+            or self.research_qualification_roster.research_purpose
+            is not self.research_purpose
+        ):
+            raise ValueError(
+                "Decision Research Qualification roster belongs to another authority"
+            )
         candidate_count = len(self.candidate_set.candidates)
         target_count = len(self.targets)
         commitment_count = len(self.commitments)
@@ -656,6 +967,16 @@ class DecisionRunAuthority:
         object.__setattr__(self, "commitment_roster_sha256", commitment_hash)
         object.__setattr__(
             self,
+            "research_qualification_count",
+            self.research_qualification_roster.member_count,
+        )
+        object.__setattr__(
+            self,
+            "research_qualification_roster_sha256",
+            self.research_qualification_roster.roster_sha256,
+        )
+        object.__setattr__(
+            self,
             "definition_summary_sha256",
             canonical_json_sha256(
                 {
@@ -667,6 +988,13 @@ class DecisionRunAuthority:
                     "commitment_roster_sha256": commitment_hash,
                     "decision_time": self.runtime.decision_time,
                     "reference_count": commitment_count,
+                    "research_purpose": self.research_purpose,
+                    "research_qualification_count": (
+                        self.research_qualification_roster.member_count
+                    ),
+                    "research_qualification_roster_sha256": (
+                        self.research_qualification_roster.roster_sha256
+                    ),
                     "request_sha256": self.request_sha256,
                     "runtime_mode": self.runtime.runtime_mode,
                     "target_count": target_count,
@@ -684,6 +1012,8 @@ def build_decision_authority(
     targets: tuple[TargetDecisionSnapshot, ...],
     references: tuple[PreparedDecisionReference, ...],
     runtime: RuntimeDecisionSnapshot,
+    research_purpose: ResearchPurpose,
+    research_qualifications: tuple[PreparedResearchQualification, ...],
     request_identity: str,
     request_sha256: str,
     request_received_at: datetime,
@@ -691,6 +1021,10 @@ def build_decision_authority(
     actor_type: str,
     actor_id: str,
     reason_code: str,
+    qualification_roster_id: UUID,
+    qualification_member_id_factory: Callable[
+        [PreparedResearchQualification, int], UUID
+    ],
     commitment_id_factory: Callable[[CandidateDecisionFact, TargetDecisionSnapshot], UUID],
     observation_id_factory: Callable[[UUID], UUID],
     target_id_factory: Callable[[TargetDecisionSnapshot, int], UUID] | None = None,
@@ -710,6 +1044,43 @@ def build_decision_authority(
         raise ValueError("Runtime and CandidateSet DecisionTime must match")
     if commitment_recorded_at < request_received_at:
         raise ValueError("commitment recording cannot precede request receipt")
+    if not isinstance(research_purpose, ResearchPurpose):
+        raise TypeError("Decision research purpose must be typed")
+    PreparedResearchQualification.roster(research_qualifications)
+    target_definition_ids = {item.target_definition_id for item in targets}
+    for qualification in research_qualifications:
+        if qualification.qualification_purpose is not research_purpose:
+            raise ValueError("Research Qualification has the wrong Decision purpose")
+        if qualification.target_definition_id not in target_definition_ids:
+            raise ValueError("Research Qualification has no matching Decision Target")
+        if qualification.effective_at > runtime.decision_time:
+            raise ValueError("Research Qualification effective_at exceeds DecisionTime")
+        if qualification.known_at > runtime.decision_time:
+            raise ValueError("Research Qualification known_at exceeds DecisionTime")
+        if qualification.source_generation_max_decision_time >= runtime.decision_time:
+            raise ValueError(
+                "Research Qualification source generation must be strictly earlier"
+            )
+    qualification_members = tuple(
+        DecisionRunResearchQualificationMemberPlan(
+            member_id=qualification_member_id_factory(item, ordinal),
+            roster_id=qualification_roster_id,
+            decision_run_id=decision_run_id,
+            ordinal=ordinal,
+            source=item,
+        )
+        for ordinal, item in enumerate(research_qualifications, start=1)
+    )
+    if len({item.member_id for item in qualification_members}) != len(
+        qualification_members
+    ):
+        raise ValueError("Research Qualification member identities must be unique")
+    qualification_roster = DecisionRunResearchQualificationRosterPlan(
+        roster_id=qualification_roster_id,
+        decision_run_id=decision_run_id,
+        research_purpose=research_purpose,
+        members=qualification_members,
+    )
     target_plans = tuple(
         DecisionRunTargetPlan(
             decision_run_target_id=(
@@ -798,6 +1169,8 @@ def build_decision_authority(
         candidate_set=candidate_set,
         targets=target_plans,
         commitments=tuple(commitments),
+        research_purpose=research_purpose,
+        research_qualification_roster=qualification_roster,
         runtime=runtime,
         request_identity=request_identity,
         request_sha256=request_sha256,
@@ -813,14 +1186,18 @@ __all__ = [
     "CandidateDecisionFact",
     "CandidateSetDecisionSnapshot",
     "DecisionReferenceObservationPlan",
+    "DecisionRunResearchQualificationMemberPlan",
+    "DecisionRunResearchQualificationRosterPlan",
     "DecisionRunAuthority",
     "DecisionRunTargetPlan",
     "DecisionTargetCommitmentPlan",
     "OpenDecisionRunRequest",
     "PreparedDecisionInputs",
     "PreparedDecisionReference",
+    "PreparedResearchQualification",
     "ProviderProductDecisionSnapshot",
     "RequestedDecisionTarget",
+    "RequestedResearchQualification",
     "RuntimeDecisionSnapshot",
     "TargetDecisionSnapshot",
     "build_decision_authority",

@@ -54,7 +54,6 @@ def test_wp10_adds_exactly_eight_outcome_authority_relations(
             (
                 "model",
                 "qualification",
-                "context",
                 "trade_outcome",
             )
         )

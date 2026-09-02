@@ -29,6 +29,71 @@ class PostgresDecisionRunRepository:
 
     def insert(self, authority: DecisionRunAuthority) -> None:
         with self._connection.cursor() as cursor:
+            qualification_roster = authority.research_qualification_roster
+            cursor.execute(
+                """
+                INSERT INTO mra.decision_run_research_qualification_roster (
+                    research_qualification_roster_id, decision_run_id,
+                    research_purpose, decision_time, member_count,
+                    roster_sha256, created_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    qualification_roster.roster_id,
+                    authority.decision_run_id,
+                    authority.research_purpose.value,
+                    authority.runtime.decision_time,
+                    qualification_roster.member_count,
+                    qualification_roster.roster_sha256,
+                    authority.commitment_recorded_at,
+                ),
+            )
+            cursor.executemany(
+                """
+                INSERT INTO mra.decision_run_research_qualification_member (
+                    research_qualification_member_id,
+                    research_qualification_roster_id, decision_run_id,
+                    ordinal, role, research_qualification_decision_id,
+                    decision_code, revision, supersedes_decision_id,
+                    research_assessment_id,
+                    research_qualification_policy_id, experiment_id,
+                    target_definition_id, qualification_purpose,
+                    decision_status, source_generation_max_decision_time,
+                    effective_at, known_at, qualification_content_sha256,
+                    decision_time, content_sha256, created_at
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                )
+                """,
+                (
+                    (
+                        item.member_id,
+                        item.roster_id,
+                        item.decision_run_id,
+                        item.ordinal,
+                        item.source.role.value,
+                        item.source.research_qualification_decision_id,
+                        item.source.decision_code,
+                        item.source.revision,
+                        item.source.supersedes_decision_id,
+                        item.source.research_assessment_id,
+                        item.source.research_qualification_policy_id,
+                        item.source.experiment_id,
+                        item.source.target_definition_id,
+                        item.source.qualification_purpose.value,
+                        "ADMITTED",
+                        item.source.source_generation_max_decision_time,
+                        item.source.effective_at,
+                        item.source.known_at,
+                        item.source.content_sha256,
+                        authority.runtime.decision_time,
+                        item.content_sha256,
+                        authority.commitment_recorded_at,
+                    )
+                    for item in qualification_roster.members
+                ),
+            )
             cursor.executemany(
                 """
                 INSERT INTO mra.decision_run_target (
@@ -159,7 +224,10 @@ class PostgresDecisionRunRepository:
                 candidate_set_content_sha256, dataset_id,
                 candidate_policy_id, candidate_count, selected_count,
                 ranked_not_selected_count, unrankable_count,
-                candidate_roster_sha256, target_count,
+                candidate_roster_sha256, research_purpose,
+                research_qualification_roster_id,
+                research_qualification_count,
+                research_qualification_roster_sha256, target_count,
                 target_roster_sha256, commitment_count, reference_count,
                 commitment_roster_sha256, runtime_mode, decision_time,
                 commitment_recorded_at, request_received_at,
@@ -174,7 +242,8 @@ class PostgresDecisionRunRepository:
             VALUES (
                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s,
                 'OPEN_DECISION_RUN', %s, %s, %s, %s, %s, %s, %s, %s, %s
             )
             """,
@@ -190,6 +259,10 @@ class PostgresDecisionRunRepository:
                 candidate.ranked_not_selected_count,
                 candidate.unrankable_count,
                 authority.candidate_roster_sha256,
+                authority.research_purpose.value,
+                qualification_roster.roster_id,
+                authority.research_qualification_count,
+                authority.research_qualification_roster_sha256,
                 authority.target_count,
                 authority.target_roster_sha256,
                 authority.commitment_count,
@@ -230,8 +303,11 @@ class PostgresDecisionRunRepository:
         root = self._connection.execute(
             """
             SELECT candidate_set_id, target_count, commitment_count,
-                   reference_count, candidate_roster_sha256,
-                   target_roster_sha256, commitment_roster_sha256
+                   reference_count, research_qualification_count,
+                   candidate_roster_sha256, target_roster_sha256,
+                   commitment_roster_sha256,
+                   research_qualification_roster_sha256,
+                   research_qualification_roster_id
             FROM mra.decision_run
             WHERE decision_run_id = %s
             """
@@ -244,11 +320,13 @@ class PostgresDecisionRunRepository:
                 actual_target_count=0,
                 actual_commitment_count=0,
                 actual_reference_count=0,
+                actual_research_qualification_count=0,
                 missing_commitment_count=0,
                 extra_commitment_count=0,
                 candidate_roster_sha256="0" * 64,
                 target_roster_sha256="0" * 64,
                 commitment_roster_sha256="0" * 64,
+                research_qualification_roster_sha256="0" * 64,
                 matched=False,
             )
         actual = self._connection.execute(
@@ -260,7 +338,11 @@ class PostgresDecisionRunRepository:
                   (SELECT count(*) FROM mra.decision_target_commitment
                    WHERE decision_run_id = %(decision_run_id)s) AS commitment_count,
                   (SELECT count(*) FROM mra.decision_reference_observation
-                   WHERE decision_run_id = %(decision_run_id)s) AS reference_count
+                   WHERE decision_run_id = %(decision_run_id)s) AS reference_count,
+                  (SELECT count(*)
+                   FROM mra.decision_run_research_qualification_member
+                   WHERE decision_run_id = %(decision_run_id)s)
+                    AS research_qualification_count
             ), missing AS (
                 SELECT count(*) AS count
                 FROM mra.candidate AS candidate
@@ -319,19 +401,34 @@ class PostgresDecisionRunRepository:
                      ON target.decision_run_target_id =
                         commitment.decision_run_target_id
                    WHERE commitment.decision_run_id = %(decision_run_id)s)
-                    AS commitment_hash
+                    AS commitment_hash,
+                  (SELECT mra.canonical_sha256(
+                      replace(COALESCE(json_agg(json_build_object(
+                        'content_sha256', content_sha256,
+                        'member_id', research_qualification_member_id,
+                        'ordinal', ordinal,
+                        'research_qualification_decision_id',
+                          research_qualification_decision_id,
+                        'role', role
+                      ) ORDER BY ordinal)::text, '[]'), ' ', ''))
+                   FROM mra.decision_run_research_qualification_member
+                   WHERE research_qualification_roster_id =
+                         %(research_qualification_roster_id)s)
+                    AS qualification_hash
             )
             SELECT actual_counts.target_count,
                    actual_counts.commitment_count,
                    actual_counts.reference_count,
+                   actual_counts.research_qualification_count,
                    missing.count, extra.count,
                    hashes.candidate_hash, hashes.target_hash,
-                   hashes.commitment_hash
+                   hashes.commitment_hash, hashes.qualification_hash
             FROM actual_counts, missing, extra, hashes
             """,
             {
                 "decision_run_id": decision_run_id,
                 "candidate_set_id": UUID(str(root[0])),
+                "research_qualification_roster_id": UUID(str(root[9])),
             },
         ).fetchone()
         assert actual is not None
@@ -339,22 +436,26 @@ class PostgresDecisionRunRepository:
             int(actual[0]) == int(root[1])
             and int(actual[1]) == int(root[2])
             and int(actual[2]) == int(root[3])
-            and int(actual[3]) == 0
+            and int(actual[3]) == int(root[4])
             and int(actual[4]) == 0
-            and str(actual[5]) == str(root[4])
+            and int(actual[5]) == 0
             and str(actual[6]) == str(root[5])
             and str(actual[7]) == str(root[6])
+            and str(actual[8]) == str(root[7])
+            and str(actual[9]) == str(root[8])
         )
         return DecisionRunReconciliation(
             decision_run_id=decision_run_id,
             actual_target_count=int(actual[0]),
             actual_commitment_count=int(actual[1]),
             actual_reference_count=int(actual[2]),
-            missing_commitment_count=int(actual[3]),
-            extra_commitment_count=int(actual[4]),
-            candidate_roster_sha256=str(actual[5]),
-            target_roster_sha256=str(actual[6]),
-            commitment_roster_sha256=str(actual[7]),
+            actual_research_qualification_count=int(actual[3]),
+            missing_commitment_count=int(actual[4]),
+            extra_commitment_count=int(actual[5]),
+            candidate_roster_sha256=str(actual[6]),
+            target_roster_sha256=str(actual[7]),
+            commitment_roster_sha256=str(actual[8]),
+            research_qualification_roster_sha256=str(actual[9]),
             matched=matched,
         )
 

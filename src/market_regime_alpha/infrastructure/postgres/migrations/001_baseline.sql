@@ -423,6 +423,9 @@ CREATE FUNCTION mra.decision_run_definition_summary_sha256(
     commitment_roster_sha256 text,
     decision_time timestamptz,
     reference_count bigint,
+    research_purpose text,
+    research_qualification_count integer,
+    research_qualification_roster_sha256 text,
     request_sha256 text,
     runtime_mode text,
     target_count integer,
@@ -447,9 +450,60 @@ AS $$
                     mra.canonical_timestamptz_text(decision_time),
                 'reference_count', reference_count,
                 'request_sha256', request_sha256,
+                'research_purpose', research_purpose,
+                'research_qualification_count',
+                    research_qualification_count,
+                'research_qualification_roster_sha256',
+                    research_qualification_roster_sha256,
                 'runtime_mode', runtime_mode,
                 'target_count', target_count,
                 'target_roster_sha256', target_roster_sha256
+            )::text,
+            ' ',
+            ''
+        )
+    );
+$$;
+
+CREATE FUNCTION mra.decision_qualification_member_content_sha256(
+    decision_code text,
+    experiment_id uuid,
+    qualification_content_sha256 text,
+    qualification_purpose text,
+    revision integer,
+    research_assessment_id uuid,
+    research_qualification_decision_id uuid,
+    research_qualification_policy_id uuid,
+    role text,
+    source_generation_max_decision_time timestamptz,
+    supersedes_decision_id uuid,
+    target_definition_id uuid
+)
+RETURNS text
+LANGUAGE sql
+IMMUTABLE
+PARALLEL SAFE
+AS $$
+    SELECT mra.canonical_sha256(
+        replace(
+            json_build_object(
+                'decision_code', decision_code,
+                'experiment_id', experiment_id,
+                'qualification_content_sha256', qualification_content_sha256,
+                'qualification_purpose', qualification_purpose,
+                'research_assessment_id', research_assessment_id,
+                'research_qualification_decision_id',
+                    research_qualification_decision_id,
+                'research_qualification_policy_id',
+                    research_qualification_policy_id,
+                'revision', revision,
+                'role', role,
+                'source_generation_max_decision_time',
+                    mra.canonical_timestamptz_text(
+                        source_generation_max_decision_time
+                    ),
+                'supersedes_decision_id', supersedes_decision_id,
+                'target_definition_id', target_definition_id
             )::text,
             ' ',
             ''
@@ -5045,6 +5099,140 @@ ALTER TABLE mra.command_receipt
         runtime_step_id, runtime_attempt_id, fence_token
     );
 
+CREATE TABLE mra.decision_run_research_qualification_roster (
+    research_qualification_roster_id uuid PRIMARY KEY,
+    decision_run_id uuid NOT NULL,
+    research_purpose text NOT NULL,
+    decision_time timestamptz NOT NULL,
+    member_count integer NOT NULL,
+    roster_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL,
+    CONSTRAINT decision_qualification_roster_run_uk UNIQUE (decision_run_id),
+    CONSTRAINT decision_qualification_roster_member_scope_uk UNIQUE (
+        research_qualification_roster_id, decision_run_id,
+        research_purpose, decision_time
+    ),
+    CONSTRAINT decision_qualification_roster_scope_uk UNIQUE (
+        research_qualification_roster_id, decision_run_id,
+        research_purpose, decision_time, member_count, roster_sha256
+    ),
+    CONSTRAINT decision_qualification_roster_shape_ck CHECK (
+        research_purpose IN (
+            'DISCOVERY', 'VALIDATION', 'LOCKED_OOS', 'PROSPECTIVE'
+        )
+        AND member_count >= 0
+        AND roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND created_at >= decision_time
+    )
+);
+CREATE INDEX decision_qualification_roster_run_idx
+    ON mra.decision_run_research_qualification_roster (
+        decision_run_id, research_qualification_roster_id
+    );
+CREATE INDEX decision_qualification_roster_run_fk_idx
+    ON mra.decision_run_research_qualification_roster (
+        decision_run_id, research_purpose,
+        research_qualification_roster_id, decision_time,
+        member_count, roster_sha256
+    );
+
+CREATE TABLE mra.decision_run_research_qualification_member (
+    research_qualification_member_id uuid PRIMARY KEY,
+    research_qualification_roster_id uuid NOT NULL,
+    decision_run_id uuid NOT NULL,
+    ordinal integer NOT NULL,
+    role text NOT NULL,
+    research_qualification_decision_id uuid NOT NULL,
+    decision_code text NOT NULL,
+    revision integer NOT NULL,
+    supersedes_decision_id uuid,
+    research_assessment_id uuid NOT NULL,
+    research_qualification_policy_id uuid NOT NULL,
+    experiment_id uuid NOT NULL,
+    target_definition_id uuid NOT NULL,
+    qualification_purpose text NOT NULL,
+    decision_status text NOT NULL,
+    source_generation_max_decision_time timestamptz NOT NULL,
+    effective_at timestamptz NOT NULL,
+    known_at timestamptz NOT NULL,
+    qualification_content_sha256 text NOT NULL,
+    decision_time timestamptz NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL,
+    CONSTRAINT decision_qualification_member_ordinal_uk UNIQUE (
+        research_qualification_roster_id, ordinal
+    ),
+    CONSTRAINT decision_qualification_member_decision_uk UNIQUE (
+        research_qualification_roster_id,
+        research_qualification_decision_id
+    ),
+    CONSTRAINT decision_qualification_member_scope_uk UNIQUE (
+        research_qualification_member_id,
+        research_qualification_roster_id, decision_run_id,
+        research_qualification_decision_id, target_definition_id
+    ),
+    CONSTRAINT decision_qualification_member_roster_fk FOREIGN KEY (
+        research_qualification_roster_id, decision_run_id,
+        qualification_purpose, decision_time
+    ) REFERENCES mra.decision_run_research_qualification_roster (
+        research_qualification_roster_id, decision_run_id,
+        research_purpose, decision_time
+    ) ON DELETE RESTRICT,
+    CONSTRAINT decision_qualification_member_shape_ck CHECK (
+        ordinal > 0
+        AND role IN ('PRIMARY', 'SUPPORTING', 'LIMITATION')
+        AND decision_code ~ '^[a-z][a-z0-9_.-]{0,99}$'
+        AND ((revision = 1 AND supersedes_decision_id IS NULL)
+          OR (revision > 1 AND supersedes_decision_id IS NOT NULL))
+        AND qualification_purpose IN (
+            'DISCOVERY', 'VALIDATION', 'LOCKED_OOS', 'PROSPECTIVE'
+        )
+        AND decision_status = 'ADMITTED'
+        AND source_generation_max_decision_time < decision_time
+        AND effective_at <= decision_time
+        AND known_at <= decision_time
+        AND qualification_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+        AND created_at >= decision_time
+    ),
+    CONSTRAINT decision_qualification_member_content_ck CHECK (
+        content_sha256 = mra.decision_qualification_member_content_sha256(
+            decision_code, experiment_id, qualification_content_sha256,
+            qualification_purpose, revision, research_assessment_id,
+            research_qualification_decision_id,
+            research_qualification_policy_id, role,
+            source_generation_max_decision_time,
+            supersedes_decision_id, target_definition_id
+        )
+    )
+);
+CREATE INDEX decision_qualification_member_roster_idx
+    ON mra.decision_run_research_qualification_member (
+        research_qualification_roster_id, ordinal,
+        research_qualification_decision_id
+    );
+CREATE INDEX decision_qualification_member_decision_idx
+    ON mra.decision_run_research_qualification_member (
+        research_qualification_decision_id, decision_run_id
+    );
+CREATE INDEX decision_qualification_member_target_idx
+    ON mra.decision_run_research_qualification_member (
+        decision_run_id, target_definition_id
+    );
+CREATE INDEX decision_qualification_member_roster_fk_idx
+    ON mra.decision_run_research_qualification_member (
+        research_qualification_roster_id, decision_run_id,
+        qualification_purpose, decision_time
+    );
+CREATE INDEX decision_qualification_member_admission_fk_idx
+    ON mra.decision_run_research_qualification_member (
+        research_qualification_decision_id, decision_code, revision,
+        research_assessment_id, research_qualification_policy_id,
+        experiment_id, target_definition_id, qualification_purpose,
+        decision_status, source_generation_max_decision_time,
+        effective_at, known_at, qualification_content_sha256
+    );
+
 CREATE TABLE mra.decision_run (
     decision_run_id uuid PRIMARY KEY,
     status text NOT NULL,
@@ -5057,6 +5245,10 @@ CREATE TABLE mra.decision_run (
     ranked_not_selected_count integer NOT NULL,
     unrankable_count integer NOT NULL,
     candidate_roster_sha256 text NOT NULL,
+    research_purpose text NOT NULL,
+    research_qualification_roster_id uuid NOT NULL,
+    research_qualification_count integer NOT NULL,
+    research_qualification_roster_sha256 text NOT NULL,
     target_count integer NOT NULL,
     target_roster_sha256 text NOT NULL,
     commitment_count bigint NOT NULL,
@@ -5086,6 +5278,12 @@ CREATE TABLE mra.decision_run (
     definition_summary_sha256 text NOT NULL,
     created_at timestamptz NOT NULL,
     CONSTRAINT decision_run_candidate_set_uk UNIQUE (candidate_set_id),
+    CONSTRAINT decision_run_qualification_roster_scope_uk UNIQUE (
+        decision_run_id, research_purpose,
+        research_qualification_roster_id,
+        decision_time, research_qualification_count,
+        research_qualification_roster_sha256
+    ),
     CONSTRAINT decision_run_exact_identity_uk UNIQUE (
         decision_run_id, candidate_set_id, decision_time, runtime_mode,
         commitment_recorded_at
@@ -5094,6 +5292,15 @@ CREATE TABLE mra.decision_run (
         candidate_set_id, request_identity
     ),
     CONSTRAINT decision_run_receipt_uk UNIQUE (command_receipt_id),
+    CONSTRAINT decision_run_qualification_roster_fk FOREIGN KEY (
+        research_qualification_roster_id, decision_run_id,
+        research_purpose, decision_time,
+        research_qualification_count,
+        research_qualification_roster_sha256
+    ) REFERENCES mra.decision_run_research_qualification_roster (
+        research_qualification_roster_id, decision_run_id,
+        research_purpose, decision_time, member_count, roster_sha256
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
     CONSTRAINT decision_run_candidate_set_fk FOREIGN KEY (
         candidate_set_id, candidate_set_content_sha256,
         dataset_id, candidate_policy_id, decision_time, candidate_count,
@@ -5137,6 +5344,7 @@ CREATE TABLE mra.decision_run (
         AND candidate_count = selected_count
             + ranked_not_selected_count + unrankable_count
         AND target_count > 0
+        AND research_qualification_count >= 0
         AND commitment_count = candidate_count::bigint * target_count::bigint
         AND reference_count = commitment_count
     ),
@@ -5145,6 +5353,7 @@ CREATE TABLE mra.decision_run (
         AND candidate_roster_sha256 ~ '^[0-9a-f]{64}$'
         AND target_roster_sha256 ~ '^[0-9a-f]{64}$'
         AND commitment_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND research_qualification_roster_sha256 ~ '^[0-9a-f]{64}$'
         AND request_sha256 ~ '^[0-9a-f]{64}$'
         AND definition_summary_sha256 ~ '^[0-9a-f]{64}$'
         AND config_hash ~ '^[0-9a-f]{64}$'
@@ -5157,6 +5366,11 @@ CREATE TABLE mra.decision_run (
         AND runtime_step_kind = 'OPEN_DECISION_RUN'
         AND runtime_step_key ~ '^[a-z][a-z0-9_-]{0,99}$'
         AND runtime_fence_token > 0
+    ),
+    CONSTRAINT decision_run_research_purpose_ck CHECK (
+        research_purpose IN (
+            'DISCOVERY', 'VALIDATION', 'LOCKED_OOS', 'PROSPECTIVE'
+        )
     ),
     CONSTRAINT decision_run_request_ck CHECK (
         request_kind = 'OPEN_DECISION_RUN'
@@ -5176,7 +5390,9 @@ CREATE TABLE mra.decision_run (
                 candidate_count, candidate_roster_sha256,
                 candidate_set_content_sha256, candidate_set_id,
                 commitment_count, commitment_roster_sha256,
-                decision_time, reference_count, request_sha256,
+                decision_time, reference_count, research_purpose,
+                research_qualification_count,
+                research_qualification_roster_sha256, request_sha256,
                 runtime_mode, target_count, target_roster_sha256
             )
     )
@@ -5217,6 +5433,25 @@ CREATE INDEX decision_run_receipt_claim_fk_idx
         request_identity, request_sha256, runtime_step_id,
         runtime_attempt_id, runtime_fence_token
     );
+CREATE INDEX decision_run_qualification_roster_fk_idx
+    ON mra.decision_run (
+        research_qualification_roster_id, decision_run_id,
+        research_purpose, decision_time,
+        research_qualification_count,
+        research_qualification_roster_sha256
+    );
+
+ALTER TABLE mra.decision_run_research_qualification_roster
+    ADD CONSTRAINT decision_qualification_roster_run_fk FOREIGN KEY (
+        decision_run_id, research_purpose,
+        research_qualification_roster_id, decision_time,
+        member_count, roster_sha256
+    ) REFERENCES mra.decision_run (
+        decision_run_id, research_purpose,
+        research_qualification_roster_id, decision_time,
+        research_qualification_count,
+        research_qualification_roster_sha256
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED;
 
 CREATE TABLE mra.decision_run_target (
     decision_run_target_id uuid PRIMARY KEY,
@@ -5337,6 +5572,13 @@ CREATE INDEX decision_run_target_product_fk_idx
         reference_provider_product_revision,
         decision_visibility_policy, source_availability_policy
     );
+
+ALTER TABLE mra.decision_run_research_qualification_member
+    ADD CONSTRAINT decision_qualification_member_target_fk FOREIGN KEY (
+        decision_run_id, target_definition_id
+    ) REFERENCES mra.decision_run_target (
+        decision_run_id, target_definition_id
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED;
 
 CREATE TABLE mra.decision_target_commitment (
     commitment_id uuid PRIMARY KEY,
@@ -5685,6 +5927,1991 @@ ALTER TABLE mra.decision_target_commitment
         instrument_id, reference_provider_product_id, decision_time,
         runtime_mode, commitment_recorded_at, content_sha256
     ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED;
+
+ALTER TABLE mra.decision_run
+    ADD CONSTRAINT decision_run_context_authority_uk UNIQUE (
+        decision_run_id, candidate_set_id, candidate_set_content_sha256,
+        candidate_roster_sha256, decision_time, candidate_count
+    );
+
+ALTER TABLE mra.decision_reference_observation
+    ADD CONSTRAINT decision_reference_context_scope_uk UNIQUE (
+        decision_reference_observation_id, decision_run_id,
+        candidate_set_id, candidate_id, instrument_id, known_at, source_kind
+    );
+
+CREATE TABLE mra.context_policy (
+    context_policy_id uuid PRIMARY KEY,
+    policy_code text NOT NULL,
+    version integer NOT NULL,
+    supersedes_policy_id uuid,
+    metric_count integer NOT NULL,
+    kind_count integer NOT NULL,
+    metric_roster_sha256 text NOT NULL,
+    kind_roster_sha256 text NOT NULL,
+    code_artifact_id uuid NOT NULL,
+    code_content_sha256 text NOT NULL,
+    code_size_bytes bigint NOT NULL,
+    config_artifact_id uuid NOT NULL,
+    config_content_sha256 text NOT NULL,
+    config_size_bytes bigint NOT NULL,
+    provenance_sha256 text NOT NULL,
+    content_sha256 text NOT NULL,
+    request_identity text NOT NULL,
+    request_sha256 text NOT NULL,
+    frozen_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT context_policy_series_uk UNIQUE (policy_code, version),
+    CONSTRAINT context_policy_supersedes_uk UNIQUE (supersedes_policy_id),
+    CONSTRAINT context_policy_request_uk UNIQUE (policy_code, request_identity),
+    CONSTRAINT context_policy_exact_uk UNIQUE (
+        context_policy_id, content_sha256,
+        kind_count, kind_roster_sha256
+    ),
+    CONSTRAINT context_policy_supersedes_fk FOREIGN KEY (
+        supersedes_policy_id
+    ) REFERENCES mra.context_policy(context_policy_id) ON DELETE RESTRICT,
+    CONSTRAINT context_policy_code_artifact_fk FOREIGN KEY (
+        code_artifact_id, code_content_sha256, code_size_bytes
+    ) REFERENCES mra.artifact(
+        artifact_id, content_sha256, size_bytes
+    ) ON DELETE RESTRICT,
+    CONSTRAINT context_policy_config_artifact_fk FOREIGN KEY (
+        config_artifact_id, config_content_sha256, config_size_bytes
+    ) REFERENCES mra.artifact(
+        artifact_id, content_sha256, size_bytes
+    ) ON DELETE RESTRICT,
+    CONSTRAINT context_policy_shape_ck CHECK (
+        policy_code ~ '^[a-z][a-z0-9_.-]{0,99}$'
+        AND ((version = 1 AND supersedes_policy_id IS NULL)
+          OR (version > 1 AND supersedes_policy_id IS NOT NULL))
+        AND metric_count > 0 AND kind_count > 0 AND kind_count <= metric_count
+        AND metric_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND kind_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND code_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND config_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND code_size_bytes >= 0 AND config_size_bytes >= 0
+        AND provenance_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+        AND request_identity ~ '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$'
+        AND request_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+CREATE INDEX context_policy_supersedes_idx
+    ON mra.context_policy (supersedes_policy_id)
+    WHERE supersedes_policy_id IS NOT NULL;
+CREATE INDEX context_policy_code_artifact_fk_idx
+    ON mra.context_policy (
+        code_artifact_id, code_content_sha256, code_size_bytes
+    );
+CREATE INDEX context_policy_config_artifact_fk_idx
+    ON mra.context_policy (
+        config_artifact_id, config_content_sha256, config_size_bytes
+    );
+
+CREATE TABLE mra.context_policy_metric (
+    context_policy_metric_id uuid PRIMARY KEY,
+    context_policy_id uuid NOT NULL,
+    metric_code text NOT NULL,
+    metric_ordinal integer NOT NULL,
+    context_kind text NOT NULL,
+    measure text NOT NULL,
+    reducer text NOT NULL,
+    qualification_operator text NOT NULL,
+    lower_threshold numeric NOT NULL,
+    upper_threshold numeric,
+    minimum_source_count integer NOT NULL,
+    minimum_available_count integer NOT NULL,
+    missingness_policy text NOT NULL,
+    source_role text NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT context_policy_metric_ordinal_uk UNIQUE (
+        context_policy_id, metric_ordinal
+    ),
+    CONSTRAINT context_policy_metric_code_uk UNIQUE (
+        context_policy_id, metric_code
+    ),
+    CONSTRAINT context_policy_metric_exact_uk UNIQUE (
+        context_policy_metric_id, context_policy_id,
+        context_kind, measure, reducer, source_role, content_sha256
+    ),
+    CONSTRAINT context_policy_metric_policy_fk FOREIGN KEY (
+        context_policy_id
+    ) REFERENCES mra.context_policy(context_policy_id)
+      ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT context_policy_metric_shape_ck CHECK (
+        metric_code ~ '^[a-z][a-z0-9_.-]{0,99}$'
+        AND metric_ordinal > 0
+        AND context_kind IN (
+            'MARKET_REGIME', 'ETF_ROTATION',
+            'THEME_ROTATION', 'CAPITAL_BREADTH'
+        )
+        AND measure IN (
+            'RETURN', 'ADVANCE_RATE', 'TURNOVER',
+            'MEMBER_COVERAGE', 'FLOW_PROXY'
+        )
+        AND reducer IN (
+            'MEAN_DECIMAL', 'MEDIAN_DECIMAL', 'SUM_DECIMAL', 'TRUE_RATE'
+        )
+        AND ((measure IN ('ADVANCE_RATE', 'MEMBER_COVERAGE')
+              AND reducer = 'TRUE_RATE')
+          OR (measure NOT IN ('ADVANCE_RATE', 'MEMBER_COVERAGE')
+              AND reducer <> 'TRUE_RATE'))
+        AND qualification_operator IN ('AT_LEAST', 'AT_MOST', 'BETWEEN')
+        AND ((qualification_operator = 'BETWEEN'
+              AND upper_threshold IS NOT NULL
+              AND lower_threshold <= upper_threshold)
+          OR (qualification_operator <> 'BETWEEN'
+              AND upper_threshold IS NULL))
+        AND minimum_source_count >= 0
+        AND minimum_available_count >= 0
+        AND (minimum_source_count = 0
+             OR minimum_available_count <= minimum_source_count)
+        AND missingness_policy IN ('UNKNOWN', 'NOT_ESTIMABLE', 'FAILED')
+        AND source_role = 'PRIMARY_DECISION_REFERENCE'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+CREATE INDEX context_policy_metric_policy_fk_idx
+    ON mra.context_policy_metric (context_policy_id, metric_ordinal);
+
+CREATE TABLE mra.context_assessment (
+    context_assessment_id uuid PRIMARY KEY,
+    assessment_group_id uuid NOT NULL,
+    assessment_ordinal integer NOT NULL,
+    assessment_count integer NOT NULL,
+    assessment_roster_sha256 text NOT NULL,
+    decision_run_id uuid NOT NULL,
+    candidate_set_id uuid NOT NULL,
+    candidate_set_content_sha256 text NOT NULL,
+    candidate_roster_sha256 text NOT NULL,
+    decision_time timestamptz NOT NULL,
+    candidate_count integer NOT NULL,
+    context_policy_id uuid NOT NULL,
+    context_policy_content_sha256 text NOT NULL,
+    policy_kind_count integer NOT NULL,
+    policy_kind_roster_sha256 text NOT NULL,
+    context_kind text NOT NULL,
+    assessment_status text NOT NULL,
+    assessment_state text NOT NULL,
+    metric_count integer NOT NULL,
+    source_count integer NOT NULL,
+    metric_roster_sha256 text NOT NULL,
+    request_identity text NOT NULL,
+    request_sha256 text NOT NULL,
+    content_sha256 text NOT NULL,
+    recorded_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT context_assessment_group_ordinal_uk UNIQUE (
+        assessment_group_id, assessment_ordinal
+    ),
+    CONSTRAINT context_assessment_group_kind_uk UNIQUE (
+        assessment_group_id, context_kind
+    ),
+    CONSTRAINT context_assessment_identity_uk UNIQUE (
+        decision_run_id, context_policy_id, context_kind
+    ),
+    CONSTRAINT context_assessment_request_uk UNIQUE (
+        decision_run_id, context_policy_id, request_identity, context_kind
+    ),
+    CONSTRAINT context_assessment_exact_uk UNIQUE (
+        context_assessment_id, assessment_group_id,
+        decision_run_id, candidate_set_id, context_policy_id,
+        context_kind, recorded_at
+    ),
+    CONSTRAINT context_assessment_run_fk FOREIGN KEY (
+        decision_run_id, candidate_set_id, candidate_set_content_sha256,
+        candidate_roster_sha256, decision_time, candidate_count
+    ) REFERENCES mra.decision_run(
+        decision_run_id, candidate_set_id, candidate_set_content_sha256,
+        candidate_roster_sha256, decision_time, candidate_count
+    ) ON DELETE RESTRICT,
+    CONSTRAINT context_assessment_policy_fk FOREIGN KEY (
+        context_policy_id, context_policy_content_sha256,
+        policy_kind_count, policy_kind_roster_sha256
+    ) REFERENCES mra.context_policy(
+        context_policy_id, content_sha256,
+        kind_count, kind_roster_sha256
+    ) ON DELETE RESTRICT,
+    CONSTRAINT context_assessment_shape_ck CHECK (
+        assessment_ordinal > 0 AND assessment_count > 0
+        AND assessment_ordinal <= assessment_count
+        AND assessment_count = policy_kind_count
+        AND candidate_count >= 0 AND metric_count > 0
+        AND source_count = metric_count::bigint * candidate_count::bigint
+        AND context_kind IN (
+            'MARKET_REGIME', 'ETF_ROTATION',
+            'THEME_ROTATION', 'CAPITAL_BREADTH'
+        )
+        AND assessment_status IN (
+            'AVAILABLE', 'UNKNOWN', 'NOT_ESTIMABLE', 'FAILED'
+        )
+        AND assessment_state IN (
+            'POSITIVE', 'NEUTRAL', 'NEGATIVE', 'UNKNOWN'
+        )
+        AND assessment_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND candidate_set_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND candidate_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND context_policy_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND policy_kind_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND metric_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND request_identity ~ '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$'
+        AND request_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+        AND recorded_at > decision_time
+    )
+);
+CREATE INDEX context_assessment_run_fk_idx
+    ON mra.context_assessment (
+        decision_run_id, candidate_set_id, candidate_set_content_sha256,
+        candidate_roster_sha256, decision_time, candidate_count
+    );
+CREATE INDEX context_assessment_policy_fk_idx
+    ON mra.context_assessment (
+        context_policy_id, context_policy_content_sha256,
+        policy_kind_count, policy_kind_roster_sha256
+    );
+
+CREATE TABLE mra.context_metric (
+    context_metric_id uuid PRIMARY KEY,
+    context_assessment_id uuid NOT NULL,
+    assessment_group_id uuid NOT NULL,
+    decision_run_id uuid NOT NULL,
+    candidate_set_id uuid NOT NULL,
+    context_policy_id uuid NOT NULL,
+    context_kind text NOT NULL,
+    context_policy_metric_id uuid NOT NULL,
+    definition_measure text NOT NULL,
+    definition_reducer text NOT NULL,
+    definition_source_role text NOT NULL,
+    definition_content_sha256 text NOT NULL,
+    metric_status text NOT NULL,
+    metric_state text NOT NULL,
+    decimal_value numeric,
+    source_count integer NOT NULL,
+    available_count integer NOT NULL,
+    unavailable_count integer NOT NULL,
+    failed_count integer NOT NULL,
+    source_roster_sha256 text NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT context_metric_assessment_metric_uk UNIQUE (
+        context_assessment_id, context_policy_metric_id
+    ),
+    CONSTRAINT context_metric_exact_uk UNIQUE (
+        context_metric_id, context_assessment_id,
+        context_policy_metric_id, decision_run_id, candidate_set_id
+    ),
+    CONSTRAINT context_metric_assessment_fk FOREIGN KEY (
+        context_assessment_id, assessment_group_id,
+        decision_run_id, candidate_set_id, context_policy_id,
+        context_kind, created_at
+    ) REFERENCES mra.context_assessment(
+        context_assessment_id, assessment_group_id,
+        decision_run_id, candidate_set_id, context_policy_id,
+        context_kind, recorded_at
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT context_metric_definition_fk FOREIGN KEY (
+        context_policy_metric_id, context_policy_id,
+        context_kind, definition_measure, definition_reducer,
+        definition_source_role, definition_content_sha256
+    ) REFERENCES mra.context_policy_metric(
+        context_policy_metric_id, context_policy_id,
+        context_kind, measure, reducer, source_role, content_sha256
+    ) ON DELETE RESTRICT,
+    CONSTRAINT context_metric_shape_ck CHECK (
+        metric_status IN ('AVAILABLE', 'UNKNOWN', 'NOT_ESTIMABLE', 'FAILED')
+        AND metric_state IN ('POSITIVE', 'NEUTRAL', 'NEGATIVE', 'UNKNOWN')
+        AND source_count >= 0 AND available_count >= 0
+        AND unavailable_count >= 0 AND failed_count >= 0
+        AND source_count = available_count + unavailable_count + failed_count
+        AND ((metric_status = 'AVAILABLE' AND decimal_value IS NOT NULL
+              AND metric_state <> 'UNKNOWN')
+          OR (metric_status <> 'AVAILABLE' AND decimal_value IS NULL
+              AND metric_state = 'UNKNOWN'))
+        AND source_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND definition_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+CREATE INDEX context_metric_assessment_fk_idx
+    ON mra.context_metric (
+        context_assessment_id, assessment_group_id,
+        decision_run_id, candidate_set_id, context_policy_id,
+        context_kind, created_at
+    );
+CREATE INDEX context_metric_definition_fk_idx
+    ON mra.context_metric (
+        context_policy_metric_id, context_policy_id,
+        context_kind, definition_measure, definition_reducer,
+        definition_source_role, definition_content_sha256
+    );
+
+CREATE TABLE mra.context_metric_source (
+    context_metric_source_id uuid PRIMARY KEY,
+    context_metric_id uuid NOT NULL,
+    context_assessment_id uuid NOT NULL,
+    context_policy_metric_id uuid NOT NULL,
+    decision_run_id uuid NOT NULL,
+    candidate_set_id uuid NOT NULL,
+    candidate_id uuid NOT NULL,
+    instrument_id uuid NOT NULL,
+    source_ordinal integer NOT NULL,
+    source_role text NOT NULL,
+    decision_reference_observation_id uuid NOT NULL,
+    reference_known_at timestamptz NOT NULL,
+    reference_source_kind text NOT NULL,
+    bar_revision_id uuid,
+    source_gap_id uuid,
+    value_status text NOT NULL,
+    decimal_value numeric,
+    boolean_value boolean,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT context_metric_source_ordinal_uk UNIQUE (
+        context_metric_id, source_ordinal
+    ),
+    CONSTRAINT context_metric_source_candidate_uk UNIQUE (
+        context_metric_id, candidate_id
+    ),
+    CONSTRAINT context_metric_source_metric_fk FOREIGN KEY (
+        context_metric_id, context_assessment_id,
+        context_policy_metric_id, decision_run_id, candidate_set_id
+    ) REFERENCES mra.context_metric(
+        context_metric_id, context_assessment_id,
+        context_policy_metric_id, decision_run_id, candidate_set_id
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT context_metric_source_reference_fk FOREIGN KEY (
+        decision_reference_observation_id, decision_run_id,
+        candidate_set_id, candidate_id, instrument_id,
+        reference_known_at, reference_source_kind
+    ) REFERENCES mra.decision_reference_observation(
+        decision_reference_observation_id, decision_run_id,
+        candidate_set_id, candidate_id, instrument_id, known_at, source_kind
+    ) ON DELETE RESTRICT,
+    CONSTRAINT context_metric_source_bar_fk FOREIGN KEY (
+        bar_revision_id
+    ) REFERENCES mra.market_bar_revision(bar_revision_id) ON DELETE RESTRICT,
+    CONSTRAINT context_metric_source_gap_fk FOREIGN KEY (
+        source_gap_id
+    ) REFERENCES mra.source_gap(gap_id) ON DELETE RESTRICT,
+    CONSTRAINT context_metric_source_shape_ck CHECK (
+        source_ordinal > 0
+        AND source_role = 'PRIMARY_DECISION_REFERENCE'
+        AND reference_source_kind IN ('BAR_REVISION', 'SOURCE_GAP')
+        AND ((reference_source_kind = 'BAR_REVISION'
+              AND bar_revision_id IS NOT NULL AND source_gap_id IS NULL)
+          OR (reference_source_kind = 'SOURCE_GAP'
+              AND bar_revision_id IS NULL AND source_gap_id IS NOT NULL))
+        AND value_status IN ('AVAILABLE', 'UNAVAILABLE', 'FAILED')
+        AND ((value_status = 'AVAILABLE'
+              AND ((decimal_value IS NOT NULL AND boolean_value IS NULL)
+                OR (decimal_value IS NULL AND boolean_value IS NOT NULL)))
+          OR (value_status <> 'AVAILABLE'
+              AND decimal_value IS NULL AND boolean_value IS NULL))
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+CREATE INDEX context_metric_source_metric_fk_idx
+    ON mra.context_metric_source (
+        context_metric_id, context_assessment_id,
+        context_policy_metric_id, decision_run_id, candidate_set_id
+    );
+CREATE INDEX context_metric_source_reference_fk_idx
+    ON mra.context_metric_source (
+        decision_reference_observation_id, decision_run_id,
+        candidate_set_id, candidate_id, instrument_id,
+        reference_known_at, reference_source_kind
+    );
+CREATE INDEX context_metric_source_bar_fk_idx
+    ON mra.context_metric_source (bar_revision_id)
+    WHERE bar_revision_id IS NOT NULL;
+CREATE INDEX context_metric_source_gap_fk_idx
+    ON mra.context_metric_source (source_gap_id)
+    WHERE source_gap_id IS NOT NULL;
+
+-- WP-13 immutable Strategy definition and complete Signal/Forecast Authority.
+ALTER TABLE mra.target_definition
+    ADD CONSTRAINT target_definition_strategy_authority_uk UNIQUE (
+        target_definition_id, content_sha256
+    );
+ALTER TABLE mra.target_checkpoint
+    ADD CONSTRAINT target_checkpoint_strategy_authority_uk UNIQUE (
+        target_checkpoint_id, target_definition_id, content_sha256
+    );
+ALTER TABLE mra.target_metric_definition
+    ADD CONSTRAINT target_metric_strategy_authority_uk UNIQUE (
+        target_metric_definition_id, target_definition_id, content_sha256
+    );
+ALTER TABLE mra.decision_target_commitment
+    ADD CONSTRAINT decision_commitment_forecast_authority_uk UNIQUE (
+        commitment_id, decision_run_id, candidate_id, instrument_id,
+        target_definition_id, target_checkpoint_id, content_sha256
+    );
+ALTER TABLE mra.context_assessment
+    ADD CONSTRAINT context_assessment_signal_authority_uk UNIQUE (
+        context_assessment_id, assessment_group_id, decision_run_id,
+        context_policy_id, context_policy_content_sha256,
+        context_kind, assessment_status, assessment_state,
+        content_sha256, recorded_at
+    );
+ALTER TABLE mra.context_policy
+    ADD CONSTRAINT context_policy_strategy_authority_uk UNIQUE (
+        context_policy_id, content_sha256
+    );
+
+CREATE TABLE mra.strategy (
+    strategy_id uuid PRIMARY KEY,
+    strategy_code text NOT NULL,
+    objective text NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT strategy_code_uk UNIQUE (strategy_code),
+    CONSTRAINT strategy_content_uk UNIQUE (content_sha256),
+    CONSTRAINT strategy_exact_uk UNIQUE (strategy_id, content_sha256),
+    CONSTRAINT strategy_shape_ck CHECK (
+        strategy_code ~ '^[a-z][a-z0-9_.-]{0,99}$'
+        AND objective <> '' AND length(objective) <= 500
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE TABLE mra.strategy_version (
+    strategy_version_id uuid PRIMARY KEY,
+    strategy_id uuid NOT NULL,
+    strategy_content_sha256 text NOT NULL,
+    version integer NOT NULL,
+    supersedes_strategy_version_id uuid,
+    primary_change text NOT NULL,
+    action_policy text NOT NULL,
+    context_requirement_count integer NOT NULL,
+    context_requirement_roster_sha256 text NOT NULL,
+    strategy_signal_rule_id uuid NOT NULL,
+    signal_rule_sha256 text NOT NULL,
+    forecast_rule_count integer NOT NULL,
+    forecast_rule_roster_sha256 text NOT NULL,
+    code_artifact_id uuid NOT NULL,
+    code_content_sha256 text NOT NULL,
+    code_size_bytes bigint NOT NULL,
+    config_artifact_id uuid NOT NULL,
+    config_content_sha256 text NOT NULL,
+    config_size_bytes bigint NOT NULL,
+    provenance_sha256 text NOT NULL,
+    content_sha256 text NOT NULL,
+    request_identity text NOT NULL,
+    request_sha256 text NOT NULL,
+    frozen_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT strategy_version_series_uk UNIQUE (strategy_id, version),
+    CONSTRAINT strategy_version_supersedes_uk UNIQUE (supersedes_strategy_version_id),
+    CONSTRAINT strategy_version_request_uk UNIQUE (strategy_id, request_identity),
+    CONSTRAINT strategy_version_exact_uk UNIQUE (
+        strategy_version_id, strategy_id, content_sha256
+    ),
+    CONSTRAINT strategy_version_content_uk UNIQUE (
+        strategy_version_id, content_sha256
+    ),
+    CONSTRAINT strategy_version_strategy_fk FOREIGN KEY (
+        strategy_id, strategy_content_sha256
+    ) REFERENCES mra.strategy(strategy_id, content_sha256) ON DELETE RESTRICT,
+    CONSTRAINT strategy_version_supersedes_fk FOREIGN KEY (
+        supersedes_strategy_version_id
+    ) REFERENCES mra.strategy_version(strategy_version_id) ON DELETE RESTRICT,
+    CONSTRAINT strategy_version_code_artifact_fk FOREIGN KEY (
+        code_artifact_id, code_content_sha256, code_size_bytes
+    ) REFERENCES mra.artifact(artifact_id, content_sha256, size_bytes)
+      ON DELETE RESTRICT,
+    CONSTRAINT strategy_version_config_artifact_fk FOREIGN KEY (
+        config_artifact_id, config_content_sha256, config_size_bytes
+    ) REFERENCES mra.artifact(artifact_id, content_sha256, size_bytes)
+      ON DELETE RESTRICT,
+    CONSTRAINT strategy_version_shape_ck CHECK (
+        ((version = 1 AND supersedes_strategy_version_id IS NULL)
+          OR (version > 1 AND supersedes_strategy_version_id IS NOT NULL))
+        AND primary_change <> '' AND length(primary_change) <= 500
+        AND action_policy = 'LONG_ONLY_RESEARCH'
+        AND context_requirement_count > 0 AND forecast_rule_count > 0
+        AND context_requirement_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND signal_rule_sha256 ~ '^[0-9a-f]{64}$'
+        AND forecast_rule_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND code_content_sha256 ~ '^[0-9a-f]{64}$' AND code_size_bytes >= 0
+        AND config_content_sha256 ~ '^[0-9a-f]{64}$' AND config_size_bytes >= 0
+        AND provenance_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+        AND request_identity ~ '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$'
+        AND request_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE TABLE mra.strategy_context_requirement (
+    strategy_context_requirement_id uuid PRIMARY KEY,
+    strategy_version_id uuid NOT NULL,
+    ordinal integer NOT NULL,
+    context_policy_id uuid NOT NULL,
+    context_policy_content_sha256 text NOT NULL,
+    context_kind text NOT NULL,
+    required_state text NOT NULL,
+    missing_action text NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT strategy_context_requirement_ordinal_uk UNIQUE (
+        strategy_version_id, ordinal
+    ),
+    CONSTRAINT strategy_context_requirement_kind_uk UNIQUE (
+        strategy_version_id, context_kind
+    ),
+    CONSTRAINT strategy_context_requirement_exact_uk UNIQUE (
+        strategy_context_requirement_id, strategy_version_id,
+        context_kind, content_sha256
+    ),
+    CONSTRAINT strategy_context_requirement_scope_uk UNIQUE (
+        strategy_context_requirement_id, strategy_version_id,
+        context_policy_id, context_policy_content_sha256, context_kind
+    ),
+    CONSTRAINT strategy_context_requirement_version_fk FOREIGN KEY (
+        strategy_version_id
+    ) REFERENCES mra.strategy_version(strategy_version_id)
+      ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT strategy_context_requirement_policy_fk FOREIGN KEY (
+        context_policy_id, context_policy_content_sha256
+    ) REFERENCES mra.context_policy(context_policy_id, content_sha256)
+      ON DELETE RESTRICT,
+    CONSTRAINT strategy_context_requirement_shape_ck CHECK (
+        ordinal > 0
+        AND context_kind IN (
+            'MARKET_REGIME', 'ETF_ROTATION', 'THEME_ROTATION', 'CAPITAL_BREADTH'
+        )
+        AND required_state IN ('POSITIVE', 'NEUTRAL', 'NEGATIVE')
+        AND missing_action IN ('WAIT', 'UNKNOWN', 'NOT_ESTIMABLE')
+        AND context_policy_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE TABLE mra.strategy_signal_rule (
+    strategy_signal_rule_id uuid PRIMARY KEY,
+    strategy_version_id uuid NOT NULL,
+    eligible_disposition text NOT NULL,
+    positive_status text NOT NULL,
+    negative_status text NOT NULL,
+    ineligible_status text NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT strategy_signal_rule_version_uk UNIQUE (strategy_version_id),
+    CONSTRAINT strategy_signal_rule_exact_uk UNIQUE (
+        strategy_signal_rule_id, strategy_version_id, content_sha256
+    ),
+    CONSTRAINT strategy_signal_rule_version_fk FOREIGN KEY (
+        strategy_version_id
+    ) REFERENCES mra.strategy_version(strategy_version_id)
+      ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT strategy_signal_rule_shape_ck CHECK (
+        eligible_disposition IN (
+            'SELECTED', 'RANKED_NOT_SELECTED', 'UNRANKABLE'
+        )
+        AND positive_status = 'PRESENT'
+        AND negative_status = 'NO_SIGNAL'
+        AND ineligible_status = 'NO_SIGNAL'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE TABLE mra.strategy_forecast_rule (
+    strategy_forecast_rule_id uuid PRIMARY KEY,
+    strategy_version_id uuid NOT NULL,
+    ordinal integer NOT NULL,
+    target_definition_id uuid NOT NULL,
+    target_definition_sha256 text NOT NULL,
+    target_checkpoint_id uuid NOT NULL,
+    target_checkpoint_sha256 text NOT NULL,
+    target_metric_definition_id uuid NOT NULL,
+    target_metric_definition_sha256 text NOT NULL,
+    source_measure text NOT NULL,
+    coefficient numeric NOT NULL,
+    intercept numeric NOT NULL,
+    lower_offset numeric NOT NULL,
+    upper_offset numeric NOT NULL,
+    value_unit text NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT strategy_forecast_rule_ordinal_uk UNIQUE (
+        strategy_version_id, ordinal
+    ),
+    CONSTRAINT strategy_forecast_rule_metric_uk UNIQUE (
+        strategy_version_id, target_definition_id, target_metric_definition_id
+    ),
+    CONSTRAINT strategy_forecast_rule_exact_uk UNIQUE (
+        strategy_forecast_rule_id, strategy_version_id,
+        target_definition_id, target_metric_definition_id, content_sha256
+    ),
+    CONSTRAINT strategy_forecast_rule_scope_uk UNIQUE (
+        strategy_forecast_rule_id, strategy_version_id,
+        target_definition_id, target_metric_definition_id
+    ),
+    CONSTRAINT strategy_forecast_rule_version_fk FOREIGN KEY (
+        strategy_version_id
+    ) REFERENCES mra.strategy_version(strategy_version_id)
+      ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT strategy_forecast_rule_target_fk FOREIGN KEY (
+        target_definition_id, target_definition_sha256
+    ) REFERENCES mra.target_definition(
+        target_definition_id, content_sha256
+    ) ON DELETE RESTRICT,
+    CONSTRAINT strategy_forecast_rule_checkpoint_fk FOREIGN KEY (
+        target_checkpoint_id, target_definition_id, target_checkpoint_sha256
+    ) REFERENCES mra.target_checkpoint(
+        target_checkpoint_id, target_definition_id, content_sha256
+    ) ON DELETE RESTRICT,
+    CONSTRAINT strategy_forecast_rule_metric_fk FOREIGN KEY (
+        target_metric_definition_id, target_definition_id,
+        target_metric_definition_sha256
+    ) REFERENCES mra.target_metric_definition(
+        target_metric_definition_id, target_definition_id, content_sha256
+    ) ON DELETE RESTRICT,
+    CONSTRAINT strategy_forecast_rule_shape_ck CHECK (
+        ordinal > 0 AND source_measure = 'CANDIDATE_COMPOSITE_SCORE'
+        AND lower_offset >= 0 AND upper_offset >= 0
+        AND coefficient < 'Infinity'::numeric AND coefficient > '-Infinity'::numeric
+        AND intercept < 'Infinity'::numeric AND intercept > '-Infinity'::numeric
+        AND lower_offset < 'Infinity'::numeric
+        AND upper_offset < 'Infinity'::numeric
+        AND value_unit = 'DECIMAL_RETURN'
+        AND target_definition_sha256 ~ '^[0-9a-f]{64}$'
+        AND target_checkpoint_sha256 ~ '^[0-9a-f]{64}$'
+        AND target_metric_definition_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+ALTER TABLE mra.strategy_version
+    ADD CONSTRAINT strategy_version_signal_rule_fk FOREIGN KEY (
+        strategy_signal_rule_id, strategy_version_id, signal_rule_sha256
+    ) REFERENCES mra.strategy_signal_rule(
+        strategy_signal_rule_id, strategy_version_id, content_sha256
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED;
+
+CREATE TABLE mra.signal_run (
+    signal_group_id uuid PRIMARY KEY,
+    decision_run_id uuid NOT NULL,
+    candidate_set_id uuid NOT NULL,
+    candidate_set_content_sha256 text NOT NULL,
+    candidate_roster_sha256 text NOT NULL,
+    decision_time timestamptz NOT NULL,
+    candidate_count integer NOT NULL,
+    strategy_version_id uuid NOT NULL,
+    strategy_version_sha256 text NOT NULL,
+    signal_count integer NOT NULL,
+    context_binding_count integer NOT NULL,
+    signal_roster_sha256 text NOT NULL,
+    request_identity text NOT NULL,
+    request_sha256 text NOT NULL,
+    command_receipt_id uuid NOT NULL,
+    content_sha256 text NOT NULL,
+    recorded_at timestamptz NOT NULL,
+    CONSTRAINT signal_run_identity_uk UNIQUE (
+        decision_run_id, strategy_version_id
+    ),
+    CONSTRAINT signal_run_request_uk UNIQUE (
+        decision_run_id, strategy_version_id, request_identity
+    ),
+    CONSTRAINT signal_run_exact_uk UNIQUE (
+        signal_group_id, decision_run_id, strategy_version_id,
+        content_sha256, recorded_at
+    ),
+    CONSTRAINT signal_run_content_uk UNIQUE (
+        signal_group_id, decision_run_id, strategy_version_id, content_sha256
+    ),
+    CONSTRAINT signal_run_decision_fk FOREIGN KEY (
+        decision_run_id, candidate_set_id, candidate_set_content_sha256,
+        candidate_roster_sha256, decision_time, candidate_count
+    ) REFERENCES mra.decision_run(
+        decision_run_id, candidate_set_id, candidate_set_content_sha256,
+        candidate_roster_sha256, decision_time, candidate_count
+    ) ON DELETE RESTRICT,
+    CONSTRAINT signal_run_strategy_fk FOREIGN KEY (
+        strategy_version_id, strategy_version_sha256
+    ) REFERENCES mra.strategy_version(strategy_version_id, content_sha256)
+      ON DELETE RESTRICT,
+    CONSTRAINT signal_run_receipt_fk FOREIGN KEY (command_receipt_id)
+        REFERENCES mra.command_receipt(receipt_id) ON DELETE RESTRICT,
+    CONSTRAINT signal_run_shape_ck CHECK (
+        signal_count = candidate_count AND signal_count >= 0
+        AND context_binding_count >= 0
+        AND signal_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND candidate_set_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND candidate_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND strategy_version_sha256 ~ '^[0-9a-f]{64}$'
+        AND request_identity ~ '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$'
+        AND request_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+        AND recorded_at > decision_time
+    )
+);
+
+CREATE TABLE mra.signal (
+    signal_id uuid PRIMARY KEY,
+    signal_group_id uuid NOT NULL,
+    ordinal integer NOT NULL,
+    signal_count integer NOT NULL,
+    signal_roster_sha256 text NOT NULL,
+    group_content_sha256 text NOT NULL,
+    decision_run_id uuid NOT NULL,
+    candidate_set_id uuid NOT NULL,
+    candidate_set_content_sha256 text NOT NULL,
+    candidate_roster_sha256 text NOT NULL,
+    decision_time timestamptz NOT NULL,
+    candidate_count integer NOT NULL,
+    candidate_id uuid NOT NULL,
+    instrument_id uuid NOT NULL,
+    candidate_disposition text NOT NULL,
+    candidate_score numeric,
+    strategy_version_id uuid NOT NULL,
+    strategy_version_sha256 text NOT NULL,
+    strategy_signal_rule_id uuid NOT NULL,
+    strategy_signal_rule_sha256 text NOT NULL,
+    status text NOT NULL,
+    reason_code text NOT NULL,
+    context_binding_count integer NOT NULL,
+    context_binding_roster_sha256 text NOT NULL,
+    total_context_binding_count integer NOT NULL,
+    request_identity text NOT NULL,
+    request_sha256 text NOT NULL,
+    command_receipt_id uuid NOT NULL,
+    content_sha256 text NOT NULL,
+    recorded_at timestamptz NOT NULL,
+    CONSTRAINT signal_group_ordinal_uk UNIQUE (signal_group_id, ordinal),
+    CONSTRAINT signal_group_candidate_uk UNIQUE (signal_group_id, candidate_id),
+    CONSTRAINT signal_identity_uk UNIQUE (
+        decision_run_id, strategy_version_id, candidate_id
+    ),
+    CONSTRAINT signal_request_uk UNIQUE (
+        decision_run_id, strategy_version_id, request_identity, candidate_id
+    ),
+    CONSTRAINT signal_exact_uk UNIQUE (
+        signal_id, signal_group_id, decision_run_id, candidate_id,
+        strategy_version_id, content_sha256, recorded_at
+    ),
+    CONSTRAINT signal_scope_uk UNIQUE (
+        signal_id, signal_group_id, decision_run_id, candidate_id,
+        strategy_version_id
+    ),
+    CONSTRAINT signal_content_scope_uk UNIQUE (
+        signal_id, signal_group_id, decision_run_id, candidate_id,
+        strategy_version_id, content_sha256
+    ),
+    CONSTRAINT signal_group_fk FOREIGN KEY (
+        signal_group_id, decision_run_id, strategy_version_id,
+        group_content_sha256, recorded_at
+    ) REFERENCES mra.signal_run(
+        signal_group_id, decision_run_id, strategy_version_id,
+        content_sha256, recorded_at
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT signal_run_fk FOREIGN KEY (
+        decision_run_id, candidate_set_id, candidate_set_content_sha256,
+        candidate_roster_sha256, decision_time, candidate_count
+    ) REFERENCES mra.decision_run(
+        decision_run_id, candidate_set_id, candidate_set_content_sha256,
+        candidate_roster_sha256, decision_time, candidate_count
+    ) ON DELETE RESTRICT,
+    CONSTRAINT signal_run_candidate_fk FOREIGN KEY (
+        candidate_id, candidate_set_id, instrument_id, candidate_disposition
+    ) REFERENCES mra.candidate(
+        candidate_id, candidate_set_id, instrument_id, disposition
+    ) ON DELETE RESTRICT,
+    CONSTRAINT signal_strategy_version_fk FOREIGN KEY (
+        strategy_version_id, strategy_version_sha256
+    ) REFERENCES mra.strategy_version(strategy_version_id, content_sha256)
+      ON DELETE RESTRICT,
+    CONSTRAINT signal_rule_fk FOREIGN KEY (
+        strategy_signal_rule_id, strategy_version_id,
+        strategy_signal_rule_sha256
+    ) REFERENCES mra.strategy_signal_rule(
+        strategy_signal_rule_id, strategy_version_id, content_sha256
+    ) ON DELETE RESTRICT,
+    CONSTRAINT signal_receipt_fk FOREIGN KEY (command_receipt_id)
+        REFERENCES mra.command_receipt(receipt_id) ON DELETE RESTRICT,
+    CONSTRAINT signal_shape_ck CHECK (
+        ordinal > 0 AND signal_count >= 0 AND ordinal <= signal_count
+        AND candidate_count = signal_count
+        AND context_binding_count > 0
+        AND total_context_binding_count = signal_count * context_binding_count
+        AND candidate_disposition IN (
+            'SELECTED', 'RANKED_NOT_SELECTED', 'UNRANKABLE'
+        )
+        AND ((candidate_disposition = 'UNRANKABLE' AND candidate_score IS NULL)
+          OR (candidate_disposition <> 'UNRANKABLE'
+              AND candidate_score BETWEEN 0 AND 1))
+        AND status IN (
+            'PRESENT', 'NO_SIGNAL', 'WAIT', 'UNKNOWN', 'NOT_ESTIMABLE'
+        )
+        AND reason_code ~ '^[A-Z][A-Z0-9_]{0,99}$'
+        AND signal_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND group_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND candidate_set_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND candidate_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND strategy_version_sha256 ~ '^[0-9a-f]{64}$'
+        AND strategy_signal_rule_sha256 ~ '^[0-9a-f]{64}$'
+        AND context_binding_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND request_identity ~ '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$'
+        AND request_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+        AND recorded_at > decision_time
+    )
+);
+
+CREATE TABLE mra.signal_context_binding (
+    signal_context_binding_id uuid PRIMARY KEY,
+    signal_id uuid NOT NULL,
+    signal_group_id uuid NOT NULL,
+    decision_run_id uuid NOT NULL,
+    candidate_id uuid NOT NULL,
+    strategy_version_id uuid NOT NULL,
+    binding_ordinal integer NOT NULL,
+    strategy_context_requirement_id uuid NOT NULL,
+    context_policy_id uuid NOT NULL,
+    context_policy_content_sha256 text NOT NULL,
+    context_kind text NOT NULL,
+    context_assessment_id uuid NOT NULL,
+    assessment_group_id uuid NOT NULL,
+    assessment_status text NOT NULL,
+    assessment_state text NOT NULL,
+    assessment_content_sha256 text NOT NULL,
+    assessment_recorded_at timestamptz NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT signal_context_binding_ordinal_uk UNIQUE (
+        signal_id, binding_ordinal
+    ),
+    CONSTRAINT signal_context_binding_requirement_uk UNIQUE (
+        signal_id, strategy_context_requirement_id
+    ),
+    CONSTRAINT signal_context_binding_signal_fk FOREIGN KEY (
+        signal_id, signal_group_id, decision_run_id, candidate_id,
+        strategy_version_id
+    ) REFERENCES mra.signal(
+        signal_id, signal_group_id, decision_run_id, candidate_id,
+        strategy_version_id
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT signal_context_binding_requirement_fk FOREIGN KEY (
+        strategy_context_requirement_id, strategy_version_id,
+        context_policy_id, context_policy_content_sha256, context_kind
+    ) REFERENCES mra.strategy_context_requirement(
+        strategy_context_requirement_id, strategy_version_id,
+        context_policy_id, context_policy_content_sha256, context_kind
+    ) ON DELETE RESTRICT,
+    CONSTRAINT signal_context_binding_assessment_fk FOREIGN KEY (
+        context_assessment_id, assessment_group_id, decision_run_id,
+        context_policy_id, context_policy_content_sha256,
+        context_kind, assessment_status, assessment_state,
+        assessment_content_sha256, assessment_recorded_at
+    ) REFERENCES mra.context_assessment(
+        context_assessment_id, assessment_group_id, decision_run_id,
+        context_policy_id, context_policy_content_sha256,
+        context_kind, assessment_status, assessment_state,
+        content_sha256, recorded_at
+    ) ON DELETE RESTRICT,
+    CONSTRAINT signal_context_binding_shape_ck CHECK (
+        binding_ordinal > 0
+        AND assessment_recorded_at <= created_at
+        AND context_policy_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND assessment_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE TABLE mra.forecast_run (
+    forecast_group_id uuid PRIMARY KEY,
+    decision_run_id uuid NOT NULL,
+    strategy_version_id uuid NOT NULL,
+    strategy_version_sha256 text NOT NULL,
+    signal_group_id uuid NOT NULL,
+    signal_content_sha256 text NOT NULL,
+    forecast_count integer NOT NULL,
+    estimate_count integer NOT NULL,
+    forecast_roster_sha256 text NOT NULL,
+    request_identity text NOT NULL,
+    request_sha256 text NOT NULL,
+    command_receipt_id uuid NOT NULL,
+    content_sha256 text NOT NULL,
+    recorded_at timestamptz NOT NULL,
+    CONSTRAINT forecast_run_identity_uk UNIQUE (
+        decision_run_id, strategy_version_id
+    ),
+    CONSTRAINT forecast_run_request_uk UNIQUE (
+        decision_run_id, strategy_version_id, request_identity
+    ),
+    CONSTRAINT forecast_run_exact_uk UNIQUE (
+        forecast_group_id, decision_run_id, strategy_version_id,
+        content_sha256, recorded_at
+    ),
+    CONSTRAINT forecast_run_strategy_fk FOREIGN KEY (
+        strategy_version_id, strategy_version_sha256
+    ) REFERENCES mra.strategy_version(strategy_version_id, content_sha256)
+      ON DELETE RESTRICT,
+    CONSTRAINT forecast_run_signal_fk FOREIGN KEY (
+        signal_group_id, decision_run_id, strategy_version_id,
+        signal_content_sha256
+    ) REFERENCES mra.signal_run(
+        signal_group_id, decision_run_id, strategy_version_id,
+        content_sha256
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT forecast_run_receipt_fk FOREIGN KEY (command_receipt_id)
+        REFERENCES mra.command_receipt(receipt_id) ON DELETE RESTRICT,
+    CONSTRAINT forecast_run_shape_ck CHECK (
+        forecast_count >= 0 AND estimate_count >= 0
+        AND (forecast_count > 0 OR estimate_count = 0)
+        AND strategy_version_sha256 ~ '^[0-9a-f]{64}$'
+        AND signal_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND forecast_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND request_identity ~ '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$'
+        AND request_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE TABLE mra.forecast (
+    forecast_id uuid PRIMARY KEY,
+    forecast_group_id uuid NOT NULL,
+    ordinal integer NOT NULL,
+    forecast_count integer NOT NULL,
+    forecast_roster_sha256 text NOT NULL,
+    group_content_sha256 text NOT NULL,
+    decision_run_id uuid NOT NULL,
+    strategy_version_id uuid NOT NULL,
+    strategy_version_sha256 text NOT NULL,
+    signal_group_id uuid NOT NULL,
+    signal_id uuid NOT NULL,
+    signal_content_sha256 text NOT NULL,
+    commitment_id uuid NOT NULL,
+    candidate_id uuid NOT NULL,
+    instrument_id uuid NOT NULL,
+    target_definition_id uuid NOT NULL,
+    target_definition_sha256 text NOT NULL,
+    target_checkpoint_id uuid NOT NULL,
+    target_checkpoint_sha256 text NOT NULL,
+    commitment_content_sha256 text NOT NULL,
+    status text NOT NULL,
+    calibration_status text NOT NULL,
+    reason_code text NOT NULL,
+    estimate_count integer NOT NULL,
+    estimate_roster_sha256 text NOT NULL,
+    total_estimate_count integer NOT NULL,
+    request_identity text NOT NULL,
+    request_sha256 text NOT NULL,
+    command_receipt_id uuid NOT NULL,
+    content_sha256 text NOT NULL,
+    recorded_at timestamptz NOT NULL,
+    CONSTRAINT forecast_group_ordinal_uk UNIQUE (forecast_group_id, ordinal),
+    CONSTRAINT forecast_group_commitment_uk UNIQUE (
+        forecast_group_id, commitment_id
+    ),
+    CONSTRAINT forecast_identity_uk UNIQUE (
+        decision_run_id, strategy_version_id, commitment_id
+    ),
+    CONSTRAINT forecast_request_uk UNIQUE (
+        decision_run_id, strategy_version_id, request_identity, commitment_id
+    ),
+    CONSTRAINT forecast_exact_uk UNIQUE (
+        forecast_id, forecast_group_id, decision_run_id,
+        strategy_version_id, content_sha256, recorded_at
+    ),
+    CONSTRAINT forecast_scope_uk UNIQUE (
+        forecast_id, forecast_group_id, decision_run_id,
+        strategy_version_id
+    ),
+    CONSTRAINT forecast_group_fk FOREIGN KEY (
+        forecast_group_id, decision_run_id, strategy_version_id,
+        group_content_sha256, recorded_at
+    ) REFERENCES mra.forecast_run(
+        forecast_group_id, decision_run_id, strategy_version_id,
+        content_sha256, recorded_at
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT forecast_strategy_version_fk FOREIGN KEY (
+        strategy_version_id, strategy_version_sha256
+    ) REFERENCES mra.strategy_version(strategy_version_id, content_sha256)
+      ON DELETE RESTRICT,
+    CONSTRAINT forecast_signal_fk FOREIGN KEY (
+        signal_id, signal_group_id, decision_run_id, candidate_id,
+        strategy_version_id, signal_content_sha256
+    ) REFERENCES mra.signal(
+        signal_id, signal_group_id, decision_run_id, candidate_id,
+        strategy_version_id, content_sha256
+    ) ON DELETE RESTRICT,
+    CONSTRAINT forecast_commitment_fk FOREIGN KEY (
+        commitment_id, decision_run_id, candidate_id, instrument_id,
+        target_definition_id, target_checkpoint_id,
+        commitment_content_sha256
+    ) REFERENCES mra.decision_target_commitment(
+        commitment_id, decision_run_id, candidate_id, instrument_id,
+        target_definition_id, target_checkpoint_id, content_sha256
+    ) ON DELETE RESTRICT,
+    CONSTRAINT forecast_target_fk FOREIGN KEY (
+        target_definition_id, target_definition_sha256
+    ) REFERENCES mra.target_definition(
+        target_definition_id, content_sha256
+    ) ON DELETE RESTRICT,
+    CONSTRAINT forecast_checkpoint_fk FOREIGN KEY (
+        target_checkpoint_id, target_definition_id, target_checkpoint_sha256
+    ) REFERENCES mra.target_checkpoint(
+        target_checkpoint_id, target_definition_id, content_sha256
+    ) ON DELETE RESTRICT,
+    CONSTRAINT forecast_receipt_fk FOREIGN KEY (command_receipt_id)
+        REFERENCES mra.command_receipt(receipt_id) ON DELETE RESTRICT,
+    CONSTRAINT forecast_shape_ck CHECK (
+        ordinal > 0 AND forecast_count > 0 AND ordinal <= forecast_count
+        AND estimate_count > 0 AND total_estimate_count >= forecast_count
+        AND status IN ('AVAILABLE', 'NOT_APPLICABLE', 'NOT_ESTIMABLE')
+        AND calibration_status IN ('UNCALIBRATED', 'NOT_APPLICABLE')
+        AND ((status = 'AVAILABLE' AND calibration_status = 'UNCALIBRATED')
+          OR (status <> 'AVAILABLE' AND calibration_status = 'NOT_APPLICABLE'))
+        AND reason_code ~ '^[A-Z][A-Z0-9_]{0,99}$'
+        AND forecast_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND group_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND strategy_version_sha256 ~ '^[0-9a-f]{64}$'
+        AND signal_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND target_definition_sha256 ~ '^[0-9a-f]{64}$'
+        AND target_checkpoint_sha256 ~ '^[0-9a-f]{64}$'
+        AND commitment_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND estimate_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND request_identity ~ '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$'
+        AND request_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE TABLE mra.forecast_estimate (
+    forecast_estimate_id uuid PRIMARY KEY,
+    forecast_id uuid NOT NULL,
+    forecast_group_id uuid NOT NULL,
+    decision_run_id uuid NOT NULL,
+    strategy_version_id uuid NOT NULL,
+    estimate_ordinal integer NOT NULL,
+    strategy_forecast_rule_id uuid NOT NULL,
+    target_definition_id uuid NOT NULL,
+    target_metric_definition_id uuid NOT NULL,
+    value_unit text NOT NULL,
+    point_estimate numeric,
+    lower_bound numeric,
+    upper_bound numeric,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT forecast_estimate_ordinal_uk UNIQUE (
+        forecast_id, estimate_ordinal
+    ),
+    CONSTRAINT forecast_estimate_rule_uk UNIQUE (
+        forecast_id, strategy_forecast_rule_id
+    ),
+    CONSTRAINT forecast_estimate_forecast_fk FOREIGN KEY (
+        forecast_id, forecast_group_id, decision_run_id,
+        strategy_version_id
+    ) REFERENCES mra.forecast(
+        forecast_id, forecast_group_id, decision_run_id,
+        strategy_version_id
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT forecast_estimate_rule_fk FOREIGN KEY (
+        strategy_forecast_rule_id, strategy_version_id,
+        target_definition_id, target_metric_definition_id
+    ) REFERENCES mra.strategy_forecast_rule(
+        strategy_forecast_rule_id, strategy_version_id,
+        target_definition_id, target_metric_definition_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT forecast_estimate_shape_ck CHECK (
+        estimate_ordinal > 0 AND value_unit = 'DECIMAL_RETURN'
+        AND ((point_estimate IS NOT NULL AND lower_bound IS NOT NULL
+              AND upper_bound IS NOT NULL
+              AND lower_bound <= point_estimate
+              AND point_estimate <= upper_bound)
+          OR (point_estimate IS NULL AND lower_bound IS NULL
+              AND upper_bound IS NULL))
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE INDEX strategy_version_strategy_fk_idx
+    ON mra.strategy_version (strategy_id, strategy_content_sha256);
+CREATE INDEX strategy_version_code_artifact_fk_idx ON mra.strategy_version (
+    code_artifact_id, code_content_sha256, code_size_bytes
+);
+CREATE INDEX strategy_version_config_artifact_fk_idx ON mra.strategy_version (
+    config_artifact_id, config_content_sha256, config_size_bytes
+);
+CREATE INDEX strategy_version_signal_rule_fk_idx ON mra.strategy_version (
+    strategy_signal_rule_id, strategy_version_id, signal_rule_sha256
+);
+CREATE INDEX strategy_forecast_rule_target_fk_idx
+    ON mra.strategy_forecast_rule (target_definition_id, target_definition_sha256);
+CREATE INDEX strategy_context_requirement_policy_fk_idx
+    ON mra.strategy_context_requirement (
+        context_policy_id, context_policy_content_sha256
+    );
+CREATE INDEX strategy_forecast_rule_checkpoint_fk_idx
+    ON mra.strategy_forecast_rule (
+        target_checkpoint_id, target_definition_id, target_checkpoint_sha256
+    );
+CREATE INDEX strategy_forecast_rule_metric_fk_idx
+    ON mra.strategy_forecast_rule (
+        target_metric_definition_id, target_definition_id,
+        target_metric_definition_sha256
+    );
+CREATE INDEX signal_run_decision_fk_idx ON mra.signal_run (
+    decision_run_id, candidate_set_id, candidate_set_content_sha256,
+    candidate_roster_sha256, decision_time, candidate_count
+);
+CREATE INDEX signal_run_strategy_fk_idx ON mra.signal_run (
+    strategy_version_id, strategy_version_sha256
+);
+CREATE INDEX signal_run_receipt_fk_idx ON mra.signal_run (command_receipt_id);
+CREATE INDEX signal_group_fk_idx ON mra.signal (
+    signal_group_id, decision_run_id, strategy_version_id,
+    group_content_sha256, recorded_at
+);
+CREATE INDEX signal_run_fk_idx ON mra.signal (
+    decision_run_id, candidate_set_id, candidate_set_content_sha256,
+    candidate_roster_sha256, decision_time, candidate_count
+);
+CREATE INDEX signal_candidate_fk_idx ON mra.signal (
+    candidate_id, candidate_set_id, instrument_id, candidate_disposition
+);
+CREATE INDEX signal_strategy_version_fk_idx ON mra.signal (
+    strategy_version_id, strategy_version_sha256
+);
+CREATE INDEX signal_rule_fk_idx ON mra.signal (
+    strategy_signal_rule_id, strategy_version_id,
+    strategy_signal_rule_sha256
+);
+CREATE INDEX signal_receipt_fk_idx ON mra.signal (command_receipt_id);
+CREATE INDEX signal_context_binding_signal_fk_idx
+    ON mra.signal_context_binding (
+        signal_id, signal_group_id, decision_run_id,
+        candidate_id, strategy_version_id
+    );
+CREATE INDEX signal_context_binding_requirement_fk_idx
+    ON mra.signal_context_binding (
+        strategy_context_requirement_id, strategy_version_id,
+        context_policy_id, context_policy_content_sha256, context_kind
+    );
+CREATE INDEX signal_context_binding_assessment_fk_idx
+    ON mra.signal_context_binding (
+        context_assessment_id, assessment_group_id, decision_run_id,
+        context_policy_id, context_policy_content_sha256,
+        context_kind, assessment_status, assessment_state,
+        assessment_content_sha256, assessment_recorded_at
+    );
+CREATE INDEX forecast_commitment_fk_idx ON mra.forecast (
+    commitment_id, decision_run_id, candidate_id, instrument_id,
+    target_definition_id, target_checkpoint_id, commitment_content_sha256
+);
+CREATE INDEX forecast_run_strategy_fk_idx ON mra.forecast_run (
+    strategy_version_id, strategy_version_sha256
+);
+CREATE INDEX forecast_run_signal_fk_idx ON mra.forecast_run (
+    signal_group_id, decision_run_id, strategy_version_id,
+    signal_content_sha256
+);
+CREATE INDEX forecast_run_receipt_fk_idx ON mra.forecast_run (command_receipt_id);
+CREATE INDEX forecast_group_fk_idx ON mra.forecast (
+    forecast_group_id, decision_run_id, strategy_version_id,
+    group_content_sha256, recorded_at
+);
+CREATE INDEX forecast_strategy_version_fk_idx ON mra.forecast (
+    strategy_version_id, strategy_version_sha256
+);
+CREATE INDEX forecast_signal_fk_idx ON mra.forecast (
+    signal_id, signal_group_id, decision_run_id, candidate_id,
+    strategy_version_id, signal_content_sha256
+);
+CREATE INDEX forecast_target_fk_idx ON mra.forecast (
+    target_definition_id, target_definition_sha256
+);
+CREATE INDEX forecast_checkpoint_fk_idx ON mra.forecast (
+    target_checkpoint_id, target_definition_id, target_checkpoint_sha256
+);
+CREATE INDEX forecast_receipt_fk_idx ON mra.forecast (command_receipt_id);
+CREATE INDEX forecast_estimate_forecast_fk_idx ON mra.forecast_estimate (
+    forecast_id, forecast_group_id, decision_run_id, strategy_version_id
+);
+CREATE INDEX forecast_estimate_rule_fk_idx ON mra.forecast_estimate (
+    strategy_forecast_rule_id, strategy_version_id,
+    target_definition_id, target_metric_definition_id
+);
+
+ALTER TABLE mra.signal_context_binding
+    ADD CONSTRAINT signal_context_binding_opportunity_authority_uk UNIQUE (
+        signal_context_binding_id, signal_id, signal_group_id,
+        decision_run_id, candidate_id, strategy_version_id, content_sha256
+    );
+ALTER TABLE mra.forecast_run
+    ADD CONSTRAINT forecast_run_opportunity_authority_uk UNIQUE (
+        forecast_group_id, decision_run_id, strategy_version_id,
+        signal_group_id, content_sha256, recorded_at
+    );
+ALTER TABLE mra.decision_target_commitment
+    ADD CONSTRAINT decision_commitment_opportunity_authority_uk UNIQUE (
+        commitment_id, decision_run_id, candidate_id, instrument_id,
+        target_definition_id, content_sha256
+    );
+
+CREATE TABLE mra.opportunity_set (
+    opportunity_set_id uuid PRIMARY KEY,
+    decision_run_id uuid NOT NULL,
+    strategy_version_id uuid NOT NULL,
+    strategy_version_sha256 text NOT NULL,
+    signal_group_id uuid NOT NULL,
+    signal_content_sha256 text NOT NULL,
+    forecast_group_id uuid NOT NULL,
+    forecast_content_sha256 text NOT NULL,
+    forecast_recorded_at timestamptz NOT NULL,
+    opportunity_count integer NOT NULL,
+    context_count integer NOT NULL,
+    opportunity_roster_sha256 text NOT NULL,
+    request_identity text NOT NULL,
+    request_sha256 text NOT NULL,
+    command_receipt_id uuid NOT NULL,
+    content_sha256 text NOT NULL,
+    recorded_at timestamptz NOT NULL,
+    CONSTRAINT opportunity_set_identity_uk UNIQUE (
+        decision_run_id, strategy_version_id
+    ),
+    CONSTRAINT opportunity_set_request_uk UNIQUE (
+        decision_run_id, strategy_version_id, request_identity
+    ),
+    CONSTRAINT opportunity_set_exact_uk UNIQUE (
+        opportunity_set_id, decision_run_id, strategy_version_id,
+        content_sha256, recorded_at
+    ),
+    CONSTRAINT opportunity_set_scope_uk UNIQUE (
+        opportunity_set_id, decision_run_id, strategy_version_id, recorded_at
+    ),
+    CONSTRAINT opportunity_set_strategy_fk FOREIGN KEY (
+        strategy_version_id, strategy_version_sha256
+    ) REFERENCES mra.strategy_version(strategy_version_id, content_sha256)
+      ON DELETE RESTRICT,
+    CONSTRAINT opportunity_set_signal_fk FOREIGN KEY (
+        signal_group_id, decision_run_id, strategy_version_id,
+        signal_content_sha256
+    ) REFERENCES mra.signal_run(
+        signal_group_id, decision_run_id, strategy_version_id, content_sha256
+    ) ON DELETE RESTRICT,
+    CONSTRAINT opportunity_set_forecast_fk FOREIGN KEY (
+        forecast_group_id, decision_run_id, strategy_version_id,
+        signal_group_id, forecast_content_sha256, forecast_recorded_at
+    ) REFERENCES mra.forecast_run(
+        forecast_group_id, decision_run_id, strategy_version_id,
+        signal_group_id, content_sha256, recorded_at
+    ) ON DELETE RESTRICT,
+    CONSTRAINT opportunity_set_receipt_fk FOREIGN KEY (command_receipt_id)
+        REFERENCES mra.command_receipt(receipt_id) ON DELETE RESTRICT,
+    CONSTRAINT opportunity_set_shape_ck CHECK (
+        opportunity_count >= 0 AND context_count >= 0
+        AND strategy_version_sha256 ~ '^[0-9a-f]{64}$'
+        AND signal_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND forecast_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND opportunity_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND request_identity ~ '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$'
+        AND request_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+        AND recorded_at >= forecast_recorded_at
+    )
+);
+
+CREATE TABLE mra.opportunity (
+    opportunity_id uuid PRIMARY KEY,
+    opportunity_set_id uuid NOT NULL,
+    ordinal integer NOT NULL,
+    decision_run_id uuid NOT NULL,
+    strategy_version_id uuid NOT NULL,
+    forecast_group_id uuid NOT NULL,
+    forecast_id uuid NOT NULL,
+    forecast_content_sha256 text NOT NULL,
+    forecast_recorded_at timestamptz NOT NULL,
+    signal_group_id uuid NOT NULL,
+    signal_id uuid NOT NULL,
+    signal_content_sha256 text NOT NULL,
+    candidate_id uuid NOT NULL,
+    instrument_id uuid NOT NULL,
+    commitment_id uuid NOT NULL,
+    commitment_content_sha256 text NOT NULL,
+    target_definition_id uuid NOT NULL,
+    target_definition_sha256 text NOT NULL,
+    status text NOT NULL,
+    action text NOT NULL,
+    reason_code text NOT NULL,
+    context_count integer NOT NULL,
+    context_roster_sha256 text NOT NULL,
+    content_sha256 text NOT NULL,
+    recorded_at timestamptz NOT NULL,
+    CONSTRAINT opportunity_set_ordinal_uk UNIQUE (opportunity_set_id, ordinal),
+    CONSTRAINT opportunity_set_forecast_uk UNIQUE (opportunity_set_id, forecast_id),
+    CONSTRAINT opportunity_exact_uk UNIQUE (
+        opportunity_id, opportunity_set_id, decision_run_id,
+        strategy_version_id, content_sha256
+    ),
+    CONSTRAINT opportunity_scope_uk UNIQUE (
+        opportunity_id, opportunity_set_id, decision_run_id,
+        strategy_version_id
+    ),
+    CONSTRAINT opportunity_set_fk FOREIGN KEY (
+        opportunity_set_id, decision_run_id, strategy_version_id, recorded_at
+    ) REFERENCES mra.opportunity_set(
+        opportunity_set_id, decision_run_id, strategy_version_id, recorded_at
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT opportunity_forecast_fk FOREIGN KEY (
+        forecast_id, forecast_group_id, decision_run_id,
+        strategy_version_id, forecast_content_sha256, forecast_recorded_at
+    ) REFERENCES mra.forecast(
+        forecast_id, forecast_group_id, decision_run_id,
+        strategy_version_id, content_sha256, recorded_at
+    ) ON DELETE RESTRICT,
+    CONSTRAINT opportunity_signal_fk FOREIGN KEY (
+        signal_id, signal_group_id, decision_run_id, candidate_id,
+        strategy_version_id, signal_content_sha256
+    ) REFERENCES mra.signal(
+        signal_id, signal_group_id, decision_run_id, candidate_id,
+        strategy_version_id, content_sha256
+    ) ON DELETE RESTRICT,
+    CONSTRAINT opportunity_commitment_fk FOREIGN KEY (
+        commitment_id, decision_run_id, candidate_id, instrument_id,
+        target_definition_id, commitment_content_sha256
+    ) REFERENCES mra.decision_target_commitment(
+        commitment_id, decision_run_id, candidate_id, instrument_id,
+        target_definition_id, content_sha256
+    ) ON DELETE RESTRICT,
+    CONSTRAINT opportunity_target_fk FOREIGN KEY (
+        target_definition_id, target_definition_sha256
+    ) REFERENCES mra.target_definition(target_definition_id, content_sha256)
+      ON DELETE RESTRICT,
+    CONSTRAINT opportunity_shape_ck CHECK (
+        ordinal > 0 AND context_count > 0
+        AND status IN ('ACTIONABLE', 'NO_ACTION', 'WAIT', 'NOT_ESTIMABLE')
+        AND action IN ('ENTER', 'NO_ACTION', 'WAIT', 'DATA_INSUFFICIENT')
+        AND ((status = 'ACTIONABLE' AND action = 'ENTER')
+          OR (status = 'NO_ACTION' AND action = 'NO_ACTION')
+          OR (status = 'WAIT' AND action = 'WAIT')
+          OR (status = 'NOT_ESTIMABLE' AND action = 'DATA_INSUFFICIENT'))
+        AND reason_code ~ '^[A-Z][A-Z0-9_]{0,99}$'
+        AND forecast_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND signal_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND commitment_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND target_definition_sha256 ~ '^[0-9a-f]{64}$'
+        AND context_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE TABLE mra.opportunity_context (
+    opportunity_context_id uuid PRIMARY KEY,
+    opportunity_id uuid NOT NULL,
+    opportunity_set_id uuid NOT NULL,
+    decision_run_id uuid NOT NULL,
+    strategy_version_id uuid NOT NULL,
+    ordinal integer NOT NULL,
+    signal_context_binding_id uuid NOT NULL,
+    signal_id uuid NOT NULL,
+    signal_group_id uuid NOT NULL,
+    candidate_id uuid NOT NULL,
+    strategy_context_requirement_id uuid NOT NULL,
+    context_assessment_id uuid NOT NULL,
+    binding_content_sha256 text NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT opportunity_context_ordinal_uk UNIQUE (opportunity_id, ordinal),
+    CONSTRAINT opportunity_context_requirement_uk UNIQUE (
+        opportunity_id, strategy_context_requirement_id
+    ),
+    CONSTRAINT opportunity_context_opportunity_fk FOREIGN KEY (
+        opportunity_id, opportunity_set_id, decision_run_id,
+        strategy_version_id
+    ) REFERENCES mra.opportunity(
+        opportunity_id, opportunity_set_id, decision_run_id,
+        strategy_version_id
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT opportunity_context_binding_fk FOREIGN KEY (
+        signal_context_binding_id, signal_id, signal_group_id,
+        decision_run_id, candidate_id, strategy_version_id,
+        binding_content_sha256
+    ) REFERENCES mra.signal_context_binding(
+        signal_context_binding_id, signal_id, signal_group_id,
+        decision_run_id, candidate_id, strategy_version_id, content_sha256
+    ) ON DELETE RESTRICT,
+    CONSTRAINT opportunity_context_shape_ck CHECK (
+        ordinal > 0
+        AND binding_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE TABLE mra.thesis (
+    thesis_id uuid PRIMARY KEY,
+    opportunity_id uuid NOT NULL,
+    opportunity_set_id uuid NOT NULL,
+    decision_run_id uuid NOT NULL,
+    strategy_version_id uuid NOT NULL,
+    opportunity_content_sha256 text NOT NULL,
+    revision integer NOT NULL,
+    supersedes_thesis_id uuid,
+    claim text NOT NULL,
+    condition_count integer NOT NULL,
+    condition_roster_sha256 text NOT NULL,
+    code_artifact_id uuid NOT NULL,
+    code_content_sha256 text NOT NULL,
+    code_size_bytes bigint NOT NULL,
+    config_artifact_id uuid NOT NULL,
+    config_content_sha256 text NOT NULL,
+    config_size_bytes bigint NOT NULL,
+    provenance_sha256 text NOT NULL,
+    request_identity text NOT NULL,
+    request_sha256 text NOT NULL,
+    command_receipt_id uuid NOT NULL,
+    content_sha256 text NOT NULL,
+    frozen_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT thesis_revision_uk UNIQUE (opportunity_id, revision),
+    CONSTRAINT thesis_supersedes_uk UNIQUE (supersedes_thesis_id),
+    CONSTRAINT thesis_request_uk UNIQUE (opportunity_id, request_identity),
+    CONSTRAINT thesis_exact_uk UNIQUE (
+        thesis_id, opportunity_id, opportunity_set_id,
+        decision_run_id, strategy_version_id, content_sha256
+    ),
+    CONSTRAINT thesis_opportunity_fk FOREIGN KEY (
+        opportunity_id, opportunity_set_id, decision_run_id,
+        strategy_version_id, opportunity_content_sha256
+    ) REFERENCES mra.opportunity(
+        opportunity_id, opportunity_set_id, decision_run_id,
+        strategy_version_id, content_sha256
+    ) ON DELETE RESTRICT,
+    CONSTRAINT thesis_supersedes_fk FOREIGN KEY (supersedes_thesis_id)
+        REFERENCES mra.thesis(thesis_id) ON DELETE RESTRICT,
+    CONSTRAINT thesis_code_artifact_fk FOREIGN KEY (
+        code_artifact_id, code_content_sha256, code_size_bytes
+    ) REFERENCES mra.artifact(artifact_id, content_sha256, size_bytes)
+      ON DELETE RESTRICT,
+    CONSTRAINT thesis_config_artifact_fk FOREIGN KEY (
+        config_artifact_id, config_content_sha256, config_size_bytes
+    ) REFERENCES mra.artifact(artifact_id, content_sha256, size_bytes)
+      ON DELETE RESTRICT,
+    CONSTRAINT thesis_receipt_fk FOREIGN KEY (command_receipt_id)
+        REFERENCES mra.command_receipt(receipt_id) ON DELETE RESTRICT,
+    CONSTRAINT thesis_shape_ck CHECK (
+        ((revision = 1 AND supersedes_thesis_id IS NULL)
+          OR (revision > 1 AND supersedes_thesis_id IS NOT NULL))
+        AND claim <> '' AND length(claim) <= 1000 AND condition_count > 0
+        AND opportunity_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND condition_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND code_content_sha256 ~ '^[0-9a-f]{64}$' AND code_size_bytes >= 0
+        AND config_content_sha256 ~ '^[0-9a-f]{64}$' AND config_size_bytes >= 0
+        AND provenance_sha256 ~ '^[0-9a-f]{64}$'
+        AND request_identity ~ '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$'
+        AND request_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE TABLE mra.thesis_condition (
+    thesis_condition_id uuid PRIMARY KEY,
+    thesis_id uuid NOT NULL,
+    ordinal integer NOT NULL,
+    condition_code text NOT NULL,
+    condition_kind text NOT NULL,
+    source_kind text NOT NULL,
+    operator text NOT NULL,
+    decimal_threshold numeric,
+    text_threshold text,
+    value_unit text NOT NULL,
+    missing_action text NOT NULL,
+    invalidates boolean NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT thesis_condition_ordinal_uk UNIQUE (thesis_id, ordinal),
+    CONSTRAINT thesis_condition_code_uk UNIQUE (thesis_id, condition_code),
+    CONSTRAINT thesis_condition_thesis_fk FOREIGN KEY (thesis_id)
+        REFERENCES mra.thesis(thesis_id)
+        ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT thesis_condition_shape_ck CHECK (
+        ordinal > 0 AND condition_code ~ '^[a-z][a-z0-9_.-]{0,99}$'
+        AND condition_kind IN ('ENTRY', 'HOLD', 'INVALIDATE', 'REDUCE', 'EXIT')
+        AND source_kind IN ('CONTEXT', 'SIGNAL', 'FORECAST', 'OPPORTUNITY')
+        AND operator IN ('EQUALS', 'AT_LEAST', 'AT_MOST')
+        AND ((decimal_threshold IS NULL) <> (text_threshold IS NULL))
+        AND missing_action IN ('WAIT', 'INVALIDATE', 'DATA_INSUFFICIENT')
+        AND (condition_kind <> 'INVALIDATE' OR invalidates)
+        AND value_unit <> '' AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE TABLE mra.portfolio_policy (
+    portfolio_policy_id uuid PRIMARY KEY,
+    policy_code text NOT NULL,
+    version integer NOT NULL,
+    supersedes_policy_id uuid,
+    allocation_method text NOT NULL,
+    minimum_estimable_count integer NOT NULL,
+    maximum_line_count integer NOT NULL,
+    maximum_single_weight numeric NOT NULL,
+    maximum_gross_weight numeric NOT NULL,
+    maximum_net_weight numeric NOT NULL,
+    minimum_cash_weight numeric NOT NULL,
+    maximum_turnover numeric NOT NULL,
+    decimal_places integer NOT NULL,
+    code_artifact_id uuid NOT NULL,
+    code_content_sha256 text NOT NULL,
+    code_size_bytes bigint NOT NULL,
+    config_artifact_id uuid NOT NULL,
+    config_content_sha256 text NOT NULL,
+    config_size_bytes bigint NOT NULL,
+    provenance_sha256 text NOT NULL,
+    request_identity text NOT NULL,
+    request_sha256 text NOT NULL,
+    command_receipt_id uuid NOT NULL,
+    content_sha256 text NOT NULL,
+    frozen_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT portfolio_policy_series_uk UNIQUE (policy_code, version),
+    CONSTRAINT portfolio_policy_supersedes_uk UNIQUE (supersedes_policy_id),
+    CONSTRAINT portfolio_policy_request_uk UNIQUE (policy_code, request_identity),
+    CONSTRAINT portfolio_policy_exact_uk UNIQUE (portfolio_policy_id, content_sha256),
+    CONSTRAINT portfolio_policy_supersedes_fk FOREIGN KEY (supersedes_policy_id)
+        REFERENCES mra.portfolio_policy(portfolio_policy_id) ON DELETE RESTRICT,
+    CONSTRAINT portfolio_policy_code_artifact_fk FOREIGN KEY (
+        code_artifact_id, code_content_sha256, code_size_bytes
+    ) REFERENCES mra.artifact(artifact_id, content_sha256, size_bytes) ON DELETE RESTRICT,
+    CONSTRAINT portfolio_policy_config_artifact_fk FOREIGN KEY (
+        config_artifact_id, config_content_sha256, config_size_bytes
+    ) REFERENCES mra.artifact(artifact_id, content_sha256, size_bytes) ON DELETE RESTRICT,
+    CONSTRAINT portfolio_policy_receipt_fk FOREIGN KEY (command_receipt_id)
+        REFERENCES mra.command_receipt(receipt_id) ON DELETE RESTRICT,
+    CONSTRAINT portfolio_policy_shape_ck CHECK (
+        policy_code ~ '^[a-z][a-z0-9_.-]{0,99}$'
+        AND ((version = 1 AND supersedes_policy_id IS NULL)
+          OR (version > 1 AND supersedes_policy_id IS NOT NULL))
+        AND allocation_method = 'EQUAL_WEIGHT_ACTIONABLE'
+        AND minimum_estimable_count > 0 AND maximum_line_count > 0
+        AND maximum_single_weight BETWEEN 0 AND 1
+        AND maximum_gross_weight BETWEEN 0 AND 1
+        AND maximum_net_weight BETWEEN 0 AND maximum_gross_weight
+        AND minimum_cash_weight BETWEEN 0 AND 1
+        AND maximum_turnover BETWEEN 0 AND 1
+        AND decimal_places BETWEEN 1 AND 12
+        AND code_content_sha256 ~ '^[0-9a-f]{64}$' AND code_size_bytes >= 0
+        AND config_content_sha256 ~ '^[0-9a-f]{64}$' AND config_size_bytes >= 0
+        AND provenance_sha256 ~ '^[0-9a-f]{64}$'
+        AND request_identity ~ '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$'
+        AND request_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE TABLE mra.portfolio_proposal (
+    portfolio_proposal_id uuid PRIMARY KEY,
+    decision_run_id uuid NOT NULL,
+    strategy_version_id uuid NOT NULL,
+    opportunity_set_id uuid NOT NULL,
+    opportunity_set_sha256 text NOT NULL,
+    opportunity_set_recorded_at timestamptz NOT NULL,
+    portfolio_policy_id uuid NOT NULL,
+    portfolio_policy_sha256 text NOT NULL,
+    status text NOT NULL,
+    line_count integer NOT NULL,
+    line_roster_sha256 text NOT NULL,
+    included_count integer NOT NULL,
+    excluded_count integer NOT NULL,
+    not_estimable_count integer NOT NULL,
+    gross_weight numeric NOT NULL,
+    net_weight numeric NOT NULL,
+    cash_weight numeric NOT NULL,
+    turnover_weight numeric NOT NULL,
+    request_identity text NOT NULL,
+    request_sha256 text NOT NULL,
+    command_receipt_id uuid NOT NULL,
+    content_sha256 text NOT NULL,
+    recorded_at timestamptz NOT NULL,
+    CONSTRAINT portfolio_proposal_identity_uk UNIQUE (
+        decision_run_id, strategy_version_id, portfolio_policy_id
+    ),
+    CONSTRAINT portfolio_proposal_request_uk UNIQUE (
+        decision_run_id, strategy_version_id, portfolio_policy_id, request_identity
+    ),
+    CONSTRAINT portfolio_proposal_exact_uk UNIQUE (
+        portfolio_proposal_id, decision_run_id, strategy_version_id,
+        content_sha256, recorded_at
+    ),
+    CONSTRAINT portfolio_proposal_scope_uk UNIQUE (
+        portfolio_proposal_id, decision_run_id, strategy_version_id
+    ),
+    CONSTRAINT portfolio_proposal_content_uk UNIQUE (
+        portfolio_proposal_id, decision_run_id, strategy_version_id,
+        content_sha256
+    ),
+    CONSTRAINT portfolio_proposal_opportunity_set_fk FOREIGN KEY (
+        opportunity_set_id, decision_run_id, strategy_version_id,
+        opportunity_set_sha256, opportunity_set_recorded_at
+    ) REFERENCES mra.opportunity_set(
+        opportunity_set_id, decision_run_id, strategy_version_id,
+        content_sha256, recorded_at
+    ) ON DELETE RESTRICT,
+    CONSTRAINT portfolio_proposal_policy_fk FOREIGN KEY (
+        portfolio_policy_id, portfolio_policy_sha256
+    ) REFERENCES mra.portfolio_policy(portfolio_policy_id, content_sha256)
+      ON DELETE RESTRICT,
+    CONSTRAINT portfolio_proposal_receipt_fk FOREIGN KEY (command_receipt_id)
+        REFERENCES mra.command_receipt(receipt_id) ON DELETE RESTRICT,
+    CONSTRAINT portfolio_proposal_shape_ck CHECK (
+        status IN ('PROPOSED', 'NO_ACTION', 'NOT_ESTIMABLE')
+        AND line_count >= 0 AND included_count >= 0
+        AND excluded_count >= 0 AND not_estimable_count >= 0
+        AND line_count = included_count + excluded_count + not_estimable_count
+        AND gross_weight BETWEEN 0 AND 1 AND net_weight BETWEEN 0 AND 1
+        AND cash_weight BETWEEN 0 AND 1 AND turnover_weight BETWEEN 0 AND 1
+        AND gross_weight = net_weight AND cash_weight = 1 - gross_weight
+        AND ((status = 'PROPOSED' AND included_count > 0)
+          OR (status <> 'PROPOSED' AND included_count = 0))
+        AND opportunity_set_sha256 ~ '^[0-9a-f]{64}$'
+        AND portfolio_policy_sha256 ~ '^[0-9a-f]{64}$'
+        AND line_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND request_identity ~ '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$'
+        AND request_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+        AND recorded_at >= opportunity_set_recorded_at
+    )
+);
+
+CREATE TABLE mra.portfolio_line (
+    portfolio_line_id uuid PRIMARY KEY,
+    portfolio_proposal_id uuid NOT NULL,
+    decision_run_id uuid NOT NULL,
+    strategy_version_id uuid NOT NULL,
+    ordinal integer NOT NULL,
+    opportunity_id uuid NOT NULL,
+    opportunity_set_id uuid NOT NULL,
+    candidate_id uuid NOT NULL,
+    instrument_id uuid NOT NULL,
+    target_definition_id uuid NOT NULL,
+    opportunity_status text NOT NULL,
+    opportunity_content_sha256 text NOT NULL,
+    status text NOT NULL,
+    proposed_weight numeric NOT NULL,
+    reason_code text NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT portfolio_line_ordinal_uk UNIQUE (portfolio_proposal_id, ordinal),
+    CONSTRAINT portfolio_line_opportunity_uk UNIQUE (portfolio_proposal_id, opportunity_id),
+    CONSTRAINT portfolio_line_exact_uk UNIQUE (
+        portfolio_line_id, portfolio_proposal_id, content_sha256
+    ),
+    CONSTRAINT portfolio_line_scope_uk UNIQUE (
+        portfolio_line_id, portfolio_proposal_id
+    ),
+    CONSTRAINT portfolio_line_proposal_fk FOREIGN KEY (
+        portfolio_proposal_id, decision_run_id, strategy_version_id
+    ) REFERENCES mra.portfolio_proposal(
+        portfolio_proposal_id, decision_run_id, strategy_version_id
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT portfolio_line_opportunity_fk FOREIGN KEY (
+        opportunity_id, opportunity_set_id, decision_run_id,
+        strategy_version_id, opportunity_content_sha256
+    ) REFERENCES mra.opportunity(
+        opportunity_id, opportunity_set_id, decision_run_id,
+        strategy_version_id, content_sha256
+    ) ON DELETE RESTRICT,
+    CONSTRAINT portfolio_line_shape_ck CHECK (
+        ordinal > 0
+        AND opportunity_status IN ('ACTIONABLE', 'NO_ACTION', 'WAIT', 'NOT_ESTIMABLE')
+        AND status IN ('INCLUDED', 'EXCLUDED', 'NOT_ESTIMABLE')
+        AND proposed_weight BETWEEN 0 AND 1
+        AND ((status = 'INCLUDED' AND proposed_weight > 0)
+          OR (status <> 'INCLUDED' AND proposed_weight = 0))
+        AND reason_code ~ '^[A-Z][A-Z0-9_]{0,99}$'
+        AND opportunity_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE TABLE mra.risk_policy (
+    risk_policy_id uuid PRIMARY KEY,
+    policy_code text NOT NULL,
+    version integer NOT NULL,
+    supersedes_policy_id uuid,
+    authority_scope text NOT NULL,
+    rule_count integer NOT NULL,
+    rule_roster_sha256 text NOT NULL,
+    code_artifact_id uuid NOT NULL,
+    code_content_sha256 text NOT NULL,
+    code_size_bytes bigint NOT NULL,
+    config_artifact_id uuid NOT NULL,
+    config_content_sha256 text NOT NULL,
+    config_size_bytes bigint NOT NULL,
+    provenance_sha256 text NOT NULL,
+    request_identity text NOT NULL,
+    request_sha256 text NOT NULL,
+    command_receipt_id uuid NOT NULL,
+    content_sha256 text NOT NULL,
+    frozen_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT risk_policy_series_uk UNIQUE (policy_code, version),
+    CONSTRAINT risk_policy_supersedes_uk UNIQUE (supersedes_policy_id),
+    CONSTRAINT risk_policy_request_uk UNIQUE (policy_code, request_identity),
+    CONSTRAINT risk_policy_exact_uk UNIQUE (risk_policy_id, content_sha256),
+    CONSTRAINT risk_policy_supersedes_fk FOREIGN KEY (supersedes_policy_id)
+        REFERENCES mra.risk_policy(risk_policy_id) ON DELETE RESTRICT,
+    CONSTRAINT risk_policy_code_artifact_fk FOREIGN KEY (
+        code_artifact_id, code_content_sha256, code_size_bytes
+    ) REFERENCES mra.artifact(artifact_id, content_sha256, size_bytes) ON DELETE RESTRICT,
+    CONSTRAINT risk_policy_config_artifact_fk FOREIGN KEY (
+        config_artifact_id, config_content_sha256, config_size_bytes
+    ) REFERENCES mra.artifact(artifact_id, content_sha256, size_bytes) ON DELETE RESTRICT,
+    CONSTRAINT risk_policy_receipt_fk FOREIGN KEY (command_receipt_id)
+        REFERENCES mra.command_receipt(receipt_id) ON DELETE RESTRICT,
+    CONSTRAINT risk_policy_shape_ck CHECK (
+        policy_code ~ '^[a-z][a-z0-9_.-]{0,99}$'
+        AND ((version = 1 AND supersedes_policy_id IS NULL)
+          OR (version > 1 AND supersedes_policy_id IS NOT NULL))
+        AND authority_scope = 'DECISION_SUPPORT_ONLY' AND rule_count > 0
+        AND rule_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND code_content_sha256 ~ '^[0-9a-f]{64}$' AND code_size_bytes >= 0
+        AND config_content_sha256 ~ '^[0-9a-f]{64}$' AND config_size_bytes >= 0
+        AND provenance_sha256 ~ '^[0-9a-f]{64}$'
+        AND request_identity ~ '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$'
+        AND request_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE TABLE mra.risk_rule (
+    risk_rule_id uuid PRIMARY KEY,
+    risk_policy_id uuid NOT NULL,
+    ordinal integer NOT NULL,
+    rule_code text NOT NULL,
+    rule_scope text NOT NULL,
+    subject text NOT NULL,
+    operator text NOT NULL,
+    decimal_threshold numeric,
+    integer_threshold integer,
+    text_threshold text,
+    boolean_threshold boolean,
+    value_unit text NOT NULL,
+    severity text NOT NULL,
+    missing_action text NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT risk_rule_ordinal_uk UNIQUE (risk_policy_id, ordinal),
+    CONSTRAINT risk_rule_code_uk UNIQUE (risk_policy_id, rule_code),
+    CONSTRAINT risk_rule_exact_uk UNIQUE (
+        risk_rule_id, risk_policy_id, rule_scope, subject, content_sha256
+    ),
+    CONSTRAINT risk_rule_scope_uk UNIQUE (
+        risk_rule_id, risk_policy_id, rule_scope, subject
+    ),
+    CONSTRAINT risk_rule_policy_fk FOREIGN KEY (risk_policy_id)
+        REFERENCES mra.risk_policy(risk_policy_id)
+        ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT risk_rule_shape_ck CHECK (
+        ordinal > 0 AND rule_code ~ '^[a-z][a-z0-9_.-]{0,99}$'
+        AND rule_scope IN ('GLOBAL', 'LINE')
+        AND subject IN ('PROPOSAL_STATUS', 'LINE_COUNT', 'GROSS_WEIGHT',
+            'NET_WEIGHT', 'SINGLE_LINE_WEIGHT', 'CASH_WEIGHT',
+            'ESTIMABILITY', 'QUALIFICATION_PRESENCE')
+        AND ((rule_scope = 'LINE' AND subject = 'SINGLE_LINE_WEIGHT')
+          OR (rule_scope = 'GLOBAL' AND subject <> 'SINGLE_LINE_WEIGHT'))
+        AND operator IN ('EQUALS', 'AT_MOST', 'AT_LEAST')
+        AND num_nonnulls(decimal_threshold, integer_threshold,
+                         text_threshold, boolean_threshold) = 1
+        AND value_unit <> '' AND severity IN ('REJECT', 'UNKNOWN')
+        AND missing_action IN ('FAIL', 'UNKNOWN')
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE TABLE mra.risk_decision (
+    risk_decision_id uuid PRIMARY KEY,
+    portfolio_proposal_id uuid NOT NULL,
+    decision_run_id uuid NOT NULL,
+    strategy_version_id uuid NOT NULL,
+    proposal_content_sha256 text NOT NULL,
+    risk_policy_id uuid NOT NULL,
+    risk_policy_sha256 text NOT NULL,
+    authority_scope text NOT NULL,
+    status text NOT NULL,
+    reason_count integer NOT NULL,
+    reason_roster_sha256 text NOT NULL,
+    request_identity text NOT NULL,
+    request_sha256 text NOT NULL,
+    command_receipt_id uuid NOT NULL,
+    content_sha256 text NOT NULL,
+    decided_at timestamptz NOT NULL,
+    CONSTRAINT risk_decision_identity_uk UNIQUE (
+        portfolio_proposal_id, risk_policy_id
+    ),
+    CONSTRAINT risk_decision_request_uk UNIQUE (
+        portfolio_proposal_id, risk_policy_id, request_identity
+    ),
+    CONSTRAINT risk_decision_exact_uk UNIQUE (
+        risk_decision_id, portfolio_proposal_id, risk_policy_id,
+        content_sha256, decided_at
+    ),
+    CONSTRAINT risk_decision_scope_uk UNIQUE (
+        risk_decision_id, portfolio_proposal_id, risk_policy_id
+    ),
+    CONSTRAINT risk_decision_proposal_fk FOREIGN KEY (
+        portfolio_proposal_id, decision_run_id, strategy_version_id,
+        proposal_content_sha256
+    ) REFERENCES mra.portfolio_proposal(
+        portfolio_proposal_id, decision_run_id, strategy_version_id,
+        content_sha256
+    ) ON DELETE RESTRICT,
+    CONSTRAINT risk_decision_policy_fk FOREIGN KEY (
+        risk_policy_id, risk_policy_sha256
+    ) REFERENCES mra.risk_policy(risk_policy_id, content_sha256) ON DELETE RESTRICT,
+    CONSTRAINT risk_decision_receipt_fk FOREIGN KEY (command_receipt_id)
+        REFERENCES mra.command_receipt(receipt_id) ON DELETE RESTRICT,
+    CONSTRAINT risk_decision_shape_ck CHECK (
+        authority_scope = 'DECISION_SUPPORT_ONLY'
+        AND status IN ('AUTHORIZED', 'REJECTED', 'UNKNOWN', 'NO_ACTION')
+        AND reason_count > 0
+        AND proposal_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND risk_policy_sha256 ~ '^[0-9a-f]{64}$'
+        AND reason_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND request_identity ~ '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$'
+        AND request_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE TABLE mra.risk_reason (
+    risk_reason_id uuid PRIMARY KEY,
+    risk_decision_id uuid NOT NULL,
+    portfolio_proposal_id uuid NOT NULL,
+    risk_policy_id uuid NOT NULL,
+    ordinal integer NOT NULL,
+    risk_rule_id uuid NOT NULL,
+    rule_scope text NOT NULL,
+    subject text NOT NULL,
+    portfolio_line_id uuid,
+    result text NOT NULL,
+    observed_decimal numeric,
+    observed_integer integer,
+    observed_text text,
+    observed_boolean boolean,
+    reason_code text NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT risk_reason_ordinal_uk UNIQUE (risk_decision_id, ordinal),
+    CONSTRAINT risk_reason_rule_line_uk UNIQUE NULLS NOT DISTINCT (
+        risk_decision_id, risk_rule_id, portfolio_line_id
+    ),
+    CONSTRAINT risk_reason_decision_fk FOREIGN KEY (
+        risk_decision_id, portfolio_proposal_id, risk_policy_id
+    ) REFERENCES mra.risk_decision(
+        risk_decision_id, portfolio_proposal_id, risk_policy_id
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT risk_reason_rule_fk FOREIGN KEY (
+        risk_rule_id, risk_policy_id, rule_scope, subject
+    ) REFERENCES mra.risk_rule(
+        risk_rule_id, risk_policy_id, rule_scope, subject
+    ) ON DELETE RESTRICT,
+    CONSTRAINT risk_reason_line_fk FOREIGN KEY (
+        portfolio_line_id, portfolio_proposal_id
+    ) REFERENCES mra.portfolio_line(
+        portfolio_line_id, portfolio_proposal_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT risk_reason_shape_ck CHECK (
+        ordinal > 0 AND rule_scope IN ('GLOBAL', 'LINE')
+        AND ((rule_scope = 'GLOBAL' AND portfolio_line_id IS NULL)
+          OR (rule_scope = 'LINE' AND portfolio_line_id IS NOT NULL))
+        AND result IN ('PASS', 'FAIL', 'UNKNOWN', 'NOT_APPLICABLE')
+        AND num_nonnulls(observed_decimal, observed_integer,
+                         observed_text, observed_boolean) = 1
+        AND reason_code ~ '^[A-Z][A-Z0-9_]{0,99}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE INDEX opportunity_set_strategy_fk_idx ON mra.opportunity_set (
+    strategy_version_id, strategy_version_sha256
+);
+CREATE INDEX opportunity_set_signal_fk_idx ON mra.opportunity_set (
+    signal_group_id, decision_run_id, strategy_version_id, signal_content_sha256
+);
+CREATE INDEX opportunity_set_forecast_fk_idx ON mra.opportunity_set (
+    forecast_group_id, decision_run_id, strategy_version_id,
+    signal_group_id, forecast_content_sha256, forecast_recorded_at
+);
+CREATE INDEX opportunity_set_receipt_fk_idx ON mra.opportunity_set (command_receipt_id);
+CREATE INDEX opportunity_forecast_fk_idx ON mra.opportunity (
+    forecast_id, forecast_group_id, decision_run_id,
+    strategy_version_id, forecast_content_sha256, forecast_recorded_at
+);
+CREATE INDEX opportunity_set_fk_idx ON mra.opportunity (
+    opportunity_set_id, decision_run_id, strategy_version_id, recorded_at
+);
+CREATE INDEX opportunity_signal_fk_idx ON mra.opportunity (
+    signal_id, signal_group_id, decision_run_id, candidate_id,
+    strategy_version_id, signal_content_sha256
+);
+CREATE INDEX opportunity_commitment_fk_idx ON mra.opportunity (
+    commitment_id, decision_run_id, candidate_id, instrument_id,
+    target_definition_id, commitment_content_sha256
+);
+CREATE INDEX opportunity_target_fk_idx ON mra.opportunity (
+    target_definition_id, target_definition_sha256
+);
+CREATE INDEX opportunity_context_binding_fk_idx ON mra.opportunity_context (
+    signal_context_binding_id, signal_id, signal_group_id,
+    decision_run_id, candidate_id, strategy_version_id, binding_content_sha256
+);
+CREATE INDEX opportunity_context_opportunity_fk_idx ON mra.opportunity_context (
+    opportunity_id, opportunity_set_id, decision_run_id, strategy_version_id
+);
+CREATE INDEX thesis_opportunity_fk_idx ON mra.thesis (
+    opportunity_id, opportunity_set_id, decision_run_id,
+    strategy_version_id, opportunity_content_sha256
+);
+CREATE INDEX thesis_code_artifact_fk_idx ON mra.thesis (
+    code_artifact_id, code_content_sha256, code_size_bytes
+);
+CREATE INDEX thesis_config_artifact_fk_idx ON mra.thesis (
+    config_artifact_id, config_content_sha256, config_size_bytes
+);
+CREATE INDEX thesis_receipt_fk_idx ON mra.thesis (command_receipt_id);
+CREATE INDEX portfolio_policy_code_artifact_fk_idx ON mra.portfolio_policy (
+    code_artifact_id, code_content_sha256, code_size_bytes
+);
+CREATE INDEX portfolio_policy_config_artifact_fk_idx ON mra.portfolio_policy (
+    config_artifact_id, config_content_sha256, config_size_bytes
+);
+CREATE INDEX portfolio_policy_receipt_fk_idx ON mra.portfolio_policy (command_receipt_id);
+CREATE INDEX portfolio_proposal_opportunity_set_fk_idx ON mra.portfolio_proposal (
+    opportunity_set_id, decision_run_id, strategy_version_id,
+    opportunity_set_sha256, opportunity_set_recorded_at
+);
+CREATE INDEX portfolio_proposal_policy_fk_idx ON mra.portfolio_proposal (
+    portfolio_policy_id, portfolio_policy_sha256
+);
+CREATE INDEX portfolio_proposal_receipt_fk_idx ON mra.portfolio_proposal (command_receipt_id);
+CREATE INDEX portfolio_line_opportunity_fk_idx ON mra.portfolio_line (
+    opportunity_id, opportunity_set_id, decision_run_id,
+    strategy_version_id, opportunity_content_sha256
+);
+CREATE INDEX portfolio_line_proposal_fk_idx ON mra.portfolio_line (
+    portfolio_proposal_id, decision_run_id, strategy_version_id
+);
+CREATE INDEX risk_policy_code_artifact_fk_idx ON mra.risk_policy (
+    code_artifact_id, code_content_sha256, code_size_bytes
+);
+CREATE INDEX risk_policy_config_artifact_fk_idx ON mra.risk_policy (
+    config_artifact_id, config_content_sha256, config_size_bytes
+);
+CREATE INDEX risk_policy_receipt_fk_idx ON mra.risk_policy (command_receipt_id);
+CREATE INDEX risk_decision_proposal_fk_idx ON mra.risk_decision (
+    portfolio_proposal_id, decision_run_id, strategy_version_id,
+    proposal_content_sha256
+);
+CREATE INDEX risk_decision_policy_fk_idx ON mra.risk_decision (
+    risk_policy_id, risk_policy_sha256
+);
+CREATE INDEX risk_decision_receipt_fk_idx ON mra.risk_decision (command_receipt_id);
+CREATE INDEX risk_reason_rule_fk_idx ON mra.risk_reason (
+    risk_rule_id, risk_policy_id, rule_scope, subject
+);
+CREATE INDEX risk_reason_decision_fk_idx ON mra.risk_reason (
+    risk_decision_id, portfolio_proposal_id, risk_policy_id
+);
+CREATE INDEX risk_reason_line_fk_idx ON mra.risk_reason (
+    portfolio_line_id, portfolio_proposal_id
+) WHERE portfolio_line_id IS NOT NULL;
 
 ALTER TABLE mra.trading_session
     ADD CONSTRAINT trading_session_outcome_authority_uk UNIQUE (
@@ -7375,6 +9602,44 @@ BEGIN
 END;
 $$;
 
+CREATE FUNCTION mra.guard_decision_qualification_member_insert()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    actual_supersedes_decision_id uuid;
+BEGIN
+    PERFORM pg_advisory_xact_lock(
+        hashtextextended(
+            'research-qualification-decision:' || NEW.decision_code,
+            0
+        )
+    );
+    SELECT qualification.supersedes_decision_id
+    INTO actual_supersedes_decision_id
+    FROM mra.research_qualification_decision AS qualification
+    WHERE qualification.research_qualification_decision_id =
+          NEW.research_qualification_decision_id
+    FOR SHARE;
+    IF NOT FOUND
+       OR actual_supersedes_decision_id IS DISTINCT FROM
+          NEW.supersedes_decision_id
+       OR EXISTS (
+           SELECT 1
+           FROM mra.research_qualification_decision AS successor
+           WHERE successor.supersedes_decision_id =
+                 NEW.research_qualification_decision_id
+             AND successor.effective_at <= NEW.decision_time
+             AND successor.known_at <= NEW.decision_time
+       ) THEN
+        RAISE EXCEPTION
+            'Decision Research Qualification is missing or superseded at DecisionTime'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
 CREATE FUNCTION mra.validate_decision_run_closure()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -7383,12 +9648,17 @@ DECLARE
     actual_target_count bigint;
     actual_commitment_count bigint;
     actual_reference_count bigint;
+    actual_qualification_count bigint;
+    qualification_min integer;
+    qualification_max integer;
+    qualification_primary_count bigint;
     target_min integer;
     target_max integer;
     missing_commitment_count bigint;
     actual_candidate_hash text;
     actual_target_hash text;
     actual_commitment_hash text;
+    actual_qualification_hash text;
 BEGIN
     SELECT count(*), min(ordinal), max(ordinal)
     INTO actual_target_count, target_min, target_max
@@ -7399,6 +9669,36 @@ BEGIN
     INTO actual_commitment_count
     FROM mra.decision_target_commitment
     WHERE decision_run_id = NEW.decision_run_id;
+
+    SELECT count(*), min(ordinal), max(ordinal),
+           count(*) FILTER (WHERE role = 'PRIMARY'),
+           mra.canonical_sha256(
+               replace(
+                   COALESCE(
+                       json_agg(
+                           json_build_object(
+                               'content_sha256', content_sha256,
+                               'member_id',
+                                   research_qualification_member_id,
+                               'ordinal', ordinal,
+                               'research_qualification_decision_id',
+                                   research_qualification_decision_id,
+                               'role', role
+                           ) ORDER BY ordinal
+                       )::text,
+                       '[]'
+                   ),
+                   ' ',
+                   ''
+               )
+           )
+    INTO actual_qualification_count, qualification_min,
+         qualification_max, qualification_primary_count,
+         actual_qualification_hash
+    FROM mra.decision_run_research_qualification_member
+    WHERE research_qualification_roster_id =
+          NEW.research_qualification_roster_id
+      AND decision_run_id = NEW.decision_run_id;
 
     SELECT count(*)
     INTO actual_reference_count
@@ -7420,10 +9720,52 @@ BEGIN
     IF actual_target_count <> NEW.target_count
        OR actual_commitment_count <> NEW.commitment_count
        OR actual_reference_count <> NEW.reference_count
+       OR actual_qualification_count <>
+          NEW.research_qualification_count
+       OR (
+           actual_qualification_count = 0
+           AND (qualification_min IS NOT NULL
+                OR qualification_max IS NOT NULL
+                OR qualification_primary_count <> 0)
+       )
+       OR (
+           actual_qualification_count > 0
+           AND (qualification_min <> 1
+                OR qualification_max <> actual_qualification_count
+                OR qualification_primary_count <> 1)
+       )
        OR target_min <> 1
        OR target_max <> actual_target_count
        OR missing_commitment_count <> 0 THEN
         RAISE EXCEPTION 'DecisionRun child roster is incomplete'
+            USING ERRCODE = '55000';
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM mra.decision_run_research_qualification_roster AS roster
+        WHERE roster.research_qualification_roster_id =
+              NEW.research_qualification_roster_id
+          AND roster.decision_run_id = NEW.decision_run_id
+          AND roster.research_purpose = NEW.research_purpose
+          AND roster.decision_time = NEW.decision_time
+          AND roster.member_count = NEW.research_qualification_count
+          AND roster.roster_sha256 =
+              NEW.research_qualification_roster_sha256
+          AND roster.created_at = NEW.commitment_recorded_at
+    ) OR EXISTS (
+        SELECT 1
+        FROM mra.decision_run_research_qualification_member AS member
+        WHERE member.research_qualification_roster_id =
+              NEW.research_qualification_roster_id
+          AND (
+              member.qualification_purpose <> NEW.research_purpose
+              OR member.decision_time <> NEW.decision_time
+              OR member.created_at <> NEW.commitment_recorded_at
+          )
+    ) THEN
+        RAISE EXCEPTION
+            'Decision Research Qualification roster scope does not reconcile'
             USING ERRCODE = '55000';
     END IF;
 
@@ -7552,7 +9894,9 @@ BEGIN
 
     IF actual_candidate_hash <> NEW.candidate_roster_sha256
        OR actual_target_hash <> NEW.target_roster_sha256
-       OR actual_commitment_hash <> NEW.commitment_roster_sha256 THEN
+       OR actual_commitment_hash <> NEW.commitment_roster_sha256
+       OR actual_qualification_hash <>
+          NEW.research_qualification_roster_sha256 THEN
         RAISE EXCEPTION 'DecisionRun roster hash does not reconcile'
             USING ERRCODE = '55000';
     END IF;
@@ -8049,6 +10393,22 @@ FOR EACH ROW EXECUTE FUNCTION mra.guard_open_target_child_insert();
 CREATE TRIGGER decision_run_append_only
 BEFORE UPDATE OR DELETE ON mra.decision_run
 FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER decision_qualification_roster_append_only
+BEFORE UPDATE OR DELETE ON mra.decision_run_research_qualification_roster
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER decision_qualification_roster_open_guard
+BEFORE INSERT ON mra.decision_run_research_qualification_roster
+FOR EACH ROW EXECUTE FUNCTION mra.guard_open_decision_child_insert();
+CREATE TRIGGER decision_qualification_member_append_only
+BEFORE UPDATE OR DELETE ON mra.decision_run_research_qualification_member
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER decision_qualification_member_open_guard
+BEFORE INSERT ON mra.decision_run_research_qualification_member
+FOR EACH ROW EXECUTE FUNCTION mra.guard_open_decision_child_insert();
+CREATE TRIGGER decision_qualification_member_admission_guard
+BEFORE INSERT ON mra.decision_run_research_qualification_member
+FOR EACH ROW EXECUTE FUNCTION
+    mra.guard_decision_qualification_member_insert();
 CREATE TRIGGER decision_run_closure_guard
 BEFORE INSERT ON mra.decision_run
 FOR EACH ROW EXECUTE FUNCTION mra.validate_decision_run_closure();
@@ -9737,6 +12097,30 @@ CREATE TABLE mra.research_qualification_decision (
     )
 );
 
+ALTER TABLE mra.research_qualification_decision
+    ADD CONSTRAINT research_qualification_decision_admission_uk UNIQUE (
+        research_qualification_decision_id, decision_code, revision,
+        research_assessment_id, research_qualification_policy_id,
+        experiment_id, target_definition_id, qualification_purpose,
+        decision_status, source_generation_max_decision_time,
+        effective_at, known_at, content_sha256
+    );
+
+ALTER TABLE mra.decision_run_research_qualification_member
+    ADD CONSTRAINT decision_qualification_member_admission_fk FOREIGN KEY (
+        research_qualification_decision_id, decision_code, revision,
+        research_assessment_id, research_qualification_policy_id,
+        experiment_id, target_definition_id, qualification_purpose,
+        decision_status, source_generation_max_decision_time,
+        effective_at, known_at, qualification_content_sha256
+    ) REFERENCES mra.research_qualification_decision (
+        research_qualification_decision_id, decision_code, revision,
+        research_assessment_id, research_qualification_policy_id,
+        experiment_id, target_definition_id, qualification_purpose,
+        decision_status, source_generation_max_decision_time,
+        effective_at, known_at, content_sha256
+    ) ON DELETE RESTRICT;
+
 ALTER TABLE mra.evaluation_metric
     ADD CONSTRAINT evaluation_metric_result_authority_uk UNIQUE (
         evaluation_metric_id, evaluation_run_id
@@ -10414,7 +12798,10 @@ DECLARE assessment_recorded_at timestamptz;
 DECLARE assessment_generation timestamptz;
 BEGIN
     PERFORM pg_advisory_xact_lock(
-        hashtextextended('research-qualification:' || NEW.decision_code, 0)
+        hashtextextended(
+            'research-qualification-decision:' || NEW.decision_code,
+            0
+        )
     );
     SELECT policy.frozen_at, assessment.recorded_at,
            assessment.source_generation_max_decision_time
@@ -11589,4 +13976,1405 @@ BEFORE INSERT ON mra.research_qualification_floor_evidence
 FOR EACH ROW EXECUTE FUNCTION mra.guard_research_qualification_child_insert();
 CREATE TRIGGER research_qualification_floor_evidence_append_only
 BEFORE UPDATE OR DELETE ON mra.research_qualification_floor_evidence
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+
+CREATE FUNCTION mra.guard_context_policy_metric_insert()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE expected_hash text;
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM mra.context_policy
+        WHERE context_policy_id = NEW.context_policy_id
+    ) THEN
+        RAISE EXCEPTION 'ContextPolicy metric roster is already frozen'
+            USING ERRCODE = '55000';
+    END IF;
+    expected_hash := mra.canonical_sha256(
+        replace(json_build_object(
+            'context_kind', NEW.context_kind,
+            'context_policy_id', NEW.context_policy_id,
+            'context_policy_metric_id', NEW.context_policy_metric_id,
+            'lower_threshold', NEW.lower_threshold::text,
+            'measure', NEW.measure,
+            'metric_code', NEW.metric_code,
+            'minimum_available_count', NEW.minimum_available_count,
+            'minimum_source_count', NEW.minimum_source_count,
+            'missingness_policy', NEW.missingness_policy,
+            'operator', NEW.qualification_operator,
+            'ordinal', NEW.metric_ordinal,
+            'reducer', NEW.reducer,
+            'source_role', NEW.source_role,
+            'upper_threshold', CASE WHEN NEW.upper_threshold IS NULL
+                THEN NULL ELSE NEW.upper_threshold::text END
+        )::text, ' ', '')
+    );
+    IF expected_hash <> NEW.content_sha256 THEN
+        RAISE EXCEPTION 'ContextPolicyMetric content hash mismatch'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.validate_context_policy_closure()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE actual_metric_count integer;
+DECLARE minimum_ordinal integer;
+DECLARE maximum_ordinal integer;
+DECLARE actual_kind_count integer;
+DECLARE actual_metric_hash text;
+DECLARE actual_kind_hash text;
+DECLARE expected_content_hash text;
+DECLARE predecessor record;
+BEGIN
+    PERFORM pg_advisory_xact_lock(
+        hashtextextended('context-policy:' || NEW.policy_code, 0)
+    );
+    IF NEW.version > 1 THEN
+        SELECT policy_code, version, frozen_at INTO predecessor
+        FROM mra.context_policy
+        WHERE context_policy_id = NEW.supersedes_policy_id
+        FOR SHARE;
+        IF predecessor.policy_code IS DISTINCT FROM NEW.policy_code
+           OR predecessor.version + 1 <> NEW.version
+           OR predecessor.frozen_at >= NEW.frozen_at THEN
+            RAISE EXCEPTION 'ContextPolicy supersession chain is invalid'
+                USING ERRCODE = '55000';
+        END IF;
+    END IF;
+    SELECT count(*), min(metric_ordinal), max(metric_ordinal),
+           mra.canonical_sha256(
+               replace(
+                   json_agg(
+                       json_build_object(
+                           'content_sha256', content_sha256,
+                           'context_policy_metric_id', context_policy_metric_id,
+                           'ordinal', metric_ordinal
+                       ) ORDER BY metric_ordinal
+                   )::text,
+                   ' ', ''
+               )
+           )
+      INTO actual_metric_count, minimum_ordinal, maximum_ordinal,
+           actual_metric_hash
+    FROM mra.context_policy_metric
+    WHERE context_policy_id = NEW.context_policy_id;
+
+    WITH kinds AS (
+        SELECT context_kind, min(metric_ordinal) AS first_ordinal
+        FROM mra.context_policy_metric
+        WHERE context_policy_id = NEW.context_policy_id
+        GROUP BY context_kind
+    ), ordered AS (
+        SELECT context_kind,
+               row_number() OVER (ORDER BY first_ordinal)::integer AS ordinal
+        FROM kinds
+    )
+    SELECT count(*),
+           mra.canonical_sha256(
+               replace(
+                   json_agg(
+                       json_build_object(
+                           'context_kind', context_kind,
+                           'ordinal', ordinal
+                       ) ORDER BY ordinal
+                   )::text,
+                   ' ', ''
+               )
+           )
+      INTO actual_kind_count, actual_kind_hash
+    FROM ordered;
+
+    expected_content_hash := mra.canonical_sha256(
+        replace(json_build_object(
+            'code_artifact', json_build_object(
+                'artifact_id', NEW.code_artifact_id,
+                'content_sha256', NEW.code_content_sha256,
+                'size_bytes', NEW.code_size_bytes
+            ),
+            'config_artifact', json_build_object(
+                'artifact_id', NEW.config_artifact_id,
+                'content_sha256', NEW.config_content_sha256,
+                'size_bytes', NEW.config_size_bytes
+            ),
+            'context_policy_id', NEW.context_policy_id,
+            'kind_count', NEW.kind_count,
+            'kind_roster_sha256', NEW.kind_roster_sha256,
+            'metric_count', NEW.metric_count,
+            'metric_roster_sha256', NEW.metric_roster_sha256,
+            'policy_code', NEW.policy_code,
+            'provenance_sha256', NEW.provenance_sha256,
+            'supersedes_policy_id', NEW.supersedes_policy_id,
+            'version', NEW.version
+        )::text, ' ', '')
+    );
+    IF actual_metric_count <> NEW.metric_count
+       OR minimum_ordinal <> 1 OR maximum_ordinal <> NEW.metric_count
+       OR actual_metric_hash <> NEW.metric_roster_sha256
+       OR actual_kind_count <> NEW.kind_count
+       OR actual_kind_hash <> NEW.kind_roster_sha256
+       OR expected_content_hash <> NEW.content_sha256 THEN
+        RAISE EXCEPTION 'ContextPolicy relational closure is incomplete'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.guard_context_metric_child_insert()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF TG_TABLE_NAME = 'context_metric' AND EXISTS (
+        SELECT 1 FROM mra.context_assessment
+        WHERE context_assessment_id = NEW.context_assessment_id
+    ) THEN
+        RAISE EXCEPTION 'ContextAssessment metric roster is already frozen'
+            USING ERRCODE = '55000';
+    ELSIF TG_TABLE_NAME = 'context_metric_source' AND (
+        EXISTS (
+            SELECT 1 FROM mra.context_metric
+            WHERE context_metric_id = NEW.context_metric_id
+        ) OR EXISTS (
+            SELECT 1 FROM mra.context_assessment
+            WHERE context_assessment_id = NEW.context_assessment_id
+        )
+    ) THEN
+        RAISE EXCEPTION 'ContextMetric source roster is already frozen'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.validate_context_metric_source()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE rule record;
+DECLARE reference record;
+DECLARE bar record;
+DECLARE decision_cutoff timestamptz;
+DECLARE expected_status text;
+DECLARE expected_decimal numeric;
+DECLARE expected_boolean boolean;
+DECLARE expected_hash text;
+BEGIN
+    SELECT measure, reducer, source_role INTO rule
+    FROM mra.context_policy_metric
+    WHERE context_policy_metric_id = NEW.context_policy_metric_id
+    FOR SHARE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Context source metric definition is absent'
+            USING ERRCODE = '23503';
+    END IF;
+    SELECT refrow.*, target.ordinal AS target_ordinal INTO reference
+    FROM mra.decision_reference_observation AS refrow
+    JOIN mra.decision_run_target AS target
+      ON target.decision_run_target_id = refrow.decision_run_target_id
+    WHERE refrow.decision_reference_observation_id =
+          NEW.decision_reference_observation_id
+    FOR SHARE OF refrow, target;
+    SELECT decision_time INTO decision_cutoff
+    FROM mra.decision_run
+    WHERE decision_run_id = NEW.decision_run_id
+    FOR SHARE;
+    IF reference.target_ordinal <> 1
+       OR reference.decision_run_id <> NEW.decision_run_id
+       OR reference.candidate_set_id <> NEW.candidate_set_id
+       OR reference.candidate_id <> NEW.candidate_id
+       OR reference.instrument_id <> NEW.instrument_id
+       OR reference.known_at <> NEW.reference_known_at
+       OR reference.source_kind <> NEW.reference_source_kind
+       OR reference.bar_revision_id IS DISTINCT FROM NEW.bar_revision_id
+       OR reference.source_gap_id IS DISTINCT FROM NEW.source_gap_id
+       OR reference.known_at > decision_cutoff THEN
+        RAISE EXCEPTION 'Context source is not the exact primary Decision reference'
+            USING ERRCODE = '55000';
+    END IF;
+    expected_decimal := NULL;
+    expected_boolean := NULL;
+    IF reference.source_kind = 'BAR_REVISION' THEN
+        SELECT open_value, close_value, turnover_value INTO bar
+        FROM mra.market_bar_revision
+        WHERE bar_revision_id = reference.bar_revision_id
+        FOR SHARE;
+        IF rule.measure = 'RETURN' THEN
+            expected_status := 'AVAILABLE';
+            expected_decimal := bar.close_value / bar.open_value - 1;
+        ELSIF rule.measure = 'ADVANCE_RATE' THEN
+            expected_status := 'AVAILABLE';
+            expected_boolean := bar.close_value >= bar.open_value;
+        ELSIF rule.measure = 'MEMBER_COVERAGE' THEN
+            expected_status := 'AVAILABLE';
+            expected_boolean := true;
+        ELSIF rule.measure = 'TURNOVER' AND bar.turnover_value IS NOT NULL THEN
+            expected_status := 'AVAILABLE';
+            expected_decimal := bar.turnover_value;
+        ELSIF rule.measure = 'FLOW_PROXY' AND bar.turnover_value IS NOT NULL THEN
+            expected_status := 'AVAILABLE';
+            expected_decimal := CASE
+                WHEN bar.close_value > bar.open_value THEN bar.turnover_value
+                WHEN bar.close_value < bar.open_value THEN -bar.turnover_value
+                ELSE 0::numeric
+            END;
+        ELSE
+            expected_status := 'UNAVAILABLE';
+        END IF;
+    ELSIF rule.measure = 'MEMBER_COVERAGE' THEN
+        expected_status := 'AVAILABLE';
+        expected_boolean := false;
+    ELSIF reference.value_status = 'FAILED' THEN
+        expected_status := 'FAILED';
+    ELSE
+        expected_status := 'UNAVAILABLE';
+    END IF;
+    expected_hash := mra.canonical_sha256(
+        replace(json_build_object(
+            'context_metric_source_id', NEW.context_metric_source_id,
+            'source', json_build_object(
+                'bar_revision_id', NEW.bar_revision_id,
+                'boolean_value', NEW.boolean_value,
+                'candidate_id', NEW.candidate_id,
+                'context_policy_metric_id', NEW.context_policy_metric_id,
+                'decimal_value', CASE WHEN NEW.decimal_value IS NULL
+                    THEN NULL ELSE NEW.decimal_value::text END,
+                'decision_reference_observation_id',
+                    NEW.decision_reference_observation_id,
+                'instrument_id', NEW.instrument_id,
+                'known_at', NEW.reference_known_at,
+                'source_gap_id', NEW.source_gap_id,
+                'source_kind', CASE NEW.reference_source_kind
+                    WHEN 'BAR_REVISION' THEN 'BAR_REVISION'
+                    ELSE 'SOURCE_GAP' END,
+                'source_ordinal', NEW.source_ordinal,
+                'value_status', NEW.value_status
+            )
+        )::text, ' ', '')
+    );
+    IF NEW.source_role <> rule.source_role
+       OR NEW.value_status <> expected_status
+       OR NEW.decimal_value IS DISTINCT FROM expected_decimal
+       OR NEW.boolean_value IS DISTINCT FROM expected_boolean
+       OR NEW.content_sha256 <> expected_hash THEN
+        RAISE EXCEPTION 'Context source value or content does not match exact input'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.validate_context_assessment_closure()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE actual_assessment_count integer;
+DECLARE actual_assessment_min integer;
+DECLARE actual_assessment_max integer;
+DECLARE actual_assessment_hash text;
+DECLARE actual_kind_hash text;
+DECLARE actual_metric_count integer;
+DECLARE actual_metric_hash text;
+DECLARE actual_source_count integer := 0;
+DECLARE actual_status text := 'AVAILABLE';
+DECLARE actual_state text := 'POSITIVE';
+DECLARE metric_row record;
+DECLARE source_stats record;
+DECLARE expected_status text;
+DECLARE expected_state text;
+DECLARE expected_value numeric;
+DECLARE expected_source_hash text;
+DECLARE expected_metric_hash text;
+DECLARE expected_assessment_hash text;
+BEGIN
+    SELECT count(*), min(assessment_ordinal), max(assessment_ordinal),
+           mra.canonical_sha256(
+               replace(
+                   json_agg(
+                       json_build_object(
+                           'content_sha256', content_sha256,
+                           'context_assessment_id', context_assessment_id,
+                           'ordinal', assessment_ordinal
+                       ) ORDER BY assessment_ordinal
+                   )::text,
+                   ' ', ''
+               )
+           ),
+           mra.canonical_sha256(
+               replace(
+                   json_agg(
+                       json_build_object(
+                           'context_kind', context_kind,
+                           'ordinal', assessment_ordinal
+                       ) ORDER BY assessment_ordinal
+                   )::text,
+                   ' ', ''
+               )
+           )
+      INTO actual_assessment_count, actual_assessment_min,
+           actual_assessment_max, actual_assessment_hash, actual_kind_hash
+    FROM mra.context_assessment
+    WHERE assessment_group_id = NEW.assessment_group_id;
+    IF actual_assessment_count <> NEW.assessment_count
+       OR actual_assessment_min <> 1
+       OR actual_assessment_max <> NEW.assessment_count
+       OR actual_assessment_hash <> NEW.assessment_roster_sha256
+       OR actual_kind_hash <> NEW.policy_kind_roster_sha256
+       OR EXISTS (
+           SELECT 1 FROM mra.context_assessment AS sibling
+           WHERE sibling.assessment_group_id = NEW.assessment_group_id
+             AND (sibling.decision_run_id <> NEW.decision_run_id
+               OR sibling.candidate_set_id <> NEW.candidate_set_id
+               OR sibling.context_policy_id <> NEW.context_policy_id
+               OR sibling.request_identity <> NEW.request_identity
+               OR sibling.request_sha256 <> NEW.request_sha256)
+       ) THEN
+        RAISE EXCEPTION 'Context assessment group closure is incomplete'
+            USING ERRCODE = '55000';
+    END IF;
+
+    WITH ordered_metric AS (
+        SELECT metric.content_sha256, metric.context_metric_id,
+               row_number() OVER (
+                   ORDER BY definition.metric_ordinal
+               )::integer AS local_ordinal
+        FROM mra.context_metric AS metric
+        JOIN mra.context_policy_metric AS definition
+          ON definition.context_policy_metric_id =
+             metric.context_policy_metric_id
+        WHERE metric.context_assessment_id = NEW.context_assessment_id
+    )
+    SELECT count(*),
+           mra.canonical_sha256(
+               replace(
+                   json_agg(
+                       json_build_object(
+                           'content_sha256', content_sha256,
+                           'context_metric_id', context_metric_id,
+                           'ordinal', local_ordinal
+                       ) ORDER BY local_ordinal
+                   )::text,
+                   ' ', ''
+               )
+           )
+      INTO actual_metric_count, actual_metric_hash
+    FROM ordered_metric;
+    IF actual_metric_count <> NEW.metric_count
+       OR actual_metric_hash <> NEW.metric_roster_sha256
+       OR EXISTS (
+           (SELECT definition.context_policy_metric_id
+            FROM mra.context_policy_metric AS definition
+            WHERE definition.context_policy_id = NEW.context_policy_id
+              AND definition.context_kind = NEW.context_kind)
+           EXCEPT
+           (SELECT metric.context_policy_metric_id
+            FROM mra.context_metric AS metric
+            WHERE metric.context_assessment_id = NEW.context_assessment_id)
+       ) OR EXISTS (
+           (SELECT metric.context_policy_metric_id
+            FROM mra.context_metric AS metric
+            WHERE metric.context_assessment_id = NEW.context_assessment_id)
+           EXCEPT
+           (SELECT definition.context_policy_metric_id
+            FROM mra.context_policy_metric AS definition
+            WHERE definition.context_policy_id = NEW.context_policy_id
+              AND definition.context_kind = NEW.context_kind)
+       ) THEN
+        RAISE EXCEPTION 'Context metric roster is incomplete'
+            USING ERRCODE = '55000';
+    END IF;
+
+    FOR metric_row IN
+        SELECT metric.*, definition.metric_ordinal,
+               definition.reducer, definition.qualification_operator,
+               definition.lower_threshold, definition.upper_threshold,
+               definition.minimum_source_count,
+               definition.minimum_available_count,
+               definition.missingness_policy
+        FROM mra.context_metric AS metric
+        JOIN mra.context_policy_metric AS definition
+          ON definition.context_policy_metric_id =
+             metric.context_policy_metric_id
+        WHERE metric.context_assessment_id = NEW.context_assessment_id
+        ORDER BY definition.metric_ordinal
+    LOOP
+        SELECT count(*) AS source_count,
+               count(*) FILTER (WHERE value_status = 'AVAILABLE') AS available_count,
+               count(*) FILTER (WHERE value_status = 'UNAVAILABLE') AS unavailable_count,
+               count(*) FILTER (WHERE value_status = 'FAILED') AS failed_count,
+               mra.canonical_sha256(
+                   replace(
+                       coalesce(
+                           json_agg(
+                               json_build_object(
+                                   'content_sha256', content_sha256,
+                                   'context_metric_source_id',
+                                       context_metric_source_id,
+                                   'ordinal', source_ordinal
+                               ) ORDER BY source_ordinal
+                           ), '[]'::json
+                       )::text,
+                       ' ', ''
+                   )
+               ) AS source_hash,
+               avg(decimal_value) FILTER (WHERE value_status = 'AVAILABLE') AS mean_value,
+               percentile_disc(0.5) WITHIN GROUP (ORDER BY decimal_value)
+                   FILTER (WHERE value_status = 'AVAILABLE') AS median_value,
+               sum(decimal_value) FILTER (WHERE value_status = 'AVAILABLE') AS sum_value,
+               avg(CASE WHEN boolean_value THEN 1::numeric ELSE 0::numeric END)
+                   FILTER (WHERE value_status = 'AVAILABLE') AS true_rate
+          INTO source_stats
+        FROM mra.context_metric_source
+        WHERE context_metric_id = metric_row.context_metric_id;
+        IF source_stats.source_count <> NEW.candidate_count
+           OR EXISTS (
+               (SELECT candidate_id FROM mra.candidate
+                WHERE candidate_set_id = NEW.candidate_set_id)
+               EXCEPT
+               (SELECT candidate_id FROM mra.context_metric_source
+                WHERE context_metric_id = metric_row.context_metric_id)
+           ) OR EXISTS (
+               (SELECT candidate_id FROM mra.context_metric_source
+                WHERE context_metric_id = metric_row.context_metric_id)
+               EXCEPT
+               (SELECT candidate_id FROM mra.candidate
+                WHERE candidate_set_id = NEW.candidate_set_id)
+           ) THEN
+            RAISE EXCEPTION 'Context source roster omitted a Candidate'
+                USING ERRCODE = '55000';
+        END IF;
+        expected_source_hash := source_stats.source_hash;
+        IF source_stats.failed_count > 0
+           OR source_stats.source_count < metric_row.minimum_source_count
+           OR source_stats.available_count < metric_row.minimum_available_count THEN
+            expected_status := metric_row.missingness_policy;
+            expected_state := 'UNKNOWN';
+            expected_value := NULL;
+        ELSE
+            expected_status := 'AVAILABLE';
+            expected_value := CASE metric_row.reducer
+                WHEN 'MEAN_DECIMAL' THEN source_stats.mean_value
+                WHEN 'MEDIAN_DECIMAL' THEN source_stats.median_value
+                WHEN 'SUM_DECIMAL' THEN source_stats.sum_value
+                WHEN 'TRUE_RATE' THEN source_stats.true_rate
+            END;
+            expected_state := CASE metric_row.qualification_operator
+                WHEN 'AT_LEAST' THEN CASE
+                    WHEN expected_value >= metric_row.lower_threshold
+                    THEN 'POSITIVE' ELSE 'NEGATIVE' END
+                WHEN 'AT_MOST' THEN CASE
+                    WHEN expected_value <= metric_row.lower_threshold
+                    THEN 'POSITIVE' ELSE 'NEGATIVE' END
+                ELSE CASE
+                    WHEN expected_value BETWEEN metric_row.lower_threshold
+                                            AND metric_row.upper_threshold
+                    THEN 'POSITIVE' ELSE 'NEGATIVE' END
+            END;
+        END IF;
+        expected_metric_hash := mra.canonical_sha256(
+            replace(json_build_object(
+                'available_count', source_stats.available_count,
+                'context_metric_id', metric_row.context_metric_id,
+                'decimal_value', CASE WHEN metric_row.decimal_value IS NULL
+                    THEN NULL ELSE metric_row.decimal_value::text END,
+                'definition_sha256', metric_row.definition_content_sha256,
+                'failed_count', source_stats.failed_count,
+                'source_count', source_stats.source_count,
+                'source_roster_sha256', expected_source_hash,
+                'state', expected_state,
+                'status', expected_status,
+                'unavailable_count', source_stats.unavailable_count
+            )::text, ' ', '')
+        );
+        IF metric_row.metric_status <> expected_status
+           OR metric_row.metric_state <> expected_state
+           OR metric_row.decimal_value IS DISTINCT FROM expected_value
+           OR metric_row.source_count <> source_stats.source_count
+           OR metric_row.available_count <> source_stats.available_count
+           OR metric_row.unavailable_count <> source_stats.unavailable_count
+           OR metric_row.failed_count <> source_stats.failed_count
+           OR metric_row.source_roster_sha256 <> expected_source_hash
+           OR metric_row.content_sha256 <> expected_metric_hash THEN
+            RAISE EXCEPTION
+                'Context metric result mismatch id=% stored=(%,%,%,%,%,%,%,%,%) expected=(%,%,%,%,%,%,%,%,%)',
+                metric_row.context_metric_id,
+                metric_row.metric_status, metric_row.metric_state,
+                metric_row.decimal_value, metric_row.source_count,
+                metric_row.available_count, metric_row.unavailable_count,
+                metric_row.failed_count, metric_row.source_roster_sha256,
+                metric_row.content_sha256,
+                expected_status, expected_state, expected_value,
+                source_stats.source_count, source_stats.available_count,
+                source_stats.unavailable_count, source_stats.failed_count,
+                expected_source_hash, expected_metric_hash
+                USING ERRCODE = '55000';
+        END IF;
+        actual_source_count := actual_source_count + source_stats.source_count;
+        IF expected_status = 'FAILED' THEN
+            actual_status := 'FAILED';
+        ELSIF expected_status = 'NOT_ESTIMABLE'
+              AND actual_status <> 'FAILED' THEN
+            actual_status := 'NOT_ESTIMABLE';
+        ELSIF expected_status = 'UNKNOWN'
+              AND actual_status NOT IN ('FAILED', 'NOT_ESTIMABLE') THEN
+            actual_status := 'UNKNOWN';
+        END IF;
+        IF expected_state = 'UNKNOWN' THEN
+            actual_state := 'UNKNOWN';
+        ELSIF expected_state = 'NEGATIVE' AND actual_state <> 'UNKNOWN' THEN
+            actual_state := 'NEGATIVE';
+        END IF;
+    END LOOP;
+    expected_assessment_hash := mra.canonical_sha256(
+        replace(json_build_object(
+            'assessment_group_id', NEW.assessment_group_id,
+            'context_assessment_id', NEW.context_assessment_id,
+            'context_kind', NEW.context_kind,
+            'metric_count', NEW.metric_count,
+            'metric_roster_sha256', NEW.metric_roster_sha256,
+            'ordinal', NEW.assessment_ordinal,
+            'state', actual_state,
+            'status', actual_status
+        )::text, ' ', '')
+    );
+    IF NEW.source_count <> actual_source_count
+       OR NEW.assessment_status <> actual_status
+       OR NEW.assessment_state <> actual_state
+       OR NEW.content_sha256 <> expected_assessment_hash THEN
+        RAISE EXCEPTION 'ContextAssessment derived result is invalid'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER context_policy_append_only
+BEFORE UPDATE OR DELETE ON mra.context_policy
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE CONSTRAINT TRIGGER context_policy_closure_guard
+AFTER INSERT ON mra.context_policy
+DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW EXECUTE FUNCTION mra.validate_context_policy_closure();
+CREATE TRIGGER context_policy_metric_insert_guard
+BEFORE INSERT ON mra.context_policy_metric
+FOR EACH ROW EXECUTE FUNCTION mra.guard_context_policy_metric_insert();
+CREATE TRIGGER context_policy_metric_append_only
+BEFORE UPDATE OR DELETE ON mra.context_policy_metric
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER context_assessment_append_only
+BEFORE UPDATE OR DELETE ON mra.context_assessment
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE CONSTRAINT TRIGGER context_assessment_closure_guard
+AFTER INSERT ON mra.context_assessment
+DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW EXECUTE FUNCTION mra.validate_context_assessment_closure();
+CREATE TRIGGER context_metric_insert_guard
+BEFORE INSERT ON mra.context_metric
+FOR EACH ROW EXECUTE FUNCTION mra.guard_context_metric_child_insert();
+CREATE TRIGGER context_metric_append_only
+BEFORE UPDATE OR DELETE ON mra.context_metric
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER context_metric_source_insert_guard
+BEFORE INSERT ON mra.context_metric_source
+FOR EACH ROW EXECUTE FUNCTION mra.guard_context_metric_child_insert();
+CREATE TRIGGER context_metric_source_value_guard
+BEFORE INSERT ON mra.context_metric_source
+FOR EACH ROW EXECUTE FUNCTION mra.validate_context_metric_source();
+CREATE TRIGGER context_metric_source_append_only
+BEFORE UPDATE OR DELETE ON mra.context_metric_source
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+
+CREATE FUNCTION mra.guard_strategy_child_insert()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM mra.strategy_version
+        WHERE strategy_version_id = NEW.strategy_version_id
+    ) THEN
+        RAISE EXCEPTION 'StrategyVersion is already frozen'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.validate_strategy_version_closure()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE context_count integer;
+DECLARE context_min integer;
+DECLARE context_max integer;
+DECLARE context_hash text;
+DECLARE forecast_count integer;
+DECLARE forecast_min integer;
+DECLARE forecast_max integer;
+DECLARE forecast_hash text;
+BEGIN
+    SELECT count(*), min(ordinal), max(ordinal),
+           mra.canonical_sha256(replace(json_agg(json_build_object(
+               'content_sha256', content_sha256,
+               'ordinal', ordinal,
+               'strategy_context_requirement_id',
+                   strategy_context_requirement_id
+           ) ORDER BY ordinal)::text, ' ', ''))
+      INTO context_count, context_min, context_max, context_hash
+    FROM mra.strategy_context_requirement
+    WHERE strategy_version_id = NEW.strategy_version_id;
+    SELECT count(*), min(ordinal), max(ordinal),
+           mra.canonical_sha256(replace(json_agg(json_build_object(
+               'content_sha256', content_sha256,
+               'ordinal', ordinal,
+               'strategy_forecast_rule_id', strategy_forecast_rule_id
+           ) ORDER BY ordinal)::text, ' ', ''))
+      INTO forecast_count, forecast_min, forecast_max, forecast_hash
+    FROM mra.strategy_forecast_rule
+    WHERE strategy_version_id = NEW.strategy_version_id;
+    IF context_count <> NEW.context_requirement_count
+       OR context_min <> 1 OR context_max <> NEW.context_requirement_count
+       OR context_hash <> NEW.context_requirement_roster_sha256
+       OR forecast_count <> NEW.forecast_rule_count
+       OR forecast_min <> 1 OR forecast_max <> NEW.forecast_rule_count
+       OR forecast_hash <> NEW.forecast_rule_roster_sha256
+       OR NOT EXISTS (
+           SELECT 1 FROM mra.strategy_signal_rule
+           WHERE strategy_signal_rule_id = NEW.strategy_signal_rule_id
+             AND strategy_version_id = NEW.strategy_version_id
+             AND content_sha256 = NEW.signal_rule_sha256
+       ) THEN
+        RAISE EXCEPTION 'StrategyVersion child roster is incomplete or mismatched'
+            USING ERRCODE = '55000';
+    END IF;
+    IF NEW.version > 1 AND NOT EXISTS (
+        SELECT 1 FROM mra.strategy_version AS predecessor
+        WHERE predecessor.strategy_version_id = NEW.supersedes_strategy_version_id
+          AND predecessor.strategy_id = NEW.strategy_id
+          AND predecessor.version + 1 = NEW.version
+          AND predecessor.frozen_at < NEW.frozen_at
+    ) THEN
+        RAISE EXCEPTION 'StrategyVersion supersession is not immediate and ordered'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.guard_signal_binding_insert()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM mra.signal WHERE signal_id = NEW.signal_id) THEN
+        RAISE EXCEPTION 'Signal Context roster is already frozen'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.validate_signal_closure()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE actual_signal_count integer;
+DECLARE minimum_ordinal integer;
+DECLARE maximum_ordinal integer;
+DECLARE actual_binding_count integer;
+DECLARE actual_roster_hash text;
+BEGIN
+    SELECT count(*), min(ordinal), max(ordinal),
+           mra.canonical_sha256(replace(coalesce(json_agg(json_build_object(
+               'content_sha256', content_sha256,
+               'ordinal', ordinal,
+               'signal_id', signal_id
+           ) ORDER BY ordinal)::text, '[]'), ' ', ''))
+      INTO actual_signal_count, minimum_ordinal, maximum_ordinal,
+           actual_roster_hash
+    FROM mra.signal WHERE signal_group_id = NEW.signal_group_id;
+    SELECT count(*) INTO actual_binding_count
+    FROM mra.signal_context_binding WHERE signal_group_id = NEW.signal_group_id;
+    IF actual_signal_count <> NEW.signal_count
+       OR (NEW.signal_count > 0
+           AND (minimum_ordinal <> 1 OR maximum_ordinal <> NEW.signal_count))
+       OR (NEW.signal_count = 0
+           AND (minimum_ordinal IS NOT NULL OR maximum_ordinal IS NOT NULL))
+       OR actual_roster_hash <> NEW.signal_roster_sha256
+       OR actual_binding_count <> NEW.context_binding_count
+       OR EXISTS (
+           (SELECT candidate_id FROM mra.candidate
+            WHERE candidate_set_id = NEW.candidate_set_id)
+           EXCEPT
+           (SELECT candidate_id FROM mra.signal
+            WHERE signal_group_id = NEW.signal_group_id)
+       )
+       OR EXISTS (
+           (SELECT candidate_id FROM mra.signal
+            WHERE signal_group_id = NEW.signal_group_id)
+           EXCEPT
+           (SELECT candidate_id FROM mra.candidate
+            WHERE candidate_set_id = NEW.candidate_set_id)
+       )
+       OR EXISTS (
+           SELECT 1 FROM mra.signal AS item
+           WHERE item.signal_group_id = NEW.signal_group_id
+             AND (item.decision_run_id <> NEW.decision_run_id
+               OR item.candidate_set_id <> NEW.candidate_set_id
+               OR item.candidate_set_content_sha256 <>
+                    NEW.candidate_set_content_sha256
+               OR item.candidate_roster_sha256 <> NEW.candidate_roster_sha256
+               OR item.decision_time <> NEW.decision_time
+               OR item.candidate_count <> NEW.candidate_count
+               OR item.strategy_version_id <> NEW.strategy_version_id
+               OR item.strategy_version_sha256 <>
+                    NEW.strategy_version_sha256
+               OR item.signal_count <> NEW.signal_count
+               OR item.signal_roster_sha256 <> NEW.signal_roster_sha256
+               OR item.group_content_sha256 <> NEW.content_sha256
+               OR item.total_context_binding_count <>
+                    NEW.context_binding_count
+               OR item.request_identity <> NEW.request_identity
+               OR item.request_sha256 <> NEW.request_sha256
+               OR item.command_receipt_id <> NEW.command_receipt_id
+               OR item.recorded_at <> NEW.recorded_at)
+       )
+       OR EXISTS (
+           SELECT 1 FROM mra.signal AS item
+           WHERE item.signal_group_id = NEW.signal_group_id
+             AND (
+                 SELECT count(*) FROM mra.signal_context_binding AS binding
+                 WHERE binding.signal_id = item.signal_id
+             ) <> item.context_binding_count
+       )
+       OR EXISTS (
+           SELECT 1 FROM mra.signal AS item
+           WHERE item.signal_group_id = NEW.signal_group_id
+             AND (
+                 SELECT mra.canonical_sha256(replace(coalesce(json_agg(
+                     json_build_object(
+                         'content_sha256', binding.content_sha256,
+                         'ordinal', binding.binding_ordinal,
+                         'signal_context_binding_id',
+                             binding.signal_context_binding_id
+                     ) ORDER BY binding.binding_ordinal)::text, '[]'), ' ', ''))
+                 FROM mra.signal_context_binding AS binding
+                 WHERE binding.signal_id = item.signal_id
+             ) <> item.context_binding_roster_sha256
+       ) THEN
+        RAISE EXCEPTION 'Signal Candidate or Context roster is incomplete'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.guard_forecast_estimate_insert()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM mra.forecast WHERE forecast_id = NEW.forecast_id) THEN
+        RAISE EXCEPTION 'Forecast estimate roster is already frozen'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.validate_forecast_closure()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE actual_forecast_count integer;
+DECLARE minimum_ordinal integer;
+DECLARE maximum_ordinal integer;
+DECLARE actual_estimate_count integer;
+DECLARE actual_roster_hash text;
+BEGIN
+    SELECT count(*), min(ordinal), max(ordinal),
+           mra.canonical_sha256(replace(coalesce(json_agg(json_build_object(
+               'content_sha256', content_sha256,
+               'forecast_id', forecast_id,
+               'ordinal', ordinal
+           ) ORDER BY ordinal)::text, '[]'), ' ', ''))
+      INTO actual_forecast_count, minimum_ordinal, maximum_ordinal,
+           actual_roster_hash
+    FROM mra.forecast WHERE forecast_group_id = NEW.forecast_group_id;
+    SELECT count(*) INTO actual_estimate_count
+    FROM mra.forecast_estimate WHERE forecast_group_id = NEW.forecast_group_id;
+    IF actual_forecast_count <> NEW.forecast_count
+       OR (NEW.forecast_count > 0
+           AND (minimum_ordinal <> 1 OR maximum_ordinal <> NEW.forecast_count))
+       OR (NEW.forecast_count = 0
+           AND (minimum_ordinal IS NOT NULL OR maximum_ordinal IS NOT NULL))
+       OR actual_roster_hash <> NEW.forecast_roster_sha256
+       OR actual_estimate_count <> NEW.estimate_count
+       OR EXISTS (
+           SELECT 1 FROM mra.forecast AS item
+           WHERE item.forecast_group_id = NEW.forecast_group_id
+             AND (item.decision_run_id <> NEW.decision_run_id
+               OR item.strategy_version_id <> NEW.strategy_version_id
+               OR item.strategy_version_sha256 <> NEW.strategy_version_sha256
+               OR item.signal_group_id <> NEW.signal_group_id
+               OR item.forecast_count <> NEW.forecast_count
+               OR item.forecast_roster_sha256 <> NEW.forecast_roster_sha256
+               OR item.group_content_sha256 <> NEW.content_sha256
+               OR item.total_estimate_count <> NEW.estimate_count
+               OR item.request_identity <> NEW.request_identity
+               OR item.request_sha256 <> NEW.request_sha256
+               OR item.command_receipt_id <> NEW.command_receipt_id
+               OR item.recorded_at <> NEW.recorded_at)
+       )
+       OR EXISTS (
+           SELECT 1 FROM mra.forecast AS item
+           WHERE item.forecast_group_id = NEW.forecast_group_id
+             AND (
+                 SELECT count(*) FROM mra.forecast_estimate AS estimate
+                 WHERE estimate.forecast_id = item.forecast_id
+             ) <> item.estimate_count
+       )
+       OR EXISTS (
+           SELECT 1 FROM mra.forecast AS item
+           WHERE item.forecast_group_id = NEW.forecast_group_id
+             AND (
+                 SELECT mra.canonical_sha256(replace(coalesce(json_agg(
+                     json_build_object(
+                         'content_sha256', estimate.content_sha256,
+                         'forecast_estimate_id', estimate.forecast_estimate_id,
+                         'ordinal', estimate.estimate_ordinal
+                     ) ORDER BY estimate.estimate_ordinal)::text, '[]'), ' ', ''))
+                 FROM mra.forecast_estimate AS estimate
+                 WHERE estimate.forecast_id = item.forecast_id
+             ) <> item.estimate_roster_sha256
+       )
+       OR EXISTS (
+           SELECT 1 FROM mra.forecast AS item
+           JOIN mra.forecast_estimate AS estimate
+             ON estimate.forecast_id = item.forecast_id
+           WHERE item.forecast_group_id = NEW.forecast_group_id
+             AND ((item.status = 'AVAILABLE' AND estimate.point_estimate IS NULL)
+               OR (item.status <> 'AVAILABLE' AND estimate.point_estimate IS NOT NULL))
+       ) THEN
+        RAISE EXCEPTION 'Forecast or estimate roster is incomplete'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER strategy_append_only
+BEFORE UPDATE OR DELETE ON mra.strategy
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE CONSTRAINT TRIGGER strategy_version_closure_guard
+AFTER INSERT ON mra.strategy_version DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW EXECUTE FUNCTION mra.validate_strategy_version_closure();
+CREATE TRIGGER strategy_version_append_only
+BEFORE UPDATE OR DELETE ON mra.strategy_version
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER strategy_context_requirement_insert_guard
+BEFORE INSERT ON mra.strategy_context_requirement
+FOR EACH ROW EXECUTE FUNCTION mra.guard_strategy_child_insert();
+CREATE TRIGGER strategy_context_requirement_append_only
+BEFORE UPDATE OR DELETE ON mra.strategy_context_requirement
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER strategy_signal_rule_insert_guard
+BEFORE INSERT ON mra.strategy_signal_rule
+FOR EACH ROW EXECUTE FUNCTION mra.guard_strategy_child_insert();
+CREATE TRIGGER strategy_signal_rule_append_only
+BEFORE UPDATE OR DELETE ON mra.strategy_signal_rule
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER strategy_forecast_rule_insert_guard
+BEFORE INSERT ON mra.strategy_forecast_rule
+FOR EACH ROW EXECUTE FUNCTION mra.guard_strategy_child_insert();
+CREATE TRIGGER strategy_forecast_rule_append_only
+BEFORE UPDATE OR DELETE ON mra.strategy_forecast_rule
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER signal_context_binding_insert_guard
+BEFORE INSERT ON mra.signal_context_binding
+FOR EACH ROW EXECUTE FUNCTION mra.guard_signal_binding_insert();
+CREATE TRIGGER signal_insert_guard
+BEFORE INSERT ON mra.signal
+FOR EACH ROW EXECUTE FUNCTION mra.guard_signal_binding_insert();
+CREATE CONSTRAINT TRIGGER signal_closure_guard
+AFTER INSERT ON mra.signal_run DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW EXECUTE FUNCTION mra.validate_signal_closure();
+CREATE TRIGGER signal_run_append_only
+BEFORE UPDATE OR DELETE ON mra.signal_run
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER signal_append_only
+BEFORE UPDATE OR DELETE ON mra.signal
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER signal_context_binding_append_only
+BEFORE UPDATE OR DELETE ON mra.signal_context_binding
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER forecast_estimate_insert_guard
+BEFORE INSERT ON mra.forecast_estimate
+FOR EACH ROW EXECUTE FUNCTION mra.guard_forecast_estimate_insert();
+CREATE TRIGGER forecast_insert_guard
+BEFORE INSERT ON mra.forecast
+FOR EACH ROW EXECUTE FUNCTION mra.guard_forecast_estimate_insert();
+CREATE CONSTRAINT TRIGGER forecast_closure_guard
+AFTER INSERT ON mra.forecast_run DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW EXECUTE FUNCTION mra.validate_forecast_closure();
+CREATE TRIGGER forecast_run_append_only
+BEFORE UPDATE OR DELETE ON mra.forecast_run
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER forecast_append_only
+BEFORE UPDATE OR DELETE ON mra.forecast
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER forecast_estimate_append_only
+BEFORE UPDATE OR DELETE ON mra.forecast_estimate
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+
+CREATE FUNCTION mra.guard_opportunity_child_insert()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF TG_TABLE_NAME = 'opportunity' AND EXISTS (
+        SELECT 1 FROM mra.opportunity_set
+        WHERE opportunity_set_id = NEW.opportunity_set_id
+    ) THEN
+        RAISE EXCEPTION 'OpportunitySet is already frozen' USING ERRCODE = '55000';
+    END IF;
+    IF TG_TABLE_NAME = 'opportunity_context' AND EXISTS (
+        SELECT 1 FROM mra.opportunity
+        WHERE opportunity_id = NEW.opportunity_id
+    ) THEN
+        RAISE EXCEPTION 'Opportunity Context roster is already frozen' USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.validate_opportunity_set_closure()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE actual_count integer;
+DECLARE minimum_ordinal integer;
+DECLARE maximum_ordinal integer;
+DECLARE actual_context_count integer;
+DECLARE actual_hash text;
+BEGIN
+    SELECT count(*), min(ordinal), max(ordinal),
+           mra.canonical_sha256(replace(coalesce(json_agg(json_build_object(
+               'content_sha256', content_sha256,
+               'opportunity_id', opportunity_id,
+               'ordinal', ordinal
+           ) ORDER BY ordinal)::text, '[]'), ' ', ''))
+      INTO actual_count, minimum_ordinal, maximum_ordinal, actual_hash
+    FROM mra.opportunity WHERE opportunity_set_id = NEW.opportunity_set_id;
+    SELECT count(*) INTO actual_context_count FROM mra.opportunity_context
+    WHERE opportunity_set_id = NEW.opportunity_set_id;
+    IF actual_count <> NEW.opportunity_count
+       OR (NEW.opportunity_count > 0 AND
+           (minimum_ordinal <> 1 OR maximum_ordinal <> NEW.opportunity_count))
+       OR actual_hash <> NEW.opportunity_roster_sha256
+       OR actual_context_count <> NEW.context_count
+       OR EXISTS (
+           (SELECT forecast_id FROM mra.forecast
+            WHERE forecast_group_id = NEW.forecast_group_id)
+           EXCEPT
+           (SELECT forecast_id FROM mra.opportunity
+            WHERE opportunity_set_id = NEW.opportunity_set_id)
+       )
+       OR EXISTS (
+           (SELECT forecast_id FROM mra.opportunity
+            WHERE opportunity_set_id = NEW.opportunity_set_id)
+           EXCEPT
+           (SELECT forecast_id FROM mra.forecast
+            WHERE forecast_group_id = NEW.forecast_group_id)
+       )
+       OR EXISTS (
+           SELECT 1 FROM mra.opportunity AS item
+           WHERE item.opportunity_set_id = NEW.opportunity_set_id
+             AND (item.decision_run_id <> NEW.decision_run_id
+               OR item.strategy_version_id <> NEW.strategy_version_id
+               OR item.forecast_group_id <> NEW.forecast_group_id
+               OR item.signal_group_id <> NEW.signal_group_id
+               OR item.recorded_at <> NEW.recorded_at
+               OR (SELECT count(*) FROM mra.opportunity_context AS binding
+                   WHERE binding.opportunity_id = item.opportunity_id)
+                    <> item.context_count
+               OR (SELECT mra.canonical_sha256(replace(json_agg(
+                       json_build_object(
+                           'content_sha256', binding.content_sha256,
+                           'opportunity_context_id', binding.opportunity_context_id,
+                           'ordinal', binding.ordinal
+                       ) ORDER BY binding.ordinal)::text, ' ', ''))
+                   FROM mra.opportunity_context AS binding
+                   WHERE binding.opportunity_id = item.opportunity_id)
+                    <> item.context_roster_sha256)
+       )
+       OR EXISTS (
+           SELECT 1 FROM mra.opportunity AS item
+           JOIN mra.forecast AS forecast ON forecast.forecast_id = item.forecast_id
+           JOIN mra.signal AS signal ON signal.signal_id = item.signal_id
+           WHERE item.opportunity_set_id = NEW.opportunity_set_id
+             AND (item.status, item.action) <> (
+                 CASE
+                   WHEN signal.status = 'PRESENT' AND forecast.status = 'AVAILABLE'
+                     THEN 'ACTIONABLE'
+                   WHEN signal.status = 'WAIT' THEN 'WAIT'
+                   WHEN signal.status IN ('UNKNOWN', 'NOT_ESTIMABLE')
+                     OR forecast.status = 'NOT_ESTIMABLE' THEN 'NOT_ESTIMABLE'
+                   ELSE 'NO_ACTION'
+                 END,
+                 CASE
+                   WHEN signal.status = 'PRESENT' AND forecast.status = 'AVAILABLE'
+                     THEN 'ENTER'
+                   WHEN signal.status = 'WAIT' THEN 'WAIT'
+                   WHEN signal.status IN ('UNKNOWN', 'NOT_ESTIMABLE')
+                     OR forecast.status = 'NOT_ESTIMABLE' THEN 'DATA_INSUFFICIENT'
+                   ELSE 'NO_ACTION'
+                 END
+             )
+       )
+       OR EXISTS (
+           SELECT 1 FROM mra.opportunity AS item
+           WHERE item.opportunity_set_id = NEW.opportunity_set_id
+             AND (
+               EXISTS (
+                 (SELECT signal_context_binding_id
+                    FROM mra.signal_context_binding
+                   WHERE signal_id = item.signal_id)
+                 EXCEPT
+                 (SELECT signal_context_binding_id
+                    FROM mra.opportunity_context
+                   WHERE opportunity_id = item.opportunity_id)
+               )
+               OR EXISTS (
+                 (SELECT signal_context_binding_id
+                    FROM mra.opportunity_context
+                   WHERE opportunity_id = item.opportunity_id)
+                 EXCEPT
+                 (SELECT signal_context_binding_id
+                    FROM mra.signal_context_binding
+                   WHERE signal_id = item.signal_id)
+               )
+             )
+       ) THEN
+        RAISE EXCEPTION 'Opportunity roster is incomplete or mismatched'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.validate_portfolio_policy_supersession()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.version > 1 AND NOT EXISTS (
+        SELECT 1 FROM mra.portfolio_policy AS predecessor
+        WHERE predecessor.portfolio_policy_id = NEW.supersedes_policy_id
+          AND predecessor.policy_code = NEW.policy_code
+          AND predecessor.version + 1 = NEW.version
+          AND predecessor.frozen_at < NEW.frozen_at
+    ) THEN
+        RAISE EXCEPTION 'PortfolioPolicy supersession is not immediate and ordered'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.guard_thesis_condition_insert()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM mra.thesis WHERE thesis_id = NEW.thesis_id) THEN
+        RAISE EXCEPTION 'Thesis is already frozen' USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.validate_thesis_closure()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE actual_count integer;
+DECLARE minimum_ordinal integer;
+DECLARE maximum_ordinal integer;
+DECLARE actual_hash text;
+BEGIN
+    SELECT count(*), min(ordinal), max(ordinal),
+           mra.canonical_sha256(replace(json_agg(json_build_object(
+               'content_sha256', content_sha256,
+               'ordinal', ordinal,
+               'thesis_condition_id', thesis_condition_id
+           ) ORDER BY ordinal)::text, ' ', ''))
+      INTO actual_count, minimum_ordinal, maximum_ordinal, actual_hash
+    FROM mra.thesis_condition WHERE thesis_id = NEW.thesis_id;
+    IF actual_count <> NEW.condition_count OR minimum_ordinal <> 1
+       OR maximum_ordinal <> NEW.condition_count
+       OR actual_hash <> NEW.condition_roster_sha256 THEN
+        RAISE EXCEPTION 'Thesis condition roster is incomplete'
+            USING ERRCODE = '55000';
+    END IF;
+    IF NEW.revision > 1 AND NOT EXISTS (
+        SELECT 1 FROM mra.thesis AS predecessor
+        WHERE predecessor.thesis_id = NEW.supersedes_thesis_id
+          AND predecessor.opportunity_id = NEW.opportunity_id
+          AND predecessor.revision + 1 = NEW.revision
+          AND predecessor.frozen_at < NEW.frozen_at
+    ) THEN
+        RAISE EXCEPTION 'Thesis supersession is not immediate and ordered'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.guard_portfolio_line_insert()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM mra.portfolio_proposal
+        WHERE portfolio_proposal_id = NEW.portfolio_proposal_id
+    ) THEN
+        RAISE EXCEPTION 'PortfolioProposal is already frozen' USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.validate_portfolio_proposal_closure()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE actual_count integer;
+DECLARE minimum_ordinal integer;
+DECLARE maximum_ordinal integer;
+DECLARE actual_hash text;
+DECLARE included integer;
+DECLARE excluded integer;
+DECLARE not_estimable integer;
+DECLARE gross numeric;
+BEGIN
+    SELECT count(*), min(ordinal), max(ordinal),
+           count(*) FILTER (WHERE status = 'INCLUDED'),
+           count(*) FILTER (WHERE status = 'EXCLUDED'),
+           count(*) FILTER (WHERE status = 'NOT_ESTIMABLE'),
+           coalesce(sum(proposed_weight), 0),
+           mra.canonical_sha256(replace(coalesce(json_agg(json_build_object(
+               'content_sha256', content_sha256,
+               'ordinal', ordinal,
+               'portfolio_line_id', portfolio_line_id
+           ) ORDER BY ordinal)::text, '[]'), ' ', ''))
+      INTO actual_count, minimum_ordinal, maximum_ordinal,
+           included, excluded, not_estimable, gross, actual_hash
+    FROM mra.portfolio_line WHERE portfolio_proposal_id = NEW.portfolio_proposal_id;
+    IF actual_count <> NEW.line_count
+       OR (NEW.line_count > 0 AND
+           (minimum_ordinal <> 1 OR maximum_ordinal <> NEW.line_count))
+       OR included <> NEW.included_count OR excluded <> NEW.excluded_count
+       OR not_estimable <> NEW.not_estimable_count
+       OR gross <> NEW.gross_weight OR actual_hash <> NEW.line_roster_sha256
+       OR EXISTS (
+           (SELECT opportunity_id FROM mra.opportunity
+            WHERE opportunity_set_id = NEW.opportunity_set_id)
+           EXCEPT
+           (SELECT opportunity_id FROM mra.portfolio_line
+            WHERE portfolio_proposal_id = NEW.portfolio_proposal_id)
+       )
+       OR EXISTS (
+           (SELECT opportunity_id FROM mra.portfolio_line
+            WHERE portfolio_proposal_id = NEW.portfolio_proposal_id)
+           EXCEPT
+           (SELECT opportunity_id FROM mra.opportunity
+            WHERE opportunity_set_id = NEW.opportunity_set_id)
+       ) THEN
+        RAISE EXCEPTION 'Portfolio line roster or totals are incomplete'
+            USING ERRCODE = '55000';
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM mra.portfolio_policy AS policy
+        WHERE policy.portfolio_policy_id = NEW.portfolio_policy_id
+          AND (
+            NEW.included_count > policy.maximum_line_count
+            OR NEW.gross_weight > policy.maximum_gross_weight
+            OR NEW.net_weight > policy.maximum_net_weight
+            OR NEW.cash_weight < policy.minimum_cash_weight
+            OR NEW.turnover_weight > policy.maximum_turnover
+            OR EXISTS (
+                SELECT 1 FROM mra.portfolio_line AS line
+                WHERE line.portfolio_proposal_id = NEW.portfolio_proposal_id
+                  AND line.proposed_weight > policy.maximum_single_weight
+            )
+            OR (
+                (SELECT count(*) FROM mra.portfolio_line AS line
+                 WHERE line.portfolio_proposal_id = NEW.portfolio_proposal_id
+                   AND line.opportunity_status <> 'NOT_ESTIMABLE')
+                < policy.minimum_estimable_count
+                AND NEW.status <> 'NOT_ESTIMABLE'
+            )
+          )
+    ) THEN
+        RAISE EXCEPTION 'Portfolio proposal violates frozen policy'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.guard_risk_rule_insert()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM mra.risk_policy WHERE risk_policy_id = NEW.risk_policy_id) THEN
+        RAISE EXCEPTION 'RiskPolicy is already frozen' USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.validate_risk_policy_closure()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE actual_count integer;
+DECLARE minimum_ordinal integer;
+DECLARE maximum_ordinal integer;
+DECLARE actual_hash text;
+BEGIN
+    SELECT count(*), min(ordinal), max(ordinal),
+           mra.canonical_sha256(replace(json_agg(json_build_object(
+               'content_sha256', content_sha256,
+               'ordinal', ordinal,
+               'risk_rule_id', risk_rule_id
+           ) ORDER BY ordinal)::text, ' ', ''))
+      INTO actual_count, minimum_ordinal, maximum_ordinal, actual_hash
+    FROM mra.risk_rule WHERE risk_policy_id = NEW.risk_policy_id;
+    IF actual_count <> NEW.rule_count OR minimum_ordinal <> 1
+       OR maximum_ordinal <> NEW.rule_count
+       OR actual_hash <> NEW.rule_roster_sha256 THEN
+        RAISE EXCEPTION 'RiskPolicy rule roster is incomplete'
+            USING ERRCODE = '55000';
+    END IF;
+    IF NEW.version > 1 AND NOT EXISTS (
+        SELECT 1 FROM mra.risk_policy AS predecessor
+        WHERE predecessor.risk_policy_id = NEW.supersedes_policy_id
+          AND predecessor.policy_code = NEW.policy_code
+          AND predecessor.version + 1 = NEW.version
+          AND predecessor.frozen_at < NEW.frozen_at
+    ) THEN
+        RAISE EXCEPTION 'RiskPolicy supersession is not immediate and ordered'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.guard_risk_reason_insert()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM mra.risk_decision
+        WHERE risk_decision_id = NEW.risk_decision_id
+    ) THEN
+        RAISE EXCEPTION 'RiskDecision is already frozen' USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.validate_risk_decision_closure()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE actual_count integer;
+DECLARE minimum_ordinal integer;
+DECLARE maximum_ordinal integer;
+DECLARE actual_hash text;
+DECLARE expected_status text;
+BEGIN
+    SELECT count(*), min(ordinal), max(ordinal),
+           mra.canonical_sha256(replace(json_agg(json_build_object(
+               'content_sha256', content_sha256,
+               'ordinal', ordinal,
+               'risk_reason_id', risk_reason_id
+           ) ORDER BY ordinal)::text, ' ', ''))
+      INTO actual_count, minimum_ordinal, maximum_ordinal, actual_hash
+    FROM mra.risk_reason WHERE risk_decision_id = NEW.risk_decision_id;
+    IF actual_count <> NEW.reason_count OR minimum_ordinal <> 1
+       OR maximum_ordinal <> NEW.reason_count
+       OR actual_hash <> NEW.reason_roster_sha256
+       OR EXISTS (
+           SELECT 1 FROM mra.risk_rule AS rule
+           WHERE rule.risk_policy_id = NEW.risk_policy_id
+             AND rule.rule_scope = 'GLOBAL'
+             AND NOT EXISTS (
+                 SELECT 1 FROM mra.risk_reason AS reason
+                 WHERE reason.risk_decision_id = NEW.risk_decision_id
+                   AND reason.risk_rule_id = rule.risk_rule_id
+                   AND reason.portfolio_line_id IS NULL
+             )
+       )
+       OR EXISTS (
+           SELECT 1 FROM mra.risk_rule AS rule
+           CROSS JOIN mra.portfolio_line AS line
+           WHERE rule.risk_policy_id = NEW.risk_policy_id
+             AND rule.rule_scope = 'LINE'
+             AND line.portfolio_proposal_id = NEW.portfolio_proposal_id
+             AND NOT EXISTS (
+                 SELECT 1 FROM mra.risk_reason AS reason
+                 WHERE reason.risk_decision_id = NEW.risk_decision_id
+                   AND reason.risk_rule_id = rule.risk_rule_id
+                   AND reason.portfolio_line_id = line.portfolio_line_id
+             )
+       ) THEN
+        RAISE EXCEPTION 'Risk reason Cartesian roster is incomplete'
+            USING ERRCODE = '55000';
+    END IF;
+    SELECT CASE
+             WHEN EXISTS (
+               SELECT 1 FROM mra.risk_reason AS reason
+               JOIN mra.risk_rule AS rule ON rule.risk_rule_id = reason.risk_rule_id
+               WHERE reason.risk_decision_id = NEW.risk_decision_id
+                 AND reason.result = 'FAIL' AND rule.severity = 'REJECT'
+             ) THEN 'REJECTED'
+             WHEN EXISTS (
+               SELECT 1 FROM mra.risk_reason AS reason
+               WHERE reason.risk_decision_id = NEW.risk_decision_id
+                 AND reason.result IN ('UNKNOWN', 'FAIL')
+             ) THEN 'UNKNOWN'
+             WHEN proposal.status = 'NO_ACTION' THEN 'NO_ACTION'
+             WHEN proposal.status = 'NOT_ESTIMABLE' THEN 'UNKNOWN'
+             ELSE 'AUTHORIZED'
+           END INTO expected_status
+      FROM mra.portfolio_proposal AS proposal
+     WHERE proposal.portfolio_proposal_id = NEW.portfolio_proposal_id;
+    IF expected_status IS NULL OR NEW.status <> expected_status THEN
+        RAISE EXCEPTION 'Risk decision status differs from complete reasons'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER opportunity_insert_guard BEFORE INSERT ON mra.opportunity
+FOR EACH ROW EXECUTE FUNCTION mra.guard_opportunity_child_insert();
+CREATE TRIGGER opportunity_context_insert_guard BEFORE INSERT ON mra.opportunity_context
+FOR EACH ROW EXECUTE FUNCTION mra.guard_opportunity_child_insert();
+CREATE CONSTRAINT TRIGGER opportunity_set_closure_guard
+AFTER INSERT ON mra.opportunity_set DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW EXECUTE FUNCTION mra.validate_opportunity_set_closure();
+CREATE TRIGGER opportunity_set_append_only BEFORE UPDATE OR DELETE ON mra.opportunity_set
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER opportunity_append_only BEFORE UPDATE OR DELETE ON mra.opportunity
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER opportunity_context_append_only BEFORE UPDATE OR DELETE ON mra.opportunity_context
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER thesis_condition_insert_guard BEFORE INSERT ON mra.thesis_condition
+FOR EACH ROW EXECUTE FUNCTION mra.guard_thesis_condition_insert();
+CREATE CONSTRAINT TRIGGER thesis_closure_guard
+AFTER INSERT ON mra.thesis DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW EXECUTE FUNCTION mra.validate_thesis_closure();
+CREATE TRIGGER thesis_append_only BEFORE UPDATE OR DELETE ON mra.thesis
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER thesis_condition_append_only BEFORE UPDATE OR DELETE ON mra.thesis_condition
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER portfolio_policy_append_only BEFORE UPDATE OR DELETE ON mra.portfolio_policy
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE CONSTRAINT TRIGGER portfolio_policy_supersession_guard
+AFTER INSERT ON mra.portfolio_policy DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW EXECUTE FUNCTION mra.validate_portfolio_policy_supersession();
+CREATE TRIGGER portfolio_line_insert_guard BEFORE INSERT ON mra.portfolio_line
+FOR EACH ROW EXECUTE FUNCTION mra.guard_portfolio_line_insert();
+CREATE CONSTRAINT TRIGGER portfolio_proposal_closure_guard
+AFTER INSERT ON mra.portfolio_proposal DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW EXECUTE FUNCTION mra.validate_portfolio_proposal_closure();
+CREATE TRIGGER portfolio_proposal_append_only BEFORE UPDATE OR DELETE ON mra.portfolio_proposal
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER portfolio_line_append_only BEFORE UPDATE OR DELETE ON mra.portfolio_line
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER risk_rule_insert_guard BEFORE INSERT ON mra.risk_rule
+FOR EACH ROW EXECUTE FUNCTION mra.guard_risk_rule_insert();
+CREATE CONSTRAINT TRIGGER risk_policy_closure_guard
+AFTER INSERT ON mra.risk_policy DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW EXECUTE FUNCTION mra.validate_risk_policy_closure();
+CREATE TRIGGER risk_policy_append_only BEFORE UPDATE OR DELETE ON mra.risk_policy
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER risk_rule_append_only BEFORE UPDATE OR DELETE ON mra.risk_rule
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER risk_reason_insert_guard BEFORE INSERT ON mra.risk_reason
+FOR EACH ROW EXECUTE FUNCTION mra.guard_risk_reason_insert();
+CREATE CONSTRAINT TRIGGER risk_decision_closure_guard
+AFTER INSERT ON mra.risk_decision DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW EXECUTE FUNCTION mra.validate_risk_decision_closure();
+CREATE TRIGGER risk_decision_append_only BEFORE UPDATE OR DELETE ON mra.risk_decision
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER risk_reason_append_only BEFORE UPDATE OR DELETE ON mra.risk_reason
 FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();

@@ -215,11 +215,15 @@ be introduced as a placeholder or nullable future branch.
 | `decision_reference_observation` | independent initial-reference fact | unique commitment; value, availability and finality states separate; exactly one Decision-visible Market bar revision or Source Gap shape; `known_at <= DecisionTime` |
 | `decision_run_research_qualification_roster` | complete later-generation Research Qualification input envelope | exactly one per Run after this real branch exists; zero-or-more member count/hash and reconciliation state prove an intentional empty roster |
 | `decision_run_research_qualification_member` | concrete adopted Research Qualification | unique roster/Qualification/role; matching-purpose `ADMITTED` decision effective/known and non-superseded at DecisionTime; every source Outcome generation strictly earlier |
-| `context_assessment` | typed Regime/ETF/Theme/Capital state | unique decision run/kind/scope; state/status/evidence |
-| `context_metric` | typed metric supporting Context | unique assessment/metric; value/status/evidence |
-| `signal` | setup assertion for one Candidate | unique decision run/candidate/signal kind/version |
+| `context_policy` | immutable typed Context rule set | unique code/version/hash; complete metric-rule count/hash and direct supersession |
+| `context_policy_metric` | one relational Context metric rule | unique policy/code/order; measure/reducer/operator/threshold/source/minimum/missingness typed |
+| `context_assessment` | typed Regime/ETF/Theme/Capital/Breadth state | unique decision run/policy/kind/scope; complete Candidate scope and PostgreSQL-time status |
+| `context_metric` | typed metric supporting Context | unique assessment/policy metric; Decimal value or explicit unavailable/not-estimable/failed status |
+| `context_metric_source` | complete Decision-visible Market input roster | unique metric/source order; exactly one concrete Market revision/gap shape and `known_at <= DecisionTime` |
+| `signal` | setup assertion for one Candidate | unique decision run/candidate/strategy version; complete Candidate roster and explicit no-signal/wait/unknown/not-estimable |
+| `signal_context_binding` | exact required Context used by Signal | unique signal/context kind; concrete same-Run assessment FK |
 | `forecast` | Target/checkpoint-bound forecast envelope | unique Decision Run/commitment/forecast kind; no Model requirement |
-| `forecast_estimate` | checkpoint/metric estimate and uncertainty | unique forecast/checkpoint/estimate kind; calibration status |
+| `forecast_estimate` | checkpoint/metric Decimal estimate and uncertainty | unique forecast/checkpoint/metric/estimate kind; V1 is uncalibrated/not-applicable only |
 | `forecast_model_binding` | optional model-backed Forecast branch | unique Forecast and concrete Model Version known by DecisionTime whose training Outcome generations are strictly earlier; absent for rules/heuristics, never nullable placeholder; later Model admission remains subject-specific |
 | `opportunity` | exact decision evidence binding; never Risk authorization | unique decision run/candidate/strategy version; required FK consistency; no `risk_decision` FK |
 | `thesis` | immutable falsifiable thesis revision | opportunity/revision unique; status follows typed lifecycle |
@@ -231,8 +235,8 @@ be introduced as a placeholder or nullable future branch.
 | `portfolio_line` | instrument/strategy proposed allocation | unique proposal/opportunity; signed quantity/weight constraints |
 | `risk_policy` | immutable Risk limits/evidence requirements | unique code/version/hash |
 | `risk_rule` | ordered typed limit/evidence rule within a Risk policy | unique policy/code/ordinal; subject, operator, unit and missing behavior constrained |
-| `risk_decision` | accepted/rejected/unknown authorization | unique proposal/account/policy/decision time; versioned account evidence |
-| `risk_reason` | typed binding/limit result | unique decision/rule/instrument; observed/limit/status/evidence |
+| `risk_decision` | Decision-Support-only authorized/rejected/unknown/no-action result | unique proposal/policy/request; constant scope authorizes no Account/Intent/Broker/trading action |
+| `risk_reason` | complete typed rule/input result | unique decision/rule/line scope; observed/limit/status/evidence, including unknown/not-applicable |
 
 ### Market Outcome, TradeOutcome and Attribution
 

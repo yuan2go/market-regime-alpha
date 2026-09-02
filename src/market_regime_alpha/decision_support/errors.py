@@ -15,6 +15,34 @@ class DecisionReferenceResolutionError(DecisionAuthorityIntegrityError):
     code = "DECISION_REFERENCE_RESOLUTION_FAILED"
 
 
+class DecisionQualificationResolutionError(DecisionAuthorityIntegrityError):
+    code = "DECISION_QUALIFICATION_RESOLUTION_FAILED"
+
+
+class ContextAuthorityIntegrityError(DecisionAuthorityIntegrityError):
+    code = "CONTEXT_AUTHORITY_INTEGRITY_FAILED"
+
+
+class ContextAlreadyAssessedError(ConflictError):
+    code = "CONTEXT_ALREADY_ASSESSED"
+
+
+class StrategyAuthorityIntegrityError(DecisionAuthorityIntegrityError):
+    code = "STRATEGY_AUTHORITY_INTEGRITY_FAILED"
+
+
+class StrategyAlreadyRegisteredError(ConflictError):
+    code = "STRATEGY_ALREADY_REGISTERED"
+
+
+class InferenceAuthorityIntegrityError(DecisionAuthorityIntegrityError):
+    code = "INFERENCE_AUTHORITY_INTEGRITY_FAILED"
+
+
+class InferenceAlreadyProducedError(ConflictError):
+    code = "INFERENCE_ALREADY_PRODUCED"
+
+
 class DecisionTransactionRetryExhaustedError(ConflictError):
     code = "DECISION_TRANSACTION_RETRY_EXHAUSTED"
 
@@ -33,9 +61,16 @@ class DecisionCommitOutcomeUnknownError(RuntimeError):
 
 __all__ = [
     "CandidateSetAlreadyCommittedError",
+    "ContextAlreadyAssessedError",
+    "ContextAuthorityIntegrityError",
     "DecisionAuthorityIntegrityError",
     "DecisionCommitOutcomeUnknownError",
     "DecisionRetryableTransactionError",
     "DecisionReferenceResolutionError",
+    "DecisionQualificationResolutionError",
     "DecisionTransactionRetryExhaustedError",
+    "InferenceAlreadyProducedError",
+    "InferenceAuthorityIntegrityError",
+    "StrategyAlreadyRegisteredError",
+    "StrategyAuthorityIntegrityError",
 ]

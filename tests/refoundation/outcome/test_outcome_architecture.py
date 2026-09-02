@@ -114,7 +114,7 @@ def test_outcome_postgres_adapters_have_no_provider_or_legacy_dependency() -> No
     assert "current_bar" not in preparation
 
 
-def test_wp10_boundary_now_admits_wp11_and_wp12_but_no_later_authority_tables() -> None:
+def test_outcome_boundary_admits_wp11_through_wp13_but_no_later_authority_tables() -> None:
     baseline = (POSTGRES / "migrations" / "001_baseline.sql").read_text(
         encoding="utf-8"
     )
@@ -137,6 +137,6 @@ def test_wp10_boundary_now_admits_wp11_and_wp12_but_no_later_authority_tables() 
         "evaluation_dataset",
         "model",
         "model_version",
-        "context",
+        "calibration",
     ):
-        assert f"CREATE TABLE mra.{table}" not in baseline
+        assert f"CREATE TABLE mra.{table} (" not in baseline

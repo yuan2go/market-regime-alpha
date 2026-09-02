@@ -13,7 +13,10 @@ from market_regime_alpha.decision_support.application import (
 from market_regime_alpha.decision_support.domain import (
     OpenDecisionRunRequest,
     PreparedDecisionInputs,
+    QualificationInputRole,
+    ResearchPurpose,
     RequestedDecisionTarget,
+    RequestedResearchQualification,
 )
 from market_regime_alpha.decision_support.ports import DecisionRunReconciliation
 from market_regime_alpha.decision_support.errors import (
@@ -32,6 +35,9 @@ from tests.refoundation.decision_support.test_decision_domain import (
     _runtime,
     _target_snapshot,
     _uuid,
+)
+from tests.refoundation.decision_support.test_wp13_qualification_roster_domain import (
+    _prepared as _prepared_qualification,
 )
 
 
@@ -83,11 +89,17 @@ class _DecisionRuns:
             actual_target_count=authority.target_count,
             actual_commitment_count=authority.commitment_count,
             actual_reference_count=authority.reference_count,
+            actual_research_qualification_count=(
+                authority.research_qualification_count
+            ),
             missing_commitment_count=0,
             extra_commitment_count=0,
             candidate_roster_sha256=authority.candidate_roster_sha256,
             target_roster_sha256=authority.target_roster_sha256,
             commitment_roster_sha256=authority.commitment_roster_sha256,
+            research_qualification_roster_sha256=(
+                authority.research_qualification_roster_sha256
+            ),
             matched=True,
         )
 
@@ -269,6 +281,7 @@ def test_open_decision_run_uses_one_transaction_and_exact_replay_skips_preparati
         targets=(_target_snapshot(),),
         references=_references(),
         runtime=_runtime(),
+        research_qualifications=(),
     )
     preparation = _Preparation(prepared)
     query = _Query()
@@ -297,6 +310,8 @@ def test_open_decision_run_uses_one_transaction_and_exact_replay_skips_preparati
                 ),
             ),
         ),
+        research_purpose=ResearchPurpose.DISCOVERY,
+        research_qualifications=(),
     )
 
     first = application.open_decision_run(request, _context(), runtime_claim=_claim())
@@ -311,6 +326,57 @@ def test_open_decision_run_uses_one_transaction_and_exact_replay_skips_preparati
     assert state["commits"] == 1
     assert state["locks"][0][2] == "OPEN_DECISION_RUN"
     assert state["audits"][0]["action"] == "OPEN_DECISION_RUN"
+
+
+def test_open_decision_run_freezes_exact_qualification_and_replay_never_reresolves() -> None:
+    qualification = _prepared_qualification()
+    prepared = PreparedDecisionInputs(
+        candidate_set=_candidate_snapshot(),
+        targets=(_target_snapshot(),),
+        references=_references(),
+        runtime=_runtime(),
+        research_qualifications=(qualification,),
+    )
+    preparation = _Preparation(prepared)
+    query = _Query()
+    state: dict[str, Any] = {}
+    identities = iter(range(2200, 2300))
+    application = DecisionSupportApplication(
+        preparation,
+        _UowProvider(state, query),
+        query,
+        id_factory=lambda: _uuid(next(identities)),
+        clock=lambda: datetime(2026, 8, 28, 6, 56, tzinfo=UTC),
+    )
+    request = OpenDecisionRunRequest(
+        candidate_set_id=prepared.candidate_set.candidate_set_id,
+        targets=(
+            RequestedDecisionTarget(
+                target_definition_id=prepared.targets[0].target_definition_id,
+                reference_provider_product_id=(
+                    prepared.targets[0].reference_provider_product.provider_product_id
+                ),
+            ),
+        ),
+        research_purpose=ResearchPurpose.DISCOVERY,
+        research_qualifications=(
+            RequestedResearchQualification(
+                research_qualification_decision_id=(
+                    qualification.research_qualification_decision_id
+                ),
+                role=QualificationInputRole.PRIMARY,
+            ),
+        ),
+    )
+
+    first = application.open_decision_run(request, _context(), runtime_claim=_claim())
+    replay = application.open_decision_run(request, _context(), runtime_claim=_claim())
+
+    assert first.research_purpose == "DISCOVERY"
+    assert first.research_qualification_count == 1
+    assert replay == first.as_replay()
+    assert preparation.calls == 1
+    assert state["authority"].research_qualification_roster.members[0].source == qualification
 
 
 @pytest.mark.parametrize(
@@ -347,6 +413,7 @@ def test_open_decision_run_rejects_empty_target_roster_before_preparation() -> N
         targets=(_target_snapshot(),),
         references=_references(),
         runtime=_runtime(),
+        research_qualifications=(),
     )
     preparation = _Preparation(prepared)
     query = _Query()
@@ -362,6 +429,8 @@ def test_open_decision_run_rejects_empty_target_roster_before_preparation() -> N
             OpenDecisionRunRequest(
                 candidate_set_id=prepared.candidate_set.candidate_set_id,
                 targets=(),
+                research_purpose=ResearchPurpose.DISCOVERY,
+                research_qualifications=(),
             ),
             _context(),
             runtime_claim=_claim(),
@@ -375,6 +444,7 @@ def test_open_decision_run_retries_whole_transaction_with_frozen_inputs() -> Non
         targets=(_target_snapshot(),),
         references=_references(),
         runtime=_runtime(),
+        research_qualifications=(),
     )
     request = OpenDecisionRunRequest(
         candidate_set_id=prepared.candidate_set.candidate_set_id,
@@ -386,6 +456,8 @@ def test_open_decision_run_retries_whole_transaction_with_frozen_inputs() -> Non
                 ),
             ),
         ),
+        research_purpose=ResearchPurpose.DISCOVERY,
+        research_qualifications=(),
     )
     preparation = _Preparation(prepared)
     query = _Query()
@@ -413,6 +485,7 @@ def test_retry_exhaustion_records_one_terminal_failure_after_business_rollbacks(
         targets=(_target_snapshot(),),
         references=_references(),
         runtime=_runtime(),
+        research_qualifications=(),
     )
     request = OpenDecisionRunRequest(
         candidate_set_id=prepared.candidate_set.candidate_set_id,
@@ -424,6 +497,8 @@ def test_retry_exhaustion_records_one_terminal_failure_after_business_rollbacks(
                 ),
             ),
         ),
+        research_purpose=ResearchPurpose.DISCOVERY,
+        research_qualifications=(),
     )
     preparation = _Preparation(prepared)
     query = _Query()
@@ -457,6 +532,7 @@ def test_unknown_commit_outcome_is_resolved_by_exact_authority_replay() -> None:
         targets=(_target_snapshot(),),
         references=_references(),
         runtime=_runtime(),
+        research_qualifications=(),
     )
     request = OpenDecisionRunRequest(
         candidate_set_id=prepared.candidate_set.candidate_set_id,
@@ -468,6 +544,8 @@ def test_unknown_commit_outcome_is_resolved_by_exact_authority_replay() -> None:
                 ),
             ),
         ),
+        research_purpose=ResearchPurpose.DISCOVERY,
+        research_qualifications=(),
     )
     preparation = _Preparation(prepared)
     query = _Query()

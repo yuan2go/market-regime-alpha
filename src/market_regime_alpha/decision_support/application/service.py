@@ -57,6 +57,9 @@ class OpenDecisionRunResult:
     target_count: int
     commitment_count: int
     reference_count: int
+    research_purpose: str
+    research_qualification_count: int
+    research_qualification_roster_sha256: str
     candidate_roster_sha256: str
     target_roster_sha256: str
     commitment_roster_sha256: str
@@ -109,6 +112,8 @@ class DecisionSupportApplication:
                 "actor_type": context.actor_type,
                 "candidate_set_id": request.candidate_set_id,
                 "reason_code": context.reason_code,
+                "research_purpose": request.research_purpose,
+                "research_qualification_roster": request.research_qualifications,
                 "runtime_run_id": runtime_claim.run_id,
                 "target_roster": request.targets,
             }
@@ -287,6 +292,8 @@ class DecisionSupportApplication:
                 targets=prepared.targets,
                 references=prepared.references,
                 runtime=prepared.runtime,
+                research_purpose=request.research_purpose,
+                research_qualifications=prepared.research_qualifications,
                 request_identity=context.idempotency_key,
                 request_sha256=request_hash,
                 request_received_at=request_received_at,
@@ -294,6 +301,10 @@ class DecisionSupportApplication:
                 actor_type=context.actor_type.value,
                 actor_id=context.actor_id,
                 reason_code=context.reason_code,
+                qualification_roster_id=identities.qualification_roster_id,
+                qualification_member_id_factory=(
+                    identities.qualification_member_id
+                ),
                 target_id_factory=identities.target_id,
                 commitment_id_factory=identities.commitment_id,
                 observation_id_factory=identities.observation_id,
@@ -309,12 +320,16 @@ class DecisionSupportApplication:
                 or reconciliation.actual_commitment_count
                 != authority.commitment_count
                 or reconciliation.actual_reference_count != authority.reference_count
+                or reconciliation.actual_research_qualification_count
+                != authority.research_qualification_count
                 or reconciliation.candidate_roster_sha256
                 != authority.candidate_roster_sha256
                 or reconciliation.target_roster_sha256
                 != authority.target_roster_sha256
                 or reconciliation.commitment_roster_sha256
                 != authority.commitment_roster_sha256
+                or reconciliation.research_qualification_roster_sha256
+                != authority.research_qualification_roster_sha256
             ):
                 raise DecisionAuthorityIntegrityError(
                     "Decision Run relational closure did not reconcile"
@@ -377,9 +392,22 @@ class DecisionSupportApplication:
             )
             for item in authority.targets
         )
+        requested_qualifications = tuple(
+            (item.research_qualification_decision_id, item.role)
+            for item in request.research_qualifications
+        )
+        persisted_qualifications = tuple(
+            (
+                item.source.research_qualification_decision_id,
+                item.source.role,
+            )
+            for item in authority.research_qualification_roster.members
+        )
         exact = (
             authority.request_identity == context.idempotency_key
             and requested_targets == persisted_targets
+            and authority.research_purpose is request.research_purpose
+            and requested_qualifications == persisted_qualifications
             and authority.runtime.run_id == runtime_claim.run_id
             and authority.actor_type == context.actor_type.value
             and authority.actor_id == context.actor_id
@@ -406,6 +434,8 @@ class _DecisionIdentities:
     target_ids: dict[UUID, UUID]
     commitment_ids: dict[tuple[UUID, UUID], UUID]
     observation_ids: dict[UUID, UUID]
+    qualification_roster_id: UUID
+    qualification_member_ids: dict[UUID, UUID]
 
     @classmethod
     def create(
@@ -425,6 +455,10 @@ class _DecisionIdentities:
             commitment_id: id_factory()
             for commitment_id in commitment_ids.values()
         }
+        qualification_member_ids = {
+            item.research_qualification_decision_id: id_factory()
+            for item in prepared.research_qualifications
+        }
         return cls(
             decision_run_id=id_factory(),
             receipt_id=id_factory(),
@@ -432,6 +466,8 @@ class _DecisionIdentities:
             target_ids=target_ids,
             commitment_ids=commitment_ids,
             observation_ids=observation_ids,
+            qualification_roster_id=id_factory(),
+            qualification_member_ids=qualification_member_ids,
         )
 
     def target_id(self, target, ordinal):
@@ -443,6 +479,12 @@ class _DecisionIdentities:
 
     def observation_id(self, commitment_id):
         return self.observation_ids[commitment_id]
+
+    def qualification_member_id(self, qualification, ordinal):
+        del ordinal
+        return self.qualification_member_ids[
+            qualification.research_qualification_decision_id
+        ]
 
 
 def _validate_runtime_claim(
@@ -473,6 +515,11 @@ def _authority_result_hash(authority: DecisionRunAuthority) -> str:
             "decision_run_id": authority.decision_run_id,
             "definition_summary_sha256": authority.definition_summary_sha256,
             "reference_count": authority.reference_count,
+            "research_purpose": authority.research_purpose,
+            "research_qualification_count": authority.research_qualification_count,
+            "research_qualification_roster_sha256": (
+                authority.research_qualification_roster_sha256
+            ),
             "runtime_attempt_id": authority.runtime.attempt_id,
             "runtime_fence_token": authority.runtime.fence_token,
             "runtime_run_id": authority.runtime.run_id,
@@ -497,6 +544,11 @@ def _result(
         target_count=authority.target_count,
         commitment_count=authority.commitment_count,
         reference_count=authority.reference_count,
+        research_purpose=authority.research_purpose.value,
+        research_qualification_count=authority.research_qualification_count,
+        research_qualification_roster_sha256=(
+            authority.research_qualification_roster_sha256
+        ),
         candidate_roster_sha256=authority.candidate_roster_sha256,
         target_roster_sha256=authority.target_roster_sha256,
         commitment_roster_sha256=authority.commitment_roster_sha256,

@@ -13,6 +13,7 @@ import pytest
 
 from market_regime_alpha.decision_support.domain import (
     OpenDecisionRunRequest,
+    ResearchPurpose,
     RequestedDecisionTarget,
 )
 from market_regime_alpha.infrastructure.postgres.outcome_uow import (
@@ -147,6 +148,8 @@ def _open_decision(stack, target):
                     reference_provider_product_id=stack.product.provider_product_id,
                 ),
             ),
+            research_purpose=ResearchPurpose.DISCOVERY,
+            research_qualifications=(),
         ),
         _context("wp10-open-decision", "OPEN_DECISION_RUN"),
         runtime_claim=claim,

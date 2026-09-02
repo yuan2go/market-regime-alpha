@@ -16,6 +16,7 @@ from market_regime_alpha.decision_support.application import (
 from market_regime_alpha.decision_support.domain import (
     DecisionRunMismatchKind,
     OpenDecisionRunRequest,
+    ResearchPurpose,
     RequestedDecisionTarget,
 )
 from market_regime_alpha.decision_support.errors import (
@@ -317,6 +318,8 @@ def _open_default_decision(stack: object, *, key_prefix: str):
                 ),
             ),
         ),
+        research_purpose=ResearchPurpose.DISCOVERY,
+        research_qualifications=(),
     )
     result = _application(stack).open_decision_run(
         request,
@@ -380,6 +383,8 @@ def test_open_decision_run_closes_real_cross_product_and_replays_exactly(
                 reference_provider_product_id=stack.product.provider_product_id,
             ),
         ),
+        research_purpose=ResearchPurpose.DISCOVERY,
+        research_qualifications=(),
     )
     context = _research._context("decision-open-command", "OPEN_DECISION_RUN")
     application = _application(stack)
@@ -460,6 +465,8 @@ def test_ordered_multi_target_roster_closes_full_relational_cross_product(
             )
             for target in (second_target, first_target)
         ),
+        research_purpose=ResearchPurpose.DISCOVERY,
+        research_qualifications=(),
     )
 
     result = _application(stack).open_decision_run(
@@ -515,6 +522,8 @@ def test_open_decision_run_freezes_exact_source_gap_without_value_fallback(
                 reference_provider_product_id=stack.product.provider_product_id,
             ),
         ),
+        research_purpose=ResearchPurpose.DISCOVERY,
+        research_qualifications=(),
     )
 
     result = _application(stack).open_decision_run(
@@ -613,6 +622,8 @@ def test_open_decision_run_closes_empty_candidate_set_with_non_empty_target_rost
                     ),
                 ),
             ),
+            research_purpose=ResearchPurpose.DISCOVERY,
+            research_qualifications=(),
         ),
         _research._context("decision-empty-open", "OPEN_DECISION_RUN"),
         runtime_claim=_candidate._claim(runtime, step_key="open-decision-run"),
@@ -660,6 +671,8 @@ def test_missing_exact_reference_rolls_back_authority_and_records_fenced_failure
                 reference_provider_product_id=stack.product.provider_product_id,
             ),
         ),
+        research_purpose=ResearchPurpose.DISCOVERY,
+        research_qualifications=(),
     )
 
     with pytest.raises(
@@ -742,6 +755,8 @@ def test_failure_recording_failure_rolls_back_incident_and_leaves_runtime_recove
                 reference_provider_product_id=stack.product.provider_product_id,
             ),
         ),
+        research_purpose=ResearchPurpose.DISCOVERY,
+        research_qualifications=(),
     )
 
     try:
@@ -824,6 +839,8 @@ def test_mid_write_database_failure_rolls_back_partial_roster_before_failure_rec
                 reference_provider_product_id=stack.product.provider_product_id,
             ),
         ),
+        research_purpose=ResearchPurpose.DISCOVERY,
+        research_qualifications=(),
     )
 
     with pytest.raises(DecisionAuthorityIntegrityError):
@@ -875,6 +892,8 @@ def test_stale_runtime_fence_produces_zero_decision_and_failure_writes(
                 reference_provider_product_id=stack.product.provider_product_id,
             ),
         ),
+        research_purpose=ResearchPurpose.DISCOVERY,
+        research_qualifications=(),
     )
 
     with pytest.raises(StaleFenceError):
@@ -918,6 +937,8 @@ def test_concurrent_identical_open_has_one_canonical_writer_and_exact_replay(
                 reference_provider_product_id=stack.product.provider_product_id,
             ),
         ),
+        research_purpose=ResearchPurpose.DISCOVERY,
+        research_qualifications=(),
     )
     context = _research._context(
         "decision-concurrent-open",
@@ -1010,6 +1031,8 @@ def test_candidate_set_allows_only_one_canonical_decision_run(
                 reference_provider_product_id=stack.product.provider_product_id,
             ),
         ),
+        research_purpose=ResearchPurpose.DISCOVERY,
+        research_qualifications=(),
     )
     application = _application(stack)
     application.open_decision_run(
@@ -1049,6 +1072,8 @@ def test_same_decision_request_identity_rejects_changed_target_roster_without_ne
                 reference_provider_product_id=stack.product.provider_product_id,
             ),
         ),
+        research_purpose=ResearchPurpose.DISCOVERY,
+        research_qualifications=(),
     )
     application.open_decision_run(
         first_request,
@@ -1119,6 +1144,8 @@ def test_concurrent_conflicting_target_rosters_choose_one_canonical_run_and_reje
                     reference_provider_product_id=stack.product.provider_product_id,
                 ),
             ),
+            research_purpose=ResearchPurpose.DISCOVERY,
+            research_qualifications=(),
         )
         for target in (first_target, second_target)
     )
@@ -1440,6 +1467,8 @@ def test_later_provider_repair_cannot_replace_frozen_decision_reference(
                 reference_provider_product_id=stack.product.provider_product_id,
             ),
         ),
+        research_purpose=ResearchPurpose.DISCOVERY,
+        research_qualifications=(),
     )
     context = _research._context(
         "decision-provider-repair-open",
@@ -1602,5 +1631,6 @@ def test_decision_replay_and_reconciliation_queries_have_bounded_index_plans(
         "decision_run_candidate_set_uk",
         "decision_run_candidate_set_idx",
         "decision_run_candidate_fk_idx",
+        "decision_run_context_authority_uk",
         "decision_run_request_uk",
     }

@@ -55,8 +55,7 @@ def test_candidate_schema_adds_exactly_five_selection_authority_tables(
                 "model",
                 "qualification",
                 "outcome",
-                "context",
-                "trade_outcome",
+                    "trade_outcome",
             )
         )
     }

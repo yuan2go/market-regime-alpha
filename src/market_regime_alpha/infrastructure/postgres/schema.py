@@ -228,10 +228,61 @@ EXPECTED_TARGET_DEFINITION_TABLES: Final[frozenset[str]] = frozenset(
 EXPECTED_DECISION_SUPPORT_TABLES: Final[frozenset[str]] = frozenset(
     {
         "decision_run",
+        "decision_run_research_qualification_roster",
+        "decision_run_research_qualification_member",
         "decision_run_target",
         "decision_target_commitment",
         "decision_reference_observation",
     }
+)
+
+EXPECTED_CONTEXT_TABLES: Final[frozenset[str]] = frozenset(
+    {
+        "context_policy",
+        "context_policy_metric",
+        "context_assessment",
+        "context_metric",
+        "context_metric_source",
+    }
+)
+
+EXPECTED_STRATEGY_TABLES: Final[frozenset[str]] = frozenset(
+    {
+        "strategy",
+        "strategy_version",
+        "strategy_context_requirement",
+        "strategy_signal_rule",
+        "strategy_forecast_rule",
+    }
+)
+
+EXPECTED_INFERENCE_TABLES: Final[frozenset[str]] = frozenset(
+    {
+        "signal_run",
+        "signal",
+        "signal_context_binding",
+        "forecast_run",
+        "forecast",
+        "forecast_estimate",
+    }
+)
+
+EXPECTED_OPPORTUNITY_TABLES: Final[frozenset[str]] = frozenset(
+    {
+        "opportunity_set",
+        "opportunity",
+        "opportunity_context",
+        "thesis",
+        "thesis_condition",
+    }
+)
+
+EXPECTED_PORTFOLIO_TABLES: Final[frozenset[str]] = frozenset(
+    {"portfolio_policy", "portfolio_proposal", "portfolio_line"}
+)
+
+EXPECTED_RISK_TABLES: Final[frozenset[str]] = frozenset(
+    {"risk_policy", "risk_rule", "risk_decision", "risk_reason"}
 )
 
 EXPECTED_OUTCOME_TABLES: Final[frozenset[str]] = frozenset(
@@ -286,6 +337,12 @@ EXPECTED_TARGET_TABLES: Final[frozenset[str]] = (
     | EXPECTED_RESEARCH_DEFINITION_TABLES
     | EXPECTED_TARGET_DEFINITION_TABLES
     | EXPECTED_DECISION_SUPPORT_TABLES
+    | EXPECTED_CONTEXT_TABLES
+    | EXPECTED_STRATEGY_TABLES
+    | EXPECTED_INFERENCE_TABLES
+    | EXPECTED_OPPORTUNITY_TABLES
+    | EXPECTED_PORTFOLIO_TABLES
+    | EXPECTED_RISK_TABLES
     | EXPECTED_OUTCOME_TABLES
     | EXPECTED_RESEARCH_VALIDITY_TABLES
     | EXPECTED_RESEARCH_QUALIFICATION_TABLES
@@ -1584,6 +1641,7 @@ __all__ = [
     "CatalogDriftError",
     "DatabaseIdentity",
     "EXPECTED_DECISION_SUPPORT_TABLES",
+    "EXPECTED_CONTEXT_TABLES",
     "EXPECTED_FOUNDATION_TABLES",
     "EXPECTED_MARKET_TABLES",
     "EXPECTED_OUTCOME_TABLES",

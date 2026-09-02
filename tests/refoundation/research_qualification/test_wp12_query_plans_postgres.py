@@ -195,6 +195,7 @@ def test_wp12_representative_queries_use_bounded_index_led_plans(
         },
         "generation_safe_admission": {
             "research_qualification_decision_pkey",
+            "research_qualification_decision_admission_uk",
         },
     }
     for label, explanation in plans.items():

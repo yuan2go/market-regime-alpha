@@ -21,6 +21,19 @@ class DecisionRuntimeMode(StrEnum):
     PROSPECTIVE = "PROSPECTIVE"
 
 
+class ResearchPurpose(StrEnum):
+    DISCOVERY = "DISCOVERY"
+    VALIDATION = "VALIDATION"
+    LOCKED_OOS = "LOCKED_OOS"
+    PROSPECTIVE = "PROSPECTIVE"
+
+
+class QualificationInputRole(StrEnum):
+    PRIMARY = "PRIMARY"
+    SUPPORTING = "SUPPORTING"
+    LIMITATION = "LIMITATION"
+
+
 class DecisionReferenceSourceKind(StrEnum):
     BAR_REVISION = "BAR_REVISION"
     SOURCE_GAP = "SOURCE_GAP"
@@ -63,4 +76,6 @@ __all__ = [
     "DecisionRunMismatchKind",
     "DecisionRunStatus",
     "DecisionRuntimeMode",
+    "QualificationInputRole",
+    "ResearchPurpose",
 ]
