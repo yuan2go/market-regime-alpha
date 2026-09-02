@@ -32,9 +32,9 @@ def failure_descriptor(*, operation: str, scope_id: str, request_hash: str) -> C
         error_class="COMMAND",
         error_code=f"{operation}_REJECTED",
         aggregate_kind="DECISION_SUPPORT_COMMAND",
-        failure_action="DECISION_SUPPORT_COMMAND_FAILED",
+        failure_action=f"{operation}_FAILED",
         rejection_command_kind="DECISION_SUPPORT_COMMAND_REJECTION",
-        rejection_action="DECISION_SUPPORT_COMMAND_REJECTED",
+        rejection_action=f"{operation}_REJECTED",
         rejection_key_prefix="decision-support-command-rejection",
     )
 
