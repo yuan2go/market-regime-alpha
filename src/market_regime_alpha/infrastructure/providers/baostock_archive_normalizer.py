@@ -29,6 +29,9 @@ from market_regime_alpha.market.domain import (
     TradingSession,
 )
 from market_regime_alpha.market.ports import NormalizerContract
+from market_regime_alpha.market.ports.revision_lineage import (
+    MarketRevisionLineageReadPort,
+)
 from market_regime_alpha.shared.financial import Money, Quantity, QuantityUnit
 from market_regime_alpha.shared.identity import InstrumentId, TradingSessionId
 
@@ -87,8 +90,13 @@ class BaoStockArchiveNormalizer:
         implementation_sha256="de8d3e7c5dc51a946580c6be27eea56bff53282769fc291175048c68db14821d",
     )
 
-    def __init__(self, expected_query: BaoStockArchiveQuery | None = None) -> None:
+    def __init__(
+        self,
+        expected_query: BaoStockArchiveQuery | None = None,
+        revision_lineage: MarketRevisionLineageReadPort | None = None,
+    ) -> None:
         self._expected_query = expected_query
+        self._revision_lineage = revision_lineage
 
     def normalize(self, capture: ProviderCapture, content: bytes) -> NormalizationBatch:
         envelope = self._decode(content)
@@ -230,6 +238,7 @@ class BaoStockArchiveNormalizer:
         rows = self._row_dicts(envelope, required)
         bars: list[MarketBarRevision] = []
         gaps: list[SourceGap] = []
+        observed_keys: set[tuple[str, BarTimeframe, datetime]] = set()
         for row in rows:
             if row["adjustflag"] != "3":
                 raise ValueError("archive bar must preserve RAW_UNADJUSTED price basis")
@@ -246,6 +255,10 @@ class BaoStockArchiveNormalizer:
                 event_end = datetime.strptime(row["time"], "%Y%m%d%H%M%S%f").replace(tzinfo=_SHANGHAI).astimezone(UTC)
                 event_start = event_end - timedelta(minutes=5)
                 timeframe = BarTimeframe.MINUTE_5
+            observation_key = (row["code"], timeframe, event_start)
+            if observation_key in observed_keys:
+                raise ValueError("BaoStock payload contains a duplicate bar observation")
+            observed_keys.add(observation_key)
             gap = self._bar_gap_if_needed(capture, row, session.session_id, timeframe, event_start, event_end)
             if gap is not None:
                 gaps.append(gap)
@@ -256,6 +269,21 @@ class BaoStockArchiveNormalizer:
                 )
                 volume = Quantity(Decimal(row["volume"]), QuantityUnit.SHARES)
                 turnover = Money(Decimal(row["amount"]), "CNY") if row["amount"] else None
+                head = (
+                    self._revision_lineage.market_bar_head(
+                        provider_product_id=capture.provider_product_id,
+                        instrument_id=a_share_instrument_id(row["code"]),
+                        session_id=session.session_id,
+                        timeframe=timeframe,
+                        price_basis=PriceBasis.RAW_UNADJUSTED,
+                        event_start=event_start,
+                        event_end=event_end,
+                    )
+                    if self._revision_lineage is not None
+                    else None
+                )
+                revision = 1 if head is None else head.revision + 1
+                supersedes = None if head is None else head.bar_revision_id
                 bar = MarketBarRevision(
                     bar_revision_id=uuid5(
                         NAMESPACE_URL,
@@ -269,8 +297,8 @@ class BaoStockArchiveNormalizer:
                     price_basis=PriceBasis.RAW_UNADJUSTED,
                     event_start=event_start,
                     event_end=event_end,
-                    revision=1,
-                    supersedes_revision_id=None,
+                    revision=revision,
+                    supersedes_revision_id=supersedes,
                     open=open_value,
                     high=high_value,
                     low=low_value,
@@ -294,7 +322,32 @@ class BaoStockArchiveNormalizer:
             else:
                 bars.append(bar)
         if not rows:
-            raise ValueError("history normalization requires a typed per-session absence disposition")
+            query = envelope.query
+            assert query.code is not None
+            assert query.start_date is not None and query.end_date is not None
+            if query.start_date != query.end_date:
+                raise ValueError(
+                    "multi-session history absence cannot be assigned to one exact Session"
+                )
+            exchange, _ = _parse_code(query.code)
+            session = _session(exchange, query.start_date, capture.capture_id)
+            timeframe = (
+                BarTimeframe.DAILY
+                if is_daily
+                else BarTimeframe.MINUTE_5
+            )
+            gaps.append(
+                self._bar_gap(
+                    capture,
+                    query.code,
+                    session.session_id,
+                    timeframe,
+                    session.open_at,
+                    session.close_at,
+                    GapKind.MISSING,
+                    GapReasonCode.NO_ROWS_RETURNED,
+                )
+            )
         return NormalizationBatch(
             source_capture_id=capture.capture_id,
             source_provider_product_id=capture.provider_product_id,

@@ -81,6 +81,7 @@ from market_regime_alpha.infrastructure.postgres.queries import (
     PostgresDecisionInputPreparationProvider,
     PostgresDecisionRunQueryProvider,
     PostgresMarketQueryProvider,
+    PostgresMarketRevisionLineageReadPort,
     PostgresOutcomeInputPreparationProvider,
     PostgresOutcomeQueryProvider,
     PostgresOutcomeVerificationProvider,
@@ -92,6 +93,7 @@ from market_regime_alpha.infrastructure.postgres.queries.decision_context_inputs
     PostgresContextInputPreparationProvider,
     PostgresContextQueryProvider,
 )
+from market_regime_alpha.market.ports import MarketRevisionLineageReadPort
 from market_regime_alpha.infrastructure.postgres.queries.decision_inference_inputs import (
     PostgresInferenceInputPreparationProvider,
     PostgresInferenceQueryProvider,
@@ -262,6 +264,7 @@ class TargetApplication:
     provider_qualifications: ProviderQualificationCommands
     provider_qualification_queries: ProviderQualificationQueryPort
     market_queries: MarketQueryProvider
+    market_revision_lineage: MarketRevisionLineageReadPort
     selection: SelectionApplication
     research_definitions: ResearchQualificationApplication
     research_partitions: ResearchPartitionCommands
@@ -347,6 +350,7 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
         ),
         provider_qualification_queries=PostgresProviderQualificationQueryPort(pool),
         market_queries=PostgresMarketQueryProvider(pool),
+        market_revision_lineage=PostgresMarketRevisionLineageReadPort(pool),
         selection=SelectionApplication(PostgresSelectionUnitOfWorkProvider(pool)),
         research_definitions=ResearchQualificationApplication(
             byte_store,

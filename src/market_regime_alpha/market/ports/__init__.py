@@ -16,6 +16,10 @@ from market_regime_alpha.market.ports.provider import (
     NormalizerContract,
     ProviderResponse,
 )
+from market_regime_alpha.market.ports.revision_lineage import (
+    MarketBarRevisionHead,
+    MarketRevisionLineageReadPort,
+)
 from market_regime_alpha.market.ports.archive_operations import (
     ArchiveCaptureDisposition,
     ArchiveOperationsReadPort,
@@ -62,6 +66,8 @@ __all__ = [
     "MarketArtifactByteStore",
     "MarketArtifactRepository",
     "MarketDatabaseClock",
+    "MarketBarRevisionHead",
+    "MarketRevisionLineageReadPort",
     "MarketNormalizer",
     "MarketProvider",
     "MarketProviderError",

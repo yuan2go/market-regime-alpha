@@ -24,6 +24,9 @@ from market_regime_alpha.infrastructure.postgres.queries.market import (
     PostgresMarketQueries,
     PostgresMarketQueryProvider,
 )
+from market_regime_alpha.infrastructure.postgres.queries.market_revision_lineage import (
+    PostgresMarketRevisionLineageReadPort,
+)
 from market_regime_alpha.infrastructure.postgres.queries.outcome_inputs import (
     PostgresOutcomeDependencyRepository,
     PostgresOutcomeInputPreparationProvider,
@@ -61,6 +64,7 @@ __all__ = [
     "PostgresDecisionRunVerificationProvider",
     "PostgresMarketQueries",
     "PostgresMarketQueryProvider",
+    "PostgresMarketRevisionLineageReadPort",
     "PostgresOutcomeDependencyRepository",
     "PostgresOutcomeInputPreparationProvider",
     "PostgresOutcomeQueryProvider",

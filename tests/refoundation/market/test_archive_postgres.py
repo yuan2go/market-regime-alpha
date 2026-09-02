@@ -310,6 +310,73 @@ def test_prospective_archive_cannot_package_a_historical_window(archive_stack) -
         commands.start(request, _context("prospective-invalid"))
 
 
+def test_prospective_slice_remains_open_for_repeated_observations(archive_stack) -> None:
+    commands, market, product, code, config, database_url = archive_stack
+    future_start = datetime.now(UTC) + timedelta(days=1)
+    base = _request(product, code, config)
+    archive_id = uuid4()
+    slice_plan = replace(
+        base.slices[0],
+        market_archive_slice_id=uuid4(),
+        event_window_start=future_start,
+        event_window_end=future_start + timedelta(hours=1),
+    )
+    capture_request = CaptureRequest(
+        provider_product_id=product.provider_product_id,
+        capture_key="wp17p-prospective-repeat",
+        resource="fixture://wp17p-prospective-repeat",
+        request_headers_hash="d" * 64,
+    )
+    slice_plan = replace(
+        slice_plan,
+        request_sha256=canonical_json_sha256(capture_request),
+    )
+    request = replace(
+        base,
+        market_archive_id=archive_id,
+        archive_code="wp17p-prospective-repeat",
+        lane=ArchiveLane.PROSPECTIVE_CONTEMPORANEOUS,
+        event_window_start=slice_plan.event_window_start,
+        event_window_end=slice_plan.event_window_end,
+        slices=(slice_plan,),
+    )
+    started = commands.start(request, _context("prospective-repeat-start"))
+
+    for ordinal in (1, 2):
+        captured = market.capture(
+            capture_request,
+            _BytesProvider(f'{{"observation":{ordinal}}}'.encode()),
+            _context(f"prospective-repeat-capture-{ordinal}"),
+        )
+        market.normalize(
+            captured.capture.capture_id,
+            _CapturedGapNormalizer(),
+            _context(f"prospective-repeat-normalize-{ordinal}"),
+        )
+        result = commands.record_capture_observation(
+            RecordArchiveCaptureObservationRequest(
+                market_archive_id=started.market_archive_id,
+                market_archive_slice_id=slice_plan.market_archive_slice_id,
+                capture_id=captured.capture.capture_id,
+                schedule_slot="POST_CLOSE" if ordinal == 1 else "LATER_VERIFICATION",
+                requested_at=captured.capture.temporal.capture_started_at
+                - timedelta(microseconds=1),
+            ),
+            _context(f"prospective-repeat-observe-{ordinal}"),
+        )
+        assert result.observation_ordinal == ordinal
+
+    pool = TargetPostgresPool(database_url, min_size=0, max_size=1)
+    try:
+        contract = PostgresArchiveOperationsReadPort(pool).load_slice_contract(
+            request.market_archive_id,
+            slice_plan.market_archive_slice_id,
+        )
+    finally:
+        pool.close()
+    assert contract.terminal_status is None
+
+
 def test_observation_gap_and_seal_preserve_complete_terminal_roster(archive_stack) -> None:
     commands, market, product, code, config, database_url = archive_stack
     request = _request(product, code, config)

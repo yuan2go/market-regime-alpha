@@ -25,6 +25,7 @@ from market_regime_alpha.market.domain import (
     SourceAvailabilityStatus,
     TemporalEnvelope,
 )
+from market_regime_alpha.market.ports import MarketBarRevisionHead
 from market_regime_alpha.shared.identity import ContentHash
 from market_regime_alpha.shared.time import DecisionTime, KnownTime
 
@@ -193,4 +194,88 @@ def test_payload_query_mismatch_and_non_raw_adjustflag_fail_closed() -> None:
         BaoStockArchiveNormalizer().normalize(
             capture,
             _payload(history, fields, [["2026-01-05", "20260105093500000", "sh.600000", "1", "1", "1", "1", "1", "1", "2"]]),
+        )
+
+
+def test_empty_single_session_history_becomes_typed_gap() -> None:
+    capture = _capture()
+    query = BaoStockArchiveQuery(
+        kind=BaoStockArchiveQueryKind.HISTORY_5M_RAW,
+        code="sh.600000",
+        start_date=date(2026, 1, 5),
+        end_date=date(2026, 1, 5),
+    )
+    fields = [
+        "date", "time", "code", "open", "high", "low", "close",
+        "volume", "amount", "adjustflag",
+    ]
+
+    batch = BaoStockArchiveNormalizer().normalize(
+        capture,
+        _payload(query, fields, []),
+    )
+
+    assert not batch.bars
+    assert batch.gaps[0].gap_kind is GapKind.MISSING
+    assert batch.gaps[0].reason_code is GapReasonCode.NO_ROWS_RETURNED
+    assert batch.gaps[0].session_id == a_share_session_id("XSHG", date(2026, 1, 5))
+
+
+class _RevisionLineage:
+    def __init__(self, head: MarketBarRevisionHead | None) -> None:
+        self.head = head
+
+    def market_bar_head(self, **kwargs):
+        return self.head
+
+
+def test_repeated_observation_appends_exact_market_revision_lineage() -> None:
+    capture = _capture()
+    query = BaoStockArchiveQuery(
+        kind=BaoStockArchiveQueryKind.HISTORY_5M_RAW,
+        code="sh.600000",
+        start_date=date(2026, 1, 5),
+        end_date=date(2026, 1, 5),
+    )
+    fields = [
+        "date", "time", "code", "open", "high", "low", "close",
+        "volume", "amount", "adjustflag",
+    ]
+    predecessor = uuid4()
+
+    batch = BaoStockArchiveNormalizer(
+        revision_lineage=_RevisionLineage(
+            MarketBarRevisionHead(predecessor, 3)
+        )
+    ).normalize(
+        capture,
+        _payload(
+            query,
+            fields,
+            [["2026-01-05", "20260105093500000", "sh.600000", "10", "10", "10", "10", "1", "10", "3"]],
+        ),
+    )
+
+    assert batch.bars[0].revision == 4
+    assert batch.bars[0].supersedes_revision_id == predecessor
+
+
+def test_duplicate_bar_in_one_payload_fails_closed() -> None:
+    capture = _capture()
+    query = BaoStockArchiveQuery(
+        kind=BaoStockArchiveQueryKind.HISTORY_5M_RAW,
+        code="sh.600000",
+        start_date=date(2026, 1, 5),
+        end_date=date(2026, 1, 5),
+    )
+    fields = [
+        "date", "time", "code", "open", "high", "low", "close",
+        "volume", "amount", "adjustflag",
+    ]
+    row = ["2026-01-05", "20260105093500000", "sh.600000", "10", "10", "10", "10", "1", "10", "3"]
+
+    with pytest.raises(ValueError, match="duplicate bar"):
+        BaoStockArchiveNormalizer().normalize(
+            capture,
+            _payload(query, fields, [row, row]),
         )

@@ -30,7 +30,7 @@ class PostgresArchiveOperationsReadPort:
                        CASE
                          WHEN resource.market_archive_resource_stop_id IS NOT NULL THEN 'RESOURCE_LIMIT'
                          WHEN gap.market_archive_slice_gap_id IS NOT NULL THEN gap.terminal_status
-                         WHEN EXISTS (
+                         WHEN root.lane = 'RETROSPECTIVE_BACKFILL' AND EXISTS (
                              SELECT 1 FROM mra.market_archive_capture_observation AS observation
                              WHERE observation.market_archive_slice_id = slice.market_archive_slice_id
                          ) THEN 'CAPTURED'
