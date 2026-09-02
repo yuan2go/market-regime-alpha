@@ -161,6 +161,7 @@ from market_regime_alpha.decision_support.application import (
     RiskCommands,
     StrategyCommands,
 )
+from market_regime_alpha.decision_support.ports import DecisionRunQueryProvider
 from market_regime_alpha.outcome.application import OutcomeApplication, OutcomeVerifier
 from market_regime_alpha.outcome.ports import OutcomeReadPort
 from market_regime_alpha.research_qualification.application import (
@@ -299,6 +300,7 @@ class TargetApplication:
     candidates: CandidateApplication
     candidate_queries: CandidateQueryProvider
     decision_support: DecisionSupportApplication
+    decision_runs: DecisionRunQueryProvider
     decision_contexts: ContextCommands
     decision_strategies: StrategyCommands
     decision_inference: InferenceCommands
@@ -430,6 +432,7 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
             PostgresDecisionRunQueryProvider(pool),
             exploratory_preparation=PostgresDecisionInputPreparationProvider(pool),
         ),
+        decision_runs=PostgresDecisionRunQueryProvider(pool),
         decision_contexts=ContextCommands(
             PostgresContextInputPreparationProvider(pool),
             PostgresContextUnitOfWorkProvider(pool),
