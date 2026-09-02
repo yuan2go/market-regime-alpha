@@ -5,7 +5,7 @@
 > **Owner:** Market Regime Alpha maintainers
 > **Generated At:** 2026-09-02 WP-12 exact-SHA engineering qualification reconciliation
 > **Repository Implementation Checkpoint:** `48949c87ad0241a8d60031137bc3aa8eb9887525`
-> **Merged Main Checkpoint:** `883f35835671ebbd7d977b35b36c59528d536990`
+> **Merged Main Checkpoint:** `6e0ad150057e43a89843eb4fb307e0373d5572ac`
 > **Containing Documentation Commit:** reported by the final handoff; this read model does not claim a self-referential Git SHA
 > **Previous Verified Snapshot:** merged WP-11 at `07151542f12a66d6e7da3e228e2dbf1d7d7771bb`
 > **Implementation Line Start:** `c3ac21ef1e13f2e8408d30b0481fa9b74c4f9539`
@@ -19,8 +19,9 @@
 This read model records the WP-12 Evaluation-bound Evidence, complete
 Experiment Assessment, purpose-specific Research Qualification, and
 generation-safe admission-read implementation and exact-SHA engineering
-qualification. The linked immutable Verification establishes the exit gate;
-the merged main SHA above remains the independently qualified WP-11 baseline.
+qualification. The linked immutable Verification establishes the exit gate and
+the merged main SHA above contains that exact WP-12 checkpoint. WP-13 Remaining
+Decision Support is authorized but not yet implemented in this snapshot.
 This read model is invalid after any source, migration, test, or composition change until
 regenerated. It cannot write business state or promote Provider, research,
 qualification, trading, or Production claims.

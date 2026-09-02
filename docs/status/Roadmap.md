@@ -24,8 +24,8 @@ Foundation
 → Market Target Outcome revision/settlement and read-only port
 → integrated WP-11 Research Partition/Experiment/Evaluation closure
 → Evidence, Research Assessment and Research Qualification
-→ optional Model/ModelVersion and Calibration
-→ remaining Decision Support, including optional model-backed Forecast binding
+→ remaining Decision Support with rule-based Forecast
+→ optional Model/ModelVersion and Calibration only when separately justified
 → Execution/Account, TradeOutcome and Attribution
 → Runtime/CLI Cutover → separately authorized Legacy deletion
 ```
@@ -37,13 +37,15 @@ Research Validity and Evaluation Closure work package covering Target/Outcome
 parity, Partition, Experiment, Evaluation Protocol/Run, controlled Outcome
 access, observations, and metrics. It is implemented and passes its exact-SHA
 engineering exit gate at `07151542f12a66d6e7da3e228e2dbf1d7d7771bb`.
-WP-11Q is merged in
-`origin/main@883f35835671ebbd7d977b35b36c59528d536990`. WP-12 now passes its
+WP-11Q and WP-12 are merged in
+`origin/main@6e0ad150057e43a89843eb4fb307e0373d5572ac`. WP-12 passes its
 independent exact-SHA engineering exit gate at
-`48949c87ad0241a8d60031137bc3aa8eb9887525`. The optional Model/Calibration
-branch is dependency-ready but not started or required. Every later row retains
-its own approval/exit gate; ordering never grants Runtime cutover, empirical
-promotion, broker authority, or Legacy deletion.
+`48949c87ad0241a8d60031137bc3aa8eb9887525`. WP-13 Remaining Decision
+Support is therefore dependency-ready and explicitly authorized. The optional
+Model/Calibration branch is skipped, not started, and not required for
+rule-based Forecast. Every later row retains its own approval/exit gate;
+ordering never grants Runtime cutover, empirical promotion, broker authority,
+or Legacy deletion.
 
 No stage begins canonical writes until its predecessor exit gate passes. Before
 Runtime/CLI Cutover, completed target modules are test-only and the old Runtime
@@ -64,9 +66,9 @@ availability-selected fallback.
 | **8. Market Target Outcome** | `EXIT_GATE_PASS / NOT_CUT_OVER` | one commitment-bound root, append-only full revisions, concrete source/observation/metric/reference-dependency/observation-dependency/reason children, correction/supersession, two cutoffs, exact replay and narrow read-only port | partial/complete/correction/finality/idempotency/replay/port isolation proven; every old label consumer disposition remains fail-closed until its own cut |
 | **9. WP-11 Research Validity and Evaluation Closure** | `WP11_EXIT_GATE_PASS / NOT_CUT_OVER` | Target/Outcome contract parity; immutable single-exchange-calendar Partition/member roster; Decision/Outcome windows and purpose-specific purge/embargo/overlap policy; global ordinal first-access ledger; Experiment with a complete ordered non-empty Partition binding roster and partition-specific Run; predeclared Evaluation Protocol/metrics; Evaluation Run, exact Outcome access/observations and complete metric-member rosters; canonical composition and read-only reconciliation | exact-SHA clean PostgreSQL/recreate, real concurrency/failure/recovery, replay/reconciliation, representative plans, full regression, static/build/docs/architecture gates pass; remote CI is disabled and not claimed; no Runtime/CLI cutover or research promotion |
 | **10. WP-12 Research Evidence, Assessment and Qualification Closure** | `WP12_EXIT_GATE_PASS / NOT_CUT_OVER` | Evaluation-bound EvidenceItem/Dependency, Experiment-bound ResearchAssessment with complete terminal Evaluation/Evidence rosters, ResearchQualification policy/floor/decision/result/evidence | exact-SHA concrete FK/DAG/roster closure, negative/inconclusive/not-estimable preservation, every floor and exact Evidence binding, generation safety, idempotency/concurrency/recovery/replay, clean PostgreSQL, plans, full regression, static/build/docs gates pass; remote CI disabled and not claimed |
-| **11. Optional Model and Calibration** | `DEPENDENCY_READY / OPTIONAL / NOT_STARTED` | Model/ModelVersion from completed training Evaluation, calibration Evaluation purpose and subject-specific Model qualification where separately approved; no Forecast child table yet | Model remains optional; calibrated claims require exact partition/metric/evidence floors; no Candidate/Target/Outcome prerequisite or nullable future Forecast FK |
-| **12. Remaining Decision Support** | `ORDER_AUTHORIZED / BLOCKED_BY_PREDECESSORS` | add concrete Decision Run Research Qualification roster/members only after their real parent; Context, Signal, Forecast, then optional concrete `forecast_model_binding` and `evaluation_forecast_binding`, Opportunity, Thesis, Strategy, Portfolio and Risk | qualification/Forecast binding children follow their real parents; same-generation DAG remains one-way; rule Forecast needs no Model; Risk is sole post-Portfolio authorization; no Outcome feedback into current generation |
-| **13. Execution, TradeOutcome and Attribution** | `ORDER_AUTHORIZED / BLOCKED_BY_PREDECESSORS` | Account/Intent/observed Fill/allocation/reconciliation/Position projection; separate TradeOutcome; Market and Trade Attribution | Fill-only trade mutation, Market/Trade subject separation, reconciliation and human-approval gates pass |
+| **11. WP-13 Remaining Decision Support Closure** | `IMPLEMENTATION_AUTHORIZED / NOT_STARTED` | add concrete Decision Run Research Qualification roster/members now that their real parent exists; Context, Signal, rule-based Forecast, Opportunity, Thesis, Strategy, Portfolio and Risk | complete qualification/Context/Opportunity/Portfolio rosters; same-generation DAG remains one-way; rule Forecast needs no Model; Risk is sole post-Portfolio authorization; no Outcome feedback, Execution, or broker authority |
+| **12. Optional Model and Calibration** | `DEPENDENCY_READY / OPTIONAL / NOT_STARTED` | Model/ModelVersion from completed training Evaluation, calibration Evaluation purpose and subject-specific Model qualification where separately approved; concrete model/Forecast children only after both real parents | Model remains optional; calibrated claims require exact partition/metric/evidence floors; no Candidate/Target/Outcome prerequisite or nullable future Forecast FK |
+| **13. Execution, TradeOutcome and Attribution** | `ORDER_AUTHORIZED / BLOCKED_BY_WP13` | Account/Intent/observed Fill/allocation/reconciliation/Position projection; separate TradeOutcome; Market and Trade Attribution | Fill-only trade mutation, Market/Trade subject separation, reconciliation and human-approval gates pass |
 | **14. Runtime/CLI Cutover and Legacy deletion** | `NO_GO / SEPARATE_AUTHORIZATION_REQUIRED` | complete target composition/CLI/epoch release followed by separately approved removal of old writers/readers/schema | complete catalog and consumer cuts proven; no dual write/fallback; clean bootstrap/replay/recovery; empirical/Provider/Production floors remain independent |
 
 The target `001_baseline.sql` remains an unreleased, reviewable build artifact
@@ -277,12 +279,13 @@ then owns one revisioned realized-market-fact truth. Partition/Evaluation
 consumers use its narrow read-only port, and feedback crosses only from generation `n` to
 Decision Run `n+1` through a concrete Research Qualification binding.
 
-WP-11's qualified branch is merged in
-`origin/main@883f35835671ebbd7d977b35b36c59528d536990`. WP-12 is the latest
-passed Exit Gate at `48949c87ad0241a8d60031137bc3aa8eb9887525` on its independent
-branch. Optional Model/Calibration is dependency-ready but not started. Context,
-Signal, Forecast, Portfolio, Risk, Execution, TradeOutcome, Attribution,
-compatibility reads, dual writes, and future placeholders remain outside WP-12.
+WP-12 is the latest passed Exit Gate at
+`48949c87ad0241a8d60031137bc3aa8eb9887525` and is merged in
+`origin/main@6e0ad150057e43a89843eb4fb307e0373d5572ac`. WP-13 Remaining
+Decision Support is the active checkpoint. Optional Model/Calibration remains
+unstarted and skipped. Context, Signal, Forecast, Opportunity, Thesis, Strategy,
+Portfolio, Risk, Execution, TradeOutcome, Attribution, compatibility reads,
+dual writes, and future placeholders remain absent before WP-13 implementation.
 
 No Alpha hypothesis/optimization, Formal OOS access, Provider campaign, broker
 integration, Runtime cutover, Legacy deletion, evidence-ceiling increase, or
