@@ -23,6 +23,13 @@ from market_regime_alpha.market.ports.uow import (
     MarketUnitOfWork,
     MarketUnitOfWorkProvider,
 )
+from market_regime_alpha.market.ports.provider_qualification import (
+    ProviderQualificationDecisionRecord,
+    ProviderQualificationProtocolRecord,
+    ProviderQualificationRepository,
+    ProviderQualificationUnitOfWork,
+    ProviderQualificationUnitOfWorkProvider,
+)
 
 __all__ = [
     "CaptureRequest",
@@ -39,5 +46,10 @@ __all__ = [
     "MarketUnitOfWork",
     "MarketUnitOfWorkProvider",
     "NormalizerContract",
+    "ProviderQualificationDecisionRecord",
+    "ProviderQualificationProtocolRecord",
+    "ProviderQualificationRepository",
+    "ProviderQualificationUnitOfWork",
+    "ProviderQualificationUnitOfWorkProvider",
     "ProviderResponse",
 ]

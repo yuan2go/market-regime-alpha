@@ -5,9 +5,19 @@ from market_regime_alpha.market.application.results import (
     MarketMutationResult,
 )
 from market_regime_alpha.market.application.service import MarketApplication
+from market_regime_alpha.market.application.provider_qualification import (
+    ProviderFinalityObservationResult,
+    ProviderProtocolRegistrationResult,
+    ProviderQualificationCommands,
+    ProviderQualificationCompletionResult,
+)
 
 __all__ = [
     "CaptureMutationResult",
     "MarketApplication",
     "MarketMutationResult",
+    "ProviderFinalityObservationResult",
+    "ProviderProtocolRegistrationResult",
+    "ProviderQualificationCommands",
+    "ProviderQualificationCompletionResult",
 ]

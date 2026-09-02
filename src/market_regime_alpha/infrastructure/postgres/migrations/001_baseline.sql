@@ -15476,3 +15476,459 @@ CREATE TRIGGER risk_decision_append_only BEFORE UPDATE OR DELETE ON mra.risk_dec
 FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
 CREATE TRIGGER risk_reason_append_only BEFORE UPDATE OR DELETE ON mra.risk_reason
 FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+
+-- WP-14: Market-owned purpose-specific Provider qualification mechanics.
+-- These relations qualify recorded evidence; they never mutate Capture or
+-- normalized Market history and engineering rehearsals cannot be admitted.
+
+CREATE TABLE mra.provider_qualification_protocol (
+    provider_qualification_protocol_id uuid PRIMARY KEY,
+    protocol_code text NOT NULL,
+    revision integer NOT NULL,
+    supersedes_protocol_id uuid REFERENCES mra.provider_qualification_protocol(provider_qualification_protocol_id) ON DELETE RESTRICT,
+    provider_product_id uuid NOT NULL REFERENCES mra.provider_product(provider_product_id) ON DELETE RESTRICT,
+    purpose text NOT NULL,
+    evidence_class text NOT NULL,
+    market_scope text NOT NULL,
+    instrument_scope text NOT NULL,
+    exchange_code text NOT NULL,
+    timeframe text NOT NULL,
+    price_basis text NOT NULL,
+    decision_time_rule text NOT NULL,
+    capture_window_start timestamptz NOT NULL,
+    capture_window_end timestamptz NOT NULL,
+    evidence_cutoff timestamptz NOT NULL,
+    outcome_path_sessions integer NOT NULL,
+    requirement_count integer NOT NULL,
+    requirement_roster_sha256 text NOT NULL,
+    code_artifact_id uuid NOT NULL,
+    code_content_sha256 text NOT NULL,
+    code_size_bytes bigint NOT NULL,
+    config_artifact_id uuid NOT NULL,
+    config_content_sha256 text NOT NULL,
+    config_size_bytes bigint NOT NULL,
+    provenance_sha256 text NOT NULL,
+    content_sha256 text NOT NULL,
+    request_identity text NOT NULL,
+    request_sha256 text NOT NULL,
+    registered_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT provider_qualification_protocol_identity_uk UNIQUE (protocol_code, revision),
+    CONSTRAINT provider_qualification_protocol_supersedes_uk UNIQUE (supersedes_protocol_id),
+    CONSTRAINT provider_qualification_protocol_request_uk UNIQUE (protocol_code, request_identity),
+    CONSTRAINT provider_qualification_protocol_exact_uk UNIQUE (
+        provider_qualification_protocol_id, provider_product_id, purpose,
+        evidence_class, content_sha256, registered_at
+    ),
+    CONSTRAINT provider_qualification_protocol_decision_uk UNIQUE (
+        provider_qualification_protocol_id, provider_product_id, purpose,
+        evidence_class, content_sha256
+    ),
+    CONSTRAINT provider_qualification_protocol_code_artifact_fk FOREIGN KEY (
+        code_artifact_id, code_content_sha256, code_size_bytes
+    ) REFERENCES mra.artifact(artifact_id, content_sha256, size_bytes) ON DELETE RESTRICT,
+    CONSTRAINT provider_qualification_protocol_config_artifact_fk FOREIGN KEY (
+        config_artifact_id, config_content_sha256, config_size_bytes
+    ) REFERENCES mra.artifact(artifact_id, content_sha256, size_bytes) ON DELETE RESTRICT,
+    CONSTRAINT provider_qualification_protocol_shape_ck CHECK (
+        protocol_code ~ '^[a-z][a-z0-9_-]{0,99}$'
+        AND ((revision = 1 AND supersedes_protocol_id IS NULL)
+          OR (revision > 1 AND supersedes_protocol_id IS NOT NULL))
+        AND purpose IN ('HISTORICAL_PIT', 'PROSPECTIVE_DECISION', 'OUTCOME_SETTLEMENT')
+        AND evidence_class IN ('ENGINEERING_REHEARSAL', 'RECORDED_PROVIDER')
+        AND market_scope <> '' AND instrument_scope <> ''
+        AND exchange_code ~ '^[A-Z][A-Z0-9]{1,15}$'
+        AND timeframe IN ('MINUTE_1', 'MINUTE_5', 'MINUTE_15', 'MINUTE_30', 'MINUTE_60', 'DAILY')
+        AND price_basis IN ('RAW_UNADJUSTED', 'FORWARD_ADJUSTED', 'BACKWARD_ADJUSTED')
+        AND decision_time_rule ~ '^[A-Z][A-Z0-9_]{0,99}$'
+        AND capture_window_start < capture_window_end
+        AND capture_window_end <= evidence_cutoff
+        AND outcome_path_sessions > 0 AND requirement_count = 10
+        AND requirement_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND provenance_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+        AND request_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE TABLE mra.provider_qualification_requirement (
+    provider_qualification_requirement_id uuid PRIMARY KEY,
+    provider_qualification_protocol_id uuid NOT NULL,
+    ordinal integer NOT NULL,
+    requirement_kind text NOT NULL,
+    minimum_observation_count integer NOT NULL,
+    minimum_ratio numeric(12,10) NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT provider_qualification_requirement_ordinal_uk UNIQUE (provider_qualification_protocol_id, ordinal),
+    CONSTRAINT provider_qualification_requirement_kind_uk UNIQUE (provider_qualification_protocol_id, requirement_kind),
+    CONSTRAINT provider_qualification_requirement_exact_uk UNIQUE (
+        provider_qualification_requirement_id,
+        provider_qualification_protocol_id, requirement_kind
+    ),
+    CONSTRAINT provider_qualification_requirement_protocol_fk FOREIGN KEY (
+        provider_qualification_protocol_id
+    ) REFERENCES mra.provider_qualification_protocol(provider_qualification_protocol_id)
+      ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT provider_qualification_requirement_shape_ck CHECK (
+        ordinal > 0
+        AND requirement_kind IN (
+            'COVERAGE', 'RAW_SOURCE_LINEAGE', 'HISTORICAL_AVAILABILITY',
+            'KNOWN_TIME', 'REVISION_FINALITY', 'PRICE_BASIS',
+            'TRADING_CALENDAR', 'MEMBERSHIP_STATUS', 'DECISION_REFERENCE',
+            'OUTCOME_PATH'
+        )
+        AND minimum_observation_count > 0
+        AND minimum_ratio BETWEEN 0 AND 1
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE TABLE mra.provider_finality_observation (
+    provider_finality_observation_id uuid PRIMARY KEY,
+    capture_id uuid NOT NULL REFERENCES mra.data_capture(capture_id) ON DELETE RESTRICT,
+    observation_ordinal integer NOT NULL,
+    supersedes_observation_id uuid REFERENCES mra.provider_finality_observation(provider_finality_observation_id) ON DELETE RESTRICT,
+    finality_status text NOT NULL,
+    publication_observed_at timestamptz NOT NULL,
+    code_artifact_id uuid NOT NULL,
+    code_content_sha256 text NOT NULL,
+    code_size_bytes bigint NOT NULL,
+    config_artifact_id uuid NOT NULL,
+    config_content_sha256 text NOT NULL,
+    config_size_bytes bigint NOT NULL,
+    provenance_sha256 text NOT NULL,
+    content_sha256 text NOT NULL,
+    recorded_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT provider_finality_observation_capture_ordinal_uk UNIQUE (capture_id, observation_ordinal),
+    CONSTRAINT provider_finality_observation_supersedes_uk UNIQUE (supersedes_observation_id),
+    CONSTRAINT provider_finality_observation_code_artifact_fk FOREIGN KEY (
+        code_artifact_id, code_content_sha256, code_size_bytes
+    ) REFERENCES mra.artifact(artifact_id, content_sha256, size_bytes) ON DELETE RESTRICT,
+    CONSTRAINT provider_finality_observation_config_artifact_fk FOREIGN KEY (
+        config_artifact_id, config_content_sha256, config_size_bytes
+    ) REFERENCES mra.artifact(artifact_id, content_sha256, size_bytes) ON DELETE RESTRICT,
+    CONSTRAINT provider_finality_observation_shape_ck CHECK (
+        ((observation_ordinal = 1 AND supersedes_observation_id IS NULL)
+          OR (observation_ordinal > 1 AND supersedes_observation_id IS NOT NULL))
+        AND finality_status IN ('FINAL', 'PROVISIONAL', 'UNKNOWN')
+        AND publication_observed_at <= recorded_at
+        AND provenance_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE TABLE mra.provider_qualification_decision (
+    provider_qualification_decision_id uuid PRIMARY KEY,
+    decision_code text NOT NULL UNIQUE,
+    provider_qualification_protocol_id uuid NOT NULL,
+    provider_product_id uuid NOT NULL,
+    purpose text NOT NULL,
+    evidence_class text NOT NULL,
+    protocol_content_sha256 text NOT NULL,
+    decision_status text NOT NULL,
+    capture_count integer NOT NULL,
+    capture_roster_sha256 text NOT NULL,
+    requirement_result_count integer NOT NULL,
+    requirement_result_roster_sha256 text NOT NULL,
+    reason_code text NOT NULL,
+    content_sha256 text NOT NULL,
+    request_identity text NOT NULL,
+    request_sha256 text NOT NULL,
+    decided_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT provider_qualification_decision_request_uk UNIQUE (provider_qualification_protocol_id, request_identity),
+    CONSTRAINT provider_qualification_decision_protocol_uk UNIQUE (provider_qualification_protocol_id),
+    CONSTRAINT provider_qualification_decision_exact_uk UNIQUE (
+        provider_qualification_decision_id,
+        provider_qualification_protocol_id, provider_product_id,
+        purpose, evidence_class, protocol_content_sha256,
+        decision_status, content_sha256
+    ),
+    CONSTRAINT provider_qualification_decision_protocol_fk FOREIGN KEY (
+        provider_qualification_protocol_id, provider_product_id, purpose,
+        evidence_class, protocol_content_sha256
+    ) REFERENCES mra.provider_qualification_protocol(
+        provider_qualification_protocol_id, provider_product_id, purpose,
+        evidence_class, content_sha256
+    ) ON DELETE RESTRICT,
+    CONSTRAINT provider_qualification_decision_shape_ck CHECK (
+        decision_code ~ '^[a-z][a-z0-9_-]{0,99}$'
+        AND decision_status IN ('ADMITTED', 'REJECTED', 'INCONCLUSIVE')
+        AND NOT (evidence_class = 'ENGINEERING_REHEARSAL' AND decision_status = 'ADMITTED')
+        AND capture_count > 0 AND requirement_result_count = 10
+        AND capture_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND protocol_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND requirement_result_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND reason_code ~ '^[A-Z][A-Z0-9_]{0,99}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+        AND request_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE TABLE mra.provider_qualification_capture_member (
+    provider_qualification_capture_member_id uuid PRIMARY KEY,
+    provider_qualification_decision_id uuid NOT NULL,
+    member_ordinal integer NOT NULL,
+    capture_id uuid NOT NULL,
+    provider_product_id uuid NOT NULL,
+    capture_status text NOT NULL,
+    artifact_id uuid,
+    source_availability_status text NOT NULL,
+    source_available_at timestamptz,
+    known_at timestamptz NOT NULL,
+    runtime_capture_lineage boolean NOT NULL,
+    artifact_verified boolean NOT NULL,
+    source_gap_count integer NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT provider_qualification_capture_member_ordinal_uk UNIQUE (provider_qualification_decision_id, member_ordinal),
+    CONSTRAINT provider_qualification_capture_member_capture_uk UNIQUE (provider_qualification_decision_id, capture_id),
+    CONSTRAINT provider_qualification_capture_member_decision_fk FOREIGN KEY (
+        provider_qualification_decision_id
+    ) REFERENCES mra.provider_qualification_decision(provider_qualification_decision_id)
+      ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT provider_qualification_capture_member_capture_fk FOREIGN KEY (
+        capture_id, provider_product_id
+    ) REFERENCES mra.data_capture(capture_id, provider_product_id) ON DELETE RESTRICT,
+    CONSTRAINT provider_qualification_capture_member_shape_ck CHECK (
+        member_ordinal > 0
+        AND capture_status IN ('CAPTURED', 'PROVIDER_FAILURE')
+        AND source_availability_status IN ('UNKNOWN', 'PROVIDER_REPORTED')
+        AND source_gap_count >= 0
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE TABLE mra.provider_qualification_requirement_result (
+    provider_qualification_requirement_result_id uuid PRIMARY KEY,
+    provider_qualification_decision_id uuid NOT NULL,
+    provider_qualification_protocol_id uuid NOT NULL,
+    provider_qualification_requirement_id uuid NOT NULL,
+    result_ordinal integer NOT NULL,
+    requirement_kind text NOT NULL,
+    result_status text NOT NULL,
+    observation_count integer NOT NULL,
+    satisfied_count integer NOT NULL,
+    observed_ratio numeric(12,10) NOT NULL,
+    reason_code text NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT provider_qualification_requirement_result_ordinal_uk UNIQUE (provider_qualification_decision_id, result_ordinal),
+    CONSTRAINT provider_qualification_requirement_result_kind_uk UNIQUE (provider_qualification_decision_id, requirement_kind),
+    CONSTRAINT provider_qualification_requirement_result_decision_fk FOREIGN KEY (
+        provider_qualification_decision_id
+    ) REFERENCES mra.provider_qualification_decision(provider_qualification_decision_id)
+      ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT provider_qualification_requirement_result_requirement_fk FOREIGN KEY (
+        provider_qualification_requirement_id,
+        provider_qualification_protocol_id, requirement_kind
+    ) REFERENCES mra.provider_qualification_requirement(
+        provider_qualification_requirement_id,
+        provider_qualification_protocol_id, requirement_kind
+    ) ON DELETE RESTRICT,
+    CONSTRAINT provider_qualification_requirement_result_shape_ck CHECK (
+        result_ordinal > 0
+        AND result_status IN ('SATISFIED', 'REJECTED', 'INCONCLUSIVE')
+        AND observation_count >= 0 AND satisfied_count >= 0
+        AND satisfied_count <= observation_count
+        AND observed_ratio BETWEEN 0 AND 1
+        AND reason_code ~ '^[A-Z][A-Z0-9_]{0,99}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE INDEX provider_qualification_protocol_product_idx ON mra.provider_qualification_protocol(provider_product_id, purpose, capture_window_start, capture_window_end);
+CREATE INDEX provider_qualification_protocol_supersedes_idx ON mra.provider_qualification_protocol(supersedes_protocol_id) WHERE supersedes_protocol_id IS NOT NULL;
+CREATE INDEX provider_qualification_protocol_code_artifact_idx ON mra.provider_qualification_protocol(code_artifact_id, code_content_sha256, code_size_bytes);
+CREATE INDEX provider_qualification_protocol_config_artifact_idx ON mra.provider_qualification_protocol(config_artifact_id, config_content_sha256, config_size_bytes);
+CREATE INDEX provider_qualification_requirement_protocol_idx ON mra.provider_qualification_requirement(provider_qualification_protocol_id, ordinal);
+CREATE INDEX provider_finality_observation_capture_idx ON mra.provider_finality_observation(capture_id, observation_ordinal DESC);
+CREATE INDEX provider_finality_observation_code_artifact_idx ON mra.provider_finality_observation(code_artifact_id, code_content_sha256, code_size_bytes);
+CREATE INDEX provider_finality_observation_config_artifact_idx ON mra.provider_finality_observation(config_artifact_id, config_content_sha256, config_size_bytes);
+CREATE INDEX provider_qualification_decision_protocol_idx ON mra.provider_qualification_decision(provider_qualification_protocol_id);
+CREATE INDEX provider_qualification_decision_protocol_fk_idx ON mra.provider_qualification_decision(provider_qualification_protocol_id, provider_product_id, purpose, evidence_class, protocol_content_sha256);
+CREATE INDEX provider_qualification_capture_member_decision_idx ON mra.provider_qualification_capture_member(provider_qualification_decision_id, member_ordinal);
+CREATE INDEX provider_qualification_capture_member_capture_idx ON mra.provider_qualification_capture_member(capture_id, provider_product_id);
+CREATE INDEX provider_qualification_requirement_result_decision_idx ON mra.provider_qualification_requirement_result(provider_qualification_decision_id, result_ordinal);
+CREATE INDEX provider_qualification_requirement_result_requirement_idx ON mra.provider_qualification_requirement_result(provider_qualification_requirement_id, provider_qualification_protocol_id, requirement_kind);
+
+CREATE FUNCTION mra.guard_provider_qualification_requirement_insert()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM mra.provider_qualification_protocol
+        WHERE provider_qualification_protocol_id = NEW.provider_qualification_protocol_id
+    ) THEN
+        RAISE EXCEPTION 'Provider qualification requirement roster is already frozen'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.validate_provider_qualification_protocol_closure()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE actual_count integer;
+DECLARE minimum_ordinal integer;
+DECLARE maximum_ordinal integer;
+DECLARE kind_count integer;
+DECLARE predecessor record;
+BEGIN
+    SELECT count(*), min(ordinal), max(ordinal), count(DISTINCT requirement_kind)
+      INTO actual_count, minimum_ordinal, maximum_ordinal, kind_count
+    FROM mra.provider_qualification_requirement
+    WHERE provider_qualification_protocol_id = NEW.provider_qualification_protocol_id;
+    IF actual_count <> NEW.requirement_count OR actual_count <> 10
+       OR minimum_ordinal <> 1 OR maximum_ordinal <> 10 OR kind_count <> 10 THEN
+        RAISE EXCEPTION 'Provider qualification Protocol requirement roster is incomplete'
+            USING ERRCODE = '55000';
+    END IF;
+    IF NEW.revision > 1 THEN
+        SELECT protocol_code, revision, provider_product_id, registered_at
+          INTO predecessor
+        FROM mra.provider_qualification_protocol
+        WHERE provider_qualification_protocol_id = NEW.supersedes_protocol_id
+        FOR SHARE;
+        IF predecessor.protocol_code IS DISTINCT FROM NEW.protocol_code
+           OR predecessor.revision + 1 <> NEW.revision
+           OR predecessor.provider_product_id IS DISTINCT FROM NEW.provider_product_id
+           OR predecessor.registered_at >= NEW.registered_at THEN
+            RAISE EXCEPTION 'Provider qualification Protocol supersession is invalid'
+                USING ERRCODE = '55000';
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.guard_provider_qualification_decision_child_insert()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM mra.provider_qualification_decision
+        WHERE provider_qualification_decision_id = NEW.provider_qualification_decision_id
+    ) THEN
+        RAISE EXCEPTION 'Provider qualification decision roster is already frozen'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.validate_provider_qualification_decision_closure()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE protocol record;
+DECLARE actual_capture_count integer;
+DECLARE minimum_capture_ordinal integer;
+DECLARE maximum_capture_ordinal integer;
+DECLARE expected_capture_count integer;
+DECLARE actual_result_count integer;
+DECLARE minimum_result_ordinal integer;
+DECLARE maximum_result_ordinal integer;
+DECLARE derived_status text;
+BEGIN
+    SELECT * INTO protocol
+    FROM mra.provider_qualification_protocol
+    WHERE provider_qualification_protocol_id = NEW.provider_qualification_protocol_id
+    FOR SHARE;
+    SELECT count(*), min(member_ordinal), max(member_ordinal)
+      INTO actual_capture_count, minimum_capture_ordinal, maximum_capture_ordinal
+    FROM mra.provider_qualification_capture_member
+    WHERE provider_qualification_decision_id = NEW.provider_qualification_decision_id;
+    SELECT count(*) INTO expected_capture_count
+    FROM mra.data_capture
+    WHERE provider_product_id = NEW.provider_product_id
+      AND capture_started_at >= protocol.capture_window_start
+      AND capture_started_at < protocol.capture_window_end
+      AND known_at <= protocol.evidence_cutoff;
+    SELECT count(*), min(result_ordinal), max(result_ordinal)
+      INTO actual_result_count, minimum_result_ordinal, maximum_result_ordinal
+    FROM mra.provider_qualification_requirement_result
+    WHERE provider_qualification_decision_id = NEW.provider_qualification_decision_id;
+    IF actual_capture_count <> NEW.capture_count
+       OR actual_capture_count <> expected_capture_count
+       OR actual_capture_count = 0
+       OR minimum_capture_ordinal <> 1
+       OR maximum_capture_ordinal <> actual_capture_count
+       OR actual_result_count <> NEW.requirement_result_count
+       OR actual_result_count <> protocol.requirement_count
+       OR minimum_result_ordinal <> 1
+       OR maximum_result_ordinal <> protocol.requirement_count
+       OR EXISTS (
+           SELECT 1 FROM mra.data_capture capture
+           WHERE capture.provider_product_id = NEW.provider_product_id
+             AND capture.capture_started_at >= protocol.capture_window_start
+             AND capture.capture_started_at < protocol.capture_window_end
+             AND capture.known_at <= protocol.evidence_cutoff
+             AND NOT EXISTS (
+                 SELECT 1 FROM mra.provider_qualification_capture_member member
+                 WHERE member.provider_qualification_decision_id = NEW.provider_qualification_decision_id
+                   AND member.capture_id = capture.capture_id
+             )
+       )
+       OR EXISTS (
+           SELECT 1 FROM mra.provider_qualification_requirement requirement
+           WHERE requirement.provider_qualification_protocol_id = NEW.provider_qualification_protocol_id
+             AND NOT EXISTS (
+                 SELECT 1 FROM mra.provider_qualification_requirement_result result
+                 WHERE result.provider_qualification_decision_id = NEW.provider_qualification_decision_id
+                   AND result.provider_qualification_requirement_id = requirement.provider_qualification_requirement_id
+             )
+       ) THEN
+        RAISE EXCEPTION 'Provider qualification Decision roster is incomplete'
+            USING ERRCODE = '55000';
+    END IF;
+    SELECT CASE
+             WHEN EXISTS (
+               SELECT 1 FROM mra.provider_qualification_requirement_result
+               WHERE provider_qualification_decision_id = NEW.provider_qualification_decision_id
+                 AND result_status = 'REJECTED'
+             ) THEN 'REJECTED'
+             WHEN NEW.evidence_class = 'ENGINEERING_REHEARSAL'
+               OR EXISTS (
+                 SELECT 1 FROM mra.provider_qualification_requirement_result
+                 WHERE provider_qualification_decision_id = NEW.provider_qualification_decision_id
+                   AND result_status = 'INCONCLUSIVE'
+             ) THEN 'INCONCLUSIVE'
+             ELSE 'ADMITTED'
+           END INTO derived_status;
+    IF NEW.decision_status <> derived_status THEN
+        RAISE EXCEPTION 'Provider qualification Decision status is not derived'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER provider_qualification_requirement_insert_guard
+BEFORE INSERT ON mra.provider_qualification_requirement
+FOR EACH ROW EXECUTE FUNCTION mra.guard_provider_qualification_requirement_insert();
+CREATE CONSTRAINT TRIGGER provider_qualification_protocol_closure_guard
+AFTER INSERT ON mra.provider_qualification_protocol DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW EXECUTE FUNCTION mra.validate_provider_qualification_protocol_closure();
+CREATE TRIGGER provider_qualification_protocol_append_only
+BEFORE UPDATE OR DELETE ON mra.provider_qualification_protocol
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER provider_qualification_requirement_append_only
+BEFORE UPDATE OR DELETE ON mra.provider_qualification_requirement
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER provider_finality_observation_append_only
+BEFORE UPDATE OR DELETE ON mra.provider_finality_observation
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER provider_qualification_capture_member_insert_guard
+BEFORE INSERT ON mra.provider_qualification_capture_member
+FOR EACH ROW EXECUTE FUNCTION mra.guard_provider_qualification_decision_child_insert();
+CREATE TRIGGER provider_qualification_requirement_result_insert_guard
+BEFORE INSERT ON mra.provider_qualification_requirement_result
+FOR EACH ROW EXECUTE FUNCTION mra.guard_provider_qualification_decision_child_insert();
+CREATE CONSTRAINT TRIGGER provider_qualification_decision_closure_guard
+AFTER INSERT ON mra.provider_qualification_decision DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW EXECUTE FUNCTION mra.validate_provider_qualification_decision_closure();
+CREATE TRIGGER provider_qualification_decision_append_only
+BEFORE UPDATE OR DELETE ON mra.provider_qualification_decision
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER provider_qualification_capture_member_append_only
+BEFORE UPDATE OR DELETE ON mra.provider_qualification_capture_member
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER provider_qualification_requirement_result_append_only
+BEFORE UPDATE OR DELETE ON mra.provider_qualification_requirement_result
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();

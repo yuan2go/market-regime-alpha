@@ -179,6 +179,12 @@ EXPECTED_MARKET_TABLES: Final[frozenset[str]] = frozenset(
         "instrument_fact_revision",
         "corporate_action_revision",
         "source_gap",
+        "provider_qualification_protocol",
+        "provider_qualification_requirement",
+        "provider_finality_observation",
+        "provider_qualification_decision",
+        "provider_qualification_capture_member",
+        "provider_qualification_requirement_result",
     }
 )
 
