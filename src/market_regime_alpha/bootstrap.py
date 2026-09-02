@@ -32,6 +32,15 @@ from market_regime_alpha.infrastructure.postgres.experiment_uow import (
 from market_regime_alpha.infrastructure.postgres.evaluation_uow import (
     PostgresEvaluationUnitOfWorkProvider,
 )
+from market_regime_alpha.infrastructure.postgres.evidence_uow import (
+    PostgresEvidenceUnitOfWorkProvider,
+)
+from market_regime_alpha.infrastructure.postgres.assessment_uow import (
+    PostgresAssessmentUnitOfWorkProvider,
+)
+from market_regime_alpha.infrastructure.postgres.qualification_uow import (
+    PostgresQualificationUnitOfWorkProvider,
+)
 from market_regime_alpha.infrastructure.postgres.selection_uow import (
     PostgresSelectionUnitOfWorkProvider,
 )
@@ -51,6 +60,8 @@ from market_regime_alpha.infrastructure.postgres.queries import (
     PostgresOutcomeQueryProvider,
     PostgresOutcomeVerificationProvider,
     PostgresResearchEvaluationVerificationProvider,
+    PostgresResearchQualificationAdmissionReadPort,
+    PostgresResearchQualificationVerificationProvider,
 )
 from market_regime_alpha.infrastructure.postgres.schema import (
     DatabaseIdentity,
@@ -66,11 +77,18 @@ from market_regime_alpha.decision_support.application import DecisionSupportAppl
 from market_regime_alpha.outcome.application import OutcomeApplication, OutcomeVerifier
 from market_regime_alpha.outcome.ports import OutcomeReadPort
 from market_regime_alpha.research_qualification.application import (
+    AssessmentCommands,
     EvaluationCommands,
+    EvidenceCommands,
     ExperimentCommands,
     ResearchPartitionCommands,
     ResearchEvaluationVerifier,
     ResearchQualificationApplication,
+    ResearchQualificationVerifier,
+    QualificationCommands,
+)
+from market_regime_alpha.research_qualification.ports import (
+    ResearchQualificationAdmissionReadPort,
 )
 from market_regime_alpha.selection.application import (
     CandidateApplication,
@@ -163,6 +181,11 @@ class TargetApplication:
     research_experiments: ExperimentCommands
     research_evaluations: EvaluationCommands
     research_evaluation_verifier: ResearchEvaluationVerifier
+    research_evidence: EvidenceCommands
+    research_assessments: AssessmentCommands
+    research_qualifications: QualificationCommands
+    research_qualification_admissions: ResearchQualificationAdmissionReadPort
+    research_qualification_verifier: ResearchQualificationVerifier
     candidates: CandidateApplication
     candidate_queries: CandidateQueryProvider
     decision_support: DecisionSupportApplication
@@ -222,6 +245,24 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
         ),
         research_evaluation_verifier=ResearchEvaluationVerifier(
             PostgresResearchEvaluationVerificationProvider(pool)
+        ),
+        research_evidence=EvidenceCommands(
+            PostgresEvidenceUnitOfWorkProvider(pool),
+            id_factory=uuid4,
+        ),
+        research_assessments=AssessmentCommands(
+            PostgresAssessmentUnitOfWorkProvider(pool, id_factory=uuid4),
+            id_factory=uuid4,
+        ),
+        research_qualifications=QualificationCommands(
+            PostgresQualificationUnitOfWorkProvider(pool, id_factory=uuid4),
+            id_factory=uuid4,
+        ),
+        research_qualification_admissions=(
+            PostgresResearchQualificationAdmissionReadPort(pool)
+        ),
+        research_qualification_verifier=ResearchQualificationVerifier(
+            PostgresResearchQualificationVerificationProvider(pool)
         ),
         candidates=CandidateApplication(
             PostgresCandidateResearchInputLoader(pool, byte_store),

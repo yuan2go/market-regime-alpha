@@ -9208,6 +9208,1596 @@ CREATE INDEX evaluation_metric_observation_source_fk_idx ON mra.evaluation_metri
     source_target_metric_definition_id, source_value_type, source_value_status
 );
 
+-- WP-12: integrated Research Evidence, Assessment, and Qualification Authority.
+ALTER TABLE mra.evaluation_run
+    ADD CONSTRAINT evaluation_run_evidence_authority_uk UNIQUE (
+        evaluation_run_id, experiment_id, evaluation_protocol_id,
+        target_definition_id, partition_purpose
+    );
+
+CREATE TABLE mra.evidence_item (
+    evidence_item_id uuid PRIMARY KEY,
+    evidence_code text NOT NULL,
+    evaluation_run_id uuid NOT NULL,
+    experiment_id uuid NOT NULL,
+    evaluation_protocol_id uuid NOT NULL,
+    target_definition_id uuid NOT NULL,
+    partition_purpose text NOT NULL,
+    evaluation_metric_id uuid,
+    evaluation_protocol_metric_id uuid,
+    evidence_scope text NOT NULL,
+    evidence_class text NOT NULL,
+    origin_class text NOT NULL,
+    evidence_role text NOT NULL,
+    evidence_direction text NOT NULL,
+    proof_ceiling text NOT NULL,
+    evaluation_terminal_at timestamptz NOT NULL,
+    source_generation_max_decision_time timestamptz NOT NULL,
+    observed_at timestamptz NOT NULL,
+    evidence_artifact_id uuid NOT NULL,
+    evidence_content_sha256 text NOT NULL,
+    evidence_size_bytes bigint NOT NULL,
+    code_artifact_id uuid NOT NULL,
+    code_content_sha256 text NOT NULL,
+    code_size_bytes bigint NOT NULL,
+    config_artifact_id uuid NOT NULL,
+    config_content_sha256 text NOT NULL,
+    config_size_bytes bigint NOT NULL,
+    provenance_sha256 text NOT NULL,
+    dependency_count integer NOT NULL,
+    dependency_roster_sha256 text NOT NULL,
+    content_sha256 text NOT NULL,
+    request_identity text NOT NULL,
+    request_sha256 text NOT NULL,
+    recorded_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT evidence_item_code_uk UNIQUE (evaluation_run_id, evidence_code),
+    CONSTRAINT evidence_item_request_uk UNIQUE (evaluation_run_id, request_identity),
+    CONSTRAINT evidence_item_exact_uk UNIQUE (
+        evidence_item_id, evaluation_run_id, evidence_direction,
+        evidence_class, origin_class, evidence_role
+    ),
+    CONSTRAINT evidence_item_run_authority_uk UNIQUE (
+        evidence_item_id, evaluation_run_id
+    ),
+    CONSTRAINT evidence_item_evaluation_fk FOREIGN KEY (
+        evaluation_run_id, experiment_id, evaluation_protocol_id,
+        target_definition_id, partition_purpose
+    ) REFERENCES mra.evaluation_run(
+        evaluation_run_id, experiment_id, evaluation_protocol_id,
+        target_definition_id, partition_purpose
+    ) ON DELETE RESTRICT,
+    CONSTRAINT evidence_item_metric_fk FOREIGN KEY (
+        evaluation_metric_id, evaluation_run_id,
+        evaluation_protocol_metric_id
+    ) REFERENCES mra.evaluation_metric(
+        evaluation_metric_id, evaluation_run_id,
+        evaluation_protocol_metric_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT evidence_item_evidence_artifact_fk FOREIGN KEY (
+        evidence_artifact_id, evidence_content_sha256, evidence_size_bytes
+    ) REFERENCES mra.artifact(
+        artifact_id, content_sha256, size_bytes
+    ) ON DELETE RESTRICT,
+    CONSTRAINT evidence_item_code_artifact_fk FOREIGN KEY (
+        code_artifact_id, code_content_sha256, code_size_bytes
+    ) REFERENCES mra.artifact(
+        artifact_id, content_sha256, size_bytes
+    ) ON DELETE RESTRICT,
+    CONSTRAINT evidence_item_config_artifact_fk FOREIGN KEY (
+        config_artifact_id, config_content_sha256, config_size_bytes
+    ) REFERENCES mra.artifact(
+        artifact_id, content_sha256, size_bytes
+    ) ON DELETE RESTRICT,
+    CONSTRAINT evidence_item_shape_ck CHECK (
+        evidence_code ~ '^[a-z][a-z0-9_-]{0,99}$'
+        AND partition_purpose IN ('DISCOVERY', 'FIT', 'VALIDATION', 'LOCKED_OOS', 'PROSPECTIVE')
+        AND evidence_scope IN ('RUN', 'METRIC')
+        AND evidence_class IN ('SOFTWARE_VERIFICATION', 'SOURCE_CAPTURE', 'TEMPORAL_LINEAGE', 'DATASET_LINEAGE', 'RESEARCH_RESULT', 'OUTCOME_OBSERVATION', 'REPLAY_COMPARISON', 'OPERATOR_ATTESTATION')
+        AND origin_class IN ('FIXTURE', 'RECORDED_PROVIDER', 'QUALIFIED_ARCHIVE', 'PROSPECTIVE_CAPTURE', 'DERIVED_CANONICAL', 'OPERATOR_ATTESTED')
+        AND evidence_role IN ('PRIMARY_RESULT', 'ROBUSTNESS', 'LINEAGE', 'MISSINGNESS', 'LIMITATION', 'REPLAY', 'PROCESS_CONTROL')
+        AND evidence_direction IN ('SUPPORT', 'COUNTER', 'NEUTRAL')
+        AND proof_ceiling IN ('ENGINEERING', 'EXPLORATORY', 'PIT_QUALIFIED', 'FORMAL_OOS', 'PROSPECTIVE')
+        AND ((evidence_scope = 'RUN' AND evaluation_metric_id IS NULL AND evaluation_protocol_metric_id IS NULL)
+          OR (evidence_scope = 'METRIC' AND evaluation_metric_id IS NOT NULL AND evaluation_protocol_metric_id IS NOT NULL))
+        AND dependency_count >= 0
+        AND evaluation_terminal_at <= observed_at AND observed_at <= recorded_at
+        AND evidence_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND code_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND config_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND provenance_sha256 ~ '^[0-9a-f]{64}$'
+        AND dependency_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+        AND request_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE TABLE mra.evidence_dependency (
+    evidence_dependency_id uuid PRIMARY KEY,
+    child_evidence_item_id uuid NOT NULL,
+    parent_evidence_item_id uuid NOT NULL,
+    dependency_ordinal integer NOT NULL,
+    dependency_role text NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT evidence_dependency_child_ordinal_uk UNIQUE (
+        child_evidence_item_id, dependency_ordinal
+    ),
+    CONSTRAINT evidence_dependency_child_parent_uk UNIQUE (
+        child_evidence_item_id, parent_evidence_item_id
+    ),
+    CONSTRAINT evidence_dependency_child_fk FOREIGN KEY (
+        child_evidence_item_id
+    ) REFERENCES mra.evidence_item(evidence_item_id)
+      ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT evidence_dependency_parent_fk FOREIGN KEY (
+        parent_evidence_item_id
+    ) REFERENCES mra.evidence_item(evidence_item_id) ON DELETE RESTRICT,
+    CONSTRAINT evidence_dependency_shape_ck CHECK (
+        child_evidence_item_id <> parent_evidence_item_id
+        AND dependency_ordinal > 0
+        AND dependency_role IN ('DERIVED_FROM', 'CORROBORATES', 'QUALIFIES', 'CONTRADICTS')
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE TABLE mra.research_assessment (
+    research_assessment_id uuid PRIMARY KEY,
+    assessment_code text NOT NULL,
+    revision integer NOT NULL,
+    supersedes_assessment_id uuid,
+    experiment_id uuid NOT NULL,
+    target_definition_id uuid NOT NULL,
+    target_version integer NOT NULL,
+    target_definition_sha256 text NOT NULL,
+    knowledge_cutoff timestamptz NOT NULL,
+    assessment_status text NOT NULL,
+    reason_code text NOT NULL,
+    evaluation_count integer NOT NULL,
+    evaluation_roster_sha256 text NOT NULL,
+    evidence_count integer NOT NULL,
+    evidence_roster_sha256 text NOT NULL,
+    source_generation_min_decision_time timestamptz NOT NULL,
+    source_generation_max_decision_time timestamptz NOT NULL,
+    terminal_evaluation_ceiling timestamptz NOT NULL,
+    code_artifact_id uuid NOT NULL,
+    code_content_sha256 text NOT NULL,
+    code_size_bytes bigint NOT NULL,
+    config_artifact_id uuid NOT NULL,
+    config_content_sha256 text NOT NULL,
+    config_size_bytes bigint NOT NULL,
+    provenance_sha256 text NOT NULL,
+    content_sha256 text NOT NULL,
+    request_identity text NOT NULL,
+    request_sha256 text NOT NULL,
+    recorded_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT research_assessment_series_uk UNIQUE (assessment_code, revision),
+    CONSTRAINT research_assessment_supersedes_uk UNIQUE (supersedes_assessment_id),
+    CONSTRAINT research_assessment_request_uk UNIQUE (
+        assessment_code, request_identity
+    ),
+    CONSTRAINT research_assessment_decision_authority_uk UNIQUE (
+        research_assessment_id, experiment_id, target_definition_id,
+        assessment_status
+    ),
+    CONSTRAINT research_assessment_supersedes_fk FOREIGN KEY (
+        supersedes_assessment_id
+    ) REFERENCES mra.research_assessment(research_assessment_id) ON DELETE RESTRICT,
+    CONSTRAINT research_assessment_experiment_fk FOREIGN KEY (
+        experiment_id, target_definition_id, target_version,
+        target_definition_sha256
+    ) REFERENCES mra.experiment(
+        experiment_id, target_definition_id, target_version,
+        target_definition_sha256
+    ) ON DELETE RESTRICT,
+    CONSTRAINT research_assessment_code_artifact_fk FOREIGN KEY (
+        code_artifact_id, code_content_sha256, code_size_bytes
+    ) REFERENCES mra.artifact(artifact_id, content_sha256, size_bytes) ON DELETE RESTRICT,
+    CONSTRAINT research_assessment_config_artifact_fk FOREIGN KEY (
+        config_artifact_id, config_content_sha256, config_size_bytes
+    ) REFERENCES mra.artifact(artifact_id, content_sha256, size_bytes) ON DELETE RESTRICT,
+    CONSTRAINT research_assessment_shape_ck CHECK (
+        assessment_code ~ '^[a-z][a-z0-9_-]{0,99}$'
+        AND ((revision = 1 AND supersedes_assessment_id IS NULL)
+          OR (revision > 1 AND supersedes_assessment_id IS NOT NULL))
+        AND assessment_status IN ('SUPPORTED', 'REJECTED', 'NOT_ESTIMABLE', 'INCONCLUSIVE', 'BLOCKED', 'FAILED')
+        AND reason_code ~ '^[A-Z][A-Z0-9_]{0,99}$'
+        AND evaluation_count > 0 AND evidence_count > 0
+        AND source_generation_min_decision_time <= source_generation_max_decision_time
+        AND terminal_evaluation_ceiling <= recorded_at
+        AND evaluation_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND evidence_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND provenance_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+        AND request_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE TABLE mra.research_assessment_evaluation (
+    research_assessment_evaluation_id uuid PRIMARY KEY,
+    research_assessment_id uuid NOT NULL,
+    evaluation_ordinal integer NOT NULL,
+    evaluation_run_id uuid NOT NULL,
+    experiment_id uuid NOT NULL,
+    evaluation_protocol_id uuid NOT NULL,
+    target_definition_id uuid NOT NULL,
+    partition_purpose text NOT NULL,
+    evaluation_status text NOT NULL,
+    terminal_at timestamptz NOT NULL,
+    metric_count integer NOT NULL,
+    rejected_metric_count integer NOT NULL,
+    not_estimable_metric_count integer NOT NULL,
+    source_generation_min_decision_time timestamptz NOT NULL,
+    source_generation_max_decision_time timestamptz NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT research_assessment_evaluation_ordinal_uk UNIQUE (
+        research_assessment_id, evaluation_ordinal
+    ),
+    CONSTRAINT research_assessment_evaluation_run_uk UNIQUE (
+        research_assessment_id, evaluation_run_id
+    ),
+    CONSTRAINT research_assessment_evaluation_exact_uk UNIQUE (
+        research_assessment_evaluation_id, research_assessment_id,
+        evaluation_run_id
+    ),
+    CONSTRAINT research_assessment_evaluation_assessment_fk FOREIGN KEY (
+        research_assessment_id
+    ) REFERENCES mra.research_assessment(research_assessment_id)
+      ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT research_assessment_evaluation_run_fk FOREIGN KEY (
+        evaluation_run_id, experiment_id, evaluation_protocol_id,
+        target_definition_id, partition_purpose
+    ) REFERENCES mra.evaluation_run(
+        evaluation_run_id, experiment_id, evaluation_protocol_id,
+        target_definition_id, partition_purpose
+    ) ON DELETE RESTRICT,
+    CONSTRAINT research_assessment_evaluation_shape_ck CHECK (
+        evaluation_ordinal > 0
+        AND evaluation_status IN ('COMPLETED', 'FAILED')
+        AND partition_purpose IN ('DISCOVERY', 'FIT', 'VALIDATION', 'LOCKED_OOS', 'PROSPECTIVE')
+        AND metric_count >= 0 AND rejected_metric_count >= 0
+        AND not_estimable_metric_count >= 0
+        AND rejected_metric_count + not_estimable_metric_count <= metric_count
+        AND source_generation_min_decision_time <= source_generation_max_decision_time
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE TABLE mra.research_assessment_evidence (
+    research_assessment_evidence_id uuid PRIMARY KEY,
+    research_assessment_id uuid NOT NULL,
+    research_assessment_evaluation_id uuid NOT NULL,
+    evidence_ordinal integer NOT NULL,
+    evidence_item_id uuid NOT NULL,
+    evaluation_run_id uuid NOT NULL,
+    evidence_class text NOT NULL,
+    origin_class text NOT NULL,
+    evidence_role text NOT NULL,
+    evidence_direction text NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT research_assessment_evidence_ordinal_uk UNIQUE (
+        research_assessment_id, evidence_ordinal
+    ),
+    CONSTRAINT research_assessment_evidence_item_uk UNIQUE (
+        research_assessment_id, evidence_item_id
+    ),
+    CONSTRAINT research_assessment_evidence_exact_uk UNIQUE (
+        research_assessment_evidence_id, research_assessment_id,
+        evidence_item_id
+    ),
+    CONSTRAINT research_assessment_evidence_assessment_fk FOREIGN KEY (
+        research_assessment_id
+    ) REFERENCES mra.research_assessment(research_assessment_id)
+      ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT research_assessment_evidence_evaluation_fk FOREIGN KEY (
+        research_assessment_evaluation_id, research_assessment_id,
+        evaluation_run_id
+    ) REFERENCES mra.research_assessment_evaluation(
+        research_assessment_evaluation_id, research_assessment_id,
+        evaluation_run_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT research_assessment_evidence_item_fk FOREIGN KEY (
+        evidence_item_id, evaluation_run_id, evidence_direction,
+        evidence_class, origin_class, evidence_role
+    ) REFERENCES mra.evidence_item(
+        evidence_item_id, evaluation_run_id, evidence_direction,
+        evidence_class, origin_class, evidence_role
+    ) ON DELETE RESTRICT,
+    CONSTRAINT research_assessment_evidence_shape_ck CHECK (
+        evidence_ordinal > 0
+        AND evidence_direction IN ('SUPPORT', 'COUNTER', 'NEUTRAL')
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE TABLE mra.research_qualification_policy (
+    research_qualification_policy_id uuid PRIMARY KEY,
+    policy_code text NOT NULL,
+    version integer NOT NULL,
+    supersedes_policy_id uuid,
+    target_definition_id uuid NOT NULL,
+    target_version integer NOT NULL,
+    target_definition_sha256 text NOT NULL,
+    qualification_purpose text NOT NULL,
+    required_assessment_status text NOT NULL,
+    require_preaccess_freeze boolean NOT NULL,
+    floor_count integer NOT NULL,
+    floor_roster_sha256 text NOT NULL,
+    code_artifact_id uuid NOT NULL,
+    code_content_sha256 text NOT NULL,
+    code_size_bytes bigint NOT NULL,
+    config_artifact_id uuid NOT NULL,
+    config_content_sha256 text NOT NULL,
+    config_size_bytes bigint NOT NULL,
+    provenance_sha256 text NOT NULL,
+    content_sha256 text NOT NULL,
+    request_identity text NOT NULL,
+    request_sha256 text NOT NULL,
+    frozen_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT research_qualification_policy_series_uk UNIQUE (policy_code, version),
+    CONSTRAINT research_qualification_policy_supersedes_uk UNIQUE (supersedes_policy_id),
+    CONSTRAINT research_qualification_policy_request_uk UNIQUE (
+        policy_code, request_identity
+    ),
+    CONSTRAINT research_qualification_policy_decision_authority_uk UNIQUE (
+        research_qualification_policy_id, target_definition_id,
+        qualification_purpose
+    ),
+    CONSTRAINT research_qualification_policy_supersedes_fk FOREIGN KEY (
+        supersedes_policy_id
+    ) REFERENCES mra.research_qualification_policy(
+        research_qualification_policy_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT research_qualification_policy_target_fk FOREIGN KEY (
+        target_definition_id, target_version, target_definition_sha256
+    ) REFERENCES mra.target_definition(
+        target_definition_id, version, content_sha256
+    ) ON DELETE RESTRICT,
+    CONSTRAINT research_qualification_policy_code_artifact_fk FOREIGN KEY (
+        code_artifact_id, code_content_sha256, code_size_bytes
+    ) REFERENCES mra.artifact(artifact_id, content_sha256, size_bytes) ON DELETE RESTRICT,
+    CONSTRAINT research_qualification_policy_config_artifact_fk FOREIGN KEY (
+        config_artifact_id, config_content_sha256, config_size_bytes
+    ) REFERENCES mra.artifact(artifact_id, content_sha256, size_bytes) ON DELETE RESTRICT,
+    CONSTRAINT research_qualification_policy_shape_ck CHECK (
+        policy_code ~ '^[a-z][a-z0-9_-]{0,99}$'
+        AND ((version = 1 AND supersedes_policy_id IS NULL)
+          OR (version > 1 AND supersedes_policy_id IS NOT NULL))
+        AND qualification_purpose IN ('DISCOVERY', 'VALIDATION', 'LOCKED_OOS', 'PROSPECTIVE')
+        AND required_assessment_status IN ('SUPPORTED', 'REJECTED', 'NOT_ESTIMABLE', 'INCONCLUSIVE', 'BLOCKED', 'FAILED')
+        AND (qualification_purpose NOT IN ('LOCKED_OOS', 'PROSPECTIVE') OR require_preaccess_freeze)
+        AND floor_count > 0
+        AND floor_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND provenance_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+        AND request_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE TABLE mra.research_qualification_policy_floor (
+    research_qualification_policy_floor_id uuid PRIMARY KEY,
+    research_qualification_policy_id uuid NOT NULL,
+    floor_code text NOT NULL,
+    floor_ordinal integer NOT NULL,
+    evaluation_protocol_id uuid NOT NULL,
+    evaluation_protocol_metric_id uuid NOT NULL,
+    source_target_metric_definition_id uuid NOT NULL,
+    evaluation_protocol_metric_sha256 text NOT NULL,
+    required_partition_purpose text NOT NULL,
+    required_evaluation_status text NOT NULL,
+    metric_code text NOT NULL,
+    source_value_type text NOT NULL,
+    reducer text NOT NULL,
+    slice_kind text NOT NULL,
+    candidate_disposition text,
+    direction text NOT NULL,
+    qualification_operator text NOT NULL,
+    decimal_threshold numeric,
+    boolean_threshold boolean,
+    minimum_member_count integer NOT NULL,
+    minimum_estimable_count integer NOT NULL,
+    missingness_policy text NOT NULL,
+    required_evidence_class text NOT NULL,
+    required_origin_class text NOT NULL,
+    required_evidence_role text NOT NULL,
+    minimum_support_evidence_count integer NOT NULL,
+    maximum_counter_evidence_count integer NOT NULL,
+    required boolean NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT research_qualification_policy_floor_ordinal_uk UNIQUE (
+        research_qualification_policy_id, floor_ordinal
+    ),
+    CONSTRAINT research_qualification_policy_floor_code_uk UNIQUE (
+        research_qualification_policy_id, floor_code
+    ),
+    CONSTRAINT research_qualification_policy_floor_binding_uk UNIQUE (
+        research_qualification_policy_id,
+        evaluation_protocol_metric_id, required_partition_purpose
+    ),
+    CONSTRAINT research_qualification_policy_floor_exact_uk UNIQUE (
+        research_qualification_policy_floor_id,
+        research_qualification_policy_id
+    ),
+    CONSTRAINT research_qualification_policy_floor_policy_fk FOREIGN KEY (
+        research_qualification_policy_id
+    ) REFERENCES mra.research_qualification_policy(
+        research_qualification_policy_id
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT research_qualification_policy_floor_metric_fk FOREIGN KEY (
+        evaluation_protocol_metric_id, evaluation_protocol_id,
+        source_target_metric_definition_id, source_value_type
+    ) REFERENCES mra.evaluation_protocol_metric(
+        evaluation_protocol_metric_id, evaluation_protocol_id,
+        source_target_metric_definition_id, source_value_type
+    ) ON DELETE RESTRICT,
+    CONSTRAINT research_qualification_policy_floor_shape_ck CHECK (
+        floor_code ~ '^[a-z][a-z0-9_-]{0,99}$' AND floor_ordinal > 0
+        AND evaluation_protocol_metric_sha256 ~ '^[0-9a-f]{64}$'
+        AND required_partition_purpose IN ('DISCOVERY', 'FIT', 'VALIDATION', 'LOCKED_OOS', 'PROSPECTIVE')
+        AND required_evaluation_status = 'COMPLETED'
+        AND metric_code ~ '^[a-z][a-z0-9_-]{0,99}$'
+        AND source_value_type IN ('DECIMAL', 'BOOLEAN')
+        AND reducer IN ('MEAN_DECIMAL', 'MEDIAN_DECIMAL', 'TRUE_RATE', 'ESTIMABLE_RATE')
+        AND slice_kind IN ('ALL_MEMBERS', 'CANDIDATE_DISPOSITION')
+        AND ((slice_kind = 'ALL_MEMBERS' AND candidate_disposition IS NULL)
+          OR (slice_kind = 'CANDIDATE_DISPOSITION' AND candidate_disposition IN ('SELECTED', 'RANKED_NOT_SELECTED', 'UNRANKABLE')))
+        AND direction IN ('HIGHER', 'LOWER', 'DESCRIPTIVE')
+        AND qualification_operator IN ('AT_LEAST', 'AT_MOST', 'EQUALS')
+        AND ((source_value_type = 'DECIMAL' AND decimal_threshold IS NOT NULL AND boolean_threshold IS NULL AND qualification_operator <> 'EQUALS')
+          OR (source_value_type = 'BOOLEAN' AND decimal_threshold IS NULL AND boolean_threshold IS NOT NULL AND qualification_operator = 'EQUALS'))
+        AND minimum_member_count > 0 AND minimum_estimable_count > 0
+        AND missingness_policy IN ('REJECT', 'INCONCLUSIVE')
+        AND required_evidence_class IN ('SOFTWARE_VERIFICATION', 'SOURCE_CAPTURE', 'TEMPORAL_LINEAGE', 'DATASET_LINEAGE', 'RESEARCH_RESULT', 'OUTCOME_OBSERVATION', 'REPLAY_COMPARISON', 'OPERATOR_ATTESTATION')
+        AND required_origin_class IN ('FIXTURE', 'RECORDED_PROVIDER', 'QUALIFIED_ARCHIVE', 'PROSPECTIVE_CAPTURE', 'DERIVED_CANONICAL', 'OPERATOR_ATTESTED')
+        AND required_evidence_role IN ('PRIMARY_RESULT', 'ROBUSTNESS', 'LINEAGE', 'MISSINGNESS', 'LIMITATION', 'REPLAY', 'PROCESS_CONTROL')
+        AND minimum_support_evidence_count >= 0
+        AND maximum_counter_evidence_count >= 0
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE TABLE mra.research_qualification_decision (
+    research_qualification_decision_id uuid PRIMARY KEY,
+    decision_code text NOT NULL,
+    revision integer NOT NULL,
+    supersedes_decision_id uuid,
+    research_assessment_id uuid NOT NULL,
+    research_qualification_policy_id uuid NOT NULL,
+    experiment_id uuid NOT NULL,
+    target_definition_id uuid NOT NULL,
+    assessment_status text NOT NULL,
+    qualification_purpose text NOT NULL,
+    decision_status text NOT NULL,
+    reason_code text NOT NULL,
+    floor_count integer NOT NULL,
+    floor_result_roster_sha256 text NOT NULL,
+    source_generation_max_decision_time timestamptz NOT NULL,
+    effective_at timestamptz NOT NULL,
+    known_at timestamptz NOT NULL,
+    code_artifact_id uuid NOT NULL,
+    code_content_sha256 text NOT NULL,
+    code_size_bytes bigint NOT NULL,
+    config_artifact_id uuid NOT NULL,
+    config_content_sha256 text NOT NULL,
+    config_size_bytes bigint NOT NULL,
+    provenance_sha256 text NOT NULL,
+    content_sha256 text NOT NULL,
+    request_identity text NOT NULL,
+    request_sha256 text NOT NULL,
+    recorded_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT research_qualification_decision_series_uk UNIQUE (
+        decision_code, revision
+    ),
+    CONSTRAINT research_qualification_decision_supersedes_uk UNIQUE (
+        supersedes_decision_id
+    ),
+    CONSTRAINT research_qualification_decision_request_uk UNIQUE (
+        decision_code, request_identity
+    ),
+    CONSTRAINT research_qualification_decision_supersedes_fk FOREIGN KEY (
+        supersedes_decision_id
+    ) REFERENCES mra.research_qualification_decision(
+        research_qualification_decision_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT research_qualification_decision_assessment_fk FOREIGN KEY (
+        research_assessment_id, experiment_id, target_definition_id,
+        assessment_status
+    ) REFERENCES mra.research_assessment(
+        research_assessment_id, experiment_id, target_definition_id,
+        assessment_status
+    ) ON DELETE RESTRICT,
+    CONSTRAINT research_qualification_decision_policy_fk FOREIGN KEY (
+        research_qualification_policy_id, target_definition_id,
+        qualification_purpose
+    ) REFERENCES mra.research_qualification_policy(
+        research_qualification_policy_id, target_definition_id,
+        qualification_purpose
+    ) ON DELETE RESTRICT,
+    CONSTRAINT research_qualification_decision_code_artifact_fk FOREIGN KEY (
+        code_artifact_id, code_content_sha256, code_size_bytes
+    ) REFERENCES mra.artifact(artifact_id, content_sha256, size_bytes) ON DELETE RESTRICT,
+    CONSTRAINT research_qualification_decision_config_artifact_fk FOREIGN KEY (
+        config_artifact_id, config_content_sha256, config_size_bytes
+    ) REFERENCES mra.artifact(artifact_id, content_sha256, size_bytes) ON DELETE RESTRICT,
+    CONSTRAINT research_qualification_decision_shape_ck CHECK (
+        decision_code ~ '^[a-z][a-z0-9_-]{0,99}$'
+        AND ((revision = 1 AND supersedes_decision_id IS NULL)
+          OR (revision > 1 AND supersedes_decision_id IS NOT NULL))
+        AND decision_status IN ('ADMITTED', 'REJECTED', 'INCONCLUSIVE')
+        AND reason_code ~ '^[A-Z][A-Z0-9_]{0,99}$'
+        AND floor_count > 0
+        AND source_generation_max_decision_time < effective_at
+        AND effective_at <= known_at AND known_at <= recorded_at
+        AND floor_result_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND provenance_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+        AND request_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+ALTER TABLE mra.evaluation_metric
+    ADD CONSTRAINT evaluation_metric_result_authority_uk UNIQUE (
+        evaluation_metric_id, evaluation_run_id
+    );
+
+CREATE TABLE mra.research_qualification_floor_result (
+    research_qualification_floor_result_id uuid PRIMARY KEY,
+    research_qualification_decision_id uuid NOT NULL,
+    research_qualification_policy_floor_id uuid NOT NULL,
+    research_qualification_policy_id uuid NOT NULL,
+    result_ordinal integer NOT NULL,
+    research_assessment_evaluation_id uuid,
+    research_assessment_id uuid NOT NULL,
+    evaluation_run_id uuid,
+    evaluation_metric_id uuid,
+    result_status text NOT NULL,
+    observed_decimal_value numeric,
+    observed_boolean_value boolean,
+    member_count integer NOT NULL,
+    estimable_count integer NOT NULL,
+    not_estimable_count integer NOT NULL,
+    support_evidence_count integer NOT NULL,
+    counter_evidence_count integer NOT NULL,
+    evidence_roster_sha256 text NOT NULL,
+    reason_code text NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT research_qualification_floor_result_ordinal_uk UNIQUE (
+        research_qualification_decision_id, result_ordinal
+    ),
+    CONSTRAINT research_qualification_floor_result_floor_uk UNIQUE (
+        research_qualification_decision_id,
+        research_qualification_policy_floor_id
+    ),
+    CONSTRAINT research_qualification_floor_result_exact_uk UNIQUE (
+        research_qualification_floor_result_id,
+        research_qualification_decision_id,
+        research_assessment_id
+    ),
+    CONSTRAINT research_qualification_floor_result_decision_fk FOREIGN KEY (
+        research_qualification_decision_id
+    ) REFERENCES mra.research_qualification_decision(
+        research_qualification_decision_id
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT research_qualification_floor_result_floor_fk FOREIGN KEY (
+        research_qualification_policy_floor_id,
+        research_qualification_policy_id
+    ) REFERENCES mra.research_qualification_policy_floor(
+        research_qualification_policy_floor_id,
+        research_qualification_policy_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT research_qualification_floor_result_assessment_fk FOREIGN KEY (
+        research_assessment_evaluation_id, research_assessment_id,
+        evaluation_run_id
+    ) REFERENCES mra.research_assessment_evaluation(
+        research_assessment_evaluation_id, research_assessment_id,
+        evaluation_run_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT research_qualification_floor_result_metric_fk FOREIGN KEY (
+        evaluation_metric_id, evaluation_run_id
+    ) REFERENCES mra.evaluation_metric(
+        evaluation_metric_id, evaluation_run_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT research_qualification_floor_result_shape_ck CHECK (
+        result_ordinal > 0
+        AND result_status IN ('SATISFIED', 'REJECTED', 'MISSING', 'NOT_ESTIMABLE', 'INCONCLUSIVE', 'BLOCKED')
+        AND member_count >= 0 AND estimable_count >= 0
+        AND not_estimable_count >= 0
+        AND estimable_count + not_estimable_count <= member_count
+        AND support_evidence_count >= 0 AND counter_evidence_count >= 0
+        AND ((evaluation_metric_id IS NULL AND evaluation_run_id IS NULL AND research_assessment_evaluation_id IS NULL)
+          OR (evaluation_metric_id IS NOT NULL AND evaluation_run_id IS NOT NULL AND research_assessment_evaluation_id IS NOT NULL))
+        AND evidence_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND reason_code ~ '^[A-Z][A-Z0-9_]{0,99}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE TABLE mra.research_qualification_floor_evidence (
+    research_qualification_floor_evidence_id uuid PRIMARY KEY,
+    research_qualification_decision_id uuid NOT NULL,
+    research_qualification_floor_result_id uuid NOT NULL,
+    research_assessment_id uuid NOT NULL,
+    research_assessment_evidence_id uuid NOT NULL,
+    evidence_item_id uuid NOT NULL,
+    evidence_ordinal integer NOT NULL,
+    evidence_direction text NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT research_qualification_floor_evidence_ordinal_uk UNIQUE (
+        research_qualification_floor_result_id, evidence_ordinal
+    ),
+    CONSTRAINT research_qualification_floor_evidence_item_uk UNIQUE (
+        research_qualification_floor_result_id,
+        research_assessment_evidence_id
+    ),
+    CONSTRAINT research_qualification_floor_evidence_result_fk FOREIGN KEY (
+        research_qualification_floor_result_id,
+        research_qualification_decision_id,
+        research_assessment_id
+    ) REFERENCES mra.research_qualification_floor_result(
+        research_qualification_floor_result_id,
+        research_qualification_decision_id,
+        research_assessment_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT research_qualification_floor_evidence_assessment_fk FOREIGN KEY (
+        research_assessment_evidence_id, research_assessment_id,
+        evidence_item_id
+    ) REFERENCES mra.research_assessment_evidence(
+        research_assessment_evidence_id, research_assessment_id,
+        evidence_item_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT research_qualification_floor_evidence_shape_ck CHECK (
+        evidence_ordinal > 0
+        AND evidence_direction IN ('SUPPORT', 'COUNTER', 'NEUTRAL')
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE INDEX evidence_item_evaluation_fk_idx ON mra.evidence_item (
+    evaluation_run_id, experiment_id, evaluation_protocol_id,
+    target_definition_id, partition_purpose
+);
+CREATE INDEX evidence_item_metric_fk_idx ON mra.evidence_item (
+    evaluation_metric_id, evaluation_run_id, evaluation_protocol_metric_id
+);
+CREATE INDEX evidence_item_evidence_artifact_fk_idx ON mra.evidence_item (
+    evidence_artifact_id, evidence_content_sha256, evidence_size_bytes
+);
+CREATE INDEX evidence_item_code_artifact_fk_idx ON mra.evidence_item (
+    code_artifact_id, code_content_sha256, code_size_bytes
+);
+CREATE INDEX evidence_item_config_artifact_fk_idx ON mra.evidence_item (
+    config_artifact_id, config_content_sha256, config_size_bytes
+);
+CREATE INDEX evidence_dependency_child_fk_idx ON mra.evidence_dependency (child_evidence_item_id);
+CREATE INDEX evidence_dependency_parent_fk_idx ON mra.evidence_dependency (parent_evidence_item_id);
+CREATE INDEX research_assessment_supersedes_fk_idx ON mra.research_assessment (supersedes_assessment_id);
+CREATE INDEX research_assessment_experiment_fk_idx ON mra.research_assessment (
+    experiment_id, target_definition_id, target_version, target_definition_sha256
+);
+CREATE INDEX research_assessment_code_artifact_fk_idx ON mra.research_assessment (
+    code_artifact_id, code_content_sha256, code_size_bytes
+);
+CREATE INDEX research_assessment_config_artifact_fk_idx ON mra.research_assessment (
+    config_artifact_id, config_content_sha256, config_size_bytes
+);
+CREATE INDEX research_assessment_evaluation_assessment_fk_idx ON mra.research_assessment_evaluation (research_assessment_id);
+CREATE INDEX research_assessment_evaluation_run_fk_idx ON mra.research_assessment_evaluation (
+    evaluation_run_id, experiment_id, evaluation_protocol_id,
+    target_definition_id, partition_purpose
+);
+CREATE INDEX research_assessment_evidence_assessment_fk_idx ON mra.research_assessment_evidence (research_assessment_id);
+CREATE INDEX research_assessment_evidence_evaluation_fk_idx ON mra.research_assessment_evidence (
+    research_assessment_evaluation_id, research_assessment_id, evaluation_run_id
+);
+CREATE INDEX research_assessment_evidence_item_fk_idx ON mra.research_assessment_evidence (
+    evidence_item_id, evaluation_run_id, evidence_direction,
+    evidence_class, origin_class, evidence_role
+);
+CREATE INDEX research_qualification_policy_supersedes_fk_idx ON mra.research_qualification_policy (supersedes_policy_id);
+CREATE INDEX research_qualification_policy_target_fk_idx ON mra.research_qualification_policy (
+    target_definition_id, target_version, target_definition_sha256
+);
+CREATE INDEX research_qualification_policy_code_artifact_fk_idx ON mra.research_qualification_policy (
+    code_artifact_id, code_content_sha256, code_size_bytes
+);
+CREATE INDEX research_qualification_policy_config_artifact_fk_idx ON mra.research_qualification_policy (
+    config_artifact_id, config_content_sha256, config_size_bytes
+);
+CREATE INDEX research_qualification_policy_floor_policy_fk_idx ON mra.research_qualification_policy_floor (research_qualification_policy_id);
+CREATE INDEX research_qualification_policy_floor_metric_fk_idx ON mra.research_qualification_policy_floor (
+    evaluation_protocol_metric_id, evaluation_protocol_id,
+    source_target_metric_definition_id, source_value_type
+);
+CREATE INDEX research_qualification_decision_supersedes_fk_idx ON mra.research_qualification_decision (supersedes_decision_id);
+CREATE INDEX research_qualification_decision_assessment_fk_idx ON mra.research_qualification_decision (
+    research_assessment_id, experiment_id, target_definition_id,
+    assessment_status
+);
+CREATE INDEX research_qualification_decision_policy_fk_idx ON mra.research_qualification_decision (
+    research_qualification_policy_id, target_definition_id,
+    qualification_purpose
+);
+CREATE INDEX research_qualification_decision_code_artifact_fk_idx ON mra.research_qualification_decision (
+    code_artifact_id, code_content_sha256, code_size_bytes
+);
+CREATE INDEX research_qualification_decision_config_artifact_fk_idx ON mra.research_qualification_decision (
+    config_artifact_id, config_content_sha256, config_size_bytes
+);
+CREATE INDEX research_qualification_floor_result_decision_fk_idx ON mra.research_qualification_floor_result (research_qualification_decision_id);
+CREATE INDEX research_qualification_floor_result_floor_fk_idx ON mra.research_qualification_floor_result (
+    research_qualification_policy_floor_id, research_qualification_policy_id
+);
+CREATE INDEX research_qualification_floor_result_assessment_fk_idx ON mra.research_qualification_floor_result (
+    research_assessment_evaluation_id, research_assessment_id, evaluation_run_id
+);
+CREATE INDEX research_qualification_floor_result_metric_fk_idx ON mra.research_qualification_floor_result (
+    evaluation_metric_id, evaluation_run_id
+);
+CREATE INDEX research_qualification_floor_evidence_result_fk_idx ON mra.research_qualification_floor_evidence (
+    research_qualification_floor_result_id,
+    research_qualification_decision_id, research_assessment_id
+);
+CREATE INDEX research_qualification_floor_evidence_assessment_fk_idx ON mra.research_qualification_floor_evidence (
+    research_assessment_evidence_id, research_assessment_id,
+    evidence_item_id
+);
+
+CREATE FUNCTION mra.guard_evidence_dependency_insert()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE parent_recorded_at timestamptz;
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM mra.evidence_item
+        WHERE evidence_item_id = NEW.child_evidence_item_id
+    ) THEN
+        RAISE EXCEPTION 'Evidence dependency roster is already frozen'
+            USING ERRCODE = '55000';
+    END IF;
+    SELECT recorded_at INTO parent_recorded_at
+    FROM mra.evidence_item
+    WHERE evidence_item_id = NEW.parent_evidence_item_id
+    FOR SHARE;
+    IF parent_recorded_at IS NULL OR parent_recorded_at >= NEW.created_at THEN
+        RAISE EXCEPTION 'Evidence dependency parent must be an earlier immutable EvidenceItem'
+            USING ERRCODE = '55000';
+    END IF;
+    IF NEW.content_sha256 <> mra.canonical_sha256(
+        replace(
+            json_build_object(
+                'dependency_role', NEW.dependency_role,
+                'evidence_dependency_id', NEW.evidence_dependency_id,
+                'ordinal', NEW.dependency_ordinal,
+                'parent_evidence_item_id', NEW.parent_evidence_item_id
+            )::text,
+            ' ',
+            ''
+        )
+    ) THEN
+        RAISE EXCEPTION 'Evidence dependency content hash is invalid'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.validate_evidence_item_closure()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE actual_count integer;
+DECLARE minimum_ordinal integer;
+DECLARE maximum_ordinal integer;
+DECLARE actual_roster_hash text;
+DECLARE actual_terminal_at timestamptz;
+DECLARE actual_generation_max timestamptz;
+DECLARE actual_status text;
+BEGIN
+    SELECT count(*), min(dependency_ordinal), max(dependency_ordinal),
+           mra.canonical_sha256(
+               replace(
+                   coalesce(
+                       json_agg(
+                           json_build_object(
+                               'content_sha256', content_sha256,
+                               'dependency_role', dependency_role,
+                               'evidence_dependency_id', evidence_dependency_id,
+                               'ordinal', dependency_ordinal,
+                               'parent_evidence_item_id', parent_evidence_item_id
+                           ) ORDER BY dependency_ordinal
+                       ),
+                       '[]'::json
+                   )::text,
+                   ' ',
+                   ''
+               )
+           )
+      INTO actual_count, minimum_ordinal, maximum_ordinal, actual_roster_hash
+    FROM mra.evidence_dependency
+    WHERE child_evidence_item_id = NEW.evidence_item_id;
+
+    SELECT run.status, coalesce(run.completed_at, run.failed_at),
+           max(member.decision_time)
+      INTO actual_status, actual_terminal_at, actual_generation_max
+    FROM mra.evaluation_run AS run
+    JOIN mra.research_partition_member AS member
+      ON member.research_partition_id = run.research_partition_id
+    WHERE run.evaluation_run_id = NEW.evaluation_run_id
+    GROUP BY run.status, run.completed_at, run.failed_at;
+
+    IF actual_status NOT IN ('COMPLETED', 'FAILED')
+       OR actual_terminal_at IS NULL
+       OR actual_terminal_at <> NEW.evaluation_terminal_at
+       OR actual_generation_max <> NEW.source_generation_max_decision_time
+       OR actual_count <> NEW.dependency_count
+       OR actual_roster_hash <> NEW.dependency_roster_sha256
+       OR (actual_count > 0 AND (
+           minimum_ordinal <> 1 OR maximum_ordinal <> actual_count
+       ))
+       OR EXISTS (
+           SELECT 1
+           FROM mra.evidence_dependency AS dependency
+           JOIN mra.evidence_item AS parent
+             ON parent.evidence_item_id = dependency.parent_evidence_item_id
+           WHERE dependency.child_evidence_item_id = NEW.evidence_item_id
+             AND parent.recorded_at >= NEW.recorded_at
+       ) THEN
+        RAISE EXCEPTION 'EvidenceItem dependency or Evaluation closure is invalid'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.guard_research_assessment_child_insert()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM mra.research_assessment
+        WHERE research_assessment_id = NEW.research_assessment_id
+    ) THEN
+        RAISE EXCEPTION 'ResearchAssessment roster is already frozen'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.guard_research_assessment_insert()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE predecessor record;
+BEGIN
+    PERFORM pg_advisory_xact_lock(
+        hashtextextended('research-assessment:' || NEW.assessment_code, 0)
+    );
+    IF NEW.knowledge_cutoff > NEW.recorded_at THEN
+        RAISE EXCEPTION 'ResearchAssessment knowledge cutoff is in the future'
+            USING ERRCODE = '55000';
+    END IF;
+    IF NEW.revision > 1 THEN
+        SELECT assessment_code, experiment_id, revision, recorded_at
+          INTO predecessor
+        FROM mra.research_assessment
+        WHERE research_assessment_id = NEW.supersedes_assessment_id
+        FOR SHARE;
+        IF predecessor.assessment_code IS DISTINCT FROM NEW.assessment_code
+           OR predecessor.experiment_id IS DISTINCT FROM NEW.experiment_id
+           OR predecessor.revision + 1 <> NEW.revision
+           OR predecessor.recorded_at >= NEW.recorded_at THEN
+            RAISE EXCEPTION 'ResearchAssessment supersession chain is invalid'
+                USING ERRCODE = '55000';
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.validate_research_assessment_closure()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE actual_evaluation_count integer;
+DECLARE actual_evidence_count integer;
+DECLARE minimum_evaluation_ordinal integer;
+DECLARE maximum_evaluation_ordinal integer;
+DECLARE minimum_evidence_ordinal integer;
+DECLARE maximum_evidence_ordinal integer;
+DECLARE actual_evaluation_hash text;
+DECLARE actual_evidence_hash text;
+DECLARE actual_min_generation timestamptz;
+DECLARE actual_max_generation timestamptz;
+DECLARE actual_terminal_ceiling timestamptz;
+DECLARE derived_status text;
+BEGIN
+    SELECT count(*), min(evaluation_ordinal), max(evaluation_ordinal),
+           mra.canonical_sha256(
+               replace(
+                   json_agg(
+                       json_build_object(
+                           'content_sha256', content_sha256,
+                           'evaluation_ordinal', evaluation_ordinal,
+                           'evaluation_run_id', evaluation_run_id,
+                           'research_assessment_evaluation_id',
+                               research_assessment_evaluation_id
+                       ) ORDER BY evaluation_ordinal
+                   )::text,
+                   ' ',
+                   ''
+               )
+           ),
+           min(source_generation_min_decision_time),
+           max(source_generation_max_decision_time),
+           max(terminal_at)
+      INTO actual_evaluation_count, minimum_evaluation_ordinal,
+           maximum_evaluation_ordinal, actual_evaluation_hash,
+           actual_min_generation, actual_max_generation,
+           actual_terminal_ceiling
+    FROM mra.research_assessment_evaluation
+    WHERE research_assessment_id = NEW.research_assessment_id;
+
+    SELECT count(*), min(evidence_ordinal), max(evidence_ordinal),
+           mra.canonical_sha256(
+               replace(
+                   json_agg(
+                       json_build_object(
+                           'content_sha256', content_sha256,
+                           'evidence_item_id', evidence_item_id,
+                           'evidence_ordinal', evidence_ordinal,
+                           'research_assessment_evidence_id',
+                               research_assessment_evidence_id
+                       ) ORDER BY evidence_ordinal
+                   )::text,
+                   ' ',
+                   ''
+               )
+           )
+      INTO actual_evidence_count, minimum_evidence_ordinal,
+           maximum_evidence_ordinal, actual_evidence_hash
+    FROM mra.research_assessment_evidence
+    WHERE research_assessment_id = NEW.research_assessment_id;
+
+    SELECT CASE
+        WHEN bool_or(evaluation_status = 'FAILED') THEN 'BLOCKED'
+        WHEN bool_or(rejected_metric_count > 0) THEN 'REJECTED'
+        WHEN sum(metric_count) > 0
+             AND sum(not_estimable_metric_count) = sum(metric_count)
+          THEN 'NOT_ESTIMABLE'
+        WHEN bool_or(not_estimable_metric_count > 0)
+             OR EXISTS (
+                 SELECT 1 FROM mra.research_assessment_evidence
+                 WHERE research_assessment_id = NEW.research_assessment_id
+                   AND evidence_direction = 'COUNTER'
+             )
+             OR NOT EXISTS (
+                 SELECT 1 FROM mra.research_assessment_evidence
+                 WHERE research_assessment_id = NEW.research_assessment_id
+                   AND evidence_direction = 'SUPPORT'
+             )
+          THEN 'INCONCLUSIVE'
+        ELSE 'SUPPORTED'
+    END INTO derived_status
+    FROM mra.research_assessment_evaluation
+    WHERE research_assessment_id = NEW.research_assessment_id;
+
+    IF actual_evaluation_count <> NEW.evaluation_count
+       OR minimum_evaluation_ordinal <> 1
+       OR maximum_evaluation_ordinal <> NEW.evaluation_count
+       OR actual_evaluation_hash <> NEW.evaluation_roster_sha256
+       OR actual_evidence_count <> NEW.evidence_count
+       OR minimum_evidence_ordinal <> 1
+       OR maximum_evidence_ordinal <> NEW.evidence_count
+       OR actual_evidence_hash <> NEW.evidence_roster_sha256
+       OR actual_min_generation <> NEW.source_generation_min_decision_time
+       OR actual_max_generation <> NEW.source_generation_max_decision_time
+       OR actual_terminal_ceiling <> NEW.terminal_evaluation_ceiling
+       OR derived_status <> NEW.assessment_status
+       OR EXISTS (
+           SELECT 1
+           FROM mra.research_assessment_evaluation AS item
+           JOIN mra.evaluation_run AS run
+             ON run.evaluation_run_id = item.evaluation_run_id
+           WHERE item.research_assessment_id = NEW.research_assessment_id
+             AND (
+                 run.experiment_id <> NEW.experiment_id
+                 OR run.status <> item.evaluation_status
+                 OR coalesce(run.completed_at, run.failed_at) <> item.terminal_at
+                 OR run.opened_at > NEW.knowledge_cutoff
+             )
+       )
+       OR EXISTS (
+           (SELECT run.evaluation_run_id
+            FROM mra.evaluation_run AS run
+            WHERE run.experiment_id = NEW.experiment_id
+              AND run.opened_at <= NEW.knowledge_cutoff)
+           EXCEPT
+           (SELECT item.evaluation_run_id
+            FROM mra.research_assessment_evaluation AS item
+            WHERE item.research_assessment_id = NEW.research_assessment_id)
+       )
+       OR EXISTS (
+           SELECT 1
+           FROM mra.research_assessment_evaluation AS item
+           WHERE item.research_assessment_id = NEW.research_assessment_id
+             AND NOT EXISTS (
+                 SELECT 1 FROM mra.research_assessment_evidence AS evidence
+                 WHERE evidence.research_assessment_evaluation_id =
+                       item.research_assessment_evaluation_id
+             )
+       )
+       OR EXISTS (
+           (SELECT evidence.evidence_item_id
+            FROM mra.evidence_item AS evidence
+            JOIN mra.evaluation_run AS run
+              ON run.evaluation_run_id = evidence.evaluation_run_id
+            WHERE run.experiment_id = NEW.experiment_id
+              AND run.opened_at <= NEW.knowledge_cutoff
+              AND evidence.recorded_at <= NEW.knowledge_cutoff)
+           EXCEPT
+           (SELECT item.evidence_item_id
+            FROM mra.research_assessment_evidence AS item
+            WHERE item.research_assessment_id = NEW.research_assessment_id)
+       )
+       OR EXISTS (
+           SELECT 1
+           FROM mra.research_assessment_evidence AS item
+           JOIN mra.evidence_item AS evidence
+             ON evidence.evidence_item_id = item.evidence_item_id
+           WHERE item.research_assessment_id = NEW.research_assessment_id
+             AND evidence.recorded_at > NEW.knowledge_cutoff
+       ) THEN
+        RAISE EXCEPTION 'ResearchAssessment roster or derived conclusion is incomplete'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.guard_research_qualification_policy_floor_insert()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM mra.research_qualification_policy
+        WHERE research_qualification_policy_id =
+              NEW.research_qualification_policy_id
+    ) THEN
+        RAISE EXCEPTION 'ResearchQualificationPolicy floor roster is already frozen'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.validate_research_qualification_policy_closure()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE actual_count integer;
+DECLARE minimum_ordinal integer;
+DECLARE maximum_ordinal integer;
+DECLARE actual_roster_hash text;
+DECLARE predecessor record;
+BEGIN
+    SELECT count(*), min(floor_ordinal), max(floor_ordinal),
+           mra.canonical_sha256(
+               replace(
+                   json_agg(
+                       json_build_object(
+                           'boolean_threshold', boolean_threshold,
+                           'candidate_disposition', candidate_disposition,
+                           'content_sha256', content_sha256,
+                           'decimal_threshold', decimal_threshold::text,
+                           'direction', direction,
+                           'evaluation_protocol_id', evaluation_protocol_id,
+                           'evaluation_protocol_metric_id', evaluation_protocol_metric_id,
+                           'evaluation_protocol_metric_sha256', evaluation_protocol_metric_sha256,
+                           'floor_code', floor_code,
+                           'maximum_counter_evidence_count', maximum_counter_evidence_count,
+                           'minimum_estimable_count', minimum_estimable_count,
+                           'minimum_member_count', minimum_member_count,
+                           'minimum_support_evidence_count', minimum_support_evidence_count,
+                           'missingness_policy', missingness_policy,
+                           'operator', qualification_operator,
+                           'ordinal', floor_ordinal,
+                           'reducer', reducer,
+                           'required', required,
+                           'required_evaluation_status', required_evaluation_status,
+                           'required_evidence_class', required_evidence_class,
+                           'required_evidence_role', required_evidence_role,
+                           'required_origin_class', required_origin_class,
+                           'required_partition_purpose', required_partition_purpose,
+                           'research_qualification_policy_floor_id', research_qualification_policy_floor_id,
+                           'slice_kind', slice_kind,
+                           'source_value_type', source_value_type
+                       ) ORDER BY floor_ordinal
+                   )::text,
+                   ' ',
+                   ''
+               )
+           )
+      INTO actual_count, minimum_ordinal, maximum_ordinal, actual_roster_hash
+    FROM mra.research_qualification_policy_floor
+    WHERE research_qualification_policy_id = NEW.research_qualification_policy_id;
+
+    IF NEW.version > 1 THEN
+        SELECT policy_code, version, target_definition_id,
+               qualification_purpose, frozen_at
+          INTO predecessor
+        FROM mra.research_qualification_policy
+        WHERE research_qualification_policy_id = NEW.supersedes_policy_id
+        FOR SHARE;
+        IF predecessor.policy_code IS DISTINCT FROM NEW.policy_code
+           OR predecessor.version + 1 <> NEW.version
+           OR predecessor.target_definition_id IS DISTINCT FROM NEW.target_definition_id
+           OR predecessor.qualification_purpose IS DISTINCT FROM NEW.qualification_purpose
+           OR predecessor.frozen_at >= NEW.frozen_at THEN
+            RAISE EXCEPTION 'ResearchQualificationPolicy supersession chain is invalid'
+                USING ERRCODE = '55000';
+        END IF;
+    END IF;
+
+    IF actual_count <> NEW.floor_count
+       OR minimum_ordinal <> 1 OR maximum_ordinal <> NEW.floor_count
+       OR actual_roster_hash <> NEW.floor_roster_sha256
+       OR NOT EXISTS (
+           SELECT 1
+           FROM mra.research_qualification_policy_floor
+           WHERE research_qualification_policy_id =
+                 NEW.research_qualification_policy_id
+             AND required
+       )
+       OR EXISTS (
+           SELECT 1
+           FROM mra.research_qualification_policy_floor AS floor
+           JOIN mra.evaluation_protocol_metric AS metric
+             ON metric.evaluation_protocol_metric_id =
+                floor.evaluation_protocol_metric_id
+           JOIN mra.evaluation_protocol AS protocol
+             ON protocol.evaluation_protocol_id = floor.evaluation_protocol_id
+           WHERE floor.research_qualification_policy_id =
+                 NEW.research_qualification_policy_id
+             AND (
+                 protocol.target_definition_id <> NEW.target_definition_id
+                 OR protocol.applicable_purpose <> floor.required_partition_purpose
+                 OR metric.content_sha256 <> floor.evaluation_protocol_metric_sha256
+                 OR metric.metric_code <> floor.metric_code
+                 OR metric.source_value_type <> floor.source_value_type
+                 OR metric.reducer <> floor.reducer
+                 OR metric.slice_kind <> floor.slice_kind
+                 OR metric.candidate_disposition IS DISTINCT FROM floor.candidate_disposition
+                 OR metric.direction <> floor.direction
+                 OR (floor.reducer IN ('MEAN_DECIMAL', 'MEDIAN_DECIMAL', 'ESTIMABLE_RATE')
+                     AND floor.source_value_type <> 'DECIMAL')
+                 OR (floor.reducer = 'TRUE_RATE'
+                     AND floor.source_value_type <> 'BOOLEAN')
+             )
+       )
+       OR EXISTS (
+           SELECT 1
+           FROM mra.research_qualification_policy_floor AS floor
+           WHERE floor.research_qualification_policy_id =
+                 NEW.research_qualification_policy_id
+             AND NOT (
+                 (NEW.qualification_purpose = 'DISCOVERY'
+                  AND floor.required_partition_purpose IN ('DISCOVERY', 'FIT'))
+                 OR (NEW.qualification_purpose = 'VALIDATION'
+                     AND floor.required_partition_purpose IN ('FIT', 'VALIDATION'))
+                 OR (NEW.qualification_purpose = 'LOCKED_OOS'
+                     AND floor.required_partition_purpose IN ('FIT', 'VALIDATION', 'LOCKED_OOS'))
+                 OR (NEW.qualification_purpose = 'PROSPECTIVE'
+                     AND floor.required_partition_purpose IN ('FIT', 'VALIDATION', 'LOCKED_OOS', 'PROSPECTIVE'))
+             )
+       ) THEN
+        RAISE EXCEPTION 'ResearchQualificationPolicy floor closure is invalid'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.guard_research_qualification_child_insert()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM mra.research_qualification_decision
+        WHERE research_qualification_decision_id =
+              NEW.research_qualification_decision_id
+    ) THEN
+        RAISE EXCEPTION 'ResearchQualificationDecision result roster is already frozen'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.guard_research_qualification_decision_insert()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE predecessor record;
+DECLARE policy_frozen_at timestamptz;
+DECLARE assessment_recorded_at timestamptz;
+DECLARE assessment_generation timestamptz;
+BEGIN
+    PERFORM pg_advisory_xact_lock(
+        hashtextextended('research-qualification:' || NEW.decision_code, 0)
+    );
+    SELECT policy.frozen_at, assessment.recorded_at,
+           assessment.source_generation_max_decision_time
+      INTO policy_frozen_at, assessment_recorded_at, assessment_generation
+    FROM mra.research_qualification_policy AS policy
+    CROSS JOIN mra.research_assessment AS assessment
+    WHERE policy.research_qualification_policy_id =
+          NEW.research_qualification_policy_id
+      AND assessment.research_assessment_id = NEW.research_assessment_id
+    FOR SHARE;
+    IF policy_frozen_at IS NULL
+       OR assessment_recorded_at >= NEW.recorded_at
+       OR assessment_generation <> NEW.source_generation_max_decision_time
+       OR NEW.source_generation_max_decision_time >= NEW.effective_at THEN
+        RAISE EXCEPTION 'ResearchQualificationDecision generation ordering is invalid'
+            USING ERRCODE = '55000';
+    END IF;
+    IF NEW.revision > 1 THEN
+        SELECT decision_code, revision, research_assessment_id,
+               research_qualification_policy_id, recorded_at
+          INTO predecessor
+        FROM mra.research_qualification_decision
+        WHERE research_qualification_decision_id = NEW.supersedes_decision_id
+        FOR SHARE;
+        IF predecessor.decision_code IS DISTINCT FROM NEW.decision_code
+           OR predecessor.revision + 1 <> NEW.revision
+           OR predecessor.recorded_at >= NEW.recorded_at THEN
+            RAISE EXCEPTION 'ResearchQualificationDecision supersession chain is invalid'
+                USING ERRCODE = '55000';
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.validate_research_qualification_decision_closure()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE actual_count integer;
+DECLARE minimum_ordinal integer;
+DECLARE maximum_ordinal integer;
+DECLARE actual_roster_hash text;
+DECLARE required_count integer;
+DECLARE derived_status text;
+DECLARE first_access_at timestamptz;
+DECLARE item record;
+DECLARE match_count integer;
+DECLARE actual_assessment_evaluation_id uuid;
+DECLARE actual_evaluation_run_id uuid;
+DECLARE actual_evaluation_metric_id uuid;
+DECLARE actual_metric_state text;
+DECLARE actual_decimal numeric;
+DECLARE actual_boolean boolean;
+DECLARE actual_estimable_count integer;
+DECLARE actual_member_count integer;
+DECLARE actual_not_estimable_count integer;
+DECLARE actual_support_count integer;
+DECLARE actual_counter_count integer;
+DECLARE actual_evidence_count integer;
+DECLARE actual_evidence_min_ordinal integer;
+DECLARE actual_evidence_max_ordinal integer;
+DECLARE actual_evidence_hash text;
+DECLARE expected_result_status text;
+BEGIN
+    SELECT count(*), min(result_ordinal), max(result_ordinal),
+           mra.canonical_sha256(
+               replace(
+                   json_agg(
+                       json_build_object(
+                           'content_sha256', content_sha256,
+                           'research_qualification_floor_result_id',
+                               research_qualification_floor_result_id,
+                           'research_qualification_policy_floor_id',
+                               research_qualification_policy_floor_id,
+                           'result_ordinal', result_ordinal
+                       ) ORDER BY result_ordinal
+                   )::text,
+                   ' ',
+                   ''
+               )
+           )
+      INTO actual_count, minimum_ordinal, maximum_ordinal, actual_roster_hash
+    FROM mra.research_qualification_floor_result
+    WHERE research_qualification_decision_id =
+          NEW.research_qualification_decision_id;
+
+    SELECT count(*) INTO required_count
+    FROM mra.research_qualification_policy_floor
+    WHERE research_qualification_policy_id =
+          NEW.research_qualification_policy_id
+      AND required;
+
+    SELECT CASE
+        WHEN NEW.assessment_status = 'REJECTED'
+          OR EXISTS (
+              SELECT 1
+              FROM mra.research_qualification_floor_result AS result
+              JOIN mra.research_qualification_policy_floor AS floor
+                ON floor.research_qualification_policy_floor_id =
+                   result.research_qualification_policy_floor_id
+              WHERE result.research_qualification_decision_id =
+                    NEW.research_qualification_decision_id
+                AND floor.required AND result.result_status = 'REJECTED'
+          ) THEN 'REJECTED'
+        WHEN NEW.assessment_status = (
+                 SELECT required_assessment_status
+                 FROM mra.research_qualification_policy
+                 WHERE research_qualification_policy_id =
+                       NEW.research_qualification_policy_id
+             )
+             AND required_count > 0
+             AND NOT EXISTS (
+                 SELECT 1
+                 FROM mra.research_qualification_floor_result AS result
+                 JOIN mra.research_qualification_policy_floor AS floor
+                   ON floor.research_qualification_policy_floor_id =
+                      result.research_qualification_policy_floor_id
+                 WHERE result.research_qualification_decision_id =
+                       NEW.research_qualification_decision_id
+                   AND floor.required
+                   AND result.result_status <> 'SATISFIED'
+             ) THEN 'ADMITTED'
+        ELSE 'INCONCLUSIVE'
+    END INTO derived_status;
+
+    SELECT min(access.accessed_at) INTO first_access_at
+    FROM mra.research_assessment_evaluation AS assessment_item
+    JOIN mra.evaluation_run AS run
+      ON run.evaluation_run_id = assessment_item.evaluation_run_id
+    JOIN mra.research_partition_outcome_access AS access
+      ON access.evaluation_run_id = run.evaluation_run_id
+    WHERE assessment_item.research_assessment_id = NEW.research_assessment_id;
+
+    FOR item IN
+        SELECT result.*, floor.evaluation_protocol_id,
+               floor.evaluation_protocol_metric_id,
+               floor.required_partition_purpose,
+               floor.required_evaluation_status,
+               floor.source_value_type, floor.qualification_operator,
+               floor.decimal_threshold, floor.boolean_threshold,
+               floor.minimum_member_count, floor.minimum_estimable_count,
+               floor.missingness_policy, floor.required_evidence_class,
+               floor.required_origin_class, floor.required_evidence_role,
+               floor.minimum_support_evidence_count,
+               floor.maximum_counter_evidence_count
+        FROM mra.research_qualification_floor_result AS result
+        JOIN mra.research_qualification_policy_floor AS floor
+          ON floor.research_qualification_policy_floor_id =
+             result.research_qualification_policy_floor_id
+        WHERE result.research_qualification_decision_id =
+              NEW.research_qualification_decision_id
+        ORDER BY result.result_ordinal
+    LOOP
+        SELECT count(*) INTO match_count
+        FROM mra.research_assessment_evaluation AS assessment_evaluation
+        JOIN mra.evaluation_metric AS metric
+          ON metric.evaluation_run_id = assessment_evaluation.evaluation_run_id
+         AND metric.evaluation_protocol_metric_id =
+             item.evaluation_protocol_metric_id
+        WHERE assessment_evaluation.research_assessment_id =
+              NEW.research_assessment_id
+          AND assessment_evaluation.evaluation_protocol_id =
+              item.evaluation_protocol_id
+          AND assessment_evaluation.partition_purpose =
+              item.required_partition_purpose
+          AND assessment_evaluation.evaluation_status =
+              item.required_evaluation_status;
+
+        IF match_count > 1 THEN
+            RAISE EXCEPTION 'Qualification floor input is ambiguous'
+                USING ERRCODE = '55000';
+        ELSIF match_count = 0 THEN
+            IF item.research_assessment_evaluation_id IS NOT NULL
+               OR item.evaluation_run_id IS NOT NULL
+               OR item.evaluation_metric_id IS NOT NULL
+               OR item.result_status <> 'MISSING'
+               OR item.observed_decimal_value IS NOT NULL
+               OR item.observed_boolean_value IS NOT NULL
+               OR item.member_count <> 0 OR item.estimable_count <> 0
+               OR item.not_estimable_count <> 0
+               OR item.support_evidence_count <> 0
+               OR item.counter_evidence_count <> 0 THEN
+                RAISE EXCEPTION 'Missing Qualification floor was not preserved'
+                    USING ERRCODE = '55000';
+            END IF;
+        ELSE
+            SELECT assessment_evaluation.research_assessment_evaluation_id,
+                   assessment_evaluation.evaluation_run_id,
+                   metric.evaluation_metric_id, metric.metric_state,
+                   metric.decimal_value, metric.boolean_value,
+                   metric.estimable_count,
+                   (SELECT count(*)
+                    FROM mra.evaluation_metric_observation AS input
+                    WHERE input.evaluation_metric_id = metric.evaluation_metric_id
+                      AND input.input_state <> 'EXCLUDED'),
+                   (SELECT count(*)
+                    FROM mra.evaluation_metric_observation AS input
+                    WHERE input.evaluation_metric_id = metric.evaluation_metric_id
+                      AND input.input_state = 'NOT_ESTIMABLE')
+              INTO actual_assessment_evaluation_id,
+                   actual_evaluation_run_id, actual_evaluation_metric_id,
+                   actual_metric_state, actual_decimal, actual_boolean,
+                   actual_estimable_count, actual_member_count,
+                   actual_not_estimable_count
+            FROM mra.research_assessment_evaluation AS assessment_evaluation
+            JOIN mra.evaluation_metric AS metric
+              ON metric.evaluation_run_id =
+                 assessment_evaluation.evaluation_run_id
+             AND metric.evaluation_protocol_metric_id =
+                 item.evaluation_protocol_metric_id
+            WHERE assessment_evaluation.research_assessment_id =
+                  NEW.research_assessment_id
+              AND assessment_evaluation.evaluation_protocol_id =
+                  item.evaluation_protocol_id
+              AND assessment_evaluation.partition_purpose =
+                  item.required_partition_purpose
+              AND assessment_evaluation.evaluation_status =
+                  item.required_evaluation_status;
+
+            SELECT count(*) FILTER (WHERE evidence_direction = 'SUPPORT'),
+                   count(*) FILTER (WHERE evidence_direction = 'COUNTER')
+              INTO actual_support_count, actual_counter_count
+            FROM mra.research_assessment_evidence
+            WHERE research_assessment_id = NEW.research_assessment_id
+              AND research_assessment_evaluation_id =
+                  actual_assessment_evaluation_id
+              AND evidence_class = item.required_evidence_class
+              AND origin_class = item.required_origin_class
+              AND evidence_role = item.required_evidence_role;
+
+            expected_result_status := CASE
+                WHEN actual_metric_state = 'NOT_ESTIMABLE'
+                  THEN 'NOT_ESTIMABLE'
+                WHEN actual_member_count < item.minimum_member_count
+                  OR actual_estimable_count < item.minimum_estimable_count
+                  THEN CASE WHEN item.missingness_policy = 'REJECT'
+                            THEN 'REJECTED' ELSE 'INCONCLUSIVE' END
+                WHEN actual_support_count < item.minimum_support_evidence_count
+                  OR actual_counter_count > item.maximum_counter_evidence_count
+                  THEN 'REJECTED'
+                WHEN item.source_value_type = 'DECIMAL'
+                 AND ((item.qualification_operator = 'AT_LEAST'
+                       AND actual_decimal >= item.decimal_threshold)
+                   OR (item.qualification_operator = 'AT_MOST'
+                       AND actual_decimal <= item.decimal_threshold))
+                  THEN 'SATISFIED'
+                WHEN item.source_value_type = 'BOOLEAN'
+                 AND actual_boolean IS NOT DISTINCT FROM item.boolean_threshold
+                  THEN 'SATISFIED'
+                ELSE 'REJECTED'
+            END;
+
+            IF item.research_assessment_evaluation_id IS DISTINCT FROM
+                   actual_assessment_evaluation_id
+               OR item.evaluation_run_id IS DISTINCT FROM
+                  actual_evaluation_run_id
+               OR item.evaluation_metric_id IS DISTINCT FROM
+                  actual_evaluation_metric_id
+               OR item.observed_decimal_value IS DISTINCT FROM actual_decimal
+               OR item.observed_boolean_value IS DISTINCT FROM actual_boolean
+               OR item.member_count <> actual_member_count
+               OR item.estimable_count <> actual_estimable_count
+               OR item.not_estimable_count <> actual_not_estimable_count
+               OR item.support_evidence_count <> actual_support_count
+               OR item.counter_evidence_count <> actual_counter_count
+               OR item.result_status <> expected_result_status THEN
+                RAISE EXCEPTION 'Qualification floor result does not match exact inputs'
+                    USING ERRCODE = '55000';
+            END IF;
+        END IF;
+
+        SELECT count(*), min(evidence_ordinal), max(evidence_ordinal),
+               mra.canonical_sha256(
+                   replace(
+                       coalesce(
+                           json_agg(
+                               json_build_object(
+                                   'content_sha256', content_sha256,
+                                   'evidence_ordinal', evidence_ordinal,
+                                   'research_assessment_evidence_id',
+                                       research_assessment_evidence_id,
+                                   'research_qualification_floor_evidence_id',
+                                       research_qualification_floor_evidence_id
+                               ) ORDER BY evidence_ordinal
+                           ),
+                           '[]'::json
+                       )::text,
+                       ' ',
+                       ''
+                   )
+               )
+          INTO actual_evidence_count, actual_evidence_min_ordinal,
+               actual_evidence_max_ordinal, actual_evidence_hash
+        FROM mra.research_qualification_floor_evidence
+        WHERE research_qualification_floor_result_id =
+              item.research_qualification_floor_result_id;
+
+        IF actual_evidence_hash <> item.evidence_roster_sha256
+           OR (actual_evidence_count > 0 AND (
+               actual_evidence_min_ordinal <> 1
+               OR actual_evidence_max_ordinal <> actual_evidence_count
+           ))
+           OR EXISTS (
+               (SELECT evidence.research_assessment_evidence_id
+                FROM mra.research_assessment_evidence AS evidence
+                WHERE match_count = 1
+                  AND evidence.research_assessment_id =
+                      NEW.research_assessment_id
+                  AND evidence.research_assessment_evaluation_id =
+                      actual_assessment_evaluation_id
+                  AND evidence.evidence_class = item.required_evidence_class
+                  AND evidence.origin_class = item.required_origin_class
+                  AND evidence.evidence_role = item.required_evidence_role)
+               EXCEPT
+               (SELECT binding.research_assessment_evidence_id
+                FROM mra.research_qualification_floor_evidence AS binding
+                WHERE binding.research_qualification_floor_result_id =
+                      item.research_qualification_floor_result_id)
+           )
+           OR EXISTS (
+               (SELECT binding.research_assessment_evidence_id
+                FROM mra.research_qualification_floor_evidence AS binding
+                WHERE binding.research_qualification_floor_result_id =
+                      item.research_qualification_floor_result_id)
+               EXCEPT
+               (SELECT evidence.research_assessment_evidence_id
+                FROM mra.research_assessment_evidence AS evidence
+                WHERE match_count = 1
+                  AND evidence.research_assessment_id =
+                      NEW.research_assessment_id
+                  AND evidence.research_assessment_evaluation_id =
+                      actual_assessment_evaluation_id
+                  AND evidence.evidence_class = item.required_evidence_class
+                  AND evidence.origin_class = item.required_origin_class
+                  AND evidence.evidence_role = item.required_evidence_role)
+           ) THEN
+            RAISE EXCEPTION 'Qualification floor Evidence roster is incomplete'
+                USING ERRCODE = '55000';
+        END IF;
+    END LOOP;
+
+    IF actual_count <> NEW.floor_count
+       OR minimum_ordinal <> 1 OR maximum_ordinal <> NEW.floor_count
+       OR actual_roster_hash <> NEW.floor_result_roster_sha256
+       OR derived_status <> NEW.decision_status
+       OR EXISTS (
+           (SELECT floor.research_qualification_policy_floor_id
+            FROM mra.research_qualification_policy_floor AS floor
+            WHERE floor.research_qualification_policy_id =
+                  NEW.research_qualification_policy_id)
+           EXCEPT
+           (SELECT result.research_qualification_policy_floor_id
+            FROM mra.research_qualification_floor_result AS result
+            WHERE result.research_qualification_decision_id =
+                  NEW.research_qualification_decision_id)
+       )
+       OR EXISTS (
+           SELECT 1
+           FROM mra.research_qualification_floor_result AS result
+           JOIN mra.research_qualification_policy_floor AS floor
+             ON floor.research_qualification_policy_floor_id =
+                result.research_qualification_policy_floor_id
+           WHERE result.research_qualification_decision_id =
+                 NEW.research_qualification_decision_id
+             AND (result.research_qualification_policy_id <>
+                  NEW.research_qualification_policy_id
+                  OR result.result_ordinal <> floor.floor_ordinal)
+       )
+       OR EXISTS (
+           SELECT 1
+           FROM mra.research_qualification_policy AS policy
+           WHERE policy.research_qualification_policy_id =
+                 NEW.research_qualification_policy_id
+             AND policy.require_preaccess_freeze
+             AND first_access_at IS NOT NULL
+             AND policy.frozen_at >= first_access_at
+       ) THEN
+        RAISE EXCEPTION 'ResearchQualificationDecision floor closure is invalid'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
 CREATE FUNCTION mra.guard_research_partition_overlap()
 RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
@@ -9926,3 +11516,77 @@ FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
 CREATE TRIGGER evaluation_metric_observation_insert_guard
 BEFORE INSERT ON mra.evaluation_metric_observation
 FOR EACH ROW EXECUTE FUNCTION mra.guard_evaluation_metric_insert();
+
+CREATE TRIGGER evidence_item_append_only
+BEFORE UPDATE OR DELETE ON mra.evidence_item
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE CONSTRAINT TRIGGER evidence_item_closure_guard
+AFTER INSERT ON mra.evidence_item
+DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW EXECUTE FUNCTION mra.validate_evidence_item_closure();
+CREATE TRIGGER evidence_dependency_insert_guard
+BEFORE INSERT ON mra.evidence_dependency
+FOR EACH ROW EXECUTE FUNCTION mra.guard_evidence_dependency_insert();
+CREATE TRIGGER evidence_dependency_append_only
+BEFORE UPDATE OR DELETE ON mra.evidence_dependency
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+
+CREATE TRIGGER research_assessment_insert_guard
+BEFORE INSERT ON mra.research_assessment
+FOR EACH ROW EXECUTE FUNCTION mra.guard_research_assessment_insert();
+CREATE TRIGGER research_assessment_append_only
+BEFORE UPDATE OR DELETE ON mra.research_assessment
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE CONSTRAINT TRIGGER research_assessment_closure_guard
+AFTER INSERT ON mra.research_assessment
+DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW EXECUTE FUNCTION mra.validate_research_assessment_closure();
+CREATE TRIGGER research_assessment_evaluation_insert_guard
+BEFORE INSERT ON mra.research_assessment_evaluation
+FOR EACH ROW EXECUTE FUNCTION mra.guard_research_assessment_child_insert();
+CREATE TRIGGER research_assessment_evaluation_append_only
+BEFORE UPDATE OR DELETE ON mra.research_assessment_evaluation
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER research_assessment_evidence_insert_guard
+BEFORE INSERT ON mra.research_assessment_evidence
+FOR EACH ROW EXECUTE FUNCTION mra.guard_research_assessment_child_insert();
+CREATE TRIGGER research_assessment_evidence_append_only
+BEFORE UPDATE OR DELETE ON mra.research_assessment_evidence
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+
+CREATE TRIGGER research_qualification_policy_append_only
+BEFORE UPDATE OR DELETE ON mra.research_qualification_policy
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE CONSTRAINT TRIGGER research_qualification_policy_closure_guard
+AFTER INSERT ON mra.research_qualification_policy
+DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW EXECUTE FUNCTION mra.validate_research_qualification_policy_closure();
+CREATE TRIGGER research_qualification_policy_floor_insert_guard
+BEFORE INSERT ON mra.research_qualification_policy_floor
+FOR EACH ROW EXECUTE FUNCTION mra.guard_research_qualification_policy_floor_insert();
+CREATE TRIGGER research_qualification_policy_floor_append_only
+BEFORE UPDATE OR DELETE ON mra.research_qualification_policy_floor
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+
+CREATE TRIGGER research_qualification_decision_insert_guard
+BEFORE INSERT ON mra.research_qualification_decision
+FOR EACH ROW EXECUTE FUNCTION mra.guard_research_qualification_decision_insert();
+CREATE TRIGGER research_qualification_decision_append_only
+BEFORE UPDATE OR DELETE ON mra.research_qualification_decision
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE CONSTRAINT TRIGGER research_qualification_decision_closure_guard
+AFTER INSERT ON mra.research_qualification_decision
+DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW EXECUTE FUNCTION mra.validate_research_qualification_decision_closure();
+CREATE TRIGGER research_qualification_floor_result_insert_guard
+BEFORE INSERT ON mra.research_qualification_floor_result
+FOR EACH ROW EXECUTE FUNCTION mra.guard_research_qualification_child_insert();
+CREATE TRIGGER research_qualification_floor_result_append_only
+BEFORE UPDATE OR DELETE ON mra.research_qualification_floor_result
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER research_qualification_floor_evidence_insert_guard
+BEFORE INSERT ON mra.research_qualification_floor_evidence
+FOR EACH ROW EXECUTE FUNCTION mra.guard_research_qualification_child_insert();
+CREATE TRIGGER research_qualification_floor_evidence_append_only
+BEFORE UPDATE OR DELETE ON mra.research_qualification_floor_evidence
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();

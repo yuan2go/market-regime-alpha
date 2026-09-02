@@ -80,7 +80,7 @@ def test_market_physical_modules_keep_stable_export_files_small() -> None:
     assert "classify_decision_reference" not in target_source
 
 
-def test_wp10_adds_exact_outcome_authority_without_later_authorities() -> None:
+def test_wp12_preserves_prior_authorities_without_later_authorities() -> None:
     baseline = (SRC / "infrastructure" / "postgres" / "migrations" / "001_baseline.sql").read_text(encoding="utf-8")
     candidate_tables = {
         "candidate_policy",
@@ -114,7 +114,6 @@ def test_wp10_adds_exact_outcome_authority_without_later_authorities() -> None:
     ):
         assert f"CREATE TABLE mra.{table}" in baseline
     for table in (
-        "evaluation_dataset",
         "evidence_item",
         "evidence_dependency",
         "research_assessment",
@@ -125,9 +124,14 @@ def test_wp10_adds_exact_outcome_authority_without_later_authorities() -> None:
         "research_qualification_decision",
         "research_qualification_floor_result",
         "research_qualification_floor_evidence",
+    ):
+        assert f"CREATE TABLE mra.{table}" in baseline
+    for table in (
+        "evaluation_dataset",
         "model",
         "model_version",
         "context",
+        "trade_outcome",
     ):
         assert f"CREATE TABLE mra.{table}" not in baseline
     for table in EXPECTED_RESEARCH_VALIDITY_TABLES:

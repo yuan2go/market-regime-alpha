@@ -76,6 +76,23 @@ from market_regime_alpha.research_qualification.domain import (
     FeatureSourceRequirement,
     FeatureValueType,
 )
+from market_regime_alpha.research_qualification.domain.assessment import AssessmentStatus
+from market_regime_alpha.research_qualification.domain.evidence import (
+    EvidenceClass as ResearchEvidenceClass,
+    EvidenceDependencyRole,
+    EvidenceDirection,
+    EvidenceOriginClass,
+    EvidenceRole,
+    EvidenceScope as ResearchEvidenceScope,
+    ResearchProofClass,
+)
+from market_regime_alpha.research_qualification.domain.qualification import (
+    FloorMissingnessPolicy,
+    FloorResultStatus,
+    QualificationDecisionStatus,
+    QualificationOperator,
+    QualificationPurpose,
+)
 from market_regime_alpha.research_qualification.domain.target_vocabulary import (
     TargetAvailabilityRule,
     TargetBarTimeframe,
@@ -247,6 +264,21 @@ EXPECTED_RESEARCH_VALIDITY_TABLES: Final[frozenset[str]] = frozenset(
     }
 )
 
+EXPECTED_RESEARCH_QUALIFICATION_TABLES: Final[frozenset[str]] = frozenset(
+    {
+        "evidence_item",
+        "evidence_dependency",
+        "research_assessment",
+        "research_assessment_evaluation",
+        "research_assessment_evidence",
+        "research_qualification_policy",
+        "research_qualification_policy_floor",
+        "research_qualification_decision",
+        "research_qualification_floor_result",
+        "research_qualification_floor_evidence",
+    }
+)
+
 EXPECTED_TARGET_TABLES: Final[frozenset[str]] = (
     EXPECTED_FOUNDATION_TABLES
     | EXPECTED_MARKET_TABLES
@@ -256,6 +288,7 @@ EXPECTED_TARGET_TABLES: Final[frozenset[str]] = (
     | EXPECTED_DECISION_SUPPORT_TABLES
     | EXPECTED_OUTCOME_TABLES
     | EXPECTED_RESEARCH_VALIDITY_TABLES
+    | EXPECTED_RESEARCH_QUALIFICATION_TABLES
 )
 
 _LEGACY_TABLE_SIGNATURES: Final[frozenset[str]] = frozenset(
@@ -455,6 +488,33 @@ _REFERENCE_VOCABULARY: Final[dict[str, tuple[str, ...]]] = {
     "evaluation_acceptance_state": tuple(item.value for item in AcceptanceState),
     "evaluation_metric_state": tuple(item.value for item in EvaluationMetricState),
     "evaluation_input_state": tuple(item.value for item in EvaluationInputState),
+    "research_evidence_class": tuple(item.value for item in ResearchEvidenceClass),
+    "research_evidence_origin_class": tuple(
+        item.value for item in EvidenceOriginClass
+    ),
+    "research_evidence_scope": tuple(item.value for item in ResearchEvidenceScope),
+    "research_evidence_role": tuple(item.value for item in EvidenceRole),
+    "research_evidence_direction": tuple(item.value for item in EvidenceDirection),
+    "research_evidence_dependency_role": tuple(
+        item.value for item in EvidenceDependencyRole
+    ),
+    "research_proof_class": tuple(item.value for item in ResearchProofClass),
+    "research_assessment_status": tuple(item.value for item in AssessmentStatus),
+    "research_qualification_purpose": tuple(
+        item.value for item in QualificationPurpose
+    ),
+    "research_qualification_operator": tuple(
+        item.value for item in QualificationOperator
+    ),
+    "research_qualification_missingness_policy": tuple(
+        item.value for item in FloorMissingnessPolicy
+    ),
+    "research_qualification_floor_result_status": tuple(
+        item.value for item in FloorResultStatus
+    ),
+    "research_qualification_decision_status": tuple(
+        item.value for item in QualificationDecisionStatus
+    ),
 }
 
 
@@ -1528,6 +1588,7 @@ __all__ = [
     "EXPECTED_MARKET_TABLES",
     "EXPECTED_OUTCOME_TABLES",
     "EXPECTED_RESEARCH_DEFINITION_TABLES",
+    "EXPECTED_RESEARCH_QUALIFICATION_TABLES",
     "EXPECTED_RESEARCH_VALIDITY_TABLES",
     "EXPECTED_SELECTION_TABLES",
     "EXPECTED_TARGET_DEFINITION_TABLES",

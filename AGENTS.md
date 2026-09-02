@@ -3,7 +3,7 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Sole repository execution, safety, and evidence contract
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-31
+> **Last Updated:** 2026-09-02
 > **Related Documents:** `CLAUDE.md`, `docs/README.md`, `docs/architecture/Canonical-Overall-Design.md`, `docs/status/Roadmap.md`
 
 ## Mission and current program
@@ -35,12 +35,13 @@ Foundation
 → Execution/TradeOutcome/Attribution → Runtime/CLI Cutover
 ```
 
-WP-08 authorizes this dependency order, not concurrent implementation. WP-09
-and WP-10 have passed their immutable local engineering gates. The active
-authorized package is integrated WP-11 Research Validity and Evaluation
-Closure; it combines the former Partition/Experiment and Evaluation package
-split without authorizing Evidence, Assessment, Qualification, Runtime/CLI
-Cutover, or Legacy deletion. Every later stage remains blocked by its
+WP-08 authorizes this dependency order, not concurrent implementation. WP-09,
+WP-10, and integrated WP-11 have passed their immutable local engineering
+gates. WP-11Q is merged in `origin/main@883f35835671ebbd7d977b35b36c59528d536990`.
+The active authorized package is WP-12 Research Evidence, Assessment, and
+Qualification Closure. It does not authorize Model/Calibration, Decision
+Support consumers, Runtime/CLI Cutover, Legacy deletion, research promotion,
+or Production qualification. Every later stage remains blocked by its
 predecessor and own exit gate.
 
 Do not resume the former Alpha Proof Roadmap as an engineering program. Existing

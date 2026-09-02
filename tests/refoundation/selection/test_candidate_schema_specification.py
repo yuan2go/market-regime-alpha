@@ -9,6 +9,7 @@ from market_regime_alpha.infrastructure.postgres.schema import (
     EXPECTED_CANDIDATE_TABLES,
     EXPECTED_DECISION_SUPPORT_TABLES,
     EXPECTED_OUTCOME_TABLES,
+    EXPECTED_RESEARCH_QUALIFICATION_TABLES,
     EXPECTED_RESEARCH_VALIDITY_TABLES,
     EXPECTED_TARGET_DEFINITION_TABLES,
     SchemaManager,
@@ -45,18 +46,16 @@ def test_candidate_schema_adds_exactly_five_selection_authority_tables(
         name for name in tables if name.startswith("market_target_outcome")
     } == EXPECTED_OUTCOME_TABLES
     assert EXPECTED_RESEARCH_VALIDITY_TABLES <= tables
+    assert EXPECTED_RESEARCH_QUALIFICATION_TABLES <= tables
     assert not {
         name
         for name in tables
         if name.startswith(
             (
                 "model",
-                "evidence_",
                 "qualification",
                 "outcome",
                 "context",
-                "research_assessment",
-                "research_qualification",
                 "trade_outcome",
             )
         )

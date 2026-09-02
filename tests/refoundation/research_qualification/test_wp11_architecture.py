@@ -105,7 +105,9 @@ def test_no_out_of_scope_authority_placeholders_were_added() -> None:
         ROOT
         / "src/market_regime_alpha/infrastructure/postgres/migrations/001_baseline.sql"
     ).read_text()
-    wp11_sql = sql.split("-- WP-11:", maxsplit=1)[1]
+    wp11_sql = sql.split("-- WP-11:", maxsplit=1)[1].split(
+        "-- WP-12:", maxsplit=1
+    )[0]
     for forbidden in (
         "create table mra.evidence_item",
         "create table mra.research_assessment",

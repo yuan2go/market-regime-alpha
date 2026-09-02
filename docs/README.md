@@ -3,7 +3,7 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Documentation navigation and precedence only
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-31
+> **Last Updated:** 2026-09-02
 > **Code Evidence:** `src/market_regime_alpha`, both legacy and target PostgreSQL migration packages, `tests`
 
 Documentation never creates implementation truth, research evidence,
@@ -105,6 +105,23 @@ Checkpoint traceability:
   rosters, controlled Outcome access, full Evaluation closure, PostgreSQL
   qualification, concurrency/recovery/replay, full regression, static/build,
   and `WP11_EXIT_GATE = PASS` without Runtime/CLI cutover.
+- [WP-12 Research Evidence, Assessment and Qualification Closure Design](references/WP-ARCHITECTURE-REFOUNDATION-12-Research-Evidence-Assessment-Qualification-Design.md)
+  — canonical implementation contract for Evaluation-bound immutable Evidence,
+  complete Experiment Assessment rosters, purpose-specific relational Policy
+  floors, explicit floor results/Evidence, append-only supersession, and
+  generation-safe qualification reads; design only until its exact-SHA
+  engineering gate passes.
+- [WP-12 Research Evidence, Assessment and Qualification Implementation Plan](references/WP-ARCHITECTURE-REFOUNDATION-12-Research-Evidence-Assessment-Qualification-Implementation-Plan.md)
+  — file-level TDD slices for Evidence, Assessment, Policy/Decision,
+  generation-safe reads, reconciliation, real PostgreSQL campaigns, and the
+  final exact-SHA engineering gate.
+- [WP-12 Research Evidence, Assessment and Qualification Implementation Status](references/WP-ARCHITECTURE-REFOUNDATION-12-Research-Evidence-Assessment-Qualification-Implementation-Status.md)
+  — current handoff read model for the qualified implementation and its strict
+  non-cutover/evidence ceiling.
+- [WP-12 Research Evidence, Assessment and Qualification Verification](references/WP-ARCHITECTURE-REFOUNDATION-12-Research-Evidence-Assessment-Qualification-Verification.md)
+  — immutable exact-SHA engineering proof for Evaluation-bound Evidence,
+  complete Assessment, purpose-specific Qualification, generation safety,
+  PostgreSQL qualification, full regression, and `WP12_EXIT_GATE = PASS`.
 
 Design documents in this section define the Target destination. Status and
 Verification records report their explicitly bounded implementation evidence;

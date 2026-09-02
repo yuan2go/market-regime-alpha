@@ -114,14 +114,13 @@ def test_outcome_postgres_adapters_have_no_provider_or_legacy_dependency() -> No
     assert "current_bar" not in preparation
 
 
-def test_wp10_boundary_now_admits_wp11_but_no_later_authority_tables() -> None:
+def test_wp10_boundary_now_admits_wp11_and_wp12_but_no_later_authority_tables() -> None:
     baseline = (POSTGRES / "migrations" / "001_baseline.sql").read_text(
         encoding="utf-8"
     )
     for table in EXPECTED_RESEARCH_VALIDITY_TABLES:
         assert f"CREATE TABLE mra.{table}" in baseline
     for table in (
-        "evaluation_dataset",
         "evidence_item",
         "evidence_dependency",
         "research_assessment",
@@ -132,6 +131,10 @@ def test_wp10_boundary_now_admits_wp11_but_no_later_authority_tables() -> None:
         "research_qualification_decision",
         "research_qualification_floor_result",
         "research_qualification_floor_evidence",
+    ):
+        assert f"CREATE TABLE mra.{table}" in baseline
+    for table in (
+        "evaluation_dataset",
         "model",
         "model_version",
         "context",
