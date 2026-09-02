@@ -15,6 +15,7 @@ dependencies = [
     "baostock>=0.9",
     "yfinance>=0.2.66",
     "pandas>=2.2",
+    "numpy>=2.0",
     "python-dotenv>=1.0",
     "duckdb>=1.1",
     "pyarrow>=16.0",
