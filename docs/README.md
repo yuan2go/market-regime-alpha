@@ -141,6 +141,9 @@ Checkpoint traceability:
   — frozen Provider-qualification, formal campaign predeclaration, controlled
   Runtime plans, qualified historical visibility, locked-OOS/prospective due,
   inspection, and engineering-only evidence-ceiling contract.
+- [WP-14 Formal Research Engineering Readiness Implementation Plan](references/WP-ARCHITECTURE-REFOUNDATION-14-Formal-Research-Engineering-Readiness-Implementation-Plan.md)
+  — TDD slices, narrow UoWs, schema closure, composition, failure/recovery,
+  exact-SHA qualification, immutable Verification, and merge dependency gate.
 
 Design documents in this section define the Target destination. Status and
 Verification records report their explicitly bounded implementation evidence;
