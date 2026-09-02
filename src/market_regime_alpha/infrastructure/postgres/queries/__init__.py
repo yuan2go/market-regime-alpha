@@ -6,6 +6,9 @@ from market_regime_alpha.infrastructure.postgres.queries.candidate import (
 from market_regime_alpha.infrastructure.postgres.queries.archive_operations import (
     PostgresArchiveOperationsReadPort,
 )
+from market_regime_alpha.infrastructure.postgres.queries.archive_inspection import (
+    PostgresArchiveInspectionPort,
+)
 from market_regime_alpha.infrastructure.postgres.queries.candidate_research_inputs import (
     PostgresCandidateResearchDependencyQueries,
     PostgresCandidateResearchInputLoader,
@@ -56,6 +59,7 @@ from market_regime_alpha.infrastructure.postgres.queries.research_qualification_
 __all__ = [
     "PostgresCandidateQueryProvider",
     "PostgresArchiveOperationsReadPort",
+    "PostgresArchiveInspectionPort",
     "PostgresCandidateResearchDependencyQueries",
     "PostgresCandidateResearchInputLoader",
     "PostgresDecisionInputPreparationProvider",

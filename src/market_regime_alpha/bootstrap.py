@@ -77,6 +77,7 @@ from market_regime_alpha.infrastructure.postgres.target_uow import (
 from market_regime_alpha.infrastructure.postgres.queries import (
     PostgresCandidateQueryProvider,
     PostgresArchiveOperationsReadPort,
+    PostgresArchiveInspectionPort,
     PostgresCandidateResearchInputLoader,
     PostgresDecisionInputPreparationProvider,
     PostgresDecisionRunQueryProvider,
@@ -93,7 +94,10 @@ from market_regime_alpha.infrastructure.postgres.queries.decision_context_inputs
     PostgresContextInputPreparationProvider,
     PostgresContextQueryProvider,
 )
-from market_regime_alpha.market.ports import MarketRevisionLineageReadPort
+from market_regime_alpha.market.ports import (
+    ArchiveInspectionPort,
+    MarketRevisionLineageReadPort,
+)
 from market_regime_alpha.infrastructure.postgres.queries.decision_inference_inputs import (
     PostgresInferenceInputPreparationProvider,
     PostgresInferenceQueryProvider,
@@ -261,6 +265,7 @@ class TargetApplication:
     market: MarketApplication
     market_archives: ArchiveCommands
     archive_operations: MarketArchiveOperations
+    archive_inspection: ArchiveInspectionPort
     provider_qualifications: ProviderQualificationCommands
     provider_qualification_queries: ProviderQualificationQueryPort
     market_queries: MarketQueryProvider
@@ -342,6 +347,7 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
             FilesystemArchiveResourceInspector(settings.artifact_root),
             PostgresMarketDatabaseClock(pool),
         ),
+        archive_inspection=PostgresArchiveInspectionPort(pool),
         provider_qualifications=ProviderQualificationCommands(
             PostgresProviderQualificationUnitOfWorkProvider(
                 pool, id_factory=uuid4

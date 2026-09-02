@@ -20,6 +20,11 @@ from market_regime_alpha.market.ports.revision_lineage import (
     MarketBarRevisionHead,
     MarketRevisionLineageReadPort,
 )
+from market_regime_alpha.market.ports.archive_inspection import (
+    ArchiveInspection,
+    ArchiveInspectionPort,
+    ArchiveSliceInspection,
+)
 from market_regime_alpha.market.ports.archive_operations import (
     ArchiveCaptureDisposition,
     ArchiveOperationsReadPort,
@@ -60,6 +65,9 @@ __all__ = [
     "CaptureRequest",
     "ArchiveCaptureDisposition",
     "ArchiveOperationsReadPort",
+    "ArchiveInspection",
+    "ArchiveInspectionPort",
+    "ArchiveSliceInspection",
     "ArchiveResourceInspector",
     "ArchiveSliceOperatingContract",
     "CaptureSource",

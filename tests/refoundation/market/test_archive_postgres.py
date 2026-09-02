@@ -20,6 +20,9 @@ from market_regime_alpha.infrastructure.postgres.pool import TargetPostgresPool
 from market_regime_alpha.infrastructure.postgres.queries.archive_operations import (
     PostgresArchiveOperationsReadPort,
 )
+from market_regime_alpha.infrastructure.postgres.queries.archive_inspection import (
+    PostgresArchiveInspectionPort,
+)
 from market_regime_alpha.infrastructure.postgres.schema import SchemaManager
 from market_regime_alpha.infrastructure.postgres.uow import PostgresUnitOfWorkProvider
 from market_regime_alpha.market.application import (
@@ -452,6 +455,25 @@ def test_observation_gap_and_seal_preserve_complete_terminal_roster(archive_stac
     assert seal.knowledge_cutoff == seal.sealed_at
     assert seal.capture_count == 1
     assert seal.gap_count == 1
+
+    pool = TargetPostgresPool(database_url, min_size=0, max_size=1)
+    try:
+        inspection = PostgresArchiveInspectionPort(pool).inspect(
+            started.market_archive_id
+        )
+    finally:
+        pool.close()
+    assert inspection.slice_count == 2
+    assert inspection.captured_slice_count == 1
+    assert inspection.gap_slice_count == 1
+    assert inspection.pending_slice_count == 0
+    assert inspection.observation_count == 1
+    assert inspection.artifact_count == 1
+    assert inspection.seal_disposition == "PARTIAL_WITH_GAPS"
+    assert [item.status for item in inspection.slices] == [
+        "CAPTURED",
+        "GAP_RECORDED",
+    ]
 
     replay = commands.seal_retrospective(
         market_archive_id=started.market_archive_id,
