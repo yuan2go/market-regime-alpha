@@ -39,16 +39,18 @@ Foundation
 ```
 
 WP-08 authorizes this dependency order, not concurrent implementation. WP-09
-through WP-13 have passed their immutable local engineering gates; WP-13 is
-merged in `origin/main@eb7970b4833228a2faba6715c65c26dae88f6ee5`. The active
-authorized package is WP-14 Formal Research/OOS/Prospective Engineering
-Readiness Closure. It may prove mechanics only and cannot establish Formal PIT,
-Formal OOS, Prospective, Provider, Alpha, trading, or Production evidence. The
-optional Model/Calibration branch is deliberately skipped and remains optional.
-WP-15 remains blocked until WP-14 independently passes, is merged, and latest
-main is fetched and rechecked. Execution, Runtime/CLI Cutover, Legacy deletion,
-and Production qualification remain unauthorized. Every later stage remains
-blocked by its predecessor and own exit gate.
+through WP-14 have passed their immutable local engineering gates; WP-14 is
+merged in `origin/main@8067a4be74f697a01aaa996465c10ed5b45b5a7f` and proves
+engineering readiness only. WP-15 then used that exact merged main for a real
+recorded BaoStock Provider gate. The complete ten-requirement Decision is
+`REJECTED`: historical availability, revision finality, and Outcome-path floors
+failed, while calendar, membership, and Decision-reference evidence remained
+inconclusive. The Formal PIT/hypothesis/OOS/prospective campaign therefore did
+not start. The rejected Decision and exact capture remain immutable negative
+evidence; a later attempt requires new adequate external evidence and a new
+Protocol/revision rather than reinterpretation. The optional Model/Calibration
+branch remains skipped and optional. Execution, Runtime/CLI Cutover, Legacy
+deletion, and Production qualification remain unauthorized.
 
 Do not resume the former Alpha Proof Roadmap as an engineering program. Existing
 protocols, results, and negative evidence remain immutable provenance. New

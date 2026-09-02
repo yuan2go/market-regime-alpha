@@ -152,6 +152,11 @@ Checkpoint traceability:
   freeze, locked-OOS/prospective mechanics, Provider qualification mechanics,
   PostgreSQL qualification, full regression, and `WP14_EXIT_GATE = PASS` while
   Formal PIT/OOS/Prospective/Provider/Alpha remain unproven.
+- [WP-15 Formal Research Proof Campaign Verification](references/WP-ARCHITECTURE-REFOUNDATION-15-Formal-Research-Proof-Campaign-Verification.md)
+  — immutable execution ledger for the first real recorded BaoStock Provider
+  gate: exact capture/Artifact/Runtime lineage, complete ten-floor `REJECTED`
+  Decision, reconciliation, downstream zero-write stop proof, and the explicit
+  Formal PIT/OOS/Prospective/Alpha evidence ceiling.
 
 Design documents in this section define the Target destination. Status and
 Verification records report their explicitly bounded implementation evidence;

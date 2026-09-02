@@ -3,24 +3,27 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Non-authoritative implementation status read model; exact-SHA engineering proof remains in Verification
 > **Owner:** Market Regime Alpha maintainers
-> **Generated At:** 2026-09-02 WP-14 exact-SHA engineering qualification reconciliation
+> **Generated At:** 2026-09-02 WP-15 real Provider gate reconciliation
 > **Repository Implementation Checkpoint:** `ca6f66b50ec2c55250cd82d2fa1ed6c5f35c29b8`
-> **Execution-Time Main Baseline:** `eb7970b4833228a2faba6715c65c26dae88f6ee5`
+> **Execution-Time Main Baseline:** `8067a4be74f697a01aaa996465c10ed5b45b5a7f`
 > **Containing Documentation Commit:** reported by the final handoff; this read model does not claim a self-referential Git SHA
 > **Previous Verified Snapshot:** merged WP-13 implementation `fc5993e5d9e05dbe2845659140108e1051cf3704` on `origin/main@eb7970b4833228a2faba6715c65c26dae88f6ee5`
 > **Implementation Line Start:** `c3ac21ef1e13f2e8408d30b0481fa9b74c4f9539`
 > **Foundation Source Checkpoint:** `eeff49c7a3995ba6d65045be88d4244617301234`
 > **Legacy Business Implementation Parent:** `0382dad416d6d50d1eea0bda1603d7c359d65274`
 > **Schema Epochs:** canonical business `LEGACY_MIGRATIONS_001_106`; target draft `MRA_REFOUNDATION_1 / DRAFT / NOT_CUT_OVER`
-> **Generator:** `WP-ARCHITECTURE-REFOUNDATION-14 engineering qualification reconciliation; non-authoritative read model`
+> **Generator:** `WP-ARCHITECTURE-REFOUNDATION-15 real Provider gate reconciliation; non-authoritative read model`
 > **Source Tree IDs:** root `c1198fa61e432d46a416e863d32a7b253abdf67e`; source `ccc42e2a732f0738c560d762ce3c61a1418c475e`; tests `4a2148ff361c057db68d4ee3e758266246b010dd`; Research Qualification tree `453e0f4f81d62a27ebd1e8237fae1627901c95b8`; Market tree `d0efafaa99e7cc575b619f1a3791112e432bb5f0`; Runtime tree `b01c45b9ca7009fe8ddc9cba227f2f656473c6c1`; target baseline blob `2b4f587da1f616ef6b0eeaf15621cbe1c116be50`; legacy migrations tree `6d3730548780ad6244d2cfecb4fb3559064b6f06`
-> **Code Evidence:** target and legacy source/migration packages, `tests`, [WP-14 canonical design](../references/WP-ARCHITECTURE-REFOUNDATION-14-Formal-Research-Engineering-Readiness-Design.md), and [WP-14 immutable Verification](../references/WP-ARCHITECTURE-REFOUNDATION-14-Formal-Research-Engineering-Readiness-Verification.md)
+> **Code Evidence:** target and legacy source/migration packages, `tests`, [WP-14 canonical design](../references/WP-ARCHITECTURE-REFOUNDATION-14-Formal-Research-Engineering-Readiness-Design.md), [WP-14 immutable Verification](../references/WP-ARCHITECTURE-REFOUNDATION-14-Formal-Research-Engineering-Readiness-Verification.md), and [WP-15 real campaign Verification](../references/WP-ARCHITECTURE-REFOUNDATION-15-Formal-Research-Proof-Campaign-Verification.md)
 
 This read model records the WP-14 controlled proof Runtime profiles, Formal
 Campaign freeze, protected OOS/prospective mechanics, Market-owned Provider
 qualification mechanics, qualified Formal PIT/Dataset seams, inspection, and
-exact-SHA engineering qualification. The linked immutable Verification
-establishes the exit gate;
+exact-SHA engineering qualification. It also records the first WP-15 real
+recorded-Provider gate: BaoStock transport and capture succeeded, but the
+complete purpose-specific Provider Decision is `REJECTED`, so no formal
+hypothesis or downstream campaign started. The linked immutable Verifications
+establish those separate results;
 the containing documentation/merge SHA is reported by the final handoff rather
 than self-referenced here.
 This read model is invalid after any source, migration, test, or composition change until
@@ -41,11 +44,11 @@ qualification, trading, or Production claims.
 | Research/Qualification | Current legacy capabilities remain canonical. Permanent target `market_regime_alpha.research_qualification` retains WP-11/WP-12 Authority and adds immutable Formal Campaign predeclaration, complete FIT/VALIDATION/LOCKED_OOS plans, actual Partition/Experiment binding, protected zero-access opening, database-clock due inspection, and read-only reconciliation. Model/Calibration remain absent |
 | Decision/Outcome | Current legacy capabilities remain canonical. Permanent target `market_regime_alpha.decision_support` implements the sole immutable Decision Run per Candidate Set, explicit later-generation Qualification roster, PIT Context, Strategy, Signal, uncalibrated rule Forecast, Opportunity, Thesis, complete Portfolio and Decision-Support-only Risk. Permanent `market_regime_alpha.outcome` retains one commitment-bound Market Target Outcome root, append-only full revisions, exact rosters, dual cutoffs, pure Decimal settlement, typed replay/reconciliation, and a narrow read-only port; all remain test-only before cutover |
 | Execution/Account | Human/manual execution only; observed effective Fill remains the source of trade-caused Position. No target implementation was added |
-| Target epoch | Foundation through WP-14 Formal Research Engineering Readiness are implemented in mutable `MRA_REFOUNDATION_1`; Formal PIT/OOS/Prospective/Provider/Alpha remain empirically unproven, and Model/Calibration, Execution, and Runtime/CLI Cutover remain absent |
+| Target epoch | Foundation through WP-14 Formal Research Engineering Readiness are implemented in mutable `MRA_REFOUNDATION_1`; the first WP-15 recorded BaoStock Provider scope is rejected, Formal PIT/OOS/Prospective/Alpha remain unproven, and Model/Calibration, Execution, and Runtime/CLI Cutover remain absent |
 | Legacy | Old source, 001–106 migrations, CLIs, compatibility paths, and tests remain physically present as the current implementation and regression oracle |
 
 The convergence state is therefore
-`WP14_EXIT_GATE_PASS / FORMAL_RESEARCH_ENGINEERING_READY / NOT_CUT_OVER`.
+`WP14_EXIT_GATE_PASS / FORMAL_RESEARCH_ENGINEERING_READY / WP15_PROVIDER_GATE_REJECTED / FORMAL_CAMPAIGN_STOPPED / NOT_CUT_OVER`.
 Similar legacy vocabulary does not make an old owner part of the target, and
 target test writes do not become canonical business writes.
 
@@ -598,7 +601,43 @@ This proves `FORMAL_RESEARCH_ENGINEERING_READY = true` only. Formal PIT, Formal
 OOS, Prospective value, Provider qualification, Alpha, and Production remain
 unproven.
 
-## Historical exact-SHA verification through WP-14
+## WP-15 real Provider gate truth
+
+WP-14 was merged through PR #97 as
+`origin/main@8067a4be74f697a01aaa996465c10ed5b45b5a7f`. WP-15 fetched that exact
+main in an independent worktree and executed one real BaoStock
+`RECORDED_PROVIDER / HISTORICAL_PIT` gate for `sh.600519` raw five-minute bars.
+
+The sole composition root ran a fenced `SHADOW` CAPTURE and committed one
+verified 17,894-byte Artifact containing 144 real rows. PostgreSQL recorded
+`known_at` from the acquisition clock while correctly retaining
+`source_availability_status=UNKNOWN`, `source_available_at=NULL`, and
+`provider_time=NULL`.
+
+The immutable ten-floor Provider Decision is `REJECTED`. Coverage, exact
+Runtime/raw lineage, acquisition known-time, and raw price basis passed.
+Historical availability, revision finality, and the five-session Outcome path
+failed. Trading calendar, membership status, and Decision-reference evidence
+were insufficient. Protocol and Decision reconciliation both return
+`matched=true, mismatch_count=0`.
+
+```text
+WP15_CAMPAIGN_EXECUTION = STOPPED_AT_PROVIDER_GATE
+PROVIDER_QUALIFICATION = REJECTED
+FORMAL_PIT / LOCKED_OOS = BLOCKED_BY_PROVIDER_GATE / NOT_RUN
+RESEARCH_QUALIFICATION = BLOCKED_BY_PROVIDER_GATE / NOT_RUN
+PROSPECTIVE_CAMPAIGN = NOT_STARTED
+PROSPECTIVE_PROVEN / ALPHA_PROVEN = NO
+```
+
+Qualified visibility, Formal Campaign, Dataset, Research Partition,
+Experiment, and Evaluation Run counts remain zero. The rejected capture and
+Decision are preserved as negative evidence; another attempt requires adequate
+external evidence and a new immutable Protocol/revision. Exact identities,
+timestamps, floor results, command evidence, and the stop proof are recorded in
+[WP-15](../references/WP-ARCHITECTURE-REFOUNDATION-15-Formal-Research-Proof-Campaign-Verification.md).
+
+## Historical exact-SHA verification through WP-15
 
 The immutable pre-refoundation ledger is
 [WP-02](../references/WP-ARCHITECTURE-REFOUNDATION-02-Pre-Refoundation-Verification-Baseline.md),
@@ -626,14 +665,16 @@ Remaining Decision Support closure and its proof ceiling are recorded in
 Formal Research/OOS/Prospective engineering readiness and its empirical ceiling
 are recorded in
 [WP-14](../references/WP-ARCHITECTURE-REFOUNDATION-14-Formal-Research-Engineering-Readiness-Verification.md).
+The first real Provider gate and its negative empirical ceiling are recorded in
+[WP-15](../references/WP-ARCHITECTURE-REFOUNDATION-15-Formal-Research-Proof-Campaign-Verification.md).
 
 Each immutable ledger owns only its recorded exact-SHA evidence. Earlier
 checkpoint counts and checksums remain historical facts inside those ledgers;
-they are not current catalog or regression claims. At WP-14, GitHub Actions
+they are not current catalog or regression claims. At WP-15, GitHub Actions
 remains disabled, so remote CI is
 `BLOCKED_BY_REPOSITORY_CONFIGURATION / NOT_RUN`, not PASS. No current or
-historical local gate proves Provider, Alpha/OOS, broker, trading, sustained
-Prospective value, Production, or Runtime/CLI Cutover evidence.
+historical gate admits a Provider or proves Alpha/OOS, broker, trading,
+sustained Prospective value, Production, or Runtime/CLI Cutover evidence.
 
 ## Research and production ceiling
 
