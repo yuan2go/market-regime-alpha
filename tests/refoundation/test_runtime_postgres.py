@@ -262,12 +262,12 @@ def test_expired_lease_recovery_rejects_stale_worker_and_completes_new_fence(
     run_id = _run(application, artifacts, schedule, steps=(_step("capture", 1),))
     first = application.claim_next(
         worker_id="worker-a",
-        lease_duration=timedelta(milliseconds=20),
+        lease_duration=timedelta(seconds=1),
         context=_context("claim-a", reason="WORKER_CLAIM"),
     )
     assert first is not None
     application.start_attempt(first, _context("start-a", reason="WORKER_START"))
-    time.sleep(0.05)
+    time.sleep(1.1)
 
     recovered = application.recover_expired(
         actor_id="recovery-test",
@@ -382,13 +382,13 @@ def test_unknown_remote_outcome_waits_for_explicit_resume_and_restart(
     )
     claim = first_application.claim_next(
         worker_id="worker-a",
-        lease_duration=timedelta(milliseconds=20),
+        lease_duration=timedelta(seconds=1),
         context=_context("claim-a", reason="WORKER_CLAIM"),
     )
     assert claim is not None
     first_application.start_attempt(claim, _context("start-a", reason="WORKER_START"))
     first_pool.close()
-    time.sleep(0.05)
+    time.sleep(1.1)
 
     second_pool = TargetPostgresPool(target_database_url, min_size=0, max_size=4)
     second_application = RuntimeApplication(PostgresUnitOfWorkProvider(second_pool))
@@ -524,12 +524,12 @@ def test_claim_and_heartbeat_retries_return_the_original_receipts(
     context = _context("claim-once", reason="WORKER_CLAIM")
     claim = application.claim_next(
         worker_id="worker-a",
-        lease_duration=timedelta(milliseconds=100),
+        lease_duration=timedelta(seconds=1),
         context=context,
     )
     replay = application.claim_next(
         worker_id="worker-a",
-        lease_duration=timedelta(milliseconds=100),
+        lease_duration=timedelta(seconds=1),
         context=context,
     )
     assert claim is not None
