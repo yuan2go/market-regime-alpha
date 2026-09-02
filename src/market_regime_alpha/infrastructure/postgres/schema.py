@@ -384,8 +384,12 @@ _REFERENCE_VOCABULARY: Final[dict[str, tuple[str, ...]]] = {
         "DECIDE_AND_RISK",
         "PERSIST_DECISION",
         "SETTLE_OUTCOME",
+        "ACQUIRE_OUTCOME_INPUTS",
+        "EVALUATE",
+        "RECORD_EVIDENCE",
         "ATTRIBUTE",
         "ASSESS_RESEARCH",
+        "QUALIFY",
     ),
     "runtime_mode": (
         "OPERATIONAL",

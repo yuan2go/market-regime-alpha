@@ -15,6 +15,10 @@ from market_regime_alpha.research_qualification.application.assessment import As
 from market_regime_alpha.research_qualification.application.qualification import QualificationCommands
 from market_regime_alpha.research_qualification.application.verification import ResearchEvaluationVerifier
 from market_regime_alpha.research_qualification.application.qualification_verification import ResearchQualificationVerifier
+from market_regime_alpha.research_qualification.application.formal_runtime import (
+    build_decision_proof_runtime_profile,
+    build_due_proof_runtime_profile,
+)
 
 __all__ = [
     "AssessmentCommands", "DatasetRegistrationResult", "EvaluationCommands",
@@ -22,5 +26,6 @@ __all__ = [
     "ResearchEvaluationVerifier", "ResearchMutationResult",
     "ResearchPartitionCommands", "ResearchQualificationApplication",
     "ResearchQualificationVerifier", "TargetDefinitionCommands",
-    "TargetRegistrationResult",
+    "TargetRegistrationResult", "build_decision_proof_runtime_profile",
+    "build_due_proof_runtime_profile",
 ]

@@ -4725,7 +4725,7 @@ CREATE TABLE mra.runtime_step (
     CONSTRAINT runtime_step_run_key_uk UNIQUE (run_id, step_key),
     CONSTRAINT runtime_step_run_ordinal_uk UNIQUE (run_id, ordinal),
     CONSTRAINT runtime_step_key_ck CHECK (step_key ~ '^[a-z][a-z0-9_-]{0,99}$'),
-    CONSTRAINT runtime_step_kind_ck CHECK (step_kind IN ('CAPTURE', 'NORMALIZE_PIT', 'FREEZE_UNIVERSE', 'ASSESS_ELIGIBILITY', 'REGISTER_DATASET', 'BUILD_CANDIDATE_SET', 'OPEN_DECISION_RUN', 'ASSESS_CONTEXT', 'SIGNAL_AND_FORECAST', 'DECIDE_AND_RISK', 'PERSIST_DECISION', 'SETTLE_OUTCOME', 'ATTRIBUTE', 'ASSESS_RESEARCH')),
+    CONSTRAINT runtime_step_kind_ck CHECK (step_kind IN ('CAPTURE', 'NORMALIZE_PIT', 'FREEZE_UNIVERSE', 'ASSESS_ELIGIBILITY', 'REGISTER_DATASET', 'BUILD_CANDIDATE_SET', 'OPEN_DECISION_RUN', 'ASSESS_CONTEXT', 'SIGNAL_AND_FORECAST', 'DECIDE_AND_RISK', 'PERSIST_DECISION', 'SETTLE_OUTCOME', 'ACQUIRE_OUTCOME_INPUTS', 'EVALUATE', 'RECORD_EVIDENCE', 'ATTRIBUTE', 'ASSESS_RESEARCH', 'QUALIFY')),
     CONSTRAINT runtime_step_implementation_ck CHECK (implementation <> '' AND implementation_version <> ''),
     CONSTRAINT runtime_step_ordinal_ck CHECK (ordinal >= 0),
     CONSTRAINT runtime_step_request_hash_ck CHECK (request_hash ~ '^[0-9a-f]{64}$'),
@@ -4864,6 +4864,104 @@ CREATE CONSTRAINT TRIGGER runtime_dependency_decision_chain_guard
 AFTER INSERT OR UPDATE OR DELETE ON mra.runtime_step_dependency
 DEFERRABLE INITIALLY DEFERRED
 FOR EACH ROW EXECUTE FUNCTION mra.validate_runtime_decision_chain();
+
+CREATE FUNCTION mra.validate_runtime_formal_profile()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    affected_run_id uuid := COALESCE(NEW.run_id, OLD.run_id);
+    profile_name text;
+    expected_kinds text[];
+    actual_kinds text[];
+    actual_ordinals integer[];
+    required_count integer;
+    direct_edge_count integer;
+    bypass_count integer;
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM mra.runtime_step
+        WHERE run_id = affected_run_id AND step_key LIKE 'formal-decision-%'
+    ) THEN
+        profile_name := 'decision';
+        expected_kinds := ARRAY[
+            'CAPTURE', 'NORMALIZE_PIT', 'FREEZE_UNIVERSE',
+            'ASSESS_ELIGIBILITY', 'REGISTER_DATASET', 'BUILD_CANDIDATE_SET',
+            'OPEN_DECISION_RUN', 'ASSESS_CONTEXT', 'SIGNAL_AND_FORECAST',
+            'DECIDE_AND_RISK'
+        ];
+    ELSIF EXISTS (
+        SELECT 1 FROM mra.runtime_step
+        WHERE run_id = affected_run_id AND step_key LIKE 'formal-due-%'
+    ) THEN
+        profile_name := 'due';
+        expected_kinds := ARRAY[
+            'SETTLE_OUTCOME', 'ACQUIRE_OUTCOME_INPUTS', 'EVALUATE',
+            'RECORD_EVIDENCE', 'ASSESS_RESEARCH', 'QUALIFY'
+        ];
+    ELSE
+        RETURN COALESCE(NEW, OLD);
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM mra.runtime_step
+        WHERE run_id = affected_run_id
+          AND ((profile_name = 'decision' AND step_key LIKE 'formal-due-%')
+            OR (profile_name = 'due' AND step_key LIKE 'formal-decision-%'))
+    ) THEN
+        RAISE EXCEPTION 'Runtime Run cannot mix formal proof profiles'
+            USING ERRCODE = '23514';
+    END IF;
+    SELECT array_agg(step_kind ORDER BY ordinal),
+           array_agg(ordinal ORDER BY ordinal),
+           count(*) FILTER (WHERE required)
+      INTO actual_kinds, actual_ordinals, required_count
+    FROM mra.runtime_step
+    WHERE run_id = affected_run_id;
+    IF actual_kinds IS DISTINCT FROM expected_kinds
+       OR actual_ordinals IS DISTINCT FROM (
+           SELECT array_agg(value) FROM generate_series(1, cardinality(expected_kinds)) value
+       )
+       OR required_count <> cardinality(expected_kinds) THEN
+        RAISE EXCEPTION 'Runtime formal % profile shape is invalid', profile_name
+            USING ERRCODE = '23514';
+    END IF;
+    SELECT count(*)
+      INTO direct_edge_count
+    FROM mra.runtime_step_dependency dependency
+    JOIN mra.runtime_step predecessor
+      ON predecessor.step_id = dependency.predecessor_step_id
+    JOIN mra.runtime_step successor
+      ON successor.step_id = dependency.successor_step_id
+    WHERE dependency.run_id = affected_run_id
+      AND dependency.dependency_kind = 'REQUIRED_SUCCESS'
+      AND successor.ordinal = predecessor.ordinal + 1;
+    SELECT count(*)
+      INTO bypass_count
+    FROM mra.runtime_step_dependency dependency
+    JOIN mra.runtime_step predecessor
+      ON predecessor.step_id = dependency.predecessor_step_id
+    JOIN mra.runtime_step successor
+      ON successor.step_id = dependency.successor_step_id
+    WHERE dependency.run_id = affected_run_id
+      AND successor.ordinal > predecessor.ordinal + 1;
+    IF direct_edge_count <> cardinality(expected_kinds) - 1
+       OR bypass_count <> 0 THEN
+        RAISE EXCEPTION 'Runtime formal % profile edges are invalid', profile_name
+            USING ERRCODE = '23514';
+    END IF;
+    RETURN COALESCE(NEW, OLD);
+END;
+$$;
+
+CREATE CONSTRAINT TRIGGER runtime_step_formal_profile_guard
+AFTER INSERT OR UPDATE OR DELETE ON mra.runtime_step
+DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW EXECUTE FUNCTION mra.validate_runtime_formal_profile();
+
+CREATE CONSTRAINT TRIGGER runtime_dependency_formal_profile_guard
+AFTER INSERT OR UPDATE OR DELETE ON mra.runtime_step_dependency
+DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW EXECUTE FUNCTION mra.validate_runtime_formal_profile();
 
 CREATE TABLE mra.command_receipt (
     receipt_id uuid PRIMARY KEY,
