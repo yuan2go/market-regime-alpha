@@ -19,6 +19,14 @@ class DecisionQualificationResolutionError(DecisionAuthorityIntegrityError):
     code = "DECISION_QUALIFICATION_RESOLUTION_FAILED"
 
 
+class ContextAuthorityIntegrityError(DecisionAuthorityIntegrityError):
+    code = "CONTEXT_AUTHORITY_INTEGRITY_FAILED"
+
+
+class ContextAlreadyAssessedError(ConflictError):
+    code = "CONTEXT_ALREADY_ASSESSED"
+
+
 class DecisionTransactionRetryExhaustedError(ConflictError):
     code = "DECISION_TRANSACTION_RETRY_EXHAUSTED"
 
@@ -37,6 +45,8 @@ class DecisionCommitOutcomeUnknownError(RuntimeError):
 
 __all__ = [
     "CandidateSetAlreadyCommittedError",
+    "ContextAlreadyAssessedError",
+    "ContextAuthorityIntegrityError",
     "DecisionAuthorityIntegrityError",
     "DecisionCommitOutcomeUnknownError",
     "DecisionRetryableTransactionError",

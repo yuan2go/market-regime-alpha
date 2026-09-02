@@ -236,6 +236,16 @@ EXPECTED_DECISION_SUPPORT_TABLES: Final[frozenset[str]] = frozenset(
     }
 )
 
+EXPECTED_CONTEXT_TABLES: Final[frozenset[str]] = frozenset(
+    {
+        "context_policy",
+        "context_policy_metric",
+        "context_assessment",
+        "context_metric",
+        "context_metric_source",
+    }
+)
+
 EXPECTED_OUTCOME_TABLES: Final[frozenset[str]] = frozenset(
     {
         "market_target_outcome",
@@ -288,6 +298,7 @@ EXPECTED_TARGET_TABLES: Final[frozenset[str]] = (
     | EXPECTED_RESEARCH_DEFINITION_TABLES
     | EXPECTED_TARGET_DEFINITION_TABLES
     | EXPECTED_DECISION_SUPPORT_TABLES
+    | EXPECTED_CONTEXT_TABLES
     | EXPECTED_OUTCOME_TABLES
     | EXPECTED_RESEARCH_VALIDITY_TABLES
     | EXPECTED_RESEARCH_QUALIFICATION_TABLES
@@ -1586,6 +1597,7 @@ __all__ = [
     "CatalogDriftError",
     "DatabaseIdentity",
     "EXPECTED_DECISION_SUPPORT_TABLES",
+    "EXPECTED_CONTEXT_TABLES",
     "EXPECTED_FOUNDATION_TABLES",
     "EXPECTED_MARKET_TABLES",
     "EXPECTED_OUTCOME_TABLES",

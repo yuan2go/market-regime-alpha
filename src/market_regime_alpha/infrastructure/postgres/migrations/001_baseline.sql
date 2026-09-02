@@ -5928,6 +5928,407 @@ ALTER TABLE mra.decision_target_commitment
         runtime_mode, commitment_recorded_at, content_sha256
     ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED;
 
+ALTER TABLE mra.decision_run
+    ADD CONSTRAINT decision_run_context_authority_uk UNIQUE (
+        decision_run_id, candidate_set_id, candidate_set_content_sha256,
+        candidate_roster_sha256, decision_time, candidate_count
+    );
+
+ALTER TABLE mra.decision_reference_observation
+    ADD CONSTRAINT decision_reference_context_scope_uk UNIQUE (
+        decision_reference_observation_id, decision_run_id,
+        candidate_set_id, candidate_id, instrument_id, known_at, source_kind
+    );
+
+CREATE TABLE mra.context_policy (
+    context_policy_id uuid PRIMARY KEY,
+    policy_code text NOT NULL,
+    version integer NOT NULL,
+    supersedes_policy_id uuid,
+    metric_count integer NOT NULL,
+    kind_count integer NOT NULL,
+    metric_roster_sha256 text NOT NULL,
+    kind_roster_sha256 text NOT NULL,
+    code_artifact_id uuid NOT NULL,
+    code_content_sha256 text NOT NULL,
+    code_size_bytes bigint NOT NULL,
+    config_artifact_id uuid NOT NULL,
+    config_content_sha256 text NOT NULL,
+    config_size_bytes bigint NOT NULL,
+    provenance_sha256 text NOT NULL,
+    content_sha256 text NOT NULL,
+    request_identity text NOT NULL,
+    request_sha256 text NOT NULL,
+    frozen_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT context_policy_series_uk UNIQUE (policy_code, version),
+    CONSTRAINT context_policy_supersedes_uk UNIQUE (supersedes_policy_id),
+    CONSTRAINT context_policy_request_uk UNIQUE (policy_code, request_identity),
+    CONSTRAINT context_policy_exact_uk UNIQUE (
+        context_policy_id, content_sha256,
+        kind_count, kind_roster_sha256
+    ),
+    CONSTRAINT context_policy_supersedes_fk FOREIGN KEY (
+        supersedes_policy_id
+    ) REFERENCES mra.context_policy(context_policy_id) ON DELETE RESTRICT,
+    CONSTRAINT context_policy_code_artifact_fk FOREIGN KEY (
+        code_artifact_id, code_content_sha256, code_size_bytes
+    ) REFERENCES mra.artifact(
+        artifact_id, content_sha256, size_bytes
+    ) ON DELETE RESTRICT,
+    CONSTRAINT context_policy_config_artifact_fk FOREIGN KEY (
+        config_artifact_id, config_content_sha256, config_size_bytes
+    ) REFERENCES mra.artifact(
+        artifact_id, content_sha256, size_bytes
+    ) ON DELETE RESTRICT,
+    CONSTRAINT context_policy_shape_ck CHECK (
+        policy_code ~ '^[a-z][a-z0-9_.-]{0,99}$'
+        AND ((version = 1 AND supersedes_policy_id IS NULL)
+          OR (version > 1 AND supersedes_policy_id IS NOT NULL))
+        AND metric_count > 0 AND kind_count > 0 AND kind_count <= metric_count
+        AND metric_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND kind_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND code_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND config_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND code_size_bytes >= 0 AND config_size_bytes >= 0
+        AND provenance_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+        AND request_identity ~ '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$'
+        AND request_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+CREATE INDEX context_policy_supersedes_idx
+    ON mra.context_policy (supersedes_policy_id)
+    WHERE supersedes_policy_id IS NOT NULL;
+CREATE INDEX context_policy_code_artifact_fk_idx
+    ON mra.context_policy (
+        code_artifact_id, code_content_sha256, code_size_bytes
+    );
+CREATE INDEX context_policy_config_artifact_fk_idx
+    ON mra.context_policy (
+        config_artifact_id, config_content_sha256, config_size_bytes
+    );
+
+CREATE TABLE mra.context_policy_metric (
+    context_policy_metric_id uuid PRIMARY KEY,
+    context_policy_id uuid NOT NULL,
+    metric_code text NOT NULL,
+    metric_ordinal integer NOT NULL,
+    context_kind text NOT NULL,
+    measure text NOT NULL,
+    reducer text NOT NULL,
+    qualification_operator text NOT NULL,
+    lower_threshold numeric NOT NULL,
+    upper_threshold numeric,
+    minimum_source_count integer NOT NULL,
+    minimum_available_count integer NOT NULL,
+    missingness_policy text NOT NULL,
+    source_role text NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT context_policy_metric_ordinal_uk UNIQUE (
+        context_policy_id, metric_ordinal
+    ),
+    CONSTRAINT context_policy_metric_code_uk UNIQUE (
+        context_policy_id, metric_code
+    ),
+    CONSTRAINT context_policy_metric_exact_uk UNIQUE (
+        context_policy_metric_id, context_policy_id,
+        context_kind, measure, reducer, source_role, content_sha256
+    ),
+    CONSTRAINT context_policy_metric_policy_fk FOREIGN KEY (
+        context_policy_id
+    ) REFERENCES mra.context_policy(context_policy_id)
+      ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT context_policy_metric_shape_ck CHECK (
+        metric_code ~ '^[a-z][a-z0-9_.-]{0,99}$'
+        AND metric_ordinal > 0
+        AND context_kind IN (
+            'MARKET_REGIME', 'ETF_ROTATION',
+            'THEME_ROTATION', 'CAPITAL_BREADTH'
+        )
+        AND measure IN (
+            'RETURN', 'ADVANCE_RATE', 'TURNOVER',
+            'MEMBER_COVERAGE', 'FLOW_PROXY'
+        )
+        AND reducer IN (
+            'MEAN_DECIMAL', 'MEDIAN_DECIMAL', 'SUM_DECIMAL', 'TRUE_RATE'
+        )
+        AND ((measure IN ('ADVANCE_RATE', 'MEMBER_COVERAGE')
+              AND reducer = 'TRUE_RATE')
+          OR (measure NOT IN ('ADVANCE_RATE', 'MEMBER_COVERAGE')
+              AND reducer <> 'TRUE_RATE'))
+        AND qualification_operator IN ('AT_LEAST', 'AT_MOST', 'BETWEEN')
+        AND ((qualification_operator = 'BETWEEN'
+              AND upper_threshold IS NOT NULL
+              AND lower_threshold <= upper_threshold)
+          OR (qualification_operator <> 'BETWEEN'
+              AND upper_threshold IS NULL))
+        AND minimum_source_count >= 0
+        AND minimum_available_count >= 0
+        AND (minimum_source_count = 0
+             OR minimum_available_count <= minimum_source_count)
+        AND missingness_policy IN ('UNKNOWN', 'NOT_ESTIMABLE', 'FAILED')
+        AND source_role = 'PRIMARY_DECISION_REFERENCE'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+CREATE INDEX context_policy_metric_policy_fk_idx
+    ON mra.context_policy_metric (context_policy_id, metric_ordinal);
+
+CREATE TABLE mra.context_assessment (
+    context_assessment_id uuid PRIMARY KEY,
+    assessment_group_id uuid NOT NULL,
+    assessment_ordinal integer NOT NULL,
+    assessment_count integer NOT NULL,
+    assessment_roster_sha256 text NOT NULL,
+    decision_run_id uuid NOT NULL,
+    candidate_set_id uuid NOT NULL,
+    candidate_set_content_sha256 text NOT NULL,
+    candidate_roster_sha256 text NOT NULL,
+    decision_time timestamptz NOT NULL,
+    candidate_count integer NOT NULL,
+    context_policy_id uuid NOT NULL,
+    context_policy_content_sha256 text NOT NULL,
+    policy_kind_count integer NOT NULL,
+    policy_kind_roster_sha256 text NOT NULL,
+    context_kind text NOT NULL,
+    assessment_status text NOT NULL,
+    assessment_state text NOT NULL,
+    metric_count integer NOT NULL,
+    source_count integer NOT NULL,
+    metric_roster_sha256 text NOT NULL,
+    request_identity text NOT NULL,
+    request_sha256 text NOT NULL,
+    content_sha256 text NOT NULL,
+    recorded_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT context_assessment_group_ordinal_uk UNIQUE (
+        assessment_group_id, assessment_ordinal
+    ),
+    CONSTRAINT context_assessment_group_kind_uk UNIQUE (
+        assessment_group_id, context_kind
+    ),
+    CONSTRAINT context_assessment_identity_uk UNIQUE (
+        decision_run_id, context_policy_id, context_kind
+    ),
+    CONSTRAINT context_assessment_request_uk UNIQUE (
+        decision_run_id, context_policy_id, request_identity, context_kind
+    ),
+    CONSTRAINT context_assessment_exact_uk UNIQUE (
+        context_assessment_id, assessment_group_id,
+        decision_run_id, candidate_set_id, context_policy_id,
+        context_kind, recorded_at
+    ),
+    CONSTRAINT context_assessment_run_fk FOREIGN KEY (
+        decision_run_id, candidate_set_id, candidate_set_content_sha256,
+        candidate_roster_sha256, decision_time, candidate_count
+    ) REFERENCES mra.decision_run(
+        decision_run_id, candidate_set_id, candidate_set_content_sha256,
+        candidate_roster_sha256, decision_time, candidate_count
+    ) ON DELETE RESTRICT,
+    CONSTRAINT context_assessment_policy_fk FOREIGN KEY (
+        context_policy_id, context_policy_content_sha256,
+        policy_kind_count, policy_kind_roster_sha256
+    ) REFERENCES mra.context_policy(
+        context_policy_id, content_sha256,
+        kind_count, kind_roster_sha256
+    ) ON DELETE RESTRICT,
+    CONSTRAINT context_assessment_shape_ck CHECK (
+        assessment_ordinal > 0 AND assessment_count > 0
+        AND assessment_ordinal <= assessment_count
+        AND assessment_count = policy_kind_count
+        AND candidate_count >= 0 AND metric_count > 0
+        AND source_count = metric_count::bigint * candidate_count::bigint
+        AND context_kind IN (
+            'MARKET_REGIME', 'ETF_ROTATION',
+            'THEME_ROTATION', 'CAPITAL_BREADTH'
+        )
+        AND assessment_status IN (
+            'AVAILABLE', 'UNKNOWN', 'NOT_ESTIMABLE', 'FAILED'
+        )
+        AND assessment_state IN (
+            'POSITIVE', 'NEUTRAL', 'NEGATIVE', 'UNKNOWN'
+        )
+        AND assessment_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND candidate_set_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND candidate_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND context_policy_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND policy_kind_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND metric_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND request_identity ~ '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$'
+        AND request_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+        AND recorded_at > decision_time
+    )
+);
+CREATE INDEX context_assessment_run_fk_idx
+    ON mra.context_assessment (
+        decision_run_id, candidate_set_id, candidate_set_content_sha256,
+        candidate_roster_sha256, decision_time, candidate_count
+    );
+CREATE INDEX context_assessment_policy_fk_idx
+    ON mra.context_assessment (
+        context_policy_id, context_policy_content_sha256,
+        policy_kind_count, policy_kind_roster_sha256
+    );
+
+CREATE TABLE mra.context_metric (
+    context_metric_id uuid PRIMARY KEY,
+    context_assessment_id uuid NOT NULL,
+    assessment_group_id uuid NOT NULL,
+    decision_run_id uuid NOT NULL,
+    candidate_set_id uuid NOT NULL,
+    context_policy_id uuid NOT NULL,
+    context_kind text NOT NULL,
+    context_policy_metric_id uuid NOT NULL,
+    definition_measure text NOT NULL,
+    definition_reducer text NOT NULL,
+    definition_source_role text NOT NULL,
+    definition_content_sha256 text NOT NULL,
+    metric_status text NOT NULL,
+    metric_state text NOT NULL,
+    decimal_value numeric,
+    source_count integer NOT NULL,
+    available_count integer NOT NULL,
+    unavailable_count integer NOT NULL,
+    failed_count integer NOT NULL,
+    source_roster_sha256 text NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT context_metric_assessment_metric_uk UNIQUE (
+        context_assessment_id, context_policy_metric_id
+    ),
+    CONSTRAINT context_metric_exact_uk UNIQUE (
+        context_metric_id, context_assessment_id,
+        context_policy_metric_id, decision_run_id, candidate_set_id
+    ),
+    CONSTRAINT context_metric_assessment_fk FOREIGN KEY (
+        context_assessment_id, assessment_group_id,
+        decision_run_id, candidate_set_id, context_policy_id,
+        context_kind, created_at
+    ) REFERENCES mra.context_assessment(
+        context_assessment_id, assessment_group_id,
+        decision_run_id, candidate_set_id, context_policy_id,
+        context_kind, recorded_at
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT context_metric_definition_fk FOREIGN KEY (
+        context_policy_metric_id, context_policy_id,
+        context_kind, definition_measure, definition_reducer,
+        definition_source_role, definition_content_sha256
+    ) REFERENCES mra.context_policy_metric(
+        context_policy_metric_id, context_policy_id,
+        context_kind, measure, reducer, source_role, content_sha256
+    ) ON DELETE RESTRICT,
+    CONSTRAINT context_metric_shape_ck CHECK (
+        metric_status IN ('AVAILABLE', 'UNKNOWN', 'NOT_ESTIMABLE', 'FAILED')
+        AND metric_state IN ('POSITIVE', 'NEUTRAL', 'NEGATIVE', 'UNKNOWN')
+        AND source_count >= 0 AND available_count >= 0
+        AND unavailable_count >= 0 AND failed_count >= 0
+        AND source_count = available_count + unavailable_count + failed_count
+        AND ((metric_status = 'AVAILABLE' AND decimal_value IS NOT NULL
+              AND metric_state <> 'UNKNOWN')
+          OR (metric_status <> 'AVAILABLE' AND decimal_value IS NULL
+              AND metric_state = 'UNKNOWN'))
+        AND source_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND definition_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+CREATE INDEX context_metric_assessment_fk_idx
+    ON mra.context_metric (
+        context_assessment_id, assessment_group_id,
+        decision_run_id, candidate_set_id, context_policy_id,
+        context_kind, created_at
+    );
+CREATE INDEX context_metric_definition_fk_idx
+    ON mra.context_metric (
+        context_policy_metric_id, context_policy_id,
+        context_kind, definition_measure, definition_reducer,
+        definition_source_role, definition_content_sha256
+    );
+
+CREATE TABLE mra.context_metric_source (
+    context_metric_source_id uuid PRIMARY KEY,
+    context_metric_id uuid NOT NULL,
+    context_assessment_id uuid NOT NULL,
+    context_policy_metric_id uuid NOT NULL,
+    decision_run_id uuid NOT NULL,
+    candidate_set_id uuid NOT NULL,
+    candidate_id uuid NOT NULL,
+    instrument_id uuid NOT NULL,
+    source_ordinal integer NOT NULL,
+    source_role text NOT NULL,
+    decision_reference_observation_id uuid NOT NULL,
+    reference_known_at timestamptz NOT NULL,
+    reference_source_kind text NOT NULL,
+    bar_revision_id uuid,
+    source_gap_id uuid,
+    value_status text NOT NULL,
+    decimal_value numeric,
+    boolean_value boolean,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT context_metric_source_ordinal_uk UNIQUE (
+        context_metric_id, source_ordinal
+    ),
+    CONSTRAINT context_metric_source_candidate_uk UNIQUE (
+        context_metric_id, candidate_id
+    ),
+    CONSTRAINT context_metric_source_metric_fk FOREIGN KEY (
+        context_metric_id, context_assessment_id,
+        context_policy_metric_id, decision_run_id, candidate_set_id
+    ) REFERENCES mra.context_metric(
+        context_metric_id, context_assessment_id,
+        context_policy_metric_id, decision_run_id, candidate_set_id
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT context_metric_source_reference_fk FOREIGN KEY (
+        decision_reference_observation_id, decision_run_id,
+        candidate_set_id, candidate_id, instrument_id,
+        reference_known_at, reference_source_kind
+    ) REFERENCES mra.decision_reference_observation(
+        decision_reference_observation_id, decision_run_id,
+        candidate_set_id, candidate_id, instrument_id, known_at, source_kind
+    ) ON DELETE RESTRICT,
+    CONSTRAINT context_metric_source_bar_fk FOREIGN KEY (
+        bar_revision_id
+    ) REFERENCES mra.market_bar_revision(bar_revision_id) ON DELETE RESTRICT,
+    CONSTRAINT context_metric_source_gap_fk FOREIGN KEY (
+        source_gap_id
+    ) REFERENCES mra.source_gap(gap_id) ON DELETE RESTRICT,
+    CONSTRAINT context_metric_source_shape_ck CHECK (
+        source_ordinal > 0
+        AND source_role = 'PRIMARY_DECISION_REFERENCE'
+        AND reference_source_kind IN ('BAR_REVISION', 'SOURCE_GAP')
+        AND ((reference_source_kind = 'BAR_REVISION'
+              AND bar_revision_id IS NOT NULL AND source_gap_id IS NULL)
+          OR (reference_source_kind = 'SOURCE_GAP'
+              AND bar_revision_id IS NULL AND source_gap_id IS NOT NULL))
+        AND value_status IN ('AVAILABLE', 'UNAVAILABLE', 'FAILED')
+        AND ((value_status = 'AVAILABLE'
+              AND ((decimal_value IS NOT NULL AND boolean_value IS NULL)
+                OR (decimal_value IS NULL AND boolean_value IS NOT NULL)))
+          OR (value_status <> 'AVAILABLE'
+              AND decimal_value IS NULL AND boolean_value IS NULL))
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+CREATE INDEX context_metric_source_metric_fk_idx
+    ON mra.context_metric_source (
+        context_metric_id, context_assessment_id,
+        context_policy_metric_id, decision_run_id, candidate_set_id
+    );
+CREATE INDEX context_metric_source_reference_fk_idx
+    ON mra.context_metric_source (
+        decision_reference_observation_id, decision_run_id,
+        candidate_set_id, candidate_id, instrument_id,
+        reference_known_at, reference_source_kind
+    );
+CREATE INDEX context_metric_source_bar_fk_idx
+    ON mra.context_metric_source (bar_revision_id)
+    WHERE bar_revision_id IS NOT NULL;
+CREATE INDEX context_metric_source_gap_fk_idx
+    ON mra.context_metric_source (source_gap_id)
+    WHERE source_gap_id IS NOT NULL;
+
 ALTER TABLE mra.trading_session
     ADD CONSTRAINT trading_session_outcome_authority_uk UNIQUE (
         session_id, exchange, session_date, timezone_name,
@@ -11991,4 +12392,605 @@ BEFORE INSERT ON mra.research_qualification_floor_evidence
 FOR EACH ROW EXECUTE FUNCTION mra.guard_research_qualification_child_insert();
 CREATE TRIGGER research_qualification_floor_evidence_append_only
 BEFORE UPDATE OR DELETE ON mra.research_qualification_floor_evidence
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+
+CREATE FUNCTION mra.guard_context_policy_metric_insert()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE expected_hash text;
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM mra.context_policy
+        WHERE context_policy_id = NEW.context_policy_id
+    ) THEN
+        RAISE EXCEPTION 'ContextPolicy metric roster is already frozen'
+            USING ERRCODE = '55000';
+    END IF;
+    expected_hash := mra.canonical_sha256(
+        replace(json_build_object(
+            'context_kind', NEW.context_kind,
+            'context_policy_id', NEW.context_policy_id,
+            'context_policy_metric_id', NEW.context_policy_metric_id,
+            'lower_threshold', NEW.lower_threshold::text,
+            'measure', NEW.measure,
+            'metric_code', NEW.metric_code,
+            'minimum_available_count', NEW.minimum_available_count,
+            'minimum_source_count', NEW.minimum_source_count,
+            'missingness_policy', NEW.missingness_policy,
+            'operator', NEW.qualification_operator,
+            'ordinal', NEW.metric_ordinal,
+            'reducer', NEW.reducer,
+            'source_role', NEW.source_role,
+            'upper_threshold', CASE WHEN NEW.upper_threshold IS NULL
+                THEN NULL ELSE NEW.upper_threshold::text END
+        )::text, ' ', '')
+    );
+    IF expected_hash <> NEW.content_sha256 THEN
+        RAISE EXCEPTION 'ContextPolicyMetric content hash mismatch'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.validate_context_policy_closure()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE actual_metric_count integer;
+DECLARE minimum_ordinal integer;
+DECLARE maximum_ordinal integer;
+DECLARE actual_kind_count integer;
+DECLARE actual_metric_hash text;
+DECLARE actual_kind_hash text;
+DECLARE expected_content_hash text;
+DECLARE predecessor record;
+BEGIN
+    PERFORM pg_advisory_xact_lock(
+        hashtextextended('context-policy:' || NEW.policy_code, 0)
+    );
+    IF NEW.version > 1 THEN
+        SELECT policy_code, version, frozen_at INTO predecessor
+        FROM mra.context_policy
+        WHERE context_policy_id = NEW.supersedes_policy_id
+        FOR SHARE;
+        IF predecessor.policy_code IS DISTINCT FROM NEW.policy_code
+           OR predecessor.version + 1 <> NEW.version
+           OR predecessor.frozen_at >= NEW.frozen_at THEN
+            RAISE EXCEPTION 'ContextPolicy supersession chain is invalid'
+                USING ERRCODE = '55000';
+        END IF;
+    END IF;
+    SELECT count(*), min(metric_ordinal), max(metric_ordinal),
+           mra.canonical_sha256(
+               replace(
+                   json_agg(
+                       json_build_object(
+                           'content_sha256', content_sha256,
+                           'context_policy_metric_id', context_policy_metric_id,
+                           'ordinal', metric_ordinal
+                       ) ORDER BY metric_ordinal
+                   )::text,
+                   ' ', ''
+               )
+           )
+      INTO actual_metric_count, minimum_ordinal, maximum_ordinal,
+           actual_metric_hash
+    FROM mra.context_policy_metric
+    WHERE context_policy_id = NEW.context_policy_id;
+
+    WITH kinds AS (
+        SELECT context_kind, min(metric_ordinal) AS first_ordinal
+        FROM mra.context_policy_metric
+        WHERE context_policy_id = NEW.context_policy_id
+        GROUP BY context_kind
+    ), ordered AS (
+        SELECT context_kind,
+               row_number() OVER (ORDER BY first_ordinal)::integer AS ordinal
+        FROM kinds
+    )
+    SELECT count(*),
+           mra.canonical_sha256(
+               replace(
+                   json_agg(
+                       json_build_object(
+                           'context_kind', context_kind,
+                           'ordinal', ordinal
+                       ) ORDER BY ordinal
+                   )::text,
+                   ' ', ''
+               )
+           )
+      INTO actual_kind_count, actual_kind_hash
+    FROM ordered;
+
+    expected_content_hash := mra.canonical_sha256(
+        replace(json_build_object(
+            'code_artifact', json_build_object(
+                'artifact_id', NEW.code_artifact_id,
+                'content_sha256', NEW.code_content_sha256,
+                'size_bytes', NEW.code_size_bytes
+            ),
+            'config_artifact', json_build_object(
+                'artifact_id', NEW.config_artifact_id,
+                'content_sha256', NEW.config_content_sha256,
+                'size_bytes', NEW.config_size_bytes
+            ),
+            'context_policy_id', NEW.context_policy_id,
+            'kind_count', NEW.kind_count,
+            'kind_roster_sha256', NEW.kind_roster_sha256,
+            'metric_count', NEW.metric_count,
+            'metric_roster_sha256', NEW.metric_roster_sha256,
+            'policy_code', NEW.policy_code,
+            'provenance_sha256', NEW.provenance_sha256,
+            'supersedes_policy_id', NEW.supersedes_policy_id,
+            'version', NEW.version
+        )::text, ' ', '')
+    );
+    IF actual_metric_count <> NEW.metric_count
+       OR minimum_ordinal <> 1 OR maximum_ordinal <> NEW.metric_count
+       OR actual_metric_hash <> NEW.metric_roster_sha256
+       OR actual_kind_count <> NEW.kind_count
+       OR actual_kind_hash <> NEW.kind_roster_sha256
+       OR expected_content_hash <> NEW.content_sha256 THEN
+        RAISE EXCEPTION 'ContextPolicy relational closure is incomplete'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.guard_context_metric_child_insert()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF TG_TABLE_NAME = 'context_metric' AND EXISTS (
+        SELECT 1 FROM mra.context_assessment
+        WHERE context_assessment_id = NEW.context_assessment_id
+    ) THEN
+        RAISE EXCEPTION 'ContextAssessment metric roster is already frozen'
+            USING ERRCODE = '55000';
+    ELSIF TG_TABLE_NAME = 'context_metric_source' AND (
+        EXISTS (
+            SELECT 1 FROM mra.context_metric
+            WHERE context_metric_id = NEW.context_metric_id
+        ) OR EXISTS (
+            SELECT 1 FROM mra.context_assessment
+            WHERE context_assessment_id = NEW.context_assessment_id
+        )
+    ) THEN
+        RAISE EXCEPTION 'ContextMetric source roster is already frozen'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.validate_context_metric_source()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE rule record;
+DECLARE reference record;
+DECLARE bar record;
+DECLARE decision_cutoff timestamptz;
+DECLARE expected_status text;
+DECLARE expected_decimal numeric;
+DECLARE expected_boolean boolean;
+DECLARE expected_hash text;
+BEGIN
+    SELECT measure, reducer, source_role INTO rule
+    FROM mra.context_policy_metric
+    WHERE context_policy_metric_id = NEW.context_policy_metric_id
+    FOR SHARE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Context source metric definition is absent'
+            USING ERRCODE = '23503';
+    END IF;
+    SELECT refrow.*, target.ordinal AS target_ordinal INTO reference
+    FROM mra.decision_reference_observation AS refrow
+    JOIN mra.decision_run_target AS target
+      ON target.decision_run_target_id = refrow.decision_run_target_id
+    WHERE refrow.decision_reference_observation_id =
+          NEW.decision_reference_observation_id
+    FOR SHARE OF refrow, target;
+    SELECT decision_time INTO decision_cutoff
+    FROM mra.decision_run
+    WHERE decision_run_id = NEW.decision_run_id
+    FOR SHARE;
+    IF reference.target_ordinal <> 1
+       OR reference.decision_run_id <> NEW.decision_run_id
+       OR reference.candidate_set_id <> NEW.candidate_set_id
+       OR reference.candidate_id <> NEW.candidate_id
+       OR reference.instrument_id <> NEW.instrument_id
+       OR reference.known_at <> NEW.reference_known_at
+       OR reference.source_kind <> NEW.reference_source_kind
+       OR reference.bar_revision_id IS DISTINCT FROM NEW.bar_revision_id
+       OR reference.source_gap_id IS DISTINCT FROM NEW.source_gap_id
+       OR reference.known_at > decision_cutoff THEN
+        RAISE EXCEPTION 'Context source is not the exact primary Decision reference'
+            USING ERRCODE = '55000';
+    END IF;
+    expected_decimal := NULL;
+    expected_boolean := NULL;
+    IF reference.source_kind = 'BAR_REVISION' THEN
+        SELECT open_value, close_value, turnover_value INTO bar
+        FROM mra.market_bar_revision
+        WHERE bar_revision_id = reference.bar_revision_id
+        FOR SHARE;
+        IF rule.measure = 'RETURN' THEN
+            expected_status := 'AVAILABLE';
+            expected_decimal := bar.close_value / bar.open_value - 1;
+        ELSIF rule.measure = 'ADVANCE_RATE' THEN
+            expected_status := 'AVAILABLE';
+            expected_boolean := bar.close_value >= bar.open_value;
+        ELSIF rule.measure = 'MEMBER_COVERAGE' THEN
+            expected_status := 'AVAILABLE';
+            expected_boolean := true;
+        ELSIF rule.measure = 'TURNOVER' AND bar.turnover_value IS NOT NULL THEN
+            expected_status := 'AVAILABLE';
+            expected_decimal := bar.turnover_value;
+        ELSIF rule.measure = 'FLOW_PROXY' AND bar.turnover_value IS NOT NULL THEN
+            expected_status := 'AVAILABLE';
+            expected_decimal := CASE
+                WHEN bar.close_value > bar.open_value THEN bar.turnover_value
+                WHEN bar.close_value < bar.open_value THEN -bar.turnover_value
+                ELSE 0::numeric
+            END;
+        ELSE
+            expected_status := 'UNAVAILABLE';
+        END IF;
+    ELSIF rule.measure = 'MEMBER_COVERAGE' THEN
+        expected_status := 'AVAILABLE';
+        expected_boolean := false;
+    ELSIF reference.value_status = 'FAILED' THEN
+        expected_status := 'FAILED';
+    ELSE
+        expected_status := 'UNAVAILABLE';
+    END IF;
+    expected_hash := mra.canonical_sha256(
+        replace(json_build_object(
+            'context_metric_source_id', NEW.context_metric_source_id,
+            'source', json_build_object(
+                'bar_revision_id', NEW.bar_revision_id,
+                'boolean_value', NEW.boolean_value,
+                'candidate_id', NEW.candidate_id,
+                'context_policy_metric_id', NEW.context_policy_metric_id,
+                'decimal_value', CASE WHEN NEW.decimal_value IS NULL
+                    THEN NULL ELSE NEW.decimal_value::text END,
+                'decision_reference_observation_id',
+                    NEW.decision_reference_observation_id,
+                'instrument_id', NEW.instrument_id,
+                'known_at', NEW.reference_known_at,
+                'source_gap_id', NEW.source_gap_id,
+                'source_kind', CASE NEW.reference_source_kind
+                    WHEN 'BAR_REVISION' THEN 'BAR_REVISION'
+                    ELSE 'SOURCE_GAP' END,
+                'source_ordinal', NEW.source_ordinal,
+                'value_status', NEW.value_status
+            )
+        )::text, ' ', '')
+    );
+    IF NEW.source_role <> rule.source_role
+       OR NEW.value_status <> expected_status
+       OR NEW.decimal_value IS DISTINCT FROM expected_decimal
+       OR NEW.boolean_value IS DISTINCT FROM expected_boolean
+       OR NEW.content_sha256 <> expected_hash THEN
+        RAISE EXCEPTION 'Context source value or content does not match exact input'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.validate_context_assessment_closure()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE actual_assessment_count integer;
+DECLARE actual_assessment_min integer;
+DECLARE actual_assessment_max integer;
+DECLARE actual_assessment_hash text;
+DECLARE actual_kind_hash text;
+DECLARE actual_metric_count integer;
+DECLARE actual_metric_hash text;
+DECLARE actual_source_count integer := 0;
+DECLARE actual_status text := 'AVAILABLE';
+DECLARE actual_state text := 'POSITIVE';
+DECLARE metric_row record;
+DECLARE source_stats record;
+DECLARE expected_status text;
+DECLARE expected_state text;
+DECLARE expected_value numeric;
+DECLARE expected_source_hash text;
+DECLARE expected_metric_hash text;
+DECLARE expected_assessment_hash text;
+BEGIN
+    SELECT count(*), min(assessment_ordinal), max(assessment_ordinal),
+           mra.canonical_sha256(
+               replace(
+                   json_agg(
+                       json_build_object(
+                           'content_sha256', content_sha256,
+                           'context_assessment_id', context_assessment_id,
+                           'ordinal', assessment_ordinal
+                       ) ORDER BY assessment_ordinal
+                   )::text,
+                   ' ', ''
+               )
+           ),
+           mra.canonical_sha256(
+               replace(
+                   json_agg(
+                       json_build_object(
+                           'context_kind', context_kind,
+                           'ordinal', assessment_ordinal
+                       ) ORDER BY assessment_ordinal
+                   )::text,
+                   ' ', ''
+               )
+           )
+      INTO actual_assessment_count, actual_assessment_min,
+           actual_assessment_max, actual_assessment_hash, actual_kind_hash
+    FROM mra.context_assessment
+    WHERE assessment_group_id = NEW.assessment_group_id;
+    IF actual_assessment_count <> NEW.assessment_count
+       OR actual_assessment_min <> 1
+       OR actual_assessment_max <> NEW.assessment_count
+       OR actual_assessment_hash <> NEW.assessment_roster_sha256
+       OR actual_kind_hash <> NEW.policy_kind_roster_sha256
+       OR EXISTS (
+           SELECT 1 FROM mra.context_assessment AS sibling
+           WHERE sibling.assessment_group_id = NEW.assessment_group_id
+             AND (sibling.decision_run_id <> NEW.decision_run_id
+               OR sibling.candidate_set_id <> NEW.candidate_set_id
+               OR sibling.context_policy_id <> NEW.context_policy_id
+               OR sibling.request_identity <> NEW.request_identity
+               OR sibling.request_sha256 <> NEW.request_sha256)
+       ) THEN
+        RAISE EXCEPTION 'Context assessment group closure is incomplete'
+            USING ERRCODE = '55000';
+    END IF;
+
+    WITH ordered_metric AS (
+        SELECT metric.content_sha256, metric.context_metric_id,
+               row_number() OVER (
+                   ORDER BY definition.metric_ordinal
+               )::integer AS local_ordinal
+        FROM mra.context_metric AS metric
+        JOIN mra.context_policy_metric AS definition
+          ON definition.context_policy_metric_id =
+             metric.context_policy_metric_id
+        WHERE metric.context_assessment_id = NEW.context_assessment_id
+    )
+    SELECT count(*),
+           mra.canonical_sha256(
+               replace(
+                   json_agg(
+                       json_build_object(
+                           'content_sha256', content_sha256,
+                           'context_metric_id', context_metric_id,
+                           'ordinal', local_ordinal
+                       ) ORDER BY local_ordinal
+                   )::text,
+                   ' ', ''
+               )
+           )
+      INTO actual_metric_count, actual_metric_hash
+    FROM ordered_metric;
+    IF actual_metric_count <> NEW.metric_count
+       OR actual_metric_hash <> NEW.metric_roster_sha256
+       OR EXISTS (
+           (SELECT definition.context_policy_metric_id
+            FROM mra.context_policy_metric AS definition
+            WHERE definition.context_policy_id = NEW.context_policy_id
+              AND definition.context_kind = NEW.context_kind)
+           EXCEPT
+           (SELECT metric.context_policy_metric_id
+            FROM mra.context_metric AS metric
+            WHERE metric.context_assessment_id = NEW.context_assessment_id)
+       ) OR EXISTS (
+           (SELECT metric.context_policy_metric_id
+            FROM mra.context_metric AS metric
+            WHERE metric.context_assessment_id = NEW.context_assessment_id)
+           EXCEPT
+           (SELECT definition.context_policy_metric_id
+            FROM mra.context_policy_metric AS definition
+            WHERE definition.context_policy_id = NEW.context_policy_id
+              AND definition.context_kind = NEW.context_kind)
+       ) THEN
+        RAISE EXCEPTION 'Context metric roster is incomplete'
+            USING ERRCODE = '55000';
+    END IF;
+
+    FOR metric_row IN
+        SELECT metric.*, definition.metric_ordinal,
+               definition.reducer, definition.qualification_operator,
+               definition.lower_threshold, definition.upper_threshold,
+               definition.minimum_source_count,
+               definition.minimum_available_count,
+               definition.missingness_policy
+        FROM mra.context_metric AS metric
+        JOIN mra.context_policy_metric AS definition
+          ON definition.context_policy_metric_id =
+             metric.context_policy_metric_id
+        WHERE metric.context_assessment_id = NEW.context_assessment_id
+        ORDER BY definition.metric_ordinal
+    LOOP
+        SELECT count(*) AS source_count,
+               count(*) FILTER (WHERE value_status = 'AVAILABLE') AS available_count,
+               count(*) FILTER (WHERE value_status = 'UNAVAILABLE') AS unavailable_count,
+               count(*) FILTER (WHERE value_status = 'FAILED') AS failed_count,
+               mra.canonical_sha256(
+                   replace(
+                       coalesce(
+                           json_agg(
+                               json_build_object(
+                                   'content_sha256', content_sha256,
+                                   'context_metric_source_id',
+                                       context_metric_source_id,
+                                   'ordinal', source_ordinal
+                               ) ORDER BY source_ordinal
+                           ), '[]'::json
+                       )::text,
+                       ' ', ''
+                   )
+               ) AS source_hash,
+               avg(decimal_value) FILTER (WHERE value_status = 'AVAILABLE') AS mean_value,
+               percentile_disc(0.5) WITHIN GROUP (ORDER BY decimal_value)
+                   FILTER (WHERE value_status = 'AVAILABLE') AS median_value,
+               sum(decimal_value) FILTER (WHERE value_status = 'AVAILABLE') AS sum_value,
+               avg(CASE WHEN boolean_value THEN 1::numeric ELSE 0::numeric END)
+                   FILTER (WHERE value_status = 'AVAILABLE') AS true_rate
+          INTO source_stats
+        FROM mra.context_metric_source
+        WHERE context_metric_id = metric_row.context_metric_id;
+        IF source_stats.source_count <> NEW.candidate_count
+           OR EXISTS (
+               (SELECT candidate_id FROM mra.candidate
+                WHERE candidate_set_id = NEW.candidate_set_id)
+               EXCEPT
+               (SELECT candidate_id FROM mra.context_metric_source
+                WHERE context_metric_id = metric_row.context_metric_id)
+           ) OR EXISTS (
+               (SELECT candidate_id FROM mra.context_metric_source
+                WHERE context_metric_id = metric_row.context_metric_id)
+               EXCEPT
+               (SELECT candidate_id FROM mra.candidate
+                WHERE candidate_set_id = NEW.candidate_set_id)
+           ) THEN
+            RAISE EXCEPTION 'Context source roster omitted a Candidate'
+                USING ERRCODE = '55000';
+        END IF;
+        expected_source_hash := source_stats.source_hash;
+        IF source_stats.failed_count > 0
+           OR source_stats.source_count < metric_row.minimum_source_count
+           OR source_stats.available_count < metric_row.minimum_available_count THEN
+            expected_status := metric_row.missingness_policy;
+            expected_state := 'UNKNOWN';
+            expected_value := NULL;
+        ELSE
+            expected_status := 'AVAILABLE';
+            expected_value := CASE metric_row.reducer
+                WHEN 'MEAN_DECIMAL' THEN source_stats.mean_value
+                WHEN 'MEDIAN_DECIMAL' THEN source_stats.median_value
+                WHEN 'SUM_DECIMAL' THEN source_stats.sum_value
+                WHEN 'TRUE_RATE' THEN source_stats.true_rate
+            END;
+            expected_state := CASE metric_row.qualification_operator
+                WHEN 'AT_LEAST' THEN CASE
+                    WHEN expected_value >= metric_row.lower_threshold
+                    THEN 'POSITIVE' ELSE 'NEGATIVE' END
+                WHEN 'AT_MOST' THEN CASE
+                    WHEN expected_value <= metric_row.lower_threshold
+                    THEN 'POSITIVE' ELSE 'NEGATIVE' END
+                ELSE CASE
+                    WHEN expected_value BETWEEN metric_row.lower_threshold
+                                            AND metric_row.upper_threshold
+                    THEN 'POSITIVE' ELSE 'NEGATIVE' END
+            END;
+        END IF;
+        expected_metric_hash := mra.canonical_sha256(
+            replace(json_build_object(
+                'available_count', source_stats.available_count,
+                'context_metric_id', metric_row.context_metric_id,
+                'decimal_value', CASE WHEN metric_row.decimal_value IS NULL
+                    THEN NULL ELSE metric_row.decimal_value::text END,
+                'definition_sha256', metric_row.definition_content_sha256,
+                'failed_count', source_stats.failed_count,
+                'source_count', source_stats.source_count,
+                'source_roster_sha256', expected_source_hash,
+                'state', expected_state,
+                'status', expected_status,
+                'unavailable_count', source_stats.unavailable_count
+            )::text, ' ', '')
+        );
+        IF metric_row.metric_status <> expected_status
+           OR metric_row.metric_state <> expected_state
+           OR metric_row.decimal_value IS DISTINCT FROM expected_value
+           OR metric_row.source_count <> source_stats.source_count
+           OR metric_row.available_count <> source_stats.available_count
+           OR metric_row.unavailable_count <> source_stats.unavailable_count
+           OR metric_row.failed_count <> source_stats.failed_count
+           OR metric_row.source_roster_sha256 <> expected_source_hash
+           OR metric_row.content_sha256 <> expected_metric_hash THEN
+            RAISE EXCEPTION
+                'Context metric result mismatch id=% stored=(%,%,%,%,%,%,%,%,%) expected=(%,%,%,%,%,%,%,%,%)',
+                metric_row.context_metric_id,
+                metric_row.metric_status, metric_row.metric_state,
+                metric_row.decimal_value, metric_row.source_count,
+                metric_row.available_count, metric_row.unavailable_count,
+                metric_row.failed_count, metric_row.source_roster_sha256,
+                metric_row.content_sha256,
+                expected_status, expected_state, expected_value,
+                source_stats.source_count, source_stats.available_count,
+                source_stats.unavailable_count, source_stats.failed_count,
+                expected_source_hash, expected_metric_hash
+                USING ERRCODE = '55000';
+        END IF;
+        actual_source_count := actual_source_count + source_stats.source_count;
+        IF expected_status = 'FAILED' THEN
+            actual_status := 'FAILED';
+        ELSIF expected_status = 'NOT_ESTIMABLE'
+              AND actual_status <> 'FAILED' THEN
+            actual_status := 'NOT_ESTIMABLE';
+        ELSIF expected_status = 'UNKNOWN'
+              AND actual_status NOT IN ('FAILED', 'NOT_ESTIMABLE') THEN
+            actual_status := 'UNKNOWN';
+        END IF;
+        IF expected_state = 'UNKNOWN' THEN
+            actual_state := 'UNKNOWN';
+        ELSIF expected_state = 'NEGATIVE' AND actual_state <> 'UNKNOWN' THEN
+            actual_state := 'NEGATIVE';
+        END IF;
+    END LOOP;
+    expected_assessment_hash := mra.canonical_sha256(
+        replace(json_build_object(
+            'assessment_group_id', NEW.assessment_group_id,
+            'context_assessment_id', NEW.context_assessment_id,
+            'context_kind', NEW.context_kind,
+            'metric_count', NEW.metric_count,
+            'metric_roster_sha256', NEW.metric_roster_sha256,
+            'ordinal', NEW.assessment_ordinal,
+            'state', actual_state,
+            'status', actual_status
+        )::text, ' ', '')
+    );
+    IF NEW.source_count <> actual_source_count
+       OR NEW.assessment_status <> actual_status
+       OR NEW.assessment_state <> actual_state
+       OR NEW.content_sha256 <> expected_assessment_hash THEN
+        RAISE EXCEPTION 'ContextAssessment derived result is invalid'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER context_policy_append_only
+BEFORE UPDATE OR DELETE ON mra.context_policy
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE CONSTRAINT TRIGGER context_policy_closure_guard
+AFTER INSERT ON mra.context_policy
+DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW EXECUTE FUNCTION mra.validate_context_policy_closure();
+CREATE TRIGGER context_policy_metric_insert_guard
+BEFORE INSERT ON mra.context_policy_metric
+FOR EACH ROW EXECUTE FUNCTION mra.guard_context_policy_metric_insert();
+CREATE TRIGGER context_policy_metric_append_only
+BEFORE UPDATE OR DELETE ON mra.context_policy_metric
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER context_assessment_append_only
+BEFORE UPDATE OR DELETE ON mra.context_assessment
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE CONSTRAINT TRIGGER context_assessment_closure_guard
+AFTER INSERT ON mra.context_assessment
+DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW EXECUTE FUNCTION mra.validate_context_assessment_closure();
+CREATE TRIGGER context_metric_insert_guard
+BEFORE INSERT ON mra.context_metric
+FOR EACH ROW EXECUTE FUNCTION mra.guard_context_metric_child_insert();
+CREATE TRIGGER context_metric_append_only
+BEFORE UPDATE OR DELETE ON mra.context_metric
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER context_metric_source_insert_guard
+BEFORE INSERT ON mra.context_metric_source
+FOR EACH ROW EXECUTE FUNCTION mra.guard_context_metric_child_insert();
+CREATE TRIGGER context_metric_source_value_guard
+BEFORE INSERT ON mra.context_metric_source
+FOR EACH ROW EXECUTE FUNCTION mra.validate_context_metric_source();
+CREATE TRIGGER context_metric_source_append_only
+BEFORE UPDATE OR DELETE ON mra.context_metric_source
 FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();

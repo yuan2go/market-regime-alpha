@@ -1,5 +1,18 @@
 """Stable Decision Support ports."""
 
+from market_regime_alpha.decision_support.ports.context import (
+    ContextAssessmentRecord,
+    ContextArtifactRepository,
+    ContextDependencyRepository,
+    ContextInputPreparationProvider,
+    ContextPolicyRecord,
+    ContextQueryProvider,
+    ContextReconciliation,
+    ContextRepository,
+    ContextRuntimeFinalization,
+    ContextUnitOfWork,
+    ContextUnitOfWorkProvider,
+)
 from market_regime_alpha.decision_support.ports.preparation import (
     DecisionDependencyRepository,
     DecisionInputPreparationProvider,
@@ -23,6 +36,17 @@ from market_regime_alpha.decision_support.ports.verification import (
 )
 
 __all__ = [
+    "ContextAssessmentRecord",
+    "ContextArtifactRepository",
+    "ContextDependencyRepository",
+    "ContextInputPreparationProvider",
+    "ContextPolicyRecord",
+    "ContextQueryProvider",
+    "ContextReconciliation",
+    "ContextRepository",
+    "ContextRuntimeFinalization",
+    "ContextUnitOfWork",
+    "ContextUnitOfWorkProvider",
     "DecisionDependencyRepository",
     "DecisionInputPreparationProvider",
     "DecisionResearchQualificationInputProvider",

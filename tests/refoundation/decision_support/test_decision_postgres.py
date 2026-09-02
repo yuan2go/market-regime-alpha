@@ -1631,5 +1631,6 @@ def test_decision_replay_and_reconciliation_queries_have_bounded_index_plans(
         "decision_run_candidate_set_uk",
         "decision_run_candidate_set_idx",
         "decision_run_candidate_fk_idx",
+        "decision_run_context_authority_uk",
         "decision_run_request_uk",
     }
