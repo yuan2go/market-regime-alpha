@@ -32,6 +32,9 @@ from market_regime_alpha.infrastructure.postgres.queries.decision_verification i
 from market_regime_alpha.infrastructure.postgres.queries.exploratory_feature_inputs import (
     PostgresExploratoryFeatureInputReadPort,
 )
+from market_regime_alpha.infrastructure.postgres.queries.exploratory_campaigns import (
+    PostgresExploratoryCampaignReadPort,
+)
 from market_regime_alpha.infrastructure.postgres.queries.market import (
     PostgresMarketQueries,
     PostgresMarketQueryProvider,
@@ -78,6 +81,7 @@ __all__ = [
     "PostgresDecisionRunQueryProvider",
     "PostgresDecisionRunVerificationProvider",
     "PostgresExploratoryFeatureInputReadPort",
+    "PostgresExploratoryCampaignReadPort",
     "PostgresMarketQueries",
     "PostgresMarketQueryProvider",
     "PostgresMarketRevisionLineageReadPort",

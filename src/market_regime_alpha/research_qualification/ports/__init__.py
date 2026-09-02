@@ -10,6 +10,10 @@ from market_regime_alpha.research_qualification.ports.exploratory_feature_inputs
     ExploratoryIntradayFeatureInput,
     ExploratoryIntradayFeatureObservation,
 )
+from market_regime_alpha.research_qualification.ports.exploratory_campaign import (
+    CompletedExploratoryCampaign,
+    ExploratoryCampaignReadPort,
+)
 from market_regime_alpha.research_qualification.ports.sources import (
     DatasetMarketSourceObservation,
     DatasetPopulationMember,
@@ -68,6 +72,8 @@ __all__ = [
     "DatasetRecord",
     "DueOutcomeMember",
     "DueOutcomeState",
+    "CompletedExploratoryCampaign",
+    "ExploratoryCampaignReadPort",
     "ExploratoryFeatureInputReadPort",
     "ExploratoryIntradayFeatureGap",
     "ExploratoryIntradayFeatureInput",

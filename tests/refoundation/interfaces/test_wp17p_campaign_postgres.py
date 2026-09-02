@@ -325,10 +325,11 @@ def test_canonical_wp17p_fit_model_validation_chain(target_database_url, tmp_pat
             provenance_sha256="f" * 64,
         )
 
-        result = Wp17pCampaignOperations(
+        campaign = Wp17pCampaignOperations(
             application,
             code_sha="a" * 40,
-        ).run(
+        )
+        result = campaign.run(
             catalog=catalog,
             pilot_instrument_ids=instrument_ids,
         )
@@ -339,6 +340,11 @@ def test_canonical_wp17p_fit_model_validation_chain(target_database_url, tmp_pat
         assert application.research_evaluation_verifier.verify_evaluation_run(
             result.validation_evaluation_run_id
         ).matched
+        replayed = campaign.run(
+            catalog=catalog,
+            pilot_instrument_ids=instrument_ids,
+        )
+        assert replayed == result
     with psycopg.connect(target_database_url) as connection:
         counts = connection.execute(
             """

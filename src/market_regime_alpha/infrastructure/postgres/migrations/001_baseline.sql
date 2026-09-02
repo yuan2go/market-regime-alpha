@@ -14702,10 +14702,10 @@ BEGIN
     ELSE
         expected_status := 'UNAVAILABLE';
     END IF;
-    expected_hash := mra.canonical_sha256(
-        replace(json_build_object(
+    expected_hash := mra.canonical_sha256(mra.canonical_json_text(
+        jsonb_build_object(
             'context_metric_source_id', NEW.context_metric_source_id,
-            'source', json_build_object(
+            'source', jsonb_build_object(
                 'bar_revision_id', NEW.bar_revision_id,
                 'boolean_value', NEW.boolean_value,
                 'candidate_id', NEW.candidate_id,
@@ -14715,7 +14715,8 @@ BEGIN
                 'decision_reference_observation_id',
                     NEW.decision_reference_observation_id,
                 'instrument_id', NEW.instrument_id,
-                'known_at', NEW.reference_known_at,
+                'known_at',
+                    mra.canonical_timestamptz_text(NEW.reference_known_at),
                 'source_gap_id', NEW.source_gap_id,
                 'source_kind', CASE NEW.reference_source_kind
                     WHEN 'BAR_REVISION' THEN 'BAR_REVISION'
@@ -14723,8 +14724,8 @@ BEGIN
                 'source_ordinal', NEW.source_ordinal,
                 'value_status', NEW.value_status
             )
-        )::text, ' ', '')
-    );
+        )
+    ));
     IF NEW.source_role <> rule.source_role
        OR NEW.value_status <> expected_status
        OR NEW.decimal_value IS DISTINCT FROM expected_decimal

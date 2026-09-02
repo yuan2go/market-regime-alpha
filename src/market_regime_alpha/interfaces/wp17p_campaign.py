@@ -37,6 +37,10 @@ from market_regime_alpha.research_qualification.domain.exploratory_backtest impo
 from market_regime_alpha.research_qualification.domain.research_vocabulary import (
     PartitionPurpose,
 )
+from market_regime_alpha.research_qualification.ports import (
+    CompletedExploratoryCampaign,
+    ExploratoryCampaignReadPort,
+)
 from market_regime_alpha.shared.identity import InstrumentId
 
 
@@ -132,7 +136,9 @@ class Wp17pCampaignOperations:
         evaluations: _EvaluationOperations | None = None,
         outcomes: _OutcomeOperations | None = None,
         models: _ModelOperations | None = None,
+        campaigns: ExploratoryCampaignReadPort | None = None,
     ) -> None:
+        self._application = application
         self._research = research or Wp17pResearchOperations(application)
         self._decisions = decisions or Wp17pDecisionOperations(
             application,
@@ -144,6 +150,7 @@ class Wp17pCampaignOperations:
             code_sha=code_sha,
         )
         self._models = models or Wp17pModelOperations(application)
+        self._campaigns = campaigns or getattr(application, "exploratory_campaigns", None)
 
     def run(
         self,
@@ -152,6 +159,13 @@ class Wp17pCampaignOperations:
         pilot_instrument_ids: tuple[InstrumentId, ...],
     ) -> Wp17pCampaignExecution:
         self._research.register_catalog(catalog)
+        if self._campaigns is not None:
+            completed = self._campaigns.completed(
+                catalog.backtest.exploratory_backtest_run_id,
+                expected_definition_sha256=str(catalog.backtest.content_sha256),
+            )
+            if completed is not None:
+                return self._completed_replay(completed)
         baseline = _one_arm(catalog, BacktestArmKind.RULE_BASELINE)
         challenger = _one_arm(catalog, BacktestArmKind.MODEL_CHALLENGER)
         fit_fold = _one_fold(catalog, PartitionPurpose.FIT)
@@ -254,6 +268,44 @@ class Wp17pCampaignOperations:
             tuple(item.dataset_id for item in validation_datasets),
             tuple(item.decision_run_id for item in validation_decisions),
             validation_evaluation.evaluation_run_id,
+        )
+
+    def _completed_replay(
+        self,
+        completed: CompletedExploratoryCampaign,
+    ) -> Wp17pCampaignExecution:
+        backtest = self._application.exploratory_backtest_verifier.verify(
+            completed.exploratory_backtest_run_id
+        )
+        if not backtest.matched or backtest.mismatch_count:
+            raise ValueError("ExploratoryBacktest Authority did not reconcile")
+        for decision_run_id in (
+            completed.fit_decision_run_id,
+            *completed.validation_decision_run_ids,
+        ):
+            decision = self._application.decision_support_verifier.verify(
+                decision_run_id
+            )
+            if not decision.matched or decision.mismatch_count:
+                raise ValueError("Decision Support Authority did not reconcile")
+        for evaluation_run_id in (
+            completed.fit_evaluation_run_id,
+            completed.validation_evaluation_run_id,
+        ):
+            evaluation = (
+                self._application.research_evaluation_verifier.verify_evaluation_run(
+                    evaluation_run_id
+                )
+            )
+            if not evaluation.matched or evaluation.mismatch_count:
+                raise ValueError("Evaluation Authority did not reconcile")
+        return Wp17pCampaignExecution(
+            completed.fit_dataset_id,
+            completed.fit_evaluation_run_id,
+            completed.model_version_id,
+            completed.validation_dataset_ids,
+            completed.validation_decision_run_ids,
+            completed.validation_evaluation_run_id,
         )
 
 

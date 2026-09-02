@@ -92,6 +92,7 @@ from market_regime_alpha.infrastructure.postgres.queries import (
     PostgresResearchQualificationAdmissionReadPort,
     PostgresResearchQualificationVerificationProvider,
     PostgresExploratoryFeatureInputReadPort,
+    PostgresExploratoryCampaignReadPort,
 )
 from market_regime_alpha.infrastructure.postgres.queries.decision_context_inputs import (
     PostgresContextInputPreparationProvider,
@@ -180,6 +181,7 @@ from market_regime_alpha.research_qualification.application import (
     QualificationCommands,
 )
 from market_regime_alpha.research_qualification.ports import (
+    ExploratoryCampaignReadPort,
     ExploratoryFeatureInputReadPort,
     FormalPitSourceReadPort,
     FormalCampaignQueryPort,
@@ -285,6 +287,7 @@ class TargetApplication:
     research_experiments: ExperimentCommands
     exploratory_backtests: ExploratoryBacktestCommands
     exploratory_backtest_verifier: ExploratoryBacktestVerificationPort
+    exploratory_campaigns: ExploratoryCampaignReadPort
     exploratory_feature_inputs: ExploratoryFeatureInputReadPort
     research_models: ResearchModelApplication
     research_evaluations: EvaluationCommands
@@ -387,6 +390,7 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
             id_factory=uuid4,
         ),
         exploratory_backtest_verifier=(PostgresExploratoryBacktestVerificationPort(pool)),
+        exploratory_campaigns=PostgresExploratoryCampaignReadPort(pool),
         exploratory_feature_inputs=PostgresExploratoryFeatureInputReadPort(pool),
         research_models=ResearchModelApplication(
             ModelCommands(
