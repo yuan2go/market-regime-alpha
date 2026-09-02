@@ -24,6 +24,17 @@ class ArchiveSliceGapRecord:
     gap_id: UUID
     terminal_status: str
     content_sha256: str
+
+
+@dataclass(frozen=True, slots=True)
+class ArchiveResourceStopRecord:
+    market_archive_resource_stop_id: UUID
+    market_archive_id: UUID
+    market_archive_slice_id: UUID
+    observed_free_bytes: int
+    required_free_bytes: int
+    reason_code: str
+    content_sha256: str
 from market_regime_alpha.runtime.ports import (
     AuditRepository,
     CommandReceiptRepository,
@@ -72,6 +83,17 @@ class ArchiveRepository(Protocol):
 
     def get_slice_gap(self, binding_id: UUID) -> ArchiveSliceGapRecord: ...
 
+    def record_resource_stop(
+        self,
+        *,
+        resource_stop_id: UUID,
+        market_archive_id: UUID,
+        market_archive_slice_id: UUID,
+        observed_free_bytes: int,
+    ) -> ArchiveResourceStopRecord: ...
+
+    def get_resource_stop(self, resource_stop_id: UUID) -> ArchiveResourceStopRecord: ...
+
     def seal_retrospective(
         self,
         *,
@@ -114,6 +136,7 @@ class ArchiveUnitOfWorkProvider(Protocol):
 
 __all__ = [
     "ArchiveRepository",
+    "ArchiveResourceStopRecord",
     "ArchiveSliceGapRecord",
     "ArchiveUnitOfWork",
     "ArchiveUnitOfWorkProvider",

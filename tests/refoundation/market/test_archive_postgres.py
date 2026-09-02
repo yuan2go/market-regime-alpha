@@ -380,3 +380,35 @@ def test_observation_gap_and_seal_preserve_complete_terminal_roster(archive_stac
     )
     assert replay.replayed is True
     assert replay.market_archive_seal_id == seal.market_archive_seal_id
+
+
+def test_resource_limit_is_terminal_append_only_evidence_and_seals_partial(archive_stack) -> None:
+    commands, _, product, code, config, _ = archive_stack
+    request = replace(
+        _request(product, code, config),
+        market_archive_id=uuid4(),
+        archive_code="wp17p-resource-limited",
+        slices=tuple(
+            replace(item, market_archive_slice_id=uuid4())
+            for item in _request(product, code, config).slices
+        ),
+    )
+    started = commands.start(request, _context("resource-start"))
+
+    for item in request.slices:
+        result = commands.record_resource_stop(
+            market_archive_id=started.market_archive_id,
+            market_archive_slice_id=item.market_archive_slice_id,
+            observed_free_bytes=1_000_000,
+            context=_context(f"resource-stop-{item.ordinal}"),
+        )
+        assert result.reason_code == "DISK_RESERVED_FLOOR"
+        assert result.required_free_bytes == 2_050_000_000
+
+    seal = commands.seal_retrospective(
+        market_archive_id=started.market_archive_id,
+        disposition=ArchiveSealDisposition.PARTIAL_WITH_RESOURCE_LIMIT,
+        context=_context("resource-seal"),
+    )
+    assert seal.gap_count == 2
+    assert seal.disposition == "PARTIAL_WITH_RESOURCE_LIMIT"

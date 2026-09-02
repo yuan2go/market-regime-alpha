@@ -209,6 +209,7 @@ EXPECTED_MARKET_TABLES: Final[frozenset[str]] = frozenset(
         "market_archive_slice",
         "market_archive_capture_observation",
         "market_archive_slice_gap",
+        "market_archive_resource_stop",
         "market_archive_seal",
     }
 )
@@ -219,6 +220,7 @@ EXPECTED_MARKET_ARCHIVE_TABLES: Final[frozenset[str]] = frozenset(
         "market_archive_slice",
         "market_archive_capture_observation",
         "market_archive_slice_gap",
+        "market_archive_resource_stop",
         "market_archive_seal",
     }
 )

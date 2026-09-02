@@ -3,6 +3,7 @@
 from market_regime_alpha.market.application.archive import (
     ArchiveCaptureObservationResult,
     ArchiveCommands,
+    ArchiveResourceStopResult,
     ArchiveSealResult,
     ArchiveSlicePlan,
     ArchiveSliceGapResult,
@@ -26,6 +27,7 @@ from market_regime_alpha.market.application.provider_qualification import (
 __all__ = [
     "ArchiveCaptureObservationResult",
     "ArchiveCommands",
+    "ArchiveResourceStopResult",
     "ArchiveSealResult",
     "ArchiveSlicePlan",
     "ArchiveSliceGapResult",

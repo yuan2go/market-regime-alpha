@@ -21,7 +21,10 @@ from market_regime_alpha.market.domain import (
     MarketArchiveSeal,
     PriceBasis,
 )
-from market_regime_alpha.market.ports.archive import ArchiveSliceGapRecord
+from market_regime_alpha.market.ports.archive import (
+    ArchiveResourceStopRecord,
+    ArchiveSliceGapRecord,
+)
 from market_regime_alpha.shared.hashing import canonical_json_sha256
 from market_regime_alpha.shared.identity import ContentHash
 from market_regime_alpha.runtime.errors import (
@@ -141,6 +144,7 @@ class PostgresArchiveRepository:
                    slice.event_window_start, slice.event_window_end,
                    slice.request_sha256, slice.expected_fact_kind,
                    CASE
+                     WHEN resource_stop.market_archive_resource_stop_id IS NOT NULL THEN 'RESOURCE_LIMIT'
                      WHEN gap.market_archive_slice_gap_id IS NOT NULL THEN gap.terminal_status
                      WHEN EXISTS (
                         SELECT 1 FROM mra.market_archive_capture_observation AS observation
@@ -151,6 +155,8 @@ class PostgresArchiveRepository:
             FROM mra.market_archive_slice AS slice
             LEFT JOIN mra.market_archive_slice_gap AS gap
               ON gap.market_archive_slice_id = slice.market_archive_slice_id
+            LEFT JOIN mra.market_archive_resource_stop AS resource_stop
+              ON resource_stop.market_archive_slice_id = slice.market_archive_slice_id
             WHERE slice.market_archive_id = %s
             ORDER BY slice.ordinal
             """,
@@ -442,6 +448,86 @@ class PostgresArchiveRepository:
             content_sha256=str(row[4]),
         )
 
+    def record_resource_stop(
+        self,
+        *,
+        resource_stop_id: UUID,
+        market_archive_id: UUID,
+        market_archive_slice_id: UUID,
+        observed_free_bytes: int,
+    ) -> ArchiveResourceStopRecord:
+        root = self._connection.execute(
+            """
+            SELECT reserved_free_bytes + maximum_slice_bytes
+            FROM mra.market_archive WHERE market_archive_id = %s FOR UPDATE
+            """,
+            (market_archive_id,),
+        ).fetchone()
+        if root is None:
+            raise RuntimeNotFoundError("Market archive resource-stop root is missing")
+        required_free_bytes = int(root[0])
+        reason_code = "DISK_RESERVED_FLOOR"
+        content_hash = canonical_json_sha256(
+            {
+                "market_archive_id": market_archive_id,
+                "market_archive_resource_stop_id": resource_stop_id,
+                "market_archive_slice_id": market_archive_slice_id,
+                "observed_free_bytes": observed_free_bytes,
+                "reason_code": reason_code,
+                "required_free_bytes": required_free_bytes,
+            }
+        )
+        self._connection.execute(
+            """
+            INSERT INTO mra.market_archive_resource_stop (
+                market_archive_resource_stop_id, market_archive_id,
+                market_archive_slice_id, observed_free_bytes,
+                required_free_bytes, reason_code, content_sha256
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                resource_stop_id,
+                market_archive_id,
+                market_archive_slice_id,
+                observed_free_bytes,
+                required_free_bytes,
+                reason_code,
+                content_hash,
+            ),
+        )
+        return ArchiveResourceStopRecord(
+            market_archive_resource_stop_id=resource_stop_id,
+            market_archive_id=market_archive_id,
+            market_archive_slice_id=market_archive_slice_id,
+            observed_free_bytes=observed_free_bytes,
+            required_free_bytes=required_free_bytes,
+            reason_code=reason_code,
+            content_sha256=content_hash,
+        )
+
+    def get_resource_stop(self, resource_stop_id: UUID) -> ArchiveResourceStopRecord:
+        row = self._connection.execute(
+            """
+            SELECT market_archive_id, market_archive_slice_id,
+                   observed_free_bytes, required_free_bytes, reason_code,
+                   content_sha256
+            FROM mra.market_archive_resource_stop
+            WHERE market_archive_resource_stop_id = %s
+            """,
+            (resource_stop_id,),
+        ).fetchone()
+        if row is None:
+            raise RuntimeNotFoundError(f"Archive resource stop {resource_stop_id} does not exist")
+        return ArchiveResourceStopRecord(
+            market_archive_resource_stop_id=resource_stop_id,
+            market_archive_id=UUID(str(row[0])),
+            market_archive_slice_id=UUID(str(row[1])),
+            observed_free_bytes=int(row[2]),
+            required_free_bytes=int(row[3]),
+            reason_code=str(row[4]),
+            content_sha256=str(row[5]),
+        )
+
     def seal_retrospective(
         self,
         *,
@@ -462,11 +548,28 @@ class PostgresArchiveRepository:
         ).fetchall()
         gaps = self._connection.execute(
             """
-            SELECT market_archive_slice_gap_id, gap_id, terminal_status
-            FROM mra.market_archive_slice_gap
-            WHERE market_archive_id = %s ORDER BY market_archive_slice_id
+            SELECT market_archive_slice_id, binding_id, gap_identity,
+                   terminal_status, gap_kind
+            FROM (
+                SELECT market_archive_slice_id,
+                       market_archive_slice_gap_id AS binding_id,
+                       gap_id AS gap_identity,
+                       terminal_status,
+                       'SOURCE_GAP'::text AS gap_kind
+                FROM mra.market_archive_slice_gap
+                WHERE market_archive_id = %s
+                UNION ALL
+                SELECT market_archive_slice_id,
+                       market_archive_resource_stop_id AS binding_id,
+                       market_archive_resource_stop_id AS gap_identity,
+                       'RESOURCE_LIMIT'::text AS terminal_status,
+                       'RESOURCE_STOP'::text AS gap_kind
+                FROM mra.market_archive_resource_stop
+                WHERE market_archive_id = %s
+            ) AS terminal_gap
+            ORDER BY market_archive_slice_id
             """,
-            (market_archive_id,),
+            (market_archive_id, market_archive_id),
         ).fetchall()
         capture_roster = [
             {"capture_id": UUID(str(item[1])), "observation_id": UUID(str(item[0]))}
@@ -485,9 +588,10 @@ class PostgresArchiveRepository:
         ]
         gap_roster = [
             {
-                "binding_id": UUID(str(item[0])),
-                "gap_id": UUID(str(item[1])),
-                "terminal_status": str(item[2]),
+                "binding_id": UUID(str(item[1])),
+                "gap_id": UUID(str(item[2])),
+                "gap_kind": str(item[4]),
+                "terminal_status": str(item[3]),
             }
             for item in gaps
         ]

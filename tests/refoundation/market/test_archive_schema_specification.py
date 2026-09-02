@@ -34,6 +34,7 @@ def test_archive_schema_has_concrete_two_lane_authority(
         "market_archive_slice",
         "market_archive_capture_observation",
         "market_archive_slice_gap",
+        "market_archive_resource_stop",
         "market_archive_seal",
     }
     assert EXPECTED_MARKET_ARCHIVE_TABLES <= tables
@@ -85,6 +86,7 @@ def test_archive_children_are_append_only_and_fk_indexed(
         "market_archive_observation_capture_idx",
         "market_archive_slice_gap_slice_idx",
         "market_archive_slice_gap_gap_idx",
+        "market_archive_resource_stop_slice_idx",
         "market_archive_seal_archive_idx",
     } <= fk_indexes
 

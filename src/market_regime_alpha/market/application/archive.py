@@ -20,6 +20,7 @@ from market_regime_alpha.market.domain import (
     PriceBasis,
 )
 from market_regime_alpha.market.ports.archive import (
+    ArchiveResourceStopRecord,
     ArchiveUnitOfWork,
     ArchiveUnitOfWorkProvider,
 )
@@ -117,6 +118,20 @@ class ArchiveSliceGapResult:
     market_archive_slice_id: UUID
     gap_id: UUID
     terminal_status: str
+    content_sha256: str
+    receipt_id: UUID
+    result_hash: str
+    replayed: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ArchiveResourceStopResult:
+    market_archive_resource_stop_id: UUID
+    market_archive_id: UUID
+    market_archive_slice_id: UUID
+    observed_free_bytes: int
+    required_free_bytes: int
+    reason_code: str
     content_sha256: str
     receipt_id: UUID
     result_hash: str
@@ -456,6 +471,59 @@ class ArchiveCommands:
                 replayed=False,
             )
 
+    def record_resource_stop(
+        self,
+        *,
+        market_archive_id: UUID,
+        market_archive_slice_id: UUID,
+        observed_free_bytes: int,
+        context: CommandContext,
+        runtime_claim: AttemptClaim | None = None,
+    ) -> ArchiveResourceStopResult:
+        request = {
+            "market_archive_id": market_archive_id,
+            "market_archive_slice_id": market_archive_slice_id,
+            "observed_free_bytes": observed_free_bytes,
+        }
+        request_hash = canonical_json_sha256(request)
+        with self._uow_provider() as uow:
+            if runtime_claim is not None:
+                uow.runtime_finalization.lock_live(runtime_claim)
+            receipt = uow.receipts.start(
+                receipt_id=self._id_factory(),
+                command_kind="RECORD_ARCHIVE_RESOURCE_STOP",
+                scope_id=str(market_archive_slice_id),
+                idempotency_key=context.idempotency_key,
+                request_hash=request_hash,
+            )
+            if not receipt.is_new:
+                _ensure_succeeded(receipt)
+                if receipt.result_aggregate_id is None or receipt.result_hash is None:
+                    raise ArtifactIntegrityError("Archive resource-stop replay receipt is incomplete")
+                record = uow.archives.get_resource_stop(UUID(receipt.result_aggregate_id))
+                if canonical_json_sha256(record) != receipt.result_hash:
+                    raise ArtifactIntegrityError("Archive resource-stop replay differs from Authority")
+                return _resource_stop_result(record, receipt, result_hash=receipt.result_hash, replayed=True)
+            record = uow.archives.record_resource_stop(
+                resource_stop_id=self._id_factory(),
+                market_archive_id=market_archive_id,
+                market_archive_slice_id=market_archive_slice_id,
+                observed_free_bytes=observed_free_bytes,
+            )
+            result_hash = canonical_json_sha256(record)
+            self._finish(
+                uow,
+                receipt_id=receipt.receipt_id,
+                aggregate_kind="MARKET_ARCHIVE_RESOURCE_STOP",
+                aggregate_id=str(record.market_archive_resource_stop_id),
+                action="RECORD_ARCHIVE_RESOURCE_STOP",
+                result_hash=result_hash,
+                context=context,
+                runtime_claim=runtime_claim,
+            )
+            uow.commit()
+            return _resource_stop_result(record, receipt, result_hash=result_hash, replayed=False)
+
     def _finish(
         self,
         uow: ArchiveUnitOfWork,
@@ -573,6 +641,27 @@ def _seal_result(
     )
 
 
+def _resource_stop_result(
+    record: ArchiveResourceStopRecord,
+    receipt: ReceiptRecord,
+    *,
+    result_hash: str,
+    replayed: bool,
+) -> ArchiveResourceStopResult:
+    return ArchiveResourceStopResult(
+        market_archive_resource_stop_id=record.market_archive_resource_stop_id,
+        market_archive_id=record.market_archive_id,
+        market_archive_slice_id=record.market_archive_slice_id,
+        observed_free_bytes=record.observed_free_bytes,
+        required_free_bytes=record.required_free_bytes,
+        reason_code=record.reason_code,
+        content_sha256=record.content_sha256,
+        receipt_id=receipt.receipt_id,
+        result_hash=result_hash,
+        replayed=replayed,
+    )
+
+
 def _ensure_succeeded(receipt: ReceiptRecord) -> None:
     if receipt.status in {"FAILED", "BLOCKED"}:
         raise CommandPreviouslyFailedError(receipt.error_code or "START_MARKET_ARCHIVE_FAILED")
@@ -583,6 +672,7 @@ def _ensure_succeeded(receipt: ReceiptRecord) -> None:
 __all__ = [
     "ArchiveCaptureObservationResult",
     "ArchiveCommands",
+    "ArchiveResourceStopResult",
     "ArchiveSealResult",
     "ArchiveSlicePlan",
     "ArchiveSliceGapResult",

@@ -17406,6 +17406,27 @@ CREATE TABLE mra.market_archive_slice_gap (
     )
 );
 
+CREATE TABLE mra.market_archive_resource_stop (
+    market_archive_resource_stop_id uuid PRIMARY KEY,
+    market_archive_id uuid NOT NULL REFERENCES mra.market_archive(market_archive_id) ON DELETE RESTRICT,
+    market_archive_slice_id uuid NOT NULL,
+    observed_free_bytes bigint NOT NULL,
+    required_free_bytes bigint NOT NULL,
+    reason_code text NOT NULL,
+    content_sha256 text NOT NULL,
+    stopped_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT market_archive_resource_stop_slice_fk FOREIGN KEY (market_archive_id, market_archive_slice_id)
+        REFERENCES mra.market_archive_slice(market_archive_id, market_archive_slice_id) ON DELETE RESTRICT,
+    CONSTRAINT market_archive_resource_stop_slice_uk UNIQUE (market_archive_slice_id),
+    CONSTRAINT market_archive_resource_stop_shape_ck CHECK (
+        observed_free_bytes >= 0
+        AND required_free_bytes > 0
+        AND observed_free_bytes < required_free_bytes
+        AND reason_code = 'DISK_RESERVED_FLOOR'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
 CREATE TABLE mra.market_archive_seal (
     market_archive_seal_id uuid PRIMARY KEY,
     market_archive_id uuid NOT NULL UNIQUE REFERENCES mra.market_archive(market_archive_id) ON DELETE RESTRICT,
@@ -17451,6 +17472,8 @@ CREATE INDEX market_archive_observation_previous_idx ON mra.market_archive_captu
 CREATE INDEX market_archive_slice_gap_slice_idx ON mra.market_archive_slice_gap(market_archive_slice_id);
 CREATE INDEX market_archive_slice_gap_archive_slice_idx ON mra.market_archive_slice_gap(market_archive_id, market_archive_slice_id);
 CREATE INDEX market_archive_slice_gap_gap_idx ON mra.market_archive_slice_gap(gap_id);
+CREATE INDEX market_archive_resource_stop_slice_idx ON mra.market_archive_resource_stop(market_archive_slice_id);
+CREATE INDEX market_archive_resource_stop_archive_slice_idx ON mra.market_archive_resource_stop(market_archive_id, market_archive_slice_id);
 CREATE INDEX market_archive_seal_archive_idx ON mra.market_archive_seal(market_archive_id);
 
 CREATE FUNCTION mra.validate_market_archive()
@@ -17583,7 +17606,8 @@ BEGIN
        OR NEW.known_at <> capture_row.known_at
        OR NEW.artifact_sha256 <> artifact_row.content_sha256
        OR NEW.artifact_size_bytes <> artifact_row.size_bytes
-       OR EXISTS (SELECT 1 FROM mra.market_archive_slice_gap WHERE market_archive_slice_id = NEW.market_archive_slice_id) THEN
+       OR EXISTS (SELECT 1 FROM mra.market_archive_slice_gap WHERE market_archive_slice_id = NEW.market_archive_slice_id)
+       OR EXISTS (SELECT 1 FROM mra.market_archive_resource_stop WHERE market_archive_slice_id = NEW.market_archive_slice_id) THEN
         RAISE EXCEPTION 'Market archive observation lineage is invalid' USING ERRCODE = '55000';
     END IF;
     SELECT normalized_revision_count, normalized_revision_roster_sha256
@@ -17635,8 +17659,43 @@ BEGIN
     SELECT * INTO gap_row FROM mra.source_gap WHERE gap_id = NEW.gap_id FOR SHARE;
     SELECT provider_product_id INTO capture_product FROM mra.data_capture WHERE capture_id = gap_row.capture_id FOR SHARE;
     IF capture_product <> root.provider_product_id
-       OR EXISTS (SELECT 1 FROM mra.market_archive_capture_observation WHERE market_archive_slice_id = NEW.market_archive_slice_id) THEN
+       OR EXISTS (SELECT 1 FROM mra.market_archive_capture_observation WHERE market_archive_slice_id = NEW.market_archive_slice_id)
+       OR EXISTS (SELECT 1 FROM mra.market_archive_resource_stop WHERE market_archive_slice_id = NEW.market_archive_slice_id) THEN
         RAISE EXCEPTION 'Market archive slice gap lineage is invalid' USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.validate_market_archive_resource_stop()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE root mra.market_archive%ROWTYPE;
+DECLARE expected_content text;
+BEGIN
+    SELECT * INTO root FROM mra.market_archive
+    WHERE market_archive_id = NEW.market_archive_id FOR SHARE;
+    IF NEW.required_free_bytes <> root.reserved_free_bytes + root.maximum_slice_bytes
+       OR NEW.observed_free_bytes >= NEW.required_free_bytes
+       OR EXISTS (
+           SELECT 1 FROM mra.market_archive_capture_observation
+           WHERE market_archive_slice_id = NEW.market_archive_slice_id
+       )
+       OR EXISTS (
+           SELECT 1 FROM mra.market_archive_slice_gap
+           WHERE market_archive_slice_id = NEW.market_archive_slice_id
+       ) THEN
+        RAISE EXCEPTION 'Market archive resource stop is invalid' USING ERRCODE = '55000';
+    END IF;
+    expected_content := mra.canonical_sha256(mra.canonical_json_text(jsonb_build_object(
+        'market_archive_id', NEW.market_archive_id,
+        'market_archive_resource_stop_id', NEW.market_archive_resource_stop_id,
+        'market_archive_slice_id', NEW.market_archive_slice_id,
+        'observed_free_bytes', NEW.observed_free_bytes,
+        'reason_code', NEW.reason_code,
+        'required_free_bytes', NEW.required_free_bytes
+    )));
+    IF NEW.content_sha256 <> expected_content THEN
+        RAISE EXCEPTION 'Market archive resource stop hash is invalid' USING ERRCODE = '55000';
     END IF;
     RETURN NEW;
 END;
@@ -17668,6 +17727,10 @@ BEGIN
         SELECT market_archive_slice_id, terminal_status
         FROM mra.market_archive_slice_gap
         WHERE market_archive_id = NEW.market_archive_id
+        UNION ALL
+        SELECT market_archive_slice_id, 'RESOURCE_LIMIT'::text
+        FROM mra.market_archive_resource_stop
+        WHERE market_archive_id = NEW.market_archive_id
     ) AS terminal;
     SELECT count(*),
            mra.canonical_sha256(mra.canonical_json_text(coalesce(jsonb_agg(
@@ -17698,14 +17761,30 @@ BEGIN
     SELECT count(*),
            mra.canonical_sha256(mra.canonical_json_text(coalesce(jsonb_agg(
                jsonb_build_object(
-                   'binding_id', market_archive_slice_gap_id,
-                   'gap_id', gap_id,
+                   'binding_id', binding_id,
+                   'gap_id', gap_identity,
+                   'gap_kind', gap_kind,
                    'terminal_status', terminal_status
                ) ORDER BY market_archive_slice_id
            ), '[]'::jsonb)))
       INTO actual_gap_count, actual_gap_hash
-    FROM mra.market_archive_slice_gap
-    WHERE market_archive_id = NEW.market_archive_id;
+    FROM (
+        SELECT market_archive_slice_id,
+               market_archive_slice_gap_id AS binding_id,
+               gap_id AS gap_identity,
+               terminal_status,
+               'SOURCE_GAP'::text AS gap_kind
+        FROM mra.market_archive_slice_gap
+        WHERE market_archive_id = NEW.market_archive_id
+        UNION ALL
+        SELECT market_archive_slice_id,
+               market_archive_resource_stop_id AS binding_id,
+               market_archive_resource_stop_id AS gap_identity,
+               'RESOURCE_LIMIT'::text AS terminal_status,
+               'RESOURCE_STOP'::text AS gap_kind
+        FROM mra.market_archive_resource_stop
+        WHERE market_archive_id = NEW.market_archive_id
+    ) AS terminal_gap;
     IF root.lane <> 'RETROSPECTIVE_BACKFILL'
        OR NEW.sealed_at < root.archive_start_at
        OR NEW.knowledge_cutoff <> NEW.sealed_at
@@ -17736,9 +17815,11 @@ CREATE CONSTRAINT TRIGGER market_archive_roster_root_guard AFTER INSERT ON mra.m
 CREATE CONSTRAINT TRIGGER market_archive_roster_slice_guard AFTER INSERT ON mra.market_archive_slice DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION mra.validate_market_archive_roster();
 CREATE TRIGGER market_archive_observation_guard BEFORE INSERT ON mra.market_archive_capture_observation FOR EACH ROW EXECUTE FUNCTION mra.validate_market_archive_observation();
 CREATE TRIGGER market_archive_slice_gap_guard BEFORE INSERT ON mra.market_archive_slice_gap FOR EACH ROW EXECUTE FUNCTION mra.validate_market_archive_slice_gap();
+CREATE TRIGGER market_archive_resource_stop_guard BEFORE INSERT ON mra.market_archive_resource_stop FOR EACH ROW EXECUTE FUNCTION mra.validate_market_archive_resource_stop();
 CREATE TRIGGER market_archive_seal_guard BEFORE INSERT ON mra.market_archive_seal FOR EACH ROW EXECUTE FUNCTION mra.validate_market_archive_seal();
 CREATE TRIGGER market_archive_append_only BEFORE UPDATE OR DELETE ON mra.market_archive FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
 CREATE TRIGGER market_archive_slice_append_only BEFORE UPDATE OR DELETE ON mra.market_archive_slice FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
 CREATE TRIGGER market_archive_observation_append_only BEFORE UPDATE OR DELETE ON mra.market_archive_capture_observation FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
 CREATE TRIGGER market_archive_slice_gap_append_only BEFORE UPDATE OR DELETE ON mra.market_archive_slice_gap FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER market_archive_resource_stop_append_only BEFORE UPDATE OR DELETE ON mra.market_archive_resource_stop FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
 CREATE TRIGGER market_archive_seal_append_only BEFORE UPDATE OR DELETE ON mra.market_archive_seal FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
