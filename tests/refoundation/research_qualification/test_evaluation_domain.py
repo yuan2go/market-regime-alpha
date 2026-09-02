@@ -254,3 +254,46 @@ def test_source_kind_and_measure_are_frozen_compatibly() -> None:
             source_kind=EvaluationSourceKind.SIGNAL_STATUS,
             source_measure=EvaluationSourceMeasure.FORECAST_POINT_VS_TARGET,
         )
+
+
+@pytest.mark.parametrize(
+    ("source_kind", "source_measure", "source_type"),
+    [
+        (
+            EvaluationSourceKind.CANDIDATE_DISPOSITION,
+            EvaluationSourceMeasure.CANDIDATE_SELECTED,
+            SourceMetricValueType.DECIMAL,
+        ),
+        (
+            EvaluationSourceKind.SIGNAL_STATUS,
+            EvaluationSourceMeasure.SIGNAL_PRESENT,
+            SourceMetricValueType.DECIMAL,
+        ),
+        (
+            EvaluationSourceKind.PORTFOLIO_LINE,
+            EvaluationSourceMeasure.TARGET_WEIGHT,
+            SourceMetricValueType.BOOLEAN,
+        ),
+        (
+            EvaluationSourceKind.RISK_DECISION,
+            EvaluationSourceMeasure.RISK_REJECTED,
+            SourceMetricValueType.DECIMAL,
+        ),
+    ],
+)
+def test_source_kind_and_input_value_type_are_frozen_compatibly(
+    source_kind: EvaluationSourceKind,
+    source_measure: EvaluationSourceMeasure,
+    source_type: SourceMetricValueType,
+) -> None:
+    with pytest.raises(ValueError, match="source kind"):
+        _metric(
+            source_kind=source_kind,
+            source_measure=source_measure,
+            source_value_type=source_type,
+            reducer=(
+                EvaluationReducer.TRUE_RATE
+                if source_type is SourceMetricValueType.BOOLEAN
+                else EvaluationReducer.MEAN_DECIMAL
+            ),
+        )

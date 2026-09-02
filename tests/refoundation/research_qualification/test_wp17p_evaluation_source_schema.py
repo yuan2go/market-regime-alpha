@@ -128,6 +128,15 @@ def test_protocol_freezes_reducer_source_and_arm_compatibility_in_postgres(
         assert "MAX_DRAWDOWN" in contract
         assert "EXPLORATORY_BACKTEST_ARM" in contract
         assert "NET_PORTFOLIO_RETURN_ASSUMED_COST" in contract
+        source_type_guard = connection.execute(
+            """
+            SELECT pg_get_functiondef(
+                'mra.validate_evaluation_protocol_metric_source_type()'::regprocedure
+            )
+            """
+        ).fetchone()
+        assert source_type_guard is not None
+        assert "Outcome Evaluation source type" in str(source_type_guard[0])
 
 
 def test_completed_run_guard_requires_complete_typed_source_rosters(

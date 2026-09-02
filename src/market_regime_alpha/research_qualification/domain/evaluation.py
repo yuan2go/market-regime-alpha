@@ -206,6 +206,17 @@ class ProtocolMetricDefinition:
         }
         if self.source_measure not in source_measures[self.source_kind]:
             raise ValueError("source measure is incompatible with source kind")
+        source_types = {
+            EvaluationSourceKind.FORECAST_OUTCOME_PAIR: SourceMetricValueType.DECIMAL,
+            EvaluationSourceKind.CANDIDATE_DISPOSITION: SourceMetricValueType.BOOLEAN,
+            EvaluationSourceKind.SIGNAL_STATUS: SourceMetricValueType.BOOLEAN,
+            EvaluationSourceKind.PORTFOLIO_LINE: SourceMetricValueType.DECIMAL,
+            EvaluationSourceKind.PORTFOLIO_OUTCOME: SourceMetricValueType.DECIMAL,
+            EvaluationSourceKind.RISK_DECISION: SourceMetricValueType.BOOLEAN,
+        }
+        source_type = source_types.get(self.source_kind)
+        if source_type is not None and self.source_value_type is not source_type:
+            raise ValueError("source kind is incompatible with source metric value type")
         if (
             self.reducer is EvaluationReducer.SPEARMAN_RANK_CORRELATION
             and self.source_kind is not EvaluationSourceKind.FORECAST_OUTCOME_PAIR

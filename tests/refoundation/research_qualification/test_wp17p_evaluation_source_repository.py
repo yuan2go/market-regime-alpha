@@ -26,18 +26,31 @@ from market_regime_alpha.research_qualification.domain.research_vocabulary impor
 def _metric(
     source_kind: EvaluationSourceKind,
     source_measure: EvaluationSourceMeasure,
-    reducer: EvaluationReducer = EvaluationReducer.MEAN_DECIMAL,
+    reducer: EvaluationReducer | None = None,
 ) -> ProtocolMetricDefinition:
+    boolean_source = source_kind in {
+        EvaluationSourceKind.CANDIDATE_DISPOSITION,
+        EvaluationSourceKind.SIGNAL_STATUS,
+        EvaluationSourceKind.RISK_DECISION,
+    }
     return ProtocolMetricDefinition(
         evaluation_protocol_metric_id=uuid4(),
         metric_code="pilot-metric",
         ordinal=1,
         source_target_metric_definition_id=uuid4(),
         source_metric_code="simple-return",
-        source_value_type=SourceMetricValueType.DECIMAL,
+        source_value_type=(
+            SourceMetricValueType.BOOLEAN
+            if boolean_source
+            else SourceMetricValueType.DECIMAL
+        ),
         source_kind=source_kind,
         source_measure=source_measure,
-        reducer=reducer,
+        reducer=reducer or (
+            EvaluationReducer.TRUE_RATE
+            if boolean_source
+            else EvaluationReducer.MEAN_DECIMAL
+        ),
         slice_kind=EvaluationSliceKind.EXPLORATORY_BACKTEST_ARM,
         candidate_disposition=None,
         backtest_arm_kind=ExploratoryBacktestArmKind.MODEL_CHALLENGER,
@@ -172,4 +185,26 @@ def test_risk_unknown_is_retained_as_not_estimable_source() -> None:
     )
 
     assert resolved[0].input.decimal_value is None
+    assert resolved[0].input.boolean_value is None
     assert resolved[0].input.source_value_status == "UNAVAILABLE"
+
+
+def test_risk_rejection_is_a_boolean_true_rate_input() -> None:
+    metric = _metric(
+        EvaluationSourceKind.RISK_DECISION,
+        EvaluationSourceMeasure.RISK_REJECTED,
+    )
+
+    resolved = _repository()._resolve_metric_inputs(  # noqa: SLF001
+        metric,
+        [
+            _source(
+                decision_time=datetime(2026, 1, 5, 2, 30, tzinfo=UTC),
+                risk_status="REJECTED",
+            )
+        ],
+    )
+
+    assert resolved[0].input.decimal_value is None
+    assert resolved[0].input.boolean_value is True
+    assert resolved[0].input.source_value_status == "COMPLETE"

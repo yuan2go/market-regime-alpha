@@ -11,9 +11,15 @@ from market_regime_alpha.research_qualification.domain.exploratory import (
     ExploratoryRetrospectiveDatasetScope,
 )
 from market_regime_alpha.research_qualification.ports.exploratory_feature_inputs import (
+    ExploratoryIntradayFeatureGap,
+    ExploratoryIntradayFeatureInput,
     ExploratoryIntradayFeatureObservation,
 )
-from market_regime_alpha.runtime.errors import ArtifactIntegrityError, RuntimeStateConflictError
+from market_regime_alpha.runtime.errors import (
+    ArtifactIntegrityError,
+    RuntimeNotFoundError,
+    RuntimeStateConflictError,
+)
 from market_regime_alpha.shared.hashing import canonical_json_sha256
 from market_regime_alpha.shared.identity import ContentHash, InstrumentId, TradingSessionId
 from market_regime_alpha.shared.time import require_utc
@@ -32,7 +38,7 @@ class PostgresExploratoryFeatureInputReadPort:
         instrument_id: InstrumentId,
         session_id: TradingSessionId,
         feature_event_end: datetime,
-    ) -> ExploratoryIntradayFeatureObservation | None:
+    ) -> ExploratoryIntradayFeatureInput:
         instrument_id = InstrumentId.parse(instrument_id)
         session_id = TradingSessionId.parse(session_id)
         event_end = require_utc(feature_event_end, field="feature_event_end")
@@ -117,8 +123,68 @@ class PostgresExploratoryFeatureInputReadPort:
                     scope.knowledge_cutoff,
                 ),
             ).fetchall()
+            gaps = (
+                ()
+                if rows
+                else connection.execute(
+                    """
+                    SELECT gap.gap_id, gap.capture_id, gap.instrument_id,
+                           gap.session_id, gap.event_start, gap.event_end,
+                           gap.known_at, gap.gap_kind, gap.reason_code
+                    FROM mra.source_gap AS gap
+                    WHERE gap.instrument_id = %s
+                      AND gap.session_id = %s
+                      AND gap.fact_kind = 'MARKET_BAR'
+                      AND gap.timeframe = 'MINUTE_5'
+                      AND gap.price_basis = 'RAW_UNADJUSTED'
+                      AND gap.event_start = %s
+                      AND gap.event_end = %s
+                      AND gap.decision_visible_at <= %s
+                      AND EXISTS (
+                          SELECT 1
+                          FROM mra.market_archive_capture_observation AS observation
+                          WHERE observation.market_archive_id = %s
+                            AND observation.capture_id = gap.capture_id
+                            AND observation.known_at <= %s
+                      )
+                    ORDER BY gap.gap_id
+                    """,
+                    (
+                        instrument_id.value,
+                        session_id.value,
+                        event_start,
+                        event_end,
+                        scope.knowledge_cutoff,
+                        scope.market_archive_id,
+                        scope.knowledge_cutoff,
+                    ),
+                ).fetchall()
+            )
         if not rows:
-            return None
+            if not gaps:
+                raise RuntimeNotFoundError(
+                    "retrospective feature checkpoint has neither exact bar nor SourceGap"
+                )
+            if len(gaps) != 1:
+                raise ArtifactIntegrityError(
+                    "retrospective feature SourceGap is ambiguous at the frozen cutoff"
+                )
+            gap = gaps[0]
+            payload = {
+                "capture_id": UUID(str(gap[1])),
+                "event_end": gap[5],
+                "event_start": gap[4],
+                "gap_id": UUID(str(gap[0])),
+                "gap_kind": str(gap[7]),
+                "instrument_id": instrument_id,
+                "known_at": gap[6],
+                "reason_code": str(gap[8]),
+                "session_id": session_id,
+            }
+            return ExploratoryIntradayFeatureGap(
+                **payload,
+                content_sha256=ContentHash(canonical_json_sha256(payload)),
+            )
         if len(rows) != 1:
             raise ArtifactIntegrityError("retrospective feature bar is ambiguous at the frozen cutoff")
         row = rows[0]

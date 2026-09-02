@@ -11286,7 +11286,7 @@ ALTER TABLE mra.target_metric_definition
     ),
     ADD CONSTRAINT target_metric_evaluation_code_authority_uk UNIQUE (
         target_metric_definition_id, target_definition_id,
-        value_type, metric_code
+        metric_code
     );
 
 CREATE TABLE mra.evaluation_protocol_metric (
@@ -11328,10 +11328,10 @@ CREATE TABLE mra.evaluation_protocol_metric (
     ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
     CONSTRAINT evaluation_protocol_metric_source_fk FOREIGN KEY (
         source_target_metric_definition_id, target_definition_id,
-        source_value_type, source_metric_code
+        source_metric_code
     ) REFERENCES mra.target_metric_definition(
         target_metric_definition_id, target_definition_id,
-        value_type, metric_code
+        metric_code
     ) ON DELETE RESTRICT,
     CONSTRAINT evaluation_protocol_metric_shape_ck CHECK (
         ordinal > 0 AND metric_code ~ '^[a-z][a-z0-9_-]{0,99}$'
@@ -11351,6 +11351,13 @@ CREATE TABLE mra.evaluation_protocol_metric (
           OR (source_kind = 'PORTFOLIO_LINE' AND source_measure IN ('TARGET_WEIGHT', 'TURNOVER'))
           OR (source_kind = 'PORTFOLIO_OUTCOME' AND source_measure IN ('GROSS_PORTFOLIO_RETURN', 'NET_PORTFOLIO_RETURN_ASSUMED_COST'))
           OR (source_kind = 'RISK_DECISION' AND source_measure = 'RISK_REJECTED'))
+        AND (source_kind = 'OUTCOME_METRIC'
+          OR (source_kind IN ('FORECAST_OUTCOME_PAIR', 'PORTFOLIO_LINE',
+                              'PORTFOLIO_OUTCOME')
+              AND source_value_type = 'DECIMAL')
+          OR (source_kind IN ('CANDIDATE_DISPOSITION', 'SIGNAL_STATUS',
+                              'RISK_DECISION')
+              AND source_value_type = 'BOOLEAN'))
         AND reducer IN ('MEAN_DECIMAL', 'MEDIAN_DECIMAL', 'TRUE_RATE',
             'ESTIMABLE_RATE', 'SUM_DECIMAL', 'ABSOLUTE_MEAN_DECIMAL',
             'SPEARMAN_RANK_CORRELATION', 'MAX_DRAWDOWN')
@@ -11398,8 +11405,31 @@ CREATE INDEX evaluation_protocol_metric_protocol_fk_idx ON mra.evaluation_protoc
 );
 CREATE INDEX evaluation_protocol_metric_source_fk_idx ON mra.evaluation_protocol_metric (
     source_target_metric_definition_id, target_definition_id,
-    source_value_type, source_metric_code
+    source_metric_code
 );
+
+CREATE FUNCTION mra.validate_evaluation_protocol_metric_source_type()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.source_kind = 'OUTCOME_METRIC' AND NOT EXISTS (
+        SELECT 1
+        FROM mra.target_metric_definition AS target_metric
+        WHERE target_metric.target_metric_definition_id =
+              NEW.source_target_metric_definition_id
+          AND target_metric.target_definition_id = NEW.target_definition_id
+          AND target_metric.metric_code = NEW.source_metric_code
+          AND target_metric.value_type = NEW.source_value_type
+    ) THEN
+        RAISE EXCEPTION 'Outcome Evaluation source type differs from exact Target metric'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER evaluation_protocol_metric_source_type_guard
+BEFORE INSERT ON mra.evaluation_protocol_metric
+FOR EACH ROW EXECUTE FUNCTION mra.validate_evaluation_protocol_metric_source_type();
 
 CREATE TABLE mra.evaluation_run (
     evaluation_run_id uuid PRIMARY KEY,

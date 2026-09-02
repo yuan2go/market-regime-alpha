@@ -20,6 +20,9 @@ from market_regime_alpha.research_qualification.domain import (
     FormalDatasetScope,
 )
 from market_regime_alpha.research_qualification.domain.exploratory import ExploratoryRetrospectiveDatasetScope
+from market_regime_alpha.research_qualification.domain.exploratory_backtest import (
+    ExploratoryBacktestDatasetScope,
+)
 from market_regime_alpha.research_qualification.domain.targets import TargetDefinition
 from market_regime_alpha.research_qualification.ports import (
     ResearchArtifactByteStore,
@@ -95,6 +98,21 @@ class ResearchQualificationApplication:
     ) -> DatasetRegistrationResult:
         return self._datasets.register(
             definition, context, exploratory_scope=exploratory_scope,
+            runtime_claim=runtime_claim,
+        )
+
+    def register_exploratory_backtest_dataset(
+        self,
+        definition: DecisionInputDatasetDefinition,
+        backtest_scope: ExploratoryBacktestDatasetScope,
+        context: CommandContext,
+        *,
+        runtime_claim: AttemptClaim | None = None,
+    ) -> DatasetRegistrationResult:
+        return self._datasets.register(
+            definition,
+            context,
+            backtest_scope=backtest_scope,
             runtime_claim=runtime_claim,
         )
 

@@ -69,6 +69,9 @@ from market_regime_alpha.market.domain import (
     ClassificationMembershipRevision,
     ClassificationRevision,
     EvidenceScope,
+    GapFactKind,
+    GapKind,
+    GapReasonCode,
     Instrument,
     InstrumentFactKind,
     InstrumentType,
@@ -82,6 +85,7 @@ from market_regime_alpha.market.domain import (
     ProviderProduct,
     SecurityStatus,
     SecurityStatusFactRevision,
+    SourceGap,
     SourceAvailabilityStatus,
     TradingSession,
 )
@@ -1436,6 +1440,46 @@ def test_retrospective_feature_input_uses_exact_sealed_dual_clock_bar(
     )
     archive_id = uuid4()
     archive_slice_id = uuid4()
+    gap_slice_id = uuid4()
+    gap_capture = stack.market.capture(
+        CaptureRequest(
+            provider_product_id=stack.product.provider_product_id,
+            capture_key=f"wp17p-feature-gap-{uuid4()}",
+            resource="fixture://wp17p/feature-gap",
+            request_headers_hash="8" * 64,
+        ),
+        _BytesProvider(),
+        _context("feature-gap-capture", "CAPTURE_PROVIDER_RESPONSE"),
+    )
+    gap_id = uuid4()
+    stack.market.normalize(
+        gap_capture.capture.capture_id,
+        _Normalizer(
+            lambda capture: NormalizationBatch(
+                source_capture_id=capture.capture_id,
+                source_provider_product_id=capture.provider_product_id,
+                gaps=(
+                    SourceGap(
+                        gap_id=gap_id,
+                        provider_product_id=capture.provider_product_id,
+                        capture_id=capture.capture_id,
+                        instrument_id=stack.instrument_id,
+                        session_id=stack.market_session_id,
+                        gap_kind=GapKind.MISSING,
+                        reason_code=GapReasonCode.EXACT_BAR_MISSING,
+                        fact_kind=GapFactKind.MARKET_BAR,
+                        instrument_fact_kind=None,
+                        timeframe=BarTimeframe.MINUTE_5,
+                        price_basis=PriceBasis.RAW_UNADJUSTED,
+                        event_start=stack.decision_time.value - timedelta(minutes=16),
+                        event_end=stack.decision_time.value - timedelta(minutes=11),
+                        detail="exact archived checkpoint has no provider row",
+                    ),
+                ),
+            )
+        ),
+        _context("feature-gap-normalize", "NORMALIZE_MARKET_PIT"),
+    )
     archive_commands = ArchiveCommands(
         PostgresArchiveUnitOfWorkProvider(stack.pool),
         id_factory=uuid4,
@@ -1451,7 +1495,7 @@ def test_retrospective_feature_input_uses_exact_sealed_dual_clock_bar(
             price_basis=PriceBasis.RAW_UNADJUSTED,
             instrument_scope="ENGINEERING_EXPLORATORY_PILOT_32",
             instrument_scope_sha256=canonical_json_sha256({"scope": "ENGINEERING_EXPLORATORY_PILOT_32"}),
-            event_window_start=stack.decision_time.value - timedelta(minutes=11),
+            event_window_start=stack.decision_time.value - timedelta(minutes=16),
             event_window_end=stack.decision_time.value - timedelta(minutes=6),
             reserved_free_bytes=1,
             maximum_archive_bytes=1_000_000,
@@ -1469,6 +1513,15 @@ def test_retrospective_feature_input_uses_exact_sealed_dual_clock_bar(
                     request_sha256=canonical_json_sha256({"bar_revision_id": stack.market_bar_revision_id}),
                     expected_fact_kind="MARKET_BAR",
                 ),
+                ArchiveSlicePlan(
+                    market_archive_slice_id=gap_slice_id,
+                    ordinal=2,
+                    scope_key=f"{stack.instrument_id}:prior-reference-gap",
+                    event_window_start=stack.decision_time.value - timedelta(minutes=16),
+                    event_window_end=stack.decision_time.value - timedelta(minutes=11),
+                    request_sha256=canonical_json_sha256({"gap_id": gap_id}),
+                    expected_fact_kind="MARKET_BAR",
+                ),
             ),
         ),
         _context("feature-input-archive", "START_MARKET_ARCHIVE"),
@@ -1482,6 +1535,16 @@ def test_retrospective_feature_input_uses_exact_sealed_dual_clock_bar(
             requested_at=stack.decision_time.value - timedelta(minutes=2),
         ),
         _context("feature-input-observation", "RECORD_ARCHIVE_CAPTURE_OBSERVATION"),
+    )
+    archive_commands.record_capture_observation(
+        RecordArchiveCaptureObservationRequest(
+            market_archive_id=archive_id,
+            market_archive_slice_id=gap_slice_id,
+            capture_id=gap_capture.capture.capture_id,
+            schedule_slot="RETROSPECTIVE_BATCH",
+            requested_at=gap_capture.capture.temporal.capture_started_at,
+        ),
+        _context("feature-gap-observation", "RECORD_ARCHIVE_CAPTURE_OBSERVATION"),
     )
     seal = archive_commands.seal_retrospective(
         market_archive_id=archive_id,
@@ -1506,6 +1569,15 @@ def test_retrospective_feature_input_uses_exact_sealed_dual_clock_bar(
     assert observation.bar_revision_id == stack.market_bar_revision_id
     assert observation.capture_id == stack.market_capture_id
     assert observation.intraday_move == Decimal("0.010000000000")
+    gap = PostgresExploratoryFeatureInputReadPort(stack.pool).exact_intraday_move(
+        scope=scope,
+        instrument_id=stack.instrument_id,
+        session_id=stack.market_session_id,
+        feature_event_end=stack.decision_time.value - timedelta(minutes=11),
+    )
+    assert gap.gap_id == gap_id
+    assert gap.gap_kind == "MISSING"
+    assert gap.reason_code == "EXACT_BAR_MISSING"
     with pytest.raises(RuntimeStateConflictError, match="differs from Archive Authority"):
         PostgresExploratoryFeatureInputReadPort(stack.pool).exact_intraday_move(
             scope=replace(

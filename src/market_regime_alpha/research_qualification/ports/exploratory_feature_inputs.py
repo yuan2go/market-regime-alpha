@@ -29,6 +29,25 @@ class ExploratoryIntradayFeatureObservation:
     content_sha256: ContentHash
 
 
+@dataclass(frozen=True, slots=True)
+class ExploratoryIntradayFeatureGap:
+    gap_id: UUID
+    capture_id: UUID
+    instrument_id: InstrumentId
+    session_id: TradingSessionId
+    event_start: datetime
+    event_end: datetime
+    known_at: datetime
+    gap_kind: str
+    reason_code: str
+    content_sha256: ContentHash
+
+
+ExploratoryIntradayFeatureInput = (
+    ExploratoryIntradayFeatureObservation | ExploratoryIntradayFeatureGap
+)
+
+
 class ExploratoryFeatureInputReadPort(Protocol):
     def exact_intraday_move(
         self,
@@ -37,10 +56,12 @@ class ExploratoryFeatureInputReadPort(Protocol):
         instrument_id: InstrumentId,
         session_id: TradingSessionId,
         feature_event_end: datetime,
-    ) -> ExploratoryIntradayFeatureObservation | None: ...
+    ) -> ExploratoryIntradayFeatureInput: ...
 
 
 __all__ = [
     "ExploratoryFeatureInputReadPort",
+    "ExploratoryIntradayFeatureGap",
+    "ExploratoryIntradayFeatureInput",
     "ExploratoryIntradayFeatureObservation",
 ]

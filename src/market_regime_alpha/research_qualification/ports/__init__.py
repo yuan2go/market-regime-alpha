@@ -6,6 +6,8 @@ from market_regime_alpha.research_qualification.ports.artifacts import (
 )
 from market_regime_alpha.research_qualification.ports.exploratory_feature_inputs import (
     ExploratoryFeatureInputReadPort,
+    ExploratoryIntradayFeatureGap,
+    ExploratoryIntradayFeatureInput,
     ExploratoryIntradayFeatureObservation,
 )
 from market_regime_alpha.research_qualification.ports.sources import (
@@ -67,6 +69,8 @@ __all__ = [
     "DueOutcomeMember",
     "DueOutcomeState",
     "ExploratoryFeatureInputReadPort",
+    "ExploratoryIntradayFeatureGap",
+    "ExploratoryIntradayFeatureInput",
     "ExploratoryIntradayFeatureObservation",
     "FormalCampaignBindingRecord",
     "FormalCampaignInspection",

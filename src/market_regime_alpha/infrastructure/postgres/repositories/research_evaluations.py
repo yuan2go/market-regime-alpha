@@ -502,22 +502,20 @@ class PostgresEvaluationRepository:
             gross_return: Decimal | None = None
             net_return: Decimal | None = None
             if metric.source_kind is EvaluationSourceKind.CANDIDATE_DISPOSITION:
-                decimal_value = Decimal(
-                    int(str(source[3]) == CandidateDisposition.SELECTED.value)
-                )
-                boolean_value = None
+                decimal_value = None
+                boolean_value = str(source[3]) == CandidateDisposition.SELECTED.value
                 value_status = "COMPLETE"
             elif metric.source_kind is EvaluationSourceKind.SIGNAL_STATUS:
                 if source[24] is None:
                     raise EvaluationReconciliationError("Signal source is absent")
                 signal_status = str(source[25])
                 if signal_status in {"UNKNOWN", "NOT_ESTIMABLE"}:
-                    decimal_value = None
+                    boolean_value = None
                     value_status = "UNAVAILABLE"
                 else:
-                    decimal_value = Decimal(int(signal_status == "PRESENT"))
+                    boolean_value = signal_status == "PRESENT"
                     value_status = "COMPLETE"
-                boolean_value = None
+                decimal_value = None
             elif metric.source_kind is EvaluationSourceKind.FORECAST_OUTCOME_PAIR:
                 if source[26] is None or source[28] is None:
                     raise EvaluationReconciliationError("Forecast source is absent or ambiguous")
@@ -587,12 +585,12 @@ class PostgresEvaluationRepository:
                     raise EvaluationReconciliationError("Risk source is absent")
                 risk_status = str(source[35])
                 if risk_status == "UNKNOWN":
-                    decimal_value = None
+                    boolean_value = None
                     value_status = "UNAVAILABLE"
                 else:
-                    decimal_value = Decimal(int(risk_status == "REJECTED"))
+                    boolean_value = risk_status == "REJECTED"
                     value_status = "COMPLETE"
-                boolean_value = None
+                decimal_value = None
             group_key = f"{arm_kind or 'UNBOUND'}:{source[12].isoformat()}"
             item = EvaluationInput(
                 evaluation_observation_id=UUID(str(source[0])),
