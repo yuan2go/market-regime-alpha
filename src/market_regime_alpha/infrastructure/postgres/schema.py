@@ -246,6 +246,25 @@ EXPECTED_CONTEXT_TABLES: Final[frozenset[str]] = frozenset(
     }
 )
 
+EXPECTED_STRATEGY_TABLES: Final[frozenset[str]] = frozenset(
+    {
+        "strategy",
+        "strategy_version",
+        "strategy_context_requirement",
+        "strategy_signal_rule",
+        "strategy_forecast_rule",
+    }
+)
+
+EXPECTED_INFERENCE_TABLES: Final[frozenset[str]] = frozenset(
+    {
+        "signal",
+        "signal_context_binding",
+        "forecast",
+        "forecast_estimate",
+    }
+)
+
 EXPECTED_OUTCOME_TABLES: Final[frozenset[str]] = frozenset(
     {
         "market_target_outcome",
@@ -299,6 +318,8 @@ EXPECTED_TARGET_TABLES: Final[frozenset[str]] = (
     | EXPECTED_TARGET_DEFINITION_TABLES
     | EXPECTED_DECISION_SUPPORT_TABLES
     | EXPECTED_CONTEXT_TABLES
+    | EXPECTED_STRATEGY_TABLES
+    | EXPECTED_INFERENCE_TABLES
     | EXPECTED_OUTCOME_TABLES
     | EXPECTED_RESEARCH_VALIDITY_TABLES
     | EXPECTED_RESEARCH_QUALIFICATION_TABLES
