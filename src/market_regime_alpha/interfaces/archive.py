@@ -188,6 +188,7 @@ def resume_archive(
             normalizer = BaoStockArchiveNormalizer(
                 expected_query=query,
                 revision_lineage=application.market_revision_lineage,
+                trading_sessions=application.archive_trading_sessions,
             )
             results.append(
                 application.archive_operations.execute_slice(

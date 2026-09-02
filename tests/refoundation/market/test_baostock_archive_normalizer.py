@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, time
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -25,7 +26,10 @@ from market_regime_alpha.market.domain import (
     SourceAvailabilityStatus,
     TemporalEnvelope,
 )
-from market_regime_alpha.market.ports import MarketBarRevisionHead
+from market_regime_alpha.market.ports import (
+    ArchiveTradingSession,
+    MarketBarRevisionHead,
+)
 from market_regime_alpha.shared.identity import ContentHash
 from market_regime_alpha.shared.time import DecisionTime, KnownTime
 
@@ -283,6 +287,61 @@ class _RevisionLineage:
 
     def market_bar_head(self, **kwargs):
         return self.head
+
+
+class _Sessions:
+    def sessions(self, *, exchange, start_date, end_date):
+        shanghai = ZoneInfo("Asia/Shanghai")
+
+        def at(session_date, value):
+            return datetime.combine(session_date, value, tzinfo=shanghai).astimezone(UTC)
+
+        return tuple(
+            ArchiveTradingSession(
+                session_id=a_share_session_id(exchange, session_date),
+                exchange=exchange,
+                session_date=session_date,
+                open_at=at(session_date, time(9, 30)),
+                break_start_at=at(session_date, time(11, 30)),
+                break_end_at=at(session_date, time(13, 0)),
+                close_at=at(session_date, time(15, 0)),
+            )
+            for session_date in (date(2026, 1, 5), date(2026, 1, 6))
+        )
+
+
+def test_multi_session_bar_slice_expands_complete_calendar_grid() -> None:
+    capture = _capture()
+    query = BaoStockArchiveQuery(
+        kind=BaoStockArchiveQueryKind.HISTORY_5M_RAW,
+        code="sh.600000",
+        start_date=date(2026, 1, 5),
+        end_date=date(2026, 1, 6),
+    )
+    fields = [
+        "date", "time", "code", "open", "high", "low", "close",
+        "volume", "amount", "adjustflag",
+    ]
+
+    batch = BaoStockArchiveNormalizer(trading_sessions=_Sessions()).normalize(
+        capture,
+        _payload(
+            query,
+            fields,
+            [["2026-01-05", "20260105093500000", "sh.600000", "10", "10", "10", "10", "1", "10", "3"]],
+        ),
+    )
+
+    assert len(batch.bars) == 1
+    assert len(batch.gaps) == 95
+    assert all(
+        item.reason_code is GapReasonCode.EXPECTED_OBSERVATION_MISSING
+        for item in batch.gaps
+    )
+    assert sum(
+        item.session_id == a_share_session_id("XSHG", date(2026, 1, 6))
+        for item in batch.gaps
+    ) == 48
 
 
 def test_repeated_observation_appends_exact_market_revision_lineage() -> None:

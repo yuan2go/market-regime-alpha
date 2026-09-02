@@ -35,6 +35,10 @@ from market_regime_alpha.market.ports import NormalizerContract
 from market_regime_alpha.market.ports.revision_lineage import (
     MarketRevisionLineageReadPort,
 )
+from market_regime_alpha.market.ports.session_roster import (
+    ArchiveTradingSession,
+    ArchiveTradingSessionReadPort,
+)
 from market_regime_alpha.shared.financial import Money, Quantity, QuantityUnit
 from market_regime_alpha.shared.identity import InstrumentId, TradingSessionId
 
@@ -97,9 +101,11 @@ class BaoStockArchiveNormalizer:
         self,
         expected_query: BaoStockArchiveQuery | None = None,
         revision_lineage: MarketRevisionLineageReadPort | None = None,
+        trading_sessions: ArchiveTradingSessionReadPort | None = None,
     ) -> None:
         self._expected_query = expected_query
         self._revision_lineage = revision_lineage
+        self._trading_sessions = trading_sessions
 
     def normalize(self, capture: ProviderCapture, content: bytes) -> NormalizationBatch:
         envelope = self._decode(content)
@@ -339,15 +345,27 @@ class BaoStockArchiveNormalizer:
         bars: list[MarketBarRevision] = []
         gaps: list[SourceGap] = []
         observed_keys: set[tuple[str, BarTimeframe, datetime]] = set()
+        query = envelope.query
+        assert query.code is not None
+        assert query.start_date is not None and query.end_date is not None
+        exchange, _ = _parse_code(query.code)
+        expected_sessions = self._expected_sessions(
+            exchange=exchange,
+            start_date=query.start_date,
+            end_date=query.end_date,
+            capture_id=capture.capture_id,
+        )
+        expected_by_date = {item.session_date: item for item in expected_sessions}
         for row in rows:
             if row["adjustflag"] != "3":
                 raise ValueError("archive bar must preserve RAW_UNADJUSTED price basis")
             query_code = envelope.query.code
             if query_code is None or row["code"] != query_code:
                 raise ValueError("bar row code differs from the frozen query")
-            exchange, _ = _parse_code(row["code"])
             session_date = date.fromisoformat(row["date"])
-            session = _session(exchange, session_date, capture.capture_id)
+            session = expected_by_date.get(session_date)
+            if session is None:
+                raise ValueError("bar row date is not an expected trading Session")
             if is_daily:
                 event_start, event_end = session.open_at, session.close_at
                 timeframe = BarTimeframe.DAILY
@@ -421,31 +439,41 @@ class BaoStockArchiveNormalizer:
                 )
             else:
                 bars.append(bar)
-        if not rows:
-            query = envelope.query
-            assert query.code is not None
-            assert query.start_date is not None and query.end_date is not None
-            if query.start_date != query.end_date:
-                raise ValueError(
-                    "multi-session history absence cannot be assigned to one exact Session"
-                )
-            exchange, _ = _parse_code(query.code)
-            session = _session(exchange, query.start_date, capture.capture_id)
-            timeframe = (
-                BarTimeframe.DAILY
-                if is_daily
-                else BarTimeframe.MINUTE_5
-            )
+        expected_intervals = {
+            (session.session_id, start, end)
+            for session in expected_sessions
+            for start, end in self._expected_intervals(session, is_daily=is_daily)
+        }
+        observed_intervals = {
+            (item.session_id, item.event_start, item.event_end) for item in bars
+        } | {
+            (item.session_id, item.event_start, item.event_end)
+            for item in gaps
+            if item.fact_kind is GapFactKind.MARKET_BAR
+            and item.session_id is not None
+            and item.event_start is not None
+            and item.event_end is not None
+        }
+        reason = (
+            GapReasonCode.NO_ROWS_RETURNED
+            if not rows
+            else GapReasonCode.EXPECTED_OBSERVATION_MISSING
+        )
+        timeframe = BarTimeframe.DAILY if is_daily else BarTimeframe.MINUTE_5
+        for session_id, event_start, event_end in sorted(
+            expected_intervals - observed_intervals,
+            key=lambda item: (item[1], str(item[0])),
+        ):
             gaps.append(
                 self._bar_gap(
                     capture,
                     query.code,
-                    session.session_id,
+                    session_id,
                     timeframe,
-                    session.open_at,
-                    session.close_at,
+                    event_start,
+                    event_end,
                     GapKind.MISSING,
-                    GapReasonCode.NO_ROWS_RETURNED,
+                    reason,
                 )
             )
         return NormalizationBatch(
@@ -454,6 +482,59 @@ class BaoStockArchiveNormalizer:
             bars=tuple(bars),
             gaps=tuple(gaps),
         )
+
+    def _expected_sessions(
+        self,
+        *,
+        exchange: str,
+        start_date: date,
+        end_date: date,
+        capture_id: UUID,
+    ) -> tuple[ArchiveTradingSession, ...]:
+        if self._trading_sessions is not None:
+            sessions = self._trading_sessions.sessions(
+                exchange=exchange,
+                start_date=start_date,
+                end_date=end_date,
+            )
+            if not sessions:
+                raise ValueError("history interval has no canonical trading Sessions")
+            return sessions
+        if start_date != end_date:
+            raise ValueError(
+                "multi-session history requires an exact trading-session roster"
+            )
+        session = _session(exchange, start_date, capture_id)
+        return (
+            ArchiveTradingSession(
+                session_id=session.session_id,
+                exchange=session.exchange,
+                session_date=session.session_date,
+                open_at=session.open_at,
+                break_start_at=session.break_start_at,
+                break_end_at=session.break_end_at,
+                close_at=session.close_at,
+            ),
+        )
+
+    @staticmethod
+    def _expected_intervals(
+        session: ArchiveTradingSession,
+        *,
+        is_daily: bool,
+    ) -> tuple[tuple[datetime, datetime], ...]:
+        if is_daily:
+            return ((session.open_at, session.close_at),)
+        intervals: list[tuple[datetime, datetime]] = []
+        for start, end in (
+            (session.open_at, session.break_start_at),
+            (session.break_end_at, session.close_at),
+        ):
+            cursor = start
+            while cursor < end:
+                intervals.append((cursor, cursor + timedelta(minutes=5)))
+                cursor += timedelta(minutes=5)
+        return tuple(intervals)
 
     def _bar_gap_if_needed(
         self,
