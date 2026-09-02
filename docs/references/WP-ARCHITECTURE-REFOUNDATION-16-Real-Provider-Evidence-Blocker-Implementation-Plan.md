@@ -67,4 +67,3 @@ WP-16 concurrency/failure/recovery campaign
 full repository pytest/Ruff/mypy/build qualification
 remote CI
 ```
-
