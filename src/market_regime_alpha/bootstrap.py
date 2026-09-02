@@ -20,6 +20,12 @@ from market_regime_alpha.infrastructure.postgres.candidate_uow import (
 from market_regime_alpha.infrastructure.postgres.decision_uow import (
     PostgresDecisionSupportUnitOfWorkProvider,
 )
+from market_regime_alpha.infrastructure.postgres.context_uow import PostgresContextUnitOfWorkProvider
+from market_regime_alpha.infrastructure.postgres.inference_uow import PostgresInferenceUnitOfWorkProvider
+from market_regime_alpha.infrastructure.postgres.opportunity_uow import PostgresOpportunityUnitOfWorkProvider
+from market_regime_alpha.infrastructure.postgres.portfolio_uow import PostgresPortfolioUnitOfWorkProvider
+from market_regime_alpha.infrastructure.postgres.risk_uow import PostgresRiskUnitOfWorkProvider
+from market_regime_alpha.infrastructure.postgres.strategy_uow import PostgresStrategyUnitOfWorkProvider
 from market_regime_alpha.infrastructure.postgres.outcome_uow import (
     PostgresOutcomeUnitOfWorkProvider,
 )
@@ -63,6 +69,28 @@ from market_regime_alpha.infrastructure.postgres.queries import (
     PostgresResearchQualificationAdmissionReadPort,
     PostgresResearchQualificationVerificationProvider,
 )
+from market_regime_alpha.infrastructure.postgres.queries.decision_context_inputs import (
+    PostgresContextInputPreparationProvider,
+    PostgresContextQueryProvider,
+)
+from market_regime_alpha.infrastructure.postgres.queries.decision_inference_inputs import (
+    PostgresInferenceInputPreparationProvider,
+    PostgresInferenceQueryProvider,
+)
+from market_regime_alpha.infrastructure.postgres.queries.decision_opportunity_inputs import (
+    PostgresOpportunityInputPreparationProvider,
+    PostgresOpportunityQueryProvider,
+)
+from market_regime_alpha.infrastructure.postgres.queries.decision_portfolio_inputs import (
+    PostgresPortfolioInputPreparationProvider,
+    PostgresPortfolioQueryProvider,
+)
+from market_regime_alpha.infrastructure.postgres.queries.decision_risk_inputs import (
+    PostgresRiskInputPreparationProvider,
+    PostgresRiskQueryProvider,
+)
+from market_regime_alpha.infrastructure.postgres.queries.decision_strategy import PostgresStrategyQueryProvider
+from market_regime_alpha.infrastructure.postgres.queries.decision_verification import PostgresDecisionRunVerificationProvider
 from market_regime_alpha.infrastructure.postgres.schema import (
     DatabaseIdentity,
     RecreateAuthorization,
@@ -73,7 +101,16 @@ from market_regime_alpha.infrastructure.postgres.schema import (
 )
 from market_regime_alpha.infrastructure.postgres.uow import PostgresUnitOfWorkProvider
 from market_regime_alpha.runtime.application import ArtifactApplication, RuntimeApplication
-from market_regime_alpha.decision_support.application import DecisionSupportApplication
+from market_regime_alpha.decision_support.application import (
+    ContextCommands,
+    DecisionRunVerifier,
+    DecisionSupportApplication,
+    InferenceCommands,
+    OpportunityCommands,
+    PortfolioCommands,
+    RiskCommands,
+    StrategyCommands,
+)
 from market_regime_alpha.outcome.application import OutcomeApplication, OutcomeVerifier
 from market_regime_alpha.outcome.ports import OutcomeReadPort
 from market_regime_alpha.research_qualification.application import (
@@ -131,23 +168,13 @@ class TargetSettings:
             raise ValueError("MRA_SCHEMA_EPOCH must be exactly MRA_REFOUNDATION_1")
         if isinstance(self.pool_min_size, bool) or self.pool_min_size < 0:
             raise ValueError("MRA_POOL_MIN_SIZE must be non-negative")
-        if (
-            isinstance(self.pool_max_size, bool)
-            or self.pool_max_size < max(1, self.pool_min_size)
-            or self.pool_max_size > 32
-        ):
-            raise ValueError(
-                "MRA_POOL_MAX_SIZE must be between max(1, min size) and 32"
-            )
+        if isinstance(self.pool_max_size, bool) or self.pool_max_size < max(1, self.pool_min_size) or self.pool_max_size > 32:
+            raise ValueError("MRA_POOL_MAX_SIZE must be between max(1, min size) and 32")
 
     @classmethod
     def from_environ(cls, environ: Mapping[str, str] | None = None) -> TargetSettings:
         source = os.environ if environ is None else environ
-        unknown = sorted(
-            key
-            for key in source
-            if key.startswith("MRA_") and key not in _ALLOWED_ENVIRONMENT_KEYS
-        )
+        unknown = sorted(key for key in source if key.startswith("MRA_") and key not in _ALLOWED_ENVIRONMENT_KEYS)
         if unknown:
             raise ValueError(f"unknown MRA configuration keys: {unknown}")
         database_url = source.get("MRA_DATABASE_URL", "")
@@ -189,6 +216,13 @@ class TargetApplication:
     candidates: CandidateApplication
     candidate_queries: CandidateQueryProvider
     decision_support: DecisionSupportApplication
+    decision_contexts: ContextCommands
+    decision_strategies: StrategyCommands
+    decision_inference: InferenceCommands
+    decision_opportunities: OpportunityCommands
+    decision_portfolios: PortfolioCommands
+    decision_risk: RiskCommands
+    decision_support_verifier: DecisionRunVerifier
     outcomes: OutcomeApplication
     outcome_queries: OutcomeReadPort
     outcome_verifier: OutcomeVerifier
@@ -243,9 +277,7 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
             PostgresEvaluationUnitOfWorkProvider(pool, id_factory=uuid4),
             id_factory=uuid4,
         ),
-        research_evaluation_verifier=ResearchEvaluationVerifier(
-            PostgresResearchEvaluationVerificationProvider(pool)
-        ),
+        research_evaluation_verifier=ResearchEvaluationVerifier(PostgresResearchEvaluationVerificationProvider(pool)),
         research_evidence=EvidenceCommands(
             PostgresEvidenceUnitOfWorkProvider(pool),
             id_factory=uuid4,
@@ -258,12 +290,8 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
             PostgresQualificationUnitOfWorkProvider(pool, id_factory=uuid4),
             id_factory=uuid4,
         ),
-        research_qualification_admissions=(
-            PostgresResearchQualificationAdmissionReadPort(pool)
-        ),
-        research_qualification_verifier=ResearchQualificationVerifier(
-            PostgresResearchQualificationVerificationProvider(pool)
-        ),
+        research_qualification_admissions=(PostgresResearchQualificationAdmissionReadPort(pool)),
+        research_qualification_verifier=ResearchQualificationVerifier(PostgresResearchQualificationVerificationProvider(pool)),
         candidates=CandidateApplication(
             PostgresCandidateResearchInputLoader(pool, byte_store),
             PostgresCandidateUnitOfWorkProvider(pool),
@@ -274,6 +302,36 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
             PostgresDecisionSupportUnitOfWorkProvider(pool),
             PostgresDecisionRunQueryProvider(pool),
         ),
+        decision_contexts=ContextCommands(
+            PostgresContextInputPreparationProvider(pool),
+            PostgresContextUnitOfWorkProvider(pool),
+            PostgresContextQueryProvider(pool),
+        ),
+        decision_strategies=StrategyCommands(
+            PostgresStrategyUnitOfWorkProvider(pool),
+            PostgresStrategyQueryProvider(pool),
+        ),
+        decision_inference=InferenceCommands(
+            PostgresInferenceInputPreparationProvider(pool),
+            PostgresInferenceUnitOfWorkProvider(pool),
+            PostgresInferenceQueryProvider(pool),
+        ),
+        decision_opportunities=OpportunityCommands(
+            PostgresOpportunityInputPreparationProvider(pool),
+            PostgresOpportunityUnitOfWorkProvider(pool),
+            PostgresOpportunityQueryProvider(pool),
+        ),
+        decision_portfolios=PortfolioCommands(
+            PostgresPortfolioInputPreparationProvider(pool),
+            PostgresPortfolioUnitOfWorkProvider(pool),
+            PostgresPortfolioQueryProvider(pool),
+        ),
+        decision_risk=RiskCommands(
+            PostgresRiskInputPreparationProvider(pool),
+            PostgresRiskUnitOfWorkProvider(pool),
+            PostgresRiskQueryProvider(pool),
+        ),
+        decision_support_verifier=DecisionRunVerifier(PostgresDecisionRunVerificationProvider(pool)),
         outcomes=OutcomeApplication(
             PostgresOutcomeInputPreparationProvider(pool),
             PostgresOutcomeUnitOfWorkProvider(pool),

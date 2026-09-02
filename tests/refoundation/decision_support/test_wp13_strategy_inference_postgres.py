@@ -93,6 +93,12 @@ def _open_decision(stack):
             ordinal=4,
             request_character="4",
         ),
+        _candidate._step(
+            key="decide-and-risk",
+            kind="DECIDE_AND_RISK",
+            ordinal=5,
+            request_character="5",
+        ),
     )
     runtime, _ = _candidate._schedule_run(
         stack,

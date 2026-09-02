@@ -7458,6 +7458,7 @@ CREATE TABLE mra.portfolio_policy (
     provenance_sha256 text NOT NULL,
     request_identity text NOT NULL,
     request_sha256 text NOT NULL,
+    command_receipt_id uuid NOT NULL,
     content_sha256 text NOT NULL,
     frozen_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     CONSTRAINT portfolio_policy_series_uk UNIQUE (policy_code, version),
@@ -7472,6 +7473,8 @@ CREATE TABLE mra.portfolio_policy (
     CONSTRAINT portfolio_policy_config_artifact_fk FOREIGN KEY (
         config_artifact_id, config_content_sha256, config_size_bytes
     ) REFERENCES mra.artifact(artifact_id, content_sha256, size_bytes) ON DELETE RESTRICT,
+    CONSTRAINT portfolio_policy_receipt_fk FOREIGN KEY (command_receipt_id)
+        REFERENCES mra.command_receipt(receipt_id) ON DELETE RESTRICT,
     CONSTRAINT portfolio_policy_shape_ck CHECK (
         policy_code ~ '^[a-z][a-z0-9_.-]{0,99}$'
         AND ((version = 1 AND supersedes_policy_id IS NULL)
@@ -7635,6 +7638,7 @@ CREATE TABLE mra.risk_policy (
     provenance_sha256 text NOT NULL,
     request_identity text NOT NULL,
     request_sha256 text NOT NULL,
+    command_receipt_id uuid NOT NULL,
     content_sha256 text NOT NULL,
     frozen_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     CONSTRAINT risk_policy_series_uk UNIQUE (policy_code, version),
@@ -7649,6 +7653,8 @@ CREATE TABLE mra.risk_policy (
     CONSTRAINT risk_policy_config_artifact_fk FOREIGN KEY (
         config_artifact_id, config_content_sha256, config_size_bytes
     ) REFERENCES mra.artifact(artifact_id, content_sha256, size_bytes) ON DELETE RESTRICT,
+    CONSTRAINT risk_policy_receipt_fk FOREIGN KEY (command_receipt_id)
+        REFERENCES mra.command_receipt(receipt_id) ON DELETE RESTRICT,
     CONSTRAINT risk_policy_shape_ck CHECK (
         policy_code ~ '^[a-z][a-z0-9_.-]{0,99}$'
         AND ((version = 1 AND supersedes_policy_id IS NULL)
@@ -7866,6 +7872,7 @@ CREATE INDEX portfolio_policy_code_artifact_fk_idx ON mra.portfolio_policy (
 CREATE INDEX portfolio_policy_config_artifact_fk_idx ON mra.portfolio_policy (
     config_artifact_id, config_content_sha256, config_size_bytes
 );
+CREATE INDEX portfolio_policy_receipt_fk_idx ON mra.portfolio_policy (command_receipt_id);
 CREATE INDEX portfolio_proposal_opportunity_set_fk_idx ON mra.portfolio_proposal (
     opportunity_set_id, decision_run_id, strategy_version_id,
     opportunity_set_sha256, opportunity_set_recorded_at
@@ -7887,6 +7894,7 @@ CREATE INDEX risk_policy_code_artifact_fk_idx ON mra.risk_policy (
 CREATE INDEX risk_policy_config_artifact_fk_idx ON mra.risk_policy (
     config_artifact_id, config_content_sha256, config_size_bytes
 );
+CREATE INDEX risk_policy_receipt_fk_idx ON mra.risk_policy (command_receipt_id);
 CREATE INDEX risk_decision_proposal_fk_idx ON mra.risk_decision (
     portfolio_proposal_id, decision_run_id, strategy_version_id,
     proposal_content_sha256
@@ -14978,8 +14986,73 @@ BEGIN
                    FROM mra.opportunity_context AS binding
                    WHERE binding.opportunity_id = item.opportunity_id)
                     <> item.context_roster_sha256)
+       )
+       OR EXISTS (
+           SELECT 1 FROM mra.opportunity AS item
+           JOIN mra.forecast AS forecast ON forecast.forecast_id = item.forecast_id
+           JOIN mra.signal AS signal ON signal.signal_id = item.signal_id
+           WHERE item.opportunity_set_id = NEW.opportunity_set_id
+             AND (item.status, item.action) <> (
+                 CASE
+                   WHEN signal.status = 'PRESENT' AND forecast.status = 'AVAILABLE'
+                     THEN 'ACTIONABLE'
+                   WHEN signal.status = 'WAIT' THEN 'WAIT'
+                   WHEN signal.status IN ('UNKNOWN', 'NOT_ESTIMABLE')
+                     OR forecast.status = 'NOT_ESTIMABLE' THEN 'NOT_ESTIMABLE'
+                   ELSE 'NO_ACTION'
+                 END,
+                 CASE
+                   WHEN signal.status = 'PRESENT' AND forecast.status = 'AVAILABLE'
+                     THEN 'ENTER'
+                   WHEN signal.status = 'WAIT' THEN 'WAIT'
+                   WHEN signal.status IN ('UNKNOWN', 'NOT_ESTIMABLE')
+                     OR forecast.status = 'NOT_ESTIMABLE' THEN 'DATA_INSUFFICIENT'
+                   ELSE 'NO_ACTION'
+                 END
+             )
+       )
+       OR EXISTS (
+           SELECT 1 FROM mra.opportunity AS item
+           WHERE item.opportunity_set_id = NEW.opportunity_set_id
+             AND (
+               EXISTS (
+                 (SELECT signal_context_binding_id
+                    FROM mra.signal_context_binding
+                   WHERE signal_id = item.signal_id)
+                 EXCEPT
+                 (SELECT signal_context_binding_id
+                    FROM mra.opportunity_context
+                   WHERE opportunity_id = item.opportunity_id)
+               )
+               OR EXISTS (
+                 (SELECT signal_context_binding_id
+                    FROM mra.opportunity_context
+                   WHERE opportunity_id = item.opportunity_id)
+                 EXCEPT
+                 (SELECT signal_context_binding_id
+                    FROM mra.signal_context_binding
+                   WHERE signal_id = item.signal_id)
+               )
+             )
        ) THEN
         RAISE EXCEPTION 'Opportunity roster is incomplete or mismatched'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.validate_portfolio_policy_supersession()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.version > 1 AND NOT EXISTS (
+        SELECT 1 FROM mra.portfolio_policy AS predecessor
+        WHERE predecessor.portfolio_policy_id = NEW.supersedes_policy_id
+          AND predecessor.policy_code = NEW.policy_code
+          AND predecessor.version + 1 = NEW.version
+          AND predecessor.frozen_at < NEW.frozen_at
+    ) THEN
+        RAISE EXCEPTION 'PortfolioPolicy supersession is not immediate and ordered'
             USING ERRCODE = '55000';
     END IF;
     RETURN NEW;
@@ -15091,6 +15164,32 @@ BEGIN
         RAISE EXCEPTION 'Portfolio line roster or totals are incomplete'
             USING ERRCODE = '55000';
     END IF;
+    IF EXISTS (
+        SELECT 1 FROM mra.portfolio_policy AS policy
+        WHERE policy.portfolio_policy_id = NEW.portfolio_policy_id
+          AND (
+            NEW.included_count > policy.maximum_line_count
+            OR NEW.gross_weight > policy.maximum_gross_weight
+            OR NEW.net_weight > policy.maximum_net_weight
+            OR NEW.cash_weight < policy.minimum_cash_weight
+            OR NEW.turnover_weight > policy.maximum_turnover
+            OR EXISTS (
+                SELECT 1 FROM mra.portfolio_line AS line
+                WHERE line.portfolio_proposal_id = NEW.portfolio_proposal_id
+                  AND line.proposed_weight > policy.maximum_single_weight
+            )
+            OR (
+                (SELECT count(*) FROM mra.portfolio_line AS line
+                 WHERE line.portfolio_proposal_id = NEW.portfolio_proposal_id
+                   AND line.opportunity_status <> 'NOT_ESTIMABLE')
+                < policy.minimum_estimable_count
+                AND NEW.status <> 'NOT_ESTIMABLE'
+            )
+          )
+    ) THEN
+        RAISE EXCEPTION 'Portfolio proposal violates frozen policy'
+            USING ERRCODE = '55000';
+    END IF;
     RETURN NEW;
 END;
 $$;
@@ -15159,6 +15258,7 @@ DECLARE actual_count integer;
 DECLARE minimum_ordinal integer;
 DECLARE maximum_ordinal integer;
 DECLARE actual_hash text;
+DECLARE expected_status text;
 BEGIN
     SELECT count(*), min(ordinal), max(ordinal),
            mra.canonical_sha256(replace(json_agg(json_build_object(
@@ -15198,6 +15298,28 @@ BEGIN
         RAISE EXCEPTION 'Risk reason Cartesian roster is incomplete'
             USING ERRCODE = '55000';
     END IF;
+    SELECT CASE
+             WHEN EXISTS (
+               SELECT 1 FROM mra.risk_reason AS reason
+               JOIN mra.risk_rule AS rule ON rule.risk_rule_id = reason.risk_rule_id
+               WHERE reason.risk_decision_id = NEW.risk_decision_id
+                 AND reason.result = 'FAIL' AND rule.severity = 'REJECT'
+             ) THEN 'REJECTED'
+             WHEN EXISTS (
+               SELECT 1 FROM mra.risk_reason AS reason
+               WHERE reason.risk_decision_id = NEW.risk_decision_id
+                 AND reason.result IN ('UNKNOWN', 'FAIL')
+             ) THEN 'UNKNOWN'
+             WHEN proposal.status = 'NO_ACTION' THEN 'NO_ACTION'
+             WHEN proposal.status = 'NOT_ESTIMABLE' THEN 'UNKNOWN'
+             ELSE 'AUTHORIZED'
+           END INTO expected_status
+      FROM mra.portfolio_proposal AS proposal
+     WHERE proposal.portfolio_proposal_id = NEW.portfolio_proposal_id;
+    IF expected_status IS NULL OR NEW.status <> expected_status THEN
+        RAISE EXCEPTION 'Risk decision status differs from complete reasons'
+            USING ERRCODE = '55000';
+    END IF;
     RETURN NEW;
 END;
 $$;
@@ -15226,6 +15348,9 @@ CREATE TRIGGER thesis_condition_append_only BEFORE UPDATE OR DELETE ON mra.thesi
 FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
 CREATE TRIGGER portfolio_policy_append_only BEFORE UPDATE OR DELETE ON mra.portfolio_policy
 FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE CONSTRAINT TRIGGER portfolio_policy_supersession_guard
+AFTER INSERT ON mra.portfolio_policy DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW EXECUTE FUNCTION mra.validate_portfolio_policy_supersession();
 CREATE TRIGGER portfolio_line_insert_guard BEFORE INSERT ON mra.portfolio_line
 FOR EACH ROW EXECUTE FUNCTION mra.guard_portfolio_line_insert();
 CREATE CONSTRAINT TRIGGER portfolio_proposal_closure_guard

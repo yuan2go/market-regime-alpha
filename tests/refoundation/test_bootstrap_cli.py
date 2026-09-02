@@ -12,7 +12,16 @@ from market_regime_alpha.bootstrap import (
     TargetSettings,
     bootstrap_application,
 )
-from market_regime_alpha.decision_support.application import DecisionSupportApplication
+from market_regime_alpha.decision_support.application import (
+    ContextCommands,
+    DecisionRunVerifier,
+    DecisionSupportApplication,
+    InferenceCommands,
+    OpportunityCommands,
+    PortfolioCommands,
+    RiskCommands,
+    StrategyCommands,
+)
 from market_regime_alpha.infrastructure.postgres.schema import (
     SchemaManager,
     SchemaMissingError,
@@ -76,17 +85,13 @@ def test_normal_application_startup_fails_closed_without_schema_or_ddl(
     target_database_url: str,
     tmp_path,
 ) -> None:
-    settings = TargetSettings.from_environ(
-        _environment(target_database_url, str(tmp_path / "artifacts"))
-    )
+    settings = TargetSettings.from_environ(_environment(target_database_url, str(tmp_path / "artifacts")))
 
     with pytest.raises(SchemaMissingError, match="SCHEMA_MISSING"):
         bootstrap_application(settings)
 
     with psycopg.connect(target_database_url) as connection:
-        assert connection.execute(
-            "SELECT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'mra')"
-        ).fetchone() == (False,)
+        assert connection.execute("SELECT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'mra')").fetchone() == (False,)
 
 
 def test_mra_db_bootstrap_verify_and_runtime_inspection_smoke(
@@ -97,18 +102,24 @@ def test_mra_db_bootstrap_verify_and_runtime_inspection_smoke(
     bootstrap_output = StringIO()
     verify_output = StringIO()
 
-    assert main(
-        ["db", "bootstrap"],
-        environ=environment,
-        stdout=bootstrap_output,
-        stderr=StringIO(),
-    ) == 0
-    assert main(
-        ["db", "verify"],
-        environ=environment,
-        stdout=verify_output,
-        stderr=StringIO(),
-    ) == 0
+    assert (
+        main(
+            ["db", "bootstrap"],
+            environ=environment,
+            stdout=bootstrap_output,
+            stderr=StringIO(),
+        )
+        == 0
+    )
+    assert (
+        main(
+            ["db", "verify"],
+            environ=environment,
+            stdout=verify_output,
+            stderr=StringIO(),
+        )
+        == 0
+    )
     assert json.loads(bootstrap_output.getvalue())["created"] is True
     assert json.loads(verify_output.getvalue())["epoch"] == "MRA_REFOUNDATION_1"
 
@@ -117,6 +128,13 @@ def test_mra_db_bootstrap_verify_and_runtime_inspection_smoke(
         assert isinstance(application.selection, SelectionApplication)
         assert isinstance(application.candidates, CandidateApplication)
         assert isinstance(application.decision_support, DecisionSupportApplication)
+        assert isinstance(application.decision_contexts, ContextCommands)
+        assert isinstance(application.decision_strategies, StrategyCommands)
+        assert isinstance(application.decision_inference, InferenceCommands)
+        assert isinstance(application.decision_opportunities, OpportunityCommands)
+        assert isinstance(application.decision_portfolios, PortfolioCommands)
+        assert isinstance(application.decision_risk, RiskCommands)
+        assert isinstance(application.decision_support_verifier, DecisionRunVerifier)
         assert isinstance(application.research_partitions, ResearchPartitionCommands)
         assert isinstance(application.research_experiments, ExperimentCommands)
         assert isinstance(application.research_evaluations, EvaluationCommands)
@@ -182,12 +200,15 @@ def test_mra_db_bootstrap_verify_and_runtime_inspection_smoke(
         application.close()
 
     inspect_output = StringIO()
-    assert main(
-        ["runtime", "inspect", "--run-id", str(run.run_id)],
-        environ=environment,
-        stdout=inspect_output,
-        stderr=StringIO(),
-    ) == 0
+    assert (
+        main(
+            ["runtime", "inspect", "--run-id", str(run.run_id)],
+            environ=environment,
+            stdout=inspect_output,
+            stderr=StringIO(),
+        )
+        == 0
+    )
     payload = json.loads(inspect_output.getvalue())
     assert payload["run_id"] == str(run.run_id)
     assert payload["run_state"] == "RUNNING"
@@ -209,9 +230,7 @@ def test_mra_cli_missing_schema_returns_nonzero_without_bootstrap(
     assert code != 0
     assert "SCHEMA_MISSING" in error_output.getvalue()
     with psycopg.connect(target_database_url) as connection:
-        assert connection.execute(
-            "SELECT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'mra')"
-        ).fetchone() == (False,)
+        assert connection.execute("SELECT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'mra')").fetchone() == (False,)
 
 
 def test_mra_cli_recreate_plan_apply_requires_same_operator_and_exact_plan(
@@ -225,66 +244,75 @@ def test_mra_cli_recreate_plan_apply_requires_same_operator_and_exact_plan(
     plan_path = tmp_path / "recreate-plan.json"
     plan_output = StringIO()
 
-    assert main(
-        [
-            "db",
-            "recreate-plan",
-            "--expected-database-name",
-            identity.database_name,
-            "--expected-database-oid",
-            str(identity.database_oid),
-            "--operator-id",
-            "cli-operator",
-            "--reason",
-            "exercise explicit draft recreate",
-            "--backup-attestation",
-            "isolated disposable test database",
-            "--output",
-            str(plan_path),
-        ],
-        environ=environment,
-        stdout=plan_output,
-        stderr=StringIO(),
-    ) == 0
+    assert (
+        main(
+            [
+                "db",
+                "recreate-plan",
+                "--expected-database-name",
+                identity.database_name,
+                "--expected-database-oid",
+                str(identity.database_oid),
+                "--operator-id",
+                "cli-operator",
+                "--reason",
+                "exercise explicit draft recreate",
+                "--backup-attestation",
+                "isolated disposable test database",
+                "--output",
+                str(plan_path),
+            ],
+            environ=environment,
+            stdout=plan_output,
+            stderr=StringIO(),
+        )
+        == 0
+    )
     plan_payload = json.loads(plan_output.getvalue())
     assert plan_path.exists()
     assert plan_payload["active_connection_pids"] == []
 
     wrong_operator_error = StringIO()
-    assert main(
-        [
-            "db",
-            "recreate-apply",
-            "--plan",
-            str(plan_path),
-            "--challenge",
-            plan_payload["challenge"],
-            "--operator-id",
-            "different-operator",
-        ],
-        environ=environment,
-        stdout=StringIO(),
-        stderr=wrong_operator_error,
-    ) == 2
+    assert (
+        main(
+            [
+                "db",
+                "recreate-apply",
+                "--plan",
+                str(plan_path),
+                "--challenge",
+                plan_payload["challenge"],
+                "--operator-id",
+                "different-operator",
+            ],
+            environ=environment,
+            stdout=StringIO(),
+            stderr=wrong_operator_error,
+        )
+        == 2
+    )
     assert "RECREATE_OPERATOR_MISMATCH" in wrong_operator_error.getvalue()
     assert manager.verify().epoch == "MRA_REFOUNDATION_1"
 
     apply_output = StringIO()
-    assert main(
-        [
-            "db",
-            "recreate-apply",
-            "--plan",
-            str(plan_path),
-            "--challenge",
-            plan_payload["challenge"],
-            "--operator-id",
-            "cli-operator",
-        ],
-        environ=environment,
-        stdout=apply_output,
-        stderr=StringIO(),
-    ) == 0
+    assert (
+        main(
+            [
+                "db",
+                "recreate-apply",
+                "--plan",
+                str(plan_path),
+                "--challenge",
+                plan_payload["challenge"],
+                "--operator-id",
+                "cli-operator",
+            ],
+            environ=environment,
+            stdout=apply_output,
+            stderr=StringIO(),
+        )
+        == 0
+    )
     result = json.loads(apply_output.getvalue())
     assert result["removed_application_schema"] == "mra"
     assert result["verification"]["created"] is True
@@ -299,19 +327,22 @@ def test_mra_cli_rejects_malformed_recreate_plan_without_traceback(
     plan_path.write_text('{"database_name":"incomplete"}', encoding="utf-8")
     error = StringIO()
 
-    assert main(
-        [
-            "db",
-            "recreate-apply",
-            "--plan",
-            str(plan_path),
-            "--challenge",
-            "0" * 24,
-            "--operator-id",
-            "cli-operator",
-        ],
-        environ=environment,
-        stdout=StringIO(),
-        stderr=error,
-    ) == 2
+    assert (
+        main(
+            [
+                "db",
+                "recreate-apply",
+                "--plan",
+                str(plan_path),
+                "--challenge",
+                "0" * 24,
+                "--operator-id",
+                "cli-operator",
+            ],
+            environ=environment,
+            stdout=StringIO(),
+            stderr=error,
+        )
+        == 2
+    )
     assert "required shape" in error.getvalue()
