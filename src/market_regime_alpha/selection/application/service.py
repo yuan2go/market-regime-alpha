@@ -37,6 +37,7 @@ from market_regime_alpha.selection.domain import (
     EligibilityRule,
     EligibilityRuleKind,
     EligibilityStatus,
+    ExploratoryRetrospectiveSelectionScope,
     FrozenUniverse,
     MarketEvidenceStatus,
     UniverseDefinition,
@@ -201,7 +202,6 @@ class SelectionApplication:
                 replayed=False,
             )
 
-    @_replay_concurrent_success
     def freeze_universe(
         self,
         *,
@@ -211,17 +211,63 @@ class SelectionApplication:
         context: CommandContext,
         runtime_claim: AttemptClaim | None = None,
     ) -> FrozenUniverse:
+        return self._freeze_universe(
+            universe_id=universe_id,
+            scope=scope,
+            decision_time=decision_time,
+            context=context,
+            runtime_claim=runtime_claim,
+            retrospective_scope=None,
+        )
+
+    def freeze_exploratory_retrospective_universe(
+        self,
+        *,
+        universe_id: UUID,
+        scope: UniverseScopeSpecification,
+        retrospective_scope: ExploratoryRetrospectiveSelectionScope,
+        context: CommandContext,
+        runtime_claim: AttemptClaim | None = None,
+    ) -> FrozenUniverse:
+        """Freeze historical population only through an exact sealed archive."""
+
+        return self._freeze_universe(
+            universe_id=universe_id,
+            scope=scope,
+            decision_time=DecisionTime(retrospective_scope.simulated_event_cutoff),
+            context=context,
+            runtime_claim=runtime_claim,
+            retrospective_scope=retrospective_scope,
+        )
+
+    @_replay_concurrent_success
+    def _freeze_universe(
+        self,
+        *,
+        universe_id: UUID,
+        scope: UniverseScopeSpecification,
+        decision_time: DecisionTime,
+        context: CommandContext,
+        runtime_claim: AttemptClaim | None,
+        retrospective_scope: ExploratoryRetrospectiveSelectionScope | None,
+    ) -> FrozenUniverse:
         decision_time = decision_time if isinstance(decision_time, DecisionTime) else DecisionTime(decision_time)
         request_hash = canonical_json_sha256(
             {
                 "decision_time": decision_time,
+                "retrospective_scope": retrospective_scope,
                 "scope": scope,
                 "universe_id": universe_id,
             }
         )
+        command_kind = (
+            "FREEZE_EXPLORATORY_RETROSPECTIVE_UNIVERSE"
+            if retrospective_scope is not None
+            else "FREEZE_UNIVERSE"
+        )
         with (
             self._terminal_failure_boundary(
-                operation="FREEZE_UNIVERSE",
+                operation=command_kind,
                 scope_id=str(universe_id),
                 request_hash=request_hash,
                 error_class="COMMAND",
@@ -235,7 +281,7 @@ class SelectionApplication:
                 uow.runtime_finalization.lock_live(runtime_claim)
             receipt = uow.receipts.start(
                 receipt_id=self._id_factory(),
-                command_kind="FREEZE_UNIVERSE",
+                command_kind=command_kind,
                 scope_id=str(universe_id),
                 idempotency_key=context.idempotency_key,
                 request_hash=request_hash,
@@ -248,6 +294,11 @@ class SelectionApplication:
                     receipt_id=receipt.receipt_id,
                     replayed=True,
                 )
+                if retrospective_scope is not None:
+                    uow.selection.require_exploratory_retrospective_universe_scope(
+                        frozen.universe_revision_id,
+                        retrospective_scope,
+                    )
                 self._finalize_runtime(
                     uow,
                     runtime_claim,
@@ -263,10 +314,18 @@ class SelectionApplication:
             members = tuple(
                 self._classify_member(
                     instrument_id=instrument_id,
-                    evidence=uow.market_queries.membership_as_of(
-                        scope=scope,
-                        instrument_id=instrument_id,
-                        decision_time=decision_time,
+                    evidence=(
+                        uow.market_queries.membership_for_exploratory_retrospective(
+                            scope=scope,
+                            instrument_id=instrument_id,
+                            retrospective=retrospective_scope,
+                        )
+                        if retrospective_scope is not None
+                        else uow.market_queries.membership_as_of(
+                            scope=scope,
+                            instrument_id=instrument_id,
+                            decision_time=decision_time,
+                        )
                     ),
                     scope=scope,
                 )
@@ -296,6 +355,11 @@ class SelectionApplication:
                 scope=scope,
                 members=members,
             )
+            if retrospective_scope is not None:
+                uow.selection.bind_exploratory_retrospective_universe(
+                    universe_revision_id,
+                    retrospective_scope,
+                )
             self._finish(
                 uow,
                 receipt_id=receipt.receipt_id,
@@ -303,7 +367,7 @@ class SelectionApplication:
                 aggregate_id=str(universe_revision_id),
                 aggregate_version=revision,
                 result_hash=result_hash,
-                action="FREEZE_UNIVERSE",
+                action=command_kind,
                 context=context,
                 runtime_claim=runtime_claim,
             )
@@ -329,7 +393,6 @@ class SelectionApplication:
                 replayed=False,
             )
 
-    @_replay_concurrent_success
     def assess_eligibility(
         self,
         *,
@@ -339,18 +402,64 @@ class SelectionApplication:
         context: CommandContext,
         runtime_claim: AttemptClaim | None = None,
     ) -> EligibilityBatch:
+        return self._assess_eligibility(
+            universe_revision_id=universe_revision_id,
+            eligibility_policy_id=eligibility_policy_id,
+            decision_time=decision_time,
+            context=context,
+            runtime_claim=runtime_claim,
+            retrospective_scope=None,
+        )
+
+    def assess_exploratory_retrospective_eligibility(
+        self,
+        *,
+        universe_revision_id: UUID,
+        eligibility_policy_id: UUID,
+        retrospective_scope: ExploratoryRetrospectiveSelectionScope,
+        context: CommandContext,
+        runtime_claim: AttemptClaim | None = None,
+    ) -> EligibilityBatch:
+        """Assess a retrospective Universe under its same exact archive seal."""
+
+        return self._assess_eligibility(
+            universe_revision_id=universe_revision_id,
+            eligibility_policy_id=eligibility_policy_id,
+            decision_time=DecisionTime(retrospective_scope.simulated_event_cutoff),
+            context=context,
+            runtime_claim=runtime_claim,
+            retrospective_scope=retrospective_scope,
+        )
+
+    @_replay_concurrent_success
+    def _assess_eligibility(
+        self,
+        *,
+        universe_revision_id: UUID,
+        eligibility_policy_id: UUID,
+        decision_time: DecisionTime,
+        context: CommandContext,
+        runtime_claim: AttemptClaim | None,
+        retrospective_scope: ExploratoryRetrospectiveSelectionScope | None,
+    ) -> EligibilityBatch:
         decision_time = decision_time if isinstance(decision_time, DecisionTime) else DecisionTime(decision_time)
         request_hash = canonical_json_sha256(
             {
                 "decision_time": decision_time,
                 "eligibility_policy_id": eligibility_policy_id,
+                "retrospective_scope": retrospective_scope,
                 "universe_revision_id": universe_revision_id,
             }
         )
         scope_id = f"{universe_revision_id}:{eligibility_policy_id}"
+        command_kind = (
+            "ASSESS_EXPLORATORY_RETROSPECTIVE_ELIGIBILITY"
+            if retrospective_scope is not None
+            else "ASSESS_ELIGIBILITY"
+        )
         with (
             self._terminal_failure_boundary(
-                operation="ASSESS_ELIGIBILITY",
+                operation=command_kind,
                 scope_id=scope_id,
                 request_hash=request_hash,
                 error_class="COMMAND",
@@ -364,7 +473,7 @@ class SelectionApplication:
                 uow.runtime_finalization.lock_live(runtime_claim)
             receipt = uow.receipts.start(
                 receipt_id=self._id_factory(),
-                command_kind="ASSESS_ELIGIBILITY",
+                command_kind=command_kind,
                 scope_id=scope_id,
                 idempotency_key=context.idempotency_key,
                 request_hash=request_hash,
@@ -379,6 +488,12 @@ class SelectionApplication:
                     receipt_id=receipt.receipt_id,
                     replayed=True,
                 )
+                if retrospective_scope is not None:
+                    uow.selection.require_exploratory_retrospective_eligibility_scope(
+                        universe_revision_id=universe_revision_id,
+                        eligibility_policy_id=eligibility_policy_id,
+                        scope=retrospective_scope,
+                    )
                 self._finalize_runtime(
                     uow,
                     runtime_claim,
@@ -390,6 +505,11 @@ class SelectionApplication:
             universe = uow.selection.lock_frozen_universe(universe_revision_id)
             if universe.decision_time != decision_time:
                 raise ValueError("Eligibility DecisionTime must equal Universe DecisionTime")
+            if retrospective_scope is not None:
+                uow.selection.require_exploratory_retrospective_universe_scope(
+                    universe_revision_id,
+                    retrospective_scope,
+                )
             policy = uow.selection.load_eligibility_policy(eligibility_policy_id)
             assessments = tuple(
                 self._assess_member(
@@ -397,6 +517,7 @@ class SelectionApplication:
                     member=member,
                     policy=policy,
                     decision_time=decision_time,
+                    retrospective_scope=retrospective_scope,
                 )
                 for member in universe.members
             )
@@ -419,6 +540,13 @@ class SelectionApplication:
                 decision_time=decision_time,
                 assessments=assessments,
             )
+            if retrospective_scope is not None:
+                uow.selection.bind_exploratory_retrospective_eligibility(
+                    universe=universe,
+                    eligibility_policy_id=eligibility_policy_id,
+                    scope=retrospective_scope,
+                    assessment_count=len(assessments),
+                )
             self._finish(
                 uow,
                 receipt_id=receipt.receipt_id,
@@ -426,7 +554,7 @@ class SelectionApplication:
                 aggregate_id=scope_id,
                 aggregate_version=1,
                 result_hash=result_hash,
-                action="ASSESS_ELIGIBILITY",
+                action=command_kind,
                 context=context,
                 runtime_claim=runtime_claim,
             )
@@ -568,15 +696,25 @@ class SelectionApplication:
         member: UniverseMemberDecision,
         policy: EligibilityPolicy,
         decision_time: DecisionTime,
+        retrospective_scope: ExploratoryRetrospectiveSelectionScope | None,
     ) -> EligibilityAssessmentDecision:
         reasons = tuple(
             self._evaluate_rule(
                 rule,
-                uow.market_queries.criterion_evidence_as_of(
-                    market_provider_product_id=policy.market_provider_product_id,
-                    rule=rule,
-                    instrument_id=member.instrument_id,
-                    decision_time=decision_time,
+                (
+                    uow.market_queries.criterion_evidence_for_exploratory_retrospective(
+                        market_provider_product_id=policy.market_provider_product_id,
+                        rule=rule,
+                        instrument_id=member.instrument_id,
+                        retrospective=retrospective_scope,
+                    )
+                    if retrospective_scope is not None
+                    else uow.market_queries.criterion_evidence_as_of(
+                        market_provider_product_id=policy.market_provider_product_id,
+                        rule=rule,
+                        instrument_id=member.instrument_id,
+                        decision_time=decision_time,
+                    )
                 ),
             )
             for rule in policy.rules

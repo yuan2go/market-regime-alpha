@@ -234,6 +234,8 @@ EXPECTED_SELECTION_CORE_TABLES: Final[frozenset[str]] = frozenset(
         "eligibility_rule",
         "eligibility_assessment",
         "eligibility_reason",
+        "exploratory_retrospective_universe_revision",
+        "exploratory_retrospective_eligibility_batch",
     }
 )
 

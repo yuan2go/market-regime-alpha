@@ -25,6 +25,8 @@ def test_selection_schema_has_exactly_the_seven_core_authority_relations(
         "eligibility_rule",
         "eligibility_assessment",
         "eligibility_reason",
+        "exploratory_retrospective_universe_revision",
+        "exploratory_retrospective_eligibility_batch",
     }
     assert EXPECTED_SELECTION_TABLES <= tables
     assert {

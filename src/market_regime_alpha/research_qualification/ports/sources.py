@@ -9,6 +9,9 @@ from market_regime_alpha.research_qualification.domain import (
     DatasetSource,
     DatasetSourceRole,
 )
+from market_regime_alpha.research_qualification.domain.exploratory import (
+    ExploratoryRetrospectiveDatasetScope,
+)
 from market_regime_alpha.shared.time import DecisionTime
 
 
@@ -38,6 +41,7 @@ class ResearchSourceQueries(Protocol):
         eligibility_policy_id: UUID,
         decision_time: DecisionTime,
         lock: bool,
+        exploratory_scope: ExploratoryRetrospectiveDatasetScope | None = None,
     ) -> tuple[DatasetPopulationMember, ...]: ...
 
     def market_source_observations(

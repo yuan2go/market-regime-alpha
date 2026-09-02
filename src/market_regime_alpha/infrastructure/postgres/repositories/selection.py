@@ -25,6 +25,7 @@ from market_regime_alpha.selection.domain import (
     EligibilityRule,
     EligibilityRuleKind,
     EligibilityStatus,
+    ExploratoryRetrospectiveSelectionScope,
     FrozenUniverse,
     MarketEvidenceStatus,
     MarketLineage,
@@ -300,6 +301,147 @@ class PostgresSelectionRepository:
                 for member in members
             ),
         )
+
+    def bind_exploratory_retrospective_universe(
+        self,
+        universe_revision_id: UUID,
+        scope: ExploratoryRetrospectiveSelectionScope,
+    ) -> None:
+        content_hash = canonical_json_sha256(
+            {
+                "evidence_lane": scope.evidence_lane,
+                "knowledge_cutoff": scope.knowledge_cutoff,
+                "market_archive_id": scope.market_archive_id,
+                "market_archive_seal_id": scope.market_archive_seal_id,
+                "scope_content_sha256": str(scope.content_sha256),
+                "simulated_event_cutoff": scope.simulated_event_cutoff,
+                "universe_revision_id": universe_revision_id,
+            }
+        )
+        self._connection.execute(
+            """
+            INSERT INTO mra.exploratory_retrospective_universe_revision (
+                universe_revision_id, market_archive_id,
+                market_archive_seal_id, evidence_lane, knowledge_cutoff,
+                simulated_event_cutoff, scope_content_sha256, content_sha256
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                universe_revision_id,
+                scope.market_archive_id,
+                scope.market_archive_seal_id,
+                scope.evidence_lane,
+                scope.knowledge_cutoff,
+                scope.simulated_event_cutoff,
+                str(scope.content_sha256),
+                content_hash,
+            ),
+        )
+
+    def bind_exploratory_retrospective_eligibility(
+        self,
+        *,
+        universe: FrozenUniverse,
+        eligibility_policy_id: UUID,
+        scope: ExploratoryRetrospectiveSelectionScope,
+        assessment_count: int,
+    ) -> None:
+        content_hash = canonical_json_sha256(
+            {
+                "assessment_count": assessment_count,
+                "eligibility_policy_id": eligibility_policy_id,
+                "evidence_lane": scope.evidence_lane,
+                "knowledge_cutoff": scope.knowledge_cutoff,
+                "market_archive_id": scope.market_archive_id,
+                "market_archive_seal_id": scope.market_archive_seal_id,
+                "scope_content_sha256": str(scope.content_sha256),
+                "simulated_event_cutoff": scope.simulated_event_cutoff,
+                "universe_revision_id": universe.universe_revision_id,
+            }
+        )
+        self._connection.execute(
+            """
+            INSERT INTO mra.exploratory_retrospective_eligibility_batch (
+                universe_revision_id, eligibility_policy_id,
+                market_archive_id, market_archive_seal_id, evidence_lane,
+                knowledge_cutoff, simulated_event_cutoff,
+                scope_content_sha256, assessment_count, content_sha256
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                universe.universe_revision_id,
+                eligibility_policy_id,
+                scope.market_archive_id,
+                scope.market_archive_seal_id,
+                scope.evidence_lane,
+                scope.knowledge_cutoff,
+                scope.simulated_event_cutoff,
+                str(scope.content_sha256),
+                assessment_count,
+                content_hash,
+            ),
+        )
+
+    def require_exploratory_retrospective_universe_scope(
+        self,
+        universe_revision_id: UUID,
+        scope: ExploratoryRetrospectiveSelectionScope,
+    ) -> None:
+        row = self._connection.execute(
+            """
+            SELECT market_archive_id, market_archive_seal_id, evidence_lane,
+                   knowledge_cutoff, simulated_event_cutoff,
+                   scope_content_sha256
+            FROM mra.exploratory_retrospective_universe_revision
+            WHERE universe_revision_id = %s
+            FOR SHARE
+            """,
+            (universe_revision_id,),
+        ).fetchone()
+        expected = (
+            scope.market_archive_id,
+            scope.market_archive_seal_id,
+            scope.evidence_lane,
+            scope.knowledge_cutoff,
+            scope.simulated_event_cutoff,
+            str(scope.content_sha256),
+        )
+        if row is None or tuple(row) != expected:
+            raise RuntimeStateConflictError(
+                "retrospective Eligibility requires the exact Universe archive scope"
+            )
+
+    def require_exploratory_retrospective_eligibility_scope(
+        self,
+        *,
+        universe_revision_id: UUID,
+        eligibility_policy_id: UUID,
+        scope: ExploratoryRetrospectiveSelectionScope,
+    ) -> None:
+        row = self._connection.execute(
+            """
+            SELECT market_archive_id, market_archive_seal_id, evidence_lane,
+                   knowledge_cutoff, simulated_event_cutoff,
+                   scope_content_sha256
+            FROM mra.exploratory_retrospective_eligibility_batch
+            WHERE universe_revision_id = %s
+              AND eligibility_policy_id = %s
+            FOR SHARE
+            """,
+            (universe_revision_id, eligibility_policy_id),
+        ).fetchone()
+        expected = (
+            scope.market_archive_id,
+            scope.market_archive_seal_id,
+            scope.evidence_lane,
+            scope.knowledge_cutoff,
+            scope.simulated_event_cutoff,
+            str(scope.content_sha256),
+        )
+        if row is None or tuple(row) != expected:
+            raise RuntimeStateConflictError(
+                "retrospective Eligibility archive scope does not reconcile"
+            )
 
     def load_frozen_universe(
         self,

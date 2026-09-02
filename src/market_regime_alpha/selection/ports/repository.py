@@ -11,6 +11,7 @@ from market_regime_alpha.selection.domain import (
     UniverseDefinition,
     UniverseMemberDecision,
     UniverseScopeSpecification,
+    ExploratoryRetrospectiveSelectionScope,
 )
 from market_regime_alpha.shared.time import DecisionTime
 
@@ -73,6 +74,35 @@ class SelectionRepository(Protocol):
         receipt_id: UUID,
         replayed: bool,
     ) -> EligibilityBatch: ...
+
+    def bind_exploratory_retrospective_universe(
+        self,
+        universe_revision_id: UUID,
+        scope: ExploratoryRetrospectiveSelectionScope,
+    ) -> None: ...
+
+    def bind_exploratory_retrospective_eligibility(
+        self,
+        *,
+        universe: FrozenUniverse,
+        eligibility_policy_id: UUID,
+        scope: ExploratoryRetrospectiveSelectionScope,
+        assessment_count: int,
+    ) -> None: ...
+
+    def require_exploratory_retrospective_universe_scope(
+        self,
+        universe_revision_id: UUID,
+        scope: ExploratoryRetrospectiveSelectionScope,
+    ) -> None: ...
+
+    def require_exploratory_retrospective_eligibility_scope(
+        self,
+        *,
+        universe_revision_id: UUID,
+        eligibility_policy_id: UUID,
+        scope: ExploratoryRetrospectiveSelectionScope,
+    ) -> None: ...
 
 
 __all__ = ["SelectionRepository"]

@@ -18123,6 +18123,243 @@ CREATE TRIGGER market_archive_slice_gap_append_only BEFORE UPDATE OR DELETE ON m
 CREATE TRIGGER market_archive_resource_stop_append_only BEFORE UPDATE OR DELETE ON mra.market_archive_resource_stop FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
 CREATE TRIGGER market_archive_seal_append_only BEFORE UPDATE OR DELETE ON mra.market_archive_seal FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
 
+-- Selection-owned dual-clock bindings. Ordinary Selection remains strict PIT.
+CREATE TABLE mra.exploratory_retrospective_universe_revision (
+    universe_revision_id uuid PRIMARY KEY
+        REFERENCES mra.universe_revision(universe_revision_id) ON DELETE RESTRICT,
+    market_archive_id uuid NOT NULL
+        REFERENCES mra.market_archive(market_archive_id) ON DELETE RESTRICT,
+    market_archive_seal_id uuid NOT NULL
+        REFERENCES mra.market_archive_seal(market_archive_seal_id) ON DELETE RESTRICT,
+    evidence_lane text NOT NULL,
+    knowledge_cutoff timestamptz NOT NULL,
+    simulated_event_cutoff timestamptz NOT NULL,
+    scope_content_sha256 text NOT NULL,
+    content_sha256 text NOT NULL,
+    bound_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT exploratory_retrospective_universe_shape_ck CHECK (
+        evidence_lane = 'EXPLORATORY_RETROSPECTIVE'
+        AND simulated_event_cutoff < knowledge_cutoff
+        AND scope_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+CREATE INDEX exploratory_retrospective_universe_archive_idx
+    ON mra.exploratory_retrospective_universe_revision(
+        market_archive_id, market_archive_seal_id, universe_revision_id
+    );
+CREATE INDEX exploratory_retrospective_universe_seal_idx
+    ON mra.exploratory_retrospective_universe_revision(
+        market_archive_seal_id, universe_revision_id
+    );
+
+CREATE TABLE mra.exploratory_retrospective_eligibility_batch (
+    universe_revision_id uuid NOT NULL
+        REFERENCES mra.universe_revision(universe_revision_id) ON DELETE RESTRICT,
+    eligibility_policy_id uuid NOT NULL
+        REFERENCES mra.eligibility_policy(eligibility_policy_id) ON DELETE RESTRICT,
+    market_archive_id uuid NOT NULL
+        REFERENCES mra.market_archive(market_archive_id) ON DELETE RESTRICT,
+    market_archive_seal_id uuid NOT NULL
+        REFERENCES mra.market_archive_seal(market_archive_seal_id) ON DELETE RESTRICT,
+    evidence_lane text NOT NULL,
+    knowledge_cutoff timestamptz NOT NULL,
+    simulated_event_cutoff timestamptz NOT NULL,
+    scope_content_sha256 text NOT NULL,
+    assessment_count integer NOT NULL,
+    content_sha256 text NOT NULL,
+    bound_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    PRIMARY KEY (universe_revision_id, eligibility_policy_id),
+    CONSTRAINT exploratory_retrospective_eligibility_universe_fk
+        FOREIGN KEY (universe_revision_id)
+        REFERENCES mra.exploratory_retrospective_universe_revision(
+            universe_revision_id
+        ) ON DELETE RESTRICT,
+    CONSTRAINT exploratory_retrospective_eligibility_shape_ck CHECK (
+        evidence_lane = 'EXPLORATORY_RETROSPECTIVE'
+        AND simulated_event_cutoff < knowledge_cutoff
+        AND scope_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND assessment_count >= 0
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+CREATE INDEX exploratory_retrospective_eligibility_archive_idx
+    ON mra.exploratory_retrospective_eligibility_batch(
+        market_archive_id, market_archive_seal_id,
+        universe_revision_id, eligibility_policy_id
+    );
+CREATE INDEX exploratory_retrospective_eligibility_seal_idx
+    ON mra.exploratory_retrospective_eligibility_batch(
+        market_archive_seal_id, universe_revision_id, eligibility_policy_id
+    );
+CREATE INDEX exploratory_retrospective_eligibility_policy_idx
+    ON mra.exploratory_retrospective_eligibility_batch(
+        eligibility_policy_id, universe_revision_id
+    );
+
+CREATE FUNCTION mra.validate_exploratory_retrospective_universe()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE expected_scope text;
+DECLARE expected_content text;
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM mra.universe_revision AS revision
+        JOIN mra.market_archive AS archive
+          ON archive.market_archive_id = NEW.market_archive_id
+        JOIN mra.market_archive_seal AS seal
+          ON seal.market_archive_seal_id = NEW.market_archive_seal_id
+         AND seal.market_archive_id = archive.market_archive_id
+        WHERE revision.universe_revision_id = NEW.universe_revision_id
+          AND revision.decision_time = NEW.simulated_event_cutoff
+          AND archive.lane = 'RETROSPECTIVE_BACKFILL'
+          AND archive.evidence_class = 'EXPLORATORY_RETROSPECTIVE'
+          AND seal.knowledge_cutoff = NEW.knowledge_cutoff
+    ) OR EXISTS (
+        SELECT 1
+        FROM mra.universe_member AS member
+        LEFT JOIN mra.classification AS classification
+          ON classification.classification_id = member.classification_id
+        LEFT JOIN mra.instrument AS instrument
+          ON instrument.instrument_id = member.instrument_id
+        WHERE member.universe_revision_id = NEW.universe_revision_id
+          AND (
+              member.market_decision_visible_at > NEW.knowledge_cutoff
+              OR (
+                  member.market_capture_id IS NOT NULL
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM mra.market_archive_capture_observation AS observation
+                      WHERE observation.market_archive_id = NEW.market_archive_id
+                        AND observation.capture_id = member.market_capture_id
+                  )
+              )
+              OR (
+                  classification.source_capture_id IS NOT NULL
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM mra.market_archive_capture_observation AS observation
+                      WHERE observation.market_archive_id = NEW.market_archive_id
+                        AND observation.capture_id = classification.source_capture_id
+                  )
+              )
+              OR (
+                  instrument.source_capture_id IS NOT NULL
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM mra.market_archive_capture_observation AS observation
+                      WHERE observation.market_archive_id = NEW.market_archive_id
+                        AND observation.capture_id = instrument.source_capture_id
+                  )
+              )
+          )
+    ) THEN
+        RAISE EXCEPTION 'Exploratory Universe archive dual-clock binding is invalid'
+            USING ERRCODE = '55000';
+    END IF;
+    expected_scope := mra.canonical_sha256(mra.canonical_json_text(jsonb_build_object(
+        'evidence_lane', NEW.evidence_lane,
+        'knowledge_cutoff', NEW.knowledge_cutoff,
+        'market_archive_id', NEW.market_archive_id,
+        'market_archive_seal_id', NEW.market_archive_seal_id,
+        'simulated_event_cutoff', NEW.simulated_event_cutoff
+    )));
+    expected_content := mra.canonical_sha256(mra.canonical_json_text(jsonb_build_object(
+        'evidence_lane', NEW.evidence_lane,
+        'knowledge_cutoff', NEW.knowledge_cutoff,
+        'market_archive_id', NEW.market_archive_id,
+        'market_archive_seal_id', NEW.market_archive_seal_id,
+        'scope_content_sha256', NEW.scope_content_sha256,
+        'simulated_event_cutoff', NEW.simulated_event_cutoff,
+        'universe_revision_id', NEW.universe_revision_id
+    )));
+    IF NEW.scope_content_sha256 <> expected_scope
+       OR NEW.content_sha256 <> expected_content THEN
+        RAISE EXCEPTION 'Exploratory Universe dual-clock hash is invalid'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.validate_exploratory_retrospective_eligibility()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE expected_content text;
+DECLARE actual_count integer;
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM mra.exploratory_retrospective_universe_revision AS universe
+        WHERE universe.universe_revision_id = NEW.universe_revision_id
+          AND universe.market_archive_id = NEW.market_archive_id
+          AND universe.market_archive_seal_id = NEW.market_archive_seal_id
+          AND universe.evidence_lane = NEW.evidence_lane
+          AND universe.knowledge_cutoff = NEW.knowledge_cutoff
+          AND universe.simulated_event_cutoff = NEW.simulated_event_cutoff
+          AND universe.scope_content_sha256 = NEW.scope_content_sha256
+    ) THEN
+        RAISE EXCEPTION 'Exploratory Eligibility lost its exact Universe scope'
+            USING ERRCODE = '55000';
+    END IF;
+    SELECT count(*) INTO actual_count
+    FROM mra.eligibility_assessment
+    WHERE universe_revision_id = NEW.universe_revision_id
+      AND eligibility_policy_id = NEW.eligibility_policy_id
+      AND decision_time = NEW.simulated_event_cutoff;
+    IF actual_count <> NEW.assessment_count
+       OR actual_count <> (
+           SELECT total_count FROM mra.universe_revision
+           WHERE universe_revision_id = NEW.universe_revision_id
+       ) OR EXISTS (
+           SELECT 1
+           FROM mra.eligibility_reason AS reason
+           JOIN mra.eligibility_assessment AS assessment
+             ON assessment.eligibility_assessment_id = reason.eligibility_assessment_id
+           CROSS JOIN LATERAL unnest(reason.market_capture_ids) AS capture_id
+           WHERE assessment.universe_revision_id = NEW.universe_revision_id
+             AND assessment.eligibility_policy_id = NEW.eligibility_policy_id
+             AND NOT EXISTS (
+                 SELECT 1
+                 FROM mra.market_archive_capture_observation AS observation
+                 WHERE observation.market_archive_id = NEW.market_archive_id
+                   AND observation.capture_id = capture_id
+             )
+       ) THEN
+        RAISE EXCEPTION 'Exploratory Eligibility roster/archive lineage is incomplete'
+            USING ERRCODE = '55000';
+    END IF;
+    expected_content := mra.canonical_sha256(mra.canonical_json_text(jsonb_build_object(
+        'assessment_count', NEW.assessment_count,
+        'eligibility_policy_id', NEW.eligibility_policy_id,
+        'evidence_lane', NEW.evidence_lane,
+        'knowledge_cutoff', NEW.knowledge_cutoff,
+        'market_archive_id', NEW.market_archive_id,
+        'market_archive_seal_id', NEW.market_archive_seal_id,
+        'scope_content_sha256', NEW.scope_content_sha256,
+        'simulated_event_cutoff', NEW.simulated_event_cutoff,
+        'universe_revision_id', NEW.universe_revision_id
+    )));
+    IF NEW.content_sha256 <> expected_content THEN
+        RAISE EXCEPTION 'Exploratory Eligibility content hash is invalid'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER exploratory_retrospective_universe_guard
+BEFORE INSERT ON mra.exploratory_retrospective_universe_revision
+FOR EACH ROW EXECUTE FUNCTION mra.validate_exploratory_retrospective_universe();
+CREATE TRIGGER exploratory_retrospective_eligibility_guard
+BEFORE INSERT ON mra.exploratory_retrospective_eligibility_batch
+FOR EACH ROW EXECUTE FUNCTION mra.validate_exploratory_retrospective_eligibility();
+CREATE TRIGGER exploratory_retrospective_universe_append_only
+BEFORE UPDATE OR DELETE ON mra.exploratory_retrospective_universe_revision
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER exploratory_retrospective_eligibility_append_only
+BEFORE UPDATE OR DELETE ON mra.exploratory_retrospective_eligibility_batch
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+
 -- Research-owned typed dual-clock binding. This never changes Dataset PIT rules.
 CREATE TABLE mra.exploratory_retrospective_dataset (
     dataset_id uuid PRIMARY KEY REFERENCES mra.dataset(dataset_id) ON DELETE RESTRICT,

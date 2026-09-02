@@ -48,6 +48,7 @@ class PostgresResearchSourceQueries:
         eligibility_policy_id: UUID,
         decision_time: DecisionTime,
         lock: bool,
+        exploratory_scope=None,
     ) -> tuple[DatasetPopulationMember, ...]:
         lock_scope = " FOR SHARE OF revision, policy" if lock else ""
         scope = self._connection.execute(
@@ -70,6 +71,47 @@ class PostgresResearchSourceQueries:
             raise RuntimeNotFoundError(
                 "Dataset Selection scope does not exist at the exact DecisionTime"
             )
+        retrospective = self._connection.execute(
+            """
+            SELECT universe.market_archive_id,
+                   universe.market_archive_seal_id,
+                   universe.knowledge_cutoff,
+                   universe.simulated_event_cutoff,
+                   universe.scope_content_sha256,
+                   eligibility.market_archive_id,
+                   eligibility.market_archive_seal_id,
+                   eligibility.knowledge_cutoff,
+                   eligibility.simulated_event_cutoff,
+                   eligibility.scope_content_sha256
+            FROM mra.exploratory_retrospective_universe_revision AS universe
+            JOIN mra.exploratory_retrospective_eligibility_batch AS eligibility
+              ON eligibility.universe_revision_id = universe.universe_revision_id
+            WHERE universe.universe_revision_id = %s
+              AND eligibility.eligibility_policy_id = %s
+            """
+            + (" FOR SHARE OF universe, eligibility" if lock else ""),
+            (universe_revision_id, eligibility_policy_id),
+        ).fetchone()
+        if exploratory_scope is None:
+            if retrospective is not None:
+                raise RuntimeStateConflictError(
+                    "retrospective Selection population requires an exploratory Dataset scope"
+                )
+        else:
+            expected = (
+                exploratory_scope.market_archive_id,
+                exploratory_scope.market_archive_seal_id,
+                exploratory_scope.knowledge_cutoff,
+                exploratory_scope.simulated_event_cutoff,
+                str(exploratory_scope.content_sha256),
+            )
+            if retrospective is not None and (
+                tuple(retrospective[:5]) != expected
+                or tuple(retrospective[5:]) != expected
+            ):
+                raise RuntimeStateConflictError(
+                    "exploratory Dataset requires the exact retrospective Selection scope"
+                )
         lock_rows = " FOR SHARE OF member, assessment" if lock else ""
         rows = self._connection.execute(
             """

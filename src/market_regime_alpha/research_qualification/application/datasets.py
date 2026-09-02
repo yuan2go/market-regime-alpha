@@ -406,6 +406,7 @@ class DatasetCommands:
                 eligibility_policy_id=definition.eligibility_policy_id,
                 decision_time=definition.decision_time,
                 lock=True,
+                exploratory_scope=exploratory_scope,
             )
             validate_population(manifest, expected_population)
             observations = (
