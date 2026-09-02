@@ -67,6 +67,60 @@ class ArchiveOperatorManifest:
         ):
             raise ValueError("operator manifest CaptureRequest hash differs from slice")
 
+    def to_json(self) -> str:
+        request = self.start_request
+        payload = {
+            "archive_code": request.archive_code,
+            "code_artifact_id": str(request.code_artifact_id),
+            "config_artifact_id": str(request.config_artifact_id),
+            "event_window_end": request.event_window_end.isoformat(),
+            "event_window_start": request.event_window_start.isoformat(),
+            "exchange_code": request.exchange_code,
+            "instrument_scope": request.instrument_scope,
+            "instrument_scope_sha256": request.instrument_scope_sha256,
+            "lane": request.lane.value,
+            "market_archive_id": str(request.market_archive_id),
+            "maximum_archive_bytes": request.maximum_archive_bytes,
+            "maximum_slice_bytes": request.maximum_slice_bytes,
+            "price_basis": request.price_basis.value,
+            "provenance_sha256": request.provenance_sha256,
+            "provider_product_id": str(request.provider_product_id),
+            "reserved_free_bytes": request.reserved_free_bytes,
+            "slices": [
+                {
+                    "capture_request": {
+                        "capture_key": item.capture_request.capture_key,
+                        "provider_product_id": str(
+                            item.capture_request.provider_product_id
+                        ),
+                        "request_headers_hash": str(
+                            item.capture_request.request_headers_hash
+                        ),
+                        "resource": item.capture_request.resource,
+                    },
+                    "event_window_end": item.plan.event_window_end.isoformat(),
+                    "event_window_start": item.plan.event_window_start.isoformat(),
+                    "expected_fact_kind": item.plan.expected_fact_kind,
+                    "market_archive_slice_id": str(
+                        item.plan.market_archive_slice_id
+                    ),
+                    "ordinal": item.plan.ordinal,
+                    "schedule_slot": item.schedule_slot,
+                    "scope_key": item.plan.scope_key,
+                }
+                for item in self.slices
+            ],
+            "timeframe": request.timeframe.value,
+            "version": 1,
+        }
+        return json.dumps(
+            payload,
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+
     @classmethod
     def from_json(cls, payload: str) -> ArchiveOperatorManifest:
         try:
