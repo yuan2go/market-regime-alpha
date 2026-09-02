@@ -17,18 +17,25 @@ from market_regime_alpha.market.domain import (
     BarTimeframe,
     ClassificationMembershipRevision,
     ClassificationRevision,
+    EvidenceScope,
     GapFactKind,
     GapKind,
     GapReasonCode,
     Instrument,
+    InstrumentFactKind,
     InstrumentIdentifier,
+    InstrumentLifecycleFactRevision,
     InstrumentType,
+    ListingStatus,
     MarketBarRevision,
     MembershipStatus,
     NormalizationBatch,
     PriceBasis,
     ProviderCapture,
     SourceGap,
+    SecurityStatus,
+    SecurityStatusFactRevision,
+    SpecialTreatmentStatus,
     TradingSession,
 )
 from market_regime_alpha.market.ports import NormalizerContract
@@ -171,6 +178,7 @@ class BaoStockArchiveNormalizer:
         rows = self._row_dicts(envelope, required)
         instruments: list[Instrument] = []
         identifiers: list[InstrumentIdentifier] = []
+        lifecycle: list[InstrumentLifecycleFactRevision] = []
         for row in rows:
             exchange, digits = _parse_code(row["code"])
             if row["type"] != "1":
@@ -207,6 +215,23 @@ class BaoStockArchiveNormalizer:
                         source_capture_id=capture.capture_id,
                     )
                 )
+                lifecycle.append(
+                    InstrumentLifecycleFactRevision(
+                        fact_revision_id=uuid5(
+                            NAMESPACE_URL,
+                            f"mra:lifecycle:{capture.capture_id}:{row['code']}:LISTING_STATUS",
+                        ),
+                        provider_product_id=capture.provider_product_id,
+                        capture_id=capture.capture_id,
+                        instrument_id=instrument_id,
+                        fact_kind=InstrumentFactKind.LISTING_STATUS,
+                        status=ListingStatus.LISTED,
+                        effective_from=effective_from,
+                        effective_to=effective_to,
+                        revision=1,
+                        supersedes_revision_id=None,
+                    )
+                )
         if not instruments:
             query = envelope.query
             assert query.code is not None
@@ -237,6 +262,7 @@ class BaoStockArchiveNormalizer:
             source_provider_product_id=capture.provider_product_id,
             instruments=tuple(instruments),
             instrument_identifiers=tuple(identifiers),
+            lifecycle_status_facts=tuple(lifecycle),
         )
 
     def _normalize_csi300_membership(
@@ -337,13 +363,18 @@ class BaoStockArchiveNormalizer:
     def _normalize_bars(self, capture: ProviderCapture, envelope: _Envelope) -> NormalizationBatch:
         is_daily = envelope.query.kind is BaoStockArchiveQueryKind.HISTORY_DAILY_RAW
         required = (
-            ("date", "code", "open", "high", "low", "close", "volume", "amount", "adjustflag")
+            (
+                "date", "code", "open", "high", "low", "close", "volume",
+                "amount", "adjustflag", "tradestatus", "isST",
+            )
             if is_daily
             else ("date", "time", "code", "open", "high", "low", "close", "volume", "amount", "adjustflag")
         )
         rows = self._row_dicts(envelope, required)
         bars: list[MarketBarRevision] = []
         gaps: list[SourceGap] = []
+        security_statuses: list[SecurityStatusFactRevision] = []
+        special_treatment_statuses: list[InstrumentLifecycleFactRevision] = []
         observed_keys: set[tuple[str, BarTimeframe, datetime]] = set()
         query = envelope.query
         assert query.code is not None
@@ -377,6 +408,54 @@ class BaoStockArchiveNormalizer:
             if observation_key in observed_keys:
                 raise ValueError("BaoStock payload contains a duplicate bar observation")
             observed_keys.add(observation_key)
+            if is_daily:
+                if row.get("tradestatus") not in {"0", "1"}:
+                    raise ValueError("daily bar tradestatus is invalid")
+                if row.get("isST") not in {"0", "1"}:
+                    raise ValueError("daily bar isST is invalid")
+                security_statuses.append(
+                    SecurityStatusFactRevision(
+                        fact_revision_id=uuid5(
+                            NAMESPACE_URL,
+                            f"mra:security-status:{capture.capture_id}:{row['code']}:{session_date.isoformat()}",
+                        ),
+                        provider_product_id=capture.provider_product_id,
+                        capture_id=capture.capture_id,
+                        instrument_id=a_share_instrument_id(row["code"]),
+                        session_id=session.session_id,
+                        evidence_scope=EvidenceScope.DECISION_SESSION,
+                        status=(
+                            SecurityStatus.ACTIVE
+                            if row["tradestatus"] == "1"
+                            else SecurityStatus.SUSPENDED
+                        ),
+                        event_start=session.open_at,
+                        event_end=session.close_at,
+                        revision=1,
+                        supersedes_revision_id=None,
+                    )
+                )
+                special_treatment_statuses.append(
+                    InstrumentLifecycleFactRevision(
+                        fact_revision_id=uuid5(
+                            NAMESPACE_URL,
+                            f"mra:lifecycle:{capture.capture_id}:{row['code']}:ST:{session_date.isoformat()}",
+                        ),
+                        provider_product_id=capture.provider_product_id,
+                        capture_id=capture.capture_id,
+                        instrument_id=a_share_instrument_id(row["code"]),
+                        fact_kind=InstrumentFactKind.SPECIAL_TREATMENT_STATUS,
+                        status=(
+                            SpecialTreatmentStatus.ST
+                            if row["isST"] == "1"
+                            else SpecialTreatmentStatus.NORMAL
+                        ),
+                        effective_from=session.open_at,
+                        effective_to=session.close_at,
+                        revision=1,
+                        supersedes_revision_id=None,
+                    )
+                )
             gap = self._bar_gap_if_needed(capture, row, session.session_id, timeframe, event_start, event_end)
             if gap is not None:
                 gaps.append(gap)
@@ -476,10 +555,37 @@ class BaoStockArchiveNormalizer:
                     reason,
                 )
             )
+            if is_daily and not any(
+                item.session_id == session_id for item in security_statuses
+            ):
+                gaps.append(
+                    SourceGap(
+                        gap_id=uuid5(
+                            NAMESPACE_URL,
+                            f"mra:gap:{capture.capture_id}:SECURITY_STATUS:{session_id}",
+                        ),
+                        provider_product_id=capture.provider_product_id,
+                        capture_id=capture.capture_id,
+                        instrument_id=a_share_instrument_id(query.code),
+                        session_id=session_id,
+                        gap_kind=GapKind.MISSING,
+                        reason_code=reason,
+                        fact_kind=GapFactKind.INSTRUMENT_FACT,
+                        instrument_fact_kind=InstrumentFactKind.SECURITY_STATUS,
+                        evidence_scope=EvidenceScope.DECISION_SESSION,
+                        timeframe=None,
+                        price_basis=None,
+                        event_start=event_start,
+                        event_end=event_end,
+                        detail="BaoStock daily status observation is absent",
+                    )
+                )
         return NormalizationBatch(
             source_capture_id=capture.capture_id,
             source_provider_product_id=capture.provider_product_id,
             bars=tuple(bars),
+            security_status_facts=tuple(security_statuses),
+            lifecycle_status_facts=tuple(special_treatment_statuses),
             gaps=tuple(gaps),
         )
 

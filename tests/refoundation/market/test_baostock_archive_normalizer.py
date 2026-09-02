@@ -23,6 +23,7 @@ from market_regime_alpha.market.domain import (
     GapReasonCode,
     PriceBasis,
     ProviderCapture,
+    SecurityStatus,
     SourceAvailabilityStatus,
     TemporalEnvelope,
 )
@@ -142,6 +143,34 @@ def test_five_minute_raw_bar_preserves_exact_grid_and_decimal_values() -> None:
     assert bar.event_start == datetime(2026, 1, 5, 1, 30, tzinfo=UTC)
     assert bar.event_end == datetime(2026, 1, 5, 1, 35, tzinfo=UTC)
     assert str(bar.close.amount) == "10.1000000000"
+
+
+def test_daily_bar_preserves_session_security_and_st_status() -> None:
+    capture = _capture()
+    query = BaoStockArchiveQuery(
+        kind=BaoStockArchiveQueryKind.HISTORY_DAILY_RAW,
+        code="sh.600000",
+        start_date=date(2026, 1, 5),
+        end_date=date(2026, 1, 5),
+    )
+    fields = [
+        "date", "code", "open", "high", "low", "close", "preclose",
+        "volume", "amount", "adjustflag", "turn", "tradestatus", "pctChg",
+        "isST",
+    ]
+
+    batch = BaoStockArchiveNormalizer().normalize(
+        capture,
+        _payload(
+            query,
+            fields,
+            [["2026-01-05", "sh.600000", "10", "11", "9", "10", "10", "1", "10", "3", "1", "1", "0", "0"]],
+        ),
+    )
+
+    assert batch.security_status_facts[0].status is SecurityStatus.ACTIVE
+    assert batch.lifecycle_status_facts[0].status.value == "NORMAL"
+    assert not batch.gaps
 
 
 def test_blank_ohlc_is_an_explicit_placeholder_gap_not_a_silent_drop() -> None:
