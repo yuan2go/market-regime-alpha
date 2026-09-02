@@ -3,18 +3,18 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Non-authoritative implementation status read model; exact-SHA engineering proof remains in Verification
 > **Owner:** Market Regime Alpha maintainers
-> **Generated At:** 2026-09-02 WP-15 real Provider gate reconciliation
+> **Generated At:** 2026-09-02 WP-16 external Provider-evidence Gate A reconciliation
 > **Repository Implementation Checkpoint:** `ca6f66b50ec2c55250cd82d2fa1ed6c5f35c29b8`
-> **Execution-Time Main Baseline:** `8067a4be74f697a01aaa996465c10ed5b45b5a7f`
+> **Execution-Time Main Baseline:** `16a4ab1d0d42a4144ef1bd1dcd15ac4ba5ab1087`
 > **Containing Documentation Commit:** reported by the final handoff; this read model does not claim a self-referential Git SHA
 > **Previous Verified Snapshot:** merged WP-13 implementation `fc5993e5d9e05dbe2845659140108e1051cf3704` on `origin/main@eb7970b4833228a2faba6715c65c26dae88f6ee5`
 > **Implementation Line Start:** `c3ac21ef1e13f2e8408d30b0481fa9b74c4f9539`
 > **Foundation Source Checkpoint:** `eeff49c7a3995ba6d65045be88d4244617301234`
 > **Legacy Business Implementation Parent:** `0382dad416d6d50d1eea0bda1603d7c359d65274`
 > **Schema Epochs:** canonical business `LEGACY_MIGRATIONS_001_106`; target draft `MRA_REFOUNDATION_1 / DRAFT / NOT_CUT_OVER`
-> **Generator:** `WP-ARCHITECTURE-REFOUNDATION-15 real Provider gate reconciliation; non-authoritative read model`
-> **Source Tree IDs:** root `c1198fa61e432d46a416e863d32a7b253abdf67e`; source `ccc42e2a732f0738c560d762ce3c61a1418c475e`; tests `4a2148ff361c057db68d4ee3e758266246b010dd`; Research Qualification tree `453e0f4f81d62a27ebd1e8237fae1627901c95b8`; Market tree `d0efafaa99e7cc575b619f1a3791112e432bb5f0`; Runtime tree `b01c45b9ca7009fe8ddc9cba227f2f656473c6c1`; target baseline blob `2b4f587da1f616ef6b0eeaf15621cbe1c116be50`; legacy migrations tree `6d3730548780ad6244d2cfecb4fb3559064b6f06`
-> **Code Evidence:** target and legacy source/migration packages, `tests`, [WP-14 canonical design](../references/WP-ARCHITECTURE-REFOUNDATION-14-Formal-Research-Engineering-Readiness-Design.md), [WP-14 immutable Verification](../references/WP-ARCHITECTURE-REFOUNDATION-14-Formal-Research-Engineering-Readiness-Verification.md), and [WP-15 real campaign Verification](../references/WP-ARCHITECTURE-REFOUNDATION-15-Formal-Research-Proof-Campaign-Verification.md)
+> **Generator:** `WP-ARCHITECTURE-REFOUNDATION-16 external Provider-evidence Gate A reconciliation; non-authoritative read model`
+> **Source Tree IDs:** execution-baseline root `6f12a62c63b869000c08b0bf2673e9a3721187f6`; source `ccc42e2a732f0738c560d762ce3c61a1418c475e`; tests `4a2148ff361c057db68d4ee3e758266246b010dd`; Research Qualification tree `453e0f4f81d62a27ebd1e8237fae1627901c95b8`; Market tree `d0efafaa99e7cc575b619f1a3791112e432bb5f0`; Runtime tree `b01c45b9ca7009fe8ddc9cba227f2f656473c6c1`; target baseline blob `2b4f587da1f616ef6b0eeaf15621cbe1c116be50`; legacy migrations tree `6d3730548780ad6244d2cfecb4fb3559064b6f06`
+> **Code Evidence:** target and legacy source/migration packages, `tests`, [WP-14 canonical design](../references/WP-ARCHITECTURE-REFOUNDATION-14-Formal-Research-Engineering-Readiness-Design.md), [WP-14 immutable Verification](../references/WP-ARCHITECTURE-REFOUNDATION-14-Formal-Research-Engineering-Readiness-Verification.md), [WP-15 real campaign Verification](../references/WP-ARCHITECTURE-REFOUNDATION-15-Formal-Research-Proof-Campaign-Verification.md), [WP-16 blocker design](../references/WP-ARCHITECTURE-REFOUNDATION-16-Real-Provider-Evidence-Blocker-Design.md), and [WP-16 immutable Gate A Verification](../references/WP-ARCHITECTURE-REFOUNDATION-16-Real-Provider-Evidence-Gate-A-Verification.md)
 
 This read model records the WP-14 controlled proof Runtime profiles, Formal
 Campaign freeze, protected OOS/prospective mechanics, Market-owned Provider
@@ -22,8 +22,12 @@ qualification mechanics, qualified Formal PIT/Dataset seams, inspection, and
 exact-SHA engineering qualification. It also records the first WP-15 real
 recorded-Provider gate: BaoStock transport and capture succeeded, but the
 complete purpose-specific Provider Decision is `REJECTED`, so no formal
-hypothesis or downstream campaign started. The linked immutable Verifications
-establish those separate results;
+hypothesis or downstream campaign started. WP-16 then audited the exact latest
+main, environment, and accessible Provider/Product evidence and stopped at Gate
+A because no accessible Product has direct recorded evidence for both P0
+availability and finality floors. This is an external-evidence blocker, not a
+vendor-wide incapability finding and not a new Provider Decision. The linked
+immutable Verifications establish those separate results;
 the containing documentation/merge SHA is reported by the final handoff rather
 than self-referenced here.
 This read model is invalid after any source, migration, test, or composition change until
@@ -44,11 +48,11 @@ qualification, trading, or Production claims.
 | Research/Qualification | Current legacy capabilities remain canonical. Permanent target `market_regime_alpha.research_qualification` retains WP-11/WP-12 Authority and adds immutable Formal Campaign predeclaration, complete FIT/VALIDATION/LOCKED_OOS plans, actual Partition/Experiment binding, protected zero-access opening, database-clock due inspection, and read-only reconciliation. Model/Calibration remain absent |
 | Decision/Outcome | Current legacy capabilities remain canonical. Permanent target `market_regime_alpha.decision_support` implements the sole immutable Decision Run per Candidate Set, explicit later-generation Qualification roster, PIT Context, Strategy, Signal, uncalibrated rule Forecast, Opportunity, Thesis, complete Portfolio and Decision-Support-only Risk. Permanent `market_regime_alpha.outcome` retains one commitment-bound Market Target Outcome root, append-only full revisions, exact rosters, dual cutoffs, pure Decimal settlement, typed replay/reconciliation, and a narrow read-only port; all remain test-only before cutover |
 | Execution/Account | Human/manual execution only; observed effective Fill remains the source of trade-caused Position. No target implementation was added |
-| Target epoch | Foundation through WP-14 Formal Research Engineering Readiness are implemented in mutable `MRA_REFOUNDATION_1`; the first WP-15 recorded BaoStock Provider scope is rejected, Formal PIT/OOS/Prospective/Alpha remain unproven, and Model/Calibration, Execution, and Runtime/CLI Cutover remain absent |
+| Target epoch | Foundation through WP-14 Formal Research Engineering Readiness are implemented in mutable `MRA_REFOUNDATION_1`; the first WP-15 recorded BaoStock Provider scope is rejected; WP-16 stops before implementation because no accessible inspected Product has P0 `F/F` evidence; Formal PIT/OOS/Prospective/Alpha remain unproven, and Model/Calibration, Execution, and Runtime/CLI Cutover remain absent |
 | Legacy | Old source, 001–106 migrations, CLIs, compatibility paths, and tests remain physically present as the current implementation and regression oracle |
 
 The convergence state is therefore
-`WP14_EXIT_GATE_PASS / FORMAL_RESEARCH_ENGINEERING_READY / WP15_PROVIDER_GATE_REJECTED / FORMAL_CAMPAIGN_STOPPED / NOT_CUT_OVER`.
+`WP14_EXIT_GATE_PASS / FORMAL_RESEARCH_ENGINEERING_READY / WP15_PROVIDER_GATE_REJECTED / WP16_GATE_A_BLOCKED / FORMAL_CAMPAIGN_STOPPED / NOT_CUT_OVER`.
 Similar legacy vocabulary does not make an old owner part of the target, and
 target test writes do not become canonical business writes.
 
@@ -637,7 +641,49 @@ external evidence and a new immutable Protocol/revision. Exact identities,
 timestamps, floor results, command evidence, and the stop proof are recorded in
 [WP-15](../references/WP-ARCHITECTURE-REFOUNDATION-15-Formal-Research-Proof-Campaign-Verification.md).
 
-## Historical exact-SHA verification through WP-15
+## WP-16 external Provider-evidence Gate A truth
+
+WP-16 fetched merged `origin/main@16a4ab1d0d42a4144ef1bd1dcd15ac4ba5ab1087`
+and audited actual credential/runtime/access availability plus the inspected
+BaoStock, Tencent, Tushare, XtQuant, iFinD, Wind, JQData, RQData, and
+AKShare/EastMoney Product surfaces. Its four-state matrix preserves direct
+facts as `F`, exact-Product contract failures as `X`, unestablished capability
+as `?`, and access-blocked capability as `B`.
+
+No actually accessible Product has direct recorded evidence for both:
+
+```text
+HISTORICAL_AVAILABILITY = F
+REVISION_FINALITY = F
+```
+
+The bounded result is therefore:
+
+```text
+WP16_GATE_A = BLOCKED
+WP16 = BLOCKED_BY_EXTERNAL_PROVIDER_EVIDENCE
+WP16_ENGINEERING_IMPLEMENTATION = NOT_STARTED_BY_GATE
+NEW_PROVIDER_PROTOCOL = NOT_REGISTERED
+NEW_PROVIDER_QUALIFICATION = NOT_RUN
+FORMAL_PIT = BLOCKED
+WP17 = NO-GO
+```
+
+iFinD's public QuantAPI documentation establishes historical/high-frequency
+and some point-in-time interface feasibility, but this environment has no
+usable SDK/client/license and the inspected public contract does not prove
+exact historical-minute publication or revision/finality/version semantics.
+XtQuant, Tushare, Wind, JQData, and RQData are likewise access-blocked here;
+their `B/?` state is not a finding that the vendor is incapable.
+
+No adapter, schema, Product, Protocol, Capture, Decision, or Formal PIT state
+was added. Gate A may reopen only with a new secure credential/runtime/license,
+a versioned vendor publication/finality contract, a new actual Product, or new
+direct evidence that changes a `B/?` cell. The exact stop proof and re-entry
+contract are recorded in the immutable
+[WP-16 Gate A Verification](../references/WP-ARCHITECTURE-REFOUNDATION-16-Real-Provider-Evidence-Gate-A-Verification.md).
+
+## Historical exact-SHA verification through WP-16
 
 The immutable pre-refoundation ledger is
 [WP-02](../references/WP-ARCHITECTURE-REFOUNDATION-02-Pre-Refoundation-Verification-Baseline.md),
@@ -667,10 +713,13 @@ are recorded in
 [WP-14](../references/WP-ARCHITECTURE-REFOUNDATION-14-Formal-Research-Engineering-Readiness-Verification.md).
 The first real Provider gate and its negative empirical ceiling are recorded in
 [WP-15](../references/WP-ARCHITECTURE-REFOUNDATION-15-Formal-Research-Proof-Campaign-Verification.md).
+The bounded external Provider-evidence feasibility stop and re-entry contract
+are recorded in
+[WP-16](../references/WP-ARCHITECTURE-REFOUNDATION-16-Real-Provider-Evidence-Gate-A-Verification.md).
 
 Each immutable ledger owns only its recorded exact-SHA evidence. Earlier
 checkpoint counts and checksums remain historical facts inside those ledgers;
-they are not current catalog or regression claims. At WP-15, GitHub Actions
+they are not current catalog or regression claims. At WP-16, GitHub Actions
 remains disabled, so remote CI is
 `BLOCKED_BY_REPOSITORY_CONFIGURATION / NOT_RUN`, not PASS. No current or
 historical gate admits a Provider or proves Alpha/OOS, broker, trading,

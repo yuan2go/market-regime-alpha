@@ -157,6 +157,19 @@ Checkpoint traceability:
   gate: exact capture/Artifact/Runtime lineage, complete ten-floor `REJECTED`
   Decision, reconciliation, downstream zero-write stop proof, and the explicit
   Formal PIT/OOS/Prospective/Alpha evidence ceiling.
+- [WP-16 Real Provider Evidence Gate A Blocker Design](references/WP-ARCHITECTURE-REFOUNDATION-16-Real-Provider-Evidence-Blocker-Design.md)
+  — frozen four-state feasibility matrix, P0 stop rule, bounded external-
+  evidence conclusion, and exact re-entry contract without adapter/schema work.
+- [WP-16 External Provider Evidence Acquisition Checklist](references/WP-ARCHITECTURE-REFOUNDATION-16-External-Provider-Evidence-Acquisition-Checklist.md)
+  — concise vendor evidence request for exact publication, revision/finality,
+  calendar/membership/status, Decision reference, and Outcome path semantics.
+- [WP-16 Real Provider Evidence Gate A Blocker Implementation Plan](references/WP-ARCHITECTURE-REFOUNDATION-16-Real-Provider-Evidence-Blocker-Implementation-Plan.md)
+  — docs-only checkpoint order, immutable blocker ledger boundary, applicable
+  validation, and explicit `NOT_RUN_BY_GATE_A_STOP` engineering scope.
+- [WP-16 Real Provider Evidence Gate A Verification](references/WP-ARCHITECTURE-REFOUNDATION-16-Real-Provider-Evidence-Gate-A-Verification.md)
+  — immutable exact-baseline ledger for the corrected `F/X/?/B` feasibility
+  matrix, bounded external-evidence blocker, Gate A stop, and explicit re-entry
+  contract without a new Provider Protocol or Qualification Decision.
 
 Design documents in this section define the Target destination. Status and
 Verification records report their explicitly bounded implementation evidence;
