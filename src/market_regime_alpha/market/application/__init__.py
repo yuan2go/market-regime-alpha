@@ -15,6 +15,12 @@ from market_regime_alpha.market.application.results import (
     CaptureMutationResult,
     MarketMutationResult,
 )
+from market_regime_alpha.market.application.archive_operations import (
+    ArchiveSliceExecutionRequest,
+    ArchiveSliceExecutionResult,
+    ArchiveSliceExecutionStatus,
+    MarketArchiveOperations,
+)
 from market_regime_alpha.market.application.service import MarketApplication
 from market_regime_alpha.market.application.provider_qualification import (
     ProviderFinalityObservationResult,
@@ -31,8 +37,12 @@ __all__ = [
     "ArchiveSealResult",
     "ArchiveSlicePlan",
     "ArchiveSliceGapResult",
+    "ArchiveSliceExecutionRequest",
+    "ArchiveSliceExecutionResult",
+    "ArchiveSliceExecutionStatus",
     "CaptureMutationResult",
     "MarketApplication",
+    "MarketArchiveOperations",
     "MarketArchiveResult",
     "MarketMutationResult",
     "ProviderFinalityObservationResult",

@@ -16,6 +16,12 @@ from market_regime_alpha.market.ports.provider import (
     NormalizerContract,
     ProviderResponse,
 )
+from market_regime_alpha.market.ports.archive_operations import (
+    ArchiveCaptureDisposition,
+    ArchiveOperationsReadPort,
+    ArchiveResourceInspector,
+    ArchiveSliceOperatingContract,
+)
 from market_regime_alpha.market.ports.queries import (
     MarketQueries,
     MarketQueryProvider,
@@ -48,6 +54,10 @@ __all__ = [
     "ArchiveUnitOfWork",
     "ArchiveUnitOfWorkProvider",
     "CaptureRequest",
+    "ArchiveCaptureDisposition",
+    "ArchiveOperationsReadPort",
+    "ArchiveResourceInspector",
+    "ArchiveSliceOperatingContract",
     "CaptureSource",
     "MarketArtifactByteStore",
     "MarketArtifactRepository",

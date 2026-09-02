@@ -9,6 +9,9 @@ from typing import Mapping
 from uuid import uuid4
 
 from market_regime_alpha.infrastructure.artifacts import LocalArtifactStore
+from market_regime_alpha.infrastructure.archive_resources import (
+    FilesystemArchiveResourceInspector,
+)
 from market_regime_alpha.infrastructure.postgres.pool import TargetPostgresPool
 from market_regime_alpha.infrastructure.postgres.market_uow import (
     PostgresMarketDatabaseClock,
@@ -67,6 +70,7 @@ from market_regime_alpha.infrastructure.postgres.target_uow import (
 )
 from market_regime_alpha.infrastructure.postgres.queries import (
     PostgresCandidateQueryProvider,
+    PostgresArchiveOperationsReadPort,
     PostgresCandidateResearchInputLoader,
     PostgresDecisionInputPreparationProvider,
     PostgresDecisionRunQueryProvider,
@@ -153,7 +157,11 @@ from market_regime_alpha.selection.application import (
     SelectionApplication,
 )
 from market_regime_alpha.selection.ports import CandidateQueryProvider
-from market_regime_alpha.market.application import ArchiveCommands, MarketApplication
+from market_regime_alpha.market.application import (
+    ArchiveCommands,
+    MarketApplication,
+    MarketArchiveOperations,
+)
 from market_regime_alpha.market.application import ProviderQualificationCommands
 from market_regime_alpha.market.ports import (
     MarketQueryProvider,
@@ -227,6 +235,7 @@ class TargetApplication:
     artifacts: ArtifactApplication
     market: MarketApplication
     market_archives: ArchiveCommands
+    archive_operations: MarketArchiveOperations
     provider_qualifications: ProviderQualificationCommands
     provider_qualification_queries: ProviderQualificationQueryPort
     market_queries: MarketQueryProvider
@@ -281,17 +290,26 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
     )
     uow_provider = PostgresUnitOfWorkProvider(pool)
     byte_store = LocalArtifactStore(settings.artifact_root)
+    market_application = MarketApplication(
+        byte_store,
+        PostgresMarketUnitOfWorkProvider(pool),
+        PostgresMarketDatabaseClock(pool),
+    )
+    archive_commands = ArchiveCommands(
+        PostgresArchiveUnitOfWorkProvider(pool),
+        id_factory=uuid4,
+    )
     return TargetApplication(
         runtime=RuntimeApplication(uow_provider),
         artifacts=ArtifactApplication(byte_store, uow_provider),
-        market=MarketApplication(
-            byte_store,
-            PostgresMarketUnitOfWorkProvider(pool),
+        market=market_application,
+        market_archives=archive_commands,
+        archive_operations=MarketArchiveOperations(
+            market_application,
+            archive_commands,
+            PostgresArchiveOperationsReadPort(pool),
+            FilesystemArchiveResourceInspector(settings.artifact_root),
             PostgresMarketDatabaseClock(pool),
-        ),
-        market_archives=ArchiveCommands(
-            PostgresArchiveUnitOfWorkProvider(pool),
-            id_factory=uuid4,
         ),
         provider_qualifications=ProviderQualificationCommands(
             PostgresProviderQualificationUnitOfWorkProvider(

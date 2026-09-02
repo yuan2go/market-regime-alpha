@@ -17,6 +17,9 @@ from market_regime_alpha.infrastructure.postgres.market_uow import (
     PostgresMarketUnitOfWorkProvider,
 )
 from market_regime_alpha.infrastructure.postgres.pool import TargetPostgresPool
+from market_regime_alpha.infrastructure.postgres.queries.archive_operations import (
+    PostgresArchiveOperationsReadPort,
+)
 from market_regime_alpha.infrastructure.postgres.schema import SchemaManager
 from market_regime_alpha.infrastructure.postgres.uow import PostgresUnitOfWorkProvider
 from market_regime_alpha.market.application import (
@@ -262,6 +265,16 @@ def test_start_archive_uses_database_time_and_atomically_freezes_full_roster(
     assert root[:2] == ("RETROSPECTIVE_BACKFILL", "EXPLORATORY_RETROSPECTIVE")
     assert root[3] == 2
     assert slices == [(1, "sh.600000:2026-01-05"), (2, "sh.600001:2026-01-05")]
+    inspection_pool = TargetPostgresPool(database_url, min_size=0, max_size=1)
+    try:
+        contract = PostgresArchiveOperationsReadPort(inspection_pool).load_slice_contract(
+            request.market_archive_id,
+            request.slices[0].market_archive_slice_id,
+        )
+    finally:
+        inspection_pool.close()
+    assert contract.request_sha256 == request.slices[0].request_sha256
+    assert contract.terminal_status is None
 
 
 def test_changed_archive_request_fails_closed_without_partial_roster(archive_stack) -> None:
