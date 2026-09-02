@@ -14,6 +14,9 @@ from market_regime_alpha.infrastructure.postgres.market_uow import (
     PostgresMarketDatabaseClock,
     PostgresMarketUnitOfWorkProvider,
 )
+from market_regime_alpha.infrastructure.postgres.archive_uow import (
+    PostgresArchiveUnitOfWorkProvider,
+)
 from market_regime_alpha.infrastructure.postgres.candidate_uow import (
     PostgresCandidateUnitOfWorkProvider,
 )
@@ -150,7 +153,7 @@ from market_regime_alpha.selection.application import (
     SelectionApplication,
 )
 from market_regime_alpha.selection.ports import CandidateQueryProvider
-from market_regime_alpha.market.application import MarketApplication
+from market_regime_alpha.market.application import ArchiveCommands, MarketApplication
 from market_regime_alpha.market.application import ProviderQualificationCommands
 from market_regime_alpha.market.ports import (
     MarketQueryProvider,
@@ -223,6 +226,7 @@ class TargetApplication:
     runtime: RuntimeApplication
     artifacts: ArtifactApplication
     market: MarketApplication
+    market_archives: ArchiveCommands
     provider_qualifications: ProviderQualificationCommands
     provider_qualification_queries: ProviderQualificationQueryPort
     market_queries: MarketQueryProvider
@@ -284,6 +288,10 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
             byte_store,
             PostgresMarketUnitOfWorkProvider(pool),
             PostgresMarketDatabaseClock(pool),
+        ),
+        market_archives=ArchiveCommands(
+            PostgresArchiveUnitOfWorkProvider(pool),
+            id_factory=uuid4,
         ),
         provider_qualifications=ProviderQualificationCommands(
             PostgresProviderQualificationUnitOfWorkProvider(

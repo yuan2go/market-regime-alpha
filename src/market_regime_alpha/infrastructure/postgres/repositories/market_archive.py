@@ -24,7 +24,10 @@ from market_regime_alpha.market.domain import (
 from market_regime_alpha.market.ports.archive import ArchiveSliceGapRecord
 from market_regime_alpha.shared.hashing import canonical_json_sha256
 from market_regime_alpha.shared.identity import ContentHash
-from market_regime_alpha.runtime.errors import RuntimeNotFoundError
+from market_regime_alpha.runtime.errors import (
+    RuntimeNotFoundError,
+    RuntimeStateConflictError,
+)
 
 
 class PostgresArchiveRepository:
@@ -203,8 +206,6 @@ class PostgresArchiveRepository:
         capture_id: UUID,
         schedule_slot: str,
         requested_at: datetime,
-        normalized_revision_count: int,
-        normalized_revision_roster_sha256: str,
     ) -> ArchiveCaptureObservation:
         root = self._connection.execute(
             """
@@ -235,6 +236,12 @@ class PostgresArchiveRepository:
         ).fetchone()
         if root is None or slice_row is None or capture is None:
             raise RuntimeNotFoundError("Market archive observation source is missing")
+        normalized = self._connection.execute(
+            "SELECT normalized_revision_count, normalized_revision_roster_sha256 FROM mra.market_capture_normalized_roster(%s)",
+            (capture_id,),
+        ).fetchone()
+        if normalized is None or int(normalized[0]) < 1:
+            raise RuntimeStateConflictError("Archive Capture has no canonical normalization disposition")
         prior = self._connection.execute(
             """
             SELECT market_archive_capture_observation_id, observation_ordinal,
@@ -278,8 +285,8 @@ class PostgresArchiveRepository:
             event_window_end=slice_row[1],
             artifact_sha256=str(capture[4]),
             artifact_size_bytes=int(capture[5]),
-            normalized_revision_count=normalized_revision_count,
-            normalized_revision_roster_sha256=normalized_revision_roster_sha256,
+            normalized_revision_count=int(normalized[0]),
+            normalized_revision_roster_sha256=str(normalized[1]),
             relation=relation,
             timeliness=timeliness,
         )

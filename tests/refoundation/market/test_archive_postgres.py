@@ -30,23 +30,32 @@ from market_regime_alpha.market.domain import (
     ArchiveLane,
     ArchiveSealDisposition,
     BarTimeframe,
+    GapFactKind,
+    GapKind,
+    GapReasonCode,
     MarketFactKind,
+    NormalizationBatch,
     PriceBasis,
     Provider,
     ProviderKind,
     ProviderProduct,
     SourceAvailabilityStatus,
+    SourceGap,
 )
 from market_regime_alpha.runtime.application import (
     ActorType,
     ArtifactApplication,
     CommandContext,
 )
-from market_regime_alpha.runtime.errors import IdempotencyKeyReusedError
+from market_regime_alpha.runtime.errors import (
+    IdempotencyKeyReusedError,
+    RuntimeStateConflictError,
+)
 from market_regime_alpha.shared.hashing import canonical_json_sha256
 from market_regime_alpha.market.ports import (
     CaptureRequest,
     MarketProviderError,
+    NormalizerContract,
     ProviderResponse,
 )
 
@@ -73,6 +82,38 @@ class _BytesProvider:
 class _FailingProvider:
     def capture(self, request: CaptureRequest) -> ProviderResponse:
         raise MarketProviderError("PROVIDER_UNAVAILABLE", "fixture provider unavailable")
+
+
+class _CapturedGapNormalizer:
+    contract = NormalizerContract(
+        implementation="tests.wp17p_captured_gap",
+        version="1",
+        implementation_sha256="f" * 64,
+    )
+
+    def normalize(self, capture, content: bytes) -> NormalizationBatch:
+        return NormalizationBatch(
+            source_capture_id=capture.capture_id,
+            source_provider_product_id=capture.provider_product_id,
+            gaps=(
+                SourceGap(
+                    gap_id=uuid4(),
+                    provider_product_id=capture.provider_product_id,
+                    capture_id=capture.capture_id,
+                    instrument_id=None,
+                    session_id=None,
+                    gap_kind=GapKind.MISSING,
+                    reason_code=GapReasonCode.NO_ROWS_RETURNED,
+                    fact_kind=GapFactKind.DATA_CAPTURE,
+                    instrument_fact_kind=None,
+                    timeframe=None,
+                    price_basis=None,
+                    event_start=None,
+                    event_end=None,
+                    detail="fixture normalization disposition",
+                ),
+            ),
+        )
 
 
 def _context(key: str) -> CommandContext:
@@ -270,18 +311,32 @@ def test_observation_gap_and_seal_preserve_complete_terminal_roster(archive_stac
         _BytesProvider(b'{"rows":[["sh.600000","10.00"]]}'),
         _context("success-capture"),
     )
+    observation_request = RecordArchiveCaptureObservationRequest(
+        market_archive_id=started.market_archive_id,
+        market_archive_slice_id=request.slices[0].market_archive_slice_id,
+        capture_id=success.capture.capture_id,
+        schedule_slot="RETROSPECTIVE_BATCH",
+        requested_at=success.capture.temporal.capture_started_at - timedelta(microseconds=1),
+    )
+    with pytest.raises(RuntimeStateConflictError, match="canonical normalization"):
+        commands.record_capture_observation(
+            observation_request,
+            _context("record-before-normalize"),
+        )
+    market.normalize(
+        success.capture.capture_id,
+        _CapturedGapNormalizer(),
+        _context("success-normalize"),
+    )
     observation = commands.record_capture_observation(
-        RecordArchiveCaptureObservationRequest(
-            market_archive_id=started.market_archive_id,
-            market_archive_slice_id=request.slices[0].market_archive_slice_id,
-            capture_id=success.capture.capture_id,
-            schedule_slot="RETROSPECTIVE_BATCH",
-            requested_at=success.capture.temporal.capture_started_at - timedelta(microseconds=1),
-            normalized_revision_count=0,
-            normalized_revision_roster_sha256=canonical_json_sha256([]),
-        ),
+        observation_request,
         _context("record-observation"),
     )
+    with pytest.raises(RuntimeStateConflictError):
+        commands.record_capture_observation(
+            observation_request,
+            _context("record-second-retrospective-observation"),
+        )
     failure = market.capture(
         CaptureRequest(
             provider_product_id=product.provider_product_id,

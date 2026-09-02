@@ -17511,6 +17511,52 @@ BEGIN
 END;
 $$;
 
+CREATE FUNCTION mra.market_capture_normalized_roster(target_capture_id uuid)
+RETURNS TABLE (
+    normalized_revision_count integer,
+    normalized_revision_roster_sha256 text
+)
+LANGUAGE sql
+STABLE
+AS $$
+    WITH normalized AS (
+        SELECT 'INSTRUMENT'::text AS revision_kind, instrument_id AS revision_id
+        FROM mra.instrument WHERE source_capture_id = target_capture_id
+        UNION ALL
+        SELECT 'INSTRUMENT_IDENTIFIER', instrument_identifier_id
+        FROM mra.instrument_identifier WHERE source_capture_id = target_capture_id
+        UNION ALL
+        SELECT 'TRADING_SESSION', session_id
+        FROM mra.trading_session WHERE source_capture_id = target_capture_id
+        UNION ALL
+        SELECT 'CLASSIFICATION', classification_id
+        FROM mra.classification WHERE source_capture_id = target_capture_id
+        UNION ALL
+        SELECT 'CLASSIFICATION_MEMBERSHIP', membership_revision_id
+        FROM mra.classification_membership_revision WHERE source_capture_id = target_capture_id
+        UNION ALL
+        SELECT 'MARKET_BAR', bar_revision_id
+        FROM mra.market_bar_revision WHERE capture_id = target_capture_id
+        UNION ALL
+        SELECT 'INSTRUMENT_FACT', fact_revision_id
+        FROM mra.instrument_fact_revision WHERE capture_id = target_capture_id
+        UNION ALL
+        SELECT 'CORPORATE_ACTION', corporate_action_revision_id
+        FROM mra.corporate_action_revision WHERE capture_id = target_capture_id
+        UNION ALL
+        SELECT 'SOURCE_GAP', gap_id
+        FROM mra.source_gap WHERE capture_id = target_capture_id
+    )
+    SELECT count(*)::integer,
+           mra.canonical_sha256(mra.canonical_json_text(coalesce(jsonb_agg(
+               jsonb_build_object(
+                   'revision_id', revision_id,
+                   'revision_kind', revision_kind
+               ) ORDER BY revision_kind, revision_id
+           ), '[]'::jsonb)))
+    FROM normalized;
+$$;
+
 CREATE FUNCTION mra.validate_market_archive_observation()
 RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE root mra.market_archive%ROWTYPE;
@@ -17520,6 +17566,8 @@ DECLARE artifact_row mra.artifact%ROWTYPE;
 DECLARE prior mra.market_archive_capture_observation%ROWTYPE;
 DECLARE expected_relation text;
 DECLARE expected_timeliness text;
+DECLARE expected_normalized_count integer;
+DECLARE expected_normalized_hash text;
 BEGIN
     SELECT * INTO root FROM mra.market_archive WHERE market_archive_id = NEW.market_archive_id FOR SHARE;
     SELECT * INTO slice_row FROM mra.market_archive_slice WHERE market_archive_slice_id = NEW.market_archive_slice_id FOR SHARE;
@@ -17538,6 +17586,14 @@ BEGIN
        OR EXISTS (SELECT 1 FROM mra.market_archive_slice_gap WHERE market_archive_slice_id = NEW.market_archive_slice_id) THEN
         RAISE EXCEPTION 'Market archive observation lineage is invalid' USING ERRCODE = '55000';
     END IF;
+    SELECT normalized_revision_count, normalized_revision_roster_sha256
+      INTO expected_normalized_count, expected_normalized_hash
+    FROM mra.market_capture_normalized_roster(NEW.capture_id);
+    IF expected_normalized_count < 1
+       OR NEW.normalized_revision_count <> expected_normalized_count
+       OR NEW.normalized_revision_roster_sha256 <> expected_normalized_hash THEN
+        RAISE EXCEPTION 'Market archive normalized revision roster is incomplete' USING ERRCODE = '55000';
+    END IF;
     SELECT * INTO prior FROM mra.market_archive_capture_observation
     WHERE market_archive_slice_id = NEW.market_archive_slice_id
     ORDER BY observation_ordinal DESC LIMIT 1 FOR SHARE;
@@ -17548,6 +17604,9 @@ BEGIN
         END IF;
     ELSE
         expected_relation := CASE WHEN prior.artifact_sha256 = NEW.artifact_sha256 THEN 'IDENTICAL' ELSE 'CHANGED' END;
+        IF root.lane = 'RETROSPECTIVE_BACKFILL' THEN
+            RAISE EXCEPTION 'Retrospective archive slice permits exactly one observation' USING ERRCODE = '55000';
+        END IF;
         IF NEW.observation_ordinal <> prior.observation_ordinal + 1
            OR NEW.previous_observation_id <> prior.market_archive_capture_observation_id THEN
             RAISE EXCEPTION 'Market archive observation_ordinal chain is invalid' USING ERRCODE = '55000';
@@ -17588,6 +17647,14 @@ RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE root mra.market_archive%ROWTYPE;
 DECLARE terminal_count integer;
 DECLARE resource_count integer;
+DECLARE actual_capture_count integer;
+DECLARE actual_capture_hash text;
+DECLARE actual_artifact_count integer;
+DECLARE actual_artifact_hash text;
+DECLARE actual_normalized_count integer;
+DECLARE actual_normalized_hash text;
+DECLARE actual_gap_count integer;
+DECLARE actual_gap_hash text;
 BEGIN
     SELECT * INTO root FROM mra.market_archive WHERE market_archive_id = NEW.market_archive_id FOR SHARE;
     SELECT count(*), count(*) FILTER (WHERE terminal_status = 'RESOURCE_LIMIT')
@@ -17602,13 +17669,59 @@ BEGIN
         FROM mra.market_archive_slice_gap
         WHERE market_archive_id = NEW.market_archive_id
     ) AS terminal;
+    SELECT count(*),
+           mra.canonical_sha256(mra.canonical_json_text(coalesce(jsonb_agg(
+               jsonb_build_object(
+                   'capture_id', capture_id,
+                   'observation_id', market_archive_capture_observation_id
+               ) ORDER BY market_archive_slice_id, observation_ordinal
+           ), '[]'::jsonb))),
+           count(*),
+           mra.canonical_sha256(mra.canonical_json_text(coalesce(jsonb_agg(
+               jsonb_build_object(
+                   'content_sha256', artifact_sha256,
+                   'size_bytes', artifact_size_bytes
+               ) ORDER BY market_archive_slice_id, observation_ordinal
+           ), '[]'::jsonb))),
+           coalesce(sum(normalized_revision_count), 0)::integer,
+           mra.canonical_sha256(mra.canonical_json_text(coalesce(jsonb_agg(
+               jsonb_build_object(
+                   'observation_id', market_archive_capture_observation_id,
+                   'roster_sha256', normalized_revision_roster_sha256
+               ) ORDER BY market_archive_slice_id, observation_ordinal
+           ), '[]'::jsonb)))
+      INTO actual_capture_count, actual_capture_hash,
+           actual_artifact_count, actual_artifact_hash,
+           actual_normalized_count, actual_normalized_hash
+    FROM mra.market_archive_capture_observation
+    WHERE market_archive_id = NEW.market_archive_id;
+    SELECT count(*),
+           mra.canonical_sha256(mra.canonical_json_text(coalesce(jsonb_agg(
+               jsonb_build_object(
+                   'binding_id', market_archive_slice_gap_id,
+                   'gap_id', gap_id,
+                   'terminal_status', terminal_status
+               ) ORDER BY market_archive_slice_id
+           ), '[]'::jsonb)))
+      INTO actual_gap_count, actual_gap_hash
+    FROM mra.market_archive_slice_gap
+    WHERE market_archive_id = NEW.market_archive_id;
     IF root.lane <> 'RETROSPECTIVE_BACKFILL'
        OR NEW.sealed_at < root.archive_start_at
        OR NEW.knowledge_cutoff <> NEW.sealed_at
        OR terminal_count <> root.slice_count
        OR NEW.slice_count <> root.slice_count
        OR NEW.slice_roster_sha256 <> root.slice_roster_sha256
-       OR (NEW.disposition = 'COMPLETE' AND (NEW.gap_count <> 0 OR terminal_count <> NEW.capture_count))
+       OR NEW.capture_count <> actual_capture_count
+       OR NEW.capture_roster_sha256 <> actual_capture_hash
+       OR NEW.artifact_count <> actual_artifact_count
+       OR NEW.artifact_roster_sha256 <> actual_artifact_hash
+       OR NEW.normalized_revision_count <> actual_normalized_count
+       OR NEW.normalized_revision_roster_sha256 <> actual_normalized_hash
+       OR NEW.gap_count <> actual_gap_count
+       OR NEW.gap_roster_sha256 <> actual_gap_hash
+       OR NEW.capture_count + NEW.gap_count <> root.slice_count
+       OR (NEW.disposition = 'COMPLETE' AND NEW.gap_count <> 0)
        OR (NEW.disposition = 'PARTIAL_WITH_GAPS' AND NEW.gap_count < 1)
        OR (NEW.disposition = 'PARTIAL_WITH_RESOURCE_LIMIT' AND resource_count < 1) THEN
         RAISE EXCEPTION 'Retrospective archive seal roster/disposition is invalid' USING ERRCODE = '55000';

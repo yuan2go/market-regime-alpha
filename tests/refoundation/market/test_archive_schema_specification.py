@@ -104,6 +104,7 @@ def test_prospective_and_seal_guards_live_in_postgres(
                 WHERE namespace.nspname = 'mra'
                   AND item.proname IN (
                     'validate_market_archive',
+                    'market_capture_normalized_roster',
                     'validate_market_archive_observation',
                     'validate_market_archive_seal'
                   )
@@ -115,5 +116,7 @@ def test_prospective_and_seal_guards_live_in_postgres(
     assert "PROSPECTIVE_CONTEMPORANEOUS" in functions
     assert "archive_start_at" in functions
     assert "observation_ordinal" in functions
+    assert "normalized_revision_roster_sha256" in functions
+    assert "SOURCE_GAP" in functions
     assert "RETROSPECTIVE_BACKFILL" in functions
     assert "PARTIAL_WITH_RESOURCE_LIMIT" in functions

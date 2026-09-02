@@ -93,8 +93,6 @@ class RecordArchiveCaptureObservationRequest:
     capture_id: UUID
     schedule_slot: str
     requested_at: datetime
-    normalized_revision_count: int
-    normalized_revision_roster_sha256: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -304,8 +302,6 @@ class ArchiveCommands:
                 capture_id=request.capture_id,
                 schedule_slot=request.schedule_slot,
                 requested_at=request.requested_at,
-                normalized_revision_count=request.normalized_revision_count,
-                normalized_revision_roster_sha256=request.normalized_revision_roster_sha256,
             )
             result_hash = canonical_json_sha256(observation)
             self._finish(

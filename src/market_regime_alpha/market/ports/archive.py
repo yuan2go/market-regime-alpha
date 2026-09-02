@@ -54,8 +54,6 @@ class ArchiveRepository(Protocol):
         capture_id: UUID,
         schedule_slot: str,
         requested_at: datetime,
-        normalized_revision_count: int,
-        normalized_revision_roster_sha256: str,
     ) -> ArchiveCaptureObservation: ...
 
     def get_capture_observation(

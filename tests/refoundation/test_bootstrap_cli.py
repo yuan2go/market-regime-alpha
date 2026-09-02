@@ -30,6 +30,7 @@ from market_regime_alpha.infrastructure.postgres.queries import (
     PostgresCandidateQueryProvider,
 )
 from market_regime_alpha.interfaces.cli import main
+from market_regime_alpha.market.application import ArchiveCommands
 from market_regime_alpha.runtime.application import ActorType, CommandContext
 from market_regime_alpha.research_qualification.application import (
     EvaluationCommands,
@@ -138,6 +139,7 @@ def test_mra_db_bootstrap_verify_and_runtime_inspection_smoke(
         assert isinstance(application.research_partitions, ResearchPartitionCommands)
         assert isinstance(application.research_experiments, ExperimentCommands)
         assert isinstance(application.research_evaluations, EvaluationCommands)
+        assert isinstance(application.market_archives, ArchiveCommands)
         assert isinstance(
             application.research_evaluation_verifier,
             ResearchEvaluationVerifier,
