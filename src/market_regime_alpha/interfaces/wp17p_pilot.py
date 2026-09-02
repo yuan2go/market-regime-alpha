@@ -24,6 +24,7 @@ from market_regime_alpha.market.application import (
 from market_regime_alpha.market.domain import ArchiveLane, BarTimeframe, PriceBasis
 from market_regime_alpha.market.ports import CaptureRequest
 from market_regime_alpha.shared.hashing import canonical_json_sha256, sha256_bytes
+from market_regime_alpha.shared.identity import ContentHash
 
 
 _SHANGHAI = ZoneInfo("Asia/Shanghai")
@@ -302,7 +303,7 @@ def _manifest(
             provider_product_id=provider_product_id,
             capture_key=f"{archive_code}/{ordinal:04d}",
             resource=query.resource,
-            request_headers_hash=_EMPTY_HEADERS_SHA256,
+            request_headers_hash=ContentHash(_EMPTY_HEADERS_SHA256),
         )
         plan = ArchiveSlicePlan(
             market_archive_slice_id=_id(f"{archive_id}:slice:{ordinal}"),

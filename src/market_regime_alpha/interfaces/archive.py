@@ -7,7 +7,6 @@ from datetime import datetime
 import json
 from pathlib import Path
 import re
-from typing import Any, Protocol
 from uuid import UUID
 
 from market_regime_alpha.bootstrap import (
@@ -18,6 +17,7 @@ from market_regime_alpha.bootstrap import (
 from market_regime_alpha.infrastructure.providers.baostock_archive import (
     BaoStockArchiveProvider,
     BaoStockArchiveQuery,
+    BaoStockSdk,
     BaoStockSession,
 )
 from market_regime_alpha.infrastructure.providers.baostock_archive_normalizer import (
@@ -32,18 +32,13 @@ from market_regime_alpha.market.domain import ArchiveLane, BarTimeframe, PriceBa
 from market_regime_alpha.market.ports import CaptureRequest
 from market_regime_alpha.runtime.application import ActorType, CommandContext
 from market_regime_alpha.shared.hashing import canonical_json_sha256
+from market_regime_alpha.shared.identity import ContentHash
 
 
 _NON_OPERATIONAL_DATABASE = re.compile(
     r"(^|[_-])(test(?:ing)?\d*|dev(?:elopment)?\d*|qual(?:ification)?\d*|fixture\d*|tmp\d*|temp\d*)([_-]|$)",
     re.IGNORECASE,
 )
-
-
-class _BaoStockSdk(Protocol):
-    def login(self) -> Any: ...
-
-    def logout(self) -> Any: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,7 +132,9 @@ class ArchiveOperatorManifest:
                     provider_product_id=UUID(capture_raw["provider_product_id"]),
                     capture_key=str(capture_raw["capture_key"]),
                     resource=str(capture_raw["resource"]),
-                    request_headers_hash=str(capture_raw["request_headers_hash"]),
+                    request_headers_hash=ContentHash(
+                        str(capture_raw["request_headers_hash"])
+                    ),
                 )
                 plan = ArchiveSlicePlan(
                     market_archive_slice_id=UUID(item["market_archive_slice_id"]),
@@ -230,7 +227,7 @@ def resume_archive(
     application: TargetApplication,
     manifest: ArchiveOperatorManifest,
     *,
-    sdk: _BaoStockSdk,
+    sdk: BaoStockSdk,
     actor_id: str,
     operation_key: str,
     slice_ids: tuple[UUID, ...] | None = None,

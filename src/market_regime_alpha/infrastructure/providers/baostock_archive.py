@@ -100,7 +100,7 @@ class BaoStockArchiveQuery:
         return query
 
 
-class _BaoStockResult(Protocol):
+class BaoStockResult(Protocol):
     fields: list[str]
     error_code: str
     error_msg: str
@@ -110,18 +110,18 @@ class _BaoStockResult(Protocol):
     def get_row_data(self) -> list[str]: ...
 
 
-class _BaoStockSdk(Protocol):
+class BaoStockSdk(Protocol):
     def login(self) -> Any: ...
 
     def logout(self) -> Any: ...
 
-    def query_history_k_data_plus(self, *args: Any, **kwargs: Any) -> _BaoStockResult: ...
+    def query_history_k_data_plus(self, *args: Any, **kwargs: Any) -> BaoStockResult: ...
 
-    def query_trade_dates(self, *args: Any, **kwargs: Any) -> _BaoStockResult: ...
+    def query_trade_dates(self, *args: Any, **kwargs: Any) -> BaoStockResult: ...
 
-    def query_stock_basic(self, *args: Any, **kwargs: Any) -> _BaoStockResult: ...
+    def query_stock_basic(self, *args: Any, **kwargs: Any) -> BaoStockResult: ...
 
-    def query_hs300_stocks(self, *args: Any, **kwargs: Any) -> _BaoStockResult: ...
+    def query_hs300_stocks(self, *args: Any, **kwargs: Any) -> BaoStockResult: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,7 +137,7 @@ class BaoStockSession:
 
     def __init__(
         self,
-        sdk: _BaoStockSdk,
+        sdk: BaoStockSdk,
         *,
         timeout_seconds: float = 30.0,
         maximum_attempts: int = 2,
@@ -229,7 +229,7 @@ class BaoStockSession:
             f"BaoStock {label} failed after {attempts} bounded attempt(s)",
         ) from last_error
 
-    def _dispatch(self, query: BaoStockArchiveQuery) -> _BaoStockResult:
+    def _dispatch(self, query: BaoStockArchiveQuery) -> BaoStockResult:
         if query.kind is BaoStockArchiveQueryKind.STOCK_BASIC:
             return self._sdk.query_stock_basic(code=query.code or "")
         if query.kind is BaoStockArchiveQueryKind.TRADE_DATES:
@@ -322,5 +322,7 @@ __all__ = [
     "BaoStockArchiveQuery",
     "BaoStockArchiveQueryKind",
     "BaoStockArchiveResult",
+    "BaoStockResult",
+    "BaoStockSdk",
     "BaoStockSession",
 ]

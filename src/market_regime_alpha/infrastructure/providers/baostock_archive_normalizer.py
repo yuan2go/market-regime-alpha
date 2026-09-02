@@ -611,6 +611,8 @@ class BaoStockArchiveNormalizer:
                 "multi-session history requires an exact trading-session roster"
             )
         session = _session(exchange, start_date, capture_id)
+        if session.break_start_at is None or session.break_end_at is None:
+            raise ValueError("archive trading Session requires an exact break interval")
         return (
             ArchiveTradingSession(
                 session_id=session.session_id,
