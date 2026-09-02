@@ -137,6 +137,10 @@ Checkpoint traceability:
   binding, PIT Context, Strategy, Signal, rule-based Forecast, Opportunity,
   Thesis, complete Portfolio/Risk, PostgreSQL qualification, full regression,
   and `WP13_EXIT_GATE = PASS`.
+- [WP-14 Formal Research/OOS/Prospective Engineering Readiness Design](references/WP-ARCHITECTURE-REFOUNDATION-14-Formal-Research-Engineering-Readiness-Design.md)
+  — frozen Provider-qualification, formal campaign predeclaration, controlled
+  Runtime plans, qualified historical visibility, locked-OOS/prospective due,
+  inspection, and engineering-only evidence-ceiling contract.
 
 Design documents in this section define the Target destination. Status and
 Verification records report their explicitly bounded implementation evidence;
