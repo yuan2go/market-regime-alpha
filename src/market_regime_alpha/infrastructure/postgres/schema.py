@@ -267,6 +267,24 @@ EXPECTED_INFERENCE_TABLES: Final[frozenset[str]] = frozenset(
     }
 )
 
+EXPECTED_OPPORTUNITY_TABLES: Final[frozenset[str]] = frozenset(
+    {
+        "opportunity_set",
+        "opportunity",
+        "opportunity_context",
+        "thesis",
+        "thesis_condition",
+    }
+)
+
+EXPECTED_PORTFOLIO_TABLES: Final[frozenset[str]] = frozenset(
+    {"portfolio_policy", "portfolio_proposal", "portfolio_line"}
+)
+
+EXPECTED_RISK_TABLES: Final[frozenset[str]] = frozenset(
+    {"risk_policy", "risk_rule", "risk_decision", "risk_reason"}
+)
+
 EXPECTED_OUTCOME_TABLES: Final[frozenset[str]] = frozenset(
     {
         "market_target_outcome",
@@ -322,6 +340,9 @@ EXPECTED_TARGET_TABLES: Final[frozenset[str]] = (
     | EXPECTED_CONTEXT_TABLES
     | EXPECTED_STRATEGY_TABLES
     | EXPECTED_INFERENCE_TABLES
+    | EXPECTED_OPPORTUNITY_TABLES
+    | EXPECTED_PORTFOLIO_TABLES
+    | EXPECTED_RISK_TABLES
     | EXPECTED_OUTCOME_TABLES
     | EXPECTED_RESEARCH_VALIDITY_TABLES
     | EXPECTED_RESEARCH_QUALIFICATION_TABLES
