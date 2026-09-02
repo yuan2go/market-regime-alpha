@@ -15,6 +15,8 @@ from market_regime_alpha.infrastructure.providers.baostock_archive import (
 )
 from market_regime_alpha.market.domain import (
     BarTimeframe,
+    ClassificationMembershipRevision,
+    ClassificationRevision,
     GapFactKind,
     GapKind,
     GapReasonCode,
@@ -22,6 +24,7 @@ from market_regime_alpha.market.domain import (
     InstrumentIdentifier,
     InstrumentType,
     MarketBarRevision,
+    MembershipStatus,
     NormalizationBatch,
     PriceBasis,
     ProviderCapture,
@@ -106,6 +109,8 @@ class BaoStockArchiveNormalizer:
             return self._normalize_calendar(capture, envelope)
         if envelope.query.kind is BaoStockArchiveQueryKind.STOCK_BASIC:
             return self._normalize_security_master(capture, envelope)
+        if envelope.query.kind is BaoStockArchiveQueryKind.CSI300_MEMBERS:
+            return self._normalize_csi300_membership(capture, envelope)
         if envelope.query.kind in {
             BaoStockArchiveQueryKind.HISTORY_DAILY_RAW,
             BaoStockArchiveQueryKind.HISTORY_5M_RAW,
@@ -226,6 +231,98 @@ class BaoStockArchiveNormalizer:
             source_provider_product_id=capture.provider_product_id,
             instruments=tuple(instruments),
             instrument_identifiers=tuple(identifiers),
+        )
+
+    def _normalize_csi300_membership(
+        self,
+        capture: ProviderCapture,
+        envelope: _Envelope,
+    ) -> NormalizationBatch:
+        required = ("updateDate", "code", "code_name")
+        rows = self._row_dicts(envelope, required)
+        query_date = envelope.query.start_date
+        assert query_date is not None
+        effective_from = datetime.combine(
+            query_date,
+            time(),
+            tzinfo=_SHANGHAI,
+        ).astimezone(UTC)
+        effective_to = effective_from + timedelta(days=1)
+        if not rows:
+            return NormalizationBatch(
+                source_capture_id=capture.capture_id,
+                source_provider_product_id=capture.provider_product_id,
+                gaps=(
+                    SourceGap(
+                        gap_id=uuid5(
+                            NAMESPACE_URL,
+                            f"mra:gap:{capture.capture_id}:csi300:{query_date.isoformat()}",
+                        ),
+                        provider_product_id=capture.provider_product_id,
+                        capture_id=capture.capture_id,
+                        instrument_id=None,
+                        session_id=None,
+                        gap_kind=GapKind.MISSING,
+                        reason_code=GapReasonCode.NO_ROWS_RETURNED,
+                        fact_kind=GapFactKind.CLASSIFICATION_MEMBERSHIP,
+                        instrument_fact_kind=None,
+                        timeframe=None,
+                        price_basis=None,
+                        event_start=effective_from,
+                        event_end=effective_to,
+                        effective_from=effective_from,
+                        effective_to=effective_to,
+                        classification_scheme="INDEX_MEMBERSHIP",
+                        classification_code="CSI300",
+                        detail="BaoStock returned no CSI300 members for the exact as-of date",
+                    ),
+                ),
+            )
+        classification_id = uuid5(
+            NAMESPACE_URL,
+            f"mra:classification:INDEX_MEMBERSHIP:CSI300:{effective_from.isoformat()}",
+        )
+        classification = ClassificationRevision(
+            classification_id=classification_id,
+            classification_scheme="INDEX_MEMBERSHIP",
+            classification_code="CSI300",
+            display_name="CSI 300",
+            revision=1,
+            effective_from=effective_from,
+            effective_to=effective_to,
+            supersedes_classification_id=None,
+            source_capture_id=capture.capture_id,
+        )
+        memberships: list[ClassificationMembershipRevision] = []
+        seen: set[str] = set()
+        for row in rows:
+            if row["updateDate"] != query_date.isoformat():
+                raise ValueError("CSI300 member row date differs from the frozen query")
+            if row["code"] in seen:
+                raise ValueError("CSI300 payload contains a duplicate member")
+            seen.add(row["code"])
+            instrument_id = a_share_instrument_id(row["code"])
+            memberships.append(
+                ClassificationMembershipRevision(
+                    membership_revision_id=uuid5(
+                        NAMESPACE_URL,
+                        f"mra:membership:{classification_id}:{instrument_id}:1",
+                    ),
+                    classification_id=classification_id,
+                    instrument_id=instrument_id,
+                    source_capture_id=capture.capture_id,
+                    membership_status=MembershipStatus.MEMBER,
+                    effective_from=effective_from,
+                    effective_to=effective_to,
+                    revision=1,
+                    supersedes_membership_revision_id=None,
+                )
+            )
+        return NormalizationBatch(
+            source_capture_id=capture.capture_id,
+            source_provider_product_id=capture.provider_product_id,
+            classifications=(classification,),
+            classification_memberships=tuple(memberships),
         )
 
     def _normalize_bars(self, capture: ProviderCapture, envelope: _Envelope) -> NormalizationBatch:

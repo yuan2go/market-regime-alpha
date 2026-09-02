@@ -221,6 +221,62 @@ def test_empty_single_session_history_becomes_typed_gap() -> None:
     assert batch.gaps[0].session_id == a_share_session_id("XSHG", date(2026, 1, 5))
 
 
+def test_csi300_snapshot_preserves_exact_asof_membership_lineage() -> None:
+    capture = _capture()
+    query = BaoStockArchiveQuery(
+        kind=BaoStockArchiveQueryKind.CSI300_MEMBERS,
+        start_date=date(2026, 9, 3),
+        end_date=date(2026, 9, 3),
+    )
+
+    batch = BaoStockArchiveNormalizer(expected_query=query).normalize(
+        capture,
+        _payload(
+            query,
+            ["updateDate", "code", "code_name"],
+            [
+                ["2026-09-03", "sh.600000", "浦发银行"],
+                ["2026-09-03", "sz.000001", "平安银行"],
+            ],
+        ),
+    )
+
+    assert batch.classifications[0].classification_scheme == "INDEX_MEMBERSHIP"
+    assert batch.classifications[0].classification_code == "CSI300"
+    assert len(batch.classification_memberships) == 2
+    assert all(
+        item.classification_id == batch.classifications[0].classification_id
+        for item in batch.classification_memberships
+    )
+    assert {
+        item.instrument_id for item in batch.classification_memberships
+    } == {
+        a_share_instrument_id("sh.600000"),
+        a_share_instrument_id("sz.000001"),
+    }
+
+
+def test_csi300_snapshot_rejects_wrong_date_and_duplicate_member() -> None:
+    capture = _capture()
+    query = BaoStockArchiveQuery(
+        kind=BaoStockArchiveQueryKind.CSI300_MEMBERS,
+        start_date=date(2026, 9, 3),
+        end_date=date(2026, 9, 3),
+    )
+    fields = ["updateDate", "code", "code_name"]
+    with pytest.raises(ValueError, match="date differs"):
+        BaoStockArchiveNormalizer().normalize(
+            capture,
+            _payload(query, fields, [["2026-09-02", "sh.600000", "浦发银行"]]),
+        )
+    row = ["2026-09-03", "sh.600000", "浦发银行"]
+    with pytest.raises(ValueError, match="duplicate member"):
+        BaoStockArchiveNormalizer().normalize(
+            capture,
+            _payload(query, fields, [row, row]),
+        )
+
+
 class _RevisionLineage:
     def __init__(self, head: MarketBarRevisionHead | None) -> None:
         self.head = head
