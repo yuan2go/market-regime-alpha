@@ -96,6 +96,10 @@ from market_regime_alpha.infrastructure.postgres.queries.decision_inference_inpu
     PostgresInferenceInputPreparationProvider,
     PostgresInferenceQueryProvider,
 )
+from market_regime_alpha.infrastructure.postgres.queries.model_forecast_inputs import (
+    PostgresModelForecastInputPreparationProvider,
+    PostgresModelForecastQueryProvider,
+)
 from market_regime_alpha.infrastructure.postgres.queries.decision_opportunity_inputs import (
     PostgresOpportunityInputPreparationProvider,
     PostgresOpportunityQueryProvider,
@@ -140,6 +144,7 @@ from market_regime_alpha.decision_support.application import (
     DecisionRunVerifier,
     DecisionSupportApplication,
     InferenceCommands,
+    ModelForecastCommands,
     OpportunityCommands,
     PortfolioCommands,
     RiskCommands,
@@ -280,6 +285,7 @@ class TargetApplication:
     decision_contexts: ContextCommands
     decision_strategies: StrategyCommands
     decision_inference: InferenceCommands
+    decision_model_forecasts: ModelForecastCommands
     decision_opportunities: OpportunityCommands
     decision_portfolios: PortfolioCommands
     decision_risk: RiskCommands
@@ -419,6 +425,16 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
             PostgresInferenceInputPreparationProvider(pool),
             PostgresInferenceUnitOfWorkProvider(pool),
             PostgresInferenceQueryProvider(pool),
+        ),
+        decision_model_forecasts=ModelForecastCommands(
+            PostgresModelForecastInputPreparationProvider(
+                pool,
+                byte_store,
+                PostgresInferenceInputPreparationProvider(pool),
+            ),
+            PostgresInferenceUnitOfWorkProvider(pool),
+            PostgresInferenceQueryProvider(pool),
+            PostgresModelForecastQueryProvider(pool),
         ),
         decision_opportunities=OpportunityCommands(
             PostgresOpportunityInputPreparationProvider(pool),

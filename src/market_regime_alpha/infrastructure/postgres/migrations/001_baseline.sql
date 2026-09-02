@@ -19489,3 +19489,366 @@ FOR EACH ROW EXECUTE FUNCTION mra.validate_model_version();
 CREATE TRIGGER model_version_append_only
 BEFORE UPDATE OR DELETE ON mra.model_version
 FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+
+-- Decision-Support-owned exact bridge from one immutable ModelVersion output
+-- into one ordinary, uncalibrated Forecast estimate. Rule Forecasts remain
+-- valid without this optional child.
+ALTER TABLE mra.forecast ADD CONSTRAINT forecast_model_parent_uk UNIQUE (
+    forecast_id, forecast_group_id, decision_run_id, strategy_version_id,
+    commitment_id, recorded_at, status, calibration_status
+);
+ALTER TABLE mra.forecast_estimate
+    ADD CONSTRAINT forecast_estimate_model_output_uk UNIQUE (
+        forecast_estimate_id, forecast_id, forecast_group_id,
+        decision_run_id, strategy_version_id, target_metric_definition_id,
+        content_sha256
+    );
+ALTER TABLE mra.model_version
+    ADD CONSTRAINT model_version_forecast_authority_uk UNIQUE (
+        model_version_id, model_id, model_training_run_id,
+        fitted_model_artifact_id, fitted_model_content_sha256,
+        fitted_model_size_bytes, registered_at, content_sha256
+    );
+
+CREATE TABLE mra.forecast_model_binding (
+    forecast_model_binding_id uuid PRIMARY KEY,
+    forecast_id uuid NOT NULL UNIQUE,
+    forecast_group_id uuid NOT NULL,
+    forecast_estimate_id uuid NOT NULL UNIQUE,
+    decision_run_id uuid NOT NULL,
+    strategy_version_id uuid NOT NULL,
+    commitment_id uuid NOT NULL,
+    status text NOT NULL,
+    calibration_status text NOT NULL,
+    reason_code text NOT NULL,
+    target_metric_definition_id uuid NOT NULL,
+    forecast_estimate_content_sha256 text NOT NULL,
+    dataset_id uuid NOT NULL,
+    exploratory_backtest_run_id uuid NOT NULL,
+    exploratory_backtest_arm_id uuid NOT NULL,
+    exploratory_backtest_fold_id uuid NOT NULL,
+    exploratory_backtest_fold_session_id uuid NOT NULL,
+    inference_fold_ordinal integer NOT NULL,
+    model_version_id uuid NOT NULL,
+    model_id uuid NOT NULL,
+    model_training_run_id uuid NOT NULL,
+    training_fold_id uuid NOT NULL,
+    training_fold_ordinal integer NOT NULL,
+    model_version_sha256 text NOT NULL,
+    fitted_model_artifact_id uuid NOT NULL,
+    fitted_model_content_sha256 text NOT NULL,
+    fitted_model_size_bytes bigint NOT NULL,
+    feature_vector_sha256 text NOT NULL,
+    point_estimate numeric(48, 18),
+    model_registered_at timestamptz NOT NULL,
+    forecast_recorded_at timestamptz NOT NULL,
+    inference_input_sha256 text NOT NULL,
+    inference_output_sha256 text NOT NULL,
+    content_sha256 text NOT NULL UNIQUE,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT forecast_model_forecast_fk FOREIGN KEY (
+        forecast_id, forecast_group_id, decision_run_id,
+        strategy_version_id, commitment_id, forecast_recorded_at,
+        status, calibration_status
+    ) REFERENCES mra.forecast(
+        forecast_id, forecast_group_id, decision_run_id,
+        strategy_version_id, commitment_id, recorded_at,
+        status, calibration_status
+    ) ON DELETE RESTRICT,
+    CONSTRAINT forecast_model_estimate_fk FOREIGN KEY (
+        forecast_estimate_id, forecast_id, forecast_group_id,
+        decision_run_id, strategy_version_id,
+        target_metric_definition_id,
+        forecast_estimate_content_sha256
+    ) REFERENCES mra.forecast_estimate(
+        forecast_estimate_id, forecast_id, forecast_group_id,
+        decision_run_id, strategy_version_id,
+        target_metric_definition_id, content_sha256
+    ) ON DELETE RESTRICT,
+    CONSTRAINT forecast_model_decision_fk FOREIGN KEY (decision_run_id)
+        REFERENCES mra.exploratory_retrospective_decision_run(decision_run_id)
+        ON DELETE RESTRICT,
+    CONSTRAINT forecast_model_dataset_fk FOREIGN KEY (dataset_id)
+        REFERENCES mra.exploratory_backtest_dataset(dataset_id)
+        ON DELETE RESTRICT,
+    CONSTRAINT forecast_model_backtest_fk FOREIGN KEY (
+        exploratory_backtest_run_id
+    ) REFERENCES mra.exploratory_backtest_run(exploratory_backtest_run_id)
+        ON DELETE RESTRICT,
+    CONSTRAINT forecast_model_arm_fk FOREIGN KEY (
+        exploratory_backtest_arm_id, exploratory_backtest_run_id
+    ) REFERENCES mra.exploratory_backtest_arm(
+        exploratory_backtest_arm_id, exploratory_backtest_run_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT forecast_model_fold_fk FOREIGN KEY (
+        exploratory_backtest_fold_id, exploratory_backtest_run_id
+    ) REFERENCES mra.exploratory_backtest_fold(
+        exploratory_backtest_fold_id, exploratory_backtest_run_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT forecast_model_session_fk FOREIGN KEY (
+        exploratory_backtest_fold_session_id
+    ) REFERENCES mra.exploratory_backtest_fold_session(
+        exploratory_backtest_fold_session_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT forecast_model_training_fold_fk FOREIGN KEY (
+        training_fold_id, exploratory_backtest_run_id
+    ) REFERENCES mra.exploratory_backtest_fold(
+        exploratory_backtest_fold_id, exploratory_backtest_run_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT forecast_model_version_fk FOREIGN KEY (
+        model_version_id, model_id, model_training_run_id,
+        fitted_model_artifact_id, fitted_model_content_sha256,
+        fitted_model_size_bytes, model_registered_at,
+        model_version_sha256
+    ) REFERENCES mra.model_version(
+        model_version_id, model_id, model_training_run_id,
+        fitted_model_artifact_id, fitted_model_content_sha256,
+        fitted_model_size_bytes, registered_at, content_sha256
+    ) ON DELETE RESTRICT,
+    CONSTRAINT forecast_model_artifact_fk FOREIGN KEY (
+        fitted_model_artifact_id, fitted_model_content_sha256,
+        fitted_model_size_bytes
+    ) REFERENCES mra.artifact(
+        artifact_id, content_sha256, size_bytes
+    ) ON DELETE RESTRICT,
+    CONSTRAINT forecast_model_shape_ck CHECK (
+        inference_fold_ordinal > training_fold_ordinal
+        AND training_fold_ordinal > 0
+        AND status IN ('AVAILABLE', 'NOT_ESTIMABLE')
+        AND ((status = 'AVAILABLE' AND calibration_status = 'UNCALIBRATED'
+              AND point_estimate IS NOT NULL)
+          OR (status = 'NOT_ESTIMABLE'
+              AND calibration_status = 'NOT_APPLICABLE'
+              AND point_estimate IS NULL))
+        AND reason_code ~ '^[A-Z][A-Z0-9_]{0,99}$'
+        AND fitted_model_size_bytes >= 0
+        AND model_registered_at < forecast_recorded_at
+        AND model_version_sha256 ~ '^[0-9a-f]{64}$'
+        AND fitted_model_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND feature_vector_sha256 ~ '^[0-9a-f]{64}$'
+        AND inference_input_sha256 ~ '^[0-9a-f]{64}$'
+        AND inference_output_sha256 ~ '^[0-9a-f]{64}$'
+        AND forecast_estimate_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE INDEX forecast_model_forecast_idx ON mra.forecast_model_binding(
+    forecast_id, forecast_group_id, decision_run_id, strategy_version_id,
+    commitment_id, forecast_recorded_at, status, calibration_status
+);
+CREATE INDEX forecast_model_estimate_idx ON mra.forecast_model_binding(
+    forecast_estimate_id, forecast_id, forecast_group_id, decision_run_id,
+    strategy_version_id, target_metric_definition_id,
+    forecast_estimate_content_sha256
+);
+CREATE INDEX forecast_model_decision_idx
+    ON mra.forecast_model_binding(decision_run_id);
+CREATE INDEX forecast_model_dataset_idx
+    ON mra.forecast_model_binding(dataset_id);
+CREATE INDEX forecast_model_backtest_idx
+    ON mra.forecast_model_binding(exploratory_backtest_run_id);
+CREATE INDEX forecast_model_arm_idx ON mra.forecast_model_binding(
+    exploratory_backtest_arm_id, exploratory_backtest_run_id
+);
+CREATE INDEX forecast_model_fold_idx ON mra.forecast_model_binding(
+    exploratory_backtest_fold_id, exploratory_backtest_run_id
+);
+CREATE INDEX forecast_model_session_idx ON mra.forecast_model_binding(
+    exploratory_backtest_fold_session_id
+);
+CREATE INDEX forecast_model_training_fold_idx ON mra.forecast_model_binding(
+    training_fold_id, exploratory_backtest_run_id
+);
+CREATE INDEX forecast_model_version_idx ON mra.forecast_model_binding(
+    model_version_id, model_id, model_training_run_id,
+    fitted_model_artifact_id, fitted_model_content_sha256,
+    fitted_model_size_bytes, model_registered_at, model_version_sha256
+);
+CREATE INDEX forecast_model_artifact_idx ON mra.forecast_model_binding(
+    fitted_model_artifact_id, fitted_model_content_sha256,
+    fitted_model_size_bytes
+);
+
+CREATE FUNCTION mra.validate_forecast_model_binding()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE expected_input text;
+DECLARE expected_output text;
+DECLARE expected_content text;
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM mra.forecast AS forecast
+        JOIN mra.forecast_estimate AS estimate
+          ON estimate.forecast_estimate_id = NEW.forecast_estimate_id
+         AND estimate.forecast_id = forecast.forecast_id
+         AND estimate.forecast_group_id = forecast.forecast_group_id
+         AND estimate.decision_run_id = forecast.decision_run_id
+         AND estimate.strategy_version_id = forecast.strategy_version_id
+         AND estimate.target_metric_definition_id =
+             NEW.target_metric_definition_id
+         AND estimate.content_sha256 =
+             NEW.forecast_estimate_content_sha256
+        JOIN mra.exploratory_retrospective_decision_run AS decision
+          ON decision.decision_run_id = forecast.decision_run_id
+         AND decision.dataset_id = NEW.dataset_id
+         AND decision.exploratory_backtest_run_id =
+             NEW.exploratory_backtest_run_id
+         AND decision.exploratory_backtest_arm_id =
+             NEW.exploratory_backtest_arm_id
+         AND decision.exploratory_backtest_fold_id =
+             NEW.exploratory_backtest_fold_id
+         AND decision.exploratory_backtest_fold_session_id =
+             NEW.exploratory_backtest_fold_session_id
+        JOIN mra.exploratory_backtest_arm AS inference_arm
+          ON inference_arm.exploratory_backtest_arm_id =
+             decision.exploratory_backtest_arm_id
+         AND inference_arm.exploratory_backtest_run_id =
+             decision.exploratory_backtest_run_id
+         AND inference_arm.arm_kind = 'MODEL_CHALLENGER'
+        JOIN mra.exploratory_backtest_fold AS inference_fold
+          ON inference_fold.exploratory_backtest_fold_id =
+             decision.exploratory_backtest_fold_id
+         AND inference_fold.exploratory_backtest_run_id =
+             decision.exploratory_backtest_run_id
+         AND inference_fold.ordinal = NEW.inference_fold_ordinal
+         AND inference_fold.purpose IN ('DISCOVERY', 'VALIDATION')
+        JOIN mra.exploratory_backtest_fold_session AS inference_session
+          ON inference_session.exploratory_backtest_fold_session_id =
+             decision.exploratory_backtest_fold_session_id
+         AND inference_session.exploratory_backtest_fold_id =
+             inference_fold.exploratory_backtest_fold_id
+         AND inference_session.session_role = 'EVALUATION'
+        JOIN mra.model_version AS version
+          ON version.model_version_id = NEW.model_version_id
+         AND version.model_id = NEW.model_id
+         AND version.model_training_run_id = NEW.model_training_run_id
+         AND version.fitted_model_artifact_id =
+             NEW.fitted_model_artifact_id
+         AND version.fitted_model_content_sha256 =
+             NEW.fitted_model_content_sha256
+         AND version.fitted_model_size_bytes =
+             NEW.fitted_model_size_bytes
+         AND version.registered_at = NEW.model_registered_at
+         AND version.content_sha256 = NEW.model_version_sha256
+        JOIN mra.model_training_run AS training
+          ON training.model_training_run_id = version.model_training_run_id
+         AND training.model_id = version.model_id
+         AND training.exploratory_backtest_run_id =
+             decision.exploratory_backtest_run_id
+         AND training.exploratory_backtest_arm_id =
+             decision.exploratory_backtest_arm_id
+         AND training.exploratory_backtest_fold_id = NEW.training_fold_id
+        JOIN mra.exploratory_backtest_fold AS training_fold
+          ON training_fold.exploratory_backtest_fold_id =
+             training.exploratory_backtest_fold_id
+         AND training_fold.exploratory_backtest_run_id =
+             training.exploratory_backtest_run_id
+         AND training_fold.ordinal = NEW.training_fold_ordinal
+         AND training_fold.purpose = 'FIT'
+        JOIN mra.model AS model
+          ON model.model_id = version.model_id
+         AND model.target_definition_id = forecast.target_definition_id
+        JOIN mra.evaluation_protocol_metric AS training_metric
+          ON training_metric.evaluation_protocol_metric_id =
+             training.evaluation_protocol_metric_id
+         AND training_metric.source_target_metric_definition_id =
+             estimate.target_metric_definition_id
+        JOIN mra.decision_run AS decision_root
+          ON decision_root.decision_run_id = forecast.decision_run_id
+        WHERE forecast.forecast_id = NEW.forecast_id
+          AND forecast.forecast_group_id = NEW.forecast_group_id
+          AND forecast.decision_run_id = NEW.decision_run_id
+          AND forecast.strategy_version_id = NEW.strategy_version_id
+          AND forecast.commitment_id = NEW.commitment_id
+          AND forecast.status = NEW.status
+          AND forecast.calibration_status = NEW.calibration_status
+          AND forecast.reason_code = NEW.reason_code
+          AND estimate.point_estimate IS NOT DISTINCT FROM NEW.point_estimate
+          AND forecast.recorded_at = NEW.forecast_recorded_at
+          AND version.registered_at < forecast.recorded_at
+          AND training_fold.ordinal < inference_fold.ordinal
+          AND NOT EXISTS (
+              SELECT 1
+              FROM mra.model_training_sample AS sample
+              JOIN mra.decision_run AS training_decision
+                ON training_decision.decision_run_id = sample.decision_run_id
+              WHERE sample.model_training_run_id =
+                    training.model_training_run_id
+                AND training_decision.decision_time >=
+                    decision_root.decision_time
+          )
+    ) THEN
+        RAISE EXCEPTION 'Forecast ModelVersion lineage is not later-generation exact'
+            USING ERRCODE = '55000';
+    END IF;
+
+    expected_input := mra.canonical_sha256(mra.canonical_json_text(
+        jsonb_build_object(
+            'dataset_id', NEW.dataset_id,
+            'feature_vector_sha256', NEW.feature_vector_sha256,
+            'fitted_model_artifact_id', NEW.fitted_model_artifact_id,
+            'fitted_model_content_sha256',
+                NEW.fitted_model_content_sha256,
+            'fitted_model_size_bytes', NEW.fitted_model_size_bytes,
+            'model_version_id', NEW.model_version_id,
+            'model_version_sha256', NEW.model_version_sha256
+        )
+    ));
+    expected_output := mra.canonical_sha256(mra.canonical_json_text(
+        jsonb_build_object(
+            'forecast_estimate_id', NEW.forecast_estimate_id,
+            'point_estimate', NEW.point_estimate::text,
+            'reason_code', NEW.reason_code,
+            'state', NEW.status
+        )
+    ));
+    expected_content := mra.canonical_sha256(mra.canonical_json_text(
+        jsonb_build_object(
+            'commitment_id', NEW.commitment_id,
+            'dataset_id', NEW.dataset_id,
+            'decision_run_id', NEW.decision_run_id,
+            'exploratory_backtest_arm_id',
+                NEW.exploratory_backtest_arm_id,
+            'exploratory_backtest_fold_id',
+                NEW.exploratory_backtest_fold_id,
+            'exploratory_backtest_fold_session_id',
+                NEW.exploratory_backtest_fold_session_id,
+            'exploratory_backtest_run_id',
+                NEW.exploratory_backtest_run_id,
+            'forecast_group_id', NEW.forecast_group_id,
+            'forecast_id', NEW.forecast_id,
+            'forecast_estimate_content_sha256',
+                NEW.forecast_estimate_content_sha256,
+            'forecast_model_binding_id', NEW.forecast_model_binding_id,
+            'inference_fold_ordinal', NEW.inference_fold_ordinal,
+            'inference_input_sha256', NEW.inference_input_sha256,
+            'inference_output_sha256', NEW.inference_output_sha256,
+            'model_id', NEW.model_id,
+            'model_registered_at', NEW.model_registered_at,
+            'model_training_run_id', NEW.model_training_run_id,
+            'model_version_id', NEW.model_version_id,
+            'model_version_sha256', NEW.model_version_sha256,
+            'prediction_state', NEW.status,
+            'reason_code', NEW.reason_code,
+            'training_fold_id', NEW.training_fold_id,
+            'training_fold_ordinal', NEW.training_fold_ordinal,
+            'target_metric_definition_id',
+                NEW.target_metric_definition_id
+        )
+    ));
+    IF NEW.inference_input_sha256 <> expected_input
+       OR NEW.inference_output_sha256 <> expected_output
+       OR NEW.content_sha256 <> expected_content THEN
+        RAISE EXCEPTION 'Forecast Model binding hash is invalid'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+CREATE TRIGGER forecast_model_binding_guard
+BEFORE INSERT ON mra.forecast_model_binding
+FOR EACH ROW EXECUTE FUNCTION mra.validate_forecast_model_binding();
+CREATE TRIGGER forecast_model_binding_append_only
+BEFORE UPDATE OR DELETE ON mra.forecast_model_binding
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();

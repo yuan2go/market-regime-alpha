@@ -310,6 +310,7 @@ EXPECTED_INFERENCE_TABLES: Final[frozenset[str]] = frozenset(
         "forecast_run",
         "forecast",
         "forecast_estimate",
+        "forecast_model_binding",
     }
 )
 

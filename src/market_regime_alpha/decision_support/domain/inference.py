@@ -635,6 +635,11 @@ def build_forecast_authority(
     recorded_at: datetime,
     forecast_id_factory: Callable[[SignalPlan, PreparedForecastCommitment], UUID],
     estimate_id_factory: Callable[[StrategyForecastRule, ForecastPlan], UUID],
+    prediction_factory: Callable[
+        [SignalPlan, PreparedForecastCommitment],
+        tuple[ForecastStatus, str, Decimal | None],
+    ]
+    | None = None,
 ) -> ForecastAuthority:
     if not _REQUEST.fullmatch(request_identity):
         raise ValueError("Forecast request identity is invalid")
@@ -650,35 +655,56 @@ def build_forecast_authority(
                 for rule in prepared.strategy_version.forecast_rules
                 if rule.target_definition_id == commitment.target_definition_id
             )
-            available = (
-                signal.status is SignalStatus.PRESENT
-                and signal.candidate.composite_score is not None
-            )
+            if prediction_factory is None:
+                available = (
+                    signal.status is SignalStatus.PRESENT
+                    and signal.candidate.composite_score is not None
+                )
+                status = (
+                    ForecastStatus.AVAILABLE
+                    if available
+                    else ForecastStatus.NOT_APPLICABLE
+                )
+                reason_code = (
+                    "RULE_ESTIMATE_AVAILABLE"
+                    if available
+                    else "SIGNAL_NOT_PRESENT"
+                )
+                model_point = None
+            else:
+                status, reason_code, model_point = prediction_factory(
+                    signal,
+                    commitment,
+                )
+                available = status is ForecastStatus.AVAILABLE
+                if available != (model_point is not None):
+                    raise ValueError(
+                        "Model Forecast availability and estimate differ"
+                    )
             provisional = ForecastPlan(
                 forecast_id=forecast_id_factory(signal, commitment),
                 ordinal=len(forecasts) + 1,
                 signal=signal,
                 commitment=commitment,
-                status=(
-                    ForecastStatus.AVAILABLE
-                    if available
-                    else ForecastStatus.NOT_APPLICABLE
-                ),
+                status=status,
                 calibration_status=(
                     ForecastCalibrationStatus.UNCALIBRATED
                     if available
                     else ForecastCalibrationStatus.NOT_APPLICABLE
                 ),
-                reason_code=(
-                    "RULE_ESTIMATE_AVAILABLE"
-                    if available
-                    else "SIGNAL_NOT_PRESENT"
-                ),
+                reason_code=reason_code,
                 estimate_roster_sha256="0" * 64,
                 estimates=(),
             )
             estimates = tuple(
-                _estimate(rule, provisional, available, estimate_id_factory)
+                _estimate(
+                    rule,
+                    provisional,
+                    available,
+                    estimate_id_factory,
+                    model_point=model_point,
+                    is_model=prediction_factory is not None,
+                )
                 for rule in rules
             )
             estimate_hash = canonical_json_sha256(
@@ -731,15 +757,30 @@ def build_forecast_authority(
     )
 
 
-def _estimate(rule, forecast, available, factory) -> ForecastEstimatePlan:
+def _estimate(
+    rule,
+    forecast,
+    available,
+    factory,
+    *,
+    model_point: Decimal | None = None,
+    is_model: bool = False,
+) -> ForecastEstimatePlan:
+    point: Decimal | None
+    lower: Decimal | None
+    upper: Decimal | None
     if available:
-        assert forecast.signal.candidate.composite_score is not None
-        point = (
-            forecast.signal.candidate.composite_score * rule.coefficient
-            + rule.intercept
-        )
-        lower = point - rule.lower_offset
-        upper = point + rule.upper_offset
+        if is_model:
+            assert model_point is not None
+            point = lower = upper = model_point
+        else:
+            assert forecast.signal.candidate.composite_score is not None
+            point = (
+                forecast.signal.candidate.composite_score * rule.coefficient
+                + rule.intercept
+            )
+            lower = point - rule.lower_offset
+            upper = point + rule.upper_offset
     else:
         point = lower = upper = None
     return ForecastEstimatePlan(

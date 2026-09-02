@@ -30,6 +30,15 @@ from market_regime_alpha.decision_support.ports.inference import (
     InferenceUnitOfWork,
     InferenceUnitOfWorkProvider,
 )
+from market_regime_alpha.decision_support.ports.model_forecast import (
+    ModelForecastArtifactRepository,
+    ModelForecastInputPreparationProvider,
+    ModelForecastBindingSummary,
+    ModelForecastQueryProvider,
+    ModelForecastReconciliation,
+    ModelForecastRepository,
+    PreparedModelForecastInputs,
+)
 from market_regime_alpha.decision_support.ports.strategy import (
     StrategyArtifactRepository,
     StrategyQueryProvider,
@@ -116,6 +125,13 @@ __all__ = [
     "InferenceRuntimeFinalization",
     "InferenceUnitOfWork",
     "InferenceUnitOfWorkProvider",
+    "ModelForecastInputPreparationProvider",
+    "ModelForecastArtifactRepository",
+    "ModelForecastBindingSummary",
+    "ModelForecastQueryProvider",
+    "ModelForecastReconciliation",
+    "ModelForecastRepository",
+    "PreparedModelForecastInputs",
     "OpportunityArtifactRepository",
     "OpportunityDependencyRepository",
     "OpportunityInputPreparationProvider",

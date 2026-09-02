@@ -19,6 +19,10 @@ from market_regime_alpha.runtime.ports import (
     CommandReceiptRepository,
     RuntimeCommandFinalization,
 )
+from market_regime_alpha.decision_support.ports.model_forecast import (
+    ModelForecastArtifactRepository,
+    ModelForecastRepository,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,6 +129,12 @@ class InferenceUnitOfWork(Protocol):
 
     @property
     def dependencies(self) -> InferenceDependencyRepository: ...
+
+    @property
+    def model_forecasts(self) -> ModelForecastRepository: ...
+
+    @property
+    def artifacts(self) -> ModelForecastArtifactRepository: ...
 
     @property
     def receipts(self) -> CommandReceiptRepository: ...

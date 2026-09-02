@@ -46,6 +46,11 @@ from market_regime_alpha.decision_support.domain.model import (
 from market_regime_alpha.decision_support.domain.retrospective import (
     ExploratoryRetrospectiveDecisionScope,
 )
+from market_regime_alpha.decision_support.domain.model_forecast import (
+    ForecastModelBindingPlan,
+    ModelForecastPrediction,
+    ModelPredictionState,
+)
 from market_regime_alpha.decision_support.domain.inference import (
     ForecastAuthority,
     ForecastCalibrationStatus,
@@ -179,9 +184,12 @@ __all__ = [
     "ForecastAuthority",
     "ForecastCalibrationStatus",
     "ForecastEstimatePlan",
+    "ForecastModelBindingPlan",
     "ForecastPlan",
     "ForecastSourceMeasure",
     "ForecastStatus",
+    "ModelForecastPrediction",
+    "ModelPredictionState",
     "OpenDecisionRunRequest",
     "OpportunityAuthority",
     "OpportunityContextPlan",

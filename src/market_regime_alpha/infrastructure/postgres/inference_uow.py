@@ -21,6 +21,12 @@ from market_regime_alpha.infrastructure.postgres.queries.decision_inference_inpu
 from market_regime_alpha.infrastructure.postgres.repositories.decision_inference import (
     PostgresInferenceRepository,
 )
+from market_regime_alpha.infrastructure.postgres.repositories.model_forecasts import (
+    PostgresModelForecastRepository,
+)
+from market_regime_alpha.infrastructure.postgres.repositories.target_artifacts import (
+    PostgresTargetArtifactRepository,
+)
 from market_regime_alpha.infrastructure.postgres.repositories.runtime import (
     PostgresAuditRepository,
     PostgresCommandReceiptRepository,
@@ -58,6 +64,14 @@ class PostgresInferenceUnitOfWork:
     @property
     def dependencies(self) -> PostgresInferenceDependencyRepository:
         return PostgresInferenceDependencyRepository(self._active())
+
+    @property
+    def model_forecasts(self) -> PostgresModelForecastRepository:
+        return PostgresModelForecastRepository(self._active())
+
+    @property
+    def artifacts(self) -> PostgresTargetArtifactRepository:
+        return PostgresTargetArtifactRepository(self._active())
 
     @property
     def receipts(self) -> PostgresCommandReceiptRepository:
