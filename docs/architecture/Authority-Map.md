@@ -97,17 +97,17 @@ Domain errors nor commands and is not a command bus or workflow owner.
 | Research Qualification policy/floors | Research & Qualification, Qualification UoW | `RegisterResearchQualificationPolicy` | `research_qualification_policy`, `research_qualification_policy_floor` | immutable purpose and complete relational floor/decision-rule revision with exact Protocol metric/slice, state, threshold, count, missingness and Evidence requirements; direct supersession only | qualification command |
 | Research Qualification decision | Research & Qualification, Qualification UoW | `DecideResearchQualification` | `research_qualification_decision`, `research_qualification_floor_result`, `research_qualification_floor_evidence` | concrete Assessment + Policy; every floor and exact links to that Assessment's Evidence set complete; generation-safe effective/known time, typed append-only supersession, no generic subject | exact-ID later-generation admission read |
 | Decision Run/requested Target/commitment/reference | Decision Support (`market_regime_alpha.decision_support`) | `OpenDecisionRun` | `decision_run`, `decision_run_target`, `decision_target_commitment`, `decision_reference_observation` | mandatory after Candidate and before Context; exactly one canonical Run per Candidate Set; atomically freezes an ordered Target/version and Decision-time Provider Product roster that survives empty population, every Candidate × requested Target, and exact Decision-visible Market revision or Source Gap with separate value/availability/finality states; no Outcome placeholder | all decision facts, Market Target Outcome |
-| Later-generation Research Qualification input | Decision Support | later qualified form of `OpenDecisionRun` | `decision_run_research_qualification_roster`, `decision_run_research_qualification_member` | one Run roster freezes zero-or-more count/hash; each member has a matching-purpose `ADMITTED` decision FK effective/known and non-superseded at DecisionTime with strictly earlier source Outcome generations; implemented only after the real Qualification parent, never as a WP-09 placeholder | later-generation Context/Forecast/Decision policy only |
-| Context assessment | Decision Support | `AssessContext` | `context_assessment`, `context_metric` | typed Regime/ETF/Theme/Capital kind with evidence and Known Time | Signal/Strategy |
-| Signal | Decision Support | `ProduceSignal` | `signal` | immutable setup assertion; no probability claim | Forecast/Opportunity |
-| Forecast | Decision Support | `ProduceForecast` | `forecast`, `forecast_estimate`, optional `forecast_model_binding` | bound to Decision Target Commitment and checkpoint; calibration explicit; model branch requires Version known by DecisionTime and trained only on earlier Outcome generations | Opportunity/Evaluation |
+| Later-generation Research Qualification input | Decision Support | qualified form of `OpenDecisionRun` | `decision_run_research_qualification_roster`, `decision_run_research_qualification_member` | every Run atomically freezes an intentional zero-or-more ordered count/hash roster; each member has a matching-purpose exact `ADMITTED` decision FK effective/known and non-superseded at DecisionTime with strictly earlier source Outcome generations; no current/latest or caller assertion | later-generation Context/Forecast/Decision policy only |
+| Context assessment | Decision Support | `RegisterContextPolicy`, `AssessContext` | `context_policy`, `context_policy_metric`, `context_assessment`, `context_metric`, `context_metric_source` | immutable typed Regime/ETF/Theme/Capital/Breadth rules; complete Market/PIT source lineage, Known Time, availability and missingness; never Outcome | Signal/Strategy |
+| Signal | Decision Support | `ProduceSignal` | `signal`, `signal_context_binding` | one immutable typed assertion for every Candidate under exact Context/Strategy inputs; explicit no-signal/wait/unknown/not-estimable; no probability claim | Forecast/Opportunity |
+| Forecast | Decision Support | `ProduceForecast` | `forecast`, `forecast_estimate` | complete rule-based Target/commitment/checkpoint estimates; uncalibrated semantics explicit; no Model prerequisite or placeholder | Opportunity/Evaluation |
 | Opportunity | Decision Support | `CreateOpportunity` | `opportunity` | exact Candidate/Signal/Forecast/Context/Strategy input binding; no Risk authorization | Thesis/Portfolio |
 | Thesis/condition | Decision Support | `Create/ReviseThesis` | `thesis`, `thesis_condition` | immutable revision; conditions typed and independently observed | Portfolio, monitoring |
 | Strategy/version | Decision Support | `RegisterStrategyVersion` | `strategy`, `strategy_version` | stable semantics; qualification purpose-scoped | Opportunity/Portfolio |
 | Portfolio policy | Decision Support | `RegisterPortfolioPolicy` | `portfolio_policy` | immutable allocation constraints | proposal |
 | Portfolio proposal/line | Decision Support | `ProposePortfolio` | `portfolio_proposal`, `portfolio_line` | complete allocation result; no account/Fill mutation | Risk/Execution |
 | Risk policy/rules | Decision Support | `RegisterRiskPolicy` | `risk_policy`, `risk_rule` | immutable typed limits, units and missing behavior | risk assessment |
-| Risk decision/reason | Decision Support | `AssessRisk` | `risk_decision`, `risk_reason` | accept/reject/unknown from exact account/market state; rejection final for scope | Execution |
+| Risk decision/reason | Decision Support | `AssessRisk` | `risk_decision`, `risk_reason` | `DECISION_SUPPORT_ONLY` authorization over one complete Proposal using frozen proposal/upstream Market facts and every typed rule; authorized/rejected/unknown/no-action are explicit and rejection is final for this scope; never Account, Intent, broker or trading authority | later Execution may only narrow an accepted scope |
 | Market Target Outcome root/revision | Outcome & Attribution | `SettleMarketTargetOutcome` | `market_target_outcome`, `market_target_outcome_revision` | one root per Decision Target Commitment; exact request retry reuses revision; partial/completion/correction/finality change appends a full snapshot with direct supersession | Outcome read port |
 | Market Target Outcome facts | Outcome & Attribution | same settlement command | `market_target_outcome_source`, `market_target_outcome_observation`, `market_target_outcome_metric`, `market_target_outcome_metric_reference`, `market_target_outcome_metric_observation`, `market_target_outcome_reason` | exact relational source roster; `REFERENCE` concrete-FKs the frozen WP-09 Decision reference while `OBSERVATION`/`PATH_MEMBER` concrete-FK same-revision Outcome observations; revision children keep path/checkpoint/return/MFE/MAE/barrier value, availability, finality and failure independent; two cutoffs; never rewrites Decision | Evaluation/Market Attribution |
 | Market Attribution | Outcome & Attribution | `RunMarketAttribution` | `market_attribution_run`, `market_attribution_line` | diagnostic, reconciled to declared Market Outcome total or `NOT_ESTIMABLE` | Research |
@@ -245,15 +245,18 @@ netted into a Fill.
 
 ## 5. Risk and execution boundary
 
-Risk evaluates the exact account/Position query, active Intent reservations,
-Market/PIT evidence, liquidity/trading restrictions, Portfolio Proposal, and
-every ordered `risk_rule` in the exact Risk Policy at Decision time. Each
-`risk_reason` FK-binds the evaluated rule. Its accepted quantity is an upper
-bound, not a Fill. A rejection cannot be overridden by Strategy code or an
-ordinary retry.
+WP-13 Risk evaluates the complete Portfolio Proposal, its lines, frozen
+Decision-visible Market/PIT lineage and every ordered `risk_rule` in the exact
+Risk Policy. Each `risk_reason` FK-binds the evaluated rule. Its constant
+`DECISION_SUPPORT_ONLY` scope authorizes no Account, Intent, broker request,
+Order, Fill, Position mutation or trading. A rejection cannot be overridden by
+Strategy code or an ordinary retry.
 
-Execution Intent creation re-loads the accepted Proposal and Risk Decision under
-lock and computes remaining authorization:
+After the concrete Account and Execution parents exist, Execution Intent
+creation must re-load an accepted Proposal and Risk Decision plus the exact
+Account Authority Epoch, Fill-derived Position and live reservations under
+lock. It may only narrow capacity or reject; it cannot overwrite or reinterpret
+the Decision Support result. Remaining authorization is then computed as:
 
 ```text
 remaining

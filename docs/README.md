@@ -122,6 +122,10 @@ Checkpoint traceability:
   — immutable exact-SHA engineering proof for Evaluation-bound Evidence,
   complete Assessment, purpose-specific Qualification, generation safety,
   PostgreSQL qualification, full regression, and `WP12_EXIT_GATE = PASS`.
+- [WP-13 Remaining Decision Support Closure Design](references/WP-ARCHITECTURE-REFOUNDATION-13-Remaining-Decision-Support-Design.md)
+  — canonical contract for next-generation Qualification binding, Context,
+  Signal, rule-based Forecast, Opportunity, Thesis, Strategy, Portfolio and
+  Decision-Support-only Risk without Model, Execution or empirical promotion.
 
 Design documents in this section define the Target destination. Status and
 Verification records report their explicitly bounded implementation evidence;

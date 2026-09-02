@@ -180,15 +180,19 @@ Evidence previously labelled “pre-strategy risk” is split into Market/PIT
 facts, Eligibility reasons, Context metrics, or ordinary Evidence. No
 pre-Strategy allow/deny result survives as a Risk Decision.
 
-Risk reloads Proposal, exact account Authority epoch, current Fill-derived
-Position, active Intent reservations, Decision-visible trading restrictions and
-Risk Policy. It emits accepted/rejected/unknown authorization with every rule
-result. Rejection cannot be bypassed by Strategy code, operator convenience, or
-a new idempotency key.
+WP-13 Risk reloads the complete Proposal/line roster, its exact upstream
+Decision-visible Market/PIT facts and Risk Policy. It emits
+authorized/rejected/unknown/no-action with every rule result under the constant
+`DECISION_SUPPORT_ONLY` scope. Rejection cannot be bypassed by Strategy code,
+operator convenience, or a new idempotency key. This result cannot create an
+Account, Intent, Order, Fill, Position mutation, broker request or trade.
 
-Execution remains human-in-the-loop. Intent records authorized scope; observed
-Fill is the only trade fact. Position and sleeve rules are frozen in the
-[Authority Map](Authority-Map.md).
+Execution remains human-in-the-loop and outside WP-13. When its real Account
+and Authority Epoch parents exist, it must bind an accepted Risk Decision and
+may only narrow capacity or reject after account/position/reservation checks;
+it is not a second Risk owner and can never override a rejection. Intent then
+records authorized scope; observed Fill is the only trade fact. Position and
+sleeve rules are frozen in the [Authority Map](Authority-Map.md).
 
 ## 6. Target commitment and Market Target Outcome lifecycle
 
