@@ -41,6 +41,9 @@ from market_regime_alpha.infrastructure.postgres.partition_uow import (
 from market_regime_alpha.infrastructure.postgres.experiment_uow import (
     PostgresExperimentUnitOfWorkProvider,
 )
+from market_regime_alpha.infrastructure.postgres.exploratory_backtest_uow import (
+    PostgresExploratoryBacktestUnitOfWorkProvider,
+)
 from market_regime_alpha.infrastructure.postgres.evaluation_uow import (
     PostgresEvaluationUnitOfWorkProvider,
 )
@@ -113,6 +116,9 @@ from market_regime_alpha.infrastructure.postgres.queries.formal_campaigns import
 from market_regime_alpha.infrastructure.postgres.queries.provider_qualification import (
     PostgresProviderQualificationQueryPort,
 )
+from market_regime_alpha.infrastructure.postgres.queries.exploratory_backtests import (
+    PostgresExploratoryBacktestVerificationPort,
+)
 from market_regime_alpha.infrastructure.postgres.schema import (
     DatabaseIdentity,
     RecreateAuthorization,
@@ -140,6 +146,7 @@ from market_regime_alpha.research_qualification.application import (
     EvaluationCommands,
     EvidenceCommands,
     ExperimentCommands,
+    ExploratoryBacktestCommands,
     ResearchPartitionCommands,
     FormalCampaignCommands,
     ResearchEvaluationVerifier,
@@ -151,6 +158,9 @@ from market_regime_alpha.research_qualification.ports import (
     FormalPitSourceReadPort,
     FormalCampaignQueryPort,
     ResearchQualificationAdmissionReadPort,
+)
+from market_regime_alpha.research_qualification.ports.exploratory_backtest_queries import (
+    ExploratoryBacktestVerificationPort,
 )
 from market_regime_alpha.selection.application import (
     CandidateApplication,
@@ -243,6 +253,8 @@ class TargetApplication:
     research_definitions: ResearchQualificationApplication
     research_partitions: ResearchPartitionCommands
     research_experiments: ExperimentCommands
+    exploratory_backtests: ExploratoryBacktestCommands
+    exploratory_backtest_verifier: ExploratoryBacktestVerificationPort
     research_evaluations: EvaluationCommands
     research_evaluation_verifier: ResearchEvaluationVerifier
     research_evidence: EvidenceCommands
@@ -332,6 +344,13 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
         research_experiments=ExperimentCommands(
             PostgresExperimentUnitOfWorkProvider(pool),
             id_factory=uuid4,
+        ),
+        exploratory_backtests=ExploratoryBacktestCommands(
+            PostgresExploratoryBacktestUnitOfWorkProvider(pool),
+            id_factory=uuid4,
+        ),
+        exploratory_backtest_verifier=(
+            PostgresExploratoryBacktestVerificationPort(pool)
         ),
         research_evaluations=EvaluationCommands(
             PostgresEvaluationUnitOfWorkProvider(pool, id_factory=uuid4),

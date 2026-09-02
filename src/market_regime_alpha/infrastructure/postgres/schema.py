@@ -384,6 +384,17 @@ EXPECTED_RESEARCH_QUALIFICATION_TABLES: Final[frozenset[str]] = frozenset(
     }
 )
 
+EXPECTED_EXPLORATORY_BACKTEST_TABLES: Final[frozenset[str]] = frozenset(
+    {
+        "exploratory_backtest_run",
+        "exploratory_backtest_feature",
+        "exploratory_backtest_arm",
+        "exploratory_backtest_fold",
+        "exploratory_backtest_fold_session",
+        "exploratory_backtest_cost_assumption",
+    }
+)
+
 EXPECTED_TARGET_TABLES: Final[frozenset[str]] = (
     EXPECTED_FOUNDATION_TABLES
     | EXPECTED_MARKET_TABLES
@@ -400,6 +411,7 @@ EXPECTED_TARGET_TABLES: Final[frozenset[str]] = (
     | EXPECTED_OUTCOME_TABLES
     | EXPECTED_RESEARCH_VALIDITY_TABLES
     | EXPECTED_RESEARCH_QUALIFICATION_TABLES
+    | EXPECTED_EXPLORATORY_BACKTEST_TABLES
 )
 
 _LEGACY_TABLE_SIGNATURES: Final[frozenset[str]] = frozenset(
@@ -1726,6 +1738,7 @@ __all__ = [
     "CatalogDriftError",
     "DatabaseIdentity",
     "EXPECTED_DECISION_SUPPORT_TABLES",
+    "EXPECTED_EXPLORATORY_BACKTEST_TABLES",
     "EXPECTED_CONTEXT_TABLES",
     "EXPECTED_FOUNDATION_TABLES",
     "EXPECTED_MARKET_TABLES",

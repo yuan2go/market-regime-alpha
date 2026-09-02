@@ -18005,3 +18005,446 @@ $$;
 CREATE TRIGGER formal_dataset_exploratory_rejection_guard
 BEFORE INSERT ON mra.formal_research_dataset
 FOR EACH ROW EXECUTE FUNCTION mra.reject_exploratory_formal_dataset();
+
+-- Narrow Research-owned predeclaration root for exploratory backtest lineage.
+CREATE TABLE mra.exploratory_backtest_run (
+    exploratory_backtest_run_id uuid PRIMARY KEY,
+    run_code text NOT NULL,
+    generation integer NOT NULL,
+    evidence_lane text NOT NULL,
+    market_archive_id uuid NOT NULL REFERENCES mra.market_archive(market_archive_id) ON DELETE RESTRICT,
+    market_archive_seal_id uuid NOT NULL REFERENCES mra.market_archive_seal(market_archive_seal_id) ON DELETE RESTRICT,
+    hypothesis text NOT NULL,
+    target_definition_id uuid NOT NULL,
+    target_version integer NOT NULL,
+    target_definition_sha256 text NOT NULL,
+    candidate_policy_id uuid NOT NULL REFERENCES mra.candidate_policy(candidate_policy_id) ON DELETE RESTRICT,
+    candidate_policy_sha256 text NOT NULL,
+    context_policy_id uuid NOT NULL REFERENCES mra.context_policy(context_policy_id) ON DELETE RESTRICT,
+    context_policy_sha256 text NOT NULL,
+    strategy_version_id uuid NOT NULL REFERENCES mra.strategy_version(strategy_version_id) ON DELETE RESTRICT,
+    strategy_version_sha256 text NOT NULL,
+    portfolio_policy_id uuid NOT NULL REFERENCES mra.portfolio_policy(portfolio_policy_id) ON DELETE RESTRICT,
+    portfolio_policy_sha256 text NOT NULL,
+    risk_policy_id uuid NOT NULL REFERENCES mra.risk_policy(risk_policy_id) ON DELETE RESTRICT,
+    risk_policy_sha256 text NOT NULL,
+    feature_count integer NOT NULL,
+    feature_roster_sha256 text NOT NULL,
+    arm_count integer NOT NULL,
+    arm_roster_sha256 text NOT NULL,
+    fold_count integer NOT NULL,
+    fold_roster_sha256 text NOT NULL,
+    session_count integer NOT NULL,
+    cost_count integer NOT NULL,
+    cost_roster_sha256 text NOT NULL,
+    random_seed bigint NOT NULL,
+    code_artifact_id uuid NOT NULL,
+    code_content_sha256 text NOT NULL,
+    code_size_bytes bigint NOT NULL,
+    config_artifact_id uuid NOT NULL,
+    config_content_sha256 text NOT NULL,
+    config_size_bytes bigint NOT NULL,
+    provenance_sha256 text NOT NULL,
+    definition_sha256 text NOT NULL,
+    request_identity text NOT NULL,
+    request_sha256 text NOT NULL,
+    registered_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT exploratory_backtest_run_series_uk UNIQUE (run_code, generation),
+    CONSTRAINT exploratory_backtest_run_request_uk UNIQUE (run_code, generation, request_identity),
+    CONSTRAINT exploratory_backtest_run_exact_uk UNIQUE (exploratory_backtest_run_id, definition_sha256),
+    CONSTRAINT exploratory_backtest_run_target_fk FOREIGN KEY (
+        target_definition_id, target_version, target_definition_sha256
+    ) REFERENCES mra.target_definition(target_definition_id, version, content_sha256) ON DELETE RESTRICT,
+    CONSTRAINT exploratory_backtest_run_code_artifact_fk FOREIGN KEY (
+        code_artifact_id, code_content_sha256, code_size_bytes
+    ) REFERENCES mra.artifact(artifact_id, content_sha256, size_bytes) ON DELETE RESTRICT,
+    CONSTRAINT exploratory_backtest_run_config_artifact_fk FOREIGN KEY (
+        config_artifact_id, config_content_sha256, config_size_bytes
+    ) REFERENCES mra.artifact(artifact_id, content_sha256, size_bytes) ON DELETE RESTRICT,
+    CONSTRAINT exploratory_backtest_run_shape_ck CHECK (
+        run_code ~ '^[a-z][a-z0-9_-]{0,99}$' AND generation > 0
+        AND evidence_lane = 'EXPLORATORY_RETROSPECTIVE'
+        AND hypothesis <> '' AND target_version > 0
+        AND feature_count > 0 AND arm_count = 2 AND fold_count > 0
+        AND session_count > 0 AND cost_count > 0 AND random_seed >= 0
+        AND target_definition_sha256 ~ '^[0-9a-f]{64}$'
+        AND candidate_policy_sha256 ~ '^[0-9a-f]{64}$'
+        AND context_policy_sha256 ~ '^[0-9a-f]{64}$'
+        AND strategy_version_sha256 ~ '^[0-9a-f]{64}$'
+        AND portfolio_policy_sha256 ~ '^[0-9a-f]{64}$'
+        AND risk_policy_sha256 ~ '^[0-9a-f]{64}$'
+        AND feature_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND arm_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND fold_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND cost_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND code_content_sha256 ~ '^[0-9a-f]{64}$' AND code_size_bytes >= 0
+        AND config_content_sha256 ~ '^[0-9a-f]{64}$' AND config_size_bytes >= 0
+        AND provenance_sha256 ~ '^[0-9a-f]{64}$'
+        AND definition_sha256 ~ '^[0-9a-f]{64}$'
+        AND request_identity ~ '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$'
+        AND request_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+CREATE INDEX exploratory_backtest_run_archive_idx ON mra.exploratory_backtest_run(market_archive_id, market_archive_seal_id);
+CREATE INDEX exploratory_backtest_run_seal_idx ON mra.exploratory_backtest_run(market_archive_seal_id, exploratory_backtest_run_id);
+CREATE INDEX exploratory_backtest_run_target_idx ON mra.exploratory_backtest_run(target_definition_id, target_version, target_definition_sha256);
+CREATE INDEX exploratory_backtest_run_candidate_idx ON mra.exploratory_backtest_run(candidate_policy_id);
+CREATE INDEX exploratory_backtest_run_context_idx ON mra.exploratory_backtest_run(context_policy_id);
+CREATE INDEX exploratory_backtest_run_strategy_idx ON mra.exploratory_backtest_run(strategy_version_id);
+CREATE INDEX exploratory_backtest_run_portfolio_idx ON mra.exploratory_backtest_run(portfolio_policy_id);
+CREATE INDEX exploratory_backtest_run_risk_idx ON mra.exploratory_backtest_run(risk_policy_id);
+CREATE INDEX exploratory_backtest_run_code_artifact_idx ON mra.exploratory_backtest_run(code_artifact_id, code_content_sha256, code_size_bytes);
+CREATE INDEX exploratory_backtest_run_config_artifact_idx ON mra.exploratory_backtest_run(config_artifact_id, config_content_sha256, config_size_bytes);
+
+CREATE TABLE mra.exploratory_backtest_feature (
+    exploratory_backtest_run_id uuid NOT NULL REFERENCES mra.exploratory_backtest_run(exploratory_backtest_run_id) ON DELETE RESTRICT,
+    feature_ordinal integer NOT NULL,
+    feature_definition_id uuid NOT NULL REFERENCES mra.feature_definition(feature_definition_id) ON DELETE RESTRICT,
+    feature_definition_sha256 text NOT NULL,
+    PRIMARY KEY (exploratory_backtest_run_id, feature_ordinal),
+    CONSTRAINT exploratory_backtest_feature_identity_uk UNIQUE (exploratory_backtest_run_id, feature_definition_id),
+    CONSTRAINT exploratory_backtest_feature_shape_ck CHECK (
+        feature_ordinal > 0 AND feature_definition_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+CREATE INDEX exploratory_backtest_feature_definition_idx ON mra.exploratory_backtest_feature(feature_definition_id);
+
+CREATE TABLE mra.exploratory_backtest_arm (
+    exploratory_backtest_arm_id uuid PRIMARY KEY,
+    exploratory_backtest_run_id uuid NOT NULL REFERENCES mra.exploratory_backtest_run(exploratory_backtest_run_id) ON DELETE RESTRICT,
+    ordinal integer NOT NULL,
+    arm_kind text NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT exploratory_backtest_arm_ordinal_uk UNIQUE (exploratory_backtest_run_id, ordinal),
+    CONSTRAINT exploratory_backtest_arm_kind_uk UNIQUE (exploratory_backtest_run_id, arm_kind),
+    CONSTRAINT exploratory_backtest_arm_exact_uk UNIQUE (exploratory_backtest_arm_id, exploratory_backtest_run_id, content_sha256),
+    CONSTRAINT exploratory_backtest_arm_shape_ck CHECK (
+        ordinal > 0 AND arm_kind IN ('RULE_BASELINE', 'MODEL_CHALLENGER')
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+CREATE INDEX exploratory_backtest_arm_run_idx ON mra.exploratory_backtest_arm(exploratory_backtest_run_id);
+
+CREATE TABLE mra.exploratory_backtest_fold (
+    exploratory_backtest_fold_id uuid PRIMARY KEY,
+    exploratory_backtest_run_id uuid NOT NULL REFERENCES mra.exploratory_backtest_run(exploratory_backtest_run_id) ON DELETE RESTRICT,
+    ordinal integer NOT NULL,
+    purpose text NOT NULL,
+    exchange_code text NOT NULL,
+    purge_sessions integer NOT NULL,
+    embargo_sessions integer NOT NULL,
+    evaluation_protocol_id uuid NOT NULL REFERENCES mra.evaluation_protocol(evaluation_protocol_id) ON DELETE RESTRICT,
+    evaluation_protocol_sha256 text NOT NULL,
+    session_count integer NOT NULL,
+    session_roster_sha256 text NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT exploratory_backtest_fold_ordinal_uk UNIQUE (exploratory_backtest_run_id, ordinal),
+    CONSTRAINT exploratory_backtest_fold_exact_uk UNIQUE (exploratory_backtest_fold_id, exploratory_backtest_run_id, content_sha256),
+    CONSTRAINT exploratory_backtest_fold_scope_uk UNIQUE (exploratory_backtest_fold_id, exploratory_backtest_run_id),
+    CONSTRAINT exploratory_backtest_fold_shape_ck CHECK (
+        ordinal > 0 AND purpose IN ('DISCOVERY', 'FIT', 'VALIDATION')
+        AND exchange_code IN ('XSHG', 'XSHE')
+        AND purge_sessions >= 0 AND embargo_sessions >= 0
+        AND session_count > 0
+        AND evaluation_protocol_sha256 ~ '^[0-9a-f]{64}$'
+        AND session_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+CREATE INDEX exploratory_backtest_fold_run_idx ON mra.exploratory_backtest_fold(exploratory_backtest_run_id);
+CREATE INDEX exploratory_backtest_fold_protocol_idx ON mra.exploratory_backtest_fold(evaluation_protocol_id);
+
+CREATE TABLE mra.exploratory_backtest_fold_session (
+    exploratory_backtest_fold_session_id uuid PRIMARY KEY,
+    exploratory_backtest_fold_id uuid NOT NULL,
+    exploratory_backtest_run_id uuid NOT NULL,
+    ordinal integer NOT NULL,
+    trading_session_id uuid NOT NULL REFERENCES mra.trading_session(session_id) ON DELETE RESTRICT,
+    session_date date NOT NULL,
+    session_role text NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT exploratory_backtest_fold_session_ordinal_uk UNIQUE (exploratory_backtest_fold_id, ordinal),
+    CONSTRAINT exploratory_backtest_fold_session_global_uk UNIQUE (exploratory_backtest_run_id, trading_session_id),
+    CONSTRAINT exploratory_backtest_fold_session_exact_uk UNIQUE (exploratory_backtest_fold_session_id, exploratory_backtest_fold_id, content_sha256),
+    CONSTRAINT exploratory_backtest_fold_session_fold_fk FOREIGN KEY (
+        exploratory_backtest_fold_id, exploratory_backtest_run_id
+    ) REFERENCES mra.exploratory_backtest_fold(exploratory_backtest_fold_id, exploratory_backtest_run_id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT exploratory_backtest_fold_session_shape_ck CHECK (
+        ordinal > 0
+        AND session_role IN ('FIT_INPUT', 'PURGE', 'EVALUATION', 'EMBARGO')
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+CREATE INDEX exploratory_backtest_fold_session_fold_idx ON mra.exploratory_backtest_fold_session(exploratory_backtest_fold_id, exploratory_backtest_run_id);
+CREATE INDEX exploratory_backtest_fold_session_market_idx ON mra.exploratory_backtest_fold_session(trading_session_id);
+
+CREATE TABLE mra.exploratory_backtest_cost_assumption (
+    exploratory_backtest_cost_assumption_id uuid PRIMARY KEY,
+    exploratory_backtest_run_id uuid NOT NULL REFERENCES mra.exploratory_backtest_run(exploratory_backtest_run_id) ON DELETE RESTRICT,
+    ordinal integer NOT NULL,
+    cost_kind text NOT NULL,
+    amount_bps numeric NOT NULL,
+    evidence_class text NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT exploratory_backtest_cost_ordinal_uk UNIQUE (exploratory_backtest_run_id, ordinal),
+    CONSTRAINT exploratory_backtest_cost_kind_uk UNIQUE (exploratory_backtest_run_id, cost_kind),
+    CONSTRAINT exploratory_backtest_cost_exact_uk UNIQUE (exploratory_backtest_cost_assumption_id, exploratory_backtest_run_id, content_sha256),
+    CONSTRAINT exploratory_backtest_cost_shape_ck CHECK (
+        ordinal > 0
+        AND cost_kind IN ('COMMISSION_BPS', 'SLIPPAGE_BPS', 'STAMP_DUTY_BPS')
+        AND amount_bps >= 0 AND evidence_class = 'ASSUMED_COST'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+CREATE INDEX exploratory_backtest_cost_run_idx ON mra.exploratory_backtest_cost_assumption(exploratory_backtest_run_id);
+
+CREATE FUNCTION mra.validate_exploratory_backtest_run()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE actual_feature_count integer;
+DECLARE actual_feature_hash text;
+DECLARE actual_arm_count integer;
+DECLARE actual_arm_hash text;
+DECLARE actual_fold_count integer;
+DECLARE actual_fold_hash text;
+DECLARE actual_session_count integer;
+DECLARE actual_cost_count integer;
+DECLARE actual_cost_hash text;
+DECLARE expected_definition text;
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM mra.market_archive AS archive
+        JOIN mra.market_archive_seal AS seal
+          ON seal.market_archive_id = archive.market_archive_id
+         AND seal.market_archive_seal_id = NEW.market_archive_seal_id
+        JOIN mra.candidate_policy AS candidate
+          ON candidate.candidate_policy_id = NEW.candidate_policy_id
+         AND candidate.content_sha256 = NEW.candidate_policy_sha256
+        JOIN mra.context_policy AS context
+          ON context.context_policy_id = NEW.context_policy_id
+         AND context.content_sha256 = NEW.context_policy_sha256
+        JOIN mra.strategy_version AS strategy
+          ON strategy.strategy_version_id = NEW.strategy_version_id
+         AND strategy.content_sha256 = NEW.strategy_version_sha256
+        JOIN mra.portfolio_policy AS portfolio
+          ON portfolio.portfolio_policy_id = NEW.portfolio_policy_id
+         AND portfolio.content_sha256 = NEW.portfolio_policy_sha256
+        JOIN mra.risk_policy AS risk
+          ON risk.risk_policy_id = NEW.risk_policy_id
+         AND risk.content_sha256 = NEW.risk_policy_sha256
+        WHERE archive.market_archive_id = NEW.market_archive_id
+          AND archive.lane = 'RETROSPECTIVE_BACKFILL'
+          AND archive.evidence_class = 'EXPLORATORY_RETROSPECTIVE'
+    ) THEN
+        RAISE EXCEPTION 'Exploratory backtest parent or archive binding is invalid' USING ERRCODE = '55000';
+    END IF;
+    SELECT count(*), mra.canonical_sha256(mra.canonical_json_text(coalesce(jsonb_agg(
+        jsonb_build_object('content_sha256', feature_definition_sha256,
+                           'feature_definition_id', feature_definition_id)
+        ORDER BY feature_ordinal
+    ), '[]'::jsonb)))
+      INTO actual_feature_count, actual_feature_hash
+      FROM mra.exploratory_backtest_feature
+     WHERE exploratory_backtest_run_id = NEW.exploratory_backtest_run_id;
+    IF EXISTS (
+        SELECT 1 FROM mra.exploratory_backtest_feature AS binding
+        LEFT JOIN mra.feature_definition AS feature
+          ON feature.feature_definition_id = binding.feature_definition_id
+         AND feature.content_sha256 = binding.feature_definition_sha256
+        WHERE binding.exploratory_backtest_run_id = NEW.exploratory_backtest_run_id
+          AND feature.feature_definition_id IS NULL
+    ) THEN
+        RAISE EXCEPTION 'Exploratory backtest Feature binding is not exact' USING ERRCODE = '55000';
+    END IF;
+    SELECT count(*), mra.canonical_sha256(mra.canonical_json_text(coalesce(jsonb_agg(
+        jsonb_build_object('content_sha256', content_sha256,
+                           'exploratory_backtest_arm_id', exploratory_backtest_arm_id,
+                           'ordinal', ordinal) ORDER BY ordinal
+    ), '[]'::jsonb)))
+      INTO actual_arm_count, actual_arm_hash
+      FROM mra.exploratory_backtest_arm
+     WHERE exploratory_backtest_run_id = NEW.exploratory_backtest_run_id;
+    IF (SELECT array_agg(arm_kind ORDER BY ordinal)
+        FROM mra.exploratory_backtest_arm
+        WHERE exploratory_backtest_run_id = NEW.exploratory_backtest_run_id)
+       <> ARRAY['RULE_BASELINE', 'MODEL_CHALLENGER']::text[]
+       OR EXISTS (
+          SELECT 1 FROM mra.exploratory_backtest_arm
+          WHERE exploratory_backtest_run_id = NEW.exploratory_backtest_run_id
+            AND content_sha256 <> mra.canonical_sha256(mra.canonical_json_text(jsonb_build_object(
+                'exploratory_backtest_arm_id', exploratory_backtest_arm_id,
+                'kind', arm_kind, 'ordinal', ordinal
+            )))
+       ) THEN
+        RAISE EXCEPTION 'Exploratory backtest arm roster is invalid' USING ERRCODE = '55000';
+    END IF;
+    IF EXISTS (
+        SELECT 1
+        FROM mra.exploratory_backtest_fold_session AS member
+        JOIN mra.exploratory_backtest_fold AS fold
+          ON fold.exploratory_backtest_fold_id = member.exploratory_backtest_fold_id
+        LEFT JOIN mra.trading_session AS session
+          ON session.session_id = member.trading_session_id
+         AND session.session_date = member.session_date
+         AND session.exchange = fold.exchange_code
+        WHERE member.exploratory_backtest_run_id = NEW.exploratory_backtest_run_id
+          AND (session.session_id IS NULL OR member.content_sha256 <>
+              mra.canonical_sha256(mra.canonical_json_text(jsonb_build_object(
+                  'exploratory_backtest_fold_session_id', member.exploratory_backtest_fold_session_id,
+                  'ordinal', member.ordinal, 'role', member.session_role,
+                  'session_date', member.session_date,
+                  'trading_session_id', member.trading_session_id
+              ))))
+    ) THEN
+        RAISE EXCEPTION 'Exploratory backtest session binding is invalid' USING ERRCODE = '55000';
+    END IF;
+    IF EXISTS (
+        WITH ordered AS (
+            SELECT member.*,
+                   lag(member.session_date) OVER (
+                       PARTITION BY member.exploratory_backtest_fold_id ORDER BY member.ordinal
+                   ) AS prior_date,
+                   lag(CASE member.session_role WHEN 'FIT_INPUT' THEN 1 WHEN 'PURGE' THEN 2
+                       WHEN 'EVALUATION' THEN 3 ELSE 4 END) OVER (
+                       PARTITION BY member.exploratory_backtest_fold_id ORDER BY member.ordinal
+                   ) AS prior_role,
+                   CASE member.session_role WHEN 'FIT_INPUT' THEN 1 WHEN 'PURGE' THEN 2
+                       WHEN 'EVALUATION' THEN 3 ELSE 4 END AS role_order
+            FROM mra.exploratory_backtest_fold_session AS member
+            WHERE member.exploratory_backtest_run_id = NEW.exploratory_backtest_run_id
+        )
+        SELECT 1 FROM ordered
+        WHERE (prior_date IS NOT NULL AND session_date <= prior_date)
+           OR (prior_role IS NOT NULL AND role_order < prior_role)
+    ) THEN
+        RAISE EXCEPTION 'Exploratory backtest fold sessions are not chronological' USING ERRCODE = '55000';
+    END IF;
+    IF EXISTS (
+        SELECT 1
+        FROM mra.exploratory_backtest_fold AS fold
+        LEFT JOIN mra.evaluation_protocol AS protocol
+          ON protocol.evaluation_protocol_id = fold.evaluation_protocol_id
+         AND protocol.content_sha256 = fold.evaluation_protocol_sha256
+         AND protocol.target_definition_id = NEW.target_definition_id
+         AND protocol.applicable_purpose = fold.purpose
+        WHERE fold.exploratory_backtest_run_id = NEW.exploratory_backtest_run_id
+          AND (
+            protocol.evaluation_protocol_id IS NULL
+            OR fold.session_count <> (SELECT count(*) FROM mra.exploratory_backtest_fold_session AS member WHERE member.exploratory_backtest_fold_id = fold.exploratory_backtest_fold_id)
+            OR fold.purge_sessions <> (SELECT count(*) FROM mra.exploratory_backtest_fold_session AS member WHERE member.exploratory_backtest_fold_id = fold.exploratory_backtest_fold_id AND member.session_role = 'PURGE')
+            OR fold.embargo_sessions <> (SELECT count(*) FROM mra.exploratory_backtest_fold_session AS member WHERE member.exploratory_backtest_fold_id = fold.exploratory_backtest_fold_id AND member.session_role = 'EMBARGO')
+            OR NOT EXISTS (SELECT 1 FROM mra.exploratory_backtest_fold_session AS member WHERE member.exploratory_backtest_fold_id = fold.exploratory_backtest_fold_id AND member.session_role = 'EVALUATION')
+            OR fold.session_roster_sha256 <> (
+                SELECT mra.canonical_sha256(mra.canonical_json_text(coalesce(jsonb_agg(
+                    jsonb_build_object('content_sha256', member.content_sha256,
+                        'exploratory_backtest_fold_session_id', member.exploratory_backtest_fold_session_id,
+                        'ordinal', member.ordinal) ORDER BY member.ordinal
+                ), '[]'::jsonb)))
+                FROM mra.exploratory_backtest_fold_session AS member
+                WHERE member.exploratory_backtest_fold_id = fold.exploratory_backtest_fold_id
+            )
+            OR fold.content_sha256 <> mra.canonical_sha256(mra.canonical_json_text(jsonb_build_object(
+                'embargo_sessions', fold.embargo_sessions,
+                'evaluation_protocol_id', fold.evaluation_protocol_id,
+                'evaluation_protocol_sha256', fold.evaluation_protocol_sha256,
+                'exchange_code', fold.exchange_code,
+                'exploratory_backtest_fold_id', fold.exploratory_backtest_fold_id,
+                'ordinal', fold.ordinal, 'purge_sessions', fold.purge_sessions,
+                'purpose', fold.purpose,
+                'session_roster_sha256', fold.session_roster_sha256
+            )))
+          )
+    ) THEN
+        RAISE EXCEPTION 'Exploratory backtest fold roster is invalid' USING ERRCODE = '55000';
+    END IF;
+    SELECT count(*), mra.canonical_sha256(mra.canonical_json_text(coalesce(jsonb_agg(
+        jsonb_build_object('content_sha256', content_sha256,
+            'exploratory_backtest_fold_id', exploratory_backtest_fold_id,
+            'ordinal', ordinal) ORDER BY ordinal
+    ), '[]'::jsonb)))
+      INTO actual_fold_count, actual_fold_hash
+      FROM mra.exploratory_backtest_fold
+     WHERE exploratory_backtest_run_id = NEW.exploratory_backtest_run_id;
+    SELECT count(*) INTO actual_session_count
+      FROM mra.exploratory_backtest_fold_session
+     WHERE exploratory_backtest_run_id = NEW.exploratory_backtest_run_id;
+    IF EXISTS (
+        SELECT 1 FROM mra.exploratory_backtest_cost_assumption
+        WHERE exploratory_backtest_run_id = NEW.exploratory_backtest_run_id
+          AND content_sha256 <> mra.canonical_sha256(mra.canonical_json_text(jsonb_build_object(
+              'amount_bps', amount_bps::text, 'cost_kind', cost_kind,
+              'exploratory_backtest_cost_assumption_id', exploratory_backtest_cost_assumption_id,
+              'ordinal', ordinal
+          )))
+    ) THEN
+        RAISE EXCEPTION 'Exploratory backtest cost roster is invalid' USING ERRCODE = '55000';
+    END IF;
+    SELECT count(*), mra.canonical_sha256(mra.canonical_json_text(coalesce(jsonb_agg(
+        jsonb_build_object('content_sha256', content_sha256,
+            'exploratory_backtest_cost_assumption_id', exploratory_backtest_cost_assumption_id,
+            'ordinal', ordinal) ORDER BY ordinal
+    ), '[]'::jsonb)))
+      INTO actual_cost_count, actual_cost_hash
+      FROM mra.exploratory_backtest_cost_assumption
+     WHERE exploratory_backtest_run_id = NEW.exploratory_backtest_run_id;
+    IF (NEW.feature_count, NEW.feature_roster_sha256,
+        NEW.arm_count, NEW.arm_roster_sha256,
+        NEW.fold_count, NEW.fold_roster_sha256, NEW.session_count,
+        NEW.cost_count, NEW.cost_roster_sha256)
+       IS DISTINCT FROM
+       (actual_feature_count, actual_feature_hash,
+        actual_arm_count, actual_arm_hash,
+        actual_fold_count, actual_fold_hash, actual_session_count,
+        actual_cost_count, actual_cost_hash) THEN
+        RAISE EXCEPTION 'Exploratory backtest root and child rosters differ' USING ERRCODE = '55000';
+    END IF;
+    expected_definition := mra.canonical_sha256(mra.canonical_json_text(jsonb_build_object(
+        'arm_roster_sha256', NEW.arm_roster_sha256,
+        'candidate_policy_id', NEW.candidate_policy_id,
+        'candidate_policy_sha256', NEW.candidate_policy_sha256,
+        'code_artifact', jsonb_build_object('artifact_id', NEW.code_artifact_id,
+            'content_sha256', NEW.code_content_sha256, 'size_bytes', NEW.code_size_bytes),
+        'config_artifact', jsonb_build_object('artifact_id', NEW.config_artifact_id,
+            'content_sha256', NEW.config_content_sha256, 'size_bytes', NEW.config_size_bytes),
+        'context_policy_id', NEW.context_policy_id,
+        'context_policy_sha256', NEW.context_policy_sha256,
+        'cost_roster_sha256', NEW.cost_roster_sha256,
+        'evidence_lane', NEW.evidence_lane,
+        'exploratory_backtest_run_id', NEW.exploratory_backtest_run_id,
+        'feature_roster_sha256', NEW.feature_roster_sha256,
+        'fold_roster_sha256', NEW.fold_roster_sha256,
+        'generation', NEW.generation, 'hypothesis', NEW.hypothesis,
+        'market_archive_id', NEW.market_archive_id,
+        'market_archive_seal_id', NEW.market_archive_seal_id,
+        'portfolio_policy_id', NEW.portfolio_policy_id,
+        'portfolio_policy_sha256', NEW.portfolio_policy_sha256,
+        'provenance_sha256', NEW.provenance_sha256,
+        'random_seed', NEW.random_seed, 'risk_policy_id', NEW.risk_policy_id,
+        'risk_policy_sha256', NEW.risk_policy_sha256,
+        'session_count', NEW.session_count,
+        'strategy_version_id', NEW.strategy_version_id,
+        'strategy_version_sha256', NEW.strategy_version_sha256,
+        'target_definition_id', NEW.target_definition_id,
+        'target_definition_sha256', NEW.target_definition_sha256,
+        'target_version', NEW.target_version
+    )));
+    IF NEW.definition_sha256 <> expected_definition THEN
+        RAISE EXCEPTION 'Exploratory backtest definition hash is invalid' USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+CREATE CONSTRAINT TRIGGER exploratory_backtest_run_reconcile_guard
+AFTER INSERT ON mra.exploratory_backtest_run
+DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW EXECUTE FUNCTION mra.validate_exploratory_backtest_run();
+CREATE TRIGGER exploratory_backtest_run_append_only BEFORE UPDATE OR DELETE ON mra.exploratory_backtest_run FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER exploratory_backtest_feature_append_only BEFORE UPDATE OR DELETE ON mra.exploratory_backtest_feature FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER exploratory_backtest_arm_append_only BEFORE UPDATE OR DELETE ON mra.exploratory_backtest_arm FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER exploratory_backtest_fold_append_only BEFORE UPDATE OR DELETE ON mra.exploratory_backtest_fold FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER exploratory_backtest_fold_session_append_only BEFORE UPDATE OR DELETE ON mra.exploratory_backtest_fold_session FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER exploratory_backtest_cost_append_only BEFORE UPDATE OR DELETE ON mra.exploratory_backtest_cost_assumption FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();

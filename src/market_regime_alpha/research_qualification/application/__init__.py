@@ -15,10 +15,11 @@ from market_regime_alpha.research_qualification.application.verification import 
 from market_regime_alpha.research_qualification.application.qualification_verification import ResearchQualificationVerifier
 from market_regime_alpha.research_qualification.application.formal_runtime import build_decision_proof_runtime_profile, build_due_proof_runtime_profile
 from market_regime_alpha.research_qualification.application.formal_campaign import FormalCampaignCommands, FormalCampaignMutationResult
+from market_regime_alpha.research_qualification.application.exploratory_backtest import ExploratoryBacktestCommands
 
 __all__ = [
     "AssessmentCommands", "DatasetRegistrationResult", "EvaluationCommands", "EvidenceCommands",
-    "ExperimentCommands", "FormalCampaignCommands", "FormalCampaignMutationResult",
+    "ExperimentCommands", "ExploratoryBacktestCommands", "FormalCampaignCommands", "FormalCampaignMutationResult",
     "QualificationCommands", "ResearchEvaluationVerifier", "ResearchMutationResult",
     "ResearchPartitionCommands", "ResearchQualificationApplication", "ResearchQualificationVerifier",
     "TargetDefinitionCommands", "TargetRegistrationResult", "build_decision_proof_runtime_profile", "build_due_proof_runtime_profile",
