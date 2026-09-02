@@ -5969,7 +5969,6 @@ CREATE TABLE mra.decision_reference_observation (
         event_end > event_start
         AND observation_time = event_end
         AND known_at >= source_recorded_at
-        AND known_at <= decision_time
         AND runtime_mode IN (
             'OPERATIONAL', 'HISTORICAL', 'REPLAY', 'SHADOW', 'PROSPECTIVE'
         )
@@ -13382,6 +13381,16 @@ BEGIN
     IF partition_scope <> 'ALL_COMMITMENTS' AND partition_scope <> NEW.candidate_disposition THEN
         RAISE EXCEPTION 'Partition member is outside declared population scope' USING ERRCODE = '55000';
     END IF;
+    IF partition_purpose IN ('LOCKED_OOS', 'PROSPECTIVE') AND EXISTS (
+        SELECT 1
+        FROM mra.decision_target_commitment AS commitment
+        JOIN mra.exploratory_retrospective_decision_run AS retrospective
+          ON retrospective.decision_run_id = commitment.decision_run_id
+        WHERE commitment.commitment_id = NEW.commitment_id
+    ) THEN
+        RAISE EXCEPTION 'exploratory retrospective commitment cannot enter protected research'
+            USING ERRCODE = '55000';
+    END IF;
     IF partition_purpose = 'PROSPECTIVE' THEN
         IF NEW.commitment_recorded_at >= NEW.earliest_outcome_event_at THEN
             RAISE EXCEPTION 'Prospective commitment must precede earliest Outcome event' USING ERRCODE = '55000';
@@ -18581,3 +18590,216 @@ FOR EACH ROW EXECUTE FUNCTION mra.validate_exploratory_backtest_dataset();
 CREATE TRIGGER exploratory_backtest_dataset_append_only
 BEFORE UPDATE OR DELETE ON mra.exploratory_backtest_dataset
 FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+
+-- Decision-owned proof that one otherwise ordinary DecisionRun used the
+-- explicitly bounded archive clock instead of claiming contemporaneous PIT.
+CREATE TABLE mra.exploratory_retrospective_decision_run (
+    decision_run_id uuid PRIMARY KEY
+        REFERENCES mra.decision_run(decision_run_id) ON DELETE RESTRICT,
+    dataset_id uuid NOT NULL
+        REFERENCES mra.exploratory_backtest_dataset(dataset_id)
+        ON DELETE RESTRICT,
+    exploratory_backtest_run_id uuid NOT NULL
+        REFERENCES mra.exploratory_backtest_run(exploratory_backtest_run_id)
+        ON DELETE RESTRICT,
+    exploratory_backtest_arm_id uuid NOT NULL
+        REFERENCES mra.exploratory_backtest_arm(exploratory_backtest_arm_id)
+        ON DELETE RESTRICT,
+    exploratory_backtest_fold_id uuid NOT NULL
+        REFERENCES mra.exploratory_backtest_fold(exploratory_backtest_fold_id)
+        ON DELETE RESTRICT,
+    exploratory_backtest_fold_session_id uuid NOT NULL
+        REFERENCES mra.exploratory_backtest_fold_session(
+            exploratory_backtest_fold_session_id
+        ) ON DELETE RESTRICT,
+    market_archive_id uuid NOT NULL
+        REFERENCES mra.market_archive(market_archive_id) ON DELETE RESTRICT,
+    market_archive_seal_id uuid NOT NULL
+        REFERENCES mra.market_archive_seal(market_archive_seal_id)
+        ON DELETE RESTRICT,
+    evidence_lane text NOT NULL,
+    knowledge_cutoff timestamptz NOT NULL,
+    simulated_event_cutoff timestamptz NOT NULL,
+    scope_content_sha256 text NOT NULL,
+    content_sha256 text NOT NULL,
+    bound_at timestamptz NOT NULL,
+    CONSTRAINT exploratory_decision_member_uk UNIQUE (
+        exploratory_backtest_run_id, exploratory_backtest_arm_id,
+        exploratory_backtest_fold_session_id
+    ),
+    CONSTRAINT exploratory_decision_shape_ck CHECK (
+        evidence_lane = 'EXPLORATORY_RETROSPECTIVE'
+        AND simulated_event_cutoff < knowledge_cutoff
+        AND scope_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+CREATE INDEX exploratory_decision_dataset_idx
+    ON mra.exploratory_retrospective_decision_run(dataset_id, decision_run_id);
+CREATE INDEX exploratory_decision_run_idx
+    ON mra.exploratory_retrospective_decision_run(
+        exploratory_backtest_run_id, exploratory_backtest_fold_id,
+        exploratory_backtest_fold_session_id
+    );
+CREATE INDEX exploratory_decision_arm_idx
+    ON mra.exploratory_retrospective_decision_run(
+        exploratory_backtest_arm_id, exploratory_backtest_run_id
+    );
+CREATE INDEX exploratory_decision_fold_idx
+    ON mra.exploratory_retrospective_decision_run(
+        exploratory_backtest_fold_id, exploratory_backtest_run_id
+    );
+CREATE INDEX exploratory_decision_session_idx
+    ON mra.exploratory_retrospective_decision_run(
+        exploratory_backtest_fold_session_id, exploratory_backtest_fold_id
+    );
+CREATE INDEX exploratory_decision_archive_idx
+    ON mra.exploratory_retrospective_decision_run(
+        market_archive_id, market_archive_seal_id, decision_run_id
+    );
+CREATE INDEX exploratory_decision_seal_idx
+    ON mra.exploratory_retrospective_decision_run(
+        market_archive_seal_id, decision_run_id
+    );
+
+CREATE FUNCTION mra.validate_exploratory_retrospective_decision_run()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE expected_scope text;
+DECLARE expected_content text;
+BEGIN
+    SELECT mra.canonical_sha256(mra.canonical_json_text(jsonb_build_object(
+               'dataset_id', NEW.dataset_id,
+               'evidence_lane', NEW.evidence_lane,
+               'exploratory_backtest_arm_id', NEW.exploratory_backtest_arm_id,
+               'exploratory_backtest_fold_id', NEW.exploratory_backtest_fold_id,
+               'exploratory_backtest_fold_session_id',
+                   NEW.exploratory_backtest_fold_session_id,
+               'exploratory_backtest_run_id', NEW.exploratory_backtest_run_id,
+               'knowledge_cutoff', NEW.knowledge_cutoff,
+               'market_archive_id', NEW.market_archive_id,
+               'market_archive_seal_id', NEW.market_archive_seal_id,
+               'simulated_event_cutoff', NEW.simulated_event_cutoff
+           )))
+      INTO expected_scope
+      FROM mra.decision_run AS decision
+      JOIN mra.exploratory_backtest_dataset AS dataset
+        ON dataset.dataset_id = decision.dataset_id
+       AND dataset.dataset_id = NEW.dataset_id
+       AND dataset.exploratory_backtest_run_id =
+           NEW.exploratory_backtest_run_id
+       AND dataset.exploratory_backtest_arm_id =
+           NEW.exploratory_backtest_arm_id
+       AND dataset.exploratory_backtest_fold_id =
+           NEW.exploratory_backtest_fold_id
+       AND dataset.exploratory_backtest_fold_session_id =
+           NEW.exploratory_backtest_fold_session_id
+      JOIN mra.exploratory_retrospective_dataset AS retrospective
+        ON retrospective.dataset_id = dataset.dataset_id
+       AND retrospective.market_archive_id = NEW.market_archive_id
+       AND retrospective.market_archive_seal_id = NEW.market_archive_seal_id
+       AND retrospective.knowledge_cutoff = NEW.knowledge_cutoff
+       AND retrospective.simulated_event_cutoff =
+           NEW.simulated_event_cutoff
+      JOIN mra.exploratory_backtest_run AS backtest
+        ON backtest.exploratory_backtest_run_id =
+           dataset.exploratory_backtest_run_id
+       AND backtest.candidate_policy_id = decision.candidate_policy_id
+      JOIN mra.exploratory_backtest_fold_session AS member
+        ON member.exploratory_backtest_fold_session_id =
+           dataset.exploratory_backtest_fold_session_id
+       AND member.session_role IN ('FIT_INPUT', 'EVALUATION')
+     WHERE decision.decision_run_id = NEW.decision_run_id
+       AND decision.runtime_mode IN ('HISTORICAL', 'REPLAY')
+       AND decision.decision_time = NEW.simulated_event_cutoff
+       AND decision.commitment_recorded_at = NEW.bound_at
+       AND retrospective.evidence_lane = NEW.evidence_lane
+       AND dataset.evidence_lane = NEW.evidence_lane
+       AND backtest.evidence_lane = NEW.evidence_lane
+       AND NOT EXISTS (
+           SELECT 1
+           FROM mra.decision_run_target AS target
+           WHERE target.decision_run_id = decision.decision_run_id
+             AND target.target_definition_id <>
+                 backtest.target_definition_id
+       )
+       AND decision.target_count = 1
+       AND NOT EXISTS (
+           SELECT 1
+           FROM mra.decision_reference_observation AS reference
+           WHERE reference.decision_run_id = decision.decision_run_id
+             AND (
+                 reference.known_at > NEW.knowledge_cutoff
+                 OR reference.event_end > NEW.simulated_event_cutoff
+                 OR NOT EXISTS (
+                     SELECT 1
+                     FROM mra.market_archive_capture_observation AS observation
+                     WHERE observation.market_archive_id = NEW.market_archive_id
+                       AND observation.capture_id = reference.capture_id
+                 )
+             )
+       );
+    IF expected_scope IS NULL OR NEW.scope_content_sha256 <> expected_scope THEN
+        RAISE EXCEPTION 'Exploratory retrospective Decision binding is invalid'
+            USING ERRCODE = '55000';
+    END IF;
+    expected_content := mra.canonical_sha256(mra.canonical_json_text(
+        jsonb_build_object(
+            'bound_at', NEW.bound_at, 'dataset_id', NEW.dataset_id,
+            'decision_run_id', NEW.decision_run_id,
+            'evidence_lane', NEW.evidence_lane,
+            'exploratory_backtest_arm_id', NEW.exploratory_backtest_arm_id,
+            'exploratory_backtest_fold_id', NEW.exploratory_backtest_fold_id,
+            'exploratory_backtest_fold_session_id',
+                NEW.exploratory_backtest_fold_session_id,
+            'exploratory_backtest_run_id', NEW.exploratory_backtest_run_id,
+            'knowledge_cutoff', NEW.knowledge_cutoff,
+            'market_archive_id', NEW.market_archive_id,
+            'market_archive_seal_id', NEW.market_archive_seal_id,
+            'scope_content_sha256', NEW.scope_content_sha256,
+            'simulated_event_cutoff', NEW.simulated_event_cutoff
+        )
+    ));
+    IF NEW.content_sha256 <> expected_content THEN
+        RAISE EXCEPTION 'Exploratory retrospective Decision hash is invalid'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.validate_decision_reference_visibility()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.known_at <= NEW.decision_time THEN
+        RETURN NEW;
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1
+        FROM mra.exploratory_retrospective_decision_run AS binding
+        JOIN mra.market_archive_capture_observation AS observation
+          ON observation.market_archive_id = binding.market_archive_id
+         AND observation.capture_id = NEW.capture_id
+        WHERE binding.decision_run_id = NEW.decision_run_id
+          AND binding.evidence_lane = 'EXPLORATORY_RETROSPECTIVE'
+          AND binding.simulated_event_cutoff = NEW.decision_time
+          AND NEW.event_end <= binding.simulated_event_cutoff
+          AND NEW.known_at <= binding.knowledge_cutoff
+          AND NEW.runtime_mode IN ('HISTORICAL', 'REPLAY')
+    ) THEN
+        RAISE EXCEPTION 'Decision reference is not visible at its authorized cutoff'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+CREATE TRIGGER exploratory_retrospective_decision_guard
+BEFORE INSERT ON mra.exploratory_retrospective_decision_run
+FOR EACH ROW EXECUTE FUNCTION
+    mra.validate_exploratory_retrospective_decision_run();
+CREATE TRIGGER exploratory_retrospective_decision_append_only
+BEFORE UPDATE OR DELETE ON mra.exploratory_retrospective_decision_run
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE CONSTRAINT TRIGGER decision_reference_visibility_guard
+AFTER INSERT ON mra.decision_reference_observation
+DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW EXECUTE FUNCTION mra.validate_decision_reference_visibility();

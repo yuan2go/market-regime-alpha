@@ -7,8 +7,12 @@ from uuid import UUID
 
 import psycopg
 
-from market_regime_alpha.decision_support.domain import DecisionRunAuthority
+from market_regime_alpha.decision_support.domain import (
+    DecisionRunAuthority,
+    ExploratoryRetrospectiveDecisionScope,
+)
 from market_regime_alpha.decision_support.ports import DecisionRunReconciliation
+from market_regime_alpha.shared.hashing import canonical_json_sha256
 
 
 class PostgresDecisionRunRepository:
@@ -292,6 +296,62 @@ class PostgresDecisionRunRepository:
                 authority.commitment_recorded_at,
             ),
         )
+
+    def bind_exploratory_retrospective(
+        self,
+        authority: DecisionRunAuthority,
+        scope: ExploratoryRetrospectiveDecisionScope,
+    ) -> str:
+        content_hash = canonical_json_sha256(
+            {
+                "bound_at": authority.commitment_recorded_at,
+                "dataset_id": scope.dataset_id,
+                "decision_run_id": authority.decision_run_id,
+                "evidence_lane": scope.evidence_lane,
+                "exploratory_backtest_arm_id": scope.exploratory_backtest_arm_id,
+                "exploratory_backtest_fold_id": scope.exploratory_backtest_fold_id,
+                "exploratory_backtest_fold_session_id": (
+                    scope.exploratory_backtest_fold_session_id
+                ),
+                "exploratory_backtest_run_id": scope.exploratory_backtest_run_id,
+                "knowledge_cutoff": scope.knowledge_cutoff,
+                "market_archive_id": scope.market_archive_id,
+                "market_archive_seal_id": scope.market_archive_seal_id,
+                "scope_content_sha256": str(scope.content_sha256),
+                "simulated_event_cutoff": scope.simulated_event_cutoff,
+            }
+        )
+        self._connection.execute(
+            """
+            INSERT INTO mra.exploratory_retrospective_decision_run (
+                decision_run_id, dataset_id, exploratory_backtest_run_id,
+                exploratory_backtest_arm_id, exploratory_backtest_fold_id,
+                exploratory_backtest_fold_session_id, market_archive_id,
+                market_archive_seal_id, evidence_lane, knowledge_cutoff,
+                simulated_event_cutoff, scope_content_sha256,
+                content_sha256, bound_at
+            ) VALUES (
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+            )
+            """,
+            (
+                authority.decision_run_id,
+                scope.dataset_id,
+                scope.exploratory_backtest_run_id,
+                scope.exploratory_backtest_arm_id,
+                scope.exploratory_backtest_fold_id,
+                scope.exploratory_backtest_fold_session_id,
+                scope.market_archive_id,
+                scope.market_archive_seal_id,
+                scope.evidence_lane,
+                scope.knowledge_cutoff,
+                scope.simulated_event_cutoff,
+                str(scope.content_sha256),
+                content_hash,
+                authority.commitment_recorded_at,
+            ),
+        )
+        return content_hash
 
     def reconcile(
         self,

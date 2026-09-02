@@ -16,6 +16,7 @@ from market_regime_alpha.decision_support.ports.context import (
 from market_regime_alpha.decision_support.ports.preparation import (
     DecisionDependencyRepository,
     DecisionInputPreparationProvider,
+    ExploratoryDecisionInputPreparationProvider,
     DecisionResearchQualificationInputProvider,
 )
 from market_regime_alpha.decision_support.ports.inference import (
@@ -127,6 +128,7 @@ __all__ = [
     "OpportunityUnitOfWorkProvider",
     "DecisionDependencyRepository",
     "DecisionInputPreparationProvider",
+    "ExploratoryDecisionInputPreparationProvider",
     "DecisionResearchQualificationInputProvider",
     "DecisionRunQueryProvider",
     "DecisionRunReconciliation",

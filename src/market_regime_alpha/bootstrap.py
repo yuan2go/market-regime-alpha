@@ -386,6 +386,7 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
             PostgresDecisionInputPreparationProvider(pool),
             PostgresDecisionSupportUnitOfWorkProvider(pool),
             PostgresDecisionRunQueryProvider(pool),
+            exploratory_preparation=PostgresDecisionInputPreparationProvider(pool),
         ),
         decision_contexts=ContextCommands(
             PostgresContextInputPreparationProvider(pool),

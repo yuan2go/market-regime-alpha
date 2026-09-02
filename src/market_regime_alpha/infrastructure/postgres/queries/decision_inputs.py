@@ -20,6 +20,7 @@ from market_regime_alpha.decision_support.domain import (
     DecisionReferenceSourceKind,
     DecisionReferenceValueStatus,
     DecisionRuntimeMode,
+    ExploratoryRetrospectiveDecisionScope,
     OpenDecisionRunRequest,
     PreparedDecisionInputs,
     PreparedDecisionReference,
@@ -102,6 +103,66 @@ class PostgresDecisionInputPreparationProvider:
             research_qualifications=research_qualifications,
         )
 
+    def prepare_exploratory_retrospective(
+        self,
+        request: OpenDecisionRunRequest,
+        runtime_claim: AttemptClaim,
+        scope: ExploratoryRetrospectiveDecisionScope,
+    ) -> PreparedDecisionInputs:
+        requested_targets = request.validated_targets()
+        with self._pool.connection(read_only=True) as connection:
+            runtime = _load_runtime(connection, runtime_claim)
+            candidate_set = _load_candidate_set(
+                connection,
+                request.candidate_set_id,
+                lock=False,
+            )
+            session_id = _validate_exploratory_scope(
+                connection,
+                scope,
+                candidate_set=candidate_set,
+                requested_target_ids=tuple(
+                    item.target_definition_id for item in requested_targets
+                ),
+                runtime=runtime,
+                lock=False,
+            )
+            targets = tuple(
+                _load_target(
+                    connection,
+                    item.target_definition_id,
+                    item.reference_provider_product_id,
+                    lock=False,
+                )
+                for item in requested_targets
+            )
+            references = tuple(
+                reference
+                for target in targets
+                for reference in _load_target_references(
+                    connection,
+                    candidate_set,
+                    target,
+                    visibility_cutoff=scope.knowledge_cutoff,
+                    exact_session_id=session_id,
+                    market_archive_id=scope.market_archive_id,
+                )
+            )
+            research_qualifications = _load_research_qualifications(
+                connection,
+                request,
+                decision_time=runtime.decision_time,
+                lock=False,
+            )
+        return PreparedDecisionInputs(
+            candidate_set=candidate_set,
+            targets=targets,
+            references=references,
+            runtime=runtime,
+            research_qualifications=research_qualifications,
+            exploratory_retrospective_scope=scope,
+        )
+
 
 class PostgresDecisionResearchQualificationInputProvider:
     """Exact-ID, cutoff-aware, non-current Qualification read adapter."""
@@ -175,6 +236,25 @@ class PostgresDecisionDependencyRepository:
                 )
 
         _lock_exact_reference_dependencies(self._connection, prepared)
+
+        if prepared.exploratory_retrospective_scope is not None:
+            actual_session_id = _validate_exploratory_scope(
+                self._connection,
+                prepared.exploratory_retrospective_scope,
+                candidate_set=prepared.candidate_set,
+                requested_target_ids=tuple(
+                    item.target_definition_id for item in prepared.targets
+                ),
+                runtime=prepared.runtime,
+                lock=True,
+            )
+            if any(
+                item.session_id != actual_session_id
+                for item in prepared.references
+            ):
+                raise DecisionAuthorityIntegrityError(
+                    "prepared reference left its frozen backtest session"
+                )
 
         actual_candidate_set = _load_candidate_set(
             self._connection,
@@ -375,6 +455,118 @@ def _load_runtime(
     )
 
 
+def _validate_exploratory_scope(
+    connection: psycopg.Connection[Any],
+    scope: ExploratoryRetrospectiveDecisionScope,
+    *,
+    candidate_set: CandidateSetDecisionSnapshot,
+    requested_target_ids: tuple[UUID, ...],
+    runtime: RuntimeDecisionSnapshot,
+    lock: bool,
+) -> UUID:
+    suffix = (
+        " FOR SHARE OF backtest_dataset, retrospective, backtest, arm, "
+        "fold, member, seal"
+        if lock
+        else ""
+    )
+    row = connection.execute(
+        """
+        SELECT backtest_dataset.dataset_id,
+               backtest_dataset.exploratory_backtest_run_id,
+               backtest_dataset.exploratory_backtest_arm_id,
+               backtest_dataset.exploratory_backtest_fold_id,
+               backtest_dataset.exploratory_backtest_fold_session_id,
+               retrospective.market_archive_id,
+               retrospective.market_archive_seal_id,
+               retrospective.knowledge_cutoff,
+               retrospective.simulated_event_cutoff,
+               retrospective.evidence_lane,
+               member.trading_session_id, member.session_role,
+               backtest.candidate_policy_id,
+               backtest.target_definition_id,
+               seal.knowledge_cutoff
+        FROM mra.exploratory_backtest_dataset AS backtest_dataset
+        JOIN mra.exploratory_retrospective_dataset AS retrospective
+          ON retrospective.dataset_id = backtest_dataset.dataset_id
+        JOIN mra.exploratory_backtest_run AS backtest
+          ON backtest.exploratory_backtest_run_id =
+             backtest_dataset.exploratory_backtest_run_id
+         AND backtest.market_archive_id = retrospective.market_archive_id
+         AND backtest.market_archive_seal_id =
+             retrospective.market_archive_seal_id
+        JOIN mra.exploratory_backtest_arm AS arm
+          ON arm.exploratory_backtest_arm_id =
+             backtest_dataset.exploratory_backtest_arm_id
+         AND arm.exploratory_backtest_run_id =
+             backtest.exploratory_backtest_run_id
+        JOIN mra.exploratory_backtest_fold AS fold
+          ON fold.exploratory_backtest_fold_id =
+             backtest_dataset.exploratory_backtest_fold_id
+         AND fold.exploratory_backtest_run_id =
+             backtest.exploratory_backtest_run_id
+        JOIN mra.exploratory_backtest_fold_session AS member
+          ON member.exploratory_backtest_fold_session_id =
+             backtest_dataset.exploratory_backtest_fold_session_id
+         AND member.exploratory_backtest_fold_id =
+             fold.exploratory_backtest_fold_id
+         AND member.exploratory_backtest_run_id =
+             backtest.exploratory_backtest_run_id
+        JOIN mra.market_archive_seal AS seal
+          ON seal.market_archive_seal_id = retrospective.market_archive_seal_id
+         AND seal.market_archive_id = retrospective.market_archive_id
+        WHERE backtest_dataset.dataset_id = %s
+          AND backtest_dataset.exploratory_backtest_run_id = %s
+          AND backtest_dataset.exploratory_backtest_arm_id = %s
+          AND backtest_dataset.exploratory_backtest_fold_id = %s
+          AND backtest_dataset.exploratory_backtest_fold_session_id = %s
+        """
+        + suffix,
+        (
+            scope.dataset_id,
+            scope.exploratory_backtest_run_id,
+            scope.exploratory_backtest_arm_id,
+            scope.exploratory_backtest_fold_id,
+            scope.exploratory_backtest_fold_session_id,
+        ),
+    ).fetchone()
+    if row is None:
+        raise DecisionAuthorityIntegrityError(
+            "exact exploratory backtest Dataset member does not exist"
+        )
+    actual_scope = ExploratoryRetrospectiveDecisionScope(
+        dataset_id=UUID(str(row[0])),
+        exploratory_backtest_run_id=UUID(str(row[1])),
+        exploratory_backtest_arm_id=UUID(str(row[2])),
+        exploratory_backtest_fold_id=UUID(str(row[3])),
+        exploratory_backtest_fold_session_id=UUID(str(row[4])),
+        market_archive_id=UUID(str(row[5])),
+        market_archive_seal_id=UUID(str(row[6])),
+        knowledge_cutoff=row[7],
+        simulated_event_cutoff=row[8],
+    )
+    valid = (
+        actual_scope == scope
+        and str(row[9]) == "EXPLORATORY_RETROSPECTIVE"
+        and str(row[11]) in {"FIT_INPUT", "EVALUATION"}
+        and UUID(str(row[12])) == candidate_set.candidate_policy_id
+        and requested_target_ids == (UUID(str(row[13])),)
+        and row[14] == scope.knowledge_cutoff
+        and candidate_set.dataset_id == scope.dataset_id
+        and candidate_set.decision_time == scope.simulated_event_cutoff
+        and runtime.decision_time == scope.simulated_event_cutoff
+        and runtime.runtime_mode in {
+            DecisionRuntimeMode.HISTORICAL,
+            DecisionRuntimeMode.REPLAY,
+        }
+    )
+    if not valid:
+        raise DecisionAuthorityIntegrityError(
+            "exploratory Decision scope does not match its frozen backtest member"
+        )
+    return UUID(str(row[10]))
+
+
 def _load_candidate_set(
     connection: psycopg.Connection[Any],
     candidate_set_id: UUID,
@@ -496,6 +688,10 @@ def _load_target_references(
     connection: psycopg.Connection[Any],
     candidate_set: CandidateSetDecisionSnapshot,
     target: TargetDecisionSnapshot,
+    *,
+    visibility_cutoff: datetime | None = None,
+    exact_session_id: UUID | None = None,
+    market_archive_id: UUID | None = None,
 ) -> tuple[PreparedDecisionReference, ...]:
     if not candidate_set.candidates:
         return ()
@@ -519,6 +715,7 @@ def _load_target_references(
     timezone_name = str(checkpoint[1])
     zone = ZoneInfo(timezone_name)
     session_date = candidate_set.decision_time.astimezone(zone).date()
+    cutoff = visibility_cutoff or candidate_set.decision_time
     session_rows = connection.execute(
         """
         SELECT candidate.candidate_id, candidate.instrument_id,
@@ -530,13 +727,20 @@ def _load_target_references(
         JOIN mra.instrument AS instrument
           ON instrument.instrument_id = candidate.instrument_id
         JOIN mra.trading_session AS session
-          ON session.exchange = instrument.exchange
+         ON session.exchange = instrument.exchange
          AND session.session_date = %s
          AND session.decision_visible_at <= %s
+         AND (%s::uuid IS NULL OR session.session_id = %s)
         WHERE candidate.candidate_set_id = %s
         ORDER BY candidate.candidate_id
         """,
-        (session_date, candidate_set.decision_time, candidate_set.candidate_set_id),
+        (
+            session_date,
+            cutoff,
+            exact_session_id,
+            exact_session_id,
+            candidate_set.candidate_set_id,
+        ),
     ).fetchall()
     if len(session_rows) != len(candidate_set.candidates):
         raise DecisionReferenceResolutionError(
@@ -556,7 +760,8 @@ def _load_target_references(
         connection,
         target=target,
         windows=windows,
-        decision_time=candidate_set.decision_time,
+        decision_time=cutoff,
+        market_archive_id=market_archive_id,
     )
     return tuple(
         _select_exact_observation(
@@ -642,6 +847,7 @@ def _load_exact_observations(
     target: TargetDecisionSnapshot,
     windows: tuple[_ReferenceWindow, ...],
     decision_time: datetime,
+    market_archive_id: UUID | None = None,
 ) -> dict[UUID, tuple[tuple[Any, ...], ...]]:
     rows = connection.execute(
         """
@@ -681,6 +887,14 @@ def _load_exact_observations(
              AND bar.event_start = requested.event_start
              AND bar.event_end = requested.event_end
              AND bar.decision_visible_at <= %s
+             AND (
+                 %s::uuid IS NULL OR EXISTS (
+                     SELECT 1
+                     FROM mra.market_archive_capture_observation AS archive_observation
+                     WHERE archive_observation.market_archive_id = %s
+                       AND archive_observation.capture_id = bar.capture_id
+                 )
+             )
             JOIN mra.data_capture AS capture
               ON capture.capture_id = bar.capture_id
              AND capture.provider_product_id = bar.provider_product_id
@@ -710,6 +924,14 @@ def _load_exact_observations(
              AND gap.event_start = requested.event_start
              AND gap.event_end = requested.event_end
              AND gap.decision_visible_at <= %s
+             AND (
+                 %s::uuid IS NULL OR EXISTS (
+                     SELECT 1
+                     FROM mra.market_archive_capture_observation AS archive_observation
+                     WHERE archive_observation.market_archive_id = %s
+                       AND archive_observation.capture_id = gap.capture_id
+                 )
+             )
             JOIN mra.data_capture AS capture
               ON capture.capture_id = gap.capture_id
              AND capture.provider_product_id = gap.provider_product_id
@@ -731,10 +953,14 @@ def _load_exact_observations(
             target.timeframe,
             target.price_basis,
             decision_time,
+            market_archive_id,
+            market_archive_id,
             target.reference_provider_product.provider_product_id,
             target.timeframe,
             target.price_basis,
             decision_time,
+            market_archive_id,
+            market_archive_id,
         ),
     ).fetchall()
     grouped: defaultdict[UUID, list[tuple[Any, ...]]] = defaultdict(list)
@@ -936,10 +1162,32 @@ def _lock_exact_reference_dependencies(
             raise DecisionAuthorityIntegrityError(
                 "prepared exact Market reference changed before closure"
             )
-        if reference.known_at > prepared.runtime.decision_time:
+        visibility_cutoff = (
+            prepared.exploratory_retrospective_scope.knowledge_cutoff
+            if prepared.exploratory_retrospective_scope is not None
+            else prepared.runtime.decision_time
+        )
+        if reference.known_at > visibility_cutoff:
             raise DecisionAuthorityIntegrityError(
-                "prepared Market reference crossed the DecisionTime boundary"
+                "prepared Market reference crossed its visibility boundary"
             )
+        if prepared.exploratory_retrospective_scope is not None:
+            archived = connection.execute(
+                """
+                SELECT 1
+                FROM mra.market_archive_capture_observation
+                WHERE market_archive_id = %s AND capture_id = %s
+                FOR SHARE
+                """,
+                (
+                    prepared.exploratory_retrospective_scope.market_archive_id,
+                    reference.capture_id,
+                ),
+            ).fetchone()
+            if archived is None:
+                raise DecisionAuthorityIntegrityError(
+                    "prepared Market reference is outside the frozen archive"
+                )
 
 
 __all__ = [

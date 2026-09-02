@@ -9,6 +9,7 @@ from uuid import UUID, uuid4
 
 from market_regime_alpha.decision_support.domain import (
     DecisionRunAuthority,
+    ExploratoryRetrospectiveDecisionScope,
     OpenDecisionRunRequest,
     PreparedDecisionInputs,
     build_decision_authority,
@@ -22,6 +23,7 @@ from market_regime_alpha.decision_support.errors import (
 )
 from market_regime_alpha.decision_support.ports import (
     DecisionInputPreparationProvider,
+    ExploratoryDecisionInputPreparationProvider,
     DecisionRunQueryProvider,
     DecisionRunSnapshot,
     DecisionSupportUnitOfWorkProvider,
@@ -86,12 +88,16 @@ class DecisionSupportApplication:
         uow_provider: DecisionSupportUnitOfWorkProvider,
         queries: DecisionRunQueryProvider,
         *,
+        exploratory_preparation: (
+            ExploratoryDecisionInputPreparationProvider | None
+        ) = None,
         id_factory: Callable[[], UUID] = uuid4,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._preparation = preparation
         self._uow_provider = uow_provider
         self._queries = queries
+        self._exploratory_preparation = exploratory_preparation
         self._id_factory = id_factory
         self._clock = clock
         self._failure_recorder = RuntimeCommandFailureRecorder(
@@ -106,23 +112,59 @@ class DecisionSupportApplication:
         *,
         runtime_claim: AttemptClaim,
     ) -> OpenDecisionRunResult:
-        raw_request_hash = canonical_json_sha256(
-            {
-                "actor_id": context.actor_id,
-                "actor_type": context.actor_type,
-                "candidate_set_id": request.candidate_set_id,
-                "reason_code": context.reason_code,
-                "research_purpose": request.research_purpose,
-                "research_qualification_roster": request.research_qualifications,
-                "runtime_run_id": runtime_claim.run_id,
-                "target_roster": request.targets,
-            }
+        return self._execute_open(
+            request,
+            context,
+            runtime_claim=runtime_claim,
+            exploratory_scope=None,
         )
+
+    def open_exploratory_retrospective_decision_run(
+        self,
+        request: OpenDecisionRunRequest,
+        scope: ExploratoryRetrospectiveDecisionScope,
+        context: CommandContext,
+        *,
+        runtime_claim: AttemptClaim,
+    ) -> OpenDecisionRunResult:
+        if self._exploratory_preparation is None:
+            raise RuntimeStateConflictError(
+                "exploratory retrospective Decision preparation is not composed"
+            )
+        return self._execute_open(
+            request,
+            context,
+            runtime_claim=runtime_claim,
+            exploratory_scope=scope,
+        )
+
+    def _execute_open(
+        self,
+        request: OpenDecisionRunRequest,
+        context: CommandContext,
+        *,
+        runtime_claim: AttemptClaim,
+        exploratory_scope: ExploratoryRetrospectiveDecisionScope | None,
+    ) -> OpenDecisionRunResult:
+        raw_payload = {
+            "actor_id": context.actor_id,
+            "actor_type": context.actor_type,
+            "candidate_set_id": request.candidate_set_id,
+            "reason_code": context.reason_code,
+            "research_purpose": request.research_purpose,
+            "research_qualification_roster": request.research_qualifications,
+            "runtime_run_id": runtime_claim.run_id,
+            "target_roster": request.targets,
+        }
+        if exploratory_scope is not None:
+            raw_payload["exploratory_retrospective_scope"] = exploratory_scope
+        raw_request_hash = canonical_json_sha256(raw_payload)
         existing = self._probe_existing(
             request,
             context,
             runtime_claim=runtime_claim,
             raise_conflict=True,
+            exploratory_scope=exploratory_scope,
         )
         if existing is not None:
             return _result_from_snapshot(existing, replayed=True)
@@ -132,6 +174,7 @@ class DecisionSupportApplication:
                 context,
                 runtime_claim=runtime_claim,
                 raw_request_hash=raw_request_hash,
+                exploratory_scope=exploratory_scope,
             )
         except (StaleFenceError, ConcurrentCommandSucceeded):
             existing = self._probe_existing(
@@ -139,6 +182,7 @@ class DecisionSupportApplication:
                 context,
                 runtime_claim=runtime_claim,
                 raise_conflict=True,
+                exploratory_scope=exploratory_scope,
             )
             if existing is not None:
                 return _result_from_snapshot(existing, replayed=True)
@@ -151,6 +195,7 @@ class DecisionSupportApplication:
         *,
         runtime_claim: AttemptClaim,
         raw_request_hash: str,
+        exploratory_scope: ExploratoryRetrospectiveDecisionScope | None,
     ) -> OpenDecisionRunResult:
         descriptor = _failure_descriptor(request, raw_request_hash)
         try:
@@ -159,7 +204,25 @@ class DecisionSupportApplication:
                 self._clock(),
                 field="Decision request received time",
             )
-            prepared = self._preparation.prepare(request, runtime_claim)
+            prepared = (
+                self._preparation.prepare(request, runtime_claim)
+                if exploratory_scope is None
+                else self._exploratory_preparation.prepare_exploratory_retrospective(
+                    request,
+                    runtime_claim,
+                    exploratory_scope,
+                )
+                if self._exploratory_preparation is not None
+                else None
+            )
+            if prepared is None:
+                raise RuntimeStateConflictError(
+                    "exploratory retrospective Decision preparation is not composed"
+                )
+            if prepared.exploratory_retrospective_scope != exploratory_scope:
+                raise DecisionAuthorityIntegrityError(
+                    "prepared retrospective scope differs from the command"
+                )
             _validate_runtime_claim(prepared, runtime_claim)
             request_hash = prepared.semantic_request_sha256(
                 request=request,
@@ -177,6 +240,7 @@ class DecisionSupportApplication:
                 request_received_at=request_received_at,
                 context=context,
                 runtime_claim=runtime_claim,
+                exploratory_scope=exploratory_scope,
             )
         except StaleFenceError:
             raise
@@ -186,6 +250,7 @@ class DecisionSupportApplication:
                 context,
                 runtime_claim=runtime_claim,
                 raise_conflict=False,
+                exploratory_scope=exploratory_scope,
             )
             if existing is not None:
                 return _result_from_snapshot(existing, replayed=True)
@@ -229,6 +294,7 @@ class DecisionSupportApplication:
         request_received_at: datetime,
         context: CommandContext,
         runtime_claim: AttemptClaim,
+        exploratory_scope: ExploratoryRetrospectiveDecisionScope | None,
     ) -> OpenDecisionRunResult:
         for attempt_number in range(1, _MAX_TRANSACTION_ATTEMPTS + 1):
             try:
@@ -240,6 +306,7 @@ class DecisionSupportApplication:
                     request_received_at=request_received_at,
                     context=context,
                     runtime_claim=runtime_claim,
+                    exploratory_scope=exploratory_scope,
                 )
             except DecisionRetryableTransactionError as exc:
                 if attempt_number == _MAX_TRANSACTION_ATTEMPTS:
@@ -259,6 +326,7 @@ class DecisionSupportApplication:
         request_received_at: datetime,
         context: CommandContext,
         runtime_claim: AttemptClaim,
+        exploratory_scope: ExploratoryRetrospectiveDecisionScope | None,
     ) -> OpenDecisionRunResult:
         with self._uow_provider() as uow:
             uow.runtime_finalization.lock_live_for_step(
@@ -308,8 +376,14 @@ class DecisionSupportApplication:
                 target_id_factory=identities.target_id,
                 commitment_id_factory=identities.commitment_id,
                 observation_id_factory=identities.observation_id,
+                exploratory_retrospective_scope=exploratory_scope,
             )
             uow.decision_runs.insert(authority)
+            if exploratory_scope is not None:
+                uow.decision_runs.bind_exploratory_retrospective(
+                    authority,
+                    exploratory_scope,
+                )
             reconciliation = uow.decision_runs.reconcile(
                 authority.decision_run_id,
                 lock=True,
@@ -376,6 +450,7 @@ class DecisionSupportApplication:
         *,
         runtime_claim: AttemptClaim,
         raise_conflict: bool,
+        exploratory_scope: ExploratoryRetrospectiveDecisionScope | None,
     ) -> DecisionRunSnapshot | None:
         existing = self._queries.find_by_candidate_set(request.candidate_set_id)
         if existing is None:
@@ -412,6 +487,7 @@ class DecisionSupportApplication:
             and authority.actor_type == context.actor_type.value
             and authority.actor_id == context.actor_id
             and authority.reason_code == context.reason_code
+            and existing.exploratory_retrospective_scope == exploratory_scope
         )
         if exact:
             return existing

@@ -278,6 +278,7 @@ EXPECTED_DECISION_SUPPORT_TABLES: Final[frozenset[str]] = frozenset(
         "decision_run_target",
         "decision_target_commitment",
         "decision_reference_observation",
+        "exploratory_retrospective_decision_run",
     }
 )
 

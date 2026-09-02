@@ -43,6 +43,9 @@ from market_regime_alpha.decision_support.domain.model import (
     TargetDecisionSnapshot,
     build_decision_authority,
 )
+from market_regime_alpha.decision_support.domain.retrospective import (
+    ExploratoryRetrospectiveDecisionScope,
+)
 from market_regime_alpha.decision_support.domain.inference import (
     ForecastAuthority,
     ForecastCalibrationStatus,
@@ -169,6 +172,7 @@ __all__ = [
     "DecisionRunVerification",
     "DecisionRunTargetPlan",
     "DecisionRuntimeMode",
+    "ExploratoryRetrospectiveDecisionScope",
     "DecisionTargetCommitmentPlan",
     "DecisionArtifactBinding",
     "DecisionAction",

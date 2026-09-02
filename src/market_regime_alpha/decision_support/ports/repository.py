@@ -7,7 +7,10 @@ from datetime import datetime
 from typing import Protocol
 from uuid import UUID
 
-from market_regime_alpha.decision_support.domain import DecisionRunAuthority
+from market_regime_alpha.decision_support.domain import (
+    DecisionRunAuthority,
+    ExploratoryRetrospectiveDecisionScope,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,6 +35,12 @@ class DecisionRunRepository(Protocol):
     def authoritative_recorded_at(self) -> datetime: ...
 
     def insert(self, authority: DecisionRunAuthority) -> None: ...
+
+    def bind_exploratory_retrospective(
+        self,
+        authority: DecisionRunAuthority,
+        scope: ExploratoryRetrospectiveDecisionScope,
+    ) -> str: ...
 
     def reconcile(
         self,

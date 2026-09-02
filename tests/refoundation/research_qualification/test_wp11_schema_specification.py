@@ -19,7 +19,7 @@ def test_refoundation_extends_only_unreleased_baseline() -> None:
     migrations = sorted(item.name for item in MIGRATIONS.glob("*.sql"))
     assert migrations == ["001_baseline.sql"]
     assert len(EXPECTED_RESEARCH_VALIDITY_TABLES) == 12
-    assert len(EXPECTED_TARGET_TABLES) == 143
+    assert len(EXPECTED_TARGET_TABLES) == 144
 
 
 def test_wp11_relations_have_no_generic_or_future_placeholder_shape(
