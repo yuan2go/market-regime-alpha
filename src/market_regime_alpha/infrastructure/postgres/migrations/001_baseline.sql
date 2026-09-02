@@ -6350,8 +6350,13 @@ ALTER TABLE mra.decision_target_commitment
 ALTER TABLE mra.context_assessment
     ADD CONSTRAINT context_assessment_signal_authority_uk UNIQUE (
         context_assessment_id, assessment_group_id, decision_run_id,
+        context_policy_id, context_policy_content_sha256,
         context_kind, assessment_status, assessment_state,
         content_sha256, recorded_at
+    );
+ALTER TABLE mra.context_policy
+    ADD CONSTRAINT context_policy_strategy_authority_uk UNIQUE (
+        context_policy_id, content_sha256
     );
 
 CREATE TABLE mra.strategy (
@@ -6440,6 +6445,8 @@ CREATE TABLE mra.strategy_context_requirement (
     strategy_context_requirement_id uuid PRIMARY KEY,
     strategy_version_id uuid NOT NULL,
     ordinal integer NOT NULL,
+    context_policy_id uuid NOT NULL,
+    context_policy_content_sha256 text NOT NULL,
     context_kind text NOT NULL,
     required_state text NOT NULL,
     missing_action text NOT NULL,
@@ -6456,12 +6463,17 @@ CREATE TABLE mra.strategy_context_requirement (
         context_kind, content_sha256
     ),
     CONSTRAINT strategy_context_requirement_scope_uk UNIQUE (
-        strategy_context_requirement_id, strategy_version_id, context_kind
+        strategy_context_requirement_id, strategy_version_id,
+        context_policy_id, context_policy_content_sha256, context_kind
     ),
     CONSTRAINT strategy_context_requirement_version_fk FOREIGN KEY (
         strategy_version_id
     ) REFERENCES mra.strategy_version(strategy_version_id)
       ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT strategy_context_requirement_policy_fk FOREIGN KEY (
+        context_policy_id, context_policy_content_sha256
+    ) REFERENCES mra.context_policy(context_policy_id, content_sha256)
+      ON DELETE RESTRICT,
     CONSTRAINT strategy_context_requirement_shape_ck CHECK (
         ordinal > 0
         AND context_kind IN (
@@ -6469,6 +6481,7 @@ CREATE TABLE mra.strategy_context_requirement (
         )
         AND required_state IN ('POSITIVE', 'NEUTRAL', 'NEGATIVE')
         AND missing_action IN ('WAIT', 'UNKNOWN', 'NOT_ESTIMABLE')
+        AND context_policy_content_sha256 ~ '^[0-9a-f]{64}$'
         AND content_sha256 ~ '^[0-9a-f]{64}$'
     )
 );
@@ -6753,6 +6766,8 @@ CREATE TABLE mra.signal_context_binding (
     strategy_version_id uuid NOT NULL,
     binding_ordinal integer NOT NULL,
     strategy_context_requirement_id uuid NOT NULL,
+    context_policy_id uuid NOT NULL,
+    context_policy_content_sha256 text NOT NULL,
     context_kind text NOT NULL,
     context_assessment_id uuid NOT NULL,
     assessment_group_id uuid NOT NULL,
@@ -6777,22 +6792,26 @@ CREATE TABLE mra.signal_context_binding (
     ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
     CONSTRAINT signal_context_binding_requirement_fk FOREIGN KEY (
         strategy_context_requirement_id, strategy_version_id,
-        context_kind
+        context_policy_id, context_policy_content_sha256, context_kind
     ) REFERENCES mra.strategy_context_requirement(
-        strategy_context_requirement_id, strategy_version_id, context_kind
+        strategy_context_requirement_id, strategy_version_id,
+        context_policy_id, context_policy_content_sha256, context_kind
     ) ON DELETE RESTRICT,
     CONSTRAINT signal_context_binding_assessment_fk FOREIGN KEY (
         context_assessment_id, assessment_group_id, decision_run_id,
+        context_policy_id, context_policy_content_sha256,
         context_kind, assessment_status, assessment_state,
         assessment_content_sha256, assessment_recorded_at
     ) REFERENCES mra.context_assessment(
         context_assessment_id, assessment_group_id, decision_run_id,
+        context_policy_id, context_policy_content_sha256,
         context_kind, assessment_status, assessment_state,
         content_sha256, recorded_at
     ) ON DELETE RESTRICT,
     CONSTRAINT signal_context_binding_shape_ck CHECK (
         binding_ordinal > 0
         AND assessment_recorded_at <= created_at
+        AND context_policy_content_sha256 ~ '^[0-9a-f]{64}$'
         AND assessment_content_sha256 ~ '^[0-9a-f]{64}$'
         AND content_sha256 ~ '^[0-9a-f]{64}$'
     )
@@ -7019,6 +7038,10 @@ CREATE INDEX strategy_version_signal_rule_fk_idx ON mra.strategy_version (
 );
 CREATE INDEX strategy_forecast_rule_target_fk_idx
     ON mra.strategy_forecast_rule (target_definition_id, target_definition_sha256);
+CREATE INDEX strategy_context_requirement_policy_fk_idx
+    ON mra.strategy_context_requirement (
+        context_policy_id, context_policy_content_sha256
+    );
 CREATE INDEX strategy_forecast_rule_checkpoint_fk_idx
     ON mra.strategy_forecast_rule (
         target_checkpoint_id, target_definition_id, target_checkpoint_sha256
@@ -7062,11 +7085,13 @@ CREATE INDEX signal_context_binding_signal_fk_idx
     );
 CREATE INDEX signal_context_binding_requirement_fk_idx
     ON mra.signal_context_binding (
-        strategy_context_requirement_id, strategy_version_id, context_kind
+        strategy_context_requirement_id, strategy_version_id,
+        context_policy_id, context_policy_content_sha256, context_kind
     );
 CREATE INDEX signal_context_binding_assessment_fk_idx
     ON mra.signal_context_binding (
         context_assessment_id, assessment_group_id, decision_run_id,
+        context_policy_id, context_policy_content_sha256,
         context_kind, assessment_status, assessment_state,
         assessment_content_sha256, assessment_recorded_at
     );

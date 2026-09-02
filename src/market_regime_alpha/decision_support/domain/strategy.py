@@ -84,6 +84,8 @@ class StrategyContextRequirement:
     strategy_context_requirement_id: UUID
     strategy_version_id: UUID
     ordinal: int
+    context_policy_id: UUID
+    context_policy_content_sha256: str
     context_kind: ContextKind
     required_state: ContextState
     missing_action: ContextFailureAction
@@ -94,6 +96,11 @@ class StrategyContextRequirement:
             raise ValueError("Strategy Context ordinal must be positive")
         if not isinstance(self.context_kind, ContextKind):
             raise TypeError("Strategy Context kind must be typed")
+        object.__setattr__(
+            self,
+            "context_policy_content_sha256",
+            _sha(self.context_policy_content_sha256, "ContextPolicy hash"),
+        )
         if self.required_state not in {
             ContextState.POSITIVE,
             ContextState.NEUTRAL,
@@ -108,6 +115,10 @@ class StrategyContextRequirement:
             canonical_json_sha256(
                 {
                     "context_kind": self.context_kind,
+                    "context_policy_content_sha256": (
+                        self.context_policy_content_sha256
+                    ),
+                    "context_policy_id": self.context_policy_id,
                     "missing_action": self.missing_action,
                     "ordinal": self.ordinal,
                     "required_state": self.required_state,

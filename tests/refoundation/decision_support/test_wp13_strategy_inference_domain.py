@@ -69,6 +69,8 @@ def _strategy() -> StrategyVersionPlan:
                 strategy_context_requirement_id=_uuid(2010),
                 strategy_version_id=version_id,
                 ordinal=1,
+                context_policy_id=_uuid(2005),
+                context_policy_content_sha256="8" * 64,
                 context_kind=ContextKind.MARKET_REGIME,
                 required_state=ContextState.POSITIVE,
                 missing_action=ContextFailureAction.WAIT,
@@ -77,6 +79,8 @@ def _strategy() -> StrategyVersionPlan:
                 strategy_context_requirement_id=_uuid(2011),
                 strategy_version_id=version_id,
                 ordinal=2,
+                context_policy_id=_uuid(2005),
+                context_policy_content_sha256="8" * 64,
                 context_kind=ContextKind.CAPITAL_BREADTH,
                 required_state=ContextState.POSITIVE,
                 missing_action=ContextFailureAction.NOT_ESTIMABLE,
@@ -127,6 +131,8 @@ def _context(
         strategy_context_requirement_id=(
             requirement.strategy_context_requirement_id
         ),
+        context_policy_id=requirement.context_policy_id,
+        context_policy_content_sha256=requirement.context_policy_content_sha256,
         context_assessment_id=_uuid(2100 + requirement.ordinal),
         assessment_group_id=_uuid(2110),
         context_kind=requirement.context_kind,
@@ -218,6 +224,7 @@ def test_signal_preserves_every_candidate_and_missing_context_state() -> None:
     prepared = PreparedSignalInputs(
         decision_run_id=_uuid(2300),
         candidate_set_id=_uuid(2301),
+        candidate_set_content_sha256="0" * 64,
         candidate_roster_sha256="1" * 64,
         decision_time=DECISION_TIME,
         strategy_version=strategy,
@@ -267,6 +274,7 @@ def test_forecast_is_target_bound_uncalibrated_and_complete() -> None:
         prepared=PreparedSignalInputs(
             decision_run_id=_uuid(2510),
             candidate_set_id=_uuid(2511),
+            candidate_set_content_sha256="2" * 64,
             candidate_roster_sha256="3" * 64,
             decision_time=DECISION_TIME,
             strategy_version=strategy,

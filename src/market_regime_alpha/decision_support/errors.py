@@ -27,6 +27,22 @@ class ContextAlreadyAssessedError(ConflictError):
     code = "CONTEXT_ALREADY_ASSESSED"
 
 
+class StrategyAuthorityIntegrityError(DecisionAuthorityIntegrityError):
+    code = "STRATEGY_AUTHORITY_INTEGRITY_FAILED"
+
+
+class StrategyAlreadyRegisteredError(ConflictError):
+    code = "STRATEGY_ALREADY_REGISTERED"
+
+
+class InferenceAuthorityIntegrityError(DecisionAuthorityIntegrityError):
+    code = "INFERENCE_AUTHORITY_INTEGRITY_FAILED"
+
+
+class InferenceAlreadyProducedError(ConflictError):
+    code = "INFERENCE_ALREADY_PRODUCED"
+
+
 class DecisionTransactionRetryExhaustedError(ConflictError):
     code = "DECISION_TRANSACTION_RETRY_EXHAUSTED"
 
@@ -53,4 +69,8 @@ __all__ = [
     "DecisionReferenceResolutionError",
     "DecisionQualificationResolutionError",
     "DecisionTransactionRetryExhaustedError",
+    "InferenceAlreadyProducedError",
+    "InferenceAuthorityIntegrityError",
+    "StrategyAlreadyRegisteredError",
+    "StrategyAuthorityIntegrityError",
 ]

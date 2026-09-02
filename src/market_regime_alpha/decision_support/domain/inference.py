@@ -62,6 +62,8 @@ def _sha(value: str, label: str) -> str:
 @dataclass(frozen=True, slots=True)
 class PreparedSignalContext:
     strategy_context_requirement_id: UUID
+    context_policy_id: UUID
+    context_policy_content_sha256: str
     context_assessment_id: UUID
     assessment_group_id: UUID
     context_kind: ContextKind
@@ -77,6 +79,11 @@ class PreparedSignalContext:
             raise TypeError("Signal Context status must be typed")
         if not isinstance(self.assessment_state, ContextState):
             raise TypeError("Signal Context state must be typed")
+        object.__setattr__(
+            self,
+            "context_policy_content_sha256",
+            _sha(self.context_policy_content_sha256, "ContextPolicy hash"),
+        )
         object.__setattr__(
             self,
             "assessment_content_sha256",
@@ -123,6 +130,7 @@ class PreparedSignalCandidate:
 class PreparedSignalInputs:
     decision_run_id: UUID
     candidate_set_id: UUID
+    candidate_set_content_sha256: str
     candidate_roster_sha256: str
     decision_time: datetime
     strategy_version: StrategyVersionPlan
@@ -135,6 +143,11 @@ class PreparedSignalInputs:
 
         if not isinstance(self.strategy_version, StrategyVersionPlan):
             raise TypeError("Signal StrategyVersion must be typed")
+        object.__setattr__(
+            self,
+            "candidate_set_content_sha256",
+            _sha(self.candidate_set_content_sha256, "CandidateSet hash"),
+        )
         object.__setattr__(
             self,
             "candidate_roster_sha256",
@@ -159,6 +172,17 @@ class PreparedSignalInputs:
             )
             if actual != expected:
                 raise ValueError("Signal requires the complete Context roster")
+            if any(
+                context.context_policy_id != requirement.context_policy_id
+                or context.context_policy_content_sha256
+                != requirement.context_policy_content_sha256
+                for context, requirement in zip(
+                    candidate.contexts,
+                    self.strategy_version.context_requirements,
+                    strict=True,
+                )
+            ):
+                raise ValueError("Signal ContextPolicy binding is not exact")
             groups = tuple(item.assessment_group_id for item in candidate.contexts)
             if len(set(groups)) != 1:
                 raise ValueError("Signal Context roster must share one assessment group")
@@ -238,6 +262,7 @@ class SignalAuthority:
     signal_group_id: UUID
     decision_run_id: UUID
     candidate_set_id: UUID
+    candidate_set_content_sha256: str
     candidate_roster_sha256: str
     decision_time: datetime
     strategy_version: StrategyVersionPlan
@@ -264,6 +289,9 @@ class SignalAuthority:
                 {
                     "candidate_roster_sha256": self.candidate_roster_sha256,
                     "candidate_set_id": self.candidate_set_id,
+                    "candidate_set_content_sha256": (
+                        self.candidate_set_content_sha256
+                    ),
                     "context_binding_count": self.context_binding_count,
                     "decision_run_id": self.decision_run_id,
                     "decision_time": self.decision_time,
@@ -390,6 +418,7 @@ def build_signal_authority(
         signal_group_id=signal_group_id,
         decision_run_id=prepared.decision_run_id,
         candidate_set_id=prepared.candidate_set_id,
+        candidate_set_content_sha256=prepared.candidate_set_content_sha256,
         candidate_roster_sha256=prepared.candidate_roster_sha256,
         decision_time=prepared.decision_time,
         strategy_version=prepared.strategy_version,
