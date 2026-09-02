@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[3]
 BASELINE = ROOT / "src/market_regime_alpha/infrastructure/postgres/migrations/001_baseline.sql"
 
 
-def test_strategy_and_inference_are_nine_relational_authority_tables() -> None:
+def test_strategy_and_inference_are_relational_authority_tables() -> None:
     assert EXPECTED_STRATEGY_TABLES == {
         "strategy",
         "strategy_version",
@@ -25,8 +25,10 @@ def test_strategy_and_inference_are_nine_relational_authority_tables() -> None:
         "strategy_forecast_rule",
     }
     assert EXPECTED_INFERENCE_TABLES == {
+        "signal_run",
         "signal",
         "signal_context_binding",
+        "forecast_run",
         "forecast",
         "forecast_estimate",
     }

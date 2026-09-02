@@ -258,8 +258,10 @@ EXPECTED_STRATEGY_TABLES: Final[frozenset[str]] = frozenset(
 
 EXPECTED_INFERENCE_TABLES: Final[frozenset[str]] = frozenset(
     {
+        "signal_run",
         "signal",
         "signal_context_binding",
+        "forecast_run",
         "forecast",
         "forecast_estimate",
     }

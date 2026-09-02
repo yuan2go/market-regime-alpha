@@ -469,6 +469,21 @@ class PreparedForecastInputs:
 
 
 @dataclass(frozen=True, slots=True)
+class PreparedInferenceInputs:
+    signal_inputs: PreparedSignalInputs
+    commitments: tuple[PreparedForecastCommitment, ...]
+
+    def __post_init__(self) -> None:
+        candidate_ids = {
+            candidate.candidate_id for candidate in self.signal_inputs.candidates
+        }
+        if {
+            commitment.candidate_id for commitment in self.commitments
+        } != candidate_ids:
+            raise ValueError("Inference requires commitments for every Candidate")
+
+
+@dataclass(frozen=True, slots=True)
 class ForecastEstimatePlan:
     forecast_estimate_id: UUID
     rule: StrategyForecastRule
@@ -715,6 +730,7 @@ __all__ = [
     "ForecastStatus",
     "PreparedForecastCommitment",
     "PreparedForecastInputs",
+    "PreparedInferenceInputs",
     "PreparedSignalCandidate",
     "PreparedSignalContext",
     "PreparedSignalInputs",

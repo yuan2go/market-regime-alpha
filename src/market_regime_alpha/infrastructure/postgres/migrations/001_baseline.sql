@@ -6575,6 +6575,64 @@ ALTER TABLE mra.strategy_version
         strategy_signal_rule_id, strategy_version_id, content_sha256
     ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED;
 
+CREATE TABLE mra.signal_run (
+    signal_group_id uuid PRIMARY KEY,
+    decision_run_id uuid NOT NULL,
+    candidate_set_id uuid NOT NULL,
+    candidate_set_content_sha256 text NOT NULL,
+    candidate_roster_sha256 text NOT NULL,
+    decision_time timestamptz NOT NULL,
+    candidate_count integer NOT NULL,
+    strategy_version_id uuid NOT NULL,
+    strategy_version_sha256 text NOT NULL,
+    signal_count integer NOT NULL,
+    context_binding_count integer NOT NULL,
+    signal_roster_sha256 text NOT NULL,
+    request_identity text NOT NULL,
+    request_sha256 text NOT NULL,
+    command_receipt_id uuid NOT NULL,
+    content_sha256 text NOT NULL,
+    recorded_at timestamptz NOT NULL,
+    CONSTRAINT signal_run_identity_uk UNIQUE (
+        decision_run_id, strategy_version_id
+    ),
+    CONSTRAINT signal_run_request_uk UNIQUE (
+        decision_run_id, strategy_version_id, request_identity
+    ),
+    CONSTRAINT signal_run_exact_uk UNIQUE (
+        signal_group_id, decision_run_id, strategy_version_id,
+        content_sha256, recorded_at
+    ),
+    CONSTRAINT signal_run_content_uk UNIQUE (
+        signal_group_id, decision_run_id, strategy_version_id, content_sha256
+    ),
+    CONSTRAINT signal_run_decision_fk FOREIGN KEY (
+        decision_run_id, candidate_set_id, candidate_set_content_sha256,
+        candidate_roster_sha256, decision_time, candidate_count
+    ) REFERENCES mra.decision_run(
+        decision_run_id, candidate_set_id, candidate_set_content_sha256,
+        candidate_roster_sha256, decision_time, candidate_count
+    ) ON DELETE RESTRICT,
+    CONSTRAINT signal_run_strategy_fk FOREIGN KEY (
+        strategy_version_id, strategy_version_sha256
+    ) REFERENCES mra.strategy_version(strategy_version_id, content_sha256)
+      ON DELETE RESTRICT,
+    CONSTRAINT signal_run_receipt_fk FOREIGN KEY (command_receipt_id)
+        REFERENCES mra.command_receipt(receipt_id) ON DELETE RESTRICT,
+    CONSTRAINT signal_run_shape_ck CHECK (
+        signal_count = candidate_count AND signal_count >= 0
+        AND context_binding_count >= 0
+        AND signal_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND candidate_set_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND candidate_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND strategy_version_sha256 ~ '^[0-9a-f]{64}$'
+        AND request_identity ~ '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$'
+        AND request_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+        AND recorded_at > decision_time
+    )
+);
+
 CREATE TABLE mra.signal (
     signal_id uuid PRIMARY KEY,
     signal_group_id uuid NOT NULL,
@@ -6626,6 +6684,13 @@ CREATE TABLE mra.signal (
         signal_id, signal_group_id, decision_run_id, candidate_id,
         strategy_version_id, content_sha256
     ),
+    CONSTRAINT signal_group_fk FOREIGN KEY (
+        signal_group_id, decision_run_id, strategy_version_id,
+        group_content_sha256, recorded_at
+    ) REFERENCES mra.signal_run(
+        signal_group_id, decision_run_id, strategy_version_id,
+        content_sha256, recorded_at
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
     CONSTRAINT signal_run_fk FOREIGN KEY (
         decision_run_id, candidate_set_id, candidate_set_content_sha256,
         candidate_roster_sha256, decision_time, candidate_count
@@ -6733,6 +6798,56 @@ CREATE TABLE mra.signal_context_binding (
     )
 );
 
+CREATE TABLE mra.forecast_run (
+    forecast_group_id uuid PRIMARY KEY,
+    decision_run_id uuid NOT NULL,
+    strategy_version_id uuid NOT NULL,
+    strategy_version_sha256 text NOT NULL,
+    signal_group_id uuid NOT NULL,
+    signal_content_sha256 text NOT NULL,
+    forecast_count integer NOT NULL,
+    estimate_count integer NOT NULL,
+    forecast_roster_sha256 text NOT NULL,
+    request_identity text NOT NULL,
+    request_sha256 text NOT NULL,
+    command_receipt_id uuid NOT NULL,
+    content_sha256 text NOT NULL,
+    recorded_at timestamptz NOT NULL,
+    CONSTRAINT forecast_run_identity_uk UNIQUE (
+        decision_run_id, strategy_version_id
+    ),
+    CONSTRAINT forecast_run_request_uk UNIQUE (
+        decision_run_id, strategy_version_id, request_identity
+    ),
+    CONSTRAINT forecast_run_exact_uk UNIQUE (
+        forecast_group_id, decision_run_id, strategy_version_id,
+        content_sha256, recorded_at
+    ),
+    CONSTRAINT forecast_run_strategy_fk FOREIGN KEY (
+        strategy_version_id, strategy_version_sha256
+    ) REFERENCES mra.strategy_version(strategy_version_id, content_sha256)
+      ON DELETE RESTRICT,
+    CONSTRAINT forecast_run_signal_fk FOREIGN KEY (
+        signal_group_id, decision_run_id, strategy_version_id,
+        signal_content_sha256
+    ) REFERENCES mra.signal_run(
+        signal_group_id, decision_run_id, strategy_version_id,
+        content_sha256
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT forecast_run_receipt_fk FOREIGN KEY (command_receipt_id)
+        REFERENCES mra.command_receipt(receipt_id) ON DELETE RESTRICT,
+    CONSTRAINT forecast_run_shape_ck CHECK (
+        forecast_count >= 0 AND estimate_count >= 0
+        AND (forecast_count > 0 OR estimate_count = 0)
+        AND strategy_version_sha256 ~ '^[0-9a-f]{64}$'
+        AND signal_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND forecast_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND request_identity ~ '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$'
+        AND request_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
 CREATE TABLE mra.forecast (
     forecast_id uuid PRIMARY KEY,
     forecast_group_id uuid NOT NULL,
@@ -6783,6 +6898,13 @@ CREATE TABLE mra.forecast (
         forecast_id, forecast_group_id, decision_run_id,
         strategy_version_id
     ),
+    CONSTRAINT forecast_group_fk FOREIGN KEY (
+        forecast_group_id, decision_run_id, strategy_version_id,
+        group_content_sha256, recorded_at
+    ) REFERENCES mra.forecast_run(
+        forecast_group_id, decision_run_id, strategy_version_id,
+        content_sha256, recorded_at
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
     CONSTRAINT forecast_strategy_version_fk FOREIGN KEY (
         strategy_version_id, strategy_version_sha256
     ) REFERENCES mra.strategy_version(strategy_version_id, content_sha256)
@@ -6906,6 +7028,18 @@ CREATE INDEX strategy_forecast_rule_metric_fk_idx
         target_metric_definition_id, target_definition_id,
         target_metric_definition_sha256
     );
+CREATE INDEX signal_run_decision_fk_idx ON mra.signal_run (
+    decision_run_id, candidate_set_id, candidate_set_content_sha256,
+    candidate_roster_sha256, decision_time, candidate_count
+);
+CREATE INDEX signal_run_strategy_fk_idx ON mra.signal_run (
+    strategy_version_id, strategy_version_sha256
+);
+CREATE INDEX signal_run_receipt_fk_idx ON mra.signal_run (command_receipt_id);
+CREATE INDEX signal_group_fk_idx ON mra.signal (
+    signal_group_id, decision_run_id, strategy_version_id,
+    group_content_sha256, recorded_at
+);
 CREATE INDEX signal_run_fk_idx ON mra.signal (
     decision_run_id, candidate_set_id, candidate_set_content_sha256,
     candidate_roster_sha256, decision_time, candidate_count
@@ -6939,6 +7073,18 @@ CREATE INDEX signal_context_binding_assessment_fk_idx
 CREATE INDEX forecast_commitment_fk_idx ON mra.forecast (
     commitment_id, decision_run_id, candidate_id, instrument_id,
     target_definition_id, target_checkpoint_id, commitment_content_sha256
+);
+CREATE INDEX forecast_run_strategy_fk_idx ON mra.forecast_run (
+    strategy_version_id, strategy_version_sha256
+);
+CREATE INDEX forecast_run_signal_fk_idx ON mra.forecast_run (
+    signal_group_id, decision_run_id, strategy_version_id,
+    signal_content_sha256
+);
+CREATE INDEX forecast_run_receipt_fk_idx ON mra.forecast_run (command_receipt_id);
+CREATE INDEX forecast_group_fk_idx ON mra.forecast (
+    forecast_group_id, decision_run_id, strategy_version_id,
+    group_content_sha256, recorded_at
 );
 CREATE INDEX forecast_strategy_version_fk_idx ON mra.forecast (
     strategy_version_id, strategy_version_sha256
@@ -13718,25 +13864,26 @@ DECLARE actual_signal_count integer;
 DECLARE minimum_ordinal integer;
 DECLARE maximum_ordinal integer;
 DECLARE actual_binding_count integer;
-DECLARE actual_binding_hash text;
+DECLARE actual_roster_hash text;
 BEGIN
-    SELECT count(*), min(ordinal), max(ordinal)
-      INTO actual_signal_count, minimum_ordinal, maximum_ordinal
-    FROM mra.signal WHERE signal_group_id = NEW.signal_group_id;
-    SELECT count(*), mra.canonical_sha256(replace(json_agg(json_build_object(
+    SELECT count(*), min(ordinal), max(ordinal),
+           mra.canonical_sha256(replace(coalesce(json_agg(json_build_object(
                'content_sha256', content_sha256,
-               'ordinal', binding_ordinal,
-               'signal_context_binding_id', signal_context_binding_id
-           ) ORDER BY binding_ordinal)::text, ' ', ''))
-      INTO actual_binding_count, actual_binding_hash
-    FROM mra.signal_context_binding WHERE signal_id = NEW.signal_id;
+               'ordinal', ordinal,
+               'signal_id', signal_id
+           ) ORDER BY ordinal)::text, '[]'), ' ', ''))
+      INTO actual_signal_count, minimum_ordinal, maximum_ordinal,
+           actual_roster_hash
+    FROM mra.signal WHERE signal_group_id = NEW.signal_group_id;
+    SELECT count(*) INTO actual_binding_count
+    FROM mra.signal_context_binding WHERE signal_group_id = NEW.signal_group_id;
     IF actual_signal_count <> NEW.signal_count
-       OR minimum_ordinal <> 1 OR maximum_ordinal <> NEW.signal_count
+       OR (NEW.signal_count > 0
+           AND (minimum_ordinal <> 1 OR maximum_ordinal <> NEW.signal_count))
+       OR (NEW.signal_count = 0
+           AND (minimum_ordinal IS NOT NULL OR maximum_ordinal IS NOT NULL))
+       OR actual_roster_hash <> NEW.signal_roster_sha256
        OR actual_binding_count <> NEW.context_binding_count
-       OR actual_binding_hash <> NEW.context_binding_roster_sha256
-       OR (SELECT count(*) FROM mra.signal_context_binding
-           WHERE signal_group_id = NEW.signal_group_id)
-              <> NEW.total_context_binding_count
        OR EXISTS (
            (SELECT candidate_id FROM mra.candidate
             WHERE candidate_set_id = NEW.candidate_set_id)
@@ -13750,6 +13897,52 @@ BEGIN
            EXCEPT
            (SELECT candidate_id FROM mra.candidate
             WHERE candidate_set_id = NEW.candidate_set_id)
+       )
+       OR EXISTS (
+           SELECT 1 FROM mra.signal AS item
+           WHERE item.signal_group_id = NEW.signal_group_id
+             AND (item.decision_run_id <> NEW.decision_run_id
+               OR item.candidate_set_id <> NEW.candidate_set_id
+               OR item.candidate_set_content_sha256 <>
+                    NEW.candidate_set_content_sha256
+               OR item.candidate_roster_sha256 <> NEW.candidate_roster_sha256
+               OR item.decision_time <> NEW.decision_time
+               OR item.candidate_count <> NEW.candidate_count
+               OR item.strategy_version_id <> NEW.strategy_version_id
+               OR item.strategy_version_sha256 <>
+                    NEW.strategy_version_sha256
+               OR item.signal_count <> NEW.signal_count
+               OR item.signal_roster_sha256 <> NEW.signal_roster_sha256
+               OR item.group_content_sha256 <> NEW.content_sha256
+               OR item.total_context_binding_count <>
+                    NEW.context_binding_count
+               OR item.request_identity <> NEW.request_identity
+               OR item.request_sha256 <> NEW.request_sha256
+               OR item.command_receipt_id <> NEW.command_receipt_id
+               OR item.recorded_at <> NEW.recorded_at)
+       )
+       OR EXISTS (
+           SELECT 1 FROM mra.signal AS item
+           WHERE item.signal_group_id = NEW.signal_group_id
+             AND (
+                 SELECT count(*) FROM mra.signal_context_binding AS binding
+                 WHERE binding.signal_id = item.signal_id
+             ) <> item.context_binding_count
+       )
+       OR EXISTS (
+           SELECT 1 FROM mra.signal AS item
+           WHERE item.signal_group_id = NEW.signal_group_id
+             AND (
+                 SELECT mra.canonical_sha256(replace(coalesce(json_agg(
+                     json_build_object(
+                         'content_sha256', binding.content_sha256,
+                         'ordinal', binding.binding_ordinal,
+                         'signal_context_binding_id',
+                             binding.signal_context_binding_id
+                     ) ORDER BY binding.binding_ordinal)::text, '[]'), ' ', ''))
+                 FROM mra.signal_context_binding AS binding
+                 WHERE binding.signal_id = item.signal_id
+             ) <> item.context_binding_roster_sha256
        ) THEN
         RAISE EXCEPTION 'Signal Candidate or Context roster is incomplete'
             USING ERRCODE = '55000';
@@ -13775,30 +13968,71 @@ DECLARE actual_forecast_count integer;
 DECLARE minimum_ordinal integer;
 DECLARE maximum_ordinal integer;
 DECLARE actual_estimate_count integer;
-DECLARE actual_estimate_hash text;
+DECLARE actual_roster_hash text;
 BEGIN
-    SELECT count(*), min(ordinal), max(ordinal)
-      INTO actual_forecast_count, minimum_ordinal, maximum_ordinal
-    FROM mra.forecast WHERE forecast_group_id = NEW.forecast_group_id;
-    SELECT count(*), mra.canonical_sha256(replace(json_agg(json_build_object(
+    SELECT count(*), min(ordinal), max(ordinal),
+           mra.canonical_sha256(replace(coalesce(json_agg(json_build_object(
                'content_sha256', content_sha256,
-               'forecast_estimate_id', forecast_estimate_id,
-               'ordinal', estimate_ordinal
-           ) ORDER BY estimate_ordinal)::text, ' ', ''))
-      INTO actual_estimate_count, actual_estimate_hash
-    FROM mra.forecast_estimate WHERE forecast_id = NEW.forecast_id;
+               'forecast_id', forecast_id,
+               'ordinal', ordinal
+           ) ORDER BY ordinal)::text, '[]'), ' ', ''))
+      INTO actual_forecast_count, minimum_ordinal, maximum_ordinal,
+           actual_roster_hash
+    FROM mra.forecast WHERE forecast_group_id = NEW.forecast_group_id;
+    SELECT count(*) INTO actual_estimate_count
+    FROM mra.forecast_estimate WHERE forecast_group_id = NEW.forecast_group_id;
     IF actual_forecast_count <> NEW.forecast_count
-       OR minimum_ordinal <> 1 OR maximum_ordinal <> NEW.forecast_count
+       OR (NEW.forecast_count > 0
+           AND (minimum_ordinal <> 1 OR maximum_ordinal <> NEW.forecast_count))
+       OR (NEW.forecast_count = 0
+           AND (minimum_ordinal IS NOT NULL OR maximum_ordinal IS NOT NULL))
+       OR actual_roster_hash <> NEW.forecast_roster_sha256
        OR actual_estimate_count <> NEW.estimate_count
-       OR actual_estimate_hash <> NEW.estimate_roster_sha256
-       OR (SELECT count(*) FROM mra.forecast_estimate
-           WHERE forecast_group_id = NEW.forecast_group_id)
-              <> NEW.total_estimate_count
        OR EXISTS (
-           SELECT 1 FROM mra.forecast_estimate AS estimate
-           WHERE estimate.forecast_id = NEW.forecast_id
-             AND ((NEW.status = 'AVAILABLE' AND estimate.point_estimate IS NULL)
-               OR (NEW.status <> 'AVAILABLE' AND estimate.point_estimate IS NOT NULL))
+           SELECT 1 FROM mra.forecast AS item
+           WHERE item.forecast_group_id = NEW.forecast_group_id
+             AND (item.decision_run_id <> NEW.decision_run_id
+               OR item.strategy_version_id <> NEW.strategy_version_id
+               OR item.strategy_version_sha256 <> NEW.strategy_version_sha256
+               OR item.signal_group_id <> NEW.signal_group_id
+               OR item.forecast_count <> NEW.forecast_count
+               OR item.forecast_roster_sha256 <> NEW.forecast_roster_sha256
+               OR item.group_content_sha256 <> NEW.content_sha256
+               OR item.total_estimate_count <> NEW.estimate_count
+               OR item.request_identity <> NEW.request_identity
+               OR item.request_sha256 <> NEW.request_sha256
+               OR item.command_receipt_id <> NEW.command_receipt_id
+               OR item.recorded_at <> NEW.recorded_at)
+       )
+       OR EXISTS (
+           SELECT 1 FROM mra.forecast AS item
+           WHERE item.forecast_group_id = NEW.forecast_group_id
+             AND (
+                 SELECT count(*) FROM mra.forecast_estimate AS estimate
+                 WHERE estimate.forecast_id = item.forecast_id
+             ) <> item.estimate_count
+       )
+       OR EXISTS (
+           SELECT 1 FROM mra.forecast AS item
+           WHERE item.forecast_group_id = NEW.forecast_group_id
+             AND (
+                 SELECT mra.canonical_sha256(replace(coalesce(json_agg(
+                     json_build_object(
+                         'content_sha256', estimate.content_sha256,
+                         'forecast_estimate_id', estimate.forecast_estimate_id,
+                         'ordinal', estimate.estimate_ordinal
+                     ) ORDER BY estimate.estimate_ordinal)::text, '[]'), ' ', ''))
+                 FROM mra.forecast_estimate AS estimate
+                 WHERE estimate.forecast_id = item.forecast_id
+             ) <> item.estimate_roster_sha256
+       )
+       OR EXISTS (
+           SELECT 1 FROM mra.forecast AS item
+           JOIN mra.forecast_estimate AS estimate
+             ON estimate.forecast_id = item.forecast_id
+           WHERE item.forecast_group_id = NEW.forecast_group_id
+             AND ((item.status = 'AVAILABLE' AND estimate.point_estimate IS NULL)
+               OR (item.status <> 'AVAILABLE' AND estimate.point_estimate IS NOT NULL))
        ) THEN
         RAISE EXCEPTION 'Forecast or estimate roster is incomplete'
             USING ERRCODE = '55000';
@@ -13837,9 +14071,15 @@ FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
 CREATE TRIGGER signal_context_binding_insert_guard
 BEFORE INSERT ON mra.signal_context_binding
 FOR EACH ROW EXECUTE FUNCTION mra.guard_signal_binding_insert();
+CREATE TRIGGER signal_insert_guard
+BEFORE INSERT ON mra.signal
+FOR EACH ROW EXECUTE FUNCTION mra.guard_signal_binding_insert();
 CREATE CONSTRAINT TRIGGER signal_closure_guard
-AFTER INSERT ON mra.signal DEFERRABLE INITIALLY DEFERRED
+AFTER INSERT ON mra.signal_run DEFERRABLE INITIALLY DEFERRED
 FOR EACH ROW EXECUTE FUNCTION mra.validate_signal_closure();
+CREATE TRIGGER signal_run_append_only
+BEFORE UPDATE OR DELETE ON mra.signal_run
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
 CREATE TRIGGER signal_append_only
 BEFORE UPDATE OR DELETE ON mra.signal
 FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
@@ -13849,9 +14089,15 @@ FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
 CREATE TRIGGER forecast_estimate_insert_guard
 BEFORE INSERT ON mra.forecast_estimate
 FOR EACH ROW EXECUTE FUNCTION mra.guard_forecast_estimate_insert();
+CREATE TRIGGER forecast_insert_guard
+BEFORE INSERT ON mra.forecast
+FOR EACH ROW EXECUTE FUNCTION mra.guard_forecast_estimate_insert();
 CREATE CONSTRAINT TRIGGER forecast_closure_guard
-AFTER INSERT ON mra.forecast DEFERRABLE INITIALLY DEFERRED
+AFTER INSERT ON mra.forecast_run DEFERRABLE INITIALLY DEFERRED
 FOR EACH ROW EXECUTE FUNCTION mra.validate_forecast_closure();
+CREATE TRIGGER forecast_run_append_only
+BEFORE UPDATE OR DELETE ON mra.forecast_run
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
 CREATE TRIGGER forecast_append_only
 BEFORE UPDATE OR DELETE ON mra.forecast
 FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
