@@ -25,15 +25,16 @@ The durable convergence facts are:
   remain reachable;
 - repository-wide factories and compatibility paths still participate in
   composition and replay;
-- the unreleased target draft now contains Target/Decision commitment, Market
-  Target Outcome, and the focused-validated WP-11 Partition/Experiment/
-  Evaluation implementation. Runtime dispatch remains absent, and the WP-11Q
-  audit found that the three WP-11 command modules are not yet composed by the
-  sole `bootstrap.py` target application;
-- WP-11 remains below its engineering exit gate: Partition does not yet freeze
-  one explicit exchange-calendar identity, and Experiment persistence does not
-  yet close a complete ordered multi-Partition binding roster. Those are
-  correctness blockers, not deferred cutover work.
+- the unreleased target draft now contains the engineering-qualified Authority
+  chain through WP-14: Target/Decision commitment, Market Target Outcome,
+  Partition/Experiment/Evaluation, Evidence/Assessment/Research Qualification,
+  later-generation Decision Support, Provider Qualification mechanics, and
+  Formal Research readiness. The sole `bootstrap.py` composes their narrow
+  Application seams; Runtime business dispatch and CLI cutover remain absent;
+- WP-11Q, WP-12, WP-13, and WP-14 passed their immutable exact-SHA engineering
+  gates. The first real WP-15 BaoStock Provider Qualification Decision is
+  permanently `REJECTED`, so qualified historical visibility and downstream
+  Formal PIT/OOS/Prospective work remain blocked rather than partially opened.
 
 The current all-day call chain is recovered from code, not documentation:
 

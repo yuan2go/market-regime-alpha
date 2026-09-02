@@ -70,7 +70,7 @@ it may not preallocate nullable columns here.
 | Table | Purpose | Lifecycle and key constraints |
 |---|---|---|
 | `provider` | stable source identity | unique code; no credential |
-| `provider_product` | source/fact/time/price-basis contract | unique provider/product/revision; no qualification state; a later Research-owned Qualification Decision may reference this identity |
+| `provider_product` | source/fact/time/price-basis contract | unique provider/product/revision; no embedded qualification state; Market-owned purpose-specific Provider Qualification references this identity |
 | `data_capture` | exact request/response capture metadata | provider product + artifact; DB capture times; request hash; status |
 | `instrument` | stable security/ETF/index identity | unique internal code; exchange/type/lifecycle checks |
 | `instrument_identifier` | effective-dated provider/exchange identifiers | no overlapping scheme/provider value or instrument interval |
@@ -81,6 +81,17 @@ it may not preallocate nullable columns here.
 | `instrument_fact_revision` | typed suspension/status/shares/limit/reference fact | kind-specific typed value check; logical key/revision unique |
 | `corporate_action_revision` | dividends/splits/rights/conversions revision | action identity/revision unique; ex/record/pay session and factors constrained |
 | `source_gap` | expected observation missing/placeholder/conflict | source/scope/interval/kind unique; typed reason/status |
+| `provider_qualification_protocol` | immutable purpose-specific Provider Product qualification contract | one exact Product, scope, timeframe/basis, Decision-time rule, capture window/cutoff, Outcome path, complete requirement count/hash, code/config/provenance and typed supersession |
+| `provider_qualification_requirement` | complete ten-floor requirement roster | one contiguous row for every closed Provider requirement kind; relational minimum count/ratio and exact Protocol FK |
+| `provider_finality_observation` | append-only publication/finality observation for one Capture | concrete Capture and Artifact identities, typed `FINAL`/`PROVISIONAL`/`UNKNOWN`, observation ordinal, direct supersession and PostgreSQL recorded time |
+| `provider_qualification_decision` | immutable derived Provider admission result | exact Protocol/Product/purpose/evidence class; complete Capture/result counts and hashes; `ADMITTED`/`REJECTED`/`INCONCLUSIVE`; engineering rehearsal cannot admit |
+| `provider_qualification_capture_member` | database-derived complete Capture roster | concrete Decision/Capture/Product/Artifact lineage; failed captures and Source Gaps remain present; no caller-selected evidence roster |
+| `provider_qualification_requirement_result` | explicit result for every Protocol requirement | exact Decision/Protocol/requirement composite FKs; complete ordered `SATISFIED`/`REJECTED`/`INCONCLUSIVE` vector |
+| `qualified_market_bar_visibility` | admitted historical visibility for one exact Market bar revision | concrete admitted Decision and bar FK; exact source availability/qualified visibility/hash; append-only |
+| `qualified_instrument_fact_visibility` | admitted historical visibility for one exact instrument fact revision | concrete admitted Decision and fact FK; source-specific and append-only |
+| `qualified_classification_membership_visibility` | admitted historical visibility for one exact membership revision | concrete admitted Decision and membership FK; no current-membership reconstruction |
+| `qualified_trading_session_visibility` | admitted historical visibility for one exact trading session | concrete admitted Decision and session FK; no inferred calendar |
+| `qualified_source_gap_visibility` | admitted historical visibility for one exact Source Gap | concrete admitted Decision and gap FK; missingness remains visible |
 
 ### Selection Core
 
@@ -157,12 +168,12 @@ MFE/MAE, barrier, future observation, realized label, or other posterior values
 are rejected. Artifact and `dataset_source` lineage are validated bidirectionally
 and cannot disagree.
 
-### Target and Research Evaluation
+### Target, Research Evaluation, Evidence, and Qualification
 
-The relations through `evaluation_metric_observation` are implemented in the
-unreleased target baseline. They are not Candidate V1 prerequisites. Research
-owns definitions, rosters, protocols, and Evaluation but never a bars-to-label
-writer.
+The relations through Research Qualification are implemented in the unreleased
+target baseline. They are not Candidate V1 prerequisites. Research owns
+definitions, rosters, protocols, Evaluation, Evidence, Assessment, and
+Research Qualification but never a bars-to-label writer.
 
 | Table | Purpose | Lifecycle and key constraints |
 |---|---|---|
@@ -182,28 +193,48 @@ writer.
 | `evaluation_observation` | exact realized input to Evaluation | exactly one per Evaluation Run/member; binds same-Partition access and exact Market Target Outcome revision; commitment chain implies Dataset/Candidate/Target; unavailable/failed revisions remain present |
 | `evaluation_metric` | typed result over declared protocol metric | unique Run/protocol metric/slice; status independent of value; complete input reconciliation |
 | `evaluation_metric_observation` | exact member roster for one Evaluation metric/slice | unique Evaluation metric/observation; included/excluded/not-estimable state and reason relational; complete reconciliation to protocol missingness rule |
+| `evidence_item` | immutable Evaluation evidence or counter-evidence | concrete terminal Evaluation Run and Artifact FKs; optional exact same-Run metric scope; class/origin/claim direction/time/hash/ceiling plus complete dependency count/hash |
+| `evidence_dependency` | exact Evidence-only DAG edge | unique child/parent/role/order; no self-edge or cycle; complete root reconciliation |
+| `research_assessment` | governed Experiment-bound research claim revision | unique Experiment/claim/revision; complete terminal Evaluation and Evidence counts/hashes; closed status, append-only supersession, negative/inconclusive/not-estimable preservation |
+| `research_assessment_evaluation` | complete terminal Evaluation roster for one Assessment | unique Assessment/Evaluation Run/role; every Run belongs to the Assessment Experiment; no current/latest lookup |
+| `research_assessment_evidence` | complete concrete Assessment Evidence set | unique Assessment/Evidence Item; composite FK requires the item's Evaluation Run in the Assessment roster; typed support/counter/neutral role |
+| `research_qualification_policy` | immutable research-purpose floor contract | unique code/version/hash/purpose; typed decision semantics and direct supersession |
+| `research_qualification_policy_floor` | complete relational qualification floor roster | unique policy/floor/order; exact Evaluation purpose/state/metric/slice/operator/threshold/sample/missingness/Evidence requirements |
+| `research_qualification_decision` | sole Research-purpose admission owner | exact Assessment and Policy; complete floor/evidence counts and hashes; append-only supersession and generation/effective/known-time safety |
+| `research_qualification_floor_result` | explicit result for every Policy floor | unique Decision/Policy floor; every floor present with typed status/reason and observed counts/value |
+| `research_qualification_floor_evidence` | concrete Assessment Evidence bound to one floor result | unique floor-result/Assessment-Evidence/role; exact same-Assessment composite FK; no JSON or weak reference |
 
-#### Deferred Research and Qualification
+#### Formal Research engineering readiness
+
+These WP-14 relations compose existing owners for controlled proof execution.
+They prove mechanics only and cannot create Provider, Formal PIT/OOS,
+Prospective, Alpha, trading, or Production claims without real admitted
+evidence.
+
+| Table | Purpose | Lifecycle and key constraints |
+|---|---|---|
+| `formal_research_campaign` | immutable campaign predeclaration and generation root | exact hypothesis/Target/Provider Protocol and Decision-Support policy identities; complete child counts/hashes; engineering/formal evidence class and typed state |
+| `formal_research_campaign_partition_plan` | complete FIT/VALIDATION/LOCKED_OOS and optional PROSPECTIVE plan | exact purpose/calendar/Decision range/population/purge/embargo order and hash; no posterior plan edit |
+| `formal_research_campaign_evaluation_protocol` | purpose-specific Evaluation Protocol binding | concrete campaign/plan/Protocol identity and contiguous complete roster |
+| `formal_research_campaign_cost_assumption` | typed declared cost assumption | relational kind/unit/Decimal value/order; complete roster; never empirical execution proof |
+| `formal_research_campaign_provider_decision` | exact Provider Decision binding | concrete admitted recorded-provider Decision for formal campaigns; engineering rehearsal ceiling remains enforced |
+| `formal_research_campaign_partition_binding` | planned-to-actual Research Partition binding | concrete same-purpose/Target/calendar identity with exact plan reconciliation |
+| `formal_research_campaign_experiment` | exact complete Experiment binding | concrete Experiment and complete partition roster identity; no late replacement |
+| `formal_research_campaign_protected_open` | zero-access protected OOS/Prospective opening fact | concrete Experiment Run and Evaluation Run; PostgreSQL authoritative ordering and zero first-access guard |
+| `formal_research_campaign_runtime_run` | exact controlled Runtime plan binding | concrete Decision/Due proof Runtime Run and persisted DAG identity; no second Runtime or dispatcher |
+| `formal_research_dataset` | exact campaign-bound Formal PIT Dataset envelope | concrete admitted Provider Decision and complete qualified source roster/count/hash; source-specific visibility only |
+
+#### Deferred optional Model branch
 
 The following relations remain logical target design only and are not present
-in the WP-11 baseline. Their dependency order remains frozen by WP-08; none may
-be introduced as a placeholder or nullable future branch.
+in the target baseline. None may be introduced as a placeholder or nullable
+future branch.
 
 | Table | Purpose | Lifecycle and key constraints |
 |---|---|---|
 | `evaluation_forecast_binding` | optional Forecast-evaluation branch | concrete Evaluation observation/Forecast FK only when a real Forecast exists; implemented after the Forecast parent, never as a nullable branch placeholder |
 | `model` | stable optional fitted-model family | unique code; no Target/Candidate/Outcome/Evaluation existence dependency |
 | `model_version` | immutable fitted version lineage | requires completed `MODEL_TRAINING` Evaluation Run and fitted/code/config Artifacts; unique Model/version/hash; completion/known time explicit |
-| `evidence_item` | immutable Evaluation evidence or counter-evidence | requires concrete terminal Evaluation Run and Artifact FKs; class/origin/claim direction/time/hash/ceiling plus complete dependency count/hash relational |
-| `evidence_dependency` | exact evidence graph edge | unique child/parent/role; temporal non-decrease |
-| `research_assessment` | governed Experiment-bound research claim revision | unique Experiment/claim/revision; non-empty Evaluation/Evidence counts and hashes, closed status and typed supersession; negative/inconclusive preserved |
-| `research_assessment_evaluation` | complete terminal Evaluation roster for one Assessment | unique Assessment/Evaluation Run/role; every Run belongs to the Assessment Experiment; no current/latest lookup |
-| `research_assessment_evidence` | complete concrete Assessment evidence set | unique Assessment/Evidence Item; composite FK requires the item's Evaluation Run in the Assessment roster; typed support/counter-evidence role |
-| `research_qualification_policy` | immutable research-purpose floor contract | unique code/version/hash/purpose; decision rules typed |
-| `research_qualification_policy_floor` | required/optional floor and acceptance rule | unique policy/floor; typed proof class and evidence requirement |
-| `research_qualification_decision` | sole Research admission owner | exact Research Assessment + Policy/revision; typed status/supersession; no generic subject |
-| `research_qualification_floor_result` | complete policy proof vector | unique decision/policy floor; every floor present; typed status/reason |
-| `research_qualification_floor_evidence` | concrete Assessment Evidence for one floor result | unique floor result/Assessment-Evidence binding/role; the binding belongs to the decision's Assessment; no JSON or weak reference |
 
 ### Decision Support
 
