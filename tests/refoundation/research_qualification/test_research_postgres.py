@@ -13,6 +13,9 @@ import pytest
 
 from market_regime_alpha.infrastructure.artifacts import LocalArtifactStore
 from market_regime_alpha.infrastructure.postgres.pool import TargetPostgresPool
+from market_regime_alpha.infrastructure.postgres.queries import (
+    PostgresExploratoryFeatureInputReadPort,
+)
 from market_regime_alpha.infrastructure.postgres.repositories import (
     PostgresAuditRepository,
 )
@@ -388,9 +391,7 @@ def dataset_stack(target_database_url: str, tmp_path, request) -> _DatasetStack:
             ("instrument_fact_revision", "instrument_fact_revision_append_only"),
         )
         for table_name, trigger_name in append_only_triggers:
-            connection.execute(
-                f"ALTER TABLE mra.{table_name} DISABLE TRIGGER {trigger_name}"
-            )
+            connection.execute(f"ALTER TABLE mra.{table_name} DISABLE TRIGGER {trigger_name}")
         connection.execute(
             """
             UPDATE mra.data_capture
@@ -434,9 +435,7 @@ def dataset_stack(target_database_url: str, tmp_path, request) -> _DatasetStack:
                 ),
             )
         for table_name, trigger_name in append_only_triggers:
-            connection.execute(
-                f"ALTER TABLE mra.{table_name} ENABLE TRIGGER {trigger_name}"
-            )
+            connection.execute(f"ALTER TABLE mra.{table_name} ENABLE TRIGGER {trigger_name}")
     scope_payload = {
         "classification_code": "RESEARCH_SCOPE",
         "classification_scheme": "INDEX",
@@ -610,9 +609,7 @@ def _dataset_feature(stack: _DatasetStack) -> FeatureDefinition:
         window_unit=FeatureIntervalUnit.TRADING_SESSION,
         lookback_value=0,
         lookback_unit=FeatureIntervalUnit.TRADING_SESSION,
-        source_requirements=(
-            FeatureSourceRequirement.INSTRUMENT_FACT_REVISION,
-        ),
+        source_requirements=(FeatureSourceRequirement.INSTRUMENT_FACT_REVISION,),
         availability_rule=FeatureAvailabilityRule.DECISION_VISIBLE_AT_OR_BEFORE,
         missingness_policy=FeatureMissingnessPolicy.EXPLICIT_STATUS,
         algorithm_code="is_active",
@@ -651,21 +648,16 @@ def _dataset_input(
     market_source_id = uuid4()
     if market_source_role is None:
         market_source_role = (
-            DatasetSourceRole.MARKET_INSTRUMENT_FACT_REVISION
-            if status is FeatureCellStatus.AVAILABLE
-            else DatasetSourceRole.MARKET_CAPTURE
+            DatasetSourceRole.MARKET_INSTRUMENT_FACT_REVISION if status is FeatureCellStatus.AVAILABLE else DatasetSourceRole.MARKET_CAPTURE
         )
     if market_source_identity is None:
         market_source_identity = (
             stack.market_fact_revision_id
-            if market_source_role
-            is DatasetSourceRole.MARKET_INSTRUMENT_FACT_REVISION
+            if market_source_role is DatasetSourceRole.MARKET_INSTRUMENT_FACT_REVISION
             else stack.market_capture_id
         )
     source_identity_field = {
-        DatasetSourceRole.MARKET_INSTRUMENT_FACT_REVISION: (
-            "market_instrument_fact_revision_id"
-        ),
+        DatasetSourceRole.MARKET_INSTRUMENT_FACT_REVISION: ("market_instrument_fact_revision_id"),
         DatasetSourceRole.MARKET_CAPTURE: "market_capture_id",
     }[market_source_role]
     sources: list[dict[str, str]] = [
@@ -677,23 +669,15 @@ def _dataset_input(
     ]
     rows: list[dict[str, object]] = []
     if include_expected_row or extra_population:
-        instrument_id = (
-            stack.instrument_id.value if include_expected_row else uuid4()
-        )
+        instrument_id = stack.instrument_id.value if include_expected_row else uuid4()
         sources.extend(
             (
                 {
                     "dataset_source_id": str(population_source_id),
                     "role": DatasetSourceRole.POPULATION.value,
                     "instrument_id": str(instrument_id),
-                    "universe_member_id": str(
-                        stack.universe_member_id if include_expected_row else uuid4()
-                    ),
-                    "eligibility_assessment_id": str(
-                        stack.eligibility_assessment_id
-                        if include_expected_row
-                        else uuid4()
-                    ),
+                    "universe_member_id": str(stack.universe_member_id if include_expected_row else uuid4()),
+                    "eligibility_assessment_id": str(stack.eligibility_assessment_id if include_expected_row else uuid4()),
                 },
                 {
                     "dataset_source_id": str(market_source_id),
@@ -708,23 +692,11 @@ def _dataset_input(
                 "population_source_id": str(population_source_id),
                 "cells": [
                     {
-                        "feature_definition_id": str(
-                            feature.feature_definition_id
-                        ),
+                        "feature_definition_id": str(feature.feature_definition_id),
                         "status": status.value,
-                        "value": (
-                            True
-                            if status is FeatureCellStatus.AVAILABLE
-                            else None
-                        ),
-                        "reason_code": (
-                            "OBSERVED"
-                            if status is FeatureCellStatus.AVAILABLE
-                            else "SOURCE_MISSING"
-                        ),
-                        "source_ids": sorted(
-                            (str(feature_source_id), str(market_source_id))
-                        ),
+                        "value": (True if status is FeatureCellStatus.AVAILABLE else None),
+                        "reason_code": ("OBSERVED" if status is FeatureCellStatus.AVAILABLE else "SOURCE_MISSING"),
+                        "source_ids": sorted((str(feature_source_id), str(market_source_id))),
                     }
                 ],
             }
@@ -1124,9 +1096,7 @@ def test_dataset_accepts_exact_empty_included_and_eligible_population(
             "classification_code": "ABSENT_RESEARCH_SCOPE",
             "classification_scheme": "INDEX",
             "instrument_ids": [str(stack.instrument_id)],
-            "market_provider_product_id": str(
-                stack.product.provider_product_id
-            ),
+            "market_provider_product_id": str(stack.product.provider_product_id),
             "schema": "selection-universe-scope-v1",
         },
         sort_keys=True,
@@ -1360,9 +1330,7 @@ def test_dataset_rejects_late_lineage_unless_exact_retrospective_archive_is_boun
             timeframe=BarTimeframe.MINUTE_5,
             price_basis=PriceBasis.RAW_UNADJUSTED,
             instrument_scope="ENGINEERING_EXPLORATORY_PILOT_32",
-            instrument_scope_sha256=canonical_json_sha256(
-                {"scope": "ENGINEERING_EXPLORATORY_PILOT_32"}
-            ),
+            instrument_scope_sha256=canonical_json_sha256({"scope": "ENGINEERING_EXPLORATORY_PILOT_32"}),
             event_window_start=session_times[0],
             event_window_end=session_times[1],
             reserved_free_bytes=1,
@@ -1370,9 +1338,7 @@ def test_dataset_rejects_late_lineage_unless_exact_retrospective_archive_is_boun
             maximum_slice_bytes=1_000_000,
             code_artifact_id=definition.code_artifact.artifact_id,
             config_artifact_id=definition.config_artifact.artifact_id,
-            provenance_sha256=canonical_json_sha256(
-                {"test": "dual-clock-retrospective-dataset"}
-            ),
+            provenance_sha256=canonical_json_sha256({"test": "dual-clock-retrospective-dataset"}),
             slices=(
                 ArchiveSlicePlan(
                     market_archive_slice_id=archive_slice_id,
@@ -1454,6 +1420,104 @@ def test_dataset_rejects_late_lineage_unless_exact_retrospective_archive_is_boun
     )
 
 
+def test_retrospective_feature_input_uses_exact_sealed_dual_clock_bar(
+    dataset_stack: _DatasetStack,
+) -> None:
+    stack = dataset_stack
+    code = stack.artifacts.publish(
+        b"wp17p-feature-input: exact sealed dual clock\n",
+        media_type="text/plain",
+        context=_context("feature-input-code", "REGISTER_FEATURE_CODE"),
+    )
+    config = stack.artifacts.publish(
+        b'{"field":"intraday_move","timeframe":"MINUTE_5"}\n',
+        media_type="application/json",
+        context=_context("feature-input-config", "REGISTER_FEATURE_CONFIG"),
+    )
+    archive_id = uuid4()
+    archive_slice_id = uuid4()
+    archive_commands = ArchiveCommands(
+        PostgresArchiveUnitOfWorkProvider(stack.pool),
+        id_factory=uuid4,
+    )
+    archive_commands.start(
+        StartMarketArchiveRequest(
+            market_archive_id=archive_id,
+            archive_code=f"feature-input-{archive_id.hex[:12]}",
+            lane=ArchiveLane.RETROSPECTIVE_BACKFILL,
+            provider_product_id=stack.product.provider_product_id,
+            exchange_code="XSHG",
+            timeframe=BarTimeframe.MINUTE_5,
+            price_basis=PriceBasis.RAW_UNADJUSTED,
+            instrument_scope="ENGINEERING_EXPLORATORY_PILOT_32",
+            instrument_scope_sha256=canonical_json_sha256({"scope": "ENGINEERING_EXPLORATORY_PILOT_32"}),
+            event_window_start=stack.decision_time.value - timedelta(minutes=11),
+            event_window_end=stack.decision_time.value - timedelta(minutes=6),
+            reserved_free_bytes=1,
+            maximum_archive_bytes=1_000_000,
+            maximum_slice_bytes=1_000_000,
+            code_artifact_id=code.artifact_id,
+            config_artifact_id=config.artifact_id,
+            provenance_sha256=canonical_json_sha256({"test": "exact-retrospective-feature-input"}),
+            slices=(
+                ArchiveSlicePlan(
+                    market_archive_slice_id=archive_slice_id,
+                    ordinal=1,
+                    scope_key=f"{stack.instrument_id}:reference",
+                    event_window_start=stack.decision_time.value - timedelta(minutes=11),
+                    event_window_end=stack.decision_time.value - timedelta(minutes=6),
+                    request_sha256=canonical_json_sha256({"bar_revision_id": stack.market_bar_revision_id}),
+                    expected_fact_kind="MARKET_BAR",
+                ),
+            ),
+        ),
+        _context("feature-input-archive", "START_MARKET_ARCHIVE"),
+    )
+    archive_commands.record_capture_observation(
+        RecordArchiveCaptureObservationRequest(
+            market_archive_id=archive_id,
+            market_archive_slice_id=archive_slice_id,
+            capture_id=stack.market_capture_id,
+            schedule_slot="RETROSPECTIVE_BATCH",
+            requested_at=stack.decision_time.value - timedelta(minutes=2),
+        ),
+        _context("feature-input-observation", "RECORD_ARCHIVE_CAPTURE_OBSERVATION"),
+    )
+    seal = archive_commands.seal_retrospective(
+        market_archive_id=archive_id,
+        disposition=ArchiveSealDisposition.COMPLETE,
+        context=_context("feature-input-seal", "SEAL_RETROSPECTIVE_ARCHIVE"),
+    )
+    scope = ExploratoryRetrospectiveDatasetScope(
+        market_archive_id=archive_id,
+        market_archive_seal_id=seal.market_archive_seal_id,
+        knowledge_cutoff=seal.knowledge_cutoff,
+        simulated_event_cutoff=stack.decision_time.value,
+    )
+
+    observation = PostgresExploratoryFeatureInputReadPort(stack.pool).exact_intraday_move(
+        scope=scope,
+        instrument_id=stack.instrument_id,
+        session_id=stack.market_session_id,
+        feature_event_end=stack.decision_time.value - timedelta(minutes=6),
+    )
+
+    assert observation is not None
+    assert observation.bar_revision_id == stack.market_bar_revision_id
+    assert observation.capture_id == stack.market_capture_id
+    assert observation.intraday_move == Decimal("0.010000000000")
+    with pytest.raises(RuntimeStateConflictError, match="differs from Archive Authority"):
+        PostgresExploratoryFeatureInputReadPort(stack.pool).exact_intraday_move(
+            scope=replace(
+                scope,
+                knowledge_cutoff=scope.knowledge_cutoff - timedelta(seconds=1),
+            ),
+            instrument_id=stack.instrument_id,
+            session_id=stack.market_session_id,
+            feature_event_end=stack.decision_time.value - timedelta(minutes=6),
+        )
+
+
 def test_dataset_parser_rejects_label_leakage_before_any_authority_write(
     dataset_stack: _DatasetStack,
 ) -> None:
@@ -1506,9 +1570,7 @@ def test_dataset_manifest_artifact_failure_fails_closed_and_is_replayable(
         feature,
         key_prefix=f"candidate-input-{failure_mode}",
     )
-    object_path = stack.store.object_path(
-        str(definition.manifest_artifact.content_sha256)
-    )
+    object_path = stack.store.object_path(str(definition.manifest_artifact.content_sha256))
     if failure_mode == "missing":
         object_path.unlink()
     else:
@@ -1906,10 +1968,7 @@ def test_concurrent_exact_dataset_registration_commits_one_authority(
     context = _context("concurrent-dataset", "REGISTER_DATASET")
 
     with ThreadPoolExecutor(max_workers=2) as executor:
-        futures = tuple(
-            executor.submit(stack.research.register_dataset, definition, context)
-            for _ in range(2)
-        )
+        futures = tuple(executor.submit(stack.research.register_dataset, definition, context) for _ in range(2))
         results = tuple(future.result(timeout=10) for future in futures)
 
     assert sorted(item.replayed for item in results) == [False, True]

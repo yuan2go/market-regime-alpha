@@ -91,6 +91,7 @@ from market_regime_alpha.infrastructure.postgres.queries import (
     PostgresResearchEvaluationVerificationProvider,
     PostgresResearchQualificationAdmissionReadPort,
     PostgresResearchQualificationVerificationProvider,
+    PostgresExploratoryFeatureInputReadPort,
 )
 from market_regime_alpha.infrastructure.postgres.queries.decision_context_inputs import (
     PostgresContextInputPreparationProvider,
@@ -178,6 +179,7 @@ from market_regime_alpha.research_qualification.application import (
     QualificationCommands,
 )
 from market_regime_alpha.research_qualification.ports import (
+    ExploratoryFeatureInputReadPort,
     FormalPitSourceReadPort,
     FormalCampaignQueryPort,
     ResearchQualificationAdmissionReadPort,
@@ -282,6 +284,7 @@ class TargetApplication:
     research_experiments: ExperimentCommands
     exploratory_backtests: ExploratoryBacktestCommands
     exploratory_backtest_verifier: ExploratoryBacktestVerificationPort
+    exploratory_feature_inputs: ExploratoryFeatureInputReadPort
     research_models: ResearchModelApplication
     research_evaluations: EvaluationCommands
     research_evaluation_verifier: ResearchEvaluationVerifier
@@ -357,9 +360,7 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
         archive_verification=PostgresArchiveVerificationPort(pool),
         archive_trading_sessions=PostgresArchiveTradingSessionReadPort(pool),
         provider_qualifications=ProviderQualificationCommands(
-            PostgresProviderQualificationUnitOfWorkProvider(
-                pool, id_factory=uuid4
-            ),
+            PostgresProviderQualificationUnitOfWorkProvider(pool, id_factory=uuid4),
             id_factory=uuid4,
         ),
         provider_qualification_queries=PostgresProviderQualificationQueryPort(pool),
@@ -383,9 +384,8 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
             PostgresExploratoryBacktestUnitOfWorkProvider(pool),
             id_factory=uuid4,
         ),
-        exploratory_backtest_verifier=(
-            PostgresExploratoryBacktestVerificationPort(pool)
-        ),
+        exploratory_backtest_verifier=(PostgresExploratoryBacktestVerificationPort(pool)),
+        exploratory_feature_inputs=PostgresExploratoryFeatureInputReadPort(pool),
         research_models=ResearchModelApplication(
             ModelCommands(
                 PostgresResearchModelUnitOfWorkProvider(pool),
