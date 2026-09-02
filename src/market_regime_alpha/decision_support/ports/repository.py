@@ -16,11 +16,13 @@ class DecisionRunReconciliation:
     actual_target_count: int
     actual_commitment_count: int
     actual_reference_count: int
+    actual_research_qualification_count: int
     missing_commitment_count: int
     extra_commitment_count: int
     candidate_roster_sha256: str
     target_roster_sha256: str
     commitment_roster_sha256: str
+    research_qualification_roster_sha256: str
     matched: bool
 
 

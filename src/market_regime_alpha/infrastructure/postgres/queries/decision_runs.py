@@ -10,8 +10,10 @@ from market_regime_alpha.decision_support.domain import (
     OpenDecisionRunRequest,
     PreparedDecisionInputs,
     PreparedDecisionReference,
+    PreparedResearchQualification,
     ProviderProductDecisionSnapshot,
     RequestedDecisionTarget,
+    RequestedResearchQualification,
     RuntimeDecisionSnapshot,
     TargetDecisionSnapshot,
     build_decision_authority,
@@ -21,6 +23,8 @@ from market_regime_alpha.decision_support.domain.vocabulary import (
     DecisionReferenceFinalityStatus,
     DecisionReferenceSourceKind,
     DecisionReferenceValueStatus,
+    QualificationInputRole,
+    ResearchPurpose,
 )
 from market_regime_alpha.decision_support.errors import (
     DecisionAuthorityIntegrityError,
@@ -66,7 +70,10 @@ def _load_snapshot(connection: Any, decision_run_id: UUID) -> DecisionRunSnapsho
                candidate_set_content_sha256, dataset_id,
                candidate_policy_id, candidate_count, selected_count,
                ranked_not_selected_count, unrankable_count,
-               candidate_roster_sha256, target_count,
+               candidate_roster_sha256, research_purpose,
+               research_qualification_roster_id,
+               research_qualification_count,
+               research_qualification_roster_sha256, target_count,
                target_roster_sha256, commitment_count, reference_count,
                commitment_roster_sha256, runtime_mode, decision_time,
                commitment_recorded_at, request_received_at,
@@ -145,6 +152,29 @@ def _load_snapshot(connection: Any, decision_run_id: UUID) -> DecisionRunSnapsho
         """,
         (decision_run_id,),
     ).fetchall()
+    qualification_rows = connection.execute(
+        """
+        SELECT member.research_qualification_member_id,
+               member.research_qualification_roster_id,
+               member.decision_run_id, member.ordinal, member.role,
+               member.research_qualification_decision_id,
+               member.decision_code, member.revision,
+               member.supersedes_decision_id,
+               member.research_assessment_id,
+               member.research_qualification_policy_id,
+               member.experiment_id, member.target_definition_id,
+               member.qualification_purpose,
+               member.source_generation_max_decision_time,
+               member.effective_at, member.known_at,
+               member.qualification_content_sha256,
+               member.decision_time, member.content_sha256,
+               member.created_at
+        FROM mra.decision_run_research_qualification_member AS member
+        WHERE member.decision_run_id = %s
+        ORDER BY member.ordinal
+        """,
+        (decision_run_id,),
+    ).fetchall()
     try:
         candidate_set = _load_candidate_set(
             connection,
@@ -154,17 +184,39 @@ def _load_snapshot(connection: Any, decision_run_id: UUID) -> DecisionRunSnapsho
         targets = tuple(_target_snapshot(row) for row in target_rows)
         references = tuple(_reference(row) for row in commitment_rows)
         runtime = RuntimeDecisionSnapshot(
-            run_id=UUID(str(root[20])),
-            step_id=UUID(str(root[21])),
-            attempt_id=UUID(str(root[22])),
-            fence_token=int(root[23]),
-            step_key=str(root[24]),
-            step_kind=str(root[25]),
-            runtime_mode=DecisionRuntimeMode(str(root[16])),
-            decision_time=root[17],
-            code_sha=str(root[26]),
-            config_artifact_id=UUID(str(root[27])),
-            config_hash=str(root[28]),
+            run_id=UUID(str(root[24])),
+            step_id=UUID(str(root[25])),
+            attempt_id=UUID(str(root[26])),
+            fence_token=int(root[27]),
+            step_key=str(root[28]),
+            step_kind=str(root[29]),
+            runtime_mode=DecisionRuntimeMode(str(root[20])),
+            decision_time=root[21],
+            code_sha=str(root[30]),
+            config_artifact_id=UUID(str(root[31])),
+            config_hash=str(root[32]),
+        )
+        research_purpose = ResearchPurpose(str(root[11]))
+        research_qualifications = tuple(
+            PreparedResearchQualification(
+                research_qualification_decision_id=UUID(str(row[5])),
+                role=QualificationInputRole(str(row[4])),
+                decision_code=str(row[6]),
+                revision=int(row[7]),
+                supersedes_decision_id=(
+                    UUID(str(row[8])) if row[8] is not None else None
+                ),
+                research_assessment_id=UUID(str(row[9])),
+                research_qualification_policy_id=UUID(str(row[10])),
+                experiment_id=UUID(str(row[11])),
+                target_definition_id=UUID(str(row[12])),
+                qualification_purpose=ResearchPurpose(str(row[13])),
+                source_generation_max_decision_time=row[14],
+                effective_at=row[15],
+                known_at=row[16],
+                content_sha256=str(row[17]),
+            )
+            for row in qualification_rows
         )
         target_ids = {
             UUID(str(row[2])): UUID(str(row[0])) for row in target_rows
@@ -176,20 +228,29 @@ def _load_snapshot(connection: Any, decision_run_id: UUID) -> DecisionRunSnapsho
         observation_ids = {
             UUID(str(row[0])): UUID(str(row[4])) for row in commitment_rows
         }
+        qualification_member_ids = {
+            UUID(str(row[5])): UUID(str(row[0])) for row in qualification_rows
+        }
         authority = build_decision_authority(
             decision_run_id=UUID(str(root[0])),
-            command_receipt_id=UUID(str(root[33])),
+            command_receipt_id=UUID(str(root[37])),
             candidate_set=candidate_set,
             targets=targets,
             references=references,
             runtime=runtime,
-            request_identity=str(root[31]),
-            request_sha256=str(root[32]),
-            request_received_at=root[19],
-            commitment_recorded_at=root[18],
-            actor_type=str(root[34]),
-            actor_id=str(root[35]),
-            reason_code=str(root[36]),
+            research_purpose=research_purpose,
+            research_qualifications=research_qualifications,
+            request_identity=str(root[35]),
+            request_sha256=str(root[36]),
+            request_received_at=root[23],
+            commitment_recorded_at=root[22],
+            actor_type=str(root[38]),
+            actor_id=str(root[39]),
+            reason_code=str(root[40]),
+            qualification_roster_id=UUID(str(root[12])),
+            qualification_member_id_factory=lambda item, ordinal: (
+                qualification_member_ids[item.research_qualification_decision_id]
+            ),
             target_id_factory=lambda target, ordinal: target_ids[
                 target.target_definition_id
             ],
@@ -205,6 +266,7 @@ def _load_snapshot(connection: Any, decision_run_id: UUID) -> DecisionRunSnapsho
             targets=targets,
             references=references,
             runtime=runtime,
+            research_qualifications=research_qualifications,
         )
         request = OpenDecisionRunRequest(
             candidate_set_id=candidate_set.candidate_set_id,
@@ -217,12 +279,22 @@ def _load_snapshot(connection: Any, decision_run_id: UUID) -> DecisionRunSnapsho
                 )
                 for target in targets
             ),
+            research_purpose=research_purpose,
+            research_qualifications=tuple(
+                RequestedResearchQualification(
+                    research_qualification_decision_id=(
+                        item.research_qualification_decision_id
+                    ),
+                    role=item.role,
+                )
+                for item in research_qualifications
+            ),
         )
         computed_request_hash = prepared.semantic_request_sha256(
             request=request,
-            actor_type=str(root[34]),
-            actor_id=str(root[35]),
-            reason_code=str(root[36]),
+            actor_type=str(root[38]),
+            actor_id=str(root[39]),
+            reason_code=str(root[40]),
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise DecisionAuthorityIntegrityError(
@@ -230,7 +302,7 @@ def _load_snapshot(connection: Any, decision_run_id: UUID) -> DecisionRunSnapsho
         ) from exc
 
     _validate_root(root, authority, computed_request_hash)
-    _validate_children(target_rows, commitment_rows, authority)
+    _validate_children(target_rows, commitment_rows, qualification_rows, authority)
     receipt = connection.execute(
         """
         SELECT status, result_aggregate_kind, result_aggregate_id,
@@ -332,9 +404,10 @@ def _validate_root(root: tuple[Any, ...], authority: Any, request_hash: str) -> 
     actual = (
         str(root[1]), UUID(str(root[2])), str(root[3]), UUID(str(root[4])),
         UUID(str(root[5])), int(root[6]), int(root[7]), int(root[8]),
-        int(root[9]), str(root[10]), int(root[11]), str(root[12]),
-        int(root[13]), int(root[14]), str(root[15]), str(root[29]),
-        str(root[30]), str(root[37]),
+        int(root[9]), str(root[10]), str(root[11]), UUID(str(root[12])),
+        int(root[13]), str(root[14]), int(root[15]), str(root[16]),
+        int(root[17]), int(root[18]), str(root[19]), str(root[33]),
+        str(root[34]), str(root[41]),
     )
     expected = (
         authority.status.value, candidate.candidate_set_id,
@@ -342,6 +415,10 @@ def _validate_root(root: tuple[Any, ...], authority: Any, request_hash: str) -> 
         candidate.candidate_policy_id, authority.candidate_count,
         candidate.selected_count, candidate.ranked_not_selected_count,
         candidate.unrankable_count, authority.candidate_roster_sha256,
+        authority.research_purpose.value,
+        authority.research_qualification_roster.roster_id,
+        authority.research_qualification_count,
+        authority.research_qualification_roster_sha256,
         authority.target_count, authority.target_roster_sha256,
         authority.commitment_count, authority.reference_count,
         authority.commitment_roster_sha256, "OPEN_DECISION_RUN",
@@ -350,7 +427,7 @@ def _validate_root(root: tuple[Any, ...], authority: Any, request_hash: str) -> 
     if (
         actual != expected
         or request_hash != authority.request_sha256
-        or str(root[32]) != request_hash
+        or str(root[36]) != request_hash
     ):
         raise DecisionAuthorityIntegrityError(
             "Decision Run root facts do not reconstruct canonically"
@@ -360,6 +437,7 @@ def _validate_root(root: tuple[Any, ...], authority: Any, request_hash: str) -> 
 def _validate_children(
     target_rows: tuple[tuple[Any, ...], ...],
     commitment_rows: tuple[tuple[Any, ...], ...],
+    qualification_rows: tuple[tuple[Any, ...], ...],
     authority: Any,
 ) -> None:
     if tuple(str(row[23]) for row in target_rows) != tuple(
@@ -382,6 +460,24 @@ def _validate_children(
         ):
             raise DecisionAuthorityIntegrityError(
                 "Decision commitment/reference immutable facts changed"
+            )
+    qualification_members = authority.research_qualification_roster.members
+    if len(qualification_rows) != len(qualification_members):
+        raise DecisionAuthorityIntegrityError(
+            "Decision Research Qualification roster changed"
+        )
+    for row, member in zip(qualification_rows, qualification_members, strict=True):
+        if (
+            UUID(str(row[0])) != member.member_id
+            or UUID(str(row[1])) != member.roster_id
+            or UUID(str(row[2])) != member.decision_run_id
+            or int(row[3]) != member.ordinal
+            or str(row[19]) != member.content_sha256
+            or row[18] != authority.runtime.decision_time
+            or row[20] != authority.commitment_recorded_at
+        ):
+            raise DecisionAuthorityIntegrityError(
+                "Decision Research Qualification immutable facts changed"
             )
 
 

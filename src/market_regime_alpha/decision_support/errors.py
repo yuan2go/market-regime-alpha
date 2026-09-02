@@ -15,6 +15,10 @@ class DecisionReferenceResolutionError(DecisionAuthorityIntegrityError):
     code = "DECISION_REFERENCE_RESOLUTION_FAILED"
 
 
+class DecisionQualificationResolutionError(DecisionAuthorityIntegrityError):
+    code = "DECISION_QUALIFICATION_RESOLUTION_FAILED"
+
+
 class DecisionTransactionRetryExhaustedError(ConflictError):
     code = "DECISION_TRANSACTION_RETRY_EXHAUSTED"
 
@@ -37,5 +41,6 @@ __all__ = [
     "DecisionCommitOutcomeUnknownError",
     "DecisionRetryableTransactionError",
     "DecisionReferenceResolutionError",
+    "DecisionQualificationResolutionError",
     "DecisionTransactionRetryExhaustedError",
 ]

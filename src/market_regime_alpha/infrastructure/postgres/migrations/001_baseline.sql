@@ -423,6 +423,9 @@ CREATE FUNCTION mra.decision_run_definition_summary_sha256(
     commitment_roster_sha256 text,
     decision_time timestamptz,
     reference_count bigint,
+    research_purpose text,
+    research_qualification_count integer,
+    research_qualification_roster_sha256 text,
     request_sha256 text,
     runtime_mode text,
     target_count integer,
@@ -447,9 +450,60 @@ AS $$
                     mra.canonical_timestamptz_text(decision_time),
                 'reference_count', reference_count,
                 'request_sha256', request_sha256,
+                'research_purpose', research_purpose,
+                'research_qualification_count',
+                    research_qualification_count,
+                'research_qualification_roster_sha256',
+                    research_qualification_roster_sha256,
                 'runtime_mode', runtime_mode,
                 'target_count', target_count,
                 'target_roster_sha256', target_roster_sha256
+            )::text,
+            ' ',
+            ''
+        )
+    );
+$$;
+
+CREATE FUNCTION mra.decision_qualification_member_content_sha256(
+    decision_code text,
+    experiment_id uuid,
+    qualification_content_sha256 text,
+    qualification_purpose text,
+    revision integer,
+    research_assessment_id uuid,
+    research_qualification_decision_id uuid,
+    research_qualification_policy_id uuid,
+    role text,
+    source_generation_max_decision_time timestamptz,
+    supersedes_decision_id uuid,
+    target_definition_id uuid
+)
+RETURNS text
+LANGUAGE sql
+IMMUTABLE
+PARALLEL SAFE
+AS $$
+    SELECT mra.canonical_sha256(
+        replace(
+            json_build_object(
+                'decision_code', decision_code,
+                'experiment_id', experiment_id,
+                'qualification_content_sha256', qualification_content_sha256,
+                'qualification_purpose', qualification_purpose,
+                'research_assessment_id', research_assessment_id,
+                'research_qualification_decision_id',
+                    research_qualification_decision_id,
+                'research_qualification_policy_id',
+                    research_qualification_policy_id,
+                'revision', revision,
+                'role', role,
+                'source_generation_max_decision_time',
+                    mra.canonical_timestamptz_text(
+                        source_generation_max_decision_time
+                    ),
+                'supersedes_decision_id', supersedes_decision_id,
+                'target_definition_id', target_definition_id
             )::text,
             ' ',
             ''
@@ -5045,6 +5099,140 @@ ALTER TABLE mra.command_receipt
         runtime_step_id, runtime_attempt_id, fence_token
     );
 
+CREATE TABLE mra.decision_run_research_qualification_roster (
+    research_qualification_roster_id uuid PRIMARY KEY,
+    decision_run_id uuid NOT NULL,
+    research_purpose text NOT NULL,
+    decision_time timestamptz NOT NULL,
+    member_count integer NOT NULL,
+    roster_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL,
+    CONSTRAINT decision_qualification_roster_run_uk UNIQUE (decision_run_id),
+    CONSTRAINT decision_qualification_roster_member_scope_uk UNIQUE (
+        research_qualification_roster_id, decision_run_id,
+        research_purpose, decision_time
+    ),
+    CONSTRAINT decision_qualification_roster_scope_uk UNIQUE (
+        research_qualification_roster_id, decision_run_id,
+        research_purpose, decision_time, member_count, roster_sha256
+    ),
+    CONSTRAINT decision_qualification_roster_shape_ck CHECK (
+        research_purpose IN (
+            'DISCOVERY', 'VALIDATION', 'LOCKED_OOS', 'PROSPECTIVE'
+        )
+        AND member_count >= 0
+        AND roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND created_at >= decision_time
+    )
+);
+CREATE INDEX decision_qualification_roster_run_idx
+    ON mra.decision_run_research_qualification_roster (
+        decision_run_id, research_qualification_roster_id
+    );
+CREATE INDEX decision_qualification_roster_run_fk_idx
+    ON mra.decision_run_research_qualification_roster (
+        decision_run_id, research_purpose,
+        research_qualification_roster_id, decision_time,
+        member_count, roster_sha256
+    );
+
+CREATE TABLE mra.decision_run_research_qualification_member (
+    research_qualification_member_id uuid PRIMARY KEY,
+    research_qualification_roster_id uuid NOT NULL,
+    decision_run_id uuid NOT NULL,
+    ordinal integer NOT NULL,
+    role text NOT NULL,
+    research_qualification_decision_id uuid NOT NULL,
+    decision_code text NOT NULL,
+    revision integer NOT NULL,
+    supersedes_decision_id uuid,
+    research_assessment_id uuid NOT NULL,
+    research_qualification_policy_id uuid NOT NULL,
+    experiment_id uuid NOT NULL,
+    target_definition_id uuid NOT NULL,
+    qualification_purpose text NOT NULL,
+    decision_status text NOT NULL,
+    source_generation_max_decision_time timestamptz NOT NULL,
+    effective_at timestamptz NOT NULL,
+    known_at timestamptz NOT NULL,
+    qualification_content_sha256 text NOT NULL,
+    decision_time timestamptz NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL,
+    CONSTRAINT decision_qualification_member_ordinal_uk UNIQUE (
+        research_qualification_roster_id, ordinal
+    ),
+    CONSTRAINT decision_qualification_member_decision_uk UNIQUE (
+        research_qualification_roster_id,
+        research_qualification_decision_id
+    ),
+    CONSTRAINT decision_qualification_member_scope_uk UNIQUE (
+        research_qualification_member_id,
+        research_qualification_roster_id, decision_run_id,
+        research_qualification_decision_id, target_definition_id
+    ),
+    CONSTRAINT decision_qualification_member_roster_fk FOREIGN KEY (
+        research_qualification_roster_id, decision_run_id,
+        qualification_purpose, decision_time
+    ) REFERENCES mra.decision_run_research_qualification_roster (
+        research_qualification_roster_id, decision_run_id,
+        research_purpose, decision_time
+    ) ON DELETE RESTRICT,
+    CONSTRAINT decision_qualification_member_shape_ck CHECK (
+        ordinal > 0
+        AND role IN ('PRIMARY', 'SUPPORTING', 'LIMITATION')
+        AND decision_code ~ '^[a-z][a-z0-9_.-]{0,99}$'
+        AND ((revision = 1 AND supersedes_decision_id IS NULL)
+          OR (revision > 1 AND supersedes_decision_id IS NOT NULL))
+        AND qualification_purpose IN (
+            'DISCOVERY', 'VALIDATION', 'LOCKED_OOS', 'PROSPECTIVE'
+        )
+        AND decision_status = 'ADMITTED'
+        AND source_generation_max_decision_time < decision_time
+        AND effective_at <= decision_time
+        AND known_at <= decision_time
+        AND qualification_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+        AND created_at >= decision_time
+    ),
+    CONSTRAINT decision_qualification_member_content_ck CHECK (
+        content_sha256 = mra.decision_qualification_member_content_sha256(
+            decision_code, experiment_id, qualification_content_sha256,
+            qualification_purpose, revision, research_assessment_id,
+            research_qualification_decision_id,
+            research_qualification_policy_id, role,
+            source_generation_max_decision_time,
+            supersedes_decision_id, target_definition_id
+        )
+    )
+);
+CREATE INDEX decision_qualification_member_roster_idx
+    ON mra.decision_run_research_qualification_member (
+        research_qualification_roster_id, ordinal,
+        research_qualification_decision_id
+    );
+CREATE INDEX decision_qualification_member_decision_idx
+    ON mra.decision_run_research_qualification_member (
+        research_qualification_decision_id, decision_run_id
+    );
+CREATE INDEX decision_qualification_member_target_idx
+    ON mra.decision_run_research_qualification_member (
+        decision_run_id, target_definition_id
+    );
+CREATE INDEX decision_qualification_member_roster_fk_idx
+    ON mra.decision_run_research_qualification_member (
+        research_qualification_roster_id, decision_run_id,
+        qualification_purpose, decision_time
+    );
+CREATE INDEX decision_qualification_member_admission_fk_idx
+    ON mra.decision_run_research_qualification_member (
+        research_qualification_decision_id, decision_code, revision,
+        research_assessment_id, research_qualification_policy_id,
+        experiment_id, target_definition_id, qualification_purpose,
+        decision_status, source_generation_max_decision_time,
+        effective_at, known_at, qualification_content_sha256
+    );
+
 CREATE TABLE mra.decision_run (
     decision_run_id uuid PRIMARY KEY,
     status text NOT NULL,
@@ -5057,6 +5245,10 @@ CREATE TABLE mra.decision_run (
     ranked_not_selected_count integer NOT NULL,
     unrankable_count integer NOT NULL,
     candidate_roster_sha256 text NOT NULL,
+    research_purpose text NOT NULL,
+    research_qualification_roster_id uuid NOT NULL,
+    research_qualification_count integer NOT NULL,
+    research_qualification_roster_sha256 text NOT NULL,
     target_count integer NOT NULL,
     target_roster_sha256 text NOT NULL,
     commitment_count bigint NOT NULL,
@@ -5086,6 +5278,12 @@ CREATE TABLE mra.decision_run (
     definition_summary_sha256 text NOT NULL,
     created_at timestamptz NOT NULL,
     CONSTRAINT decision_run_candidate_set_uk UNIQUE (candidate_set_id),
+    CONSTRAINT decision_run_qualification_roster_scope_uk UNIQUE (
+        decision_run_id, research_purpose,
+        research_qualification_roster_id,
+        decision_time, research_qualification_count,
+        research_qualification_roster_sha256
+    ),
     CONSTRAINT decision_run_exact_identity_uk UNIQUE (
         decision_run_id, candidate_set_id, decision_time, runtime_mode,
         commitment_recorded_at
@@ -5094,6 +5292,15 @@ CREATE TABLE mra.decision_run (
         candidate_set_id, request_identity
     ),
     CONSTRAINT decision_run_receipt_uk UNIQUE (command_receipt_id),
+    CONSTRAINT decision_run_qualification_roster_fk FOREIGN KEY (
+        research_qualification_roster_id, decision_run_id,
+        research_purpose, decision_time,
+        research_qualification_count,
+        research_qualification_roster_sha256
+    ) REFERENCES mra.decision_run_research_qualification_roster (
+        research_qualification_roster_id, decision_run_id,
+        research_purpose, decision_time, member_count, roster_sha256
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
     CONSTRAINT decision_run_candidate_set_fk FOREIGN KEY (
         candidate_set_id, candidate_set_content_sha256,
         dataset_id, candidate_policy_id, decision_time, candidate_count,
@@ -5137,6 +5344,7 @@ CREATE TABLE mra.decision_run (
         AND candidate_count = selected_count
             + ranked_not_selected_count + unrankable_count
         AND target_count > 0
+        AND research_qualification_count >= 0
         AND commitment_count = candidate_count::bigint * target_count::bigint
         AND reference_count = commitment_count
     ),
@@ -5145,6 +5353,7 @@ CREATE TABLE mra.decision_run (
         AND candidate_roster_sha256 ~ '^[0-9a-f]{64}$'
         AND target_roster_sha256 ~ '^[0-9a-f]{64}$'
         AND commitment_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND research_qualification_roster_sha256 ~ '^[0-9a-f]{64}$'
         AND request_sha256 ~ '^[0-9a-f]{64}$'
         AND definition_summary_sha256 ~ '^[0-9a-f]{64}$'
         AND config_hash ~ '^[0-9a-f]{64}$'
@@ -5157,6 +5366,11 @@ CREATE TABLE mra.decision_run (
         AND runtime_step_kind = 'OPEN_DECISION_RUN'
         AND runtime_step_key ~ '^[a-z][a-z0-9_-]{0,99}$'
         AND runtime_fence_token > 0
+    ),
+    CONSTRAINT decision_run_research_purpose_ck CHECK (
+        research_purpose IN (
+            'DISCOVERY', 'VALIDATION', 'LOCKED_OOS', 'PROSPECTIVE'
+        )
     ),
     CONSTRAINT decision_run_request_ck CHECK (
         request_kind = 'OPEN_DECISION_RUN'
@@ -5176,7 +5390,9 @@ CREATE TABLE mra.decision_run (
                 candidate_count, candidate_roster_sha256,
                 candidate_set_content_sha256, candidate_set_id,
                 commitment_count, commitment_roster_sha256,
-                decision_time, reference_count, request_sha256,
+                decision_time, reference_count, research_purpose,
+                research_qualification_count,
+                research_qualification_roster_sha256, request_sha256,
                 runtime_mode, target_count, target_roster_sha256
             )
     )
@@ -5217,6 +5433,25 @@ CREATE INDEX decision_run_receipt_claim_fk_idx
         request_identity, request_sha256, runtime_step_id,
         runtime_attempt_id, runtime_fence_token
     );
+CREATE INDEX decision_run_qualification_roster_fk_idx
+    ON mra.decision_run (
+        research_qualification_roster_id, decision_run_id,
+        research_purpose, decision_time,
+        research_qualification_count,
+        research_qualification_roster_sha256
+    );
+
+ALTER TABLE mra.decision_run_research_qualification_roster
+    ADD CONSTRAINT decision_qualification_roster_run_fk FOREIGN KEY (
+        decision_run_id, research_purpose,
+        research_qualification_roster_id, decision_time,
+        member_count, roster_sha256
+    ) REFERENCES mra.decision_run (
+        decision_run_id, research_purpose,
+        research_qualification_roster_id, decision_time,
+        research_qualification_count,
+        research_qualification_roster_sha256
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED;
 
 CREATE TABLE mra.decision_run_target (
     decision_run_target_id uuid PRIMARY KEY,
@@ -5337,6 +5572,13 @@ CREATE INDEX decision_run_target_product_fk_idx
         reference_provider_product_revision,
         decision_visibility_policy, source_availability_policy
     );
+
+ALTER TABLE mra.decision_run_research_qualification_member
+    ADD CONSTRAINT decision_qualification_member_target_fk FOREIGN KEY (
+        decision_run_id, target_definition_id
+    ) REFERENCES mra.decision_run_target (
+        decision_run_id, target_definition_id
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED;
 
 CREATE TABLE mra.decision_target_commitment (
     commitment_id uuid PRIMARY KEY,
@@ -7375,6 +7617,44 @@ BEGIN
 END;
 $$;
 
+CREATE FUNCTION mra.guard_decision_qualification_member_insert()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    actual_supersedes_decision_id uuid;
+BEGIN
+    PERFORM pg_advisory_xact_lock(
+        hashtextextended(
+            'research-qualification-decision:' || NEW.decision_code,
+            0
+        )
+    );
+    SELECT qualification.supersedes_decision_id
+    INTO actual_supersedes_decision_id
+    FROM mra.research_qualification_decision AS qualification
+    WHERE qualification.research_qualification_decision_id =
+          NEW.research_qualification_decision_id
+    FOR SHARE;
+    IF NOT FOUND
+       OR actual_supersedes_decision_id IS DISTINCT FROM
+          NEW.supersedes_decision_id
+       OR EXISTS (
+           SELECT 1
+           FROM mra.research_qualification_decision AS successor
+           WHERE successor.supersedes_decision_id =
+                 NEW.research_qualification_decision_id
+             AND successor.effective_at <= NEW.decision_time
+             AND successor.known_at <= NEW.decision_time
+       ) THEN
+        RAISE EXCEPTION
+            'Decision Research Qualification is missing or superseded at DecisionTime'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
 CREATE FUNCTION mra.validate_decision_run_closure()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -7383,12 +7663,17 @@ DECLARE
     actual_target_count bigint;
     actual_commitment_count bigint;
     actual_reference_count bigint;
+    actual_qualification_count bigint;
+    qualification_min integer;
+    qualification_max integer;
+    qualification_primary_count bigint;
     target_min integer;
     target_max integer;
     missing_commitment_count bigint;
     actual_candidate_hash text;
     actual_target_hash text;
     actual_commitment_hash text;
+    actual_qualification_hash text;
 BEGIN
     SELECT count(*), min(ordinal), max(ordinal)
     INTO actual_target_count, target_min, target_max
@@ -7399,6 +7684,36 @@ BEGIN
     INTO actual_commitment_count
     FROM mra.decision_target_commitment
     WHERE decision_run_id = NEW.decision_run_id;
+
+    SELECT count(*), min(ordinal), max(ordinal),
+           count(*) FILTER (WHERE role = 'PRIMARY'),
+           mra.canonical_sha256(
+               replace(
+                   COALESCE(
+                       json_agg(
+                           json_build_object(
+                               'content_sha256', content_sha256,
+                               'member_id',
+                                   research_qualification_member_id,
+                               'ordinal', ordinal,
+                               'research_qualification_decision_id',
+                                   research_qualification_decision_id,
+                               'role', role
+                           ) ORDER BY ordinal
+                       )::text,
+                       '[]'
+                   ),
+                   ' ',
+                   ''
+               )
+           )
+    INTO actual_qualification_count, qualification_min,
+         qualification_max, qualification_primary_count,
+         actual_qualification_hash
+    FROM mra.decision_run_research_qualification_member
+    WHERE research_qualification_roster_id =
+          NEW.research_qualification_roster_id
+      AND decision_run_id = NEW.decision_run_id;
 
     SELECT count(*)
     INTO actual_reference_count
@@ -7420,10 +7735,52 @@ BEGIN
     IF actual_target_count <> NEW.target_count
        OR actual_commitment_count <> NEW.commitment_count
        OR actual_reference_count <> NEW.reference_count
+       OR actual_qualification_count <>
+          NEW.research_qualification_count
+       OR (
+           actual_qualification_count = 0
+           AND (qualification_min IS NOT NULL
+                OR qualification_max IS NOT NULL
+                OR qualification_primary_count <> 0)
+       )
+       OR (
+           actual_qualification_count > 0
+           AND (qualification_min <> 1
+                OR qualification_max <> actual_qualification_count
+                OR qualification_primary_count <> 1)
+       )
        OR target_min <> 1
        OR target_max <> actual_target_count
        OR missing_commitment_count <> 0 THEN
         RAISE EXCEPTION 'DecisionRun child roster is incomplete'
+            USING ERRCODE = '55000';
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM mra.decision_run_research_qualification_roster AS roster
+        WHERE roster.research_qualification_roster_id =
+              NEW.research_qualification_roster_id
+          AND roster.decision_run_id = NEW.decision_run_id
+          AND roster.research_purpose = NEW.research_purpose
+          AND roster.decision_time = NEW.decision_time
+          AND roster.member_count = NEW.research_qualification_count
+          AND roster.roster_sha256 =
+              NEW.research_qualification_roster_sha256
+          AND roster.created_at = NEW.commitment_recorded_at
+    ) OR EXISTS (
+        SELECT 1
+        FROM mra.decision_run_research_qualification_member AS member
+        WHERE member.research_qualification_roster_id =
+              NEW.research_qualification_roster_id
+          AND (
+              member.qualification_purpose <> NEW.research_purpose
+              OR member.decision_time <> NEW.decision_time
+              OR member.created_at <> NEW.commitment_recorded_at
+          )
+    ) THEN
+        RAISE EXCEPTION
+            'Decision Research Qualification roster scope does not reconcile'
             USING ERRCODE = '55000';
     END IF;
 
@@ -7552,7 +7909,9 @@ BEGIN
 
     IF actual_candidate_hash <> NEW.candidate_roster_sha256
        OR actual_target_hash <> NEW.target_roster_sha256
-       OR actual_commitment_hash <> NEW.commitment_roster_sha256 THEN
+       OR actual_commitment_hash <> NEW.commitment_roster_sha256
+       OR actual_qualification_hash <>
+          NEW.research_qualification_roster_sha256 THEN
         RAISE EXCEPTION 'DecisionRun roster hash does not reconcile'
             USING ERRCODE = '55000';
     END IF;
@@ -8049,6 +8408,22 @@ FOR EACH ROW EXECUTE FUNCTION mra.guard_open_target_child_insert();
 CREATE TRIGGER decision_run_append_only
 BEFORE UPDATE OR DELETE ON mra.decision_run
 FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER decision_qualification_roster_append_only
+BEFORE UPDATE OR DELETE ON mra.decision_run_research_qualification_roster
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER decision_qualification_roster_open_guard
+BEFORE INSERT ON mra.decision_run_research_qualification_roster
+FOR EACH ROW EXECUTE FUNCTION mra.guard_open_decision_child_insert();
+CREATE TRIGGER decision_qualification_member_append_only
+BEFORE UPDATE OR DELETE ON mra.decision_run_research_qualification_member
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER decision_qualification_member_open_guard
+BEFORE INSERT ON mra.decision_run_research_qualification_member
+FOR EACH ROW EXECUTE FUNCTION mra.guard_open_decision_child_insert();
+CREATE TRIGGER decision_qualification_member_admission_guard
+BEFORE INSERT ON mra.decision_run_research_qualification_member
+FOR EACH ROW EXECUTE FUNCTION
+    mra.guard_decision_qualification_member_insert();
 CREATE TRIGGER decision_run_closure_guard
 BEFORE INSERT ON mra.decision_run
 FOR EACH ROW EXECUTE FUNCTION mra.validate_decision_run_closure();
@@ -9737,6 +10112,30 @@ CREATE TABLE mra.research_qualification_decision (
     )
 );
 
+ALTER TABLE mra.research_qualification_decision
+    ADD CONSTRAINT research_qualification_decision_admission_uk UNIQUE (
+        research_qualification_decision_id, decision_code, revision,
+        research_assessment_id, research_qualification_policy_id,
+        experiment_id, target_definition_id, qualification_purpose,
+        decision_status, source_generation_max_decision_time,
+        effective_at, known_at, content_sha256
+    );
+
+ALTER TABLE mra.decision_run_research_qualification_member
+    ADD CONSTRAINT decision_qualification_member_admission_fk FOREIGN KEY (
+        research_qualification_decision_id, decision_code, revision,
+        research_assessment_id, research_qualification_policy_id,
+        experiment_id, target_definition_id, qualification_purpose,
+        decision_status, source_generation_max_decision_time,
+        effective_at, known_at, qualification_content_sha256
+    ) REFERENCES mra.research_qualification_decision (
+        research_qualification_decision_id, decision_code, revision,
+        research_assessment_id, research_qualification_policy_id,
+        experiment_id, target_definition_id, qualification_purpose,
+        decision_status, source_generation_max_decision_time,
+        effective_at, known_at, content_sha256
+    ) ON DELETE RESTRICT;
+
 ALTER TABLE mra.evaluation_metric
     ADD CONSTRAINT evaluation_metric_result_authority_uk UNIQUE (
         evaluation_metric_id, evaluation_run_id
@@ -10414,7 +10813,10 @@ DECLARE assessment_recorded_at timestamptz;
 DECLARE assessment_generation timestamptz;
 BEGIN
     PERFORM pg_advisory_xact_lock(
-        hashtextextended('research-qualification:' || NEW.decision_code, 0)
+        hashtextextended(
+            'research-qualification-decision:' || NEW.decision_code,
+            0
+        )
     );
     SELECT policy.frozen_at, assessment.recorded_at,
            assessment.source_generation_max_decision_time

@@ -135,8 +135,6 @@ def test_decision_support_has_narrow_uow_wiring_and_no_future_authority() -> Non
     assert "decision_support=DecisionSupportApplication(" in bootstrap
     prohibited = (
         "MarketTargetOutcome",
-        "QualificationRoster",
-        "QualificationMember",
         "GenericSubjectRegistry",
         "CompatibilityFacade",
         "ContextRepository",

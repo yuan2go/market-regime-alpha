@@ -37,7 +37,8 @@ class PostgresDecisionRunVerificationProvider:
             root = connection.execute(
                 """
                 SELECT candidate_set_id, target_count, commitment_count,
-                       reference_count
+                       reference_count, research_qualification_count,
+                       research_qualification_roster_id
                 FROM mra.decision_run
                 WHERE decision_run_id = %s
                 """,
@@ -59,11 +60,17 @@ class PostgresDecisionRunVerificationProvider:
                 decision_run_id,
                 lock=False,
             )
-            expected_counts = (int(root[1]), int(root[2]), int(root[3]))
+            expected_counts = (
+                int(root[1]),
+                int(root[2]),
+                int(root[3]),
+                int(root[4]),
+            )
             actual_counts = (
                 reconciliation.actual_target_count,
                 reconciliation.actual_commitment_count,
                 reconciliation.actual_reference_count,
+                reconciliation.actual_research_qualification_count,
             )
             if actual_counts != expected_counts:
                 mismatches.append(
@@ -96,6 +103,7 @@ class PostgresDecisionRunVerificationProvider:
                 reconciliation.candidate_roster_sha256,
                 reconciliation.target_roster_sha256,
                 reconciliation.commitment_roster_sha256,
+                reconciliation.research_qualification_roster_sha256,
             ) != _stored_hashes(connection, decision_run_id):
                 mismatches.append(
                     DecisionRunMismatch(
@@ -107,6 +115,7 @@ class PostgresDecisionRunVerificationProvider:
                                 reconciliation.candidate_roster_sha256,
                                 reconciliation.target_roster_sha256,
                                 reconciliation.commitment_roster_sha256,
+                                reconciliation.research_qualification_roster_sha256,
                             )
                         ),
                     )
@@ -132,6 +141,33 @@ class PostgresDecisionRunVerificationProvider:
                         fact_path="decision_run_target.ordinal",
                         expected=str(expected_ordinals),
                         actual=str(ordinals),
+                    )
+                )
+
+            qualification_ordinals = tuple(
+                int(row[0])
+                for row in connection.execute(
+                    """
+                    SELECT ordinal
+                    FROM mra.decision_run_research_qualification_member
+                    WHERE research_qualification_roster_id = %s
+                    ORDER BY ordinal
+                    """,
+                    (UUID(str(root[5])),),
+                ).fetchall()
+            )
+            expected_qualification_ordinals = tuple(
+                range(1, int(root[4]) + 1)
+            )
+            if qualification_ordinals != expected_qualification_ordinals:
+                mismatches.append(
+                    DecisionRunMismatch(
+                        kind=DecisionRunMismatchKind.ORDER_MISMATCH,
+                        fact_path=(
+                            "decision_run_research_qualification_member.ordinal"
+                        ),
+                        expected=str(expected_qualification_ordinals),
+                        actual=str(qualification_ordinals),
                     )
                 )
 
@@ -169,6 +205,69 @@ class PostgresDecisionRunVerificationProvider:
                         fact_path="decision_target_commitment.scope",
                         expected="0",
                         actual=str(identity_count),
+                    )
+                )
+
+            qualification_identity_count = _scalar_count(
+                connection,
+                """
+                    SELECT count(*)
+                    FROM mra.decision_run_research_qualification_member AS member
+                    JOIN mra.decision_run AS decision
+                      ON decision.decision_run_id = member.decision_run_id
+                     AND decision.research_qualification_roster_id =
+                         member.research_qualification_roster_id
+                     AND decision.research_purpose =
+                         member.qualification_purpose
+                     AND decision.decision_time = member.decision_time
+                    LEFT JOIN mra.research_qualification_decision AS qualification
+                      ON qualification.research_qualification_decision_id =
+                         member.research_qualification_decision_id
+                     AND qualification.decision_code = member.decision_code
+                     AND qualification.revision = member.revision
+                     AND qualification.research_assessment_id =
+                         member.research_assessment_id
+                     AND qualification.research_qualification_policy_id =
+                         member.research_qualification_policy_id
+                     AND qualification.experiment_id = member.experiment_id
+                     AND qualification.target_definition_id =
+                         member.target_definition_id
+                     AND qualification.qualification_purpose =
+                         member.qualification_purpose
+                     AND qualification.decision_status = 'ADMITTED'
+                     AND qualification.source_generation_max_decision_time =
+                         member.source_generation_max_decision_time
+                     AND qualification.effective_at = member.effective_at
+                     AND qualification.known_at = member.known_at
+                     AND qualification.content_sha256 =
+                         member.qualification_content_sha256
+                    LEFT JOIN mra.decision_run_target AS target
+                      ON target.decision_run_id = member.decision_run_id
+                     AND target.target_definition_id =
+                         member.target_definition_id
+                    WHERE member.decision_run_id = %s
+                      AND (
+                          qualification.research_qualification_decision_id IS NULL
+                          OR target.decision_run_target_id IS NULL
+                          OR EXISTS (
+                              SELECT 1
+                              FROM mra.research_qualification_decision AS successor
+                              WHERE successor.supersedes_decision_id =
+                                    member.research_qualification_decision_id
+                                AND successor.effective_at <= member.decision_time
+                                AND successor.known_at <= member.decision_time
+                          )
+                      )
+                """,
+                (decision_run_id,),
+            )
+            if qualification_identity_count:
+                mismatches.append(
+                    DecisionRunMismatch(
+                        kind=DecisionRunMismatchKind.IDENTITY_MISMATCH,
+                        fact_path="decision_run.research_qualification_roster",
+                        expected="0",
+                        actual=str(qualification_identity_count),
                     )
                 )
 
@@ -308,6 +407,22 @@ class PostgresDecisionRunVerificationProvider:
                              reference.value_status))
                       +
                       (SELECT count(*)
+                       FROM mra.decision_run_research_qualification_member AS member
+                       WHERE member.decision_run_id = %(decision_run_id)s
+                         AND member.content_sha256 <>
+                           mra.decision_qualification_member_content_sha256(
+                             member.decision_code, member.experiment_id,
+                             member.qualification_content_sha256,
+                             member.qualification_purpose, member.revision,
+                             member.research_assessment_id,
+                             member.research_qualification_decision_id,
+                             member.research_qualification_policy_id,
+                             member.role,
+                             member.source_generation_max_decision_time,
+                             member.supersedes_decision_id,
+                             member.target_definition_id))
+                      +
+                      (SELECT count(*)
                        FROM mra.decision_run AS decision
                        WHERE decision.decision_run_id = %(decision_run_id)s
                          AND decision.definition_summary_sha256 <>
@@ -320,6 +435,9 @@ class PostgresDecisionRunVerificationProvider:
                              decision.commitment_roster_sha256,
                              decision.decision_time,
                              decision.reference_count,
+                             decision.research_purpose,
+                             decision.research_qualification_count,
+                             decision.research_qualification_roster_sha256,
                              decision.request_sha256,
                              decision.runtime_mode,
                              decision.target_count,
@@ -352,18 +470,21 @@ class PostgresDecisionRunVerificationProvider:
         )
 
 
-def _stored_hashes(connection, decision_run_id: UUID) -> tuple[str, str, str]:
+def _stored_hashes(
+    connection, decision_run_id: UUID
+) -> tuple[str, str, str, str]:
     row = connection.execute(
         """
         SELECT candidate_roster_sha256, target_roster_sha256,
-               commitment_roster_sha256
+               commitment_roster_sha256,
+               research_qualification_roster_sha256
         FROM mra.decision_run
         WHERE decision_run_id = %s
         """,
         (decision_run_id,),
     ).fetchone()
     assert row is not None
-    return str(row[0]), str(row[1]), str(row[2])
+    return str(row[0]), str(row[1]), str(row[2]), str(row[3])
 
 
 def _scalar_count(connection, query: str, parameters) -> int:

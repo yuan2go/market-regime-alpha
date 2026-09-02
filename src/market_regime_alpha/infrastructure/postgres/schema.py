@@ -228,6 +228,8 @@ EXPECTED_TARGET_DEFINITION_TABLES: Final[frozenset[str]] = frozenset(
 EXPECTED_DECISION_SUPPORT_TABLES: Final[frozenset[str]] = frozenset(
     {
         "decision_run",
+        "decision_run_research_qualification_roster",
+        "decision_run_research_qualification_member",
         "decision_run_target",
         "decision_target_commitment",
         "decision_reference_observation",

@@ -9,6 +9,7 @@ from market_regime_alpha.infrastructure.postgres.queries.candidate_research_inpu
 )
 from market_regime_alpha.infrastructure.postgres.queries.decision_inputs import (
     PostgresDecisionInputPreparationProvider,
+    PostgresDecisionResearchQualificationInputProvider,
 )
 from market_regime_alpha.infrastructure.postgres.queries.decision_runs import (
     PostgresDecisionRunQueryProvider,
@@ -51,6 +52,7 @@ __all__ = [
     "PostgresCandidateResearchDependencyQueries",
     "PostgresCandidateResearchInputLoader",
     "PostgresDecisionInputPreparationProvider",
+    "PostgresDecisionResearchQualificationInputProvider",
     "PostgresDecisionRunQueryProvider",
     "PostgresDecisionRunVerificationProvider",
     "PostgresMarketQueries",

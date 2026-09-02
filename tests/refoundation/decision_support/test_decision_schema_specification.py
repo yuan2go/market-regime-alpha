@@ -12,7 +12,7 @@ from market_regime_alpha.infrastructure.postgres.schema import (
 )
 
 
-def test_decision_support_schema_adds_exactly_four_authority_relations(
+def test_decision_support_schema_includes_qualification_roster_authority(
     target_database_url: str,
 ) -> None:
     SchemaManager(target_database_url).bootstrap()
@@ -37,6 +37,8 @@ def test_decision_support_schema_adds_exactly_four_authority_relations(
         }
     assert EXPECTED_DECISION_SUPPORT_TABLES == {
         "decision_run",
+        "decision_run_research_qualification_roster",
+        "decision_run_research_qualification_member",
         "decision_run_target",
         "decision_target_commitment",
         "decision_reference_observation",
@@ -55,7 +57,6 @@ def test_decision_support_schema_adds_exactly_four_authority_relations(
         if table.startswith(
             (
                 "outcome",
-                "context",
                 "qualification",
                 "model",
                 "trade_outcome",
@@ -75,6 +76,11 @@ def test_decision_run_closure_uses_composite_fks_and_one_reference_per_commitmen
         "decision_run_runtime_step_fk",
         "decision_run_runtime_attempt_fk",
         "decision_run_receipt_claim_fk",
+        "decision_run_qualification_roster_fk",
+        "decision_qualification_roster_run_fk",
+        "decision_qualification_member_roster_fk",
+        "decision_qualification_member_target_fk",
+        "decision_qualification_member_admission_fk",
         "decision_run_counts_ck",
         "decision_run_time_ck",
         "decision_run_target_ordinal_uk",
@@ -138,6 +144,11 @@ def test_decision_run_closure_uses_composite_fks_and_one_reference_per_commitmen
     trigger_names = {name for _, name, _ in triggers}
     assert {
         "decision_run_append_only",
+        "decision_qualification_roster_append_only",
+        "decision_qualification_member_append_only",
+        "decision_qualification_roster_open_guard",
+        "decision_qualification_member_open_guard",
+        "decision_qualification_member_admission_guard",
         "decision_run_target_append_only",
         "decision_commitment_append_only",
         "decision_reference_append_only",
@@ -178,4 +189,8 @@ def test_decision_support_has_authority_and_replay_indexes(
         "decision_reference_bar_idx",
         "decision_reference_gap_idx",
         "decision_reference_known_at_idx",
+        "decision_qualification_roster_run_idx",
+        "decision_qualification_member_roster_idx",
+        "decision_qualification_member_decision_idx",
+        "decision_qualification_member_target_idx",
     } <= set(indexes)

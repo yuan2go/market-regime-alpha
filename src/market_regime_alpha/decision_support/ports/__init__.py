@@ -3,6 +3,7 @@
 from market_regime_alpha.decision_support.ports.preparation import (
     DecisionDependencyRepository,
     DecisionInputPreparationProvider,
+    DecisionResearchQualificationInputProvider,
 )
 from market_regime_alpha.decision_support.ports.queries import (
     DecisionRunQueryProvider,
@@ -24,6 +25,7 @@ from market_regime_alpha.decision_support.ports.verification import (
 __all__ = [
     "DecisionDependencyRepository",
     "DecisionInputPreparationProvider",
+    "DecisionResearchQualificationInputProvider",
     "DecisionRunQueryProvider",
     "DecisionRunReconciliation",
     "DecisionRunRepository",
