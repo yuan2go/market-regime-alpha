@@ -28,6 +28,7 @@ def test_research_and_qualification_schema_has_exact_owned_relations(
         "dataset_source",
         "feature_definition",
         "formal_research_dataset",
+        "exploratory_retrospective_dataset",
     }
     assert EXPECTED_RESEARCH_DEFINITION_TABLES <= tables
     assert EXPECTED_RESEARCH_VALIDITY_TABLES <= tables

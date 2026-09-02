@@ -19,6 +19,7 @@ from market_regime_alpha.research_qualification.domain import (
     FeatureValueType,
     FormalDatasetScope,
 )
+from market_regime_alpha.research_qualification.domain.exploratory import ExploratoryRetrospectiveDatasetScope
 from market_regime_alpha.research_qualification.ports.repository import DatasetRecord
 from market_regime_alpha.runtime.errors import (
     ArtifactIntegrityError,
@@ -354,6 +355,104 @@ class PostgresResearchDefinitionRepository:
                 scope.formal_research_campaign_id,
                 dataset_id,
                 scope.provider_qualification_decision_id,
+            ),
+        ).fetchone()
+        return row is not None
+
+    def bind_exploratory_retrospective_dataset(
+        self,
+        dataset_id: UUID,
+        scope: ExploratoryRetrospectiveDatasetScope,
+    ) -> str:
+        row = self._connection.execute(
+            """
+            SELECT count(*),
+                   mra.canonical_sha256(mra.canonical_json_text(coalesce(jsonb_agg(
+                       jsonb_build_object(
+                           'dataset_source_id', dataset_source_id,
+                           'source_identity', coalesce(
+                               market_bar_revision_id,
+                               market_instrument_fact_revision_id,
+                               market_trading_session_id,
+                               market_source_gap_id,
+                               market_capture_id
+                           ),
+                           'source_role', source_role
+                       ) ORDER BY dataset_source_id
+                   ), '[]'::jsonb)))
+            FROM mra.dataset_source
+            WHERE dataset_id = %s
+              AND source_role IN (
+                  'MARKET_BAR_REVISION', 'MARKET_INSTRUMENT_FACT_REVISION',
+                  'MARKET_TRADING_SESSION', 'MARKET_SOURCE_GAP', 'MARKET_CAPTURE'
+              )
+            """,
+            (dataset_id,),
+        ).fetchone()
+        if row is None or int(row[0]) < 1:
+            raise ArtifactIntegrityError("Exploratory Dataset has no Market source roster")
+        source_count = int(row[0])
+        roster_hash = str(row[1])
+        content_hash = canonical_json_sha256(
+            {
+                "dataset_id": dataset_id,
+                "evidence_lane": scope.evidence_lane,
+                "knowledge_cutoff": scope.knowledge_cutoff,
+                "market_archive_id": scope.market_archive_id,
+                "market_archive_seal_id": scope.market_archive_seal_id,
+                "scope_content_sha256": str(scope.content_sha256),
+                "simulated_event_cutoff": scope.simulated_event_cutoff,
+                "source_count": source_count,
+                "source_roster_sha256": roster_hash,
+            }
+        )
+        self._connection.execute(
+            """
+            INSERT INTO mra.exploratory_retrospective_dataset (
+                dataset_id, market_archive_id, market_archive_seal_id,
+                evidence_lane, knowledge_cutoff, simulated_event_cutoff,
+                scope_content_sha256, source_count,
+                source_roster_sha256, content_sha256
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                dataset_id,
+                scope.market_archive_id,
+                scope.market_archive_seal_id,
+                scope.evidence_lane.value,
+                scope.knowledge_cutoff,
+                scope.simulated_event_cutoff,
+                str(scope.content_sha256),
+                source_count,
+                roster_hash,
+                content_hash,
+            ),
+        )
+        return content_hash
+
+    def exploratory_retrospective_dataset_matches(
+        self,
+        dataset_id: UUID,
+        scope: ExploratoryRetrospectiveDatasetScope,
+    ) -> bool:
+        row = self._connection.execute(
+            """
+            SELECT 1 FROM mra.exploratory_retrospective_dataset
+            WHERE dataset_id = %s
+              AND market_archive_id = %s
+              AND market_archive_seal_id = %s
+              AND evidence_lane = 'EXPLORATORY_RETROSPECTIVE'
+              AND knowledge_cutoff = %s
+              AND simulated_event_cutoff = %s
+              AND scope_content_sha256 = %s
+            """,
+            (
+                dataset_id,
+                scope.market_archive_id,
+                scope.market_archive_seal_id,
+                scope.knowledge_cutoff,
+                scope.simulated_event_cutoff,
+                str(scope.content_sha256),
             ),
         ).fetchone()
         return row is not None

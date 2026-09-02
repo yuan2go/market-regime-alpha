@@ -27,6 +27,7 @@ class DatasetMarketSourceObservation:
     instrument_id: UUID | None
     decision_visible_at: datetime
     foundation_integrity: bool
+    event_cutoff_at: datetime | None = None
 
 
 class ResearchSourceQueries(Protocol):
@@ -52,6 +53,17 @@ class ResearchSourceQueries(Protocol):
         *,
         formal_research_campaign_id: UUID,
         provider_qualification_decision_id: UUID,
+        lock: bool,
+    ) -> tuple[DatasetMarketSourceObservation, ...]: ...
+
+    def exploratory_market_source_observations(
+        self,
+        sources: tuple[DatasetSource, ...],
+        *,
+        market_archive_id: UUID,
+        market_archive_seal_id: UUID,
+        knowledge_cutoff: datetime,
+        simulated_event_cutoff: datetime,
         lock: bool,
     ) -> tuple[DatasetMarketSourceObservation, ...]: ...
 

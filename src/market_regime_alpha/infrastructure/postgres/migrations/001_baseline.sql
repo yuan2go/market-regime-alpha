@@ -17823,3 +17823,185 @@ CREATE TRIGGER market_archive_observation_append_only BEFORE UPDATE OR DELETE ON
 CREATE TRIGGER market_archive_slice_gap_append_only BEFORE UPDATE OR DELETE ON mra.market_archive_slice_gap FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
 CREATE TRIGGER market_archive_resource_stop_append_only BEFORE UPDATE OR DELETE ON mra.market_archive_resource_stop FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
 CREATE TRIGGER market_archive_seal_append_only BEFORE UPDATE OR DELETE ON mra.market_archive_seal FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+
+-- Research-owned typed dual-clock binding. This never changes Dataset PIT rules.
+CREATE TABLE mra.exploratory_retrospective_dataset (
+    dataset_id uuid PRIMARY KEY REFERENCES mra.dataset(dataset_id) ON DELETE RESTRICT,
+    market_archive_id uuid NOT NULL REFERENCES mra.market_archive(market_archive_id) ON DELETE RESTRICT,
+    market_archive_seal_id uuid NOT NULL REFERENCES mra.market_archive_seal(market_archive_seal_id) ON DELETE RESTRICT,
+    evidence_lane text NOT NULL,
+    knowledge_cutoff timestamptz NOT NULL,
+    simulated_event_cutoff timestamptz NOT NULL,
+    scope_content_sha256 text NOT NULL,
+    source_count integer NOT NULL,
+    source_roster_sha256 text NOT NULL,
+    content_sha256 text NOT NULL,
+    registered_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT exploratory_retrospective_dataset_shape_ck CHECK (
+        evidence_lane = 'EXPLORATORY_RETROSPECTIVE'
+        AND simulated_event_cutoff < knowledge_cutoff
+        AND scope_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND source_count > 0
+        AND source_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+CREATE INDEX exploratory_retrospective_dataset_archive_idx
+    ON mra.exploratory_retrospective_dataset(market_archive_id, market_archive_seal_id, dataset_id);
+CREATE INDEX exploratory_retrospective_dataset_seal_idx
+    ON mra.exploratory_retrospective_dataset(market_archive_seal_id, dataset_id);
+
+CREATE FUNCTION mra.validate_exploratory_retrospective_dataset()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE expected_count integer;
+DECLARE expected_roster text;
+DECLARE expected_scope text;
+DECLARE expected_content text;
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM mra.dataset AS dataset
+        JOIN mra.market_archive AS archive ON archive.market_archive_id = NEW.market_archive_id
+        JOIN mra.market_archive_seal AS seal
+          ON seal.market_archive_seal_id = NEW.market_archive_seal_id
+         AND seal.market_archive_id = archive.market_archive_id
+        WHERE dataset.dataset_id = NEW.dataset_id
+          AND dataset.decision_time = NEW.simulated_event_cutoff
+          AND archive.lane = 'RETROSPECTIVE_BACKFILL'
+          AND archive.evidence_class = 'EXPLORATORY_RETROSPECTIVE'
+          AND seal.knowledge_cutoff = NEW.knowledge_cutoff
+    ) OR EXISTS (
+        SELECT 1 FROM mra.formal_research_dataset
+        WHERE dataset_id = NEW.dataset_id
+    ) THEN
+        RAISE EXCEPTION 'Exploratory Dataset dual-clock/archive binding is invalid' USING ERRCODE = '55000';
+    END IF;
+    SELECT count(*),
+           mra.canonical_sha256(mra.canonical_json_text(coalesce(jsonb_agg(
+               jsonb_build_object(
+                   'dataset_source_id', dataset_source_id,
+                   'source_identity', coalesce(
+                       market_bar_revision_id,
+                       market_instrument_fact_revision_id,
+                       market_trading_session_id,
+                       market_source_gap_id,
+                       market_capture_id
+                   ),
+                   'source_role', source_role
+               ) ORDER BY dataset_source_id
+           ), '[]'::jsonb)))
+      INTO expected_count, expected_roster
+    FROM mra.dataset_source
+    WHERE dataset_id = NEW.dataset_id
+      AND source_role IN (
+          'MARKET_BAR_REVISION', 'MARKET_INSTRUMENT_FACT_REVISION',
+          'MARKET_TRADING_SESSION', 'MARKET_SOURCE_GAP', 'MARKET_CAPTURE'
+      );
+    IF NEW.source_count <> expected_count
+       OR NEW.source_roster_sha256 <> expected_roster
+       OR EXISTS (
+           SELECT 1 FROM mra.dataset_source
+           WHERE dataset_id = NEW.dataset_id AND source_role = 'MARKET_CAPTURE'
+       ) OR EXISTS (
+           WITH source_facts AS (
+               SELECT source.dataset_source_id, bar.capture_id,
+                      bar.event_end AS event_cutoff_at,
+                      bar.decision_visible_at, NULL::uuid AS gap_id
+               FROM mra.dataset_source AS source
+               JOIN mra.market_bar_revision AS bar
+                 ON bar.bar_revision_id = source.market_bar_revision_id
+               WHERE source.dataset_id = NEW.dataset_id
+                 AND source.source_role = 'MARKET_BAR_REVISION'
+               UNION ALL
+               SELECT source.dataset_source_id, fact.capture_id,
+                      fact.event_start, fact.decision_visible_at, NULL::uuid
+               FROM mra.dataset_source AS source
+               JOIN mra.instrument_fact_revision AS fact
+                 ON fact.fact_revision_id = source.market_instrument_fact_revision_id
+               WHERE source.dataset_id = NEW.dataset_id
+                 AND source.source_role = 'MARKET_INSTRUMENT_FACT_REVISION'
+               UNION ALL
+               SELECT source.dataset_source_id, session.source_capture_id,
+                      session.decision_reference_at, session.decision_visible_at,
+                      NULL::uuid
+               FROM mra.dataset_source AS source
+               JOIN mra.trading_session AS session
+                 ON session.session_id = source.market_trading_session_id
+               WHERE source.dataset_id = NEW.dataset_id
+                 AND source.source_role = 'MARKET_TRADING_SESSION'
+               UNION ALL
+               SELECT source.dataset_source_id, gap.capture_id,
+                      coalesce(gap.event_end, gap.effective_from, gap.event_start),
+                      gap.decision_visible_at, gap.gap_id
+               FROM mra.dataset_source AS source
+               JOIN mra.source_gap AS gap ON gap.gap_id = source.market_source_gap_id
+               WHERE source.dataset_id = NEW.dataset_id
+                 AND source.source_role = 'MARKET_SOURCE_GAP'
+           )
+           SELECT 1 FROM source_facts AS fact
+           WHERE fact.event_cutoff_at IS NULL
+              OR fact.event_cutoff_at > NEW.simulated_event_cutoff
+              OR fact.decision_visible_at > NEW.knowledge_cutoff
+              OR NOT (
+                  EXISTS (
+                      SELECT 1 FROM mra.market_archive_capture_observation AS observation
+                      WHERE observation.market_archive_id = NEW.market_archive_id
+                        AND observation.capture_id = fact.capture_id
+                  ) OR (
+                      fact.gap_id IS NOT NULL AND EXISTS (
+                          SELECT 1 FROM mra.market_archive_slice_gap AS gap_binding
+                          WHERE gap_binding.market_archive_id = NEW.market_archive_id
+                            AND gap_binding.gap_id = fact.gap_id
+                      )
+                  )
+              )
+       ) THEN
+        RAISE EXCEPTION 'Exploratory Dataset source roster exceeds its archive dual-clock scope' USING ERRCODE = '55000';
+    END IF;
+    expected_scope := mra.canonical_sha256(mra.canonical_json_text(jsonb_build_object(
+        'evidence_lane', NEW.evidence_lane,
+        'knowledge_cutoff', NEW.knowledge_cutoff,
+        'market_archive_id', NEW.market_archive_id,
+        'market_archive_seal_id', NEW.market_archive_seal_id,
+        'simulated_event_cutoff', NEW.simulated_event_cutoff
+    )));
+    expected_content := mra.canonical_sha256(mra.canonical_json_text(jsonb_build_object(
+        'dataset_id', NEW.dataset_id,
+        'evidence_lane', NEW.evidence_lane,
+        'knowledge_cutoff', NEW.knowledge_cutoff,
+        'market_archive_id', NEW.market_archive_id,
+        'market_archive_seal_id', NEW.market_archive_seal_id,
+        'scope_content_sha256', NEW.scope_content_sha256,
+        'simulated_event_cutoff', NEW.simulated_event_cutoff,
+        'source_count', NEW.source_count,
+        'source_roster_sha256', NEW.source_roster_sha256
+    )));
+    IF NEW.scope_content_sha256 <> expected_scope OR NEW.content_sha256 <> expected_content THEN
+        RAISE EXCEPTION 'Exploratory Dataset content hash is invalid' USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+CREATE TRIGGER exploratory_retrospective_dataset_guard
+BEFORE INSERT ON mra.exploratory_retrospective_dataset
+FOR EACH ROW EXECUTE FUNCTION mra.validate_exploratory_retrospective_dataset();
+CREATE TRIGGER exploratory_retrospective_dataset_append_only
+BEFORE UPDATE OR DELETE ON mra.exploratory_retrospective_dataset
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+
+CREATE FUNCTION mra.reject_exploratory_formal_dataset()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM mra.exploratory_retrospective_dataset
+        WHERE dataset_id = NEW.dataset_id
+    ) THEN
+        RAISE EXCEPTION 'Exploratory retrospective Dataset cannot enter Formal PIT'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+CREATE TRIGGER formal_dataset_exploratory_rejection_guard
+BEFORE INSERT ON mra.formal_research_dataset
+FOR EACH ROW EXECUTE FUNCTION mra.reject_exploratory_formal_dataset();

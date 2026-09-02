@@ -19,6 +19,7 @@ from market_regime_alpha.research_qualification.domain import (
     FeatureDefinition,
     FormalDatasetScope,
 )
+from market_regime_alpha.research_qualification.domain.exploratory import ExploratoryRetrospectiveDatasetScope
 from market_regime_alpha.research_qualification.domain.targets import TargetDefinition
 from market_regime_alpha.research_qualification.ports import (
     ResearchArtifactByteStore,
@@ -68,30 +69,32 @@ class ResearchQualificationApplication:
         )
 
     def register_dataset(
-        self,
-        definition: DecisionInputDatasetDefinition,
-        context: CommandContext,
+        self, definition: DecisionInputDatasetDefinition, context: CommandContext,
         *,
         runtime_claim: AttemptClaim | None = None,
     ) -> DatasetRegistrationResult:
         return self._datasets.register(
-            definition,
-            context,
-            runtime_claim=runtime_claim,
+            definition, context, runtime_claim=runtime_claim,
         )
 
     def register_formal_dataset(
-        self,
-        definition: DecisionInputDatasetDefinition,
-        formal_scope: FormalDatasetScope,
-        context: CommandContext,
+        self, definition: DecisionInputDatasetDefinition,
+        formal_scope: FormalDatasetScope, context: CommandContext,
         *,
         runtime_claim: AttemptClaim | None = None,
     ) -> DatasetRegistrationResult:
         return self._datasets.register(
-            definition,
-            context,
-            formal_scope=formal_scope,
+            definition, context, formal_scope=formal_scope, runtime_claim=runtime_claim,
+        )
+
+    def register_exploratory_retrospective_dataset(
+        self, definition: DecisionInputDatasetDefinition,
+        exploratory_scope: ExploratoryRetrospectiveDatasetScope, context: CommandContext,
+        *,
+        runtime_claim: AttemptClaim | None = None,
+    ) -> DatasetRegistrationResult:
+        return self._datasets.register(
+            definition, context, exploratory_scope=exploratory_scope,
             runtime_claim=runtime_claim,
         )
 

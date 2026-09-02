@@ -11,6 +11,7 @@ from market_regime_alpha.research_qualification.domain import (
     FeatureDefinition,
     FormalDatasetScope,
 )
+from market_regime_alpha.research_qualification.domain.exploratory import ExploratoryRetrospectiveDatasetScope
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,6 +61,18 @@ class ResearchDefinitionRepository(Protocol):
 
     def formal_dataset_matches(
         self, dataset_id: UUID, scope: FormalDatasetScope
+    ) -> bool: ...
+
+    def bind_exploratory_retrospective_dataset(
+        self,
+        dataset_id: UUID,
+        scope: ExploratoryRetrospectiveDatasetScope,
+    ) -> str: ...
+
+    def exploratory_retrospective_dataset_matches(
+        self,
+        dataset_id: UUID,
+        scope: ExploratoryRetrospectiveDatasetScope,
     ) -> bool: ...
 
 

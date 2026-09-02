@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from uuid import UUID
 
 from market_regime_alpha.research_qualification.domain import (
@@ -69,15 +70,31 @@ def validate_market_lineage(
     *,
     features: tuple[FeatureDefinition, ...],
     observations: tuple[DatasetMarketSourceObservation, ...],
+    knowledge_cutoff: datetime | None = None,
+    simulated_event_cutoff: datetime | None = None,
 ) -> None:
     source_map = {source.dataset_source_id: source for source in manifest.sources}
     observation_map = {
         observation.dataset_source_id: observation for observation in observations
     }
+    if (knowledge_cutoff is None) != (simulated_event_cutoff is None):
+        raise ValueError("exploratory Dataset validation requires both clock cutoffs")
+    if simulated_event_cutoff is not None and manifest.decision_time.value != simulated_event_cutoff:
+        raise RuntimeStateConflictError("Dataset DecisionTime must equal its simulated event cutoff")
+    visibility_cutoff = knowledge_cutoff or manifest.decision_time.value
     for observation in observations:
-        if observation.decision_visible_at > manifest.decision_time.value:
+        if observation.decision_visible_at > visibility_cutoff:
             raise RuntimeStateConflictError(
                 "Dataset Market source is not visible at DecisionTime"
+                if knowledge_cutoff is None
+                else "Dataset Market source is not visible at its allowed knowledge cutoff"
+            )
+        if simulated_event_cutoff is not None and (
+            observation.event_cutoff_at is None
+            or observation.event_cutoff_at > simulated_event_cutoff
+        ):
+            raise RuntimeStateConflictError(
+                "Exploratory Dataset Market source exceeds simulated event cutoff"
             )
         if not observation.foundation_integrity:
             raise ArtifactIntegrityError(

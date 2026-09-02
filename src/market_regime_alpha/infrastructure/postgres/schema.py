@@ -257,6 +257,7 @@ EXPECTED_RESEARCH_DEFINITION_TABLES: Final[frozenset[str]] = frozenset(
         "dataset_source",
         "feature_definition",
         "formal_research_dataset",
+        "exploratory_retrospective_dataset",
     }
 )
 

@@ -20,6 +20,9 @@ from market_regime_alpha.infrastructure.postgres.market_uow import (
     PostgresMarketDatabaseClock,
     PostgresMarketUnitOfWorkProvider,
 )
+from market_regime_alpha.infrastructure.postgres.archive_uow import (
+    PostgresArchiveUnitOfWorkProvider,
+)
 from market_regime_alpha.infrastructure.postgres.research_uow import (
     PostgresResearchUnitOfWorkProvider,
 )
@@ -46,8 +49,19 @@ from market_regime_alpha.research_qualification.domain import (
     FeatureSourceRequirement,
     FeatureValueType,
 )
-from market_regime_alpha.market.application import MarketApplication
+from market_regime_alpha.research_qualification.domain.exploratory import (
+    ExploratoryRetrospectiveDatasetScope,
+)
+from market_regime_alpha.market.application import (
+    ArchiveCommands,
+    ArchiveSlicePlan,
+    MarketApplication,
+    RecordArchiveCaptureObservationRequest,
+    StartMarketArchiveRequest,
+)
 from market_regime_alpha.market.domain import (
+    ArchiveLane,
+    ArchiveSealDisposition,
     BarTimeframe,
     ClassificationMembershipRevision,
     ClassificationRevision,
@@ -107,6 +121,7 @@ from market_regime_alpha.selection.domain import (
     UniverseScopeSpecification,
 )
 from market_regime_alpha.shared.identity import InstrumentId
+from market_regime_alpha.shared.hashing import canonical_json_sha256
 from market_regime_alpha.shared.financial import Money, Quantity, QuantityUnit
 from market_regime_alpha.shared.time import DecisionTime
 
@@ -1245,7 +1260,7 @@ def test_dataset_available_cell_binds_exact_market_fact_and_decision_time(
     )
 
 
-def test_dataset_rejects_market_lineage_not_visible_at_decision_time(
+def test_dataset_rejects_late_lineage_unless_exact_retrospective_archive_is_bound(
     dataset_stack: _DatasetStack,
 ) -> None:
     stack = dataset_stack
@@ -1328,6 +1343,115 @@ def test_dataset_rejects_market_lineage_not_visible_at_decision_time(
             """
         ).fetchone()
     assert counts == (0, 0, 1)
+
+    archive_id = uuid4()
+    archive_slice_id = uuid4()
+    archive_commands = ArchiveCommands(
+        PostgresArchiveUnitOfWorkProvider(stack.pool),
+        id_factory=uuid4,
+    )
+    started = archive_commands.start(
+        StartMarketArchiveRequest(
+            market_archive_id=archive_id,
+            archive_code=f"retrospective-{archive_id.hex[:12]}",
+            lane=ArchiveLane.RETROSPECTIVE_BACKFILL,
+            provider_product_id=stack.product.provider_product_id,
+            exchange_code="SSE",
+            timeframe=BarTimeframe.MINUTE_5,
+            price_basis=PriceBasis.RAW_UNADJUSTED,
+            instrument_scope="ENGINEERING_EXPLORATORY_PILOT_32",
+            instrument_scope_sha256=canonical_json_sha256(
+                {"scope": "ENGINEERING_EXPLORATORY_PILOT_32"}
+            ),
+            event_window_start=session_times[0],
+            event_window_end=session_times[1],
+            reserved_free_bytes=1,
+            maximum_archive_bytes=1_000_000,
+            maximum_slice_bytes=1_000_000,
+            code_artifact_id=definition.code_artifact.artifact_id,
+            config_artifact_id=definition.config_artifact.artifact_id,
+            provenance_sha256=canonical_json_sha256(
+                {"test": "dual-clock-retrospective-dataset"}
+            ),
+            slices=(
+                ArchiveSlicePlan(
+                    market_archive_slice_id=archive_slice_id,
+                    ordinal=1,
+                    scope_key=f"{stack.instrument_id}:{stack.decision_time.value.date()}",
+                    event_window_start=session_times[0],
+                    event_window_end=session_times[1],
+                    request_sha256=canonical_json_sha256(
+                        {
+                            "instrument_id": stack.instrument_id,
+                            "session": stack.decision_time.value.date(),
+                        }
+                    ),
+                    expected_fact_kind="SECURITY_STATUS",
+                ),
+            ),
+        ),
+        _context("retrospective-archive", "START_MARKET_ARCHIVE"),
+    )
+    archive_commands.record_capture_observation(
+        RecordArchiveCaptureObservationRequest(
+            market_archive_id=archive_id,
+            market_archive_slice_id=archive_slice_id,
+            capture_id=later_capture.capture.capture_id,
+            schedule_slot="RETROSPECTIVE_BATCH",
+            requested_at=later_capture.capture.temporal.capture_started_at,
+        ),
+        _context("retrospective-observation", "RECORD_ARCHIVE_CAPTURE_OBSERVATION"),
+    )
+    seal = archive_commands.seal_retrospective(
+        market_archive_id=archive_id,
+        disposition=ArchiveSealDisposition.COMPLETE,
+        context=_context("retrospective-seal", "SEAL_RETROSPECTIVE_ARCHIVE"),
+    )
+    assert started.market_archive_id == archive_id
+    scope = ExploratoryRetrospectiveDatasetScope(
+        market_archive_id=archive_id,
+        market_archive_seal_id=seal.market_archive_seal_id,
+        knowledge_cutoff=seal.knowledge_cutoff,
+        simulated_event_cutoff=stack.decision_time.value,
+    )
+
+    result = stack.research.register_exploratory_retrospective_dataset(
+        definition,
+        scope,
+        _context(
+            "retrospective-dataset",
+            "REGISTER_EXPLORATORY_RETROSPECTIVE_DATASET",
+        ),
+    )
+
+    assert result.row_count == 1
+    with psycopg.connect(stack.database_url) as connection:
+        binding = connection.execute(
+            """
+            SELECT exploratory.evidence_lane,
+                   exploratory.knowledge_cutoff,
+                   exploratory.simulated_event_cutoff,
+                   exploratory.source_count,
+                   dataset.decision_time,
+                   EXISTS (
+                       SELECT 1 FROM mra.formal_research_dataset AS formal
+                       WHERE formal.dataset_id = exploratory.dataset_id
+                   )
+            FROM mra.exploratory_retrospective_dataset AS exploratory
+            JOIN mra.dataset AS dataset
+              ON dataset.dataset_id = exploratory.dataset_id
+            WHERE exploratory.dataset_id = %s
+            """,
+            (definition.dataset_id,),
+        ).fetchone()
+    assert binding == (
+        "EXPLORATORY_RETROSPECTIVE",
+        seal.knowledge_cutoff,
+        stack.decision_time.value,
+        1,
+        stack.decision_time.value,
+        False,
+    )
 
 
 def test_dataset_parser_rejects_label_leakage_before_any_authority_write(
