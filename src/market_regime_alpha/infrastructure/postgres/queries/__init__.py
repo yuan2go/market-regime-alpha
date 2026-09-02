@@ -9,6 +9,9 @@ from market_regime_alpha.infrastructure.postgres.queries.archive_operations impo
 from market_regime_alpha.infrastructure.postgres.queries.archive_inspection import (
     PostgresArchiveInspectionPort,
 )
+from market_regime_alpha.infrastructure.postgres.queries.archive_verification import (
+    PostgresArchiveVerificationPort,
+)
 from market_regime_alpha.infrastructure.postgres.queries.archive_sessions import (
     PostgresArchiveTradingSessionReadPort,
 )
@@ -63,6 +66,7 @@ __all__ = [
     "PostgresCandidateQueryProvider",
     "PostgresArchiveOperationsReadPort",
     "PostgresArchiveInspectionPort",
+    "PostgresArchiveVerificationPort",
     "PostgresArchiveTradingSessionReadPort",
     "PostgresCandidateResearchDependencyQueries",
     "PostgresCandidateResearchInputLoader",

@@ -179,11 +179,23 @@ def resume_archive(
     sdk: _BaoStockSdk,
     actor_id: str,
     operation_key: str,
+    slice_ids: tuple[UUID, ...] | None = None,
 ) -> tuple[object, ...]:
     results: list[object] = []
+    selected = set(slice_ids or ())
+    if slice_ids is not None and (
+        not slice_ids
+        or len(selected) != len(slice_ids)
+        or not selected.issubset(
+            {item.plan.market_archive_slice_id for item in manifest.slices}
+        )
+    ):
+        raise ValueError("selected archive slice roster is empty, duplicate, or unknown")
     with BaoStockSession(sdk) as session:
         provider = BaoStockArchiveProvider(session)
         for item in manifest.slices:
+            if slice_ids is not None and item.plan.market_archive_slice_id not in selected:
+                continue
             query = BaoStockArchiveQuery.from_resource(item.capture_request.resource)
             normalizer = BaoStockArchiveNormalizer(
                 expected_query=query,

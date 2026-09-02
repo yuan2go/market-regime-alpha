@@ -128,6 +128,7 @@ def _dispatch(arguments: argparse.Namespace, settings: TargetSettings) -> object
                     sdk=sdk,
                     actor_id=arguments.actor_id,
                     operation_key=arguments.operation_key,
+                    slice_ids=(tuple(arguments.slice_id) if arguments.slice_id else None),
                 )
     raise ValueError("command is not implemented")
 
@@ -168,6 +169,7 @@ def _parser() -> argparse.ArgumentParser:
         mutation.add_argument("--actor-id", required=True)
         if command in {"resume", "retry"}:
             mutation.add_argument("--operation-key", required=True)
+            mutation.add_argument("--slice-id", action="append", type=UUID)
     for command in ("inspect", "gap-report", "revision-report", "daily-health"):
         inspection = archive_commands.add_parser(command)
         inspection.add_argument("--archive-id", required=True, type=UUID)

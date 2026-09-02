@@ -23,6 +23,9 @@ from market_regime_alpha.infrastructure.postgres.queries.archive_operations impo
 from market_regime_alpha.infrastructure.postgres.queries.archive_inspection import (
     PostgresArchiveInspectionPort,
 )
+from market_regime_alpha.infrastructure.postgres.queries.archive_verification import (
+    PostgresArchiveVerificationPort,
+)
 from market_regime_alpha.infrastructure.postgres.schema import SchemaManager
 from market_regime_alpha.infrastructure.postgres.uow import PostgresUnitOfWorkProvider
 from market_regime_alpha.market.application import (
@@ -461,6 +464,9 @@ def test_observation_gap_and_seal_preserve_complete_terminal_roster(archive_stac
         inspection = PostgresArchiveInspectionPort(pool).inspect(
             started.market_archive_id
         )
+        verification = PostgresArchiveVerificationPort(pool).verify(
+            started.market_archive_id
+        )
     finally:
         pool.close()
     assert inspection.slice_count == 2
@@ -470,6 +476,8 @@ def test_observation_gap_and_seal_preserve_complete_terminal_roster(archive_stac
     assert inspection.observation_count == 1
     assert inspection.artifact_count == 1
     assert inspection.seal_disposition == "PARTIAL_WITH_GAPS"
+    assert verification.matched is True
+    assert verification.mismatch_count == 0
     assert [item.status for item in inspection.slices] == [
         "CAPTURED",
         "GAP_RECORDED",

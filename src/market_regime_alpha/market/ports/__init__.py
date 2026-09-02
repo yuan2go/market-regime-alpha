@@ -24,6 +24,8 @@ from market_regime_alpha.market.ports.archive_inspection import (
     ArchiveInspection,
     ArchiveInspectionPort,
     ArchiveSliceInspection,
+    ArchiveVerification,
+    ArchiveVerificationPort,
 )
 from market_regime_alpha.market.ports.session_roster import (
     ArchiveTradingSession,
@@ -72,6 +74,8 @@ __all__ = [
     "ArchiveInspection",
     "ArchiveInspectionPort",
     "ArchiveSliceInspection",
+    "ArchiveVerification",
+    "ArchiveVerificationPort",
     "ArchiveTradingSession",
     "ArchiveTradingSessionReadPort",
     "ArchiveResourceInspector",

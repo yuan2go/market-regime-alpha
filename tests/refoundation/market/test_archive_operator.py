@@ -9,6 +9,7 @@ import pytest
 
 from market_regime_alpha.interfaces.archive import (
     ArchiveOperatorManifest,
+    resume_archive,
     validate_operational_target,
 )
 from market_regime_alpha.shared.hashing import canonical_json_sha256
@@ -114,4 +115,26 @@ def test_operational_guard_rejects_disposable_or_mismatched_targets() -> None:
             database_name="mra_archive_operational_20260903",
             expected_database_name="mra_archive_operational_20260903",
             artifact_root=Path("/tmp/archive"),
+        )
+
+
+def test_resume_rejects_an_unknown_or_empty_selected_slice_roster() -> None:
+    manifest = ArchiveOperatorManifest.from_json(json.dumps(_manifest()))
+    with pytest.raises(ValueError, match="slice roster"):
+        resume_archive(
+            object(),  # type: ignore[arg-type]
+            manifest,
+            sdk=object(),  # type: ignore[arg-type]
+            actor_id="operator",
+            operation_key="selected",
+            slice_ids=(),
+        )
+    with pytest.raises(ValueError, match="slice roster"):
+        resume_archive(
+            object(),  # type: ignore[arg-type]
+            manifest,
+            sdk=object(),  # type: ignore[arg-type]
+            actor_id="operator",
+            operation_key="selected",
+            slice_ids=(uuid4(),),
         )

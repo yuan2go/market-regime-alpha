@@ -57,8 +57,25 @@ class ArchiveInspectionPort(Protocol):
     def inspect(self, market_archive_id: UUID) -> ArchiveInspection: ...
 
 
+@dataclass(frozen=True, slots=True)
+class ArchiveVerification:
+    market_archive_id: UUID
+    matched: bool
+    mismatches: tuple[str, ...]
+
+    @property
+    def mismatch_count(self) -> int:
+        return len(self.mismatches)
+
+
+class ArchiveVerificationPort(Protocol):
+    def verify(self, market_archive_id: UUID) -> ArchiveVerification: ...
+
+
 __all__ = [
     "ArchiveInspection",
     "ArchiveInspectionPort",
     "ArchiveSliceInspection",
+    "ArchiveVerification",
+    "ArchiveVerificationPort",
 ]
