@@ -144,6 +144,14 @@ Checkpoint traceability:
 - [WP-14 Formal Research Engineering Readiness Implementation Plan](references/WP-ARCHITECTURE-REFOUNDATION-14-Formal-Research-Engineering-Readiness-Implementation-Plan.md)
   — TDD slices, narrow UoWs, schema closure, composition, failure/recovery,
   exact-SHA qualification, immutable Verification, and merge dependency gate.
+- [WP-14 Formal Research Engineering Readiness Implementation Status](references/WP-ARCHITECTURE-REFOUNDATION-14-Formal-Research-Engineering-Readiness-Implementation-Status.md)
+  — current handoff read model for the engineering-qualified mechanics and the
+  strict non-empirical evidence ceiling.
+- [WP-14 Formal Research Engineering Readiness Verification](references/WP-ARCHITECTURE-REFOUNDATION-14-Formal-Research-Engineering-Readiness-Verification.md)
+  — immutable exact-SHA proof for controlled Runtime profiles, Formal Campaign
+  freeze, locked-OOS/prospective mechanics, Provider qualification mechanics,
+  PostgreSQL qualification, full regression, and `WP14_EXIT_GATE = PASS` while
+  Formal PIT/OOS/Prospective/Provider/Alpha remain unproven.
 
 Design documents in this section define the Target destination. Status and
 Verification records report their explicitly bounded implementation evidence;

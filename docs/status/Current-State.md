@@ -3,23 +3,24 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Non-authoritative implementation status read model; exact-SHA engineering proof remains in Verification
 > **Owner:** Market Regime Alpha maintainers
-> **Generated At:** 2026-09-02 WP-13 exact-SHA engineering qualification reconciliation
-> **Repository Implementation Checkpoint:** `fc5993e5d9e05dbe2845659140108e1051cf3704`
-> **Execution-Time Main Baseline:** `6e0ad150057e43a89843eb4fb307e0373d5572ac`
+> **Generated At:** 2026-09-02 WP-14 exact-SHA engineering qualification reconciliation
+> **Repository Implementation Checkpoint:** `ca6f66b50ec2c55250cd82d2fa1ed6c5f35c29b8`
+> **Execution-Time Main Baseline:** `eb7970b4833228a2faba6715c65c26dae88f6ee5`
 > **Containing Documentation Commit:** reported by the final handoff; this read model does not claim a self-referential Git SHA
-> **Previous Verified Snapshot:** merged WP-12 at `48949c87ad0241a8d60031137bc3aa8eb9887525`
+> **Previous Verified Snapshot:** merged WP-13 implementation `fc5993e5d9e05dbe2845659140108e1051cf3704` on `origin/main@eb7970b4833228a2faba6715c65c26dae88f6ee5`
 > **Implementation Line Start:** `c3ac21ef1e13f2e8408d30b0481fa9b74c4f9539`
 > **Foundation Source Checkpoint:** `eeff49c7a3995ba6d65045be88d4244617301234`
 > **Legacy Business Implementation Parent:** `0382dad416d6d50d1eea0bda1603d7c359d65274`
 > **Schema Epochs:** canonical business `LEGACY_MIGRATIONS_001_106`; target draft `MRA_REFOUNDATION_1 / DRAFT / NOT_CUT_OVER`
-> **Generator:** `WP-ARCHITECTURE-REFOUNDATION-13 engineering qualification reconciliation; non-authoritative read model`
-> **Source Tree IDs:** root `a6e6286ff15cc46e75ece116763e6c35d014f4fd`; source `03b785fa3ff39040e15e068228ad37ce50a33dbc`; tests `4a09d6ef845f4c38d8e34f36564b3d3b408595d4`; Decision Support tree `c1ba668614144b6bc0ed8f29adfd1996d506d0a1`; target baseline blob `047e5d1271958a5dcd2b3a4ec776d0fbe4929d5d`; legacy migrations tree `6d3730548780ad6244d2cfecb4fb3559064b6f06`
-> **Code Evidence:** target and legacy source/migration packages, `tests`, [WP-13 canonical design](../references/WP-ARCHITECTURE-REFOUNDATION-13-Remaining-Decision-Support-Design.md), and [WP-13 immutable Verification](../references/WP-ARCHITECTURE-REFOUNDATION-13-Remaining-Decision-Support-Verification.md)
+> **Generator:** `WP-ARCHITECTURE-REFOUNDATION-14 engineering qualification reconciliation; non-authoritative read model`
+> **Source Tree IDs:** root `c1198fa61e432d46a416e863d32a7b253abdf67e`; source `ccc42e2a732f0738c560d762ce3c61a1418c475e`; tests `4a2148ff361c057db68d4ee3e758266246b010dd`; Research Qualification tree `453e0f4f81d62a27ebd1e8237fae1627901c95b8`; Market tree `d0efafaa99e7cc575b619f1a3791112e432bb5f0`; Runtime tree `b01c45b9ca7009fe8ddc9cba227f2f656473c6c1`; target baseline blob `2b4f587da1f616ef6b0eeaf15621cbe1c116be50`; legacy migrations tree `6d3730548780ad6244d2cfecb4fb3559064b6f06`
+> **Code Evidence:** target and legacy source/migration packages, `tests`, [WP-14 canonical design](../references/WP-ARCHITECTURE-REFOUNDATION-14-Formal-Research-Engineering-Readiness-Design.md), and [WP-14 immutable Verification](../references/WP-ARCHITECTURE-REFOUNDATION-14-Formal-Research-Engineering-Readiness-Verification.md)
 
-This read model records the WP-13 later-generation Qualification binding, PIT
-Context, Strategy, Signal, rule-based Forecast, Opportunity, Thesis, Portfolio,
-and Decision-Support-only Risk implementation and exact-SHA engineering
-qualification. The linked immutable Verification establishes the exit gate;
+This read model records the WP-14 controlled proof Runtime profiles, Formal
+Campaign freeze, protected OOS/prospective mechanics, Market-owned Provider
+qualification mechanics, qualified Formal PIT/Dataset seams, inspection, and
+exact-SHA engineering qualification. The linked immutable Verification
+establishes the exit gate;
 the containing documentation/merge SHA is reported by the final handoff rather
 than self-referenced here.
 This read model is invalid after any source, migration, test, or composition change until
@@ -28,23 +29,23 @@ qualification, trading, or Production claims.
 
 ## Current implementation truth
 
-| Area | Current implementation fact at the WP-13 implementation checkpoint |
+| Area | Current implementation fact at the WP-14 implementation checkpoint |
 |---|---|
 | Package shape | The legacy Python 3.12 modular monolith remains intact. Target `shared`, `runtime`, `market`, permanent `selection`, permanent `research_qualification`, permanent `decision_support`, permanent `outcome`, `infrastructure`, `interfaces`, and sole target `bootstrap.py` are isolated by dependency tests; each owner keeps Domain/Application/ports while PostgreSQL adapters remain in Infrastructure |
-| PostgreSQL | The canonical business implementation remains legacy 001–106 with 283 tables. The target draft defines 108 tables and four read-only views under schema `mra` |
-| Runtime | Continuous Research remains the current all-day business control plane. The sole target composition root constructs WP-13 commands through `ASSESS_CONTEXT -> SIGNAL_AND_FORECAST -> DECIDE_AND_RISK`, but target Runtime dispatch and business CLI cutover remain absent |
+| PostgreSQL | The canonical business implementation remains legacy 001–106 with 283 tables. The target draft defines 129 tables and four read-only views under schema `mra` |
+| Runtime | Continuous Research remains the current all-day business control plane. WP-14 composes exact Decision Proof and Due Proof profiles from existing Runtime/Application commands, but target Runtime business dispatch and CLI cutover remain absent |
 | CLI | Six legacy scripts remain. `mra` exposes target DB bootstrap/verify/recreate and Runtime inspection/recovery, but no Market business cutover command |
-| Market/PIT | Within the isolated target draft, the target owner is the sole writer of its draft facts; legacy remains canonical business implementation. Its large files are physically split by cohesive Domain/Application/Ports/query/repository responsibilities with stable exports and unchanged WP-04 schema/PIT/Provider semantics; only generic exact/as-of facts remain public |
+| Market/PIT | Within the isolated target draft, Market is the sole writer of its draft facts and purpose-specific Provider Qualification Protocol/requirements/finality/decision/visibility. Engineering rehearsals cannot admit a Provider. Formal PIT requires an exact admitted recorded-provider decision and typed source identity; legacy remains canonical business implementation |
 | Universe/Eligibility | Permanent target `market_regime_alpha.selection` owns explicit immutable scope, frozen membership, typed policy/rules, complete three-state assessment/reasons, exact Market lineage, and an independent narrow Selection UoW, all test-only |
 | Candidate | Current legacy capabilities remain canonical. The target draft implements the five Selection-owned Candidate relations, deterministic Policy/Set writer, complete score matrix, independent Candidate UoW, Selection-owned Research-input port with Infrastructure adapter, and funnel/dossier queries; its local WP-07 engineering exit gate passes at `029c269` |
-| Research/Qualification | Current legacy capabilities remain canonical. Permanent target `market_regime_alpha.research_qualification` implements immutable Decision-input Dataset/Source/Feature, Outcome-compatible Target Definition, database-derived Research Partition, predeclared Experiment and Evaluation Protocol/Run, transactional exact Outcome access, complete observations/metric inputs, Evaluation-bound immutable Evidence DAGs, complete Experiment Assessments, and purpose-specific Research Qualification. Evidence, Assessment, and Qualification retain three additional narrow UoWs; Model/Calibration remain absent |
+| Research/Qualification | Current legacy capabilities remain canonical. Permanent target `market_regime_alpha.research_qualification` retains WP-11/WP-12 Authority and adds immutable Formal Campaign predeclaration, complete FIT/VALIDATION/LOCKED_OOS plans, actual Partition/Experiment binding, protected zero-access opening, database-clock due inspection, and read-only reconciliation. Model/Calibration remain absent |
 | Decision/Outcome | Current legacy capabilities remain canonical. Permanent target `market_regime_alpha.decision_support` implements the sole immutable Decision Run per Candidate Set, explicit later-generation Qualification roster, PIT Context, Strategy, Signal, uncalibrated rule Forecast, Opportunity, Thesis, complete Portfolio and Decision-Support-only Risk. Permanent `market_regime_alpha.outcome` retains one commitment-bound Market Target Outcome root, append-only full revisions, exact rosters, dual cutoffs, pure Decimal settlement, typed replay/reconciliation, and a narrow read-only port; all remain test-only before cutover |
 | Execution/Account | Human/manual execution only; observed effective Fill remains the source of trade-caused Position. No target implementation was added |
-| Target epoch | Foundation through WP-13 Remaining Decision Support are implemented in the mutable `MRA_REFOUNDATION_1` draft; optional Model/Calibration, Formal Research readiness/campaign mechanics, Execution, and Runtime/CLI Cutover remain absent |
+| Target epoch | Foundation through WP-14 Formal Research Engineering Readiness are implemented in mutable `MRA_REFOUNDATION_1`; Formal PIT/OOS/Prospective/Provider/Alpha remain empirically unproven, and Model/Calibration, Execution, and Runtime/CLI Cutover remain absent |
 | Legacy | Old source, 001–106 migrations, CLIs, compatibility paths, and tests remain physically present as the current implementation and regression oracle |
 
 The convergence state is therefore
-`WP13_EXIT_GATE_PASS / NOT_CUT_OVER`.
+`WP14_EXIT_GATE_PASS / FORMAL_RESEARCH_ENGINEERING_READY / NOT_CUT_OVER`.
 Similar legacy vocabulary does not make an old owner part of the target, and
 target test writes do not become canonical business writes.
 
@@ -120,23 +121,35 @@ Opportunity/Thesis adds `opportunity_set`, `opportunity`,
 Calibration, Account, Execution, broker, Order, Fill, Position mutation, or
 future placeholder relation is added.
 
+WP-14 adds exactly 21 tables. Market adds
+`provider_qualification_protocol`, `provider_qualification_requirement`,
+`provider_finality_observation`, `provider_qualification_decision`,
+`provider_qualification_capture_member`, and
+`provider_qualification_requirement_result`; five source-specific
+`qualified_*_visibility` tables freeze admitted historical visibility.
+Research & Qualification adds `formal_research_campaign` plus its partition
+plan, Evaluation Protocol, cost assumption, Provider Decision, actual
+Partition, Experiment, protected-open, and Runtime Run bindings. Formal
+Dataset adds `formal_research_dataset`. No generic Campaign framework, Model,
+Calibration, Execution, future nullable FK, or compatibility table is added.
+
 The four replaceable views are `candidate_component_diagnostic`,
 `candidate_funnel`, `run_trace`, and `artifact_integrity_status`. The
-implementation-defined draft shape is 108 tables, four views, 845 indexes,
-1,196 constraints, 89 functions, 224 non-internal triggers, and 2,467 catalog
+implementation-defined draft shape is 129 tables, four views, 963 indexes,
+1,349 constraints, 105 functions, 268 non-internal triggers, and 2,819 catalog
 objects.
 Its baseline checksum is
-`94fe2bdca092c979c50bc9228a7a316f2229d17b6527e54c5adeb21873bd34f8`, its
+`df75c594bba25ab293723af615fcdad8f5b64781fddaf716f6fe586fffc8bc85`, its
 seed checksum is
 `9c41cd715e35e1a7bed3a58c52a29f01cc1e9bf950b77344bb56eac6dfa2df11`, and its
 reference-vocabulary checksum is
-`f5ab9cc4fe7617dd0bc5de171365e877eddadc9f6158f3fa0eb83f634c03e701`.
-A clean PostgreSQL 16 bootstrap/verify used by exact-SHA WP-13 qualification produced
+`52fd044a72334fe7334bacd7f5ef96cff72244f3f89fab1c48bcfa4ee095d0a6`.
+A clean PostgreSQL 16 bootstrap/verify used by exact-SHA WP-14 qualification produced
 catalog checksum
-`d47fb0bc99fcec99a92e1f8353e528e4e1cd4b9eb350b609260d35f11209e60d`.
+`1d58cbace3120fb0c7048900bb5e162df8dfc40c2b4a26337b2e562093f03714`.
 Clean bootstrap, exact-OID recreate, concurrency, failure/recovery, replay,
 representative plans, full regression, static and build gates pass at the
-linked WP-13 Verification. Table count is descriptive, not an optimization
+linked WP-14 Verification. Table count is descriptive, not an optimization
 target.
 
 ## Market/PIT implementation truth
@@ -548,7 +561,44 @@ dispatch and business CLI cutover remain absent.
   docs, architecture/import, and diff gates. Remote CI is
   `BLOCKED_BY_REPOSITORY_CONFIGURATION / NOT_RUN`.
 
-## Historical exact-SHA verification through WP-13
+## WP-14 Formal Research engineering readiness truth
+
+WP-14 is engineering-qualified at
+`ca6f66b50ec2c55250cd82d2fa1ed6c5f35c29b8`. It reuses the existing Runtime,
+Market, Research & Qualification, Outcome, and Decision Support owners.
+
+- exact Decision Proof and Due Proof Runtime DAGs are immutable and database-
+  checked; the sole composition root exposes the required commands and read
+  seams without adding Runtime business dispatch or CLI cutover;
+- Formal Campaign predeclaration freezes exact Target, hypothesis, Provider,
+  Decision Support baseline, FIT/VALIDATION/LOCKED_OOS plans, Evaluation
+  Protocols, Qualification Policy, Decimal cost assumptions, code/config, and
+  provenance in complete relational rosters;
+- actual database-derived Partitions and the complete Experiment roster are
+  bound before protected opening; one exact Experiment Run/Evaluation Run pair
+  opens with PostgreSQL time and zero Outcome access;
+- Market-owned Provider qualification derives every decision from a complete
+  ten-requirement recorded-fact roster. `ENGINEERING_REHEARSAL` cannot admit a
+  Provider or write qualified visibility;
+- Formal PIT and Formal Dataset require an exact bound `RECORDED_PROVIDER +
+  ADMITTED + HISTORICAL_PIT` decision and source-specific cutoff visibility;
+  there is no current/latest or caller assertion path;
+- database-clock due inspection preserves `NOT_DUE`, `DUE`, `MISSING`, and
+  `SETTLED`; historical/replay facts cannot masquerade as Prospective;
+- the read-only verifier recomputes campaign/provider rosters, Runtime DAGs,
+  protected first-access ordering, downstream WP-11/WP-12 closure, receipts,
+  audit, fences, and hashes without Provider I/O, mutation, or reconstruction;
+- exact-SHA qualification passes 19 focused, 604 refoundation, 33 platform,
+  286 PostgreSQL persistence, and all 3,644 repository tests, plus clean
+  bootstrap/recreate, concurrency/failure/recovery/replay, six representative
+  plans, Ruff, mypy, build, docs, architecture/import, and diff gates. Remote
+  CI is `BLOCKED_BY_REPOSITORY_CONFIGURATION / NOT_RUN`.
+
+This proves `FORMAL_RESEARCH_ENGINEERING_READY = true` only. Formal PIT, Formal
+OOS, Prospective value, Provider qualification, Alpha, and Production remain
+unproven.
+
+## Historical exact-SHA verification through WP-14
 
 The immutable pre-refoundation ledger is
 [WP-02](../references/WP-ARCHITECTURE-REFOUNDATION-02-Pre-Refoundation-Verification-Baseline.md),
@@ -573,10 +623,13 @@ are recorded in
 [WP-12](../references/WP-ARCHITECTURE-REFOUNDATION-12-Research-Evidence-Assessment-Qualification-Verification.md).
 Remaining Decision Support closure and its proof ceiling are recorded in
 [WP-13](../references/WP-ARCHITECTURE-REFOUNDATION-13-Remaining-Decision-Support-Verification.md).
+Formal Research/OOS/Prospective engineering readiness and its empirical ceiling
+are recorded in
+[WP-14](../references/WP-ARCHITECTURE-REFOUNDATION-14-Formal-Research-Engineering-Readiness-Verification.md).
 
 Each immutable ledger owns only its recorded exact-SHA evidence. Earlier
 checkpoint counts and checksums remain historical facts inside those ledgers;
-they are not current catalog or regression claims. At WP-13, GitHub Actions
+they are not current catalog or regression claims. At WP-14, GitHub Actions
 remains disabled, so remote CI is
 `BLOCKED_BY_REPOSITORY_CONFIGURATION / NOT_RUN`, not PASS. No current or
 historical local gate proves Provider, Alpha/OOS, broker, trading, sustained
