@@ -296,8 +296,11 @@ class BaoStockArchiveNormalizer:
         memberships: list[ClassificationMembershipRevision] = []
         seen: set[str] = set()
         for row in rows:
-            if row["updateDate"] != query_date.isoformat():
-                raise ValueError("CSI300 member row date differs from the frozen query")
+            provider_update_date = date.fromisoformat(row["updateDate"])
+            if provider_update_date > query_date:
+                raise ValueError(
+                    "CSI300 member update date is after the frozen as-of query"
+                )
             if row["code"] in seen:
                 raise ValueError("CSI300 payload contains a duplicate member")
             seen.add(row["code"])

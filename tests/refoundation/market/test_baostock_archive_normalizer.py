@@ -235,8 +235,8 @@ def test_csi300_snapshot_preserves_exact_asof_membership_lineage() -> None:
             query,
             ["updateDate", "code", "code_name"],
             [
-                ["2026-09-03", "sh.600000", "浦发银行"],
-                ["2026-09-03", "sz.000001", "平安银行"],
+                ["2026-08-31", "sh.600000", "浦发银行"],
+                ["2026-08-31", "sz.000001", "平安银行"],
             ],
         ),
     )
@@ -264,12 +264,12 @@ def test_csi300_snapshot_rejects_wrong_date_and_duplicate_member() -> None:
         end_date=date(2026, 9, 3),
     )
     fields = ["updateDate", "code", "code_name"]
-    with pytest.raises(ValueError, match="date differs"):
+    with pytest.raises(ValueError, match="after the frozen"):
         BaoStockArchiveNormalizer().normalize(
             capture,
-            _payload(query, fields, [["2026-09-02", "sh.600000", "浦发银行"]]),
+            _payload(query, fields, [["2026-09-04", "sh.600000", "浦发银行"]]),
         )
-    row = ["2026-09-03", "sh.600000", "浦发银行"]
+    row = ["2026-08-31", "sh.600000", "浦发银行"]
     with pytest.raises(ValueError, match="duplicate member"):
         BaoStockArchiveNormalizer().normalize(
             capture,
