@@ -22893,9 +22893,34 @@ BEGIN
       FROM mra.backtest_arm_fold
      WHERE exploratory_backtest_run_id = NEW.exploratory_backtest_run_id;
     IF (actual_count, actual_hash) IS DISTINCT FROM
-       (NEW.arm_fold_count, NEW.arm_fold_roster_sha256)
-       OR actual_count <> root.arm_count * root.fold_count THEN
-        RAISE EXCEPTION 'Current Backtest arm-fold matrix differs'
+       (NEW.arm_fold_count, NEW.arm_fold_roster_sha256) THEN
+        RAISE EXCEPTION 'Current Backtest arm-fold participation roster differs'
+            USING ERRCODE = '55000';
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM mra.exploratory_backtest_arm AS arm
+        LEFT JOIN mra.backtest_arm_fold AS participation
+          ON participation.exploratory_backtest_arm_id =
+             arm.exploratory_backtest_arm_id
+         AND participation.exploratory_backtest_run_id =
+             arm.exploratory_backtest_run_id
+        WHERE arm.exploratory_backtest_run_id =
+              NEW.exploratory_backtest_run_id
+        GROUP BY arm.exploratory_backtest_arm_id
+        HAVING count(participation.backtest_arm_fold_id) = 0
+    ) OR EXISTS (
+        SELECT 1 FROM mra.exploratory_backtest_fold AS fold
+        LEFT JOIN mra.backtest_arm_fold AS participation
+          ON participation.exploratory_backtest_fold_id =
+             fold.exploratory_backtest_fold_id
+         AND participation.exploratory_backtest_run_id =
+             fold.exploratory_backtest_run_id
+        WHERE fold.exploratory_backtest_run_id =
+              NEW.exploratory_backtest_run_id
+        GROUP BY fold.exploratory_backtest_fold_id
+        HAVING count(participation.backtest_arm_fold_id) = 0
+    ) THEN
+        RAISE EXCEPTION 'Current Backtest requires non-empty arm and fold participation'
             USING ERRCODE = '55000';
     END IF;
     SELECT count(*), mra.canonical_sha256(mra.canonical_json_text(coalesce(
@@ -22913,17 +22938,71 @@ BEGIN
         RAISE EXCEPTION 'Current Backtest Model requirement roster differs'
             USING ERRCODE = '55000';
     END IF;
-    IF actual_count <> (
-        SELECT count(*)
-          FROM mra.backtest_arm_specification AS arm
-          CROSS JOIN mra.backtest_fold_dependency AS dependency
-         WHERE arm.exploratory_backtest_run_id =
-               NEW.exploratory_backtest_run_id
+    IF EXISTS (
+        SELECT 1
+          FROM mra.backtest_model_training_requirement AS requirement
+          JOIN mra.backtest_arm_specification AS arm
+            ON arm.exploratory_backtest_arm_id =
+               requirement.exploratory_backtest_arm_id
+           AND arm.exploratory_backtest_run_id =
+               requirement.exploratory_backtest_run_id
+           AND arm.specification_sha256 = requirement.specification_sha256
+          LEFT JOIN mra.backtest_fold_dependency AS dependency
+            ON dependency.fit_fold_id = requirement.fit_fold_id
+           AND dependency.validation_fold_id = requirement.validation_fold_id
            AND dependency.exploratory_backtest_run_id =
+               requirement.exploratory_backtest_run_id
+          LEFT JOIN mra.backtest_arm_fold AS fit_participation
+            ON fit_participation.exploratory_backtest_arm_id =
+               requirement.exploratory_backtest_arm_id
+           AND fit_participation.exploratory_backtest_fold_id =
+               requirement.fit_fold_id
+          LEFT JOIN mra.backtest_arm_fold AS validation_participation
+            ON validation_participation.exploratory_backtest_arm_id =
+               requirement.exploratory_backtest_arm_id
+           AND validation_participation.exploratory_backtest_fold_id =
+               requirement.validation_fold_id
+         WHERE requirement.exploratory_backtest_run_id =
+               NEW.exploratory_backtest_run_id
+           AND (arm.execution_kind <> 'MODEL'
+                OR dependency.backtest_fold_dependency_id IS NULL
+                OR fit_participation.backtest_arm_fold_id IS NULL
+                OR validation_participation.backtest_arm_fold_id IS NULL)
+    ) OR EXISTS (
+        SELECT 1
+          FROM mra.backtest_arm_fold AS validation_participation
+          JOIN mra.backtest_arm_specification AS arm
+            ON arm.exploratory_backtest_arm_id =
+               validation_participation.exploratory_backtest_arm_id
+           AND arm.exploratory_backtest_run_id =
+               validation_participation.exploratory_backtest_run_id
+          JOIN mra.exploratory_backtest_fold AS validation
+            ON validation.exploratory_backtest_fold_id =
+               validation_participation.exploratory_backtest_fold_id
+           AND validation.exploratory_backtest_run_id =
+               validation_participation.exploratory_backtest_run_id
+          JOIN mra.backtest_fold_dependency AS dependency
+            ON dependency.validation_fold_id =
+               validation.exploratory_backtest_fold_id
+           AND dependency.exploratory_backtest_run_id =
+               validation.exploratory_backtest_run_id
+          LEFT JOIN mra.backtest_arm_fold AS fit_participation
+            ON fit_participation.exploratory_backtest_arm_id =
+               arm.exploratory_backtest_arm_id
+           AND fit_participation.exploratory_backtest_fold_id =
+               dependency.fit_fold_id
+          LEFT JOIN mra.backtest_model_training_requirement AS requirement
+            ON requirement.exploratory_backtest_arm_id =
+               arm.exploratory_backtest_arm_id
+           AND requirement.fit_fold_id = dependency.fit_fold_id
+           AND requirement.validation_fold_id = dependency.validation_fold_id
+         WHERE validation_participation.exploratory_backtest_run_id =
                NEW.exploratory_backtest_run_id
            AND arm.execution_kind = 'MODEL'
+           AND (fit_participation.backtest_arm_fold_id IS NULL
+                OR requirement.backtest_model_training_requirement_id IS NULL)
     ) THEN
-        RAISE EXCEPTION 'Current Backtest Model requirements are incomplete'
+        RAISE EXCEPTION 'Current Backtest Model requirements or participation are incomplete'
             USING ERRCODE = '55000';
     END IF;
     SELECT count(*), mra.canonical_sha256(mra.canonical_json_text(coalesce(

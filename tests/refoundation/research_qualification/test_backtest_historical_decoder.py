@@ -121,6 +121,7 @@ def test_exact_completed_wp17p_decodes_to_generic_contract_without_hash_change()
         BacktestComparisonRole.CHALLENGER,
     )
     assert len(frozen.fold_dependencies) == 1
+    assert len(frozen.arm_folds) == 3
     assert frozen.distinct_trading_session_count == 8
     assert frozen.fold_session_binding_count == 8
 

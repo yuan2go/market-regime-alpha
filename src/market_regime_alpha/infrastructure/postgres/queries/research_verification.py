@@ -711,8 +711,25 @@ class PostgresResearchEvaluationVerificationProvider:
                             str(cartesian_difference[0]),
                         )
                     )
-                canonical_source_difference = connection.execute(
+                candidate_outcome_table = connection.execute(
+                    "SELECT to_regclass('mra.evaluation_candidate_outcome_source')"
+                ).fetchone()
+                assert candidate_outcome_table is not None
+                candidate_outcome_clause = ""
+                candidate_outcome_parameters: tuple[object, ...] = ()
+                if candidate_outcome_table[0] is not None:
+                    candidate_outcome_clause = """
+                        OR (metric.source_kind = 'CANDIDATE_OUTCOME_PAIR'
+                            AND (SELECT count(*) FROM mra.evaluation_candidate_outcome_source AS source
+                                 WHERE source.evaluation_run_id = %s
+                                   AND source.evaluation_protocol_metric_id = metric.evaluation_protocol_metric_id) <> %s)
                     """
+                    candidate_outcome_parameters = (
+                        evaluation_run_id,
+                        int(run[5]),
+                    )
+                canonical_source_difference = connection.execute(
+                    f"""
                     SELECT count(*)
                     FROM mra.evaluation_protocol_metric AS metric
                     WHERE metric.evaluation_protocol_id = %s
@@ -729,10 +746,7 @@ class PostgresResearchEvaluationVerificationProvider:
                             AND (SELECT count(*) FROM mra.evaluation_candidate_source AS source
                                  WHERE source.evaluation_run_id = %s
                                    AND source.evaluation_protocol_metric_id = metric.evaluation_protocol_metric_id) <> %s)
-                        OR (metric.source_kind = 'CANDIDATE_OUTCOME_PAIR'
-                            AND (SELECT count(*) FROM mra.evaluation_candidate_outcome_source AS source
-                                 WHERE source.evaluation_run_id = %s
-                                   AND source.evaluation_protocol_metric_id = metric.evaluation_protocol_metric_id) <> %s)
+                        {candidate_outcome_clause}
                         OR (metric.source_kind = 'SIGNAL_STATUS'
                             AND (SELECT count(*) FROM mra.evaluation_signal_source AS source
                                  WHERE source.evaluation_run_id = %s
@@ -755,7 +769,7 @@ class PostgresResearchEvaluationVerificationProvider:
                         run[1],
                         evaluation_run_id, int(run[5]),
                         evaluation_run_id, int(run[5]),
-                        evaluation_run_id, int(run[5]),
+                        *candidate_outcome_parameters,
                         evaluation_run_id, int(run[5]),
                         evaluation_run_id, int(run[5]),
                         evaluation_run_id, int(run[5]),

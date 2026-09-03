@@ -293,6 +293,27 @@ def test_specification_accepts_arbitrary_arms_and_overlapping_rolling_fit_sessio
     assert specification.content_sha256
     assert "model_version_id" not in BacktestModelTrainingRequirement.__dataclass_fields__
 
+    sparse_bindings = tuple(
+        item
+        for item in specification.arm_folds
+        if not (
+            item.arm_id == arms[0].exploratory_backtest_arm_id
+            and item.fold_id
+            in {
+                first_fit.exploratory_backtest_fold_id,
+                expanding_fit.exploratory_backtest_fold_id,
+            }
+        )
+    )
+    sparse = replace(
+        specification,
+        arm_folds=tuple(
+            replace(item, ordinal=ordinal)
+            for ordinal, item in enumerate(sparse_bindings, start=1)
+        ),
+    )
+    assert len(sparse.arm_folds) == 10
+
     with pytest.raises(ValueError, match="arm codes must be unique"):
         replace(
             specification,

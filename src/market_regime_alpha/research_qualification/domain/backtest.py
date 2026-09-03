@@ -734,13 +734,15 @@ class BacktestSpecification:
         _require_contiguous("arm-fold", self.arm_folds)
         arm_by_id = {item.exploratory_backtest_arm_id: item for item in self.arms}
         actual_arm_folds = {(item.arm_id, item.fold_id) for item in self.arm_folds}
-        expected_arm_folds = {
-            (arm_id, fold_id) for fold_id in fold_by_id for arm_id in arm_by_id
-        }
-        if len(actual_arm_folds) != len(self.arm_folds) or (
-            actual_arm_folds != expected_arm_folds
+        if len(actual_arm_folds) != len(self.arm_folds) or any(
+            arm_id not in arm_by_id or fold_id not in fold_by_id
+            for arm_id, fold_id in actual_arm_folds
         ):
-            raise ValueError("arm-fold roster must cover the exact arm by fold matrix")
+            raise ValueError("arm-fold roster contains a duplicate or unknown binding")
+        if {arm_id for arm_id, _ in actual_arm_folds} != set(arm_by_id):
+            raise ValueError("every arm must participate in at least one fold")
+        if {fold_id for _, fold_id in actual_arm_folds} != set(fold_by_id):
+            raise ValueError("every fold must contain at least one participating arm")
         if self.model_training_requirements:
             _require_contiguous(
                 "Model training requirement", self.model_training_requirements
@@ -770,14 +772,26 @@ class BacktestSpecification:
             if key in actual_requirements:
                 raise ValueError("Model training requirement is duplicated")
             actual_requirements.add(key)
+        fit_by_validation = {
+            dependency.validation_fold_id: dependency.fit_fold_id
+            for dependency in self.fold_dependencies
+        }
         expected_requirements = {
-            (arm_id, fit_id, validation_id)
-            for arm_id in model_arm_ids
-            for fit_id, validation_id in dependency_pairs
+            (arm_id, fit_by_validation[validation_id], validation_id)
+            for arm_id, validation_id in actual_arm_folds
+            if arm_id in model_arm_ids
+            and fold_by_id[validation_id].purpose is PartitionPurpose.VALIDATION
         }
         if actual_requirements != expected_requirements:
             raise ValueError(
                 "every Model validation requires one exact training requirement"
+            )
+        if any(
+            (arm_id, fit_id) not in actual_arm_folds
+            for arm_id, fit_id, _ in expected_requirements
+        ):
+            raise ValueError(
+                "every Model training requirement requires FIT arm participation"
             )
         _require_contiguous("cost", self.cost_assumptions)
         if len({item.cost_kind for item in self.cost_assumptions}) != len(

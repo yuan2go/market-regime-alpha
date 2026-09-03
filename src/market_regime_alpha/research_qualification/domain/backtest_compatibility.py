@@ -61,6 +61,7 @@ class _HistoricalCompatibilityManifest:
     session_count: int
     arm_kinds: tuple[HistoricalArmKind, ...]
     fold_ids: tuple[UUID, ...]
+    arm_fold_ordinals: tuple[tuple[int, int], ...]
     dependency_pairs: tuple[tuple[UUID, UUID], ...]
     evidence: FrozenBacktestEvidence
 
@@ -109,6 +110,7 @@ _HISTORICAL_MANIFESTS = MappingProxyType(
                     HistoricalArmKind.MODEL_CHALLENGER,
                 ),
                 (_WP17P_FIT, _WP17P_VALIDATION),
+                ((2, 1), (1, 2), (2, 2)),
                 ((_WP17P_FIT, _WP17P_VALIDATION),),
                 FrozenBacktestEvidence.COMPLETED_ZERO_WRITE,
             )
@@ -132,6 +134,11 @@ _HISTORICAL_MANIFESTS = MappingProxyType(
                     HistoricalArmKind.RIDGE_CONTEXT_OBSERVATIONAL,
                 ),
                 _WP18_FOLDS,
+                tuple(
+                    (arm_ordinal, fold_ordinal)
+                    for fold_ordinal in range(1, len(_WP18_FOLDS) + 1)
+                    for arm_ordinal in range(1, 5)
+                ),
                 tuple(
                     (_WP18_FOLDS[index], _WP18_FOLDS[index + 1])
                     for index in range(0, len(_WP18_FOLDS), 2)
@@ -292,6 +299,8 @@ def decode_exact_historical_backtest(
             manifest.dependency_pairs, start=1
         )
     )
+    arm_by_ordinal = {arm.ordinal: arm for arm in arms}
+    fold_by_ordinal = {fold.ordinal: fold for fold in folds}
     arm_folds = tuple(
         BacktestArmFold(
             arm_fold_id=_projection_id(
@@ -302,10 +311,14 @@ def decode_exact_historical_backtest(
             arm_id=arm.exploratory_backtest_arm_id,
             fold_id=fold.exploratory_backtest_fold_id,
         )
-        for ordinal, (fold, arm) in enumerate(
-            ((fold, arm) for fold in folds for arm in arms), start=1
+        for ordinal, (arm_ordinal, fold_ordinal) in enumerate(
+            manifest.arm_fold_ordinals, start=1
+        )
+        for arm, fold in (
+            (arm_by_ordinal[arm_ordinal], fold_by_ordinal[fold_ordinal]),
         )
     )
+    participating = {(item.arm_id, item.fold_id) for item in arm_folds}
     requirements = tuple(
         BacktestModelTrainingRequirement(
             requirement_id=_projection_id(
@@ -324,6 +337,13 @@ def decode_exact_historical_backtest(
                 for dependency in dependencies
                 for arm in arms
                 if arm.execution_kind is BacktestExecutionKind.MODEL
+                and (arm.exploratory_backtest_arm_id, dependency.fit_fold_id)
+                in participating
+                and (
+                    arm.exploratory_backtest_arm_id,
+                    dependency.validation_fold_id,
+                )
+                in participating
             ),
             start=1,
         )

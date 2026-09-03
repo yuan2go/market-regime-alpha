@@ -461,6 +461,50 @@ def test_database_recomputes_current_specification_hash(backtest_stack) -> None:
     assert row == (0,)
 
 
+def test_current_predeclaration_freezes_sparse_arm_fold_participation(
+    backtest_stack,
+) -> None:
+    complete = _current_specification(backtest_stack)
+    fit_ids = {
+        fold.exploratory_backtest_fold_id
+        for fold in complete.folds
+        if fold.purpose is PartitionPurpose.FIT
+    }
+    first_arm_id = complete.arms[0].exploratory_backtest_arm_id
+    selected = tuple(
+        binding
+        for binding in complete.arm_folds
+        if not (binding.arm_id == first_arm_id and binding.fold_id in fit_ids)
+    )
+    sparse = replace(
+        complete,
+        arm_folds=tuple(
+            replace(binding, ordinal=ordinal)
+            for ordinal, binding in enumerate(selected, start=1)
+        ),
+    )
+    application = BacktestApplication(
+        PostgresBacktestUnitOfWorkProvider(backtest_stack.pool),
+        id_factory=uuid4,
+    )
+
+    result = application.predeclare(
+        sparse,
+        _legacy._context("sparse-arm-fold-participation"),
+    )
+
+    assert result.exploratory_backtest_run_id == sparse.exploratory_backtest_run_id
+    with backtest_stack.pool.connection(read_only=True) as connection:
+        count = connection.execute(
+            """
+            SELECT count(*) FROM mra.backtest_arm_fold
+            WHERE exploratory_backtest_run_id = %s
+            """,
+            (sparse.exploratory_backtest_run_id,),
+        ).fetchone()
+    assert count == (10,)
+
+
 def test_concurrent_current_predeclaration_converges_on_one_identity(
     backtest_stack,
 ) -> None:

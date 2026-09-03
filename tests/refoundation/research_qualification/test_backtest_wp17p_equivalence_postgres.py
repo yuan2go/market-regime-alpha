@@ -11,15 +11,25 @@ from market_regime_alpha.infrastructure.postgres.pool import TargetPostgresPool
 from market_regime_alpha.infrastructure.postgres.queries.backtest_history import (
     PostgresExactHistoricalBacktestQueryPort,
 )
+from market_regime_alpha.infrastructure.postgres.queries.backtest_execution import (
+    PostgresBacktestExecutionObservationPort,
+)
 from market_regime_alpha.infrastructure.postgres.queries.exploratory_backtests import (
     PostgresExploratoryBacktestVerificationPort,
 )
 from market_regime_alpha.research_qualification.application.backtest_replay import (
     BacktestReplayApplication,
 )
+from market_regime_alpha.research_qualification.application.backtest_execution import (
+    BacktestExecutionPlanner,
+)
 from market_regime_alpha.research_qualification.domain.backtest import (
     FrozenBacktestEvidence,
     FrozenBacktestSource,
+)
+from market_regime_alpha.research_qualification.domain.backtest_execution import (
+    BacktestExecutionState,
+    BacktestResearchState,
 )
 
 
@@ -105,9 +115,19 @@ def test_completed_wp17p_has_zero_write_generic_exact_equivalence() -> None:
         before = _authority_digest(pool)
         authority_query = PostgresExactHistoricalBacktestQueryPort(pool)
         snapshot = authority_query.load(_RUN_ID)
+        expected = BacktestExecutionPlanner().compile(snapshot.run)
+        observations = PostgresBacktestExecutionObservationPort(pool).observe(
+            snapshot.run,
+            expected.expected_actions,
+        )
+        execution_replay = BacktestExecutionPlanner().compile(
+            snapshot.run,
+            observations,
+        )
         result = BacktestReplayApplication(
             authority_query,
             LocalArtifactStore(artifact_root),
+            PostgresBacktestExecutionObservationPort(pool),
         ).verify(_RUN_ID)
         old_verification = PostgresExploratoryBacktestVerificationPort(pool).verify(
             _RUN_ID
@@ -121,6 +141,10 @@ def test_completed_wp17p_has_zero_write_generic_exact_equivalence() -> None:
     assert snapshot.run.evidence is FrozenBacktestEvidence.COMPLETED_ZERO_WRITE
     assert str(snapshot.run.definition_sha256) == _DEFINITION_SHA256
     assert len(snapshot.artifact_bindings) == 2
+    assert len(expected.expected_actions) == 12
+    assert execution_replay.execution_state is BacktestExecutionState.COMPLETED
+    assert execution_replay.research_state is BacktestResearchState.ESTIMABLE
+    assert execution_replay.ready_actions == ()
     assert result.matched is True
     assert result.mismatch_count == 0
     assert old_verification.matched is True
