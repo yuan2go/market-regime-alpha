@@ -422,6 +422,12 @@ def test_current_predeclaration_is_root_owned_relational_and_replayable(
     assert reloaded.projection_sha256 == execution_plan.projection_sha256
     assert reloaded.fold_session_binding_count == 7
 
+    reloaded_specification = PostgresBacktestQueryPort(
+        backtest_stack.pool
+    ).load_specification(specification.exploratory_backtest_run_id)
+    assert reloaded_specification == specification
+    assert reloaded_specification.content_sha256 == reloaded.specification_sha256
+
     with pytest.raises(IdempotencyKeyReusedError):
         application.predeclare(
             replace(specification, random_seed=1730),

@@ -53,6 +53,20 @@ class PostgresBacktestQueryPort:
         self._pool = pool
 
     def load(self, exploratory_backtest_run_id: UUID) -> FrozenBacktestRun:
+        return freeze_backtest_specification(
+            self.load_specification(exploratory_backtest_run_id)
+        )
+
+    def load_specification(
+        self,
+        exploratory_backtest_run_id: UUID,
+    ) -> BacktestSpecification:
+        """Reload the exact current relational closure for execution.
+
+        This is an immutable application projection of the canonical rows, not
+        an additional Authority or identity.
+        """
+
         with self._pool.connection(read_only=True) as connection:
             with connection.cursor(row_factory=dict_row) as cursor:
                 root = cursor.execute(
@@ -364,7 +378,7 @@ class PostgresBacktestQueryPort:
             raise ArtifactIntegrityError(
                 "reloaded Backtest differs from canonical specification hashes"
             )
-        return freeze_backtest_specification(specification)
+        return specification
 
     @staticmethod
     def _arm(row: dict[str, Any]) -> BacktestArmSpecification:
