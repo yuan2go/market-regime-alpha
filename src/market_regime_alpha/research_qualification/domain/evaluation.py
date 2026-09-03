@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from datetime import datetime
 from decimal import Decimal
 import re
@@ -72,7 +72,12 @@ class EvaluationProtocolPlan:
             raise ValueError("Protocol metric codes must be unique")
         target_hash = ContentHash(str(self.target_definition_sha256))
         provenance_hash = ContentHash(str(self.provenance_sha256))
-        roster_hash = ContentHash(canonical_json_sha256(self.metrics))
+        # A newly optional formula must not add ``formula: null`` to the
+        # canonical bytes of historical Protocol metrics.  Build the roster
+        # projection explicitly so formula-less historical Authorities keep
+        # their exact pre-extension hashes, while current formula-backed
+        # metrics freeze the typed formula closure.
+        roster_hash = evaluation_protocol_metric_roster_sha256(self.metrics)
         object.__setattr__(self, "target_definition_sha256", target_hash)
         object.__setattr__(self, "provenance_sha256", provenance_hash)
         object.__setattr__(self, "metric_roster_sha256", roster_hash)
@@ -340,6 +345,31 @@ class ProtocolMetricDefinition:
             "content_sha256",
             ContentHash(canonical_json_sha256(content)),
         )
+
+
+def _protocol_metric_roster_value(
+    metric: ProtocolMetricDefinition,
+) -> dict[str, object]:
+    value = {
+        item.name: getattr(metric, item.name)
+        for item in fields(metric)
+        if item.name != "formula"
+    }
+    if metric.formula is not None:
+        value["formula"] = metric.formula
+    return value
+
+
+def evaluation_protocol_metric_roster_sha256(
+    metrics: tuple[ProtocolMetricDefinition, ...],
+) -> ContentHash:
+    """Hash a Protocol metric roster without rewriting legacy semantics."""
+
+    return ContentHash(
+        canonical_json_sha256(
+            tuple(_protocol_metric_roster_value(metric) for metric in metrics)
+        )
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -642,6 +672,7 @@ __all__ = [
     "ProtocolMetricDefinition",
     "EvaluationProtocolPlan",
     "EvaluationRunPlan",
+    "evaluation_protocol_metric_roster_sha256",
     "evaluate_metric",
     "transition_evaluation_run",
 ]

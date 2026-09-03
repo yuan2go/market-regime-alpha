@@ -15,6 +15,7 @@ from market_regime_alpha.research_qualification.domain.evaluation import (
     EvaluationProtocolPlan,
     EvaluationRunPlan,
     ProtocolMetricDefinition,
+    evaluation_protocol_metric_roster_sha256,
     evaluate_metric,
 )
 from market_regime_alpha.research_qualification.domain.evaluation_formula import (
@@ -1206,7 +1207,11 @@ class PostgresEvaluationRepository:
             self._protocol_metric(row, record.evaluation_protocol_id)
             for row in rows
         )
-        return len(metrics) == record.metric_count and canonical_json_sha256(metrics) == record.metric_roster_sha256
+        return (
+            len(metrics) == record.metric_count
+            and str(evaluation_protocol_metric_roster_sha256(metrics))
+            == record.metric_roster_sha256
+        )
 
     def _protocol_metric(
         self,
