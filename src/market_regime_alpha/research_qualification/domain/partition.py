@@ -6,6 +6,10 @@ from dataclasses import dataclass, field
 import re
 from uuid import UUID
 
+from market_regime_alpha.decision_support.domain.context import (
+    ContextKind,
+    ContextState,
+)
 from market_regime_alpha.research_qualification.domain.model import ArtifactBinding
 from market_regime_alpha.research_qualification.domain.research_vocabulary import (
     PartitionOverlapPolicy,
@@ -27,27 +31,34 @@ class BacktestPartitionSource:
     exploratory_backtest_run_id: UUID
     exploratory_backtest_arm_id: UUID
     exploratory_backtest_fold_id: UUID | None
+    context_kind: ContextKind | None = None
+    context_state: ContextState | None = None
     content_sha256: ContentHash = field(init=False)
 
     def __post_init__(self) -> None:
+        if (self.context_kind is None) != (self.context_state is None):
+            raise ValueError("Context kind and state must be frozen together")
+        if self.context_kind is not None and not isinstance(
+            self.context_kind, ContextKind
+        ):
+            raise TypeError("Context kind must be typed")
+        if self.context_state is not None and not isinstance(
+            self.context_state, ContextState
+        ):
+            raise TypeError("Context state must be typed")
+        payload: dict[str, object] = {
+            "exploratory_backtest_arm_id": self.exploratory_backtest_arm_id,
+            "exploratory_backtest_fold_id": self.exploratory_backtest_fold_id,
+            "exploratory_backtest_run_id": self.exploratory_backtest_run_id,
+        }
+        # Absence retains the exact hashes of pre-Context-slice current rows.
+        if self.context_kind is not None:
+            payload["context_kind"] = self.context_kind
+            payload["context_state"] = self.context_state
         object.__setattr__(
             self,
             "content_sha256",
-            ContentHash(
-                canonical_json_sha256(
-                    {
-                        "exploratory_backtest_arm_id": (
-                            self.exploratory_backtest_arm_id
-                        ),
-                        "exploratory_backtest_fold_id": (
-                            self.exploratory_backtest_fold_id
-                        ),
-                        "exploratory_backtest_run_id": (
-                            self.exploratory_backtest_run_id
-                        ),
-                    }
-                )
-            ),
+            ContentHash(canonical_json_sha256(payload)),
         )
 
 

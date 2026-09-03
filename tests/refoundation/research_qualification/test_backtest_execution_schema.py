@@ -121,6 +121,8 @@ def test_research_partition_can_bind_exact_generic_backtest_decision_scope(
         "source_backtest_arm_id",
         "source_backtest_fold_id",
         "source_backtest_sha256",
+        "source_context_kind",
+        "source_context_state",
     } <= columns
     assert {
         "research_partition_backtest_run_fk",

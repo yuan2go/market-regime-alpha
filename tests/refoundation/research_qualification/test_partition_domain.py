@@ -15,6 +15,10 @@ from market_regime_alpha.research_qualification.domain.research_vocabulary impor
     PartitionPopulationScope,
     PartitionPurpose,
 )
+from market_regime_alpha.decision_support.domain.context import (
+    ContextKind,
+    ContextState,
+)
 
 
 _HASH = "a" * 64
@@ -126,3 +130,20 @@ def test_partition_can_freeze_a_database_derived_exact_backtest_scope() -> None:
         "commitment_ids",
         "roster",
     }
+
+
+def test_backtest_partition_context_slice_is_typed_paired_and_hashed() -> None:
+    source = BacktestPartitionSource(
+        exploratory_backtest_run_id=uuid4(),
+        exploratory_backtest_arm_id=uuid4(),
+        exploratory_backtest_fold_id=None,
+        context_kind=ContextKind.MARKET_REGIME,
+        context_state=ContextState.POSITIVE,
+    )
+
+    assert source.content_sha256 != replace(
+        source,
+        context_state=ContextState.NEGATIVE,
+    ).content_sha256
+    with pytest.raises(ValueError, match="Context kind and state"):
+        replace(source, context_state=None)

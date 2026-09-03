@@ -14,6 +14,10 @@ from enum import StrEnum
 import re
 from uuid import UUID
 
+from market_regime_alpha.decision_support.domain.context import (
+    ContextKind,
+    ContextState,
+)
 from market_regime_alpha.research_qualification.domain.model import ArtifactBinding
 from market_regime_alpha.research_qualification.domain.research_models import (
     ModelExecutionEnvironment,
@@ -29,6 +33,8 @@ from market_regime_alpha.shared.identity import ContentHash
 
 _CODE = re.compile(r"^[a-z][a-z0-9_-]{0,99}$")
 _VERSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+_MONTH_SLICE = re.compile(r"^[0-9]{4}-(0[1-9]|1[0-2])$")
+_QUARTER_SLICE = re.compile(r"^[0-9]{4}-Q[1-4]$")
 
 
 class BacktestExecutionKind(StrEnum):
@@ -512,6 +518,16 @@ class BacktestEvaluationRequirement:
                 raise ValueError("AGGREGATE Evaluation forbids Fold and slice_key")
         elif self.fold_id is not None or self.slice_key is None or not self.slice_key:
             raise ValueError("time/Context Evaluation forbids Fold and requires slice_key")
+        if self.scope_kind is BacktestEvaluationScopeKind.CONTEXT:
+            parse_backtest_context_slice(self.slice_key)
+        elif self.scope_kind is BacktestEvaluationScopeKind.MONTH and not (
+            self.slice_key is not None and _MONTH_SLICE.fullmatch(self.slice_key)
+        ):
+            raise ValueError("MONTH slice_key must be YYYY-MM")
+        elif self.scope_kind is BacktestEvaluationScopeKind.QUARTER and not (
+            self.slice_key is not None and _QUARTER_SLICE.fullmatch(self.slice_key)
+        ):
+            raise ValueError("QUARTER slice_key must be YYYY-QN")
         object.__setattr__(
             self,
             "content_sha256",
@@ -530,6 +546,18 @@ class BacktestEvaluationRequirement:
                 )
             ),
         )
+
+
+def parse_backtest_context_slice(
+    value: str | None,
+) -> tuple[ContextKind, ContextState]:
+    if value is None:
+        raise ValueError("CONTEXT slice_key must be KIND:STATE")
+    try:
+        kind_text, state_text = value.split(":")
+        return ContextKind(kind_text), ContextState(state_text)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("CONTEXT slice_key must be KIND:STATE") from exc
 
 
 @dataclass(frozen=True, slots=True)
@@ -1150,4 +1178,5 @@ __all__ = [
     "FrozenBacktestSource",
     "VersionedAuthorityBinding",
     "freeze_backtest_specification",
+    "parse_backtest_context_slice",
 ]

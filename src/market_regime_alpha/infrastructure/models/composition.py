@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import TypeVar
+
 from market_regime_alpha.research_qualification.ports.model_execution import (
     FittedModelPayload,
     FrozenModelTrainingInput,
@@ -25,7 +27,7 @@ class ExplicitModelTrainerComposition:
         )
 
     def fit(self, training: FrozenModelTrainingInput) -> FittedModelPayload:
-        trainer = _require_one_trainer(
+        trainer = _require_one(
             self._matching(training.algorithm_code, training.algorithm_version),
             adapter_kind="ModelTrainer",
             algorithm_code=training.algorithm_code,
@@ -61,7 +63,7 @@ class ExplicitModelPredictorComposition:
         model: FrozenModelVersionPayload,
         batch: ModelPredictionBatch,
     ) -> tuple[ModelPrediction, ...]:
-        predictor = _require_one_predictor(
+        predictor = _require_one(
             self._matching(model.algorithm_code, model.algorithm_version),
             adapter_kind="ModelPredictor",
             algorithm_code=model.algorithm_code,
@@ -81,28 +83,16 @@ class ExplicitModelPredictorComposition:
         )
 
 
-def _require_one_trainer(
-    adapters: tuple[ModelTrainer, ...],
+_Adapter = TypeVar("_Adapter", ModelTrainer, ModelPredictor)
+
+
+def _require_one(
+    adapters: tuple[_Adapter, ...],
     *,
     adapter_kind: str,
     algorithm_code: str,
     algorithm_version: str,
-) -> ModelTrainer:
-    if len(adapters) != 1:
-        raise ValueError(
-            f"{algorithm_code}@{algorithm_version} requires exactly one explicit "
-            f"{adapter_kind}; found {len(adapters)}"
-        )
-    return adapters[0]
-
-
-def _require_one_predictor(
-    adapters: tuple[ModelPredictor, ...],
-    *,
-    adapter_kind: str,
-    algorithm_code: str,
-    algorithm_version: str,
-) -> ModelPredictor:
+) -> _Adapter:
     if len(adapters) != 1:
         raise ValueError(
             f"{algorithm_code}@{algorithm_version} requires exactly one explicit "

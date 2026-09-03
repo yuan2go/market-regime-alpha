@@ -231,6 +231,23 @@ def test_arm_meaning_is_orthogonal_and_not_derived_from_arm_code() -> None:
     assert diagnostic_model.content_sha256
 
 
+def test_context_evaluation_requires_a_typed_canonical_context_slice() -> None:
+    valid = BacktestEvaluationRequirement(
+        requirement_id=_id(998),
+        ordinal=1,
+        fold_id=None,
+        evaluation_protocol=_binding(999),
+        primary=False,
+        scope_kind=BacktestEvaluationScopeKind.CONTEXT,
+        arm_id=_id(1),
+        slice_key="MARKET_REGIME:POSITIVE",
+    )
+
+    assert valid.slice_key == "MARKET_REGIME:POSITIVE"
+    with pytest.raises(ValueError, match="CONTEXT slice_key"):
+        replace(valid, slice_key="invented:bull")
+
+
 def test_specification_accepts_arbitrary_arms_and_overlapping_rolling_fit_sessions() -> None:
     first_fit = _fold(
         identity=100,

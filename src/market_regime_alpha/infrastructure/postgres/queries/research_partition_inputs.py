@@ -50,12 +50,20 @@ class PostgresPartitionInputQueries:
                 WHERE specification.exploratory_backtest_run_id = %s
                   AND (%s::uuid IS NULL
                        OR fold.exploratory_backtest_fold_id IS NOT NULL)
+                  AND (%s::text IS NULL OR EXISTS (
+                      SELECT 1
+                      FROM mra.context_policy_metric AS metric
+                      WHERE metric.context_policy_id = arm.context_policy_id
+                        AND metric.context_kind = %s
+                  ))
                 """,
                 (
                     source.exploratory_backtest_arm_id,
                     source.exploratory_backtest_fold_id,
                     source.exploratory_backtest_run_id,
                     source.exploratory_backtest_fold_id,
+                    None if source.context_kind is None else source.context_kind.value,
+                    None if source.context_kind is None else source.context_kind.value,
                 ),
             ).fetchall()
             if len(exact_source) != 1:
@@ -224,6 +232,8 @@ class PostgresPartitionInputQueries:
             else plan.population_scope.value
         )
         source = plan.backtest_source
+        if source is not None and source.context_kind is not None:
+            self._connection.execute("LOCK TABLE mra.context_assessment IN SHARE MODE")
         source_values = (
             None if source is None else source.exploratory_backtest_run_id,
             None if source is None else source.exploratory_backtest_run_id,
@@ -232,6 +242,17 @@ class PostgresPartitionInputQueries:
             None if source is None else source.exploratory_backtest_fold_id,
             None if source is None else source.exploratory_backtest_fold_id,
             None if source is None else source.exploratory_backtest_run_id,
+            None
+            if source is None or source.context_kind is None
+            else source.context_kind.value,
+            None if source is None else source.exploratory_backtest_run_id,
+            None if source is None else source.exploratory_backtest_arm_id,
+            None
+            if source is None or source.context_kind is None
+            else source.context_kind.value,
+            None
+            if source is None or source.context_state is None
+            else source.context_state.value,
         )
         base_count = self._connection.execute(
             """
@@ -268,6 +289,24 @@ class PostgresPartitionInputQueries:
                         AND source_fold.exploratory_backtest_run_id = %s
                         AND source_fold.purpose = 'VALIDATION'
                   )))))
+              AND (%s::text IS NULL OR EXISTS (
+                  SELECT 1
+                  FROM mra.context_assessment AS context
+                  JOIN mra.backtest_arm_specification AS source_arm
+                    ON source_arm.exploratory_backtest_run_id = %s
+                   AND source_arm.exploratory_backtest_arm_id = %s
+                  JOIN mra.exploratory_backtest_run AS source_root
+                    ON source_root.exploratory_backtest_run_id =
+                       source_arm.exploratory_backtest_run_id
+                   AND source_root.current_specification_sha256 =
+                       source_arm.specification_sha256
+                  WHERE context.decision_run_id = commitment.decision_run_id
+                    AND context.context_policy_id = source_arm.context_policy_id
+                    AND context.context_policy_content_sha256 =
+                        source_arm.context_policy_sha256
+                    AND context.context_kind = %s
+                    AND context.assessment_state = %s
+              ))
             """,
             (
                 plan.decision_start_session_id,
@@ -328,6 +367,24 @@ class PostgresPartitionInputQueries:
                             AND source_fold.exploratory_backtest_run_id = %s
                             AND source_fold.purpose = 'VALIDATION'
                       )))))
+                  AND (%s::text IS NULL OR EXISTS (
+                      SELECT 1
+                      FROM mra.context_assessment AS context
+                      JOIN mra.backtest_arm_specification AS source_arm
+                        ON source_arm.exploratory_backtest_run_id = %s
+                       AND source_arm.exploratory_backtest_arm_id = %s
+                      JOIN mra.exploratory_backtest_run AS source_root
+                        ON source_root.exploratory_backtest_run_id =
+                           source_arm.exploratory_backtest_run_id
+                       AND source_root.current_specification_sha256 =
+                           source_arm.specification_sha256
+                      WHERE context.decision_run_id = commitment.decision_run_id
+                        AND context.context_policy_id = source_arm.context_policy_id
+                        AND context.context_policy_content_sha256 =
+                            source_arm.context_policy_sha256
+                        AND context.context_kind = %s
+                        AND context.assessment_state = %s
+                  ))
             )
             SELECT base.commitment_id,
                    base.decision_reference_observation_id,

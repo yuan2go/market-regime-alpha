@@ -44,7 +44,14 @@ class PostgresResearchPartitionRepository:
         request_identity: str,
         request_sha256: str,
     ) -> ResearchPartitionRecord:
-        source_values: tuple[object | None, ...] = (None, None, None, None)
+        source_values: tuple[object | None, ...] = (
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
         if plan.backtest_source is not None:
             source = plan.backtest_source
             row = self._connection.execute(
@@ -65,6 +72,8 @@ class PostgresResearchPartitionRepository:
                 source.exploratory_backtest_arm_id,
                 source.exploratory_backtest_fold_id,
                 str(row[0]),
+                None if source.context_kind is None else source.context_kind.value,
+                None if source.context_state is None else source.context_state.value,
             )
         member_rows = tuple(
             (
@@ -130,13 +139,14 @@ class PostgresResearchPartitionRepository:
                 provenance_sha256, content_sha256,
                 request_identity, request_sha256,
                 source_backtest_run_id, source_backtest_arm_id,
-                source_backtest_fold_id, source_backtest_sha256
+                source_backtest_fold_id, source_backtest_sha256,
+                source_context_kind, source_context_state
             ) VALUES (
                 %s, %s, 'FROZEN', %s, %s, %s, %s, %s, %s,
                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                %s, %s, %s, %s
+                %s, %s, %s, %s, %s, %s
             )
             """,
             (

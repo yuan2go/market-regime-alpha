@@ -51,6 +51,7 @@ from market_regime_alpha.research_qualification.domain.backtest import (
     BacktestModelTrainingRequirement,
     BacktestSessionRole,
     BacktestSpecification,
+    parse_backtest_context_slice,
 )
 from market_regime_alpha.research_qualification.domain.backtest_dataset import (
     BacktestDatasetMember,
@@ -646,6 +647,12 @@ class BacktestCanonicalActionHandler:
             if requirement.fold_id is None
             else next(item for item in specification.folds if item.exploratory_backtest_fold_id == requirement.fold_id)
         )
+        context_kind = None
+        context_state = None
+        if requirement.scope_kind is BacktestEvaluationScopeKind.CONTEXT:
+            context_kind, context_state = parse_backtest_context_slice(
+                requirement.slice_key
+            )
         return ResearchPartitionPlan(
             research_partition_id=partition_id,
             partition_code=f"backtest-{action.action_id.hex}",
@@ -670,6 +677,8 @@ class BacktestCanonicalActionHandler:
                 exploratory_backtest_run_id=(specification.exploratory_backtest_run_id),
                 exploratory_backtest_arm_id=self._required_arm_id(requirement),
                 exploratory_backtest_fold_id=requirement.fold_id,
+                context_kind=context_kind,
+                context_state=context_state,
             ),
         )
 

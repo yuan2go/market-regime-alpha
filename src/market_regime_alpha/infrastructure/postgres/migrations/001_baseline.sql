@@ -13879,6 +13879,7 @@ DECLARE actual_calendar_count integer;
 DECLARE actual_calendar_hash text;
 BEGIN
     LOCK TABLE mra.decision_target_commitment IN SHARE MODE;
+    LOCK TABLE mra.context_assessment IN SHARE MODE;
     SELECT count(*), min(member_ordinal), max(member_ordinal)
       INTO actual_count, minimum_ordinal, maximum_ordinal
     FROM mra.research_partition_member
@@ -13942,7 +13943,24 @@ BEGIN
                 AND source_fold.exploratory_backtest_run_id =
                     NEW.source_backtest_run_id
                 AND source_fold.purpose = 'VALIDATION'
-          )))));
+          )))))
+      AND (NEW.source_context_kind IS NULL OR EXISTS (
+          SELECT 1
+          FROM mra.context_assessment AS context
+          JOIN mra.backtest_arm_specification AS source_arm
+            ON source_arm.exploratory_backtest_run_id =
+               NEW.source_backtest_run_id
+           AND source_arm.exploratory_backtest_arm_id =
+               NEW.source_backtest_arm_id
+           AND source_arm.specification_sha256 =
+               NEW.source_backtest_sha256
+          WHERE context.decision_run_id = commitment.decision_run_id
+            AND context.context_policy_id = source_arm.context_policy_id
+            AND context.context_policy_content_sha256 =
+                source_arm.context_policy_sha256
+            AND context.context_kind = NEW.source_context_kind
+            AND context.assessment_state = NEW.source_context_state
+      ));
 
     SELECT mra.canonical_sha256(
                replace(
@@ -14018,6 +14036,24 @@ BEGIN
                                NEW.source_backtest_run_id
                            AND source_fold.purpose = 'VALIDATION'
                      )))))
+                 AND (NEW.source_context_kind IS NULL OR EXISTS (
+                     SELECT 1
+                     FROM mra.context_assessment AS context
+                     JOIN mra.backtest_arm_specification AS source_arm
+                       ON source_arm.exploratory_backtest_run_id =
+                          NEW.source_backtest_run_id
+                      AND source_arm.exploratory_backtest_arm_id =
+                          NEW.source_backtest_arm_id
+                      AND source_arm.specification_sha256 =
+                          NEW.source_backtest_sha256
+                     WHERE context.decision_run_id = commitment.decision_run_id
+                       AND context.context_policy_id =
+                           source_arm.context_policy_id
+                       AND context.context_policy_content_sha256 =
+                           source_arm.context_policy_sha256
+                       AND context.context_kind = NEW.source_context_kind
+                       AND context.assessment_state = NEW.source_context_state
+                 ))
            )
            EXCEPT
            (
@@ -14069,6 +14105,24 @@ BEGIN
                                NEW.source_backtest_run_id
                            AND source_fold.purpose = 'VALIDATION'
                      )))))
+                 AND (NEW.source_context_kind IS NULL OR EXISTS (
+                     SELECT 1
+                     FROM mra.context_assessment AS context
+                     JOIN mra.backtest_arm_specification AS source_arm
+                       ON source_arm.exploratory_backtest_run_id =
+                          NEW.source_backtest_run_id
+                      AND source_arm.exploratory_backtest_arm_id =
+                          NEW.source_backtest_arm_id
+                      AND source_arm.specification_sha256 =
+                          NEW.source_backtest_sha256
+                     WHERE context.decision_run_id = commitment.decision_run_id
+                       AND context.context_policy_id =
+                           source_arm.context_policy_id
+                       AND context.context_policy_content_sha256 =
+                           source_arm.context_policy_sha256
+                       AND context.context_kind = NEW.source_context_kind
+                       AND context.assessment_state = NEW.source_context_state
+                 ))
            )
        ) THEN
         RAISE EXCEPTION 'ResearchPartition member roster is incomplete or outside declaration' USING ERRCODE = '55000';
@@ -23362,9 +23416,15 @@ CREATE TABLE mra.backtest_evaluation_requirement (
               AND exploratory_backtest_fold_id IS NULL AND slice_key IS NULL)
           OR (scope_kind = 'FOLD'
               AND exploratory_backtest_fold_id IS NOT NULL AND slice_key IS NULL)
-          OR (scope_kind IN ('MONTH', 'QUARTER', 'CONTEXT')
+          OR (scope_kind = 'MONTH'
               AND exploratory_backtest_fold_id IS NULL
-              AND slice_key IS NOT NULL AND length(slice_key) > 0))
+              AND slice_key ~ '^[0-9]{4}-(0[1-9]|1[0-2])$')
+          OR (scope_kind = 'QUARTER'
+              AND exploratory_backtest_fold_id IS NULL
+              AND slice_key ~ '^[0-9]{4}-Q[1-4]$')
+          OR (scope_kind = 'CONTEXT'
+              AND exploratory_backtest_fold_id IS NULL
+              AND slice_key ~ '^(MARKET_REGIME|ETF_ROTATION|THEME_ROTATION|CAPITAL_BREADTH):(POSITIVE|NEUTRAL|NEGATIVE|UNKNOWN)$'))
         AND specification_sha256 ~ '^[0-9a-f]{64}$'
         AND evaluation_protocol_sha256 ~ '^[0-9a-f]{64}$'
         AND content_sha256 ~ '^[0-9a-f]{64}$'
@@ -24109,6 +24169,8 @@ ALTER TABLE mra.research_partition
     ADD COLUMN source_backtest_arm_id uuid,
     ADD COLUMN source_backtest_fold_id uuid,
     ADD COLUMN source_backtest_sha256 text,
+    ADD COLUMN source_context_kind text,
+    ADD COLUMN source_context_state text,
     ADD CONSTRAINT research_partition_backtest_run_fk FOREIGN KEY (
         source_backtest_run_id, source_backtest_sha256
     ) REFERENCES mra.backtest_specification(
@@ -24132,11 +24194,22 @@ ALTER TABLE mra.research_partition
         (source_backtest_run_id IS NULL
          AND source_backtest_arm_id IS NULL
          AND source_backtest_fold_id IS NULL
-         AND source_backtest_sha256 IS NULL)
+         AND source_backtest_sha256 IS NULL
+         AND source_context_kind IS NULL
+         AND source_context_state IS NULL)
         OR
         (source_backtest_run_id IS NOT NULL
          AND source_backtest_arm_id IS NOT NULL
-         AND source_backtest_sha256 ~ '^[0-9a-f]{64}$')
+         AND source_backtest_sha256 ~ '^[0-9a-f]{64}$'
+         AND ((source_context_kind IS NULL
+               AND source_context_state IS NULL)
+           OR (source_context_kind IN (
+                   'MARKET_REGIME', 'ETF_ROTATION',
+                   'THEME_ROTATION', 'CAPITAL_BREADTH'
+               )
+               AND source_context_state IN (
+                   'POSITIVE', 'NEUTRAL', 'NEGATIVE', 'UNKNOWN'
+               ))))
     ),
     DROP CONSTRAINT research_partition_shape_ck,
     ADD CONSTRAINT research_partition_shape_ck CHECK (
@@ -24171,7 +24244,7 @@ ALTER TABLE mra.research_partition
 CREATE INDEX research_partition_backtest_source_idx
     ON mra.research_partition(
         source_backtest_run_id, source_backtest_arm_id,
-        source_backtest_fold_id
+        source_backtest_fold_id, source_context_kind, source_context_state
     ) WHERE source_backtest_run_id IS NOT NULL;
 CREATE INDEX research_partition_backtest_run_fk_idx
     ON mra.research_partition(
@@ -24908,6 +24981,27 @@ BEGIN
            AND formula.evaluation_protocol_metric_id IS NULL
     ) THEN
         RAISE EXCEPTION 'Current Backtest Evaluation formula closure is incomplete'
+            USING ERRCODE = '55000';
+    END IF;
+    IF EXISTS (
+        SELECT 1
+          FROM mra.backtest_evaluation_requirement AS requirement
+          JOIN mra.backtest_arm_specification AS arm
+            ON arm.exploratory_backtest_arm_id =
+               requirement.exploratory_backtest_arm_id
+           AND arm.exploratory_backtest_run_id =
+               requirement.exploratory_backtest_run_id
+           AND arm.specification_sha256 = requirement.specification_sha256
+          LEFT JOIN mra.context_policy_metric AS context_metric
+            ON context_metric.context_policy_id = arm.context_policy_id
+           AND context_metric.context_kind =
+               split_part(requirement.slice_key, ':', 1)
+         WHERE requirement.exploratory_backtest_run_id =
+               NEW.exploratory_backtest_run_id
+           AND requirement.scope_kind = 'CONTEXT'
+           AND context_metric.context_policy_metric_id IS NULL
+    ) THEN
+        RAISE EXCEPTION 'Current Backtest Context Evaluation kind is not frozen by the Arm policy'
             USING ERRCODE = '55000';
     END IF;
     IF NOT EXISTS (
