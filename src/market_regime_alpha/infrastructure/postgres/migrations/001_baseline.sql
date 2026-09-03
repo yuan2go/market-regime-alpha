@@ -23444,18 +23444,19 @@ DECLARE runtime_row record;
 DECLARE root_row record;
 DECLARE expected_content text;
 BEGIN
-    SELECT runtime_mode, config_artifact_id, config_hash
+    SELECT runtime_mode, code_sha, config_artifact_id, config_hash
       INTO runtime_row
       FROM mra.runtime_run
      WHERE run_id = NEW.runtime_run_id
      FOR SHARE;
-    SELECT config_artifact_id, config_content_sha256
+    SELECT code_content_sha256, config_artifact_id, config_content_sha256
       INTO root_row
       FROM mra.exploratory_backtest_run
      WHERE exploratory_backtest_run_id = NEW.exploratory_backtest_run_id
        AND current_specification_sha256 = NEW.specification_sha256
      FOR SHARE;
     IF NOT FOUND OR runtime_row.runtime_mode NOT IN ('HISTORICAL', 'REPLAY')
+       OR runtime_row.code_sha <> root_row.code_content_sha256
        OR runtime_row.config_artifact_id <> root_row.config_artifact_id
        OR runtime_row.config_hash <> root_row.config_content_sha256 THEN
         RAISE EXCEPTION 'Backtest Runtime binding is not exact'

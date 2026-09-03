@@ -86,7 +86,15 @@ class BacktestExecutionPlanner:
             action_id for action_id, observation in observed_by_id.items() if observation.state is BacktestObservedState.MISMATCH
         )
         integrity_error = bool(mismatch_ids)
-        ready = () if integrity_error else self._ready(actions, observed_by_id)
+        terminal_failure = any(
+            observation.state is BacktestObservedState.FAILED_TERMINAL
+            for observation in observed_by_id.values()
+        )
+        ready = (
+            ()
+            if integrity_error or terminal_failure
+            else self._ready(actions, observed_by_id)
+        )
         folds = tuple(
             self._fold_lifecycle(
                 fold.exploratory_backtest_fold_id,
@@ -383,6 +391,11 @@ class BacktestExecutor:
                 raise BacktestExecutionIntegrityError(f"Backtest reconciliation produced INTEGRITY_ERROR: {mismatches}")
             if plan.execution_state is BacktestExecutionState.COMPLETED:
                 return plan
+            if (
+                plan.execution_state is BacktestExecutionState.FAILED
+                and not plan.ready_actions
+            ):
+                return plan
             if not plan.ready_actions:
                 raise BacktestExecutionIntegrityError("Backtest has incomplete work but no dependency-ready action")
             ready = plan.ready_actions[0]
@@ -407,7 +420,14 @@ def _execution_state(states: tuple[BacktestObservedState, ...], *, integrity_err
         return BacktestExecutionState.INTEGRITY_ERROR
     if states and all(state is BacktestObservedState.MATCHED_COMPLETE for state in states):
         return BacktestExecutionState.COMPLETED
-    if any(state is BacktestObservedState.FAILED_RETRYABLE for state in states):
+    if any(
+        state
+        in {
+            BacktestObservedState.FAILED_RETRYABLE,
+            BacktestObservedState.FAILED_TERMINAL,
+        }
+        for state in states
+    ):
         return BacktestExecutionState.FAILED
     if any(state is BacktestObservedState.MATCHED_INCOMPLETE for state in states):
         return BacktestExecutionState.RUNNING

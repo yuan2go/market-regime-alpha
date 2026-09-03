@@ -365,3 +365,23 @@ def test_incomplete_and_retryable_actions_select_recovery_and_new_attempt() -> N
     assert operation_by_id[first.action.action_id] is BacktestNextOperation.RECOVER
     assert operation_by_id[second.action.action_id] is BacktestNextOperation.RETRY
     assert result.execution_state is BacktestExecutionState.FAILED
+
+
+def test_terminal_execution_failure_is_not_integrity_error_or_retryable() -> None:
+    planner = BacktestExecutionPlanner()
+    initial = planner.compile(_run())
+    failed = initial.ready_actions[0].action
+
+    result = planner.compile(
+        _run(),
+        (
+            BacktestActionObservation(
+                failed.action_id,
+                BacktestObservedState.FAILED_TERMINAL,
+            ),
+        ),
+    )
+
+    assert result.execution_state is BacktestExecutionState.FAILED
+    assert result.ready_actions == ()
+    assert result.integrity_mismatch_action_ids == ()

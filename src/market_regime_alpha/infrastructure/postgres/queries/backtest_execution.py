@@ -20,6 +20,7 @@ from market_regime_alpha.infrastructure.postgres.queries.research_verification i
 )
 from market_regime_alpha.research_qualification.domain.backtest import (
     FrozenBacktestRun,
+    FrozenBacktestSource,
 )
 from market_regime_alpha.research_qualification.domain.backtest_execution import (
     BacktestActionKind,
@@ -27,6 +28,7 @@ from market_regime_alpha.research_qualification.domain.backtest_execution import
     BacktestExpectedAction,
     BacktestObservedState,
     BacktestResearchState,
+    BacktestRuntimeBinding,
 )
 
 
@@ -115,8 +117,13 @@ class PostgresBacktestExecutionObservationPort:
                     """,
                     (run.exploratory_backtest_run_id,),
                 ).fetchall()
-                current_evaluations = cursor.execute(
-                    """
+                current_evaluations: list[dict[str, Any]] = []
+                current_metric_states: list[dict[str, Any]] = []
+                model_lineages: list[dict[str, Any]] = []
+                runtime_bindings: list[dict[str, Any]] = []
+                if run.source is FrozenBacktestSource.CURRENT_RELATIONAL:
+                    current_evaluations = cursor.execute(
+                        """
                     SELECT execution.backtest_evaluation_requirement_id,
                            execution.evaluation_run_id,
                            execution.evaluation_protocol_id,
@@ -131,11 +138,11 @@ class PostgresBacktestExecutionObservationPort:
                      AND evaluation.evaluation_protocol_id =
                          execution.evaluation_protocol_id
                     WHERE execution.exploratory_backtest_run_id = %s
-                    """,
-                    (run.exploratory_backtest_run_id,),
-                ).fetchall()
-                current_metric_states = cursor.execute(
-                    """
+                        """,
+                        (run.exploratory_backtest_run_id,),
+                    ).fetchall()
+                    current_metric_states = cursor.execute(
+                        """
                     SELECT execution.backtest_evaluation_requirement_id,
                            metric.metric_state
                     FROM mra.backtest_evaluation_execution AS execution
@@ -144,9 +151,48 @@ class PostgresBacktestExecutionObservationPort:
                     WHERE execution.exploratory_backtest_run_id = %s
                     GROUP BY execution.backtest_evaluation_requirement_id,
                              metric.metric_state
+                        """,
+                        (run.exploratory_backtest_run_id,),
+                    ).fetchall()
+                    runtime_bindings = cursor.execute(
+                        """
+                    SELECT binding.backtest_runtime_binding_id,
+                           binding.specification_sha256,
+                           binding.action_id, binding.action_kind,
+                           binding.action_content_sha256,
+                           binding.exploratory_backtest_arm_id,
+                           binding.exploratory_backtest_fold_id,
+                           binding.exploratory_backtest_fold_session_id,
+                           binding.model_training_requirement_id,
+                           binding.evaluation_requirement_id,
+                           binding.runtime_run_id, binding.content_sha256,
+                           runtime.runtime_mode, runtime.fire_key,
+                           runtime.code_sha, runtime.config_artifact_id,
+                           runtime.config_hash, runtime.state AS runtime_state,
+                           root.code_content_sha256 AS root_code_sha,
+                           root.config_artifact_id AS root_config_artifact_id,
+                           root.config_content_sha256 AS root_config_hash,
+                           latest_attempt.state AS latest_attempt_state
+                    FROM mra.backtest_runtime_binding AS binding
+                    JOIN mra.runtime_run AS runtime
+                      ON runtime.run_id = binding.runtime_run_id
+                    JOIN mra.exploratory_backtest_run AS root
+                      ON root.exploratory_backtest_run_id =
+                         binding.exploratory_backtest_run_id
+                    LEFT JOIN LATERAL (
+                        SELECT attempt.state
+                        FROM mra.runtime_step AS step
+                        JOIN mra.runtime_attempt AS attempt
+                          ON attempt.step_id = step.step_id
+                        WHERE step.run_id = runtime.run_id
+                        ORDER BY attempt.created_at DESC,
+                                 attempt.attempt_no DESC
+                        LIMIT 1
+                    ) AS latest_attempt ON true
+                    WHERE binding.exploratory_backtest_run_id = %s
                     """,
-                    (run.exploratory_backtest_run_id,),
-                ).fetchall()
+                        (run.exploratory_backtest_run_id,),
+                    ).fetchall()
                 training_rows = cursor.execute(
                     """
                     SELECT training.exploratory_backtest_arm_id,
@@ -162,8 +208,9 @@ class PostgresBacktestExecutionObservationPort:
                     """,
                     (run.exploratory_backtest_run_id,),
                 ).fetchall()
-                model_lineages = cursor.execute(
-                    """
+                if run.source is FrozenBacktestSource.CURRENT_RELATIONAL:
+                    model_lineages = cursor.execute(
+                        """
                     SELECT lineage.model_training_requirement_id,
                            lineage.model_id,
                            lineage.model_training_run_id,
@@ -184,9 +231,9 @@ class PostgresBacktestExecutionObservationPort:
                     JOIN mra.model_version AS version
                       ON version.model_version_id = lineage.model_version_id
                     WHERE lineage.exploratory_backtest_run_id = %s
-                    """,
-                    (run.exploratory_backtest_run_id,),
-                ).fetchall()
+                        """,
+                        (run.exploratory_backtest_run_id,),
+                    ).fetchall()
 
         dataset_by_scope = _rows_by_scope(datasets)
         decision_by_scope = _rows_by_scope(decisions)
@@ -218,48 +265,60 @@ class PostgresBacktestExecutionObservationPort:
         current_metric_states_by_requirement: dict[UUID, set[str]] = defaultdict(set)
         for row in current_metric_states:
             current_metric_states_by_requirement[UUID(str(row["backtest_evaluation_requirement_id"]))].add(str(row["metric_state"]))
+        runtime_by_action: dict[UUID, list[dict[str, Any]]] = defaultdict(list)
+        for row in runtime_bindings:
+            runtime_by_action[UUID(str(row["action_id"]))].append(row)
 
         observed: list[BacktestActionObservation] = []
         for action in expected_actions:
             if action.kind is BacktestActionKind.MATERIALIZE_DATASET:
                 state = _unique_presence(dataset_by_scope.get(_scope(action), ()))
-                observed.append(BacktestActionObservation(action.action_id, state))
+                observation = BacktestActionObservation(action.action_id, state)
             elif action.kind is BacktestActionKind.GENERATE_DECISION_SUPPORT:
-                observed.append(self._decision(action, decision_by_scope))
+                observation = self._decision(action, decision_by_scope)
             elif action.kind is BacktestActionKind.SETTLE_OUTCOME:
-                observed.append(self._outcome(action, decision_by_scope, outcome_by_scope))
+                observation = self._outcome(
+                    action,
+                    decision_by_scope,
+                    outcome_by_scope,
+                )
             elif action.kind in {
                 BacktestActionKind.COMPLETE_FOLD_EVALUATION,
                 BacktestActionKind.COMPLETE_AGGREGATE_EVALUATION,
             }:
                 if action.evaluation_requirement_id is not None:
-                    observed.append(
-                        self._current_evaluation(
-                            action,
-                            current_evaluation_by_requirement,
-                            current_metric_states_by_requirement,
-                        )
+                    observation = self._current_evaluation(
+                        action,
+                        current_evaluation_by_requirement,
+                        current_metric_states_by_requirement,
                     )
                 else:
-                    observed.append(
-                        self._evaluation(
-                            action,
-                            evaluations_by_fold,
-                            metrics_by_fold,
-                            expected_arms_by_fold,
-                        )
+                    observation = self._evaluation(
+                        action,
+                        evaluations_by_fold,
+                        metrics_by_fold,
+                        expected_arms_by_fold,
                     )
             elif action.kind is BacktestActionKind.TRAIN_MODEL:
-                observed.append(
-                    self._training(
-                        action,
-                        training_by_scope,
-                        lineage_by_requirement,
-                        requirement_by_id,
-                        current=bool(run.evaluation_requirements),
-                    )
+                observation = self._training(
+                    action,
+                    training_by_scope,
+                    lineage_by_requirement,
+                    requirement_by_id,
+                    current=bool(run.evaluation_requirements),
                 )
-        return tuple(observation for observation in observed if observation.state is not BacktestObservedState.ABSENT)
+            else:  # pragma: no cover - closed enum exhaustiveness guard
+                raise AssertionError(f"unsupported Backtest action {action.kind}")
+            if run.source is FrozenBacktestSource.CURRENT_RELATIONAL:
+                observation = _reconcile_current_runtime(
+                    run,
+                    action,
+                    observation,
+                    runtime_by_action.get(action.action_id, ()),
+                )
+            if observation.state is not BacktestObservedState.ABSENT:
+                observed.append(observation)
+        return tuple(observed)
 
     def _decision(
         self,
@@ -441,6 +500,110 @@ def _rows_by_scope(rows: list[dict[str, Any]]) -> dict[_Scope, list[dict[str, An
 def _scope(action: BacktestExpectedAction) -> _Scope:
     assert action.arm_id is not None and action.fold_id is not None and action.fold_session_id is not None
     return action.arm_id, action.fold_id, action.fold_session_id
+
+
+def _reconcile_current_runtime(
+    run: FrozenBacktestRun,
+    action: BacktestExpectedAction,
+    owner: BacktestActionObservation,
+    rows: list[dict[str, Any]] | tuple[()],
+) -> BacktestActionObservation:
+    if not rows:
+        return (
+            owner
+            if owner.state is BacktestObservedState.ABSENT
+            else BacktestActionObservation(
+                action.action_id,
+                BacktestObservedState.MISMATCH,
+            )
+        )
+    if len(rows) != 1:
+        return BacktestActionObservation(
+            action.action_id,
+            BacktestObservedState.MISMATCH,
+        )
+    row = rows[0]
+    try:
+        expected_binding = BacktestRuntimeBinding(
+            UUID(str(row["backtest_runtime_binding_id"])),
+            run.exploratory_backtest_run_id,
+            run.specification_sha256,
+            action,
+            UUID(str(row["runtime_run_id"])),
+        )
+    except (TypeError, ValueError):
+        return BacktestActionObservation(
+            action.action_id,
+            BacktestObservedState.MISMATCH,
+        )
+    exact = (
+        str(row["specification_sha256"]) == str(run.specification_sha256)
+        and str(row["action_kind"]) == action.kind.value
+        and str(row["action_content_sha256"]) == str(action.content_sha256)
+        and _optional_uuid(row["exploratory_backtest_arm_id"]) == action.arm_id
+        and _optional_uuid(row["exploratory_backtest_fold_id"]) == action.fold_id
+        and _optional_uuid(row["exploratory_backtest_fold_session_id"])
+        == action.fold_session_id
+        and _optional_uuid(row["model_training_requirement_id"])
+        == action.model_training_requirement_id
+        and _optional_uuid(row["evaluation_requirement_id"])
+        == action.evaluation_requirement_id
+        and str(row["content_sha256"]) == str(expected_binding.content_sha256)
+        and str(row["runtime_mode"]) in {"HISTORICAL", "REPLAY"}
+        and str(row["fire_key"]) == str(action.action_id)
+        and str(row["code_sha"]) == str(row["root_code_sha"])
+        and UUID(str(row["config_artifact_id"]))
+        == UUID(str(row["root_config_artifact_id"]))
+        and str(row["config_hash"]) == str(row["root_config_hash"])
+    )
+    if not exact or owner.state is BacktestObservedState.MISMATCH:
+        return BacktestActionObservation(
+            action.action_id,
+            BacktestObservedState.MISMATCH,
+        )
+
+    runtime_state = str(row["runtime_state"])
+    if runtime_state == "SUCCEEDED":
+        return (
+            owner
+            if owner.state is BacktestObservedState.MATCHED_COMPLETE
+            else BacktestActionObservation(
+                action.action_id,
+                BacktestObservedState.MISMATCH,
+            )
+        )
+    if runtime_state in {"FAILED", "BLOCKED", "CANCELLED"}:
+        return BacktestActionObservation(
+            action.action_id,
+            BacktestObservedState.FAILED_TERMINAL,
+        )
+    if owner.state is BacktestObservedState.MATCHED_COMPLETE:
+        return BacktestActionObservation(
+            action.action_id,
+            BacktestObservedState.MATCHED_INCOMPLETE,
+        )
+    latest_attempt_state = row["latest_attempt_state"]
+    if latest_attempt_state is not None and str(latest_attempt_state) in {
+        "FAILED_RETRYABLE",
+        "ABANDONED",
+    }:
+        return BacktestActionObservation(
+            action.action_id,
+            BacktestObservedState.FAILED_RETRYABLE,
+        )
+    if latest_attempt_state is not None and str(latest_attempt_state) == "FAILED_TERMINAL":
+        return BacktestActionObservation(
+            action.action_id,
+            BacktestObservedState.FAILED_TERMINAL,
+        )
+    return BacktestActionObservation(
+        action.action_id,
+        BacktestObservedState.MATCHED_INCOMPLETE,
+    )
+
+
+def _optional_uuid(value: object) -> UUID | None:
+    return None if value is None else UUID(str(value))
 
 
 def _unique_presence(rows: list[dict[str, Any]] | tuple[()]) -> BacktestObservedState:

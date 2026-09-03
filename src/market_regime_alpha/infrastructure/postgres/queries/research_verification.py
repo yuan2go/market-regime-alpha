@@ -10,6 +10,7 @@ import psycopg
 from market_regime_alpha.infrastructure.postgres.pool import TargetPostgresPool
 from market_regime_alpha.research_qualification.domain.evaluation import (
     ProtocolMetricDefinition,
+    evaluation_protocol_metric_roster_sha256,
 )
 from market_regime_alpha.research_qualification.domain.evaluation_formula import (
     BacktestFormulaCode,
@@ -929,14 +930,24 @@ class PostgresResearchEvaluationVerificationProvider:
             """,
             (protocol_id,),
         ).fetchall()
+        formula_relation = connection.execute(
+            "SELECT to_regclass('mra.evaluation_metric_formula')"
+        ).fetchone()
+        formulas_available = (
+            formula_relation is not None and formula_relation[0] is not None
+        )
         metrics = tuple(
             _protocol_metric(
                 row,
-                formula=_load_protocol_formula(
-                    connection,
-                    UUID(str(row[0])),
-                    protocol_id,
-                    mismatches,
+                formula=(
+                    _load_protocol_formula(
+                        connection,
+                        UUID(str(row[0])),
+                        protocol_id,
+                        mismatches,
+                    )
+                    if formulas_available
+                    else None
                 ),
             )
             for row in rows
@@ -962,7 +973,7 @@ class PostgresResearchEvaluationVerificationProvider:
             mismatches,
             "evaluation_protocol.metric_roster_sha256",
             str(root[3]),
-            canonical_json_sha256(metrics),
+            str(evaluation_protocol_metric_roster_sha256(metrics)),
         )
 
     @staticmethod

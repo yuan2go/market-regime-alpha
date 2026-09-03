@@ -17,6 +17,9 @@ from market_regime_alpha.infrastructure.postgres.backtest_uow import (
 from market_regime_alpha.infrastructure.postgres.queries.backtests import (
     PostgresBacktestQueryPort,
 )
+from market_regime_alpha.infrastructure.postgres.queries.backtest_execution import (
+    PostgresBacktestExecutionObservationPort,
+)
 from market_regime_alpha.research_qualification.application.backtests import (
     BacktestApplication,
 )
@@ -48,6 +51,7 @@ from market_regime_alpha.research_qualification.domain.backtest import (
 )
 from market_regime_alpha.research_qualification.domain.model import ArtifactBinding
 from market_regime_alpha.research_qualification.domain.backtest_execution import (
+    BacktestObservedState,
     BacktestRuntimeBinding,
 )
 from market_regime_alpha.research_qualification.domain.research_vocabulary import (
@@ -619,7 +623,7 @@ def test_runtime_action_binding_is_application_backed_append_only_lineage(
                 schedule_id,
                 str(action.action_id),
                 datetime.now(UTC),
-                "1" * 40,
+                str(specification.code_artifact.content_sha256),
                 specification.config_artifact.artifact_id,
                 str(specification.config_artifact.content_sha256),
             ),
@@ -653,3 +657,9 @@ def test_runtime_action_binding_is_application_backed_append_only_lineage(
         runtime_run_id,
         str(binding.content_sha256),
     )
+    observations = PostgresBacktestExecutionObservationPort(
+        backtest_stack.pool
+    ).observe(frozen, (action,))
+    assert len(observations) == 1
+    assert observations[0].action_id == action.action_id
+    assert observations[0].state is BacktestObservedState.MATCHED_INCOMPLETE
