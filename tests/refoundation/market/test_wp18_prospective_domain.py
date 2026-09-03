@@ -78,7 +78,20 @@ def test_friday_target_resolves_next_actual_session_not_calendar_day() -> None:
         result.reference_at
     )
     assert by_slot[ProspectiveArchiveScheduleSlot.OUTCOME_PATH].window_start == (
+        result.outcome.open_at
+    )
+    assert by_slot[ProspectiveArchiveScheduleSlot.OUTCOME_PATH].window_end == (
         result.outcome_at
+    )
+    assert by_slot[ProspectiveArchiveScheduleSlot.OUTCOME_10_30].window_start == (
+        result.outcome_at
+    )
+    assert by_slot[ProspectiveArchiveScheduleSlot.OUTCOME_10_30].window_end > (
+        result.outcome_at
+    )
+    assert (
+        by_slot[ProspectiveArchiveScheduleSlot.OUTCOME_PATH]
+        != by_slot[ProspectiveArchiveScheduleSlot.OUTCOME_10_30]
     )
     assert by_slot[ProspectiveArchiveScheduleSlot.OUTCOME_PATH].session_id == (
         MONDAY.session_id

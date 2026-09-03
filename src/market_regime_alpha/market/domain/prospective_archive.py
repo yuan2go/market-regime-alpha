@@ -400,7 +400,7 @@ def target_aligned_capture_windows(
          resolved.outcome.open_at - timedelta(minutes=25), 1),
         (ProspectiveArchiveScheduleSlot.OUTCOME_PATH, resolved.outcome.session_id,
          resolved.outcome_checkpoint.target_checkpoint_id,
-         outcome_at, outcome_at + timedelta(minutes=1), 2),
+         resolved.outcome.open_at, outcome_at, 2),
         (ProspectiveArchiveScheduleSlot.OUTCOME_10_30, resolved.outcome.session_id,
          resolved.outcome_checkpoint.target_checkpoint_id,
          outcome_at, outcome_at + timedelta(minutes=1), 3),

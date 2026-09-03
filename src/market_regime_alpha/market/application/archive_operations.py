@@ -146,7 +146,7 @@ class MarketArchiveOperations:
             request.capture_request,
             provider,
             _child_context(context, "capture"),
-            runtime_claim=runtime_claim,
+            runtime_claim=None,
         )
         capture_id = captured.capture.capture_id
         if captured.capture.status is CaptureStatus.PROVIDER_FAILURE:
@@ -173,7 +173,7 @@ class MarketArchiveOperations:
             capture_id,
             normalizer,
             _child_context(context, "normalize"),
-            runtime_claim=runtime_claim,
+            runtime_claim=None,
         )
         self._archives.record_capture_observation(
             RecordArchiveCaptureObservationRequest(
