@@ -34,23 +34,28 @@ Foundation
 → WP-13 remaining Decision Support
 → WP-14 Formal Research/OOS/Prospective engineering readiness
 → WP-15 real Provider qualification and frozen research proof campaign
-→ optional Model/Calibration only when separately justified
+→ WP-16 external Provider evidence Gate A
+→ WP-17P retrospective/prospective archive and exploratory Model/backtest
+→ optional Calibration only when separately justified
 → Execution/TradeOutcome/Attribution → Runtime/CLI Cutover
 ```
 
 WP-08 authorizes this dependency order, not concurrent implementation. WP-09
-through WP-14 have passed their immutable local engineering gates; WP-14 is
-merged in `origin/main@8067a4be74f697a01aaa996465c10ed5b45b5a7f` and proves
-engineering readiness only. WP-15 then used that exact merged main for a real
+through WP-14 have passed their immutable local engineering gates; WP-14 proves
+engineering readiness only. WP-15 then used its exact merged main for a real
 recorded BaoStock Provider gate. The complete ten-requirement Decision is
 `REJECTED`: historical availability, revision finality, and Outcome-path floors
 failed, while calendar, membership, and Decision-reference evidence remained
 inconclusive. The Formal PIT/hypothesis/OOS/prospective campaign therefore did
 not start. The rejected Decision and exact capture remain immutable negative
 evidence; a later attempt requires new adequate external evidence and a new
-Protocol/revision rather than reinterpretation. The optional Model/Calibration
-branch remains skipped and optional. Execution, Runtime/CLI Cutover, Legacy
-deletion, and Production qualification remain unauthorized.
+Protocol/revision rather than reinterpretation. WP-16 found no accessible
+Product with direct recorded evidence for both P0 availability and finality and
+stopped before implementation. WP-17P then added engineering-qualified,
+permanently separated retrospective/prospective archives plus an exploratory-
+only Model/backtest path without reopening that Provider gate. Calibration
+remains optional and unstarted. Execution, Runtime/CLI Cutover, Legacy deletion,
+and Production qualification remain unauthorized.
 
 Do not resume the former Alpha Proof Roadmap as an engineering program. Existing
 protocols, results, and negative evidence remain immutable provenance. New

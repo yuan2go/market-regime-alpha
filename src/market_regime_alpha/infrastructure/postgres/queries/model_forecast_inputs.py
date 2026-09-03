@@ -322,7 +322,10 @@ def _load_root(
              retrospective.exploratory_backtest_arm_id
          AND arm.exploratory_backtest_run_id =
              retrospective.exploratory_backtest_run_id
-         AND arm.arm_kind = 'MODEL_CHALLENGER'
+         AND arm.arm_kind IN (
+             'MODEL_CHALLENGER', 'RIDGE_CURRENT_CONTEXT',
+             'RIDGE_CONTEXT_OBSERVATIONAL'
+         )
         JOIN mra.exploratory_backtest_fold AS inference_fold
           ON inference_fold.exploratory_backtest_fold_id =
              retrospective.exploratory_backtest_fold_id

@@ -729,6 +729,10 @@ class PostgresResearchEvaluationVerificationProvider:
                             AND (SELECT count(*) FROM mra.evaluation_candidate_source AS source
                                  WHERE source.evaluation_run_id = %s
                                    AND source.evaluation_protocol_metric_id = metric.evaluation_protocol_metric_id) <> %s)
+                        OR (metric.source_kind = 'CANDIDATE_OUTCOME_PAIR'
+                            AND (SELECT count(*) FROM mra.evaluation_candidate_outcome_source AS source
+                                 WHERE source.evaluation_run_id = %s
+                                   AND source.evaluation_protocol_metric_id = metric.evaluation_protocol_metric_id) <> %s)
                         OR (metric.source_kind = 'SIGNAL_STATUS'
                             AND (SELECT count(*) FROM mra.evaluation_signal_source AS source
                                  WHERE source.evaluation_run_id = %s
@@ -749,6 +753,7 @@ class PostgresResearchEvaluationVerificationProvider:
                     """,
                     (
                         run[1],
+                        evaluation_run_id, int(run[5]),
                         evaluation_run_id, int(run[5]),
                         evaluation_run_id, int(run[5]),
                         evaluation_run_id, int(run[5]),

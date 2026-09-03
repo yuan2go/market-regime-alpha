@@ -51,6 +51,14 @@ class ArchiveInspection:
     sealed_at: datetime | None
     seal_disposition: str | None
     slices: tuple[ArchiveSliceInspection, ...]
+    prospective_generation: int | None = None
+    predecessor_market_archive_id: UUID | None = None
+    not_due_slice_count: int = 0
+    due_slice_count: int = 0
+    overdue_slice_count: int = 0
+    missed_slice_count: int = 0
+    observed_identical_count: int = 0
+    observed_changed_count: int = 0
 
 
 class ArchiveInspectionPort(Protocol):

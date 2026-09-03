@@ -201,7 +201,9 @@ def build_prospective_manifest(
     code_artifact_id: UUID,
     config_artifact_id: UUID,
     archive_not_before: datetime,
-    next_session_date: date,
+    decision_session_date: date,
+    outcome_session_date: date,
+    later_verification_session_date: date,
     pilot_codes: tuple[str, ...],
     exchange_calendar: str,
     provenance_sha256: str,
@@ -227,25 +229,20 @@ def build_prospective_manifest(
     archive_id = _id(f"archive:{archive_code}")
     first_code = pilot_codes[0]
     smoke_start = archive_not_before + timedelta(minutes=1)
+    if not decision_session_date < outcome_session_date < later_verification_session_date:
+        raise ValueError("prospective Sessions must be strictly chronological")
     future_slots = (
-        ("DECISION_NEAR", next_session_date, time(14, 50), time(14, 56)),
-        ("POST_CLOSE", next_session_date, time(15, 25), time(15, 35)),
-        ("EVENING", next_session_date, time(19, 55), time(20, 5)),
+        ("PRE_DECISION", decision_session_date, time(14, 40), time(14, 48)),
+        ("DECISION_NEAR", decision_session_date, time(14, 50), time(14, 56)),
+        ("POST_CLOSE", decision_session_date, time(15, 25), time(15, 35)),
+        ("EVENING_REVISION", decision_session_date, time(19, 55), time(20, 5)),
+        ("OUTCOME_PRE_OPEN", outcome_session_date, time(8, 55), time(9, 5)),
+        ("OUTCOME_PATH", outcome_session_date, time(9, 30), time(10, 31)),
+        ("OUTCOME_10_30", outcome_session_date, time(10, 25), time(10, 31)),
+        ("OUTCOME_POST_CLOSE", outcome_session_date, time(15, 25), time(15, 35)),
         (
-            "NEXT_PREOPEN",
-            next_session_date + timedelta(days=1),
-            time(8, 55),
-            time(9, 5),
-        ),
-        (
-            "NEXT_POSTCLOSE",
-            next_session_date + timedelta(days=1),
-            time(15, 25),
-            time(15, 35),
-        ),
-        (
-            "LATER_VERIFICATION",
-            next_session_date + timedelta(days=7),
+            "REVISION_VERIFICATION",
+            later_verification_session_date,
             time(15, 25),
             time(15, 35),
         ),
@@ -264,7 +261,7 @@ def build_prospective_manifest(
         for code in pilot_codes:
             kind = (
                 BaoStockArchiveQueryKind.HISTORY_5M_RAW
-                if slot == "DECISION_NEAR"
+                if slot in {"PRE_DECISION", "DECISION_NEAR", "OUTCOME_PATH", "OUTCOME_10_30"}
                 else BaoStockArchiveQueryKind.HISTORY_DAILY_RAW
             )
             inputs.append(

@@ -177,6 +177,7 @@ EXPECTED_FOUNDATION_TABLES: Final[frozenset[str]] = frozenset(
         "artifact_dependency",
         "artifact_verification",
         "artifact_gc_candidate",
+        "operational_schema_upgrade_receipt",
     }
 )
 
@@ -217,6 +218,11 @@ EXPECTED_MARKET_TABLES: Final[frozenset[str]] = frozenset(
         "market_archive_slice_gap",
         "market_archive_resource_stop",
         "market_archive_seal",
+        "prospective_archive_generation",
+        "prospective_archive_generation_member",
+        "prospective_archive_slice_schedule",
+        "prospective_archive_slice_terminal",
+        "prospective_archive_revision_observation",
     }
 )
 
@@ -228,6 +234,11 @@ EXPECTED_MARKET_ARCHIVE_TABLES: Final[frozenset[str]] = frozenset(
         "market_archive_slice_gap",
         "market_archive_resource_stop",
         "market_archive_seal",
+        "prospective_archive_generation",
+        "prospective_archive_generation_member",
+        "prospective_archive_slice_schedule",
+        "prospective_archive_slice_terminal",
+        "prospective_archive_revision_observation",
     }
 )
 
@@ -374,6 +385,7 @@ EXPECTED_EXPLORATORY_EVALUATION_SOURCE_TABLES: Final[frozenset[str]] = frozenset
     {
         "evaluation_backtest_arm_source",
         "evaluation_candidate_source",
+        "evaluation_candidate_outcome_source",
         "evaluation_signal_source",
         "evaluation_forecast_source",
         "evaluation_portfolio_source",
@@ -411,6 +423,7 @@ EXPECTED_EXPLORATORY_BACKTEST_TABLES: Final[frozenset[str]] = frozenset(
         "exploratory_backtest_run",
         "exploratory_backtest_feature",
         "exploratory_backtest_arm",
+        "exploratory_backtest_arm_strategy",
         "exploratory_backtest_fold",
         "exploratory_backtest_fold_session",
         "exploratory_backtest_cost_assumption",

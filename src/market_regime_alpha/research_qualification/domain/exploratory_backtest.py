@@ -26,6 +26,15 @@ _CODE = re.compile(r"^[a-z][a-z0-9_-]{0,99}$")
 class BacktestArmKind(StrEnum):
     RULE_BASELINE = "RULE_BASELINE"
     MODEL_CHALLENGER = "MODEL_CHALLENGER"
+    RULE_CURRENT_CONTEXT = "RULE_CURRENT_CONTEXT"
+    RIDGE_CURRENT_CONTEXT = "RIDGE_CURRENT_CONTEXT"
+    RULE_CONTEXT_OBSERVATIONAL = "RULE_CONTEXT_OBSERVATIONAL"
+    RIDGE_CONTEXT_OBSERVATIONAL = "RIDGE_CONTEXT_OBSERVATIONAL"
+
+
+class BacktestContextMode(StrEnum):
+    CURRENT_GATE = "CURRENT_GATE"
+    OBSERVATIONAL = "OBSERVATIONAL"
 
 
 class BacktestSessionRole(StrEnum):
@@ -46,24 +55,67 @@ class BacktestArmPlan:
     exploratory_backtest_arm_id: UUID
     ordinal: int
     kind: BacktestArmKind
+    strategy_version_id: UUID | None = None
+    strategy_version_sha256: ContentHash | str | None = None
     content_sha256: ContentHash = field(init=False)
 
     def __post_init__(self) -> None:
         if isinstance(self.ordinal, bool) or self.ordinal < 1:
             raise ValueError("arm ordinal must be positive")
+        is_wp18 = self.kind not in {
+            BacktestArmKind.RULE_BASELINE,
+            BacktestArmKind.MODEL_CHALLENGER,
+        }
+        if is_wp18 != (self.strategy_version_id is not None):
+            raise ValueError("WP-18 arm requires an exact StrategyVersion binding")
+        if is_wp18:
+            if self.strategy_version_sha256 is None:
+                raise ValueError("WP-18 arm requires an exact StrategyVersion hash")
+            object.__setattr__(
+                self,
+                "strategy_version_sha256",
+                ContentHash(str(self.strategy_version_sha256)),
+            )
+        elif self.strategy_version_sha256 is not None:
+            raise ValueError("legacy arm cannot carry a StrategyVersion companion")
+        payload = {
+            "exploratory_backtest_arm_id": self.exploratory_backtest_arm_id,
+            "kind": self.kind,
+            "ordinal": self.ordinal,
+        }
+        if is_wp18:
+            payload.update(
+                {
+                    "strategy_version_id": self.strategy_version_id,
+                    "strategy_version_sha256": str(self.strategy_version_sha256),
+                }
+            )
         object.__setattr__(
             self,
             "content_sha256",
             ContentHash(
                 canonical_json_sha256(
-                    {
-                        "exploratory_backtest_arm_id": self.exploratory_backtest_arm_id,
-                        "kind": self.kind,
-                        "ordinal": self.ordinal,
-                    }
+                    payload
                 )
             ),
         )
+
+    @property
+    def context_mode(self) -> BacktestContextMode:
+        if self.kind in {
+            BacktestArmKind.RULE_CONTEXT_OBSERVATIONAL,
+            BacktestArmKind.RIDGE_CONTEXT_OBSERVATIONAL,
+        }:
+            return BacktestContextMode.OBSERVATIONAL
+        return BacktestContextMode.CURRENT_GATE
+
+    @property
+    def uses_model(self) -> bool:
+        return self.kind in {
+            BacktestArmKind.MODEL_CHALLENGER,
+            BacktestArmKind.RIDGE_CURRENT_CONTEXT,
+            BacktestArmKind.RIDGE_CONTEXT_OBSERVATIONAL,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,8 +194,15 @@ class BacktestFoldPlan:
             raise ValueError("fold purge roster does not match purge_sessions")
         if sum(item.role is BacktestSessionRole.EMBARGO for item in self.sessions) != self.embargo_sessions:
             raise ValueError("fold embargo roster does not match embargo_sessions")
-        if not any(item.role is BacktestSessionRole.EVALUATION for item in self.sessions):
-            raise ValueError("fold requires at least one Evaluation session")
+        required_role = (
+            BacktestSessionRole.FIT_INPUT
+            if self.purpose is PartitionPurpose.FIT
+            else BacktestSessionRole.EVALUATION
+        )
+        if not any(item.role is required_role for item in self.sessions):
+            raise ValueError(
+                f"{self.purpose.value} fold requires at least one {required_role.value} session"
+            )
         protocol_hash = ContentHash(str(self.evaluation_protocol_sha256))
         roster_hash = ContentHash(
             canonical_json_sha256(
@@ -260,13 +319,26 @@ class ExploratoryBacktestRunPlan:
         if len({item[0] for item in self.feature_definitions}) != len(self.feature_definitions):
             raise ValueError("feature roster contains duplicates")
         expected_arms = (
-            BacktestArmKind.RULE_BASELINE,
-            BacktestArmKind.MODEL_CHALLENGER,
+            (
+                BacktestArmKind.RULE_BASELINE,
+                BacktestArmKind.MODEL_CHALLENGER,
+            )
+            if self.generation == 1
+            else (
+                BacktestArmKind.RULE_CURRENT_CONTEXT,
+                BacktestArmKind.RIDGE_CURRENT_CONTEXT,
+                BacktestArmKind.RULE_CONTEXT_OBSERVATIONAL,
+                BacktestArmKind.RIDGE_CONTEXT_OBSERVATIONAL,
+            )
         )
-        if len(self.arms) != 2:
+        if self.generation == 1 and len(self.arms) != 2:
             raise ValueError("first exploratory generation requires exactly two arms")
-        if tuple(item.ordinal for item in self.arms) != (1, 2) or tuple(item.kind for item in self.arms) != expected_arms:
-            raise ValueError("exploratory arm roster must be baseline then challenger")
+        if self.generation > 1 and len(self.arms) != 4:
+            raise ValueError("walk-forward generation requires exactly four arms")
+        if tuple(item.ordinal for item in self.arms) != tuple(
+            range(1, len(expected_arms) + 1)
+        ) or tuple(item.kind for item in self.arms) != expected_arms:
+            raise ValueError("exploratory arm roster is invalid for its generation")
         if not self.folds or tuple(item.ordinal for item in self.folds) != tuple(range(1, len(self.folds) + 1)):
             raise ValueError("backtest fold ordinals must be contiguous")
         if tuple(fold.sessions[0].session_date for fold in self.folds) != tuple(
@@ -430,6 +502,7 @@ class ExploratoryBacktestDatasetScope:
 __all__ = [
     "BacktestArmKind",
     "BacktestArmPlan",
+    "BacktestContextMode",
     "BacktestCostAssumption",
     "BacktestCostKind",
     "BacktestFoldPlan",

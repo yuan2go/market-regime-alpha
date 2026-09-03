@@ -104,18 +104,26 @@ class Wp17pDecisionOperations:
         if not complete_decision_support and session.role is not BacktestSessionRole.FIT_INPUT:
             raise ValueError("training input Decision must use a FIT_INPUT session")
         if model_version_id is not None and (
-            arm.kind is not BacktestArmKind.MODEL_CHALLENGER
-            or not complete_decision_support
+            not arm.uses_model or not complete_decision_support
         ):
             raise ValueError("ModelVersion is allowed only on the challenger Evaluation arm")
         if (
             complete_decision_support
-            and arm.kind is BacktestArmKind.MODEL_CHALLENGER
+            and arm.uses_model
             and model_version_id is None
         ):
             raise ValueError("challenger Evaluation requires an exact ModelVersion")
-        if arm.kind is BacktestArmKind.RULE_BASELINE and model_version_id is not None:
+        if not arm.uses_model and model_version_id is not None:
             raise ValueError("rule baseline cannot bind a ModelVersion")
+        strategy = catalog.strategy
+        if arm.strategy_version_id is not None:
+            matches = tuple(
+                item
+                for item in (catalog.strategy_roster or (catalog.strategy,))
+                if item.strategy_version_id == arm.strategy_version_id
+                and str(item.content_sha256) == str(arm.strategy_version_sha256)
+            )
+            strategy = _one(matches, "arm StrategyVersion")
 
         app = self._application
         runtime_run_id = uuid5(
@@ -188,14 +196,14 @@ class Wp17pDecisionOperations:
             if model_version_id is None:
                 app.decision_inference.produce(
                     decision.decision_run_id,
-                    catalog.strategy.strategy_version_id,
+                    strategy.strategy_version_id,
                     _context(f"inference-{dataset.dataset_id}"),
                     runtime_claim=inference_claim,
                 )
             else:
                 app.decision_model_forecasts.produce(
                     decision.decision_run_id,
-                    catalog.strategy.strategy_version_id,
+                    strategy.strategy_version_id,
                     model_version_id,
                     _context(f"model-inference-{dataset.dataset_id}"),
                     runtime_claim=inference_claim,
@@ -203,7 +211,7 @@ class Wp17pDecisionOperations:
             decide_claim = _claim(app, runtime_run_id, "decide-and-risk")
             opportunities = app.decision_opportunities.create_opportunities(
                 decision.decision_run_id,
-                catalog.strategy.strategy_version_id,
+                strategy.strategy_version_id,
                 _context(f"opportunities-{dataset.dataset_id}"),
                 runtime_claim=decide_claim,
             )

@@ -33,6 +33,12 @@ class ArchiveSliceStatus(StrEnum):
     CAPTURED = "CAPTURED"
     GAP_RECORDED = "GAP_RECORDED"
     RESOURCE_LIMIT = "RESOURCE_LIMIT"
+    CAPTURED_ON_TIME = "CAPTURED_ON_TIME"
+    CAPTURED_LATE = "CAPTURED_LATE"
+    MISSED = "MISSED"
+    PROVIDER_GAP = "PROVIDER_GAP"
+    RESOURCE_STOP = "RESOURCE_STOP"
+    FAILED = "FAILED"
 
     @property
     def is_terminal(self) -> bool:

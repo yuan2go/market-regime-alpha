@@ -18,6 +18,7 @@ from market_regime_alpha.market.domain import (
     MarketArchiveSeal,
     MarketArchiveSlice,
     PriceBasis,
+    ProspectiveArchiveGenerationPlan,
 )
 from market_regime_alpha.market.ports.archive import (
     ArchiveResourceStopRecord,
@@ -65,6 +66,7 @@ class StartMarketArchiveRequest:
     config_artifact_id: UUID
     provenance_sha256: str
     slices: tuple[ArchiveSlicePlan, ...]
+    prospective_generation: ProspectiveArchiveGenerationPlan | None = None
 
     def __post_init__(self) -> None:
         if not re.fullmatch(r"[a-z][a-z0-9_-]{0,99}", self.archive_code):
@@ -73,6 +75,16 @@ class StartMarketArchiveRequest:
             raise ValueError("archive slice plan must be non-empty")
         if tuple(item.ordinal for item in self.slices) != tuple(range(1, len(self.slices) + 1)):
             raise ValueError("archive slice plan ordinals must be contiguous")
+        if self.prospective_generation is not None:
+            if self.lane is not ArchiveLane.PROSPECTIVE_CONTEMPORANEOUS:
+                raise ValueError("prospective generation requires prospective lane")
+            if self.prospective_generation.market_archive_id != self.market_archive_id:
+                raise ValueError("prospective generation belongs to another archive")
+            if {item.market_archive_slice_id for item in self.slices} != {
+                item.market_archive_slice_id
+                for item in self.prospective_generation.schedules
+            }:
+                raise ValueError("prospective generation schedule must cover every slice")
 
 
 @dataclass(frozen=True, slots=True)
@@ -148,6 +160,15 @@ class ArchiveSealResult:
     capture_count: int
     gap_count: int
     content_sha256: str
+    receipt_id: UUID
+    result_hash: str
+    replayed: bool
+
+
+@dataclass(frozen=True, slots=True)
+class FinalizeOverdueArchiveResult:
+    market_archive_id: UUID
+    missed_slice_ids: tuple[UUID, ...]
     receipt_id: UUID
     result_hash: str
     replayed: bool
@@ -238,6 +259,10 @@ class ArchiveCommands:
                 request_identity=context.idempotency_key,
                 request_sha256=request_hash,
             )
+            if request.prospective_generation is not None:
+                uow.archives.insert_prospective_generation(
+                    request.prospective_generation
+                )
             result_hash = _archive_result_hash(archive)
             uow.receipts.succeed(
                 receipt_id=receipt.receipt_id,
@@ -335,6 +360,83 @@ class ArchiveCommands:
                 receipt,
                 result_hash=result_hash,
                 replayed=False,
+            )
+
+    def finalize_overdue(
+        self,
+        *,
+        market_archive_id: UUID,
+        context: CommandContext,
+        runtime_claim: AttemptClaim | None = None,
+    ) -> FinalizeOverdueArchiveResult:
+        request_hash = canonical_json_sha256(
+            {"market_archive_id": market_archive_id}
+        )
+        with self._uow_provider() as uow:
+            if runtime_claim is not None:
+                uow.runtime_finalization.lock_live(runtime_claim)
+            receipt = uow.receipts.start(
+                receipt_id=self._id_factory(),
+                command_kind="FINALIZE_OVERDUE_ARCHIVE_SLICES",
+                scope_id=str(market_archive_id),
+                idempotency_key=context.idempotency_key,
+                request_hash=request_hash,
+            )
+            if not receipt.is_new:
+                _ensure_succeeded(receipt)
+                if receipt.result_hash is None:
+                    raise ArtifactIntegrityError(
+                        "Overdue archive replay receipt is incomplete"
+                    )
+                missed = uow.archives.finalize_overdue(market_archive_id)
+                replay_hash = canonical_json_sha256(
+                    {
+                        "market_archive_id": market_archive_id,
+                        "missed_slice_ids": missed,
+                    }
+                )
+                if replay_hash != receipt.result_hash:
+                    raise ArtifactIntegrityError(
+                        "Overdue archive replay differs from Authority"
+                    )
+                if runtime_claim is not None:
+                    uow.runtime_finalization.succeed(
+                        runtime_claim,
+                        receipt_id=receipt.receipt_id,
+                        result_hash=receipt.result_hash,
+                    )
+                    uow.commit()
+                return FinalizeOverdueArchiveResult(
+                    market_archive_id,
+                    missed,
+                    receipt.receipt_id,
+                    receipt.result_hash,
+                    True,
+                )
+            missed = uow.archives.finalize_overdue(market_archive_id)
+            result_hash = canonical_json_sha256(
+                {
+                    "market_archive_id": market_archive_id,
+                    "missed_slice_ids": missed,
+                }
+            )
+            self._finish(
+                uow,
+                receipt_id=receipt.receipt_id,
+                aggregate_kind="PROSPECTIVE_ARCHIVE_GENERATION",
+                aggregate_id=str(market_archive_id),
+                action="FINALIZE_OVERDUE_ARCHIVE_SLICES",
+                result_hash=result_hash,
+                context=context,
+                runtime_claim=runtime_claim,
+            )
+            uow.commit()
+            return FinalizeOverdueArchiveResult(
+                market_archive_id,
+                missed,
+                receipt.receipt_id,
+                result_hash,
+                False,
             )
 
     def record_slice_gap(
@@ -676,6 +778,7 @@ __all__ = [
     "ArchiveSealResult",
     "ArchiveSlicePlan",
     "ArchiveSliceGapResult",
+    "FinalizeOverdueArchiveResult",
     "MarketArchiveResult",
     "RecordArchiveCaptureObservationRequest",
     "StartMarketArchiveRequest",

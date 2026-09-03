@@ -396,7 +396,8 @@ class PostgresEvaluationRepository:
                    retrospective.exploratory_backtest_fold_id,
                    retrospective.exploratory_backtest_fold_session_id,
                    arm.arm_kind,
-                   backtest.strategy_version_id,
+                   coalesce(arm_strategy.strategy_version_id,
+                            backtest.strategy_version_id),
                    backtest.portfolio_policy_id,
                    backtest.risk_policy_id,
                    backtest.cost_count,
@@ -417,13 +418,20 @@ class PostgresEvaluationRepository:
                    line.proposed_weight,
                    risk.risk_decision_id,
                    risk.status,
-                   outcome_metric.value_type
+                   outcome_metric.value_type,
+                   candidate.composite_score,
+                   candidate.competition_rank,
+                   candidate.candidate_set_id
             FROM mra.evaluation_observation AS observation
             JOIN mra.research_partition_member AS member
               ON member.research_partition_member_id =
                  observation.research_partition_member_id
             JOIN mra.decision_target_commitment AS commitment
               ON commitment.commitment_id = member.commitment_id
+            JOIN mra.candidate AS candidate
+              ON candidate.candidate_id = commitment.candidate_id
+             AND candidate.instrument_id = commitment.instrument_id
+             AND candidate.disposition = commitment.candidate_disposition
             JOIN mra.market_target_outcome_metric AS outcome_metric
               ON outcome_metric.market_target_outcome_revision_id =
                  observation.market_target_outcome_revision_id
@@ -438,21 +446,32 @@ class PostgresEvaluationRepository:
             LEFT JOIN mra.exploratory_backtest_run AS backtest
               ON backtest.exploratory_backtest_run_id =
                  retrospective.exploratory_backtest_run_id
+            LEFT JOIN mra.exploratory_backtest_arm_strategy AS arm_strategy
+              ON arm_strategy.exploratory_backtest_arm_id =
+                 retrospective.exploratory_backtest_arm_id
+             AND arm_strategy.exploratory_backtest_run_id =
+                 retrospective.exploratory_backtest_run_id
             LEFT JOIN mra.signal AS signal
               ON signal.decision_run_id = commitment.decision_run_id
              AND signal.candidate_id = commitment.candidate_id
-             AND signal.strategy_version_id = backtest.strategy_version_id
+             AND signal.strategy_version_id = coalesce(
+                 arm_strategy.strategy_version_id, backtest.strategy_version_id
+             )
             LEFT JOIN mra.forecast AS forecast
               ON forecast.decision_run_id = commitment.decision_run_id
              AND forecast.candidate_id = commitment.candidate_id
              AND forecast.commitment_id = commitment.commitment_id
-             AND forecast.strategy_version_id = backtest.strategy_version_id
+             AND forecast.strategy_version_id = coalesce(
+                 arm_strategy.strategy_version_id, backtest.strategy_version_id
+             )
             LEFT JOIN mra.forecast_estimate AS estimate
               ON estimate.forecast_id = forecast.forecast_id
              AND estimate.target_metric_definition_id = %s
             LEFT JOIN mra.portfolio_proposal AS proposal
               ON proposal.decision_run_id = commitment.decision_run_id
-             AND proposal.strategy_version_id = backtest.strategy_version_id
+             AND proposal.strategy_version_id = coalesce(
+                 arm_strategy.strategy_version_id, backtest.strategy_version_id
+             )
              AND proposal.portfolio_policy_id = backtest.portfolio_policy_id
             LEFT JOIN mra.portfolio_line AS line
               ON line.portfolio_proposal_id = proposal.portfolio_proposal_id
@@ -532,6 +551,44 @@ class PostgresEvaluationRepository:
                     value_status = "UNAVAILABLE"
                 else:
                     value_status = str(source[5])
+            elif metric.source_kind is EvaluationSourceKind.CANDIDATE_OUTCOME_PAIR:
+                outcome_value = source[6]
+                outcome_available = (
+                    outcome_value is not None
+                    and str(source[5]) in {"COMPLETE", "PARTIAL"}
+                )
+                if (
+                    metric.source_measure
+                    is EvaluationSourceMeasure.CANDIDATE_SCORE_VS_TARGET
+                ):
+                    decimal_value = source[37]
+                    secondary_decimal_value = outcome_value
+                    boolean_value = None
+                    if decimal_value is None or not outcome_available:
+                        value_status = "UNAVAILABLE"
+                elif (
+                    metric.source_measure
+                    is EvaluationSourceMeasure.CANDIDATE_TOP_K_RETURN
+                ):
+                    decimal_value = (
+                        outcome_value
+                        if str(source[3]) == CandidateDisposition.SELECTED.value
+                        and outcome_available
+                        else None
+                    )
+                    boolean_value = None
+                    if decimal_value is None:
+                        value_status = "UNAVAILABLE"
+                else:
+                    decimal_value = None
+                    boolean_value = (
+                        Decimal(outcome_value) > 0
+                        if str(source[3]) == CandidateDisposition.SELECTED.value
+                        and outcome_available
+                        else None
+                    )
+                    if boolean_value is None:
+                        value_status = "UNAVAILABLE"
             elif metric.source_kind in {
                 EvaluationSourceKind.PORTFOLIO_LINE,
                 EvaluationSourceKind.PORTFOLIO_OUTCOME,
@@ -631,6 +688,7 @@ class PostgresEvaluationRepository:
             EvaluationSourceKind.CANDIDATE_DISPOSITION: "candidate",
             EvaluationSourceKind.SIGNAL_STATUS: "signal",
             EvaluationSourceKind.FORECAST_OUTCOME_PAIR: "forecast",
+            EvaluationSourceKind.CANDIDATE_OUTCOME_PAIR: "candidate_outcome",
             EvaluationSourceKind.PORTFOLIO_LINE: "portfolio",
             EvaluationSourceKind.PORTFOLIO_OUTCOME: "portfolio",
             EvaluationSourceKind.RISK_DECISION: "risk",
@@ -722,6 +780,26 @@ class PostgresEvaluationRepository:
                 item.source[8], item.source[9], item.source[26], item.source[28],
                 item.source[27], item.input.decimal_value,
                 item.input.secondary_decimal_value, item.input.source_value_status,
+            ),
+        )
+
+    def _insert_candidate_outcome_sources(
+        self, evaluation_run_id: UUID, metric: ProtocolMetricDefinition,
+        resolved: tuple[_ResolvedMetricInput, ...], input_ids: dict[UUID, UUID],
+    ) -> None:
+        self._insert_simple_sources(
+            "evaluation_candidate_outcome_source",
+            "commitment_id, candidate_id, candidate_set_id, disposition, "
+            "composite_score, competition_rank, market_target_outcome_metric_id, "
+            "market_target_outcome_revision_id, outcome_decimal_value, "
+            "decimal_value, secondary_decimal_value, boolean_value, source_status",
+            evaluation_run_id, metric, resolved, input_ids,
+            lambda item: (
+                item.source[8], item.source[10], item.source[39], item.source[3],
+                item.source[37], item.source[38], item.source[4], item.source[2],
+                item.source[6], item.input.decimal_value,
+                item.input.secondary_decimal_value, item.input.boolean_value,
+                item.input.source_value_status,
             ),
         )
 

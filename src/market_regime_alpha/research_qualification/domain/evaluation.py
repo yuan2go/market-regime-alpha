@@ -175,6 +175,7 @@ class ProtocolMetricDefinition:
             EvaluationReducer.ABSOLUTE_MEAN_DECIMAL: SourceMetricValueType.DECIMAL,
             EvaluationReducer.SPEARMAN_RANK_CORRELATION: SourceMetricValueType.DECIMAL,
             EvaluationReducer.MAX_DRAWDOWN: SourceMetricValueType.DECIMAL,
+            EvaluationReducer.TOP_BOTTOM_SPREAD: SourceMetricValueType.DECIMAL,
         }
         required = compatible.get(self.reducer)
         if required is not None and self.source_value_type is not required:
@@ -203,6 +204,11 @@ class ProtocolMetricDefinition:
             EvaluationSourceKind.RISK_DECISION: {
                 EvaluationSourceMeasure.RISK_REJECTED,
             },
+            EvaluationSourceKind.CANDIDATE_OUTCOME_PAIR: {
+                EvaluationSourceMeasure.CANDIDATE_SCORE_VS_TARGET,
+                EvaluationSourceMeasure.CANDIDATE_TOP_K_RETURN,
+                EvaluationSourceMeasure.CANDIDATE_HIT,
+            },
         }
         if self.source_measure not in source_measures[self.source_kind]:
             raise ValueError("source measure is incompatible with source kind")
@@ -214,23 +220,59 @@ class ProtocolMetricDefinition:
             EvaluationSourceKind.PORTFOLIO_OUTCOME: SourceMetricValueType.DECIMAL,
             EvaluationSourceKind.RISK_DECISION: SourceMetricValueType.BOOLEAN,
         }
+        measure_types = {
+            EvaluationSourceMeasure.CANDIDATE_SCORE_VS_TARGET: SourceMetricValueType.DECIMAL,
+            EvaluationSourceMeasure.CANDIDATE_TOP_K_RETURN: SourceMetricValueType.DECIMAL,
+            EvaluationSourceMeasure.CANDIDATE_HIT: SourceMetricValueType.BOOLEAN,
+        }
         source_type = source_types.get(self.source_kind)
+        source_type = measure_types.get(self.source_measure, source_type)
         if source_type is not None and self.source_value_type is not source_type:
             raise ValueError("source kind is incompatible with source metric value type")
         if (
             self.reducer is EvaluationReducer.SPEARMAN_RANK_CORRELATION
-            and self.source_kind is not EvaluationSourceKind.FORECAST_OUTCOME_PAIR
+            and self.source_kind not in {
+                EvaluationSourceKind.FORECAST_OUTCOME_PAIR,
+                EvaluationSourceKind.CANDIDATE_OUTCOME_PAIR,
+            }
         ):
             raise ValueError("rank correlation requires FORECAST_OUTCOME_PAIR")
         if (
-            self.source_kind is EvaluationSourceKind.FORECAST_OUTCOME_PAIR
+            self.source_kind in {
+                EvaluationSourceKind.FORECAST_OUTCOME_PAIR,
+                EvaluationSourceKind.CANDIDATE_OUTCOME_PAIR,
+            }
             and self.reducer
             not in {
                 EvaluationReducer.SPEARMAN_RANK_CORRELATION,
                 EvaluationReducer.ESTIMABLE_RATE,
+                EvaluationReducer.TOP_BOTTOM_SPREAD,
+                EvaluationReducer.MEAN_DECIMAL,
+                EvaluationReducer.TRUE_RATE,
             }
         ):
             raise ValueError("Forecast/Outcome pair reducer is incompatible")
+        candidate_reducers = {
+            EvaluationSourceMeasure.CANDIDATE_SCORE_VS_TARGET: {
+                EvaluationReducer.SPEARMAN_RANK_CORRELATION,
+                EvaluationReducer.TOP_BOTTOM_SPREAD,
+                EvaluationReducer.ESTIMABLE_RATE,
+            },
+            EvaluationSourceMeasure.CANDIDATE_TOP_K_RETURN: {
+                EvaluationReducer.MEAN_DECIMAL,
+                EvaluationReducer.MEDIAN_DECIMAL,
+                EvaluationReducer.ESTIMABLE_RATE,
+            },
+            EvaluationSourceMeasure.CANDIDATE_HIT: {
+                EvaluationReducer.TRUE_RATE,
+                EvaluationReducer.ESTIMABLE_RATE,
+            },
+        }
+        if (
+            self.source_kind is EvaluationSourceKind.CANDIDATE_OUTCOME_PAIR
+            and self.reducer not in candidate_reducers[self.source_measure]
+        ):
+            raise ValueError("Candidate/Outcome measure reducer is incompatible")
         if (
             self.reducer is EvaluationReducer.MAX_DRAWDOWN
             and self.source_measure
@@ -371,12 +413,17 @@ def evaluate_metric(
                 )
             )
             continue
+        requires_pair = (
+            metric.source_kind is EvaluationSourceKind.FORECAST_OUTCOME_PAIR
+            or (
+                metric.source_kind is EvaluationSourceKind.CANDIDATE_OUTCOME_PAIR
+                and metric.source_measure
+                is EvaluationSourceMeasure.CANDIDATE_SCORE_VS_TARGET
+            )
+        )
         has_value = (
             item.decimal_value is not None
-            and (
-                metric.source_kind is not EvaluationSourceKind.FORECAST_OUTCOME_PAIR
-                or item.secondary_decimal_value is not None
-            )
+            and (not requires_pair or item.secondary_decimal_value is not None)
             if metric.source_value_type is SourceMetricValueType.DECIMAL
             else item.boolean_value is not None
         )
@@ -488,6 +535,37 @@ def evaluate_metric(
             peak = max(peak, equity)
             if peak > 0:
                 value = max(value, (peak - equity) / peak)
+    elif metric.reducer is EvaluationReducer.TOP_BOTTOM_SPREAD:
+        grouped: dict[str, list[EvaluationInput]] = {}
+        for item in included:
+            grouped.setdefault(item.group_key or "ALL", []).append(item)
+        spreads: list[Decimal] = []
+        for members in grouped.values():
+            ranked = sorted(
+                (
+                    (item.decimal_value, item.secondary_decimal_value)
+                    for item in members
+                    if item.decimal_value is not None
+                    and item.secondary_decimal_value is not None
+                ),
+                key=lambda item: item[0],
+            )
+            if len(ranked) < 2:
+                continue
+            width = max(1, len(ranked) // 5)
+            low = sum((item[1] for item in ranked[:width]), Decimal(0)) / Decimal(width)
+            high = sum((item[1] for item in ranked[-width:]), Decimal(0)) / Decimal(width)
+            spreads.append(high - low)
+        if not spreads:
+            return EvaluationMetricResult(
+                EvaluationMetricState.NOT_ESTIMABLE,
+                None,
+                None,
+                0,
+                AcceptanceState.NOT_ESTIMABLE,
+                tuple(observations),
+            )
+        value = sum(spreads, Decimal(0)) / Decimal(len(spreads))
     else:
         eligible_count = sum(
             item.state is not EvaluationInputState.EXCLUDED for item in observations

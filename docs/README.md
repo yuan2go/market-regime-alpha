@@ -178,6 +178,8 @@ Checkpoint traceability:
   — vertical TDD slices, exact public seams, PostgreSQL qualification, isolated
   real execution and immutable Verification delivery order.
 - [WP-17P Prospective Archive and Exploratory Backtest Verification](references/WP-ARCHITECTURE-REFOUNDATION-17P-Prospective-Archive-Exploratory-Backtest-Verification.md)
+- [WP-18 Prospective Operations and Walk-Forward Design](references/WP-ARCHITECTURE-REFOUNDATION-18-Prospective-Walk-Forward-Design.md)
+- [WP-18 Prospective Operations and Walk-Forward Implementation Plan](references/WP-ARCHITECTURE-REFOUNDATION-18-Prospective-Walk-Forward-Implementation-Plan.md)
   — immutable exact-SHA proof for two-lane archive engineering, dual-clock
   retrospective execution, bounded XSHG-32 rule/Model backtests, prospective
   archive start, replay/reconciliation, and the unchanged Formal evidence

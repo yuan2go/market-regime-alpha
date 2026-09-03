@@ -28,7 +28,15 @@ from market_regime_alpha.market.application import (
     ArchiveSlicePlan,
     StartMarketArchiveRequest,
 )
-from market_regime_alpha.market.domain import ArchiveLane, BarTimeframe, PriceBasis
+from market_regime_alpha.market.domain import (
+    ArchiveLane,
+    BarTimeframe,
+    PriceBasis,
+    ProspectiveArchiveGenerationPlan,
+    ProspectiveArchiveMemberPlan,
+    ProspectiveArchiveScheduleSlot,
+    ProspectiveArchiveSliceSchedulePlan,
+)
 from market_regime_alpha.market.ports import CaptureRequest
 from market_regime_alpha.runtime.application import ActorType, CommandContext
 from market_regime_alpha.shared.hashing import canonical_json_sha256
@@ -64,7 +72,7 @@ class ArchiveOperatorManifest:
 
     def to_json(self) -> str:
         request = self.start_request
-        payload = {
+        payload: dict[str, object] = {
             "archive_code": request.archive_code,
             "code_artifact_id": str(request.code_artifact_id),
             "config_artifact_id": str(request.config_artifact_id),
@@ -106,8 +114,59 @@ class ArchiveOperatorManifest:
                 for item in self.slices
             ],
             "timeframe": request.timeframe.value,
-            "version": 1,
+            "version": 2 if request.prospective_generation is not None else 1,
         }
+        if request.prospective_generation is not None:
+            generation = request.prospective_generation
+            payload["prospective_generation"] = {
+                "decision_session_id": str(generation.decision_session_id),
+                "exchange": generation.exchange,
+                "generation": generation.generation,
+                "later_verification_session_id": str(
+                    generation.later_verification_session_id
+                ),
+                "members": [
+                    {
+                        "instrument_id": str(item.instrument_id),
+                        "instrument_identifier_id": str(
+                            item.instrument_identifier_id
+                        ),
+                        "ordinal": item.ordinal,
+                    }
+                    for item in generation.members
+                ],
+                "outcome_checkpoint_id": str(generation.outcome_checkpoint_id),
+                "outcome_session_id": str(generation.outcome_session_id),
+                "predecessor_market_archive_id": (
+                    str(generation.predecessor_market_archive_id)
+                    if generation.predecessor_market_archive_id is not None
+                    else None
+                ),
+                "provenance_sha256": str(generation.provenance_sha256),
+                "reference_checkpoint_id": str(
+                    generation.reference_checkpoint_id
+                ),
+                "schedules": [
+                    {
+                        "comparison_ordinal": item.comparison_ordinal,
+                        "instrument_id": str(item.instrument_id),
+                        "market_archive_slice_id": str(
+                            item.market_archive_slice_id
+                        ),
+                        "ordinal": item.ordinal,
+                        "slot": item.slot.value,
+                        "target_checkpoint_id": str(item.target_checkpoint_id),
+                        "trading_session_id": str(item.trading_session_id),
+                    }
+                    for item in generation.schedules
+                ],
+                "series_code": generation.series_code,
+                "target_definition_id": str(generation.target_definition_id),
+                "target_definition_sha256": str(
+                    generation.target_definition_sha256
+                ),
+                "target_version": generation.target_version,
+            }
         return json.dumps(
             payload,
             ensure_ascii=False,
@@ -120,7 +179,7 @@ class ArchiveOperatorManifest:
     def from_json(cls, payload: str) -> ArchiveOperatorManifest:
         try:
             raw = json.loads(payload)
-            if not isinstance(raw, dict) or raw.get("version") != 1:
+            if not isinstance(raw, dict) or raw.get("version") not in {1, 2}:
                 raise ValueError("archive manifest version is unsupported")
             slice_rows = raw["slices"]
             if not isinstance(slice_rows, list) or not slice_rows:
@@ -158,6 +217,72 @@ class ArchiveOperatorManifest:
                 for item in slices
             ):
                 raise ValueError("archive manifest mixes ProviderProduct identities")
+            prospective_generation = None
+            if raw["version"] == 2:
+                generation_raw = raw.get("prospective_generation")
+                if not isinstance(generation_raw, dict):
+                    raise ValueError("prospective generation is required")
+                prospective_generation = ProspectiveArchiveGenerationPlan(
+                    market_archive_id=UUID(raw["market_archive_id"]),
+                    series_code=str(generation_raw["series_code"]),
+                    generation=int(generation_raw["generation"]),
+                    predecessor_market_archive_id=(
+                        UUID(generation_raw["predecessor_market_archive_id"])
+                        if generation_raw["predecessor_market_archive_id"]
+                        is not None
+                        else None
+                    ),
+                    exchange=str(generation_raw["exchange"]),
+                    target_definition_id=UUID(
+                        generation_raw["target_definition_id"]
+                    ),
+                    target_version=int(generation_raw["target_version"]),
+                    target_definition_sha256=str(
+                        generation_raw["target_definition_sha256"]
+                    ),
+                    reference_checkpoint_id=UUID(
+                        generation_raw["reference_checkpoint_id"]
+                    ),
+                    outcome_checkpoint_id=UUID(
+                        generation_raw["outcome_checkpoint_id"]
+                    ),
+                    decision_session_id=UUID(
+                        generation_raw["decision_session_id"]
+                    ),
+                    outcome_session_id=UUID(
+                        generation_raw["outcome_session_id"]
+                    ),
+                    later_verification_session_id=UUID(
+                        generation_raw["later_verification_session_id"]
+                    ),
+                    members=tuple(
+                        ProspectiveArchiveMemberPlan(
+                            instrument_id=UUID(item["instrument_id"]),
+                            instrument_identifier_id=UUID(
+                                item["instrument_identifier_id"]
+                            ),
+                            ordinal=int(item["ordinal"]),
+                        )
+                        for item in generation_raw["members"]
+                    ),
+                    schedules=tuple(
+                        ProspectiveArchiveSliceSchedulePlan(
+                            market_archive_slice_id=UUID(
+                                item["market_archive_slice_id"]
+                            ),
+                            instrument_id=UUID(item["instrument_id"]),
+                            ordinal=int(item["ordinal"]),
+                            slot=ProspectiveArchiveScheduleSlot(item["slot"]),
+                            trading_session_id=UUID(item["trading_session_id"]),
+                            target_checkpoint_id=UUID(
+                                item["target_checkpoint_id"]
+                            ),
+                            comparison_ordinal=int(item["comparison_ordinal"]),
+                        )
+                        for item in generation_raw["schedules"]
+                    ),
+                    provenance_sha256=str(generation_raw["provenance_sha256"]),
+                )
             request = StartMarketArchiveRequest(
                 market_archive_id=UUID(raw["market_archive_id"]),
                 archive_code=str(raw["archive_code"]),
@@ -177,6 +302,7 @@ class ArchiveOperatorManifest:
                 config_artifact_id=UUID(raw["config_artifact_id"]),
                 provenance_sha256=str(raw["provenance_sha256"]),
                 slices=tuple(item.plan for item in slices),
+                prospective_generation=prospective_generation,
             )
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
             raise ValueError("archive operator manifest is invalid") from exc
@@ -242,6 +368,32 @@ def resume_archive(
         )
     ):
         raise ValueError("selected archive slice roster is empty, duplicate, or unknown")
+    if manifest.start_request.lane is ArchiveLane.PROSPECTIVE_CONTEMPORANEOUS:
+        application.market_archives.finalize_overdue(
+            market_archive_id=manifest.start_request.market_archive_id,
+            context=_context(
+                manifest,
+                actor_id,
+                f"{operation_key}-finalize-overdue",
+            ),
+        )
+        if manifest.start_request.prospective_generation is not None:
+            report = application.archive_inspection.inspect(
+                manifest.start_request.market_archive_id
+            )
+            due = {
+                item.market_archive_slice_id
+                for item in report.slices
+                if item.status == "DUE"
+            }
+            if slice_ids is not None and not selected.issubset(due):
+                raise ValueError(
+                    "prospective execution roster contains a non-DUE slice"
+                )
+            selected = due if slice_ids is None else selected
+            slice_ids = tuple(sorted(selected, key=str))
+            if not slice_ids:
+                return ()
     with BaoStockSession(sdk) as session:
         provider = BaoStockArchiveProvider(session)
         for item in manifest.slices:
@@ -280,7 +432,12 @@ def archive_report(application: TargetApplication, archive_id: UUID, kind: str) 
                 item for item in report.slices if item.gap_id is not None
             ),
             "resource_stops": tuple(
-                item for item in report.slices if item.status == "RESOURCE_LIMIT"
+                item
+                for item in report.slices
+                if item.status in {"RESOURCE_LIMIT", "RESOURCE_STOP"}
+            ),
+            "missed": tuple(
+                item for item in report.slices if item.status == "MISSED"
             ),
         }
     if kind == "revision-report":
@@ -293,6 +450,25 @@ def archive_report(application: TargetApplication, archive_id: UUID, kind: str) 
             ),
         }
     raise ValueError("archive report kind is unsupported")
+
+
+def run_due_archive(
+    application: TargetApplication,
+    manifest: ArchiveOperatorManifest,
+    *,
+    sdk: BaoStockSdk,
+    actor_id: str,
+    operation_key: str,
+) -> tuple[object, ...]:
+    """Close overdue windows, then execute the currently due manifest roster."""
+
+    return resume_archive(
+        application,
+        manifest,
+        sdk=sdk,
+        actor_id=actor_id,
+        operation_key=operation_key,
+    )
 
 
 def load_archive_manifest(path: Path) -> ArchiveOperatorManifest:
@@ -329,6 +505,7 @@ __all__ = [
     "load_archive_manifest",
     "require_isolated_operational_target",
     "resume_archive",
+    "run_due_archive",
     "start_archive",
     "validate_operational_target",
 ]

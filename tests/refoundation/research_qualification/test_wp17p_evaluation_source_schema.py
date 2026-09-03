@@ -66,6 +66,7 @@ def test_every_canonical_source_has_concrete_foreign_keys_and_append_only_guard(
             "evaluation_backtest_input_fk",
             "evaluation_backtest_decision_fk",
             "evaluation_candidate_input_fk",
+            "evaluation_candidate_outcome_input_fk",
             "evaluation_signal_input_fk",
             "evaluation_forecast_input_fk",
             "evaluation_portfolio_input_fk",
@@ -126,6 +127,8 @@ def test_protocol_freezes_reducer_source_and_arm_compatibility_in_postgres(
         contract = str(definition[0])
         assert "SPEARMAN_RANK_CORRELATION" in contract
         assert "MAX_DRAWDOWN" in contract
+        assert "TOP_BOTTOM_SPREAD" in contract
+        assert "CANDIDATE_OUTCOME_PAIR" in contract
         assert "EXPLORATORY_BACKTEST_ARM" in contract
         assert "NET_PORTFOLIO_RETURN_ASSUMED_COST" in contract
         source_type_guard = connection.execute(

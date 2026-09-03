@@ -84,13 +84,19 @@ class PostgresArchiveInspectionPort:
                        slice.scope_key, slice.expected_fact_kind,
                        slice.event_window_start, slice.event_window_end,
                        CASE
+                         WHEN terminal.market_archive_slice_id IS NOT NULL
+                           THEN terminal.terminal_state
                          WHEN resource.market_archive_resource_stop_id IS NOT NULL
                            THEN 'RESOURCE_LIMIT'
                          WHEN gap.market_archive_slice_gap_id IS NOT NULL
                            THEN gap.terminal_status
                          WHEN count(observation.market_archive_capture_observation_id) > 0
                            THEN 'CAPTURED'
-                         ELSE 'PLANNED'
+                         WHEN clock_timestamp() < slice.event_window_start
+                           THEN 'NOT_DUE'
+                         WHEN clock_timestamp() <= slice.event_window_end
+                           THEN 'DUE'
+                         ELSE 'OVERDUE'
                        END,
                        count(observation.market_archive_capture_observation_id),
                        (array_agg(observation.relation ORDER BY observation.observation_ordinal DESC)
@@ -107,15 +113,34 @@ class PostgresArchiveInspectionPort:
                   ON source_gap.gap_id = gap.gap_id
                 LEFT JOIN mra.market_archive_resource_stop AS resource
                   ON resource.market_archive_slice_id = slice.market_archive_slice_id
+                LEFT JOIN mra.prospective_archive_slice_terminal AS terminal
+                  ON terminal.market_archive_slice_id = slice.market_archive_slice_id
                 WHERE slice.market_archive_id = %s
                 GROUP BY slice.market_archive_slice_id, gap.gap_id,
                          gap.market_archive_slice_gap_id, gap.terminal_status,
                          source_gap.reason_code,
-                         resource.market_archive_resource_stop_id
+                         resource.market_archive_resource_stop_id,
+                         terminal.market_archive_slice_id, terminal.terminal_state
                 ORDER BY slice.ordinal
                 """,
                 (market_archive_id,),
             ).fetchall()
+            generation = connection.execute(
+                """
+                SELECT generation, predecessor_market_archive_id,
+                       (SELECT count(*)
+                        FROM mra.prospective_archive_revision_observation AS revision
+                        WHERE revision.market_archive_id = root.market_archive_id
+                          AND revision.relation = 'IDENTICAL'),
+                       (SELECT count(*)
+                        FROM mra.prospective_archive_revision_observation AS revision
+                        WHERE revision.market_archive_id = root.market_archive_id
+                          AND revision.relation = 'CHANGED')
+                FROM mra.prospective_archive_generation AS root
+                WHERE root.market_archive_id = %s
+                """,
+                (market_archive_id,),
+            ).fetchone()
         slices = tuple(
             ArchiveSliceInspection(
                 market_archive_slice_id=UUID(str(row[0])),
@@ -137,6 +162,16 @@ class PostgresArchiveInspectionPort:
         captured = int(root[7])
         gaps = int(root[8])
         resource_stops = int(root[9])
+        statuses = tuple(item.status for item in slices)
+        terminal_states = {
+            "CAPTURED_ON_TIME",
+            "CAPTURED_LATE",
+            "MISSED",
+            "PROVIDER_GAP",
+            "RESOURCE_STOP",
+            "FAILED",
+        }
+        wp18_terminal_count = sum(item in terminal_states for item in statuses)
         return ArchiveInspection(
             market_archive_id=market_archive_id,
             archive_code=str(root[0]),
@@ -149,7 +184,11 @@ class PostgresArchiveInspectionPort:
             captured_slice_count=captured,
             gap_slice_count=gaps,
             resource_stop_count=resource_stops,
-            pending_slice_count=int(root[6]) - captured - gaps - resource_stops,
+            pending_slice_count=(
+                int(root[6]) - wp18_terminal_count
+                if generation is not None
+                else int(root[6]) - captured - gaps - resource_stops
+            ),
             observation_count=int(root[10]),
             changed_observation_count=int(root[11]),
             on_time_observation_count=int(root[12]),
@@ -162,6 +201,24 @@ class PostgresArchiveInspectionPort:
             sealed_at=root[19],
             seal_disposition=str(root[20]) if root[20] is not None else None,
             slices=slices,
+            prospective_generation=(
+                int(generation[0]) if generation is not None else None
+            ),
+            predecessor_market_archive_id=(
+                UUID(str(generation[1]))
+                if generation is not None and generation[1] is not None
+                else None
+            ),
+            not_due_slice_count=statuses.count("NOT_DUE"),
+            due_slice_count=statuses.count("DUE"),
+            overdue_slice_count=statuses.count("OVERDUE"),
+            missed_slice_count=statuses.count("MISSED"),
+            observed_identical_count=(
+                int(generation[2]) if generation is not None else 0
+            ),
+            observed_changed_count=(
+                int(generation[3]) if generation is not None else 0
+            ),
         )
 
 

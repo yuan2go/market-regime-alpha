@@ -32,6 +32,10 @@ from market_regime_alpha.market.ports.session_roster import (
     ArchiveTradingSession,
     ArchiveTradingSessionReadPort,
 )
+from market_regime_alpha.market.ports.target_archive_schedule import (
+    TargetArchiveContract,
+    TargetArchiveScheduleReadPort,
+)
 from market_regime_alpha.market.ports.archive_operations import (
     ArchiveCaptureDisposition,
     ArchiveOperationsReadPort,
@@ -79,6 +83,8 @@ __all__ = [
     "ArchiveVerificationPort",
     "ArchiveTradingSession",
     "ArchiveTradingSessionReadPort",
+    "TargetArchiveContract",
+    "TargetArchiveScheduleReadPort",
     "ArchiveResourceInspector",
     "ArchiveSliceOperatingContract",
     "CaptureSource",

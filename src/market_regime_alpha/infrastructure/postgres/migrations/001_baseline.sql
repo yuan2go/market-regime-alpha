@@ -6800,7 +6800,7 @@ CREATE TABLE mra.strategy_context_requirement (
             'MARKET_REGIME', 'ETF_ROTATION', 'THEME_ROTATION', 'CAPITAL_BREADTH'
         )
         AND required_state IN ('POSITIVE', 'NEUTRAL', 'NEGATIVE')
-        AND missing_action IN ('WAIT', 'UNKNOWN', 'NOT_ESTIMABLE')
+        AND missing_action IN ('WAIT', 'UNKNOWN', 'NOT_ESTIMABLE', 'OBSERVE_ONLY')
         AND context_policy_content_sha256 ~ '^[0-9a-f]{64}$'
         AND content_sha256 ~ '^[0-9a-f]{64}$'
     )
@@ -11567,35 +11567,63 @@ CREATE TABLE mra.evaluation_protocol_metric (
         AND source_value_type IN ('DECIMAL', 'BOOLEAN')
         AND source_kind IN ('OUTCOME_METRIC', 'FORECAST_OUTCOME_PAIR',
             'CANDIDATE_DISPOSITION', 'SIGNAL_STATUS', 'PORTFOLIO_LINE',
-            'PORTFOLIO_OUTCOME', 'RISK_DECISION')
+            'PORTFOLIO_OUTCOME', 'RISK_DECISION',
+            'CANDIDATE_OUTCOME_PAIR')
         AND source_measure IN ('TARGET_VALUE', 'FORECAST_POINT_VS_TARGET',
             'CANDIDATE_SELECTED', 'SIGNAL_PRESENT', 'TARGET_WEIGHT',
             'TURNOVER', 'GROSS_PORTFOLIO_RETURN',
-            'NET_PORTFOLIO_RETURN_ASSUMED_COST', 'RISK_REJECTED')
+            'NET_PORTFOLIO_RETURN_ASSUMED_COST', 'RISK_REJECTED',
+            'CANDIDATE_SCORE_VS_TARGET', 'CANDIDATE_TOP_K_RETURN',
+            'CANDIDATE_HIT')
         AND ((source_kind = 'OUTCOME_METRIC' AND source_measure = 'TARGET_VALUE')
           OR (source_kind = 'FORECAST_OUTCOME_PAIR' AND source_measure = 'FORECAST_POINT_VS_TARGET')
           OR (source_kind = 'CANDIDATE_DISPOSITION' AND source_measure = 'CANDIDATE_SELECTED')
           OR (source_kind = 'SIGNAL_STATUS' AND source_measure = 'SIGNAL_PRESENT')
           OR (source_kind = 'PORTFOLIO_LINE' AND source_measure IN ('TARGET_WEIGHT', 'TURNOVER'))
           OR (source_kind = 'PORTFOLIO_OUTCOME' AND source_measure IN ('GROSS_PORTFOLIO_RETURN', 'NET_PORTFOLIO_RETURN_ASSUMED_COST'))
-          OR (source_kind = 'RISK_DECISION' AND source_measure = 'RISK_REJECTED'))
+          OR (source_kind = 'RISK_DECISION' AND source_measure = 'RISK_REJECTED')
+          OR (source_kind = 'CANDIDATE_OUTCOME_PAIR'
+              AND source_measure IN ('CANDIDATE_SCORE_VS_TARGET',
+                                     'CANDIDATE_TOP_K_RETURN',
+                                     'CANDIDATE_HIT')))
         AND (source_kind = 'OUTCOME_METRIC'
           OR (source_kind IN ('FORECAST_OUTCOME_PAIR', 'PORTFOLIO_LINE',
                               'PORTFOLIO_OUTCOME')
               AND source_value_type = 'DECIMAL')
           OR (source_kind IN ('CANDIDATE_DISPOSITION', 'SIGNAL_STATUS',
                               'RISK_DECISION')
-              AND source_value_type = 'BOOLEAN'))
+              AND source_value_type = 'BOOLEAN')
+          OR (source_kind = 'CANDIDATE_OUTCOME_PAIR'
+              AND ((source_measure IN ('CANDIDATE_SCORE_VS_TARGET',
+                                       'CANDIDATE_TOP_K_RETURN')
+                    AND source_value_type = 'DECIMAL')
+                OR (source_measure = 'CANDIDATE_HIT'
+                    AND source_value_type = 'BOOLEAN'))))
         AND reducer IN ('MEAN_DECIMAL', 'MEDIAN_DECIMAL', 'TRUE_RATE',
             'ESTIMABLE_RATE', 'SUM_DECIMAL', 'ABSOLUTE_MEAN_DECIMAL',
-            'SPEARMAN_RANK_CORRELATION', 'MAX_DRAWDOWN')
+            'SPEARMAN_RANK_CORRELATION', 'MAX_DRAWDOWN',
+            'TOP_BOTTOM_SPREAD')
         AND ((reducer IN ('MEAN_DECIMAL', 'MEDIAN_DECIMAL', 'SUM_DECIMAL',
                           'ABSOLUTE_MEAN_DECIMAL', 'SPEARMAN_RANK_CORRELATION',
-                          'MAX_DRAWDOWN') AND source_value_type = 'DECIMAL')
+                          'MAX_DRAWDOWN', 'TOP_BOTTOM_SPREAD')
+              AND source_value_type = 'DECIMAL')
           OR (reducer = 'TRUE_RATE' AND source_value_type = 'BOOLEAN')
           OR reducer = 'ESTIMABLE_RATE')
         AND (reducer <> 'SPEARMAN_RANK_CORRELATION'
-             OR source_kind = 'FORECAST_OUTCOME_PAIR')
+             OR source_kind IN ('FORECAST_OUTCOME_PAIR',
+                                'CANDIDATE_OUTCOME_PAIR'))
+        AND (reducer <> 'TOP_BOTTOM_SPREAD'
+             OR (source_kind = 'CANDIDATE_OUTCOME_PAIR'
+                 AND source_measure = 'CANDIDATE_SCORE_VS_TARGET'))
+        AND (source_kind <> 'CANDIDATE_OUTCOME_PAIR'
+             OR (source_measure = 'CANDIDATE_SCORE_VS_TARGET'
+                 AND reducer IN ('SPEARMAN_RANK_CORRELATION',
+                                 'TOP_BOTTOM_SPREAD', 'ESTIMABLE_RATE'))
+             OR (source_measure = 'CANDIDATE_TOP_K_RETURN'
+                 AND reducer IN ('MEAN_DECIMAL', 'MEDIAN_DECIMAL',
+                                 'ESTIMABLE_RATE'))
+             OR (source_measure = 'CANDIDATE_HIT'
+                 AND reducer IN ('TRUE_RATE', 'ESTIMABLE_RATE')))
         AND (reducer <> 'MAX_DRAWDOWN'
              OR source_measure IN ('GROSS_PORTFOLIO_RETURN',
                                    'NET_PORTFOLIO_RETURN_ASSUMED_COST'))
@@ -11608,7 +11636,11 @@ CREATE TABLE mra.evaluation_protocol_metric (
               AND backtest_arm_kind IS NULL)
           OR (slice_kind = 'EXPLORATORY_BACKTEST_ARM'
               AND candidate_disposition IS NULL
-              AND backtest_arm_kind IN ('RULE_BASELINE', 'MODEL_CHALLENGER')))
+              AND backtest_arm_kind IN (
+                  'RULE_BASELINE', 'MODEL_CHALLENGER',
+                  'RULE_CURRENT_CONTEXT', 'RIDGE_CURRENT_CONTEXT',
+                  'RULE_CONTEXT_OBSERVATIONAL', 'RIDGE_CONTEXT_OBSERVATIONAL'
+              )))
         AND direction IN ('HIGHER', 'LOWER', 'DESCRIPTIVE')
         AND inclusion_policy IN ('COMPLETE_ONLY', 'AVAILABLE_VALUE')
         AND missingness_policy IN ('RETAIN_AND_ESTIMATE', 'REQUIRE_COMPLETE_ROSTER')
@@ -11639,14 +11671,18 @@ CREATE INDEX evaluation_protocol_metric_source_fk_idx ON mra.evaluation_protocol
 CREATE FUNCTION mra.validate_evaluation_protocol_metric_source_type()
 RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
-    IF NEW.source_kind = 'OUTCOME_METRIC' AND NOT EXISTS (
+    IF NEW.source_kind IN ('OUTCOME_METRIC', 'CANDIDATE_OUTCOME_PAIR')
+       AND NOT EXISTS (
         SELECT 1
         FROM mra.target_metric_definition AS target_metric
         WHERE target_metric.target_metric_definition_id =
               NEW.source_target_metric_definition_id
           AND target_metric.target_definition_id = NEW.target_definition_id
           AND target_metric.metric_code = NEW.source_metric_code
-          AND target_metric.value_type = NEW.source_value_type
+          AND (NEW.source_kind = 'CANDIDATE_OUTCOME_PAIR'
+               AND target_metric.value_type = 'DECIMAL'
+               OR NEW.source_kind = 'OUTCOME_METRIC'
+               AND target_metric.value_type = NEW.source_value_type)
     ) THEN
         RAISE EXCEPTION 'Outcome Evaluation source type differs from exact Target metric'
             USING ERRCODE = '55000';
@@ -14150,6 +14186,13 @@ BEGIN
                           AND source.evaluation_protocol_metric_id =
                               protocol_metric.evaluation_protocol_metric_id)
                        <> NEW.expected_member_count)
+               OR (protocol_metric.source_kind = 'CANDIDATE_OUTCOME_PAIR'
+                   AND (SELECT count(*)
+                        FROM mra.evaluation_candidate_outcome_source AS source
+                        WHERE source.evaluation_run_id = NEW.evaluation_run_id
+                          AND source.evaluation_protocol_metric_id =
+                              protocol_metric.evaluation_protocol_metric_id)
+                       <> NEW.expected_member_count)
                OR (protocol_metric.source_kind = 'SIGNAL_STATUS'
                    AND (SELECT count(*)
                         FROM mra.evaluation_signal_source AS source
@@ -14208,6 +14251,11 @@ BEGIN
                 SELECT source.evaluation_protocol_metric_id,
                        source.source_measure
                 FROM mra.evaluation_candidate_source AS source
+                WHERE source.evaluation_run_id = NEW.evaluation_run_id
+                UNION ALL
+                SELECT source.evaluation_protocol_metric_id,
+                       source.source_measure
+                FROM mra.evaluation_candidate_outcome_source AS source
                 WHERE source.evaluation_run_id = NEW.evaluation_run_id
                 UNION ALL
                 SELECT source.evaluation_protocol_metric_id,
@@ -14295,6 +14343,55 @@ BEGIN
               AND commitment.commitment_id IS NULL
         ) THEN
             RAISE EXCEPTION 'Evaluation Candidate source is not exact'
+                USING ERRCODE = '55000';
+        END IF;
+        IF EXISTS (
+            SELECT 1
+            FROM mra.evaluation_candidate_outcome_source AS source
+            JOIN mra.evaluation_metric_observation AS input
+              ON input.evaluation_metric_observation_id =
+                 source.evaluation_metric_observation_id
+            JOIN mra.evaluation_observation AS observation
+              ON observation.evaluation_observation_id =
+                 input.evaluation_observation_id
+            JOIN mra.research_partition_member AS member
+              ON member.research_partition_member_id =
+                 observation.research_partition_member_id
+            JOIN mra.evaluation_protocol_metric AS protocol_metric
+              ON protocol_metric.evaluation_protocol_metric_id =
+                 source.evaluation_protocol_metric_id
+             AND protocol_metric.source_kind = 'CANDIDATE_OUTCOME_PAIR'
+             AND protocol_metric.source_measure = source.source_measure
+            LEFT JOIN mra.decision_target_commitment AS commitment
+              ON commitment.commitment_id = member.commitment_id
+             AND commitment.commitment_id = source.commitment_id
+             AND commitment.candidate_id = source.candidate_id
+             AND commitment.candidate_disposition = source.disposition
+            LEFT JOIN mra.candidate AS candidate
+              ON candidate.candidate_id = source.candidate_id
+             AND candidate.candidate_set_id = source.candidate_set_id
+             AND candidate.disposition = source.disposition
+             AND candidate.composite_score IS NOT DISTINCT FROM
+                 source.composite_score
+             AND candidate.competition_rank IS NOT DISTINCT FROM
+                 source.competition_rank
+            LEFT JOIN mra.market_target_outcome_metric AS outcome_metric
+              ON outcome_metric.market_target_outcome_metric_id =
+                 source.market_target_outcome_metric_id
+             AND outcome_metric.market_target_outcome_revision_id =
+                 observation.market_target_outcome_revision_id
+             AND outcome_metric.market_target_outcome_revision_id =
+                 source.market_target_outcome_revision_id
+             AND outcome_metric.target_metric_definition_id =
+                 protocol_metric.source_target_metric_definition_id
+             AND outcome_metric.decimal_value IS NOT DISTINCT FROM
+                 source.outcome_decimal_value
+            WHERE source.evaluation_run_id = NEW.evaluation_run_id
+              AND (commitment.commitment_id IS NULL
+                   OR candidate.candidate_id IS NULL
+                   OR outcome_metric.market_target_outcome_metric_id IS NULL)
+        ) THEN
+            RAISE EXCEPTION 'Evaluation Candidate/Outcome source is not exact'
                 USING ERRCODE = '55000';
         END IF;
         IF EXISTS (
@@ -18048,6 +18145,640 @@ CREATE INDEX market_archive_resource_stop_slice_idx ON mra.market_archive_resour
 CREATE INDEX market_archive_resource_stop_archive_slice_idx ON mra.market_archive_resource_stop(market_archive_id, market_archive_slice_id);
 CREATE INDEX market_archive_seal_archive_idx ON mra.market_archive_seal(market_archive_id);
 
+-- WP-18 Target-aligned prospective generation companion. The existing
+-- MarketArchive remains the executable root; this freezes session/Target/member
+-- scheduling without rewriting WP-17P rows.
+CREATE TABLE mra.prospective_archive_generation (
+    market_archive_id uuid PRIMARY KEY
+        REFERENCES mra.market_archive(market_archive_id) ON DELETE RESTRICT,
+    series_code text NOT NULL,
+    generation integer NOT NULL,
+    predecessor_market_archive_id uuid
+        REFERENCES mra.prospective_archive_generation(market_archive_id)
+        ON DELETE RESTRICT,
+    exchange_code text NOT NULL,
+    target_definition_id uuid NOT NULL,
+    target_version integer NOT NULL,
+    target_definition_sha256 text NOT NULL,
+    reference_checkpoint_id uuid NOT NULL,
+    outcome_checkpoint_id uuid NOT NULL,
+    decision_session_id uuid NOT NULL
+        REFERENCES mra.trading_session(session_id) ON DELETE RESTRICT,
+    outcome_session_id uuid NOT NULL
+        REFERENCES mra.trading_session(session_id) ON DELETE RESTRICT,
+    later_verification_session_id uuid NOT NULL
+        REFERENCES mra.trading_session(session_id) ON DELETE RESTRICT,
+    member_count integer NOT NULL,
+    member_roster_sha256 text NOT NULL,
+    schedule_count integer NOT NULL,
+    schedule_roster_sha256 text NOT NULL,
+    provenance_sha256 text NOT NULL,
+    content_sha256 text NOT NULL UNIQUE,
+    registered_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT prospective_archive_generation_series_uk UNIQUE (
+        series_code, generation
+    ),
+    CONSTRAINT prospective_archive_generation_predecessor_uk UNIQUE (
+        predecessor_market_archive_id
+    ),
+    CONSTRAINT prospective_archive_generation_target_fk FOREIGN KEY (
+        target_definition_id, target_version, target_definition_sha256
+    ) REFERENCES mra.target_definition(
+        target_definition_id, version, content_sha256
+    ) ON DELETE RESTRICT,
+    CONSTRAINT prospective_archive_generation_reference_fk FOREIGN KEY (
+        reference_checkpoint_id, target_definition_id
+    ) REFERENCES mra.target_checkpoint(
+        target_checkpoint_id, target_definition_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT prospective_archive_generation_outcome_fk FOREIGN KEY (
+        outcome_checkpoint_id, target_definition_id
+    ) REFERENCES mra.target_checkpoint(
+        target_checkpoint_id, target_definition_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT prospective_archive_generation_shape_ck CHECK (
+        series_code ~ '^[a-z][a-z0-9_-]{0,99}$'
+        AND generation > 0
+        AND ((generation = 1) = (predecessor_market_archive_id IS NULL))
+        AND exchange_code IN ('XSHG', 'XSHE')
+        AND target_version > 0
+        AND target_definition_sha256 ~ '^[0-9a-f]{64}$'
+        AND member_count > 0
+        AND schedule_count = member_count * 9
+        AND member_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND schedule_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND provenance_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+CREATE INDEX prospective_archive_generation_target_idx
+    ON mra.prospective_archive_generation(
+        target_definition_id, target_version, target_definition_sha256
+    );
+CREATE INDEX prospective_archive_generation_sessions_idx
+    ON mra.prospective_archive_generation(
+        decision_session_id, outcome_session_id, later_verification_session_id
+    );
+CREATE INDEX prospective_archive_generation_outcome_session_idx
+    ON mra.prospective_archive_generation(outcome_session_id);
+CREATE INDEX prospective_archive_generation_later_session_idx
+    ON mra.prospective_archive_generation(later_verification_session_id);
+CREATE INDEX prospective_archive_generation_reference_idx
+    ON mra.prospective_archive_generation(
+        reference_checkpoint_id, target_definition_id
+    );
+CREATE INDEX prospective_archive_generation_outcome_idx
+    ON mra.prospective_archive_generation(
+        outcome_checkpoint_id, target_definition_id
+    );
+
+CREATE TABLE mra.prospective_archive_generation_member (
+    market_archive_id uuid NOT NULL
+        REFERENCES mra.prospective_archive_generation(market_archive_id)
+        ON DELETE RESTRICT,
+    ordinal integer NOT NULL,
+    instrument_id uuid NOT NULL REFERENCES mra.instrument(instrument_id)
+        ON DELETE RESTRICT,
+    instrument_identifier_id uuid NOT NULL
+        REFERENCES mra.instrument_identifier(instrument_identifier_id)
+        ON DELETE RESTRICT,
+    content_sha256 text NOT NULL,
+    PRIMARY KEY (market_archive_id, ordinal),
+    CONSTRAINT prospective_archive_member_instrument_uk UNIQUE (
+        market_archive_id, instrument_id
+    ),
+    CONSTRAINT prospective_archive_member_scope_uk UNIQUE (
+        market_archive_id, instrument_id, ordinal
+    ),
+    CONSTRAINT prospective_archive_member_shape_ck CHECK (
+        ordinal > 0 AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+CREATE INDEX prospective_archive_member_identifier_idx
+    ON mra.prospective_archive_generation_member(instrument_identifier_id);
+CREATE INDEX prospective_archive_member_instrument_idx
+    ON mra.prospective_archive_generation_member(instrument_id);
+
+CREATE TABLE mra.prospective_archive_slice_schedule (
+    market_archive_slice_id uuid PRIMARY KEY,
+    market_archive_id uuid NOT NULL,
+    ordinal integer NOT NULL,
+    instrument_id uuid NOT NULL,
+    member_ordinal integer NOT NULL,
+    schedule_slot text NOT NULL,
+    trading_session_id uuid NOT NULL
+        REFERENCES mra.trading_session(session_id) ON DELETE RESTRICT,
+    target_checkpoint_id uuid NOT NULL,
+    comparison_ordinal integer NOT NULL,
+    content_sha256 text NOT NULL,
+    planned_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT prospective_archive_schedule_slice_fk FOREIGN KEY (
+        market_archive_id, market_archive_slice_id
+    ) REFERENCES mra.market_archive_slice(
+        market_archive_id, market_archive_slice_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT prospective_archive_schedule_member_fk FOREIGN KEY (
+        market_archive_id, instrument_id, member_ordinal
+    ) REFERENCES mra.prospective_archive_generation_member(
+        market_archive_id, instrument_id, ordinal
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT prospective_archive_schedule_ordinal_uk UNIQUE (
+        market_archive_id, ordinal
+    ),
+    CONSTRAINT prospective_archive_schedule_slot_uk UNIQUE (
+        market_archive_id, instrument_id, schedule_slot
+    ),
+    CONSTRAINT prospective_archive_schedule_shape_ck CHECK (
+        ordinal > 0 AND member_ordinal > 0 AND comparison_ordinal > 0
+        AND schedule_slot IN (
+            'PRE_DECISION', 'DECISION_NEAR', 'POST_CLOSE',
+            'EVENING_REVISION', 'OUTCOME_PRE_OPEN', 'OUTCOME_PATH',
+            'OUTCOME_10_30', 'OUTCOME_POST_CLOSE',
+            'REVISION_VERIFICATION'
+        )
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+CREATE INDEX prospective_archive_schedule_due_idx
+    ON mra.prospective_archive_slice_schedule(
+        market_archive_id, trading_session_id, schedule_slot
+    );
+CREATE INDEX prospective_archive_schedule_slice_scope_idx
+    ON mra.prospective_archive_slice_schedule(
+        market_archive_id, market_archive_slice_id
+    );
+CREATE INDEX prospective_archive_schedule_member_idx
+    ON mra.prospective_archive_slice_schedule(
+        market_archive_id, instrument_id, member_ordinal
+    );
+CREATE INDEX prospective_archive_schedule_session_idx
+    ON mra.prospective_archive_slice_schedule(trading_session_id);
+CREATE INDEX prospective_archive_schedule_checkpoint_idx
+    ON mra.prospective_archive_slice_schedule(target_checkpoint_id);
+
+CREATE TABLE mra.prospective_archive_slice_terminal (
+    market_archive_slice_id uuid PRIMARY KEY,
+    market_archive_id uuid NOT NULL,
+    terminal_state text NOT NULL,
+    reason_code text NOT NULL,
+    terminal_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    content_sha256 text NOT NULL,
+    CONSTRAINT prospective_archive_terminal_schedule_fk FOREIGN KEY (
+        market_archive_slice_id
+    ) REFERENCES mra.prospective_archive_slice_schedule(
+        market_archive_slice_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT prospective_archive_terminal_slice_fk FOREIGN KEY (
+        market_archive_id, market_archive_slice_id
+    ) REFERENCES mra.market_archive_slice(
+        market_archive_id, market_archive_slice_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT prospective_archive_terminal_shape_ck CHECK (
+        terminal_state IN (
+            'CAPTURED_ON_TIME', 'CAPTURED_LATE', 'MISSED',
+            'PROVIDER_GAP', 'RESOURCE_STOP', 'FAILED'
+        )
+        AND reason_code ~ '^[A-Z][A-Z0-9_]{0,99}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+CREATE INDEX prospective_archive_terminal_archive_idx
+    ON mra.prospective_archive_slice_terminal(
+        market_archive_id, terminal_state, market_archive_slice_id
+    );
+CREATE INDEX prospective_archive_terminal_slice_scope_idx
+    ON mra.prospective_archive_slice_terminal(
+        market_archive_id, market_archive_slice_id
+    );
+
+CREATE TABLE mra.prospective_archive_revision_observation (
+    market_archive_capture_observation_id uuid PRIMARY KEY
+        REFERENCES mra.market_archive_capture_observation(
+            market_archive_capture_observation_id
+        ) ON DELETE RESTRICT,
+    market_archive_id uuid NOT NULL,
+    market_archive_slice_id uuid NOT NULL,
+    instrument_id uuid NOT NULL,
+    target_checkpoint_id uuid NOT NULL
+        REFERENCES mra.target_checkpoint(target_checkpoint_id) ON DELETE RESTRICT,
+    comparison_ordinal integer NOT NULL,
+    predecessor_observation_id uuid
+        REFERENCES mra.prospective_archive_revision_observation(
+            market_archive_capture_observation_id
+        ) ON DELETE RESTRICT,
+    relation text NOT NULL,
+    artifact_sha256 text NOT NULL,
+    normalized_revision_roster_sha256 text NOT NULL,
+    content_sha256 text NOT NULL,
+    observed_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT prospective_archive_revision_schedule_fk FOREIGN KEY (
+        market_archive_slice_id
+    ) REFERENCES mra.prospective_archive_slice_schedule(
+        market_archive_slice_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT prospective_archive_revision_ordinal_uk UNIQUE (
+        market_archive_id, instrument_id, target_checkpoint_id,
+        comparison_ordinal
+    ),
+    CONSTRAINT prospective_archive_revision_shape_ck CHECK (
+        comparison_ordinal > 0
+        AND relation IN ('FIRST', 'IDENTICAL', 'CHANGED')
+        AND ((comparison_ordinal = 1) = (predecessor_observation_id IS NULL))
+        AND ((comparison_ordinal = 1) = (relation = 'FIRST'))
+        AND artifact_sha256 ~ '^[0-9a-f]{64}$'
+        AND normalized_revision_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+CREATE INDEX prospective_archive_revision_predecessor_idx
+    ON mra.prospective_archive_revision_observation(predecessor_observation_id);
+CREATE INDEX prospective_archive_revision_schedule_idx
+    ON mra.prospective_archive_revision_observation(market_archive_slice_id);
+CREATE INDEX prospective_archive_revision_checkpoint_idx
+    ON mra.prospective_archive_revision_observation(target_checkpoint_id);
+
+CREATE TABLE mra.operational_schema_upgrade_receipt (
+    operational_schema_upgrade_receipt_id uuid PRIMARY KEY,
+    upgrade_code text NOT NULL UNIQUE,
+    database_oid oid NOT NULL,
+    prior_baseline_sha256 text NOT NULL,
+    next_baseline_sha256 text NOT NULL,
+    backup_sha256 text NOT NULL,
+    backup_size_bytes bigint NOT NULL,
+    code_sha text NOT NULL,
+    content_sha256 text NOT NULL UNIQUE,
+    applied_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT operational_schema_upgrade_receipt_shape_ck CHECK (
+        upgrade_code ~ '^[a-z][a-z0-9_-]{0,99}$'
+        AND prior_baseline_sha256 ~ '^[0-9a-f]{64}$'
+        AND next_baseline_sha256 ~ '^[0-9a-f]{64}$'
+        AND backup_sha256 ~ '^[0-9a-f]{64}$'
+        AND backup_size_bytes > 0
+        AND code_sha ~ '^[0-9a-f]{40}([0-9a-f]{24})?$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE FUNCTION mra.validate_prospective_archive_generation()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE decision_date date;
+DECLARE outcome_date date;
+DECLARE later_date date;
+DECLARE outcome_offset integer;
+DECLARE expected_content text;
+BEGIN
+    SELECT decision.session_date, outcome.session_date, later.session_date,
+           outcome_checkpoint.session_offset
+      INTO decision_date, outcome_date, later_date, outcome_offset
+      FROM mra.market_archive AS archive
+      JOIN mra.trading_session AS decision
+        ON decision.session_id = NEW.decision_session_id
+       AND decision.exchange = NEW.exchange_code
+      JOIN mra.trading_session AS outcome
+        ON outcome.session_id = NEW.outcome_session_id
+       AND outcome.exchange = NEW.exchange_code
+      JOIN mra.trading_session AS later
+        ON later.session_id = NEW.later_verification_session_id
+       AND later.exchange = NEW.exchange_code
+      JOIN mra.target_checkpoint AS reference_checkpoint
+        ON reference_checkpoint.target_checkpoint_id = NEW.reference_checkpoint_id
+       AND reference_checkpoint.target_definition_id = NEW.target_definition_id
+       AND reference_checkpoint.checkpoint_role = 'DECISION_REFERENCE'
+       AND reference_checkpoint.session_offset = 0
+      JOIN mra.target_checkpoint AS outcome_checkpoint
+        ON outcome_checkpoint.target_checkpoint_id = NEW.outcome_checkpoint_id
+       AND outcome_checkpoint.target_definition_id = NEW.target_definition_id
+       AND outcome_checkpoint.checkpoint_role = 'OUTCOME_OBSERVATION'
+       AND outcome_checkpoint.session_offset > 0
+     WHERE archive.market_archive_id = NEW.market_archive_id
+       AND archive.lane = 'PROSPECTIVE_CONTEMPORANEOUS'
+       AND archive.evidence_class = 'FIRST_PARTY_CONTEMPORANEOUS'
+       AND archive.exchange_code = NEW.exchange_code;
+    IF decision_date IS NULL OR NOT decision_date < outcome_date
+       OR NOT outcome_date < later_date
+       OR (SELECT count(*) FROM mra.trading_session
+           WHERE exchange = NEW.exchange_code
+             AND session_date > decision_date
+             AND session_date <= outcome_date) <> outcome_offset THEN
+        RAISE EXCEPTION 'Prospective generation Target/TradingSession binding is invalid'
+            USING ERRCODE = '55000';
+    END IF;
+    IF NEW.generation > 1 AND NOT EXISTS (
+        SELECT 1 FROM mra.prospective_archive_generation AS prior
+        WHERE prior.market_archive_id = NEW.predecessor_market_archive_id
+          AND prior.series_code = NEW.series_code
+          AND prior.generation = NEW.generation - 1
+          AND prior.exchange_code = NEW.exchange_code
+          AND prior.target_definition_id = NEW.target_definition_id
+          AND prior.target_version = NEW.target_version
+          AND prior.target_definition_sha256 = NEW.target_definition_sha256
+          AND prior.decision_session_id <> NEW.decision_session_id
+          AND prior.member_roster_sha256 = NEW.member_roster_sha256
+    ) THEN
+        RAISE EXCEPTION 'Prospective generation predecessor is not exact'
+            USING ERRCODE = '55000';
+    END IF;
+    expected_content := mra.canonical_sha256(mra.canonical_json_text(jsonb_build_object(
+        'decision_session_id', NEW.decision_session_id,
+        'exchange', NEW.exchange_code,
+        'generation', NEW.generation,
+        'later_verification_session_id', NEW.later_verification_session_id,
+        'market_archive_id', NEW.market_archive_id,
+        'member_roster_sha256', NEW.member_roster_sha256,
+        'outcome_checkpoint_id', NEW.outcome_checkpoint_id,
+        'outcome_session_id', NEW.outcome_session_id,
+        'predecessor_market_archive_id', NEW.predecessor_market_archive_id,
+        'provenance_sha256', NEW.provenance_sha256,
+        'reference_checkpoint_id', NEW.reference_checkpoint_id,
+        'schedule_roster_sha256', NEW.schedule_roster_sha256,
+        'series_code', NEW.series_code,
+        'target_definition_id', NEW.target_definition_id,
+        'target_definition_sha256', NEW.target_definition_sha256,
+        'target_version', NEW.target_version
+    )));
+    IF NEW.content_sha256 <> expected_content THEN
+        RAISE EXCEPTION 'Prospective generation content hash is invalid'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.validate_prospective_archive_member()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE expected_content text;
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM mra.prospective_archive_generation AS generation
+        JOIN mra.instrument AS instrument
+          ON instrument.instrument_id = NEW.instrument_id
+         AND instrument.exchange = generation.exchange_code
+        JOIN mra.instrument_identifier AS identifier
+          ON identifier.instrument_identifier_id = NEW.instrument_identifier_id
+         AND identifier.instrument_id = instrument.instrument_id
+        WHERE generation.market_archive_id = NEW.market_archive_id
+    ) THEN
+        RAISE EXCEPTION 'Prospective archive member identity/exchange is invalid'
+            USING ERRCODE = '55000';
+    END IF;
+    expected_content := mra.canonical_sha256(mra.canonical_json_text(jsonb_build_object(
+        'instrument_id', NEW.instrument_id,
+        'instrument_identifier_id', NEW.instrument_identifier_id,
+        'ordinal', NEW.ordinal
+    )));
+    IF NEW.content_sha256 <> expected_content THEN
+        RAISE EXCEPTION 'Prospective archive member hash is invalid'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.validate_prospective_archive_schedule()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE generation mra.prospective_archive_generation%ROWTYPE;
+DECLARE expected_session uuid;
+DECLARE expected_checkpoint uuid;
+DECLARE expected_content text;
+BEGIN
+    SELECT * INTO generation FROM mra.prospective_archive_generation
+    WHERE market_archive_id = NEW.market_archive_id FOR SHARE;
+    expected_session := CASE
+        WHEN NEW.schedule_slot IN (
+            'PRE_DECISION', 'DECISION_NEAR', 'POST_CLOSE', 'EVENING_REVISION'
+        ) THEN generation.decision_session_id
+        WHEN NEW.schedule_slot = 'REVISION_VERIFICATION'
+            THEN generation.later_verification_session_id
+        ELSE generation.outcome_session_id END;
+    expected_checkpoint := CASE
+        WHEN NEW.schedule_slot IN (
+            'PRE_DECISION', 'DECISION_NEAR', 'POST_CLOSE', 'EVENING_REVISION'
+        ) THEN generation.reference_checkpoint_id
+        ELSE generation.outcome_checkpoint_id END;
+    IF NEW.trading_session_id <> expected_session
+       OR NEW.target_checkpoint_id <> expected_checkpoint
+       OR NOT EXISTS (
+           SELECT 1 FROM mra.market_archive_slice AS slice
+           JOIN mra.trading_session AS session
+             ON session.session_id = NEW.trading_session_id
+           WHERE slice.market_archive_slice_id = NEW.market_archive_slice_id
+             AND slice.market_archive_id = NEW.market_archive_id
+             AND (slice.event_window_start AT TIME ZONE session.timezone_name)::date = session.session_date
+             AND (slice.event_window_end AT TIME ZONE session.timezone_name)::date = session.session_date
+       ) THEN
+        RAISE EXCEPTION 'Prospective archive schedule session/Target binding is invalid'
+            USING ERRCODE = '55000';
+    END IF;
+    expected_content := mra.canonical_sha256(mra.canonical_json_text(jsonb_build_object(
+        'comparison_ordinal', NEW.comparison_ordinal,
+        'instrument_id', NEW.instrument_id,
+        'market_archive_slice_id', NEW.market_archive_slice_id,
+        'ordinal', NEW.ordinal,
+        'slot', NEW.schedule_slot,
+        'target_checkpoint_id', NEW.target_checkpoint_id,
+        'trading_session_id', NEW.trading_session_id
+    )));
+    IF NEW.content_sha256 <> expected_content THEN
+        RAISE EXCEPTION 'Prospective archive schedule hash is invalid'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.validate_prospective_archive_roster()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE root_id uuid;
+DECLARE generation mra.prospective_archive_generation%ROWTYPE;
+DECLARE member_count integer;
+DECLARE member_ordinals integer[];
+DECLARE member_hash text;
+DECLARE schedule_count integer;
+DECLARE schedule_ordinals integer[];
+DECLARE schedule_hash text;
+BEGIN
+    root_id := NEW.market_archive_id;
+    SELECT * INTO generation FROM mra.prospective_archive_generation
+    WHERE market_archive_id = root_id;
+    SELECT count(*), array_agg(ordinal ORDER BY ordinal),
+           mra.canonical_sha256(mra.canonical_json_text(coalesce(jsonb_agg(
+               jsonb_build_object('content_sha256', content_sha256, 'ordinal', ordinal)
+               ORDER BY ordinal
+           ), '[]'::jsonb)))
+      INTO member_count, member_ordinals, member_hash
+      FROM mra.prospective_archive_generation_member
+     WHERE market_archive_id = root_id;
+    SELECT count(*), array_agg(ordinal ORDER BY ordinal),
+           mra.canonical_sha256(mra.canonical_json_text(coalesce(jsonb_agg(
+               jsonb_build_object('content_sha256', content_sha256, 'ordinal', ordinal)
+               ORDER BY ordinal
+           ), '[]'::jsonb)))
+      INTO schedule_count, schedule_ordinals, schedule_hash
+      FROM mra.prospective_archive_slice_schedule
+     WHERE market_archive_id = root_id;
+    IF member_count <> generation.member_count
+       OR member_ordinals <> ARRAY(SELECT generate_series(1, generation.member_count))
+       OR member_hash <> generation.member_roster_sha256
+       OR schedule_count <> generation.schedule_count
+       OR schedule_ordinals <> ARRAY(SELECT generate_series(1, generation.schedule_count))
+       OR schedule_hash <> generation.schedule_roster_sha256
+       OR schedule_count <> (
+           SELECT count(*) FROM mra.market_archive_slice
+           WHERE market_archive_id = root_id
+       ) THEN
+        RAISE EXCEPTION 'Prospective archive generation roster is incomplete'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+CREATE FUNCTION mra.validate_prospective_archive_terminal()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE slice_row mra.market_archive_slice%ROWTYPE;
+DECLARE observed_timeliness text;
+DECLARE has_gap boolean;
+DECLARE has_resource boolean;
+BEGIN
+    NEW.terminal_at := clock_timestamp();
+    SELECT * INTO slice_row FROM mra.market_archive_slice
+    WHERE market_archive_slice_id = NEW.market_archive_slice_id FOR SHARE;
+    SELECT timeliness INTO observed_timeliness
+    FROM mra.market_archive_capture_observation
+    WHERE market_archive_slice_id = NEW.market_archive_slice_id;
+    has_gap := EXISTS (SELECT 1 FROM mra.market_archive_slice_gap
+        WHERE market_archive_slice_id = NEW.market_archive_slice_id);
+    has_resource := EXISTS (SELECT 1 FROM mra.market_archive_resource_stop
+        WHERE market_archive_slice_id = NEW.market_archive_slice_id);
+    IF (NEW.terminal_state = 'CAPTURED_ON_TIME' AND observed_timeliness IS DISTINCT FROM 'ON_TIME')
+       OR (NEW.terminal_state = 'CAPTURED_LATE' AND observed_timeliness IS DISTINCT FROM 'LATE')
+       OR (NEW.terminal_state IN ('PROVIDER_GAP', 'FAILED') AND NOT has_gap)
+       OR (NEW.terminal_state = 'RESOURCE_STOP' AND NOT has_resource)
+       OR (NEW.terminal_state = 'MISSED' AND (
+            NEW.terminal_at <= slice_row.event_window_end
+            OR observed_timeliness IS NOT NULL OR has_gap OR has_resource
+       )) THEN
+        RAISE EXCEPTION 'Prospective archive terminal evidence is invalid'
+            USING ERRCODE = '55000';
+    END IF;
+    NEW.content_sha256 := mra.canonical_sha256(mra.canonical_json_text(jsonb_build_object(
+        'market_archive_id', NEW.market_archive_id,
+        'market_archive_slice_id', NEW.market_archive_slice_id,
+        'reason_code', NEW.reason_code,
+        'terminal_at', mra.canonical_timestamptz_text(NEW.terminal_at),
+        'terminal_state', NEW.terminal_state
+    )));
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.validate_prospective_archive_revision()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE observation mra.market_archive_capture_observation%ROWTYPE;
+DECLARE schedule mra.prospective_archive_slice_schedule%ROWTYPE;
+DECLARE prior mra.prospective_archive_revision_observation%ROWTYPE;
+DECLARE expected_relation text;
+DECLARE expected_content text;
+BEGIN
+    SELECT * INTO observation FROM mra.market_archive_capture_observation
+    WHERE market_archive_capture_observation_id = NEW.market_archive_capture_observation_id
+    FOR SHARE;
+    SELECT * INTO schedule FROM mra.prospective_archive_slice_schedule
+    WHERE market_archive_slice_id = NEW.market_archive_slice_id FOR SHARE;
+    SELECT * INTO prior FROM mra.prospective_archive_revision_observation
+    WHERE market_archive_id = NEW.market_archive_id
+      AND instrument_id = NEW.instrument_id
+      AND target_checkpoint_id = NEW.target_checkpoint_id
+    ORDER BY comparison_ordinal DESC LIMIT 1 FOR SHARE;
+    expected_relation := CASE
+        WHEN prior.market_archive_capture_observation_id IS NULL THEN 'FIRST'
+        WHEN prior.artifact_sha256 = observation.artifact_sha256
+         AND prior.normalized_revision_roster_sha256 = observation.normalized_revision_roster_sha256
+            THEN 'IDENTICAL'
+        ELSE 'CHANGED' END;
+    IF observation.market_archive_id <> NEW.market_archive_id
+       OR observation.market_archive_slice_id <> NEW.market_archive_slice_id
+       OR schedule.instrument_id <> NEW.instrument_id
+       OR schedule.target_checkpoint_id <> NEW.target_checkpoint_id
+       OR schedule.comparison_ordinal <> NEW.comparison_ordinal
+       OR NEW.artifact_sha256 <> observation.artifact_sha256
+       OR NEW.normalized_revision_roster_sha256 <> observation.normalized_revision_roster_sha256
+       OR NEW.relation <> expected_relation
+       OR (prior.market_archive_capture_observation_id IS NULL AND NEW.predecessor_observation_id IS NOT NULL)
+       OR (prior.market_archive_capture_observation_id IS NOT NULL AND (
+            NEW.predecessor_observation_id <> prior.market_archive_capture_observation_id
+            OR NEW.comparison_ordinal <> prior.comparison_ordinal + 1
+       )) THEN
+        RAISE EXCEPTION 'Prospective archive revision chain is invalid'
+            USING ERRCODE = '55000';
+    END IF;
+    expected_content := mra.canonical_sha256(mra.canonical_json_text(jsonb_build_object(
+        'artifact_sha256', NEW.artifact_sha256,
+        'comparison_ordinal', NEW.comparison_ordinal,
+        'instrument_id', NEW.instrument_id,
+        'market_archive_capture_observation_id', NEW.market_archive_capture_observation_id,
+        'market_archive_id', NEW.market_archive_id,
+        'market_archive_slice_id', NEW.market_archive_slice_id,
+        'target_checkpoint_id', NEW.target_checkpoint_id,
+        'normalized_revision_roster_sha256', NEW.normalized_revision_roster_sha256,
+        'predecessor_observation_id', NEW.predecessor_observation_id,
+        'relation', NEW.relation
+    )));
+    IF NEW.content_sha256 <> expected_content THEN
+        RAISE EXCEPTION 'Prospective archive revision hash is invalid'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER prospective_archive_generation_guard
+BEFORE INSERT ON mra.prospective_archive_generation
+FOR EACH ROW EXECUTE FUNCTION mra.validate_prospective_archive_generation();
+CREATE TRIGGER prospective_archive_member_guard
+BEFORE INSERT ON mra.prospective_archive_generation_member
+FOR EACH ROW EXECUTE FUNCTION mra.validate_prospective_archive_member();
+CREATE TRIGGER prospective_archive_schedule_guard
+BEFORE INSERT ON mra.prospective_archive_slice_schedule
+FOR EACH ROW EXECUTE FUNCTION mra.validate_prospective_archive_schedule();
+CREATE CONSTRAINT TRIGGER prospective_archive_generation_roster_guard
+AFTER INSERT ON mra.prospective_archive_generation
+DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
+EXECUTE FUNCTION mra.validate_prospective_archive_roster();
+CREATE CONSTRAINT TRIGGER prospective_archive_member_roster_guard
+AFTER INSERT ON mra.prospective_archive_generation_member
+DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
+EXECUTE FUNCTION mra.validate_prospective_archive_roster();
+CREATE CONSTRAINT TRIGGER prospective_archive_schedule_roster_guard
+AFTER INSERT ON mra.prospective_archive_slice_schedule
+DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
+EXECUTE FUNCTION mra.validate_prospective_archive_roster();
+CREATE TRIGGER prospective_archive_terminal_guard
+BEFORE INSERT ON mra.prospective_archive_slice_terminal
+FOR EACH ROW EXECUTE FUNCTION mra.validate_prospective_archive_terminal();
+CREATE TRIGGER prospective_archive_revision_guard
+BEFORE INSERT ON mra.prospective_archive_revision_observation
+FOR EACH ROW EXECUTE FUNCTION mra.validate_prospective_archive_revision();
+CREATE TRIGGER prospective_archive_generation_append_only
+BEFORE UPDATE OR DELETE ON mra.prospective_archive_generation
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER prospective_archive_member_append_only
+BEFORE UPDATE OR DELETE ON mra.prospective_archive_generation_member
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER prospective_archive_schedule_append_only
+BEFORE UPDATE OR DELETE ON mra.prospective_archive_slice_schedule
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER prospective_archive_terminal_append_only
+BEFORE UPDATE OR DELETE ON mra.prospective_archive_slice_terminal
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER prospective_archive_revision_append_only
+BEFORE UPDATE OR DELETE ON mra.prospective_archive_revision_observation
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER operational_schema_upgrade_receipt_append_only
+BEFORE UPDATE OR DELETE ON mra.operational_schema_upgrade_receipt
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+
 CREATE FUNCTION mra.validate_market_archive()
 RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
@@ -18923,7 +19654,9 @@ CREATE TABLE mra.exploratory_backtest_run (
         run_code ~ '^[a-z][a-z0-9_-]{0,99}$' AND generation > 0
         AND evidence_lane = 'EXPLORATORY_RETROSPECTIVE'
         AND hypothesis <> '' AND target_version > 0
-        AND feature_count > 0 AND arm_count = 2 AND fold_count > 0
+        AND feature_count > 0
+        AND ((generation = 1 AND arm_count = 2) OR (generation > 1 AND arm_count = 4))
+        AND fold_count > 0
         AND session_count > 0 AND cost_count > 0 AND random_seed >= 0
         AND target_definition_sha256 ~ '^[0-9a-f]{64}$'
         AND candidate_policy_sha256 ~ '^[0-9a-f]{64}$'
@@ -18976,13 +19709,57 @@ CREATE TABLE mra.exploratory_backtest_arm (
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     CONSTRAINT exploratory_backtest_arm_ordinal_uk UNIQUE (exploratory_backtest_run_id, ordinal),
     CONSTRAINT exploratory_backtest_arm_kind_uk UNIQUE (exploratory_backtest_run_id, arm_kind),
+    CONSTRAINT exploratory_backtest_arm_scope_uk UNIQUE (
+        exploratory_backtest_arm_id, exploratory_backtest_run_id
+    ),
     CONSTRAINT exploratory_backtest_arm_exact_uk UNIQUE (exploratory_backtest_arm_id, exploratory_backtest_run_id, content_sha256),
     CONSTRAINT exploratory_backtest_arm_shape_ck CHECK (
-        ordinal > 0 AND arm_kind IN ('RULE_BASELINE', 'MODEL_CHALLENGER')
+        ordinal > 0 AND arm_kind IN (
+            'RULE_BASELINE', 'MODEL_CHALLENGER',
+            'RULE_CURRENT_CONTEXT', 'RIDGE_CURRENT_CONTEXT',
+            'RULE_CONTEXT_OBSERVATIONAL', 'RIDGE_CONTEXT_OBSERVATIONAL'
+        )
         AND content_sha256 ~ '^[0-9a-f]{64}$'
     )
 );
 CREATE INDEX exploratory_backtest_arm_run_idx ON mra.exploratory_backtest_arm(exploratory_backtest_run_id);
+
+CREATE TABLE mra.exploratory_backtest_arm_strategy (
+    exploratory_backtest_arm_id uuid PRIMARY KEY,
+    exploratory_backtest_run_id uuid NOT NULL,
+    strategy_version_id uuid NOT NULL,
+    strategy_version_sha256 text NOT NULL,
+    context_mode text NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT exploratory_backtest_arm_strategy_arm_fk FOREIGN KEY (
+        exploratory_backtest_arm_id, exploratory_backtest_run_id
+    ) REFERENCES mra.exploratory_backtest_arm(
+        exploratory_backtest_arm_id, exploratory_backtest_run_id
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT exploratory_backtest_arm_strategy_version_fk FOREIGN KEY (
+        strategy_version_id, strategy_version_sha256
+    ) REFERENCES mra.strategy_version(
+        strategy_version_id, content_sha256
+    ) ON DELETE RESTRICT,
+    CONSTRAINT exploratory_backtest_arm_strategy_shape_ck CHECK (
+        context_mode IN ('CURRENT_GATE', 'OBSERVATIONAL')
+        AND strategy_version_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+CREATE INDEX exploratory_backtest_arm_strategy_run_idx
+    ON mra.exploratory_backtest_arm_strategy(
+        exploratory_backtest_run_id, exploratory_backtest_arm_id
+    );
+CREATE INDEX exploratory_backtest_arm_strategy_scope_idx
+    ON mra.exploratory_backtest_arm_strategy(
+        exploratory_backtest_arm_id, exploratory_backtest_run_id
+    );
+CREATE INDEX exploratory_backtest_arm_strategy_version_idx
+    ON mra.exploratory_backtest_arm_strategy(
+        strategy_version_id, strategy_version_sha256
+    );
 
 CREATE TABLE mra.exploratory_backtest_fold (
     exploratory_backtest_fold_id uuid PRIMARY KEY,
@@ -19132,16 +19909,41 @@ BEGIN
     IF (SELECT array_agg(arm_kind ORDER BY ordinal)
         FROM mra.exploratory_backtest_arm
         WHERE exploratory_backtest_run_id = NEW.exploratory_backtest_run_id)
-       <> ARRAY['RULE_BASELINE', 'MODEL_CHALLENGER']::text[]
-       OR EXISTS (
+       <> (CASE WHEN NEW.generation = 1
+           THEN ARRAY['RULE_BASELINE', 'MODEL_CHALLENGER']::text[]
+           ELSE ARRAY[
+               'RULE_CURRENT_CONTEXT', 'RIDGE_CURRENT_CONTEXT',
+               'RULE_CONTEXT_OBSERVATIONAL', 'RIDGE_CONTEXT_OBSERVATIONAL'
+           ]::text[] END)
+       OR (NEW.generation = 1 AND EXISTS (
           SELECT 1 FROM mra.exploratory_backtest_arm
           WHERE exploratory_backtest_run_id = NEW.exploratory_backtest_run_id
             AND content_sha256 <> mra.canonical_sha256(mra.canonical_json_text(jsonb_build_object(
                 'exploratory_backtest_arm_id', exploratory_backtest_arm_id,
                 'kind', arm_kind, 'ordinal', ordinal
             )))
-       ) THEN
+       )) THEN
         RAISE EXCEPTION 'Exploratory backtest arm roster is invalid' USING ERRCODE = '55000';
+    END IF;
+    IF (NEW.generation = 1 AND EXISTS (
+            SELECT 1 FROM mra.exploratory_backtest_arm_strategy
+            WHERE exploratory_backtest_run_id = NEW.exploratory_backtest_run_id
+        )) OR (NEW.generation > 1 AND EXISTS (
+            SELECT 1
+            FROM mra.exploratory_backtest_arm AS arm
+            LEFT JOIN mra.exploratory_backtest_arm_strategy AS binding
+              ON binding.exploratory_backtest_arm_id = arm.exploratory_backtest_arm_id
+             AND binding.exploratory_backtest_run_id = arm.exploratory_backtest_run_id
+            WHERE arm.exploratory_backtest_run_id = NEW.exploratory_backtest_run_id
+              AND (
+                  binding.exploratory_backtest_arm_id IS NULL
+                  OR binding.content_sha256 <> arm.content_sha256
+                  OR binding.context_mode <> CASE
+                      WHEN arm.arm_kind LIKE '%OBSERVATIONAL' THEN 'OBSERVATIONAL'
+                      ELSE 'CURRENT_GATE' END
+              )
+        )) THEN
+        RAISE EXCEPTION 'Exploratory backtest arm Strategy roster is incomplete' USING ERRCODE = '55000';
     END IF;
     IF EXISTS (
         SELECT 1
@@ -19198,7 +20000,14 @@ BEGIN
             OR fold.session_count <> (SELECT count(*) FROM mra.exploratory_backtest_fold_session AS member WHERE member.exploratory_backtest_fold_id = fold.exploratory_backtest_fold_id)
             OR fold.purge_sessions <> (SELECT count(*) FROM mra.exploratory_backtest_fold_session AS member WHERE member.exploratory_backtest_fold_id = fold.exploratory_backtest_fold_id AND member.session_role = 'PURGE')
             OR fold.embargo_sessions <> (SELECT count(*) FROM mra.exploratory_backtest_fold_session AS member WHERE member.exploratory_backtest_fold_id = fold.exploratory_backtest_fold_id AND member.session_role = 'EMBARGO')
-            OR NOT EXISTS (SELECT 1 FROM mra.exploratory_backtest_fold_session AS member WHERE member.exploratory_backtest_fold_id = fold.exploratory_backtest_fold_id AND member.session_role = 'EVALUATION')
+            OR NOT EXISTS (
+                SELECT 1 FROM mra.exploratory_backtest_fold_session AS member
+                WHERE member.exploratory_backtest_fold_id = fold.exploratory_backtest_fold_id
+                  AND member.session_role = CASE
+                      WHEN fold.purpose = 'FIT' THEN 'FIT_INPUT'
+                      ELSE 'EVALUATION'
+                  END
+            )
             OR fold.session_roster_sha256 <> (
                 SELECT mra.canonical_sha256(mra.canonical_json_text(coalesce(jsonb_agg(
                     jsonb_build_object('content_sha256', member.content_sha256,
@@ -19306,6 +20115,7 @@ FOR EACH ROW EXECUTE FUNCTION mra.validate_exploratory_backtest_run();
 CREATE TRIGGER exploratory_backtest_run_append_only BEFORE UPDATE OR DELETE ON mra.exploratory_backtest_run FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
 CREATE TRIGGER exploratory_backtest_feature_append_only BEFORE UPDATE OR DELETE ON mra.exploratory_backtest_feature FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
 CREATE TRIGGER exploratory_backtest_arm_append_only BEFORE UPDATE OR DELETE ON mra.exploratory_backtest_arm FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER exploratory_backtest_arm_strategy_append_only BEFORE UPDATE OR DELETE ON mra.exploratory_backtest_arm_strategy FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
 CREATE TRIGGER exploratory_backtest_fold_append_only BEFORE UPDATE OR DELETE ON mra.exploratory_backtest_fold FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
 CREATE TRIGGER exploratory_backtest_fold_session_append_only BEFORE UPDATE OR DELETE ON mra.exploratory_backtest_fold_session FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
 CREATE TRIGGER exploratory_backtest_cost_append_only BEFORE UPDATE OR DELETE ON mra.exploratory_backtest_cost_assumption FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
@@ -19676,11 +20486,6 @@ ALTER TABLE mra.evaluation_metric_observation
         research_partition_member_id, market_target_outcome_revision_id,
         source_outcome_metric_id, input_state
     );
-ALTER TABLE mra.exploratory_backtest_arm
-    ADD CONSTRAINT exploratory_backtest_arm_scope_uk UNIQUE (
-        exploratory_backtest_arm_id, exploratory_backtest_run_id
-    );
-
 CREATE TABLE mra.model (
     model_id uuid PRIMARY KEY,
     model_code text NOT NULL UNIQUE,
@@ -20097,7 +20902,10 @@ BEGIN
           ON arm.exploratory_backtest_arm_id = NEW.exploratory_backtest_arm_id
          AND arm.exploratory_backtest_run_id =
              backtest.exploratory_backtest_run_id
-         AND arm.arm_kind = 'MODEL_CHALLENGER'
+         AND arm.arm_kind IN (
+             'MODEL_CHALLENGER', 'RIDGE_CURRENT_CONTEXT',
+             'RIDGE_CONTEXT_OBSERVATIONAL'
+         )
         JOIN mra.exploratory_backtest_fold AS fold
           ON fold.exploratory_backtest_fold_id = NEW.exploratory_backtest_fold_id
          AND fold.exploratory_backtest_run_id =
@@ -20562,7 +21370,10 @@ BEGIN
              decision.exploratory_backtest_arm_id
          AND inference_arm.exploratory_backtest_run_id =
              decision.exploratory_backtest_run_id
-         AND inference_arm.arm_kind = 'MODEL_CHALLENGER'
+         AND inference_arm.arm_kind IN (
+             'MODEL_CHALLENGER', 'RIDGE_CURRENT_CONTEXT',
+             'RIDGE_CONTEXT_OBSERVATIONAL'
+         )
         JOIN mra.exploratory_backtest_fold AS inference_fold
           ON inference_fold.exploratory_backtest_fold_id =
              decision.exploratory_backtest_fold_id
@@ -20760,7 +21571,11 @@ CREATE TABLE mra.evaluation_backtest_arm_source (
         exploratory_backtest_fold_session_id
     ) ON DELETE RESTRICT,
     CONSTRAINT evaluation_backtest_source_shape_ck CHECK (
-        arm_kind IN ('RULE_BASELINE', 'MODEL_CHALLENGER')
+        arm_kind IN (
+            'RULE_BASELINE', 'MODEL_CHALLENGER',
+            'RULE_CURRENT_CONTEXT', 'RIDGE_CURRENT_CONTEXT',
+            'RULE_CONTEXT_OBSERVATIONAL', 'RIDGE_CONTEXT_OBSERVATIONAL'
+        )
         AND content_sha256 ~ '^[0-9a-f]{64}$'
     )
 );
@@ -20822,6 +21637,95 @@ CREATE INDEX evaluation_candidate_source_commitment_idx ON mra.evaluation_candid
 CREATE INDEX evaluation_candidate_source_candidate_idx ON mra.evaluation_candidate_source(
     candidate_id
 );
+
+CREATE TABLE mra.evaluation_candidate_outcome_source (
+    evaluation_metric_observation_id uuid PRIMARY KEY,
+    evaluation_run_id uuid NOT NULL,
+    evaluation_protocol_metric_id uuid NOT NULL,
+    source_measure text NOT NULL,
+    commitment_id uuid NOT NULL
+        REFERENCES mra.decision_target_commitment(commitment_id) ON DELETE RESTRICT,
+    candidate_id uuid NOT NULL REFERENCES mra.candidate(candidate_id) ON DELETE RESTRICT,
+    candidate_set_id uuid NOT NULL REFERENCES mra.candidate_set(candidate_set_id) ON DELETE RESTRICT,
+    disposition text NOT NULL,
+    composite_score numeric,
+    competition_rank integer,
+    market_target_outcome_metric_id uuid NOT NULL
+        REFERENCES mra.market_target_outcome_metric(market_target_outcome_metric_id)
+        ON DELETE RESTRICT,
+    market_target_outcome_revision_id uuid NOT NULL
+        REFERENCES mra.market_target_outcome_revision(market_target_outcome_revision_id)
+        ON DELETE RESTRICT,
+    outcome_decimal_value numeric,
+    decimal_value numeric,
+    secondary_decimal_value numeric,
+    boolean_value boolean,
+    source_status text NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT evaluation_candidate_outcome_input_fk FOREIGN KEY (
+        evaluation_metric_observation_id, evaluation_run_id,
+        evaluation_protocol_metric_id
+    ) REFERENCES mra.evaluation_metric_observation(
+        evaluation_metric_observation_id, evaluation_run_id,
+        evaluation_protocol_metric_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT evaluation_candidate_outcome_shape_ck CHECK (
+        source_measure IN ('CANDIDATE_SCORE_VS_TARGET',
+                           'CANDIDATE_TOP_K_RETURN', 'CANDIDATE_HIT')
+        AND disposition IN ('SELECTED', 'RANKED_NOT_SELECTED', 'UNRANKABLE')
+        AND source_status IN ('PARTIAL', 'COMPLETE', 'UNAVAILABLE')
+        AND ((disposition = 'UNRANKABLE'
+              AND composite_score IS NULL AND competition_rank IS NULL)
+          OR (disposition <> 'UNRANKABLE'
+              AND composite_score BETWEEN 0 AND 1
+              AND competition_rank > 0))
+        AND (
+          source_status = 'UNAVAILABLE'
+          OR (source_measure = 'CANDIDATE_SCORE_VS_TARGET'
+              AND decimal_value = composite_score
+              AND secondary_decimal_value = outcome_decimal_value
+              AND boolean_value IS NULL
+              AND decimal_value IS NOT NULL
+              AND secondary_decimal_value IS NOT NULL)
+          OR (source_measure = 'CANDIDATE_TOP_K_RETURN'
+              AND disposition = 'SELECTED'
+              AND decimal_value = outcome_decimal_value
+              AND secondary_decimal_value IS NULL
+              AND boolean_value IS NULL
+              AND decimal_value IS NOT NULL)
+          OR (source_measure = 'CANDIDATE_HIT'
+              AND disposition = 'SELECTED'
+              AND decimal_value IS NULL
+              AND secondary_decimal_value IS NULL
+              AND boolean_value IS NOT NULL)
+        )
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+CREATE INDEX evaluation_candidate_outcome_run_idx
+    ON mra.evaluation_candidate_outcome_source(
+        evaluation_run_id, evaluation_protocol_metric_id
+    );
+CREATE INDEX evaluation_candidate_outcome_input_idx
+    ON mra.evaluation_candidate_outcome_source(
+        evaluation_metric_observation_id, evaluation_run_id,
+        evaluation_protocol_metric_id
+    );
+CREATE INDEX evaluation_candidate_outcome_commitment_idx
+    ON mra.evaluation_candidate_outcome_source(commitment_id, candidate_id);
+CREATE INDEX evaluation_candidate_outcome_candidate_idx
+    ON mra.evaluation_candidate_outcome_source(candidate_id, candidate_set_id);
+CREATE INDEX evaluation_candidate_outcome_candidate_set_idx
+    ON mra.evaluation_candidate_outcome_source(candidate_set_id, candidate_id);
+CREATE INDEX evaluation_candidate_outcome_metric_idx
+    ON mra.evaluation_candidate_outcome_source(
+        market_target_outcome_metric_id, market_target_outcome_revision_id
+    );
+CREATE INDEX evaluation_candidate_outcome_revision_idx
+    ON mra.evaluation_candidate_outcome_source(
+        market_target_outcome_revision_id, market_target_outcome_metric_id
+    );
 
 CREATE TABLE mra.evaluation_signal_source (
     evaluation_metric_observation_id uuid PRIMARY KEY,
@@ -21101,6 +22005,8 @@ CREATE TRIGGER evaluation_backtest_arm_source_append_only BEFORE UPDATE OR DELET
 CREATE TRIGGER evaluation_backtest_arm_source_insert_guard BEFORE INSERT ON mra.evaluation_backtest_arm_source FOR EACH ROW EXECUTE FUNCTION mra.guard_evaluation_metric_insert();
 CREATE TRIGGER evaluation_candidate_source_append_only BEFORE UPDATE OR DELETE ON mra.evaluation_candidate_source FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
 CREATE TRIGGER evaluation_candidate_source_insert_guard BEFORE INSERT ON mra.evaluation_candidate_source FOR EACH ROW EXECUTE FUNCTION mra.guard_evaluation_metric_insert();
+CREATE TRIGGER evaluation_candidate_outcome_source_append_only BEFORE UPDATE OR DELETE ON mra.evaluation_candidate_outcome_source FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER evaluation_candidate_outcome_source_insert_guard BEFORE INSERT ON mra.evaluation_candidate_outcome_source FOR EACH ROW EXECUTE FUNCTION mra.guard_evaluation_metric_insert();
 CREATE TRIGGER evaluation_signal_source_append_only BEFORE UPDATE OR DELETE ON mra.evaluation_signal_source FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
 CREATE TRIGGER evaluation_signal_source_insert_guard BEFORE INSERT ON mra.evaluation_signal_source FOR EACH ROW EXECUTE FUNCTION mra.guard_evaluation_metric_insert();
 CREATE TRIGGER evaluation_forecast_source_append_only BEFORE UPDATE OR DELETE ON mra.evaluation_forecast_source FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();

@@ -128,6 +128,31 @@ class PostgresExploratoryBacktestRepository:
                     )
                 ),
             )
+            wp18_arms = tuple(
+                arm for arm in plan.arms if arm.strategy_version_id is not None
+            )
+            if wp18_arms:
+                cursor.executemany(
+                    """
+                    INSERT INTO mra.exploratory_backtest_arm_strategy (
+                        exploratory_backtest_arm_id,
+                        exploratory_backtest_run_id,
+                        strategy_version_id, strategy_version_sha256,
+                        context_mode, content_sha256
+                    ) VALUES (%s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        (
+                            arm.exploratory_backtest_arm_id,
+                            plan.exploratory_backtest_run_id,
+                            arm.strategy_version_id,
+                            str(arm.strategy_version_sha256),
+                            arm.context_mode.value,
+                            str(arm.content_sha256),
+                        )
+                        for arm in wp18_arms
+                    ),
+                )
             cursor.executemany(
                 """
                 INSERT INTO mra.exploratory_backtest_arm (
@@ -290,6 +315,27 @@ class PostgresExploratoryBacktestRepository:
             raise RuntimeStateConflictError(
                 "Exploratory backtest Feature roster is not exact"
             )
+        wp18_strategies = tuple(
+            (arm.strategy_version_id, str(arm.strategy_version_sha256))
+            for arm in plan.arms
+            if arm.strategy_version_id is not None
+        )
+        if wp18_strategies:
+            rows = self._connection.execute(
+                """
+                SELECT strategy_version_id, content_sha256
+                FROM mra.strategy_version
+                WHERE strategy_version_id = ANY(%s::uuid[])
+                FOR SHARE
+                """,
+                ([item[0] for item in wp18_strategies],),
+            ).fetchall()
+            if {(UUID(str(row[0])), str(row[1])) for row in rows} != set(
+                wp18_strategies
+            ):
+                raise RuntimeStateConflictError(
+                    "Exploratory backtest arm Strategy roster is not exact"
+                )
         for fold in plan.folds:
             protocol = self._connection.execute(
                 """

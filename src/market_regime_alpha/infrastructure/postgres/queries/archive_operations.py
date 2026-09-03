@@ -30,6 +30,7 @@ class PostgresArchiveOperationsReadPort:
                        slice.event_window_end,
                        root.reserved_free_bytes, root.maximum_slice_bytes,
                        CASE
+                         WHEN terminal.market_archive_slice_id IS NOT NULL THEN terminal.terminal_state
                          WHEN resource.market_archive_resource_stop_id IS NOT NULL THEN 'RESOURCE_LIMIT'
                          WHEN gap.market_archive_slice_gap_id IS NOT NULL THEN gap.terminal_status
                          WHEN root.lane = 'RETROSPECTIVE_BACKFILL' AND EXISTS (
@@ -45,6 +46,8 @@ class PostgresArchiveOperationsReadPort:
                   ON gap.market_archive_slice_id = slice.market_archive_slice_id
                 LEFT JOIN mra.market_archive_resource_stop AS resource
                   ON resource.market_archive_slice_id = slice.market_archive_slice_id
+                LEFT JOIN mra.prospective_archive_slice_terminal AS terminal
+                  ON terminal.market_archive_slice_id = slice.market_archive_slice_id
                 WHERE root.market_archive_id = %s
                   AND slice.market_archive_slice_id = %s
                 """,
