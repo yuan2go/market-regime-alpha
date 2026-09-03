@@ -295,6 +295,7 @@ class PostgresBacktestQueryPort:
                 cost_kind=BacktestCostKind(str(row["cost_kind"])),
                 charge_side=BacktestCostChargeSide(str(row["charge_side"])),
                 amount_bps=Decimal(str(row["amount_bps"])),
+                arm_id=(None if row["exploratory_backtest_arm_id"] is None else UUID(str(row["exploratory_backtest_arm_id"]))),
             )
             for row in cost_rows
         )

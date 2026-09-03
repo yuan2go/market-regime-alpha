@@ -328,7 +328,7 @@ class PostgresBacktestRepository:
                     cost_kind, amount_bps, evidence_class, content_sha256,
                     specification_sha256, charge_side,
                     exploratory_backtest_arm_id
-                ) VALUES (%s, %s, %s, %s, %s, 'ASSUMED_COST', %s, %s, %s, NULL)
+                ) VALUES (%s, %s, %s, %s, %s, 'ASSUMED_COST', %s, %s, %s, %s)
                 """,
                 (
                     (
@@ -340,6 +340,7 @@ class PostgresBacktestRepository:
                         str(cost.content_sha256),
                         specification_hash,
                         cost.charge_side.value,
+                        cost.arm_id,
                     )
                     for cost in specification.cost_assumptions
                 ),

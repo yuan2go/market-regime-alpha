@@ -209,15 +209,26 @@ class PostgresEvaluationRepository:
             )
             """,
             (
-                plan.evaluation_protocol_id, plan.protocol_code, plan.protocol_version,
-                plan.target_definition_id, plan.target_version,
-                str(plan.target_definition_sha256), plan.applicable_purpose.value,
-                plan.decision_rule, len(plan.metrics), str(plan.metric_roster_sha256),
-                plan.code_artifact.artifact_id, str(plan.code_artifact.content_sha256),
-                plan.code_artifact.size_bytes, plan.config_artifact.artifact_id,
-                str(plan.config_artifact.content_sha256), plan.config_artifact.size_bytes,
-                str(plan.provenance_sha256), str(plan.content_sha256),
-                request_identity, request_sha256,
+                plan.evaluation_protocol_id,
+                plan.protocol_code,
+                plan.protocol_version,
+                plan.target_definition_id,
+                plan.target_version,
+                str(plan.target_definition_sha256),
+                plan.applicable_purpose.value,
+                plan.decision_rule,
+                len(plan.metrics),
+                str(plan.metric_roster_sha256),
+                plan.code_artifact.artifact_id,
+                str(plan.code_artifact.content_sha256),
+                plan.code_artifact.size_bytes,
+                plan.config_artifact.artifact_id,
+                str(plan.config_artifact.content_sha256),
+                plan.config_artifact.size_bytes,
+                str(plan.provenance_sha256),
+                str(plan.content_sha256),
+                request_identity,
+                request_sha256,
             ),
         )
         record = self.protocol_record(plan.evaluation_protocol_id, lock=False)
@@ -225,9 +236,7 @@ class PostgresEvaluationRepository:
             raise EvaluationReconciliationError("EvaluationProtocol metric roster does not reconcile")
         return record
 
-    def open_run(
-        self, plan: EvaluationRunPlan, *, request_sha256: str
-    ) -> EvaluationRunRecord:
+    def open_run(self, plan: EvaluationRunPlan, *, request_sha256: str) -> EvaluationRunRecord:
         binding = self._connection.execute(
             """
             SELECT run.experiment_id, run.experiment_partition_id,
@@ -251,9 +260,7 @@ class PostgresEvaluationRepository:
             (plan.evaluation_protocol_id, plan.experiment_run_id),
         ).fetchone()
         if binding is None:
-            raise EvaluationProtocolError(
-                "EvaluationRun requires exact Experiment/Partition/Protocol binding"
-            )
+            raise EvaluationProtocolError("EvaluationRun requires exact Experiment/Partition/Protocol binding")
         member_count = self._connection.execute(
             "SELECT count(*) FROM mra.research_partition_member WHERE research_partition_id = %s",
             (binding[2],),
@@ -280,18 +287,27 @@ class PostgresEvaluationRepository:
             )
             """,
             (
-                plan.evaluation_run_id, plan.experiment_run_id,
-                binding[0], binding[1], binding[2], plan.evaluation_protocol_id,
-                binding[3], binding[4], plan.requested_knowledge_cutoff,
-                binding[5], binding[6],
+                plan.evaluation_run_id,
+                plan.experiment_run_id,
+                binding[0],
+                binding[1],
+                binding[2],
+                plan.evaluation_protocol_id,
+                binding[3],
+                binding[4],
+                plan.requested_knowledge_cutoff,
+                binding[5],
+                binding[6],
                 plan.code_artifact.artifact_id,
                 str(plan.code_artifact.content_sha256),
                 plan.code_artifact.size_bytes,
                 plan.config_artifact.artifact_id,
                 str(plan.config_artifact.content_sha256),
                 plan.config_artifact.size_bytes,
-                str(plan.provenance_sha256), str(plan.content_sha256),
-                plan.request_identity, request_sha256,
+                str(plan.provenance_sha256),
+                str(plan.content_sha256),
+                plan.request_identity,
+                request_sha256,
             ),
         )
         return self.run_record(plan.evaluation_run_id, lock=False)
@@ -314,9 +330,7 @@ class PostgresEvaluationRepository:
         if run[4] == "COMPLETED":
             if run[7] is None:
                 raise EvaluationReconciliationError("completed EvaluationRun has no metric roster hash")
-            return EvaluationCompletionResult(
-                evaluation_run_id, int(run[5]), int(run[6]), str(run[7])
-            )
+            return EvaluationCompletionResult(evaluation_run_id, int(run[5]), int(run[6]), str(run[7]))
         if run[4] != "INPUTS_ACQUIRED":
             raise RuntimeStateConflictError("EvaluationRun is not INPUTS_ACQUIRED")
         if int(run[1]) != int(run[3]):
@@ -346,9 +360,7 @@ class PostgresEvaluationRepository:
             metric = self._protocol_metric(row, UUID(str(run[0])))
             source_rows = self._metric_source_rows(evaluation_run_id, metric)
             if len(source_rows) != int(run[1]):
-                raise EvaluationReconciliationError(
-                    "exact canonical metric input roster is incomplete or ambiguous"
-                )
+                raise EvaluationReconciliationError("exact canonical metric input roster is incomplete or ambiguous")
             resolved = self._resolve_metric_inputs(metric, source_rows)
             inputs = tuple(item.input for item in resolved)
             legacy_result = evaluate_metric(metric, inputs)
@@ -373,9 +385,7 @@ class PostgresEvaluationRepository:
                 "result": result,
             }
             if metric.formula is not None:
-                result_payload["formula_content_sha256"] = str(
-                    metric.formula.content_sha256
-                )
+                result_payload["formula_content_sha256"] = str(metric.formula.content_sha256)
                 result_payload["reason_code"] = metric_reason_code
             result_hash = canonical_json_sha256(result_payload)
             self._connection.execute(
@@ -389,20 +399,21 @@ class PostgresEvaluationRepository:
                 ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
-                    evaluation_metric_id, evaluation_run_id,
-                    metric.evaluation_protocol_metric_id, run[0],
-                    result.state.value, result.decimal_value,
-                    result.boolean_value, result.estimable_count,
-                    result.acceptance_state.value, metric_reason_code, result_hash,
+                    evaluation_metric_id,
+                    evaluation_run_id,
+                    metric.evaluation_protocol_metric_id,
+                    run[0],
+                    result.state.value,
+                    result.decimal_value,
+                    result.boolean_value,
+                    result.estimable_count,
+                    result.acceptance_state.value,
+                    metric_reason_code,
+                    result_hash,
                 ),
             )
-            classifications = {
-                item.evaluation_observation_id: item for item in result.observations
-            }
-            input_ids = {
-                item.input.evaluation_observation_id: self._id_factory()
-                for item in resolved
-            }
+            classifications = {item.evaluation_observation_id: item for item in result.observations}
+            input_ids = {item.input.evaluation_observation_id: self._id_factory() for item in resolved}
             with self._connection.cursor() as cursor:
                 cursor.executemany(
                     """
@@ -425,7 +436,9 @@ class PostgresEvaluationRepository:
                     (
                         _metric_observation_values(
                             input_ids[item.input.evaluation_observation_id],
-                            evaluation_metric_id, evaluation_run_id, metric,
+                            evaluation_metric_id,
+                            evaluation_run_id,
+                            metric,
                             item.source,
                             classifications[item.input.evaluation_observation_id],
                         )
@@ -466,9 +479,7 @@ class PostgresEvaluationRepository:
             """,
             (len(metric_rows), expected_inputs, roster_hash, evaluation_run_id),
         )
-        return EvaluationCompletionResult(
-            evaluation_run_id, len(metric_rows), expected_inputs, roster_hash
-        )
+        return EvaluationCompletionResult(evaluation_run_id, len(metric_rows), expected_inputs, roster_hash)
 
     def _metric_source_rows(
         self,
@@ -502,16 +513,32 @@ class PostgresEvaluationRepository:
                             backtest.portfolio_policy_id),
                    coalesce(current_arm.risk_policy_id,
                             backtest.risk_policy_id),
-                   backtest.cost_count,
+                   (SELECT count(*)
+                      FROM mra.exploratory_backtest_cost_assumption AS cost
+                     WHERE cost.exploratory_backtest_run_id =
+                           backtest.exploratory_backtest_run_id
+                       AND ((coalesce(current_arm.cost_binding_source,
+                                      'SHARED_DEFAULT') = 'ARM_OVERRIDE'
+                             AND cost.exploratory_backtest_arm_id =
+                                 retrospective.exploratory_backtest_arm_id)
+                            OR
+                            (coalesce(current_arm.cost_binding_source,
+                                      'SHARED_DEFAULT') = 'SHARED_DEFAULT'
+                             AND cost.exploratory_backtest_arm_id IS NULL))),
                    coalesce(current_arm.effective_cost_roster_sha256,
                             backtest.cost_roster_sha256),
                    (SELECT sum(cost.amount_bps)
                       FROM mra.exploratory_backtest_cost_assumption AS cost
                      WHERE cost.exploratory_backtest_run_id =
                            backtest.exploratory_backtest_run_id
-                       AND (cost.exploratory_backtest_arm_id IS NULL
-                            OR cost.exploratory_backtest_arm_id =
-                               retrospective.exploratory_backtest_arm_id)),
+                       AND ((coalesce(current_arm.cost_binding_source,
+                                      'SHARED_DEFAULT') = 'ARM_OVERRIDE'
+                             AND cost.exploratory_backtest_arm_id =
+                                 retrospective.exploratory_backtest_arm_id)
+                            OR
+                            (coalesce(current_arm.cost_binding_source,
+                                      'SHARED_DEFAULT') = 'SHARED_DEFAULT'
+                             AND cost.exploratory_backtest_arm_id IS NULL))),
                    signal.signal_id,
                    signal.status,
                    forecast.forecast_id,
@@ -631,11 +658,7 @@ class PostgresEvaluationRepository:
         previous_weights: dict[tuple[object, object], Decimal] = {}
         for source in source_rows:
             try:
-                arm_kind = (
-                    ExploratoryBacktestArmKind(str(source[17]))
-                    if source[17] is not None
-                    else None
-                )
+                arm_kind = ExploratoryBacktestArmKind(str(source[17])) if source[17] is not None else None
             except ValueError:
                 # Current generic arm codes are exact relational lineage, not
                 # the private legacy WP arm vocabulary.
@@ -645,9 +668,7 @@ class PostgresEvaluationRepository:
                 metric.slice_kind is EvaluationSliceKind.EXPLORATORY_BACKTEST_ARM
                 or metric.source_kind is not EvaluationSourceKind.OUTCOME_METRIC
             ) and not has_backtest_arm:
-                raise EvaluationReconciliationError(
-                    "exploratory metric source lacks exact Backtest arm lineage"
-                )
+                raise EvaluationReconciliationError("exploratory metric source lacks exact Backtest arm lineage")
             value_status = str(source[5])
             decimal_value = source[6]
             boolean_value = source[7]
@@ -691,39 +712,22 @@ class PostgresEvaluationRepository:
                     value_status = str(source[5])
             elif metric.source_kind is EvaluationSourceKind.CANDIDATE_OUTCOME_PAIR:
                 outcome_value = source[6]
-                outcome_available = (
-                    outcome_value is not None
-                    and str(source[5]) in {"COMPLETE", "PARTIAL"}
-                )
-                if (
-                    metric.source_measure
-                    is EvaluationSourceMeasure.CANDIDATE_SCORE_VS_TARGET
-                ):
+                outcome_available = outcome_value is not None and str(source[5]) in {"COMPLETE", "PARTIAL"}
+                if metric.source_measure is EvaluationSourceMeasure.CANDIDATE_SCORE_VS_TARGET:
                     decimal_value = source[37]
                     secondary_decimal_value = outcome_value
                     boolean_value = None
                     if decimal_value is None or not outcome_available:
                         value_status = "UNAVAILABLE"
-                elif (
-                    metric.source_measure
-                    is EvaluationSourceMeasure.CANDIDATE_TOP_K_RETURN
-                ):
-                    decimal_value = (
-                        outcome_value
-                        if str(source[3]) == CandidateDisposition.SELECTED.value
-                        and outcome_available
-                        else None
-                    )
+                elif metric.source_measure is EvaluationSourceMeasure.CANDIDATE_TOP_K_RETURN:
+                    decimal_value = outcome_value if str(source[3]) == CandidateDisposition.SELECTED.value and outcome_available else None
                     boolean_value = None
                     if decimal_value is None:
                         value_status = "UNAVAILABLE"
                 else:
                     decimal_value = None
                     boolean_value = (
-                        Decimal(outcome_value) > 0
-                        if str(source[3]) == CandidateDisposition.SELECTED.value
-                        and outcome_available
-                        else None
+                        Decimal(outcome_value) > 0 if str(source[3]) == CandidateDisposition.SELECTED.value and outcome_available else None
                     )
                     if boolean_value is None:
                         value_status = "UNAVAILABLE"
@@ -742,11 +746,7 @@ class PostgresEvaluationRepository:
                 sell_turnover = max(prior - proposed_weight, Decimal(0))
                 previous_weights[weight_key] = proposed_weight
                 if metric.source_kind is EvaluationSourceKind.PORTFOLIO_LINE:
-                    decimal_value = (
-                        proposed_weight
-                        if metric.source_measure is EvaluationSourceMeasure.TARGET_WEIGHT
-                        else turnover
-                    )
+                    decimal_value = proposed_weight if metric.source_measure is EvaluationSourceMeasure.TARGET_WEIGHT else turnover
                     boolean_value = None
                     value_status = "COMPLETE"
                 else:
@@ -760,22 +760,13 @@ class PostgresEvaluationRepository:
                         decimal_value = None
                         value_status = "UNAVAILABLE"
                     else:
-                        effective_weight = (
-                            proposed_weight if risk_status == "AUTHORIZED" else Decimal(0)
-                        )
+                        effective_weight = proposed_weight if risk_status == "AUTHORIZED" else Decimal(0)
                         gross_return = effective_weight * Decimal(source[6])
                         if source[21] is None or source[23] is None:
-                            raise EvaluationReconciliationError(
-                                "assumed-cost roster is absent"
-                            )
-                        net_return = gross_return - (
-                            turnover * Decimal(source[23]) / Decimal(10_000)
-                        )
+                            raise EvaluationReconciliationError("assumed-cost roster is absent")
+                        net_return = gross_return - (turnover * Decimal(source[23]) / Decimal(10_000))
                         decimal_value = (
-                            gross_return
-                            if metric.source_measure
-                            is EvaluationSourceMeasure.GROSS_PORTFOLIO_RETURN
-                            else net_return
+                            gross_return if metric.source_measure is EvaluationSourceMeasure.GROSS_PORTFOLIO_RETURN else net_return
                         )
                         value_status = str(source[5])
                     boolean_value = None
@@ -828,26 +819,11 @@ class PostgresEvaluationRepository:
             BacktestFormulaCode.TOP_K_RETURN,
             BacktestFormulaCode.TOP_BOTTOM_SPREAD,
         }:
-            width = next(
-                int(parameter.value)
-                for parameter in metric.formula.parameters
-                if parameter.parameter_code == "top_k"
-            )
-            group_keys = tuple(
-                dict.fromkeys(item.input.group_key or "ALL" for item in resolved)
-            )
+            width = next(int(parameter.value) for parameter in metric.formula.parameters if parameter.parameter_code == "top_k")
+            group_keys = tuple(dict.fromkeys(item.input.group_key or "ALL" for item in resolved))
             for group_key in group_keys:
-                members = tuple(
-                    item
-                    for item in resolved
-                    if (item.input.group_key or "ALL") == group_key
-                )
-                ranking_index = (
-                    29
-                    if metric.source_kind
-                    is EvaluationSourceKind.FORECAST_OUTCOME_PAIR
-                    else 37
-                )
+                members = tuple(item for item in resolved if (item.input.group_key or "ALL") == group_key)
+                ranking_index = 29 if metric.source_kind is EvaluationSourceKind.FORECAST_OUTCOME_PAIR else 37
                 if any(item.source[ranking_index] is None for item in members):
                     continue
                 ranked = tuple(
@@ -860,9 +836,7 @@ class PostgresEvaluationRepository:
                     )
                 )
                 for item in ranked[:width]:
-                    ranked_membership[
-                        item.input.evaluation_observation_id
-                    ] = FrozenRankingMembership.TOP
+                    ranked_membership[item.input.evaluation_observation_id] = FrozenRankingMembership.TOP
                 if code is BacktestFormulaCode.TOP_BOTTOM_SPREAD:
                     for item in ranked[-width:]:
                         identity = item.input.evaluation_observation_id
@@ -890,11 +864,7 @@ class PostgresEvaluationRepository:
                 BacktestFormulaCode.NET_EXPOSURE,
                 BacktestFormulaCode.TURNOVER,
             }:
-                value = (
-                    None
-                    if item.source[33] is None
-                    else Decimal(item.source[33])
-                )
+                value = None if item.source[33] is None else Decimal(item.source[33])
                 secondary_value = item.previous_weight
             elif code is BacktestFormulaCode.NET_RETURN_ASSUMED_COST:
                 value = item.gross_return
@@ -902,8 +872,7 @@ class PostgresEvaluationRepository:
                 item.input.evaluation_observation_id,
                 (
                     FrozenRankingMembership.SELECTED
-                    if item.input.candidate_disposition
-                    is CandidateDisposition.SELECTED
+                    if item.input.candidate_disposition is CandidateDisposition.SELECTED
                     else FrozenRankingMembership.ELIGIBLE
                 ),
             )
@@ -947,9 +916,7 @@ class PostgresEvaluationRepository:
         }.get(metric.source_kind)
         if table is None:
             return
-        getattr(self, f"_insert_{table}_sources")(
-            evaluation_run_id, metric, resolved, input_ids
-        )
+        getattr(self, f"_insert_{table}_sources")(evaluation_run_id, metric, resolved, input_ids)
 
     def _insert_backtest_arm_sources(
         self,
@@ -975,8 +942,12 @@ class PostgresEvaluationRepository:
                         input_ids[item.input.evaluation_observation_id],
                         evaluation_run_id,
                         metric.evaluation_protocol_metric_id,
-                        item.source[9], item.source[13], item.source[14],
-                        item.source[15], item.source[16], item.source[17],
+                        item.source[9],
+                        item.source[13],
+                        item.source[14],
+                        item.source[15],
+                        item.source[16],
+                        item.source[17],
                         canonical_json_sha256(
                             {
                                 "arm": item.source[14],
@@ -993,51 +964,83 @@ class PostgresEvaluationRepository:
             )
 
     def _insert_candidate_sources(
-        self, evaluation_run_id: UUID, metric: ProtocolMetricDefinition,
-        resolved: tuple[_ResolvedMetricInput, ...], input_ids: dict[UUID, UUID],
+        self,
+        evaluation_run_id: UUID,
+        metric: ProtocolMetricDefinition,
+        resolved: tuple[_ResolvedMetricInput, ...],
+        input_ids: dict[UUID, UUID],
     ) -> None:
         self._insert_simple_sources(
             "evaluation_candidate_source",
             "commitment_id, candidate_id, disposition, boolean_value",
-            evaluation_run_id, metric, resolved, input_ids,
+            evaluation_run_id,
+            metric,
+            resolved,
+            input_ids,
             lambda item: (
-                item.source[8], item.source[10], item.source[3],
+                item.source[8],
+                item.source[10],
+                item.source[3],
                 item.input.boolean_value,
             ),
         )
 
     def _insert_signal_sources(
-        self, evaluation_run_id: UUID, metric: ProtocolMetricDefinition,
-        resolved: tuple[_ResolvedMetricInput, ...], input_ids: dict[UUID, UUID],
+        self,
+        evaluation_run_id: UUID,
+        metric: ProtocolMetricDefinition,
+        resolved: tuple[_ResolvedMetricInput, ...],
+        input_ids: dict[UUID, UUID],
     ) -> None:
         self._insert_simple_sources(
             "evaluation_signal_source",
             "decision_run_id, candidate_id, signal_id, signal_status, boolean_value, source_status",
-            evaluation_run_id, metric, resolved, input_ids,
+            evaluation_run_id,
+            metric,
+            resolved,
+            input_ids,
             lambda item: (
-                item.source[9], item.source[10], item.source[24], item.source[25],
-                item.input.boolean_value, item.input.source_value_status,
+                item.source[9],
+                item.source[10],
+                item.source[24],
+                item.source[25],
+                item.input.boolean_value,
+                item.input.source_value_status,
             ),
         )
 
     def _insert_forecast_sources(
-        self, evaluation_run_id: UUID, metric: ProtocolMetricDefinition,
-        resolved: tuple[_ResolvedMetricInput, ...], input_ids: dict[UUID, UUID],
+        self,
+        evaluation_run_id: UUID,
+        metric: ProtocolMetricDefinition,
+        resolved: tuple[_ResolvedMetricInput, ...],
+        input_ids: dict[UUID, UUID],
     ) -> None:
         self._insert_simple_sources(
             "evaluation_forecast_source",
             "commitment_id, decision_run_id, forecast_id, forecast_estimate_id, forecast_status, point_estimate, outcome_decimal_value, source_status",
-            evaluation_run_id, metric, resolved, input_ids,
+            evaluation_run_id,
+            metric,
+            resolved,
+            input_ids,
             lambda item: (
-                item.source[8], item.source[9], item.source[26], item.source[28],
-                item.source[27], item.input.decimal_value,
-                item.input.secondary_decimal_value, item.input.source_value_status,
+                item.source[8],
+                item.source[9],
+                item.source[26],
+                item.source[28],
+                item.source[27],
+                item.input.decimal_value,
+                item.input.secondary_decimal_value,
+                item.input.source_value_status,
             ),
         )
 
     def _insert_candidate_outcome_sources(
-        self, evaluation_run_id: UUID, metric: ProtocolMetricDefinition,
-        resolved: tuple[_ResolvedMetricInput, ...], input_ids: dict[UUID, UUID],
+        self,
+        evaluation_run_id: UUID,
+        metric: ProtocolMetricDefinition,
+        resolved: tuple[_ResolvedMetricInput, ...],
+        input_ids: dict[UUID, UUID],
     ) -> None:
         self._insert_simple_sources(
             "evaluation_candidate_outcome_source",
@@ -1045,30 +1048,57 @@ class PostgresEvaluationRepository:
             "composite_score, competition_rank, market_target_outcome_metric_id, "
             "market_target_outcome_revision_id, outcome_decimal_value, "
             "decimal_value, secondary_decimal_value, boolean_value, source_status",
-            evaluation_run_id, metric, resolved, input_ids,
+            evaluation_run_id,
+            metric,
+            resolved,
+            input_ids,
             lambda item: (
-                item.source[8], item.source[10], item.source[39], item.source[3],
-                item.source[37], item.source[38], item.source[4], item.source[2],
-                item.source[6], item.input.decimal_value,
-                item.input.secondary_decimal_value, item.input.boolean_value,
+                item.source[8],
+                item.source[10],
+                item.source[39],
+                item.source[3],
+                item.source[37],
+                item.source[38],
+                item.source[4],
+                item.source[2],
+                item.source[6],
+                item.input.decimal_value,
+                item.input.secondary_decimal_value,
+                item.input.boolean_value,
                 item.input.source_value_status,
             ),
         )
 
     def _insert_portfolio_sources(
-        self, evaluation_run_id: UUID, metric: ProtocolMetricDefinition,
-        resolved: tuple[_ResolvedMetricInput, ...], input_ids: dict[UUID, UUID],
+        self,
+        evaluation_run_id: UUID,
+        metric: ProtocolMetricDefinition,
+        resolved: tuple[_ResolvedMetricInput, ...],
+        input_ids: dict[UUID, UUID],
     ) -> None:
         self._insert_simple_sources(
             "evaluation_portfolio_source",
             "decision_run_id, candidate_id, portfolio_proposal_id, portfolio_line_id, risk_decision_id, line_status, risk_status, proposed_weight, turnover, effective_weight, gross_return, net_return, source_status, cost_count, cost_roster_sha256",
-            evaluation_run_id, metric, resolved, input_ids,
+            evaluation_run_id,
+            metric,
+            resolved,
+            input_ids,
             lambda item: (
-                item.source[9], item.source[10], item.source[30], item.source[31],
-                item.source[34], item.source[32], item.source[35], item.source[33],
-                item.turnover, item.effective_weight, item.gross_return,
-                item.net_return, item.input.source_value_status,
-                item.source[21], item.source[22],
+                item.source[9],
+                item.source[10],
+                item.source[30],
+                item.source[31],
+                item.source[34],
+                item.source[32],
+                item.source[35],
+                item.source[33],
+                item.turnover,
+                item.effective_weight,
+                item.gross_return,
+                item.net_return,
+                item.input.source_value_status,
+                item.source[21],
+                item.source[22],
             ),
         )
         if metric.source_measure is EvaluationSourceMeasure.NET_PORTFOLIO_RETURN_ASSUMED_COST:
@@ -1076,14 +1106,21 @@ class PostgresEvaluationRepository:
                 for item in resolved:
                     cost_rows = self._connection.execute(
                         """
-                        SELECT exploratory_backtest_cost_assumption_id,
-                               ordinal, cost_kind, amount_bps,
-                               evidence_class, content_sha256
-                        FROM mra.exploratory_backtest_cost_assumption
-                        WHERE exploratory_backtest_run_id = %s
-                        ORDER BY ordinal
+                        SELECT cost.exploratory_backtest_cost_assumption_id,
+                               cost.ordinal, cost.cost_kind, cost.amount_bps,
+                               cost.evidence_class, cost.content_sha256
+                        FROM mra.exploratory_backtest_cost_assumption AS cost
+                        LEFT JOIN mra.backtest_arm_specification AS arm
+                          ON arm.exploratory_backtest_run_id =
+                             cost.exploratory_backtest_run_id
+                         AND arm.exploratory_backtest_arm_id = %s
+                        WHERE cost.exploratory_backtest_run_id = %s
+                          AND cost.exploratory_backtest_arm_id IS NOT DISTINCT FROM
+                              CASE WHEN arm.cost_binding_source = 'ARM_OVERRIDE'
+                                   THEN %s ELSE NULL::uuid END
+                        ORDER BY cost.ordinal
                         """,
-                        (item.source[13],),
+                        (item.source[14], item.source[13], item.source[14]),
                     ).fetchall()
                     cursor.executemany(
                         """
@@ -1098,8 +1135,13 @@ class PostgresEvaluationRepository:
                         (
                             (
                                 input_ids[item.input.evaluation_observation_id],
-                                cost[0], item.source[13], cost[1], cost[2], cost[3],
-                                cost[4], cost[5],
+                                cost[0],
+                                item.source[13],
+                                cost[1],
+                                cost[2],
+                                cost[3],
+                                cost[4],
+                                cost[5],
                                 canonical_json_sha256(
                                     {
                                         "assumption": cost[0],
@@ -1113,16 +1155,26 @@ class PostgresEvaluationRepository:
                     )
 
     def _insert_risk_sources(
-        self, evaluation_run_id: UUID, metric: ProtocolMetricDefinition,
-        resolved: tuple[_ResolvedMetricInput, ...], input_ids: dict[UUID, UUID],
+        self,
+        evaluation_run_id: UUID,
+        metric: ProtocolMetricDefinition,
+        resolved: tuple[_ResolvedMetricInput, ...],
+        input_ids: dict[UUID, UUID],
     ) -> None:
         self._insert_simple_sources(
             "evaluation_risk_source",
             "decision_run_id, portfolio_proposal_id, risk_decision_id, risk_status, boolean_value, source_status",
-            evaluation_run_id, metric, resolved, input_ids,
+            evaluation_run_id,
+            metric,
+            resolved,
+            input_ids,
             lambda item: (
-                item.source[9], item.source[30], item.source[34], item.source[35],
-                item.input.boolean_value, item.input.source_value_status,
+                item.source[9],
+                item.source[30],
+                item.source[34],
+                item.source[35],
+                item.input.boolean_value,
+                item.input.source_value_status,
             ),
         )
 
@@ -1193,14 +1245,19 @@ class PostgresEvaluationRepository:
                    metric_roster_sha256, frozen_at
             FROM mra.evaluation_protocol
             WHERE evaluation_protocol_id = %s
-            """ + (" FOR SHARE" if lock else ""),
+            """
+            + (" FOR SHARE" if lock else ""),
             (evaluation_protocol_id,),
         ).fetchone()
         if row is None:
             raise RuntimeNotFoundError(f"EvaluationProtocol {evaluation_protocol_id} does not exist")
         return EvaluationProtocolRecord(
-            UUID(str(row[0])), UUID(str(row[1])), str(row[2]),
-            int(row[3]), str(row[4]), row[5],
+            UUID(str(row[0])),
+            UUID(str(row[1])),
+            str(row[2]),
+            int(row[3]),
+            str(row[4]),
+            row[5],
         )
 
     def run_record(self, evaluation_run_id: UUID, *, lock: bool) -> EvaluationRunRecord:
@@ -1210,14 +1267,21 @@ class PostgresEvaluationRepository:
                    research_partition_id, evaluation_protocol_id,
                    status, opened_at, content_sha256, version
             FROM mra.evaluation_run WHERE evaluation_run_id = %s
-            """ + (" FOR SHARE" if lock else ""),
+            """
+            + (" FOR SHARE" if lock else ""),
             (evaluation_run_id,),
         ).fetchone()
         if row is None:
             raise RuntimeNotFoundError(f"EvaluationRun {evaluation_run_id} does not exist")
         return EvaluationRunRecord(
-            UUID(str(row[0])), UUID(str(row[1])), UUID(str(row[2])),
-            UUID(str(row[3])), str(row[4]), row[5], str(row[6]), int(row[7]),
+            UUID(str(row[0])),
+            UUID(str(row[1])),
+            UUID(str(row[2])),
+            UUID(str(row[3])),
+            str(row[4]),
+            row[5],
+            str(row[6]),
+            int(row[7]),
         )
 
     def _protocol_reconciles(self, record: EvaluationProtocolRecord) -> bool:
@@ -1235,15 +1299,8 @@ class PostgresEvaluationRepository:
             """,
             (record.evaluation_protocol_id,),
         ).fetchall()
-        metrics = tuple(
-            self._protocol_metric(row, record.evaluation_protocol_id)
-            for row in rows
-        )
-        return (
-            len(metrics) == record.metric_count
-            and str(evaluation_protocol_metric_roster_sha256(metrics))
-            == record.metric_roster_sha256
-        )
+        metrics = tuple(self._protocol_metric(row, record.evaluation_protocol_id) for row in rows)
+        return len(metrics) == record.metric_count and str(evaluation_protocol_metric_roster_sha256(metrics)) == record.metric_roster_sha256
 
     def _protocol_metric(
         self,
@@ -1303,18 +1360,12 @@ class PostgresEvaluationRepository:
                 or str(formula.parameter_roster_sha256) != str(formula_row[6])
                 or str(formula.content_sha256) != str(formula_row[7])
             ):
-                raise EvaluationReconciliationError(
-                    "Evaluation formula closure does not reconcile"
-                )
+                raise EvaluationReconciliationError("Evaluation formula closure does not reconcile")
             if any(
                 str(parameter.content_sha256) != str(row_parameter[8])
-                for parameter, row_parameter in zip(
-                    parameters, parameter_rows, strict=True
-                )
+                for parameter, row_parameter in zip(parameters, parameter_rows, strict=True)
             ):
-                raise EvaluationReconciliationError(
-                    "Evaluation formula parameter does not reconcile"
-                )
+                raise EvaluationReconciliationError("Evaluation formula parameter does not reconcile")
         return _protocol_metric(row, formula=formula)
 
 
@@ -1340,14 +1391,8 @@ def _formula_metric_result(
     else:
         threshold = metric.acceptance_threshold
         assert threshold is not None
-        accepted = (
-            decimal_value >= threshold
-            if metric.acceptance_operator is AcceptanceOperator.AT_LEAST
-            else decimal_value <= threshold
-        )
-        acceptance = (
-            AcceptanceState.ACCEPTED if accepted else AcceptanceState.REJECTED
-        )
+        accepted = decimal_value >= threshold if metric.acceptance_operator is AcceptanceOperator.AT_LEAST else decimal_value <= threshold
+        acceptance = AcceptanceState.ACCEPTED if accepted else AcceptanceState.REJECTED
     return EvaluationMetricResult(
         EvaluationMetricState.ESTIMATED,
         decimal_value,
@@ -1364,16 +1409,22 @@ def _protocol_metric(
     formula: EvaluationFormulaDefinition | None = None,
 ) -> ProtocolMetricDefinition:
     return ProtocolMetricDefinition(
-        evaluation_protocol_metric_id=UUID(str(row[0])), metric_code=str(row[1]),
-        ordinal=int(row[2]), source_target_metric_definition_id=UUID(str(row[3])),
-        source_metric_code=str(row[4]), source_value_type=SourceMetricValueType(str(row[5])),
+        evaluation_protocol_metric_id=UUID(str(row[0])),
+        metric_code=str(row[1]),
+        ordinal=int(row[2]),
+        source_target_metric_definition_id=UUID(str(row[3])),
+        source_metric_code=str(row[4]),
+        source_value_type=SourceMetricValueType(str(row[5])),
         source_kind=EvaluationSourceKind(str(row[6])),
         source_measure=EvaluationSourceMeasure(str(row[7])),
-        reducer=EvaluationReducer(str(row[8])), slice_kind=EvaluationSliceKind(str(row[9])),
+        reducer=EvaluationReducer(str(row[8])),
+        slice_kind=EvaluationSliceKind(str(row[9])),
         candidate_disposition=CandidateDisposition(str(row[10])) if row[10] is not None else None,
         backtest_arm_kind=ExploratoryBacktestArmKind(str(row[11])) if row[11] is not None else None,
-        direction=MetricDirection(str(row[12])), minimum_estimable_count=int(row[13]),
-        acceptance_operator=AcceptanceOperator(str(row[14])), acceptance_threshold=row[15],
+        direction=MetricDirection(str(row[12])),
+        minimum_estimable_count=int(row[13]),
+        acceptance_operator=AcceptanceOperator(str(row[14])),
+        acceptance_threshold=row[15],
         inclusion_policy=EvaluationInclusionPolicy(str(row[16])),
         missingness_policy=EvaluationMissingnessPolicy(str(row[17])),
         formula=formula,
@@ -1398,11 +1449,20 @@ def _metric_observation_values(
         }
     )
     return (
-        identity, evaluation_metric_id, evaluation_run_id,
-        metric.evaluation_protocol_metric_id, source[0], source[1], source[2],
-        source[4], metric.source_target_metric_definition_id,
-        source[36], source[5], classification.state.value,
-        classification.reason_code, content_hash,
+        identity,
+        evaluation_metric_id,
+        evaluation_run_id,
+        metric.evaluation_protocol_metric_id,
+        source[0],
+        source[1],
+        source[2],
+        source[4],
+        metric.source_target_metric_definition_id,
+        source[36],
+        source[5],
+        classification.state.value,
+        classification.reason_code,
+        content_hash,
     )
 
 

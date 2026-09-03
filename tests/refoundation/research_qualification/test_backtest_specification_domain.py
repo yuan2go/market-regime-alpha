@@ -43,6 +43,7 @@ from market_regime_alpha.research_qualification.domain.research_models import (
 from market_regime_alpha.research_qualification.domain.research_vocabulary import (
     PartitionPurpose,
 )
+from market_regime_alpha.shared.hashing import canonical_json_sha256
 
 
 def _id(value: int) -> UUID:
@@ -55,6 +56,28 @@ def _binding(value: int) -> AuthorityBinding:
 
 def _artifact(value: int) -> ArtifactBinding:
     return ArtifactBinding(_id(value), f"{value:064x}", value)
+
+
+def _cost(identity: int = 440, amount: str = "3") -> BacktestCostAssumption:
+    return BacktestCostAssumption(
+        assumption_id=_id(identity),
+        ordinal=1,
+        cost_kind=BacktestCostKind.COMMISSION_BPS,
+        charge_side=BacktestCostChargeSide.BOTH,
+        amount_bps=Decimal(amount),
+    )
+
+
+def _cost_hash(cost: BacktestCostAssumption) -> str:
+    return canonical_json_sha256(
+        (
+            {
+                "content_sha256": str(cost.content_sha256),
+                "assumption_id": cost.assumption_id,
+                "ordinal": cost.ordinal,
+            },
+        )
+    )
 
 
 def _model_recipe() -> BacktestModelTrainingRecipe:
@@ -101,9 +124,7 @@ def _fold(
         purpose=purpose,
         exchange_code="XSHG",
         purge_sessions=sum(role is BacktestSessionRole.PURGE for _, _, role in sessions),
-        embargo_sessions=sum(
-            role is BacktestSessionRole.EMBARGO for _, _, role in sessions
-        ),
+        embargo_sessions=sum(role is BacktestSessionRole.EMBARGO for _, _, role in sessions),
         evaluation_protocol=_binding(identity + 100),
         sessions=tuple(
             BacktestFoldSession(
@@ -125,6 +146,7 @@ def _arm(
     code: str,
     execution_kind: BacktestExecutionKind = BacktestExecutionKind.RULE,
     role: BacktestComparisonRole = BacktestComparisonRole.CHALLENGER,
+    effective_cost_roster_sha256: str | None = None,
 ) -> BacktestArmSpecification:
     return BacktestArmSpecification(
         exploratory_backtest_arm_id=_id(identity),
@@ -136,16 +158,14 @@ def _arm(
         candidate=_binding(432),
         context=_binding(433),
         strategy=_binding(identity + 10),
-        model=_binding(identity + 20)
-        if execution_kind is BacktestExecutionKind.MODEL
-        else None,
+        model=_binding(identity + 20) if execution_kind is BacktestExecutionKind.MODEL else None,
         portfolio=_binding(40),
         risk=_binding(41),
-        effective_cost_roster_sha256="6" * 64,
+        effective_cost_roster_sha256=(_cost_hash(_cost()) if effective_cost_roster_sha256 is None else effective_cost_roster_sha256),
         candidate_binding_source=BacktestBindingSource.ARM_OVERRIDE,
         context_binding_source=BacktestBindingSource.ARM_OVERRIDE,
         strategy_binding_source=BacktestBindingSource.ARM_OVERRIDE,
-        cost_binding_source=BacktestBindingSource.ARM_OVERRIDE,
+        cost_binding_source=BacktestBindingSource.SHARED_DEFAULT,
     )
 
 
@@ -156,9 +176,7 @@ def _evaluation_requirements(
     *,
     first_identity: int,
 ) -> tuple[BacktestEvaluationRequirement, ...]:
-    fold_by_id = {
-        fold.exploratory_backtest_fold_id: fold for fold in folds
-    }
+    fold_by_id = {fold.exploratory_backtest_fold_id: fold for fold in folds}
     requirements: list[BacktestEvaluationRequirement] = []
     for ordinal, participation in enumerate(arm_folds, start=1):
         requirements.append(
@@ -166,18 +184,12 @@ def _evaluation_requirements(
                 requirement_id=_id(first_identity + ordinal),
                 ordinal=ordinal,
                 fold_id=participation.fold_id,
-                evaluation_protocol=fold_by_id[
-                    participation.fold_id
-                ].evaluation_protocol,
+                evaluation_protocol=fold_by_id[participation.fold_id].evaluation_protocol,
                 primary=True,
                 arm_id=participation.arm_id,
             )
         )
-    validation_protocol = next(
-        fold.evaluation_protocol
-        for fold in folds
-        if fold.purpose is PartitionPurpose.VALIDATION
-    )
+    validation_protocol = next(fold.evaluation_protocol for fold in folds if fold.purpose is PartitionPurpose.VALIDATION)
     for arm in arms:
         ordinal = len(requirements) + 1
         requirements.append(
@@ -272,10 +284,8 @@ def test_specification_accepts_arbitrary_arms_and_overlapping_rolling_fit_sessio
         ),
     )
     dependencies = (
-        BacktestFoldDependency(_id(300), 1, first_fit.exploratory_backtest_fold_id,
-                               validation.exploratory_backtest_fold_id),
-        BacktestFoldDependency(_id(301), 2, expanding_fit.exploratory_backtest_fold_id,
-                               later_validation.exploratory_backtest_fold_id),
+        BacktestFoldDependency(_id(300), 1, first_fit.exploratory_backtest_fold_id, validation.exploratory_backtest_fold_id),
+        BacktestFoldDependency(_id(301), 2, expanding_fit.exploratory_backtest_fold_id, later_validation.exploratory_backtest_fold_id),
     )
     arm_folds = tuple(
         BacktestArmFold(
@@ -285,8 +295,7 @@ def test_specification_accepts_arbitrary_arms_and_overlapping_rolling_fit_sessio
             fold_id=fold.exploratory_backtest_fold_id,
         )
         for index, (fold, arm) in enumerate(
-            ((fold, arm) for fold in (first_fit, validation, expanding_fit, later_validation)
-             for arm in arms),
+            ((fold, arm) for fold in (first_fit, validation, expanding_fit, later_validation) for arm in arms),
             start=1,
         )
     )
@@ -326,10 +335,7 @@ def test_specification_accepts_arbitrary_arms_and_overlapping_rolling_fit_sessio
         universe_revision=_binding(403),
         eligibility_policy=_binding(404),
         sample_scope_code="stable-hash-3",
-        sample_members=tuple(
-            BacktestSampleMember(_id(410 + index), _id(420 + index), index)
-            for index in range(1, 4)
-        ),
+        sample_members=tuple(BacktestSampleMember(_id(410 + index), _id(420 + index), index) for index in range(1, 4)),
         exchange_code="XSHG",
         first_trading_session_id=_id(1001),
         last_trading_session_id=_id(1004),
@@ -355,15 +361,7 @@ def test_specification_accepts_arbitrary_arms_and_overlapping_rolling_fit_sessio
             validation_sessions=1,
             step_sessions=1,
         ),
-        cost_assumptions=(
-            BacktestCostAssumption(
-                assumption_id=_id(440),
-                ordinal=1,
-                cost_kind=BacktestCostKind.COMMISSION_BPS,
-                charge_side=BacktestCostChargeSide.BOTH,
-                amount_bps=Decimal("3"),
-            ),
-        ),
+        cost_assumptions=(_cost(),),
         evaluation_requirements=_evaluation_requirements(
             arms,
             (first_fit, validation, expanding_fit, later_validation),
@@ -381,6 +379,34 @@ def test_specification_accepts_arbitrary_arms_and_overlapping_rolling_fit_sessio
     assert specification.fold_session_binding_count == 7
     assert specification.content_sha256
     assert "model_version_id" not in BacktestModelTrainingRequirement.__dataclass_fields__
+
+    override_cost = replace(
+        _cost(441, "7.5"),
+        ordinal=2,
+        arm_id=arms[0].exploratory_backtest_arm_id,
+    )
+    override_hash = canonical_json_sha256(
+        (
+            {
+                "content_sha256": str(override_cost.content_sha256),
+                "assumption_id": override_cost.assumption_id,
+                "ordinal": override_cost.ordinal,
+            },
+        )
+    )
+    override_arm = replace(
+        arms[0],
+        cost_binding_source=BacktestBindingSource.ARM_OVERRIDE,
+        effective_cost_roster_sha256=override_hash,
+    )
+    overridden = replace(
+        specification,
+        arms=(override_arm, *arms[1:]),
+        cost_assumptions=(*specification.cost_assumptions, override_cost),
+    )
+    assert str(overridden.arms[0].effective_cost_roster_sha256) == override_hash
+    with pytest.raises(ValueError, match="Cost override differs"):
+        replace(specification, arms=(override_arm, *arms[1:]))
 
     with pytest.raises(ValueError, match="training metric"):
         replace(
@@ -421,17 +447,11 @@ def test_specification_accepts_arbitrary_arms_and_overlapping_rolling_fit_sessio
     )
     sparse = replace(
         specification,
-        arm_folds=tuple(
-            replace(item, ordinal=ordinal)
-            for ordinal, item in enumerate(sparse_bindings, start=1)
-        ),
+        arm_folds=tuple(replace(item, ordinal=ordinal) for ordinal, item in enumerate(sparse_bindings, start=1)),
         evaluation_requirements=_evaluation_requirements(
             specification.arms,
             specification.folds,
-            tuple(
-                replace(item, ordinal=ordinal)
-                for ordinal, item in enumerate(sparse_bindings, start=1)
-            ),
+            tuple(replace(item, ordinal=ordinal) for ordinal, item in enumerate(sparse_bindings, start=1)),
             first_identity=1100,
         ),
     )
@@ -440,23 +460,27 @@ def test_specification_accepts_arbitrary_arms_and_overlapping_rolling_fit_sessio
     with pytest.raises(ValueError, match="arm codes must be unique"):
         replace(
             specification,
-            arms=(arms[0], BacktestArmSpecification(
-                exploratory_backtest_arm_id=_id(999),
-                ordinal=2,
-                arm_code=arms[0].arm_code,
-                execution_kind=BacktestExecutionKind.RULE,
-                comparison_role=BacktestComparisonRole.CHALLENGER,
-                context_mode=BacktestContextMode.CURRENT_GATE,
-                candidate=_binding(432),
-                context=_binding(433),
-                strategy=_binding(998),
-                model=None,
-                portfolio=_binding(40),
-                risk=_binding(41),
-                effective_cost_roster_sha256="6" * 64,
-                strategy_binding_source=BacktestBindingSource.ARM_OVERRIDE,
-                cost_binding_source=BacktestBindingSource.ARM_OVERRIDE,
-            ), arms[2]),
+            arms=(
+                arms[0],
+                BacktestArmSpecification(
+                    exploratory_backtest_arm_id=_id(999),
+                    ordinal=2,
+                    arm_code=arms[0].arm_code,
+                    execution_kind=BacktestExecutionKind.RULE,
+                    comparison_role=BacktestComparisonRole.CHALLENGER,
+                    context_mode=BacktestContextMode.CURRENT_GATE,
+                    candidate=_binding(432),
+                    context=_binding(433),
+                    strategy=_binding(998),
+                    model=None,
+                    portfolio=_binding(40),
+                    risk=_binding(41),
+                    effective_cost_roster_sha256="6" * 64,
+                    strategy_binding_source=BacktestBindingSource.ARM_OVERRIDE,
+                    cost_binding_source=BacktestBindingSource.ARM_OVERRIDE,
+                ),
+                arms[2],
+            ),
         )
 
 
@@ -478,6 +502,7 @@ def test_rule_only_specification_requires_no_model_training_requirement() -> Non
         ordinal=1,
         code="rule-only",
         role=BacktestComparisonRole.BASELINE,
+        effective_cost_roster_sha256=_cost_hash(_cost(717, "0")),
     )
     specification = BacktestSpecification(
         exploratory_backtest_run_id=_id(703),
@@ -535,15 +560,7 @@ def test_rule_only_specification_requires_no_model_training_requirement() -> Non
             validation_sessions=1,
             step_sessions=1,
         ),
-        cost_assumptions=(
-            BacktestCostAssumption(
-                assumption_id=_id(717),
-                ordinal=1,
-                cost_kind=BacktestCostKind.COMMISSION_BPS,
-                charge_side=BacktestCostChargeSide.BOTH,
-                amount_bps=Decimal("0"),
-            ),
-        ),
+        cost_assumptions=(_cost(717, "0"),),
         evaluation_requirements=_evaluation_requirements(
             (arm,),
             (fit, validation),

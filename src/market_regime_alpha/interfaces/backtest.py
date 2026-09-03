@@ -198,6 +198,7 @@ def encode_backtest_specification(specification: BacktestSpecification) -> bytes
                 "cost_kind": item.cost_kind.value,
                 "charge_side": item.charge_side.value,
                 "amount_bps": format(item.amount_bps, "f"),
+                "arm_id": None if item.arm_id is None else str(item.arm_id),
             }
             for item in specification.cost_assumptions
         ),
@@ -407,6 +408,7 @@ def _cost(value: object) -> BacktestCostAssumption:
         cost_kind=BacktestCostKind(_text(row, "cost_kind")),
         charge_side=BacktestCostChargeSide(_text(row, "charge_side")),
         amount_bps=Decimal(_scalar_text(row["amount_bps"], "amount_bps")),
+        arm_id=_optional_uuid(row["arm_id"], "arm_id"),
     )
 
 

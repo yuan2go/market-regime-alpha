@@ -24075,6 +24075,12 @@ ALTER TABLE mra.exploratory_backtest_cost_assumption
     ADD COLUMN specification_sha256 text,
     ADD COLUMN charge_side text,
     ADD COLUMN exploratory_backtest_arm_id uuid,
+    DROP CONSTRAINT exploratory_backtest_cost_kind_uk,
+    ADD CONSTRAINT exploratory_backtest_cost_kind_uk
+        UNIQUE NULLS NOT DISTINCT (
+            exploratory_backtest_run_id, exploratory_backtest_arm_id,
+            cost_kind
+        ),
     ADD CONSTRAINT exploratory_backtest_cost_specification_fk FOREIGN KEY (
         exploratory_backtest_run_id, specification_sha256
     ) REFERENCES mra.backtest_specification(
@@ -24901,6 +24907,64 @@ BEGIN
            AND formula.evaluation_protocol_metric_id IS NULL
     ) THEN
         RAISE EXCEPTION 'Current Backtest Evaluation formula closure is incomplete'
+            USING ERRCODE = '55000';
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM mra.exploratory_backtest_cost_assumption
+         WHERE exploratory_backtest_run_id = NEW.exploratory_backtest_run_id
+           AND exploratory_backtest_arm_id IS NULL
+    ) OR EXISTS (
+        SELECT 1 FROM mra.exploratory_backtest_cost_assumption AS cost
+         WHERE cost.exploratory_backtest_run_id = NEW.exploratory_backtest_run_id
+           AND cost.content_sha256 <> mra.canonical_sha256(
+               mra.canonical_json_text(jsonb_build_object(
+                   'amount_bps', cost.amount_bps::text,
+                   'arm_id', cost.exploratory_backtest_arm_id,
+                   'assumption_id',
+                       cost.exploratory_backtest_cost_assumption_id,
+                   'charge_side', cost.charge_side,
+                   'cost_kind', cost.cost_kind,
+                   'ordinal', cost.ordinal
+               ))
+           )
+    ) OR EXISTS (
+        SELECT 1
+          FROM mra.backtest_arm_specification AS arm
+          CROSS JOIN LATERAL (
+              SELECT count(*) AS item_count,
+                     mra.canonical_sha256(mra.canonical_json_text(coalesce(
+                         jsonb_agg(jsonb_build_object(
+                             'content_sha256', cost.content_sha256,
+                             'assumption_id',
+                                 cost.exploratory_backtest_cost_assumption_id,
+                             'ordinal', cost.ordinal
+                         ) ORDER BY cost.ordinal), '[]'::jsonb
+                     ))) AS roster_sha256
+                FROM mra.exploratory_backtest_cost_assumption AS cost
+               WHERE cost.exploratory_backtest_run_id =
+                     arm.exploratory_backtest_run_id
+                 AND cost.exploratory_backtest_arm_id IS NOT DISTINCT FROM
+                     CASE WHEN arm.cost_binding_source = 'ARM_OVERRIDE'
+                          THEN arm.exploratory_backtest_arm_id
+                          ELSE NULL::uuid END
+          ) AS effective
+         WHERE arm.exploratory_backtest_run_id = NEW.exploratory_backtest_run_id
+           AND (effective.item_count = 0
+                OR effective.roster_sha256 <>
+                   arm.effective_cost_roster_sha256)
+    ) OR EXISTS (
+        SELECT 1
+          FROM mra.exploratory_backtest_cost_assumption AS cost
+          JOIN mra.backtest_arm_specification AS arm
+            ON arm.exploratory_backtest_arm_id =
+               cost.exploratory_backtest_arm_id
+           AND arm.exploratory_backtest_run_id =
+               cost.exploratory_backtest_run_id
+         WHERE cost.exploratory_backtest_run_id = NEW.exploratory_backtest_run_id
+           AND cost.exploratory_backtest_arm_id IS NOT NULL
+           AND arm.cost_binding_source <> 'ARM_OVERRIDE'
+    ) THEN
+        RAISE EXCEPTION 'Current Backtest Cost scope does not reconcile'
             USING ERRCODE = '55000';
     END IF;
     IF (SELECT count(*) FROM mra.backtest_arm_specification

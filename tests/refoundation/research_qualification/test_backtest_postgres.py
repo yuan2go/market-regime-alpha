@@ -43,6 +43,7 @@ from market_regime_alpha.research_qualification.domain.backtest import (
     AuthorityBinding,
     BacktestArmFold,
     BacktestArmSpecification,
+    BacktestBindingSource,
     BacktestComparisonRole,
     BacktestContextMode,
     BacktestCostAssumption,
@@ -653,6 +654,68 @@ def test_current_model_recipe_round_trips_as_typed_relational_closure(
             ),
         ).fetchone()
     assert counts == (2, 2, 2)
+
+
+def test_current_arm_cost_override_is_a_concrete_relational_roster(
+    backtest_stack,
+) -> None:
+    specification = _current_specification(backtest_stack)
+    overridden_arm = specification.arms[0]
+    override = BacktestCostAssumption(
+        assumption_id=uuid4(),
+        ordinal=len(specification.cost_assumptions) + 1,
+        cost_kind=BacktestCostKind.COMMISSION_BPS,
+        charge_side=BacktestCostChargeSide.BOTH,
+        amount_bps=Decimal("7.5"),
+        arm_id=overridden_arm.exploratory_backtest_arm_id,
+    )
+    override_roster_sha256 = canonical_json_sha256(
+        (
+            {
+                "content_sha256": str(override.content_sha256),
+                "assumption_id": override.assumption_id,
+                "ordinal": override.ordinal,
+            },
+        )
+    )
+    overridden = replace(
+        specification,
+        arms=(
+            replace(
+                overridden_arm,
+                cost_binding_source=BacktestBindingSource.ARM_OVERRIDE,
+                effective_cost_roster_sha256=override_roster_sha256,
+            ),
+            *specification.arms[1:],
+        ),
+        cost_assumptions=(*specification.cost_assumptions, override),
+    )
+
+    BacktestApplication(
+        PostgresBacktestUnitOfWorkProvider(backtest_stack.pool),
+        id_factory=uuid4,
+    ).predeclare(
+        overridden,
+        _legacy._context("arm-cost-override"),
+    )
+    reloaded = PostgresBacktestQueryPort(backtest_stack.pool).load_specification(overridden.exploratory_backtest_run_id)
+
+    assert reloaded == overridden
+    with backtest_stack.pool.connection(read_only=True) as connection:
+        rows = connection.execute(
+            """
+            SELECT exploratory_backtest_arm_id, cost_kind, amount_bps
+            FROM mra.exploratory_backtest_cost_assumption
+            WHERE exploratory_backtest_run_id = %s
+            ORDER BY ordinal
+            """,
+            (overridden.exploratory_backtest_run_id,),
+        ).fetchall()
+    assert rows[-1] == (
+        overridden_arm.exploratory_backtest_arm_id,
+        "COMMISSION_BPS",
+        Decimal("7.500000000000"),
+    )
 
 
 def test_operator_json_round_trips_complete_typed_current_specification(
