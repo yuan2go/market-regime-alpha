@@ -8,6 +8,8 @@ from typing import Protocol
 from uuid import UUID
 
 from market_regime_alpha.research_qualification.domain.backtest import (
+    BacktestModelTrainingRecipe,
+    BacktestModelTrainingRequirement,
     BacktestSpecification,
 )
 from market_regime_alpha.research_qualification.domain.backtest_dataset import (
@@ -15,6 +17,9 @@ from market_regime_alpha.research_qualification.domain.backtest_dataset import (
 )
 from market_regime_alpha.research_qualification.domain.exploratory import (
     ExploratoryRetrospectiveDatasetScope,
+)
+from market_regime_alpha.research_qualification.ports.model_inputs import (
+    ReproducibleModelTrainingRunRequest,
 )
 from market_regime_alpha.shared.identity import ContentHash, InstrumentId
 
@@ -61,12 +66,8 @@ class BacktestFeatureExecutionDefinition:
     algorithm_sha256: ContentHash | str
 
     def __post_init__(self) -> None:
-        object.__setattr__(
-            self, "content_sha256", ContentHash(str(self.content_sha256))
-        )
-        object.__setattr__(
-            self, "algorithm_sha256", ContentHash(str(self.algorithm_sha256))
-        )
+        object.__setattr__(self, "content_sha256", ContentHash(str(self.content_sha256)))
+        object.__setattr__(self, "algorithm_sha256", ContentHash(str(self.algorithm_sha256)))
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,9 +92,7 @@ class BacktestPartitionExecution:
     purpose: str
 
     def __post_init__(self) -> None:
-        object.__setattr__(
-            self, "content_sha256", ContentHash(str(self.content_sha256))
-        )
+        object.__setattr__(self, "content_sha256", ContentHash(str(self.content_sha256)))
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,6 +116,40 @@ class BacktestEvaluationResult:
 
 
 @dataclass(frozen=True, slots=True)
+class BacktestFitEvaluationExecution:
+    backtest_evaluation_execution_id: UUID
+    evaluation_run_id: UUID
+    evaluation_protocol_id: UUID
+
+
+@dataclass(frozen=True, slots=True)
+class BacktestModelExecutionResult:
+    model_id: UUID
+    model_training_run_id: UUID
+    model_training_run_sha256: ContentHash | str
+    model_training_reproducibility_sha256: ContentHash | str
+    model_version_id: UUID
+    model_version_sha256: ContentHash | str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "model_training_run_sha256",
+            ContentHash(str(self.model_training_run_sha256)),
+        )
+        object.__setattr__(
+            self,
+            "model_training_reproducibility_sha256",
+            ContentHash(str(self.model_training_reproducibility_sha256)),
+        )
+        object.__setattr__(
+            self,
+            "model_version_sha256",
+            ContentHash(str(self.model_version_sha256)),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class BacktestFeatureRequest:
     definition: BacktestFeatureExecutionDefinition
     scope: ExploratoryRetrospectiveDatasetScope
@@ -134,14 +167,25 @@ class BacktestFeatureMaterializer(Protocol):
     ) -> BacktestDatasetFeatureCell: ...
 
 
-class BacktestActionReadPort(Protocol):
-    def archive_seal(
-        self, specification: BacktestSpecification
-    ) -> BacktestArchiveSeal: ...
+class BacktestModelAdapter(Protocol):
+    """One explicitly composed adapter for one supported Model family."""
 
-    def universe_template(
-        self, specification: BacktestSpecification
-    ) -> BacktestUniverseTemplate: ...
+    def supports(self, recipe: BacktestModelTrainingRecipe) -> bool: ...
+
+    def training_request(
+        self,
+        *,
+        specification: BacktestSpecification,
+        requirement: BacktestModelTrainingRequirement,
+        fit_evaluation: BacktestFitEvaluationExecution,
+        model_training_run_id: UUID,
+    ) -> ReproducibleModelTrainingRunRequest: ...
+
+
+class BacktestActionReadPort(Protocol):
+    def archive_seal(self, specification: BacktestSpecification) -> BacktestArchiveSeal: ...
+
+    def universe_template(self, specification: BacktestSpecification) -> BacktestUniverseTemplate: ...
 
     def trading_session(
         self,
@@ -149,13 +193,9 @@ class BacktestActionReadPort(Protocol):
         trading_session_id: UUID,
     ) -> BacktestTradingSession: ...
 
-    def target_checkpoints(
-        self, specification: BacktestSpecification
-    ) -> tuple[BacktestTargetCheckpoint, ...]: ...
+    def target_checkpoints(self, specification: BacktestSpecification) -> tuple[BacktestTargetCheckpoint, ...]: ...
 
-    def feature_definitions(
-        self, specification: BacktestSpecification
-    ) -> tuple[BacktestFeatureExecutionDefinition, ...]: ...
+    def feature_definitions(self, specification: BacktestSpecification) -> tuple[BacktestFeatureExecutionDefinition, ...]: ...
 
     def retrospective_universe_id(
         self,
@@ -206,13 +246,24 @@ class BacktestActionReadPort(Protocol):
         model_training_requirement_id: UUID,
     ) -> UUID: ...
 
-    def partition_execution(
-        self, research_partition_id: UUID
-    ) -> BacktestPartitionExecution: ...
+    def fit_evaluation_execution(
+        self,
+        *,
+        exploratory_backtest_run_id: UUID,
+        specification_sha256: ContentHash | str,
+        model_training_requirement_id: UUID,
+    ) -> BacktestFitEvaluationExecution: ...
 
-    def evaluation_result(
-        self, evaluation_run_id: UUID
-    ) -> BacktestEvaluationResult: ...
+    def model_execution_result(
+        self,
+        *,
+        model_training_run_id: UUID,
+        model_version_id: UUID,
+    ) -> BacktestModelExecutionResult: ...
+
+    def partition_execution(self, research_partition_id: UUID) -> BacktestPartitionExecution: ...
+
+    def evaluation_result(self, evaluation_run_id: UUID) -> BacktestEvaluationResult: ...
 
 
 __all__ = [
@@ -223,6 +274,9 @@ __all__ = [
     "BacktestFeatureMaterializer",
     "BacktestFeatureRequest",
     "BacktestEvaluationResult",
+    "BacktestFitEvaluationExecution",
+    "BacktestModelAdapter",
+    "BacktestModelExecutionResult",
     "BacktestPartitionExecution",
     "BacktestPopulationMember",
     "BacktestTargetCheckpoint",

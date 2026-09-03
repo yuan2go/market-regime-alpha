@@ -23747,6 +23747,11 @@ BEGIN
     IF NOT EXISTS (
         SELECT 1
         FROM mra.backtest_model_training_requirement AS requirement
+        JOIN mra.exploratory_backtest_run AS backtest
+          ON backtest.exploratory_backtest_run_id =
+             requirement.exploratory_backtest_run_id
+         AND backtest.current_specification_sha256 =
+             requirement.specification_sha256
         JOIN mra.backtest_evaluation_execution AS execution
           ON execution.backtest_evaluation_execution_id =
              NEW.backtest_evaluation_execution_id
@@ -23779,16 +23784,47 @@ BEGIN
          AND training.exploratory_backtest_arm_id =
              requirement.exploratory_backtest_arm_id
          AND training.exploratory_backtest_fold_id = requirement.fit_fold_id
+         AND training.evaluation_protocol_metric_id =
+             requirement.required_fit_evaluation_protocol_metric_id
+         AND training.algorithm_code = requirement.algorithm_code
+         AND training.algorithm_version = requirement.algorithm_version
+         AND training.algorithm_sha256 = requirement.implementation_sha256
+         AND training.random_seed = backtest.random_seed
+         AND training.code_artifact_id = backtest.code_artifact_id
+         AND training.code_content_sha256 = backtest.code_content_sha256
+         AND training.code_size_bytes = backtest.code_size_bytes
+         AND training.config_artifact_id = backtest.config_artifact_id
+         AND training.config_content_sha256 = backtest.config_content_sha256
+         AND training.config_size_bytes = backtest.config_size_bytes
+         AND training.provenance_sha256 = backtest.provenance_sha256
         JOIN mra.model_training_reproducibility AS reproducibility
           ON reproducibility.model_training_run_id =
              training.model_training_run_id
          AND reproducibility.content_sha256 =
              NEW.model_training_reproducibility_sha256
+         AND reproducibility.implementation_sha256 =
+             requirement.implementation_sha256
+         AND reproducibility.python_implementation =
+             requirement.python_implementation
+         AND reproducibility.python_version = requirement.python_version
+         AND reproducibility.runtime_code = requirement.runtime_code
+         AND reproducibility.runtime_version = requirement.runtime_version
+         AND reproducibility.uv_lock_sha256 = requirement.uv_lock_sha256
+         AND reproducibility.dependency_count = requirement.dependency_count
+         AND reproducibility.dependency_roster_sha256 =
+             requirement.dependency_roster_sha256
+         AND reproducibility.hyperparameter_count =
+             requirement.hyperparameter_count
+         AND reproducibility.hyperparameter_roster_sha256 =
+             requirement.hyperparameter_roster_sha256
+         AND reproducibility.environment_sha256 =
+             requirement.environment_sha256
         JOIN mra.model_version AS version
           ON version.model_version_id = NEW.model_version_id
          AND version.content_sha256 = NEW.model_version_sha256
          AND version.model_id = training.model_id
          AND version.model_training_run_id = training.model_training_run_id
+         AND version.version = requirement.planned_model_version
          AND version.registered_at >= training.opened_at
         WHERE requirement.backtest_model_training_requirement_id =
               NEW.model_training_requirement_id

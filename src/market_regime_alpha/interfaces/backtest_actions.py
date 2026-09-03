@@ -38,12 +38,17 @@ from market_regime_alpha.research_qualification.application.experiments import (
 from market_regime_alpha.research_qualification.application.partitions import (
     ResearchPartitionCommands,
 )
+from market_regime_alpha.research_qualification.application.research_models import (
+    RegisterModelVersionRequest,
+    ResearchModelApplication,
+)
 from market_regime_alpha.research_qualification.domain.backtest import (
     BacktestArmSpecification,
     BacktestEvaluationRequirement,
     BacktestEvaluationScopeKind,
     BacktestExecutionKind,
     BacktestFoldSession,
+    BacktestModelTrainingRequirement,
     BacktestSessionRole,
     BacktestSpecification,
 )
@@ -60,6 +65,7 @@ from market_regime_alpha.research_qualification.domain.backtest_execution import
     BacktestActionKind,
     BacktestEvaluationExecution,
     BacktestExpectedAction,
+    BacktestModelLineage,
 )
 from market_regime_alpha.research_qualification.domain.evaluation import (
     EvaluationRunPlan,
@@ -89,6 +95,7 @@ from market_regime_alpha.research_qualification.ports.backtest_actions import (
     BacktestActionReadPort,
     BacktestFeatureMaterializer,
     BacktestFeatureRequest,
+    BacktestModelAdapter,
     BacktestTradingSession,
 )
 from market_regime_alpha.research_qualification.ports.backtest_runtime import (
@@ -127,6 +134,13 @@ class _EvaluationIdentities:
     evaluation_binding_id: UUID
 
 
+@dataclass(frozen=True, slots=True)
+class _ModelIdentities:
+    model_training_run_id: UUID
+    model_version_id: UUID
+    model_lineage_id: UUID
+
+
 class BacktestCanonicalActionHandler:
     """Closed action/step dispatcher; every mutation stays with its owner."""
 
@@ -151,6 +165,8 @@ class BacktestCanonicalActionHandler:
         research_partitions: ResearchPartitionCommands | None = None,
         research_experiments: ExperimentCommands | None = None,
         research_evaluations: EvaluationCommands | None = None,
+        research_models: ResearchModelApplication | None = None,
+        model_adapters: tuple[BacktestModelAdapter, ...] = (),
         backtests: BacktestApplication | None = None,
         runtime: RuntimeApplication | None = None,
     ) -> None:
@@ -176,6 +192,8 @@ class BacktestCanonicalActionHandler:
         self._research_partitions = research_partitions
         self._research_experiments = research_experiments
         self._research_evaluations = research_evaluations
+        self._research_models = research_models
+        self._model_adapters = model_adapters
         self._backtests = backtests
         self._runtime = runtime
 
@@ -195,16 +213,10 @@ class BacktestCanonicalActionHandler:
         if action.fold_session_id is None:
             return None
         fold_session = self._fold_session(specification, action)
-        session = self._reads.trading_session(
-            specification, fold_session.trading_session_id
-        )
+        session = self._reads.trading_session(specification, fold_session.trading_session_id)
         if session.session_date != fold_session.session_date:
             raise ValueError("Backtest Session date differs from specification")
-        references = tuple(
-            item
-            for item in self._reads.target_checkpoints(specification)
-            if item.role == "DECISION_REFERENCE"
-        )
+        references = tuple(item for item in self._reads.target_checkpoints(specification) if item.role == "DECISION_REFERENCE")
         if len(references) != 1 or references[0].session_offset != 0:
             raise ValueError("Backtest Target requires one Decision reference")
         reference = references[0]
@@ -230,9 +242,7 @@ class BacktestCanonicalActionHandler:
                     canonical_json_sha256(
                         {
                             "action_content_sha256": str(action.content_sha256),
-                            "specification_sha256": str(
-                                specification.content_sha256
-                            ),
+                            "specification_sha256": str(specification.content_sha256),
                             "step_key": key,
                         }
                     ),
@@ -277,9 +287,7 @@ class BacktestCanonicalActionHandler:
                     canonical_json_sha256(
                         {
                             "action_content_sha256": str(action.content_sha256),
-                            "specification_sha256": str(
-                                specification.content_sha256
-                            ),
+                            "specification_sha256": str(specification.content_sha256),
                             "step_key": key,
                         }
                     ),
@@ -290,10 +298,7 @@ class BacktestCanonicalActionHandler:
         if action.kind is BacktestActionKind.SETTLE_OUTCOME:
             commitment_ids = self._commitment_ids(specification, action)
             roster = (
-                tuple(
-                    (f"settle-{commitment_id.hex}", "SETTLE_OUTCOME")
-                    for commitment_id in commitment_ids
-                )
+                tuple((f"settle-{commitment_id.hex}", "SETTLE_OUTCOME") for commitment_id in commitment_ids)
                 if commitment_ids
                 else (("record-empty-outcome-roster", "RECORD_EVIDENCE"),)
             )
@@ -305,15 +310,45 @@ class BacktestCanonicalActionHandler:
                         {
                             "action_content_sha256": str(action.content_sha256),
                             "commitment_ids": commitment_ids,
-                            "specification_sha256": str(
-                                specification.content_sha256
-                            ),
+                            "specification_sha256": str(specification.content_sha256),
                             "step_key": key,
                         }
                     ),
                     ExternalEffectClass.NONE,
                 )
                 for key, kind in roster
+            )
+        if action.kind is BacktestActionKind.TRAIN_MODEL:
+            return tuple(
+                BacktestRuntimeStep(
+                    key,
+                    kind,
+                    canonical_json_sha256(
+                        {
+                            "action_content_sha256": str(action.content_sha256),
+                            "specification_sha256": str(specification.content_sha256),
+                            "step_key": key,
+                        }
+                    ),
+                    external_effect,
+                )
+                for key, kind, external_effect in (
+                    (
+                        "open-model-training",
+                        "OPEN_MODEL_TRAINING_RUN",
+                        ExternalEffectClass.CONTENT_PUT,
+                    ),
+                    (
+                        "register-model-version",
+                        "REGISTER_MODEL_VERSION",
+                        ExternalEffectClass.CONTENT_PUT,
+                    ),
+                    (
+                        "bind-model-lineage",
+                        "RECORD_EVIDENCE",
+                        ExternalEffectClass.NONE,
+                    ),
+                )
             )
         if action.kind in {
             BacktestActionKind.COMPLETE_FOLD_EVALUATION,
@@ -326,9 +361,7 @@ class BacktestCanonicalActionHandler:
                     canonical_json_sha256(
                         {
                             "action_content_sha256": str(action.content_sha256),
-                            "specification_sha256": str(
-                                specification.content_sha256
-                            ),
+                            "specification_sha256": str(specification.content_sha256),
                             "step_key": key,
                         }
                     ),
@@ -365,6 +398,8 @@ class BacktestCanonicalActionHandler:
             self._execute_decision_step(specification, action, claim)
         elif action.kind is BacktestActionKind.SETTLE_OUTCOME:
             self._execute_outcome_step(specification, action, claim)
+        elif action.kind is BacktestActionKind.TRAIN_MODEL:
+            self._execute_model_step(specification, action, claim)
         elif action.kind in {
             BacktestActionKind.COMPLETE_FOLD_EVALUATION,
             BacktestActionKind.COMPLETE_AGGREGATE_EVALUATION,
@@ -372,6 +407,99 @@ class BacktestCanonicalActionHandler:
             self._execute_evaluation_step(specification, action, claim)
         else:
             raise ValueError(f"unsupported Backtest action {action.kind}")
+
+    def _execute_model_step(
+        self,
+        specification: BacktestSpecification,
+        action: BacktestExpectedAction,
+        claim: AttemptClaim,
+    ) -> None:
+        if self._research_models is None or self._backtests is None or not self._model_adapters:
+            raise ValueError("Backtest Model owner Applications are not composed")
+        requirement = self._model_training_requirement(specification, action)
+        if requirement.recipe is None:  # pragma: no cover - domain invariant
+            raise ValueError("current Backtest Model recipe is missing")
+        adapters = tuple(item for item in self._model_adapters if item.supports(requirement.recipe))
+        if len(adapters) != 1:
+            raise ValueError("Backtest Model recipe requires exactly one concrete adapter")
+        identities = _model_identities(action)
+        fit_evaluation = self._reads.fit_evaluation_execution(
+            exploratory_backtest_run_id=(specification.exploratory_backtest_run_id),
+            specification_sha256=specification.content_sha256,
+            model_training_requirement_id=requirement.requirement_id,
+        )
+        context = self._context(action, claim.step_key)
+        if claim.step_key == "open-model-training":
+            self._research_models.open_reproducible_training_run(
+                adapters[0].training_request(
+                    specification=specification,
+                    requirement=requirement,
+                    fit_evaluation=fit_evaluation,
+                    model_training_run_id=identities.model_training_run_id,
+                ),
+                context,
+                runtime_claim=claim,
+            )
+            return
+        if requirement.planned_model_version is None:  # pragma: no cover
+            raise ValueError("current Model requirement lacks planned version")
+        if claim.step_key == "register-model-version":
+            self._research_models.fit_and_register_reproducible_version(
+                RegisterModelVersionRequest(
+                    model_version_id=identities.model_version_id,
+                    model_id=requirement.model_definition.authority_id,
+                    version=requirement.planned_model_version,
+                    model_training_run_id=identities.model_training_run_id,
+                    provenance_sha256=str(specification.provenance_sha256),
+                ),
+                context,
+                runtime_claim=claim,
+            )
+            return
+        if claim.step_key == "bind-model-lineage":
+            result = self._reads.model_execution_result(
+                model_training_run_id=identities.model_training_run_id,
+                model_version_id=identities.model_version_id,
+            )
+            if result.model_id != requirement.model_definition.authority_id:
+                raise ValueError("Backtest trained Model differs from requirement")
+            self._backtests.bind_model_lineage(
+                BacktestModelLineage(
+                    backtest_model_lineage_id=identities.model_lineage_id,
+                    exploratory_backtest_run_id=(specification.exploratory_backtest_run_id),
+                    specification_sha256=specification.content_sha256,
+                    model_training_requirement_id=requirement.requirement_id,
+                    backtest_evaluation_execution_id=(fit_evaluation.backtest_evaluation_execution_id),
+                    fit_evaluation_run_id=fit_evaluation.evaluation_run_id,
+                    model_id=result.model_id,
+                    model_training_run_id=result.model_training_run_id,
+                    model_training_run_sha256=(result.model_training_run_sha256),
+                    model_training_reproducibility_sha256=(result.model_training_reproducibility_sha256),
+                    model_version_id=result.model_version_id,
+                    model_version_sha256=result.model_version_sha256,
+                ),
+                context,
+                runtime_claim=claim,
+            )
+            return
+        raise ValueError(f"unsupported Model step {claim.step_key}")
+
+    @staticmethod
+    def _model_training_requirement(
+        specification: BacktestSpecification,
+        action: BacktestExpectedAction,
+    ) -> BacktestModelTrainingRequirement:
+        if action.model_training_requirement_id is None:
+            raise ValueError("Backtest Model action lacks exact requirement")
+        matches = tuple(
+            item for item in specification.model_training_requirements if item.requirement_id == action.model_training_requirement_id
+        )
+        if len(matches) != 1:
+            raise ValueError("Backtest Model requirement is absent or ambiguous")
+        requirement = matches[0]
+        if requirement.model_arm_id != action.arm_id or requirement.fit_fold_id != action.fold_id:
+            raise ValueError("Backtest Model action scope differs")
+        return requirement
 
     def _execute_evaluation_step(
         self,
@@ -400,9 +528,7 @@ class BacktestCanonicalActionHandler:
             )
             return
         partition = self._reads.partition_execution(identities.partition_id)
-        expected_purpose = self._evaluation_purpose(
-            specification, requirement
-        )
+        expected_purpose = self._evaluation_purpose(specification, requirement)
         if partition.purpose != expected_purpose.value:
             raise ValueError("Backtest Evaluation Partition purpose differs")
         binding = ExperimentPartitionBinding(
@@ -422,22 +548,13 @@ class BacktestCanonicalActionHandler:
                     experiment_id=identities.experiment_id,
                     experiment_code=f"backtest-{action.action_id.hex}",
                     research_question=specification.hypothesis,
-                    primary_change=(
-                        f"evaluate frozen arm {requirement.arm_id} "
-                        f"at {requirement.scope_kind.value} scope"
-                    ),
+                    primary_change=(f"evaluate frozen arm {requirement.arm_id} at {requirement.scope_kind.value} scope"),
                     hypothesis=specification.hypothesis,
                     target_definition_id=specification.target.authority_id,
                     target_version=specification.target.version,
                     target_definition_sha256=specification.target.content_sha256,
-                    protocol_identity=(
-                        f"evaluation-protocol:"
-                        f"{requirement.evaluation_protocol.authority_id}"
-                    ),
-                    acceptance_semantics=(
-                        "Frozen EvaluationProtocol metrics are the sole "
-                        "acceptance and NOT_ESTIMABLE Authority."
-                    ),
+                    protocol_identity=(f"evaluation-protocol:{requirement.evaluation_protocol.authority_id}"),
+                    acceptance_semantics=("Frozen EvaluationProtocol metrics are the sole acceptance and NOT_ESTIMABLE Authority."),
                     code_artifact=specification.code_artifact,
                     config_artifact=specification.config_artifact,
                     provenance_sha256=specification.provenance_sha256,
@@ -464,12 +581,8 @@ class BacktestCanonicalActionHandler:
                 EvaluationRunPlan(
                     evaluation_run_id=identities.evaluation_run_id,
                     experiment_run_id=identities.experiment_run_id,
-                    evaluation_protocol_id=(
-                        requirement.evaluation_protocol.authority_id
-                    ),
-                    requested_knowledge_cutoff=(
-                        self._reads.archive_seal(specification).knowledge_cutoff
-                    ),
+                    evaluation_protocol_id=(requirement.evaluation_protocol.authority_id),
+                    requested_knowledge_cutoff=(self._reads.archive_seal(specification).knowledge_cutoff),
                     request_identity=f"backtest:{action.action_id}",
                     code_artifact=specification.code_artifact,
                     config_artifact=specification.config_artifact,
@@ -494,32 +607,19 @@ class BacktestCanonicalActionHandler:
             )
             return
         if claim.step_key == "bind-evaluation":
-            result = self._reads.evaluation_result(
-                identities.evaluation_run_id
-            )
-            if (
-                result.evaluation_protocol_id
-                != requirement.evaluation_protocol.authority_id
-            ):
+            result = self._reads.evaluation_result(identities.evaluation_run_id)
+            if result.evaluation_protocol_id != requirement.evaluation_protocol.authority_id:
                 raise ValueError("Backtest Evaluation Protocol lineage differs")
             self._backtests.bind_evaluation(
                 BacktestEvaluationExecution(
-                    backtest_evaluation_execution_id=(
-                        identities.evaluation_binding_id
-                    ),
-                    exploratory_backtest_run_id=(
-                        specification.exploratory_backtest_run_id
-                    ),
+                    backtest_evaluation_execution_id=(identities.evaluation_binding_id),
+                    exploratory_backtest_run_id=(specification.exploratory_backtest_run_id),
                     specification_sha256=specification.content_sha256,
-                    backtest_evaluation_requirement_id=(
-                        requirement.requirement_id
-                    ),
+                    backtest_evaluation_requirement_id=(requirement.requirement_id),
                     evaluation_run_id=result.evaluation_run_id,
                     evaluation_protocol_id=result.evaluation_protocol_id,
                     evaluation_metric_count=result.metric_count,
-                    evaluation_metric_roster_sha256=(
-                        result.metric_roster_sha256
-                    ),
+                    evaluation_metric_roster_sha256=(result.metric_roster_sha256),
                     canonical_completed_at=result.completed_at,
                 ),
                 context,
@@ -544,11 +644,7 @@ class BacktestCanonicalActionHandler:
         fold = (
             None
             if requirement.fold_id is None
-            else next(
-                item
-                for item in specification.folds
-                if item.exploratory_backtest_fold_id == requirement.fold_id
-            )
+            else next(item for item in specification.folds if item.exploratory_backtest_fold_id == requirement.fold_id)
         )
         return ResearchPartitionPlan(
             research_partition_id=partition_id,
@@ -571,9 +667,7 @@ class BacktestCanonicalActionHandler:
             config_artifact=specification.config_artifact,
             provenance_sha256=specification.provenance_sha256,
             backtest_source=BacktestPartitionSource(
-                exploratory_backtest_run_id=(
-                    specification.exploratory_backtest_run_id
-                ),
+                exploratory_backtest_run_id=(specification.exploratory_backtest_run_id),
                 exploratory_backtest_arm_id=self._required_arm_id(requirement),
                 exploratory_backtest_fold_id=requirement.fold_id,
             ),
@@ -592,11 +686,7 @@ class BacktestCanonicalActionHandler:
     ) -> BacktestEvaluationRequirement:
         if action.evaluation_requirement_id is None:
             raise ValueError("current Backtest Evaluation action lacks requirement")
-        matches = tuple(
-            item
-            for item in specification.evaluation_requirements
-            if item.requirement_id == action.evaluation_requirement_id
-        )
+        matches = tuple(item for item in specification.evaluation_requirements if item.requirement_id == action.evaluation_requirement_id)
         if len(matches) != 1:
             raise ValueError("Backtest Evaluation requirement is absent or ambiguous")
         requirement = matches[0]
@@ -611,61 +701,35 @@ class BacktestCanonicalActionHandler:
     ) -> PartitionPurpose:
         if requirement.fold_id is None:
             return PartitionPurpose.VALIDATION
-        return next(
-            item.purpose
-            for item in specification.folds
-            if item.exploratory_backtest_fold_id == requirement.fold_id
-        )
+        return next(item.purpose for item in specification.folds if item.exploratory_backtest_fold_id == requirement.fold_id)
 
     def _evaluation_sessions(
         self,
         specification: BacktestSpecification,
         requirement: BacktestEvaluationRequirement,
     ) -> tuple[BacktestFoldSession, ...]:
-        participating_folds = {
-            item.fold_id
-            for item in specification.arm_folds
-            if item.arm_id == requirement.arm_id
-        }
+        participating_folds = {item.fold_id for item in specification.arm_folds if item.arm_id == requirement.arm_id}
         if requirement.fold_id is not None:
-            folds = tuple(
-                item
-                for item in specification.folds
-                if item.exploratory_backtest_fold_id == requirement.fold_id
-            )
+            folds = tuple(item for item in specification.folds if item.exploratory_backtest_fold_id == requirement.fold_id)
         else:
             folds = tuple(
                 item
                 for item in specification.folds
-                if item.exploratory_backtest_fold_id in participating_folds
-                and item.purpose is PartitionPurpose.VALIDATION
+                if item.exploratory_backtest_fold_id in participating_folds and item.purpose is PartitionPurpose.VALIDATION
             )
         sessions = tuple(
             session
             for fold in folds
             for session in fold.sessions
-            if session.role
-            is (
-                BacktestSessionRole.FIT_INPUT
-                if fold.purpose is PartitionPurpose.FIT
-                else BacktestSessionRole.EVALUATION
-            )
+            if session.role is (BacktestSessionRole.FIT_INPUT if fold.purpose is PartitionPurpose.FIT else BacktestSessionRole.EVALUATION)
         )
         if requirement.scope_kind is BacktestEvaluationScopeKind.MONTH:
             year, month = _parse_month(requirement.slice_key)
-            sessions = tuple(
-                item
-                for item in sessions
-                if (item.session_date.year, item.session_date.month)
-                == (year, month)
-            )
+            sessions = tuple(item for item in sessions if (item.session_date.year, item.session_date.month) == (year, month))
         elif requirement.scope_kind is BacktestEvaluationScopeKind.QUARTER:
             year, quarter = _parse_quarter(requirement.slice_key)
             sessions = tuple(
-                item
-                for item in sessions
-                if item.session_date.year == year
-                and (item.session_date.month - 1) // 3 + 1 == quarter
+                item for item in sessions if item.session_date.year == year and (item.session_date.month - 1) // 3 + 1 == quarter
             )
         return sessions
 
@@ -707,10 +771,7 @@ class BacktestCanonicalActionHandler:
             return
         if self._outcomes is None:
             raise ValueError("Backtest Outcome owner Application is not composed")
-        by_step = {
-            f"settle-{commitment_id.hex}": commitment_id
-            for commitment_id in commitment_ids
-        }
+        by_step = {f"settle-{commitment_id.hex}": commitment_id for commitment_id in commitment_ids}
         commitment_id = by_step.get(claim.step_key)
         if commitment_id is None:
             raise ValueError("Backtest Outcome Step is outside exact commitment roster")
@@ -718,17 +779,15 @@ class BacktestCanonicalActionHandler:
         knowledge_cutoff = self._reads.archive_seal(specification).knowledge_cutoff
         if observation_cutoff >= knowledge_cutoff:
             raise ValueError("Backtest Outcome must predate Archive knowledge cutoff")
-        result = (
-            self._outcomes.settle_exploratory_retrospective_market_target_outcome(
-                SettleMarketTargetOutcomeRequest(
-                    commitment_id,
-                    observation_cutoff,
-                    knowledge_cutoff,
-                    None,
-                ),
-                self._context(action, f"outcome-{commitment_id}"),
-                runtime_claim=claim,
-            )
+        result = self._outcomes.settle_exploratory_retrospective_market_target_outcome(
+            SettleMarketTargetOutcomeRequest(
+                commitment_id,
+                observation_cutoff,
+                knowledge_cutoff,
+                None,
+            ),
+            self._context(action, f"outcome-{commitment_id}"),
+            runtime_claim=claim,
         )
         if isinstance(result, OutcomeNotDueResult):
             raise ValueError("Backtest retrospective Outcome is unexpectedly NOT_DUE")
@@ -738,11 +797,7 @@ class BacktestCanonicalActionHandler:
         specification: BacktestSpecification,
         action: BacktestExpectedAction,
     ) -> tuple[UUID, ...]:
-        if (
-            action.arm_id is None
-            or action.fold_id is None
-            or action.fold_session_id is None
-        ):
+        if action.arm_id is None or action.fold_id is None or action.fold_session_id is None:
             raise ValueError("Backtest Outcome action lacks exact scope")
         return self._reads.decision_commitment_ids(
             exploratory_backtest_run_id=specification.exploratory_backtest_run_id,
@@ -758,18 +813,9 @@ class BacktestCanonicalActionHandler:
         action: BacktestExpectedAction,
     ) -> datetime:
         reference = self._fold_session(specification, action)
-        bindings = tuple(
-            (session.trading_session_id, session.session_date)
-            for fold in specification.folds
-            for session in fold.sessions
-        )
-        distinct_ids = tuple(
-            dict.fromkeys(session_id for session_id, _ in bindings)
-        )
-        sessions = tuple(
-            self._reads.trading_session(specification, session_id)
-            for session_id in distinct_ids
-        )
+        bindings = tuple((session.trading_session_id, session.session_date) for fold in specification.folds for session in fold.sessions)
+        distinct_ids = tuple(dict.fromkeys(session_id for session_id, _ in bindings))
+        sessions = tuple(self._reads.trading_session(specification, session_id) for session_id in distinct_ids)
         checkpoints = tuple(
             BacktestOutcomeCheckpoint(
                 checkpoint.session_offset,
@@ -801,11 +847,7 @@ class BacktestCanonicalActionHandler:
         claim: AttemptClaim,
     ) -> None:
         self._require_decision_composition()
-        assert (
-            action.arm_id is not None
-            and action.fold_id is not None
-            and action.fold_session_id is not None
-        )
+        assert action.arm_id is not None and action.fold_id is not None and action.fold_session_id is not None
         arm = self._arm(specification, action)
         fold = self._fold(specification, action)
         dataset = self._reads.dataset_execution(
@@ -852,16 +894,10 @@ class BacktestCanonicalActionHandler:
                     targets=(
                         RequestedDecisionTarget(
                             specification.target.authority_id,
-                            self._reads.universe_template(
-                                specification
-                            ).market_provider_product_id,
+                            self._reads.universe_template(specification).market_provider_product_id,
                         ),
                     ),
-                    research_purpose=(
-                        ResearchPurpose.DISCOVERY
-                        if fold.purpose is PartitionPurpose.FIT
-                        else ResearchPurpose.VALIDATION
-                    ),
+                    research_purpose=(ResearchPurpose.DISCOVERY if fold.purpose is PartitionPurpose.FIT else ResearchPurpose.VALIDATION),
                     research_qualifications=(),
                 ),
                 retrospective_scope,
@@ -881,9 +917,7 @@ class BacktestCanonicalActionHandler:
             return
         if fold.purpose is not PartitionPurpose.VALIDATION:
             raise ValueError("FIT Decision does not have validation-only steps")
-        model_version_id = self._validation_model_version(
-            specification, action, arm
-        )
+        model_version_id = self._validation_model_version(specification, action, arm)
         if claim.step_key == "signal-and-forecast":
             if model_version_id is None:
                 self._decision_inference.produce(
@@ -932,8 +966,7 @@ class BacktestCanonicalActionHandler:
         requirements = tuple(
             item
             for item in specification.model_training_requirements
-            if item.model_arm_id == action.arm_id
-            and item.validation_fold_id == action.fold_id
+            if item.model_arm_id == action.arm_id and item.validation_fold_id == action.fold_id
         )
         if arm.execution_kind is BacktestExecutionKind.RULE:
             if requirements:
@@ -968,22 +1001,14 @@ class BacktestCanonicalActionHandler:
         specification: BacktestSpecification,
         action: BacktestExpectedAction,
     ) -> BacktestArmSpecification:
-        matches = tuple(
-            item
-            for item in specification.arms
-            if item.exploratory_backtest_arm_id == action.arm_id
-        )
+        matches = tuple(item for item in specification.arms if item.exploratory_backtest_arm_id == action.arm_id)
         if len(matches) != 1:
             raise ValueError("Backtest action Arm is absent or ambiguous")
         return matches[0]
 
     @staticmethod
     def _fold(specification: BacktestSpecification, action: BacktestExpectedAction):
-        matches = tuple(
-            item
-            for item in specification.folds
-            if item.exploratory_backtest_fold_id == action.fold_id
-        )
+        matches = tuple(item for item in specification.folds if item.exploratory_backtest_fold_id == action.fold_id)
         if len(matches) != 1:
             raise ValueError("Backtest action Fold is absent or ambiguous")
         return matches[0]
@@ -1011,10 +1036,7 @@ class BacktestCanonicalActionHandler:
             template.classification_code,
             tuple(
                 sorted(
-                    (
-                        InstrumentId.parse(item.instrument_id)
-                        for item in specification.sample_members
-                    ),
+                    (InstrumentId.parse(item.instrument_id) for item in specification.sample_members),
                     key=str,
                 )
             ),
@@ -1022,9 +1044,7 @@ class BacktestCanonicalActionHandler:
         self._selection.freeze_exploratory_retrospective_universe(
             universe_id=template.universe_id,
             scope=scope,
-            retrospective_scope=self._selection_scope(
-                specification, decision_time
-            ),
+            retrospective_scope=self._selection_scope(specification, decision_time),
             context=self._context(action, "freeze-universe"),
             runtime_claim=claim,
         )
@@ -1036,11 +1056,7 @@ class BacktestCanonicalActionHandler:
         claim: AttemptClaim,
     ) -> None:
         decision_time = self._required_decision_time(specification, action)
-        scope_hash = sha256_bytes(
-            self._scope_content(
-                specification, self._reads.universe_template(specification)
-            )
-        )
+        scope_hash = sha256_bytes(self._scope_content(specification, self._reads.universe_template(specification)))
         universe_revision_id = self._reads.retrospective_universe_id(
             specification=specification,
             decision_time=decision_time,
@@ -1049,9 +1065,7 @@ class BacktestCanonicalActionHandler:
         self._selection.assess_exploratory_retrospective_eligibility(
             universe_revision_id=universe_revision_id,
             eligibility_policy_id=specification.eligibility_policy.authority_id,
-            retrospective_scope=self._selection_scope(
-                specification, decision_time
-            ),
+            retrospective_scope=self._selection_scope(specification, decision_time),
             context=self._context(action, "assess-eligibility"),
             runtime_claim=claim,
         )
@@ -1068,9 +1082,7 @@ class BacktestCanonicalActionHandler:
         universe_revision_id = self._reads.retrospective_universe_id(
             specification=specification,
             decision_time=decision_time,
-            scope_content_sha256=sha256_bytes(
-                self._scope_content(specification, template)
-            ),
+            scope_content_sha256=sha256_bytes(self._scope_content(specification, template)),
         )
         population = self._reads.eligible_population(
             universe_revision_id=universe_revision_id,
@@ -1110,16 +1122,11 @@ class BacktestCanonicalActionHandler:
         )
         materialized = materialize_backtest_dataset(
             dataset_id=dataset_id,
-            dataset_code=(
-                f"backtest_{str(action.arm_id)[:8]}_"
-                f"{session.session_date:%Y%m%d}"
-            ),
+            dataset_code=(f"backtest_{str(action.arm_id)[:8]}_{session.session_date:%Y%m%d}"),
             simulated_decision_time=decision_time,
             universe_revision_id=universe_revision_id,
             eligibility_policy_id=specification.eligibility_policy.authority_id,
-            feature_definition_ids=tuple(
-                item.feature_definition_id for item in feature_definitions
-            ),
+            feature_definition_ids=tuple(item.feature_definition_id for item in feature_definitions),
             code_artifact=specification.code_artifact,
             config_artifact=specification.config_artifact,
             members=members,
@@ -1169,9 +1176,7 @@ class BacktestCanonicalActionHandler:
                         key=lambda member: str(member.instrument_id),
                     )
                 ],
-                "market_provider_product_id": str(
-                    template.market_provider_product_id
-                ),
+                "market_provider_product_id": str(template.market_provider_product_id),
                 "schema": "selection-universe-scope-v1",
             },
             ensure_ascii=False,
@@ -1181,15 +1186,9 @@ class BacktestCanonicalActionHandler:
         ).encode("utf-8")
 
     def _feature_materializer(self, definition):
-        matches = tuple(
-            item
-            for item in self._feature_materializers
-            if item.supports(definition)
-        )
+        matches = tuple(item for item in self._feature_materializers if item.supports(definition))
         if len(matches) != 1:
-            raise ValueError(
-                "FeatureDefinition requires exactly one concrete Backtest adapter"
-            )
+            raise ValueError("FeatureDefinition requires exactly one concrete Backtest adapter")
         return matches[0]
 
     def _required_decision_time(self, specification, action) -> datetime:
@@ -1204,9 +1203,7 @@ class BacktestCanonicalActionHandler:
         action: BacktestExpectedAction,
     ) -> BacktestTradingSession:
         member = self._fold_session(specification, action)
-        return self._reads.trading_session(
-            specification, member.trading_session_id
-        )
+        return self._reads.trading_session(specification, member.trading_session_id)
 
     @staticmethod
     def _fold_session(
@@ -1220,8 +1217,7 @@ class BacktestCanonicalActionHandler:
             for fold in specification.folds
             if fold.exploratory_backtest_fold_id == action.fold_id
             for member in fold.sessions
-            if member.exploratory_backtest_fold_session_id
-            == action.fold_session_id
+            if member.exploratory_backtest_fold_session_id == action.fold_session_id
         )
         if len(matches) != 1 or matches[0].role not in {
             BacktestSessionRole.FIT_INPUT,
@@ -1257,12 +1253,18 @@ def _evaluation_identities(
     return _EvaluationIdentities(
         partition_id=uuid5(action.action_id, "research-partition"),
         experiment_id=uuid5(action.action_id, "experiment"),
-        experiment_partition_id=uuid5(
-            action.action_id, "experiment-partition"
-        ),
+        experiment_partition_id=uuid5(action.action_id, "experiment-partition"),
         experiment_run_id=uuid5(action.action_id, "experiment-run"),
         evaluation_run_id=uuid5(action.action_id, "evaluation-run"),
         evaluation_binding_id=uuid5(action.action_id, "evaluation-binding"),
+    )
+
+
+def _model_identities(action: BacktestExpectedAction) -> _ModelIdentities:
+    return _ModelIdentities(
+        model_training_run_id=uuid5(action.action_id, "model-training-run"),
+        model_version_id=uuid5(action.action_id, "model-version"),
+        model_lineage_id=uuid5(action.action_id, "model-lineage"),
     )
 
 

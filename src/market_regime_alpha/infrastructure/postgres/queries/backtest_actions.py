@@ -16,6 +16,8 @@ from market_regime_alpha.research_qualification.ports.backtest_actions import (
     BacktestDatasetExecution,
     BacktestEvaluationResult,
     BacktestFeatureExecutionDefinition,
+    BacktestFitEvaluationExecution,
+    BacktestModelExecutionResult,
     BacktestPopulationMember,
     BacktestPartitionExecution,
     BacktestTargetCheckpoint,
@@ -27,15 +29,14 @@ from market_regime_alpha.runtime.errors import (
     RuntimeNotFoundError,
 )
 from market_regime_alpha.shared.identity import InstrumentId
+from market_regime_alpha.shared.identity import ContentHash
 
 
 class PostgresBacktestActionReadPort:
     def __init__(self, pool: TargetPostgresPool) -> None:
         self._pool = pool
 
-    def archive_seal(
-        self, specification: BacktestSpecification
-    ) -> BacktestArchiveSeal:
+    def archive_seal(self, specification: BacktestSpecification) -> BacktestArchiveSeal:
         with self._pool.connection(read_only=True) as connection:
             row = connection.execute(
                 """
@@ -64,9 +65,7 @@ class PostgresBacktestActionReadPort:
             raise ArtifactIntegrityError("Backtest Archive seal differs from specification")
         return BacktestArchiveSeal(row[0])
 
-    def universe_template(
-        self, specification: BacktestSpecification
-    ) -> BacktestUniverseTemplate:
+    def universe_template(self, specification: BacktestSpecification) -> BacktestUniverseTemplate:
         with self._pool.connection(read_only=True) as connection:
             row = connection.execute(
                 """
@@ -83,9 +82,7 @@ class PostgresBacktestActionReadPort:
         if row is None:
             raise RuntimeNotFoundError("Backtest UniverseRevision does not exist")
         if str(row[4]) != str(specification.universe_revision.content_sha256):
-            raise ArtifactIntegrityError(
-                "Backtest UniverseRevision scope differs from specification"
-            )
+            raise ArtifactIntegrityError("Backtest UniverseRevision scope differs from specification")
         return BacktestUniverseTemplate(row[0], row[1], row[2], row[3])
 
     def trading_session(
@@ -109,9 +106,7 @@ class PostgresBacktestActionReadPort:
             raise ArtifactIntegrityError("Backtest TradingSession exchange differs")
         return BacktestTradingSession(*row)
 
-    def target_checkpoints(
-        self, specification: BacktestSpecification
-    ) -> tuple[BacktestTargetCheckpoint, ...]:
+    def target_checkpoints(self, specification: BacktestSpecification) -> tuple[BacktestTargetCheckpoint, ...]:
         with self._pool.connection(read_only=True) as connection:
             target = connection.execute(
                 """
@@ -131,20 +126,12 @@ class PostgresBacktestActionReadPort:
                 """,
                 (specification.target.authority_id,),
             ).fetchall()
-        if target is None or (
-            int(target[0]) != specification.target.version
-            or str(target[1]) != str(specification.target.content_sha256)
-        ):
+        if target is None or (int(target[0]) != specification.target.version or str(target[1]) != str(specification.target.content_sha256)):
             raise ArtifactIntegrityError("Backtest Target differs from specification")
         return tuple(BacktestTargetCheckpoint(*row) for row in rows)
 
-    def feature_definitions(
-        self, specification: BacktestSpecification
-    ) -> tuple[BacktestFeatureExecutionDefinition, ...]:
-        expected = {
-            item.authority_id: str(item.content_sha256)
-            for item in specification.feature_definitions
-        }
+    def feature_definitions(self, specification: BacktestSpecification) -> tuple[BacktestFeatureExecutionDefinition, ...]:
+        expected = {item.authority_id: str(item.content_sha256) for item in specification.feature_definitions}
         with self._pool.connection(read_only=True) as connection:
             rows = connection.execute(
                 """
@@ -158,9 +145,7 @@ class PostgresBacktestActionReadPort:
             ).fetchall()
         actual = {row[0]: str(row[1]) for row in rows}
         if actual != expected:
-            raise ArtifactIntegrityError(
-                "Backtest FeatureDefinition roster differs from specification"
-            )
+            raise ArtifactIntegrityError("Backtest FeatureDefinition roster differs from specification")
         return tuple(BacktestFeatureExecutionDefinition(*row) for row in rows)
 
     def retrospective_universe_id(
@@ -198,9 +183,7 @@ class PostgresBacktestActionReadPort:
                 ),
             ).fetchall()
         if len(rows) != 1:
-            raise RuntimeNotFoundError(
-                "Backtest retrospective UniverseRevision is absent or ambiguous"
-            )
+            raise RuntimeNotFoundError("Backtest retrospective UniverseRevision is absent or ambiguous")
         return UUID(str(rows[0][0]))
 
     def eligible_population(
@@ -227,10 +210,7 @@ class PostgresBacktestActionReadPort:
                 """,
                 (universe_revision_id, eligibility_policy_id),
             ).fetchall()
-        return tuple(
-            BacktestPopulationMember(InstrumentId.parse(row[0]), row[1], row[2])
-            for row in rows
-        )
+        return tuple(BacktestPopulationMember(InstrumentId.parse(row[0]), row[1], row[2]) for row in rows)
 
     def dataset_execution(
         self,
@@ -259,17 +239,13 @@ class PostgresBacktestActionReadPort:
                 (exploratory_backtest_run_id, arm_id, fold_session_id),
             ).fetchall()
         if len(rows) != 1:
-            raise RuntimeNotFoundError(
-                "Backtest Dataset execution is absent or ambiguous"
-            )
+            raise RuntimeNotFoundError("Backtest Dataset execution is absent or ambiguous")
         row = rows[0]
         return BacktestDatasetExecution(
             dataset_id=row[0],
             universe_revision_id=row[1],
             eligibility_policy_id=row[2],
-            retrospective_scope=ExploratoryRetrospectiveDatasetScope(
-                row[3], row[4], row[5], row[6]
-            ),
+            retrospective_scope=ExploratoryRetrospectiveDatasetScope(row[3], row[4], row[5], row[6]),
         )
 
     def candidate_set_id(
@@ -331,9 +307,7 @@ class PostgresBacktestActionReadPort:
                 ),
             ).fetchall()
             if len(decision_rows) != 1:
-                raise RuntimeNotFoundError(
-                    "Backtest DecisionRun is absent or ambiguous"
-                )
+                raise RuntimeNotFoundError("Backtest DecisionRun is absent or ambiguous")
             rows = connection.execute(
                 """
                 SELECT commitment.commitment_id
@@ -365,14 +339,99 @@ class PostgresBacktestActionReadPort:
                 ),
             ).fetchall()
         if len(rows) != 1:
-            raise RuntimeNotFoundError(
-                "Backtest ModelVersion lineage is absent or ambiguous"
-            )
+            raise RuntimeNotFoundError("Backtest ModelVersion lineage is absent or ambiguous")
         return UUID(str(rows[0][0]))
 
-    def partition_execution(
-        self, research_partition_id: UUID
-    ) -> BacktestPartitionExecution:
+    def fit_evaluation_execution(
+        self,
+        *,
+        exploratory_backtest_run_id: UUID,
+        specification_sha256: ContentHash | str,
+        model_training_requirement_id: UUID,
+    ) -> BacktestFitEvaluationExecution:
+        with self._pool.connection(read_only=True) as connection:
+            rows = connection.execute(
+                """
+                SELECT execution.backtest_evaluation_execution_id,
+                       execution.evaluation_run_id,
+                       execution.evaluation_protocol_id
+                FROM mra.backtest_model_training_requirement AS training
+                JOIN mra.backtest_evaluation_requirement AS requirement
+                  ON requirement.exploratory_backtest_run_id =
+                     training.exploratory_backtest_run_id
+                 AND requirement.specification_sha256 =
+                     training.specification_sha256
+                 AND requirement.scope_kind = 'FOLD'
+                 AND requirement.exploratory_backtest_arm_id =
+                     training.exploratory_backtest_arm_id
+                 AND requirement.exploratory_backtest_fold_id =
+                     training.fit_fold_id
+                 AND requirement.evaluation_protocol_id =
+                     training.required_fit_evaluation_protocol_id
+                 AND requirement.evaluation_protocol_sha256 =
+                     training.required_fit_evaluation_protocol_sha256
+                JOIN mra.backtest_evaluation_execution AS execution
+                  ON execution.backtest_evaluation_requirement_id =
+                     requirement.backtest_evaluation_requirement_id
+                 AND execution.exploratory_backtest_run_id =
+                     training.exploratory_backtest_run_id
+                 AND execution.specification_sha256 =
+                     training.specification_sha256
+                 AND execution.evaluation_protocol_id =
+                     training.required_fit_evaluation_protocol_id
+                JOIN mra.evaluation_protocol_metric AS metric
+                  ON metric.evaluation_protocol_metric_id =
+                     training.required_fit_evaluation_protocol_metric_id
+                 AND metric.evaluation_protocol_id =
+                     execution.evaluation_protocol_id
+                 AND metric.content_sha256 =
+                     training.required_fit_evaluation_metric_sha256
+                WHERE training.backtest_model_training_requirement_id = %s
+                  AND training.exploratory_backtest_run_id = %s
+                  AND training.specification_sha256 = %s
+                """,
+                (
+                    model_training_requirement_id,
+                    exploratory_backtest_run_id,
+                    str(specification_sha256),
+                ),
+            ).fetchall()
+        if len(rows) != 1:
+            raise RuntimeNotFoundError("Backtest completed FIT Evaluation is absent or ambiguous")
+        return BacktestFitEvaluationExecution(*rows[0])
+
+    def model_execution_result(
+        self,
+        *,
+        model_training_run_id: UUID,
+        model_version_id: UUID,
+    ) -> BacktestModelExecutionResult:
+        with self._pool.connection(read_only=True) as connection:
+            rows = connection.execute(
+                """
+                SELECT training.model_id,
+                       training.model_training_run_id,
+                       training.content_sha256,
+                       reproducibility.content_sha256,
+                       version.model_version_id,
+                       version.content_sha256
+                FROM mra.model_training_run AS training
+                JOIN mra.model_training_reproducibility AS reproducibility
+                  USING (model_training_run_id)
+                JOIN mra.model_version AS version
+                  ON version.model_training_run_id =
+                     training.model_training_run_id
+                 AND version.model_id = training.model_id
+                WHERE training.model_training_run_id = %s
+                  AND version.model_version_id = %s
+                """,
+                (model_training_run_id, model_version_id),
+            ).fetchall()
+        if len(rows) != 1:
+            raise RuntimeNotFoundError("Backtest Model training/version result is absent or ambiguous")
+        return BacktestModelExecutionResult(*rows[0])
+
+    def partition_execution(self, research_partition_id: UUID) -> BacktestPartitionExecution:
         with self._pool.connection(read_only=True) as connection:
             rows = connection.execute(
                 """
@@ -383,14 +442,10 @@ class PostgresBacktestActionReadPort:
                 (research_partition_id,),
             ).fetchall()
         if len(rows) != 1:
-            raise RuntimeNotFoundError(
-                "Backtest ResearchPartition is absent or ambiguous"
-            )
+            raise RuntimeNotFoundError("Backtest ResearchPartition is absent or ambiguous")
         return BacktestPartitionExecution(*rows[0])
 
-    def evaluation_result(
-        self, evaluation_run_id: UUID
-    ) -> BacktestEvaluationResult:
+    def evaluation_result(self, evaluation_run_id: UUID) -> BacktestEvaluationResult:
         with self._pool.connection(read_only=True) as connection:
             rows = connection.execute(
                 """
@@ -402,9 +457,7 @@ class PostgresBacktestActionReadPort:
                 (evaluation_run_id,),
             ).fetchall()
         if len(rows) != 1:
-            raise RuntimeNotFoundError(
-                "Backtest EvaluationRun is absent or incomplete"
-            )
+            raise RuntimeNotFoundError("Backtest EvaluationRun is absent or incomplete")
         return BacktestEvaluationResult(*rows[0])
 
 
