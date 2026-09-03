@@ -3,7 +3,7 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Documentation navigation and precedence only
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-09-02
+> **Last Updated:** 2026-09-03
 > **Code Evidence:** `src/market_regime_alpha`, both legacy and target PostgreSQL migration packages, `tests`
 
 Documentation never creates implementation truth, research evidence,
@@ -177,6 +177,11 @@ Checkpoint traceability:
 - [WP-17P Prospective Archive and Exploratory Backtest Implementation Plan](references/WP-ARCHITECTURE-REFOUNDATION-17P-Prospective-Archive-Exploratory-Backtest-Implementation-Plan.md)
   — vertical TDD slices, exact public seams, PostgreSQL qualification, isolated
   real execution and immutable Verification delivery order.
+- [WP-17P Prospective Archive and Exploratory Backtest Verification](references/WP-ARCHITECTURE-REFOUNDATION-17P-Prospective-Archive-Exploratory-Backtest-Verification.md)
+  — immutable exact-SHA proof for two-lane archive engineering, dual-clock
+  retrospective execution, bounded XSHG-32 rule/Model backtests, prospective
+  archive start, replay/reconciliation, and the unchanged Formal evidence
+  ceiling.
 
 Design documents in this section define the Target destination. Status and
 Verification records report their explicitly bounded implementation evidence;
