@@ -89,10 +89,12 @@ class Wp17pResearchOperations:
             catalog.context_policy,
             _context("register-context-policy"),
         )
-        app.decision_strategies.register(
-            catalog.strategy,
-            _context("register-strategy"),
-        )
+        strategies = catalog.strategy_roster or (catalog.strategy,)
+        for strategy in strategies:
+            app.decision_strategies.register(
+                strategy,
+                _context(f"register-strategy-{strategy.strategy_version_id}"),
+            )
         app.decision_portfolios.register_policy(
             catalog.portfolio_policy,
             _context("register-portfolio-policy"),

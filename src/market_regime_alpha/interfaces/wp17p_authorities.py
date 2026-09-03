@@ -616,6 +616,71 @@ def _strategy(
     )
 
 
+def _wp18_observational_strategy(
+    target: TargetDefinition,
+    context: ContextPolicyPlan,
+    code: ArtifactBinding,
+    config: ArtifactBinding,
+    provenance: str,
+) -> StrategyVersionPlan:
+    strategy_id = _wp18_id("strategy:context-observational")
+    version_id = _wp18_id("strategy:context-observational:version:1")
+    return StrategyVersionPlan(
+        StrategyPlan(
+            strategy_id,
+            "wp18_context_observational",
+            "Context-observed but non-gating diagnostic strategy",
+        ),
+        version_id,
+        1,
+        None,
+        "Frozen diagnostic arm; the 0.50 Context threshold is not changed",
+        StrategyActionPolicy.LONG_ONLY_RESEARCH,
+        (
+            StrategyContextRequirement(
+                _wp18_id("strategy:context-observational:requirement"),
+                version_id,
+                1,
+                context.context_policy_id,
+                context.content_sha256,
+                ContextKind.MARKET_REGIME,
+                ContextState.POSITIVE,
+                ContextFailureAction.OBSERVE_ONLY,
+            ),
+        ),
+        StrategySignalRule(
+            _wp18_id("strategy:context-observational:signal"),
+            version_id,
+            DecisionCandidateDisposition.SELECTED,
+            SignalStatus.PRESENT,
+            SignalStatus.NO_SIGNAL,
+            SignalStatus.NO_SIGNAL,
+        ),
+        (
+            StrategyForecastRule(
+                _wp18_id("strategy:context-observational:forecast"),
+                version_id,
+                1,
+                target.target_definition_id,
+                str(target.content_sha256),
+                target.checkpoints[0].target_checkpoint_id,
+                str(target.checkpoints[0].content_sha256),
+                target.metrics[0].target_metric_definition_id,
+                str(target.metrics[0].content_sha256),
+                ForecastSourceMeasure.CANDIDATE_COMPOSITE_SCORE,
+                Decimal("0.02"),
+                Decimal("0"),
+                Decimal("0.03"),
+                Decimal("0.03"),
+                "DECIMAL_RETURN",
+            ),
+        ),
+        _decision_artifact(code),
+        _decision_artifact(config),
+        provenance,
+    )
+
+
 def _portfolio(
     code: ArtifactBinding,
     config: ArtifactBinding,
@@ -867,6 +932,108 @@ def _evaluation_protocol(
     )
 
 
+def _wp18_evaluation_protocol(
+    target: TargetDefinition,
+    purpose: PartitionPurpose,
+    code: ArtifactBinding,
+    config: ArtifactBinding,
+    provenance: str,
+) -> EvaluationProtocolPlan:
+    protocol_id = _wp18_id(f"evaluation:{purpose.value}")
+    target_metric = target.metrics[0]
+    arms = (
+        ("rule_current", ExploratoryBacktestArmKind.RULE_CURRENT_CONTEXT),
+        ("ridge_current", ExploratoryBacktestArmKind.RIDGE_CURRENT_CONTEXT),
+        ("rule_observational", ExploratoryBacktestArmKind.RULE_CONTEXT_OBSERVATIONAL),
+        ("ridge_observational", ExploratoryBacktestArmKind.RIDGE_CONTEXT_OBSERVATIONAL),
+    )
+    metrics: list[ProtocolMetricDefinition] = []
+
+    def append(
+        suffix: str,
+        arm: ExploratoryBacktestArmKind,
+        reducer: EvaluationReducer,
+        value_type: SourceMetricValueType,
+        source_kind: EvaluationSourceKind,
+        source_measure: EvaluationSourceMeasure,
+        *,
+        minimum: int = 1,
+    ) -> None:
+        metrics.append(
+            ProtocolMetricDefinition(
+                _wp18_id(f"evaluation:{purpose.value}:{suffix}"),
+                suffix,
+                len(metrics) + 1,
+                target_metric.target_metric_definition_id,
+                target_metric.metric_code,
+                value_type,
+                reducer,
+                EvaluationSliceKind.EXPLORATORY_BACKTEST_ARM,
+                None,
+                MetricDirection.DESCRIPTIVE,
+                minimum,
+                AcceptanceOperator.NONE,
+                None,
+                arm,
+                source_kind=source_kind,
+                source_measure=source_measure,
+            )
+        )
+
+    if purpose is PartitionPurpose.FIT:
+        append(
+            "fit_ridge_current_mean",
+            ExploratoryBacktestArmKind.RIDGE_CURRENT_CONTEXT,
+            EvaluationReducer.MEAN_DECIMAL,
+            SourceMetricValueType.DECIMAL,
+            EvaluationSourceKind.OUTCOME_METRIC,
+            EvaluationSourceMeasure.TARGET_VALUE,
+        )
+    else:
+        declarations = (
+            ("candidate_rank_ic", EvaluationReducer.SPEARMAN_RANK_CORRELATION, SourceMetricValueType.DECIMAL, EvaluationSourceKind.CANDIDATE_OUTCOME_PAIR, EvaluationSourceMeasure.CANDIDATE_SCORE_VS_TARGET, 2),
+            ("candidate_spread", EvaluationReducer.TOP_BOTTOM_SPREAD, SourceMetricValueType.DECIMAL, EvaluationSourceKind.CANDIDATE_OUTCOME_PAIR, EvaluationSourceMeasure.CANDIDATE_SCORE_VS_TARGET, 2),
+            ("candidate_top_k_return", EvaluationReducer.MEAN_DECIMAL, SourceMetricValueType.DECIMAL, EvaluationSourceKind.CANDIDATE_OUTCOME_PAIR, EvaluationSourceMeasure.CANDIDATE_TOP_K_RETURN, 1),
+            ("candidate_hit_rate", EvaluationReducer.TRUE_RATE, SourceMetricValueType.BOOLEAN, EvaluationSourceKind.CANDIDATE_OUTCOME_PAIR, EvaluationSourceMeasure.CANDIDATE_HIT, 1),
+            ("candidate_coverage", EvaluationReducer.ESTIMABLE_RATE, SourceMetricValueType.DECIMAL, EvaluationSourceKind.CANDIDATE_OUTCOME_PAIR, EvaluationSourceMeasure.CANDIDATE_SCORE_VS_TARGET, 1),
+            ("selected_ratio", EvaluationReducer.TRUE_RATE, SourceMetricValueType.BOOLEAN, EvaluationSourceKind.CANDIDATE_DISPOSITION, EvaluationSourceMeasure.CANDIDATE_SELECTED, 1),
+            ("signal_coverage", EvaluationReducer.TRUE_RATE, SourceMetricValueType.BOOLEAN, EvaluationSourceKind.SIGNAL_STATUS, EvaluationSourceMeasure.SIGNAL_PRESENT, 1),
+            ("forecast_rank_ic", EvaluationReducer.SPEARMAN_RANK_CORRELATION, SourceMetricValueType.DECIMAL, EvaluationSourceKind.FORECAST_OUTCOME_PAIR, EvaluationSourceMeasure.FORECAST_POINT_VS_TARGET, 2),
+            ("forecast_coverage", EvaluationReducer.ESTIMABLE_RATE, SourceMetricValueType.DECIMAL, EvaluationSourceKind.FORECAST_OUTCOME_PAIR, EvaluationSourceMeasure.FORECAST_POINT_VS_TARGET, 1),
+            ("exposure", EvaluationReducer.SUM_DECIMAL, SourceMetricValueType.DECIMAL, EvaluationSourceKind.PORTFOLIO_LINE, EvaluationSourceMeasure.TARGET_WEIGHT, 1),
+            ("turnover", EvaluationReducer.ABSOLUTE_MEAN_DECIMAL, SourceMetricValueType.DECIMAL, EvaluationSourceKind.PORTFOLIO_LINE, EvaluationSourceMeasure.TURNOVER, 1),
+            ("gross_result", EvaluationReducer.SUM_DECIMAL, SourceMetricValueType.DECIMAL, EvaluationSourceKind.PORTFOLIO_OUTCOME, EvaluationSourceMeasure.GROSS_PORTFOLIO_RETURN, 1),
+            ("assumed_cost_net_result", EvaluationReducer.SUM_DECIMAL, SourceMetricValueType.DECIMAL, EvaluationSourceKind.PORTFOLIO_OUTCOME, EvaluationSourceMeasure.NET_PORTFOLIO_RETURN_ASSUMED_COST, 1),
+            ("drawdown", EvaluationReducer.MAX_DRAWDOWN, SourceMetricValueType.DECIMAL, EvaluationSourceKind.PORTFOLIO_OUTCOME, EvaluationSourceMeasure.NET_PORTFOLIO_RETURN_ASSUMED_COST, 1),
+            ("risk_rejection_rate", EvaluationReducer.TRUE_RATE, SourceMetricValueType.BOOLEAN, EvaluationSourceKind.RISK_DECISION, EvaluationSourceMeasure.RISK_REJECTED, 1),
+        )
+        for label, arm in arms:
+            for suffix, reducer, value_type, source_kind, measure, minimum in declarations:
+                append(
+                    f"{label}_{suffix}",
+                    arm,
+                    reducer,
+                    value_type,
+                    source_kind,
+                    measure,
+                    minimum=minimum,
+                )
+    return EvaluationProtocolPlan(
+        protocol_id,
+        f"wp18_{purpose.value.lower()}_evaluation",
+        1,
+        target.target_definition_id,
+        target.version,
+        target.content_sha256,
+        purpose,
+        "Exploratory walk-forward attribution; complete denominators and no admission.",
+        tuple(metrics),
+        code,
+        config,
+        provenance,
+    )
+
+
 def _backtest(
     archive_id: UUID,
     seal_id: UUID,
@@ -977,6 +1144,144 @@ def _backtest(
     )
 
 
+def _wp18_backtest(
+    archive_id: UUID,
+    seal_id: UUID,
+    sessions: tuple[ArchiveTradingSession, ...],
+    target: TargetDefinition,
+    feature: FeatureDefinition,
+    candidate: CandidatePolicy,
+    context: ContextPolicyPlan,
+    current_strategy: StrategyVersionPlan,
+    observational_strategy: StrategyVersionPlan,
+    portfolio: PortfolioPolicyPlan,
+    risk: RiskPolicyPlan,
+    fit: EvaluationProtocolPlan,
+    validation: EvaluationProtocolPlan,
+    code: ArtifactBinding,
+    config: ArtifactBinding,
+    provenance: str,
+) -> ExploratoryBacktestRunPlan:
+    folds: list[BacktestFoldPlan] = []
+    for cycle_index in range(len(sessions) // 8):
+        cycle = sessions[cycle_index * 8 : (cycle_index + 1) * 8]
+        declarations = (
+            (
+                PartitionPurpose.FIT,
+                fit,
+                cycle[:3],
+                (BacktestSessionRole.FIT_INPUT,) * 3,
+                0,
+                0,
+            ),
+            (
+                PartitionPurpose.VALIDATION,
+                validation,
+                cycle[3:],
+                (
+                    BacktestSessionRole.PURGE,
+                    BacktestSessionRole.EVALUATION,
+                    BacktestSessionRole.EVALUATION,
+                    BacktestSessionRole.EVALUATION,
+                    BacktestSessionRole.EMBARGO,
+                ),
+                1,
+                1,
+            ),
+        )
+        for purpose, protocol, selected, roles, purge, embargo in declarations:
+            ordinal = len(folds) + 1
+            folds.append(
+                BacktestFoldPlan(
+                    _wp18_id(f"fold:{ordinal}"),
+                    ordinal,
+                    purpose,
+                    "XSHG",
+                    purge,
+                    embargo,
+                    protocol.evaluation_protocol_id,
+                    protocol.content_sha256,
+                    tuple(
+                        BacktestFoldSessionPlan(
+                            _wp18_id(f"fold:{ordinal}:session:{index}"),
+                            index,
+                            item.session_id.value,
+                            item.session_date,
+                            role,
+                        )
+                        for index, (item, role) in enumerate(
+                            zip(selected, roles, strict=True),
+                            start=1,
+                        )
+                    ),
+                )
+            )
+
+    arms = (
+        BacktestArmPlan(
+            _wp18_id("arm:rule-current"),
+            1,
+            BacktestArmKind.RULE_CURRENT_CONTEXT,
+            current_strategy.strategy_version_id,
+            current_strategy.content_sha256,
+        ),
+        BacktestArmPlan(
+            _wp18_id("arm:ridge-current"),
+            2,
+            BacktestArmKind.RIDGE_CURRENT_CONTEXT,
+            current_strategy.strategy_version_id,
+            current_strategy.content_sha256,
+        ),
+        BacktestArmPlan(
+            _wp18_id("arm:rule-observational"),
+            3,
+            BacktestArmKind.RULE_CONTEXT_OBSERVATIONAL,
+            observational_strategy.strategy_version_id,
+            observational_strategy.content_sha256,
+        ),
+        BacktestArmPlan(
+            _wp18_id("arm:ridge-observational"),
+            4,
+            BacktestArmKind.RIDGE_CONTEXT_OBSERVATIONAL,
+            observational_strategy.strategy_version_id,
+            observational_strategy.content_sha256,
+        ),
+    )
+    return ExploratoryBacktestRunPlan(
+        _wp18_id("backtest"),
+        "wp18_walk_forward",
+        2,
+        archive_id,
+        seal_id,
+        "Candidate information and the frozen Context gate are diagnosed without threshold or parameter search.",
+        target.target_definition_id,
+        target.version,
+        target.content_sha256,
+        ((feature.feature_definition_id, feature.content_sha256),),
+        candidate.candidate_policy_id,
+        candidate.content_sha256,
+        context.context_policy_id,
+        context.content_sha256,
+        current_strategy.strategy_version_id,
+        current_strategy.content_sha256,
+        portfolio.portfolio_policy_id,
+        portfolio.content_sha256,
+        risk.risk_policy_id,
+        risk.content_sha256,
+        arms,
+        tuple(folds),
+        (
+            BacktestCostAssumption(_wp18_id("cost:commission"), 1, BacktestCostKind.COMMISSION_BPS, Decimal("3")),
+            BacktestCostAssumption(_wp18_id("cost:slippage"), 2, BacktestCostKind.SLIPPAGE_BPS, Decimal("5")),
+            BacktestCostAssumption(_wp18_id("cost:stamp-duty"), 3, BacktestCostKind.STAMP_DUTY_BPS, Decimal("5")),
+        ),
+        1729,
+        code,
+        config,
+        provenance,
+    )
+
+
 def _candidate_artifact(binding: ArtifactBinding) -> CandidateArtifactBinding:
     return CandidateArtifactBinding(
         binding.artifact_id,
@@ -995,6 +1300,17 @@ def _decision_artifact(binding: ArtifactBinding) -> DecisionArtifactBinding:
 
 def _id(suffix: str) -> UUID:
     return uuid5(NAMESPACE_URL, f"{_CATALOG_KEY}:{suffix}")
+
+
+def _wp18_id(suffix: str) -> UUID:
+    return uuid5(NAMESPACE_URL, f"mra:wp18:walk-forward:v1:{suffix}")
+
+
+__all__ = [
+    "Wp17pAuthorityCatalog",
+    "build_wp17p_authority_catalog",
+    "build_wp18_authority_catalog",
+]
 
 
 __all__ = ["Wp17pAuthorityCatalog", "build_wp17p_authority_catalog"]
