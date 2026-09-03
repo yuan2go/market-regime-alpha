@@ -101,6 +101,7 @@ class Wp17pModelOperations:
         ):
             raise ValueError("Model training declarations are ambiguous")
         model = wp17p_model_plan(catalog)
+        fold_suffix = str(fit_folds[0].exploratory_backtest_fold_id)
         app = self._application
         app.research_models.register_model(
             model,
@@ -128,7 +129,7 @@ class Wp17pModelOperations:
                 catalog.backtest.config_artifact,
                 catalog.backtest.provenance_sha256,
             ),
-            _context("open-model-training"),
+            _context(f"open-model-training-{fold_suffix}"),
         )
         model_version_id = uuid5(model.model_id, f"version:{model_version}")
         version = app.research_models.fit_and_register_version(
@@ -139,7 +140,7 @@ class Wp17pModelOperations:
                 training_run_id,
                 str(catalog.backtest.provenance_sha256),
             ),
-            _context("fit-model-version"),
+            _context(f"fit-model-version-{model_version}-{fold_suffix}"),
         )
         return Wp17pModelExecution(
             model.model_id,

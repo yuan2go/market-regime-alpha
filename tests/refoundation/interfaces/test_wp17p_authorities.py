@@ -7,6 +7,7 @@ import pytest
 
 from market_regime_alpha.interfaces.wp17p_authorities import (
     build_wp17p_authority_catalog,
+    build_wp18_authority_catalog,
 )
 from market_regime_alpha.market.ports import ArchiveTradingSession
 from market_regime_alpha.research_qualification.domain import ArtifactBinding
@@ -91,3 +92,45 @@ def test_catalog_rejects_joint_or_ambiguous_calendar_roster() -> None:
             config_artifact=artifact,
             provenance_sha256="2" * 64,
         )
+
+
+def test_wp18_catalog_freezes_five_cycles_and_four_diagnostic_arms() -> None:
+    artifact = ArtifactBinding(UUID(int=1), "1" * 64, 1)
+    sessions = tuple(
+        ArchiveTradingSession(
+            TradingSessionId(UUID(int=1000 + ordinal)),
+            "XSHG",
+            date(2026, 1, 5) + timedelta(days=ordinal),
+            datetime(2026, 1, 5, 1, 30, tzinfo=UTC) + timedelta(days=ordinal),
+            datetime(2026, 1, 5, 3, 30, tzinfo=UTC) + timedelta(days=ordinal),
+            datetime(2026, 1, 5, 5, 0, tzinfo=UTC) + timedelta(days=ordinal),
+            datetime(2026, 1, 5, 7, 0, tzinfo=UTC) + timedelta(days=ordinal),
+        )
+        for ordinal in range(40)
+    )
+
+    catalog = build_wp18_authority_catalog(
+        provider_product_id=UUID(int=2),
+        market_archive_id=UUID(int=3),
+        market_archive_seal_id=UUID(int=4),
+        sessions=sessions,
+        code_artifact=artifact,
+        config_artifact=artifact,
+        provenance_sha256="2" * 64,
+    )
+
+    assert catalog.backtest.generation == 2
+    assert catalog.backtest.session_count == 40
+    assert len(catalog.backtest.folds) == 10
+    assert tuple(item.kind for item in catalog.backtest.arms) == (
+        BacktestArmKind.RULE_CURRENT_CONTEXT,
+        BacktestArmKind.RIDGE_CURRENT_CONTEXT,
+        BacktestArmKind.RULE_CONTEXT_OBSERVATIONAL,
+        BacktestArmKind.RIDGE_CONTEXT_OBSERVATIONAL,
+    )
+    assert tuple(item.purpose for item in catalog.backtest.folds) == (
+        PartitionPurpose.FIT,
+        PartitionPurpose.VALIDATION,
+    ) * 5
+    assert len(catalog.strategy_roster) == 2
+    assert len(catalog.validation_evaluation_protocol.metrics) == 60
