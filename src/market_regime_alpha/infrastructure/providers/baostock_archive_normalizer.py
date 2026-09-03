@@ -100,8 +100,8 @@ class _Envelope:
 class BaoStockArchiveNormalizer:
     contract = NormalizerContract(
         implementation="market.baostock_archive",
-        version="1",
-        implementation_sha256="de8d3e7c5dc51a946580c6be27eea56bff53282769fc291175048c68db14821d",
+        version="2",
+        implementation_sha256="ba062d62a95cd8c152a8ec2f0e69a4203f90cbb970f13c8612524e103028d6c5",
     )
 
     def __init__(
