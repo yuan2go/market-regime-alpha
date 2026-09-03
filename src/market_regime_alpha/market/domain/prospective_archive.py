@@ -59,6 +59,75 @@ class ProspectiveArchiveDueState(StrEnum):
         return cls.OVERDUE
 
 
+_PLANNING_GAP_REASONS = frozenset(
+    {
+        "GENERATION_NOT_PREDECLARED",
+        "RUNTIME_OUTAGE",
+        "CALENDAR_INCOMPLETE",
+        "TARGET_CONTRACT_UNAVAILABLE",
+    }
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ProspectiveArchivePlanningGap:
+    prospective_archive_planning_gap_id: UUID
+    series_code: str
+    expected_generation: int
+    predecessor_market_archive_id: UUID | None
+    target_definition_id: UUID
+    target_version: int
+    target_definition_sha256: ContentHash | str
+    expected_decision_session_id: UUID
+    detected_at: datetime
+    reason_code: str
+    content_sha256: ContentHash = field(init=False)
+
+    def __post_init__(self) -> None:
+        if not self.series_code or len(self.series_code) > 100:
+            raise ValueError("prospective planning gap series_code is invalid")
+        if isinstance(self.expected_generation, bool) or self.expected_generation < 1:
+            raise ValueError("prospective planning gap generation is invalid")
+        if (self.expected_generation == 1) != (
+            self.predecessor_market_archive_id is None
+        ):
+            raise ValueError("prospective planning gap predecessor is invalid")
+        if self.target_version < 1:
+            raise ValueError("prospective planning gap Target version is invalid")
+        target_hash = ContentHash(str(self.target_definition_sha256))
+        detected_at = require_utc(self.detected_at, field="planning gap detected_at")
+        if self.reason_code not in _PLANNING_GAP_REASONS:
+            raise ValueError("prospective planning gap reason is invalid")
+        object.__setattr__(self, "target_definition_sha256", target_hash)
+        object.__setattr__(self, "detected_at", detected_at)
+        object.__setattr__(
+            self,
+            "content_sha256",
+            ContentHash(
+                canonical_json_sha256(
+                    {
+                        "detected_at": detected_at,
+                        "expected_decision_session_id": (
+                            self.expected_decision_session_id
+                        ),
+                        "expected_generation": self.expected_generation,
+                        "predecessor_market_archive_id": (
+                            self.predecessor_market_archive_id
+                        ),
+                        "prospective_archive_planning_gap_id": (
+                            self.prospective_archive_planning_gap_id
+                        ),
+                        "reason_code": self.reason_code,
+                        "series_code": self.series_code,
+                        "target_definition_id": self.target_definition_id,
+                        "target_definition_sha256": str(target_hash),
+                        "target_version": self.target_version,
+                    }
+                )
+            ),
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class ProspectiveArchiveSession:
     session_id: UUID
@@ -430,6 +499,7 @@ __all__ = [
     "ProspectiveArchiveScheduleSlot",
     "ProspectiveArchiveGenerationPlan",
     "ProspectiveArchiveMemberPlan",
+    "ProspectiveArchivePlanningGap",
     "ProspectiveArchiveSession",
     "ProspectiveArchiveSliceSchedulePlan",
     "ProspectiveArchiveTerminalState",

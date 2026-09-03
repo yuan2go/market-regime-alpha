@@ -18244,6 +18244,51 @@ CREATE INDEX prospective_archive_generation_outcome_idx
         outcome_checkpoint_id, target_definition_id
     );
 
+CREATE TABLE mra.prospective_archive_planning_gap (
+    prospective_archive_planning_gap_id uuid PRIMARY KEY,
+    series_code text NOT NULL,
+    expected_generation integer NOT NULL,
+    predecessor_market_archive_id uuid
+        REFERENCES mra.prospective_archive_generation(market_archive_id)
+        ON DELETE RESTRICT,
+    target_definition_id uuid NOT NULL,
+    target_version integer NOT NULL,
+    target_definition_sha256 text NOT NULL,
+    expected_decision_session_id uuid NOT NULL
+        REFERENCES mra.trading_session(session_id) ON DELETE RESTRICT,
+    detected_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    reason_code text NOT NULL,
+    content_sha256 text NOT NULL UNIQUE,
+    CONSTRAINT prospective_archive_planning_gap_scope_uk UNIQUE (
+        series_code, expected_generation, expected_decision_session_id
+    ),
+    CONSTRAINT prospective_archive_planning_gap_target_fk FOREIGN KEY (
+        target_definition_id, target_version, target_definition_sha256
+    ) REFERENCES mra.target_definition(
+        target_definition_id, version, content_sha256
+    ) ON DELETE RESTRICT,
+    CONSTRAINT prospective_archive_planning_gap_shape_ck CHECK (
+        series_code ~ '^[a-z][a-z0-9_-]{0,99}$'
+        AND expected_generation > 0
+        AND ((expected_generation = 1) = (predecessor_market_archive_id IS NULL))
+        AND target_version > 0
+        AND target_definition_sha256 ~ '^[0-9a-f]{64}$'
+        AND reason_code IN (
+            'GENERATION_NOT_PREDECLARED', 'RUNTIME_OUTAGE',
+            'CALENDAR_INCOMPLETE', 'TARGET_CONTRACT_UNAVAILABLE'
+        )
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+CREATE INDEX prospective_archive_planning_gap_predecessor_idx
+    ON mra.prospective_archive_planning_gap(predecessor_market_archive_id);
+CREATE INDEX prospective_archive_planning_gap_target_idx
+    ON mra.prospective_archive_planning_gap(
+        target_definition_id, target_version, target_definition_sha256
+    );
+CREATE INDEX prospective_archive_planning_gap_session_idx
+    ON mra.prospective_archive_planning_gap(expected_decision_session_id);
+
 CREATE TABLE mra.prospective_archive_generation_member (
     market_archive_id uuid NOT NULL
         REFERENCES mra.prospective_archive_generation(market_archive_id)
@@ -18745,6 +18790,46 @@ BEGIN
 END;
 $$;
 
+CREATE FUNCTION mra.validate_prospective_archive_planning_gap()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE expected_content text;
+BEGIN
+    IF NEW.expected_generation > 1 AND NOT EXISTS (
+        SELECT 1
+        FROM mra.prospective_archive_generation AS predecessor
+        WHERE predecessor.market_archive_id = NEW.predecessor_market_archive_id
+          AND predecessor.series_code = NEW.series_code
+          AND predecessor.generation = NEW.expected_generation - 1
+          AND predecessor.target_definition_id = NEW.target_definition_id
+          AND predecessor.target_version = NEW.target_version
+          AND predecessor.target_definition_sha256 = NEW.target_definition_sha256
+    ) THEN
+        RAISE EXCEPTION 'Prospective planning gap predecessor is not exact'
+            USING ERRCODE = '55000';
+    END IF;
+    expected_content := mra.canonical_sha256(mra.canonical_json_text(jsonb_build_object(
+        'detected_at', NEW.detected_at,
+        'expected_decision_session_id', NEW.expected_decision_session_id,
+        'expected_generation', NEW.expected_generation,
+        'predecessor_market_archive_id', NEW.predecessor_market_archive_id,
+        'prospective_archive_planning_gap_id', NEW.prospective_archive_planning_gap_id,
+        'reason_code', NEW.reason_code,
+        'series_code', NEW.series_code,
+        'target_definition_id', NEW.target_definition_id,
+        'target_definition_sha256', NEW.target_definition_sha256,
+        'target_version', NEW.target_version
+    )));
+    IF NEW.content_sha256 <> expected_content THEN
+        RAISE EXCEPTION 'Prospective planning gap hash is invalid'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER prospective_archive_planning_gap_guard
+BEFORE INSERT ON mra.prospective_archive_planning_gap
+FOR EACH ROW EXECUTE FUNCTION mra.validate_prospective_archive_planning_gap();
 CREATE TRIGGER prospective_archive_generation_guard
 BEFORE INSERT ON mra.prospective_archive_generation
 FOR EACH ROW EXECUTE FUNCTION mra.validate_prospective_archive_generation();
@@ -18774,6 +18859,9 @@ BEFORE INSERT ON mra.prospective_archive_revision_observation
 FOR EACH ROW EXECUTE FUNCTION mra.validate_prospective_archive_revision();
 CREATE TRIGGER prospective_archive_generation_append_only
 BEFORE UPDATE OR DELETE ON mra.prospective_archive_generation
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER prospective_archive_planning_gap_append_only
+BEFORE UPDATE OR DELETE ON mra.prospective_archive_planning_gap
 FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
 CREATE TRIGGER prospective_archive_member_append_only
 BEFORE UPDATE OR DELETE ON mra.prospective_archive_generation_member

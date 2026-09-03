@@ -238,6 +238,34 @@ def test_worker_can_claim_only_from_one_exact_runtime_run(
     assert application.inspect_run(first_run).steps[0].state == "READY"
 
 
+def test_runtime_inspection_exposes_the_frozen_run_and_step_contract(
+    runtime_stack: tuple[RuntimeApplication, ArtifactApplication, TargetPostgresPool, str],
+) -> None:
+    application, artifacts, _, _ = runtime_stack
+    schedule = _schedule(application)
+    expected_step = _step("capture-contract", 1)
+    run_id = _run(
+        application,
+        artifacts,
+        schedule,
+        steps=(expected_step,),
+        key="contract-run",
+    )
+
+    trace = application.inspect_run(run_id)
+
+    assert trace.schedule_id == schedule.schedule_id
+    assert trace.runtime_mode == "OPERATIONAL"
+    assert trace.fire_key == "contract-run"
+    assert trace.code_sha == "1" * 40
+    assert len(trace.config_hash) == 64
+    assert trace.steps[0].step_kind == expected_step.step_kind
+    assert trace.steps[0].implementation == expected_step.implementation
+    assert trace.steps[0].implementation_version == "1"
+    assert trace.steps[0].request_hash == expected_step.request_hash
+    assert trace.steps[0].deadline_at is None
+
+
 def test_one_run_never_has_two_live_steps_even_when_nodes_are_parallel_ready(
     runtime_stack: tuple[RuntimeApplication, ArtifactApplication, TargetPostgresPool, str],
 ) -> None:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import asdict, is_dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from enum import Enum
 from io import TextIOBase
 import json
@@ -30,10 +30,13 @@ from market_regime_alpha.shared.errors import MraError
 from market_regime_alpha.interfaces.archive import (
     archive_report,
     load_archive_manifest,
+    predeclare_prospective_runtime,
     require_isolated_operational_target,
     resume_archive,
+    run_due_prospective_runtime,
     start_archive,
 )
+from market_regime_alpha.market.application import compile_prospective_runtime_plan
 
 
 def main(
@@ -106,6 +109,40 @@ def _dispatch(arguments: argparse.Namespace, settings: TargetSettings) -> object
             expected_database_name=arguments.expected_database_name,
         )
         with bootstrap_application(settings) as application:
+            if arguments.archive_command == "prospective":
+                command = arguments.prospective_command
+                if command in {"inspect", "health"}:
+                    return archive_report(
+                        application,
+                        arguments.archive_id,
+                        "inspect" if command == "inspect" else "daily-health",
+                    )
+                manifest = load_archive_manifest(arguments.manifest)
+                if command == "plan-next":
+                    return compile_prospective_runtime_plan(
+                        manifest,
+                        code_sha=arguments.code_sha,
+                    )
+                if command == "predeclare":
+                    return predeclare_prospective_runtime(
+                        application,
+                        manifest,
+                        code_sha=arguments.code_sha,
+                        actor_id=arguments.actor_id,
+                        lease_duration=timedelta(seconds=arguments.lease_seconds),
+                    )
+                if command in {"run-due", "resume"}:
+                    import baostock as sdk
+
+                    return run_due_prospective_runtime(
+                        application,
+                        manifest,
+                        sdk=sdk,
+                        code_sha=arguments.code_sha,
+                        actor_id=arguments.actor_id,
+                        worker_id=arguments.worker_id,
+                        lease_duration=timedelta(seconds=arguments.lease_seconds),
+                    )
             if arguments.archive_command in {"inspect", "gap-report", "revision-report", "daily-health"}:
                 return archive_report(
                     application,
@@ -162,6 +199,28 @@ def _parser() -> argparse.ArgumentParser:
 
     archive = areas.add_parser("archive")
     archive_commands = archive.add_subparsers(dest="archive_command", required=True)
+    prospective = archive_commands.add_parser("prospective")
+    prospective_commands = prospective.add_subparsers(
+        dest="prospective_command",
+        required=True,
+    )
+    prospective_plan = prospective_commands.add_parser("plan-next")
+    prospective_plan.add_argument("--manifest", required=True, type=Path)
+    prospective_plan.add_argument("--code-sha", required=True)
+    prospective_plan.add_argument("--expected-database-name", required=True)
+    for command in ("predeclare", "run-due", "resume"):
+        mutation = prospective_commands.add_parser(command)
+        mutation.add_argument("--manifest", required=True, type=Path)
+        mutation.add_argument("--code-sha", required=True)
+        mutation.add_argument("--expected-database-name", required=True)
+        mutation.add_argument("--actor-id", required=True)
+        mutation.add_argument("--lease-seconds", type=int, default=120)
+        if command in {"run-due", "resume"}:
+            mutation.add_argument("--worker-id", required=True)
+    for command in ("inspect", "health"):
+        inspection = prospective_commands.add_parser(command)
+        inspection.add_argument("--archive-id", required=True, type=UUID)
+        inspection.add_argument("--expected-database-name", required=True)
     for command in ("start", "resume", "retry"):
         mutation = archive_commands.add_parser(command)
         mutation.add_argument("--manifest", required=True, type=Path)

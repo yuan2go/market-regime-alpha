@@ -914,15 +914,21 @@ class PostgresRuntimeRepository:
 
     def inspect_run(self, run_id: UUID) -> RunTrace:
         run = self._connection.execute(
-            "SELECT state, version FROM mra.runtime_run WHERE run_id = %s",
+            """
+            SELECT schedule_id, fire_key, runtime_mode, code_sha,
+                   config_artifact_id, config_hash, state, version
+            FROM mra.runtime_run WHERE run_id = %s
+            """,
             (run_id,),
         ).fetchone()
         if run is None:
             raise RuntimeNotFoundError(f"Run {run_id} does not exist")
         rows = self._connection.execute(
             """
-            SELECT step.step_id, step.step_key, step.state, step.current_fence,
-                   step.current_attempt_id,
+            SELECT step.step_id, step.step_key, step.step_kind,
+                   step.implementation, step.implementation_version,
+                   step.request_hash, step.input_evidence_hash, step.deadline_at,
+                   step.state, step.current_fence, step.current_attempt_id,
                    COALESCE(array_agg(attempt.state ORDER BY attempt.attempt_no)
                             FILTER (WHERE attempt.attempt_id IS NOT NULL), ARRAY[]::text[])
             FROM mra.runtime_step AS step
@@ -935,16 +941,32 @@ class PostgresRuntimeRepository:
         ).fetchall()
         return RunTrace(
             run_id=run_id,
-            run_state=str(run[0]),
-            version=int(run[1]),
+            schedule_id=UUID(str(run[0])),
+            fire_key=str(run[1]),
+            runtime_mode=str(run[2]),
+            code_sha=str(run[3]),
+            config_artifact_id=UUID(str(run[4])),
+            config_hash=str(run[5]),
+            run_state=str(run[6]),
+            version=int(run[7]),
             steps=tuple(
                 StepTrace(
                     step_id=UUID(str(row[0])),
                     step_key=str(row[1]),
-                    state=str(row[2]),
-                    current_fence=int(row[3]),
-                    current_attempt_id=UUID(str(row[4])) if row[4] is not None else None,
-                    attempt_states=tuple(str(item) for item in row[5]),
+                    step_kind=str(row[2]),
+                    implementation=str(row[3]),
+                    implementation_version=str(row[4]),
+                    request_hash=str(row[5]),
+                    input_evidence_hash=(
+                        str(row[6]) if row[6] is not None else None
+                    ),
+                    deadline_at=row[7],
+                    state=str(row[8]),
+                    current_fence=int(row[9]),
+                    current_attempt_id=(
+                        UUID(str(row[10])) if row[10] is not None else None
+                    ),
+                    attempt_states=tuple(str(item) for item in row[11]),
                 )
                 for row in rows
             ),

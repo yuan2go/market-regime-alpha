@@ -204,6 +204,7 @@ from market_regime_alpha.market.application import (
     ArchiveCommands,
     MarketApplication,
     MarketArchiveOperations,
+    ProspectiveArchiveRuntimeApplication,
 )
 from market_regime_alpha.market.application import ProviderQualificationCommands
 from market_regime_alpha.market.ports import (
@@ -280,6 +281,7 @@ class TargetApplication:
     market: MarketApplication
     market_archives: ArchiveCommands
     archive_operations: MarketArchiveOperations
+    prospective_archives: ProspectiveArchiveRuntimeApplication
     archive_inspection: ArchiveInspectionPort
     archive_verification: ArchiveVerificationPort
     archive_trading_sessions: ArchiveTradingSessionReadPort
@@ -345,28 +347,40 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
         application_schema=settings.schema,
     )
     uow_provider = PostgresUnitOfWorkProvider(pool)
+    runtime_application = RuntimeApplication(uow_provider)
     byte_store = LocalArtifactStore(settings.artifact_root)
     artifact_application = ArtifactApplication(byte_store, uow_provider)
+    market_clock = PostgresMarketDatabaseClock(pool)
     market_application = MarketApplication(
         byte_store,
         PostgresMarketUnitOfWorkProvider(pool),
-        PostgresMarketDatabaseClock(pool),
+        market_clock,
     )
     archive_commands = ArchiveCommands(
         PostgresArchiveUnitOfWorkProvider(pool),
         id_factory=uuid4,
     )
+    archive_operations = MarketArchiveOperations(
+        market_application,
+        archive_commands,
+        PostgresArchiveOperationsReadPort(pool),
+        FilesystemArchiveResourceInspector(settings.artifact_root),
+        market_clock,
+    )
     return TargetApplication(
-        runtime=RuntimeApplication(uow_provider),
+        runtime=runtime_application,
         artifacts=artifact_application,
         market=market_application,
         market_archives=archive_commands,
-        archive_operations=MarketArchiveOperations(
-            market_application,
-            archive_commands,
-            PostgresArchiveOperationsReadPort(pool),
-            FilesystemArchiveResourceInspector(settings.artifact_root),
-            PostgresMarketDatabaseClock(pool),
+        archive_operations=archive_operations,
+        prospective_archives=ProspectiveArchiveRuntimeApplication(
+            runtime=runtime_application,
+            artifacts=artifact_application,
+            archives=archive_commands,
+            operations=archive_operations,
+            database_clock=market_clock,
+            archive_inspection=PostgresArchiveInspectionPort(pool),
+            archive_verification=PostgresArchiveVerificationPort(pool),
         ),
         archive_inspection=PostgresArchiveInspectionPort(pool),
         archive_verification=PostgresArchiveVerificationPort(pool),
