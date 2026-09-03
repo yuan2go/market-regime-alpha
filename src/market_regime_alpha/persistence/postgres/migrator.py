@@ -16,6 +16,8 @@ from market_regime_alpha.persistence.postgres.connection import (
 
 
 MIGRATION_LOCK_KEY: Final[int] = 4_852_410_017
+_BUSINESS_LOCK_TIMEOUT: Final[str] = "5s"
+_MIGRATION_LOCK_TIMEOUT: Final[str] = "30s"
 _MIGRATION_NAME = re.compile(r"^(?P<version>[0-9]{3})_(?P<name>[a-z0-9_]+)\.sql$")
 
 
@@ -106,11 +108,16 @@ class PostgresMigrator:
         newly_applied: list[AppliedMigration] = []
         with factory.connection() as connection:
             connection.execute(
-                "SELECT pg_advisory_lock(%s)",
-                (MIGRATION_LOCK_KEY,),
+                "SELECT set_config('lock_timeout', %s, false)",
+                (_MIGRATION_LOCK_TIMEOUT,),
             )
             connection.commit()
             try:
+                connection.execute(
+                    "SELECT pg_advisory_lock(%s)",
+                    (MIGRATION_LOCK_KEY,),
+                )
+                connection.commit()
                 _ensure_registry(connection)
                 applied = _load_registry(connection)
                 connection.commit()
@@ -145,6 +152,10 @@ class PostgresMigrator:
                 connection.execute(
                     "SELECT pg_advisory_unlock(%s)",
                     (MIGRATION_LOCK_KEY,),
+                )
+                connection.execute(
+                    "SELECT set_config('lock_timeout', %s, false)",
+                    (_BUSINESS_LOCK_TIMEOUT,),
                 )
                 connection.commit()
         return tuple(newly_applied)

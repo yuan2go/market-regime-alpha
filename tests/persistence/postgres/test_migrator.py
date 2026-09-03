@@ -364,6 +364,30 @@ def test_apply_all_is_idempotent(
     assert len(rows) == 106
 
 
+def test_migration_ddl_uses_bounded_schema_lock_budget_and_restores_business_budget(
+    postgres_factory: PostgresConnectionFactory,
+) -> None:
+    migration = PostgresMigration.create(
+        1,
+        "schema_lock_budget",
+        """
+        DO $$
+        BEGIN
+            IF current_setting('lock_timeout') <> '30s' THEN
+                RAISE EXCEPTION 'migration lock budget is not schema-bounded';
+            END IF;
+        END;
+        $$;
+        """,
+    )
+
+    applied = PostgresMigrator(migrations=(migration,)).apply_all(postgres_factory)
+
+    assert tuple(item.version for item in applied) == (1,)
+    with postgres_factory.connection(read_only=True) as connection:
+        assert connection.execute("SHOW lock_timeout").fetchone() == ("5s",)
+
+
 def test_verify_current_is_read_only_and_requires_complete_head(
     postgres_factory: PostgresConnectionFactory,
 ) -> None:
