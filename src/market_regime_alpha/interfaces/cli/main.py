@@ -18,11 +18,15 @@ import psycopg
 
 from market_regime_alpha.bootstrap import (
     TargetSettings,
+    apply_operational_database_upgrade,
     apply_database_recreate,
     bootstrap_application,
     bootstrap_database,
+    load_operational_upgrade_plan,
     load_recreate_plan,
+    make_operational_upgrade_authorization,
     make_recreate_authorization,
+    plan_operational_database_upgrade,
     plan_database_recreate,
     verify_database,
 )
@@ -72,7 +76,7 @@ def _dispatch(arguments: argparse.Namespace, settings: TargetSettings) -> object
         if arguments.db_command == "verify":
             return verify_database(settings)
         if arguments.db_command == "recreate-plan":
-            plan = plan_database_recreate(
+            recreate_plan = plan_database_recreate(
                 settings,
                 make_recreate_authorization(
                     expected_database_name=arguments.expected_database_name,
@@ -83,13 +87,43 @@ def _dispatch(arguments: argparse.Namespace, settings: TargetSettings) -> object
                 ),
             )
             if arguments.output is not None:
-                arguments.output.write_text(plan.to_json(), encoding="utf-8")
-            return plan
+                arguments.output.write_text(recreate_plan.to_json(), encoding="utf-8")
+            return recreate_plan
         if arguments.db_command == "recreate-apply":
-            plan = load_recreate_plan(arguments.plan.read_text(encoding="utf-8"))
+            recreate_plan = load_recreate_plan(
+                arguments.plan.read_text(encoding="utf-8")
+            )
             return apply_database_recreate(
                 settings,
-                plan,
+                recreate_plan,
+                challenge=arguments.challenge,
+                operator_id=arguments.operator_id,
+            )
+        if arguments.db_command == "upgrade-plan":
+            upgrade_plan = plan_operational_database_upgrade(
+                settings,
+                make_operational_upgrade_authorization(
+                    expected_database_name=arguments.expected_database_name,
+                    expected_database_oid=arguments.expected_database_oid,
+                    operator_id=arguments.operator_id,
+                    reason=arguments.reason,
+                    backup_path=arguments.backup,
+                    backup_sha256=arguments.backup_sha256,
+                    backup_size_bytes=arguments.backup_size_bytes,
+                    minimum_free_bytes=arguments.minimum_free_bytes,
+                    code_sha=arguments.code_sha,
+                ),
+            )
+            if arguments.output is not None:
+                arguments.output.write_text(upgrade_plan.to_json(), encoding="utf-8")
+            return upgrade_plan
+        if arguments.db_command == "upgrade-apply":
+            upgrade_plan = load_operational_upgrade_plan(
+                arguments.plan.read_text(encoding="utf-8")
+            )
+            return apply_operational_database_upgrade(
+                settings,
+                upgrade_plan,
                 challenge=arguments.challenge,
                 operator_id=arguments.operator_id,
             )
@@ -189,6 +223,25 @@ def _parser() -> argparse.ArgumentParser:
     recreate_apply.add_argument("--plan", required=True, type=Path)
     recreate_apply.add_argument("--challenge", required=True)
     recreate_apply.add_argument("--operator-id", required=True)
+    upgrade_plan = database_commands.add_parser("upgrade-plan")
+    upgrade_plan.add_argument("--expected-database-name", required=True)
+    upgrade_plan.add_argument("--expected-database-oid", required=True, type=int)
+    upgrade_plan.add_argument("--operator-id", required=True)
+    upgrade_plan.add_argument("--reason", required=True)
+    upgrade_plan.add_argument("--backup", required=True, type=Path)
+    upgrade_plan.add_argument("--backup-sha256", required=True)
+    upgrade_plan.add_argument("--backup-size-bytes", required=True, type=int)
+    upgrade_plan.add_argument(
+        "--minimum-free-bytes",
+        type=int,
+        default=1024 * 1024 * 1024,
+    )
+    upgrade_plan.add_argument("--code-sha", required=True)
+    upgrade_plan.add_argument("--output", type=Path)
+    upgrade_apply = database_commands.add_parser("upgrade-apply")
+    upgrade_apply.add_argument("--plan", required=True, type=Path)
+    upgrade_apply.add_argument("--challenge", required=True)
+    upgrade_apply.add_argument("--operator-id", required=True)
 
     runtime = areas.add_parser("runtime")
     runtime_commands = runtime.add_subparsers(dest="runtime_command", required=True)

@@ -19723,7 +19723,7 @@ CREATE TABLE mra.exploratory_backtest_run (
     arm_roster_sha256 text NOT NULL,
     fold_count integer NOT NULL,
     fold_roster_sha256 text NOT NULL,
-    session_count integer,
+    session_count integer NOT NULL,
     cost_count integer NOT NULL,
     cost_roster_sha256 text NOT NULL,
     random_seed bigint NOT NULL,
@@ -19734,7 +19734,6 @@ CREATE TABLE mra.exploratory_backtest_run (
     config_content_sha256 text NOT NULL,
     config_size_bytes bigint NOT NULL,
     provenance_sha256 text NOT NULL,
-    current_specification_sha256 text,
     definition_sha256 text NOT NULL,
     request_identity text NOT NULL,
     request_sha256 text NOT NULL,
@@ -19755,18 +19754,8 @@ CREATE TABLE mra.exploratory_backtest_run (
         run_code ~ '^[a-z][a-z0-9_-]{0,99}$' AND generation > 0
         AND evidence_lane = 'EXPLORATORY_RETROSPECTIVE'
         AND hypothesis <> '' AND target_version > 0
-        AND feature_count > 0 AND arm_count > 0
-        AND fold_count > 0
-        AND cost_count > 0 AND random_seed >= 0
-        AND (
-            (current_specification_sha256 IS NULL
-             AND session_count > 0
-             AND ((generation = 1 AND arm_count = 2)
-                  OR (generation > 1 AND arm_count = 4)))
-            OR
-            (current_specification_sha256 ~ '^[0-9a-f]{64}$'
-             AND session_count IS NULL)
-        )
+        AND feature_count > 0 AND arm_count = 2 AND fold_count > 0
+        AND session_count > 0 AND cost_count > 0 AND random_seed >= 0
         AND target_definition_sha256 ~ '^[0-9a-f]{64}$'
         AND candidate_policy_sha256 ~ '^[0-9a-f]{64}$'
         AND context_policy_sha256 ~ '^[0-9a-f]{64}$'
@@ -22227,6 +22216,42 @@ CREATE TABLE mra.backtest_specification (
 );
 
 ALTER TABLE mra.exploratory_backtest_run
+    ALTER COLUMN session_count DROP NOT NULL,
+    ADD COLUMN current_specification_sha256 text,
+    DROP CONSTRAINT exploratory_backtest_run_shape_ck,
+    ADD CONSTRAINT exploratory_backtest_run_shape_ck CHECK (
+        run_code ~ '^[a-z][a-z0-9_-]{0,99}$' AND generation > 0
+        AND evidence_lane = 'EXPLORATORY_RETROSPECTIVE'
+        AND hypothesis <> '' AND target_version > 0
+        AND feature_count > 0 AND arm_count > 0
+        AND fold_count > 0
+        AND cost_count > 0 AND random_seed >= 0
+        AND (
+            (current_specification_sha256 IS NULL
+             AND session_count > 0
+             AND ((generation = 1 AND arm_count = 2)
+                  OR (generation > 1 AND arm_count = 4)))
+            OR
+            (current_specification_sha256 ~ '^[0-9a-f]{64}$'
+             AND session_count IS NULL)
+        )
+        AND target_definition_sha256 ~ '^[0-9a-f]{64}$'
+        AND candidate_policy_sha256 ~ '^[0-9a-f]{64}$'
+        AND context_policy_sha256 ~ '^[0-9a-f]{64}$'
+        AND strategy_version_sha256 ~ '^[0-9a-f]{64}$'
+        AND portfolio_policy_sha256 ~ '^[0-9a-f]{64}$'
+        AND risk_policy_sha256 ~ '^[0-9a-f]{64}$'
+        AND feature_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND arm_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND fold_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND cost_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND code_content_sha256 ~ '^[0-9a-f]{64}$' AND code_size_bytes >= 0
+        AND config_content_sha256 ~ '^[0-9a-f]{64}$' AND config_size_bytes >= 0
+        AND provenance_sha256 ~ '^[0-9a-f]{64}$'
+        AND definition_sha256 ~ '^[0-9a-f]{64}$'
+        AND request_identity ~ '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$'
+        AND request_sha256 ~ '^[0-9a-f]{64}$'
+    ),
     ADD CONSTRAINT backtest_run_current_specification_fk FOREIGN KEY (
         exploratory_backtest_run_id, current_specification_sha256
     ) REFERENCES mra.backtest_specification(

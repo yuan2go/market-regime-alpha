@@ -4,13 +4,20 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
+import hashlib
 from importlib.resources import files
 import json
+import os
+from pathlib import Path
 import re
 import secrets
+import shutil
+import subprocess
 from typing import Any, Final
+from uuid import UUID, uuid5
 
 import psycopg
+from psycopg import sql
 
 from market_regime_alpha.decision_support.domain.vocabulary import (
     CandidateDisposition as DecisionCandidateDisposition,
@@ -765,6 +772,18 @@ class RecreatePlanStaleError(SchemaError):
     code = "RECREATE_PLAN_STALE"
 
 
+class UnsafeOperationalUpgradeError(SchemaError):
+    code = "UNSAFE_OPERATIONAL_UPGRADE"
+
+
+class OperationalUpgradePlanStaleError(SchemaError):
+    code = "OPERATIONAL_UPGRADE_PLAN_STALE"
+
+
+class OperationalUpgradeIntegrityError(SchemaError):
+    code = "OPERATIONAL_UPGRADE_INTEGRITY_ERROR"
+
+
 @dataclass(frozen=True, slots=True)
 class DatabaseIdentity:
     database_name: str
@@ -786,6 +805,222 @@ class SchemaVerification:
     reference_vocabulary_checksum: str
     tables: frozenset[str]
     verified_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class OperationalUpgradeAuthorization:
+    expected_database_name: str
+    expected_database_oid: int
+    operator_id: str
+    reason: str
+    backup_path: Path
+    backup_sha256: str
+    backup_size_bytes: int
+    minimum_free_bytes: int
+    code_sha: str
+
+    def __post_init__(self) -> None:
+        for name, value in (
+            ("expected_database_name", self.expected_database_name),
+            ("operator_id", self.operator_id),
+            ("reason", self.reason),
+        ):
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"{name} is required")
+        if isinstance(self.expected_database_oid, bool) or self.expected_database_oid <= 0:
+            raise ValueError("expected_database_oid must be positive")
+        if not isinstance(self.backup_path, Path) or not self.backup_path.is_absolute():
+            raise ValueError("backup_path must be an absolute Path")
+        if not re.fullmatch(r"[0-9a-f]{64}", self.backup_sha256):
+            raise ValueError("backup_sha256 must be a lowercase SHA-256")
+        if isinstance(self.backup_size_bytes, bool) or self.backup_size_bytes <= 0:
+            raise ValueError("backup_size_bytes must be positive")
+        if isinstance(self.minimum_free_bytes, bool) or self.minimum_free_bytes <= 0:
+            raise ValueError("minimum_free_bytes must be positive")
+        if not re.fullmatch(r"[0-9a-f]{40}([0-9a-f]{24})?", self.code_sha):
+            raise ValueError("code_sha must be a lowercase Git SHA")
+
+
+@dataclass(frozen=True, slots=True)
+class _OperationalUpgradeDefinition:
+    upgrade_code: str
+    prior_baseline_sha256: str
+    prior_catalog_sha256: str
+    prior_reference_vocabulary_sha256: str
+    next_baseline_sha256: str
+    next_catalog_sha256: str
+    next_reference_vocabulary_sha256: str
+    additive_sql: str
+
+    def __post_init__(self) -> None:
+        if not re.fullmatch(r"[a-z][a-z0-9_-]{0,99}", self.upgrade_code):
+            raise ValueError("upgrade_code is invalid")
+        for name in (
+            "prior_baseline_sha256",
+            "prior_catalog_sha256",
+            "prior_reference_vocabulary_sha256",
+            "next_baseline_sha256",
+            "next_catalog_sha256",
+            "next_reference_vocabulary_sha256",
+        ):
+            if not re.fullmatch(r"[0-9a-f]{64}", getattr(self, name)):
+                raise ValueError(f"{name} must be a lowercase SHA-256")
+        if not self.additive_sql.strip():
+            raise ValueError("additive_sql is required")
+
+    @property
+    def additive_bundle_sha256(self) -> str:
+        return sha256_bytes(self.additive_sql.encode("utf-8"))
+
+
+@dataclass(frozen=True, slots=True)
+class OperationalUpgradePlan:
+    upgrade_code: str
+    database_name: str
+    database_oid: int
+    database_owner: str
+    connected_role: str
+    application_schema: str
+    schema_owner: str
+    detected_epoch: str
+    detected_release_state: str
+    detected_baseline_version: int
+    prior_baseline_sha256: str
+    prior_seed_sha256: str
+    prior_catalog_sha256: str
+    prior_reference_vocabulary_sha256: str
+    next_baseline_sha256: str
+    next_catalog_sha256: str
+    next_reference_vocabulary_sha256: str
+    additive_bundle_sha256: str
+    backup_path: Path
+    backup_sha256: str
+    backup_size_bytes: int
+    backup_database_name: str
+    minimum_free_bytes: int
+    observed_free_bytes: int
+    historical_table_count: int
+    historical_projection_sha256: str
+    active_attempt_ids: tuple[UUID, ...]
+    active_connection_pids: tuple[int, ...]
+    operator_id: str
+    reason: str
+    code_sha: str
+    generated_at: datetime
+    expires_at: datetime
+    nonce: str
+    plan_hash: str
+    challenge: str
+
+    def __post_init__(self) -> None:
+        for name in (
+            "upgrade_code",
+            "database_name",
+            "database_owner",
+            "connected_role",
+            "application_schema",
+            "schema_owner",
+            "detected_epoch",
+            "detected_release_state",
+            "backup_database_name",
+            "operator_id",
+            "reason",
+        ):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"{name} is required")
+        if isinstance(self.database_oid, bool) or self.database_oid <= 0:
+            raise ValueError("database_oid must be positive")
+        if (
+            isinstance(self.detected_baseline_version, bool)
+            or self.detected_baseline_version <= 0
+        ):
+            raise ValueError("detected_baseline_version must be positive")
+        for name in (
+            "prior_baseline_sha256",
+            "prior_seed_sha256",
+            "prior_catalog_sha256",
+            "prior_reference_vocabulary_sha256",
+            "next_baseline_sha256",
+            "next_catalog_sha256",
+            "next_reference_vocabulary_sha256",
+            "additive_bundle_sha256",
+            "backup_sha256",
+            "historical_projection_sha256",
+            "plan_hash",
+        ):
+            if not re.fullmatch(r"[0-9a-f]{64}", getattr(self, name)):
+                raise ValueError(f"{name} must be a lowercase SHA-256")
+        if not re.fullmatch(r"[0-9a-f]{40}([0-9a-f]{24})?", self.code_sha):
+            raise ValueError("code_sha must be a lowercase Git SHA")
+        if not isinstance(self.backup_path, Path) or not self.backup_path.is_absolute():
+            raise ValueError("backup_path must be an absolute Path")
+        for name in (
+            "backup_size_bytes",
+            "minimum_free_bytes",
+            "observed_free_bytes",
+            "historical_table_count",
+        ):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                raise ValueError(f"{name} must be positive")
+        if tuple(sorted(set(self.active_attempt_ids), key=str)) != self.active_attempt_ids:
+            raise ValueError("active_attempt_ids must be a sorted unique tuple")
+        if tuple(sorted(set(self.active_connection_pids))) != self.active_connection_pids:
+            raise ValueError("active_connection_pids must be a sorted unique tuple")
+        if not re.fullmatch(r"[0-9a-f]{32}", self.nonce):
+            raise ValueError("nonce must be 128-bit lowercase hexadecimal")
+        if not re.fullmatch(r"[0-9a-f]{24}", self.challenge):
+            raise ValueError("challenge must be 96-bit lowercase hexadecimal")
+        if self.generated_at.tzinfo is None or self.generated_at.utcoffset() is None:
+            raise ValueError("generated_at must be timezone-aware")
+        if self.expires_at.tzinfo is None or self.expires_at.utcoffset() is None:
+            raise ValueError("expires_at must be timezone-aware")
+        if not self.generated_at < self.expires_at <= self.generated_at + timedelta(
+            hours=1
+        ):
+            raise ValueError("upgrade plan expiry must be within one hour")
+
+    def to_json(self) -> str:
+        payload = asdict(self)
+        payload["backup_path"] = str(self.backup_path)
+        payload["active_attempt_ids"] = [str(item) for item in self.active_attempt_ids]
+        payload["generated_at"] = self.generated_at.isoformat()
+        payload["expires_at"] = self.expires_at.isoformat()
+        return json.dumps(payload, indent=2, sort_keys=True) + "\n"
+
+    @classmethod
+    def from_json(cls, payload: str) -> OperationalUpgradePlan:
+        try:
+            raw = json.loads(payload)
+        except json.JSONDecodeError as exc:
+            raise ValueError("operational upgrade plan is not valid JSON") from exc
+        if not isinstance(raw, dict):
+            raise ValueError("operational upgrade plan must be a JSON object")
+        try:
+            raw["backup_path"] = Path(raw["backup_path"])
+            raw["active_attempt_ids"] = tuple(
+                UUID(item) for item in raw["active_attempt_ids"]
+            )
+            raw["active_connection_pids"] = tuple(raw["active_connection_pids"])
+            raw["generated_at"] = datetime.fromisoformat(raw["generated_at"])
+            raw["expires_at"] = datetime.fromisoformat(raw["expires_at"])
+            return cls(**raw)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(
+                "operational upgrade plan does not satisfy the required shape"
+            ) from exc
+
+
+@dataclass(frozen=True, slots=True)
+class OperationalUpgradeResult:
+    upgrade_code: str
+    receipt_id: UUID
+    receipt_content_sha256: str
+    applied_at: datetime
+    historical_projection_sha256: str
+    replayed: bool
+    verification: SchemaVerification
 
 
 @dataclass(frozen=True, slots=True)
@@ -971,6 +1206,7 @@ class SchemaManager:
         database_url: str,
         *,
         recreate_plan_ttl: timedelta = timedelta(minutes=10),
+        operational_upgrade_definition: _OperationalUpgradeDefinition | None = None,
     ) -> None:
         if not database_url:
             raise ValueError("database_url is required")
@@ -978,6 +1214,7 @@ class SchemaManager:
             raise ValueError("recreate_plan_ttl must be between zero and one hour")
         self._database_url = database_url
         self._recreate_plan_ttl = recreate_plan_ttl
+        self._operational_upgrade_definition = operational_upgrade_definition
         self._baseline_sql = _read_package_text("migrations", "001_baseline.sql")
         self._seed_sql = _read_package_text("seeds", "001_reference_seed.sql")
         self.baseline_checksum = sha256_bytes(self._baseline_sql.encode("utf-8"))
@@ -1022,6 +1259,307 @@ class SchemaManager:
 
         with self._connect(read_only=True) as connection:
             return self._verify_connection(connection, created=False)
+
+    def plan_operational_upgrade(
+        self,
+        authorization: OperationalUpgradeAuthorization,
+    ) -> OperationalUpgradePlan:
+        """Produce a read-only, short-lived plan for one exact additive route."""
+
+        definition = self._resolve_operational_upgrade_definition()
+        backup = _verify_upgrade_backup(authorization)
+        with self._connect(read_only=True) as connection:
+            identity = _database_identity(connection)
+            _validate_operational_upgrade_identity(identity, authorization)
+            if backup.database_name != identity.database_name:
+                raise UnsafeOperationalUpgradeError(
+                    "BACKUP_DATABASE_MISMATCH: archive belongs to another database"
+                )
+            _require_database_owner(identity)
+            unexpected_objects = self._require_no_external_catalog(connection)
+            if unexpected_objects:
+                raise UnsafeOperationalUpgradeError(
+                    f"unexpected user objects: {unexpected_objects!r}"
+                )
+            schema_owner = _schema_owner(connection)
+            _require_schema_owner(identity, schema_owner)
+            epoch = _read_epoch(connection)
+            _validate_operational_upgrade_epoch(epoch, definition)
+            if epoch.seed_checksum != self.seed_checksum:
+                raise UnsafeOperationalUpgradeError("PRIOR_SEED_MISMATCH")
+            actual_catalog = _target_catalog_checksum(connection)
+            if actual_catalog != definition.prior_catalog_sha256:
+                raise UnsafeOperationalUpgradeError(
+                    "PRIOR_CATALOG_MISMATCH: detected catalog is not the approved route"
+                )
+            _verify_exact_migration_registry(
+                connection,
+                baseline_checksum=definition.prior_baseline_sha256,
+            )
+            active_connection_pids = _operational_upgrade_connection_pids(connection)
+            if active_connection_pids:
+                raise UnsafeOperationalUpgradeError(
+                    "operational upgrade requires zero other client connections; "
+                    f"found pids={list(active_connection_pids)}"
+                )
+            active_attempt_ids = _active_runtime_attempt_ids(connection)
+            if active_attempt_ids:
+                raise UnsafeOperationalUpgradeError(
+                    "ACTIVE_RUNTIME_ATTEMPTS: operational upgrade is fenced closed"
+                )
+            historical = _historical_projection(connection)
+            now = _database_now(connection)
+
+        nonce = secrets.token_hex(16)
+        base = {
+            "upgrade_code": definition.upgrade_code,
+            "database_name": identity.database_name,
+            "database_oid": identity.database_oid,
+            "database_owner": identity.database_owner,
+            "connected_role": identity.connected_role,
+            "application_schema": APPLICATION_SCHEMA,
+            "schema_owner": schema_owner,
+            "detected_epoch": epoch.epoch_name,
+            "detected_release_state": epoch.release_state,
+            "detected_baseline_version": epoch.baseline_version,
+            "prior_baseline_sha256": epoch.baseline_checksum,
+            "prior_seed_sha256": epoch.seed_checksum,
+            "prior_catalog_sha256": actual_catalog,
+            "prior_reference_vocabulary_sha256": (
+                epoch.reference_vocabulary_checksum
+            ),
+            "next_baseline_sha256": definition.next_baseline_sha256,
+            "next_catalog_sha256": definition.next_catalog_sha256,
+            "next_reference_vocabulary_sha256": (
+                definition.next_reference_vocabulary_sha256
+            ),
+            "additive_bundle_sha256": definition.additive_bundle_sha256,
+            "backup_path": str(authorization.backup_path),
+            "backup_sha256": backup.sha256,
+            "backup_size_bytes": backup.size_bytes,
+            "backup_database_name": backup.database_name,
+            "minimum_free_bytes": authorization.minimum_free_bytes,
+            "observed_free_bytes": backup.free_bytes,
+            "historical_table_count": historical.table_count,
+            "historical_projection_sha256": historical.sha256,
+            "active_attempt_ids": [str(item) for item in active_attempt_ids],
+            "active_connection_pids": list(active_connection_pids),
+            "operator_id": authorization.operator_id,
+            "reason": authorization.reason,
+            "code_sha": authorization.code_sha,
+            "generated_at": now,
+            "expires_at": now + self._recreate_plan_ttl,
+            "nonce": nonce,
+        }
+        plan_hash = canonical_json_sha256(base)
+        challenge = sha256_bytes(
+            f"{plan_hash}:{nonce}:{authorization.operator_id}".encode("utf-8")
+        )[:24]
+        return OperationalUpgradePlan(
+            upgrade_code=definition.upgrade_code,
+            database_name=identity.database_name,
+            database_oid=identity.database_oid,
+            database_owner=identity.database_owner,
+            connected_role=identity.connected_role,
+            application_schema=APPLICATION_SCHEMA,
+            schema_owner=schema_owner,
+            detected_epoch=epoch.epoch_name,
+            detected_release_state=epoch.release_state,
+            detected_baseline_version=epoch.baseline_version,
+            prior_baseline_sha256=epoch.baseline_checksum,
+            prior_seed_sha256=epoch.seed_checksum,
+            prior_catalog_sha256=actual_catalog,
+            prior_reference_vocabulary_sha256=(
+                epoch.reference_vocabulary_checksum
+            ),
+            next_baseline_sha256=definition.next_baseline_sha256,
+            next_catalog_sha256=definition.next_catalog_sha256,
+            next_reference_vocabulary_sha256=(
+                definition.next_reference_vocabulary_sha256
+            ),
+            additive_bundle_sha256=definition.additive_bundle_sha256,
+            backup_path=authorization.backup_path,
+            backup_sha256=backup.sha256,
+            backup_size_bytes=backup.size_bytes,
+            backup_database_name=backup.database_name,
+            minimum_free_bytes=authorization.minimum_free_bytes,
+            observed_free_bytes=backup.free_bytes,
+            historical_table_count=historical.table_count,
+            historical_projection_sha256=historical.sha256,
+            active_attempt_ids=active_attempt_ids,
+            active_connection_pids=active_connection_pids,
+            operator_id=authorization.operator_id,
+            reason=authorization.reason,
+            code_sha=authorization.code_sha,
+            generated_at=now,
+            expires_at=now + self._recreate_plan_ttl,
+            nonce=nonce,
+            plan_hash=plan_hash,
+            challenge=challenge,
+        )
+
+    def apply_operational_upgrade(
+        self,
+        plan: OperationalUpgradePlan,
+        *,
+        challenge: str,
+        operator_id: str,
+    ) -> OperationalUpgradeResult:
+        """Apply one exact additive bundle in one locked transaction."""
+
+        _validate_operational_upgrade_plan_credentials(
+            plan,
+            challenge=challenge,
+            operator_id=operator_id,
+        )
+        definition = self._resolve_operational_upgrade_definition()
+        _require_plan_definition(plan, definition)
+        with self._connect() as connection:
+            _take_bootstrap_lock(connection)
+            identity = _database_identity(connection)
+            _validate_operational_upgrade_plan_identity(identity, plan)
+            _require_database_owner(identity)
+            replay = self._reconcile_operational_upgrade_receipt(
+                connection,
+                plan,
+                definition,
+            )
+            if replay is not None:
+                connection.commit()
+                return replay
+
+            now = _database_now(connection)
+            if now > plan.expires_at.astimezone(timezone.utc):
+                raise OperationalUpgradePlanStaleError("UPGRADE_PLAN_EXPIRED")
+            schema_owner = _schema_owner(connection)
+            if schema_owner != plan.schema_owner:
+                raise OperationalUpgradePlanStaleError("UPGRADE_SCHEMA_OWNER_MISMATCH")
+            if self._require_no_external_catalog(connection):
+                raise OperationalUpgradePlanStaleError("UPGRADE_EXTERNAL_CATALOG_CHANGED")
+            if _operational_upgrade_connection_pids(connection):
+                raise OperationalUpgradePlanStaleError(
+                    "UPGRADE_ACTIVE_CONNECTIONS_CHANGED"
+                )
+            if _active_runtime_attempt_ids(connection):
+                raise OperationalUpgradePlanStaleError("UPGRADE_ACTIVE_RUNTIME_ATTEMPT")
+            epoch = _read_epoch(connection)
+            _validate_operational_upgrade_epoch(epoch, definition)
+            actual_catalog = _target_catalog_checksum(connection)
+            if (
+                actual_catalog != plan.prior_catalog_sha256
+                or actual_catalog != definition.prior_catalog_sha256
+            ):
+                raise OperationalUpgradePlanStaleError("UPGRADE_PRIOR_CATALOG_CHANGED")
+            _verify_exact_migration_registry(
+                connection,
+                baseline_checksum=definition.prior_baseline_sha256,
+            )
+            backup = _verify_upgrade_backup(
+                OperationalUpgradeAuthorization(
+                    expected_database_name=plan.database_name,
+                    expected_database_oid=plan.database_oid,
+                    operator_id=plan.operator_id,
+                    reason=plan.reason,
+                    backup_path=plan.backup_path,
+                    backup_sha256=plan.backup_sha256,
+                    backup_size_bytes=plan.backup_size_bytes,
+                    minimum_free_bytes=plan.minimum_free_bytes,
+                    code_sha=plan.code_sha,
+                )
+            )
+            if backup.database_name != plan.backup_database_name:
+                raise OperationalUpgradePlanStaleError(
+                    "UPGRADE_BACKUP_DATABASE_CHANGED"
+                )
+            historical = _historical_projection(connection)
+            if (
+                historical.sha256 != plan.historical_projection_sha256
+                or historical.table_count != plan.historical_table_count
+            ):
+                raise OperationalUpgradePlanStaleError(
+                    "UPGRADE_HISTORICAL_PROJECTION_CHANGED"
+                )
+
+            connection.execute(definition.additive_sql)
+            upgraded_catalog = _target_catalog_checksum(connection)
+            if upgraded_catalog != definition.next_catalog_sha256:
+                raise OperationalUpgradeIntegrityError(
+                    "UPGRADE_NEXT_CATALOG_MISMATCH: additive bundle did not produce "
+                    "the approved catalog"
+                )
+            _update_operational_upgrade_metadata(
+                connection,
+                definition=definition,
+                seed_sha256=plan.prior_seed_sha256,
+                catalog_sha256=upgraded_catalog,
+            )
+            receipt = _insert_operational_upgrade_receipt(
+                connection,
+                plan=plan,
+            )
+            after = _historical_projection(
+                connection,
+                manifest=historical.manifest,
+            )
+            if after.sha256 != historical.sha256:
+                raise OperationalUpgradeIntegrityError(
+                    "UPGRADE_HISTORICAL_PROJECTION_MISMATCH"
+                )
+            verification = self._verify_connection(connection, created=False)
+            connection.commit()
+            return OperationalUpgradeResult(
+                upgrade_code=plan.upgrade_code,
+                receipt_id=receipt.receipt_id,
+                receipt_content_sha256=receipt.content_sha256,
+                applied_at=receipt.applied_at,
+                historical_projection_sha256=after.sha256,
+                replayed=False,
+                verification=verification,
+            )
+
+    def _resolve_operational_upgrade_definition(
+        self,
+    ) -> _OperationalUpgradeDefinition:
+        if self._operational_upgrade_definition is not None:
+            return self._operational_upgrade_definition
+        return _wp18q_operational_upgrade_definition(
+            baseline_sql=self._baseline_sql,
+            next_baseline_sha256=self.baseline_checksum,
+            next_reference_vocabulary_sha256=self.reference_vocabulary_checksum,
+        )
+
+    def _reconcile_operational_upgrade_receipt(
+        self,
+        connection: psycopg.Connection[Any],
+        plan: OperationalUpgradePlan,
+        definition: _OperationalUpgradeDefinition,
+    ) -> OperationalUpgradeResult | None:
+        receipt = _read_operational_upgrade_receipt(connection, plan.upgrade_code)
+        if receipt is None:
+            return None
+        expected_content = _operational_upgrade_receipt_content_sha256(plan)
+        if (
+            receipt.content_sha256 != expected_content
+            or receipt.prior_baseline_sha256 != plan.prior_baseline_sha256
+            or receipt.next_baseline_sha256 != plan.next_baseline_sha256
+            or receipt.backup_sha256 != plan.backup_sha256
+            or receipt.backup_size_bytes != plan.backup_size_bytes
+            or receipt.code_sha != plan.code_sha
+            or definition.next_baseline_sha256 != plan.next_baseline_sha256
+        ):
+            raise OperationalUpgradeIntegrityError(
+                "UPGRADE_RECEIPT_MISMATCH: existing receipt is not exact"
+            )
+        verification = self._verify_connection(connection, created=False)
+        return OperationalUpgradeResult(
+            upgrade_code=plan.upgrade_code,
+            receipt_id=receipt.receipt_id,
+            receipt_content_sha256=receipt.content_sha256,
+            applied_at=receipt.applied_at,
+            historical_projection_sha256=plan.historical_projection_sha256,
+            replayed=True,
+            verification=verification,
+        )
 
     def plan_recreate(self, authorization: RecreateAuthorization) -> RecreatePlan:
         """Generate a short-lived, database- and catalog-bound destructive plan."""
@@ -1649,6 +2187,19 @@ def _verify_migration_registry(
         )
 
 
+def _verify_exact_migration_registry(
+    connection: psycopg.Connection[Any],
+    *,
+    baseline_checksum: str,
+) -> None:
+    try:
+        _verify_migration_registry(connection, baseline_checksum)
+    except CatalogDriftError as exc:
+        raise UnsafeOperationalUpgradeError(
+            "PRIOR_MIGRATION_REGISTRY_MISMATCH"
+        ) from exc
+
+
 def _verify_primary_keys(
     connection: psycopg.Connection[Any], tables: frozenset[str]
 ) -> None:
@@ -1787,6 +2338,841 @@ def _require_schema_owner(identity: DatabaseIdentity, schema_owner: str) -> None
         )
 
 
+@dataclass(frozen=True, slots=True)
+class _UpgradeBackupProof:
+    path: Path
+    sha256: str
+    size_bytes: int
+    database_name: str
+    free_bytes: int
+
+
+@dataclass(frozen=True, slots=True)
+class _HistoricalProjection:
+    table_count: int
+    sha256: str
+    manifest: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _OperationalUpgradeReceipt:
+    receipt_id: UUID
+    prior_baseline_sha256: str
+    next_baseline_sha256: str
+    backup_sha256: str
+    backup_size_bytes: int
+    code_sha: str
+    content_sha256: str
+    applied_at: datetime
+
+
+_OPERATIONAL_UPGRADE_NAMESPACE: Final = UUID(
+    "f0cf5239-1818-5939-a786-405c1ca02322"
+)
+_UPGRADE_METADATA_TABLES: Final = frozenset(
+    {"schema_epoch", "schema_migrations", "operational_schema_upgrade_receipt"}
+)
+_WP18Q_ADDED_TABLES: Final = frozenset(
+    {
+        "backtest_arm_fold",
+        "backtest_arm_specification",
+        "backtest_evaluation_requirement",
+        "backtest_fold_dependency",
+        "backtest_model_training_requirement",
+        "backtest_sample_member",
+        "backtest_specification",
+        "evaluation_candidate_outcome_source",
+        "exploratory_backtest_arm_strategy",
+        "operational_schema_upgrade_receipt",
+        "prospective_archive_generation",
+        "prospective_archive_generation_member",
+        "prospective_archive_planning_gap",
+        "prospective_archive_revision_observation",
+        "prospective_archive_slice_schedule",
+        "prospective_archive_slice_terminal",
+    }
+)
+_WP18Q_ADDED_COLUMNS: Final = frozenset(
+    {
+        ("exploratory_backtest_run", "current_specification_sha256"),
+        ("exploratory_backtest_feature", "specification_sha256"),
+        ("exploratory_backtest_arm", "specification_sha256"),
+        ("exploratory_backtest_fold", "specification_sha256"),
+        ("exploratory_backtest_fold_session", "specification_sha256"),
+        ("exploratory_backtest_cost_assumption", "specification_sha256"),
+        ("exploratory_backtest_cost_assumption", "charge_side"),
+        ("exploratory_backtest_cost_assumption", "exploratory_backtest_arm_id"),
+    }
+)
+_WP18Q_CHANGED_FUNCTIONS: Final = frozenset(
+    {
+        "guard_evaluation_run_transition",
+        "validate_current_backtest_specification",
+        "validate_evaluation_protocol_metric_source_type",
+        "validate_exploratory_backtest_run",
+        "validate_forecast_model_binding",
+        "validate_model_training_run",
+        "validate_prospective_archive_generation",
+        "validate_prospective_archive_member",
+        "validate_prospective_archive_planning_gap",
+        "validate_prospective_archive_revision",
+        "validate_prospective_archive_roster",
+        "validate_prospective_archive_schedule",
+        "validate_prospective_archive_terminal",
+    }
+)
+_WP18Q_ADDED_CONSTRAINTS: Final = (
+    ("universe_revision", "universe_revision_exact_scope_uk"),
+    ("candidate_policy", "candidate_policy_identity_hash_uk"),
+    ("context_policy", "context_policy_identity_hash_uk"),
+    ("evaluation_protocol", "evaluation_protocol_identity_hash_uk"),
+    ("model", "model_identity_hash_uk"),
+)
+_WP18Q_REPLACED_CONSTRAINTS: Final = (
+    ("strategy_context_requirement", "strategy_context_requirement_shape_ck"),
+    ("evaluation_protocol_metric", "evaluation_protocol_metric_shape_ck"),
+    ("exploratory_backtest_arm", "exploratory_backtest_arm_shape_ck"),
+    ("evaluation_backtest_arm_source", "evaluation_backtest_source_shape_ck"),
+)
+_WP18Q_EXISTING_TABLE_INDEXES: Final = frozenset(
+    {
+        "backtest_run_current_specification_idx",
+        "exploratory_backtest_arm_specification_owner_idx",
+        "exploratory_backtest_cost_arm_idx",
+        "exploratory_backtest_cost_specification_idx",
+        "exploratory_backtest_feature_specification_idx",
+        "exploratory_backtest_fold_session_specification_idx",
+        "exploratory_backtest_fold_specification_idx",
+    }
+)
+
+
+def _wp18q_operational_upgrade_definition(
+    *,
+    baseline_sql: str,
+    next_baseline_sha256: str,
+    next_reference_vocabulary_sha256: str,
+) -> _OperationalUpgradeDefinition:
+    expected_baseline = "9da7396d6dd46e3a896b8845df2ef8619a55d66f1d05285a0dd802d1381dfa98"
+    expected_vocabulary = "d08800892f5e843a756f53e46205dfbb2787386ebf8281564c31049c45659a1b"
+    if next_baseline_sha256 != expected_baseline:
+        raise OperationalUpgradeIntegrityError(
+            "UPGRADE_SOURCE_BASELINE_CHANGED: register a new exact additive route"
+        )
+    if next_reference_vocabulary_sha256 != expected_vocabulary:
+        raise OperationalUpgradeIntegrityError(
+            "UPGRADE_SOURCE_VOCABULARY_CHANGED: register a new exact additive route"
+        )
+    return _OperationalUpgradeDefinition(
+        upgrade_code="wp18q_track_a_c_v1",
+        prior_baseline_sha256=(
+            "2faf445b96aaa9f89f13c59094e35af23d5b5142270ee465a9e7d483aa330c26"
+        ),
+        prior_catalog_sha256=(
+            "351270cbd354a4a914d5664ccf7c551b6b807cb0696d1b04a9156a38c6c8511f"
+        ),
+        prior_reference_vocabulary_sha256=(
+            "65168428b2edecf6434454c32a4c5f4e6b96e706ec047466153e6c9ef87e4c25"
+        ),
+        next_baseline_sha256=expected_baseline,
+        next_catalog_sha256=(
+            "c5ea34221f82e38358943215e48d4ba3f58bb46d814669dda72d6af28835326a"
+        ),
+        next_reference_vocabulary_sha256=expected_vocabulary,
+        additive_sql=_compile_wp18q_additive_sql(baseline_sql),
+    )
+
+
+def _compile_wp18q_additive_sql(baseline_sql: str) -> str:
+    statements = _split_postgres_statements(baseline_sql)
+    table_statements: dict[str, str] = {}
+    function_statements: dict[str, str] = {}
+    index_statements: list[tuple[str, str, str]] = []
+    trigger_statements: list[tuple[str, str]] = []
+    alter_statements: list[tuple[str, str]] = []
+    for statement in statements:
+        table = re.search(r"\bCREATE TABLE mra\.([a-z0-9_]+)\s*\(", statement)
+        if table is not None:
+            table_statements[table.group(1)] = statement
+        function = re.search(
+            r"\bCREATE FUNCTION mra\.([a-z0-9_]+)\s*\(", statement
+        )
+        if function is not None:
+            function_statements[function.group(1)] = statement
+        index = re.search(
+            r"\bCREATE INDEX ([a-z0-9_]+)\s+ON mra\.([a-z0-9_]+)",
+            statement,
+        )
+        if index is not None:
+            index_statements.append((index.group(1), index.group(2), statement))
+        trigger = re.search(
+            r"\bCREATE (?:CONSTRAINT )?TRIGGER [a-z0-9_]+.*?\bON "
+            r"mra\.([a-z0-9_]+)",
+            statement,
+            re.DOTALL,
+        )
+        if trigger is not None:
+            trigger_statements.append((trigger.group(1), statement))
+        alter = re.search(r"\bALTER TABLE mra\.([a-z0-9_]+)", statement)
+        if alter is not None:
+            alter_statements.append((alter.group(1), statement))
+
+    if set(table_statements) < _WP18Q_ADDED_TABLES:
+        missing = sorted(_WP18Q_ADDED_TABLES - set(table_statements))
+        raise OperationalUpgradeIntegrityError(
+            f"UPGRADE_SOURCE_TABLE_STATEMENTS_MISSING: {missing}"
+        )
+
+    parts: list[str] = []
+    for table_name, constraint_name in _WP18Q_ADDED_CONSTRAINTS:
+        clause = _extract_table_constraint(
+            table_statements[table_name], constraint_name
+        )
+        parts.append(
+            f"ALTER TABLE mra.{table_name} ADD CONSTRAINT "
+            f"{constraint_name} {clause};"
+        )
+    for table_name, constraint_name in _WP18Q_REPLACED_CONSTRAINTS:
+        clause = _extract_table_constraint(
+            table_statements[table_name], constraint_name
+        )
+        parts.append(
+            f"ALTER TABLE mra.{table_name} DROP CONSTRAINT {constraint_name}, "
+            f"ADD CONSTRAINT {constraint_name} {clause};"
+        )
+    member_clause = _extract_table_constraint(
+        table_statements["exploratory_backtest_fold_session"],
+        "exploratory_backtest_fold_session_member_uk",
+    )
+    parts.append(
+        "ALTER TABLE mra.exploratory_backtest_fold_session "
+        "DROP CONSTRAINT exploratory_backtest_fold_session_global_uk, "
+        "ADD CONSTRAINT exploratory_backtest_fold_session_member_uk "
+        f"{member_clause};"
+    )
+
+    for statement in statements:
+        match = re.search(r"\bCREATE TABLE mra\.([a-z0-9_]+)\s*\(", statement)
+        if match is not None and match.group(1) in _WP18Q_ADDED_TABLES:
+            parts.append(statement)
+
+    required_alters = {
+        "exploratory_backtest_run": "ADD COLUMN current_specification_sha256",
+        "exploratory_backtest_feature": "ADD COLUMN specification_sha256",
+        "exploratory_backtest_arm": "ADD COLUMN specification_sha256",
+        "exploratory_backtest_fold": "ADD COLUMN specification_sha256",
+        "exploratory_backtest_fold_session": "ADD COLUMN specification_sha256",
+        "exploratory_backtest_cost_assumption": "ADD COLUMN charge_side",
+    }
+    for table_name, marker in required_alters.items():
+        matches = [
+            statement
+            for observed_table, statement in alter_statements
+            if observed_table == table_name and marker in statement
+        ]
+        if len(matches) != 1:
+            raise OperationalUpgradeIntegrityError(
+                f"UPGRADE_SOURCE_ALTER_STATEMENT_MISMATCH: {table_name}"
+            )
+        parts.append(matches[0])
+
+    for function_name in sorted(_WP18Q_CHANGED_FUNCTIONS):
+        try:
+            statement = function_statements[function_name]
+        except KeyError as exc:
+            raise OperationalUpgradeIntegrityError(
+                f"UPGRADE_SOURCE_FUNCTION_MISSING: {function_name}"
+            ) from exc
+        parts.append(
+            statement.replace("CREATE FUNCTION", "CREATE OR REPLACE FUNCTION", 1)
+        )
+
+    for index_name, table_name, statement in index_statements:
+        if (
+            table_name in _WP18Q_ADDED_TABLES
+            or index_name in _WP18Q_EXISTING_TABLE_INDEXES
+        ):
+            parts.append(statement)
+    for table_name, statement in trigger_statements:
+        if table_name in _WP18Q_ADDED_TABLES:
+            parts.append(statement)
+    return "\n\n".join(part.strip() for part in parts) + "\n"
+
+
+def _split_postgres_statements(payload: str) -> tuple[str, ...]:
+    statements: list[str] = []
+    start = 0
+    index = 0
+    single_quote = False
+    double_quote = False
+    line_comment = False
+    block_comment_depth = 0
+    dollar_tag: str | None = None
+    while index < len(payload):
+        if line_comment:
+            if payload[index] == "\n":
+                line_comment = False
+            index += 1
+            continue
+        if block_comment_depth:
+            if payload.startswith("/*", index):
+                block_comment_depth += 1
+                index += 2
+            elif payload.startswith("*/", index):
+                block_comment_depth -= 1
+                index += 2
+            else:
+                index += 1
+            continue
+        if dollar_tag is not None:
+            if payload.startswith(dollar_tag, index):
+                index += len(dollar_tag)
+                dollar_tag = None
+            else:
+                index += 1
+            continue
+        if single_quote:
+            if payload.startswith("''", index):
+                index += 2
+            elif payload[index] == "'":
+                single_quote = False
+                index += 1
+            else:
+                index += 1
+            continue
+        if double_quote:
+            if payload.startswith('""', index):
+                index += 2
+            elif payload[index] == '"':
+                double_quote = False
+                index += 1
+            else:
+                index += 1
+            continue
+        if payload.startswith("--", index):
+            line_comment = True
+            index += 2
+            continue
+        if payload.startswith("/*", index):
+            block_comment_depth = 1
+            index += 2
+            continue
+        if payload[index] == "'":
+            single_quote = True
+            index += 1
+            continue
+        if payload[index] == '"':
+            double_quote = True
+            index += 1
+            continue
+        if payload[index] == "$":
+            match = re.match(r"\$[A-Za-z_][A-Za-z0-9_]*\$|\$\$", payload[index:])
+            if match is not None:
+                dollar_tag = match.group(0)
+                index += len(dollar_tag)
+                continue
+        if payload[index] == ";":
+            statement = payload[start : index + 1].strip()
+            if statement:
+                statements.append(statement)
+            start = index + 1
+        index += 1
+    if payload[start:].strip():
+        raise OperationalUpgradeIntegrityError(
+            "UPGRADE_SOURCE_SQL_HAS_UNTERMINATED_STATEMENT"
+        )
+    return tuple(statements)
+
+
+def _extract_table_constraint(table_statement: str, constraint_name: str) -> str:
+    match = re.search(
+        rf"\bCONSTRAINT\s+{re.escape(constraint_name)}\s+",
+        table_statement,
+    )
+    if match is None:
+        raise OperationalUpgradeIntegrityError(
+            f"UPGRADE_SOURCE_CONSTRAINT_MISSING: {constraint_name}"
+        )
+    start = match.end()
+    depth = 0
+    index = start
+    single_quote = False
+    while index < len(table_statement):
+        character = table_statement[index]
+        if single_quote:
+            if table_statement.startswith("''", index):
+                index += 2
+                continue
+            if character == "'":
+                single_quote = False
+            index += 1
+            continue
+        if character == "'":
+            single_quote = True
+        elif character == "(":
+            depth += 1
+        elif character == ")":
+            if depth == 0:
+                return table_statement[start:index].strip()
+            depth -= 1
+        elif character == "," and depth == 0:
+            return table_statement[start:index].strip()
+        index += 1
+    raise OperationalUpgradeIntegrityError(
+        f"UPGRADE_SOURCE_CONSTRAINT_UNTERMINATED: {constraint_name}"
+    )
+
+
+def _validate_operational_upgrade_identity(
+    identity: DatabaseIdentity,
+    authorization: OperationalUpgradeAuthorization,
+) -> None:
+    try:
+        _require_non_system_database(identity)
+    except UnsafeRecreateError as exc:
+        raise UnsafeOperationalUpgradeError(str(exc)) from exc
+    if identity.database_name != authorization.expected_database_name:
+        raise UnsafeOperationalUpgradeError(
+            "database name does not match explicit authorization"
+        )
+    if identity.database_oid != authorization.expected_database_oid:
+        raise UnsafeOperationalUpgradeError(
+            "database OID does not match explicit authorization"
+        )
+    if identity.connected_role != identity.database_owner:
+        raise UnsafeOperationalUpgradeError(
+            "operational upgrade requires the exact database owner role"
+        )
+
+
+def _validate_operational_upgrade_plan_identity(
+    identity: DatabaseIdentity,
+    plan: OperationalUpgradePlan,
+) -> None:
+    if (
+        identity.database_name,
+        identity.database_oid,
+        identity.database_owner,
+        identity.connected_role,
+    ) != (
+        plan.database_name,
+        plan.database_oid,
+        plan.database_owner,
+        plan.connected_role,
+    ):
+        raise OperationalUpgradePlanStaleError(
+            "UPGRADE_DATABASE_IDENTITY_CHANGED"
+        )
+
+
+def _validate_operational_upgrade_epoch(
+    epoch: _EpochRow,
+    definition: _OperationalUpgradeDefinition,
+) -> None:
+    if (
+        epoch.epoch_name,
+        epoch.schema_name,
+        epoch.release_state,
+        epoch.baseline_version,
+    ) != (
+        SCHEMA_EPOCH,
+        APPLICATION_SCHEMA,
+        BASELINE_RELEASE_STATE,
+        BASELINE_VERSION,
+    ):
+        raise UnsafeOperationalUpgradeError(
+            "operational upgrade accepts only the approved draft epoch"
+        )
+    if epoch.baseline_checksum != definition.prior_baseline_sha256:
+        raise UnsafeOperationalUpgradeError("PRIOR_BASELINE_MISMATCH")
+    if epoch.catalog_checksum != definition.prior_catalog_sha256:
+        raise UnsafeOperationalUpgradeError("PRIOR_STORED_CATALOG_MISMATCH")
+    if (
+        epoch.reference_vocabulary_checksum
+        != definition.prior_reference_vocabulary_sha256
+    ):
+        raise UnsafeOperationalUpgradeError("PRIOR_VOCABULARY_MISMATCH")
+
+
+def _verify_upgrade_backup(
+    authorization: OperationalUpgradeAuthorization,
+) -> _UpgradeBackupProof:
+    path = authorization.backup_path
+    try:
+        stat = path.stat()
+    except OSError as exc:
+        raise UnsafeOperationalUpgradeError("BACKUP_UNREADABLE") from exc
+    if not path.is_file() or stat.st_size != authorization.backup_size_bytes:
+        raise UnsafeOperationalUpgradeError("BACKUP_SIZE_MISMATCH")
+    digest = hashlib.sha256()
+    try:
+        with path.open("rb") as source:
+            while chunk := source.read(1024 * 1024):
+                digest.update(chunk)
+    except OSError as exc:
+        raise UnsafeOperationalUpgradeError("BACKUP_UNREADABLE") from exc
+    observed_sha256 = digest.hexdigest()
+    if observed_sha256 != authorization.backup_sha256:
+        raise UnsafeOperationalUpgradeError("BACKUP_SHA256_MISMATCH")
+    try:
+        restored = subprocess.run(
+            ["pg_restore", "--list", os.fspath(path)],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise UnsafeOperationalUpgradeError("BACKUP_FORMAT_UNREADABLE") from exc
+    match = re.search(r"^;\s+dbname:\s+(\S+)\s*$", restored.stdout, re.MULTILINE)
+    if match is None:
+        raise UnsafeOperationalUpgradeError("BACKUP_DATABASE_NAME_MISSING")
+    free_bytes = shutil.disk_usage(path.parent).free
+    if free_bytes < authorization.minimum_free_bytes:
+        raise UnsafeOperationalUpgradeError(
+            "INSUFFICIENT_FREE_SPACE: upgrade safety floor is not satisfied"
+        )
+    return _UpgradeBackupProof(
+        path=path,
+        sha256=observed_sha256,
+        size_bytes=stat.st_size,
+        database_name=match.group(1),
+        free_bytes=free_bytes,
+    )
+
+
+def _operational_upgrade_connection_pids(
+    connection: psycopg.Connection[Any],
+) -> tuple[int, ...]:
+    rows = connection.execute(
+        """
+        SELECT pid
+        FROM pg_stat_activity
+        WHERE datname = current_database()
+          AND pid <> pg_backend_pid()
+          AND backend_type = 'client backend'
+        ORDER BY pid
+        """
+    ).fetchall()
+    return tuple(int(row[0]) for row in rows)
+
+
+def _active_runtime_attempt_ids(
+    connection: psycopg.Connection[Any],
+) -> tuple[UUID, ...]:
+    rows = connection.execute(
+        """
+        SELECT attempt_id
+        FROM mra.runtime_attempt
+        WHERE state IN ('CLAIMED', 'RUNNING')
+        ORDER BY attempt_id::text
+        """
+    ).fetchall()
+    return tuple(UUID(str(row[0])) for row in rows)
+
+
+def _historical_projection_manifest(
+    connection: psycopg.Connection[Any],
+    *,
+    prior_only: bool = True,
+) -> tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...]:
+    del prior_only
+    tables = sorted(
+        _target_tables(connection)
+        - _UPGRADE_METADATA_TABLES
+        - _WP18Q_ADDED_TABLES
+    )
+    manifest: list[tuple[str, tuple[str, ...], tuple[str, ...]]] = []
+    for table_name in tables:
+        columns = tuple(
+            str(row[0])
+            for row in connection.execute(
+                """
+                SELECT attribute.attname
+                FROM pg_attribute AS attribute
+                JOIN pg_class AS relation
+                  ON relation.oid = attribute.attrelid
+                JOIN pg_namespace AS namespace
+                  ON namespace.oid = relation.relnamespace
+                WHERE namespace.nspname = 'mra'
+                  AND relation.relname = %s
+                  AND attribute.attnum > 0
+                  AND NOT attribute.attisdropped
+                ORDER BY attribute.attnum
+                """,
+                (table_name,),
+            ).fetchall()
+            if (table_name, str(row[0])) not in _WP18Q_ADDED_COLUMNS
+        )
+        primary_key = tuple(
+            str(row[0])
+            for row in connection.execute(
+                """
+                SELECT attribute.attname
+                FROM pg_constraint AS constraint_item
+                JOIN pg_class AS relation
+                  ON relation.oid = constraint_item.conrelid
+                JOIN pg_namespace AS namespace
+                  ON namespace.oid = relation.relnamespace
+                JOIN unnest(constraint_item.conkey) WITH ORDINALITY AS key(attnum, ordinal)
+                  ON true
+                JOIN pg_attribute AS attribute
+                  ON attribute.attrelid = relation.oid
+                 AND attribute.attnum = key.attnum
+                WHERE namespace.nspname = 'mra'
+                  AND relation.relname = %s
+                  AND constraint_item.contype = 'p'
+                ORDER BY key.ordinal
+                """,
+                (table_name,),
+            ).fetchall()
+        )
+        if not columns or not primary_key:
+            raise OperationalUpgradeIntegrityError(
+                f"historical projection lacks columns or PK for {table_name}"
+            )
+        manifest.append((table_name, columns, primary_key))
+    return tuple(manifest)
+
+
+def _historical_projection(
+    connection: psycopg.Connection[Any],
+    *,
+    manifest: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...] | None = None,
+) -> _HistoricalProjection:
+    resolved = (
+        _historical_projection_manifest(connection)
+        if manifest is None
+        else manifest
+    )
+    digest = hashlib.sha256()
+    for table_name, columns, primary_key in resolved:
+        digest.update(table_name.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update("\0".join(columns).encode("utf-8"))
+        digest.update(b"\0")
+        statement = sql.SQL(
+            "COPY (SELECT {columns} FROM {schema}.{table} ORDER BY {primary_key}) "
+            "TO STDOUT WITH (FORMAT text)"
+        ).format(
+            columns=sql.SQL(", ").join(map(sql.Identifier, columns)),
+            schema=sql.Identifier(APPLICATION_SCHEMA),
+            table=sql.Identifier(table_name),
+            primary_key=sql.SQL(", ").join(map(sql.Identifier, primary_key)),
+        )
+        with connection.cursor().copy(statement) as copy:
+            for chunk in copy:
+                digest.update(bytes(chunk))
+        digest.update(b"\0")
+    return _HistoricalProjection(
+        table_count=len(resolved),
+        sha256=digest.hexdigest(),
+        manifest=resolved,
+    )
+
+
+def _validate_operational_upgrade_plan_credentials(
+    plan: OperationalUpgradePlan,
+    *,
+    challenge: str,
+    operator_id: str,
+) -> None:
+    if not operator_id.strip() or not secrets.compare_digest(
+        operator_id, plan.operator_id
+    ):
+        raise OperationalUpgradePlanStaleError("UPGRADE_OPERATOR_MISMATCH")
+    expected_hash = _operational_upgrade_plan_hash(plan)
+    expected_challenge = sha256_bytes(
+        f"{expected_hash}:{plan.nonce}:{plan.operator_id}".encode("utf-8")
+    )[:24]
+    if expected_hash != plan.plan_hash:
+        raise OperationalUpgradePlanStaleError("UPGRADE_PLAN_HASH_MISMATCH")
+    if not secrets.compare_digest(
+        challenge, plan.challenge
+    ) or not secrets.compare_digest(challenge, expected_challenge):
+        raise OperationalUpgradePlanStaleError("UPGRADE_CHALLENGE_MISMATCH")
+
+
+def _require_plan_definition(
+    plan: OperationalUpgradePlan,
+    definition: _OperationalUpgradeDefinition,
+) -> None:
+    observed = (
+        plan.upgrade_code,
+        plan.prior_baseline_sha256,
+        plan.prior_catalog_sha256,
+        plan.prior_reference_vocabulary_sha256,
+        plan.next_baseline_sha256,
+        plan.next_catalog_sha256,
+        plan.next_reference_vocabulary_sha256,
+        plan.additive_bundle_sha256,
+    )
+    expected = (
+        definition.upgrade_code,
+        definition.prior_baseline_sha256,
+        definition.prior_catalog_sha256,
+        definition.prior_reference_vocabulary_sha256,
+        definition.next_baseline_sha256,
+        definition.next_catalog_sha256,
+        definition.next_reference_vocabulary_sha256,
+        definition.additive_bundle_sha256,
+    )
+    if observed != expected:
+        raise OperationalUpgradePlanStaleError("UPGRADE_DEFINITION_CHANGED")
+
+
+def _update_operational_upgrade_metadata(
+    connection: psycopg.Connection[Any],
+    *,
+    definition: _OperationalUpgradeDefinition,
+    seed_sha256: str,
+    catalog_sha256: str,
+) -> None:
+    connection.execute(
+        "ALTER TABLE mra.schema_epoch DISABLE TRIGGER schema_epoch_append_only"
+    )
+    connection.execute(
+        "ALTER TABLE mra.schema_migrations DISABLE TRIGGER schema_migrations_append_only"
+    )
+    connection.execute(
+        """
+        UPDATE mra.schema_migrations
+        SET checksum = %s
+        WHERE version = %s AND name = %s AND epoch_name = %s
+        """,
+        (
+            definition.next_baseline_sha256,
+            BASELINE_VERSION,
+            BASELINE_NAME,
+            SCHEMA_EPOCH,
+        ),
+    )
+    connection.execute(
+        """
+        UPDATE mra.schema_epoch
+        SET baseline_checksum = %s,
+            seed_checksum = %s,
+            catalog_checksum = %s,
+            reference_vocabulary_checksum = %s
+        WHERE singleton
+        """,
+        (
+            definition.next_baseline_sha256,
+            seed_sha256,
+            catalog_sha256,
+            definition.next_reference_vocabulary_sha256,
+        ),
+    )
+    connection.execute(
+        "ALTER TABLE mra.schema_migrations ENABLE TRIGGER schema_migrations_append_only"
+    )
+    connection.execute(
+        "ALTER TABLE mra.schema_epoch ENABLE TRIGGER schema_epoch_append_only"
+    )
+
+
+def _operational_upgrade_receipt_content_sha256(
+    plan: OperationalUpgradePlan,
+) -> str:
+    return canonical_json_sha256(
+        {
+            "backup_sha256": plan.backup_sha256,
+            "backup_size_bytes": plan.backup_size_bytes,
+            "code_sha": plan.code_sha,
+            "database_oid": plan.database_oid,
+            "next_baseline_sha256": plan.next_baseline_sha256,
+            "prior_baseline_sha256": plan.prior_baseline_sha256,
+            "upgrade_code": plan.upgrade_code,
+        }
+    )
+
+
+def _insert_operational_upgrade_receipt(
+    connection: psycopg.Connection[Any],
+    *,
+    plan: OperationalUpgradePlan,
+) -> _OperationalUpgradeReceipt:
+    receipt_id = uuid5(_OPERATIONAL_UPGRADE_NAMESPACE, plan.upgrade_code)
+    content_sha256 = _operational_upgrade_receipt_content_sha256(plan)
+    row = connection.execute(
+        """
+        INSERT INTO mra.operational_schema_upgrade_receipt (
+            operational_schema_upgrade_receipt_id, upgrade_code,
+            database_oid, prior_baseline_sha256, next_baseline_sha256,
+            backup_sha256, backup_size_bytes, code_sha, content_sha256
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        RETURNING applied_at
+        """,
+        (
+            receipt_id,
+            plan.upgrade_code,
+            plan.database_oid,
+            plan.prior_baseline_sha256,
+            plan.next_baseline_sha256,
+            plan.backup_sha256,
+            plan.backup_size_bytes,
+            plan.code_sha,
+            content_sha256,
+        ),
+    ).fetchone()
+    if row is None or not isinstance(row[0], datetime):
+        raise OperationalUpgradeIntegrityError("UPGRADE_RECEIPT_NOT_RETURNED")
+    return _OperationalUpgradeReceipt(
+        receipt_id=receipt_id,
+        prior_baseline_sha256=plan.prior_baseline_sha256,
+        next_baseline_sha256=plan.next_baseline_sha256,
+        backup_sha256=plan.backup_sha256,
+        backup_size_bytes=plan.backup_size_bytes,
+        code_sha=plan.code_sha,
+        content_sha256=content_sha256,
+        applied_at=row[0].astimezone(timezone.utc),
+    )
+
+
+def _read_operational_upgrade_receipt(
+    connection: psycopg.Connection[Any],
+    upgrade_code: str,
+) -> _OperationalUpgradeReceipt | None:
+    relation = connection.execute(
+        "SELECT to_regclass('mra.operational_schema_upgrade_receipt')"
+    ).fetchone()
+    if relation is None or relation[0] is None:
+        return None
+    row = connection.execute(
+        """
+        SELECT operational_schema_upgrade_receipt_id,
+               prior_baseline_sha256, next_baseline_sha256,
+               backup_sha256, backup_size_bytes, code_sha,
+               content_sha256, applied_at
+        FROM mra.operational_schema_upgrade_receipt
+        WHERE upgrade_code = %s
+        """,
+        (upgrade_code,),
+    ).fetchone()
+    if row is None:
+        return None
+    return _OperationalUpgradeReceipt(
+        receipt_id=UUID(str(row[0])),
+        prior_baseline_sha256=str(row[1]),
+        next_baseline_sha256=str(row[2]),
+        backup_sha256=str(row[3]),
+        backup_size_bytes=int(row[4]),
+        code_sha=str(row[5]),
+        content_sha256=str(row[6]),
+        applied_at=row[7].astimezone(timezone.utc),
+    )
+
+
+def _operational_upgrade_plan_hash(plan: OperationalUpgradePlan) -> str:
+    payload = asdict(plan)
+    payload.pop("plan_hash")
+    payload.pop("challenge")
+    payload["backup_path"] = str(plan.backup_path)
+    payload["active_attempt_ids"] = [str(item) for item in plan.active_attempt_ids]
+    payload["active_connection_pids"] = list(plan.active_connection_pids)
+    return canonical_json_sha256(payload)
+
+
 def _recreate_plan_hash(plan: RecreatePlan) -> str:
     payload = asdict(plan)
     payload.pop("plan_hash")
@@ -1814,6 +3200,11 @@ __all__ = [
     "EXPECTED_TARGET_DEFINITION_TABLES",
     "EXPECTED_TARGET_TABLES",
     "LegacySchemaPresentError",
+    "OperationalUpgradeAuthorization",
+    "OperationalUpgradeIntegrityError",
+    "OperationalUpgradePlan",
+    "OperationalUpgradePlanStaleError",
+    "OperationalUpgradeResult",
     "RecreateAuthorization",
     "RecreatePlan",
     "RecreateResult",
@@ -1826,5 +3217,7 @@ __all__ = [
     "SchemaMissingError",
     "SchemaVerification",
     "UnexpectedCatalogError",
+    "UnsafeOperationalUpgradeError",
     "UnsafeRecreateError",
+    "_OperationalUpgradeDefinition",
 ]

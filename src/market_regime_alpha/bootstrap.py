@@ -148,6 +148,9 @@ from market_regime_alpha.infrastructure.postgres.queries.model_training_inputs i
 )
 from market_regime_alpha.infrastructure.postgres.schema import (
     DatabaseIdentity,
+    OperationalUpgradeAuthorization,
+    OperationalUpgradePlan,
+    OperationalUpgradeResult,
     RecreateAuthorization,
     RecreatePlan,
     RecreateResult,
@@ -554,6 +557,56 @@ def load_recreate_plan(payload: str) -> RecreatePlan:
     return RecreatePlan.from_json(payload)
 
 
+def plan_operational_database_upgrade(
+    settings: TargetSettings,
+    authorization: OperationalUpgradeAuthorization,
+) -> OperationalUpgradePlan:
+    return SchemaManager(settings.database_url).plan_operational_upgrade(authorization)
+
+
+def apply_operational_database_upgrade(
+    settings: TargetSettings,
+    plan: OperationalUpgradePlan,
+    *,
+    challenge: str,
+    operator_id: str,
+) -> OperationalUpgradeResult:
+    return SchemaManager(settings.database_url).apply_operational_upgrade(
+        plan,
+        challenge=challenge,
+        operator_id=operator_id,
+    )
+
+
+def load_operational_upgrade_plan(payload: str) -> OperationalUpgradePlan:
+    return OperationalUpgradePlan.from_json(payload)
+
+
+def make_operational_upgrade_authorization(
+    *,
+    expected_database_name: str,
+    expected_database_oid: int,
+    operator_id: str,
+    reason: str,
+    backup_path: Path,
+    backup_sha256: str,
+    backup_size_bytes: int,
+    minimum_free_bytes: int,
+    code_sha: str,
+) -> OperationalUpgradeAuthorization:
+    return OperationalUpgradeAuthorization(
+        expected_database_name=expected_database_name,
+        expected_database_oid=expected_database_oid,
+        operator_id=operator_id,
+        reason=reason,
+        backup_path=backup_path,
+        backup_sha256=backup_sha256,
+        backup_size_bytes=backup_size_bytes,
+        minimum_free_bytes=minimum_free_bytes,
+        code_sha=code_sha,
+    )
+
+
 def make_recreate_authorization(
     *,
     expected_database_name: str,
@@ -574,12 +627,16 @@ def make_recreate_authorization(
 __all__ = [
     "TargetApplication",
     "TargetSettings",
+    "apply_operational_database_upgrade",
     "apply_database_recreate",
     "bootstrap_application",
     "bootstrap_database",
     "database_identity",
     "load_recreate_plan",
+    "load_operational_upgrade_plan",
+    "make_operational_upgrade_authorization",
     "make_recreate_authorization",
     "plan_database_recreate",
+    "plan_operational_database_upgrade",
     "verify_database",
 ]
