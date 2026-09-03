@@ -64,11 +64,17 @@ class Wp17pModelOperations:
         *,
         catalog: Wp17pAuthorityCatalog,
         fit_evaluation: Wp17pCompletedEvaluation,
+        fit_fold_id: UUID | None = None,
+        model_version: int = 1,
     ) -> Wp17pModelExecution:
         challenger = tuple(
             item
             for item in catalog.backtest.arms
-            if item.kind is BacktestArmKind.MODEL_CHALLENGER
+            if item.kind
+            in {
+                BacktestArmKind.MODEL_CHALLENGER,
+                BacktestArmKind.RIDGE_CURRENT_CONTEXT,
+            }
         )
         fit_folds = tuple(
             item
@@ -81,15 +87,29 @@ class Wp17pModelOperations:
             if item.backtest_arm_kind
             is ExploratoryBacktestArmKind.MODEL_CHALLENGER
         )
-        if len(challenger) != 1 or len(fit_folds) != 1 or len(metrics) != 1:
-            raise ValueError("WP-17P Model training declarations are ambiguous")
+        if fit_fold_id is not None:
+            fit_folds = tuple(
+                item
+                for item in fit_folds
+                if item.exploratory_backtest_fold_id == fit_fold_id
+            )
+        if (
+            len(challenger) != 1
+            or len(fit_folds) != 1
+            or len(metrics) != 1
+            or model_version < 1
+        ):
+            raise ValueError("Model training declarations are ambiguous")
         model = wp17p_model_plan(catalog)
         app = self._application
         app.research_models.register_model(
             model,
             _context("register-model"),
         )
-        training_run_id = uuid5(model.model_id, "training:1")
+        training_run_id = uuid5(
+            model.model_id,
+            f"training:{fit_folds[0].exploratory_backtest_fold_id}",
+        )
         app.research_models.open_training_run(
             OpenModelTrainingRunRequest(
                 training_run_id,
@@ -110,12 +130,12 @@ class Wp17pModelOperations:
             ),
             _context("open-model-training"),
         )
-        model_version_id = uuid5(model.model_id, "version:1")
+        model_version_id = uuid5(model.model_id, f"version:{model_version}")
         version = app.research_models.fit_and_register_version(
             RegisterModelVersionRequest(
                 model_version_id,
                 model.model_id,
-                1,
+                model_version,
                 training_run_id,
                 str(catalog.backtest.provenance_sha256),
             ),
@@ -132,7 +152,7 @@ class Wp17pModelOperations:
 def wp17p_model_plan(catalog: Wp17pAuthorityCatalog) -> ResearchModelPlan:
     return ResearchModelPlan(
         uuid5(catalog.backtest.exploratory_backtest_run_id, "model:ridge"),
-        "wp17p_deterministic_ridge",
+        f"wp{17 if catalog.backtest.generation == 1 else 18}_deterministic_ridge",
         catalog.target.target_definition_id,
         catalog.target.version,
         catalog.target.content_sha256,

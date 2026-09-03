@@ -20000,7 +20000,14 @@ BEGIN
             OR fold.session_count <> (SELECT count(*) FROM mra.exploratory_backtest_fold_session AS member WHERE member.exploratory_backtest_fold_id = fold.exploratory_backtest_fold_id)
             OR fold.purge_sessions <> (SELECT count(*) FROM mra.exploratory_backtest_fold_session AS member WHERE member.exploratory_backtest_fold_id = fold.exploratory_backtest_fold_id AND member.session_role = 'PURGE')
             OR fold.embargo_sessions <> (SELECT count(*) FROM mra.exploratory_backtest_fold_session AS member WHERE member.exploratory_backtest_fold_id = fold.exploratory_backtest_fold_id AND member.session_role = 'EMBARGO')
-            OR NOT EXISTS (SELECT 1 FROM mra.exploratory_backtest_fold_session AS member WHERE member.exploratory_backtest_fold_id = fold.exploratory_backtest_fold_id AND member.session_role = 'EVALUATION')
+            OR NOT EXISTS (
+                SELECT 1 FROM mra.exploratory_backtest_fold_session AS member
+                WHERE member.exploratory_backtest_fold_id = fold.exploratory_backtest_fold_id
+                  AND member.session_role = CASE
+                      WHEN fold.purpose = 'FIT' THEN 'FIT_INPUT'
+                      ELSE 'EVALUATION'
+                  END
+            )
             OR fold.session_roster_sha256 <> (
                 SELECT mra.canonical_sha256(mra.canonical_json_text(coalesce(jsonb_agg(
                     jsonb_build_object('content_sha256', member.content_sha256,
