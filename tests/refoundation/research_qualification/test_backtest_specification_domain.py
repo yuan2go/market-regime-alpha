@@ -24,6 +24,7 @@ from market_regime_alpha.research_qualification.domain.backtest import (
     BacktestFoldSession,
     BacktestFoldSpecification,
     BacktestModelTrainingRequirement,
+    BacktestModelTrainingRecipe,
     BacktestPolicyDefaults,
     BacktestSampleMember,
     BacktestSessionRole,
@@ -33,6 +34,12 @@ from market_regime_alpha.research_qualification.domain.backtest import (
     VersionedAuthorityBinding,
 )
 from market_regime_alpha.research_qualification.domain.model import ArtifactBinding
+from market_regime_alpha.research_qualification.domain.research_models import (
+    ModelDependencyVersion,
+    ModelExecutionEnvironment,
+    ModelScalarParameter,
+    ModelScalarType,
+)
 from market_regime_alpha.research_qualification.domain.research_vocabulary import (
     PartitionPurpose,
 )
@@ -48,6 +55,37 @@ def _binding(value: int) -> AuthorityBinding:
 
 def _artifact(value: int) -> ArtifactBinding:
     return ArtifactBinding(_id(value), f"{value:064x}", value)
+
+
+def _model_recipe() -> BacktestModelTrainingRecipe:
+    return BacktestModelTrainingRecipe(
+        algorithm_code="deterministic_ridge",
+        algorithm_version="1.0.0",
+        implementation_sha256="d" * 64,
+        environment=ModelExecutionEnvironment(
+            python_implementation="cpython",
+            python_version="3.12.11",
+            runtime_code="uv",
+            runtime_version="0.8.13",
+            uv_lock_sha256="e" * 64,
+            dependencies=(
+                ModelDependencyVersion(
+                    ordinal=1,
+                    package_name="market_regime_alpha",
+                    package_version="0.1.0",
+                    distribution_sha256="f" * 64,
+                ),
+            ),
+        ),
+        hyperparameters=(
+            ModelScalarParameter(
+                ordinal=1,
+                parameter_code="ridge_alpha",
+                value_type=ModelScalarType.DECIMAL,
+                decimal_value=Decimal("0.01"),
+            ),
+        ),
+    )
 
 
 def _fold(
@@ -264,6 +302,7 @@ def test_specification_accepts_arbitrary_arms_and_overlapping_rolling_fit_sessio
             model_definition=model_definition,
             training_metric=_binding(900),
             planned_model_version=1,
+            recipe=_model_recipe(),
         ),
         BacktestModelTrainingRequirement(
             requirement_id=_id(601),
@@ -274,6 +313,7 @@ def test_specification_accepts_arbitrary_arms_and_overlapping_rolling_fit_sessio
             model_definition=model_definition,
             training_metric=_binding(901),
             planned_model_version=2,
+            recipe=_model_recipe(),
         ),
     )
     specification = BacktestSpecification(
@@ -347,6 +387,14 @@ def test_specification_accepts_arbitrary_arms_and_overlapping_rolling_fit_sessio
             specification,
             model_training_requirements=(
                 replace(model_requirements[0], training_metric=None),
+                model_requirements[1],
+            ),
+        )
+    with pytest.raises(ValueError, match="training recipe"):
+        replace(
+            specification,
+            model_training_requirements=(
+                replace(model_requirements[0], recipe=None),
                 model_requirements[1],
             ),
         )

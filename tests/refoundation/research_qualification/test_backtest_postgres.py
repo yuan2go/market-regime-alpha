@@ -20,6 +20,9 @@ from market_regime_alpha.infrastructure.postgres.queries.backtests import (
 from market_regime_alpha.infrastructure.postgres.queries.backtest_execution import (
     PostgresBacktestExecutionObservationPort,
 )
+from market_regime_alpha.infrastructure.postgres.research_model_uow import (
+    PostgresResearchModelUnitOfWorkProvider,
+)
 from market_regime_alpha.research_qualification.application.backtests import (
     BacktestApplication,
 )
@@ -41,6 +44,8 @@ from market_regime_alpha.research_qualification.domain.backtest import (
     BacktestFoldDependency,
     BacktestFoldSession,
     BacktestFoldSpecification,
+    BacktestModelTrainingRecipe,
+    BacktestModelTrainingRequirement,
     BacktestPolicyDefaults,
     BacktestSampleMember,
     BacktestSessionRole,
@@ -56,6 +61,16 @@ from market_regime_alpha.research_qualification.domain.backtest_execution import
 )
 from market_regime_alpha.research_qualification.domain.research_vocabulary import (
     PartitionPurpose,
+)
+from market_regime_alpha.research_qualification.application.research_models import (
+    ModelCommands,
+)
+from market_regime_alpha.research_qualification.domain.research_models import (
+    ModelDependencyVersion,
+    ModelExecutionEnvironment,
+    ModelScalarParameter,
+    ModelScalarType,
+    ResearchModelPlan,
 )
 from market_regime_alpha.runtime.errors import (
     IdempotencyKeyReusedError,
@@ -128,12 +143,7 @@ def _current_specification(stack) -> BacktestSpecification:
             """,
             (stack.eligibility_policy_id,),
         ).fetchone()
-    assert (
-        archive_hash is not None
-        and seal_hash is not None
-        and universe is not None
-        and eligibility is not None
-    )
+    assert archive_hash is not None and seal_hash is not None and universe is not None and eligibility is not None
 
     old_sessions = tuple(session for fold in legacy.folds for session in fold.sessions)
     fit_protocol = _authority(
@@ -356,6 +366,109 @@ def _current_specification(stack) -> BacktestSpecification:
     )
 
 
+def _current_model_specification(stack) -> BacktestSpecification:
+    rule_specification = _current_specification(stack)
+    model_id = uuid4()
+    model_plan = ResearchModelPlan(
+        model_id=model_id,
+        model_code=f"generic_ridge_{uuid4().hex[:8]}",
+        target_definition_id=rule_specification.target.authority_id,
+        target_version=rule_specification.target.version,
+        target_definition_sha256=rule_specification.target.content_sha256,
+        feature_definitions=tuple((item.authority_id, item.content_sha256) for item in rule_specification.feature_definitions),
+        code_artifact=rule_specification.code_artifact,
+        config_artifact=rule_specification.config_artifact,
+        provenance_sha256="a" * 64,
+    )
+    ModelCommands(
+        PostgresResearchModelUnitOfWorkProvider(stack.pool),
+        id_factory=uuid4,
+    ).register_model(
+        model_plan,
+        _legacy._context("register-current-backtest-model"),
+    )
+    model_binding = AuthorityBinding(model_id, model_plan.content_sha256)
+    model_arm = replace(
+        rule_specification.arms[1],
+        arm_code="model-challenger",
+        execution_kind=BacktestExecutionKind.MODEL,
+        model=model_binding,
+    )
+    arms = (
+        rule_specification.arms[0],
+        model_arm,
+        rule_specification.arms[2],
+    )
+    recipe = BacktestModelTrainingRecipe(
+        algorithm_code="deterministic_ridge",
+        algorithm_version="1.0.0",
+        implementation_sha256="d" * 64,
+        environment=ModelExecutionEnvironment(
+            python_implementation="cpython",
+            python_version="3.12.11",
+            runtime_code="uv",
+            runtime_version="0.8.13",
+            uv_lock_sha256="e" * 64,
+            dependencies=(
+                ModelDependencyVersion(
+                    1,
+                    "market_regime_alpha",
+                    "0.1.0",
+                    "f" * 64,
+                ),
+            ),
+        ),
+        hyperparameters=(
+            ModelScalarParameter(
+                1,
+                "ridge_alpha",
+                ModelScalarType.DECIMAL,
+                decimal_value=Decimal("0.01"),
+            ),
+        ),
+    )
+    fold_by_id = {fold.exploratory_backtest_fold_id: fold for fold in rule_specification.folds}
+    requirements = []
+    with stack.pool.connection(read_only=True) as connection:
+        for ordinal, dependency in enumerate(
+            rule_specification.fold_dependencies,
+            start=1,
+        ):
+            fit_protocol = fold_by_id[dependency.fit_fold_id].evaluation_protocol
+            metric_row = connection.execute(
+                """
+                SELECT evaluation_protocol_metric_id, content_sha256
+                FROM mra.evaluation_protocol_metric
+                WHERE evaluation_protocol_id = %s
+                ORDER BY ordinal
+                LIMIT 1
+                """,
+                (fit_protocol.authority_id,),
+            ).fetchone()
+            assert metric_row is not None
+            requirements.append(
+                BacktestModelTrainingRequirement(
+                    requirement_id=uuid4(),
+                    ordinal=ordinal,
+                    model_arm_id=model_arm.exploratory_backtest_arm_id,
+                    fit_fold_id=dependency.fit_fold_id,
+                    validation_fold_id=dependency.validation_fold_id,
+                    model_definition=model_binding,
+                    training_metric=AuthorityBinding(
+                        metric_row[0],
+                        metric_row[1],
+                    ),
+                    planned_model_version=ordinal,
+                    recipe=recipe,
+                )
+            )
+    return replace(
+        rule_specification,
+        arms=arms,
+        model_training_requirements=tuple(requirements),
+    )
+
+
 def test_current_predeclaration_is_root_owned_relational_and_replayable(
     backtest_stack,
 ) -> None:
@@ -422,9 +535,7 @@ def test_current_predeclaration_is_root_owned_relational_and_replayable(
     assert reloaded.projection_sha256 == execution_plan.projection_sha256
     assert reloaded.fold_session_binding_count == 7
 
-    reloaded_specification = PostgresBacktestQueryPort(
-        backtest_stack.pool
-    ).load_specification(specification.exploratory_backtest_run_id)
+    reloaded_specification = PostgresBacktestQueryPort(backtest_stack.pool).load_specification(specification.exploratory_backtest_run_id)
     assert reloaded_specification == specification
     assert reloaded_specification.content_sha256 == reloaded.specification_sha256
 
@@ -433,6 +544,81 @@ def test_current_predeclaration_is_root_owned_relational_and_replayable(
             replace(specification, random_seed=1730),
             context,
         )
+
+
+def test_current_model_recipe_round_trips_as_typed_relational_closure(
+    backtest_stack,
+) -> None:
+    specification = _current_model_specification(backtest_stack)
+    application = BacktestApplication(
+        PostgresBacktestUnitOfWorkProvider(backtest_stack.pool),
+        id_factory=uuid4,
+    )
+
+    application.predeclare(
+        specification,
+        _legacy._context("model-recipe-predeclare"),
+    )
+    reloaded = PostgresBacktestQueryPort(backtest_stack.pool).load_specification(specification.exploratory_backtest_run_id)
+
+    assert reloaded == specification
+    assert reloaded.model_training_requirements[0].recipe is not None
+    assert (
+        reloaded.model_training_requirements[0].recipe.content_sha256 == specification.model_training_requirements[0].recipe.content_sha256
+    )
+    with backtest_stack.pool.connection(read_only=True) as connection:
+        counts = connection.execute(
+            """
+            SELECT
+              (SELECT count(*)
+                 FROM mra.backtest_model_training_requirement
+                WHERE exploratory_backtest_run_id = %s),
+              (SELECT count(*)
+                 FROM mra.backtest_model_training_dependency
+                WHERE exploratory_backtest_run_id = %s),
+              (SELECT count(*)
+                 FROM mra.backtest_model_training_hyperparameter
+                WHERE exploratory_backtest_run_id = %s)
+            """,
+            (
+                specification.exploratory_backtest_run_id,
+                specification.exploratory_backtest_run_id,
+                specification.exploratory_backtest_run_id,
+            ),
+        ).fetchone()
+    assert counts == (2, 2, 2)
+
+
+def test_database_recomputes_current_model_recipe_child_hash(
+    backtest_stack,
+) -> None:
+    specification = _current_model_specification(backtest_stack)
+    recipe = specification.model_training_requirements[0].recipe
+    assert recipe is not None
+    object.__setattr__(
+        recipe.environment.dependencies[0],
+        "content_sha256",
+        ContentHash("0" * 64),
+    )
+
+    with pytest.raises(RuntimeStateConflictError):
+        BacktestApplication(
+            PostgresBacktestUnitOfWorkProvider(backtest_stack.pool),
+            id_factory=uuid4,
+        ).predeclare(
+            specification,
+            _legacy._context("forged-model-recipe-child"),
+        )
+
+    with backtest_stack.pool.connection(read_only=True) as connection:
+        row = connection.execute(
+            """
+            SELECT count(*) FROM mra.exploratory_backtest_run
+            WHERE exploratory_backtest_run_id = %s
+            """,
+            (specification.exploratory_backtest_run_id,),
+        ).fetchone()
+    assert row == (0,)
 
 
 def _receipt_count(stack) -> int:
@@ -663,9 +849,7 @@ def test_runtime_action_binding_is_application_backed_append_only_lineage(
         runtime_run_id,
         str(binding.content_sha256),
     )
-    observations = PostgresBacktestExecutionObservationPort(
-        backtest_stack.pool
-    ).observe(frozen, (action,))
+    observations = PostgresBacktestExecutionObservationPort(backtest_stack.pool).observe(frozen, (action,))
     assert len(observations) == 1
     assert observations[0].action_id == action.action_id
     assert observations[0].state is BacktestObservedState.MATCHED_INCOMPLETE

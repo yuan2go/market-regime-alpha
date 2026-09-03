@@ -23147,6 +23147,20 @@ CREATE TABLE mra.backtest_model_training_requirement (
     required_fit_evaluation_protocol_metric_id uuid NOT NULL,
     required_fit_evaluation_metric_sha256 text NOT NULL,
     planned_model_version integer NOT NULL,
+    algorithm_code text NOT NULL,
+    algorithm_version text NOT NULL,
+    implementation_sha256 text NOT NULL,
+    python_implementation text NOT NULL,
+    python_version text NOT NULL,
+    runtime_code text NOT NULL,
+    runtime_version text NOT NULL,
+    uv_lock_sha256 text NOT NULL,
+    dependency_count integer NOT NULL,
+    dependency_roster_sha256 text NOT NULL,
+    hyperparameter_count integer NOT NULL,
+    hyperparameter_roster_sha256 text NOT NULL,
+    environment_sha256 text NOT NULL,
+    recipe_sha256 text NOT NULL,
     content_sha256 text NOT NULL,
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     CONSTRAINT backtest_model_requirement_ordinal_uk UNIQUE (
@@ -23157,6 +23171,10 @@ CREATE TABLE mra.backtest_model_training_requirement (
     ),
     CONSTRAINT backtest_model_requirement_version_uk UNIQUE (
         model_id, planned_model_version
+    ),
+    CONSTRAINT backtest_model_requirement_child_owner_uk UNIQUE (
+        backtest_model_training_requirement_id,
+        exploratory_backtest_run_id, specification_sha256
     ),
     CONSTRAINT backtest_model_requirement_owner_fk FOREIGN KEY (
         exploratory_backtest_run_id, specification_sha256
@@ -23200,10 +23218,96 @@ CREATE TABLE mra.backtest_model_training_requirement (
     CONSTRAINT backtest_model_requirement_shape_ck CHECK (
         ordinal > 0 AND fit_fold_id <> validation_fold_id
         AND planned_model_version > 0
+        AND algorithm_code ~ '^[a-z][a-z0-9_-]{0,99}$'
+        AND algorithm_version ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$'
+        AND implementation_sha256 ~ '^[0-9a-f]{64}$'
+        AND python_implementation ~ '^[a-z][a-z0-9_-]{0,99}$'
+        AND python_version ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$'
+        AND runtime_code ~ '^[a-z][a-z0-9_-]{0,99}$'
+        AND runtime_version ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$'
+        AND uv_lock_sha256 ~ '^[0-9a-f]{64}$'
+        AND dependency_count > 0
+        AND dependency_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND hyperparameter_count >= 0
+        AND hyperparameter_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND environment_sha256 ~ '^[0-9a-f]{64}$'
+        AND recipe_sha256 ~ '^[0-9a-f]{64}$'
         AND specification_sha256 ~ '^[0-9a-f]{64}$'
         AND model_sha256 ~ '^[0-9a-f]{64}$'
         AND required_fit_evaluation_protocol_sha256 ~ '^[0-9a-f]{64}$'
         AND required_fit_evaluation_metric_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE TABLE mra.backtest_model_training_dependency (
+    backtest_model_training_requirement_id uuid NOT NULL,
+    exploratory_backtest_run_id uuid NOT NULL,
+    specification_sha256 text NOT NULL,
+    ordinal integer NOT NULL,
+    package_name text NOT NULL,
+    package_version text NOT NULL,
+    distribution_sha256 text NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    PRIMARY KEY (backtest_model_training_requirement_id, ordinal),
+    CONSTRAINT backtest_model_training_dependency_package_uk UNIQUE (
+        backtest_model_training_requirement_id, package_name
+    ),
+    CONSTRAINT backtest_model_training_dependency_owner_fk FOREIGN KEY (
+        backtest_model_training_requirement_id,
+        exploratory_backtest_run_id, specification_sha256
+    ) REFERENCES mra.backtest_model_training_requirement(
+        backtest_model_training_requirement_id,
+        exploratory_backtest_run_id, specification_sha256
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT backtest_model_training_dependency_shape_ck CHECK (
+        ordinal > 0
+        AND package_name ~ '^[a-z][a-z0-9_-]{0,99}$'
+        AND package_version ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$'
+        AND distribution_sha256 ~ '^[0-9a-f]{64}$'
+        AND specification_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE TABLE mra.backtest_model_training_hyperparameter (
+    backtest_model_training_requirement_id uuid NOT NULL,
+    exploratory_backtest_run_id uuid NOT NULL,
+    specification_sha256 text NOT NULL,
+    ordinal integer NOT NULL,
+    parameter_code text NOT NULL,
+    value_type text NOT NULL,
+    decimal_value numeric(48, 18),
+    integer_value bigint,
+    boolean_value boolean,
+    text_value text,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    PRIMARY KEY (backtest_model_training_requirement_id, ordinal),
+    CONSTRAINT backtest_model_training_hyperparameter_code_uk UNIQUE (
+        backtest_model_training_requirement_id, parameter_code
+    ),
+    CONSTRAINT backtest_model_training_hyperparameter_owner_fk FOREIGN KEY (
+        backtest_model_training_requirement_id,
+        exploratory_backtest_run_id, specification_sha256
+    ) REFERENCES mra.backtest_model_training_requirement(
+        backtest_model_training_requirement_id,
+        exploratory_backtest_run_id, specification_sha256
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT backtest_model_training_hyperparameter_shape_ck CHECK (
+        ordinal > 0
+        AND parameter_code ~ '^[a-z][a-z0-9_-]{0,99}$'
+        AND value_type IN ('DECIMAL', 'INTEGER', 'BOOLEAN', 'TEXT')
+        AND num_nonnulls(
+            decimal_value, integer_value, boolean_value, text_value
+        ) = 1
+        AND ((value_type = 'DECIMAL' AND decimal_value IS NOT NULL)
+          OR (value_type = 'INTEGER' AND integer_value IS NOT NULL)
+          OR (value_type = 'BOOLEAN' AND boolean_value IS NOT NULL)
+          OR (value_type = 'TEXT' AND text_value IS NOT NULL
+              AND text_value <> ''))
+        AND specification_sha256 ~ '^[0-9a-f]{64}$'
         AND content_sha256 ~ '^[0-9a-f]{64}$'
     )
 );
@@ -24172,6 +24276,16 @@ CREATE INDEX backtest_model_requirement_metric_idx
         required_fit_evaluation_protocol_id,
         required_fit_evaluation_metric_sha256
     );
+CREATE INDEX backtest_model_training_dependency_owner_idx
+    ON mra.backtest_model_training_dependency(
+        backtest_model_training_requirement_id,
+        exploratory_backtest_run_id, specification_sha256
+    );
+CREATE INDEX backtest_model_training_hyperparameter_owner_idx
+    ON mra.backtest_model_training_hyperparameter(
+        backtest_model_training_requirement_id,
+        exploratory_backtest_run_id, specification_sha256
+    );
 CREATE INDEX backtest_evaluation_requirement_run_idx
     ON mra.backtest_evaluation_requirement(
         exploratory_backtest_run_id, ordinal
@@ -24475,6 +24589,140 @@ BEGIN
        (NEW.model_training_requirement_count,
         NEW.model_training_requirement_roster_sha256) THEN
         RAISE EXCEPTION 'Current Backtest Model requirement roster differs'
+            USING ERRCODE = '55000';
+    END IF;
+    IF EXISTS (
+        SELECT 1
+          FROM mra.backtest_model_training_requirement AS requirement
+          CROSS JOIN LATERAL (
+              SELECT count(*)::integer AS actual_count,
+                     min(ordinal) AS minimum_ordinal,
+                     max(ordinal) AS maximum_ordinal,
+                     mra.canonical_sha256(mra.canonical_json_text(coalesce(
+                         jsonb_agg(jsonb_build_object(
+                             'content_sha256', content_sha256,
+                             'ordinal', ordinal,
+                             'package_name', package_name
+                         ) ORDER BY ordinal), '[]'::jsonb))) AS roster_sha256,
+                     coalesce(bool_or(
+                         content_sha256 <> mra.canonical_sha256(
+                             mra.canonical_json_text(jsonb_build_object(
+                                 'distribution_sha256', distribution_sha256,
+                                 'ordinal', ordinal,
+                                 'package_name', package_name,
+                                 'package_version', package_version
+                             ))
+                         )
+                     ), false) AS invalid_child
+                FROM mra.backtest_model_training_dependency
+               WHERE backtest_model_training_requirement_id =
+                     requirement.backtest_model_training_requirement_id
+          ) AS dependencies
+          CROSS JOIN LATERAL (
+              SELECT count(*)::integer AS actual_count,
+                     min(ordinal) AS minimum_ordinal,
+                     max(ordinal) AS maximum_ordinal,
+                     mra.canonical_sha256(mra.canonical_json_text(coalesce(
+                         jsonb_agg(jsonb_build_object(
+                             'content_sha256', content_sha256,
+                             'ordinal', ordinal,
+                             'parameter_code', parameter_code
+                         ) ORDER BY ordinal), '[]'::jsonb))) AS roster_sha256,
+                     coalesce(bool_or(
+                         content_sha256 <> mra.canonical_sha256(
+                             mra.canonical_json_text(jsonb_build_object(
+                                 'boolean_value', boolean_value,
+                                 'decimal_value', CASE
+                                     WHEN decimal_value IS NULL THEN NULL
+                                     ELSE decimal_value::text END,
+                                 'integer_value', integer_value,
+                                 'ordinal', ordinal,
+                                 'parameter_code', parameter_code,
+                                 'text_value', text_value,
+                                 'value_type', value_type
+                             ))
+                         )
+                     ), false) AS invalid_child
+                FROM mra.backtest_model_training_hyperparameter
+               WHERE backtest_model_training_requirement_id =
+                     requirement.backtest_model_training_requirement_id
+          ) AS hyperparameters
+         WHERE requirement.exploratory_backtest_run_id =
+               NEW.exploratory_backtest_run_id
+           AND (
+               dependencies.actual_count <> requirement.dependency_count
+               OR dependencies.minimum_ordinal <> 1
+               OR dependencies.maximum_ordinal <> requirement.dependency_count
+               OR dependencies.roster_sha256 <>
+                  requirement.dependency_roster_sha256
+               OR dependencies.invalid_child
+               OR hyperparameters.actual_count <>
+                  requirement.hyperparameter_count
+               OR (requirement.hyperparameter_count > 0 AND (
+                   hyperparameters.minimum_ordinal <> 1
+                   OR hyperparameters.maximum_ordinal <>
+                      requirement.hyperparameter_count
+               ))
+               OR (requirement.hyperparameter_count = 0 AND (
+                   hyperparameters.minimum_ordinal IS NOT NULL
+                   OR hyperparameters.maximum_ordinal IS NOT NULL
+               ))
+               OR hyperparameters.roster_sha256 <>
+                  requirement.hyperparameter_roster_sha256
+               OR hyperparameters.invalid_child
+               OR requirement.environment_sha256 <>
+                  mra.canonical_sha256(mra.canonical_json_text(
+                      jsonb_build_object(
+                          'dependency_roster_sha256',
+                              requirement.dependency_roster_sha256,
+                          'python_implementation',
+                              requirement.python_implementation,
+                          'python_version', requirement.python_version,
+                          'runtime_code', requirement.runtime_code,
+                          'runtime_version', requirement.runtime_version,
+                          'uv_lock_sha256', requirement.uv_lock_sha256
+                      )
+                  ))
+               OR requirement.recipe_sha256 <>
+                  mra.canonical_sha256(mra.canonical_json_text(
+                      jsonb_build_object(
+                          'algorithm_code', requirement.algorithm_code,
+                          'algorithm_version', requirement.algorithm_version,
+                          'environment_sha256', requirement.environment_sha256,
+                          'hyperparameter_roster_sha256',
+                              requirement.hyperparameter_roster_sha256,
+                          'implementation_sha256',
+                              requirement.implementation_sha256
+                      )
+                  ))
+               OR requirement.content_sha256 <>
+                  mra.canonical_sha256(mra.canonical_json_text(
+                      jsonb_build_object(
+                          'fit_fold_id', requirement.fit_fold_id,
+                          'model_arm_id',
+                              requirement.exploratory_backtest_arm_id,
+                          'model_definition', jsonb_build_object(
+                              'authority_id', requirement.model_id,
+                              'content_sha256', requirement.model_sha256
+                          ),
+                          'ordinal', requirement.ordinal,
+                          'planned_model_version',
+                              requirement.planned_model_version,
+                          'recipe_sha256', requirement.recipe_sha256,
+                          'requirement_id',
+                              requirement.backtest_model_training_requirement_id,
+                          'training_metric', jsonb_build_object(
+                              'authority_id',
+                                  requirement.required_fit_evaluation_protocol_metric_id,
+                              'content_sha256',
+                                  requirement.required_fit_evaluation_metric_sha256
+                          ),
+                          'validation_fold_id', requirement.validation_fold_id
+                      )
+                  ))
+           )
+    ) THEN
+        RAISE EXCEPTION 'Current Backtest Model recipe does not reconcile'
             USING ERRCODE = '55000';
     END IF;
     IF EXISTS (
@@ -24867,6 +25115,12 @@ BEFORE UPDATE OR DELETE ON mra.backtest_arm_fold
 FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
 CREATE TRIGGER backtest_model_training_requirement_append_only
 BEFORE UPDATE OR DELETE ON mra.backtest_model_training_requirement
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER backtest_model_training_dependency_append_only
+BEFORE UPDATE OR DELETE ON mra.backtest_model_training_dependency
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER backtest_model_training_hyperparameter_append_only
+BEFORE UPDATE OR DELETE ON mra.backtest_model_training_hyperparameter
 FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
 CREATE TRIGGER backtest_evaluation_requirement_append_only
 BEFORE UPDATE OR DELETE ON mra.backtest_evaluation_requirement

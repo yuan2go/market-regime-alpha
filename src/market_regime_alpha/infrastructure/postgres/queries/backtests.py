@@ -26,6 +26,7 @@ from market_regime_alpha.research_qualification.domain.backtest import (
     BacktestFoldDependency,
     BacktestFoldSession,
     BacktestFoldSpecification,
+    BacktestModelTrainingRecipe,
     BacktestModelTrainingRequirement,
     BacktestPolicyDefaults,
     BacktestSampleMember,
@@ -41,6 +42,12 @@ from market_regime_alpha.research_qualification.domain.model import ArtifactBind
 from market_regime_alpha.research_qualification.domain.research_vocabulary import (
     PartitionPurpose,
 )
+from market_regime_alpha.research_qualification.domain.research_models import (
+    ModelDependencyVersion,
+    ModelExecutionEnvironment,
+    ModelScalarParameter,
+    ModelScalarType,
+)
 from market_regime_alpha.runtime.errors import (
     ArtifactIntegrityError,
     RuntimeNotFoundError,
@@ -53,9 +60,7 @@ class PostgresBacktestQueryPort:
         self._pool = pool
 
     def load(self, exploratory_backtest_run_id: UUID) -> FrozenBacktestRun:
-        return freeze_backtest_specification(
-            self.load_specification(exploratory_backtest_run_id)
-        )
+        return freeze_backtest_specification(self.load_specification(exploratory_backtest_run_id))
 
     def load_specification(
         self,
@@ -112,13 +117,10 @@ class PostgresBacktestQueryPort:
                     (exploratory_backtest_run_id,),
                 ).fetchone()
                 if root is None:
-                    raise RuntimeNotFoundError(
-                        f"Backtest {exploratory_backtest_run_id} does not exist"
-                    )
+                    raise RuntimeNotFoundError(f"Backtest {exploratory_backtest_run_id} does not exist")
                 if root["current_specification_sha256"] is None:
                     raise RuntimeStateConflictError(
-                        "current Backtest specification is missing; legacy decoding "
-                        "requires the private exact compatibility seam"
+                        "current Backtest specification is missing; legacy decoding requires the private exact compatibility seam"
                     )
                 sample_rows = cursor.execute(
                     """
@@ -184,6 +186,22 @@ class PostgresBacktestQueryPort:
                     """,
                     (exploratory_backtest_run_id,),
                 ).fetchall()
+                model_dependency_rows = cursor.execute(
+                    """
+                    SELECT * FROM mra.backtest_model_training_dependency
+                    WHERE exploratory_backtest_run_id = %s
+                    ORDER BY backtest_model_training_requirement_id, ordinal
+                    """,
+                    (exploratory_backtest_run_id,),
+                ).fetchall()
+                model_hyperparameter_rows = cursor.execute(
+                    """
+                    SELECT * FROM mra.backtest_model_training_hyperparameter
+                    WHERE exploratory_backtest_run_id = %s
+                    ORDER BY backtest_model_training_requirement_id, ordinal
+                    """,
+                    (exploratory_backtest_run_id,),
+                ).fetchall()
                 cost_rows = cursor.execute(
                     """
                     SELECT * FROM mra.exploratory_backtest_cost_assumption
@@ -201,9 +219,7 @@ class PostgresBacktestQueryPort:
 
         sessions_by_fold: dict[UUID, list[dict[str, Any]]] = defaultdict(list)
         for row in session_rows:
-            sessions_by_fold[UUID(str(row["exploratory_backtest_fold_id"]))].append(
-                row
-            )
+            sessions_by_fold[UUID(str(row["exploratory_backtest_fold_id"]))].append(row)
         sample_members = tuple(
             BacktestSampleMember(
                 universe_revision_member_id=UUID(str(row["universe_member_id"])),
@@ -245,37 +261,36 @@ class PostgresBacktestQueryPort:
             )
             for row in arm_fold_rows
         )
+        model_dependencies_by_requirement: dict[UUID, list[dict[str, Any]]] = defaultdict(list)
+        for row in model_dependency_rows:
+            model_dependencies_by_requirement[UUID(str(row["backtest_model_training_requirement_id"]))].append(row)
+        model_hyperparameters_by_requirement: dict[UUID, list[dict[str, Any]]] = defaultdict(list)
+        for row in model_hyperparameter_rows:
+            model_hyperparameters_by_requirement[UUID(str(row["backtest_model_training_requirement_id"]))].append(row)
         model_requirements = tuple(
             BacktestModelTrainingRequirement(
-                requirement_id=UUID(
-                    str(row["backtest_model_training_requirement_id"])
-                ),
+                requirement_id=UUID(str(row["backtest_model_training_requirement_id"])),
                 ordinal=int(row["ordinal"]),
                 model_arm_id=UUID(str(row["exploratory_backtest_arm_id"])),
                 fit_fold_id=UUID(str(row["fit_fold_id"])),
                 validation_fold_id=UUID(str(row["validation_fold_id"])),
-                model_definition=AuthorityBinding(
-                    UUID(str(row["model_id"])), str(row["model_sha256"])
-                ),
+                model_definition=AuthorityBinding(UUID(str(row["model_id"])), str(row["model_sha256"])),
                 training_metric=AuthorityBinding(
-                    UUID(
-                        str(
-                            row[
-                                "required_fit_evaluation_protocol_metric_id"
-                            ]
-                        )
-                    ),
+                    UUID(str(row["required_fit_evaluation_protocol_metric_id"])),
                     str(row["required_fit_evaluation_metric_sha256"]),
                 ),
                 planned_model_version=int(row["planned_model_version"]),
+                recipe=self._model_training_recipe(
+                    row,
+                    model_dependencies_by_requirement[UUID(str(row["backtest_model_training_requirement_id"]))],
+                    model_hyperparameters_by_requirement[UUID(str(row["backtest_model_training_requirement_id"]))],
+                ),
             )
             for row in model_rows
         )
         costs = tuple(
             BacktestCostAssumption(
-                assumption_id=UUID(
-                    str(row["exploratory_backtest_cost_assumption_id"])
-                ),
+                assumption_id=UUID(str(row["exploratory_backtest_cost_assumption_id"])),
                 ordinal=int(row["ordinal"]),
                 cost_kind=BacktestCostKind(str(row["cost_kind"])),
                 charge_side=BacktestCostChargeSide(str(row["charge_side"])),
@@ -285,15 +300,9 @@ class PostgresBacktestQueryPort:
         )
         evaluations = [
             BacktestEvaluationRequirement(
-                requirement_id=UUID(
-                    str(row["backtest_evaluation_requirement_id"])
-                ),
+                requirement_id=UUID(str(row["backtest_evaluation_requirement_id"])),
                 ordinal=int(row["ordinal"]),
-                fold_id=(
-                    None
-                    if row["exploratory_backtest_fold_id"] is None
-                    else UUID(str(row["exploratory_backtest_fold_id"]))
-                ),
+                fold_id=(None if row["exploratory_backtest_fold_id"] is None else UUID(str(row["exploratory_backtest_fold_id"]))),
                 evaluation_protocol=AuthorityBinding(
                     UUID(str(row["evaluation_protocol_id"])),
                     str(row["evaluation_protocol_sha256"]),
@@ -301,16 +310,12 @@ class PostgresBacktestQueryPort:
                 primary=bool(row["is_primary"]),
                 scope_kind=BacktestEvaluationScopeKind(str(row["scope_kind"])),
                 arm_id=UUID(str(row["exploratory_backtest_arm_id"])),
-                slice_key=(
-                    None if row["slice_key"] is None else str(row["slice_key"])
-                ),
+                slice_key=(None if row["slice_key"] is None else str(row["slice_key"])),
             )
             for row in evaluation_rows
         ]
         specification = BacktestSpecification(
-            exploratory_backtest_run_id=UUID(
-                str(root["exploratory_backtest_run_id"])
-            ),
+            exploratory_backtest_run_id=UUID(str(root["exploratory_backtest_run_id"])),
             run_code=str(root["run_code"]),
             generation=int(root["generation"]),
             hypothesis=str(root["hypothesis"]),
@@ -333,9 +338,7 @@ class PostgresBacktestQueryPort:
             sample_scope_code=str(root["sample_algorithm_code"]),
             sample_members=sample_members,
             exchange_code=str(root["exchange_code"]),
-            first_trading_session_id=UUID(
-                str(root["first_trading_session_id"])
-            ),
+            first_trading_session_id=UUID(str(root["first_trading_session_id"])),
             last_trading_session_id=UUID(str(root["last_trading_session_id"])),
             feature_definitions=features,
             target=VersionedAuthorityBinding(
@@ -380,30 +383,67 @@ class PostgresBacktestQueryPort:
             sample_algorithm_version=int(root["sample_algorithm_version"]),
             sample_input_key=str(root["sample_input_key"]),
         )
-        if (
-            str(specification.content_sha256)
-            != str(root["current_specification_sha256"])
-            or str(specification.definition_sha256)
-            != str(root["definition_sha256"])
+        if str(specification.content_sha256) != str(root["current_specification_sha256"]) or str(specification.definition_sha256) != str(
+            root["definition_sha256"]
         ):
-            raise ArtifactIntegrityError(
-                "reloaded Backtest differs from canonical specification hashes"
-            )
+            raise ArtifactIntegrityError("reloaded Backtest differs from canonical specification hashes")
         return specification
 
     @staticmethod
-    def _arm(row: dict[str, Any]) -> BacktestArmSpecification:
-        model = (
-            None
-            if row["model_id"] is None
-            else AuthorityBinding(
-                UUID(str(row["model_id"])), str(row["model_sha256"])
-            )
-        )
-        arm = BacktestArmSpecification(
-            exploratory_backtest_arm_id=UUID(
-                str(row["exploratory_backtest_arm_id"])
+    def _model_training_recipe(
+        row: dict[str, Any],
+        dependency_rows: list[dict[str, Any]],
+        hyperparameter_rows: list[dict[str, Any]],
+    ) -> BacktestModelTrainingRecipe:
+        environment = ModelExecutionEnvironment(
+            python_implementation=str(row["python_implementation"]),
+            python_version=str(row["python_version"]),
+            runtime_code=str(row["runtime_code"]),
+            runtime_version=str(row["runtime_version"]),
+            uv_lock_sha256=str(row["uv_lock_sha256"]),
+            dependencies=tuple(
+                ModelDependencyVersion(
+                    ordinal=int(item["ordinal"]),
+                    package_name=str(item["package_name"]),
+                    package_version=str(item["package_version"]),
+                    distribution_sha256=str(item["distribution_sha256"]),
+                )
+                for item in dependency_rows
             ),
+        )
+        hyperparameters = tuple(
+            ModelScalarParameter(
+                ordinal=int(item["ordinal"]),
+                parameter_code=str(item["parameter_code"]),
+                value_type=ModelScalarType(str(item["value_type"])),
+                decimal_value=(None if item["decimal_value"] is None else Decimal(str(item["decimal_value"]))),
+                integer_value=(None if item["integer_value"] is None else int(item["integer_value"])),
+                boolean_value=(None if item["boolean_value"] is None else bool(item["boolean_value"])),
+                text_value=(None if item["text_value"] is None else str(item["text_value"])),
+            )
+            for item in hyperparameter_rows
+        )
+        recipe = BacktestModelTrainingRecipe(
+            algorithm_code=str(row["algorithm_code"]),
+            algorithm_version=str(row["algorithm_version"]),
+            implementation_sha256=str(row["implementation_sha256"]),
+            environment=environment,
+            hyperparameters=hyperparameters,
+        )
+        if (
+            str(environment.dependency_roster_sha256) != str(row["dependency_roster_sha256"])
+            or str(environment.content_sha256) != str(row["environment_sha256"])
+            or str(recipe.hyperparameter_roster_sha256) != str(row["hyperparameter_roster_sha256"])
+            or str(recipe.content_sha256) != str(row["recipe_sha256"])
+        ):
+            raise ArtifactIntegrityError("reloaded Backtest Model recipe differs from canonical hashes")
+        return recipe
+
+    @staticmethod
+    def _arm(row: dict[str, Any]) -> BacktestArmSpecification:
+        model = None if row["model_id"] is None else AuthorityBinding(UUID(str(row["model_id"])), str(row["model_sha256"]))
+        arm = BacktestArmSpecification(
+            exploratory_backtest_arm_id=UUID(str(row["exploratory_backtest_arm_id"])),
             ordinal=int(row["ordinal"]),
             arm_code=str(row["arm_kind"]),
             execution_kind=BacktestExecutionKind(str(row["execution_kind"])),
@@ -415,27 +455,13 @@ class PostgresBacktestQueryPort:
             model=model,
             portfolio=_binding(row, "portfolio_policy"),
             risk=_binding(row, "risk_policy"),
-            effective_cost_roster_sha256=str(
-                row["effective_cost_roster_sha256"]
-            ),
-            candidate_binding_source=BacktestBindingSource(
-                str(row["candidate_binding_source"])
-            ),
-            context_binding_source=BacktestBindingSource(
-                str(row["context_binding_source"])
-            ),
-            strategy_binding_source=BacktestBindingSource(
-                str(row["strategy_binding_source"])
-            ),
-            portfolio_binding_source=BacktestBindingSource(
-                str(row["portfolio_binding_source"])
-            ),
-            risk_binding_source=BacktestBindingSource(
-                str(row["risk_binding_source"])
-            ),
-            cost_binding_source=BacktestBindingSource(
-                str(row["cost_binding_source"])
-            ),
+            effective_cost_roster_sha256=str(row["effective_cost_roster_sha256"]),
+            candidate_binding_source=BacktestBindingSource(str(row["candidate_binding_source"])),
+            context_binding_source=BacktestBindingSource(str(row["context_binding_source"])),
+            strategy_binding_source=BacktestBindingSource(str(row["strategy_binding_source"])),
+            portfolio_binding_source=BacktestBindingSource(str(row["portfolio_binding_source"])),
+            risk_binding_source=BacktestBindingSource(str(row["risk_binding_source"])),
+            cost_binding_source=BacktestBindingSource(str(row["cost_binding_source"])),
         )
         if str(arm.content_sha256) != str(row["content_sha256"]):
             raise ArtifactIntegrityError("Backtest Arm hash mismatch")
@@ -448,9 +474,7 @@ class PostgresBacktestQueryPort:
     ) -> BacktestFoldSpecification:
         sessions = tuple(
             BacktestFoldSession(
-                exploratory_backtest_fold_session_id=UUID(
-                    str(item["exploratory_backtest_fold_session_id"])
-                ),
+                exploratory_backtest_fold_session_id=UUID(str(item["exploratory_backtest_fold_session_id"])),
                 ordinal=int(item["ordinal"]),
                 trading_session_id=UUID(str(item["trading_session_id"])),
                 session_date=item["session_date"],
@@ -459,9 +483,7 @@ class PostgresBacktestQueryPort:
             for item in session_rows
         )
         fold = BacktestFoldSpecification(
-            exploratory_backtest_fold_id=UUID(
-                str(row["exploratory_backtest_fold_id"])
-            ),
+            exploratory_backtest_fold_id=UUID(str(row["exploratory_backtest_fold_id"])),
             ordinal=int(row["ordinal"]),
             purpose=PartitionPurpose(str(row["purpose"])),
             exchange_code=str(row["exchange_code"]),
@@ -479,9 +501,7 @@ class PostgresBacktestQueryPort:
 
 
 def _binding(row: dict[str, Any], prefix: str) -> AuthorityBinding:
-    return AuthorityBinding(
-        UUID(str(row[f"{prefix}_id"])), str(row[f"{prefix}_sha256"])
-    )
+    return AuthorityBinding(UUID(str(row[f"{prefix}_id"])), str(row[f"{prefix}_sha256"]))
 
 
 __all__ = ["PostgresBacktestQueryPort"]

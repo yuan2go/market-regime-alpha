@@ -9,6 +9,7 @@ import psycopg
 
 from market_regime_alpha.research_qualification.domain.backtest import (
     AuthorityBinding,
+    BacktestModelTrainingRecipe,
     BacktestModelTrainingRequirement,
     BacktestSpecification,
 )
@@ -34,9 +35,7 @@ def _required_training_metric(
     requirement: BacktestModelTrainingRequirement,
 ) -> AuthorityBinding:
     if requirement.training_metric is None:
-        raise ArtifactIntegrityError(
-            "current Model training requirement lacks exact training metric"
-        )
+        raise ArtifactIntegrityError("current Model training requirement lacks exact training metric")
     return requirement.training_metric
 
 
@@ -44,10 +43,16 @@ def _required_planned_model_version(
     requirement: BacktestModelTrainingRequirement,
 ) -> int:
     if requirement.planned_model_version is None:
-        raise ArtifactIntegrityError(
-            "current Model training requirement lacks planned Model version"
-        )
+        raise ArtifactIntegrityError("current Model training requirement lacks planned Model version")
     return requirement.planned_model_version
+
+
+def _required_training_recipe(
+    requirement: BacktestModelTrainingRequirement,
+) -> BacktestModelTrainingRecipe:
+    if requirement.recipe is None:
+        raise ArtifactIntegrityError("current Model training requirement lacks frozen training recipe")
+    return requirement.recipe
 
 
 class PostgresBacktestRepository:
@@ -473,10 +478,18 @@ class PostgresBacktestRepository:
                     required_fit_evaluation_protocol_metric_id,
                     required_fit_evaluation_metric_sha256,
                     planned_model_version,
+                    algorithm_code, algorithm_version,
+                    implementation_sha256,
+                    python_implementation, python_version,
+                    runtime_code, runtime_version, uv_lock_sha256,
+                    dependency_count, dependency_roster_sha256,
+                    hyperparameter_count, hyperparameter_roster_sha256,
+                    environment_sha256, recipe_sha256,
                     content_sha256
                 ) VALUES (
                     %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s, %s, %s
                 )
                 """,
                 (
@@ -493,15 +506,79 @@ class PostgresBacktestRepository:
                         folds_by_id[requirement.fit_fold_id].evaluation_protocol.authority_id,
                         str(folds_by_id[requirement.fit_fold_id].evaluation_protocol.content_sha256),
                         _required_training_metric(requirement).authority_id,
-                        str(
-                            _required_training_metric(
-                                requirement
-                            ).content_sha256
-                        ),
+                        str(_required_training_metric(requirement).content_sha256),
                         _required_planned_model_version(requirement),
+                        _required_training_recipe(requirement).algorithm_code,
+                        _required_training_recipe(requirement).algorithm_version,
+                        str(_required_training_recipe(requirement).implementation_sha256),
+                        _required_training_recipe(requirement).environment.python_implementation,
+                        _required_training_recipe(requirement).environment.python_version,
+                        _required_training_recipe(requirement).environment.runtime_code,
+                        _required_training_recipe(requirement).environment.runtime_version,
+                        str(_required_training_recipe(requirement).environment.uv_lock_sha256),
+                        len(_required_training_recipe(requirement).environment.dependencies),
+                        str(_required_training_recipe(requirement).environment.dependency_roster_sha256),
+                        len(_required_training_recipe(requirement).hyperparameters),
+                        str(_required_training_recipe(requirement).hyperparameter_roster_sha256),
+                        str(_required_training_recipe(requirement).environment.content_sha256),
+                        str(_required_training_recipe(requirement).content_sha256),
                         str(requirement.content_sha256),
                     )
                     for requirement in specification.model_training_requirements
+                ),
+            )
+            cursor.executemany(
+                """
+                INSERT INTO mra.backtest_model_training_dependency (
+                    backtest_model_training_requirement_id,
+                    exploratory_backtest_run_id, specification_sha256,
+                    ordinal, package_name, package_version,
+                    distribution_sha256, content_sha256
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    (
+                        requirement.requirement_id,
+                        run_id,
+                        specification_hash,
+                        dependency.ordinal,
+                        dependency.package_name,
+                        dependency.package_version,
+                        str(dependency.distribution_sha256),
+                        str(dependency.content_sha256),
+                    )
+                    for requirement in specification.model_training_requirements
+                    for dependency in _required_training_recipe(requirement).environment.dependencies
+                ),
+            )
+            cursor.executemany(
+                """
+                INSERT INTO mra.backtest_model_training_hyperparameter (
+                    backtest_model_training_requirement_id,
+                    exploratory_backtest_run_id, specification_sha256,
+                    ordinal, parameter_code, value_type,
+                    decimal_value, integer_value, boolean_value, text_value,
+                    content_sha256
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                )
+                """,
+                (
+                    (
+                        requirement.requirement_id,
+                        run_id,
+                        specification_hash,
+                        parameter.ordinal,
+                        parameter.parameter_code,
+                        parameter.value_type.value,
+                        parameter.decimal_value,
+                        parameter.integer_value,
+                        parameter.boolean_value,
+                        parameter.text_value,
+                        str(parameter.content_sha256),
+                    )
+                    for requirement in specification.model_training_requirements
+                    for parameter in _required_training_recipe(requirement).hyperparameters
                 ),
             )
             cursor.executemany(

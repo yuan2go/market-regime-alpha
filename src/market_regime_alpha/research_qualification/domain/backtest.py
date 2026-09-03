@@ -15,6 +15,10 @@ import re
 from uuid import UUID
 
 from market_regime_alpha.research_qualification.domain.model import ArtifactBinding
+from market_regime_alpha.research_qualification.domain.research_models import (
+    ModelExecutionEnvironment,
+    ModelScalarParameter,
+)
 from market_regime_alpha.research_qualification.domain.research_vocabulary import (
     PartitionPurpose,
 )
@@ -23,6 +27,7 @@ from market_regime_alpha.shared.identity import ContentHash
 
 
 _CODE = re.compile(r"^[a-z][a-z0-9_-]{0,99}$")
+_VERSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
 
 class BacktestExecutionKind(StrEnum):
@@ -322,6 +327,63 @@ class BacktestArmFold:
 
 
 @dataclass(frozen=True, slots=True)
+class BacktestModelTrainingRecipe:
+    """Current pre-FIT recipe; cutoff, sample and fitted bytes remain execution facts."""
+
+    algorithm_code: str
+    algorithm_version: str
+    implementation_sha256: ContentHash | str
+    environment: ModelExecutionEnvironment
+    hyperparameters: tuple[ModelScalarParameter, ...]
+    hyperparameter_roster_sha256: ContentHash = field(init=False)
+    content_sha256: ContentHash = field(init=False)
+
+    def __post_init__(self) -> None:
+        if not _CODE.fullmatch(self.algorithm_code):
+            raise ValueError("Model recipe algorithm_code is invalid")
+        if not _VERSION.fullmatch(self.algorithm_version):
+            raise ValueError("Model recipe algorithm_version is invalid")
+        if tuple(item.ordinal for item in self.hyperparameters) != tuple(
+            range(1, len(self.hyperparameters) + 1)
+        ) or len({item.parameter_code for item in self.hyperparameters}) != len(
+            self.hyperparameters
+        ):
+            raise ValueError(
+                "Model recipe hyperparameter roster must be ordered and unique"
+            )
+        implementation_hash = ContentHash(str(self.implementation_sha256))
+        roster_hash = ContentHash(
+            canonical_json_sha256(
+                tuple(
+                    {
+                        "content_sha256": str(item.content_sha256),
+                        "ordinal": item.ordinal,
+                        "parameter_code": item.parameter_code,
+                    }
+                    for item in self.hyperparameters
+                )
+            )
+        )
+        object.__setattr__(self, "implementation_sha256", implementation_hash)
+        object.__setattr__(self, "hyperparameter_roster_sha256", roster_hash)
+        object.__setattr__(
+            self,
+            "content_sha256",
+            ContentHash(
+                canonical_json_sha256(
+                    {
+                        "algorithm_code": self.algorithm_code,
+                        "algorithm_version": self.algorithm_version,
+                        "environment_sha256": str(self.environment.content_sha256),
+                        "hyperparameter_roster_sha256": str(roster_hash),
+                        "implementation_sha256": str(implementation_hash),
+                    }
+                )
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class BacktestModelTrainingRequirement:
     requirement_id: UUID
     ordinal: int
@@ -331,6 +393,7 @@ class BacktestModelTrainingRequirement:
     model_definition: AuthorityBinding
     training_metric: AuthorityBinding | None = None
     planned_model_version: int | None = None
+    recipe: BacktestModelTrainingRecipe | None = None
     content_sha256: ContentHash = field(init=False)
 
     def __post_init__(self) -> None:
@@ -355,6 +418,8 @@ class BacktestModelTrainingRequirement:
             content["training_metric"] = _authority_payload(self.training_metric)
         if self.planned_model_version is not None:
             content["planned_model_version"] = self.planned_model_version
+        if self.recipe is not None:
+            content["recipe_sha256"] = str(self.recipe.content_sha256)
         object.__setattr__(
             self,
             "content_sha256",
@@ -812,6 +877,10 @@ class BacktestSpecification:
                 raise ValueError(
                     "current Model training requirement requires a planned Model version"
                 )
+            if requirement.recipe is None:
+                raise ValueError(
+                    "current Model training requirement requires a training recipe"
+                )
             version_key = (
                 requirement.model_definition.authority_id,
                 requirement.planned_model_version,
@@ -1197,6 +1266,7 @@ __all__ = [
     "BacktestFoldSession",
     "BacktestFoldSpecification",
     "BacktestModelTrainingRequirement",
+    "BacktestModelTrainingRecipe",
     "BacktestPolicyDefaults",
     "BacktestSampleMember",
     "BacktestSessionRole",

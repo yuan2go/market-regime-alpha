@@ -16,6 +16,8 @@ CURRENT_SPECIFICATION_TABLES = {
     "backtest_fold_dependency",
     "backtest_arm_fold",
     "backtest_model_training_requirement",
+    "backtest_model_training_dependency",
+    "backtest_model_training_hyperparameter",
     "backtest_evaluation_requirement",
 }
 
@@ -90,4 +92,9 @@ def test_current_backtest_specification_is_one_relational_root_owned_closure(
         "required_fit_evaluation_protocol_metric_id",
         "required_fit_evaluation_metric_sha256",
         "planned_model_version",
+        "algorithm_code",
+        "algorithm_version",
+        "implementation_sha256",
+        "environment_sha256",
+        "recipe_sha256",
     } <= training_columns

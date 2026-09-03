@@ -445,6 +445,8 @@ EXPECTED_EXPLORATORY_BACKTEST_TABLES: Final[frozenset[str]] = frozenset(
         "backtest_fold_dependency",
         "backtest_arm_fold",
         "backtest_model_training_requirement",
+        "backtest_model_training_dependency",
+        "backtest_model_training_hyperparameter",
         "backtest_evaluation_requirement",
         "backtest_runtime_binding",
         "backtest_evaluation_execution",
