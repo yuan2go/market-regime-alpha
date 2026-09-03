@@ -308,6 +308,17 @@ def test_repeated_identical_reference_capture_reconciles_without_replacing_first
             """,
             (str(first.capture.capture_id), str(second.capture.capture_id)),
         ).fetchone() == (2,)
+        disposition = connection.execute(
+            """
+            SELECT normalized_revision_count,
+                   normalized_revision_roster_sha256
+            FROM mra.market_capture_normalized_roster(%s)
+            """,
+            (second.capture.capture_id,),
+        ).fetchone()
+        assert disposition is not None
+        assert disposition[0] == 1
+        assert len(disposition[1]) == 64
 
 
 def test_repeated_reference_capture_with_changed_business_fields_fails_closed(

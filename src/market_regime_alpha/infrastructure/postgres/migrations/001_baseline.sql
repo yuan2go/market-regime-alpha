@@ -17886,7 +17886,7 @@ RETURNS TABLE (
 LANGUAGE sql
 STABLE
 AS $$
-    WITH normalized AS (
+    WITH fact_revision AS (
         SELECT 'INSTRUMENT'::text AS revision_kind, instrument_id AS revision_id
         FROM mra.instrument WHERE source_capture_id = target_capture_id
         UNION ALL
@@ -17913,6 +17913,17 @@ AS $$
         UNION ALL
         SELECT 'SOURCE_GAP', gap_id
         FROM mra.source_gap WHERE capture_id = target_capture_id
+    ), normalized AS (
+        SELECT revision_kind, revision_id FROM fact_revision
+        UNION ALL
+        SELECT 'REFERENCE_RECONCILIATION', receipt.receipt_id
+        FROM mra.command_receipt AS receipt
+        WHERE receipt.command_kind = 'NORMALIZE_MARKET_PIT'
+          AND receipt.scope_id = target_capture_id::text
+          AND receipt.status = 'SUCCEEDED'
+          AND receipt.result_aggregate_kind = 'MARKET_NORMALIZATION'
+          AND receipt.result_aggregate_id = target_capture_id::text
+          AND NOT EXISTS (SELECT 1 FROM fact_revision)
     )
     SELECT count(*)::integer,
            mra.canonical_sha256(mra.canonical_json_text(coalesce(jsonb_agg(
