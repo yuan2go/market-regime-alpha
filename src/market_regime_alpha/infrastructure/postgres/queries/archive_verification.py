@@ -33,6 +33,9 @@ class PostgresArchiveVerificationPort:
                 raise
             except RuntimeError:
                 return ArchiveVerification(market_archive_id, False, ("ARCHIVE_ROOT",))
+            slices_by_id = {
+                item.market_archive_slice_id: item for item in archive.slices
+            }
             observation_rows = connection.execute(
                 """
                 SELECT market_archive_capture_observation_id,
@@ -56,6 +59,7 @@ class PostgresArchiveVerificationPort:
                 except RuntimeError:
                     mismatches.append(f"OBSERVATION_CONTENT:{observation_id}")
                 prior = prior_by_slice.get(slice_id)
+                slice_contract = slices_by_id[slice_id]
                 expected_ordinal = 1 if prior is None else prior[1] + 1
                 expected_previous = None if prior is None else prior[0]
                 expected_relation = (
@@ -69,9 +73,15 @@ class PostgresArchiveVerificationPort:
                     ArchiveObservationTimeliness.NOT_APPLICABLE.value
                     if archive.lane is ArchiveLane.RETROSPECTIVE_BACKFILL
                     else ArchiveObservationTimeliness.ON_TIME.value
-                    if row[10] <= row[11]
+                    if row[10] >= slice_contract.event_window_start
+                    and row[10] <= row[11]
                     else ArchiveObservationTimeliness.LATE.value
                 )
+                if (
+                    archive.lane is ArchiveLane.PROSPECTIVE_CONTEMPORANEOUS
+                    and row[10] < slice_contract.event_window_start
+                ):
+                    mismatches.append(f"EARLY_OBSERVATION:{observation_id}")
                 if (
                     int(row[3]) != (1 if prior is None else expected_ordinal)
                     or (UUID(str(row[4])) if row[4] is not None else None)

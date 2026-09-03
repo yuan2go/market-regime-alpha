@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from uuid import UUID
 
@@ -36,11 +36,12 @@ class PostgresExploratoryFeatureInputReadPort:
         *,
         scope: ExploratoryRetrospectiveDatasetScope,
         instrument_id: InstrumentId,
-        session_id: TradingSessionId,
+        session_date: date,
         feature_event_end: datetime,
     ) -> ExploratoryIntradayFeatureInput:
         instrument_id = InstrumentId.parse(instrument_id)
-        session_id = TradingSessionId.parse(session_id)
+        if not isinstance(session_date, date) or isinstance(session_date, datetime):
+            raise TypeError("session_date must be a date")
         event_end = require_utc(feature_event_end, field="feature_event_end")
         if event_end > scope.simulated_event_cutoff:
             raise ValueError("feature checkpoint exceeds simulated DecisionTime")
@@ -49,19 +50,42 @@ class PostgresExploratoryFeatureInputReadPort:
             root = connection.execute(
                 """
                 SELECT archive.lane, archive.evidence_class,
-                       seal.knowledge_cutoff, session.close_at,
-                       session.open_at, session.break_start_at,
-                       session.break_end_at
+                       seal.knowledge_cutoff, session.session_id,
+                       session.close_at, session.open_at,
+                       session.break_start_at, session.break_end_at
                 FROM mra.market_archive AS archive
                 JOIN mra.market_archive_seal AS seal
                   ON seal.market_archive_id = archive.market_archive_id
                  AND seal.market_archive_seal_id = %s
-                JOIN mra.trading_session AS session ON session.session_id = %s
+                JOIN mra.instrument AS instrument
+                  ON instrument.instrument_id = %s
+                JOIN mra.trading_session AS session
+                  ON session.exchange = instrument.exchange
+                 AND session.session_date = %s
                 WHERE archive.market_archive_id = %s
+                  AND EXISTS (
+                      SELECT 1
+                      FROM mra.market_capture_instrument_normalization AS binding
+                      JOIN mra.market_archive_capture_observation AS observation
+                        ON observation.capture_id = binding.capture_id
+                       AND observation.market_archive_id = archive.market_archive_id
+                       AND observation.known_at <= seal.knowledge_cutoff
+                      WHERE binding.instrument_id = instrument.instrument_id
+                  )
+                  AND EXISTS (
+                      SELECT 1
+                      FROM mra.market_capture_trading_session_normalization AS binding
+                      JOIN mra.market_archive_capture_observation AS observation
+                        ON observation.capture_id = binding.capture_id
+                       AND observation.market_archive_id = archive.market_archive_id
+                       AND observation.known_at <= seal.knowledge_cutoff
+                      WHERE binding.session_id = session.session_id
+                  )
                 """,
                 (
                     scope.market_archive_seal_id,
-                    session_id.value,
+                    instrument_id.value,
+                    session_date,
                     scope.market_archive_id,
                 ),
             ).fetchone()
@@ -70,11 +94,12 @@ class PostgresExploratoryFeatureInputReadPort:
             if str(root[0]) != "RETROSPECTIVE_BACKFILL" or str(root[1]) != "EXPLORATORY_RETROSPECTIVE" or root[2] != scope.knowledge_cutoff:
                 raise RuntimeStateConflictError("retrospective feature scope differs from Archive Authority")
             if (
-                event_start < root[4]
-                or event_end > root[3]
-                or (root[5] is not None and root[6] is not None and event_start < root[6] and event_end > root[5])
+                event_start < root[5]
+                or event_end > root[4]
+                or (root[6] is not None and root[7] is not None and event_start < root[7] and event_end > root[6])
             ):
                 raise ValueError("feature interval is outside the exact trading session")
+            session_id = TradingSessionId.parse(root[3])
             rows = connection.execute(
                 """
                 SELECT bar.bar_revision_id, bar.capture_id,

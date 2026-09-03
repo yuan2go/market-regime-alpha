@@ -100,8 +100,8 @@ class _Envelope:
 class BaoStockArchiveNormalizer:
     contract = NormalizerContract(
         implementation="market.baostock_archive",
-        version="1",
-        implementation_sha256="de8d3e7c5dc51a946580c6be27eea56bff53282769fc291175048c68db14821d",
+        version="2",
+        implementation_sha256="ba062d62a95cd8c152a8ec2f0e69a4203f90cbb970f13c8612524e103028d6c5",
     )
 
     def __init__(
@@ -199,6 +199,18 @@ class BaoStockArchiveNormalizer:
                 effective_to = (
                     datetime.combine(date.fromisoformat(row["outDate"]), time(), tzinfo=UTC) if row["outDate"] else None
                 )
+                listing_head = (
+                    self._revision_lineage.instrument_fact_head(
+                        provider_product_id=capture.provider_product_id,
+                        instrument_id=instrument_id,
+                        session_id=None,
+                        fact_kind=InstrumentFactKind.LISTING_STATUS,
+                        evidence_scope=EvidenceScope.EFFECTIVE_INTERVAL,
+                        event_start=effective_from,
+                    )
+                    if self._revision_lineage is not None
+                    else None
+                )
                 identifiers.append(
                     InstrumentIdentifier(
                         instrument_identifier_id=uuid5(
@@ -228,8 +240,14 @@ class BaoStockArchiveNormalizer:
                         status=ListingStatus.LISTED,
                         effective_from=effective_from,
                         effective_to=effective_to,
-                        revision=1,
-                        supersedes_revision_id=None,
+                        revision=(
+                            1 if listing_head is None else listing_head.revision + 1
+                        ),
+                        supersedes_revision_id=(
+                            None
+                            if listing_head is None
+                            else listing_head.fact_revision_id
+                        ),
                     )
                 )
         if not instruments:
@@ -413,6 +431,31 @@ class BaoStockArchiveNormalizer:
                     raise ValueError("daily bar tradestatus is invalid")
                 if row.get("isST") not in {"0", "1"}:
                     raise ValueError("daily bar isST is invalid")
+                instrument_id = a_share_instrument_id(row["code"])
+                security_head = (
+                    self._revision_lineage.instrument_fact_head(
+                        provider_product_id=capture.provider_product_id,
+                        instrument_id=instrument_id,
+                        session_id=session.session_id,
+                        fact_kind=InstrumentFactKind.SECURITY_STATUS,
+                        evidence_scope=EvidenceScope.DECISION_SESSION,
+                        event_start=session.open_at,
+                    )
+                    if self._revision_lineage is not None
+                    else None
+                )
+                treatment_head = (
+                    self._revision_lineage.instrument_fact_head(
+                        provider_product_id=capture.provider_product_id,
+                        instrument_id=instrument_id,
+                        session_id=None,
+                        fact_kind=InstrumentFactKind.SPECIAL_TREATMENT_STATUS,
+                        evidence_scope=EvidenceScope.EFFECTIVE_INTERVAL,
+                        event_start=session.open_at,
+                    )
+                    if self._revision_lineage is not None
+                    else None
+                )
                 security_statuses.append(
                     SecurityStatusFactRevision(
                         fact_revision_id=uuid5(
@@ -421,7 +464,7 @@ class BaoStockArchiveNormalizer:
                         ),
                         provider_product_id=capture.provider_product_id,
                         capture_id=capture.capture_id,
-                        instrument_id=a_share_instrument_id(row["code"]),
+                        instrument_id=instrument_id,
                         session_id=session.session_id,
                         evidence_scope=EvidenceScope.DECISION_SESSION,
                         status=(
@@ -431,8 +474,14 @@ class BaoStockArchiveNormalizer:
                         ),
                         event_start=session.open_at,
                         event_end=session.close_at,
-                        revision=1,
-                        supersedes_revision_id=None,
+                        revision=(
+                            1 if security_head is None else security_head.revision + 1
+                        ),
+                        supersedes_revision_id=(
+                            None
+                            if security_head is None
+                            else security_head.fact_revision_id
+                        ),
                     )
                 )
                 special_treatment_statuses.append(
@@ -443,7 +492,7 @@ class BaoStockArchiveNormalizer:
                         ),
                         provider_product_id=capture.provider_product_id,
                         capture_id=capture.capture_id,
-                        instrument_id=a_share_instrument_id(row["code"]),
+                        instrument_id=instrument_id,
                         fact_kind=InstrumentFactKind.SPECIAL_TREATMENT_STATUS,
                         status=(
                             SpecialTreatmentStatus.ST
@@ -452,8 +501,14 @@ class BaoStockArchiveNormalizer:
                         ),
                         effective_from=session.open_at,
                         effective_to=session.close_at,
-                        revision=1,
-                        supersedes_revision_id=None,
+                        revision=(
+                            1 if treatment_head is None else treatment_head.revision + 1
+                        ),
+                        supersedes_revision_id=(
+                            None
+                            if treatment_head is None
+                            else treatment_head.fact_revision_id
+                        ),
                     )
                 )
             gap = self._bar_gap_if_needed(capture, row, session.session_id, timeframe, event_start, event_end)

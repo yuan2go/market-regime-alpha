@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 from concurrent.futures import ThreadPoolExecutor
+import time
 
 import psycopg
 import pytest
@@ -271,6 +272,25 @@ def test_concurrent_bootstrap_serializes_and_creates_exactly_once(
     assert {result.catalog_checksum for result in results} == {
         results[0].catalog_checksum
     }
+
+
+def test_bootstrap_lock_wait_is_bounded_by_schema_statement_timeout(
+    target_database_url: str,
+) -> None:
+    manager = SchemaManager(target_database_url)
+    with psycopg.connect(target_database_url) as holder:
+        holder.execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+            ("market-regime-alpha:mra:bootstrap",),
+        )
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(manager.bootstrap)
+            time.sleep(5.2)
+            assert not future.done()
+            holder.commit()
+            result = future.result(timeout=30)
+
+    assert result.created is True
 
 
 def test_interrupted_bootstrap_rolls_back_the_entire_schema(

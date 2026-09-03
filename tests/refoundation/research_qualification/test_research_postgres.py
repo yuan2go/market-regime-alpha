@@ -1561,7 +1561,7 @@ def test_retrospective_feature_input_uses_exact_sealed_dual_clock_bar(
     observation = PostgresExploratoryFeatureInputReadPort(stack.pool).exact_intraday_move(
         scope=scope,
         instrument_id=stack.instrument_id,
-        session_id=stack.market_session_id,
+        session_date=stack.decision_time.value.astimezone(SHANGHAI).date(),
         feature_event_end=stack.decision_time.value - timedelta(minutes=6),
     )
 
@@ -1572,7 +1572,7 @@ def test_retrospective_feature_input_uses_exact_sealed_dual_clock_bar(
     gap = PostgresExploratoryFeatureInputReadPort(stack.pool).exact_intraday_move(
         scope=scope,
         instrument_id=stack.instrument_id,
-        session_id=stack.market_session_id,
+        session_date=stack.decision_time.value.astimezone(SHANGHAI).date(),
         feature_event_end=stack.decision_time.value - timedelta(minutes=11),
     )
     assert gap.gap_id == gap_id
@@ -1585,7 +1585,7 @@ def test_retrospective_feature_input_uses_exact_sealed_dual_clock_bar(
                 knowledge_cutoff=scope.knowledge_cutoff - timedelta(seconds=1),
             ),
             instrument_id=stack.instrument_id,
-            session_id=stack.market_session_id,
+            session_date=stack.decision_time.value.astimezone(SHANGHAI).date(),
             feature_event_end=stack.decision_time.value - timedelta(minutes=6),
         )
 

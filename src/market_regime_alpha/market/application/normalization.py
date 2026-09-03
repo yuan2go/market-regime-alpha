@@ -133,6 +133,7 @@ class _NormalizationCommands(_MarketCommandSupport):
                 return replay
             decision_visible_at = uow.market.insert_normalization(
                 batch,
+                normalization_receipt_id=receipt.receipt_id,
                 expected_artifact_sha256=ContentHash(source.artifact.content_sha256),
                 expected_artifact_size=source.artifact.size_bytes,
             )

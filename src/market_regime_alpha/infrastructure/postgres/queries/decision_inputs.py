@@ -117,7 +117,7 @@ class PostgresDecisionInputPreparationProvider:
                 request.candidate_set_id,
                 lock=False,
             )
-            session_id = _validate_exploratory_scope(
+            _validate_exploratory_scope(
                 connection,
                 scope,
                 candidate_set=candidate_set,
@@ -144,7 +144,6 @@ class PostgresDecisionInputPreparationProvider:
                     candidate_set,
                     target,
                     visibility_cutoff=scope.knowledge_cutoff,
-                    exact_session_id=session_id,
                     market_archive_id=scope.market_archive_id,
                 )
             )
@@ -238,7 +237,7 @@ class PostgresDecisionDependencyRepository:
         _lock_exact_reference_dependencies(self._connection, prepared)
 
         if prepared.exploratory_retrospective_scope is not None:
-            actual_session_id = _validate_exploratory_scope(
+            actual_session_date = _validate_exploratory_scope(
                 self._connection,
                 prepared.exploratory_retrospective_scope,
                 candidate_set=prepared.candidate_set,
@@ -248,10 +247,26 @@ class PostgresDecisionDependencyRepository:
                 runtime=prepared.runtime,
                 lock=True,
             )
-            if any(
-                item.session_id != actual_session_id
-                for item in prepared.references
-            ):
+            expected_session_ids = {
+                item.session_id for item in prepared.references
+            }
+            actual_session_ids = {
+                UUID(str(row[0]))
+                for row in self._connection.execute(
+                    """
+                    SELECT session_id
+                    FROM mra.trading_session
+                    WHERE session_id = ANY(%s::uuid[])
+                      AND session_date = %s
+                    FOR SHARE
+                    """,
+                    (
+                        list(expected_session_ids),
+                        actual_session_date,
+                    ),
+                ).fetchall()
+            }
+            if actual_session_ids != expected_session_ids:
                 raise DecisionAuthorityIntegrityError(
                     "prepared reference left its frozen backtest session"
                 )
@@ -463,7 +478,7 @@ def _validate_exploratory_scope(
     requested_target_ids: tuple[UUID, ...],
     runtime: RuntimeDecisionSnapshot,
     lock: bool,
-) -> UUID:
+) -> date:
     suffix = (
         " FOR SHARE OF backtest_dataset, retrospective, backtest, arm, "
         "fold, member, seal"
@@ -485,7 +500,7 @@ def _validate_exploratory_scope(
                member.trading_session_id, member.session_role,
                backtest.candidate_policy_id,
                backtest.target_definition_id,
-               seal.knowledge_cutoff
+               seal.knowledge_cutoff, member.session_date
         FROM mra.exploratory_backtest_dataset AS backtest_dataset
         JOIN mra.exploratory_retrospective_dataset AS retrospective
           ON retrospective.dataset_id = backtest_dataset.dataset_id
@@ -559,12 +574,21 @@ def _validate_exploratory_scope(
             DecisionRuntimeMode.HISTORICAL,
             DecisionRuntimeMode.REPLAY,
         }
+        and row[15]
+        == scope.simulated_event_cutoff.astimezone(
+            ZoneInfo("Asia/Shanghai")
+        ).date()
     )
     if not valid:
         raise DecisionAuthorityIntegrityError(
             "exploratory Decision scope does not match its frozen backtest member"
         )
-    return UUID(str(row[10]))
+    session_date = row[15]
+    if not isinstance(session_date, date):
+        raise DecisionAuthorityIntegrityError(
+            "exploratory backtest session date is invalid"
+        )
+    return session_date
 
 
 def _load_candidate_set(
@@ -690,7 +714,6 @@ def _load_target_references(
     target: TargetDecisionSnapshot,
     *,
     visibility_cutoff: datetime | None = None,
-    exact_session_id: UUID | None = None,
     market_archive_id: UUID | None = None,
 ) -> tuple[PreparedDecisionReference, ...]:
     if not candidate_set.candidates:
@@ -730,15 +753,12 @@ def _load_target_references(
          ON session.exchange = instrument.exchange
          AND session.session_date = %s
          AND session.decision_visible_at <= %s
-         AND (%s::uuid IS NULL OR session.session_id = %s)
         WHERE candidate.candidate_set_id = %s
         ORDER BY candidate.candidate_id
         """,
         (
             session_date,
             cutoff,
-            exact_session_id,
-            exact_session_id,
             candidate_set.candidate_set_id,
         ),
     ).fetchall()

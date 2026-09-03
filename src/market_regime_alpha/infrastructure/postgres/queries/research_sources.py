@@ -503,6 +503,18 @@ class PostgresResearchSourceQueries:
                            FROM mra.market_archive_capture_observation AS observation
                            WHERE observation.market_archive_id = %s
                              AND observation.capture_id = source.{capture_column}
+                             AND observation.known_at <= %s
+                       ) OR (
+                           %s = 'MARKET_TRADING_SESSION'
+                           AND EXISTS (
+                               SELECT 1
+                               FROM mra.market_capture_trading_session_normalization AS normalization
+                               JOIN mra.market_archive_capture_observation AS observation
+                                 ON observation.capture_id = normalization.capture_id
+                                AND observation.market_archive_id = %s
+                                AND observation.known_at <= %s
+                               WHERE normalization.session_id = source.{identity_column}
+                           )
                        ) OR (
                            %s = 'MARKET_SOURCE_GAP'
                            AND EXISTS (
@@ -515,7 +527,16 @@ class PostgresResearchSourceQueries:
                 FROM mra.{table} AS source
                 WHERE source.{identity_column} = ANY(%s::uuid[])
                 """,  # noqa: S608 -- every identifier comes from the closed mapping above
-                (market_archive_id, role.value, market_archive_id, identities),
+                (
+                    market_archive_id,
+                    knowledge_cutoff,
+                    role.value,
+                    market_archive_id,
+                    knowledge_cutoff,
+                    role.value,
+                    market_archive_id,
+                    identities,
+                ),
             ).fetchall()
             for row in rows:
                 identity = UUID(str(row[0]))

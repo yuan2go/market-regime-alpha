@@ -47,6 +47,7 @@ class MarketRepository(Protocol):
         self,
         batch: NormalizationBatch,
         *,
+        normalization_receipt_id: UUID,
         expected_artifact_sha256: ContentHash,
         expected_artifact_size: int,
     ) -> DecisionTime: ...

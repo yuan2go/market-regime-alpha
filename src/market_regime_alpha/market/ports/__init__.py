@@ -17,6 +17,7 @@ from market_regime_alpha.market.ports.provider import (
     ProviderResponse,
 )
 from market_regime_alpha.market.ports.revision_lineage import (
+    InstrumentFactRevisionHead,
     MarketBarRevisionHead,
     MarketRevisionLineageReadPort,
 )
@@ -84,6 +85,7 @@ __all__ = [
     "MarketArtifactByteStore",
     "MarketArtifactRepository",
     "MarketDatabaseClock",
+    "InstrumentFactRevisionHead",
     "MarketBarRevisionHead",
     "MarketRevisionLineageReadPort",
     "MarketNormalizer",

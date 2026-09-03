@@ -19,8 +19,10 @@ from market_regime_alpha.infrastructure.providers.baostock_archive_normalizer im
 from market_regime_alpha.market.domain import (
     BarTimeframe,
     CaptureStatus,
+    EvidenceScope,
     GapKind,
     GapReasonCode,
+    InstrumentFactKind,
     PriceBasis,
     ProviderCapture,
     SecurityStatus,
@@ -29,6 +31,7 @@ from market_regime_alpha.market.domain import (
 )
 from market_regime_alpha.market.ports import (
     ArchiveTradingSession,
+    InstrumentFactRevisionHead,
     MarketBarRevisionHead,
 )
 from market_regime_alpha.shared.identity import ContentHash
@@ -115,6 +118,35 @@ def test_security_master_builds_stable_instrument_and_identifier() -> None:
     assert batch.instruments[0].canonical_code == "600000.XSHG"
     assert batch.instrument_identifiers[0].identifier_value == "sh.600000"
     assert batch.instrument_identifiers[0].effective_from == datetime(1999, 11, 10, tzinfo=UTC)
+
+
+def test_repeated_security_master_appends_listing_status_revision() -> None:
+    capture = _capture()
+    query = BaoStockArchiveQuery(
+        kind=BaoStockArchiveQueryKind.STOCK_BASIC,
+        code="sh.600000",
+    )
+    predecessor = uuid4()
+    batch = BaoStockArchiveNormalizer(
+        revision_lineage=_RevisionLineage(
+            None,
+            {
+                InstrumentFactKind.LISTING_STATUS: InstrumentFactRevisionHead(
+                    predecessor, 3
+                )
+            },
+        )
+    ).normalize(
+        capture,
+        _payload(
+            query,
+            ["code", "code_name", "ipoDate", "outDate", "type", "status"],
+            [["sh.600000", "浦发银行", "1999-11-10", "", "1", "1"]],
+        ),
+    )
+
+    assert batch.lifecycle_status_facts[0].revision == 4
+    assert batch.lifecycle_status_facts[0].supersedes_revision_id == predecessor
 
 
 def test_five_minute_raw_bar_preserves_exact_grid_and_decimal_values() -> None:
@@ -311,11 +343,20 @@ def test_csi300_snapshot_rejects_wrong_date_and_duplicate_member() -> None:
 
 
 class _RevisionLineage:
-    def __init__(self, head: MarketBarRevisionHead | None) -> None:
+    def __init__(
+        self,
+        head: MarketBarRevisionHead | None,
+        fact_heads: dict[InstrumentFactKind, InstrumentFactRevisionHead]
+        | None = None,
+    ) -> None:
         self.head = head
+        self.fact_heads = fact_heads or {}
 
     def market_bar_head(self, **kwargs):
         return self.head
+
+    def instrument_fact_head(self, **kwargs):
+        return self.fact_heads.get(kwargs["fact_kind"])
 
 
 class _Sessions:
@@ -402,6 +443,51 @@ def test_repeated_observation_appends_exact_market_revision_lineage() -> None:
 
     assert batch.bars[0].revision == 4
     assert batch.bars[0].supersedes_revision_id == predecessor
+
+
+def test_repeated_daily_observation_appends_status_revision_lineage() -> None:
+    capture = _capture()
+    query = BaoStockArchiveQuery(
+        kind=BaoStockArchiveQueryKind.HISTORY_DAILY_RAW,
+        code="sh.600000",
+        start_date=date(2026, 1, 5),
+        end_date=date(2026, 1, 5),
+    )
+    security_predecessor = uuid4()
+    treatment_predecessor = uuid4()
+    fields = [
+        "date", "code", "open", "high", "low", "close", "preclose",
+        "volume", "amount", "adjustflag", "turn", "tradestatus",
+        "pctChg", "isST",
+    ]
+
+    batch = BaoStockArchiveNormalizer(
+        revision_lineage=_RevisionLineage(
+            None,
+            {
+                InstrumentFactKind.SECURITY_STATUS: InstrumentFactRevisionHead(
+                    security_predecessor, 2
+                ),
+                InstrumentFactKind.SPECIAL_TREATMENT_STATUS: InstrumentFactRevisionHead(
+                    treatment_predecessor, 4
+                ),
+            },
+        ),
+        trading_sessions=_Sessions(),
+    ).normalize(
+        capture,
+        _payload(
+            query,
+            fields,
+            [["2026-01-05", "sh.600000", "10", "11", "9", "10", "10", "1", "10", "3", "1", "1", "0", "0"]],
+        ),
+    )
+
+    assert batch.security_status_facts[0].evidence_scope is EvidenceScope.DECISION_SESSION
+    assert batch.security_status_facts[0].revision == 3
+    assert batch.security_status_facts[0].supersedes_revision_id == security_predecessor
+    assert batch.lifecycle_status_facts[0].revision == 5
+    assert batch.lifecycle_status_facts[0].supersedes_revision_id == treatment_predecessor
 
 
 def test_duplicate_bar_in_one_payload_fails_closed() -> None:

@@ -4,7 +4,7 @@
 > **Authority:** Planning and dependency order only; never business, evidence, or qualification Authority
 > **Owner:** Market Regime Alpha maintainers
 > **Last Updated:** 2026-09-03
-> **Code Evidence:** `docs/architecture/Canonical-Overall-Design.md`, `docs/status/Current-State.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-01-Domain-Invariant-Catalog.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-08-Post-Candidate-Authority-Design.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-09-Target-Commitment-Decision-Run-Verification.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-10-Market-Target-Outcome-Verification.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-11-Research-Validity-Evaluation-Verification.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-12-Research-Evidence-Assessment-Qualification-Verification.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-13-Remaining-Decision-Support-Verification.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-14-Formal-Research-Engineering-Readiness-Verification.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-15-Formal-Research-Proof-Campaign-Verification.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-16-Real-Provider-Evidence-Gate-A-Verification.md`
+> **Code Evidence:** `docs/architecture/Canonical-Overall-Design.md`, `docs/status/Current-State.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-01-Domain-Invariant-Catalog.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-08-Post-Candidate-Authority-Design.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-09-Target-Commitment-Decision-Run-Verification.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-10-Market-Target-Outcome-Verification.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-11-Research-Validity-Evaluation-Verification.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-12-Research-Evidence-Assessment-Qualification-Verification.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-13-Remaining-Decision-Support-Verification.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-14-Formal-Research-Engineering-Readiness-Verification.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-15-Formal-Research-Proof-Campaign-Verification.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-16-Real-Provider-Evidence-Gate-A-Verification.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-17P-Prospective-Archive-Exploratory-Backtest-Verification.md`
 
 Architecture Re-foundation is the only active engineering program. Historical
 Alpha Proof protocols/results remain evidence provenance, not executable
@@ -59,11 +59,11 @@ Model/Calibration branch is skipped, not started, and not required for
 rule-based Forecast. WP-16 then found no accessible inspected Product with
 direct recorded evidence for both P0 historical availability and revision
 finality. It stopped before adapter/schema/Protocol implementation. This is not
-a finding that access-blocked Providers are incapable. WP-17P is separately
-authorized to archive real bytes, preserve retrospective/prospective evidence
-lanes, and exercise an exploratory Model/backtest path. That authorization does
-not reopen WP-16 Gate A, admit any Provider, or permit retrospective facts into
-Formal PIT/OOS/Prospective admission. Every later row retains
+a finding that access-blocked Providers are incapable. WP-17P has now passed
+its exact-SHA engineering gate, archived real bytes in separate retrospective
+and prospective lanes, and completed one bounded exploratory Model/backtest
+campaign. That result does not reopen WP-16 Gate A, admit any Provider, or
+permit retrospective facts into Formal PIT/OOS/Prospective admission. Every later row retains
 its own approval/exit gate;
 ordering never grants Runtime cutover, empirical promotion, broker authority,
 or Legacy deletion.
@@ -91,7 +91,7 @@ availability-selected fallback.
 | **12. WP-14 Formal Research/OOS/Prospective Engineering Readiness** | `WP14_EXIT_GATE_PASS / NOT_CUT_OVER / NO_EMPIRICAL_PROMOTION` | exact controlled Runtime profiles; immutable campaign predeclaration; protected zero-access opening; database-clock due mechanics; Market-owned Provider qualification and source-specific Formal PIT/Dataset visibility; inspection/reconciliation | exact-SHA PostgreSQL, concurrency/failure/recovery/replay, plans, full regression/static/build/docs gates pass; `FORMAL_RESEARCH_ENGINEERING_READY=true` while `FORMAL_PIT/OOS/PROSPECTIVE/PROVIDER/ALPHA=NOT_PROVEN`; fixtures cannot promote claims |
 | **13. WP-15 Formal Research Proof and Provider Qualification Campaign** | `PROVIDER_GATE_REJECTED / FORMAL_CAMPAIGN_STOPPED` | real BaoStock Product gate completed with exact capture bytes and a complete ten-floor Decision; no hypothesis or downstream Authority was created | new adequate recorded Provider availability/finality/calendar/membership/Decision-reference/Outcome-path evidence plus a new immutable Protocol/revision is required before another gate; no synthetic replacement or weakening of the rejected scope |
 | **14. WP-16 Real Provider Evidence Acquisition Gate A** | `WP16_GATE_A_BLOCKED / BLOCKED_BY_EXTERNAL_PROVIDER_EVIDENCE` | corrected `F/X/?/B` feasibility matrix across actually inspected Products, including iFinD; immutable preservation of the WP-15 rejection; explicit P0 stop and re-entry contract | at least one accessible exact Product must have direct recorded `HISTORICAL_AVAILABILITY=F` and `REVISION_FINALITY=F`; only a new credential/runtime/license, versioned vendor contract, new actual Product, or new direct evidence may reopen Gate A; no adapter/schema/Protocol work before re-entry |
-| **15. WP-17P Prospective Archive Operations and Exploratory Model/Backtest Activation** | `AUTHORIZED / DESIGN_PENDING / FORMAL_EVIDENCE_CEILING_UNCHANGED` | permanently separate `RETROSPECTIVE_BACKFILL` and `PROSPECTIVE_CONTEMPORANEOUS` lanes; explicit dual-clock retrospective simulation; deterministic 32-symbol engineering pilot; minimal optional Model/ModelVersion from completed FIT samples; canonical Decision Support/Outcome/Evaluation backtests; isolated operational persistence | exact-SHA engineering qualification plus real 2026 backfill pilot, archive start/smoke, baseline/model runs and replay; retrospective results remain `EXPLORATORY_RETROSPECTIVE`, only actual-time captures can accumulate prospective evidence, and WP-16 Formal Provider/PIT/OOS blockers remain closed |
+| **15. WP-17P Prospective Archive Operations and Exploratory Model/Backtest Activation** | `WP17P_ENGINEERING_EXIT_GATE_PASS / EXPLORATORY_ONLY / PROSPECTIVE_ACCUMULATING / NOT_CUT_OVER` | permanently separate `RETROSPECTIVE_BACKFILL` and `PROSPECTIVE_CONTEMPORANEOUS` lanes; explicit dual-clock retrospective simulation; deterministic 32-symbol engineering pilot; minimal optional Model/ModelVersion from completed FIT samples; canonical Decision Support/Outcome/Evaluation backtests; isolated operational persistence | passed at exact implementation SHA `5cc3831e93fa30a58283471e2185bbad5c72cec3`; retrospective results remain `EXPLORATORY_RETROSPECTIVE`, only actual-time captures accumulate prospective evidence, and WP-16 Formal Provider/PIT/OOS blockers remain closed |
 | **16. Optional Calibration** | `OPTIONAL / NOT_STARTED` | calibration Evaluation purpose and subject-specific Model qualification when separately approved; concrete calibrated claim only after real parents and empirical floors | calibrated claims require exact partition/metric/evidence floors; WP-17P does not create or imply calibration |
 | **17. Execution, TradeOutcome and Attribution** | `NO_GO / SEPARATE_AUTHORIZATION_REQUIRED` | Account/Intent/observed Fill/allocation/reconciliation/Position projection; separate TradeOutcome; Market and Trade Attribution | Fill-only trade mutation, Market/Trade subject separation, reconciliation and human-approval gates pass |
 | **18. Runtime/CLI Cutover and Legacy deletion** | `NO_GO / SEPARATE_AUTHORIZATION_REQUIRED` | complete target composition/CLI/epoch release followed by separately approved removal of old writers/readers/schema | complete catalog and consumer cuts proven; no dual write/fallback; clean bootstrap/replay/recovery; empirical/Provider/Production floors remain independent |
@@ -403,6 +403,42 @@ records the bounded proof and the
 [external evidence checklist](../references/WP-ARCHITECTURE-REFOUNDATION-16-External-Provider-Evidence-Acquisition-Checklist.md)
 defines the vendor evidence package required before adapter development.
 
+## WP-17P archive and exploratory execution result
+
+WP-17P passed its exact-SHA engineering gate at
+`5cc3831e93fa30a58283471e2185bbad5c72cec3`. Market owns immutable
+`RETROSPECTIVE_BACKFILL` and `PROSPECTIVE_CONTEMPORANEOUS` lanes. Research &
+Qualification owns explicit dual-clock bindings, the exploratory run, and the
+minimal Model family/training/version seam. Decision Support owns the concrete
+later-fold Model binding; canonical Outcome and Evaluation owners remain the
+only realized-label and metric truth.
+
+```text
+WP17P_ENGINEERING_EXIT_GATE = PASS
+RETROSPECTIVE_2026_BACKFILL = PARTIAL_WITH_PENDING_NOT_DUE
+RETROSPECTIVE_PILOT_CAMPAIGN = COMPLETED
+RETROSPECTIVE_EVIDENCE_CEILING = EXPLORATORY_RETROSPECTIVE
+PROSPECTIVE_ARCHIVE = STARTED
+FIRST_PARTY_KNOWN_TIME = ACCUMULATING
+MODEL_RUNTIME = OPERATIONAL
+BASELINE_BACKTEST / MODEL_BACKTEST = COMPLETED / COMPLETED
+MODEL_CHALLENGER = NOT_ESTIMABLE
+FORMAL_PROVIDER_QUALIFICATION / FORMAL_PIT = BLOCKED / BLOCKED
+FORMAL_OOS = NOT_RUN
+PROSPECTIVE_PROVEN / ALPHA_PROVEN = NO
+Runtime dispatch / CLI Cutover / Production = NO-GO
+```
+
+The real archive retains 843 captured primary backfill slices with 64 due-time
+pending slices. A separate XSHG stable-hash-32 campaign completed 386 captures,
+three Datasets, FIT-only deterministic ridge training, later-fold rule/Model
+execution, and zero-mismatch replay/reconciliation. A separate prospective
+archive rejected a pre-window request and recorded one on-time smoke capture;
+192 frozen future windows remain pending. Exact identities, catalog checksums,
+test receipts, metrics, retained failures, and the unchanged evidence ceiling
+are recorded in the immutable
+[WP-17P Verification](../references/WP-ARCHITECTURE-REFOUNDATION-17P-Prospective-Archive-Exploratory-Backtest-Verification.md).
+
 ## Dependency-owned unresolved gaps
 
 | Gap | Owning stage | Required resolution |
@@ -412,7 +448,8 @@ defines the vendor evidence package required before adapter development.
 | Corporate-action and broker account semantics vary | Market/PIT / Execution | adapter-specific fixtures and qualification; no inference from adjusted prices or unexplained broker deltas |
 | The first real recorded BaoStock scope is rejected: historical availability, finality and Outcome path fail, while calendar/membership/Decision-reference evidence is insufficient | WP-15 external evidence | obtain a Provider/Product with recorded purpose-specific evidence and register a new immutable Protocol/revision; preserve the rejected Decision and do not weaken or relabel it |
 | No accessible Product in the WP-16 execution environment has direct recorded evidence for both historical availability and revision finality; Tushare, XtQuant, iFinD, Wind, JQData and RQData remain access-blocked/unverified rather than incapable | WP-16 external Provider evidence | obtain a secure credential/runtime/license, a versioned vendor publication/revision/finality contract, a new actual Product, or new direct evidence; rebuild the four-state matrix before any adapter/schema/Protocol work |
-| Artifact volume/retention is unmeasured | Runtime/CLI Cutover | no partitioning by aesthetics; measure write volume, vacuum/retention and dominant plans |
+| WP-17P measured a bounded archive pilot, but sustained Artifact volume/retention and operational vacuum behavior remain unmeasured | Runtime/CLI Cutover | continue non-destructive daily measurements; define retention only from observed volume and integrity requirements, never delete immutable evidence to hide a capacity limit |
+| The prospective archive has only one on-time smoke observation and 192 frozen future windows remain pending | WP-17P operations follow-through | execute the frozen Decision-near/post-close/next-session/later-verification windows as real time passes; preserve missed windows as explicit gaps and do not infer sustained value |
 | Unknown external broker effects lack an operator workflow | Execution / Runtime | remain reconciliation-required; no broker adapter or blind retry before workflow proof |
 | Formal PIT/OOS, sustained Prospective value, Production, and broker evidence are absent | Qualification | remain blocked/unsupported; engineering cutover cannot promote them |
 
@@ -432,9 +469,11 @@ are present. WP-15 used them for one real recorded BaoStock scope, whose
 Provider Decision is `REJECTED`; no qualified visibility or downstream Formal
 Campaign claim was admitted. WP-16 found no accessible P0 `F/F` replacement
 evidence and stopped before implementation; blocked Products retain `B/?`, not
-an incapability label. Model, Calibration, Execution, Account, and broker
-owners remain absent. This is not a Runtime/CLI cutover or target baseline
-release.
+an incapability label. WP-17P adds engineering-qualified archive mechanics and
+an exploratory-only Model owner, completes one bounded rule/Model backtest,
+and starts prospective accumulation. Model Qualification, Calibration,
+Execution, Account, and broker owners remain absent. This is not a Runtime/CLI
+cutover or target baseline release.
 
 WP-08 closes the design dependency review. `OPEN_DECISION_RUN` is mandatory
 after Candidate and before Context; it commits the complete Candidate × Target
@@ -443,14 +482,12 @@ then owns one revisioned realized-market-fact truth. Partition/Evaluation
 consumers use its narrow read-only port, and feedback crosses only from generation `n` to
 Decision Run `n+1` through a concrete Research Qualification binding.
 
-WP-14 is the latest passed engineering Exit Gate at
-`ca6f66b50ec2c55250cd82d2fa1ed6c5f35c29b8`, merged in
-`origin/main@8067a4be74f697a01aaa996465c10ed5b45b5a7f`. WP-15 is stopped at its
-rejected Provider gate, and WP-16 is blocked at external-evidence Gate A on
-`origin/main@16a4ab1d0d42a4144ef1bd1dcd15ac4ba5ab1087`. Optional
-Model remains absent at this pre-WP-17P checkpoint; its narrow exploratory
-activation is now authorized only inside the WP-17P evidence ceiling.
-Calibration remains unstarted and optional. An admitted Provider scope and
+WP-17P is the latest passed engineering Exit Gate at
+`5cc3831e93fa30a58283471e2185bbad5c72cec3`, based on fetched
+`origin/main@f67a4f34761516dab65825c38c4e81019f8c2dd1`. WP-15 remains stopped at
+its rejected Provider gate, and WP-16 remains blocked at external-evidence
+Gate A. The Model seam is operational only inside the WP-17P exploratory
+evidence ceiling; Model Qualification and Calibration remain unstarted. An admitted Provider scope and
 Formal PIT/OOS/Prospective evidence,
 Execution, TradeOutcome, Attribution, compatibility writes, dual writes, and
 future placeholders remain absent.
@@ -459,5 +496,6 @@ No Alpha optimization, Formal OOS access, follow-on Provider reinterpretation,
 Provider-qualification adapter/schema prebuild, broker integration, Runtime
 cutover, Legacy deletion, evidence-ceiling increase, or destructive
 business-database operation is authorized by the negative WP-15 result, the
-WP-16 Gate A blocker, or WP-17P. WP-17P authorizes only its typed exploratory
-simulation, archive operations, and narrow Model/backtest scope.
+WP-16 Gate A blocker, or WP-17P. WP-17P proves only its typed exploratory
+simulation, archive operations, narrow Model/backtest execution, and the start
+of future evidence accumulation.

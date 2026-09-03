@@ -118,6 +118,7 @@ def test_prospective_and_seal_guards_live_in_postgres(
     assert "PROSPECTIVE_CONTEMPORANEOUS" in functions
     assert "archive_start_at" in functions
     assert "observation_ordinal" in functions
+    assert "NEW.known_at < NEW.event_window_start" in functions
     assert "normalized_revision_roster_sha256" in functions
     assert "SOURCE_GAP" in functions
     assert "RETROSPECTIVE_BACKFILL" in functions

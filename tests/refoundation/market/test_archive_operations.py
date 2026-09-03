@@ -9,7 +9,7 @@ from market_regime_alpha.market.application.archive_operations import (
     ArchiveSliceExecutionStatus,
     MarketArchiveOperations,
 )
-from market_regime_alpha.market.domain import CaptureStatus
+from market_regime_alpha.market.domain import ArchiveLane, CaptureStatus
 from market_regime_alpha.market.ports import CaptureRequest
 from market_regime_alpha.market.ports.archive_operations import (
     ArchiveCaptureDisposition,
@@ -90,8 +90,11 @@ class _Resources:
 
 
 class _Clock:
+    def __init__(self, value: datetime | None = None) -> None:
+        self.value = value or datetime(2026, 9, 3, 8, tzinfo=UTC)
+
     def now(self) -> datetime:
-        return datetime(2026, 9, 3, 8, tzinfo=UTC)
+        return self.value
 
 
 def _context() -> CommandContext:
@@ -123,6 +126,9 @@ def _request() -> tuple[ArchiveSliceExecutionRequest, ArchiveSliceOperatingContr
         market_archive_slice_id=slice_id,
         provider_product_id=capture.provider_product_id,
         request_sha256=canonical_json_sha256(capture),
+        lane=ArchiveLane.RETROSPECTIVE_BACKFILL,
+        event_window_start=datetime(2026, 1, 5, tzinfo=UTC),
+        event_window_end=datetime(2026, 1, 6, tzinfo=UTC),
         reserved_free_bytes=100,
         maximum_slice_bytes=50,
         terminal_status=None,
@@ -155,6 +161,42 @@ def test_successful_slice_is_captured_normalized_then_observed() -> None:
     assert market.capture_calls == 1
     assert market.normalize_calls == 1
     assert archives.observations == 1
+
+
+def test_prospective_slice_before_frozen_window_is_not_due_without_provider_io() -> None:
+    request, base = _request()
+    contract = ArchiveSliceOperatingContract(
+        market_archive_id=base.market_archive_id,
+        market_archive_slice_id=base.market_archive_slice_id,
+        provider_product_id=base.provider_product_id,
+        request_sha256=base.request_sha256,
+        lane=ArchiveLane.PROSPECTIVE_CONTEMPORANEOUS,
+        event_window_start=datetime(2026, 9, 3, 8, 1, tzinfo=UTC),
+        event_window_end=datetime(2026, 9, 3, 8, 2, tzinfo=UTC),
+        reserved_free_bytes=base.reserved_free_bytes,
+        maximum_slice_bytes=base.maximum_slice_bytes,
+        terminal_status=None,
+    )
+    market = _Market(CaptureStatus.CAPTURED)
+    archives = _Archives()
+    operations = MarketArchiveOperations(
+        market,
+        archives,
+        _ReadPort(contract),
+        _Resources(150),
+        _Clock(datetime(2026, 9, 3, 8, tzinfo=UTC)),
+    )
+
+    result = operations.execute_slice(
+        request, provider=object(), normalizer=object(), context=_context()
+    )
+
+    assert result.status is ArchiveSliceExecutionStatus.NOT_DUE
+    assert market.capture_calls == 0
+    assert market.normalize_calls == 0
+    assert archives.observations == 0
+    assert archives.gaps == 0
+    assert archives.resource_stops == 0
 
 
 def test_provider_failure_binds_the_exact_capture_gap_without_normalization() -> None:

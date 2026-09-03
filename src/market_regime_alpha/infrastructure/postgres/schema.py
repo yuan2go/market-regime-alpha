@@ -190,6 +190,12 @@ EXPECTED_MARKET_TABLES: Final[frozenset[str]] = frozenset(
         "trading_session",
         "classification",
         "classification_membership_revision",
+        "market_capture_reference_normalization",
+        "market_capture_instrument_normalization",
+        "market_capture_instrument_identifier_normalization",
+        "market_capture_trading_session_normalization",
+        "market_capture_classification_normalization",
+        "market_capture_classification_membership_normalization",
         "market_bar_revision",
         "instrument_fact_revision",
         "corporate_action_revision",
@@ -1303,10 +1309,15 @@ def _schema_exists(connection: psycopg.Connection[Any], schema_name: str) -> boo
 
 
 def _take_bootstrap_lock(connection: psycopg.Connection[Any]) -> None:
+    # A clean baseline build can legitimately exceed the ordinary 5-second
+    # business lock budget on a loaded PostgreSQL catalog.  The statement
+    # timeout remains the bounded upper limit for this schema-only lock wait.
+    connection.execute("SELECT set_config('lock_timeout', '30s', true)")
     connection.execute(
         "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
         (_BOOTSTRAP_LOCK_KEY,),
     )
+    connection.execute("SELECT set_config('lock_timeout', '5s', true)")
 
 
 def _database_identity(connection: psycopg.Connection[Any]) -> DatabaseIdentity:

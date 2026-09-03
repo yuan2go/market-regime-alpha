@@ -28,6 +28,12 @@ def test_market_schema_has_the_approved_authority_relations(
         "trading_session",
         "classification",
         "classification_membership_revision",
+        "market_capture_reference_normalization",
+        "market_capture_instrument_normalization",
+        "market_capture_instrument_identifier_normalization",
+        "market_capture_trading_session_normalization",
+        "market_capture_classification_normalization",
+        "market_capture_classification_membership_normalization",
         "market_bar_revision",
         "instrument_fact_revision",
         "corporate_action_revision",
@@ -93,6 +99,78 @@ def test_capture_owns_independent_pit_axes_without_latest_or_backfill_flags(
     assert "decision_visible_at = known_at" in constraints
     assert "known_at = GREATEST(capture_completed_at, recorded_at)" in constraints
     assert "source_availability_status = 'UNKNOWN'" in constraints
+
+
+def test_reference_normalization_has_typed_complete_append_only_roster(
+    target_database_url: str,
+) -> None:
+    SchemaManager(target_database_url).bootstrap()
+    relations = (
+        "market_capture_reference_normalization",
+        "market_capture_instrument_normalization",
+        "market_capture_instrument_identifier_normalization",
+        "market_capture_trading_session_normalization",
+        "market_capture_classification_normalization",
+        "market_capture_classification_membership_normalization",
+    )
+    with psycopg.connect(target_database_url) as connection:
+        foreign_keys = {
+            (str(row[0]), str(row[1]))
+            for row in connection.execute(
+                """
+                SELECT child.relname, target.relname
+                FROM pg_constraint AS item
+                JOIN pg_class AS child ON child.oid = item.conrelid
+                JOIN pg_class AS target ON target.oid = item.confrelid
+                JOIN pg_namespace AS namespace
+                  ON namespace.oid = child.relnamespace
+                WHERE namespace.nspname = 'mra'
+                  AND item.contype = 'f'
+                  AND child.relname = ANY(%s)
+                """,
+                (list(relations),),
+            ).fetchall()
+        }
+        triggers = {
+            (str(row[0]), str(row[1]))
+            for row in connection.execute(
+                """
+                SELECT event_object_table, trigger_name
+                FROM information_schema.triggers
+                WHERE trigger_schema = 'mra'
+                  AND event_object_table = ANY(%s)
+                """,
+                (list(relations),),
+            ).fetchall()
+        }
+
+    assert {
+        ("market_capture_reference_normalization", "data_capture"),
+        ("market_capture_reference_normalization", "command_receipt"),
+        ("market_capture_instrument_normalization", "instrument"),
+        (
+            "market_capture_instrument_identifier_normalization",
+            "instrument_identifier",
+        ),
+        ("market_capture_trading_session_normalization", "trading_session"),
+        ("market_capture_classification_normalization", "classification"),
+        (
+            "market_capture_classification_membership_normalization",
+            "classification_membership_revision",
+        ),
+    } <= foreign_keys
+    assert all(
+        any(
+            table == relation and "append_only" in trigger
+            for table, trigger in triggers
+        )
+        for relation in relations
+    )
+    assert any(
+        table == "market_capture_reference_normalization"
+        and "closure_guard" in trigger
+        for table, trigger in triggers
+    )
 
 
 def test_market_financial_values_use_numeric_and_revision_rows_are_append_only(

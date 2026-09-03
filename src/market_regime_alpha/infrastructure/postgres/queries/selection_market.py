@@ -59,7 +59,11 @@ class PostgresSelectionMarketQueries:
             decision_time=DecisionTime(retrospective.simulated_event_cutoff),
             visibility_cutoff=retrospective.knowledge_cutoff,
         )
-        self._require_archive_lineage(evidence.lineage, retrospective)
+        self._require_membership_archive_lineage(
+            evidence,
+            instrument_id=instrument_id,
+            scope=retrospective,
+        )
         return evidence
 
     def _membership_as_of(
@@ -1116,23 +1120,125 @@ class PostgresSelectionMarketQueries:
         lineage: MarketLineage,
         scope: ExploratoryRetrospectiveSelectionScope,
     ) -> None:
-        capture_ids = tuple(lineage.capture_ids)
-        if not capture_ids:
+        expected = {
+            *(('INSTRUMENT_FACT', value) for value in lineage.fact_revision_ids),
+            *(('MARKET_BAR', value) for value in lineage.bar_revision_ids),
+            *(('SOURCE_GAP', value) for value in lineage.gap_ids),
+            *(('TRADING_SESSION', value) for value in lineage.session_ids),
+        }
+        if not expected:
             return
         rows = self._connection.execute(
             """
-            SELECT capture_id
-            FROM mra.market_archive_capture_observation
-            WHERE market_archive_id = %s
-              AND capture_id = ANY(%s::uuid[])
-            FOR SHARE
+            SELECT 'INSTRUMENT_FACT'::text, fact.fact_revision_id
+            FROM mra.instrument_fact_revision AS fact
+            JOIN mra.market_archive_capture_observation AS observation
+              ON observation.capture_id = fact.capture_id
+             AND observation.market_archive_id = %(archive_id)s
+             AND observation.known_at <= %(knowledge_cutoff)s
+            WHERE fact.fact_revision_id = ANY(%(fact_ids)s::uuid[])
+            UNION ALL
+            SELECT 'MARKET_BAR', bar.bar_revision_id
+            FROM mra.market_bar_revision AS bar
+            JOIN mra.market_archive_capture_observation AS observation
+              ON observation.capture_id = bar.capture_id
+             AND observation.market_archive_id = %(archive_id)s
+             AND observation.known_at <= %(knowledge_cutoff)s
+            WHERE bar.bar_revision_id = ANY(%(bar_ids)s::uuid[])
+            UNION ALL
+            SELECT 'SOURCE_GAP', gap.gap_id
+            FROM mra.source_gap AS gap
+            WHERE gap.gap_id = ANY(%(gap_ids)s::uuid[])
+              AND (
+                  EXISTS (
+                      SELECT 1
+                      FROM mra.market_archive_capture_observation AS observation
+                      WHERE observation.market_archive_id = %(archive_id)s
+                        AND observation.capture_id = gap.capture_id
+                        AND observation.known_at <= %(knowledge_cutoff)s
+                  )
+                  OR EXISTS (
+                      SELECT 1 FROM mra.market_archive_slice_gap AS binding
+                      WHERE binding.market_archive_id = %(archive_id)s
+                        AND binding.gap_id = gap.gap_id
+                  )
+              )
+            UNION ALL
+            SELECT 'TRADING_SESSION', binding.session_id
+            FROM mra.market_capture_trading_session_normalization AS binding
+            JOIN mra.market_archive_capture_observation AS observation
+              ON observation.capture_id = binding.capture_id
+             AND observation.market_archive_id = %(archive_id)s
+             AND observation.known_at <= %(knowledge_cutoff)s
+            WHERE binding.session_id = ANY(%(session_ids)s::uuid[])
             """,
-            (scope.market_archive_id, list(capture_ids)),
+            {
+                "archive_id": scope.market_archive_id,
+                "knowledge_cutoff": scope.knowledge_cutoff,
+                "fact_ids": list(lineage.fact_revision_ids),
+                "bar_ids": list(lineage.bar_revision_ids),
+                "gap_ids": list(lineage.gap_ids),
+                "session_ids": list(lineage.session_ids),
+            },
         ).fetchall()
-        if {UUID(str(row[0])) for row in rows} != set(capture_ids):
+        actual = {(str(row[0]), UUID(str(row[1]))) for row in rows}
+        if actual != expected:
             raise ValueError(
                 "retrospective Selection Market lineage is outside its exact archive"
             )
+
+    def _require_membership_archive_lineage(
+        self,
+        evidence: MembershipEvidence,
+        *,
+        instrument_id: InstrumentId,
+        scope: ExploratoryRetrospectiveSelectionScope,
+    ) -> None:
+        if evidence.gap_id is not None:
+            self._require_archive_lineage(evidence.lineage, scope)
+        required = tuple(
+            item
+            for item in (
+                (
+                    "market_capture_classification_normalization",
+                    "classification_id",
+                    evidence.classification_id,
+                ),
+                (
+                    "market_capture_classification_membership_normalization",
+                    "membership_revision_id",
+                    evidence.membership_revision_id,
+                ),
+                (
+                    "market_capture_instrument_normalization",
+                    "instrument_id",
+                    (
+                        instrument_id.value
+                        if evidence.membership_revision_id is not None
+                        else None
+                    ),
+                ),
+            )
+            if item[2] is not None
+        )
+        for table, identity_column, identity in required:
+            row = self._connection.execute(
+                f"""
+                SELECT 1
+                FROM mra.{table} AS binding
+                JOIN mra.market_archive_capture_observation AS observation
+                  ON observation.capture_id = binding.capture_id
+                 AND observation.market_archive_id = %s
+                 AND observation.known_at <= %s
+                WHERE binding.{identity_column} = %s
+                LIMIT 1
+                """,  # noqa: S608 -- table and identity column are closed above
+                (scope.market_archive_id, scope.knowledge_cutoff, identity),
+            ).fetchone()
+            if row is None:
+                raise ValueError(
+                    "retrospective Selection reference is outside its exact archive"
+                )
 
 
 def _merge_lineage(*items: MarketLineage) -> MarketLineage:

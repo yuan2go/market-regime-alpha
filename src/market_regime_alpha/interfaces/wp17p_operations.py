@@ -8,9 +8,10 @@ outside business transactions.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 import json
 from uuid import UUID, uuid5
+from zoneinfo import ZoneInfo
 
 from market_regime_alpha.bootstrap import TargetApplication
 from market_regime_alpha.interfaces.wp17p_authorities import Wp17pAuthorityCatalog
@@ -22,6 +23,8 @@ from market_regime_alpha.interfaces.wp17p_research import (
 from market_regime_alpha.research_qualification.domain import (
     ArtifactBinding,
     FeatureCellStatus,
+    TargetCheckpointRole,
+    TargetTimingRule,
 )
 from market_regime_alpha.research_qualification.domain.exploratory import (
     ExploratoryRetrospectiveDatasetScope,
@@ -153,7 +156,21 @@ class Wp17pResearchOperations:
             )
             if item.session_id.value == fold_session.trading_session_id
         )
-        simulated_cutoff = simulated.close_at + timedelta(minutes=1)
+        references = tuple(
+            checkpoint
+            for checkpoint in catalog.target.checkpoints
+            if checkpoint.role is TargetCheckpointRole.DECISION_REFERENCE
+        )
+        if len(references) != 1:
+            raise ValueError("WP-17P Target requires one Decision reference")
+        reference = references[0]
+        if reference.timing_rule is not TargetTimingRule.SESSION_LOCAL_BAR_END:
+            raise ValueError("WP-17P Target requires a session-local Decision reference")
+        simulated_cutoff = datetime.combine(
+            simulated.session_date,
+            reference.local_time,
+            ZoneInfo(reference.timezone_name),
+        )
         selection_scope = ExploratoryRetrospectiveSelectionScope(
             catalog.backtest.market_archive_id,
             catalog.backtest.market_archive_seal_id,
@@ -232,7 +249,7 @@ class Wp17pResearchOperations:
             feature = app.exploratory_feature_inputs.exact_intraday_move(
                 scope=dataset_scope,
                 instrument_id=item.instrument_id,
-                session_id=simulated.session_id,
+                session_date=simulated.session_date,
                 feature_event_end=simulated.close_at - timedelta(minutes=5),
             )
             if isinstance(feature, ExploratoryIntradayFeatureGap):
