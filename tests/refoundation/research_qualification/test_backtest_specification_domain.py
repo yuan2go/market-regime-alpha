@@ -18,6 +18,7 @@ from market_regime_alpha.research_qualification.domain.backtest import (
     BacktestCostChargeSide,
     BacktestCostKind,
     BacktestEvaluationRequirement,
+    BacktestEvaluationScopeKind,
     BacktestExecutionKind,
     BacktestFoldDependency,
     BacktestFoldSession,
@@ -108,6 +109,51 @@ def _arm(
         strategy_binding_source=BacktestBindingSource.ARM_OVERRIDE,
         cost_binding_source=BacktestBindingSource.ARM_OVERRIDE,
     )
+
+
+def _evaluation_requirements(
+    arms: tuple[BacktestArmSpecification, ...],
+    folds: tuple[BacktestFoldSpecification, ...],
+    arm_folds: tuple[BacktestArmFold, ...],
+    *,
+    first_identity: int,
+) -> tuple[BacktestEvaluationRequirement, ...]:
+    fold_by_id = {
+        fold.exploratory_backtest_fold_id: fold for fold in folds
+    }
+    requirements: list[BacktestEvaluationRequirement] = []
+    for ordinal, participation in enumerate(arm_folds, start=1):
+        requirements.append(
+            BacktestEvaluationRequirement(
+                requirement_id=_id(first_identity + ordinal),
+                ordinal=ordinal,
+                fold_id=participation.fold_id,
+                evaluation_protocol=fold_by_id[
+                    participation.fold_id
+                ].evaluation_protocol,
+                primary=True,
+                arm_id=participation.arm_id,
+            )
+        )
+    validation_protocol = next(
+        fold.evaluation_protocol
+        for fold in folds
+        if fold.purpose is PartitionPurpose.VALIDATION
+    )
+    for arm in arms:
+        ordinal = len(requirements) + 1
+        requirements.append(
+            BacktestEvaluationRequirement(
+                requirement_id=_id(first_identity + ordinal),
+                ordinal=ordinal,
+                fold_id=None,
+                evaluation_protocol=validation_protocol,
+                primary=True,
+                scope_kind=BacktestEvaluationScopeKind.AGGREGATE,
+                arm_id=arm.exploratory_backtest_arm_id,
+            )
+        )
+    return tuple(requirements)
 
 
 def test_arm_meaning_is_orthogonal_and_not_derived_from_arm_code() -> None:
@@ -271,15 +317,11 @@ def test_specification_accepts_arbitrary_arms_and_overlapping_rolling_fit_sessio
                 amount_bps=Decimal("3"),
             ),
         ),
-        evaluation_requirements=tuple(
-            BacktestEvaluationRequirement(
-                requirement_id=_id(450 + fold.ordinal),
-                ordinal=fold.ordinal,
-                fold_id=fold.exploratory_backtest_fold_id,
-                evaluation_protocol=fold.evaluation_protocol,
-                primary=True,
-            )
-            for fold in (first_fit, validation, expanding_fit, later_validation)
+        evaluation_requirements=_evaluation_requirements(
+            arms,
+            (first_fit, validation, expanding_fit, later_validation),
+            arm_folds,
+            first_identity=1000,
         ),
         random_seed=1729,
         code_artifact=_artifact(460),
@@ -310,6 +352,15 @@ def test_specification_accepts_arbitrary_arms_and_overlapping_rolling_fit_sessio
         arm_folds=tuple(
             replace(item, ordinal=ordinal)
             for ordinal, item in enumerate(sparse_bindings, start=1)
+        ),
+        evaluation_requirements=_evaluation_requirements(
+            specification.arms,
+            specification.folds,
+            tuple(
+                replace(item, ordinal=ordinal)
+                for ordinal, item in enumerate(sparse_bindings, start=1)
+            ),
+            first_identity=1100,
         ),
     )
     assert len(sparse.arm_folds) == 10
@@ -420,21 +471,24 @@ def test_rule_only_specification_requires_no_model_training_requirement() -> Non
                 amount_bps=Decimal("0"),
             ),
         ),
-        evaluation_requirements=(
-            BacktestEvaluationRequirement(
-                _id(718),
-                1,
-                fit.exploratory_backtest_fold_id,
-                fit.evaluation_protocol,
-                True,
+        evaluation_requirements=_evaluation_requirements(
+            (arm,),
+            (fit, validation),
+            (
+                BacktestArmFold(
+                    _id(715),
+                    1,
+                    arm.exploratory_backtest_arm_id,
+                    fit.exploratory_backtest_fold_id,
+                ),
+                BacktestArmFold(
+                    _id(716),
+                    2,
+                    arm.exploratory_backtest_arm_id,
+                    validation.exploratory_backtest_fold_id,
+                ),
             ),
-            BacktestEvaluationRequirement(
-                _id(719),
-                2,
-                validation.exploratory_backtest_fold_id,
-                validation.evaluation_protocol,
-                True,
-            ),
+            first_identity=1200,
         ),
         random_seed=1,
         code_artifact=_artifact(720),

@@ -27,6 +27,14 @@ class EvaluationReconciliationError(ResearchValidityError):
     code = "EVALUATION_RECONCILIATION_FAILED"
 
 
+class BacktestReportIntegrityError(ResearchValidityError):
+    code = "BACKTEST_REPORT_INTEGRITY_ERROR"
+
+
+class IncompatibleBacktestComparisonError(ResearchValidityError):
+    code = "BACKTEST_COMPARISON_INCOMPATIBLE"
+
+
 class ResearchRetryableTransactionError(RuntimeError):
     """Infrastructure-classified whole-transaction retry signal."""
 
@@ -47,7 +55,9 @@ __all__ = [
     "EvaluationAcquisitionError",
     "EvaluationProtocolError",
     "EvaluationReconciliationError",
+    "BacktestReportIntegrityError",
     "ExperimentBindingError",
+    "IncompatibleBacktestComparisonError",
     "PartitionInputError",
     "ResearchRetryableTransactionError",
     "ResearchUnknownCommitResultError",

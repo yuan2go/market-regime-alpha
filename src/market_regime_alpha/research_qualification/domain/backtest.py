@@ -71,6 +71,14 @@ class BacktestBindingSource(StrEnum):
     ARM_OVERRIDE = "ARM_OVERRIDE"
 
 
+class BacktestEvaluationScopeKind(StrEnum):
+    FOLD = "FOLD"
+    AGGREGATE = "AGGREGATE"
+    MONTH = "MONTH"
+    QUARTER = "QUARTER"
+    CONTEXT = "CONTEXT"
+
+
 class FrozenBacktestSource(StrEnum):
     CURRENT_RELATIONAL = "CURRENT_RELATIONAL"
     HISTORICAL_EXACT = "HISTORICAL_EXACT"
@@ -421,20 +429,38 @@ class BacktestCostAssumption:
 class BacktestEvaluationRequirement:
     requirement_id: UUID
     ordinal: int
-    fold_id: UUID
+    fold_id: UUID | None
     evaluation_protocol: AuthorityBinding
     primary: bool
+    scope_kind: BacktestEvaluationScopeKind = BacktestEvaluationScopeKind.FOLD
+    arm_id: UUID | None = None
+    slice_key: str | None = None
     content_sha256: ContentHash = field(init=False)
 
     def __post_init__(self) -> None:
         if isinstance(self.ordinal, bool) or self.ordinal < 1:
             raise ValueError("Evaluation requirement ordinal must be positive")
+        if self.arm_id is None:
+            raise ValueError("current Evaluation requirement requires an exact arm")
+        if self.scope_kind is BacktestEvaluationScopeKind.FOLD:
+            if self.fold_id is None or self.slice_key is not None:
+                raise ValueError("FOLD Evaluation requires a Fold and no slice_key")
+        elif self.scope_kind is BacktestEvaluationScopeKind.AGGREGATE:
+            if self.fold_id is not None or self.slice_key is not None:
+                raise ValueError(
+                    "AGGREGATE Evaluation forbids Fold and slice_key"
+                )
+        elif self.fold_id is not None or self.slice_key is None or not self.slice_key:
+            raise ValueError(
+                "time/Context Evaluation forbids Fold and requires slice_key"
+            )
         object.__setattr__(
             self,
             "content_sha256",
             ContentHash(
                 canonical_json_sha256(
                     {
+                        "arm_id": self.arm_id,
                         "evaluation_protocol": _authority_payload(
                             self.evaluation_protocol
                         ),
@@ -442,6 +468,8 @@ class BacktestEvaluationRequirement:
                         "ordinal": self.ordinal,
                         "primary": self.primary,
                         "requirement_id": self.requirement_id,
+                        "scope_kind": self.scope_kind,
+                        "slice_key": self.slice_key,
                     }
                 )
             ),
@@ -537,6 +565,7 @@ class FrozenBacktestRun:
     model_training_requirements: tuple[BacktestModelTrainingRequirement, ...]
     distinct_trading_session_count: int
     fold_session_binding_count: int
+    evaluation_requirements: tuple[BacktestEvaluationRequirement, ...] = ()
     projection_sha256: ContentHash = field(init=False)
 
     def __post_init__(self) -> None:
@@ -550,39 +579,36 @@ class FrozenBacktestRun:
             raise ValueError("distinct trading Session count must be positive")
         if self.fold_session_binding_count < self.distinct_trading_session_count:
             raise ValueError("fold Session binding count cannot be smaller than distinct count")
+        projection: dict[str, object] = {
+            "arm_content_sha256": tuple(
+                str(item.content_sha256) for item in self.arms
+            ),
+            "definition_sha256": str(definition_hash),
+            "distinct_trading_session_count": self.distinct_trading_session_count,
+            "evidence": self.evidence,
+            "exploratory_backtest_run_id": self.exploratory_backtest_run_id,
+            "fold_content_sha256": tuple(
+                str(item.content_sha256) for item in self.folds
+            ),
+            "fold_dependency_content_sha256": tuple(
+                str(item.content_sha256) for item in self.fold_dependencies
+            ),
+            "fold_session_binding_count": self.fold_session_binding_count,
+            "run_code": self.run_code,
+            "source": self.source,
+            "specification_sha256": str(specification_hash),
+        }
+        # Historical exact projections did not own the current relational
+        # requirement closure.  Omitting this key for the private decoder keeps
+        # every previously frozen projection byte/hash stable.
+        if self.evaluation_requirements:
+            projection["evaluation_requirement_content_sha256"] = tuple(
+                str(item.content_sha256) for item in self.evaluation_requirements
+            )
         object.__setattr__(
             self,
             "projection_sha256",
-            ContentHash(
-                canonical_json_sha256(
-                    {
-                        "arm_content_sha256": tuple(
-                            str(item.content_sha256) for item in self.arms
-                        ),
-                        "definition_sha256": str(definition_hash),
-                        "distinct_trading_session_count": (
-                            self.distinct_trading_session_count
-                        ),
-                        "evidence": self.evidence,
-                        "exploratory_backtest_run_id": (
-                            self.exploratory_backtest_run_id
-                        ),
-                        "fold_content_sha256": tuple(
-                            str(item.content_sha256) for item in self.folds
-                        ),
-                        "fold_dependency_content_sha256": tuple(
-                            str(item.content_sha256)
-                            for item in self.fold_dependencies
-                        ),
-                        "fold_session_binding_count": (
-                            self.fold_session_binding_count
-                        ),
-                        "run_code": self.run_code,
-                        "source": self.source,
-                        "specification_sha256": str(specification_hash),
-                    }
-                )
-            ),
+            ContentHash(canonical_json_sha256(projection)),
         )
 
 
@@ -847,19 +873,52 @@ class BacktestSpecification:
             ):
                 raise ValueError("Cost shared binding differs from root default")
         _require_contiguous("Evaluation requirement", self.evaluation_requirements)
-        requirements_by_fold = {
-            item.fold_id: item for item in self.evaluation_requirements
+        requirement_scopes = {
+            (
+                item.scope_kind,
+                item.arm_id,
+                item.fold_id,
+                item.slice_key,
+            )
+            for item in self.evaluation_requirements
         }
-        if len(requirements_by_fold) != len(self.evaluation_requirements) or set(
-            requirements_by_fold
-        ) != set(fold_by_id):
-            raise ValueError("Evaluation requirements must cover every fold exactly once")
-        for fold_id, evaluation_requirement in requirements_by_fold.items():
-            if (
-                evaluation_requirement.evaluation_protocol
-                != fold_by_id[fold_id].evaluation_protocol
-            ):
-                raise ValueError("Evaluation requirement Protocol does not match fold")
+        if len(requirement_scopes) != len(self.evaluation_requirements):
+            raise ValueError("Evaluation requirement scope is duplicated")
+        known_arms = set(arm_by_id)
+        for requirement in self.evaluation_requirements:
+            if requirement.arm_id not in known_arms:
+                raise ValueError("Evaluation requirement references an unknown arm")
+            if requirement.scope_kind is BacktestEvaluationScopeKind.FOLD:
+                assert requirement.fold_id is not None
+                if (requirement.arm_id, requirement.fold_id) not in actual_arm_folds:
+                    raise ValueError(
+                        "FOLD Evaluation requires exact arm-fold participation"
+                    )
+                if (
+                    requirement.evaluation_protocol
+                    != fold_by_id[requirement.fold_id].evaluation_protocol
+                ):
+                    raise ValueError(
+                        "Evaluation requirement Protocol does not match fold"
+                    )
+        fold_evaluation_scopes = {
+            (item.arm_id, item.fold_id)
+            for item in self.evaluation_requirements
+            if item.scope_kind is BacktestEvaluationScopeKind.FOLD
+        }
+        if fold_evaluation_scopes != actual_arm_folds:
+            raise ValueError(
+                "FOLD Evaluation requirements must cover every arm-fold exactly once"
+            )
+        aggregate_evaluation_arms = {
+            item.arm_id
+            for item in self.evaluation_requirements
+            if item.scope_kind is BacktestEvaluationScopeKind.AGGREGATE
+        }
+        if aggregate_evaluation_arms != known_arms:
+            raise ValueError(
+                "AGGREGATE Evaluation requirements must cover every arm exactly once"
+            )
 
         distinct_count = len(session_dates)
         binding_count = sum(len(item.sessions) for item in self.folds)
@@ -1069,6 +1128,7 @@ def freeze_backtest_specification(
             specification.distinct_trading_session_count
         ),
         fold_session_binding_count=specification.fold_session_binding_count,
+        evaluation_requirements=specification.evaluation_requirements,
     )
 
 
@@ -1098,6 +1158,7 @@ __all__ = [
     "BacktestCostChargeSide",
     "BacktestCostKind",
     "BacktestEvaluationRequirement",
+    "BacktestEvaluationScopeKind",
     "BacktestExecutionKind",
     "BacktestFoldDependency",
     "BacktestFoldSession",

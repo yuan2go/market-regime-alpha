@@ -21,6 +21,7 @@ from market_regime_alpha.research_qualification.domain.backtest import (
     BacktestCostChargeSide,
     BacktestCostKind,
     BacktestEvaluationRequirement,
+    BacktestEvaluationScopeKind,
     BacktestExecutionKind,
     BacktestFoldDependency,
     BacktestFoldSession,
@@ -255,26 +256,30 @@ class PostgresBacktestQueryPort:
             )
             for row in cost_rows
         )
-        evaluations: list[BacktestEvaluationRequirement] = []
-        for row in evaluation_rows:
-            if row["scope_kind"] != "FOLD" or row["exploratory_backtest_fold_id"] is None:
-                raise ArtifactIntegrityError(
-                    "unsupported current Evaluation requirement scope"
-                )
-            evaluations.append(
-                BacktestEvaluationRequirement(
-                    requirement_id=UUID(
-                        str(row["backtest_evaluation_requirement_id"])
-                    ),
-                    ordinal=int(row["ordinal"]),
-                    fold_id=UUID(str(row["exploratory_backtest_fold_id"])),
-                    evaluation_protocol=AuthorityBinding(
-                        UUID(str(row["evaluation_protocol_id"])),
-                        str(row["evaluation_protocol_sha256"]),
-                    ),
-                    primary=bool(row["is_primary"]),
-                )
+        evaluations = [
+            BacktestEvaluationRequirement(
+                requirement_id=UUID(
+                    str(row["backtest_evaluation_requirement_id"])
+                ),
+                ordinal=int(row["ordinal"]),
+                fold_id=(
+                    None
+                    if row["exploratory_backtest_fold_id"] is None
+                    else UUID(str(row["exploratory_backtest_fold_id"]))
+                ),
+                evaluation_protocol=AuthorityBinding(
+                    UUID(str(row["evaluation_protocol_id"])),
+                    str(row["evaluation_protocol_sha256"]),
+                ),
+                primary=bool(row["is_primary"]),
+                scope_kind=BacktestEvaluationScopeKind(str(row["scope_kind"])),
+                arm_id=UUID(str(row["exploratory_backtest_arm_id"])),
+                slice_key=(
+                    None if row["slice_key"] is None else str(row["slice_key"])
+                ),
             )
+            for row in evaluation_rows
+        ]
         specification = BacktestSpecification(
             exploratory_backtest_run_id=UUID(
                 str(root["exploratory_backtest_run_id"])

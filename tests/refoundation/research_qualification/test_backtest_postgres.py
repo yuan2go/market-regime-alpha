@@ -29,6 +29,7 @@ from market_regime_alpha.research_qualification.domain.backtest import (
     BacktestCostChargeSide,
     BacktestCostKind,
     BacktestEvaluationRequirement,
+    BacktestEvaluationScopeKind,
     BacktestExecutionKind,
     BacktestFoldDependency,
     BacktestFoldSession,
@@ -267,15 +268,31 @@ def _current_specification(stack) -> BacktestSpecification:
             ((fold_item, arm) for fold_item in folds for arm in arms), start=1
         )
     )
+    fold_by_id = {
+        fold_item.exploratory_backtest_fold_id: fold_item
+        for fold_item in folds
+    }
     evaluations = tuple(
         BacktestEvaluationRequirement(
             uuid4(),
-            fold_item.ordinal,
-            fold_item.exploratory_backtest_fold_id,
-            fold_item.evaluation_protocol,
+            ordinal,
+            participation.fold_id,
+            fold_by_id[participation.fold_id].evaluation_protocol,
             True,
+            arm_id=participation.arm_id,
         )
-        for fold_item in folds
+        for ordinal, participation in enumerate(arm_folds, start=1)
+    ) + tuple(
+        BacktestEvaluationRequirement(
+            uuid4(),
+            len(arm_folds) + ordinal,
+            None,
+            validation_protocol,
+            True,
+            scope_kind=BacktestEvaluationScopeKind.AGGREGATE,
+            arm_id=arm.exploratory_backtest_arm_id,
+        )
+        for ordinal, arm in enumerate(arms, start=1)
     )
     return BacktestSpecification(
         exploratory_backtest_run_id=uuid4(),
@@ -476,11 +493,22 @@ def test_current_predeclaration_freezes_sparse_arm_fold_participation(
         for binding in complete.arm_folds
         if not (binding.arm_id == first_arm_id and binding.fold_id in fit_ids)
     )
+    selected_scopes = {(item.arm_id, item.fold_id) for item in selected}
+    selected_requirements = tuple(
+        requirement
+        for requirement in complete.evaluation_requirements
+        if requirement.scope_kind is not BacktestEvaluationScopeKind.FOLD
+        or (requirement.arm_id, requirement.fold_id) in selected_scopes
+    )
     sparse = replace(
         complete,
         arm_folds=tuple(
             replace(binding, ordinal=ordinal)
             for ordinal, binding in enumerate(selected, start=1)
+        ),
+        evaluation_requirements=tuple(
+            replace(requirement, ordinal=ordinal)
+            for ordinal, requirement in enumerate(selected_requirements, start=1)
         ),
     )
     application = BacktestApplication(

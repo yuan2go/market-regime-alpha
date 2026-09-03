@@ -11663,6 +11663,115 @@ CREATE TABLE mra.evaluation_protocol_metric (
         AND content_sha256 ~ '^[0-9a-f]{64}$'
     )
 );
+
+-- Current generic Backtests freeze the exact numerical implementation as a
+-- root-owned companion.  Historical EvaluationProtocolMetric rows remain
+-- valid without this companion and are never rewritten.
+CREATE TABLE mra.evaluation_metric_formula (
+    evaluation_protocol_metric_id uuid PRIMARY KEY,
+    evaluation_protocol_id uuid NOT NULL,
+    surface_code text NOT NULL,
+    formula_code text NOT NULL,
+    formula_version integer NOT NULL,
+    decimal_precision integer NOT NULL,
+    rounding_mode text NOT NULL,
+    parameter_count integer NOT NULL,
+    parameter_roster_sha256 text NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT evaluation_metric_formula_exact_uk UNIQUE (
+        evaluation_protocol_metric_id, evaluation_protocol_id,
+        content_sha256
+    ),
+    CONSTRAINT evaluation_metric_formula_metric_fk FOREIGN KEY (
+        evaluation_protocol_metric_id, evaluation_protocol_id
+    ) REFERENCES mra.evaluation_protocol_metric(
+        evaluation_protocol_metric_id, evaluation_protocol_id
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT evaluation_metric_formula_shape_ck CHECK (
+        surface_code IN (
+            'DATA', 'CANDIDATE', 'CONTEXT', 'SIGNAL_FORECAST',
+            'PORTFOLIO_RISK', 'ECONOMICS', 'STABILITY'
+        )
+        AND formula_code IN (
+            'coverage_rate', 'missingness_rate', 'source_gap_rate',
+            'unavailable_rate', 'mean', 'sample_stddev', 'icir',
+            'rank_ic', 'top_k_return', 'top_bottom_spread', 'hit_rate',
+            'selected_ratio', 'predictive_bias', 'predictive_mae',
+            'predictive_rmse', 'gross_exposure', 'net_exposure',
+            'turnover', 'net_return_assumed_cost', 'cumulative_return',
+            'annualized_return', 'volatility', 'sharpe', 'sortino',
+            'calmar', 'max_drawdown', 'win_rate', 'mfe_mean',
+            'max_adverse_excursion_mean'
+        )
+        AND formula_version > 0
+        AND decimal_precision BETWEEN 16 AND 100
+        AND rounding_mode IN (
+            'ROUND_DOWN', 'ROUND_HALF_EVEN', 'ROUND_HALF_UP', 'ROUND_UP'
+        )
+        AND parameter_count >= 0
+        AND parameter_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE TABLE mra.evaluation_formula_parameter (
+    formula_parameter_id uuid PRIMARY KEY,
+    evaluation_protocol_metric_id uuid NOT NULL,
+    evaluation_protocol_id uuid NOT NULL,
+    formula_content_sha256 text NOT NULL,
+    ordinal integer NOT NULL,
+    parameter_code text NOT NULL,
+    value_type text NOT NULL,
+    decimal_value numeric,
+    integer_value bigint,
+    boolean_value boolean,
+    text_value text,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT evaluation_formula_parameter_ordinal_uk UNIQUE (
+        evaluation_protocol_metric_id, ordinal
+    ),
+    CONSTRAINT evaluation_formula_parameter_code_uk UNIQUE (
+        evaluation_protocol_metric_id, parameter_code
+    ),
+    CONSTRAINT evaluation_formula_parameter_owner_fk FOREIGN KEY (
+        evaluation_protocol_metric_id, evaluation_protocol_id,
+        formula_content_sha256
+    ) REFERENCES mra.evaluation_metric_formula(
+        evaluation_protocol_metric_id, evaluation_protocol_id,
+        content_sha256
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT evaluation_formula_parameter_shape_ck CHECK (
+        ordinal > 0
+        AND parameter_code ~ '^[a-z][a-z0-9_-]{0,99}$'
+        AND value_type IN ('DECIMAL', 'INTEGER', 'BOOLEAN', 'TEXT')
+        AND (
+            (value_type = 'DECIMAL' AND decimal_value IS NOT NULL
+             AND integer_value IS NULL AND boolean_value IS NULL
+             AND text_value IS NULL)
+         OR (value_type = 'INTEGER' AND decimal_value IS NULL
+             AND integer_value IS NOT NULL AND boolean_value IS NULL
+             AND text_value IS NULL)
+         OR (value_type = 'BOOLEAN' AND decimal_value IS NULL
+             AND integer_value IS NULL AND boolean_value IS NOT NULL
+             AND text_value IS NULL)
+         OR (value_type = 'TEXT' AND decimal_value IS NULL
+             AND integer_value IS NULL AND boolean_value IS NULL
+             AND text_value IS NOT NULL AND text_value <> '')
+        )
+        AND formula_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE INDEX evaluation_metric_formula_protocol_idx
+    ON mra.evaluation_metric_formula(evaluation_protocol_id);
+CREATE INDEX evaluation_formula_parameter_owner_idx
+    ON mra.evaluation_formula_parameter(
+        evaluation_protocol_metric_id, evaluation_protocol_id,
+        formula_content_sha256
+    );
 CREATE INDEX evaluation_protocol_target_fk_idx ON mra.evaluation_protocol (
     target_definition_id, target_version, target_definition_sha256
 );
@@ -11943,6 +12052,7 @@ CREATE TABLE mra.evaluation_metric (
     boolean_value boolean,
     estimable_count integer NOT NULL,
     acceptance_state text NOT NULL,
+    reason_code text,
     content_sha256 text NOT NULL,
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     CONSTRAINT evaluation_metric_run_protocol_metric_uk UNIQUE (evaluation_run_id, evaluation_protocol_metric_id),
@@ -11964,6 +12074,7 @@ CREATE TABLE mra.evaluation_metric (
         metric_state IN ('ESTIMATED', 'NOT_ESTIMABLE')
         AND estimable_count >= 0
         AND acceptance_state IN ('ACCEPTED', 'REJECTED', 'NOT_APPLICABLE', 'NOT_ESTIMABLE')
+        AND (reason_code IS NULL OR reason_code ~ '^[A-Z][A-Z0-9_]{0,99}$')
         AND ((metric_state = 'NOT_ESTIMABLE' AND decimal_value IS NULL AND boolean_value IS NULL AND acceptance_state = 'NOT_ESTIMABLE')
           OR (metric_state = 'ESTIMATED' AND (decimal_value IS NOT NULL OR boolean_value IS NOT NULL)))
         AND content_sha256 ~ '^[0-9a-f]{64}$'
@@ -14051,6 +14162,111 @@ BEGIN
 END;
 $$;
 
+CREATE FUNCTION mra.validate_evaluation_formula_closure()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE actual_count integer;
+DECLARE actual_hash text;
+DECLARE expected_hash text;
+DECLARE expected_metric_hash text;
+BEGIN
+    SELECT count(*), mra.canonical_sha256(mra.canonical_json_text(coalesce(
+        jsonb_agg(jsonb_build_object(
+            'content_sha256', content_sha256,
+            'formula_parameter_id', formula_parameter_id,
+            'ordinal', ordinal
+        ) ORDER BY ordinal), '[]'::jsonb)))
+      INTO actual_count, actual_hash
+      FROM mra.evaluation_formula_parameter
+     WHERE evaluation_protocol_metric_id =
+           NEW.evaluation_protocol_metric_id;
+    IF (actual_count, actual_hash) IS DISTINCT FROM
+       (NEW.parameter_count, NEW.parameter_roster_sha256) THEN
+        RAISE EXCEPTION 'Evaluation formula parameter roster is incomplete'
+            USING ERRCODE = '55000';
+    END IF;
+    IF EXISTS (
+        SELECT 1
+          FROM mra.evaluation_formula_parameter AS parameter
+         WHERE parameter.evaluation_protocol_metric_id =
+               NEW.evaluation_protocol_metric_id
+           AND parameter.content_sha256 <> mra.canonical_sha256(
+               mra.canonical_json_text(jsonb_build_object(
+                   'boolean_value', parameter.boolean_value,
+                   'decimal_value', parameter.decimal_value::text,
+                   'formula_parameter_id', parameter.formula_parameter_id,
+                   'integer_value', parameter.integer_value,
+                   'ordinal', parameter.ordinal,
+                   'parameter_code', parameter.parameter_code,
+                   'text_value', parameter.text_value,
+                   'value_type', parameter.value_type
+               )))
+    ) THEN
+        RAISE EXCEPTION 'Evaluation formula parameter content hash is invalid'
+            USING ERRCODE = '55000';
+    END IF;
+    expected_hash := mra.canonical_sha256(mra.canonical_json_text(
+        jsonb_build_object(
+            'decimal_precision', NEW.decimal_precision,
+            'evaluation_protocol_metric_id',
+                NEW.evaluation_protocol_metric_id,
+            'formula_code', NEW.formula_code,
+            'formula_version', NEW.formula_version,
+            'parameter_count', NEW.parameter_count,
+            'parameter_roster_sha256', NEW.parameter_roster_sha256,
+            'rounding_mode', NEW.rounding_mode,
+            'surface', NEW.surface_code
+        )
+    ));
+    IF NEW.content_sha256 <> expected_hash THEN
+        RAISE EXCEPTION 'Evaluation formula content hash is invalid'
+            USING ERRCODE = '55000';
+    END IF;
+    SELECT mra.canonical_sha256(mra.canonical_json_text(jsonb_build_object(
+        'acceptance_operator', metric.acceptance_operator,
+        'acceptance_threshold', metric.acceptance_threshold::text,
+        'backtest_arm_kind', metric.backtest_arm_kind,
+        'candidate_disposition', metric.candidate_disposition,
+        'direction', metric.direction,
+        'formula_content_sha256', NEW.content_sha256,
+        'inclusion_policy', metric.inclusion_policy,
+        'metric_code', metric.metric_code,
+        'minimum_estimable_count', metric.minimum_estimable_count,
+        'missingness_policy', metric.missingness_policy,
+        'ordinal', metric.ordinal,
+        'reducer', metric.reducer,
+        'slice_kind', metric.slice_kind,
+        'source_kind', metric.source_kind,
+        'source_measure', metric.source_measure,
+        'source_metric_code', metric.source_metric_code,
+        'source_target_metric_definition_id',
+            metric.source_target_metric_definition_id,
+        'source_value_type', metric.source_value_type
+    ))) INTO expected_metric_hash
+      FROM mra.evaluation_protocol_metric AS metric
+     WHERE metric.evaluation_protocol_metric_id =
+           NEW.evaluation_protocol_metric_id
+       AND metric.evaluation_protocol_id = NEW.evaluation_protocol_id;
+    IF expected_metric_hash IS NULL OR EXISTS (
+        SELECT 1
+          FROM mra.evaluation_protocol_metric AS metric
+         WHERE metric.evaluation_protocol_metric_id =
+               NEW.evaluation_protocol_metric_id
+           AND metric.content_sha256 <> expected_metric_hash
+    ) THEN
+        RAISE EXCEPTION 'Evaluation metric and formula hashes are not bound'
+            USING ERRCODE = '55000', DETAIL = format(
+                'expected=%s observed=%s',
+                expected_metric_hash,
+                (SELECT metric.content_sha256
+                   FROM mra.evaluation_protocol_metric AS metric
+                  WHERE metric.evaluation_protocol_metric_id =
+                        NEW.evaluation_protocol_metric_id)
+            );
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
 CREATE FUNCTION mra.guard_experiment_run_order()
 RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE registration_time timestamptz;
@@ -14527,6 +14743,25 @@ BEGIN
 END;
 $$;
 
+CREATE FUNCTION mra.guard_evaluation_metric_formula_result()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE has_formula boolean;
+BEGIN
+    SELECT EXISTS (
+        SELECT 1
+        FROM mra.evaluation_metric_formula AS formula
+        WHERE formula.evaluation_protocol_metric_id =
+              NEW.evaluation_protocol_metric_id
+          AND formula.evaluation_protocol_id = NEW.evaluation_protocol_id
+    ) INTO has_formula;
+    IF has_formula IS DISTINCT FROM (NEW.reason_code IS NOT NULL) THEN
+        RAISE EXCEPTION 'EvaluationMetric formula result reason shape is invalid'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
 CREATE FUNCTION mra.guard_research_outcome_access()
 RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE run_status text;
@@ -14672,6 +14907,22 @@ FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
 CREATE TRIGGER evaluation_protocol_metric_open_guard
 BEFORE INSERT ON mra.evaluation_protocol_metric
 FOR EACH ROW EXECUTE FUNCTION mra.guard_open_evaluation_protocol_metric();
+CREATE TRIGGER evaluation_metric_formula_append_only
+BEFORE UPDATE OR DELETE ON mra.evaluation_metric_formula
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER evaluation_metric_formula_open_guard
+BEFORE INSERT ON mra.evaluation_metric_formula
+FOR EACH ROW EXECUTE FUNCTION mra.guard_open_evaluation_protocol_metric();
+CREATE CONSTRAINT TRIGGER evaluation_metric_formula_closure_guard
+AFTER INSERT ON mra.evaluation_metric_formula
+DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW EXECUTE FUNCTION mra.validate_evaluation_formula_closure();
+CREATE TRIGGER evaluation_formula_parameter_append_only
+BEFORE UPDATE OR DELETE ON mra.evaluation_formula_parameter
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER evaluation_formula_parameter_open_guard
+BEFORE INSERT ON mra.evaluation_formula_parameter
+FOR EACH ROW EXECUTE FUNCTION mra.guard_open_evaluation_protocol_metric();
 CREATE TRIGGER evaluation_run_open_guard
 BEFORE INSERT ON mra.evaluation_run
 FOR EACH ROW EXECUTE FUNCTION mra.guard_evaluation_run_open();
@@ -14696,6 +14947,9 @@ FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
 CREATE TRIGGER evaluation_metric_insert_guard
 BEFORE INSERT ON mra.evaluation_metric
 FOR EACH ROW EXECUTE FUNCTION mra.guard_evaluation_metric_insert();
+CREATE TRIGGER evaluation_metric_formula_result_guard
+BEFORE INSERT ON mra.evaluation_metric
+FOR EACH ROW EXECUTE FUNCTION mra.guard_evaluation_metric_formula_result();
 CREATE TRIGGER evaluation_metric_observation_append_only
 BEFORE UPDATE OR DELETE ON mra.evaluation_metric_observation
 FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
@@ -22535,6 +22789,10 @@ CREATE TABLE mra.backtest_evaluation_requirement (
     CONSTRAINT backtest_evaluation_requirement_ordinal_uk UNIQUE (
         exploratory_backtest_run_id, ordinal
     ),
+    CONSTRAINT backtest_evaluation_requirement_scope_uk UNIQUE NULLS NOT DISTINCT (
+        exploratory_backtest_run_id, scope_kind,
+        exploratory_backtest_arm_id, exploratory_backtest_fold_id, slice_key
+    ),
     CONSTRAINT backtest_evaluation_requirement_owner_fk FOREIGN KEY (
         exploratory_backtest_run_id, specification_sha256
     ) REFERENCES mra.backtest_specification(
@@ -22558,12 +22816,14 @@ CREATE TABLE mra.backtest_evaluation_requirement (
     CONSTRAINT backtest_evaluation_requirement_shape_ck CHECK (
         ordinal > 0
         AND scope_kind IN ('FOLD', 'AGGREGATE', 'MONTH', 'QUARTER', 'CONTEXT')
+        AND exploratory_backtest_arm_id IS NOT NULL
         AND ((scope_kind = 'AGGREGATE'
               AND exploratory_backtest_fold_id IS NULL AND slice_key IS NULL)
           OR (scope_kind = 'FOLD'
               AND exploratory_backtest_fold_id IS NOT NULL AND slice_key IS NULL)
           OR (scope_kind IN ('MONTH', 'QUARTER', 'CONTEXT')
-              AND slice_key IS NOT NULL))
+              AND exploratory_backtest_fold_id IS NULL
+              AND slice_key IS NOT NULL AND length(slice_key) > 0))
         AND specification_sha256 ~ '^[0-9a-f]{64}$'
         AND evaluation_protocol_sha256 ~ '^[0-9a-f]{64}$'
         AND content_sha256 ~ '^[0-9a-f]{64}$'
@@ -23131,6 +23391,66 @@ BEGIN
        (NEW.evaluation_requirement_count,
         NEW.evaluation_requirement_roster_sha256) THEN
         RAISE EXCEPTION 'Current Backtest Evaluation requirement roster differs'
+            USING ERRCODE = '55000';
+    END IF;
+    IF EXISTS (
+        SELECT 1
+          FROM mra.backtest_arm_fold AS participation
+          JOIN mra.exploratory_backtest_fold AS fold
+            ON fold.exploratory_backtest_fold_id =
+               participation.exploratory_backtest_fold_id
+           AND fold.exploratory_backtest_run_id =
+               participation.exploratory_backtest_run_id
+          LEFT JOIN mra.backtest_evaluation_requirement AS requirement
+            ON requirement.exploratory_backtest_run_id =
+               participation.exploratory_backtest_run_id
+           AND requirement.scope_kind = 'FOLD'
+           AND requirement.exploratory_backtest_arm_id =
+               participation.exploratory_backtest_arm_id
+           AND requirement.exploratory_backtest_fold_id =
+               participation.exploratory_backtest_fold_id
+           AND requirement.evaluation_protocol_id = fold.evaluation_protocol_id
+           AND requirement.evaluation_protocol_sha256 =
+               fold.evaluation_protocol_sha256
+         WHERE participation.exploratory_backtest_run_id =
+               NEW.exploratory_backtest_run_id
+           AND requirement.backtest_evaluation_requirement_id IS NULL
+    ) THEN
+        RAISE EXCEPTION 'Current Backtest arm-fold Evaluation coverage is incomplete'
+            USING ERRCODE = '55000';
+    END IF;
+    IF EXISTS (
+        SELECT 1
+          FROM mra.backtest_arm_specification AS arm
+          LEFT JOIN mra.backtest_evaluation_requirement AS requirement
+            ON requirement.exploratory_backtest_run_id =
+               arm.exploratory_backtest_run_id
+           AND requirement.scope_kind = 'AGGREGATE'
+           AND requirement.exploratory_backtest_arm_id =
+               arm.exploratory_backtest_arm_id
+         WHERE arm.exploratory_backtest_run_id =
+               NEW.exploratory_backtest_run_id
+           AND requirement.backtest_evaluation_requirement_id IS NULL
+    ) THEN
+        RAISE EXCEPTION 'Current Backtest aggregate Evaluation coverage is incomplete'
+            USING ERRCODE = '55000';
+    END IF;
+    IF EXISTS (
+        SELECT 1
+          FROM mra.backtest_evaluation_requirement AS requirement
+          JOIN mra.evaluation_protocol_metric AS metric
+            ON metric.evaluation_protocol_id =
+               requirement.evaluation_protocol_id
+          LEFT JOIN mra.evaluation_metric_formula AS formula
+            ON formula.evaluation_protocol_metric_id =
+               metric.evaluation_protocol_metric_id
+           AND formula.evaluation_protocol_id =
+               metric.evaluation_protocol_id
+         WHERE requirement.exploratory_backtest_run_id =
+               NEW.exploratory_backtest_run_id
+           AND formula.evaluation_protocol_metric_id IS NULL
+    ) THEN
+        RAISE EXCEPTION 'Current Backtest Evaluation formula closure is incomplete'
             USING ERRCODE = '55000';
     END IF;
     IF (SELECT count(*) FROM mra.backtest_arm_specification

@@ -7,6 +7,7 @@ from typing import Iterable, Mapping
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from market_regime_alpha.research_qualification.domain.backtest import (
+    BacktestEvaluationScopeKind,
     BacktestExecutionKind,
     BacktestSessionRole,
     FrozenBacktestRun,
@@ -36,6 +37,7 @@ class _ActionDraft:
     fold_id: UUID | None = None
     fold_session_id: UUID | None = None
     model_training_requirement_id: UUID | None = None
+    evaluation_requirement_id: UUID | None = None
     dependency_action_ids: tuple[UUID, ...] = ()
 
 
@@ -62,6 +64,7 @@ class BacktestExecutionPlanner:
                     draft.model_training_requirement_id
                 ),
                 dependency_action_ids=draft.dependency_action_ids,
+                evaluation_requirement_id=draft.evaluation_requirement_id,
             )
             for ordinal, draft in enumerate(ordered, start=1)
         )
@@ -134,7 +137,9 @@ class BacktestExecutionPlanner:
         }
         drafts: list[_ActionDraft] = []
         outcome_ids_by_fold: dict[UUID, list[UUID]] = {}
+        outcome_ids_by_arm_fold: dict[tuple[UUID, UUID], list[UUID]] = {}
         evaluation_ids: dict[UUID, UUID] = {}
+        evaluation_ids_by_arm_fold: dict[tuple[UUID, UUID], UUID] = {}
 
         for arm_fold in run.arm_folds:
             arm = arm_by_id[arm_fold.arm_id]
@@ -213,24 +218,86 @@ class BacktestExecutionPlanner:
                     )
                 )
                 outcome_ids_by_fold.setdefault(arm_fold.fold_id, []).append(outcome_id)
+                outcome_ids_by_arm_fold.setdefault(
+                    (arm_fold.arm_id, arm_fold.fold_id), []
+                ).append(outcome_id)
 
-        for fold in run.folds:
-            evaluation_id = _action_id(
-                run,
-                BacktestActionKind.COMPLETE_FOLD_EVALUATION,
-                fold_id=fold.exploratory_backtest_fold_id,
+        if run.evaluation_requirements:
+            fold_requirements = tuple(
+                requirement
+                for requirement in run.evaluation_requirements
+                if requirement.scope_kind is BacktestEvaluationScopeKind.FOLD
             )
-            evaluation_ids[fold.exploratory_backtest_fold_id] = evaluation_id
-            drafts.append(
-                _ActionDraft(
-                    evaluation_id,
+            for requirement in fold_requirements:
+                assert requirement.arm_id is not None
+                assert requirement.fold_id is not None
+                evaluation_id = _action_id(
+                    run,
+                    BacktestActionKind.COMPLETE_FOLD_EVALUATION,
+                    arm_id=requirement.arm_id,
+                    fold_id=requirement.fold_id,
+                    requirement_id=requirement.requirement_id,
+                )
+                evaluation_ids_by_arm_fold[
+                    (requirement.arm_id, requirement.fold_id)
+                ] = evaluation_id
+                drafts.append(
+                    _ActionDraft(
+                        evaluation_id,
+                        BacktestActionKind.COMPLETE_FOLD_EVALUATION,
+                        arm_id=requirement.arm_id,
+                        fold_id=requirement.fold_id,
+                        evaluation_requirement_id=requirement.requirement_id,
+                        dependency_action_ids=tuple(
+                            outcome_ids_by_arm_fold[
+                                (requirement.arm_id, requirement.fold_id)
+                            ]
+                        ),
+                    )
+                )
+            for requirement in run.evaluation_requirements:
+                if requirement.scope_kind is BacktestEvaluationScopeKind.FOLD:
+                    continue
+                assert requirement.arm_id is not None
+                dependency_ids = tuple(
+                    evaluation_ids_by_arm_fold[(requirement.arm_id, fold.fold_id)]
+                    for fold in run.arm_folds
+                    if fold.arm_id == requirement.arm_id
+                )
+                drafts.append(
+                    _ActionDraft(
+                        _action_id(
+                            run,
+                            BacktestActionKind.COMPLETE_AGGREGATE_EVALUATION,
+                            arm_id=requirement.arm_id,
+                            requirement_id=requirement.requirement_id,
+                        ),
+                        BacktestActionKind.COMPLETE_AGGREGATE_EVALUATION,
+                        arm_id=requirement.arm_id,
+                        evaluation_requirement_id=requirement.requirement_id,
+                        dependency_action_ids=dependency_ids,
+                    )
+                )
+        else:
+            # Private exact historical projections have no current requirement
+            # closure.  Preserve their original fold-level action identities.
+            for fold in run.folds:
+                evaluation_id = _action_id(
+                    run,
                     BacktestActionKind.COMPLETE_FOLD_EVALUATION,
                     fold_id=fold.exploratory_backtest_fold_id,
-                    dependency_action_ids=tuple(
-                        outcome_ids_by_fold[fold.exploratory_backtest_fold_id]
-                    ),
                 )
-            )
+                evaluation_ids[fold.exploratory_backtest_fold_id] = evaluation_id
+                drafts.append(
+                    _ActionDraft(
+                        evaluation_id,
+                        BacktestActionKind.COMPLETE_FOLD_EVALUATION,
+                        fold_id=fold.exploratory_backtest_fold_id,
+                        dependency_action_ids=tuple(
+                            outcome_ids_by_fold[fold.exploratory_backtest_fold_id]
+                        ),
+                    )
+                )
 
         for requirement in run.model_training_requirements:
             drafts.append(
@@ -247,7 +314,11 @@ class BacktestExecutionPlanner:
                     requirement.fit_fold_id,
                     model_training_requirement_id=requirement.requirement_id,
                     dependency_action_ids=(
-                        evaluation_ids[requirement.fit_fold_id],
+                        evaluation_ids_by_arm_fold[
+                            (requirement.model_arm_id, requirement.fit_fold_id)
+                        ]
+                        if run.evaluation_requirements
+                        else evaluation_ids[requirement.fit_fold_id],
                     ),
                 )
             )

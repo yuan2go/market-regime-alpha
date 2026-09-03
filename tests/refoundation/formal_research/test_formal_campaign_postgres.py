@@ -85,6 +85,13 @@ from market_regime_alpha.research_qualification.domain.evaluation import (
     EvaluationProtocolPlan,
     ProtocolMetricDefinition,
 )
+from market_regime_alpha.research_qualification.domain.evaluation_formula import (
+    BacktestFormulaCode,
+    BacktestMetricSurface,
+    EvaluationFormulaDefinition,
+    EvaluationFormulaParameter,
+    FormulaParameterType,
+)
 from market_regime_alpha.research_qualification.domain.evidence import (
     EvidenceClass,
     EvidenceOriginClass,
@@ -336,6 +343,24 @@ def _evaluation_protocols(stack, target):
         PartitionPurpose.VALIDATION,
         PartitionPurpose.LOCKED_OOS,
     ):
+        metric_id = uuid4()
+        formula = EvaluationFormulaDefinition(
+            evaluation_protocol_metric_id=metric_id,
+            formula_code=BacktestFormulaCode.MEAN,
+            formula_version=1,
+            decimal_precision=28,
+            rounding_mode="ROUND_HALF_EVEN",
+            parameters=(
+                EvaluationFormulaParameter(
+                    formula_parameter_id=uuid4(),
+                    ordinal=1,
+                    parameter_code="minimum_observations",
+                    value_type=FormulaParameterType.INTEGER,
+                    integer_value=1,
+                ),
+            ),
+            surface=BacktestMetricSurface.ECONOMICS,
+        )
         protocol = EvaluationProtocolPlan(
             evaluation_protocol_id=uuid4(),
             protocol_code=f"wp14-{purpose.value.lower()}-{uuid4().hex[:8]}",
@@ -347,7 +372,7 @@ def _evaluation_protocols(stack, target):
             decision_rule="Apply the immutable declared descriptive reducer.",
             metrics=(
                 ProtocolMetricDefinition(
-                    evaluation_protocol_metric_id=uuid4(),
+                    evaluation_protocol_metric_id=metric_id,
                     metric_code="mean-return",
                     ordinal=1,
                     source_target_metric_definition_id=(
@@ -362,6 +387,7 @@ def _evaluation_protocols(stack, target):
                     minimum_estimable_count=1,
                     acceptance_operator=AcceptanceOperator.AT_LEAST,
                     acceptance_threshold=Decimal("0"),
+                    formula=formula,
                 ),
             ),
             code_artifact=target.algorithm.code_artifact,

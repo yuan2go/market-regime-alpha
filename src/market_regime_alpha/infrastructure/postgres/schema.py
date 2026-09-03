@@ -382,6 +382,8 @@ EXPECTED_RESEARCH_VALIDITY_TABLES: Final[frozenset[str]] = frozenset(
         "experiment_run",
         "evaluation_protocol",
         "evaluation_protocol_metric",
+        "evaluation_metric_formula",
+        "evaluation_formula_parameter",
         "evaluation_run",
         "research_partition_outcome_access",
         "evaluation_observation",

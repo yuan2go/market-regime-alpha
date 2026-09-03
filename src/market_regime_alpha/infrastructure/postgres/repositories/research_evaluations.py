@@ -11,16 +11,31 @@ import psycopg
 
 from market_regime_alpha.research_qualification.domain.evaluation import (
     EvaluationInput,
+    EvaluationMetricResult,
     EvaluationProtocolPlan,
     EvaluationRunPlan,
     ProtocolMetricDefinition,
     evaluate_metric,
 )
+from market_regime_alpha.research_qualification.domain.evaluation_formula import (
+    BacktestFormulaCode,
+    BacktestMetricSurface,
+    EvaluationFormulaDefinition,
+    EvaluationFormulaParameter,
+    FormulaParameterType,
+    FormulaObservation,
+    FormulaResultState,
+    FormulaSourceState,
+    FrozenRankingMembership,
+    evaluate_backtest_formula,
+)
 from market_regime_alpha.research_qualification.domain.research_vocabulary import (
     AcceptanceOperator,
+    AcceptanceState,
     CandidateDisposition,
     EvaluationInclusionPolicy,
     EvaluationMissingnessPolicy,
+    EvaluationMetricState,
     EvaluationReducer,
     EvaluationSourceKind,
     EvaluationSourceMeasure,
@@ -47,6 +62,9 @@ class _ResolvedMetricInput:
     source: tuple[Any, ...]
     input: EvaluationInput
     turnover: Decimal | None = None
+    previous_weight: Decimal | None = None
+    buy_turnover: Decimal | None = None
+    sell_turnover: Decimal | None = None
     effective_weight: Decimal | None = None
     gross_return: Decimal | None = None
     net_return: Decimal | None = None
@@ -115,6 +133,64 @@ class PostgresEvaluationRepository:
                     for metric in plan.metrics
                 ),
             )
+            for metric in plan.metrics:
+                formula = metric.formula
+                if formula is None:
+                    continue
+                cursor.executemany(
+                    """
+                    INSERT INTO mra.evaluation_formula_parameter (
+                        formula_parameter_id,
+                        evaluation_protocol_metric_id,
+                        evaluation_protocol_id,
+                        formula_content_sha256, ordinal, parameter_code,
+                        value_type, decimal_value, integer_value,
+                        boolean_value, text_value, content_sha256
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                    )
+                    """,
+                    (
+                        (
+                            parameter.formula_parameter_id,
+                            metric.evaluation_protocol_metric_id,
+                            plan.evaluation_protocol_id,
+                            str(formula.content_sha256),
+                            parameter.ordinal,
+                            parameter.parameter_code,
+                            parameter.value_type.value,
+                            parameter.decimal_value,
+                            parameter.integer_value,
+                            parameter.boolean_value,
+                            parameter.text_value,
+                            str(parameter.content_sha256),
+                        )
+                        for parameter in formula.parameters
+                    ),
+                )
+                cursor.execute(
+                    """
+                    INSERT INTO mra.evaluation_metric_formula (
+                        evaluation_protocol_metric_id,
+                        evaluation_protocol_id, surface_code, formula_code,
+                        formula_version, decimal_precision, rounding_mode,
+                        parameter_count, parameter_roster_sha256,
+                        content_sha256
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        metric.evaluation_protocol_metric_id,
+                        plan.evaluation_protocol_id,
+                        formula.surface.value,
+                        formula.formula_code.value,
+                        formula.formula_version,
+                        formula.decimal_precision,
+                        formula.rounding_mode,
+                        formula.parameter_count,
+                        str(formula.parameter_roster_sha256),
+                        str(formula.content_sha256),
+                    ),
+                )
         self._connection.execute(
             """
             INSERT INTO mra.evaluation_protocol (
@@ -266,7 +342,7 @@ class PostgresEvaluationRepository:
         output_hashes: list[tuple[UUID, str]] = []
         total_inputs = 0
         for row in metric_rows:
-            metric = _protocol_metric(row)
+            metric = self._protocol_metric(row, UUID(str(run[0])))
             source_rows = self._metric_source_rows(evaluation_run_id, metric)
             if len(source_rows) != int(run[1]):
                 raise EvaluationReconciliationError(
@@ -274,11 +350,33 @@ class PostgresEvaluationRepository:
                 )
             resolved = self._resolve_metric_inputs(metric, source_rows)
             inputs = tuple(item.input for item in resolved)
-            result = evaluate_metric(metric, inputs)
+            legacy_result = evaluate_metric(metric, inputs)
+            result = legacy_result
+            metric_reason_code: str | None = None
+            if metric.formula is not None:
+                formula_result = evaluate_backtest_formula(
+                    metric.formula,
+                    self._formula_observations(metric, resolved),
+                )
+                result = _formula_metric_result(
+                    metric,
+                    formula_result.state,
+                    formula_result.decimal_value,
+                    formula_result.estimable_count,
+                    legacy_result,
+                )
+                metric_reason_code = formula_result.reason_code
             evaluation_metric_id = self._id_factory()
-            result_hash = canonical_json_sha256(
-                {"metric": metric.content_sha256, "result": result}
-            )
+            result_payload: dict[str, object] = {
+                "metric": metric.content_sha256,
+                "result": result,
+            }
+            if metric.formula is not None:
+                result_payload["formula_content_sha256"] = str(
+                    metric.formula.content_sha256
+                )
+                result_payload["reason_code"] = metric_reason_code
+            result_hash = canonical_json_sha256(result_payload)
             self._connection.execute(
                 """
                 INSERT INTO mra.evaluation_metric (
@@ -286,15 +384,15 @@ class PostgresEvaluationRepository:
                     evaluation_protocol_metric_id,
                     evaluation_protocol_id, metric_state,
                     decimal_value, boolean_value, estimable_count,
-                    acceptance_state, content_sha256
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    acceptance_state, reason_code, content_sha256
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     evaluation_metric_id, evaluation_run_id,
                     metric.evaluation_protocol_metric_id, run[0],
                     result.state.value, result.decimal_value,
                     result.boolean_value, result.estimable_count,
-                    result.acceptance_state.value, result_hash,
+                    result.acceptance_state.value, metric_reason_code, result_hash,
                 ),
             )
             classifications = {
@@ -421,7 +519,8 @@ class PostgresEvaluationRepository:
                    outcome_metric.value_type,
                    candidate.composite_score,
                    candidate.competition_rank,
-                   candidate.candidate_set_id
+                   candidate.candidate_set_id,
+                   outcome_revision.knowledge_cutoff
             FROM mra.evaluation_observation AS observation
             JOIN mra.research_partition_member AS member
               ON member.research_partition_member_id =
@@ -436,6 +535,9 @@ class PostgresEvaluationRepository:
               ON outcome_metric.market_target_outcome_revision_id =
                  observation.market_target_outcome_revision_id
              AND outcome_metric.target_metric_definition_id = %s
+            JOIN mra.market_target_outcome_revision AS outcome_revision
+              ON outcome_revision.market_target_outcome_revision_id =
+                 observation.market_target_outcome_revision_id
             LEFT JOIN mra.exploratory_retrospective_decision_run AS retrospective
               ON retrospective.decision_run_id = commitment.decision_run_id
             LEFT JOIN mra.exploratory_backtest_arm AS arm
@@ -518,6 +620,9 @@ class PostgresEvaluationRepository:
             boolean_value = source[7]
             secondary_decimal_value: Decimal | None = None
             turnover: Decimal | None = None
+            previous_weight: Decimal | None = None
+            buy_turnover: Decimal | None = None
+            sell_turnover: Decimal | None = None
             effective_weight: Decimal | None = None
             gross_return: Decimal | None = None
             net_return: Decimal | None = None
@@ -598,7 +703,10 @@ class PostgresEvaluationRepository:
                 proposed_weight = Decimal(source[33])
                 weight_key = (source[14], source[11])
                 prior = previous_weights.get(weight_key, Decimal(0))
+                previous_weight = prior
                 turnover = abs(proposed_weight - prior)
+                buy_turnover = max(proposed_weight - prior, Decimal(0))
+                sell_turnover = max(prior - proposed_weight, Decimal(0))
                 previous_weights[weight_key] = proposed_weight
                 if metric.source_kind is EvaluationSourceKind.PORTFOLIO_LINE:
                     decimal_value = (
@@ -665,12 +773,123 @@ class PostgresEvaluationRepository:
                     source=source,
                     input=item,
                     turnover=turnover,
+                    previous_weight=previous_weight,
+                    buy_turnover=buy_turnover,
+                    sell_turnover=sell_turnover,
                     effective_weight=effective_weight,
                     gross_return=gross_return,
                     net_return=net_return,
                 )
             )
         return tuple(resolved)
+
+    @staticmethod
+    def _formula_observations(
+        metric: ProtocolMetricDefinition,
+        resolved: tuple[_ResolvedMetricInput, ...],
+    ) -> tuple[FormulaObservation, ...]:
+        assert metric.formula is not None
+        code = metric.formula.formula_code
+        ranked_membership: dict[UUID, FrozenRankingMembership] = {}
+        if code in {
+            BacktestFormulaCode.TOP_K_RETURN,
+            BacktestFormulaCode.TOP_BOTTOM_SPREAD,
+        }:
+            width = next(
+                int(parameter.value)
+                for parameter in metric.formula.parameters
+                if parameter.parameter_code == "top_k"
+            )
+            group_keys = tuple(
+                dict.fromkeys(item.input.group_key or "ALL" for item in resolved)
+            )
+            for group_key in group_keys:
+                members = tuple(
+                    item
+                    for item in resolved
+                    if (item.input.group_key or "ALL") == group_key
+                )
+                ranking_index = (
+                    29
+                    if metric.source_kind
+                    is EvaluationSourceKind.FORECAST_OUTCOME_PAIR
+                    else 37
+                )
+                if any(item.source[ranking_index] is None for item in members):
+                    continue
+                ranked = tuple(
+                    sorted(
+                        members,
+                        key=lambda item: (
+                            -Decimal(item.source[ranking_index]),
+                            str(item.source[11]),
+                        ),
+                    )
+                )
+                for item in ranked[:width]:
+                    ranked_membership[
+                        item.input.evaluation_observation_id
+                    ] = FrozenRankingMembership.TOP
+                if code is BacktestFormulaCode.TOP_BOTTOM_SPREAD:
+                    for item in ranked[-width:]:
+                        identity = item.input.evaluation_observation_id
+                        if identity in ranked_membership:
+                            # Overlap is intentionally not coerced into a
+                            # fabricated spread; the formula sees incomplete
+                            # bottom membership and returns NOT_ESTIMABLE.
+                            continue
+                        ranked_membership[identity] = FrozenRankingMembership.BOTTOM
+        observations: list[FormulaObservation] = []
+        for ordinal, item in enumerate(resolved, start=1):
+            source_status = item.input.source_value_status
+            source_state = {
+                "COMPLETE": FormulaSourceState.AVAILABLE,
+                "PARTIAL": FormulaSourceState.AVAILABLE,
+                "UNAVAILABLE": FormulaSourceState.UNAVAILABLE,
+                "FAILED": FormulaSourceState.FAILED,
+            }.get(source_status, FormulaSourceState.UNKNOWN)
+            value = item.input.decimal_value
+            secondary_value = item.input.secondary_decimal_value
+            if item.input.boolean_value is not None:
+                value = Decimal(1 if item.input.boolean_value else 0)
+            if code in {
+                BacktestFormulaCode.GROSS_EXPOSURE,
+                BacktestFormulaCode.NET_EXPOSURE,
+                BacktestFormulaCode.TURNOVER,
+            }:
+                value = (
+                    None
+                    if item.source[33] is None
+                    else Decimal(item.source[33])
+                )
+                secondary_value = item.previous_weight
+            elif code is BacktestFormulaCode.NET_RETURN_ASSUMED_COST:
+                value = item.gross_return
+            membership = ranked_membership.get(
+                item.input.evaluation_observation_id,
+                (
+                    FrozenRankingMembership.SELECTED
+                    if item.input.candidate_disposition
+                    is CandidateDisposition.SELECTED
+                    else FrozenRankingMembership.ELIGIBLE
+                ),
+            )
+            observations.append(
+                FormulaObservation(
+                    observation_id=item.input.evaluation_observation_id,
+                    ordinal=ordinal,
+                    group_key=item.input.group_key or "ALL",
+                    source_state=source_state,
+                    value=value,
+                    secondary_value=secondary_value,
+                    ranking_membership=membership,
+                    decision_time=item.source[12],
+                    outcome_known_at=item.source[40],
+                    buy_turnover=item.buy_turnover,
+                    sell_turnover=item.sell_turnover,
+                )
+            )
+        return tuple(observations)
 
     def _insert_canonical_sources(
         self,
@@ -983,11 +1202,130 @@ class PostgresEvaluationRepository:
             """,
             (record.evaluation_protocol_id,),
         ).fetchall()
-        metrics = tuple(_protocol_metric(row) for row in rows)
+        metrics = tuple(
+            self._protocol_metric(row, record.evaluation_protocol_id)
+            for row in rows
+        )
         return len(metrics) == record.metric_count and canonical_json_sha256(metrics) == record.metric_roster_sha256
 
+    def _protocol_metric(
+        self,
+        row: tuple[Any, ...],
+        evaluation_protocol_id: UUID,
+    ) -> ProtocolMetricDefinition:
+        metric_id = UUID(str(row[0]))
+        formula_row = self._connection.execute(
+            """
+            SELECT surface_code, formula_code, formula_version, decimal_precision,
+                   rounding_mode, parameter_count,
+                   parameter_roster_sha256, content_sha256
+            FROM mra.evaluation_metric_formula
+            WHERE evaluation_protocol_metric_id = %s
+              AND evaluation_protocol_id = %s
+            """,
+            (metric_id, evaluation_protocol_id),
+        ).fetchone()
+        formula = None
+        if formula_row is not None:
+            parameter_rows = self._connection.execute(
+                """
+                SELECT formula_parameter_id, ordinal, parameter_code,
+                       value_type, decimal_value, integer_value,
+                       boolean_value, text_value, content_sha256
+                FROM mra.evaluation_formula_parameter
+                WHERE evaluation_protocol_metric_id = %s
+                  AND evaluation_protocol_id = %s
+                ORDER BY ordinal
+                """,
+                (metric_id, evaluation_protocol_id),
+            ).fetchall()
+            parameters = tuple(
+                EvaluationFormulaParameter(
+                    formula_parameter_id=UUID(str(parameter[0])),
+                    ordinal=int(parameter[1]),
+                    parameter_code=str(parameter[2]),
+                    value_type=FormulaParameterType(str(parameter[3])),
+                    decimal_value=parameter[4],
+                    integer_value=parameter[5],
+                    boolean_value=parameter[6],
+                    text_value=parameter[7],
+                )
+                for parameter in parameter_rows
+            )
+            formula = EvaluationFormulaDefinition(
+                evaluation_protocol_metric_id=metric_id,
+                formula_code=BacktestFormulaCode(str(formula_row[1])),
+                formula_version=int(formula_row[2]),
+                decimal_precision=int(formula_row[3]),
+                rounding_mode=str(formula_row[4]),
+                parameters=parameters,
+                surface=BacktestMetricSurface(str(formula_row[0])),
+            )
+            if (
+                formula.parameter_count != int(formula_row[5])
+                or str(formula.parameter_roster_sha256) != str(formula_row[6])
+                or str(formula.content_sha256) != str(formula_row[7])
+            ):
+                raise EvaluationReconciliationError(
+                    "Evaluation formula closure does not reconcile"
+                )
+            if any(
+                str(parameter.content_sha256) != str(row_parameter[8])
+                for parameter, row_parameter in zip(
+                    parameters, parameter_rows, strict=True
+                )
+            ):
+                raise EvaluationReconciliationError(
+                    "Evaluation formula parameter does not reconcile"
+                )
+        return _protocol_metric(row, formula=formula)
 
-def _protocol_metric(row: tuple[Any, ...]) -> ProtocolMetricDefinition:
+
+def _formula_metric_result(
+    metric: ProtocolMetricDefinition,
+    state: FormulaResultState,
+    decimal_value: Decimal | None,
+    estimable_count: int,
+    classified: EvaluationMetricResult,
+) -> EvaluationMetricResult:
+    if state is FormulaResultState.NOT_ESTIMABLE:
+        return EvaluationMetricResult(
+            EvaluationMetricState.NOT_ESTIMABLE,
+            None,
+            None,
+            estimable_count,
+            AcceptanceState.NOT_ESTIMABLE,
+            classified.observations,
+        )
+    assert decimal_value is not None
+    if metric.acceptance_operator is AcceptanceOperator.NONE:
+        acceptance = AcceptanceState.NOT_APPLICABLE
+    else:
+        threshold = metric.acceptance_threshold
+        assert threshold is not None
+        accepted = (
+            decimal_value >= threshold
+            if metric.acceptance_operator is AcceptanceOperator.AT_LEAST
+            else decimal_value <= threshold
+        )
+        acceptance = (
+            AcceptanceState.ACCEPTED if accepted else AcceptanceState.REJECTED
+        )
+    return EvaluationMetricResult(
+        EvaluationMetricState.ESTIMATED,
+        decimal_value,
+        None,
+        estimable_count,
+        acceptance,
+        classified.observations,
+    )
+
+
+def _protocol_metric(
+    row: tuple[Any, ...],
+    *,
+    formula: EvaluationFormulaDefinition | None = None,
+) -> ProtocolMetricDefinition:
     return ProtocolMetricDefinition(
         evaluation_protocol_metric_id=UUID(str(row[0])), metric_code=str(row[1]),
         ordinal=int(row[2]), source_target_metric_definition_id=UUID(str(row[3])),
@@ -1001,6 +1339,7 @@ def _protocol_metric(row: tuple[Any, ...]) -> ProtocolMetricDefinition:
         acceptance_operator=AcceptanceOperator(str(row[14])), acceptance_threshold=row[15],
         inclusion_policy=EvaluationInclusionPolicy(str(row[16])),
         missingness_policy=EvaluationMissingnessPolicy(str(row[17])),
+        formula=formula,
     )
 
 

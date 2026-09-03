@@ -11,6 +11,13 @@ from market_regime_alpha.infrastructure.postgres.pool import TargetPostgresPool
 from market_regime_alpha.research_qualification.domain.evaluation import (
     ProtocolMetricDefinition,
 )
+from market_regime_alpha.research_qualification.domain.evaluation_formula import (
+    BacktestFormulaCode,
+    BacktestMetricSurface,
+    EvaluationFormulaDefinition,
+    EvaluationFormulaParameter,
+    FormulaParameterType,
+)
 from market_regime_alpha.research_qualification.domain.research_vocabulary import (
     AcceptanceOperator,
     CandidateDisposition,
@@ -922,7 +929,18 @@ class PostgresResearchEvaluationVerificationProvider:
             """,
             (protocol_id,),
         ).fetchall()
-        metrics = tuple(_protocol_metric(row) for row in rows)
+        metrics = tuple(
+            _protocol_metric(
+                row,
+                formula=_load_protocol_formula(
+                    connection,
+                    UUID(str(row[0])),
+                    protocol_id,
+                    mismatches,
+                ),
+            )
+            for row in rows
+        )
         _inspect_order(
             mismatches,
             "evaluation_protocol.metric_ordinals",
@@ -1027,7 +1045,11 @@ class PostgresResearchEvaluationVerificationProvider:
                 )
 
 
-def _protocol_metric(row: tuple[Any, ...]) -> ProtocolMetricDefinition:
+def _protocol_metric(
+    row: tuple[Any, ...],
+    *,
+    formula: EvaluationFormulaDefinition | None = None,
+) -> ProtocolMetricDefinition:
     return ProtocolMetricDefinition(
         evaluation_protocol_metric_id=UUID(str(row[0])),
         metric_code=str(row[1]),
@@ -1053,7 +1075,80 @@ def _protocol_metric(row: tuple[Any, ...]) -> ProtocolMetricDefinition:
         acceptance_threshold=row[15],
         inclusion_policy=EvaluationInclusionPolicy(str(row[16])),
         missingness_policy=EvaluationMissingnessPolicy(str(row[17])),
+        formula=formula,
     )
+
+
+def _load_protocol_formula(
+    connection: psycopg.Connection[Any],
+    metric_id: UUID,
+    protocol_id: UUID,
+    mismatches: list[Mismatch],
+) -> EvaluationFormulaDefinition | None:
+    row = connection.execute(
+        """
+        SELECT surface_code, formula_code, formula_version, decimal_precision,
+               rounding_mode, parameter_count,
+               parameter_roster_sha256, content_sha256
+        FROM mra.evaluation_metric_formula
+        WHERE evaluation_protocol_metric_id = %s
+          AND evaluation_protocol_id = %s
+        """,
+        (metric_id, protocol_id),
+    ).fetchone()
+    if row is None:
+        return None
+    parameter_rows = connection.execute(
+        """
+        SELECT formula_parameter_id, ordinal, parameter_code,
+               value_type, decimal_value, integer_value,
+               boolean_value, text_value, content_sha256
+        FROM mra.evaluation_formula_parameter
+        WHERE evaluation_protocol_metric_id = %s
+          AND evaluation_protocol_id = %s
+        ORDER BY ordinal
+        """,
+        (metric_id, protocol_id),
+    ).fetchall()
+    parameters = tuple(
+        EvaluationFormulaParameter(
+            formula_parameter_id=UUID(str(parameter[0])),
+            ordinal=int(parameter[1]),
+            parameter_code=str(parameter[2]),
+            value_type=FormulaParameterType(str(parameter[3])),
+            decimal_value=parameter[4],
+            integer_value=parameter[5],
+            boolean_value=parameter[6],
+            text_value=parameter[7],
+        )
+        for parameter in parameter_rows
+    )
+    formula = EvaluationFormulaDefinition(
+        evaluation_protocol_metric_id=metric_id,
+        formula_code=BacktestFormulaCode(str(row[1])),
+        formula_version=int(row[2]),
+        decimal_precision=int(row[3]),
+        rounding_mode=str(row[4]),
+        parameters=parameters,
+        surface=BacktestMetricSurface(str(row[0])),
+    )
+    if (
+        formula.parameter_count != int(row[5])
+        or str(formula.parameter_roster_sha256) != str(row[6])
+        or str(formula.content_sha256) != str(row[7])
+        or any(
+            str(parameter.content_sha256) != str(stored[8])
+            for parameter, stored in zip(parameters, parameter_rows, strict=True)
+        )
+    ):
+        mismatches.append(
+            _identity(
+                "evaluation_protocol.formula_closure",
+                "exact formula and typed parameter hashes",
+                str(metric_id),
+            )
+        )
+    return formula
 
 
 def _missing(path: str, identity: UUID) -> Mismatch:

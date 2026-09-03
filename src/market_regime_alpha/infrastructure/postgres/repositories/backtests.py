@@ -482,7 +482,7 @@ class PostgresBacktestRepository:
                     evaluation_protocol_id, evaluation_protocol_sha256,
                     is_primary, content_sha256
                 ) VALUES (
-                    %s, %s, %s, %s, 'FOLD', NULL, %s, NULL,
+                    %s, %s, %s, %s, %s, %s, %s, %s,
                     %s, %s, %s, %s
                 )
                 """,
@@ -492,7 +492,10 @@ class PostgresBacktestRepository:
                         run_id,
                         specification_hash,
                         requirement.ordinal,
+                        requirement.scope_kind.value,
+                        requirement.arm_id,
                         requirement.fold_id,
+                        requirement.slice_key,
                         requirement.evaluation_protocol.authority_id,
                         str(requirement.evaluation_protocol.content_sha256),
                         requirement.primary,

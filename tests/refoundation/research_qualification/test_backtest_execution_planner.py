@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date
 from uuid import UUID
 
@@ -12,6 +13,8 @@ from market_regime_alpha.research_qualification.domain.backtest import (
     BacktestArmSpecification,
     BacktestComparisonRole,
     BacktestContextMode,
+    BacktestEvaluationRequirement,
+    BacktestEvaluationScopeKind,
     BacktestExecutionKind,
     BacktestFoldDependency,
     BacktestFoldSession,
@@ -190,6 +193,73 @@ def test_planner_compiles_arbitrary_fold_dag_without_ordinal_inference() -> None
     assert len(validation_model_decisions) == 2
     assert training[_id(801)].action_id in validation_model_decisions[0].dependency_action_ids
     assert training[_id(802)].action_id in validation_model_decisions[1].dependency_action_ids
+
+
+def test_current_planner_compiles_arm_fold_and_aggregate_evaluation_roster() -> None:
+    historical_shape = _run()
+    fold_by_id = {
+        fold.exploratory_backtest_fold_id: fold
+        for fold in historical_shape.folds
+    }
+    requirements = tuple(
+        BacktestEvaluationRequirement(
+            requirement_id=_id(900 + ordinal),
+            ordinal=ordinal,
+            fold_id=participation.fold_id,
+            evaluation_protocol=fold_by_id[
+                participation.fold_id
+            ].evaluation_protocol,
+            primary=True,
+            arm_id=participation.arm_id,
+        )
+        for ordinal, participation in enumerate(
+            historical_shape.arm_folds, start=1
+        )
+    ) + tuple(
+        BacktestEvaluationRequirement(
+            requirement_id=_id(950 + ordinal),
+            ordinal=len(historical_shape.arm_folds) + ordinal,
+            fold_id=None,
+            evaluation_protocol=historical_shape.folds[-1].evaluation_protocol,
+            primary=True,
+            scope_kind=BacktestEvaluationScopeKind.AGGREGATE,
+            arm_id=arm.exploratory_backtest_arm_id,
+        )
+        for ordinal, arm in enumerate(historical_shape.arms, start=1)
+    )
+    run = replace(historical_shape, evaluation_requirements=requirements)
+
+    plan = BacktestExecutionPlanner().compile(run)
+
+    fold_evaluations = tuple(
+        action
+        for action in plan.expected_actions
+        if action.kind is BacktestActionKind.COMPLETE_FOLD_EVALUATION
+    )
+    aggregates = tuple(
+        action
+        for action in plan.expected_actions
+        if action.kind is BacktestActionKind.COMPLETE_AGGREGATE_EVALUATION
+    )
+    assert len(plan.expected_actions) == 36
+    assert len(fold_evaluations) == 8
+    assert len(aggregates) == 2
+    assert all(action.arm_id is not None for action in fold_evaluations)
+    assert {action.evaluation_requirement_id for action in fold_evaluations} == {
+        item.requirement_id for item in requirements[:8]
+    }
+    assert all(len(action.dependency_action_ids) == 4 for action in aggregates)
+    model_fit = next(
+        action
+        for action in fold_evaluations
+        if action.arm_id == _id(102) and action.fold_id == _id(201)
+    )
+    first_training = next(
+        action
+        for action in plan.expected_actions
+        if action.model_training_requirement_id == _id(801)
+    )
+    assert first_training.dependency_action_ids == (model_fit.action_id,)
 
 
 def test_completed_resume_reuses_every_identity_and_produces_no_work() -> None:

@@ -58,6 +58,7 @@ class BacktestExpectedAction:
     fold_session_id: UUID | None
     model_training_requirement_id: UUID | None
     dependency_action_ids: tuple[UUID, ...]
+    evaluation_requirement_id: UUID | None = None
     content_sha256: ContentHash = field(init=False)
 
     def __post_init__(self) -> None:
@@ -65,28 +66,23 @@ class BacktestExpectedAction:
             raise ValueError("action ordinal must be positive")
         if len(set(self.dependency_action_ids)) != len(self.dependency_action_ids):
             raise ValueError("action dependency roster contains duplicates")
+        content: dict[str, object] = {
+            "action_id": self.action_id,
+            "arm_id": self.arm_id,
+            "dependency_action_ids": self.dependency_action_ids,
+            "exploratory_backtest_run_id": self.exploratory_backtest_run_id,
+            "fold_id": self.fold_id,
+            "fold_session_id": self.fold_session_id,
+            "kind": self.kind,
+            "model_training_requirement_id": self.model_training_requirement_id,
+            "ordinal": self.ordinal,
+        }
+        if self.evaluation_requirement_id is not None:
+            content["evaluation_requirement_id"] = self.evaluation_requirement_id
         object.__setattr__(
             self,
             "content_sha256",
-            ContentHash(
-                canonical_json_sha256(
-                    {
-                        "action_id": self.action_id,
-                        "arm_id": self.arm_id,
-                        "dependency_action_ids": self.dependency_action_ids,
-                        "exploratory_backtest_run_id": (
-                            self.exploratory_backtest_run_id
-                        ),
-                        "fold_id": self.fold_id,
-                        "fold_session_id": self.fold_session_id,
-                        "kind": self.kind,
-                        "model_training_requirement_id": (
-                            self.model_training_requirement_id
-                        ),
-                        "ordinal": self.ordinal,
-                    }
-                )
-            ),
+            ContentHash(canonical_json_sha256(content)),
         )
 
 
