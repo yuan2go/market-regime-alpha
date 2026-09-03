@@ -80,41 +80,62 @@ class Wp17pEvaluationOperations:
         dataset = datasets[0]
         fold_scope = (
             dataset.backtest_scope.exploratory_backtest_fold_id,
-            dataset.backtest_scope.exploratory_backtest_fold_session_id,
             dataset.retrospective_scope.market_archive_id,
             dataset.retrospective_scope.market_archive_seal_id,
             dataset.retrospective_scope.knowledge_cutoff,
-            dataset.retrospective_scope.simulated_event_cutoff,
         )
         if any(
             (
                 item.backtest_scope.exploratory_backtest_fold_id,
-                item.backtest_scope.exploratory_backtest_fold_session_id,
                 item.retrospective_scope.market_archive_id,
                 item.retrospective_scope.market_archive_seal_id,
                 item.retrospective_scope.knowledge_cutoff,
-                item.retrospective_scope.simulated_event_cutoff,
             )
             != fold_scope
             for item in datasets
         ):
-            raise ValueError("Evaluation Dataset roster crosses a frozen fold/session")
-        plan = wp17p_partition_plan(catalog, dataset)
-        fold, session = _fold_and_session(catalog, dataset)
+            raise ValueError("Evaluation Dataset roster crosses a frozen fold")
+        fold, _ = _fold_and_session(catalog, dataset)
+        resolved_sessions = tuple(_fold_and_session(catalog, item)[1] for item in datasets)
+        plan = wp17p_partition_plan(catalog, datasets)
         arm_by_id = {item.exploratory_backtest_arm_id: item for item in catalog.backtest.arms}
         dataset_arm_ids = {item.backtest_scope.exploratory_backtest_arm_id for item in datasets}
         if not dataset_arm_ids.issubset(arm_by_id):
             raise ValueError("Evaluation Dataset arm is not declared")
-        expected_arm_ids = (
-            {item.exploratory_backtest_arm_id for item in catalog.backtest.arms if item.kind is BacktestArmKind.MODEL_CHALLENGER}
-            if fold.purpose is PartitionPurpose.FIT
-            else set(arm_by_id)
-        )
+        if fold.purpose is PartitionPurpose.FIT:
+            expected_arm_ids = {
+                item.exploratory_backtest_arm_id
+                for item in catalog.backtest.arms
+                if item.kind
+                in {
+                    BacktestArmKind.MODEL_CHALLENGER,
+                    BacktestArmKind.RIDGE_CURRENT_CONTEXT,
+                }
+            }
+        else:
+            expected_arm_ids = set(arm_by_id)
         if dataset_arm_ids != expected_arm_ids:
             raise ValueError("Evaluation Dataset roster omits a predeclared arm")
         expected_role = BacktestSessionRole.FIT_INPUT if fold.purpose is PartitionPurpose.FIT else BacktestSessionRole.EVALUATION
-        if session.role is not expected_role:
+        if any(session.role is not expected_role for session in resolved_sessions):
             raise ValueError("Evaluation Dataset uses the wrong fold session role")
+        session_ids = {
+            item.exploratory_backtest_fold_session_id for item in resolved_sessions
+        }
+        actual_pairs = {
+            (
+                item.backtest_scope.exploratory_backtest_arm_id,
+                item.backtest_scope.exploratory_backtest_fold_session_id,
+            )
+            for item in datasets
+        }
+        expected_pairs = {
+            (arm_id, session_id)
+            for arm_id in expected_arm_ids
+            for session_id in session_ids
+        }
+        if actual_pairs != expected_pairs or len(actual_pairs) != len(datasets):
+            raise ValueError("Evaluation Dataset arm-by-session roster is incomplete")
 
         app = self._application
         frozen = app.research_partitions.freeze(
@@ -131,10 +152,11 @@ class Wp17pEvaluationOperations:
         )
         definition = ExperimentDefinition(
             experiment_id,
-            f"wp17p_{fold.purpose.value.lower()}_experiment",
-            "Does the frozen WP-17P baseline produce reproducible Target outcomes?",
-            "One predeclared rule baseline versus deterministic ridge challenger.",
-            "The challenger may differ from the transparent baseline without formal admission.",
+            f"wp{17 if catalog.backtest.generation == 1 else 18}_"
+            f"{fold.purpose.value.lower()}_{fold.ordinal:02d}_experiment",
+            "Does the frozen exploratory baseline produce reproducible Target outcomes?",
+            "One primary rule-versus-ridge change under frozen Context diagnostic arms.",
+            "Any difference remains exploratory and cannot create formal admission.",
             catalog.target.target_definition_id,
             catalog.target.version,
             catalog.target.content_sha256,
@@ -171,7 +193,8 @@ class Wp17pEvaluationOperations:
                 experiment_run_id,
                 experiment_id,
                 experiment_partition_id,
-                f"wp17p-{fold.purpose.value.lower()}-run-1",
+                f"wp{17 if catalog.backtest.generation == 1 else 18}-"
+                f"{fold.purpose.value.lower()}-{fold.ordinal:02d}-run-1",
             ),
             _context(f"experiment-run-{fold.ordinal}"),
         )
@@ -265,9 +288,16 @@ class Wp17pEvaluationOperations:
 
 def wp17p_partition_plan(
     catalog: Wp17pAuthorityCatalog,
-    dataset: Wp17pDatasetAuthority,
+    datasets: tuple[Wp17pDatasetAuthority, ...] | Wp17pDatasetAuthority,
 ) -> ResearchPartitionPlan:
-    fold, session = _fold_and_session(catalog, dataset)
+    roster = (datasets,) if isinstance(datasets, Wp17pDatasetAuthority) else datasets
+    if not roster:
+        raise ValueError("Partition Dataset roster must be non-empty")
+    fold, _ = _fold_and_session(catalog, roster[0])
+    resolved = tuple(_fold_and_session(catalog, item) for item in roster)
+    if any(item[0].exploratory_backtest_fold_id != fold.exploratory_backtest_fold_id for item in resolved):
+        raise ValueError("Partition Dataset roster crosses folds")
+    sessions = tuple(sorted({item[1] for item in resolved}, key=lambda item: item.session_date))
     if fold.purpose not in {PartitionPurpose.FIT, PartitionPurpose.VALIDATION}:
         raise ValueError("WP-17P v1 evaluates only FIT and VALIDATION folds")
     return ResearchPartitionPlan(
@@ -275,7 +305,8 @@ def wp17p_partition_plan(
             catalog.backtest.exploratory_backtest_run_id,
             f"partition:{fold.exploratory_backtest_fold_id}",
         ),
-        f"wp17p_{fold.purpose.value.lower()}_partition",
+        f"wp{17 if catalog.backtest.generation == 1 else 18}_"
+        f"{fold.purpose.value.lower()}_{fold.ordinal:02d}_partition",
         catalog.target.target_definition_id,
         catalog.target.version,
         catalog.target.content_sha256,
@@ -283,8 +314,8 @@ def wp17p_partition_plan(
         PartitionPopulationScope.ALL_COMMITMENTS,
         PartitionOverlapPolicy.PURGED_WALK_FORWARD,
         fold.exchange_code,
-        session.trading_session_id,
-        session.trading_session_id,
+        sessions[0].trading_session_id,
+        sessions[-1].trading_session_id,
         fold.purge_sessions,
         0,
         fold.embargo_sessions,
