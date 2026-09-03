@@ -21,6 +21,37 @@ _EXCHANGE_CODE = re.compile(r"^[A-Z][A-Z0-9]{1,15}$")
 
 
 @dataclass(frozen=True, slots=True)
+class BacktestPartitionSource:
+    """Exact canonical Decision lineage used to derive a Partition roster."""
+
+    exploratory_backtest_run_id: UUID
+    exploratory_backtest_arm_id: UUID
+    exploratory_backtest_fold_id: UUID | None
+    content_sha256: ContentHash = field(init=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "content_sha256",
+            ContentHash(
+                canonical_json_sha256(
+                    {
+                        "exploratory_backtest_arm_id": (
+                            self.exploratory_backtest_arm_id
+                        ),
+                        "exploratory_backtest_fold_id": (
+                            self.exploratory_backtest_fold_id
+                        ),
+                        "exploratory_backtest_run_id": (
+                            self.exploratory_backtest_run_id
+                        ),
+                    }
+                )
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class ResearchPartitionPlan:
     """Caller declaration; the PostgreSQL adapter derives the member roster."""
 
@@ -43,6 +74,7 @@ class ResearchPartitionPlan:
     code_artifact: ArtifactBinding
     config_artifact: ArtifactBinding
     provenance_sha256: ContentHash | str
+    backtest_source: BacktestPartitionSource | None = None
     content_sha256: ContentHash = field(init=False)
 
     def __post_init__(self) -> None:
@@ -87,34 +119,34 @@ class ResearchPartitionPlan:
         }
         if self.overlap_policy not in allowed[self.purpose]:
             raise ValueError("purpose and overlap_policy are incompatible")
+        content: dict[str, object] = {
+            "code_artifact": self.code_artifact,
+            "config_artifact": self.config_artifact,
+            "decision_end_session_id": self.decision_end_session_id,
+            "decision_start_session_id": self.decision_start_session_id,
+            "embargo_sessions": self.embargo_sessions,
+            "exchange_code": self.exchange_code,
+            "fold_ordinal": self.fold_ordinal,
+            "overlap_policy": self.overlap_policy,
+            "partition_code": self.partition_code,
+            "population_scope": self.population_scope,
+            "provenance_sha256": provenance_hash,
+            "purge_after_sessions": self.purge_after_sessions,
+            "purge_before_sessions": self.purge_before_sessions,
+            "purpose": self.purpose,
+            "series_code": self.series_code,
+            "target_definition_id": self.target_definition_id,
+            "target_definition_sha256": target_hash,
+            "target_version": self.target_version,
+        }
+        # Absence preserves every historical Partition request/hash byte.
+        if self.backtest_source is not None:
+            content["backtest_source"] = self.backtest_source
         object.__setattr__(
             self,
             "content_sha256",
-            ContentHash(
-                canonical_json_sha256(
-                    {
-                        "code_artifact": self.code_artifact,
-                        "config_artifact": self.config_artifact,
-                        "decision_end_session_id": self.decision_end_session_id,
-                        "decision_start_session_id": self.decision_start_session_id,
-                        "embargo_sessions": self.embargo_sessions,
-                        "exchange_code": self.exchange_code,
-                        "fold_ordinal": self.fold_ordinal,
-                        "overlap_policy": self.overlap_policy,
-                        "partition_code": self.partition_code,
-                        "population_scope": self.population_scope,
-                        "provenance_sha256": provenance_hash,
-                        "purge_after_sessions": self.purge_after_sessions,
-                        "purge_before_sessions": self.purge_before_sessions,
-                        "purpose": self.purpose,
-                        "series_code": self.series_code,
-                        "target_definition_id": self.target_definition_id,
-                        "target_definition_sha256": target_hash,
-                        "target_version": self.target_version,
-                    }
-                )
-            ),
+            ContentHash(canonical_json_sha256(content)),
         )
 
 
-__all__ = ["ResearchPartitionPlan"]
+__all__ = ["BacktestPartitionSource", "ResearchPartitionPlan"]

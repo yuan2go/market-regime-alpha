@@ -400,11 +400,12 @@ class RuntimeApplication:
         *,
         actor_id: str,
         reason_code: str,
+        run_id: UUID | None = None,
     ) -> tuple[UUID, ...]:
         if not actor_id or not _CODE.fullmatch(reason_code):
             raise ValueError("recovery actor and reason are required")
         with self._uow_provider() as scan_uow:
-            attempt_ids = scan_uow.runtime.expired_attempt_ids()
+            attempt_ids = scan_uow.runtime.expired_attempt_ids(run_id)
         recovered: list[UUID] = []
         for attempt_id in attempt_ids:
             request_hash = canonical_json_sha256(
@@ -452,7 +453,7 @@ class RuntimeApplication:
                 uow.commit()
                 recovered.append(attempt_id)
         with self._uow_provider() as scan_uow:
-            step_ids = scan_uow.runtime.deadline_expired_step_ids()
+            step_ids = scan_uow.runtime.deadline_expired_step_ids(run_id)
         for step_id in step_ids:
             request_hash = canonical_json_sha256(
                 {"step_id": step_id, "reason_code": reason_code}

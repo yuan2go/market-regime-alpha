@@ -376,6 +376,63 @@ def test_expired_lease_recovery_rejects_stale_worker_and_completes_new_fence(
     assert attempts == [(1, 1, "ABANDONED"), (2, 2, "SUCCEEDED")]
 
 
+def test_expired_recovery_can_be_scoped_to_one_runtime_run(
+    runtime_stack: tuple[RuntimeApplication, ArtifactApplication, TargetPostgresPool, str],
+) -> None:
+    application, artifacts, _, _ = runtime_stack
+    schedule = _schedule(application)
+    first_run = _run(
+        application,
+        artifacts,
+        schedule,
+        steps=(_step("capture", 1),),
+        key="scoped-recovery-first",
+    )
+    second_run = _run(
+        application,
+        artifacts,
+        schedule,
+        steps=(_step("capture", 1),),
+        key="scoped-recovery-second",
+    )
+    first = application.claim_next(
+        run_id=first_run,
+        worker_id="worker-first",
+        lease_duration=timedelta(seconds=1),
+        context=_context("claim-scoped-first", reason="WORKER_CLAIM"),
+    )
+    second = application.claim_next(
+        run_id=second_run,
+        worker_id="worker-second",
+        lease_duration=timedelta(seconds=1),
+        context=_context("claim-scoped-second", reason="WORKER_CLAIM"),
+    )
+    assert first is not None and second is not None
+    application.start_attempt(
+        first, _context("start-scoped-first", reason="WORKER_START")
+    )
+    application.start_attempt(
+        second, _context("start-scoped-second", reason="WORKER_START")
+    )
+    time.sleep(1.1)
+
+    recovered = application.recover_expired(
+        run_id=first_run,
+        actor_id="scoped-recovery",
+        reason_code="LEASE_EXPIRED",
+    )
+
+    assert recovered == (first.attempt_id,)
+    assert application.inspect_run(first_run).steps[0].state == "READY"
+    assert application.inspect_run(second_run).steps[0].state == "RUNNING"
+    recovered_second = application.recover_expired(
+        run_id=second_run,
+        actor_id="scoped-recovery",
+        reason_code="LEASE_EXPIRED",
+    )
+    assert recovered_second == (second.attempt_id,)
+
+
 def test_retryable_failure_creates_a_new_attempt_without_reopening_old_attempt(
     runtime_stack: tuple[RuntimeApplication, ArtifactApplication, TargetPostgresPool, str],
 ) -> None:

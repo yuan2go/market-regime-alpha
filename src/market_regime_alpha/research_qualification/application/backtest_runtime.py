@@ -99,6 +99,7 @@ class BacktestRuntimeActionExecutor:
             self._runtime.recover_expired(
                 actor_id=self._worker_id,
                 reason_code="BACKTEST_EXECUTION_RECOVERY",
+                run_id=runtime_run_id,
             )
         elif operation is not BacktestNextOperation.RETRY:
             raise AssertionError(f"unsupported Backtest operation {operation}")

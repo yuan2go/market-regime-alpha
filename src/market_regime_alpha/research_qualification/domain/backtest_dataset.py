@@ -121,8 +121,8 @@ def materialize_backtest_dataset(
     ):
         raise ValueError("Feature definition roster must be non-empty, unique and sorted")
     ordered = tuple(sorted(members, key=lambda item: str(item.instrument_id)))
-    if not ordered or len({item.instrument_id for item in ordered}) != len(ordered):
-        raise ValueError("Dataset member roster must be non-empty and unique")
+    if len({item.instrument_id for item in ordered}) != len(ordered):
+        raise ValueError("Dataset member roster must be unique")
     expected_features = set(feature_definition_ids)
     if any(
         {cell.feature_definition_id for cell in member.cells} != expected_features

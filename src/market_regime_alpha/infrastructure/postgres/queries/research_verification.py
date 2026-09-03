@@ -64,7 +64,9 @@ class PostgresResearchEvaluationVerificationProvider:
                        protected_start_session_id, protected_end_session_id,
                        protected_start_date, protected_end_date,
                        calendar_session_count, calendar_roster_sha256,
-                       member_count, member_roster_sha256
+                       member_count, member_roster_sha256,
+                       source_backtest_run_id, source_backtest_arm_id,
+                       source_backtest_fold_id, source_backtest_sha256
                 FROM mra.research_partition
                 WHERE research_partition_id = %s
                 """,
@@ -219,11 +221,19 @@ class PostgresResearchEvaluationVerificationProvider:
                          commitment.decision_reference_observation_id
                     JOIN mra.trading_session AS session
                       ON session.session_id = reference.session_id
+                    LEFT JOIN mra.exploratory_retrospective_decision_run
+                              AS backtest
+                      ON backtest.decision_run_id = commitment.decision_run_id
                     WHERE commitment.target_definition_id = %s
                       AND session.exchange = %s
                       AND session.session_date BETWEEN %s AND %s
                       AND (%s = 'ALL_COMMITMENTS'
                            OR commitment.candidate_disposition = %s)
+                      AND (%s::uuid IS NULL OR (
+                            backtest.exploratory_backtest_run_id = %s
+                        AND backtest.exploratory_backtest_arm_id = %s
+                        AND (%s::uuid IS NULL OR
+                             backtest.exploratory_backtest_fold_id = %s)))
                 ), actual AS (
                     SELECT commitment_id
                     FROM mra.research_partition_member
@@ -244,6 +254,11 @@ class PostgresResearchEvaluationVerificationProvider:
                     root[11],
                     root[5],
                     root[5],
+                    root[24],
+                    root[24],
+                    root[25],
+                    root[26],
+                    root[26],
                     research_partition_id,
                 ),
             ).fetchone()

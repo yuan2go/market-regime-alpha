@@ -197,3 +197,21 @@ def test_generic_materializer_rejects_incomplete_feature_roster() -> None:
         assert "exact Feature roster" in str(error)
     else:  # pragma: no cover - assertion helper without pytest dependency
         raise AssertionError("incomplete feature roster was accepted")
+
+
+def test_generic_materializer_preserves_empty_selection_as_valid_dataset() -> None:
+    materialized = materialize_backtest_dataset(
+        dataset_id=_id(50),
+        dataset_code="generic_empty_selection",
+        simulated_decision_time=datetime(2026, 1, 5, 7, 1, tzinfo=UTC),
+        universe_revision_id=_id(51),
+        eligibility_policy_id=_id(52),
+        feature_definition_ids=(_id(10),),
+        code_artifact=_artifact(53),
+        config_artifact=_artifact(54),
+        members=(),
+    )
+
+    assert materialized.row_count == 0
+    assert materialized.available_cell_count == 0
+    assert materialized.unavailable_cell_count == 0

@@ -4897,7 +4897,7 @@ CREATE TABLE mra.runtime_step (
     CONSTRAINT runtime_step_run_key_uk UNIQUE (run_id, step_key),
     CONSTRAINT runtime_step_run_ordinal_uk UNIQUE (run_id, ordinal),
     CONSTRAINT runtime_step_key_ck CHECK (step_key ~ '^[a-z][a-z0-9_-]{0,99}$'),
-    CONSTRAINT runtime_step_kind_ck CHECK (step_kind IN ('CAPTURE', 'NORMALIZE_PIT', 'FREEZE_UNIVERSE', 'ASSESS_ELIGIBILITY', 'REGISTER_DATASET', 'BUILD_CANDIDATE_SET', 'OPEN_DECISION_RUN', 'ASSESS_CONTEXT', 'SIGNAL_AND_FORECAST', 'DECIDE_AND_RISK', 'PERSIST_DECISION', 'SETTLE_OUTCOME', 'ACQUIRE_OUTCOME_INPUTS', 'EVALUATE', 'RECORD_EVIDENCE', 'ATTRIBUTE', 'ASSESS_RESEARCH', 'QUALIFY')),
+    CONSTRAINT runtime_step_kind_ck CHECK (step_kind IN ('CAPTURE', 'NORMALIZE_PIT', 'FREEZE_UNIVERSE', 'ASSESS_ELIGIBILITY', 'REGISTER_DATASET', 'BUILD_CANDIDATE_SET', 'OPEN_DECISION_RUN', 'ASSESS_CONTEXT', 'SIGNAL_AND_FORECAST', 'DECIDE_AND_RISK', 'PERSIST_DECISION', 'SETTLE_OUTCOME', 'FREEZE_PARTITION', 'REGISTER_EXPERIMENT', 'OPEN_EXPERIMENT_RUN', 'OPEN_EVALUATION', 'ACQUIRE_OUTCOME_INPUTS', 'EVALUATE', 'OPEN_MODEL_TRAINING_RUN', 'REGISTER_MODEL_VERSION', 'RECORD_EVIDENCE', 'ATTRIBUTE', 'ASSESS_RESEARCH', 'QUALIFY')),
     CONSTRAINT runtime_step_implementation_ck CHECK (implementation <> '' AND implementation_version <> ''),
     CONSTRAINT runtime_step_ordinal_ck CHECK (ordinal >= 0),
     CONSTRAINT runtime_step_request_hash_ck CHECK (request_hash ~ '^[0-9a-f]{64}$'),
@@ -23841,6 +23841,10 @@ ALTER TABLE mra.exploratory_backtest_fold
     ADD CONSTRAINT exploratory_backtest_fold_specification_shape_ck CHECK (
         specification_sha256 IS NULL
         OR specification_sha256 ~ '^[0-9a-f]{64}$'
+    ),
+    ADD CONSTRAINT exploratory_backtest_fold_current_exact_uk UNIQUE (
+        exploratory_backtest_fold_id, exploratory_backtest_run_id,
+        specification_sha256
     );
 ALTER TABLE mra.exploratory_backtest_fold_session
     ADD COLUMN specification_sha256 text,
@@ -23874,6 +23878,65 @@ ALTER TABLE mra.exploratory_backtest_cost_assumption
         OR
         (specification_sha256 ~ '^[0-9a-f]{64}$'
          AND charge_side IN ('BUY', 'SELL', 'BOTH'))
+    );
+
+-- A generic Evaluation Partition still derives its complete roster inside
+-- PostgreSQL.  These nullable columns narrow that derivation to an exact
+-- current Backtest arm/fold without accepting a caller-supplied commitment
+-- roster.  Historical Partition rows remain null and retain their meaning.
+ALTER TABLE mra.research_partition
+    ADD COLUMN source_backtest_run_id uuid,
+    ADD COLUMN source_backtest_arm_id uuid,
+    ADD COLUMN source_backtest_fold_id uuid,
+    ADD COLUMN source_backtest_sha256 text,
+    ADD CONSTRAINT research_partition_backtest_run_fk FOREIGN KEY (
+        source_backtest_run_id, source_backtest_sha256
+    ) REFERENCES mra.backtest_specification(
+        exploratory_backtest_run_id, specification_sha256
+    ) ON DELETE RESTRICT,
+    ADD CONSTRAINT research_partition_backtest_arm_fk FOREIGN KEY (
+        source_backtest_arm_id, source_backtest_run_id,
+        source_backtest_sha256
+    ) REFERENCES mra.backtest_arm_specification(
+        exploratory_backtest_arm_id, exploratory_backtest_run_id,
+        specification_sha256
+    ) ON DELETE RESTRICT,
+    ADD CONSTRAINT research_partition_backtest_fold_fk FOREIGN KEY (
+        source_backtest_fold_id, source_backtest_run_id,
+        source_backtest_sha256
+    ) REFERENCES mra.exploratory_backtest_fold(
+        exploratory_backtest_fold_id, exploratory_backtest_run_id,
+        specification_sha256
+    ) ON DELETE RESTRICT,
+    ADD CONSTRAINT research_partition_backtest_source_shape_ck CHECK (
+        (source_backtest_run_id IS NULL
+         AND source_backtest_arm_id IS NULL
+         AND source_backtest_fold_id IS NULL
+         AND source_backtest_sha256 IS NULL)
+        OR
+        (source_backtest_run_id IS NOT NULL
+         AND source_backtest_arm_id IS NOT NULL
+         AND source_backtest_sha256 ~ '^[0-9a-f]{64}$')
+    );
+
+CREATE INDEX research_partition_backtest_source_idx
+    ON mra.research_partition(
+        source_backtest_run_id, source_backtest_arm_id,
+        source_backtest_fold_id
+    ) WHERE source_backtest_run_id IS NOT NULL;
+CREATE INDEX research_partition_backtest_run_fk_idx
+    ON mra.research_partition(
+        source_backtest_run_id, source_backtest_sha256
+    );
+CREATE INDEX research_partition_backtest_arm_fk_idx
+    ON mra.research_partition(
+        source_backtest_arm_id, source_backtest_run_id,
+        source_backtest_sha256
+    );
+CREATE INDEX research_partition_backtest_fold_fk_idx
+    ON mra.research_partition(
+        source_backtest_fold_id, source_backtest_run_id,
+        source_backtest_sha256
     );
 
 CREATE INDEX exploratory_backtest_feature_specification_idx

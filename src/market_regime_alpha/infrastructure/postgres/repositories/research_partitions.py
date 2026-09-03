@@ -44,6 +44,28 @@ class PostgresResearchPartitionRepository:
         request_identity: str,
         request_sha256: str,
     ) -> ResearchPartitionRecord:
+        source_values: tuple[object | None, ...] = (None, None, None, None)
+        if plan.backtest_source is not None:
+            source = plan.backtest_source
+            row = self._connection.execute(
+                """
+                SELECT current_specification_sha256
+                FROM mra.exploratory_backtest_run
+                WHERE exploratory_backtest_run_id = %s
+                  AND current_specification_sha256 IS NOT NULL
+                """,
+                (source.exploratory_backtest_run_id,),
+            ).fetchone()
+            if row is None:
+                raise ArtifactIntegrityError(
+                    "Backtest Partition source lacks current specification"
+                )
+            source_values = (
+                source.exploratory_backtest_run_id,
+                source.exploratory_backtest_arm_id,
+                source.exploratory_backtest_fold_id,
+                str(row[0]),
+            )
         member_rows = tuple(
             (
                 self._id_factory(),
@@ -106,12 +128,15 @@ class PostgresResearchPartitionRepository:
                 code_artifact_id, code_content_sha256, code_size_bytes,
                 config_artifact_id, config_content_sha256, config_size_bytes,
                 provenance_sha256, content_sha256,
-                request_identity, request_sha256
+                request_identity, request_sha256,
+                source_backtest_run_id, source_backtest_arm_id,
+                source_backtest_fold_id, source_backtest_sha256
             ) VALUES (
                 %s, %s, 'FROZEN', %s, %s, %s, %s, %s, %s,
                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s
             )
             """,
             (
@@ -153,6 +178,7 @@ class PostgresResearchPartitionRepository:
                 content_hash,
                 request_identity,
                 request_sha256,
+                *source_values,
             ),
         )
         with self._connection.cursor() as cursor:

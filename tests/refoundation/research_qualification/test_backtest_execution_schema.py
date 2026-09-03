@@ -87,3 +87,70 @@ def test_execution_relations_are_lineage_not_a_second_state_machine(
         "backtest_report_artifact_append_only",
         "backtest_report_artifact_guard",
     } <= triggers
+
+
+def test_research_partition_can_bind_exact_generic_backtest_decision_scope(
+    target_database_url: str,
+) -> None:
+    SchemaManager(target_database_url).bootstrap()
+
+    with psycopg.connect(target_database_url) as connection:
+        columns = {
+            str(row[0])
+            for row in connection.execute(
+                """
+                SELECT column_name FROM information_schema.columns
+                WHERE table_schema = 'mra'
+                  AND table_name = 'research_partition'
+                """
+            ).fetchall()
+        }
+        constraints = {
+            str(row[0])
+            for row in connection.execute(
+                """
+                SELECT conname FROM pg_constraint
+                WHERE connamespace = 'mra'::regnamespace
+                  AND conrelid = 'mra.research_partition'::regclass
+                """
+            ).fetchall()
+        }
+
+    assert {
+        "source_backtest_run_id",
+        "source_backtest_arm_id",
+        "source_backtest_fold_id",
+        "source_backtest_sha256",
+    } <= columns
+    assert {
+        "research_partition_backtest_run_fk",
+        "research_partition_backtest_arm_fk",
+        "research_partition_backtest_fold_fk",
+    } <= constraints
+
+
+def test_runtime_step_catalog_contains_generic_evaluation_and_model_owner_steps(
+    target_database_url: str,
+) -> None:
+    SchemaManager(target_database_url).bootstrap()
+
+    with psycopg.connect(target_database_url) as connection:
+        row = connection.execute(
+            """
+            SELECT pg_get_constraintdef(oid)
+            FROM pg_constraint
+            WHERE connamespace = 'mra'::regnamespace
+              AND conname = 'runtime_step_kind_ck'
+            """
+        ).fetchone()
+
+    assert row is not None
+    for step_kind in (
+        "FREEZE_PARTITION",
+        "REGISTER_EXPERIMENT",
+        "OPEN_EXPERIMENT_RUN",
+        "OPEN_EVALUATION",
+        "OPEN_MODEL_TRAINING_RUN",
+        "REGISTER_MODEL_VERSION",
+    ):
+        assert step_kind in str(row[0])

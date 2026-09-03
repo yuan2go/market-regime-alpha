@@ -7,6 +7,9 @@ import pytest
 
 from market_regime_alpha.research_qualification.domain import ArtifactBinding
 from market_regime_alpha.research_qualification.domain.partition import ResearchPartitionPlan
+from market_regime_alpha.research_qualification.domain.partition import (
+    BacktestPartitionSource,
+)
 from market_regime_alpha.research_qualification.domain.research_vocabulary import (
     PartitionOverlapPolicy,
     PartitionPopulationScope,
@@ -105,3 +108,21 @@ def test_partition_hash_is_stable_and_semantic() -> None:
     assert first.content_sha256 == same.content_sha256
     assert changed.content_sha256 != first.content_sha256
     assert changed_exchange.content_sha256 != first.content_sha256
+
+
+def test_partition_can_freeze_a_database_derived_exact_backtest_scope() -> None:
+    source = BacktestPartitionSource(
+        exploratory_backtest_run_id=uuid4(),
+        exploratory_backtest_arm_id=uuid4(),
+        exploratory_backtest_fold_id=uuid4(),
+    )
+    scoped = _plan(backtest_source=source)
+
+    assert scoped.backtest_source == source
+    assert scoped.content_sha256 != replace(scoped, backtest_source=None).content_sha256
+    assert not {item.name for item in fields(ResearchPartitionPlan)} & {
+        "members",
+        "member_ids",
+        "commitment_ids",
+        "roster",
+    }

@@ -552,7 +552,7 @@ class PostgresRuntimeRepository:
             raise RuntimeStateConflictError(f"Run {claim.run_id} could not accept failure")
         return outcome, int(step[0]), int(run[0])
 
-    def expired_attempt_ids(self) -> tuple[UUID, ...]:
+    def expired_attempt_ids(self, run_id: UUID | None = None) -> tuple[UUID, ...]:
         rows = self._connection.execute(
             """
             SELECT attempt.attempt_id
@@ -564,12 +564,16 @@ class PostgresRuntimeRepository:
               AND step.current_attempt_id = attempt.attempt_id
               AND step.current_fence = attempt.fence_token
               AND run.state = 'RUNNING'
+              AND (%s::uuid IS NULL OR run.run_id = %s)
             ORDER BY attempt.lease_until, attempt.attempt_id
-            """
+            """,
+            (run_id, run_id),
         ).fetchall()
         return tuple(UUID(str(row[0])) for row in rows)
 
-    def deadline_expired_step_ids(self) -> tuple[UUID, ...]:
+    def deadline_expired_step_ids(
+        self, run_id: UUID | None = None
+    ) -> tuple[UUID, ...]:
         rows = self._connection.execute(
             """
             SELECT step.step_id
@@ -584,8 +588,10 @@ class PostgresRuntimeRepository:
                   WHERE live_step.run_id = run.run_id
                     AND live_step.state IN ('CLAIMED', 'RUNNING')
               )
+              AND (%s::uuid IS NULL OR run.run_id = %s)
             ORDER BY step.deadline_at, step.step_id
-            """
+            """,
+            (run_id, run_id),
         ).fetchall()
         return tuple(UUID(str(row[0])) for row in rows)
 
