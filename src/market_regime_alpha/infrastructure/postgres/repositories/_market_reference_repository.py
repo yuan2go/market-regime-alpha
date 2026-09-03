@@ -56,9 +56,9 @@ class _MarketReferenceRepository(_MarketRepositorySupport):
         )
         return product.revision
 
-    def _insert_instrument(self, instrument: Instrument, *, recorded_at: datetime, known_at: datetime) -> None:
-        self._connection.execute(
-            "\n            INSERT INTO mra.instrument (\n                instrument_id, canonical_code, exchange, instrument_type,\n                currency, source_capture_id, recorded_at, known_at,\n                decision_visible_at\n            )\n            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)\n            ",
+    def _insert_instrument(self, instrument: Instrument, *, recorded_at: datetime, known_at: datetime) -> bool:
+        inserted = self._connection.execute(
+            "\n            INSERT INTO mra.instrument (\n                instrument_id, canonical_code, exchange, instrument_type,\n                currency, source_capture_id, recorded_at, known_at,\n                decision_visible_at\n            )\n            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)\n            ON CONFLICT DO NOTHING\n            RETURNING instrument_id\n            ",
             (
                 instrument.instrument_id.value,
                 instrument.canonical_code,
@@ -70,12 +70,35 @@ class _MarketReferenceRepository(_MarketRepositorySupport):
                 known_at,
                 known_at,
             ),
-        )
+        ).fetchone()
+        if inserted is not None:
+            return True
+        row = self._connection.execute(
+            """
+            SELECT instrument_id, canonical_code, exchange, instrument_type,
+                   currency
+            FROM mra.instrument
+            WHERE instrument_id = %s
+            FOR SHARE
+            """,
+            (instrument.instrument_id.value,),
+        ).fetchone()
+        if row != (
+            instrument.instrument_id.value,
+            instrument.canonical_code,
+            instrument.exchange,
+            instrument.instrument_type.value,
+            instrument.currency,
+        ):
+            raise RuntimeStateConflictError(
+                "Instrument identity already exists with different business fields"
+            )
+        return False
 
-    def _insert_instrument_identifier(self, identifier: InstrumentIdentifier, *, recorded_at: datetime, known_at: datetime) -> None:
+    def _insert_instrument_identifier(self, identifier: InstrumentIdentifier, *, recorded_at: datetime, known_at: datetime) -> bool:
         self._validate_identifier_predecessor(identifier)
-        self._connection.execute(
-            "\n            INSERT INTO mra.instrument_identifier (\n                instrument_identifier_id, instrument_id, identifier_scheme,\n                identifier_value, effective_from, effective_to, revision,\n                supersedes_identifier_id, source_capture_id, recorded_at,\n                known_at, decision_visible_at\n            )\n            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)\n            ",
+        inserted = self._connection.execute(
+            "\n            INSERT INTO mra.instrument_identifier (\n                instrument_identifier_id, instrument_id, identifier_scheme,\n                identifier_value, effective_from, effective_to, revision,\n                supersedes_identifier_id, source_capture_id, recorded_at,\n                known_at, decision_visible_at\n            )\n            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)\n            ON CONFLICT DO NOTHING\n            RETURNING instrument_identifier_id\n            ",
             (
                 identifier.instrument_identifier_id,
                 identifier.instrument_id.value,
@@ -90,11 +113,38 @@ class _MarketReferenceRepository(_MarketRepositorySupport):
                 known_at,
                 known_at,
             ),
-        )
+        ).fetchone()
+        if inserted is not None:
+            return True
+        row = self._connection.execute(
+            """
+            SELECT instrument_identifier_id, instrument_id,
+                   identifier_scheme, identifier_value, effective_from,
+                   effective_to, revision, supersedes_identifier_id
+            FROM mra.instrument_identifier
+            WHERE instrument_identifier_id = %s
+            FOR SHARE
+            """,
+            (identifier.instrument_identifier_id,),
+        ).fetchone()
+        if row != (
+            identifier.instrument_identifier_id,
+            identifier.instrument_id.value,
+            identifier.identifier_scheme,
+            identifier.identifier_value,
+            identifier.effective_from,
+            identifier.effective_to,
+            identifier.revision,
+            identifier.supersedes_identifier_id,
+        ):
+            raise RuntimeStateConflictError(
+                "InstrumentIdentifier identity already exists with different business fields"
+            )
+        return False
 
-    def _insert_trading_session(self, session: TradingSession, *, recorded_at: datetime, known_at: datetime) -> None:
-        self._connection.execute(
-            "\n            INSERT INTO mra.trading_session (\n                session_id, exchange, session_date, timezone_name, open_at,\n                break_start_at, break_end_at, close_at,\n                decision_reference_at, source_capture_id, recorded_at,\n                known_at, decision_visible_at\n            )\n            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)\n            ",
+    def _insert_trading_session(self, session: TradingSession, *, recorded_at: datetime, known_at: datetime) -> bool:
+        inserted = self._connection.execute(
+            "\n            INSERT INTO mra.trading_session (\n                session_id, exchange, session_date, timezone_name, open_at,\n                break_start_at, break_end_at, close_at,\n                decision_reference_at, source_capture_id, recorded_at,\n                known_at, decision_visible_at\n            )\n            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)\n            ON CONFLICT DO NOTHING\n            RETURNING session_id\n            ",
             (
                 session.session_id.value,
                 session.exchange,
@@ -110,12 +160,40 @@ class _MarketReferenceRepository(_MarketRepositorySupport):
                 known_at,
                 known_at,
             ),
-        )
+        ).fetchone()
+        if inserted is not None:
+            return True
+        row = self._connection.execute(
+            """
+            SELECT session_id, exchange, session_date, timezone_name,
+                   open_at, break_start_at, break_end_at, close_at,
+                   decision_reference_at
+            FROM mra.trading_session
+            WHERE session_id = %s
+            FOR SHARE
+            """,
+            (session.session_id.value,),
+        ).fetchone()
+        if row != (
+            session.session_id.value,
+            session.exchange,
+            session.session_date,
+            session.timezone_name,
+            session.open_at,
+            session.break_start_at,
+            session.break_end_at,
+            session.close_at,
+            session.decision_reference_at,
+        ):
+            raise RuntimeStateConflictError(
+                "TradingSession identity already exists with different business fields"
+            )
+        return False
 
-    def _insert_classification(self, item: ClassificationRevision, *, recorded_at: datetime, known_at: datetime) -> None:
+    def _insert_classification(self, item: ClassificationRevision, *, recorded_at: datetime, known_at: datetime) -> bool:
         self._validate_classification_predecessor(item)
-        self._connection.execute(
-            "\n            INSERT INTO mra.classification (\n                classification_id, classification_scheme,\n                classification_code, display_name, revision,\n                effective_from, effective_to,\n                supersedes_classification_id, source_capture_id, recorded_at,\n                known_at, decision_visible_at\n            )\n            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)\n            ",
+        inserted = self._connection.execute(
+            "\n            INSERT INTO mra.classification (\n                classification_id, classification_scheme,\n                classification_code, display_name, revision,\n                effective_from, effective_to,\n                supersedes_classification_id, source_capture_id, recorded_at,\n                known_at, decision_visible_at\n            )\n            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)\n            ON CONFLICT DO NOTHING\n            RETURNING classification_id\n            ",
             (
                 item.classification_id,
                 item.classification_scheme,
@@ -130,14 +208,42 @@ class _MarketReferenceRepository(_MarketRepositorySupport):
                 known_at,
                 known_at,
             ),
-        )
+        ).fetchone()
+        if inserted is not None:
+            return True
+        row = self._connection.execute(
+            """
+            SELECT classification_id, classification_scheme,
+                   classification_code, display_name, revision,
+                   effective_from, effective_to,
+                   supersedes_classification_id
+            FROM mra.classification
+            WHERE classification_id = %s
+            FOR SHARE
+            """,
+            (item.classification_id,),
+        ).fetchone()
+        if row != (
+            item.classification_id,
+            item.classification_scheme,
+            item.classification_code,
+            item.display_name,
+            item.revision,
+            item.effective_from,
+            item.effective_to,
+            item.supersedes_classification_id,
+        ):
+            raise RuntimeStateConflictError(
+                "Classification identity already exists with different business fields"
+            )
+        return False
 
     def _insert_classification_membership(
         self, item: ClassificationMembershipRevision, *, recorded_at: datetime, known_at: datetime
-    ) -> None:
+    ) -> bool:
         self._validate_membership_predecessor(item)
-        self._connection.execute(
-            "\n            INSERT INTO mra.classification_membership_revision (\n                membership_revision_id, classification_id, instrument_id,\n                source_capture_id, membership_status, effective_from,\n                effective_to, revision, supersedes_membership_revision_id,\n                recorded_at, known_at, decision_visible_at\n            )\n            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)\n            ",
+        inserted = self._connection.execute(
+            "\n            INSERT INTO mra.classification_membership_revision (\n                membership_revision_id, classification_id, instrument_id,\n                source_capture_id, membership_status, effective_from,\n                effective_to, revision, supersedes_membership_revision_id,\n                recorded_at, known_at, decision_visible_at\n            )\n            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)\n            ON CONFLICT DO NOTHING\n            RETURNING membership_revision_id\n            ",
             (
                 item.membership_revision_id,
                 item.classification_id,
@@ -152,7 +258,34 @@ class _MarketReferenceRepository(_MarketRepositorySupport):
                 known_at,
                 known_at,
             ),
-        )
+        ).fetchone()
+        if inserted is not None:
+            return True
+        row = self._connection.execute(
+            """
+            SELECT membership_revision_id, classification_id, instrument_id,
+                   membership_status, effective_from, effective_to, revision,
+                   supersedes_membership_revision_id
+            FROM mra.classification_membership_revision
+            WHERE membership_revision_id = %s
+            FOR SHARE
+            """,
+            (item.membership_revision_id,),
+        ).fetchone()
+        if row != (
+            item.membership_revision_id,
+            item.classification_id,
+            item.instrument_id.value,
+            item.membership_status.value,
+            item.effective_from,
+            item.effective_to,
+            item.revision,
+            item.supersedes_membership_revision_id,
+        ):
+            raise RuntimeStateConflictError(
+                "ClassificationMembership identity already exists with different business fields"
+            )
+        return False
 
     def _validate_product_capabilities(self, batch: NormalizationBatch) -> None:
         row = self._connection.execute(

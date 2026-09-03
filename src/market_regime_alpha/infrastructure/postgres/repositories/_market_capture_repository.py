@@ -110,8 +110,29 @@ class _MarketCaptureRepository(_MarketRepositorySupport):
             "\n            SELECT min(decision_visible_at), max(decision_visible_at), count(*)\n            FROM (\n                SELECT decision_visible_at FROM mra.instrument\n                WHERE source_capture_id = %(capture_id)s\n                UNION ALL\n                SELECT decision_visible_at FROM mra.instrument_identifier\n                WHERE source_capture_id = %(capture_id)s\n                UNION ALL\n                SELECT decision_visible_at FROM mra.trading_session\n                WHERE source_capture_id = %(capture_id)s\n                UNION ALL\n                SELECT decision_visible_at FROM mra.classification\n                WHERE source_capture_id = %(capture_id)s\n                UNION ALL\n                SELECT decision_visible_at\n                FROM mra.classification_membership_revision\n                WHERE source_capture_id = %(capture_id)s\n                UNION ALL\n                SELECT decision_visible_at FROM mra.market_bar_revision\n                WHERE capture_id = %(capture_id)s\n                UNION ALL\n                SELECT decision_visible_at FROM mra.instrument_fact_revision\n                WHERE capture_id = %(capture_id)s\n                UNION ALL\n                SELECT decision_visible_at FROM mra.corporate_action_revision\n                WHERE capture_id = %(capture_id)s\n                UNION ALL\n                SELECT decision_visible_at FROM mra.source_gap\n                WHERE capture_id = %(capture_id)s\n            ) AS normalized\n            ",
             {"capture_id": capture_id},
         ).fetchone()
-        if row is None or int(row[2]) == 0:
+        if row is None:
             raise RuntimeNotFoundError(f"Capture {capture_id} has no committed normalization evidence")
+        if int(row[2]) == 0:
+            receipt = self._connection.execute(
+                """
+                SELECT 1
+                FROM mra.command_receipt
+                WHERE command_kind = 'NORMALIZE_MARKET_PIT'
+                  AND scope_id = %s
+                  AND status = 'SUCCEEDED'
+                  AND result_aggregate_kind = 'MARKET_NORMALIZATION'
+                  AND result_aggregate_id = %s
+                LIMIT 1
+                """,
+                (str(capture_id), str(capture_id)),
+            ).fetchone()
+            if receipt is None:
+                raise RuntimeNotFoundError(
+                    f"Capture {capture_id} has no committed normalization evidence"
+                )
+            return self.capture_source(
+                capture_id, lock=False
+            ).capture.temporal.decision_visible_at
         if row[0] != row[1]:
             raise RuntimeStateConflictError(f"Capture {capture_id} normalization has inconsistent visibility")
         return DecisionTime(row[0])

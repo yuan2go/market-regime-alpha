@@ -253,6 +253,121 @@ def _session(
     )
 
 
+def test_repeated_identical_reference_capture_reconciles_without_replacing_first_source(
+    market_stack,
+) -> None:
+    application, _, _, _, _, product, database_url = market_stack
+    session_id = uuid4()
+    session_date = date(2026, 1, 5)
+    first = _capture(application, product, "reference-repeat-first", b'{"calendar":"same"}\n')
+    second = _capture(application, product, "reference-repeat-second", b'{"calendar":"same"}\n')
+
+    def batch(capture) -> NormalizationBatch:
+        return NormalizationBatch(
+            source_capture_id=capture.capture_id,
+            source_provider_product_id=capture.provider_product_id,
+            trading_sessions=(
+                _session(
+                    session_id=session_id,
+                    session_date=session_date,
+                    capture_id=capture.capture_id,
+                ),
+            ),
+        )
+
+    application.normalize(
+        first.capture.capture_id,
+        FixedNormalizer(batch),
+        _context("reference-repeat-normalize-first", "NORMALIZE_MARKET_PIT"),
+    )
+    normalized = application.normalize(
+        second.capture.capture_id,
+        FixedNormalizer(batch),
+        _context("reference-repeat-normalize-second", "NORMALIZE_MARKET_PIT"),
+    )
+    replayed = application.normalize(
+        second.capture.capture_id,
+        FixedNormalizer(batch),
+        _context("reference-repeat-normalize-second", "NORMALIZE_MARKET_PIT"),
+    )
+
+    assert normalized.replayed is False
+    assert replayed.replayed is True
+    assert replayed.decision_visible_at == normalized.decision_visible_at
+    with psycopg.connect(database_url) as connection:
+        assert connection.execute(
+            "SELECT count(*), max(source_capture_id::text) FROM mra.trading_session WHERE session_id = %s",
+            (session_id,),
+        ).fetchone() == (1, str(first.capture.capture_id))
+        assert connection.execute(
+            """
+            SELECT count(*) FROM mra.command_receipt
+            WHERE command_kind = 'NORMALIZE_MARKET_PIT'
+              AND scope_id IN (%s, %s)
+              AND status = 'SUCCEEDED'
+            """,
+            (str(first.capture.capture_id), str(second.capture.capture_id)),
+        ).fetchone() == (2,)
+
+
+def test_repeated_reference_capture_with_changed_business_fields_fails_closed(
+    market_stack,
+) -> None:
+    application, _, _, _, _, product, database_url = market_stack
+    session_id = uuid4()
+    session_date = date(2026, 1, 5)
+    first = _capture(application, product, "reference-change-first", b'{"calendar":1}\n')
+    changed = _capture(application, product, "reference-change-second", b'{"calendar":2}\n')
+    canonical = _session(
+        session_id=session_id,
+        session_date=session_date,
+        capture_id=first.capture.capture_id,
+    )
+    application.normalize(
+        first.capture.capture_id,
+        FixedNormalizer(
+            lambda capture: NormalizationBatch(
+                source_capture_id=capture.capture_id,
+                source_provider_product_id=capture.provider_product_id,
+                trading_sessions=(canonical,),
+            )
+        ),
+        _context("reference-change-normalize-first", "NORMALIZE_MARKET_PIT"),
+    )
+
+    with pytest.raises(RuntimeStateConflictError):
+        application.normalize(
+            changed.capture.capture_id,
+            FixedNormalizer(
+                lambda capture: NormalizationBatch(
+                    source_capture_id=capture.capture_id,
+                    source_provider_product_id=capture.provider_product_id,
+                    trading_sessions=(
+                        TradingSession(
+                            session_id=canonical.session_id,
+                            exchange=canonical.exchange,
+                            session_date=canonical.session_date,
+                            timezone_name=canonical.timezone_name,
+                            open_at=canonical.open_at,
+                            break_start_at=canonical.break_start_at,
+                            break_end_at=canonical.break_end_at,
+                            close_at=canonical.close_at + timedelta(minutes=1),
+                            decision_reference_at=canonical.decision_reference_at,
+                            source_capture_id=capture.capture_id,
+                        ),
+                    ),
+                )
+            ),
+            _context("reference-change-normalize-second", "NORMALIZE_MARKET_PIT"),
+        )
+
+    with psycopg.connect(database_url) as connection:
+        assert connection.execute(
+            "SELECT count(*), max(close_at) FROM mra.trading_session WHERE session_id = %s",
+            (session_id,),
+        ).fetchone() == (1, canonical.close_at)
+
+
 def test_capture_binds_exact_artifact_temporal_axes_receipt_and_audit_atomically(
     market_stack,
 ) -> None:

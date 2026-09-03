@@ -48,25 +48,36 @@ class _MarketNormalizationRepository(_MarketReferenceRepository, _MarketCaptureR
         self._validate_product_capabilities(batch)
         classification_lineage = self._lock_normalization_roots(batch)
         recorded_at, known_at = self._normalization_times(source.capture)
+        inserted_evidence = False
         for instrument in sorted(batch.instruments, key=lambda item: (item.canonical_code, str(item.instrument_id))):
-            self._insert_instrument(instrument, recorded_at=recorded_at, known_at=known_at)
+            inserted_evidence |= self._insert_instrument(
+                instrument, recorded_at=recorded_at, known_at=known_at
+            )
         for identifier in sorted(
             batch.instrument_identifiers,
             key=lambda item: (item.identifier_scheme, item.effective_from, item.revision, item.identifier_value, str(item.instrument_id)),
         ):
-            self._insert_instrument_identifier(identifier, recorded_at=recorded_at, known_at=known_at)
+            inserted_evidence |= self._insert_instrument_identifier(
+                identifier, recorded_at=recorded_at, known_at=known_at
+            )
         for session in sorted(batch.trading_sessions, key=lambda item: (item.exchange, item.session_date, str(item.session_id))):
-            self._insert_trading_session(session, recorded_at=recorded_at, known_at=known_at)
+            inserted_evidence |= self._insert_trading_session(
+                session, recorded_at=recorded_at, known_at=known_at
+            )
         for classification in sorted(
             batch.classifications,
             key=lambda item: (item.classification_scheme, item.classification_code, item.effective_from, item.revision),
         ):
-            self._insert_classification(classification, recorded_at=recorded_at, known_at=known_at)
+            inserted_evidence |= self._insert_classification(
+                classification, recorded_at=recorded_at, known_at=known_at
+            )
         for membership in sorted(
             batch.classification_memberships,
             key=lambda item: (*classification_lineage[item.classification_id], str(item.instrument_id), item.effective_from, item.revision),
         ):
-            self._insert_classification_membership(membership, recorded_at=recorded_at, known_at=known_at)
+            inserted_evidence |= self._insert_classification_membership(
+                membership, recorded_at=recorded_at, known_at=known_at
+            )
         for bar in sorted(
             batch.bars,
             key=lambda item: (
@@ -81,22 +92,27 @@ class _MarketNormalizationRepository(_MarketReferenceRepository, _MarketCaptureR
             if bar.event_end > known_at:
                 raise RuntimeStateConflictError("MarketBar cannot become known before its event interval ends")
             self._insert_bar_revision(bar, recorded_at=recorded_at, known_at=known_at)
+            inserted_evidence = True
         for instrument_fact in sorted(
             batch.instrument_facts, key=lambda item: (str(item.instrument_id), item.fact_kind.value, item.event_start, item.revision)
         ):
             self._insert_instrument_fact_revision(instrument_fact, recorded_at=recorded_at, known_at=known_at)
+            inserted_evidence = True
         for security_fact in sorted(
             batch.security_status_facts,
             key=lambda item: (str(item.instrument_id), str(item.session_id), item.evidence_scope.value, item.revision),
         ):
             self._insert_security_status_revision(security_fact, recorded_at=recorded_at, known_at=known_at)
+            inserted_evidence = True
         for lifecycle_fact in sorted(
             batch.lifecycle_status_facts,
             key=lambda item: (str(item.instrument_id), item.fact_kind.value, item.effective_from, item.revision),
         ):
             self._insert_lifecycle_status_revision(lifecycle_fact, recorded_at=recorded_at, known_at=known_at)
+            inserted_evidence = True
         for action in sorted(batch.corporate_actions, key=lambda item: (str(item.instrument_id), item.action_key, item.revision)):
             self._insert_corporate_action(action, recorded_at=recorded_at, known_at=known_at)
+            inserted_evidence = True
         for gap in sorted(
             batch.gaps,
             key=lambda item: (
@@ -110,7 +126,12 @@ class _MarketNormalizationRepository(_MarketReferenceRepository, _MarketCaptureR
             if gap.fact_kind is GapFactKind.MARKET_BAR and gap.event_end is not None and (gap.event_end > known_at):
                 raise RuntimeStateConflictError("MarketBar SourceGap cannot become known before its expected interval ends")
             self._insert_source_gap(gap, recorded_at=recorded_at, known_at=known_at)
-        return DecisionTime(known_at)
+            inserted_evidence = True
+        return DecisionTime(
+            known_at
+            if inserted_evidence
+            else source.capture.temporal.decision_visible_at.value
+        )
 
     def _lock_normalization_roots(self, batch: NormalizationBatch) -> dict[UUID, tuple[str, str]]:
         """Acquire every multi-root advisory lock in one deterministic order."""

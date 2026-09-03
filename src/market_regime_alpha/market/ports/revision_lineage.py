@@ -7,13 +7,24 @@ from datetime import datetime
 from typing import Protocol
 from uuid import UUID
 
-from market_regime_alpha.market.domain.vocabulary import BarTimeframe, PriceBasis
+from market_regime_alpha.market.domain.vocabulary import (
+    BarTimeframe,
+    EvidenceScope,
+    InstrumentFactKind,
+    PriceBasis,
+)
 from market_regime_alpha.shared.identity import InstrumentId, TradingSessionId
 
 
 @dataclass(frozen=True, slots=True)
 class MarketBarRevisionHead:
     bar_revision_id: UUID
+    revision: int
+
+
+@dataclass(frozen=True, slots=True)
+class InstrumentFactRevisionHead:
+    fact_revision_id: UUID
     revision: int
 
 
@@ -30,5 +41,20 @@ class MarketRevisionLineageReadPort(Protocol):
         event_end: datetime,
     ) -> MarketBarRevisionHead | None: ...
 
+    def instrument_fact_head(
+        self,
+        *,
+        provider_product_id: UUID,
+        instrument_id: InstrumentId,
+        session_id: TradingSessionId | None,
+        fact_kind: InstrumentFactKind,
+        evidence_scope: EvidenceScope,
+        event_start: datetime,
+    ) -> InstrumentFactRevisionHead | None: ...
 
-__all__ = ["MarketBarRevisionHead", "MarketRevisionLineageReadPort"]
+
+__all__ = [
+    "InstrumentFactRevisionHead",
+    "MarketBarRevisionHead",
+    "MarketRevisionLineageReadPort",
+]
