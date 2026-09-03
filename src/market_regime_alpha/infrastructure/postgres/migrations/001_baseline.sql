@@ -3157,6 +3157,9 @@ CREATE TABLE mra.eligibility_policy (
     rule_count integer NOT NULL,
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     CONSTRAINT eligibility_policy_identity_uk UNIQUE (policy_code, version),
+    CONSTRAINT eligibility_policy_identity_hash_uk UNIQUE (
+        eligibility_policy_id, content_sha256
+    ),
     CONSTRAINT eligibility_policy_code_ck CHECK (
         policy_code ~ '^[a-z][a-z0-9_-]{0,99}$'
     ),
@@ -22733,6 +22736,8 @@ CREATE TABLE mra.backtest_specification (
     universe_revision_id uuid NOT NULL,
     universe_id uuid NOT NULL,
     universe_scope_sha256 text NOT NULL,
+    eligibility_policy_id uuid NOT NULL,
+    eligibility_policy_sha256 text NOT NULL,
     sample_algorithm_code text NOT NULL,
     sample_algorithm_version integer NOT NULL,
     sample_input_key text NOT NULL,
@@ -22778,6 +22783,11 @@ CREATE TABLE mra.backtest_specification (
     ) REFERENCES mra.universe_revision(
         universe_revision_id, universe_id, scope_content_sha256
     ) ON DELETE RESTRICT,
+    CONSTRAINT backtest_specification_eligibility_fk FOREIGN KEY (
+        eligibility_policy_id, eligibility_policy_sha256
+    ) REFERENCES mra.eligibility_policy(
+        eligibility_policy_id, content_sha256
+    ) ON DELETE RESTRICT,
     CONSTRAINT backtest_specification_first_session_fk FOREIGN KEY (
         first_trading_session_id
     ) REFERENCES mra.trading_session(session_id) ON DELETE RESTRICT,
@@ -22788,6 +22798,7 @@ CREATE TABLE mra.backtest_specification (
         specification_schema_version > 0 AND definition_version > 0
         AND specification_sha256 ~ '^[0-9a-f]{64}$'
         AND universe_scope_sha256 ~ '^[0-9a-f]{64}$'
+        AND eligibility_policy_sha256 ~ '^[0-9a-f]{64}$'
         AND sample_algorithm_code ~ '^[a-z][a-z0-9_.-]{0,99}$'
         AND sample_algorithm_version > 0 AND sample_input_key <> ''
         AND sample_seed >= 0 AND sample_member_count > 0
@@ -22815,6 +22826,11 @@ CREATE TABLE mra.backtest_specification (
         AND NOT prospective_proven AND NOT alpha_proven
     )
 );
+
+CREATE INDEX backtest_specification_eligibility_idx
+    ON mra.backtest_specification (
+        eligibility_policy_id, eligibility_policy_sha256
+    );
 
 ALTER TABLE mra.exploratory_backtest_run
     ALTER COLUMN session_count DROP NOT NULL,
@@ -24037,6 +24053,25 @@ BEGIN
         RAISE EXCEPTION 'Current Backtest root definition hash is invalid'
             USING ERRCODE = '55000';
     END IF;
+    IF NOT EXISTS (
+        SELECT 1
+          FROM mra.universe_revision AS universe_revision
+          JOIN mra.eligibility_policy AS eligibility_policy
+            ON eligibility_policy.eligibility_policy_id =
+               NEW.eligibility_policy_id
+           AND eligibility_policy.content_sha256 =
+               NEW.eligibility_policy_sha256
+           AND eligibility_policy.market_provider_product_id =
+               universe_revision.market_provider_product_id
+         WHERE universe_revision.universe_revision_id =
+               NEW.universe_revision_id
+           AND universe_revision.universe_id = NEW.universe_id
+           AND universe_revision.scope_content_sha256 =
+               NEW.universe_scope_sha256
+    ) THEN
+        RAISE EXCEPTION 'Current Backtest eligibility policy is outside the exact UniverseRevision provider scope'
+            USING ERRCODE = '55000';
+    END IF;
     IF (root.feature_count, root.feature_roster_sha256,
         root.arm_count, root.arm_roster_sha256,
         root.fold_count, root.fold_roster_sha256,
@@ -24561,6 +24596,10 @@ BEGIN
                 NEW.distinct_trading_session_count,
             'evaluation_roster_sha256',
                 NEW.evaluation_requirement_roster_sha256,
+            'eligibility_policy', jsonb_build_object(
+                'authority_id', NEW.eligibility_policy_id,
+                'content_sha256', NEW.eligibility_policy_sha256
+            ),
             'evidence_ceiling', jsonb_build_object(
                 'alpha_proven', NEW.alpha_proven,
                 'formal_oos_state', NEW.formal_oos_state,

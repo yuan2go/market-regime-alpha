@@ -278,6 +278,7 @@ def test_specification_accepts_arbitrary_arms_and_overlapping_rolling_fit_sessio
         market_archive=_binding(401),
         market_archive_seal=_binding(402),
         universe_revision=_binding(403),
+        eligibility_policy=_binding(404),
         sample_scope_code="stable-hash-3",
         sample_members=tuple(
             BacktestSampleMember(_id(410 + index), _id(420 + index), index)
@@ -415,6 +416,7 @@ def test_rule_only_specification_requires_no_model_training_requirement() -> Non
         market_archive=_binding(704),
         market_archive_seal=_binding(705),
         universe_revision=_binding(706),
+        eligibility_policy=_binding(7070),
         sample_scope_code="fixed-one",
         sample_members=(BacktestSampleMember(_id(707), _id(708), 1),),
         exchange_code="XSHG",

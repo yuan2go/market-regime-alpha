@@ -55,6 +55,7 @@ def _source(*, cost_hash: str = "7" * 64) -> BacktestReportSource:
         market_archive=AuthorityBinding(_id(2000), "1" * 64),
         market_archive_seal=AuthorityBinding(_id(2001), "2" * 64),
         universe_revision=AuthorityBinding(_id(2002), "3" * 64),
+        eligibility_policy=AuthorityBinding(_id(2004), "f" * 64),
         sample_scope_code="stable-hash-32",
         sample_roster_sha256="4" * 64,
         feature_roster_sha256="5" * 64,

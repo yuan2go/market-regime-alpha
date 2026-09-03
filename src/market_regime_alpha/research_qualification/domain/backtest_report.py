@@ -41,6 +41,7 @@ class BacktestReportConfiguration:
     market_archive: AuthorityBinding
     market_archive_seal: AuthorityBinding
     universe_revision: AuthorityBinding
+    eligibility_policy: AuthorityBinding
     sample_scope_code: str
     sample_roster_sha256: ContentHash | str
     feature_roster_sha256: ContentHash | str
@@ -321,6 +322,7 @@ def comparison_fingerprint(
         universe_sample_sha256=canonical_json_sha256(
             (
                 configuration.universe_revision,
+                configuration.eligibility_policy,
                 configuration.sample_scope_code,
                 configuration.sample_roster_sha256,
             )

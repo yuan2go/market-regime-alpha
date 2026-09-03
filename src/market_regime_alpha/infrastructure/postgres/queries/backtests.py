@@ -63,6 +63,8 @@ class PostgresBacktestQueryPort:
                            specification.specification_sha256,
                            specification.universe_revision_id,
                            specification.universe_scope_sha256,
+                           specification.eligibility_policy_id,
+                           specification.eligibility_policy_sha256,
                            specification.sample_algorithm_code,
                            specification.sample_algorithm_version,
                            specification.sample_input_key,
@@ -298,6 +300,10 @@ class PostgresBacktestQueryPort:
             universe_revision=AuthorityBinding(
                 UUID(str(root["universe_revision_id"])),
                 str(root["universe_scope_sha256"]),
+            ),
+            eligibility_policy=AuthorityBinding(
+                UUID(str(root["eligibility_policy_id"])),
+                str(root["eligibility_policy_sha256"]),
             ),
             sample_scope_code=str(root["sample_algorithm_code"]),
             sample_members=sample_members,

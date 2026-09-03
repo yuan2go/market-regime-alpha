@@ -58,6 +58,8 @@ class PostgresBacktestReportSourcePort:
                            seal.content_sha256 AS market_archive_seal_sha256,
                            specification.universe_revision_id,
                            specification.universe_scope_sha256,
+                           specification.eligibility_policy_id,
+                           specification.eligibility_policy_sha256,
                            specification.sample_algorithm_code,
                            specification.sample_roster_sha256,
                            root.feature_roster_sha256,
@@ -222,6 +224,10 @@ class PostgresBacktestReportSourcePort:
             universe_revision=AuthorityBinding(
                 UUID(str(root["universe_revision_id"])),
                 str(root["universe_scope_sha256"]),
+            ),
+            eligibility_policy=AuthorityBinding(
+                UUID(str(root["eligibility_policy_id"])),
+                str(root["eligibility_policy_sha256"]),
             ),
             sample_scope_code=str(root["sample_algorithm_code"]),
             sample_roster_sha256=str(root["sample_roster_sha256"]),

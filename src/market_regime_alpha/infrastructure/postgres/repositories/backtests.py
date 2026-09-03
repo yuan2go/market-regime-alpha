@@ -124,6 +124,7 @@ class PostgresBacktestRepository:
                 exploratory_backtest_run_id, specification_schema_version,
                 definition_version, specification_sha256,
                 universe_revision_id, universe_id, universe_scope_sha256,
+                eligibility_policy_id, eligibility_policy_sha256,
                 sample_algorithm_code, sample_algorithm_version,
                 sample_input_key, sample_seed,
                 sample_member_count, sample_roster_sha256,
@@ -146,7 +147,7 @@ class PostgresBacktestRepository:
                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                %s, %s, %s, %s, %s, %s, %s, %s
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
             )
             """,
             (
@@ -157,6 +158,8 @@ class PostgresBacktestRepository:
                 specification.universe_revision.authority_id,
                 universe_id,
                 str(specification.universe_revision.content_sha256),
+                specification.eligibility_policy.authority_id,
+                str(specification.eligibility_policy.content_sha256),
                 specification.sample_scope_code,
                 specification.sample_algorithm_version,
                 specification.sample_input_key,
@@ -530,12 +533,17 @@ class PostgresBacktestRepository:
             JOIN mra.universe_revision AS revision
               ON revision.universe_revision_id = %s
              AND revision.scope_content_sha256 = %s
+            JOIN mra.eligibility_policy AS eligibility
+              ON eligibility.eligibility_policy_id = %s
+             AND eligibility.content_sha256 = %s
+             AND eligibility.market_provider_product_id =
+                 revision.market_provider_product_id
             WHERE archive.market_archive_id = %s
               AND archive.content_sha256 = %s
               AND archive.lane = 'RETROSPECTIVE_BACKFILL'
               AND archive.evidence_class = 'EXPLORATORY_RETROSPECTIVE'
             FOR SHARE OF archive, seal, target, candidate, context,
-                         strategy, portfolio, risk, revision
+                         strategy, portfolio, risk, revision, eligibility
             """,
             (
                 specification.market_archive_seal.authority_id,
@@ -555,6 +563,8 @@ class PostgresBacktestRepository:
                 str(defaults.risk.content_sha256),
                 specification.universe_revision.authority_id,
                 str(specification.universe_revision.content_sha256),
+                specification.eligibility_policy.authority_id,
+                str(specification.eligibility_policy.content_sha256),
                 specification.market_archive.authority_id,
                 str(specification.market_archive.content_sha256),
             ),

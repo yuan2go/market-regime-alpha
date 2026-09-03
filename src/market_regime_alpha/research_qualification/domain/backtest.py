@@ -623,6 +623,7 @@ class BacktestSpecification:
     market_archive: AuthorityBinding
     market_archive_seal: AuthorityBinding
     universe_revision: AuthorityBinding
+    eligibility_policy: AuthorityBinding
     sample_scope_code: str
     sample_members: tuple[BacktestSampleMember, ...]
     exchange_code: str
@@ -1009,6 +1010,9 @@ class BacktestSpecification:
                         ),
                         "market_archive_seal": _authority_payload(
                             self.market_archive_seal
+                        ),
+                        "eligibility_policy": _authority_payload(
+                            self.eligibility_policy
                         ),
                         "provenance_sha256": str(provenance_hash),
                         "random_seed": self.random_seed,

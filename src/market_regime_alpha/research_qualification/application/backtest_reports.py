@@ -225,6 +225,8 @@ def _report_payload(source: BacktestReportSource) -> dict[str, object]:
         "universe_sample": {
             "universe_revision_id": str(configuration.universe_revision.authority_id),
             "universe_revision_sha256": str(configuration.universe_revision.content_sha256),
+            "eligibility_policy_id": str(configuration.eligibility_policy.authority_id),
+            "eligibility_policy_sha256": str(configuration.eligibility_policy.content_sha256),
             "sample_scope_code": configuration.sample_scope_code,
             "sample_member_count": configuration.sample_member_count,
             "sample_roster_sha256": str(configuration.sample_roster_sha256),

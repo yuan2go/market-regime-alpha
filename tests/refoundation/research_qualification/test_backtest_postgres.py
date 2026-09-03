@@ -116,7 +116,20 @@ def _current_specification(stack) -> BacktestSpecification:
             """,
             (stack.universe_revision_id,),
         ).fetchone()
-    assert archive_hash is not None and seal_hash is not None and universe is not None
+        eligibility = connection.execute(
+            """
+            SELECT content_sha256
+            FROM mra.eligibility_policy
+            WHERE eligibility_policy_id = %s
+            """,
+            (stack.eligibility_policy_id,),
+        ).fetchone()
+    assert (
+        archive_hash is not None
+        and seal_hash is not None
+        and universe is not None
+        and eligibility is not None
+    )
 
     old_sessions = tuple(session for fold in legacy.folds for session in fold.sessions)
     fit_protocol = _authority(
@@ -290,6 +303,7 @@ def _current_specification(stack) -> BacktestSpecification:
         market_archive=_authority(legacy.market_archive_id, archive_hash[0]),
         market_archive_seal=_authority(legacy.market_archive_seal_id, seal_hash[0]),
         universe_revision=_authority(stack.universe_revision_id, universe[0]),
+        eligibility_policy=_authority(stack.eligibility_policy_id, eligibility[0]),
         sample_scope_code="deterministic-one",
         sample_members=(
             BacktestSampleMember(
