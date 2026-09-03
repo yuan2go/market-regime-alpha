@@ -63,10 +63,12 @@ def build_retrospective_manifest(
     security_master_codes: tuple[str, ...],
     pilot_codes: tuple[str, ...],
     provenance_sha256: str,
+    archive_generation: int = 1,
     reserved_free_bytes: int = 2_000_000_000,
     maximum_archive_bytes: int = 2_500_000_000,
     maximum_slice_bytes: int = 50_000_000,
 ) -> ArchiveOperatorManifest:
+    _validate_archive_generation(archive_generation)
     if execution_date < date(2026, 1, 1):
         raise ValueError("retrospective execution date precedes the WP-17P window")
     _validate_codes(security_master_codes)
@@ -79,7 +81,9 @@ def build_retrospective_manifest(
         or membership_dates[-1] > execution_date
     ):
         raise ValueError("membership dates must be unique and inside the archive window")
-    archive_code = f"wp17p_retro_2026_{execution_date:%Y%m%d}"
+    archive_code = (
+        f"wp17p_retro_2026_{execution_date:%Y%m%d}_g{archive_generation:03d}"
+    )
     archive_id = _id(f"archive:{archive_code}")
     window_start = _at(date(2026, 1, 1), time.min)
     window_end = _at(execution_date, time.max)
@@ -191,17 +195,22 @@ def build_prospective_manifest(
     next_session_date: date,
     pilot_codes: tuple[str, ...],
     provenance_sha256: str,
+    archive_generation: int = 1,
     reserved_free_bytes: int = 2_000_000_000,
     maximum_archive_bytes: int = 1_000_000_000,
     maximum_slice_bytes: int = 50_000_000,
 ) -> ArchiveOperatorManifest:
+    _validate_archive_generation(archive_generation)
     if archive_not_before.tzinfo is None or archive_not_before.utcoffset() is None:
         raise ValueError("archive_not_before must include an offset")
     archive_not_before = archive_not_before.astimezone(UTC)
     _validate_codes(pilot_codes)
     if len(pilot_codes) != 32:
         raise ValueError("prospective archive requires the exact 32-instrument pilot")
-    archive_code = f"wp17p_prospective_{archive_not_before:%Y%m%d_%H%M%S}"
+    archive_code = (
+        f"wp17p_prospective_{archive_not_before:%Y%m%d_%H%M%S}"
+        f"_g{archive_generation:03d}"
+    )
     archive_id = _id(f"archive:{archive_code}")
     first_code = pilot_codes[0]
     smoke_start = archive_not_before + timedelta(minutes=1)
@@ -356,6 +365,11 @@ def _validate_codes(codes: tuple[str, ...]) -> None:
         or any(_A_SHARE_CODE.fullmatch(item) is None for item in codes)
     ):
         raise ValueError("security roster must be sorted unique BaoStock A-share codes")
+
+
+def _validate_archive_generation(archive_generation: int) -> None:
+    if isinstance(archive_generation, bool) or archive_generation < 1:
+        raise ValueError("archive_generation must be positive")
 
 
 def _at(value_date: date, value_time: time) -> datetime:

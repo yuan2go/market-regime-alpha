@@ -65,6 +65,37 @@ def test_retrospective_manifest_freezes_monthly_real_request_roster() -> None:
     assert manifest == type(manifest).from_json(manifest.to_json())
 
 
+def test_archive_generation_creates_a_new_identity_without_changing_scope() -> None:
+    pilot = select_deterministic_pilot(_codes())
+    common = {
+        "provider_product_id": PRODUCT_ID,
+        "code_artifact_id": CODE_ARTIFACT_ID,
+        "config_artifact_id": CONFIG_ARTIFACT_ID,
+        "execution_date": date(2026, 3, 10),
+        "membership_dates": (date(2026, 1, 5), date(2026, 3, 9)),
+        "security_master_codes": _codes(),
+        "pilot_codes": pilot,
+        "provenance_sha256": "a" * 64,
+    }
+
+    generation_one = build_retrospective_manifest(**common, archive_generation=1)
+    generation_two = build_retrospective_manifest(**common, archive_generation=2)
+
+    assert generation_one.start_request.market_archive_id != (
+        generation_two.start_request.market_archive_id
+    )
+    assert generation_one.start_request.archive_code.endswith("_g001")
+    assert generation_two.start_request.archive_code.endswith("_g002")
+    assert generation_one.start_request.instrument_scope_sha256 == (
+        generation_two.start_request.instrument_scope_sha256
+    )
+    assert tuple(item.plan.scope_key for item in generation_one.slices) == tuple(
+        item.plan.scope_key for item in generation_two.slices
+    )
+    with pytest.raises(ValueError, match="archive_generation must be positive"):
+        build_retrospective_manifest(**common, archive_generation=0)
+
+
 def test_prospective_manifest_contains_only_post_start_scheduled_windows() -> None:
     planned_after = datetime(2026, 9, 3, 8, 0, tzinfo=UTC)
     manifest = build_prospective_manifest(
@@ -75,9 +106,11 @@ def test_prospective_manifest_contains_only_post_start_scheduled_windows() -> No
         next_session_date=date(2026, 9, 4),
         pilot_codes=select_deterministic_pilot(_codes()),
         provenance_sha256="b" * 64,
+        archive_generation=3,
     )
 
     assert manifest.start_request.lane is ArchiveLane.PROSPECTIVE_CONTEMPORANEOUS
+    assert manifest.start_request.archive_code.endswith("_g003")
     assert all(
         item.plan.event_window_start >= planned_after for item in manifest.slices
     )
