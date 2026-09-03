@@ -4,6 +4,8 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
+from io import StringIO
+import json
 from uuid import uuid4
 from threading import Lock
 
@@ -23,6 +25,11 @@ from market_regime_alpha.infrastructure.postgres.queries.backtest_history import
 from market_regime_alpha.infrastructure.postgres.queries.backtest_execution import (
     PostgresBacktestExecutionObservationPort,
 )
+from market_regime_alpha.interfaces.backtest import (
+    decode_backtest_specification,
+    encode_backtest_specification,
+)
+from market_regime_alpha.interfaces.cli import main as cli_main
 from market_regime_alpha.infrastructure.postgres.research_model_uow import (
     PostgresResearchModelUnitOfWorkProvider,
 )
@@ -646,6 +653,97 @@ def test_current_model_recipe_round_trips_as_typed_relational_closure(
             ),
         ).fetchone()
     assert counts == (2, 2, 2)
+
+
+def test_operator_json_round_trips_complete_typed_current_specification(
+    backtest_stack,
+) -> None:
+    specification = _current_model_specification(backtest_stack)
+
+    encoded = encode_backtest_specification(specification)
+    decoded = decode_backtest_specification(encoded)
+
+    assert decoded == specification
+    assert encode_backtest_specification(decoded) == encoded
+
+
+def test_generic_backtest_cli_validate_plan_predeclare_and_inspect_are_application_backed(
+    backtest_stack,
+    tmp_path,
+) -> None:
+    specification = _current_specification(backtest_stack)
+    input_path = tmp_path / "backtest-specification.json"
+    input_path.write_bytes(encode_backtest_specification(specification))
+    environment = {
+        "MRA_DATABASE_URL": backtest_stack.database_url,
+        "MRA_ARTIFACT_ROOT": str((tmp_path / "cli-artifacts").resolve()),
+        "MRA_SCHEMA": "mra",
+        "MRA_SCHEMA_EPOCH": "MRA_REFOUNDATION_1",
+        "MRA_POOL_MIN_SIZE": "0",
+        "MRA_POOL_MAX_SIZE": "2",
+    }
+    receipt_count_before = _receipt_count(backtest_stack)
+
+    validate_output = StringIO()
+    assert (
+        cli_main(
+            ["backtest", "validate", "--specification", str(input_path)],
+            environ=environment,
+            stdout=validate_output,
+            stderr=StringIO(),
+        )
+        == 0
+    )
+    plan_output = StringIO()
+    assert (
+        cli_main(
+            ["backtest", "plan", "--specification", str(input_path)],
+            environ=environment,
+            stdout=plan_output,
+            stderr=StringIO(),
+        )
+        == 0
+    )
+    assert json.loads(validate_output.getvalue())["valid"] is True
+    assert json.loads(plan_output.getvalue())["source"] == "CURRENT_RELATIONAL"
+    assert _receipt_count(backtest_stack) == receipt_count_before
+
+    predeclare_output = StringIO()
+    assert (
+        cli_main(
+            [
+                "backtest",
+                "predeclare",
+                "--specification",
+                str(input_path),
+                "--actor-id",
+                "backtest-cli-test",
+                "--idempotency-key",
+                "backtest-cli-predeclare",
+            ],
+            environ=environment,
+            stdout=predeclare_output,
+            stderr=StringIO(),
+        )
+        == 0
+    )
+    inspect_output = StringIO()
+    assert (
+        cli_main(
+            [
+                "backtest",
+                "inspect",
+                "--run-id",
+                str(specification.exploratory_backtest_run_id),
+            ],
+            environ=environment,
+            stdout=inspect_output,
+            stderr=StringIO(),
+        )
+        == 0
+    )
+    assert json.loads(predeclare_output.getvalue())["exploratory_backtest_run_id"] == str(specification.exploratory_backtest_run_id)
+    assert json.loads(inspect_output.getvalue())["execution_state"] == "PLANNED"
 
 
 def test_database_recomputes_current_model_recipe_child_hash(

@@ -40,7 +40,9 @@ from market_regime_alpha.interfaces.archive import (
     run_due_prospective_runtime,
     start_archive,
 )
+from market_regime_alpha.interfaces.backtest import load_backtest_specification
 from market_regime_alpha.market.application import compile_prospective_runtime_plan
+from market_regime_alpha.runtime.application import ActorType, CommandContext
 
 
 def main(
@@ -90,9 +92,7 @@ def _dispatch(arguments: argparse.Namespace, settings: TargetSettings) -> object
                 arguments.output.write_text(recreate_plan.to_json(), encoding="utf-8")
             return recreate_plan
         if arguments.db_command == "recreate-apply":
-            recreate_plan = load_recreate_plan(
-                arguments.plan.read_text(encoding="utf-8")
-            )
+            recreate_plan = load_recreate_plan(arguments.plan.read_text(encoding="utf-8"))
             return apply_database_recreate(
                 settings,
                 recreate_plan,
@@ -118,9 +118,7 @@ def _dispatch(arguments: argparse.Namespace, settings: TargetSettings) -> object
                 arguments.output.write_text(upgrade_plan.to_json(), encoding="utf-8")
             return upgrade_plan
         if arguments.db_command == "upgrade-apply":
-            upgrade_plan = load_operational_upgrade_plan(
-                arguments.plan.read_text(encoding="utf-8")
-            )
+            upgrade_plan = load_operational_upgrade_plan(arguments.plan.read_text(encoding="utf-8"))
             return apply_operational_database_upgrade(
                 settings,
                 upgrade_plan,
@@ -137,6 +135,48 @@ def _dispatch(arguments: argparse.Namespace, settings: TargetSettings) -> object
                     reason_code="LEASE_EXPIRED",
                 )
                 return {"recovered_attempt_ids": recovered}
+    if arguments.area == "backtest":
+        with bootstrap_application(settings) as application:
+            command = arguments.backtest_command
+            if command in {"validate", "plan", "predeclare"}:
+                specification = load_backtest_specification(arguments.specification)
+                if command == "validate":
+                    return application.backtests.validate(specification)
+                if command == "plan":
+                    return application.backtests.plan(specification)
+                return application.backtests.predeclare(
+                    specification,
+                    _backtest_context(arguments, "PREDECLARE_BACKTEST"),
+                )
+            if command in {"run", "resume", "inspect"}:
+                run = application.backtest_specifications.load(arguments.run_id)
+                if command == "run":
+                    return application.backtest_execution.run(run)
+                if command == "resume":
+                    return application.backtest_execution.resume(run)
+                return application.backtest_execution.inspect(run)
+            if command == "replay":
+                return application.backtest_replay.verify(arguments.run_id)
+            if command == "report":
+                if arguments.format == "markdown":
+                    return {
+                        "format": "markdown",
+                        "content": application.backtest_reports.render_markdown(arguments.run_id).decode("utf-8"),
+                    }
+                return application.backtest_reports.project(arguments.run_id)
+            if command == "publish-report":
+                return application.backtest_reports.publish(
+                    arguments.run_id,
+                    artifacts=application.artifacts,
+                    bindings=application.backtests,
+                    context=_backtest_context(arguments, "PUBLISH_BACKTEST_REPORT"),
+                )
+            if command == "compare":
+                return application.backtest_reports.compare(
+                    arguments.left_run_id,
+                    arguments.right_run_id,
+                    descriptive=arguments.descriptive,
+                )
     if arguments.area == "archive":
         require_isolated_operational_target(
             settings,
@@ -250,6 +290,30 @@ def _parser() -> argparse.ArgumentParser:
     recover = runtime_commands.add_parser("recover")
     recover.add_argument("--actor-id", required=True)
 
+    backtest = areas.add_parser("backtest")
+    backtest_commands = backtest.add_subparsers(
+        dest="backtest_command",
+        required=True,
+    )
+    for command in ("validate", "plan", "predeclare"):
+        operation = backtest_commands.add_parser(command)
+        operation.add_argument("--specification", required=True, type=Path)
+        if command == "predeclare":
+            _add_backtest_mutation_arguments(operation)
+    for command in ("run", "resume", "inspect", "replay"):
+        operation = backtest_commands.add_parser(command)
+        operation.add_argument("--run-id", required=True, type=UUID)
+    report = backtest_commands.add_parser("report")
+    report.add_argument("--run-id", required=True, type=UUID)
+    report.add_argument("--format", choices=("json", "markdown"), default="json")
+    publish_report = backtest_commands.add_parser("publish-report")
+    publish_report.add_argument("--run-id", required=True, type=UUID)
+    _add_backtest_mutation_arguments(publish_report)
+    compare = backtest_commands.add_parser("compare")
+    compare.add_argument("--left-run-id", required=True, type=UUID)
+    compare.add_argument("--right-run-id", required=True, type=UUID)
+    compare.add_argument("--descriptive", action="store_true")
+
     archive = areas.add_parser("archive")
     archive_commands = archive.add_subparsers(dest="archive_command", required=True)
     prospective = archive_commands.add_parser("prospective")
@@ -287,6 +351,23 @@ def _parser() -> argparse.ArgumentParser:
         inspection.add_argument("--archive-id", required=True, type=UUID)
         inspection.add_argument("--expected-database-name", required=True)
     return parser
+
+
+def _add_backtest_mutation_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--actor-id", required=True)
+    parser.add_argument("--idempotency-key", required=True)
+
+
+def _backtest_context(
+    arguments: argparse.Namespace,
+    reason_code: str,
+) -> CommandContext:
+    return CommandContext(
+        idempotency_key=arguments.idempotency_key,
+        actor_type=ActorType.OPERATOR,
+        actor_id=arguments.actor_id,
+        reason_code=reason_code,
+    )
 
 
 def _json_value(value: object) -> object:
