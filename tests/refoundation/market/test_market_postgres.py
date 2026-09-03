@@ -379,6 +379,62 @@ def test_repeated_reference_capture_with_changed_business_fields_fails_closed(
         ).fetchone() == (1, canonical.close_at)
 
 
+def test_concurrent_identical_reference_captures_converge_on_one_authority(
+    market_stack,
+) -> None:
+    application, _, _, _, _, product, database_url = market_stack
+    first = _capture(application, product, "reference-race-first", b'{"calendar":"race"}\n')
+    second = _capture(application, product, "reference-race-second", b'{"calendar":"race"}\n')
+    session_id = uuid4()
+    session_date = date(2026, 1, 5)
+    barrier = Barrier(2)
+
+    def normalize(captured, suffix: str):
+        return application.normalize(
+            captured.capture.capture_id,
+            BarrierNormalizer(
+                barrier,
+                lambda capture: NormalizationBatch(
+                    source_capture_id=capture.capture_id,
+                    source_provider_product_id=capture.provider_product_id,
+                    trading_sessions=(
+                        _session(
+                            session_id=session_id,
+                            session_date=session_date,
+                            capture_id=capture.capture_id,
+                        ),
+                    ),
+                ),
+            ),
+            _context(f"reference-race-normalize-{suffix}", "NORMALIZE_MARKET_PIT"),
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = tuple(
+            future.result(timeout=20)
+            for future in (
+                executor.submit(normalize, first, "first"),
+                executor.submit(normalize, second, "second"),
+            )
+        )
+
+    assert all(result.replayed is False for result in results)
+    with psycopg.connect(database_url) as connection:
+        assert connection.execute(
+            "SELECT count(*) FROM mra.trading_session WHERE session_id = %s",
+            (session_id,),
+        ).fetchone() == (1,)
+        assert connection.execute(
+            """
+            SELECT count(*) FROM mra.command_receipt
+            WHERE command_kind = 'NORMALIZE_MARKET_PIT'
+              AND scope_id IN (%s, %s)
+              AND status = 'SUCCEEDED'
+            """,
+            (str(first.capture.capture_id), str(second.capture.capture_id)),
+        ).fetchone() == (2,)
+
+
 def test_capture_binds_exact_artifact_temporal_axes_receipt_and_audit_atomically(
     market_stack,
 ) -> None:
