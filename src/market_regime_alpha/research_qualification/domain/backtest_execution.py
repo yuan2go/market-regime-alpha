@@ -222,6 +222,61 @@ class BacktestEvaluationExecution:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class BacktestModelLineage:
+    """Exact FIT Evaluation → training → fitted-version lineage."""
+
+    backtest_model_lineage_id: UUID
+    exploratory_backtest_run_id: UUID
+    specification_sha256: ContentHash | str
+    model_training_requirement_id: UUID
+    backtest_evaluation_execution_id: UUID
+    fit_evaluation_run_id: UUID
+    model_id: UUID
+    model_training_run_id: UUID
+    model_training_run_sha256: ContentHash | str
+    model_training_reproducibility_sha256: ContentHash | str
+    model_version_id: UUID
+    model_version_sha256: ContentHash | str
+    content_sha256: ContentHash = field(init=False)
+
+    def __post_init__(self) -> None:
+        specification_hash = ContentHash(str(self.specification_sha256))
+        training_hash = ContentHash(str(self.model_training_run_sha256))
+        reproducibility_hash = ContentHash(str(self.model_training_reproducibility_sha256))
+        version_hash = ContentHash(str(self.model_version_sha256))
+        object.__setattr__(self, "specification_sha256", specification_hash)
+        object.__setattr__(self, "model_training_run_sha256", training_hash)
+        object.__setattr__(
+            self,
+            "model_training_reproducibility_sha256",
+            reproducibility_hash,
+        )
+        object.__setattr__(self, "model_version_sha256", version_hash)
+        object.__setattr__(
+            self,
+            "content_sha256",
+            ContentHash(
+                canonical_json_sha256(
+                    {
+                        "backtest_evaluation_execution_id": (self.backtest_evaluation_execution_id),
+                        "backtest_model_lineage_id": (self.backtest_model_lineage_id),
+                        "exploratory_backtest_run_id": (self.exploratory_backtest_run_id),
+                        "fit_evaluation_run_id": self.fit_evaluation_run_id,
+                        "model_id": self.model_id,
+                        "model_training_reproducibility_sha256": str(reproducibility_hash),
+                        "model_training_requirement_id": (self.model_training_requirement_id),
+                        "model_training_run_id": self.model_training_run_id,
+                        "model_training_run_sha256": str(training_hash),
+                        "model_version_id": self.model_version_id,
+                        "model_version_sha256": str(version_hash),
+                        "specification_sha256": str(specification_hash),
+                    }
+                )
+            ),
+        )
+
+
 __all__ = [
     "BacktestActionKind",
     "BacktestActionObservation",
@@ -230,6 +285,7 @@ __all__ = [
     "BacktestExecutionState",
     "BacktestExpectedAction",
     "BacktestFoldLifecycle",
+    "BacktestModelLineage",
     "BacktestNextOperation",
     "BacktestObservedState",
     "BacktestReadyAction",

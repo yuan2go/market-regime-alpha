@@ -162,6 +162,31 @@ class PostgresBacktestExecutionObservationPort:
                     """,
                     (run.exploratory_backtest_run_id,),
                 ).fetchall()
+                model_lineages = cursor.execute(
+                    """
+                    SELECT lineage.model_training_requirement_id,
+                           lineage.model_id,
+                           lineage.model_training_run_id,
+                           lineage.model_training_run_sha256,
+                           lineage.model_training_reproducibility_sha256,
+                           lineage.model_version_id,
+                           lineage.model_version_sha256,
+                           training.content_sha256 AS canonical_training_sha256,
+                           reproducibility.content_sha256 AS canonical_reproducibility_sha256,
+                           version.content_sha256 AS canonical_version_sha256
+                    FROM mra.backtest_model_lineage AS lineage
+                    JOIN mra.model_training_run AS training
+                      ON training.model_training_run_id =
+                         lineage.model_training_run_id
+                    JOIN mra.model_training_reproducibility AS reproducibility
+                      ON reproducibility.model_training_run_id =
+                         lineage.model_training_run_id
+                    JOIN mra.model_version AS version
+                      ON version.model_version_id = lineage.model_version_id
+                    WHERE lineage.exploratory_backtest_run_id = %s
+                    """,
+                    (run.exploratory_backtest_run_id,),
+                ).fetchall()
 
         dataset_by_scope = _rows_by_scope(datasets)
         decision_by_scope = _rows_by_scope(decisions)
@@ -184,6 +209,9 @@ class PostgresBacktestExecutionObservationPort:
         for binding in run.arm_folds:
             expected_arms_by_fold[binding.fold_id].add(binding.arm_id)
         requirement_by_id = {requirement.requirement_id: requirement for requirement in run.model_training_requirements}
+        lineage_by_requirement: dict[UUID, list[dict[str, Any]]] = defaultdict(list)
+        for row in model_lineages:
+            lineage_by_requirement[UUID(str(row["model_training_requirement_id"]))].append(row)
         current_evaluation_by_requirement: dict[UUID, list[dict[str, Any]]] = defaultdict(list)
         for row in current_evaluations:
             current_evaluation_by_requirement[UUID(str(row["backtest_evaluation_requirement_id"]))].append(row)
@@ -222,7 +250,15 @@ class PostgresBacktestExecutionObservationPort:
                         )
                     )
             elif action.kind is BacktestActionKind.TRAIN_MODEL:
-                observed.append(self._training(action, training_by_scope, requirement_by_id))
+                observed.append(
+                    self._training(
+                        action,
+                        training_by_scope,
+                        lineage_by_requirement,
+                        requirement_by_id,
+                        current=bool(run.evaluation_requirements),
+                    )
+                )
         return tuple(observation for observation in observed if observation.state is not BacktestObservedState.ABSENT)
 
     def _decision(
@@ -336,11 +372,40 @@ class PostgresBacktestExecutionObservationPort:
     def _training(
         action: BacktestExpectedAction,
         rows_by_scope: dict[tuple[UUID, UUID], list[dict[str, Any]]],
+        lineage_by_requirement: dict[UUID, list[dict[str, Any]]],
         requirement_by_id: dict[UUID, Any],
+        *,
+        current: bool,
     ) -> BacktestActionObservation:
         assert action.arm_id is not None and action.fold_id is not None
         assert action.model_training_requirement_id is not None
         requirement = requirement_by_id[action.model_training_requirement_id]
+        if current:
+            lineages = lineage_by_requirement.get(
+                action.model_training_requirement_id,
+                (),
+            )
+            if not lineages:
+                return BacktestActionObservation(
+                    action.action_id,
+                    BacktestObservedState.ABSENT,
+                )
+            if len(lineages) != 1:
+                return BacktestActionObservation(
+                    action.action_id,
+                    BacktestObservedState.MISMATCH,
+                )
+            lineage = lineages[0]
+            exact = (
+                UUID(str(lineage["model_id"])) == requirement.model_definition.authority_id
+                and str(lineage["model_training_run_sha256"]) == str(lineage["canonical_training_sha256"])
+                and str(lineage["model_training_reproducibility_sha256"]) == str(lineage["canonical_reproducibility_sha256"])
+                and str(lineage["model_version_sha256"]) == str(lineage["canonical_version_sha256"])
+            )
+            return BacktestActionObservation(
+                action.action_id,
+                (BacktestObservedState.MATCHED_COMPLETE if exact else BacktestObservedState.MISMATCH),
+            )
         rows = rows_by_scope.get((action.arm_id, action.fold_id), ())
         matching = tuple(row for row in rows if UUID(str(row["model_id"])) == requirement.model_definition.authority_id)
         if not matching:

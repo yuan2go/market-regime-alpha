@@ -11,6 +11,7 @@ from market_regime_alpha.infrastructure.postgres.schema import (
 _TABLES = {
     "backtest_runtime_binding",
     "backtest_evaluation_execution",
+    "backtest_model_lineage",
     "backtest_report_artifact",
 }
 
@@ -70,6 +71,10 @@ def test_execution_relations_are_lineage_not_a_second_state_machine(
         "backtest_runtime_binding_specification_fk",
         "backtest_evaluation_execution_requirement_fk",
         "backtest_evaluation_execution_run_fk",
+        "backtest_model_lineage_requirement_fk",
+        "backtest_model_lineage_evaluation_fk",
+        "backtest_model_lineage_training_fk",
+        "backtest_model_lineage_version_fk",
         "backtest_report_artifact_json_fk",
         "backtest_report_artifact_markdown_fk",
     } <= constraints
@@ -77,6 +82,8 @@ def test_execution_relations_are_lineage_not_a_second_state_machine(
         "backtest_runtime_binding_append_only",
         "backtest_evaluation_execution_append_only",
         "backtest_evaluation_execution_guard",
+        "backtest_model_lineage_append_only",
+        "backtest_model_lineage_guard",
         "backtest_report_artifact_append_only",
         "backtest_report_artifact_guard",
     } <= triggers

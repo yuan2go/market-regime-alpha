@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from decimal import Decimal
 from enum import StrEnum
 import re
@@ -22,6 +23,224 @@ _REASON = re.compile(r"^[A-Z][A-Z0-9_]{0,99}$")
 class ModelTrainingSampleState(StrEnum):
     ESTIMABLE = "ESTIMABLE"
     NOT_ESTIMABLE = "NOT_ESTIMABLE"
+
+
+class ModelScalarType(StrEnum):
+    DECIMAL = "DECIMAL"
+    INTEGER = "INTEGER"
+    BOOLEAN = "BOOLEAN"
+    TEXT = "TEXT"
+
+
+@dataclass(frozen=True, slots=True)
+class ModelScalarParameter:
+    ordinal: int
+    parameter_code: str
+    value_type: ModelScalarType
+    decimal_value: Decimal | None = None
+    integer_value: int | None = None
+    boolean_value: bool | None = None
+    text_value: str | None = None
+    content_sha256: ContentHash = field(init=False)
+
+    def __post_init__(self) -> None:
+        if isinstance(self.ordinal, bool) or self.ordinal < 1:
+            raise ValueError("Model parameter ordinal must be positive")
+        if not _CODE.fullmatch(self.parameter_code):
+            raise ValueError("Model parameter_code is invalid")
+        values = (
+            self.decimal_value,
+            self.integer_value,
+            self.boolean_value,
+            self.text_value,
+        )
+        if sum(value is not None for value in values) != 1:
+            raise ValueError("Model parameter requires exactly one typed value")
+        expected = {
+            ModelScalarType.DECIMAL: self.decimal_value,
+            ModelScalarType.INTEGER: self.integer_value,
+            ModelScalarType.BOOLEAN: self.boolean_value,
+            ModelScalarType.TEXT: self.text_value,
+        }[self.value_type]
+        if expected is None:
+            raise ValueError("Model parameter value does not match value_type")
+        if self.decimal_value is not None and not self.decimal_value.is_finite():
+            raise ValueError("Model decimal parameter must be finite")
+        if isinstance(self.integer_value, bool):
+            raise TypeError("Model integer parameter cannot be bool")
+        if self.text_value is not None and not self.text_value:
+            raise ValueError("Model text parameter cannot be empty")
+        decimal_value = (
+            None
+            if self.decimal_value is None
+            else bounded_decimal(
+                self.decimal_value,
+                field="model scalar parameter",
+                precision=48,
+                scale=18,
+            )
+        )
+        object.__setattr__(self, "decimal_value", decimal_value)
+        object.__setattr__(
+            self,
+            "content_sha256",
+            ContentHash(
+                canonical_json_sha256(
+                    {
+                        "boolean_value": self.boolean_value,
+                        "decimal_value": decimal_value,
+                        "integer_value": self.integer_value,
+                        "ordinal": self.ordinal,
+                        "parameter_code": self.parameter_code,
+                        "text_value": self.text_value,
+                        "value_type": self.value_type,
+                    }
+                )
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ModelDependencyVersion:
+    ordinal: int
+    package_name: str
+    package_version: str
+    distribution_sha256: ContentHash | str
+    content_sha256: ContentHash = field(init=False)
+
+    def __post_init__(self) -> None:
+        if isinstance(self.ordinal, bool) or self.ordinal < 1:
+            raise ValueError("Model dependency ordinal must be positive")
+        if not _CODE.fullmatch(self.package_name):
+            raise ValueError("Model dependency package_name is invalid")
+        if not _VERSION.fullmatch(self.package_version):
+            raise ValueError("Model dependency package_version is invalid")
+        distribution_hash = ContentHash(str(self.distribution_sha256))
+        object.__setattr__(self, "distribution_sha256", distribution_hash)
+        object.__setattr__(
+            self,
+            "content_sha256",
+            ContentHash(
+                canonical_json_sha256(
+                    {
+                        "distribution_sha256": str(distribution_hash),
+                        "ordinal": self.ordinal,
+                        "package_name": self.package_name,
+                        "package_version": self.package_version,
+                    }
+                )
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ModelExecutionEnvironment:
+    python_implementation: str
+    python_version: str
+    runtime_code: str
+    runtime_version: str
+    uv_lock_sha256: ContentHash | str
+    dependencies: tuple[ModelDependencyVersion, ...]
+    dependency_roster_sha256: ContentHash = field(init=False)
+    content_sha256: ContentHash = field(init=False)
+
+    def __post_init__(self) -> None:
+        if not _CODE.fullmatch(self.python_implementation):
+            raise ValueError("Python implementation code is invalid")
+        if not _VERSION.fullmatch(self.python_version):
+            raise ValueError("Python version is invalid")
+        if not _CODE.fullmatch(self.runtime_code):
+            raise ValueError("runtime code is invalid")
+        if not _VERSION.fullmatch(self.runtime_version):
+            raise ValueError("runtime version is invalid")
+        if not self.dependencies:
+            raise ValueError("Model dependency roster must be non-empty")
+        if tuple(item.ordinal for item in self.dependencies) != tuple(range(1, len(self.dependencies) + 1)) or len(
+            {item.package_name for item in self.dependencies}
+        ) != len(self.dependencies):
+            raise ValueError("Model dependency roster must be ordered and unique")
+        lock_hash = ContentHash(str(self.uv_lock_sha256))
+        roster_hash = ContentHash(
+            canonical_json_sha256(
+                tuple(
+                    {
+                        "content_sha256": str(item.content_sha256),
+                        "ordinal": item.ordinal,
+                        "package_name": item.package_name,
+                    }
+                    for item in self.dependencies
+                )
+            )
+        )
+        object.__setattr__(self, "uv_lock_sha256", lock_hash)
+        object.__setattr__(self, "dependency_roster_sha256", roster_hash)
+        object.__setattr__(
+            self,
+            "content_sha256",
+            ContentHash(
+                canonical_json_sha256(
+                    {
+                        "dependency_roster_sha256": str(roster_hash),
+                        "python_implementation": self.python_implementation,
+                        "python_version": self.python_version,
+                        "runtime_code": self.runtime_code,
+                        "runtime_version": self.runtime_version,
+                        "uv_lock_sha256": str(lock_hash),
+                    }
+                )
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ModelTrainingReproducibility:
+    model_training_run_id: UUID
+    training_knowledge_cutoff: datetime
+    implementation_sha256: ContentHash | str
+    environment: ModelExecutionEnvironment
+    hyperparameters: tuple[ModelScalarParameter, ...]
+    hyperparameter_roster_sha256: ContentHash = field(init=False)
+    content_sha256: ContentHash = field(init=False)
+
+    def __post_init__(self) -> None:
+        if self.training_knowledge_cutoff.tzinfo is None:
+            raise ValueError("training knowledge cutoff must be timezone-aware")
+        knowledge_cutoff = self.training_knowledge_cutoff.astimezone(UTC)
+        if tuple(item.ordinal for item in self.hyperparameters) != tuple(range(1, len(self.hyperparameters) + 1)) or len(
+            {item.parameter_code for item in self.hyperparameters}
+        ) != len(self.hyperparameters):
+            raise ValueError("Model hyperparameter roster must be ordered and unique")
+        implementation_hash = ContentHash(str(self.implementation_sha256))
+        roster_hash = ContentHash(
+            canonical_json_sha256(
+                tuple(
+                    {
+                        "content_sha256": str(item.content_sha256),
+                        "ordinal": item.ordinal,
+                        "parameter_code": item.parameter_code,
+                    }
+                    for item in self.hyperparameters
+                )
+            )
+        )
+        object.__setattr__(self, "implementation_sha256", implementation_hash)
+        object.__setattr__(self, "training_knowledge_cutoff", knowledge_cutoff)
+        object.__setattr__(self, "hyperparameter_roster_sha256", roster_hash)
+        object.__setattr__(
+            self,
+            "content_sha256",
+            ContentHash(
+                canonical_json_sha256(
+                    {
+                        "environment_sha256": str(self.environment.content_sha256),
+                        "hyperparameter_roster_sha256": str(roster_hash),
+                        "implementation_sha256": str(implementation_hash),
+                        "model_training_run_id": self.model_training_run_id,
+                        "training_knowledge_cutoff": knowledge_cutoff,
+                    }
+                )
+            ),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,10 +274,7 @@ class ResearchModelPlan:
             raise ValueError("target_version must be positive")
         if not self.feature_definitions:
             raise ValueError("Model feature roster must be non-empty")
-        normalized = tuple(
-            (identity, ContentHash(str(content_hash)))
-            for identity, content_hash in self.feature_definitions
-        )
+        normalized = tuple((identity, ContentHash(str(content_hash))) for identity, content_hash in self.feature_definitions)
         if len({item[0] for item in normalized}) != len(normalized):
             raise ValueError("Model feature roster must be unique and ordered")
         target_hash = ContentHash(str(self.target_definition_sha256))
@@ -71,9 +287,7 @@ class ResearchModelPlan:
                         "feature_definition_sha256": str(content_hash),
                         "ordinal": ordinal,
                     }
-                    for ordinal, (identity, content_hash) in enumerate(
-                        normalized, start=1
-                    )
+                    for ordinal, (identity, content_hash) in enumerate(normalized, start=1)
                 )
             )
         )
@@ -139,11 +353,7 @@ class ModelTrainingSamplePlan:
             "NOT_ESTIMABLE",
         }:
             raise ValueError("evaluation_input_state is invalid")
-        vector_hash = (
-            None
-            if self.feature_vector_sha256 is None
-            else ContentHash(str(self.feature_vector_sha256))
-        )
+        vector_hash = None if self.feature_vector_sha256 is None else ContentHash(str(self.feature_vector_sha256))
         target_value = self.target_value
         if self.state is ModelTrainingSampleState.ESTIMABLE:
             if self.evaluation_input_state != "INCLUDED":
@@ -157,9 +367,7 @@ class ModelTrainingSamplePlan:
                 scale=18,
             )
         elif target_value is not None or vector_hash is not None:
-            raise ValueError(
-                "NOT_ESTIMABLE sample cannot contain target or feature values"
-            )
+            raise ValueError("NOT_ESTIMABLE sample cannot contain target or feature values")
         object.__setattr__(self, "target_value", target_value)
         object.__setattr__(self, "feature_vector_sha256", vector_hash)
         object.__setattr__(
@@ -232,17 +440,11 @@ class ModelTrainingRunPlan:
             raise ValueError("random_seed must be non-negative")
         if not self.samples:
             raise ValueError("ModelTrainingRun sample roster must be non-empty")
-        if tuple(item.ordinal for item in self.samples) != tuple(
-            range(1, len(self.samples) + 1)
-        ):
+        if tuple(item.ordinal for item in self.samples) != tuple(range(1, len(self.samples) + 1)):
             raise ValueError("ModelTrainingRun sample ordinals must be contiguous")
-        if len({item.evaluation_observation_id for item in self.samples}) != len(
-            self.samples
-        ):
+        if len({item.evaluation_observation_id for item in self.samples}) != len(self.samples):
             raise ValueError("ModelTrainingRun samples must be unique")
-        estimable_count = sum(
-            item.state is ModelTrainingSampleState.ESTIMABLE for item in self.samples
-        )
+        estimable_count = sum(item.state is ModelTrainingSampleState.ESTIMABLE for item in self.samples)
         if estimable_count < 2:
             raise ValueError("ModelTrainingRun requires at least two estimable samples")
         algorithm_hash = ContentHash(str(self.algorithm_sha256))
@@ -288,6 +490,34 @@ class ModelTrainingRunPlan:
                         "ridge_alpha": alpha,
                         "sample_roster_sha256": roster_hash,
                         "training_input_artifact": self.training_input_artifact,
+                    }
+                )
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ReproducibleModelTrainingRunPlan:
+    """Registration envelope; not a second ModelTrainingRun identity."""
+
+    training_run: ModelTrainingRunPlan
+    reproducibility: ModelTrainingReproducibility
+    content_sha256: ContentHash = field(init=False)
+
+    def __post_init__(self) -> None:
+        if (
+            self.reproducibility.model_training_run_id != self.training_run.model_training_run_id
+            or self.reproducibility.implementation_sha256 != self.training_run.algorithm_sha256
+        ):
+            raise ValueError("Model reproducibility closure differs from training identity")
+        object.__setattr__(
+            self,
+            "content_sha256",
+            ContentHash(
+                canonical_json_sha256(
+                    {
+                        "model_training_run_sha256": str(self.training_run.content_sha256),
+                        "reproducibility_sha256": str(self.reproducibility.content_sha256),
                     }
                 )
             ),
@@ -343,9 +573,15 @@ class ModelVersionPlan:
 
 __all__ = [
     "LinearTrainingRow",
+    "ModelDependencyVersion",
+    "ModelExecutionEnvironment",
+    "ModelScalarParameter",
+    "ModelScalarType",
+    "ModelTrainingReproducibility",
     "ModelTrainingRunPlan",
     "ModelTrainingSamplePlan",
     "ModelTrainingSampleState",
     "ModelVersionPlan",
     "ResearchModelPlan",
+    "ReproducibleModelTrainingRunPlan",
 ]

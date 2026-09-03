@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -13,6 +14,11 @@ from market_regime_alpha.infrastructure.models import DeterministicRidgeTrainer
 from market_regime_alpha.research_qualification.domain.model import ArtifactBinding
 from market_regime_alpha.research_qualification.domain.research_models import (
     LinearTrainingRow,
+    ModelDependencyVersion,
+    ModelExecutionEnvironment,
+    ModelScalarParameter as FrozenScalarParameter,
+    ModelScalarType as FrozenScalarType,
+    ModelTrainingReproducibility,
     ModelTrainingSamplePlan,
     ModelTrainingSampleState,
 )
@@ -20,6 +26,9 @@ from market_regime_alpha.research_qualification.ports.model_inputs import (
     OpenModelTrainingRunRequest,
     PreparedModelTrainingInputs,
     RegisteredModelTrainingInputs,
+    RegisteredReproducibleModelTrainingInputs,
+    ReproducibleModelTrainingRunRequest,
+    PreparedReproducibleModelTrainingInputs,
 )
 from market_regime_alpha.runtime.application import ActorType, CommandContext
 from market_regime_alpha.runtime.ports import ArtifactRecord
@@ -131,6 +140,17 @@ class _Commands:
         self.version_plan = plan
         return ModelMutationResult("MODEL_VERSION", plan.model_version_id, plan.version, "b" * 64, _id(802), False)
 
+    def open_reproducible_training_run(self, plan, context, *, runtime_claim=None):
+        self.training_plan = plan
+        return ModelMutationResult(
+            "MODEL_TRAINING_RUN",
+            plan.training_run.model_training_run_id,
+            1,
+            "c" * 64,
+            _id(803),
+            False,
+        )
+
 
 def test_public_model_application_derives_roster_then_fits_immutable_bytes() -> None:
     request = OpenModelTrainingRunRequest(
@@ -151,14 +171,23 @@ def test_public_model_application_derives_roster_then_fits_immutable_bytes() -> 
         provenance_sha256="b" * 64,
     )
     sample = ModelTrainingSamplePlan(
-        model_training_sample_id=_id(800), ordinal=1,
-        evaluation_observation_id=_id(1), evaluation_metric_observation_id=_id(2),
-        research_partition_member_id=_id(3), commitment_id=_id(4),
-        decision_run_id=_id(5), candidate_id=_id(6), instrument_id=_id(7),
-        dataset_id=_id(8), dataset_manifest_artifact=_binding(9),
-        market_target_outcome_revision_id=_id(10), source_outcome_metric_id=_id(11),
-        evaluation_input_state="INCLUDED", state=ModelTrainingSampleState.ESTIMABLE,
-        reason_code="COMPLETE_INPUT", target_value=Decimal("2"),
+        model_training_sample_id=_id(800),
+        ordinal=1,
+        evaluation_observation_id=_id(1),
+        evaluation_metric_observation_id=_id(2),
+        research_partition_member_id=_id(3),
+        commitment_id=_id(4),
+        decision_run_id=_id(5),
+        candidate_id=_id(6),
+        instrument_id=_id(7),
+        dataset_id=_id(8),
+        dataset_manifest_artifact=_binding(9),
+        market_target_outcome_revision_id=_id(10),
+        source_outcome_metric_id=_id(11),
+        evaluation_input_state="INCLUDED",
+        state=ModelTrainingSampleState.ESTIMABLE,
+        reason_code="COMPLETE_INPUT",
+        target_value=Decimal("2"),
         feature_vector_sha256="c" * 64,
     )
     commands = _Commands()
@@ -182,3 +211,115 @@ def test_public_model_application_derives_roster_then_fits_immutable_bytes() -> 
     assert versioned.aggregate_kind == "MODEL_VERSION"
     assert commands.version_plan.coefficient_count == 2
     assert str(commands.version_plan.fitted_model_artifact.content_sha256) == sha256_bytes(artifacts.contents[1])
+
+
+def test_reproducible_model_path_uses_db_cutoff_environment_and_exact_typed_parameters() -> None:
+    legacy_request = OpenModelTrainingRunRequest(
+        model_training_run_id=_id(180),
+        model_id=_id(181),
+        evaluation_run_id=_id(182),
+        evaluation_protocol_metric_id=_id(183),
+        exploratory_backtest_run_id=_id(184),
+        exploratory_backtest_arm_id=_id(185),
+        exploratory_backtest_fold_id=_id(186),
+        algorithm_code="deterministic_ridge",
+        algorithm_version="1.0",
+        algorithm_sha256="a" * 64,
+        ridge_alpha=Decimal("0.25"),
+        random_seed=23,
+        code_artifact=_binding(187),
+        config_artifact=_binding(188),
+        provenance_sha256="b" * 64,
+    )
+    environment = ModelExecutionEnvironment(
+        python_implementation="cpython",
+        python_version="3.13.7",
+        runtime_code="uv",
+        runtime_version="0.8.13",
+        uv_lock_sha256="c" * 64,
+        dependencies=(ModelDependencyVersion(1, "project", "0.1.0", "d" * 64),),
+    )
+    hyperparameters = (
+        FrozenScalarParameter(
+            1,
+            "ridge_alpha",
+            FrozenScalarType.DECIMAL,
+            decimal_value=Decimal("0.25"),
+        ),
+    )
+    request = ReproducibleModelTrainingRunRequest(
+        training=legacy_request,
+        environment=environment,
+        hyperparameters=hyperparameters,
+    )
+    sample = ModelTrainingSamplePlan(
+        model_training_sample_id=_id(880),
+        ordinal=1,
+        evaluation_observation_id=_id(101),
+        evaluation_metric_observation_id=_id(102),
+        research_partition_member_id=_id(103),
+        commitment_id=_id(104),
+        decision_run_id=_id(105),
+        candidate_id=_id(106),
+        instrument_id=_id(107),
+        dataset_id=_id(108),
+        dataset_manifest_artifact=_binding(109),
+        market_target_outcome_revision_id=_id(110),
+        source_outcome_metric_id=_id(111),
+        evaluation_input_state="INCLUDED",
+        state=ModelTrainingSampleState.ESTIMABLE,
+        reason_code="COMPLETE_INPUT",
+        target_value=Decimal("2"),
+        feature_vector_sha256="e" * 64,
+    )
+    reproducibility = ModelTrainingReproducibility(
+        model_training_run_id=legacy_request.model_training_run_id,
+        training_knowledge_cutoff=datetime(2026, 2, 1, tzinfo=UTC),
+        implementation_sha256=legacy_request.algorithm_sha256,
+        environment=environment,
+        hyperparameters=hyperparameters,
+    )
+
+    class Inputs(_Inputs):
+        def prepare_reproducible(self, actual_request):
+            assert actual_request == request
+            return PreparedReproducibleModelTrainingInputs(
+                training=self.prepared,
+                reproducibility=reproducibility,
+            )
+
+        def load_registered_reproducible(self, model_training_run_id):
+            assert model_training_run_id == legacy_request.model_training_run_id
+            return RegisteredReproducibleModelTrainingInputs(
+                training=self.load_registered(model_training_run_id),
+                reproducibility=reproducibility,
+            )
+
+    commands = _Commands()
+    artifacts = _Artifacts()
+    application = ResearchModelApplication(
+        commands,  # type: ignore[arg-type]
+        Inputs(legacy_request, sample),  # type: ignore[arg-type]
+        artifacts,
+        DeterministicRidgeTrainer(),
+    )
+
+    opened = application.open_reproducible_training_run(
+        request,
+        _context("open-reproducible-training"),
+    )
+    versioned = application.fit_and_register_reproducible_version(
+        RegisterModelVersionRequest(
+            _id(990),
+            legacy_request.model_id,
+            1,
+            legacy_request.model_training_run_id,
+            "f" * 64,
+        ),
+        _context("fit-reproducible-training"),
+    )
+
+    assert opened.aggregate_kind == "MODEL_TRAINING_RUN"
+    assert commands.training_plan.reproducibility == reproducibility
+    assert versioned.aggregate_kind == "MODEL_VERSION"
+    assert commands.version_plan.coefficient_count == 2

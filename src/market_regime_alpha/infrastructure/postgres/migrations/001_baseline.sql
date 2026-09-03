@@ -21227,6 +21227,285 @@ CREATE INDEX model_training_sample_candidate_idx
 CREATE INDEX model_training_sample_outcome_metric_idx
     ON mra.model_training_sample(source_outcome_metric_id);
 
+CREATE TABLE mra.model_training_reproducibility (
+    model_training_run_id uuid PRIMARY KEY,
+    training_knowledge_cutoff timestamptz NOT NULL,
+    implementation_sha256 text NOT NULL,
+    python_implementation text NOT NULL,
+    python_version text NOT NULL,
+    runtime_code text NOT NULL,
+    runtime_version text NOT NULL,
+    uv_lock_sha256 text NOT NULL,
+    dependency_count integer NOT NULL,
+    dependency_roster_sha256 text NOT NULL,
+    hyperparameter_count integer NOT NULL,
+    hyperparameter_roster_sha256 text NOT NULL,
+    environment_sha256 text NOT NULL,
+    content_sha256 text NOT NULL UNIQUE,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT model_training_reproducibility_run_fk FOREIGN KEY (
+        model_training_run_id
+    ) REFERENCES mra.model_training_run(model_training_run_id)
+        ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT model_training_reproducibility_shape_ck CHECK (
+        training_knowledge_cutoff > '-infinity'::timestamptz
+        AND training_knowledge_cutoff < 'infinity'::timestamptz
+        AND implementation_sha256 ~ '^[0-9a-f]{64}$'
+        AND python_implementation ~ '^[a-z][a-z0-9_-]{0,99}$'
+        AND python_version ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$'
+        AND runtime_code ~ '^[a-z][a-z0-9_-]{0,99}$'
+        AND runtime_version ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$'
+        AND uv_lock_sha256 ~ '^[0-9a-f]{64}$'
+        AND dependency_count > 0
+        AND dependency_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND hyperparameter_count >= 0
+        AND hyperparameter_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND environment_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE TABLE mra.model_training_dependency (
+    model_training_run_id uuid NOT NULL,
+    ordinal integer NOT NULL,
+    package_name text NOT NULL,
+    package_version text NOT NULL,
+    distribution_sha256 text NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    PRIMARY KEY (model_training_run_id, ordinal),
+    CONSTRAINT model_training_dependency_package_uk UNIQUE (
+        model_training_run_id, package_name
+    ),
+    CONSTRAINT model_training_dependency_owner_fk FOREIGN KEY (
+        model_training_run_id
+    ) REFERENCES mra.model_training_reproducibility(model_training_run_id)
+        ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT model_training_dependency_shape_ck CHECK (
+        ordinal > 0
+        AND package_name ~ '^[a-z][a-z0-9_-]{0,99}$'
+        AND package_version ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$'
+        AND distribution_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE TABLE mra.model_training_hyperparameter (
+    model_training_run_id uuid NOT NULL,
+    ordinal integer NOT NULL,
+    parameter_code text NOT NULL,
+    value_type text NOT NULL,
+    decimal_value numeric(48, 18),
+    integer_value bigint,
+    boolean_value boolean,
+    text_value text,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    PRIMARY KEY (model_training_run_id, ordinal),
+    CONSTRAINT model_training_hyperparameter_code_uk UNIQUE (
+        model_training_run_id, parameter_code
+    ),
+    CONSTRAINT model_training_hyperparameter_owner_fk FOREIGN KEY (
+        model_training_run_id
+    ) REFERENCES mra.model_training_reproducibility(model_training_run_id)
+        ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT model_training_hyperparameter_shape_ck CHECK (
+        ordinal > 0
+        AND parameter_code ~ '^[a-z][a-z0-9_-]{0,99}$'
+        AND value_type IN ('DECIMAL', 'INTEGER', 'BOOLEAN', 'TEXT')
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+        AND num_nonnulls(
+            decimal_value, integer_value, boolean_value, text_value
+        ) = 1
+        AND ((value_type = 'DECIMAL' AND decimal_value IS NOT NULL)
+          OR (value_type = 'INTEGER' AND integer_value IS NOT NULL)
+          OR (value_type = 'BOOLEAN' AND boolean_value IS NOT NULL)
+          OR (value_type = 'TEXT' AND text_value IS NOT NULL
+              AND text_value <> ''))
+    )
+);
+
+CREATE FUNCTION mra.validate_model_training_reproducibility()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE actual_dependency_count integer;
+DECLARE minimum_dependency_ordinal integer;
+DECLARE maximum_dependency_ordinal integer;
+DECLARE actual_dependency_roster text;
+DECLARE actual_hyperparameter_count integer;
+DECLARE minimum_hyperparameter_ordinal integer;
+DECLARE maximum_hyperparameter_ordinal integer;
+DECLARE actual_hyperparameter_roster text;
+DECLARE expected_environment text;
+DECLARE expected_content text;
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM mra.model_training_run AS training
+        JOIN mra.backtest_specification AS specification
+          ON specification.exploratory_backtest_run_id =
+             training.exploratory_backtest_run_id
+        WHERE training.model_training_run_id = NEW.model_training_run_id
+          AND training.algorithm_sha256 = NEW.implementation_sha256
+    ) THEN
+        RAISE EXCEPTION 'Model reproducibility requires exact current training root'
+            USING ERRCODE = '55000';
+    END IF;
+
+    SELECT count(*)::integer, min(ordinal), max(ordinal),
+           mra.canonical_sha256(mra.canonical_json_text(coalesce(jsonb_agg(
+               jsonb_build_object(
+                   'content_sha256', content_sha256,
+                   'ordinal', ordinal,
+                   'package_name', package_name
+               ) ORDER BY ordinal
+           ), '[]'::jsonb)))
+      INTO actual_dependency_count, minimum_dependency_ordinal,
+           maximum_dependency_ordinal, actual_dependency_roster
+      FROM mra.model_training_dependency
+     WHERE model_training_run_id = NEW.model_training_run_id;
+    IF actual_dependency_count <> NEW.dependency_count
+       OR minimum_dependency_ordinal <> 1
+       OR maximum_dependency_ordinal <> NEW.dependency_count
+       OR actual_dependency_roster <> NEW.dependency_roster_sha256
+       OR EXISTS (
+           SELECT 1 FROM mra.model_training_dependency
+           WHERE model_training_run_id = NEW.model_training_run_id
+             AND content_sha256 <> mra.canonical_sha256(
+                 mra.canonical_json_text(jsonb_build_object(
+                     'distribution_sha256', distribution_sha256,
+                     'ordinal', ordinal,
+                     'package_name', package_name,
+                     'package_version', package_version
+                 ))
+             )
+       ) THEN
+        RAISE EXCEPTION 'Model dependency roster does not reconcile'
+            USING ERRCODE = '55000';
+    END IF;
+
+    SELECT count(*)::integer, min(ordinal), max(ordinal),
+           mra.canonical_sha256(mra.canonical_json_text(coalesce(jsonb_agg(
+               jsonb_build_object(
+                   'content_sha256', content_sha256,
+                   'ordinal', ordinal,
+                   'parameter_code', parameter_code
+               ) ORDER BY ordinal
+           ), '[]'::jsonb)))
+      INTO actual_hyperparameter_count, minimum_hyperparameter_ordinal,
+           maximum_hyperparameter_ordinal, actual_hyperparameter_roster
+      FROM mra.model_training_hyperparameter
+     WHERE model_training_run_id = NEW.model_training_run_id;
+    IF actual_hyperparameter_count <> NEW.hyperparameter_count
+       OR (NEW.hyperparameter_count > 0 AND (
+           minimum_hyperparameter_ordinal <> 1
+           OR maximum_hyperparameter_ordinal <> NEW.hyperparameter_count
+       ))
+       OR (NEW.hyperparameter_count = 0 AND (
+           minimum_hyperparameter_ordinal IS NOT NULL
+           OR maximum_hyperparameter_ordinal IS NOT NULL
+       ))
+       OR actual_hyperparameter_roster <> NEW.hyperparameter_roster_sha256
+       OR EXISTS (
+           SELECT 1 FROM mra.model_training_hyperparameter
+           WHERE model_training_run_id = NEW.model_training_run_id
+             AND content_sha256 <> mra.canonical_sha256(
+                 mra.canonical_json_text(jsonb_build_object(
+                     'boolean_value', boolean_value,
+                     'decimal_value', CASE WHEN decimal_value IS NULL
+                         THEN NULL ELSE decimal_value::text END,
+                     'integer_value', integer_value,
+                     'ordinal', ordinal,
+                     'parameter_code', parameter_code,
+                     'text_value', text_value,
+                     'value_type', value_type
+                 ))
+             )
+       ) THEN
+        RAISE EXCEPTION 'Model hyperparameter roster does not reconcile'
+            USING ERRCODE = '55000';
+    END IF;
+
+    expected_environment := mra.canonical_sha256(mra.canonical_json_text(
+        jsonb_build_object(
+            'dependency_roster_sha256', NEW.dependency_roster_sha256,
+            'python_implementation', NEW.python_implementation,
+            'python_version', NEW.python_version,
+            'runtime_code', NEW.runtime_code,
+            'runtime_version', NEW.runtime_version,
+            'uv_lock_sha256', NEW.uv_lock_sha256
+        )
+    ));
+    expected_content := mra.canonical_sha256(mra.canonical_json_text(
+        jsonb_build_object(
+            'environment_sha256', expected_environment,
+            'hyperparameter_roster_sha256',
+                NEW.hyperparameter_roster_sha256,
+            'implementation_sha256', NEW.implementation_sha256,
+            'model_training_run_id', NEW.model_training_run_id,
+            'training_knowledge_cutoff',
+                mra.canonical_timestamptz_text(
+                    NEW.training_knowledge_cutoff
+                )
+        )
+    ));
+    IF NEW.environment_sha256 <> expected_environment
+       OR NEW.content_sha256 <> expected_content THEN
+        RAISE EXCEPTION 'Model reproducibility hash does not reconcile'
+            USING ERRCODE = '55000';
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM mra.model_training_run AS training
+        WHERE training.model_training_run_id = NEW.model_training_run_id
+          AND training.algorithm_code = 'deterministic_ridge'
+          AND (
+              SELECT count(*) <> 1 OR coalesce(bool_or(
+                  value_type <> 'DECIMAL'
+                  OR decimal_value IS DISTINCT FROM training.ridge_alpha
+              ), true)
+              FROM mra.model_training_hyperparameter
+              WHERE model_training_run_id = NEW.model_training_run_id
+                AND parameter_code = 'ridge_alpha'
+          )
+    ) THEN
+        RAISE EXCEPTION 'deterministic ridge typed alpha differs from training root'
+            USING ERRCODE = '55000';
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM mra.model_training_sample AS sample
+        JOIN mra.model_training_reproducibility AS reproducibility
+          ON reproducibility.model_training_run_id =
+             sample.model_training_run_id
+        JOIN mra.market_target_outcome_revision AS outcome
+          ON outcome.market_target_outcome_revision_id =
+             sample.market_target_outcome_revision_id
+        WHERE sample.model_training_run_id = NEW.model_training_run_id
+          AND outcome.knowledge_cutoff > reproducibility.training_knowledge_cutoff
+    ) THEN
+        RAISE EXCEPTION 'Model training used an Outcome unavailable at cutoff'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE CONSTRAINT TRIGGER model_training_reproducibility_reconcile_guard
+AFTER INSERT ON mra.model_training_reproducibility
+DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW EXECUTE FUNCTION mra.validate_model_training_reproducibility();
+CREATE TRIGGER model_training_reproducibility_append_only
+BEFORE UPDATE OR DELETE ON mra.model_training_reproducibility
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER model_training_dependency_append_only
+BEFORE UPDATE OR DELETE ON mra.model_training_dependency
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER model_training_hyperparameter_append_only
+BEFORE UPDATE OR DELETE ON mra.model_training_hyperparameter
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+
 CREATE FUNCTION mra.validate_model_training_run()
 RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE actual_count integer;
@@ -21259,10 +21538,16 @@ BEGIN
           ON arm.exploratory_backtest_arm_id = NEW.exploratory_backtest_arm_id
          AND arm.exploratory_backtest_run_id =
              backtest.exploratory_backtest_run_id
-         AND arm.arm_kind IN (
-             'MODEL_CHALLENGER', 'RIDGE_CURRENT_CONTEXT',
-             'RIDGE_CONTEXT_OBSERVATIONAL'
-         )
+        LEFT JOIN mra.backtest_specification AS specification
+          ON specification.exploratory_backtest_run_id =
+             backtest.exploratory_backtest_run_id
+        LEFT JOIN mra.backtest_arm_specification AS arm_specification
+          ON arm_specification.exploratory_backtest_arm_id =
+             arm.exploratory_backtest_arm_id
+         AND arm_specification.exploratory_backtest_run_id =
+             arm.exploratory_backtest_run_id
+         AND arm_specification.specification_sha256 =
+             specification.specification_sha256
         JOIN mra.exploratory_backtest_fold AS fold
           ON fold.exploratory_backtest_fold_id = NEW.exploratory_backtest_fold_id
          AND fold.exploratory_backtest_run_id =
@@ -21271,6 +21556,17 @@ BEGIN
          AND fold.evaluation_protocol_id = evaluation.evaluation_protocol_id
         WHERE model.model_id = NEW.model_id
           AND model.target_definition_id = NEW.target_definition_id
+          AND (
+              (specification.exploratory_backtest_run_id IS NOT NULL
+               AND arm_specification.execution_kind = 'MODEL'
+               AND arm_specification.model_id = model.model_id)
+              OR
+              (specification.exploratory_backtest_run_id IS NULL
+               AND arm.arm_kind IN (
+                   'MODEL_CHALLENGER', 'RIDGE_CURRENT_CONTEXT',
+                   'RIDGE_CONTEXT_OBSERVATIONAL'
+               ))
+          )
     ) THEN
         RAISE EXCEPTION 'Model training parent graph is invalid'
             USING ERRCODE = '55000';
@@ -21387,6 +21683,16 @@ BEGIN
           )
     ) THEN
         RAISE EXCEPTION 'Model training target value differs from Evaluation input'
+            USING ERRCODE = '55000';
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM mra.backtest_specification
+        WHERE exploratory_backtest_run_id = NEW.exploratory_backtest_run_id
+    ) AND NOT EXISTS (
+        SELECT 1 FROM mra.model_training_reproducibility
+        WHERE model_training_run_id = NEW.model_training_run_id
+    ) THEN
+        RAISE EXCEPTION 'current Backtest ModelTrainingRun requires reproducibility closure'
             USING ERRCODE = '55000';
     END IF;
     RETURN NEW;
@@ -21727,10 +22033,16 @@ BEGIN
              decision.exploratory_backtest_arm_id
          AND inference_arm.exploratory_backtest_run_id =
              decision.exploratory_backtest_run_id
-         AND inference_arm.arm_kind IN (
-             'MODEL_CHALLENGER', 'RIDGE_CURRENT_CONTEXT',
-             'RIDGE_CONTEXT_OBSERVATIONAL'
-         )
+        LEFT JOIN mra.backtest_specification AS specification
+          ON specification.exploratory_backtest_run_id =
+             decision.exploratory_backtest_run_id
+        LEFT JOIN mra.backtest_arm_specification AS arm_specification
+          ON arm_specification.exploratory_backtest_arm_id =
+             inference_arm.exploratory_backtest_arm_id
+         AND arm_specification.exploratory_backtest_run_id =
+             inference_arm.exploratory_backtest_run_id
+         AND arm_specification.specification_sha256 =
+             specification.specification_sha256
         JOIN mra.exploratory_backtest_fold AS inference_fold
           ON inference_fold.exploratory_backtest_fold_id =
              decision.exploratory_backtest_fold_id
@@ -21792,7 +22104,6 @@ BEGIN
           AND estimate.point_estimate IS NOT DISTINCT FROM NEW.point_estimate
           AND forecast.recorded_at = NEW.forecast_recorded_at
           AND version.registered_at < forecast.recorded_at
-          AND training_fold.ordinal < inference_fold.ordinal
           AND NOT EXISTS (
               SELECT 1
               FROM mra.model_training_sample AS sample
@@ -21802,6 +22113,42 @@ BEGIN
                     training.model_training_run_id
                 AND training_decision.decision_time >=
                     decision_root.decision_time
+          )
+          AND (
+              (specification.exploratory_backtest_run_id IS NOT NULL
+               AND arm_specification.execution_kind = 'MODEL'
+               AND arm_specification.model_id = version.model_id
+               AND EXISTS (
+                   SELECT 1
+                   FROM mra.backtest_model_lineage AS lineage
+                   JOIN mra.backtest_model_training_requirement AS requirement
+                     ON requirement.backtest_model_training_requirement_id =
+                        lineage.model_training_requirement_id
+                    AND requirement.exploratory_backtest_run_id =
+                        decision.exploratory_backtest_run_id
+                    AND requirement.exploratory_backtest_arm_id =
+                        decision.exploratory_backtest_arm_id
+                    AND requirement.fit_fold_id =
+                        training.exploratory_backtest_fold_id
+                    AND requirement.validation_fold_id =
+                        inference_fold.exploratory_backtest_fold_id
+                   JOIN mra.backtest_fold_dependency AS dependency
+                     ON dependency.exploratory_backtest_run_id =
+                        requirement.exploratory_backtest_run_id
+                    AND dependency.fit_fold_id = requirement.fit_fold_id
+                    AND dependency.validation_fold_id =
+                        requirement.validation_fold_id
+                   WHERE lineage.model_training_run_id =
+                         training.model_training_run_id
+                     AND lineage.model_version_id = version.model_version_id
+               ))
+              OR
+              (specification.exploratory_backtest_run_id IS NULL
+               AND inference_arm.arm_kind IN (
+                   'MODEL_CHALLENGER', 'RIDGE_CURRENT_CONTEXT',
+                   'RIDGE_CONTEXT_OBSERVATIONAL'
+               )
+               AND training_fold.ordinal < inference_fold.ordinal)
           )
     ) THEN
         RAISE EXCEPTION 'Forecast ModelVersion lineage is not later-generation exact'
@@ -22962,6 +23309,65 @@ CREATE TABLE mra.backtest_evaluation_execution (
     )
 );
 
+CREATE TABLE mra.backtest_model_lineage (
+    backtest_model_lineage_id uuid PRIMARY KEY,
+    exploratory_backtest_run_id uuid NOT NULL,
+    specification_sha256 text NOT NULL,
+    model_training_requirement_id uuid NOT NULL,
+    backtest_evaluation_execution_id uuid NOT NULL,
+    fit_evaluation_run_id uuid NOT NULL,
+    model_id uuid NOT NULL,
+    model_training_run_id uuid NOT NULL,
+    model_training_run_sha256 text NOT NULL,
+    model_training_reproducibility_sha256 text NOT NULL,
+    model_version_id uuid NOT NULL,
+    model_version_sha256 text NOT NULL,
+    content_sha256 text NOT NULL UNIQUE,
+    bound_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT backtest_model_lineage_requirement_uk UNIQUE (
+        model_training_requirement_id
+    ),
+    CONSTRAINT backtest_model_lineage_training_uk UNIQUE (
+        model_training_run_id
+    ),
+    CONSTRAINT backtest_model_lineage_version_uk UNIQUE (model_version_id),
+    CONSTRAINT backtest_model_lineage_specification_fk FOREIGN KEY (
+        exploratory_backtest_run_id, specification_sha256
+    ) REFERENCES mra.backtest_specification(
+        exploratory_backtest_run_id, specification_sha256
+    ) ON DELETE RESTRICT,
+    CONSTRAINT backtest_model_lineage_requirement_fk FOREIGN KEY (
+        model_training_requirement_id
+    ) REFERENCES mra.backtest_model_training_requirement(
+        backtest_model_training_requirement_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT backtest_model_lineage_evaluation_fk FOREIGN KEY (
+        backtest_evaluation_execution_id
+    ) REFERENCES mra.backtest_evaluation_execution(
+        backtest_evaluation_execution_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT backtest_model_lineage_training_fk FOREIGN KEY (
+        model_training_run_id
+    ) REFERENCES mra.model_training_run(model_training_run_id)
+        ON DELETE RESTRICT,
+    CONSTRAINT backtest_model_lineage_reproducibility_fk FOREIGN KEY (
+        model_training_run_id
+    ) REFERENCES mra.model_training_reproducibility(model_training_run_id)
+        ON DELETE RESTRICT,
+    CONSTRAINT backtest_model_lineage_version_fk FOREIGN KEY (
+        model_version_id
+    ) REFERENCES mra.model_version(model_version_id) ON DELETE RESTRICT,
+    CONSTRAINT backtest_model_lineage_model_fk FOREIGN KEY (model_id)
+        REFERENCES mra.model(model_id) ON DELETE RESTRICT,
+    CONSTRAINT backtest_model_lineage_shape_ck CHECK (
+        specification_sha256 ~ '^[0-9a-f]{64}$'
+        AND model_training_run_sha256 ~ '^[0-9a-f]{64}$'
+        AND model_training_reproducibility_sha256 ~ '^[0-9a-f]{64}$'
+        AND model_version_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
 CREATE TABLE mra.backtest_report_artifact (
     backtest_report_artifact_id uuid PRIMARY KEY,
     exploratory_backtest_run_id uuid NOT NULL,
@@ -23140,6 +23546,94 @@ BEGIN
 END;
 $$;
 
+CREATE FUNCTION mra.validate_backtest_model_lineage()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE expected_content text;
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM mra.backtest_model_training_requirement AS requirement
+        JOIN mra.backtest_evaluation_execution AS execution
+          ON execution.backtest_evaluation_execution_id =
+             NEW.backtest_evaluation_execution_id
+         AND execution.exploratory_backtest_run_id =
+             requirement.exploratory_backtest_run_id
+         AND execution.specification_sha256 =
+             requirement.specification_sha256
+         AND execution.evaluation_run_id = NEW.fit_evaluation_run_id
+         AND execution.evaluation_protocol_id =
+             requirement.required_fit_evaluation_protocol_id
+        JOIN mra.backtest_evaluation_requirement AS evaluation_requirement
+          ON evaluation_requirement.backtest_evaluation_requirement_id =
+             execution.backtest_evaluation_requirement_id
+         AND evaluation_requirement.exploratory_backtest_run_id =
+             requirement.exploratory_backtest_run_id
+         AND evaluation_requirement.specification_sha256 =
+             requirement.specification_sha256
+         AND evaluation_requirement.scope_kind = 'FOLD'
+         AND evaluation_requirement.exploratory_backtest_arm_id =
+             requirement.exploratory_backtest_arm_id
+         AND evaluation_requirement.exploratory_backtest_fold_id =
+             requirement.fit_fold_id
+        JOIN mra.model_training_run AS training
+          ON training.model_training_run_id = NEW.model_training_run_id
+         AND training.content_sha256 = NEW.model_training_run_sha256
+         AND training.model_id = requirement.model_id
+         AND training.evaluation_run_id = execution.evaluation_run_id
+         AND training.exploratory_backtest_run_id =
+             requirement.exploratory_backtest_run_id
+         AND training.exploratory_backtest_arm_id =
+             requirement.exploratory_backtest_arm_id
+         AND training.exploratory_backtest_fold_id = requirement.fit_fold_id
+        JOIN mra.model_training_reproducibility AS reproducibility
+          ON reproducibility.model_training_run_id =
+             training.model_training_run_id
+         AND reproducibility.content_sha256 =
+             NEW.model_training_reproducibility_sha256
+        JOIN mra.model_version AS version
+          ON version.model_version_id = NEW.model_version_id
+         AND version.content_sha256 = NEW.model_version_sha256
+         AND version.model_id = training.model_id
+         AND version.model_training_run_id = training.model_training_run_id
+         AND version.registered_at >= training.opened_at
+        WHERE requirement.backtest_model_training_requirement_id =
+              NEW.model_training_requirement_id
+          AND requirement.exploratory_backtest_run_id =
+              NEW.exploratory_backtest_run_id
+          AND requirement.specification_sha256 = NEW.specification_sha256
+          AND requirement.model_id = NEW.model_id
+    ) THEN
+        RAISE EXCEPTION 'Backtest Model lineage is not exact FIT training lineage'
+            USING ERRCODE = '55000';
+    END IF;
+
+    expected_content := mra.canonical_sha256(mra.canonical_json_text(
+        jsonb_build_object(
+            'backtest_evaluation_execution_id',
+                NEW.backtest_evaluation_execution_id,
+            'backtest_model_lineage_id', NEW.backtest_model_lineage_id,
+            'exploratory_backtest_run_id', NEW.exploratory_backtest_run_id,
+            'fit_evaluation_run_id', NEW.fit_evaluation_run_id,
+            'model_id', NEW.model_id,
+            'model_training_reproducibility_sha256',
+                NEW.model_training_reproducibility_sha256,
+            'model_training_requirement_id',
+                NEW.model_training_requirement_id,
+            'model_training_run_id', NEW.model_training_run_id,
+            'model_training_run_sha256', NEW.model_training_run_sha256,
+            'model_version_id', NEW.model_version_id,
+            'model_version_sha256', NEW.model_version_sha256,
+            'specification_sha256', NEW.specification_sha256
+        )
+    ));
+    IF NEW.content_sha256 <> expected_content THEN
+        RAISE EXCEPTION 'Backtest Model lineage hash is invalid'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
 CREATE FUNCTION mra.validate_backtest_report_artifact()
 RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE root_row record;
@@ -23221,6 +23715,12 @@ FOR EACH ROW EXECUTE FUNCTION mra.validate_backtest_evaluation_execution();
 CREATE TRIGGER backtest_evaluation_execution_append_only
 BEFORE UPDATE OR DELETE ON mra.backtest_evaluation_execution
 FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER backtest_model_lineage_guard
+BEFORE INSERT ON mra.backtest_model_lineage
+FOR EACH ROW EXECUTE FUNCTION mra.validate_backtest_model_lineage();
+CREATE TRIGGER backtest_model_lineage_append_only
+BEFORE UPDATE OR DELETE ON mra.backtest_model_lineage
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
 CREATE TRIGGER backtest_report_artifact_guard
 BEFORE INSERT ON mra.backtest_report_artifact
 FOR EACH ROW EXECUTE FUNCTION mra.validate_backtest_report_artifact();
@@ -23236,6 +23736,20 @@ CREATE INDEX backtest_runtime_binding_specification_idx
     ON mra.backtest_runtime_binding(
         exploratory_backtest_run_id, specification_sha256
     );
+CREATE INDEX backtest_model_lineage_run_idx
+    ON mra.backtest_model_lineage(exploratory_backtest_run_id);
+CREATE INDEX backtest_model_lineage_specification_idx
+    ON mra.backtest_model_lineage(
+        exploratory_backtest_run_id, specification_sha256
+    );
+CREATE INDEX backtest_model_lineage_model_idx
+    ON mra.backtest_model_lineage(model_id);
+CREATE INDEX backtest_model_lineage_evaluation_idx
+    ON mra.backtest_model_lineage(backtest_evaluation_execution_id);
+CREATE INDEX backtest_model_lineage_training_idx
+    ON mra.backtest_model_lineage(model_training_run_id);
+CREATE INDEX backtest_model_lineage_version_idx
+    ON mra.backtest_model_lineage(model_version_id);
 CREATE INDEX backtest_runtime_binding_arm_idx
     ON mra.backtest_runtime_binding(
         exploratory_backtest_arm_id, exploratory_backtest_run_id

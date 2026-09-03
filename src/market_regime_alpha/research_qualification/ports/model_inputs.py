@@ -10,6 +10,9 @@ from uuid import UUID
 from market_regime_alpha.research_qualification.domain.model import ArtifactBinding
 from market_regime_alpha.research_qualification.domain.research_models import (
     LinearTrainingRow,
+    ModelExecutionEnvironment,
+    ModelScalarParameter,
+    ModelTrainingReproducibility,
     ModelTrainingSamplePlan,
 )
 from market_regime_alpha.shared.identity import ContentHash
@@ -46,6 +49,38 @@ class PreparedModelTrainingInputs:
 
 
 @dataclass(frozen=True, slots=True)
+class ReproducibleModelTrainingRunRequest:
+    """Permanent current-run request with no nullable reproducibility fallback."""
+
+    training: OpenModelTrainingRunRequest
+    environment: ModelExecutionEnvironment
+    hyperparameters: tuple[ModelScalarParameter, ...]
+
+    def __post_init__(self) -> None:
+        if tuple(item.ordinal for item in self.hyperparameters) != tuple(range(1, len(self.hyperparameters) + 1)):
+            raise ValueError("Model hyperparameters must use contiguous ordinals")
+        if self.training.algorithm_code == "deterministic_ridge":
+            alpha = tuple(
+                item
+                for item in self.hyperparameters
+                if item.parameter_code == "ridge_alpha"
+                and item.value_type.value == "DECIMAL"
+            )
+            if len(alpha) != 1 or alpha[0].decimal_value != self.training.ridge_alpha:
+                raise ValueError("deterministic ridge typed alpha differs from training contract")
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedReproducibleModelTrainingInputs:
+    training: PreparedModelTrainingInputs
+    reproducibility: ModelTrainingReproducibility
+
+    def __post_init__(self) -> None:
+        if self.training.request.model_training_run_id != self.reproducibility.model_training_run_id:
+            raise ValueError("prepared reproducibility identity differs")
+
+
+@dataclass(frozen=True, slots=True)
 class RegisteredModelTrainingInputs:
     model_training_run_id: UUID
     model_id: UUID
@@ -68,6 +103,19 @@ class RegisteredModelTrainingInputs:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class RegisteredReproducibleModelTrainingInputs:
+    training: RegisteredModelTrainingInputs
+    reproducibility: ModelTrainingReproducibility
+
+    def __post_init__(self) -> None:
+        if (
+            self.training.model_training_run_id != self.reproducibility.model_training_run_id
+            or self.training.implementation_sha256 != self.reproducibility.implementation_sha256
+        ):
+            raise ValueError("registered reproducibility lineage differs")
+
+
 class ModelTrainingInputProvider(Protocol):
     def prepare(
         self,
@@ -78,6 +126,16 @@ class ModelTrainingInputProvider(Protocol):
         self,
         model_training_run_id: UUID,
     ) -> RegisteredModelTrainingInputs: ...
+
+    def prepare_reproducible(
+        self,
+        request: ReproducibleModelTrainingRunRequest,
+    ) -> PreparedReproducibleModelTrainingInputs: ...
+
+    def load_registered_reproducible(
+        self,
+        model_training_run_id: UUID,
+    ) -> RegisteredReproducibleModelTrainingInputs: ...
 
 
 class ModelArtifactPublisher(Protocol):
@@ -97,5 +155,8 @@ __all__ = [
     "ModelArtifactPublisher",
     "OpenModelTrainingRunRequest",
     "PreparedModelTrainingInputs",
+    "PreparedReproducibleModelTrainingInputs",
     "RegisteredModelTrainingInputs",
+    "RegisteredReproducibleModelTrainingInputs",
+    "ReproducibleModelTrainingRunRequest",
 ]

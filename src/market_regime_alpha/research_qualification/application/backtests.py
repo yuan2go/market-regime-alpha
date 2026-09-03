@@ -21,6 +21,7 @@ from market_regime_alpha.research_qualification.domain.backtest import (
 )
 from market_regime_alpha.research_qualification.domain.backtest_execution import (
     BacktestEvaluationExecution,
+    BacktestModelLineage,
     BacktestRuntimeBinding,
 )
 from market_regime_alpha.research_qualification.domain.backtest_report import (
@@ -359,6 +360,52 @@ class BacktestApplication:
             return BacktestLineageMutationResult(
                 binding.exploratory_backtest_run_id,
                 binding.backtest_report_artifact_id,
+                receipt.receipt_id,
+                str(binding.content_sha256),
+                False,
+            )
+
+    @retry_transient_transaction
+    @replay_concurrent_success
+    def bind_model_lineage(
+        self,
+        binding: BacktestModelLineage,
+        context: CommandContext,
+    ) -> BacktestLineageMutationResult:
+        """Bind one model requirement to exact FIT/training/version Authority."""
+
+        request_hash = canonical_json_sha256(binding)
+        with self._uow_provider() as uow:
+            receipt = uow.receipts.start(
+                receipt_id=self._id_factory(),
+                command_kind="BIND_BACKTEST_MODEL_LINEAGE",
+                scope_id=str(binding.model_training_requirement_id),
+                idempotency_key=context.idempotency_key,
+                request_hash=request_hash,
+            )
+            if not receipt.is_new:
+                return self._replay_lineage(
+                    uow,
+                    receipt,
+                    expected_kind="BACKTEST_MODEL_LINEAGE",
+                    expected_id=binding.backtest_model_lineage_id,
+                    expected_hash=str(binding.content_sha256),
+                    exploratory_backtest_run_id=(binding.exploratory_backtest_run_id),
+                )
+            uow.backtests.bind_model_lineage(binding)
+            self._complete_lineage_receipt(
+                uow,
+                receipt,
+                context,
+                aggregate_kind="BACKTEST_MODEL_LINEAGE",
+                aggregate_id=binding.backtest_model_lineage_id,
+                result_hash=str(binding.content_sha256),
+                action="BIND_BACKTEST_MODEL_LINEAGE",
+            )
+            uow.commit()
+            return BacktestLineageMutationResult(
+                binding.exploratory_backtest_run_id,
+                binding.backtest_model_lineage_id,
                 receipt.receipt_id,
                 str(binding.content_sha256),
                 False,

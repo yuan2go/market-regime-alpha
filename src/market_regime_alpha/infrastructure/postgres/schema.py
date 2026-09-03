@@ -448,6 +448,7 @@ EXPECTED_EXPLORATORY_BACKTEST_TABLES: Final[frozenset[str]] = frozenset(
         "backtest_evaluation_requirement",
         "backtest_runtime_binding",
         "backtest_evaluation_execution",
+        "backtest_model_lineage",
         "backtest_report_artifact",
     }
 )
@@ -458,6 +459,9 @@ EXPECTED_MODEL_TABLES: Final[frozenset[str]] = frozenset(
         "model_feature_definition",
         "model_training_run",
         "model_training_sample",
+        "model_training_reproducibility",
+        "model_training_dependency",
+        "model_training_hyperparameter",
         "model_version",
     }
 )

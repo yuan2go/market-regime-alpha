@@ -12,6 +12,7 @@ from market_regime_alpha.research_qualification.domain.backtest import (
 )
 from market_regime_alpha.research_qualification.domain.backtest_execution import (
     BacktestEvaluationExecution,
+    BacktestModelLineage,
     BacktestRuntimeBinding,
 )
 from market_regime_alpha.research_qualification.domain.backtest_report import (
@@ -852,6 +853,75 @@ class PostgresBacktestRepository:
         )
         if row is None or tuple(row) != expected:
             raise RuntimeStateConflictError("Backtest report Artifact binding was reused differently")
+        return binding
+
+    def bind_model_lineage(
+        self,
+        binding: BacktestModelLineage,
+    ) -> BacktestModelLineage:
+        self._connection.execute(
+            """
+            INSERT INTO mra.backtest_model_lineage (
+                backtest_model_lineage_id, exploratory_backtest_run_id,
+                specification_sha256, model_training_requirement_id,
+                backtest_evaluation_execution_id, fit_evaluation_run_id,
+                model_id, model_training_run_id,
+                model_training_run_sha256,
+                model_training_reproducibility_sha256,
+                model_version_id, model_version_sha256, content_sha256
+            ) VALUES (
+                %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s
+            )
+            ON CONFLICT (model_training_requirement_id) DO NOTHING
+            """,
+            (
+                binding.backtest_model_lineage_id,
+                binding.exploratory_backtest_run_id,
+                str(binding.specification_sha256),
+                binding.model_training_requirement_id,
+                binding.backtest_evaluation_execution_id,
+                binding.fit_evaluation_run_id,
+                binding.model_id,
+                binding.model_training_run_id,
+                str(binding.model_training_run_sha256),
+                str(binding.model_training_reproducibility_sha256),
+                binding.model_version_id,
+                str(binding.model_version_sha256),
+                str(binding.content_sha256),
+            ),
+        )
+        row = self._connection.execute(
+            """
+            SELECT backtest_model_lineage_id,
+                   exploratory_backtest_run_id, specification_sha256,
+                   backtest_evaluation_execution_id, fit_evaluation_run_id,
+                   model_id, model_training_run_id,
+                   model_training_run_sha256,
+                   model_training_reproducibility_sha256,
+                   model_version_id, model_version_sha256, content_sha256
+            FROM mra.backtest_model_lineage
+            WHERE model_training_requirement_id = %s
+            FOR SHARE
+            """,
+            (binding.model_training_requirement_id,),
+        ).fetchone()
+        expected = (
+            binding.backtest_model_lineage_id,
+            binding.exploratory_backtest_run_id,
+            str(binding.specification_sha256),
+            binding.backtest_evaluation_execution_id,
+            binding.fit_evaluation_run_id,
+            binding.model_id,
+            binding.model_training_run_id,
+            str(binding.model_training_run_sha256),
+            str(binding.model_training_reproducibility_sha256),
+            binding.model_version_id,
+            str(binding.model_version_sha256),
+            str(binding.content_sha256),
+        )
+        if row is None or tuple(row) != expected:
+            raise RuntimeStateConflictError("Backtest Model lineage identity was reused differently")
         return binding
 
 

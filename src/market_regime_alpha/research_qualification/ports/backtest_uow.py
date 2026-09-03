@@ -13,6 +13,7 @@ from market_regime_alpha.research_qualification.domain.backtest import (
 )
 from market_regime_alpha.research_qualification.domain.backtest_execution import (
     BacktestEvaluationExecution,
+    BacktestModelLineage,
     BacktestRuntimeBinding,
 )
 from market_regime_alpha.research_qualification.domain.backtest_report import (
@@ -57,6 +58,8 @@ class BacktestRepository(Protocol):
     def bind_runtime(self, binding: BacktestRuntimeBinding) -> BacktestRuntimeBinding: ...
 
     def bind_evaluation(self, binding: BacktestEvaluationExecution) -> BacktestEvaluationExecution: ...
+
+    def bind_model_lineage(self, binding: BacktestModelLineage) -> BacktestModelLineage: ...
 
     def bind_report(self, binding: BacktestReportArtifactBinding) -> BacktestReportArtifactBinding: ...
 

@@ -8,13 +8,16 @@ from uuid import UUID
 import psycopg
 
 from market_regime_alpha.research_qualification.domain.research_models import (
+    ModelTrainingReproducibility,
     ModelTrainingRunPlan,
     ModelVersionPlan,
+    ReproducibleModelTrainingRunPlan,
     ResearchModelPlan,
 )
 from market_regime_alpha.research_qualification.ports.model_uow import (
     ModelTrainingRunRecord,
     ModelVersionRecord,
+    ReproducibleModelTrainingRunRecord,
     ResearchModelRecord,
 )
 from market_regime_alpha.runtime.errors import RuntimeNotFoundError
@@ -91,9 +94,7 @@ class PostgresResearchModelRepository:
                 (plan.model_id, ordinal, feature_id, str(feature_hash)),
             )
             if result.rowcount != 1:
-                raise RuntimeNotFoundError(
-                    f"numeric FeatureDefinition {feature_id} is not exact"
-                )
+                raise RuntimeNotFoundError(f"numeric FeatureDefinition {feature_id} is not exact")
         self._connection.execute("SET CONSTRAINTS model_reconcile_guard IMMEDIATE")
         return self.model_record(plan.model_id, lock=False)
 
@@ -101,6 +102,39 @@ class PostgresResearchModelRepository:
         self,
         plan: ModelTrainingRunPlan,
         *,
+        request_identity: str,
+        request_sha256: str,
+    ) -> ModelTrainingRunRecord:
+        return self._register_training_run(
+            plan,
+            reproducibility=None,
+            request_identity=request_identity,
+            request_sha256=request_sha256,
+        )
+
+    def register_reproducible_training_run(
+        self,
+        plan: ReproducibleModelTrainingRunPlan,
+        *,
+        request_identity: str,
+        request_sha256: str,
+    ) -> ReproducibleModelTrainingRunRecord:
+        record = self._register_training_run(
+            plan.training_run,
+            reproducibility=plan.reproducibility,
+            request_identity=request_identity,
+            request_sha256=request_sha256,
+        )
+        return ReproducibleModelTrainingRunRecord(
+            training_run=record,
+            reproducibility_sha256=str(plan.reproducibility.content_sha256),
+        )
+
+    def _register_training_run(
+        self,
+        plan: ModelTrainingRunPlan,
+        *,
+        reproducibility: ModelTrainingReproducibility | None,
         request_identity: str,
         request_sha256: str,
     ) -> ModelTrainingRunRecord:
@@ -212,17 +246,92 @@ class PostgresResearchModelRepository:
                         sample.state.value,
                         sample.reason_code,
                         sample.target_value,
-                        None
-                        if sample.feature_vector_sha256 is None
-                        else str(sample.feature_vector_sha256),
+                        None if sample.feature_vector_sha256 is None else str(sample.feature_vector_sha256),
                         str(sample.content_sha256),
                     )
                     for sample in plan.samples
                 ),
             )
-        self._connection.execute(
-            "SET CONSTRAINTS model_training_run_reconcile_guard IMMEDIATE"
-        )
+        if reproducibility is not None:
+            environment = reproducibility.environment
+            self._connection.execute(
+                """
+                INSERT INTO mra.model_training_reproducibility (
+                    model_training_run_id, training_knowledge_cutoff,
+                    implementation_sha256, python_implementation,
+                    python_version, runtime_code, runtime_version,
+                    uv_lock_sha256, dependency_count,
+                    dependency_roster_sha256, hyperparameter_count,
+                    hyperparameter_roster_sha256, environment_sha256,
+                    content_sha256
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s, %s
+                )
+                """,
+                (
+                    plan.model_training_run_id,
+                    reproducibility.training_knowledge_cutoff,
+                    str(reproducibility.implementation_sha256),
+                    environment.python_implementation,
+                    environment.python_version,
+                    environment.runtime_code,
+                    environment.runtime_version,
+                    str(environment.uv_lock_sha256),
+                    len(environment.dependencies),
+                    str(environment.dependency_roster_sha256),
+                    len(reproducibility.hyperparameters),
+                    str(reproducibility.hyperparameter_roster_sha256),
+                    str(environment.content_sha256),
+                    str(reproducibility.content_sha256),
+                ),
+            )
+            with self._connection.cursor() as cursor:
+                cursor.executemany(
+                    """
+                    INSERT INTO mra.model_training_dependency (
+                        model_training_run_id, ordinal, package_name,
+                        package_version, distribution_sha256, content_sha256
+                    ) VALUES (%s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        (
+                            plan.model_training_run_id,
+                            dependency.ordinal,
+                            dependency.package_name,
+                            dependency.package_version,
+                            str(dependency.distribution_sha256),
+                            str(dependency.content_sha256),
+                        )
+                        for dependency in environment.dependencies
+                    ),
+                )
+                cursor.executemany(
+                    """
+                    INSERT INTO mra.model_training_hyperparameter (
+                        model_training_run_id, ordinal, parameter_code,
+                        value_type, decimal_value, integer_value,
+                        boolean_value, text_value, content_sha256
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        (
+                            plan.model_training_run_id,
+                            parameter.ordinal,
+                            parameter.parameter_code,
+                            parameter.value_type.value,
+                            parameter.decimal_value,
+                            parameter.integer_value,
+                            parameter.boolean_value,
+                            parameter.text_value,
+                            str(parameter.content_sha256),
+                        )
+                        for parameter in reproducibility.hyperparameters
+                    ),
+                )
+        self._connection.execute("SET CONSTRAINTS model_training_run_reconcile_guard IMMEDIATE")
+        if reproducibility is not None:
+            self._connection.execute("SET CONSTRAINTS model_training_reproducibility_reconcile_guard IMMEDIATE")
         return self.training_run_record(plan.model_training_run_id, lock=False)
 
     def register_version(
@@ -288,14 +397,9 @@ class PostgresResearchModelRepository:
         ).fetchone()
         if row is None:
             raise RuntimeNotFoundError(f"Model {model_id} does not exist")
-        return ResearchModelRecord(
-            UUID(str(row[0])), str(row[1]), UUID(str(row[2])), int(row[3]),
-            str(row[4]), str(row[5]), row[6]
-        )
+        return ResearchModelRecord(UUID(str(row[0])), str(row[1]), UUID(str(row[2])), int(row[3]), str(row[4]), str(row[5]), row[6])
 
-    def training_run_record(
-        self, model_training_run_id: UUID, *, lock: bool
-    ) -> ModelTrainingRunRecord:
+    def training_run_record(self, model_training_run_id: UUID, *, lock: bool) -> ModelTrainingRunRecord:
         suffix = " FOR SHARE" if lock else ""
         row = self._connection.execute(
             """
@@ -309,18 +413,43 @@ class PostgresResearchModelRepository:
             (model_training_run_id,),
         ).fetchone()
         if row is None:
-            raise RuntimeNotFoundError(
-                f"ModelTrainingRun {model_training_run_id} does not exist"
-            )
+            raise RuntimeNotFoundError(f"ModelTrainingRun {model_training_run_id} does not exist")
         return ModelTrainingRunRecord(
-            UUID(str(row[0])), UUID(str(row[1])), UUID(str(row[2])),
-            UUID(str(row[3])), UUID(str(row[4])), int(row[5]), int(row[6]),
-            str(row[7]), UUID(str(row[8])), str(row[9]), row[10]
+            UUID(str(row[0])),
+            UUID(str(row[1])),
+            UUID(str(row[2])),
+            UUID(str(row[3])),
+            UUID(str(row[4])),
+            int(row[5]),
+            int(row[6]),
+            str(row[7]),
+            UUID(str(row[8])),
+            str(row[9]),
+            row[10],
         )
 
-    def version_record(
-        self, model_version_id: UUID, *, lock: bool
-    ) -> ModelVersionRecord:
+    def reproducible_training_run_record(
+        self,
+        model_training_run_id: UUID,
+        *,
+        lock: bool,
+    ) -> ReproducibleModelTrainingRunRecord | None:
+        training = self.training_run_record(model_training_run_id, lock=lock)
+        suffix = " FOR SHARE" if lock else ""
+        row = self._connection.execute(
+            """
+            SELECT content_sha256
+            FROM mra.model_training_reproducibility
+            WHERE model_training_run_id = %s
+            """
+            + suffix,
+            (model_training_run_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return ReproducibleModelTrainingRunRecord(training, str(row[0]))
+
+    def version_record(self, model_version_id: UUID, *, lock: bool) -> ModelVersionRecord:
         suffix = " FOR SHARE" if lock else ""
         row = self._connection.execute(
             """
@@ -333,12 +462,9 @@ class PostgresResearchModelRepository:
             (model_version_id,),
         ).fetchone()
         if row is None:
-            raise RuntimeNotFoundError(
-                f"ModelVersion {model_version_id} does not exist"
-            )
+            raise RuntimeNotFoundError(f"ModelVersion {model_version_id} does not exist")
         return ModelVersionRecord(
-            UUID(str(row[0])), UUID(str(row[1])), int(row[2]), UUID(str(row[3])),
-            UUID(str(row[4])), str(row[5]), row[6]
+            UUID(str(row[0])), UUID(str(row[1])), int(row[2]), UUID(str(row[3])), UUID(str(row[4])), str(row[5]), row[6]
         )
 
 
