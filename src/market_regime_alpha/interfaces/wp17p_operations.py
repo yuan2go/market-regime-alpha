@@ -249,7 +249,7 @@ class Wp17pResearchOperations:
             feature = app.exploratory_feature_inputs.exact_intraday_move(
                 scope=dataset_scope,
                 instrument_id=item.instrument_id,
-                session_id=simulated.session_id,
+                session_date=simulated.session_date,
                 feature_event_end=simulated.close_at - timedelta(minutes=5),
             )
             if isinstance(feature, ExploratoryIntradayFeatureGap):

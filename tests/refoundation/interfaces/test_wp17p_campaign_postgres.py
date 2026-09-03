@@ -118,12 +118,22 @@ def test_canonical_wp17p_fit_model_validation_chain(target_database_url, tmp_pat
             date(2026, 1, 16),
             date(2026, 1, 19),
         )
-        sessions = tuple(_session(item, capture_id) for item in session_dates)
-        session_by_date = {item.session_date: item for item in sessions}
+        sessions = tuple(
+            _session(item, capture_id, exchange)
+            for exchange in ("XSHG",)
+            for item in session_dates
+        )
+        session_by_exchange_date = {
+            (item.exchange, item.session_date): item for item in sessions
+        }
         instrument_ids = tuple(
             InstrumentId(uuid5(NAMESPACE_URL, f"wp17p-fixture:{index}"))
             for index in range(32)
         )
+        instrument_exchange = {
+            instrument_id: "XSHG"
+            for index, instrument_id in enumerate(instrument_ids)
+        }
         classification_id = uuid4()
         batch = NormalizationBatch(
             capture_id,
@@ -131,8 +141,12 @@ def test_canonical_wp17p_fit_model_validation_chain(target_database_url, tmp_pat
             instruments=tuple(
                 Instrument(
                     instrument_id,
-                    f"{600000 + index}.XSHG",
-                    "XSHG",
+                    (
+                        f"{600000 + index}.XSHG"
+                        if instrument_exchange[instrument_id] == "XSHG"
+                        else f"{index:06d}.XSHE"
+                    ),
+                    instrument_exchange[instrument_id],
                     InstrumentType.EQUITY,
                     "CNY",
                     capture_id,
@@ -172,7 +186,9 @@ def test_canonical_wp17p_fit_model_validation_chain(target_database_url, tmp_pat
                     product.provider_product_id,
                     capture_id,
                     instrument_id,
-                    session_by_date[session_date],
+                    session_by_exchange_date[
+                        (instrument_exchange[instrument_id], session_date)
+                    ],
                     checkpoint,
                     index,
                 )
@@ -190,11 +206,17 @@ def test_canonical_wp17p_fit_model_validation_chain(target_database_url, tmp_pat
                     product.provider_product_id,
                     capture_id,
                     instrument_id,
-                    session_by_date[session_date].session_id,
+                    session_by_exchange_date[
+                        (instrument_exchange[instrument_id], session_date)
+                    ].session_id,
                     EvidenceScope.DECISION_SESSION,
                     SecurityStatus.ACTIVE,
-                    session_by_date[session_date].open_at,
-                    session_by_date[session_date].close_at,
+                    session_by_exchange_date[
+                        (instrument_exchange[instrument_id], session_date)
+                    ].open_at,
+                    session_by_exchange_date[
+                        (instrument_exchange[instrument_id], session_date)
+                    ].close_at,
                     1,
                     None,
                 )
@@ -225,8 +247,12 @@ def test_canonical_wp17p_fit_model_validation_chain(target_database_url, tmp_pat
                             instrument_id,
                             InstrumentFactKind.SPECIAL_TREATMENT_STATUS,
                             SpecialTreatmentStatus.NORMAL,
-                            session_by_date[session_date].open_at,
-                            session_by_date[session_date].close_at,
+                            session_by_exchange_date[
+                                (instrument_exchange[instrument_id], session_date)
+                            ].open_at,
+                            session_by_exchange_date[
+                                (instrument_exchange[instrument_id], session_date)
+                            ].close_at,
                             1,
                             None,
                         )
@@ -370,7 +396,7 @@ def test_canonical_wp17p_fit_model_validation_chain(target_database_url, tmp_pat
     assert decision_times == [(time(14, 55),)]
 
 
-def _session(session_date: date, capture_id):
+def _session(session_date: date, capture_id, exchange: str):
     def at(hour: int, minute: int) -> datetime:
         return datetime.combine(
             session_date,
@@ -379,8 +405,8 @@ def _session(session_date: date, capture_id):
         ).astimezone(UTC)
 
     return TradingSession(
-        uuid5(NAMESPACE_URL, f"wp17p-session:{session_date}"),
-        "XSHG",
+        uuid5(NAMESPACE_URL, f"wp17p-session:{exchange}:{session_date}"),
+        exchange,
         session_date,
         "Asia/Shanghai",
         at(9, 30),

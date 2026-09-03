@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Protocol
 from uuid import UUID
@@ -54,7 +54,7 @@ class ExploratoryFeatureInputReadPort(Protocol):
         *,
         scope: ExploratoryRetrospectiveDatasetScope,
         instrument_id: InstrumentId,
-        session_id: TradingSessionId,
+        session_date: date,
         feature_event_end: datetime,
     ) -> ExploratoryIntradayFeatureInput: ...
 
