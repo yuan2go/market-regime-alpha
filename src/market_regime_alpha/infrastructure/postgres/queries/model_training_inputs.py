@@ -388,7 +388,7 @@ class PostgresModelTrainingInputProvider:
             training_input_artifact=binding,
             feature_definition_ids=feature_ids,
             linear_rows=linear_rows,
-            ridge_alpha=Decimal(str(row[4])),
+            ridge_alpha=(Decimal(str(row[4])) if row[4] is not None else None),
             random_seed=int(row[5]),
             code_artifact=_binding(row[11:14]),
             config_artifact=_binding(row[14:17]),

@@ -18,6 +18,9 @@ from market_regime_alpha.research_qualification.ports.model_execution import (
 
 
 class DeterministicRidgeTrainer:
+    def supports(self, algorithm_code: str, algorithm_version: str) -> bool:
+        return _supports_algorithm(algorithm_code, algorithm_version)
+
     def fit(self, training: FrozenModelTrainingInput) -> FittedModelPayload:
         _require_algorithm(training.algorithm_code, training.algorithm_version)
         alpha = tuple(
@@ -42,6 +45,9 @@ class DeterministicRidgeTrainer:
 
 
 class DeterministicRidgePredictor:
+    def supports(self, algorithm_code: str, algorithm_version: str) -> bool:
+        return _supports_algorithm(algorithm_code, algorithm_version)
+
     def predict(
         self,
         model: FrozenModelVersionPayload,
@@ -75,8 +81,12 @@ class DeterministicRidgePredictor:
 
 
 def _require_algorithm(code: str, version: str) -> None:
-    if code != "deterministic_ridge" or version not in {"1.0", "1.0.0"}:
+    if not _supports_algorithm(code, version):
         raise ValueError("deterministic ridge adapter cannot execute this algorithm")
+
+
+def _supports_algorithm(code: str, version: str) -> bool:
+    return code == "deterministic_ridge" and version in {"1.0", "1.0.0"}
 
 
 __all__ = ["DeterministicRidgePredictor", "DeterministicRidgeTrainer"]

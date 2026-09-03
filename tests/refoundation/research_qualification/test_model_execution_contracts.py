@@ -9,6 +9,8 @@ import pytest
 from market_regime_alpha.infrastructure.models import (
     DeterministicRidgePredictor,
     DeterministicRidgeTrainer,
+    ExplicitModelPredictorComposition,
+    ExplicitModelTrainerComposition,
 )
 from market_regime_alpha.research_qualification.domain.research_models import (
     LinearTrainingRow,
@@ -17,6 +19,7 @@ from market_regime_alpha.research_qualification.ports.model_execution import (
     FrozenModelTrainingInput,
     FrozenModelVersionPayload,
     ModelPredictionBatch,
+    ModelPrediction,
     ModelPredictionRow,
     ModelScalarParameter,
     ModelScalarType,
@@ -118,6 +121,82 @@ def test_model_parameters_are_closed_typed_scalars() -> None:
             ModelScalarType.INTEGER,
             decimal_value=Decimal("1"),
         )
+
+
+def test_explicit_model_composition_routes_without_engine_family_dispatch() -> None:
+    training = _training()
+    ridge_trainer = DeterministicRidgeTrainer()
+    ridge_predictor = DeterministicRidgePredictor()
+    trainers = ExplicitModelTrainerComposition((ridge_trainer,))
+    predictors = ExplicitModelPredictorComposition((ridge_predictor,))
+
+    fitted = trainers.fit(training)
+    model = FrozenModelVersionPayload(
+        algorithm_code=training.algorithm_code,
+        algorithm_version=training.algorithm_version,
+        implementation_sha256=training.implementation_sha256,
+        fitted_content=fitted.content,
+        fitted_content_sha256=fitted.content_sha256,
+        feature_definition_ids=training.feature_definition_ids,
+        hyperparameters=training.hyperparameters,
+        seed=training.seed,
+        coefficient_count=fitted.coefficient_count,
+    )
+    batch = ModelPredictionBatch(
+        (ModelPredictionRow(_id(20), (Decimal("4"), Decimal("0"))),)
+    )
+
+    assert trainers.supports("deterministic_ridge", "1.0") is True
+    assert predictors.supports("deterministic_ridge", "1.0") is True
+    assert predictors.predict(model, batch) == ridge_predictor.predict(model, batch)
+
+
+def test_explicit_model_composition_fails_closed_for_missing_or_ambiguous_family() -> None:
+    class DuplicateTrainer:
+        def supports(self, algorithm_code: str, algorithm_version: str) -> bool:
+            return algorithm_code == "deterministic_ridge" and algorithm_version == "1.0"
+
+        def fit(self, training: FrozenModelTrainingInput):
+            return DeterministicRidgeTrainer().fit(training)
+
+    class DuplicatePredictor:
+        def supports(self, algorithm_code: str, algorithm_version: str) -> bool:
+            return algorithm_code == "deterministic_ridge" and algorithm_version == "1.0"
+
+        def predict(
+            self,
+            model: FrozenModelVersionPayload,
+            batch: ModelPredictionBatch,
+        ) -> tuple[ModelPrediction, ...]:
+            return DeterministicRidgePredictor().predict(model, batch)
+
+    training = _training()
+    with pytest.raises(ValueError, match="exactly one explicit ModelTrainer"):
+        ExplicitModelTrainerComposition(()).fit(training)
+    with pytest.raises(ValueError, match="exactly one explicit ModelTrainer"):
+        ExplicitModelTrainerComposition(
+            (DeterministicRidgeTrainer(), DuplicateTrainer())
+        ).fit(training)
+
+    fitted = DeterministicRidgeTrainer().fit(training)
+    model = FrozenModelVersionPayload(
+        algorithm_code=training.algorithm_code,
+        algorithm_version=training.algorithm_version,
+        implementation_sha256=training.implementation_sha256,
+        fitted_content=fitted.content,
+        fitted_content_sha256=fitted.content_sha256,
+        feature_definition_ids=training.feature_definition_ids,
+        hyperparameters=training.hyperparameters,
+        seed=training.seed,
+        coefficient_count=fitted.coefficient_count,
+    )
+    batch = ModelPredictionBatch(
+        (ModelPredictionRow(_id(20), (Decimal("4"), Decimal("0"))),)
+    )
+    with pytest.raises(ValueError, match="exactly one explicit ModelPredictor"):
+        ExplicitModelPredictorComposition(
+            (DeterministicRidgePredictor(), DuplicatePredictor())
+        ).predict(model, batch)
     with pytest.raises(ValueError, match="duplicates"):
         replace(
             _training(),

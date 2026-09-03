@@ -509,6 +509,11 @@ class ResearchModelApplication:
         registered = self._inputs.load_registered(request.model_training_run_id)
         if registered.model_id != request.model_id:
             raise ValueError("ModelVersion request does not match training Model")
+        if registered.ridge_alpha is None:
+            raise ValueError(
+                "legacy ModelVersion path requires historical ridge_alpha; "
+                "current models use reproducible typed hyperparameters"
+            )
         fitted = self._trainer.fit(
             FrozenModelTrainingInput(
                 algorithm_code=registered.algorithm_code,

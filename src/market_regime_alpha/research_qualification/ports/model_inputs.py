@@ -32,7 +32,7 @@ class OpenModelTrainingRunRequest:
     algorithm_code: str
     algorithm_version: str
     algorithm_sha256: ContentHash | str
-    ridge_alpha: Decimal
+    ridge_alpha: Decimal | None
     random_seed: int
     code_artifact: ArtifactBinding
     config_artifact: ArtifactBinding
@@ -90,7 +90,7 @@ class RegisteredModelTrainingInputs:
     training_input_artifact: ArtifactBinding
     feature_definition_ids: tuple[UUID, ...]
     linear_rows: tuple[LinearTrainingRow, ...]
-    ridge_alpha: Decimal
+    ridge_alpha: Decimal | None
     random_seed: int
     code_artifact: ArtifactBinding
     config_artifact: ArtifactBinding

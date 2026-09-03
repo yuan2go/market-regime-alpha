@@ -13,6 +13,8 @@ from market_regime_alpha.infrastructure.models import (
     DeterministicRidgeBacktestModelAdapter,
     DeterministicRidgePredictor,
     DeterministicRidgeTrainer,
+    ExplicitModelPredictorComposition,
+    ExplicitModelTrainerComposition,
 )
 from market_regime_alpha.infrastructure.backtest_features import (
     IntradayMoveBacktestFeatureAdapter,
@@ -433,6 +435,12 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
         PostgresEvaluationUnitOfWorkProvider(pool, id_factory=uuid4),
         id_factory=uuid4,
     )
+    model_trainers = ExplicitModelTrainerComposition(
+        (DeterministicRidgeTrainer(),)
+    )
+    model_predictors = ExplicitModelPredictorComposition(
+        (DeterministicRidgePredictor(),)
+    )
     research_model_application = ResearchModelApplication(
         ModelCommands(
             PostgresResearchModelUnitOfWorkProvider(pool),
@@ -440,7 +448,7 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
         ),
         PostgresModelTrainingInputProvider(pool, byte_store),
         artifact_application,
-        DeterministicRidgeTrainer(),
+        model_trainers,
     )
     candidate_application = CandidateApplication(
         PostgresCandidateResearchInputLoader(pool, byte_store),
@@ -469,7 +477,7 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
             pool,
             byte_store,
             inference_input_provider,
-            DeterministicRidgePredictor(),
+            model_predictors,
         ),
         PostgresInferenceUnitOfWorkProvider(pool),
         PostgresInferenceQueryProvider(pool),

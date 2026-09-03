@@ -156,10 +156,14 @@ class ModelPrediction:
 
 
 class ModelTrainer(Protocol):
+    def supports(self, algorithm_code: str, algorithm_version: str) -> bool: ...
+
     def fit(self, training: FrozenModelTrainingInput) -> FittedModelPayload: ...
 
 
 class ModelPredictor(Protocol):
+    def supports(self, algorithm_code: str, algorithm_version: str) -> bool: ...
+
     def predict(
         self,
         model: FrozenModelVersionPayload,

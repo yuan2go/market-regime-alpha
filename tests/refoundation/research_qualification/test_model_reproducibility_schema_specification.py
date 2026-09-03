@@ -30,3 +30,11 @@ def test_model_reproducibility_closure_is_append_only() -> None:
         "model_training_hyperparameter",
     ):
         assert f"CREATE TRIGGER {table}_append_only" in sql
+
+
+def test_legacy_ridge_alpha_does_not_block_new_typed_model_families() -> None:
+    sql = BASELINE.read_text(encoding="utf-8")
+
+    assert "ridge_alpha numeric(24, 12)," in sql
+    assert "algorithm_code <> 'deterministic_ridge' OR ridge_alpha IS NOT NULL" in sql
+    assert "ridge_alpha IS NULL OR ridge_alpha >= 0" in sql

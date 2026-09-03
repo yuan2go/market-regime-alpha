@@ -91,6 +91,18 @@ def _training_run() -> ModelTrainingRunPlan:
     )
 
 
+def test_non_ridge_model_training_uses_typed_parameters_without_fake_alpha() -> None:
+    training = replace(
+        _training_run(),
+        algorithm_code="bounded_tree",
+        algorithm_version="2.0",
+        ridge_alpha=None,
+    )
+
+    assert training.ridge_alpha is None
+    assert len(str(training.content_sha256)) == 64
+
+
 def _reproducibility() -> ModelTrainingReproducibility:
     return ModelTrainingReproducibility(
         model_training_run_id=_id(100),

@@ -411,7 +411,9 @@ class ModelTrainingRunPlan:
     algorithm_code: str
     algorithm_version: str
     algorithm_sha256: ContentHash | str
-    ridge_alpha: Decimal
+    # Retained only to reproduce historical deterministic-ridge rows/hashes.
+    # Current model-family semantics live in the typed hyperparameter closure.
+    ridge_alpha: Decimal | None
     random_seed: int
     training_input_artifact: ArtifactBinding
     code_artifact: ArtifactBinding
@@ -428,14 +430,20 @@ class ModelTrainingRunPlan:
             raise ValueError("algorithm_code has an invalid format")
         if not _VERSION.fullmatch(self.algorithm_version):
             raise ValueError("algorithm_version has an invalid format")
-        if self.ridge_alpha < 0:
-            raise ValueError("ridge_alpha must be non-negative")
-        alpha = bounded_decimal(
-            self.ridge_alpha,
-            field="ridge_alpha",
-            precision=24,
-            scale=12,
+        if self.algorithm_code == "deterministic_ridge" and self.ridge_alpha is None:
+            raise ValueError("historical deterministic_ridge contract requires ridge_alpha")
+        alpha = (
+            bounded_decimal(
+                self.ridge_alpha,
+                field="ridge_alpha",
+                precision=24,
+                scale=12,
+            )
+            if self.ridge_alpha is not None
+            else None
         )
+        if alpha is not None and alpha < 0:
+            raise ValueError("ridge_alpha must be non-negative")
         if isinstance(self.random_seed, bool) or self.random_seed < 0:
             raise ValueError("random_seed must be non-negative")
         if not self.samples:

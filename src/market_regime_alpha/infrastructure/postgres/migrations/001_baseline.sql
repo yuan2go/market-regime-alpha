@@ -21042,7 +21042,7 @@ CREATE TABLE mra.model_training_run (
     algorithm_code text NOT NULL,
     algorithm_version text NOT NULL,
     algorithm_sha256 text NOT NULL,
-    ridge_alpha numeric(24, 12) NOT NULL,
+    ridge_alpha numeric(24, 12),
     random_seed bigint NOT NULL,
     sample_count integer NOT NULL,
     estimable_count integer NOT NULL,
@@ -21124,7 +21124,8 @@ CREATE TABLE mra.model_training_run (
         algorithm_code ~ '^[a-z][a-z0-9_-]{0,99}$'
         AND algorithm_version ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$'
         AND algorithm_sha256 ~ '^[0-9a-f]{64}$'
-        AND ridge_alpha >= 0 AND random_seed >= 0
+        AND (algorithm_code <> 'deterministic_ridge' OR ridge_alpha IS NOT NULL)
+        AND (ridge_alpha IS NULL OR ridge_alpha >= 0) AND random_seed >= 0
         AND sample_count > 0 AND estimable_count >= 2
         AND estimable_count <= sample_count
         AND sample_roster_sha256 ~ '^[0-9a-f]{64}$'
