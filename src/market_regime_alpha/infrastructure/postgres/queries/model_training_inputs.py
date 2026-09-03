@@ -283,8 +283,9 @@ class PostgresModelTrainingInputProvider:
         with self._pool.connection(read_only=True) as connection:
             row = connection.execute(
                 """
-                SELECT training.model_id, training.ridge_alpha,
-                       training.random_seed, training.sample_count,
+                SELECT training.model_id, training.algorithm_code,
+                       training.algorithm_version, training.algorithm_sha256,
+                       training.ridge_alpha, training.random_seed, training.sample_count,
                        training.estimable_count,
                        training.training_input_artifact_id,
                        training.training_input_content_sha256,
@@ -329,7 +330,7 @@ class PostgresModelTrainingInputProvider:
                     (model_training_run_id,),
                 ).fetchall()
             )
-        binding = _binding(row[5:8])
+        binding = _binding(row[8:11])
         verification = self._byte_store.verify(
             str(binding.content_sha256),
             expected_size=binding.size_bytes,
@@ -350,20 +351,23 @@ class PostgresModelTrainingInputProvider:
             feature_definition_ids=feature_ids,
             sample_rows=sample_rows,
         )
-        if len(sample_rows) != int(row[3]) or len(linear_rows) != int(row[4]):
+        if len(sample_rows) != int(row[6]) or len(linear_rows) != int(row[7]):
             raise ArtifactIntegrityError(
                 "Model training Artifact does not match frozen sample counts"
             )
         return RegisteredModelTrainingInputs(
             model_training_run_id=model_training_run_id,
             model_id=UUID(str(row[0])),
+            algorithm_code=str(row[1]),
+            algorithm_version=str(row[2]),
+            implementation_sha256=str(row[3]),
             training_input_artifact=binding,
             feature_definition_ids=feature_ids,
             linear_rows=linear_rows,
-            ridge_alpha=Decimal(str(row[1])),
-            random_seed=int(row[2]),
-            code_artifact=_binding(row[8:11]),
-            config_artifact=_binding(row[11:14]),
+            ridge_alpha=Decimal(str(row[4])),
+            random_seed=int(row[5]),
+            code_artifact=_binding(row[11:14]),
+            config_artifact=_binding(row[14:17]),
         )
 
 

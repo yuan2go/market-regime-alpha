@@ -19,10 +19,13 @@ from market_regime_alpha.research_qualification.domain.research_models import (
     ModelVersionPlan,
     ResearchModelPlan,
 )
-from market_regime_alpha.research_qualification.application.deterministic_linear import (
-    fit_deterministic_ridge,
-)
 from market_regime_alpha.research_qualification.domain.model import ArtifactBinding
+from market_regime_alpha.research_qualification.ports.model_execution import (
+    FrozenModelTrainingInput,
+    ModelScalarParameter,
+    ModelScalarType,
+    ModelTrainer,
+)
 from market_regime_alpha.research_qualification.ports.model_inputs import (
     ModelArtifactPublisher,
     ModelTrainingInputProvider,
@@ -375,10 +378,12 @@ class ResearchModelApplication:
         commands: ModelCommands,
         inputs: ModelTrainingInputProvider,
         artifacts: ModelArtifactPublisher,
+        trainer: ModelTrainer,
     ) -> None:
         self._commands = commands
         self._inputs = inputs
         self._artifacts = artifacts
+        self._trainer = trainer
 
     def register_model(
         self,
@@ -446,17 +451,28 @@ class ResearchModelApplication:
         )
         if registered.model_id != request.model_id:
             raise ValueError("ModelVersion request does not match training Model")
-        fitted = fit_deterministic_ridge(
-            registered.linear_rows,
-            feature_definition_ids=registered.feature_definition_ids,
-            alpha=registered.ridge_alpha,
-            seed=registered.random_seed,
+        fitted = self._trainer.fit(
+            FrozenModelTrainingInput(
+                algorithm_code=registered.algorithm_code,
+                algorithm_version=registered.algorithm_version,
+                implementation_sha256=registered.implementation_sha256,
+                feature_definition_ids=registered.feature_definition_ids,
+                hyperparameters=(
+                    ModelScalarParameter(
+                        parameter_code="ridge_alpha",
+                        value_type=ModelScalarType.DECIMAL,
+                        decimal_value=registered.ridge_alpha,
+                    ),
+                ),
+                seed=registered.random_seed,
+                rows=registered.linear_rows,
+            )
         )
         fitted_record = self._artifacts.publish(
             fitted.content,
             media_type="application/json",
             context=_child_context(context, "fitted-model"),
-            expected_sha256=fitted.content_sha256,
+            expected_sha256=str(fitted.content_sha256),
             pin_reason_code="FITTED_MODEL",
         )
         fitted_artifact = _artifact_binding(fitted_record)
@@ -467,7 +483,7 @@ class ResearchModelApplication:
             model_training_run_id=request.model_training_run_id,
             training_input_artifact=registered.training_input_artifact,
             fitted_model_artifact=fitted_artifact,
-            coefficient_count=len(fitted.coefficients) + 1,
+            coefficient_count=fitted.coefficient_count,
             fitted_model_sha256=fitted.content_sha256,
             code_artifact=registered.code_artifact,
             config_artifact=registered.config_artifact,

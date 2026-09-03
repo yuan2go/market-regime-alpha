@@ -9,6 +9,10 @@ from typing import Mapping
 from uuid import uuid4
 
 from market_regime_alpha.infrastructure.artifacts import LocalArtifactStore
+from market_regime_alpha.infrastructure.models import (
+    DeterministicRidgePredictor,
+    DeterministicRidgeTrainer,
+)
 from market_regime_alpha.infrastructure.archive_resources import (
     FilesystemArchiveResourceInspector,
 )
@@ -403,6 +407,7 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
             ),
             PostgresModelTrainingInputProvider(pool, byte_store),
             artifact_application,
+            DeterministicRidgeTrainer(),
         ),
         research_evaluations=EvaluationCommands(
             PostgresEvaluationUnitOfWorkProvider(pool, id_factory=uuid4),
@@ -460,6 +465,7 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
                 pool,
                 byte_store,
                 PostgresInferenceInputPreparationProvider(pool),
+                DeterministicRidgePredictor(),
             ),
             PostgresInferenceUnitOfWorkProvider(pool),
             PostgresInferenceQueryProvider(pool),

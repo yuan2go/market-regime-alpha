@@ -9,6 +9,7 @@ from market_regime_alpha.research_qualification.application.research_models impo
     RegisterModelVersionRequest,
     ResearchModelApplication,
 )
+from market_regime_alpha.infrastructure.models import DeterministicRidgeTrainer
 from market_regime_alpha.research_qualification.domain.model import ArtifactBinding
 from market_regime_alpha.research_qualification.domain.research_models import (
     LinearTrainingRow,
@@ -97,6 +98,9 @@ class _Inputs:
         return RegisteredModelTrainingInputs(
             model_training_run_id=model_training_run_id,
             model_id=self.request.model_id,
+            algorithm_code=self.request.algorithm_code,
+            algorithm_version=self.request.algorithm_version,
+            implementation_sha256=self.request.algorithm_sha256,
             training_input_artifact=_binding(
                 701,
                 content_hash=str(self.prepared.training_input_content_sha256),
@@ -159,7 +163,12 @@ def test_public_model_application_derives_roster_then_fits_immutable_bytes() -> 
     )
     commands = _Commands()
     artifacts = _Artifacts()
-    application = ResearchModelApplication(commands, _Inputs(request, sample), artifacts)  # type: ignore[arg-type]
+    application = ResearchModelApplication(
+        commands,
+        _Inputs(request, sample),  # type: ignore[arg-type]
+        artifacts,
+        DeterministicRidgeTrainer(),
+    )
 
     opened = application.open_training_run(request, _context("open-training"))
     versioned = application.fit_and_register_version(

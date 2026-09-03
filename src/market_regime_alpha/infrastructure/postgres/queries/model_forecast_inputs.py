@@ -25,10 +25,6 @@ from market_regime_alpha.infrastructure.postgres.pool import TargetPostgresPool
 from market_regime_alpha.infrastructure.postgres.queries.candidate_research_inputs import (
     load_research_dataset_definition,
 )
-from market_regime_alpha.research_qualification.application.deterministic_linear import (
-    load_deterministic_ridge_artifact,
-    predict_deterministic_ridge,
-)
 from market_regime_alpha.research_qualification.domain.manifest import (
     parse_decision_input_dataset_manifest,
 )
@@ -38,6 +34,14 @@ from market_regime_alpha.research_qualification.domain.vocabulary import (
 )
 from market_regime_alpha.research_qualification.ports.artifacts import (
     ResearchArtifactByteStore,
+)
+from market_regime_alpha.research_qualification.ports.model_execution import (
+    FrozenModelVersionPayload,
+    ModelPredictionBatch,
+    ModelPredictionRow,
+    ModelPredictor,
+    ModelScalarParameter,
+    ModelScalarType,
 )
 from market_regime_alpha.runtime.errors import ArtifactIntegrityError
 from market_regime_alpha.shared.hashing import canonical_json_sha256, sha256_bytes
@@ -50,10 +54,12 @@ class PostgresModelForecastInputPreparationProvider:
         pool: TargetPostgresPool,
         byte_store: ResearchArtifactByteStore,
         inference: InferenceInputPreparationProvider,
+        predictor: ModelPredictor,
     ) -> None:
         self._pool = pool
         self._byte_store = byte_store
         self._inference = inference
+        self._predictor = predictor
 
     def prepare(
         self,
@@ -86,16 +92,23 @@ class PostgresModelForecastInputPreparationProvider:
             fitted_binding,
             context="fitted ModelVersion",
         )
-        fitted = load_deterministic_ridge_artifact(fitted_bytes)
-        if (
-            fitted.feature_definition_ids != model_features
-            or len(fitted.coefficients) + 1 != int(root[19])
-            or fitted.alpha != Decimal(str(root[20]))
-            or fitted.seed != int(root[21])
-        ):
-            raise ArtifactIntegrityError(
-                "fitted ModelVersion bytes differ from registered training contract"
-            )
+        frozen_model = FrozenModelVersionPayload(
+            algorithm_code=str(root[23]),
+            algorithm_version=str(root[24]),
+            implementation_sha256=str(root[25]),
+            fitted_content=fitted_bytes,
+            fitted_content_sha256=fitted_binding.content_sha256,
+            feature_definition_ids=model_features,
+            hyperparameters=(
+                ModelScalarParameter(
+                    parameter_code="ridge_alpha",
+                    value_type=ModelScalarType.DECIMAL,
+                    decimal_value=Decimal(str(root[20])),
+                ),
+            ),
+            seed=int(root[21]),
+            coefficient_count=int(root[19]),
+        )
 
         manifest_bytes = _read_exact(
             self._byte_store,
@@ -183,7 +196,12 @@ class PostgresModelForecastInputPreparationProvider:
                         else failure
                     ),
                     point_estimate=(
-                        predict_deterministic_ridge(fitted, tuple(values))
+                        _predict_one(
+                            self._predictor,
+                            frozen_model,
+                            commitment.commitment_id,
+                            tuple(values),
+                        )
                         if failure is None
                         else None
                     ),
@@ -303,7 +321,10 @@ def _load_root(
                version.coefficient_count,
                training.ridge_alpha,
                training.random_seed,
-               model.target_definition_id
+               model.target_definition_id,
+               training.algorithm_code,
+               training.algorithm_version,
+               training.algorithm_sha256
         FROM mra.decision_run AS decision
         JOIN mra.exploratory_retrospective_decision_run AS retrospective
           ON retrospective.decision_run_id = decision.decision_run_id
@@ -378,6 +399,23 @@ def _load_root(
             "Model Forecast requires an exact later-fold retrospective Decision"
         )
     return tuple(row)
+
+
+def _predict_one(
+    predictor: ModelPredictor,
+    model: FrozenModelVersionPayload,
+    row_id: UUID,
+    features: tuple[Decimal, ...],
+) -> Decimal:
+    result = predictor.predict(
+        model,
+        ModelPredictionBatch((ModelPredictionRow(row_id, features),)),
+    )
+    if len(result) != 1 or result[0].row_id != row_id:
+        raise InferenceAuthorityIntegrityError(
+            "ModelPredictor output does not match the exact input roster"
+        )
+    return result[0].point_estimate
 
 
 def _binding(values: tuple[Any, ...]) -> DecisionArtifactBinding:

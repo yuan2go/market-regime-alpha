@@ -49,6 +49,9 @@ class PreparedModelTrainingInputs:
 class RegisteredModelTrainingInputs:
     model_training_run_id: UUID
     model_id: UUID
+    algorithm_code: str
+    algorithm_version: str
+    implementation_sha256: ContentHash | str
     training_input_artifact: ArtifactBinding
     feature_definition_ids: tuple[UUID, ...]
     linear_rows: tuple[LinearTrainingRow, ...]
@@ -56,6 +59,13 @@ class RegisteredModelTrainingInputs:
     random_seed: int
     code_artifact: ArtifactBinding
     config_artifact: ArtifactBinding
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "implementation_sha256",
+            ContentHash(str(self.implementation_sha256)),
+        )
 
 
 class ModelTrainingInputProvider(Protocol):
