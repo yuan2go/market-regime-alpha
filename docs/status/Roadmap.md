@@ -54,15 +54,15 @@ implemented and exact-SHA engineering-qualified readiness checkpoint at
 `origin/main@8067a4be74f697a01aaa996465c10ed5b45b5a7f`. WP-15 passed that
 dependency preflight and executed one real BaoStock recorded-Provider gate at
 the exact merged main. Its complete ten-floor Decision is `REJECTED`, so the
-formal hypothesis/PIT/OOS/prospective branches did not start. The optional
-Model/Calibration branch is skipped, not started, and not required for
-rule-based Forecast. WP-16 then found no accessible inspected Product with
+formal hypothesis/PIT/OOS/prospective branches did not start. WP-16 then found
+no accessible inspected Product with
 direct recorded evidence for both P0 historical availability and revision
 finality. It stopped before adapter/schema/Protocol implementation. This is not
 a finding that access-blocked Providers are incapable. WP-17P has now passed
 its exact-SHA engineering gate, archived real bytes in separate retrospective
 and prospective lanes, and completed one bounded exploratory Model/backtest
-campaign. That result does not reopen WP-16 Gate A, admit any Provider, or
+campaign. Model is therefore no longer a skipped branch; only Calibration
+remains optional and unstarted. That result does not reopen WP-16 Gate A, admit any Provider, or
 permit retrospective facts into Formal PIT/OOS/Prospective admission. Every later row retains
 its own approval/exit gate;
 ordering never grants Runtime cutover, empirical promotion, broker authority,
