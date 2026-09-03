@@ -11,6 +11,9 @@ from psycopg.rows import dict_row
 
 from market_regime_alpha.infrastructure.postgres.pool import TargetPostgresPool
 from market_regime_alpha.research_qualification.domain.backtest import AuthorityBinding
+from market_regime_alpha.infrastructure.postgres.queries.backtests import (
+    PostgresBacktestQueryPort,
+)
 from market_regime_alpha.research_qualification.domain.backtest_compatibility import (
     HistoricalBacktestCompatibilityError,
     decode_exact_historical_backtest,
@@ -47,9 +50,7 @@ class PostgresExactHistoricalBacktestQueryPort:
 
     def load(self, exploratory_backtest_run_id: UUID) -> BacktestAuthoritySnapshot:
         if not is_exact_historical_backtest_identity(exploratory_backtest_run_id):
-            raise HistoricalBacktestCompatibilityError(
-                "Backtest identity is not in the exact historical allowlist"
-            )
+            raise HistoricalBacktestCompatibilityError("Backtest identity is not in the exact historical allowlist")
         with self._pool.connection(read_only=True) as connection:
             with connection.cursor(row_factory=dict_row) as cursor:
                 root = cursor.execute(
@@ -60,9 +61,7 @@ class PostgresExactHistoricalBacktestQueryPort:
                     (exploratory_backtest_run_id,),
                 ).fetchone()
                 if root is None:
-                    raise RuntimeNotFoundError(
-                        f"Backtest {exploratory_backtest_run_id} does not exist"
-                    )
+                    raise RuntimeNotFoundError(f"Backtest {exploratory_backtest_run_id} does not exist")
                 feature_rows = cursor.execute(
                     """
                     SELECT * FROM mra.exploratory_backtest_feature
@@ -71,9 +70,7 @@ class PostgresExactHistoricalBacktestQueryPort:
                     """,
                     (exploratory_backtest_run_id,),
                 ).fetchall()
-                has_arm_strategy = cursor.execute(
-                    "SELECT to_regclass('mra.exploratory_backtest_arm_strategy')"
-                ).fetchone()
+                has_arm_strategy = cursor.execute("SELECT to_regclass('mra.exploratory_backtest_arm_strategy')").fetchone()
                 assert has_arm_strategy is not None
                 if has_arm_strategy["to_regclass"] is None:
                     arm_rows = cursor.execute(
@@ -161,9 +158,7 @@ class PostgresExactHistoricalBacktestQueryPort:
 
         sessions_by_fold: dict[UUID, list[dict[str, Any]]] = defaultdict(list)
         for row in session_rows:
-            sessions_by_fold[UUID(str(row["exploratory_backtest_fold_id"]))].append(
-                row
-            )
+            sessions_by_fold[UUID(str(row["exploratory_backtest_fold_id"]))].append(row)
         arms = tuple(self._arm(row) for row in arm_rows)
         folds = tuple(
             self._fold(
@@ -175,13 +170,9 @@ class PostgresExactHistoricalBacktestQueryPort:
         costs = tuple(self._cost(row) for row in cost_rows)
         self._require_stored_child_hashes(arm_rows, arms, fold_rows, folds, cost_rows, costs)
         if len(artifact_rows) != 2:
-            raise ArtifactIntegrityError(
-                "historical Backtest root Artifact bindings do not reconcile"
-            )
+            raise ArtifactIntegrityError("historical Backtest root Artifact bindings do not reconcile")
         plan = ExploratoryBacktestRunPlan(
-            exploratory_backtest_run_id=UUID(
-                str(root["exploratory_backtest_run_id"])
-            ),
+            exploratory_backtest_run_id=UUID(str(root["exploratory_backtest_run_id"])),
             run_code=str(root["run_code"]),
             generation=int(root["generation"]),
             market_archive_id=UUID(str(root["market_archive_id"])),
@@ -225,9 +216,7 @@ class PostgresExactHistoricalBacktestQueryPort:
         )
         self._require_root_hashes(root, plan)
         model_definitions = self._model_definitions(model_rows)
-        frozen = decode_exact_historical_backtest(
-            plan, model_definitions=model_definitions
-        )
+        frozen = decode_exact_historical_backtest(plan, model_definitions=model_definitions)
         bindings = tuple(
             ArtifactBinding(
                 UUID(str(row["artifact_id"])),
@@ -241,38 +230,20 @@ class PostgresExactHistoricalBacktestQueryPort:
     @staticmethod
     def _arm(row: dict[str, Any]) -> BacktestArmPlan:
         arm = BacktestArmPlan(
-            exploratory_backtest_arm_id=UUID(
-                str(row["exploratory_backtest_arm_id"])
-            ),
+            exploratory_backtest_arm_id=UUID(str(row["exploratory_backtest_arm_id"])),
             ordinal=int(row["ordinal"]),
             kind=BacktestArmKind(str(row["arm_kind"])),
-            strategy_version_id=(
-                None
-                if row["arm_strategy_id"] is None
-                else UUID(str(row["arm_strategy_id"]))
-            ),
-            strategy_version_sha256=(
-                None
-                if row["arm_strategy_sha256"] is None
-                else str(row["arm_strategy_sha256"])
-            ),
+            strategy_version_id=(None if row["arm_strategy_id"] is None else UUID(str(row["arm_strategy_id"]))),
+            strategy_version_sha256=(None if row["arm_strategy_sha256"] is None else str(row["arm_strategy_sha256"])),
         )
-        if row["binding_sha256"] is not None and str(row["binding_sha256"]) != str(
-            arm.content_sha256
-        ):
-            raise ArtifactIntegrityError(
-                "historical Backtest arm Strategy binding hash does not reconcile"
-            )
+        if row["binding_sha256"] is not None and str(row["binding_sha256"]) != str(arm.content_sha256):
+            raise ArtifactIntegrityError("historical Backtest arm Strategy binding hash does not reconcile")
         return arm
 
     @staticmethod
-    def _fold(
-        row: dict[str, Any], sessions: list[dict[str, Any]]
-    ) -> BacktestFoldPlan:
+    def _fold(row: dict[str, Any], sessions: list[dict[str, Any]]) -> BacktestFoldPlan:
         fold = BacktestFoldPlan(
-            exploratory_backtest_fold_id=UUID(
-                str(row["exploratory_backtest_fold_id"])
-            ),
+            exploratory_backtest_fold_id=UUID(str(row["exploratory_backtest_fold_id"])),
             ordinal=int(row["ordinal"]),
             purpose=PartitionPurpose(str(row["purpose"])),
             exchange_code=str(row["exchange_code"]),
@@ -282,9 +253,7 @@ class PostgresExactHistoricalBacktestQueryPort:
             evaluation_protocol_sha256=str(row["evaluation_protocol_sha256"]),
             sessions=tuple(
                 BacktestFoldSessionPlan(
-                    exploratory_backtest_fold_session_id=UUID(
-                        str(member["exploratory_backtest_fold_session_id"])
-                    ),
+                    exploratory_backtest_fold_session_id=UUID(str(member["exploratory_backtest_fold_session_id"])),
                     ordinal=int(member["ordinal"]),
                     trading_session_id=UUID(str(member["trading_session_id"])),
                     session_date=member["session_date"],
@@ -293,25 +262,17 @@ class PostgresExactHistoricalBacktestQueryPort:
                 for member in sessions
             ),
         )
-        if int(row["session_count"]) != len(fold.sessions) or str(
-            row["session_roster_sha256"]
-        ) != str(fold.session_roster_sha256):
-            raise ArtifactIntegrityError(
-                "historical Backtest fold session roster does not reconcile"
-            )
+        if int(row["session_count"]) != len(fold.sessions) or str(row["session_roster_sha256"]) != str(fold.session_roster_sha256):
+            raise ArtifactIntegrityError("historical Backtest fold session roster does not reconcile")
         for stored, rebuilt in zip(sessions, fold.sessions, strict=True):
             if str(stored["content_sha256"]) != str(rebuilt.content_sha256):
-                raise ArtifactIntegrityError(
-                    "historical Backtest fold session hash does not reconcile"
-                )
+                raise ArtifactIntegrityError("historical Backtest fold session hash does not reconcile")
         return fold
 
     @staticmethod
     def _cost(row: dict[str, Any]) -> BacktestCostAssumption:
         return BacktestCostAssumption(
-            exploratory_backtest_cost_assumption_id=UUID(
-                str(row["exploratory_backtest_cost_assumption_id"])
-            ),
+            exploratory_backtest_cost_assumption_id=UUID(str(row["exploratory_backtest_cost_assumption_id"])),
             ordinal=int(row["ordinal"]),
             cost_kind=BacktestCostKind(str(row["cost_kind"])),
             amount_bps=Decimal(str(row["amount_bps"])),
@@ -334,14 +295,10 @@ class PostgresExactHistoricalBacktestQueryPort:
         for roster in pairs:
             for stored, rebuilt in roster:
                 if str(stored["content_sha256"]) != str(rebuilt.content_sha256):
-                    raise ArtifactIntegrityError(
-                        "historical Backtest child hash does not reconcile"
-                    )
+                    raise ArtifactIntegrityError("historical Backtest child hash does not reconcile")
 
     @staticmethod
-    def _require_root_hashes(
-        root: dict[str, Any], plan: ExploratoryBacktestRunPlan
-    ) -> None:
+    def _require_root_hashes(root: dict[str, Any], plan: ExploratoryBacktestRunPlan) -> None:
         expected = (
             ("feature_count", len(plan.feature_definitions)),
             ("feature_roster_sha256", str(plan.feature_roster_sha256)),
@@ -356,10 +313,7 @@ class PostgresExactHistoricalBacktestQueryPort:
         )
         mismatches = tuple(name for name, value in expected if root[name] != value)
         if mismatches:
-            raise ArtifactIntegrityError(
-                "historical Backtest root does not reconcile: "
-                + ",".join(mismatches)
-            )
+            raise ArtifactIntegrityError("historical Backtest root does not reconcile: " + ",".join(mismatches))
 
     @staticmethod
     def _model_definitions(
@@ -368,15 +322,119 @@ class PostgresExactHistoricalBacktestQueryPort:
         definitions: dict[UUID, AuthorityBinding] = {}
         for row in rows:
             arm_id = UUID(str(row["exploratory_backtest_arm_id"]))
-            binding = AuthorityBinding(
-                UUID(str(row["model_id"])), str(row["content_sha256"])
-            )
+            binding = AuthorityBinding(UUID(str(row["model_id"])), str(row["content_sha256"]))
             existing = definitions.setdefault(arm_id, binding)
             if existing != binding:
-                raise ArtifactIntegrityError(
-                    "historical Backtest model definition roster is ambiguous"
-                )
+                raise ArtifactIntegrityError("historical Backtest model definition roster is ambiguous")
         return definitions
 
 
-__all__ = ["PostgresExactHistoricalBacktestQueryPort"]
+class PostgresCurrentBacktestAuthorityQueryPort:
+    """Reload one current closure and its directly derived Artifact roster."""
+
+    def __init__(self, pool: TargetPostgresPool) -> None:
+        self._pool = pool
+        self._backtests = PostgresBacktestQueryPort(pool)
+
+    def load(self, exploratory_backtest_run_id: UUID) -> BacktestAuthoritySnapshot:
+        run = self._backtests.load(exploratory_backtest_run_id)
+        with self._pool.connection(read_only=True) as connection:
+            rows = connection.execute(
+                """
+                SELECT DISTINCT artifact_id, content_sha256, size_bytes
+                FROM (
+                    SELECT code_artifact_id AS artifact_id,
+                           code_content_sha256 AS content_sha256,
+                           code_size_bytes AS size_bytes
+                    FROM mra.exploratory_backtest_run
+                    WHERE exploratory_backtest_run_id = %s
+                    UNION ALL
+                    SELECT config_artifact_id, config_content_sha256,
+                           config_size_bytes
+                    FROM mra.exploratory_backtest_run
+                    WHERE exploratory_backtest_run_id = %s
+                    UNION ALL
+                    SELECT dataset.manifest_artifact_id,
+                           dataset.manifest_content_sha256,
+                           dataset.manifest_size_bytes
+                    FROM mra.exploratory_backtest_dataset AS source
+                    JOIN mra.dataset AS dataset USING (dataset_id)
+                    WHERE source.exploratory_backtest_run_id = %s
+                    UNION ALL
+                    SELECT training.training_input_artifact_id,
+                           training.training_input_content_sha256,
+                           training.training_input_size_bytes
+                    FROM mra.model_training_run AS training
+                    WHERE training.exploratory_backtest_run_id = %s
+                    UNION ALL
+                    SELECT version.fitted_model_artifact_id,
+                           version.fitted_model_content_sha256,
+                           version.fitted_model_size_bytes
+                    FROM mra.model_training_run AS training
+                    JOIN mra.model_version AS version
+                      USING (model_training_run_id)
+                    WHERE training.exploratory_backtest_run_id = %s
+                    UNION ALL
+                    SELECT report.json_artifact_id,
+                           report.json_content_sha256,
+                           report.json_size_bytes
+                    FROM mra.backtest_report_artifact AS report
+                    WHERE report.exploratory_backtest_run_id = %s
+                    UNION ALL
+                    SELECT report.markdown_artifact_id,
+                           report.markdown_content_sha256,
+                           report.markdown_size_bytes
+                    FROM mra.backtest_report_artifact AS report
+                    WHERE report.exploratory_backtest_run_id = %s
+                ) AS binding
+                ORDER BY artifact_id
+                """,
+                (exploratory_backtest_run_id,) * 7,
+            ).fetchall()
+        if len(rows) < 2:
+            raise ArtifactIntegrityError("current Backtest root Artifact bindings do not reconcile")
+        return BacktestAuthoritySnapshot(
+            run,
+            tuple(
+                ArtifactBinding(
+                    UUID(str(row[0])),
+                    str(row[1]),
+                    int(row[2]),
+                )
+                for row in rows
+            ),
+        )
+
+
+class PostgresBacktestAuthorityQueryPort:
+    """One generic seam with an exact, allowlisted historical branch."""
+
+    def __init__(self, pool: TargetPostgresPool) -> None:
+        self._pool = pool
+        self._current = PostgresCurrentBacktestAuthorityQueryPort(pool)
+        self._historical = PostgresExactHistoricalBacktestQueryPort(pool)
+
+    def load(self, exploratory_backtest_run_id: UUID) -> BacktestAuthoritySnapshot:
+        with self._pool.connection(read_only=True) as connection:
+            row = connection.execute(
+                """
+                SELECT current_specification_sha256
+                FROM mra.exploratory_backtest_run
+                WHERE exploratory_backtest_run_id = %s
+                """,
+                (exploratory_backtest_run_id,),
+            ).fetchone()
+        if row is None:
+            raise RuntimeNotFoundError(f"Backtest {exploratory_backtest_run_id} does not exist")
+        if row[0] is not None:
+            return self._current.load(exploratory_backtest_run_id)
+        if not is_exact_historical_backtest_identity(exploratory_backtest_run_id):
+            raise HistoricalBacktestCompatibilityError("missing current specification is not a legacy contract")
+        return self._historical.load(exploratory_backtest_run_id)
+
+
+__all__ = [
+    "PostgresBacktestAuthorityQueryPort",
+    "PostgresCurrentBacktestAuthorityQueryPort",
+    "PostgresExactHistoricalBacktestQueryPort",
+]

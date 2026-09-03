@@ -17,6 +17,9 @@ from market_regime_alpha.infrastructure.postgres.backtest_uow import (
 from market_regime_alpha.infrastructure.postgres.queries.backtests import (
     PostgresBacktestQueryPort,
 )
+from market_regime_alpha.infrastructure.postgres.queries.backtest_history import (
+    PostgresBacktestAuthorityQueryPort,
+)
 from market_regime_alpha.infrastructure.postgres.queries.backtest_execution import (
     PostgresBacktestExecutionObservationPort,
 )
@@ -58,6 +61,9 @@ from market_regime_alpha.research_qualification.domain.model import ArtifactBind
 from market_regime_alpha.research_qualification.domain.backtest_execution import (
     BacktestObservedState,
     BacktestRuntimeBinding,
+)
+from market_regime_alpha.research_qualification.domain.backtest_compatibility import (
+    HistoricalBacktestCompatibilityError,
 )
 from market_regime_alpha.research_qualification.domain.research_vocabulary import (
     PartitionPurpose,
@@ -544,6 +550,59 @@ def test_current_predeclaration_is_root_owned_relational_and_replayable(
             replace(specification, random_seed=1730),
             context,
         )
+
+
+def test_generic_authority_query_loads_current_closure_and_root_artifacts(
+    backtest_stack,
+) -> None:
+    specification = _current_specification(backtest_stack)
+    BacktestApplication(
+        PostgresBacktestUnitOfWorkProvider(backtest_stack.pool),
+        id_factory=uuid4,
+    ).predeclare(
+        specification,
+        _legacy._context("generic-authority-current"),
+    )
+
+    receipt_count_before = _receipt_count(backtest_stack)
+    snapshot = PostgresBacktestAuthorityQueryPort(backtest_stack.pool).load(specification.exploratory_backtest_run_id)
+
+    assert snapshot.run.specification_sha256 == specification.content_sha256
+    assert snapshot.run.exploratory_backtest_run_id == (specification.exploratory_backtest_run_id)
+    assert {(binding.artifact_id, binding.content_sha256, binding.size_bytes) for binding in snapshot.artifact_bindings} == {
+        (
+            specification.code_artifact.artifact_id,
+            specification.code_artifact.content_sha256,
+            specification.code_artifact.size_bytes,
+        ),
+        (
+            specification.config_artifact.artifact_id,
+            specification.config_artifact.content_sha256,
+            specification.config_artifact.size_bytes,
+        ),
+    }
+    assert _receipt_count(backtest_stack) == receipt_count_before
+
+
+def test_generic_authority_query_does_not_treat_missing_current_spec_as_legacy(
+    backtest_stack,
+) -> None:
+    legacy = _legacy._plan(backtest_stack)
+    _legacy.ExploratoryBacktestCommands(
+        _legacy.PostgresExploratoryBacktestUnitOfWorkProvider(backtest_stack.pool),
+        id_factory=uuid4,
+    ).register(
+        legacy,
+        _legacy._context("generic-authority-non-allowlisted-legacy"),
+    )
+
+    receipt_count_before = _receipt_count(backtest_stack)
+    with pytest.raises(
+        HistoricalBacktestCompatibilityError,
+        match="missing current specification is not a legacy contract",
+    ):
+        PostgresBacktestAuthorityQueryPort(backtest_stack.pool).load(legacy.exploratory_backtest_run_id)
+    assert _receipt_count(backtest_stack) == receipt_count_before
 
 
 def test_current_model_recipe_round_trips_as_typed_relational_closure(
