@@ -18181,6 +18181,8 @@ BEGIN
        OR NEW.capture_completed_at <> capture_row.capture_completed_at
        OR NEW.recorded_at <> capture_row.recorded_at
        OR NEW.known_at <> capture_row.known_at
+       OR NEW.event_window_start <> slice_row.event_window_start
+       OR NEW.event_window_end <> slice_row.event_window_end
        OR NEW.artifact_sha256 <> artifact_row.content_sha256
        OR NEW.artifact_size_bytes <> artifact_row.size_bytes
        OR EXISTS (SELECT 1 FROM mra.market_archive_slice_gap WHERE market_archive_slice_id = NEW.market_archive_slice_id)
@@ -18219,7 +18221,11 @@ BEGIN
         ELSE 'LATE'
     END;
     IF NEW.relation <> expected_relation OR NEW.timeliness <> expected_timeliness
-       OR (root.lane = 'PROSPECTIVE_CONTEMPORANEOUS' AND NEW.requested_at < root.archive_start_at) THEN
+       OR (root.lane = 'PROSPECTIVE_CONTEMPORANEOUS' AND (
+              NEW.requested_at < root.archive_start_at
+              OR NEW.requested_at < NEW.event_window_start
+              OR NEW.known_at < NEW.event_window_start
+          )) THEN
         RAISE EXCEPTION 'Market archive observation relation/timeliness is invalid' USING ERRCODE = '55000';
     END IF;
     RETURN NEW;

@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Protocol
 from uuid import UUID
 
-from market_regime_alpha.market.domain import CaptureStatus
+from market_regime_alpha.market.domain import ArchiveLane, CaptureStatus
+from market_regime_alpha.shared.time import require_utc
 
 
 @dataclass(frozen=True, slots=True)
@@ -15,9 +17,22 @@ class ArchiveSliceOperatingContract:
     market_archive_slice_id: UUID
     provider_product_id: UUID
     request_sha256: str
+    lane: ArchiveLane
+    event_window_start: datetime
+    event_window_end: datetime
     reserved_free_bytes: int
     maximum_slice_bytes: int
     terminal_status: str | None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.lane, ArchiveLane):
+            raise TypeError("lane must be ArchiveLane")
+        start = require_utc(self.event_window_start, field="event_window_start")
+        end = require_utc(self.event_window_end, field="event_window_end")
+        if end < start:
+            raise ValueError("archive operating window is invalid")
+        object.__setattr__(self, "event_window_start", start)
+        object.__setattr__(self, "event_window_end", end)
 
     @property
     def required_free_bytes(self) -> int:

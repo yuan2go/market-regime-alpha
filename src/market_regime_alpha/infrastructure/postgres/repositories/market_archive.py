@@ -267,6 +267,13 @@ class PostgresArchiveRepository:
             if str(prior[2]) == str(capture[4])
             else ArchiveObservationRelation.CHANGED
         )
+        if (
+            str(root[0]) == ArchiveLane.PROSPECTIVE_CONTEMPORANEOUS.value
+            and (requested_at < slice_row[0] or capture[3] < slice_row[0])
+        ):
+            raise RuntimeStateConflictError(
+                "Prospective archive observation cannot precede its frozen window"
+            )
         timeliness = (
             ArchiveObservationTimeliness.NOT_APPLICABLE
             if str(root[0]) == ArchiveLane.RETROSPECTIVE_BACKFILL.value

@@ -5,7 +5,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from market_regime_alpha.infrastructure.postgres.pool import TargetPostgresPool
-from market_regime_alpha.market.domain import CaptureStatus
+from market_regime_alpha.market.domain import ArchiveLane, CaptureStatus
 from market_regime_alpha.market.ports.archive_operations import (
     ArchiveCaptureDisposition,
     ArchiveSliceOperatingContract,
@@ -26,6 +26,8 @@ class PostgresArchiveOperationsReadPort:
             row = connection.execute(
                 """
                 SELECT root.provider_product_id, slice.request_sha256,
+                       root.lane, slice.event_window_start,
+                       slice.event_window_end,
                        root.reserved_free_bytes, root.maximum_slice_bytes,
                        CASE
                          WHEN resource.market_archive_resource_stop_id IS NOT NULL THEN 'RESOURCE_LIMIT'
@@ -55,9 +57,12 @@ class PostgresArchiveOperationsReadPort:
             market_archive_slice_id=market_archive_slice_id,
             provider_product_id=UUID(str(row[0])),
             request_sha256=str(row[1]),
-            reserved_free_bytes=int(row[2]),
-            maximum_slice_bytes=int(row[3]),
-            terminal_status=str(row[4]) if row[4] is not None else None,
+            lane=ArchiveLane(str(row[2])),
+            event_window_start=row[3],
+            event_window_end=row[4],
+            reserved_free_bytes=int(row[5]),
+            maximum_slice_bytes=int(row[6]),
+            terminal_status=str(row[7]) if row[7] is not None else None,
         )
 
     def capture_disposition(self, capture_id: UUID) -> ArchiveCaptureDisposition:

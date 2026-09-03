@@ -3,6 +3,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from time import sleep
 from uuid import UUID, uuid4
 
 import psycopg
@@ -280,6 +281,9 @@ def test_start_archive_uses_database_time_and_atomically_freezes_full_roster(
     finally:
         inspection_pool.close()
     assert contract.request_sha256 == request.slices[0].request_sha256
+    assert contract.lane is ArchiveLane.RETROSPECTIVE_BACKFILL
+    assert contract.event_window_start == request.slices[0].event_window_start
+    assert contract.event_window_end == request.slices[0].event_window_end
     assert contract.terminal_status is None
 
 
@@ -318,7 +322,7 @@ def test_prospective_archive_cannot_package_a_historical_window(archive_stack) -
 
 def test_prospective_slice_remains_open_for_repeated_observations(archive_stack) -> None:
     commands, market, product, code, config, database_url = archive_stack
-    future_start = datetime.now(UTC) + timedelta(days=1)
+    future_start = datetime.now(UTC) + timedelta(seconds=1)
     base = _request(product, code, config)
     archive_id = uuid4()
     slice_plan = replace(
@@ -347,6 +351,7 @@ def test_prospective_slice_remains_open_for_repeated_observations(archive_stack)
         slices=(slice_plan,),
     )
     started = commands.start(request, _context("prospective-repeat-start"))
+    sleep(1.1)
 
     for ordinal in (1, 2):
         captured = market.capture(

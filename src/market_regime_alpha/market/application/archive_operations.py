@@ -11,7 +11,7 @@ from market_regime_alpha.market.application.archive import (
     ArchiveCommands,
     RecordArchiveCaptureObservationRequest,
 )
-from market_regime_alpha.market.domain import CaptureStatus
+from market_regime_alpha.market.domain import ArchiveLane, CaptureStatus
 from market_regime_alpha.market.ports import (
     CaptureRequest,
     MarketDatabaseClock,
@@ -48,6 +48,7 @@ class _MarketCommands(Protocol):
 
 
 class ArchiveSliceExecutionStatus(StrEnum):
+    NOT_DUE = "NOT_DUE"
     CAPTURED = "CAPTURED"
     GAP_RECORDED = "GAP_RECORDED"
     RESOURCE_LIMIT = "RESOURCE_LIMIT"
@@ -113,6 +114,18 @@ class MarketArchiveOperations:
                 capture_id=None,
                 source_gap_id=None,
             )
+        requested_at = self._database_clock.now()
+        if (
+            contract.lane is ArchiveLane.PROSPECTIVE_CONTEMPORANEOUS
+            and requested_at < contract.event_window_start
+        ):
+            return ArchiveSliceExecutionResult(
+                market_archive_id=request.market_archive_id,
+                market_archive_slice_id=request.market_archive_slice_id,
+                status=ArchiveSliceExecutionStatus.NOT_DUE,
+                capture_id=None,
+                source_gap_id=None,
+            )
         available = self._resources.available_bytes()
         if available < contract.required_free_bytes:
             self._archives.record_resource_stop(
@@ -129,7 +142,6 @@ class MarketArchiveOperations:
                 capture_id=None,
                 source_gap_id=None,
             )
-        requested_at = self._database_clock.now()
         captured = self._market.capture(
             request.capture_request,
             provider,
