@@ -242,7 +242,9 @@ class BacktestFoldSpecification:
                 canonical_json_sha256(
                     {
                         "embargo_sessions": self.embargo_sessions,
-                        "evaluation_protocol": self.evaluation_protocol,
+                        "evaluation_protocol": _authority_payload(
+                            self.evaluation_protocol
+                        ),
                         "exchange_code": self.exchange_code,
                         "exploratory_backtest_fold_id": self.exploratory_backtest_fold_id,
                         "ordinal": self.ordinal,
@@ -332,7 +334,9 @@ class BacktestModelTrainingRequirement:
                     {
                         "fit_fold_id": self.fit_fold_id,
                         "model_arm_id": self.model_arm_id,
-                        "model_definition": self.model_definition,
+                        "model_definition": _authority_payload(
+                            self.model_definition
+                        ),
                         "ordinal": self.ordinal,
                         "requirement_id": self.requirement_id,
                         "validation_fold_id": self.validation_fold_id,
@@ -431,7 +435,9 @@ class BacktestEvaluationRequirement:
             ContentHash(
                 canonical_json_sha256(
                     {
-                        "evaluation_protocol": self.evaluation_protocol,
+                        "evaluation_protocol": _authority_payload(
+                            self.evaluation_protocol
+                        ),
                         "fold_id": self.fold_id,
                         "ordinal": self.ordinal,
                         "primary": self.primary,
@@ -485,23 +491,27 @@ class BacktestArmSpecification:
                 canonical_json_sha256(
                     {
                         "arm_code": self.arm_code,
-                        "candidate": self.candidate,
+                        "candidate": _authority_payload(self.candidate),
                         "candidate_binding_source": self.candidate_binding_source,
                         "comparison_role": self.comparison_role,
-                        "context": self.context,
+                        "context": _authority_payload(self.context),
                         "context_binding_source": self.context_binding_source,
                         "context_mode": self.context_mode,
                         "cost_binding_source": self.cost_binding_source,
                         "effective_cost_roster_sha256": str(cost_hash),
                         "execution_kind": self.execution_kind,
                         "exploratory_backtest_arm_id": self.exploratory_backtest_arm_id,
-                        "model": self.model,
+                        "model": (
+                            None
+                            if self.model is None
+                            else _authority_payload(self.model)
+                        ),
                         "ordinal": self.ordinal,
-                        "portfolio": self.portfolio,
+                        "portfolio": _authority_payload(self.portfolio),
                         "portfolio_binding_source": self.portfolio_binding_source,
-                        "risk": self.risk,
+                        "risk": _authority_payload(self.risk),
                         "risk_binding_source": self.risk_binding_source,
-                        "strategy": self.strategy,
+                        "strategy": _authority_payload(self.strategy),
                         "strategy_binding_source": self.strategy_binding_source,
                     }
                 )
@@ -607,8 +617,16 @@ class BacktestSpecification:
     code_artifact: ArtifactBinding
     config_artifact: ArtifactBinding
     provenance_sha256: ContentHash | str
+    sample_algorithm_version: int = 1
+    sample_input_key: str = "ROOT_RANDOM_SEED"
     specification_schema_version: int = field(default=1, init=False)
+    definition_version: int = field(default=1, init=False)
     evidence_lane: str = field(default="EXPLORATORY_RETROSPECTIVE", init=False)
+    formal_provider_state: str = field(default="BLOCKED", init=False)
+    formal_pit_state: str = field(default="BLOCKED", init=False)
+    formal_oos_state: str = field(default="NOT_RUN", init=False)
+    prospective_proven: bool = field(default=False, init=False)
+    alpha_proven: bool = field(default=False, init=False)
     distinct_trading_session_count: int = field(init=False)
     fold_session_binding_count: int = field(init=False)
     sample_roster_sha256: ContentHash = field(init=False)
@@ -636,6 +654,13 @@ class BacktestSpecification:
             raise ValueError("random_seed must be non-negative")
         if not _CODE.fullmatch(self.sample_scope_code):
             raise ValueError("sample_scope_code has an invalid format")
+        if (
+            isinstance(self.sample_algorithm_version, bool)
+            or self.sample_algorithm_version < 1
+        ):
+            raise ValueError("sample_algorithm_version must be positive")
+        if not self.sample_input_key:
+            raise ValueError("sample_input_key is required")
         _require_contiguous("sample member", self.sample_members)
         if len({item.instrument_id for item in self.sample_members}) != len(
             self.sample_members
@@ -879,9 +904,24 @@ class BacktestSpecification:
             canonical_json_sha256(
                 {
                         **{name: str(value) for name, value in roster_hashes.items()},
-                        "code_artifact": self.code_artifact,
-                        "config_artifact": self.config_artifact,
-                        "defaults": self.defaults,
+                        "code_artifact": _artifact_payload(self.code_artifact),
+                        "config_artifact": _artifact_payload(
+                            self.config_artifact
+                        ),
+                        "defaults": {
+                            "candidate": _authority_payload(
+                                self.defaults.candidate
+                            ),
+                            "context": _authority_payload(self.defaults.context),
+                            "portfolio": _authority_payload(
+                                self.defaults.portfolio
+                            ),
+                            "risk": _authority_payload(self.defaults.risk),
+                            "strategy": _authority_payload(
+                                self.defaults.strategy
+                            ),
+                        },
+                        "definition_version": self.definition_version,
                         "distinct_trading_session_count": distinct_count,
                         "evidence_lane": self.evidence_lane,
                         "exchange_code": self.exchange_code,
@@ -891,16 +931,52 @@ class BacktestSpecification:
                         "generation": self.generation,
                         "hypothesis": self.hypothesis,
                         "last_trading_session_id": self.last_trading_session_id,
-                        "market_archive": self.market_archive,
-                        "market_archive_seal": self.market_archive_seal,
+                        "market_archive": _authority_payload(
+                            self.market_archive
+                        ),
+                        "market_archive_seal": _authority_payload(
+                            self.market_archive_seal
+                        ),
                         "provenance_sha256": str(provenance_hash),
                         "random_seed": self.random_seed,
                         "run_code": self.run_code,
+                        "sample_algorithm_version": (
+                            self.sample_algorithm_version
+                        ),
+                        "sample_input_key": self.sample_input_key,
                         "sample_scope_code": self.sample_scope_code,
                         "specification_schema_version": self.specification_schema_version,
-                        "target": self.target,
-                        "universe_revision": self.universe_revision,
-                        "walk_forward_policy": self.walk_forward_policy,
+                        "target": _versioned_authority_payload(self.target),
+                        "universe_revision": _authority_payload(
+                            self.universe_revision
+                        ),
+                        "walk_forward_policy": {
+                            "content_sha256": str(
+                                self.walk_forward_policy.content_sha256
+                            ),
+                            "minimum_fit_sessions": (
+                                self.walk_forward_policy.minimum_fit_sessions
+                            ),
+                            "mode": self.walk_forward_policy.mode,
+                            "policy_code": self.walk_forward_policy.policy_code,
+                            "policy_version": (
+                                self.walk_forward_policy.policy_version
+                            ),
+                            "step_sessions": (
+                                self.walk_forward_policy.step_sessions
+                            ),
+                            "validation_sessions": (
+                                self.walk_forward_policy.validation_sessions
+                            ),
+                        },
+                        "evidence_ceiling": {
+                            "alpha_proven": self.alpha_proven,
+                            "formal_oos_state": self.formal_oos_state,
+                            "formal_pit_state": self.formal_pit_state,
+                            "formal_provider_state": self.formal_provider_state,
+                            "prospective_proven": self.prospective_proven,
+                            "retrospective": self.evidence_lane,
+                        },
                 }
             )
         )
@@ -930,6 +1006,56 @@ def _require_contiguous(name: str, rows: tuple[object, ...]) -> None:
     ordinals = tuple(getattr(item, "ordinal") for item in rows)
     if ordinals != tuple(range(1, len(rows) + 1)):
         raise ValueError(f"{name} ordinals must be contiguous")
+
+
+def _authority_payload(binding: AuthorityBinding) -> dict[str, object]:
+    return {
+        "authority_id": binding.authority_id,
+        "content_sha256": str(binding.content_sha256),
+    }
+
+
+def _versioned_authority_payload(
+    binding: VersionedAuthorityBinding,
+) -> dict[str, object]:
+    return {
+        "authority_id": binding.authority_id,
+        "content_sha256": str(binding.content_sha256),
+        "version": binding.version,
+    }
+
+
+def _artifact_payload(binding: ArtifactBinding) -> dict[str, object]:
+    return {
+        "artifact_id": binding.artifact_id,
+        "content_sha256": str(binding.content_sha256),
+        "size_bytes": binding.size_bytes,
+    }
+
+
+def freeze_backtest_specification(
+    specification: BacktestSpecification,
+) -> FrozenBacktestRun:
+    """Project a validated current specification without creating Authority."""
+
+    return FrozenBacktestRun(
+        exploratory_backtest_run_id=specification.exploratory_backtest_run_id,
+        run_code=specification.run_code,
+        generation=specification.generation,
+        definition_sha256=specification.definition_sha256,
+        specification_sha256=specification.content_sha256,
+        source=FrozenBacktestSource.CURRENT_RELATIONAL,
+        evidence=FrozenBacktestEvidence.CURRENT,
+        arms=specification.arms,
+        folds=specification.folds,
+        fold_dependencies=specification.fold_dependencies,
+        arm_folds=specification.arm_folds,
+        model_training_requirements=specification.model_training_requirements,
+        distinct_trading_session_count=(
+            specification.distinct_trading_session_count
+        ),
+        fold_session_binding_count=specification.fold_session_binding_count,
+    )
 
 
 def _roster_hash(rows: tuple[object, ...], *, identity_name: str) -> ContentHash:
@@ -973,4 +1099,5 @@ __all__ = [
     "FrozenBacktestRun",
     "FrozenBacktestSource",
     "VersionedAuthorityBinding",
+    "freeze_backtest_specification",
 ]

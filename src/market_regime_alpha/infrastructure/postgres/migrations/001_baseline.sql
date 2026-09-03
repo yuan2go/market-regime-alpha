@@ -3017,6 +3017,9 @@ CREATE TABLE mra.universe_revision (
     CONSTRAINT universe_revision_scope_uk UNIQUE (
         universe_id, decision_time, scope_content_sha256
     ),
+    CONSTRAINT universe_revision_exact_scope_uk UNIQUE (
+        universe_revision_id, universe_id, scope_content_sha256
+    ),
     CONSTRAINT universe_revision_artifact_fk FOREIGN KEY (
         scope_artifact_id, scope_content_sha256, scope_size_bytes
     ) REFERENCES mra.artifact(
@@ -3945,6 +3948,9 @@ CREATE TABLE mra.candidate_policy (
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     CONSTRAINT candidate_policy_identity_uk UNIQUE (policy_code, version),
     CONSTRAINT candidate_policy_content_uk UNIQUE (content_sha256),
+    CONSTRAINT candidate_policy_identity_hash_uk UNIQUE (
+        candidate_policy_id, content_sha256
+    ),
     CONSTRAINT candidate_policy_scope_uk UNIQUE (
         candidate_policy_id, content_sha256, requested_top_k, component_count
     ),
@@ -6286,6 +6292,9 @@ CREATE TABLE mra.context_policy (
     CONSTRAINT context_policy_exact_uk UNIQUE (
         context_policy_id, content_sha256,
         kind_count, kind_roster_sha256
+    ),
+    CONSTRAINT context_policy_identity_hash_uk UNIQUE (
+        context_policy_id, content_sha256
     ),
     CONSTRAINT context_policy_supersedes_fk FOREIGN KEY (
         supersedes_policy_id
@@ -11478,6 +11487,9 @@ CREATE TABLE mra.evaluation_protocol (
     ),
     CONSTRAINT evaluation_protocol_identity_uk UNIQUE (
         protocol_code, protocol_version
+    ),
+    CONSTRAINT evaluation_protocol_identity_hash_uk UNIQUE (
+        evaluation_protocol_id, content_sha256
     ),
     CONSTRAINT evaluation_protocol_metric_authority_uk UNIQUE (
         evaluation_protocol_id, target_definition_id
@@ -19623,7 +19635,7 @@ CREATE TABLE mra.exploratory_backtest_run (
     arm_roster_sha256 text NOT NULL,
     fold_count integer NOT NULL,
     fold_roster_sha256 text NOT NULL,
-    session_count integer NOT NULL,
+    session_count integer,
     cost_count integer NOT NULL,
     cost_roster_sha256 text NOT NULL,
     random_seed bigint NOT NULL,
@@ -19634,6 +19646,7 @@ CREATE TABLE mra.exploratory_backtest_run (
     config_content_sha256 text NOT NULL,
     config_size_bytes bigint NOT NULL,
     provenance_sha256 text NOT NULL,
+    current_specification_sha256 text,
     definition_sha256 text NOT NULL,
     request_identity text NOT NULL,
     request_sha256 text NOT NULL,
@@ -19654,10 +19667,18 @@ CREATE TABLE mra.exploratory_backtest_run (
         run_code ~ '^[a-z][a-z0-9_-]{0,99}$' AND generation > 0
         AND evidence_lane = 'EXPLORATORY_RETROSPECTIVE'
         AND hypothesis <> '' AND target_version > 0
-        AND feature_count > 0
-        AND ((generation = 1 AND arm_count = 2) OR (generation > 1 AND arm_count = 4))
+        AND feature_count > 0 AND arm_count > 0
         AND fold_count > 0
-        AND session_count > 0 AND cost_count > 0 AND random_seed >= 0
+        AND cost_count > 0 AND random_seed >= 0
+        AND (
+            (current_specification_sha256 IS NULL
+             AND session_count > 0
+             AND ((generation = 1 AND arm_count = 2)
+                  OR (generation > 1 AND arm_count = 4)))
+            OR
+            (current_specification_sha256 ~ '^[0-9a-f]{64}$'
+             AND session_count IS NULL)
+        )
         AND target_definition_sha256 ~ '^[0-9a-f]{64}$'
         AND candidate_policy_sha256 ~ '^[0-9a-f]{64}$'
         AND context_policy_sha256 ~ '^[0-9a-f]{64}$'
@@ -19714,11 +19735,7 @@ CREATE TABLE mra.exploratory_backtest_arm (
     ),
     CONSTRAINT exploratory_backtest_arm_exact_uk UNIQUE (exploratory_backtest_arm_id, exploratory_backtest_run_id, content_sha256),
     CONSTRAINT exploratory_backtest_arm_shape_ck CHECK (
-        ordinal > 0 AND arm_kind IN (
-            'RULE_BASELINE', 'MODEL_CHALLENGER',
-            'RULE_CURRENT_CONTEXT', 'RIDGE_CURRENT_CONTEXT',
-            'RULE_CONTEXT_OBSERVATIONAL', 'RIDGE_CONTEXT_OBSERVATIONAL'
-        )
+        ordinal > 0 AND arm_kind ~ '^[a-zA-Z][a-zA-Z0-9_-]{0,99}$'
         AND content_sha256 ~ '^[0-9a-f]{64}$'
     )
 );
@@ -19802,7 +19819,9 @@ CREATE TABLE mra.exploratory_backtest_fold_session (
     content_sha256 text NOT NULL,
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     CONSTRAINT exploratory_backtest_fold_session_ordinal_uk UNIQUE (exploratory_backtest_fold_id, ordinal),
-    CONSTRAINT exploratory_backtest_fold_session_global_uk UNIQUE (exploratory_backtest_run_id, trading_session_id),
+    CONSTRAINT exploratory_backtest_fold_session_member_uk UNIQUE (
+        exploratory_backtest_fold_id, trading_session_id
+    ),
     CONSTRAINT exploratory_backtest_fold_session_exact_uk UNIQUE (exploratory_backtest_fold_session_id, exploratory_backtest_fold_id, content_sha256),
     CONSTRAINT exploratory_backtest_fold_session_fold_fk FOREIGN KEY (
         exploratory_backtest_fold_id, exploratory_backtest_run_id
@@ -19850,6 +19869,12 @@ DECLARE actual_cost_count integer;
 DECLARE actual_cost_hash text;
 DECLARE expected_definition text;
 BEGIN
+    -- Current runs are reconciled by the root-owned specification closure
+    -- trigger declared after all current relations. This early return preserves
+    -- the byte-for-byte historical validator for nullable legacy companions.
+    IF NEW.current_specification_sha256 IS NOT NULL THEN
+        RETURN NEW;
+    END IF;
     IF NOT EXISTS (
         SELECT 1
         FROM mra.market_archive AS archive
@@ -20510,6 +20535,7 @@ CREATE TABLE mra.model (
         target_definition_sha256, feature_count, feature_roster_sha256,
         content_sha256
     ),
+    CONSTRAINT model_identity_hash_uk UNIQUE (model_id, content_sha256),
     CONSTRAINT model_request_uk UNIQUE (model_code, request_identity),
     CONSTRAINT model_target_fk FOREIGN KEY (
         target_definition_id, target_version, target_definition_sha256
@@ -22017,3 +22043,1149 @@ CREATE TRIGGER evaluation_portfolio_cost_source_append_only BEFORE UPDATE OR DEL
 CREATE TRIGGER evaluation_portfolio_cost_source_insert_guard BEFORE INSERT ON mra.evaluation_portfolio_cost_source FOR EACH ROW EXECUTE FUNCTION mra.guard_evaluation_portfolio_cost_source_insert();
 CREATE TRIGGER evaluation_risk_source_append_only BEFORE UPDATE OR DELETE ON mra.evaluation_risk_source FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
 CREATE TRIGGER evaluation_risk_source_insert_guard BEFORE INSERT ON mra.evaluation_risk_source FOR EACH ROW EXECUTE FUNCTION mra.guard_evaluation_metric_insert();
+
+-- WP-18Q current Backtest specification closure. ExploratoryBacktestRun remains
+-- the only Backtest identity: this table deliberately reuses the run PK and
+-- has no independently addressable business identifier.
+CREATE TABLE mra.backtest_specification (
+    exploratory_backtest_run_id uuid PRIMARY KEY,
+    specification_schema_version integer NOT NULL,
+    definition_version integer NOT NULL,
+    specification_sha256 text NOT NULL,
+    universe_revision_id uuid NOT NULL,
+    universe_id uuid NOT NULL,
+    universe_scope_sha256 text NOT NULL,
+    sample_algorithm_code text NOT NULL,
+    sample_algorithm_version integer NOT NULL,
+    sample_input_key text NOT NULL,
+    sample_seed bigint NOT NULL,
+    sample_member_count integer NOT NULL,
+    sample_roster_sha256 text NOT NULL,
+    exchange_code text NOT NULL,
+    first_trading_session_id uuid NOT NULL,
+    last_trading_session_id uuid NOT NULL,
+    distinct_trading_session_count integer NOT NULL,
+    fold_session_binding_count integer NOT NULL,
+    fold_dependency_count integer NOT NULL,
+    fold_dependency_roster_sha256 text NOT NULL,
+    arm_fold_count integer NOT NULL,
+    arm_fold_roster_sha256 text NOT NULL,
+    model_training_requirement_count integer NOT NULL,
+    model_training_requirement_roster_sha256 text NOT NULL,
+    walk_forward_policy_code text NOT NULL,
+    walk_forward_policy_version integer NOT NULL,
+    walk_forward_mode text NOT NULL,
+    minimum_fit_sessions integer NOT NULL,
+    minimum_validation_sessions integer NOT NULL,
+    step_sessions integer NOT NULL,
+    evaluation_requirement_count integer NOT NULL,
+    evaluation_requirement_roster_sha256 text NOT NULL,
+    retrospective_classification text NOT NULL,
+    formal_provider_state text NOT NULL,
+    formal_pit_state text NOT NULL,
+    formal_oos_state text NOT NULL,
+    prospective_proven boolean NOT NULL,
+    alpha_proven boolean NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT backtest_specification_identity_hash_uk UNIQUE (
+        exploratory_backtest_run_id, specification_sha256
+    ),
+    CONSTRAINT backtest_specification_run_fk FOREIGN KEY (
+        exploratory_backtest_run_id
+    ) REFERENCES mra.exploratory_backtest_run(
+        exploratory_backtest_run_id
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT backtest_specification_universe_fk FOREIGN KEY (
+        universe_revision_id, universe_id, universe_scope_sha256
+    ) REFERENCES mra.universe_revision(
+        universe_revision_id, universe_id, scope_content_sha256
+    ) ON DELETE RESTRICT,
+    CONSTRAINT backtest_specification_first_session_fk FOREIGN KEY (
+        first_trading_session_id
+    ) REFERENCES mra.trading_session(session_id) ON DELETE RESTRICT,
+    CONSTRAINT backtest_specification_last_session_fk FOREIGN KEY (
+        last_trading_session_id
+    ) REFERENCES mra.trading_session(session_id) ON DELETE RESTRICT,
+    CONSTRAINT backtest_specification_shape_ck CHECK (
+        specification_schema_version > 0 AND definition_version > 0
+        AND specification_sha256 ~ '^[0-9a-f]{64}$'
+        AND universe_scope_sha256 ~ '^[0-9a-f]{64}$'
+        AND sample_algorithm_code ~ '^[a-z][a-z0-9_.-]{0,99}$'
+        AND sample_algorithm_version > 0 AND sample_input_key <> ''
+        AND sample_seed >= 0 AND sample_member_count > 0
+        AND sample_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND exchange_code IN ('XSHG', 'XSHE')
+        AND distinct_trading_session_count > 0
+        AND fold_session_binding_count >= distinct_trading_session_count
+        AND fold_dependency_count > 0
+        AND fold_dependency_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND arm_fold_count > 0
+        AND arm_fold_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND model_training_requirement_count >= 0
+        AND model_training_requirement_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND walk_forward_policy_code ~ '^[a-z][a-z0-9_.-]{0,99}$'
+        AND walk_forward_policy_version > 0
+        AND walk_forward_mode IN ('FIXED', 'ROLLING', 'EXPANDING')
+        AND minimum_fit_sessions > 0
+        AND minimum_validation_sessions > 0 AND step_sessions > 0
+        AND evaluation_requirement_count > 0
+        AND evaluation_requirement_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND retrospective_classification = 'EXPLORATORY_RETROSPECTIVE'
+        AND formal_provider_state = 'BLOCKED'
+        AND formal_pit_state = 'BLOCKED'
+        AND formal_oos_state = 'NOT_RUN'
+        AND NOT prospective_proven AND NOT alpha_proven
+    )
+);
+
+ALTER TABLE mra.exploratory_backtest_run
+    ADD CONSTRAINT backtest_run_current_specification_fk FOREIGN KEY (
+        exploratory_backtest_run_id, current_specification_sha256
+    ) REFERENCES mra.backtest_specification(
+        exploratory_backtest_run_id, specification_sha256
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED;
+
+CREATE TABLE mra.backtest_sample_member (
+    exploratory_backtest_run_id uuid NOT NULL,
+    specification_sha256 text NOT NULL,
+    ordinal integer NOT NULL,
+    universe_revision_id uuid NOT NULL,
+    universe_member_id uuid NOT NULL,
+    instrument_id uuid NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    PRIMARY KEY (exploratory_backtest_run_id, ordinal),
+    CONSTRAINT backtest_sample_member_instrument_uk UNIQUE (
+        exploratory_backtest_run_id, instrument_id
+    ),
+    CONSTRAINT backtest_sample_member_owner_fk FOREIGN KEY (
+        exploratory_backtest_run_id, specification_sha256
+    ) REFERENCES mra.backtest_specification(
+        exploratory_backtest_run_id, specification_sha256
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT backtest_sample_member_universe_fk FOREIGN KEY (
+        universe_member_id, universe_revision_id, instrument_id
+    ) REFERENCES mra.universe_member(
+        universe_member_id, universe_revision_id, instrument_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT backtest_sample_member_shape_ck CHECK (
+        ordinal > 0 AND specification_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE TABLE mra.backtest_arm_specification (
+    exploratory_backtest_arm_id uuid PRIMARY KEY,
+    exploratory_backtest_run_id uuid NOT NULL,
+    specification_sha256 text NOT NULL,
+    execution_kind text NOT NULL,
+    comparison_role text NOT NULL,
+    context_mode text NOT NULL,
+    candidate_policy_id uuid NOT NULL,
+    candidate_policy_sha256 text NOT NULL,
+    candidate_binding_source text NOT NULL,
+    context_policy_id uuid NOT NULL,
+    context_policy_sha256 text NOT NULL,
+    context_binding_source text NOT NULL,
+    strategy_version_id uuid NOT NULL,
+    strategy_version_sha256 text NOT NULL,
+    strategy_binding_source text NOT NULL,
+    model_id uuid,
+    model_sha256 text,
+    portfolio_policy_id uuid NOT NULL,
+    portfolio_policy_sha256 text NOT NULL,
+    portfolio_binding_source text NOT NULL,
+    risk_policy_id uuid NOT NULL,
+    risk_policy_sha256 text NOT NULL,
+    risk_binding_source text NOT NULL,
+    effective_cost_roster_sha256 text NOT NULL,
+    cost_binding_source text NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT backtest_arm_specification_exact_uk UNIQUE (
+        exploratory_backtest_arm_id, exploratory_backtest_run_id,
+        specification_sha256
+    ),
+    CONSTRAINT backtest_arm_specification_arm_fk FOREIGN KEY (
+        exploratory_backtest_arm_id, exploratory_backtest_run_id
+    ) REFERENCES mra.exploratory_backtest_arm(
+        exploratory_backtest_arm_id, exploratory_backtest_run_id
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT backtest_arm_specification_owner_fk FOREIGN KEY (
+        exploratory_backtest_run_id, specification_sha256
+    ) REFERENCES mra.backtest_specification(
+        exploratory_backtest_run_id, specification_sha256
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT backtest_arm_specification_candidate_fk FOREIGN KEY (
+        candidate_policy_id, candidate_policy_sha256
+    ) REFERENCES mra.candidate_policy(
+        candidate_policy_id, content_sha256
+    ) ON DELETE RESTRICT,
+    CONSTRAINT backtest_arm_specification_context_fk FOREIGN KEY (
+        context_policy_id, context_policy_sha256
+    ) REFERENCES mra.context_policy(
+        context_policy_id, content_sha256
+    ) ON DELETE RESTRICT,
+    CONSTRAINT backtest_arm_specification_strategy_fk FOREIGN KEY (
+        strategy_version_id, strategy_version_sha256
+    ) REFERENCES mra.strategy_version(
+        strategy_version_id, content_sha256
+    ) ON DELETE RESTRICT,
+    CONSTRAINT backtest_arm_specification_model_fk FOREIGN KEY (
+        model_id, model_sha256
+    ) REFERENCES mra.model(model_id, content_sha256) ON DELETE RESTRICT,
+    CONSTRAINT backtest_arm_specification_portfolio_fk FOREIGN KEY (
+        portfolio_policy_id, portfolio_policy_sha256
+    ) REFERENCES mra.portfolio_policy(
+        portfolio_policy_id, content_sha256
+    ) ON DELETE RESTRICT,
+    CONSTRAINT backtest_arm_specification_risk_fk FOREIGN KEY (
+        risk_policy_id, risk_policy_sha256
+    ) REFERENCES mra.risk_policy(
+        risk_policy_id, content_sha256
+    ) ON DELETE RESTRICT,
+    CONSTRAINT backtest_arm_specification_shape_ck CHECK (
+        execution_kind IN ('RULE', 'MODEL')
+        AND comparison_role IN ('BASELINE', 'CHALLENGER', 'DIAGNOSTIC')
+        AND context_mode IN ('CURRENT_GATE', 'OBSERVATIONAL')
+        AND candidate_binding_source IN ('SHARED_DEFAULT', 'ARM_OVERRIDE')
+        AND context_binding_source IN ('SHARED_DEFAULT', 'ARM_OVERRIDE')
+        AND strategy_binding_source IN ('SHARED_DEFAULT', 'ARM_OVERRIDE')
+        AND portfolio_binding_source IN ('SHARED_DEFAULT', 'ARM_OVERRIDE')
+        AND risk_binding_source IN ('SHARED_DEFAULT', 'ARM_OVERRIDE')
+        AND cost_binding_source IN ('SHARED_DEFAULT', 'ARM_OVERRIDE')
+        AND ((execution_kind = 'RULE'
+              AND model_id IS NULL AND model_sha256 IS NULL)
+          OR (execution_kind = 'MODEL'
+              AND model_id IS NOT NULL
+              AND model_sha256 ~ '^[0-9a-f]{64}$'))
+        AND specification_sha256 ~ '^[0-9a-f]{64}$'
+        AND candidate_policy_sha256 ~ '^[0-9a-f]{64}$'
+        AND context_policy_sha256 ~ '^[0-9a-f]{64}$'
+        AND strategy_version_sha256 ~ '^[0-9a-f]{64}$'
+        AND portfolio_policy_sha256 ~ '^[0-9a-f]{64}$'
+        AND risk_policy_sha256 ~ '^[0-9a-f]{64}$'
+        AND effective_cost_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE TABLE mra.backtest_fold_dependency (
+    backtest_fold_dependency_id uuid PRIMARY KEY,
+    exploratory_backtest_run_id uuid NOT NULL,
+    specification_sha256 text NOT NULL,
+    ordinal integer NOT NULL,
+    fit_fold_id uuid NOT NULL,
+    validation_fold_id uuid NOT NULL,
+    dependency_kind text NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT backtest_fold_dependency_ordinal_uk UNIQUE (
+        exploratory_backtest_run_id, ordinal
+    ),
+    CONSTRAINT backtest_fold_dependency_pair_uk UNIQUE (
+        exploratory_backtest_run_id, fit_fold_id, validation_fold_id
+    ),
+    CONSTRAINT backtest_fold_dependency_owner_fk FOREIGN KEY (
+        exploratory_backtest_run_id, specification_sha256
+    ) REFERENCES mra.backtest_specification(
+        exploratory_backtest_run_id, specification_sha256
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT backtest_fold_dependency_fit_fk FOREIGN KEY (
+        fit_fold_id, exploratory_backtest_run_id
+    ) REFERENCES mra.exploratory_backtest_fold(
+        exploratory_backtest_fold_id, exploratory_backtest_run_id
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT backtest_fold_dependency_validation_fk FOREIGN KEY (
+        validation_fold_id, exploratory_backtest_run_id
+    ) REFERENCES mra.exploratory_backtest_fold(
+        exploratory_backtest_fold_id, exploratory_backtest_run_id
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT backtest_fold_dependency_shape_ck CHECK (
+        ordinal > 0 AND fit_fold_id <> validation_fold_id
+        AND dependency_kind = 'MODEL_TRAINING'
+        AND specification_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE TABLE mra.backtest_arm_fold (
+    backtest_arm_fold_id uuid PRIMARY KEY,
+    exploratory_backtest_run_id uuid NOT NULL,
+    specification_sha256 text NOT NULL,
+    ordinal integer NOT NULL,
+    exploratory_backtest_arm_id uuid NOT NULL,
+    exploratory_backtest_fold_id uuid NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT backtest_arm_fold_ordinal_uk UNIQUE (
+        exploratory_backtest_run_id, ordinal
+    ),
+    CONSTRAINT backtest_arm_fold_pair_uk UNIQUE (
+        exploratory_backtest_arm_id, exploratory_backtest_fold_id
+    ),
+    CONSTRAINT backtest_arm_fold_owner_fk FOREIGN KEY (
+        exploratory_backtest_run_id, specification_sha256
+    ) REFERENCES mra.backtest_specification(
+        exploratory_backtest_run_id, specification_sha256
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT backtest_arm_fold_arm_fk FOREIGN KEY (
+        exploratory_backtest_arm_id, exploratory_backtest_run_id
+    ) REFERENCES mra.exploratory_backtest_arm(
+        exploratory_backtest_arm_id, exploratory_backtest_run_id
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT backtest_arm_fold_fold_fk FOREIGN KEY (
+        exploratory_backtest_fold_id, exploratory_backtest_run_id
+    ) REFERENCES mra.exploratory_backtest_fold(
+        exploratory_backtest_fold_id, exploratory_backtest_run_id
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT backtest_arm_fold_shape_ck CHECK (
+        ordinal > 0 AND specification_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE TABLE mra.backtest_model_training_requirement (
+    backtest_model_training_requirement_id uuid PRIMARY KEY,
+    exploratory_backtest_run_id uuid NOT NULL,
+    specification_sha256 text NOT NULL,
+    ordinal integer NOT NULL,
+    exploratory_backtest_arm_id uuid NOT NULL,
+    fit_fold_id uuid NOT NULL,
+    validation_fold_id uuid NOT NULL,
+    model_id uuid NOT NULL,
+    model_sha256 text NOT NULL,
+    required_fit_evaluation_protocol_id uuid NOT NULL,
+    required_fit_evaluation_protocol_sha256 text NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT backtest_model_requirement_ordinal_uk UNIQUE (
+        exploratory_backtest_run_id, ordinal
+    ),
+    CONSTRAINT backtest_model_requirement_scope_uk UNIQUE (
+        exploratory_backtest_arm_id, fit_fold_id, validation_fold_id
+    ),
+    CONSTRAINT backtest_model_requirement_owner_fk FOREIGN KEY (
+        exploratory_backtest_run_id, specification_sha256
+    ) REFERENCES mra.backtest_specification(
+        exploratory_backtest_run_id, specification_sha256
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT backtest_model_requirement_arm_fk FOREIGN KEY (
+        exploratory_backtest_arm_id, exploratory_backtest_run_id,
+        specification_sha256
+    ) REFERENCES mra.backtest_arm_specification(
+        exploratory_backtest_arm_id, exploratory_backtest_run_id,
+        specification_sha256
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT backtest_model_requirement_fit_fk FOREIGN KEY (
+        fit_fold_id, exploratory_backtest_run_id
+    ) REFERENCES mra.exploratory_backtest_fold(
+        exploratory_backtest_fold_id, exploratory_backtest_run_id
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT backtest_model_requirement_validation_fk FOREIGN KEY (
+        validation_fold_id, exploratory_backtest_run_id
+    ) REFERENCES mra.exploratory_backtest_fold(
+        exploratory_backtest_fold_id, exploratory_backtest_run_id
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT backtest_model_requirement_model_fk FOREIGN KEY (
+        model_id, model_sha256
+    ) REFERENCES mra.model(model_id, content_sha256) ON DELETE RESTRICT,
+    CONSTRAINT backtest_model_requirement_protocol_fk FOREIGN KEY (
+        required_fit_evaluation_protocol_id,
+        required_fit_evaluation_protocol_sha256
+    ) REFERENCES mra.evaluation_protocol(
+        evaluation_protocol_id, content_sha256
+    ) ON DELETE RESTRICT,
+    CONSTRAINT backtest_model_requirement_shape_ck CHECK (
+        ordinal > 0 AND fit_fold_id <> validation_fold_id
+        AND specification_sha256 ~ '^[0-9a-f]{64}$'
+        AND model_sha256 ~ '^[0-9a-f]{64}$'
+        AND required_fit_evaluation_protocol_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE TABLE mra.backtest_evaluation_requirement (
+    backtest_evaluation_requirement_id uuid PRIMARY KEY,
+    exploratory_backtest_run_id uuid NOT NULL,
+    specification_sha256 text NOT NULL,
+    ordinal integer NOT NULL,
+    scope_kind text NOT NULL,
+    exploratory_backtest_arm_id uuid,
+    exploratory_backtest_fold_id uuid,
+    slice_key text,
+    evaluation_protocol_id uuid NOT NULL,
+    evaluation_protocol_sha256 text NOT NULL,
+    is_primary boolean NOT NULL,
+    content_sha256 text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT backtest_evaluation_requirement_ordinal_uk UNIQUE (
+        exploratory_backtest_run_id, ordinal
+    ),
+    CONSTRAINT backtest_evaluation_requirement_owner_fk FOREIGN KEY (
+        exploratory_backtest_run_id, specification_sha256
+    ) REFERENCES mra.backtest_specification(
+        exploratory_backtest_run_id, specification_sha256
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT backtest_evaluation_requirement_arm_fk FOREIGN KEY (
+        exploratory_backtest_arm_id, exploratory_backtest_run_id
+    ) REFERENCES mra.exploratory_backtest_arm(
+        exploratory_backtest_arm_id, exploratory_backtest_run_id
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT backtest_evaluation_requirement_fold_fk FOREIGN KEY (
+        exploratory_backtest_fold_id, exploratory_backtest_run_id
+    ) REFERENCES mra.exploratory_backtest_fold(
+        exploratory_backtest_fold_id, exploratory_backtest_run_id
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT backtest_evaluation_requirement_protocol_fk FOREIGN KEY (
+        evaluation_protocol_id, evaluation_protocol_sha256
+    ) REFERENCES mra.evaluation_protocol(
+        evaluation_protocol_id, content_sha256
+    ) ON DELETE RESTRICT,
+    CONSTRAINT backtest_evaluation_requirement_shape_ck CHECK (
+        ordinal > 0
+        AND scope_kind IN ('FOLD', 'AGGREGATE', 'MONTH', 'QUARTER', 'CONTEXT')
+        AND ((scope_kind = 'AGGREGATE'
+              AND exploratory_backtest_fold_id IS NULL AND slice_key IS NULL)
+          OR (scope_kind = 'FOLD'
+              AND exploratory_backtest_fold_id IS NOT NULL AND slice_key IS NULL)
+          OR (scope_kind IN ('MONTH', 'QUARTER', 'CONTEXT')
+              AND slice_key IS NOT NULL))
+        AND specification_sha256 ~ '^[0-9a-f]{64}$'
+        AND evaluation_protocol_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+-- Existing historical children stay null in these companion columns. Current
+-- writers must provide the exact owning specification hash; the deferred
+-- closure validator rejects a mixed historical/current shape.
+ALTER TABLE mra.exploratory_backtest_feature
+    ADD COLUMN specification_sha256 text,
+    ADD CONSTRAINT exploratory_backtest_feature_specification_fk FOREIGN KEY (
+        exploratory_backtest_run_id, specification_sha256
+    ) REFERENCES mra.backtest_specification(
+        exploratory_backtest_run_id, specification_sha256
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    ADD CONSTRAINT exploratory_backtest_feature_specification_shape_ck CHECK (
+        specification_sha256 IS NULL
+        OR specification_sha256 ~ '^[0-9a-f]{64}$'
+    );
+ALTER TABLE mra.exploratory_backtest_arm
+    ADD COLUMN specification_sha256 text,
+    ADD CONSTRAINT exploratory_backtest_arm_specification_fk FOREIGN KEY (
+        exploratory_backtest_run_id, specification_sha256
+    ) REFERENCES mra.backtest_specification(
+        exploratory_backtest_run_id, specification_sha256
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    ADD CONSTRAINT exploratory_backtest_arm_specification_shape_ck CHECK (
+        specification_sha256 IS NULL
+        OR specification_sha256 ~ '^[0-9a-f]{64}$'
+    );
+ALTER TABLE mra.exploratory_backtest_fold
+    ADD COLUMN specification_sha256 text,
+    ADD CONSTRAINT exploratory_backtest_fold_specification_fk FOREIGN KEY (
+        exploratory_backtest_run_id, specification_sha256
+    ) REFERENCES mra.backtest_specification(
+        exploratory_backtest_run_id, specification_sha256
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    ADD CONSTRAINT exploratory_backtest_fold_specification_shape_ck CHECK (
+        specification_sha256 IS NULL
+        OR specification_sha256 ~ '^[0-9a-f]{64}$'
+    );
+ALTER TABLE mra.exploratory_backtest_fold_session
+    ADD COLUMN specification_sha256 text,
+    ADD CONSTRAINT exploratory_backtest_fold_session_specification_fk
+    FOREIGN KEY (exploratory_backtest_run_id, specification_sha256)
+    REFERENCES mra.backtest_specification(
+        exploratory_backtest_run_id, specification_sha256
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    ADD CONSTRAINT exploratory_backtest_fold_session_specification_shape_ck
+    CHECK (
+        specification_sha256 IS NULL
+        OR specification_sha256 ~ '^[0-9a-f]{64}$'
+    );
+ALTER TABLE mra.exploratory_backtest_cost_assumption
+    ADD COLUMN specification_sha256 text,
+    ADD COLUMN charge_side text,
+    ADD COLUMN exploratory_backtest_arm_id uuid,
+    ADD CONSTRAINT exploratory_backtest_cost_specification_fk FOREIGN KEY (
+        exploratory_backtest_run_id, specification_sha256
+    ) REFERENCES mra.backtest_specification(
+        exploratory_backtest_run_id, specification_sha256
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    ADD CONSTRAINT exploratory_backtest_cost_arm_fk FOREIGN KEY (
+        exploratory_backtest_arm_id, exploratory_backtest_run_id
+    ) REFERENCES mra.exploratory_backtest_arm(
+        exploratory_backtest_arm_id, exploratory_backtest_run_id
+    ) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    ADD CONSTRAINT exploratory_backtest_cost_current_shape_ck CHECK (
+        (specification_sha256 IS NULL
+         AND charge_side IS NULL AND exploratory_backtest_arm_id IS NULL)
+        OR
+        (specification_sha256 ~ '^[0-9a-f]{64}$'
+         AND charge_side IN ('BUY', 'SELL', 'BOTH'))
+    );
+
+CREATE INDEX exploratory_backtest_feature_specification_idx
+    ON mra.exploratory_backtest_feature(
+        exploratory_backtest_run_id, specification_sha256
+    );
+CREATE INDEX exploratory_backtest_arm_specification_owner_idx
+    ON mra.exploratory_backtest_arm(
+        exploratory_backtest_run_id, specification_sha256
+    );
+CREATE INDEX exploratory_backtest_fold_specification_idx
+    ON mra.exploratory_backtest_fold(
+        exploratory_backtest_run_id, specification_sha256
+    );
+CREATE INDEX exploratory_backtest_fold_session_specification_idx
+    ON mra.exploratory_backtest_fold_session(
+        exploratory_backtest_run_id, specification_sha256
+    );
+CREATE INDEX exploratory_backtest_cost_specification_idx
+    ON mra.exploratory_backtest_cost_assumption(
+        exploratory_backtest_run_id, specification_sha256
+    );
+CREATE INDEX exploratory_backtest_cost_arm_idx
+    ON mra.exploratory_backtest_cost_assumption(
+        exploratory_backtest_arm_id, exploratory_backtest_run_id
+    );
+
+CREATE INDEX backtest_sample_member_revision_idx ON mra.backtest_sample_member(
+    universe_revision_id, universe_member_id, instrument_id
+);
+CREATE INDEX backtest_sample_member_owner_idx ON mra.backtest_sample_member(
+    exploratory_backtest_run_id, specification_sha256
+);
+CREATE INDEX backtest_sample_member_universe_idx ON mra.backtest_sample_member(
+    universe_member_id, universe_revision_id, instrument_id
+);
+CREATE INDEX backtest_specification_universe_idx ON mra.backtest_specification(
+    universe_revision_id, universe_id, universe_scope_sha256
+);
+CREATE INDEX backtest_specification_first_session_idx
+    ON mra.backtest_specification(first_trading_session_id);
+CREATE INDEX backtest_specification_last_session_idx
+    ON mra.backtest_specification(last_trading_session_id);
+CREATE INDEX backtest_run_current_specification_idx
+    ON mra.exploratory_backtest_run(
+        exploratory_backtest_run_id, current_specification_sha256
+    );
+CREATE INDEX backtest_arm_specification_run_idx ON mra.backtest_arm_specification(
+    exploratory_backtest_run_id, exploratory_backtest_arm_id
+);
+CREATE INDEX backtest_arm_specification_owner_idx
+    ON mra.backtest_arm_specification(
+        exploratory_backtest_run_id, specification_sha256
+    );
+CREATE INDEX backtest_arm_specification_candidate_idx
+    ON mra.backtest_arm_specification(
+        candidate_policy_id, candidate_policy_sha256
+    );
+CREATE INDEX backtest_arm_specification_context_idx
+    ON mra.backtest_arm_specification(
+        context_policy_id, context_policy_sha256
+    );
+CREATE INDEX backtest_arm_specification_strategy_idx
+    ON mra.backtest_arm_specification(
+        strategy_version_id, strategy_version_sha256
+    );
+CREATE INDEX backtest_arm_specification_model_idx
+    ON mra.backtest_arm_specification(model_id, model_sha256);
+CREATE INDEX backtest_arm_specification_portfolio_idx
+    ON mra.backtest_arm_specification(
+        portfolio_policy_id, portfolio_policy_sha256
+    );
+CREATE INDEX backtest_arm_specification_risk_idx
+    ON mra.backtest_arm_specification(risk_policy_id, risk_policy_sha256);
+CREATE INDEX backtest_fold_dependency_run_idx ON mra.backtest_fold_dependency(
+    exploratory_backtest_run_id, ordinal
+);
+CREATE INDEX backtest_fold_dependency_owner_idx
+    ON mra.backtest_fold_dependency(
+        exploratory_backtest_run_id, specification_sha256
+    );
+CREATE INDEX backtest_fold_dependency_fit_idx
+    ON mra.backtest_fold_dependency(fit_fold_id, exploratory_backtest_run_id);
+CREATE INDEX backtest_fold_dependency_validation_idx
+    ON mra.backtest_fold_dependency(
+        validation_fold_id, exploratory_backtest_run_id
+    );
+CREATE INDEX backtest_arm_fold_run_idx ON mra.backtest_arm_fold(
+    exploratory_backtest_run_id, ordinal
+);
+CREATE INDEX backtest_arm_fold_owner_idx ON mra.backtest_arm_fold(
+    exploratory_backtest_run_id, specification_sha256
+);
+CREATE INDEX backtest_arm_fold_arm_idx ON mra.backtest_arm_fold(
+    exploratory_backtest_arm_id, exploratory_backtest_run_id
+);
+CREATE INDEX backtest_arm_fold_fold_idx ON mra.backtest_arm_fold(
+    exploratory_backtest_fold_id, exploratory_backtest_run_id
+);
+CREATE INDEX backtest_model_requirement_run_idx
+    ON mra.backtest_model_training_requirement(
+        exploratory_backtest_run_id, ordinal
+    );
+CREATE INDEX backtest_model_requirement_owner_idx
+    ON mra.backtest_model_training_requirement(
+        exploratory_backtest_run_id, specification_sha256
+    );
+CREATE INDEX backtest_model_requirement_arm_idx
+    ON mra.backtest_model_training_requirement(
+        exploratory_backtest_arm_id, exploratory_backtest_run_id,
+        specification_sha256
+    );
+CREATE INDEX backtest_model_requirement_fit_idx
+    ON mra.backtest_model_training_requirement(
+        fit_fold_id, exploratory_backtest_run_id
+    );
+CREATE INDEX backtest_model_requirement_validation_idx
+    ON mra.backtest_model_training_requirement(
+        validation_fold_id, exploratory_backtest_run_id
+    );
+CREATE INDEX backtest_model_requirement_model_idx
+    ON mra.backtest_model_training_requirement(model_id, model_sha256);
+CREATE INDEX backtest_model_requirement_protocol_idx
+    ON mra.backtest_model_training_requirement(
+        required_fit_evaluation_protocol_id,
+        required_fit_evaluation_protocol_sha256
+    );
+CREATE INDEX backtest_evaluation_requirement_run_idx
+    ON mra.backtest_evaluation_requirement(
+        exploratory_backtest_run_id, ordinal
+    );
+CREATE INDEX backtest_evaluation_requirement_owner_idx
+    ON mra.backtest_evaluation_requirement(
+        exploratory_backtest_run_id, specification_sha256
+    );
+CREATE INDEX backtest_evaluation_requirement_arm_idx
+    ON mra.backtest_evaluation_requirement(
+        exploratory_backtest_arm_id, exploratory_backtest_run_id
+    );
+CREATE INDEX backtest_evaluation_requirement_fold_idx
+    ON mra.backtest_evaluation_requirement(
+        exploratory_backtest_fold_id, exploratory_backtest_run_id
+    );
+CREATE INDEX backtest_evaluation_requirement_protocol_idx
+    ON mra.backtest_evaluation_requirement(
+        evaluation_protocol_id, evaluation_protocol_sha256
+    );
+
+CREATE FUNCTION mra.validate_current_backtest_specification()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE root mra.exploratory_backtest_run%ROWTYPE;
+DECLARE actual_count integer;
+DECLARE actual_hash text;
+DECLARE actual_distinct_sessions integer;
+DECLARE actual_session_bindings integer;
+DECLARE expected_definition text;
+DECLARE expected_specification text;
+DECLARE walk_forward_hash text;
+BEGIN
+    SELECT * INTO root
+      FROM mra.exploratory_backtest_run
+     WHERE exploratory_backtest_run_id = NEW.exploratory_backtest_run_id
+     FOR SHARE;
+    IF root.exploratory_backtest_run_id IS NULL
+       OR root.current_specification_sha256 IS DISTINCT FROM
+          NEW.specification_sha256 THEN
+        RAISE EXCEPTION 'Current Backtest root/specification binding is invalid'
+            USING ERRCODE = '55000';
+    END IF;
+    expected_definition := mra.canonical_sha256(mra.canonical_json_text(
+        jsonb_build_object(
+            'current_specification_sha256', NEW.specification_sha256,
+            'exploratory_backtest_run_id', NEW.exploratory_backtest_run_id,
+            'specification_schema_version', NEW.specification_schema_version
+        )
+    ));
+    IF root.definition_sha256 <> expected_definition THEN
+        RAISE EXCEPTION 'Current Backtest root definition hash is invalid'
+            USING ERRCODE = '55000';
+    END IF;
+    IF (root.feature_count, root.feature_roster_sha256,
+        root.arm_count, root.arm_roster_sha256,
+        root.fold_count, root.fold_roster_sha256,
+        root.cost_count, root.cost_roster_sha256)
+       IS DISTINCT FROM (
+        (SELECT count(*) FROM mra.exploratory_backtest_feature
+          WHERE exploratory_backtest_run_id = NEW.exploratory_backtest_run_id),
+        (SELECT mra.canonical_sha256(mra.canonical_json_text(coalesce(jsonb_agg(
+             jsonb_build_object(
+                 'feature_definition_id', feature_definition_id,
+                 'content_sha256', feature_definition_sha256,
+                 'ordinal', feature_ordinal
+             ) ORDER BY feature_ordinal), '[]'::jsonb)))
+           FROM mra.exploratory_backtest_feature
+          WHERE exploratory_backtest_run_id = NEW.exploratory_backtest_run_id),
+        (SELECT count(*) FROM mra.exploratory_backtest_arm
+          WHERE exploratory_backtest_run_id = NEW.exploratory_backtest_run_id),
+        (SELECT mra.canonical_sha256(mra.canonical_json_text(coalesce(jsonb_agg(
+             jsonb_build_object(
+                 'content_sha256', content_sha256,
+                 'exploratory_backtest_arm_id', exploratory_backtest_arm_id,
+                 'ordinal', ordinal
+             ) ORDER BY ordinal), '[]'::jsonb)))
+           FROM mra.exploratory_backtest_arm
+          WHERE exploratory_backtest_run_id = NEW.exploratory_backtest_run_id),
+        (SELECT count(*) FROM mra.exploratory_backtest_fold
+          WHERE exploratory_backtest_run_id = NEW.exploratory_backtest_run_id),
+        (SELECT mra.canonical_sha256(mra.canonical_json_text(coalesce(jsonb_agg(
+             jsonb_build_object(
+                 'content_sha256', content_sha256,
+                 'exploratory_backtest_fold_id', exploratory_backtest_fold_id,
+                 'ordinal', ordinal
+             ) ORDER BY ordinal), '[]'::jsonb)))
+           FROM mra.exploratory_backtest_fold
+          WHERE exploratory_backtest_run_id = NEW.exploratory_backtest_run_id),
+        (SELECT count(*) FROM mra.exploratory_backtest_cost_assumption
+          WHERE exploratory_backtest_run_id = NEW.exploratory_backtest_run_id),
+        (SELECT mra.canonical_sha256(mra.canonical_json_text(coalesce(jsonb_agg(
+             jsonb_build_object(
+                 'content_sha256', content_sha256,
+                 'assumption_id',
+                    exploratory_backtest_cost_assumption_id,
+                 'ordinal', ordinal
+             ) ORDER BY ordinal), '[]'::jsonb)))
+           FROM mra.exploratory_backtest_cost_assumption
+          WHERE exploratory_backtest_run_id = NEW.exploratory_backtest_run_id)
+    ) THEN
+        RAISE EXCEPTION 'Current Backtest root and base child rosters differ'
+            USING ERRCODE = '55000', DETAIL = format(
+                'feature=%s/%s:%s/%s arm=%s/%s:%s/%s fold=%s/%s:%s/%s cost=%s/%s:%s/%s',
+                root.feature_count,
+                (SELECT count(*) FROM mra.exploratory_backtest_feature WHERE exploratory_backtest_run_id = NEW.exploratory_backtest_run_id),
+                root.feature_roster_sha256,
+                (SELECT mra.canonical_sha256(mra.canonical_json_text(coalesce(jsonb_agg(jsonb_build_object('feature_definition_id', feature_definition_id, 'content_sha256', feature_definition_sha256, 'ordinal', feature_ordinal) ORDER BY feature_ordinal), '[]'::jsonb))) FROM mra.exploratory_backtest_feature WHERE exploratory_backtest_run_id = NEW.exploratory_backtest_run_id),
+                root.arm_count,
+                (SELECT count(*) FROM mra.exploratory_backtest_arm WHERE exploratory_backtest_run_id = NEW.exploratory_backtest_run_id),
+                root.arm_roster_sha256,
+                (SELECT mra.canonical_sha256(mra.canonical_json_text(coalesce(jsonb_agg(jsonb_build_object('content_sha256', content_sha256, 'exploratory_backtest_arm_id', exploratory_backtest_arm_id, 'ordinal', ordinal) ORDER BY ordinal), '[]'::jsonb))) FROM mra.exploratory_backtest_arm WHERE exploratory_backtest_run_id = NEW.exploratory_backtest_run_id),
+                root.fold_count,
+                (SELECT count(*) FROM mra.exploratory_backtest_fold WHERE exploratory_backtest_run_id = NEW.exploratory_backtest_run_id),
+                root.fold_roster_sha256,
+                (SELECT mra.canonical_sha256(mra.canonical_json_text(coalesce(jsonb_agg(jsonb_build_object('content_sha256', content_sha256, 'exploratory_backtest_fold_id', exploratory_backtest_fold_id, 'ordinal', ordinal) ORDER BY ordinal), '[]'::jsonb))) FROM mra.exploratory_backtest_fold WHERE exploratory_backtest_run_id = NEW.exploratory_backtest_run_id),
+                root.cost_count,
+                (SELECT count(*) FROM mra.exploratory_backtest_cost_assumption WHERE exploratory_backtest_run_id = NEW.exploratory_backtest_run_id),
+                root.cost_roster_sha256,
+                (SELECT mra.canonical_sha256(mra.canonical_json_text(coalesce(jsonb_agg(jsonb_build_object('content_sha256', content_sha256, 'assumption_id', exploratory_backtest_cost_assumption_id, 'ordinal', ordinal) ORDER BY ordinal), '[]'::jsonb))) FROM mra.exploratory_backtest_cost_assumption WHERE exploratory_backtest_run_id = NEW.exploratory_backtest_run_id)
+            );
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM (
+            SELECT exploratory_backtest_run_id, specification_sha256
+              FROM mra.exploratory_backtest_feature
+            UNION ALL
+            SELECT exploratory_backtest_run_id, specification_sha256
+              FROM mra.exploratory_backtest_arm
+            UNION ALL
+            SELECT exploratory_backtest_run_id, specification_sha256
+              FROM mra.exploratory_backtest_fold
+            UNION ALL
+            SELECT exploratory_backtest_run_id, specification_sha256
+              FROM mra.exploratory_backtest_fold_session
+            UNION ALL
+            SELECT exploratory_backtest_run_id, specification_sha256
+              FROM mra.exploratory_backtest_cost_assumption
+        ) AS child
+        WHERE child.exploratory_backtest_run_id =
+              NEW.exploratory_backtest_run_id
+          AND child.specification_sha256 IS DISTINCT FROM
+              NEW.specification_sha256
+    ) THEN
+        RAISE EXCEPTION 'Current Backtest child lacks exact specification owner'
+            USING ERRCODE = '55000';
+    END IF;
+    SELECT count(*), mra.canonical_sha256(mra.canonical_json_text(coalesce(
+        jsonb_agg(jsonb_build_object(
+            'content_sha256', content_sha256,
+            'universe_revision_member_id', universe_member_id,
+            'ordinal', ordinal
+        ) ORDER BY ordinal), '[]'::jsonb)))
+      INTO actual_count, actual_hash
+      FROM mra.backtest_sample_member
+     WHERE exploratory_backtest_run_id = NEW.exploratory_backtest_run_id;
+    IF (actual_count, actual_hash) IS DISTINCT FROM
+       (NEW.sample_member_count, NEW.sample_roster_sha256) THEN
+        RAISE EXCEPTION 'Current Backtest sample roster differs'
+            USING ERRCODE = '55000';
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM mra.backtest_sample_member AS member
+        JOIN mra.universe_member AS universe_member
+          ON universe_member.universe_member_id = member.universe_member_id
+         AND universe_member.universe_revision_id = member.universe_revision_id
+         AND universe_member.instrument_id = member.instrument_id
+        WHERE member.exploratory_backtest_run_id =
+              NEW.exploratory_backtest_run_id
+          AND (member.universe_revision_id <> NEW.universe_revision_id
+               OR universe_member.membership_status <> 'INCLUDED')
+    ) THEN
+        RAISE EXCEPTION 'Current Backtest sample is outside exact UniverseRevision'
+            USING ERRCODE = '55000';
+    END IF;
+    SELECT count(*), mra.canonical_sha256(mra.canonical_json_text(coalesce(
+        jsonb_agg(jsonb_build_object(
+            'content_sha256', content_sha256,
+            'dependency_id', backtest_fold_dependency_id,
+            'ordinal', ordinal
+        ) ORDER BY ordinal), '[]'::jsonb)))
+      INTO actual_count, actual_hash
+      FROM mra.backtest_fold_dependency
+     WHERE exploratory_backtest_run_id = NEW.exploratory_backtest_run_id;
+    IF (actual_count, actual_hash) IS DISTINCT FROM
+       (NEW.fold_dependency_count, NEW.fold_dependency_roster_sha256) THEN
+        RAISE EXCEPTION 'Current Backtest FoldDependency roster differs'
+            USING ERRCODE = '55000';
+    END IF;
+    IF EXISTS (
+        SELECT 1
+          FROM mra.backtest_fold_dependency AS dependency
+          JOIN mra.exploratory_backtest_fold AS fit
+            ON fit.exploratory_backtest_fold_id = dependency.fit_fold_id
+           AND fit.exploratory_backtest_run_id =
+               dependency.exploratory_backtest_run_id
+          JOIN mra.exploratory_backtest_fold AS validation
+            ON validation.exploratory_backtest_fold_id =
+               dependency.validation_fold_id
+           AND validation.exploratory_backtest_run_id =
+               dependency.exploratory_backtest_run_id
+         WHERE dependency.exploratory_backtest_run_id =
+               NEW.exploratory_backtest_run_id
+           AND (fit.purpose <> 'FIT' OR validation.purpose <> 'VALIDATION'
+                OR fit.ordinal >= validation.ordinal
+                OR (SELECT max(session_date)
+                      FROM mra.exploratory_backtest_fold_session
+                     WHERE exploratory_backtest_fold_id = fit.exploratory_backtest_fold_id)
+                   >= (SELECT min(session_date)
+                         FROM mra.exploratory_backtest_fold_session
+                        WHERE exploratory_backtest_fold_id = validation.exploratory_backtest_fold_id
+                          AND session_role = 'EVALUATION'))
+    ) THEN
+        RAISE EXCEPTION 'Current Backtest FoldDependency is not strict FIT to VALIDATION'
+            USING ERRCODE = '55000';
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM mra.exploratory_backtest_fold AS validation
+        LEFT JOIN mra.backtest_fold_dependency AS dependency
+          ON dependency.validation_fold_id =
+             validation.exploratory_backtest_fold_id
+         AND dependency.exploratory_backtest_run_id =
+             validation.exploratory_backtest_run_id
+        WHERE validation.exploratory_backtest_run_id =
+              NEW.exploratory_backtest_run_id
+          AND validation.purpose = 'VALIDATION'
+        GROUP BY validation.exploratory_backtest_fold_id
+        HAVING count(dependency.backtest_fold_dependency_id) <> 1
+    ) THEN
+        RAISE EXCEPTION 'Current Backtest VALIDATION lacks one exact FIT dependency'
+            USING ERRCODE = '55000';
+    END IF;
+    SELECT count(*), mra.canonical_sha256(mra.canonical_json_text(coalesce(
+        jsonb_agg(jsonb_build_object(
+            'content_sha256', content_sha256,
+            'arm_fold_id', backtest_arm_fold_id,
+            'ordinal', ordinal
+        ) ORDER BY ordinal), '[]'::jsonb)))
+      INTO actual_count, actual_hash
+      FROM mra.backtest_arm_fold
+     WHERE exploratory_backtest_run_id = NEW.exploratory_backtest_run_id;
+    IF (actual_count, actual_hash) IS DISTINCT FROM
+       (NEW.arm_fold_count, NEW.arm_fold_roster_sha256)
+       OR actual_count <> root.arm_count * root.fold_count THEN
+        RAISE EXCEPTION 'Current Backtest arm-fold matrix differs'
+            USING ERRCODE = '55000';
+    END IF;
+    SELECT count(*), mra.canonical_sha256(mra.canonical_json_text(coalesce(
+        jsonb_agg(jsonb_build_object(
+            'content_sha256', content_sha256,
+            'requirement_id', backtest_model_training_requirement_id,
+            'ordinal', ordinal
+        ) ORDER BY ordinal), '[]'::jsonb)))
+      INTO actual_count, actual_hash
+      FROM mra.backtest_model_training_requirement
+     WHERE exploratory_backtest_run_id = NEW.exploratory_backtest_run_id;
+    IF (actual_count, actual_hash) IS DISTINCT FROM
+       (NEW.model_training_requirement_count,
+        NEW.model_training_requirement_roster_sha256) THEN
+        RAISE EXCEPTION 'Current Backtest Model requirement roster differs'
+            USING ERRCODE = '55000';
+    END IF;
+    IF actual_count <> (
+        SELECT count(*)
+          FROM mra.backtest_arm_specification AS arm
+          CROSS JOIN mra.backtest_fold_dependency AS dependency
+         WHERE arm.exploratory_backtest_run_id =
+               NEW.exploratory_backtest_run_id
+           AND dependency.exploratory_backtest_run_id =
+               NEW.exploratory_backtest_run_id
+           AND arm.execution_kind = 'MODEL'
+    ) THEN
+        RAISE EXCEPTION 'Current Backtest Model requirements are incomplete'
+            USING ERRCODE = '55000';
+    END IF;
+    SELECT count(*), mra.canonical_sha256(mra.canonical_json_text(coalesce(
+        jsonb_agg(jsonb_build_object(
+            'content_sha256', content_sha256,
+            'requirement_id', backtest_evaluation_requirement_id,
+            'ordinal', ordinal
+        ) ORDER BY ordinal), '[]'::jsonb)))
+      INTO actual_count, actual_hash
+      FROM mra.backtest_evaluation_requirement
+     WHERE exploratory_backtest_run_id = NEW.exploratory_backtest_run_id;
+    IF (actual_count, actual_hash) IS DISTINCT FROM
+       (NEW.evaluation_requirement_count,
+        NEW.evaluation_requirement_roster_sha256) THEN
+        RAISE EXCEPTION 'Current Backtest Evaluation requirement roster differs'
+            USING ERRCODE = '55000';
+    END IF;
+    IF (SELECT count(*) FROM mra.backtest_arm_specification
+         WHERE exploratory_backtest_run_id = NEW.exploratory_backtest_run_id)
+       <> root.arm_count THEN
+        RAISE EXCEPTION 'Current Backtest Arm specification roster is incomplete'
+            USING ERRCODE = '55000';
+    END IF;
+    IF EXISTS (
+        SELECT 1
+          FROM mra.exploratory_backtest_arm AS arm
+          JOIN mra.backtest_arm_specification AS specification
+            ON specification.exploratory_backtest_arm_id =
+               arm.exploratory_backtest_arm_id
+           AND specification.exploratory_backtest_run_id =
+               arm.exploratory_backtest_run_id
+         WHERE arm.exploratory_backtest_run_id =
+               NEW.exploratory_backtest_run_id
+           AND arm.content_sha256 <> mra.canonical_sha256(
+               mra.canonical_json_text(jsonb_build_object(
+                   'arm_code', arm.arm_kind,
+                   'candidate', jsonb_build_object(
+                       'authority_id', specification.candidate_policy_id,
+                       'content_sha256', specification.candidate_policy_sha256
+                   ),
+                   'candidate_binding_source',
+                       specification.candidate_binding_source,
+                   'comparison_role', specification.comparison_role,
+                   'context', jsonb_build_object(
+                       'authority_id', specification.context_policy_id,
+                       'content_sha256', specification.context_policy_sha256
+                   ),
+                   'context_binding_source',
+                       specification.context_binding_source,
+                   'context_mode', specification.context_mode,
+                   'cost_binding_source', specification.cost_binding_source,
+                   'effective_cost_roster_sha256',
+                       specification.effective_cost_roster_sha256,
+                   'execution_kind', specification.execution_kind,
+                   'exploratory_backtest_arm_id',
+                       arm.exploratory_backtest_arm_id,
+                   'model', CASE
+                       WHEN specification.model_id IS NULL THEN 'null'::jsonb
+                       ELSE jsonb_build_object(
+                           'authority_id', specification.model_id,
+                           'content_sha256', specification.model_sha256
+                       ) END,
+                   'ordinal', arm.ordinal,
+                   'portfolio', jsonb_build_object(
+                       'authority_id', specification.portfolio_policy_id,
+                       'content_sha256', specification.portfolio_policy_sha256
+                   ),
+                   'portfolio_binding_source',
+                       specification.portfolio_binding_source,
+                   'risk', jsonb_build_object(
+                       'authority_id', specification.risk_policy_id,
+                       'content_sha256', specification.risk_policy_sha256
+                   ),
+                   'risk_binding_source', specification.risk_binding_source,
+                   'strategy', jsonb_build_object(
+                       'authority_id', specification.strategy_version_id,
+                       'content_sha256', specification.strategy_version_sha256
+                   ),
+                   'strategy_binding_source',
+                       specification.strategy_binding_source
+               )))
+    ) THEN
+        RAISE EXCEPTION 'Current Backtest Arm content hash is invalid'
+            USING ERRCODE = '55000';
+    END IF;
+    SELECT count(DISTINCT trading_session_id), count(*)
+      INTO actual_distinct_sessions, actual_session_bindings
+      FROM mra.exploratory_backtest_fold_session
+     WHERE exploratory_backtest_run_id = NEW.exploratory_backtest_run_id;
+    IF (actual_distinct_sessions, actual_session_bindings)
+       IS DISTINCT FROM
+       (NEW.distinct_trading_session_count, NEW.fold_session_binding_count) THEN
+        RAISE EXCEPTION 'Current Backtest Session counts differ'
+            USING ERRCODE = '55000';
+    END IF;
+    IF (SELECT trading_session_id
+          FROM mra.exploratory_backtest_fold_session
+         WHERE exploratory_backtest_run_id = NEW.exploratory_backtest_run_id
+         ORDER BY session_date, trading_session_id LIMIT 1)
+       IS DISTINCT FROM NEW.first_trading_session_id
+       OR (SELECT trading_session_id
+             FROM mra.exploratory_backtest_fold_session
+            WHERE exploratory_backtest_run_id = NEW.exploratory_backtest_run_id
+            ORDER BY session_date DESC, trading_session_id DESC LIMIT 1)
+          IS DISTINCT FROM NEW.last_trading_session_id THEN
+        RAISE EXCEPTION 'Current Backtest Session range differs'
+            USING ERRCODE = '55000';
+    END IF;
+    IF NEW.sample_seed <> root.random_seed THEN
+        RAISE EXCEPTION 'Current Backtest sample seed differs from root seed'
+            USING ERRCODE = '55000';
+    END IF;
+    walk_forward_hash := mra.canonical_sha256(mra.canonical_json_text(
+        jsonb_build_object(
+            'minimum_fit_sessions', NEW.minimum_fit_sessions,
+            'mode', NEW.walk_forward_mode,
+            'policy_code', NEW.walk_forward_policy_code,
+            'policy_version', NEW.walk_forward_policy_version,
+            'step_sessions', NEW.step_sessions,
+            'validation_sessions', NEW.minimum_validation_sessions
+        )
+    ));
+    expected_specification := mra.canonical_sha256(mra.canonical_json_text(
+        jsonb_build_object(
+            'arm_fold_roster_sha256', NEW.arm_fold_roster_sha256,
+            'arm_roster_sha256', root.arm_roster_sha256,
+            'code_artifact', jsonb_build_object(
+                'artifact_id', root.code_artifact_id,
+                'content_sha256', root.code_content_sha256,
+                'size_bytes', root.code_size_bytes
+            ),
+            'config_artifact', jsonb_build_object(
+                'artifact_id', root.config_artifact_id,
+                'content_sha256', root.config_content_sha256,
+                'size_bytes', root.config_size_bytes
+            ),
+            'cost_roster_sha256', root.cost_roster_sha256,
+            'defaults', jsonb_build_object(
+                'candidate', jsonb_build_object(
+                    'authority_id', root.candidate_policy_id,
+                    'content_sha256', root.candidate_policy_sha256
+                ),
+                'context', jsonb_build_object(
+                    'authority_id', root.context_policy_id,
+                    'content_sha256', root.context_policy_sha256
+                ),
+                'portfolio', jsonb_build_object(
+                    'authority_id', root.portfolio_policy_id,
+                    'content_sha256', root.portfolio_policy_sha256
+                ),
+                'risk', jsonb_build_object(
+                    'authority_id', root.risk_policy_id,
+                    'content_sha256', root.risk_policy_sha256
+                ),
+                'strategy', jsonb_build_object(
+                    'authority_id', root.strategy_version_id,
+                    'content_sha256', root.strategy_version_sha256
+                )
+            ),
+            'definition_version', NEW.definition_version,
+            'dependency_roster_sha256',
+                NEW.fold_dependency_roster_sha256,
+            'distinct_trading_session_count',
+                NEW.distinct_trading_session_count,
+            'evaluation_roster_sha256',
+                NEW.evaluation_requirement_roster_sha256,
+            'evidence_ceiling', jsonb_build_object(
+                'alpha_proven', NEW.alpha_proven,
+                'formal_oos_state', NEW.formal_oos_state,
+                'formal_pit_state', NEW.formal_pit_state,
+                'formal_provider_state', NEW.formal_provider_state,
+                'prospective_proven', NEW.prospective_proven,
+                'retrospective', NEW.retrospective_classification
+            ),
+            'evidence_lane', root.evidence_lane,
+            'exchange_code', NEW.exchange_code,
+            'exploratory_backtest_run_id',
+                NEW.exploratory_backtest_run_id,
+            'feature_roster_sha256', root.feature_roster_sha256,
+            'first_trading_session_id', NEW.first_trading_session_id,
+            'fold_roster_sha256', root.fold_roster_sha256,
+            'fold_session_binding_count', NEW.fold_session_binding_count,
+            'generation', root.generation,
+            'hypothesis', root.hypothesis,
+            'last_trading_session_id', NEW.last_trading_session_id,
+            'market_archive', jsonb_build_object(
+                'authority_id', root.market_archive_id,
+                'content_sha256', (SELECT content_sha256
+                    FROM mra.market_archive
+                    WHERE market_archive_id = root.market_archive_id)
+            ),
+            'market_archive_seal', jsonb_build_object(
+                'authority_id', root.market_archive_seal_id,
+                'content_sha256', (SELECT content_sha256
+                    FROM mra.market_archive_seal
+                    WHERE market_archive_seal_id = root.market_archive_seal_id)
+            ),
+            'model_training_requirement_roster_sha256',
+                NEW.model_training_requirement_roster_sha256,
+            'provenance_sha256', root.provenance_sha256,
+            'random_seed', root.random_seed,
+            'run_code', root.run_code,
+            'sample_algorithm_version', NEW.sample_algorithm_version,
+            'sample_input_key', NEW.sample_input_key,
+            'sample_roster_sha256', NEW.sample_roster_sha256,
+            'sample_scope_code', NEW.sample_algorithm_code,
+            'specification_schema_version',
+                NEW.specification_schema_version,
+            'target', jsonb_build_object(
+                'authority_id', root.target_definition_id,
+                'content_sha256', root.target_definition_sha256,
+                'version', root.target_version
+            ),
+            'universe_revision', jsonb_build_object(
+                'authority_id', NEW.universe_revision_id,
+                'content_sha256', NEW.universe_scope_sha256
+            ),
+            'walk_forward_policy', jsonb_build_object(
+                'content_sha256', walk_forward_hash,
+                'minimum_fit_sessions', NEW.minimum_fit_sessions,
+                'mode', NEW.walk_forward_mode,
+                'policy_code', NEW.walk_forward_policy_code,
+                'policy_version', NEW.walk_forward_policy_version,
+                'step_sessions', NEW.step_sessions,
+                'validation_sessions', NEW.minimum_validation_sessions
+            )
+        )
+    ));
+    IF NEW.specification_sha256 <> expected_specification THEN
+        RAISE EXCEPTION 'Current Backtest specification hash is invalid'
+            USING ERRCODE = '55000', DETAIL = format(
+                'expected=%s observed=%s',
+                expected_specification, NEW.specification_sha256
+            );
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE CONSTRAINT TRIGGER backtest_specification_reconcile_guard
+AFTER INSERT ON mra.backtest_specification
+DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW EXECUTE FUNCTION mra.validate_current_backtest_specification();
+
+CREATE TRIGGER backtest_specification_append_only
+BEFORE UPDATE OR DELETE ON mra.backtest_specification
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER backtest_sample_member_append_only
+BEFORE UPDATE OR DELETE ON mra.backtest_sample_member
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER backtest_arm_specification_append_only
+BEFORE UPDATE OR DELETE ON mra.backtest_arm_specification
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER backtest_fold_dependency_append_only
+BEFORE UPDATE OR DELETE ON mra.backtest_fold_dependency
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER backtest_arm_fold_append_only
+BEFORE UPDATE OR DELETE ON mra.backtest_arm_fold
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER backtest_model_training_requirement_append_only
+BEFORE UPDATE OR DELETE ON mra.backtest_model_training_requirement
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER backtest_evaluation_requirement_append_only
+BEFORE UPDATE OR DELETE ON mra.backtest_evaluation_requirement
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
