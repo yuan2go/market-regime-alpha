@@ -329,28 +329,36 @@ class BacktestModelTrainingRequirement:
     fit_fold_id: UUID
     validation_fold_id: UUID
     model_definition: AuthorityBinding
+    training_metric: AuthorityBinding | None = None
+    planned_model_version: int | None = None
     content_sha256: ContentHash = field(init=False)
 
     def __post_init__(self) -> None:
         if isinstance(self.ordinal, bool) or self.ordinal < 1:
             raise ValueError("Model training requirement ordinal must be positive")
+        if self.planned_model_version is not None and (
+            isinstance(self.planned_model_version, bool)
+            or self.planned_model_version < 1
+        ):
+            raise ValueError("planned Model version must be positive")
+        content: dict[str, object] = {
+            "fit_fold_id": self.fit_fold_id,
+            "model_arm_id": self.model_arm_id,
+            "model_definition": _authority_payload(self.model_definition),
+            "ordinal": self.ordinal,
+            "requirement_id": self.requirement_id,
+            "validation_fold_id": self.validation_fold_id,
+        }
+        # Private historical projections predate these current-only fields.
+        # Omitting absent values preserves every historical projection hash.
+        if self.training_metric is not None:
+            content["training_metric"] = _authority_payload(self.training_metric)
+        if self.planned_model_version is not None:
+            content["planned_model_version"] = self.planned_model_version
         object.__setattr__(
             self,
             "content_sha256",
-            ContentHash(
-                canonical_json_sha256(
-                    {
-                        "fit_fold_id": self.fit_fold_id,
-                        "model_arm_id": self.model_arm_id,
-                        "model_definition": _authority_payload(
-                            self.model_definition
-                        ),
-                        "ordinal": self.ordinal,
-                        "requirement_id": self.requirement_id,
-                        "validation_fold_id": self.validation_fold_id,
-                    }
-                )
-            ),
+            ContentHash(canonical_json_sha256(content)),
         )
 
 
@@ -784,6 +792,7 @@ class BacktestSpecification:
             if arm.execution_kind is BacktestExecutionKind.MODEL
         }
         actual_requirements: set[tuple[UUID, UUID, UUID]] = set()
+        planned_versions: set[tuple[UUID, int]] = set()
         for requirement in self.model_training_requirements:
             arm = arm_by_id.get(requirement.model_arm_id)
             pair = (requirement.fit_fold_id, requirement.validation_fold_id)
@@ -795,6 +804,21 @@ class BacktestSpecification:
                 raise ValueError("Model training requirement does not match a Model arm")
             if pair not in dependency_pairs:
                 raise ValueError("Model training requirement lacks exact FoldDependency")
+            if requirement.training_metric is None:
+                raise ValueError(
+                    "current Model training requirement requires an exact training metric"
+                )
+            if requirement.planned_model_version is None:
+                raise ValueError(
+                    "current Model training requirement requires a planned Model version"
+                )
+            version_key = (
+                requirement.model_definition.authority_id,
+                requirement.planned_model_version,
+            )
+            if version_key in planned_versions:
+                raise ValueError("planned Model version is duplicated")
+            planned_versions.add(version_key)
             key = (requirement.model_arm_id, *pair)
             if key in actual_requirements:
                 raise ValueError("Model training requirement is duplicated")
@@ -886,18 +910,23 @@ class BacktestSpecification:
         if len(requirement_scopes) != len(self.evaluation_requirements):
             raise ValueError("Evaluation requirement scope is duplicated")
         known_arms = set(arm_by_id)
-        for requirement in self.evaluation_requirements:
-            if requirement.arm_id not in known_arms:
+        for evaluation_requirement in self.evaluation_requirements:
+            if evaluation_requirement.arm_id not in known_arms:
                 raise ValueError("Evaluation requirement references an unknown arm")
-            if requirement.scope_kind is BacktestEvaluationScopeKind.FOLD:
-                assert requirement.fold_id is not None
-                if (requirement.arm_id, requirement.fold_id) not in actual_arm_folds:
+            if evaluation_requirement.scope_kind is BacktestEvaluationScopeKind.FOLD:
+                assert evaluation_requirement.fold_id is not None
+                if (
+                    evaluation_requirement.arm_id,
+                    evaluation_requirement.fold_id,
+                ) not in actual_arm_folds:
                     raise ValueError(
                         "FOLD Evaluation requires exact arm-fold participation"
                     )
                 if (
-                    requirement.evaluation_protocol
-                    != fold_by_id[requirement.fold_id].evaluation_protocol
+                    evaluation_requirement.evaluation_protocol
+                    != fold_by_id[
+                        evaluation_requirement.fold_id
+                    ].evaluation_protocol
                 ):
                     raise ValueError(
                         "Evaluation requirement Protocol does not match fold"

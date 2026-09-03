@@ -59,6 +59,7 @@ def test_current_backtest_specification_is_one_relational_root_owned_closure(
                         "backtest_fold_dependency_fit_fk",
                         "backtest_fold_dependency_validation_fk",
                         "backtest_model_requirement_model_fk",
+                        "backtest_model_requirement_metric_fk",
                     ],
                 ),
             ).fetchall()
@@ -77,4 +78,16 @@ def test_current_backtest_specification_is_one_relational_root_owned_closure(
         "backtest_fold_dependency_fit_fk",
         "backtest_fold_dependency_validation_fk",
         "backtest_model_requirement_model_fk",
+        "backtest_model_requirement_metric_fk",
     }
+
+    training_columns = {
+        str(row[1])
+        for row in columns
+        if row[0] == "backtest_model_training_requirement"
+    }
+    assert {
+        "required_fit_evaluation_protocol_metric_id",
+        "required_fit_evaluation_metric_sha256",
+        "planned_model_version",
+    } <= training_columns

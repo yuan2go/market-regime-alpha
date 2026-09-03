@@ -252,6 +252,8 @@ def test_specification_accepts_arbitrary_arms_and_overlapping_rolling_fit_sessio
             start=1,
         )
     )
+    model_definition = arms[1].model
+    assert model_definition is not None
     model_requirements = (
         BacktestModelTrainingRequirement(
             requirement_id=_id(600),
@@ -259,7 +261,9 @@ def test_specification_accepts_arbitrary_arms_and_overlapping_rolling_fit_sessio
             model_arm_id=arms[1].exploratory_backtest_arm_id,
             fit_fold_id=first_fit.exploratory_backtest_fold_id,
             validation_fold_id=validation.exploratory_backtest_fold_id,
-            model_definition=arms[1].model,
+            model_definition=model_definition,
+            training_metric=_binding(900),
+            planned_model_version=1,
         ),
         BacktestModelTrainingRequirement(
             requirement_id=_id(601),
@@ -267,7 +271,9 @@ def test_specification_accepts_arbitrary_arms_and_overlapping_rolling_fit_sessio
             model_arm_id=arms[1].exploratory_backtest_arm_id,
             fit_fold_id=expanding_fit.exploratory_backtest_fold_id,
             validation_fold_id=later_validation.exploratory_backtest_fold_id,
-            model_definition=arms[1].model,
+            model_definition=model_definition,
+            training_metric=_binding(901),
+            planned_model_version=2,
         ),
     )
     specification = BacktestSpecification(
@@ -335,6 +341,23 @@ def test_specification_accepts_arbitrary_arms_and_overlapping_rolling_fit_sessio
     assert specification.fold_session_binding_count == 7
     assert specification.content_sha256
     assert "model_version_id" not in BacktestModelTrainingRequirement.__dataclass_fields__
+
+    with pytest.raises(ValueError, match="training metric"):
+        replace(
+            specification,
+            model_training_requirements=(
+                replace(model_requirements[0], training_metric=None),
+                model_requirements[1],
+            ),
+        )
+    with pytest.raises(ValueError, match="planned Model version"):
+        replace(
+            specification,
+            model_training_requirements=(
+                model_requirements[0],
+                replace(model_requirements[1], planned_model_version=1),
+            ),
+        )
 
     sparse_bindings = tuple(
         item

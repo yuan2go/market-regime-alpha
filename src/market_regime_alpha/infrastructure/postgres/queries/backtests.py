@@ -257,6 +257,17 @@ class PostgresBacktestQueryPort:
                 model_definition=AuthorityBinding(
                     UUID(str(row["model_id"])), str(row["model_sha256"])
                 ),
+                training_metric=AuthorityBinding(
+                    UUID(
+                        str(
+                            row[
+                                "required_fit_evaluation_protocol_metric_id"
+                            ]
+                        )
+                    ),
+                    str(row["required_fit_evaluation_metric_sha256"]),
+                ),
+                planned_model_version=int(row["planned_model_version"]),
             )
             for row in model_rows
         )

@@ -11564,6 +11564,9 @@ CREATE TABLE mra.evaluation_protocol_metric (
     CONSTRAINT evaluation_protocol_metric_metric_authority_uk UNIQUE (
         evaluation_protocol_metric_id, evaluation_protocol_id
     ),
+    CONSTRAINT evaluation_protocol_metric_hash_authority_uk UNIQUE (
+        evaluation_protocol_metric_id, evaluation_protocol_id, content_sha256
+    ),
     CONSTRAINT evaluation_protocol_metric_protocol_fk FOREIGN KEY (
         evaluation_protocol_id, target_definition_id
     ) REFERENCES mra.evaluation_protocol(
@@ -11899,7 +11902,7 @@ CREATE TABLE mra.evaluation_run (
     ) REFERENCES mra.artifact(artifact_id, content_sha256, size_bytes) ON DELETE RESTRICT,
     CONSTRAINT evaluation_run_shape_ck CHECK (
         partition_purpose IN ('DISCOVERY', 'FIT', 'VALIDATION', 'LOCKED_OOS', 'PROSPECTIVE')
-        AND expected_member_count > 0 AND expected_protocol_metric_count > 0
+        AND expected_member_count >= 0 AND expected_protocol_metric_count > 0
         AND status IN ('OPEN', 'INPUTS_ACQUIRED', 'COMPLETED', 'FAILED')
         AND request_sha256 ~ '^[0-9a-f]{64}$' AND version > 0
         AND provenance_sha256 ~ '^[0-9a-f]{64}$'
@@ -13918,22 +13921,38 @@ BEGIN
          commitment.decision_reference_observation_id
     JOIN mra.trading_session AS session
       ON session.session_id = reference.session_id
+    LEFT JOIN mra.exploratory_retrospective_decision_run AS backtest
+      ON backtest.decision_run_id = commitment.decision_run_id
     WHERE commitment.target_definition_id = NEW.target_definition_id
       AND session.exchange = NEW.exchange_code
       AND session.session_date BETWEEN
           NEW.decision_start_date AND NEW.decision_end_date
       AND (NEW.population_scope = 'ALL_COMMITMENTS'
-           OR commitment.candidate_disposition = NEW.population_scope);
+           OR commitment.candidate_disposition = NEW.population_scope)
+      AND (NEW.source_backtest_run_id IS NULL OR (
+            backtest.exploratory_backtest_run_id = NEW.source_backtest_run_id
+        AND backtest.exploratory_backtest_arm_id = NEW.source_backtest_arm_id
+        AND ((NEW.source_backtest_fold_id IS NOT NULL
+              AND backtest.exploratory_backtest_fold_id =
+                  NEW.source_backtest_fold_id)
+          OR (NEW.source_backtest_fold_id IS NULL AND EXISTS (
+              SELECT 1 FROM mra.exploratory_backtest_fold AS source_fold
+              WHERE source_fold.exploratory_backtest_fold_id =
+                    backtest.exploratory_backtest_fold_id
+                AND source_fold.exploratory_backtest_run_id =
+                    NEW.source_backtest_run_id
+                AND source_fold.purpose = 'VALIDATION'
+          )))));
 
     SELECT mra.canonical_sha256(
                replace(
-                   json_agg(
+                   coalesce(json_agg(
                        json_build_object(
                            'commitment_id', commitment_id,
                            'content_sha256', content_sha256,
                            'member_ordinal', member_ordinal
                        ) ORDER BY member_ordinal
-                   )::text,
+                   ), '[]'::json)::text,
                    ' ',
                    ''
                )
@@ -13947,8 +13966,12 @@ BEGIN
        OR actual_count <> NEW.member_count
        OR actual_count <> declared_population_count
        OR actual_roster_hash <> NEW.member_roster_sha256
-       OR minimum_ordinal <> 1
-       OR maximum_ordinal <> NEW.member_count OR EXISTS (
+       OR NOT (
+           (actual_count > 0 AND minimum_ordinal = 1
+            AND maximum_ordinal = NEW.member_count)
+           OR (actual_count = 0 AND NEW.source_backtest_run_id IS NOT NULL
+               AND minimum_ordinal IS NULL AND maximum_ordinal IS NULL)
+       ) OR EXISTS (
            SELECT 1 FROM mra.research_partition_member AS member
            JOIN mra.trading_session AS session
              ON session.session_id = member.decision_session_id
@@ -13968,6 +13991,8 @@ BEGIN
                     commitment.decision_reference_observation_id
                JOIN mra.trading_session AS session
                  ON session.session_id = reference.session_id
+               LEFT JOIN mra.exploratory_retrospective_decision_run AS backtest
+                 ON backtest.decision_run_id = commitment.decision_run_id
                WHERE commitment.target_definition_id =
                      NEW.target_definition_id
                  AND session.exchange = NEW.exchange_code
@@ -13976,6 +14001,23 @@ BEGIN
                  AND (NEW.population_scope = 'ALL_COMMITMENTS'
                       OR commitment.candidate_disposition =
                          NEW.population_scope)
+                 AND (NEW.source_backtest_run_id IS NULL OR (
+                       backtest.exploratory_backtest_run_id =
+                           NEW.source_backtest_run_id
+                   AND backtest.exploratory_backtest_arm_id =
+                           NEW.source_backtest_arm_id
+                   AND ((NEW.source_backtest_fold_id IS NOT NULL
+                         AND backtest.exploratory_backtest_fold_id =
+                             NEW.source_backtest_fold_id)
+                     OR (NEW.source_backtest_fold_id IS NULL AND EXISTS (
+                         SELECT 1
+                         FROM mra.exploratory_backtest_fold AS source_fold
+                         WHERE source_fold.exploratory_backtest_fold_id =
+                               backtest.exploratory_backtest_fold_id
+                           AND source_fold.exploratory_backtest_run_id =
+                               NEW.source_backtest_run_id
+                           AND source_fold.purpose = 'VALIDATION'
+                     )))))
            )
            EXCEPT
            (
@@ -14000,6 +14042,8 @@ BEGIN
                     commitment.decision_reference_observation_id
                JOIN mra.trading_session AS session
                  ON session.session_id = reference.session_id
+               LEFT JOIN mra.exploratory_retrospective_decision_run AS backtest
+                 ON backtest.decision_run_id = commitment.decision_run_id
                WHERE commitment.target_definition_id =
                      NEW.target_definition_id
                  AND session.exchange = NEW.exchange_code
@@ -14008,6 +14052,23 @@ BEGIN
                  AND (NEW.population_scope = 'ALL_COMMITMENTS'
                       OR commitment.candidate_disposition =
                          NEW.population_scope)
+                 AND (NEW.source_backtest_run_id IS NULL OR (
+                       backtest.exploratory_backtest_run_id =
+                           NEW.source_backtest_run_id
+                   AND backtest.exploratory_backtest_arm_id =
+                           NEW.source_backtest_arm_id
+                   AND ((NEW.source_backtest_fold_id IS NOT NULL
+                         AND backtest.exploratory_backtest_fold_id =
+                             NEW.source_backtest_fold_id)
+                     OR (NEW.source_backtest_fold_id IS NULL AND EXISTS (
+                         SELECT 1
+                         FROM mra.exploratory_backtest_fold AS source_fold
+                         WHERE source_fold.exploratory_backtest_fold_id =
+                               backtest.exploratory_backtest_fold_id
+                           AND source_fold.exploratory_backtest_run_id =
+                               NEW.source_backtest_run_id
+                           AND source_fold.purpose = 'VALIDATION'
+                     )))))
            )
        ) THEN
         RAISE EXCEPTION 'ResearchPartition member roster is incomplete or outside declaration' USING ERRCODE = '55000';
@@ -22278,11 +22339,7 @@ CREATE TABLE mra.evaluation_backtest_arm_source (
         exploratory_backtest_fold_session_id
     ) ON DELETE RESTRICT,
     CONSTRAINT evaluation_backtest_source_shape_ck CHECK (
-        arm_kind IN (
-            'RULE_BASELINE', 'MODEL_CHALLENGER',
-            'RULE_CURRENT_CONTEXT', 'RIDGE_CURRENT_CONTEXT',
-            'RULE_CONTEXT_OBSERVATIONAL', 'RIDGE_CONTEXT_OBSERVATIONAL'
-        )
+        arm_kind ~ '^[a-zA-Z][a-zA-Z0-9_-]{0,99}$'
         AND content_sha256 ~ '^[0-9a-f]{64}$'
     )
 );
@@ -23087,6 +23144,9 @@ CREATE TABLE mra.backtest_model_training_requirement (
     model_sha256 text NOT NULL,
     required_fit_evaluation_protocol_id uuid NOT NULL,
     required_fit_evaluation_protocol_sha256 text NOT NULL,
+    required_fit_evaluation_protocol_metric_id uuid NOT NULL,
+    required_fit_evaluation_metric_sha256 text NOT NULL,
+    planned_model_version integer NOT NULL,
     content_sha256 text NOT NULL,
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     CONSTRAINT backtest_model_requirement_ordinal_uk UNIQUE (
@@ -23094,6 +23154,9 @@ CREATE TABLE mra.backtest_model_training_requirement (
     ),
     CONSTRAINT backtest_model_requirement_scope_uk UNIQUE (
         exploratory_backtest_arm_id, fit_fold_id, validation_fold_id
+    ),
+    CONSTRAINT backtest_model_requirement_version_uk UNIQUE (
+        model_id, planned_model_version
     ),
     CONSTRAINT backtest_model_requirement_owner_fk FOREIGN KEY (
         exploratory_backtest_run_id, specification_sha256
@@ -23126,11 +23189,21 @@ CREATE TABLE mra.backtest_model_training_requirement (
     ) REFERENCES mra.evaluation_protocol(
         evaluation_protocol_id, content_sha256
     ) ON DELETE RESTRICT,
+    CONSTRAINT backtest_model_requirement_metric_fk FOREIGN KEY (
+        required_fit_evaluation_protocol_metric_id,
+        required_fit_evaluation_protocol_id,
+        required_fit_evaluation_metric_sha256
+    ) REFERENCES mra.evaluation_protocol_metric(
+        evaluation_protocol_metric_id, evaluation_protocol_id,
+        content_sha256
+    ) ON DELETE RESTRICT,
     CONSTRAINT backtest_model_requirement_shape_ck CHECK (
         ordinal > 0 AND fit_fold_id <> validation_fold_id
+        AND planned_model_version > 0
         AND specification_sha256 ~ '^[0-9a-f]{64}$'
         AND model_sha256 ~ '^[0-9a-f]{64}$'
         AND required_fit_evaluation_protocol_sha256 ~ '^[0-9a-f]{64}$'
+        AND required_fit_evaluation_metric_sha256 ~ '^[0-9a-f]{64}$'
         AND content_sha256 ~ '^[0-9a-f]{64}$'
     )
 );
@@ -23917,6 +23990,35 @@ ALTER TABLE mra.research_partition
         (source_backtest_run_id IS NOT NULL
          AND source_backtest_arm_id IS NOT NULL
          AND source_backtest_sha256 ~ '^[0-9a-f]{64}$')
+    ),
+    DROP CONSTRAINT research_partition_shape_ck,
+    ADD CONSTRAINT research_partition_shape_ck CHECK (
+        status = 'FROZEN'
+        AND purpose IN ('DISCOVERY', 'FIT', 'VALIDATION', 'LOCKED_OOS', 'PROSPECTIVE')
+        AND population_scope IN ('ALL_COMMITMENTS', 'SELECTED', 'RANKED_NOT_SELECTED', 'UNRANKABLE')
+        AND overlap_policy IN ('DIAGNOSTIC_REUSE', 'PURGED_WALK_FORWARD', 'ISOLATED_PROTECTED')
+        AND ((purpose = 'DISCOVERY' AND overlap_policy = 'DIAGNOSTIC_REUSE')
+          OR (purpose IN ('FIT', 'VALIDATION') AND overlap_policy IN ('DIAGNOSTIC_REUSE', 'PURGED_WALK_FORWARD'))
+          OR (purpose IN ('LOCKED_OOS', 'PROSPECTIVE') AND overlap_policy = 'ISOLATED_PROTECTED'))
+        AND partition_code ~ '^[a-z][a-z0-9_-]{0,99}$'
+        AND series_code ~ '^[a-z][a-z0-9_-]{0,99}$'
+        AND exchange_code ~ '^[A-Z][A-Z0-9]{1,15}$'
+        AND timezone_name = 'Asia/Shanghai'
+        AND calendar_session_count > 0
+        AND calendar_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND target_version > 0 AND outcome_horizon_sessions >= 0
+        AND purge_before_sessions >= 0 AND purge_after_sessions >= 0
+        AND embargo_sessions >= 0 AND fold_ordinal > 0
+        AND (member_count > 0 OR (
+            member_count = 0 AND source_backtest_run_id IS NOT NULL
+        ))
+        AND decision_start_date <= decision_end_date
+        AND protected_start_date <= decision_start_date
+        AND protected_end_date >= decision_end_date
+        AND member_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND provenance_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+        AND request_sha256 ~ '^[0-9a-f]{64}$'
     );
 
 CREATE INDEX research_partition_backtest_source_idx
@@ -24063,6 +24165,12 @@ CREATE INDEX backtest_model_requirement_protocol_idx
     ON mra.backtest_model_training_requirement(
         required_fit_evaluation_protocol_id,
         required_fit_evaluation_protocol_sha256
+    );
+CREATE INDEX backtest_model_requirement_metric_idx
+    ON mra.backtest_model_training_requirement(
+        required_fit_evaluation_protocol_metric_id,
+        required_fit_evaluation_protocol_id,
+        required_fit_evaluation_metric_sha256
     );
 CREATE INDEX backtest_evaluation_requirement_run_idx
     ON mra.backtest_evaluation_requirement(

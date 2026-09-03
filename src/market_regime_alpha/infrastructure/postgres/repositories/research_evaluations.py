@@ -495,16 +495,23 @@ class PostgresEvaluationRepository:
                    retrospective.exploratory_backtest_fold_id,
                    retrospective.exploratory_backtest_fold_session_id,
                    arm.arm_kind,
-                   coalesce(arm_strategy.strategy_version_id,
+                   coalesce(current_arm.strategy_version_id,
+                            arm_strategy.strategy_version_id,
                             backtest.strategy_version_id),
-                   backtest.portfolio_policy_id,
-                   backtest.risk_policy_id,
+                   coalesce(current_arm.portfolio_policy_id,
+                            backtest.portfolio_policy_id),
+                   coalesce(current_arm.risk_policy_id,
+                            backtest.risk_policy_id),
                    backtest.cost_count,
-                   backtest.cost_roster_sha256,
+                   coalesce(current_arm.effective_cost_roster_sha256,
+                            backtest.cost_roster_sha256),
                    (SELECT sum(cost.amount_bps)
                       FROM mra.exploratory_backtest_cost_assumption AS cost
                      WHERE cost.exploratory_backtest_run_id =
-                           backtest.exploratory_backtest_run_id),
+                           backtest.exploratory_backtest_run_id
+                       AND (cost.exploratory_backtest_arm_id IS NULL
+                            OR cost.exploratory_backtest_arm_id =
+                               retrospective.exploratory_backtest_arm_id)),
                    signal.signal_id,
                    signal.status,
                    forecast.forecast_id,
@@ -549,6 +556,18 @@ class PostgresEvaluationRepository:
             LEFT JOIN mra.exploratory_backtest_run AS backtest
               ON backtest.exploratory_backtest_run_id =
                  retrospective.exploratory_backtest_run_id
+            LEFT JOIN mra.backtest_specification AS current_specification
+              ON current_specification.exploratory_backtest_run_id =
+                 backtest.exploratory_backtest_run_id
+             AND current_specification.specification_sha256 =
+                 backtest.current_specification_sha256
+            LEFT JOIN mra.backtest_arm_specification AS current_arm
+              ON current_arm.exploratory_backtest_arm_id =
+                 retrospective.exploratory_backtest_arm_id
+             AND current_arm.exploratory_backtest_run_id =
+                 retrospective.exploratory_backtest_run_id
+             AND current_arm.specification_sha256 =
+                 current_specification.specification_sha256
             LEFT JOIN mra.exploratory_backtest_arm_strategy AS arm_strategy
               ON arm_strategy.exploratory_backtest_arm_id =
                  retrospective.exploratory_backtest_arm_id
@@ -558,6 +577,7 @@ class PostgresEvaluationRepository:
               ON signal.decision_run_id = commitment.decision_run_id
              AND signal.candidate_id = commitment.candidate_id
              AND signal.strategy_version_id = coalesce(
+                 current_arm.strategy_version_id,
                  arm_strategy.strategy_version_id, backtest.strategy_version_id
              )
             LEFT JOIN mra.forecast AS forecast
@@ -565,6 +585,7 @@ class PostgresEvaluationRepository:
              AND forecast.candidate_id = commitment.candidate_id
              AND forecast.commitment_id = commitment.commitment_id
              AND forecast.strategy_version_id = coalesce(
+                 current_arm.strategy_version_id,
                  arm_strategy.strategy_version_id, backtest.strategy_version_id
              )
             LEFT JOIN mra.forecast_estimate AS estimate
@@ -573,9 +594,12 @@ class PostgresEvaluationRepository:
             LEFT JOIN mra.portfolio_proposal AS proposal
               ON proposal.decision_run_id = commitment.decision_run_id
              AND proposal.strategy_version_id = coalesce(
+                 current_arm.strategy_version_id,
                  arm_strategy.strategy_version_id, backtest.strategy_version_id
              )
-             AND proposal.portfolio_policy_id = backtest.portfolio_policy_id
+             AND proposal.portfolio_policy_id = coalesce(
+                 current_arm.portfolio_policy_id, backtest.portfolio_policy_id
+             )
             LEFT JOIN mra.portfolio_line AS line
               ON line.portfolio_proposal_id = proposal.portfolio_proposal_id
              AND line.candidate_id = commitment.candidate_id
@@ -583,7 +607,9 @@ class PostgresEvaluationRepository:
              AND line.target_definition_id = commitment.target_definition_id
             LEFT JOIN mra.risk_decision AS risk
               ON risk.portfolio_proposal_id = proposal.portfolio_proposal_id
-             AND risk.risk_policy_id = backtest.risk_policy_id
+             AND risk.risk_policy_id = coalesce(
+                 current_arm.risk_policy_id, backtest.risk_policy_id
+             )
             WHERE observation.evaluation_run_id = %s
             ORDER BY commitment.decision_time, arm.ordinal NULLS FIRST,
                      commitment.instrument_id,
@@ -604,15 +630,21 @@ class PostgresEvaluationRepository:
         resolved: list[_ResolvedMetricInput] = []
         previous_weights: dict[tuple[object, object], Decimal] = {}
         for source in source_rows:
-            arm_kind = (
-                ExploratoryBacktestArmKind(str(source[17]))
-                if source[17] is not None
-                else None
-            )
+            try:
+                arm_kind = (
+                    ExploratoryBacktestArmKind(str(source[17]))
+                    if source[17] is not None
+                    else None
+                )
+            except ValueError:
+                # Current generic arm codes are exact relational lineage, not
+                # the private legacy WP arm vocabulary.
+                arm_kind = None
+            has_backtest_arm = source[14] is not None and source[17] is not None
             if (
                 metric.slice_kind is EvaluationSliceKind.EXPLORATORY_BACKTEST_ARM
                 or metric.source_kind is not EvaluationSourceKind.OUTCOME_METRIC
-            ) and arm_kind is None:
+            ) and not has_backtest_arm:
                 raise EvaluationReconciliationError(
                     "exploratory metric source lacks exact Backtest arm lineage"
                 )
@@ -758,7 +790,7 @@ class PostgresEvaluationRepository:
                     boolean_value = risk_status == "REJECTED"
                     value_status = "COMPLETE"
                 decimal_value = None
-            group_key = f"{arm_kind or 'UNBOUND'}:{source[12].isoformat()}"
+            group_key = f"{source[14] or 'UNBOUND'}:{source[12].isoformat()}"
             item = EvaluationInput(
                 evaluation_observation_id=UUID(str(source[0])),
                 candidate_disposition=CandidateDisposition(str(source[3])),

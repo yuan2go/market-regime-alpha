@@ -85,6 +85,38 @@ class BacktestDatasetExecution:
 
 
 @dataclass(frozen=True, slots=True)
+class BacktestPartitionExecution:
+    research_partition_id: UUID
+    content_sha256: ContentHash | str
+    purpose: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "content_sha256", ContentHash(str(self.content_sha256))
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class BacktestEvaluationResult:
+    evaluation_run_id: UUID
+    evaluation_protocol_id: UUID
+    metric_count: int
+    metric_roster_sha256: ContentHash | str
+    completed_at: datetime
+
+    def __post_init__(self) -> None:
+        if self.metric_count < 1:
+            raise ValueError("completed Backtest Evaluation requires metrics")
+        if self.completed_at.tzinfo is None:
+            raise ValueError("completed Backtest Evaluation time must be aware")
+        object.__setattr__(
+            self,
+            "metric_roster_sha256",
+            ContentHash(str(self.metric_roster_sha256)),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class BacktestFeatureRequest:
     definition: BacktestFeatureExecutionDefinition
     scope: ExploratoryRetrospectiveDatasetScope
@@ -174,6 +206,14 @@ class BacktestActionReadPort(Protocol):
         model_training_requirement_id: UUID,
     ) -> UUID: ...
 
+    def partition_execution(
+        self, research_partition_id: UUID
+    ) -> BacktestPartitionExecution: ...
+
+    def evaluation_result(
+        self, evaluation_run_id: UUID
+    ) -> BacktestEvaluationResult: ...
+
 
 __all__ = [
     "BacktestActionReadPort",
@@ -182,6 +222,8 @@ __all__ = [
     "BacktestFeatureExecutionDefinition",
     "BacktestFeatureMaterializer",
     "BacktestFeatureRequest",
+    "BacktestEvaluationResult",
+    "BacktestPartitionExecution",
     "BacktestPopulationMember",
     "BacktestTargetCheckpoint",
     "BacktestTradingSession",

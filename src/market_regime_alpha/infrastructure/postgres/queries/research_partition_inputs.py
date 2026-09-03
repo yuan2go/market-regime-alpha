@@ -230,6 +230,8 @@ class PostgresPartitionInputQueries:
             None if source is None else source.exploratory_backtest_arm_id,
             None if source is None else source.exploratory_backtest_fold_id,
             None if source is None else source.exploratory_backtest_fold_id,
+            None if source is None else source.exploratory_backtest_fold_id,
+            None if source is None else source.exploratory_backtest_run_id,
         )
         base_count = self._connection.execute(
             """
@@ -256,8 +258,16 @@ class PostgresPartitionInputQueries:
               AND (%s::uuid IS NULL OR (
                     backtest.exploratory_backtest_run_id = %s
                 AND backtest.exploratory_backtest_arm_id = %s
-                AND (%s::uuid IS NULL OR
-                     backtest.exploratory_backtest_fold_id = %s)))
+                AND ((%s::uuid IS NOT NULL AND
+                      backtest.exploratory_backtest_fold_id = %s)
+                  OR (%s::uuid IS NULL AND EXISTS (
+                      SELECT 1
+                      FROM mra.exploratory_backtest_fold AS source_fold
+                      WHERE source_fold.exploratory_backtest_fold_id =
+                            backtest.exploratory_backtest_fold_id
+                        AND source_fold.exploratory_backtest_run_id = %s
+                        AND source_fold.purpose = 'VALIDATION'
+                  )))))
             """,
             (
                 plan.decision_start_session_id,
@@ -308,8 +318,16 @@ class PostgresPartitionInputQueries:
                   AND (%s::uuid IS NULL OR (
                         backtest.exploratory_backtest_run_id = %s
                     AND backtest.exploratory_backtest_arm_id = %s
-                    AND (%s::uuid IS NULL OR
-                         backtest.exploratory_backtest_fold_id = %s)))
+                    AND ((%s::uuid IS NOT NULL AND
+                          backtest.exploratory_backtest_fold_id = %s)
+                      OR (%s::uuid IS NULL AND EXISTS (
+                          SELECT 1
+                          FROM mra.exploratory_backtest_fold AS source_fold
+                          WHERE source_fold.exploratory_backtest_fold_id =
+                                backtest.exploratory_backtest_fold_id
+                            AND source_fold.exploratory_backtest_run_id = %s
+                            AND source_fold.purpose = 'VALIDATION'
+                      )))))
             )
             SELECT base.commitment_id,
                    base.decision_reference_observation_id,
@@ -357,7 +375,7 @@ class PostgresPartitionInputQueries:
                 *source_values,
             ),
         ).fetchall()
-        if not rows:
+        if not rows and plan.backtest_source is None:
             raise PartitionInputError("declared Partition population is empty")
         if len(rows) != int(base_count[0]):
             raise PartitionInputError(

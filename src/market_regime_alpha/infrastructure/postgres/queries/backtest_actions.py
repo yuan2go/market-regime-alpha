@@ -14,8 +14,10 @@ from market_regime_alpha.research_qualification.domain.exploratory import (
 from market_regime_alpha.research_qualification.ports.backtest_actions import (
     BacktestArchiveSeal,
     BacktestDatasetExecution,
+    BacktestEvaluationResult,
     BacktestFeatureExecutionDefinition,
     BacktestPopulationMember,
+    BacktestPartitionExecution,
     BacktestTargetCheckpoint,
     BacktestTradingSession,
     BacktestUniverseTemplate,
@@ -367,6 +369,43 @@ class PostgresBacktestActionReadPort:
                 "Backtest ModelVersion lineage is absent or ambiguous"
             )
         return UUID(str(rows[0][0]))
+
+    def partition_execution(
+        self, research_partition_id: UUID
+    ) -> BacktestPartitionExecution:
+        with self._pool.connection(read_only=True) as connection:
+            rows = connection.execute(
+                """
+                SELECT research_partition_id, content_sha256, purpose
+                FROM mra.research_partition
+                WHERE research_partition_id = %s AND status = 'FROZEN'
+                """,
+                (research_partition_id,),
+            ).fetchall()
+        if len(rows) != 1:
+            raise RuntimeNotFoundError(
+                "Backtest ResearchPartition is absent or ambiguous"
+            )
+        return BacktestPartitionExecution(*rows[0])
+
+    def evaluation_result(
+        self, evaluation_run_id: UUID
+    ) -> BacktestEvaluationResult:
+        with self._pool.connection(read_only=True) as connection:
+            rows = connection.execute(
+                """
+                SELECT evaluation_run_id, evaluation_protocol_id,
+                       metric_count, metric_roster_sha256, completed_at
+                FROM mra.evaluation_run
+                WHERE evaluation_run_id = %s AND status = 'COMPLETED'
+                """,
+                (evaluation_run_id,),
+            ).fetchall()
+        if len(rows) != 1:
+            raise RuntimeNotFoundError(
+                "Backtest EvaluationRun is absent or incomplete"
+            )
+        return BacktestEvaluationResult(*rows[0])
 
 
 __all__ = ["PostgresBacktestActionReadPort"]

@@ -8,6 +8,8 @@ from uuid import UUID
 import psycopg
 
 from market_regime_alpha.research_qualification.domain.backtest import (
+    AuthorityBinding,
+    BacktestModelTrainingRequirement,
     BacktestSpecification,
 )
 from market_regime_alpha.research_qualification.domain.backtest_execution import (
@@ -22,9 +24,30 @@ from market_regime_alpha.research_qualification.ports.backtest_uow import (
     BacktestSpecificationRecord,
 )
 from market_regime_alpha.runtime.errors import (
+    ArtifactIntegrityError,
     RuntimeNotFoundError,
     RuntimeStateConflictError,
 )
+
+
+def _required_training_metric(
+    requirement: BacktestModelTrainingRequirement,
+) -> AuthorityBinding:
+    if requirement.training_metric is None:
+        raise ArtifactIntegrityError(
+            "current Model training requirement lacks exact training metric"
+        )
+    return requirement.training_metric
+
+
+def _required_planned_model_version(
+    requirement: BacktestModelTrainingRequirement,
+) -> int:
+    if requirement.planned_model_version is None:
+        raise ArtifactIntegrityError(
+            "current Model training requirement lacks planned Model version"
+        )
+    return requirement.planned_model_version
 
 
 class PostgresBacktestRepository:
@@ -447,9 +470,13 @@ class PostgresBacktestRepository:
                     fit_fold_id, validation_fold_id, model_id, model_sha256,
                     required_fit_evaluation_protocol_id,
                     required_fit_evaluation_protocol_sha256,
+                    required_fit_evaluation_protocol_metric_id,
+                    required_fit_evaluation_metric_sha256,
+                    planned_model_version,
                     content_sha256
                 ) VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s
                 )
                 """,
                 (
@@ -465,6 +492,13 @@ class PostgresBacktestRepository:
                         str(requirement.model_definition.content_sha256),
                         folds_by_id[requirement.fit_fold_id].evaluation_protocol.authority_id,
                         str(folds_by_id[requirement.fit_fold_id].evaluation_protocol.content_sha256),
+                        _required_training_metric(requirement).authority_id,
+                        str(
+                            _required_training_metric(
+                                requirement
+                            ).content_sha256
+                        ),
+                        _required_planned_model_version(requirement),
                         str(requirement.content_sha256),
                     )
                     for requirement in specification.model_training_requirements

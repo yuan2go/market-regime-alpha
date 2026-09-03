@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
 import json
 from uuid import UUID, uuid5
@@ -25,8 +26,22 @@ from market_regime_alpha.decision_support.domain import (
 from market_regime_alpha.research_qualification.application.service import (
     ResearchQualificationApplication,
 )
+from market_regime_alpha.research_qualification.application.backtests import (
+    BacktestApplication,
+)
+from market_regime_alpha.research_qualification.application.evaluations import (
+    EvaluationCommands,
+)
+from market_regime_alpha.research_qualification.application.experiments import (
+    ExperimentCommands,
+)
+from market_regime_alpha.research_qualification.application.partitions import (
+    ResearchPartitionCommands,
+)
 from market_regime_alpha.research_qualification.domain.backtest import (
     BacktestArmSpecification,
+    BacktestEvaluationRequirement,
+    BacktestEvaluationScopeKind,
     BacktestExecutionKind,
     BacktestFoldSession,
     BacktestSessionRole,
@@ -43,7 +58,16 @@ from market_regime_alpha.research_qualification.domain.backtest_outcome import (
 )
 from market_regime_alpha.research_qualification.domain.backtest_execution import (
     BacktestActionKind,
+    BacktestEvaluationExecution,
     BacktestExpectedAction,
+)
+from market_regime_alpha.research_qualification.domain.evaluation import (
+    EvaluationRunPlan,
+)
+from market_regime_alpha.research_qualification.domain.experiment import (
+    ExperimentDefinition,
+    ExperimentPartitionBinding,
+    ExperimentRunPlan,
 )
 from market_regime_alpha.research_qualification.domain.exploratory import (
     ExploratoryRetrospectiveDatasetScope,
@@ -52,7 +76,13 @@ from market_regime_alpha.research_qualification.domain.exploratory_backtest impo
     ExploratoryBacktestDatasetScope,
 )
 from market_regime_alpha.research_qualification.domain.model import ArtifactBinding
+from market_regime_alpha.research_qualification.domain.partition import (
+    BacktestPartitionSource,
+    ResearchPartitionPlan,
+)
 from market_regime_alpha.research_qualification.domain.research_vocabulary import (
+    PartitionOverlapPolicy,
+    PartitionPopulationScope,
     PartitionPurpose,
 )
 from market_regime_alpha.research_qualification.ports.backtest_actions import (
@@ -87,6 +117,16 @@ from market_regime_alpha.outcome.application import (
 )
 
 
+@dataclass(frozen=True, slots=True)
+class _EvaluationIdentities:
+    partition_id: UUID
+    experiment_id: UUID
+    experiment_partition_id: UUID
+    experiment_run_id: UUID
+    evaluation_run_id: UUID
+    evaluation_binding_id: UUID
+
+
 class BacktestCanonicalActionHandler:
     """Closed action/step dispatcher; every mutation stays with its owner."""
 
@@ -108,6 +148,10 @@ class BacktestCanonicalActionHandler:
         decision_portfolios: PortfolioCommands | None = None,
         decision_risk: RiskCommands | None = None,
         outcomes: OutcomeApplication | None = None,
+        research_partitions: ResearchPartitionCommands | None = None,
+        research_experiments: ExperimentCommands | None = None,
+        research_evaluations: EvaluationCommands | None = None,
+        backtests: BacktestApplication | None = None,
         runtime: RuntimeApplication | None = None,
     ) -> None:
         if not feature_materializers:
@@ -129,6 +173,10 @@ class BacktestCanonicalActionHandler:
         self._decision_portfolios = decision_portfolios
         self._decision_risk = decision_risk
         self._outcomes = outcomes
+        self._research_partitions = research_partitions
+        self._research_experiments = research_experiments
+        self._research_evaluations = research_evaluations
+        self._backtests = backtests
         self._runtime = runtime
 
     def requested_at(
@@ -267,6 +315,35 @@ class BacktestCanonicalActionHandler:
                 )
                 for key, kind in roster
             )
+        if action.kind in {
+            BacktestActionKind.COMPLETE_FOLD_EVALUATION,
+            BacktestActionKind.COMPLETE_AGGREGATE_EVALUATION,
+        }:
+            return tuple(
+                BacktestRuntimeStep(
+                    key,
+                    kind,
+                    canonical_json_sha256(
+                        {
+                            "action_content_sha256": str(action.content_sha256),
+                            "specification_sha256": str(
+                                specification.content_sha256
+                            ),
+                            "step_key": key,
+                        }
+                    ),
+                    ExternalEffectClass.NONE,
+                )
+                for key, kind in (
+                    ("freeze-partition", "FREEZE_PARTITION"),
+                    ("register-experiment", "REGISTER_EXPERIMENT"),
+                    ("open-experiment-run", "OPEN_EXPERIMENT_RUN"),
+                    ("open-evaluation", "OPEN_EVALUATION"),
+                    ("acquire-outcome-inputs", "ACQUIRE_OUTCOME_INPUTS"),
+                    ("evaluate", "EVALUATE"),
+                    ("bind-evaluation", "RECORD_EVIDENCE"),
+                )
+            )
         raise ValueError(f"Backtest action kind is not yet composed: {action.kind}")
 
     def execute_step(
@@ -288,8 +365,321 @@ class BacktestCanonicalActionHandler:
             self._execute_decision_step(specification, action, claim)
         elif action.kind is BacktestActionKind.SETTLE_OUTCOME:
             self._execute_outcome_step(specification, action, claim)
+        elif action.kind in {
+            BacktestActionKind.COMPLETE_FOLD_EVALUATION,
+            BacktestActionKind.COMPLETE_AGGREGATE_EVALUATION,
+        }:
+            self._execute_evaluation_step(specification, action, claim)
         else:
             raise ValueError(f"unsupported Backtest action {action.kind}")
+
+    def _execute_evaluation_step(
+        self,
+        specification: BacktestSpecification,
+        action: BacktestExpectedAction,
+        claim: AttemptClaim,
+    ) -> None:
+        self._require_evaluation_composition()
+        requirement = self._evaluation_requirement(specification, action)
+        identities = _evaluation_identities(action)
+        context = self._context(action, claim.step_key)
+        assert self._research_partitions is not None
+        assert self._research_experiments is not None
+        assert self._research_evaluations is not None
+        assert self._backtests is not None
+        if claim.step_key == "freeze-partition":
+            self._research_partitions.freeze(
+                self._partition_plan(
+                    specification,
+                    action,
+                    requirement,
+                    identities.partition_id,
+                ),
+                context,
+                runtime_claim=claim,
+            )
+            return
+        partition = self._reads.partition_execution(identities.partition_id)
+        expected_purpose = self._evaluation_purpose(
+            specification, requirement
+        )
+        if partition.purpose != expected_purpose.value:
+            raise ValueError("Backtest Evaluation Partition purpose differs")
+        binding = ExperimentPartitionBinding(
+            experiment_partition_id=identities.experiment_partition_id,
+            experiment_id=identities.experiment_id,
+            binding_ordinal=1,
+            research_partition_id=identities.partition_id,
+            target_definition_id=specification.target.authority_id,
+            target_version=specification.target.version,
+            target_definition_sha256=specification.target.content_sha256,
+            purpose=expected_purpose,
+            partition_content_sha256=partition.content_sha256,
+        )
+        if claim.step_key == "register-experiment":
+            self._research_experiments.register(
+                ExperimentDefinition(
+                    experiment_id=identities.experiment_id,
+                    experiment_code=f"backtest-{action.action_id.hex}",
+                    research_question=specification.hypothesis,
+                    primary_change=(
+                        f"evaluate frozen arm {requirement.arm_id} "
+                        f"at {requirement.scope_kind.value} scope"
+                    ),
+                    hypothesis=specification.hypothesis,
+                    target_definition_id=specification.target.authority_id,
+                    target_version=specification.target.version,
+                    target_definition_sha256=specification.target.content_sha256,
+                    protocol_identity=(
+                        f"evaluation-protocol:"
+                        f"{requirement.evaluation_protocol.authority_id}"
+                    ),
+                    acceptance_semantics=(
+                        "Frozen EvaluationProtocol metrics are the sole "
+                        "acceptance and NOT_ESTIMABLE Authority."
+                    ),
+                    code_artifact=specification.code_artifact,
+                    config_artifact=specification.config_artifact,
+                    provenance_sha256=specification.provenance_sha256,
+                ),
+                (binding,),
+                context,
+                runtime_claim=claim,
+            )
+            return
+        if claim.step_key == "open-experiment-run":
+            self._research_experiments.open_run(
+                ExperimentRunPlan(
+                    experiment_run_id=identities.experiment_run_id,
+                    experiment_id=identities.experiment_id,
+                    experiment_partition_id=identities.experiment_partition_id,
+                    run_identity=f"backtest:{action.action_id}",
+                ),
+                context,
+                runtime_claim=claim,
+            )
+            return
+        if claim.step_key == "open-evaluation":
+            self._research_evaluations.open_run(
+                EvaluationRunPlan(
+                    evaluation_run_id=identities.evaluation_run_id,
+                    experiment_run_id=identities.experiment_run_id,
+                    evaluation_protocol_id=(
+                        requirement.evaluation_protocol.authority_id
+                    ),
+                    requested_knowledge_cutoff=(
+                        self._reads.archive_seal(specification).knowledge_cutoff
+                    ),
+                    request_identity=f"backtest:{action.action_id}",
+                    code_artifact=specification.code_artifact,
+                    config_artifact=specification.config_artifact,
+                    provenance_sha256=specification.provenance_sha256,
+                ),
+                context,
+                runtime_claim=claim,
+            )
+            return
+        if claim.step_key == "acquire-outcome-inputs":
+            self._research_evaluations.acquire_outcome_inputs(
+                identities.evaluation_run_id,
+                context,
+                runtime_claim=claim,
+            )
+            return
+        if claim.step_key == "evaluate":
+            self._research_evaluations.complete(
+                identities.evaluation_run_id,
+                context,
+                runtime_claim=claim,
+            )
+            return
+        if claim.step_key == "bind-evaluation":
+            result = self._reads.evaluation_result(
+                identities.evaluation_run_id
+            )
+            if (
+                result.evaluation_protocol_id
+                != requirement.evaluation_protocol.authority_id
+            ):
+                raise ValueError("Backtest Evaluation Protocol lineage differs")
+            self._backtests.bind_evaluation(
+                BacktestEvaluationExecution(
+                    backtest_evaluation_execution_id=(
+                        identities.evaluation_binding_id
+                    ),
+                    exploratory_backtest_run_id=(
+                        specification.exploratory_backtest_run_id
+                    ),
+                    specification_sha256=specification.content_sha256,
+                    backtest_evaluation_requirement_id=(
+                        requirement.requirement_id
+                    ),
+                    evaluation_run_id=result.evaluation_run_id,
+                    evaluation_protocol_id=result.evaluation_protocol_id,
+                    evaluation_metric_count=result.metric_count,
+                    evaluation_metric_roster_sha256=(
+                        result.metric_roster_sha256
+                    ),
+                    canonical_completed_at=result.completed_at,
+                ),
+                context,
+                runtime_claim=claim,
+            )
+            return
+        raise ValueError(f"unsupported Evaluation step {claim.step_key}")
+
+    def _partition_plan(
+        self,
+        specification: BacktestSpecification,
+        action: BacktestExpectedAction,
+        requirement: BacktestEvaluationRequirement,
+        partition_id: UUID,
+    ) -> ResearchPartitionPlan:
+        sessions = self._evaluation_sessions(specification, requirement)
+        if not sessions:
+            raise ValueError("Backtest Evaluation scope has no frozen Sessions")
+        first = min(sessions, key=lambda item: item.session_date)
+        last = max(sessions, key=lambda item: item.session_date)
+        purpose = self._evaluation_purpose(specification, requirement)
+        fold = (
+            None
+            if requirement.fold_id is None
+            else next(
+                item
+                for item in specification.folds
+                if item.exploratory_backtest_fold_id == requirement.fold_id
+            )
+        )
+        return ResearchPartitionPlan(
+            research_partition_id=partition_id,
+            partition_code=f"backtest-{action.action_id.hex}",
+            target_definition_id=specification.target.authority_id,
+            target_version=specification.target.version,
+            target_definition_sha256=specification.target.content_sha256,
+            purpose=purpose,
+            population_scope=PartitionPopulationScope.ALL_COMMITMENTS,
+            overlap_policy=PartitionOverlapPolicy.PURGED_WALK_FORWARD,
+            exchange_code=specification.exchange_code,
+            decision_start_session_id=first.trading_session_id,
+            decision_end_session_id=last.trading_session_id,
+            purge_before_sessions=(0 if fold is None else fold.purge_sessions),
+            purge_after_sessions=0,
+            embargo_sessions=(0 if fold is None else fold.embargo_sessions),
+            series_code=f"backtest-{action.action_id.hex}",
+            fold_ordinal=(requirement.ordinal if fold is None else fold.ordinal),
+            code_artifact=specification.code_artifact,
+            config_artifact=specification.config_artifact,
+            provenance_sha256=specification.provenance_sha256,
+            backtest_source=BacktestPartitionSource(
+                exploratory_backtest_run_id=(
+                    specification.exploratory_backtest_run_id
+                ),
+                exploratory_backtest_arm_id=self._required_arm_id(requirement),
+                exploratory_backtest_fold_id=requirement.fold_id,
+            ),
+        )
+
+    @staticmethod
+    def _required_arm_id(requirement: BacktestEvaluationRequirement) -> UUID:
+        if requirement.arm_id is None:  # pragma: no cover - domain invariant
+            raise ValueError("Backtest Evaluation requires an exact Arm")
+        return requirement.arm_id
+
+    @staticmethod
+    def _evaluation_requirement(
+        specification: BacktestSpecification,
+        action: BacktestExpectedAction,
+    ) -> BacktestEvaluationRequirement:
+        if action.evaluation_requirement_id is None:
+            raise ValueError("current Backtest Evaluation action lacks requirement")
+        matches = tuple(
+            item
+            for item in specification.evaluation_requirements
+            if item.requirement_id == action.evaluation_requirement_id
+        )
+        if len(matches) != 1:
+            raise ValueError("Backtest Evaluation requirement is absent or ambiguous")
+        requirement = matches[0]
+        if requirement.arm_id != action.arm_id or requirement.fold_id != action.fold_id:
+            raise ValueError("Backtest Evaluation action scope differs")
+        return requirement
+
+    @staticmethod
+    def _evaluation_purpose(
+        specification: BacktestSpecification,
+        requirement: BacktestEvaluationRequirement,
+    ) -> PartitionPurpose:
+        if requirement.fold_id is None:
+            return PartitionPurpose.VALIDATION
+        return next(
+            item.purpose
+            for item in specification.folds
+            if item.exploratory_backtest_fold_id == requirement.fold_id
+        )
+
+    def _evaluation_sessions(
+        self,
+        specification: BacktestSpecification,
+        requirement: BacktestEvaluationRequirement,
+    ) -> tuple[BacktestFoldSession, ...]:
+        participating_folds = {
+            item.fold_id
+            for item in specification.arm_folds
+            if item.arm_id == requirement.arm_id
+        }
+        if requirement.fold_id is not None:
+            folds = tuple(
+                item
+                for item in specification.folds
+                if item.exploratory_backtest_fold_id == requirement.fold_id
+            )
+        else:
+            folds = tuple(
+                item
+                for item in specification.folds
+                if item.exploratory_backtest_fold_id in participating_folds
+                and item.purpose is PartitionPurpose.VALIDATION
+            )
+        sessions = tuple(
+            session
+            for fold in folds
+            for session in fold.sessions
+            if session.role
+            is (
+                BacktestSessionRole.FIT_INPUT
+                if fold.purpose is PartitionPurpose.FIT
+                else BacktestSessionRole.EVALUATION
+            )
+        )
+        if requirement.scope_kind is BacktestEvaluationScopeKind.MONTH:
+            year, month = _parse_month(requirement.slice_key)
+            sessions = tuple(
+                item
+                for item in sessions
+                if (item.session_date.year, item.session_date.month)
+                == (year, month)
+            )
+        elif requirement.scope_kind is BacktestEvaluationScopeKind.QUARTER:
+            year, quarter = _parse_quarter(requirement.slice_key)
+            sessions = tuple(
+                item
+                for item in sessions
+                if item.session_date.year == year
+                and (item.session_date.month - 1) // 3 + 1 == quarter
+            )
+        return sessions
+
+    def _require_evaluation_composition(self) -> None:
+        if any(
+            item is None
+            for item in (
+                self._research_partitions,
+                self._research_experiments,
+                self._research_evaluations,
+                self._backtests,
+            )
+        ):
+            raise ValueError("Backtest Evaluation owner Applications are not composed")
 
     def _execute_outcome_step(
         self,
@@ -859,6 +1249,47 @@ def _artifact(record: ArtifactRecord) -> ArtifactBinding:
         record.content_sha256,
         record.size_bytes,
     )
+
+
+def _evaluation_identities(
+    action: BacktestExpectedAction,
+) -> _EvaluationIdentities:
+    return _EvaluationIdentities(
+        partition_id=uuid5(action.action_id, "research-partition"),
+        experiment_id=uuid5(action.action_id, "experiment"),
+        experiment_partition_id=uuid5(
+            action.action_id, "experiment-partition"
+        ),
+        experiment_run_id=uuid5(action.action_id, "experiment-run"),
+        evaluation_run_id=uuid5(action.action_id, "evaluation-run"),
+        evaluation_binding_id=uuid5(action.action_id, "evaluation-binding"),
+    )
+
+
+def _parse_month(value: str | None) -> tuple[int, int]:
+    if value is None:
+        raise ValueError("MONTH Evaluation requires slice_key")
+    try:
+        year_text, month_text = value.split("-", maxsplit=1)
+        year, month = int(year_text), int(month_text)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("MONTH slice_key must be YYYY-MM") from exc
+    if len(year_text) != 4 or len(month_text) != 2 or not 1 <= month <= 12:
+        raise ValueError("MONTH slice_key must be YYYY-MM")
+    return year, month
+
+
+def _parse_quarter(value: str | None) -> tuple[int, int]:
+    if value is None:
+        raise ValueError("QUARTER Evaluation requires slice_key")
+    try:
+        year_text, quarter_text = value.split("-Q", maxsplit=1)
+        year, quarter = int(year_text), int(quarter_text)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("QUARTER slice_key must be YYYY-QN") from exc
+    if len(year_text) != 4 or quarter not in {1, 2, 3, 4}:
+        raise ValueError("QUARTER slice_key must be YYYY-QN")
+    return year, quarter
 
 
 __all__ = ["BacktestCanonicalActionHandler"]

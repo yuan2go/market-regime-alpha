@@ -277,11 +277,15 @@ class BacktestApplication:
         self,
         binding: BacktestEvaluationExecution,
         context: CommandContext,
+        *,
+        runtime_claim: AttemptClaim | None = None,
     ) -> BacktestLineageMutationResult:
         """Bind one frozen requirement to an exact completed Evaluation."""
 
         request_hash = canonical_json_sha256(binding)
         with self._uow_provider() as uow:
+            if runtime_claim is not None:
+                uow.runtime_finalization.lock_live(runtime_claim)
             receipt = uow.receipts.start(
                 receipt_id=self._id_factory(),
                 command_kind="BIND_BACKTEST_EVALUATION",
@@ -290,7 +294,7 @@ class BacktestApplication:
                 request_hash=request_hash,
             )
             if not receipt.is_new:
-                return self._replay_lineage(
+                result = self._replay_lineage(
                     uow,
                     receipt,
                     expected_kind="BACKTEST_EVALUATION_EXECUTION",
@@ -298,6 +302,8 @@ class BacktestApplication:
                     expected_hash=str(binding.content_sha256),
                     exploratory_backtest_run_id=(binding.exploratory_backtest_run_id),
                 )
+                self._finish_lineage_replay(uow, receipt, runtime_claim)
+                return result
             uow.backtests.bind_evaluation(binding)
             self._complete_lineage_receipt(
                 uow,
@@ -307,6 +313,7 @@ class BacktestApplication:
                 aggregate_id=binding.backtest_evaluation_execution_id,
                 result_hash=str(binding.content_sha256),
                 action="BIND_BACKTEST_EVALUATION",
+                runtime_claim=runtime_claim,
             )
             uow.commit()
             return BacktestLineageMutationResult(
@@ -371,11 +378,15 @@ class BacktestApplication:
         self,
         binding: BacktestModelLineage,
         context: CommandContext,
+        *,
+        runtime_claim: AttemptClaim | None = None,
     ) -> BacktestLineageMutationResult:
         """Bind one model requirement to exact FIT/training/version Authority."""
 
         request_hash = canonical_json_sha256(binding)
         with self._uow_provider() as uow:
+            if runtime_claim is not None:
+                uow.runtime_finalization.lock_live(runtime_claim)
             receipt = uow.receipts.start(
                 receipt_id=self._id_factory(),
                 command_kind="BIND_BACKTEST_MODEL_LINEAGE",
@@ -384,7 +395,7 @@ class BacktestApplication:
                 request_hash=request_hash,
             )
             if not receipt.is_new:
-                return self._replay_lineage(
+                result = self._replay_lineage(
                     uow,
                     receipt,
                     expected_kind="BACKTEST_MODEL_LINEAGE",
@@ -392,6 +403,8 @@ class BacktestApplication:
                     expected_hash=str(binding.content_sha256),
                     exploratory_backtest_run_id=(binding.exploratory_backtest_run_id),
                 )
+                self._finish_lineage_replay(uow, receipt, runtime_claim)
+                return result
             uow.backtests.bind_model_lineage(binding)
             self._complete_lineage_receipt(
                 uow,
@@ -401,6 +414,7 @@ class BacktestApplication:
                 aggregate_id=binding.backtest_model_lineage_id,
                 result_hash=str(binding.content_sha256),
                 action="BIND_BACKTEST_MODEL_LINEAGE",
+                runtime_claim=runtime_claim,
             )
             uow.commit()
             return BacktestLineageMutationResult(
@@ -421,6 +435,7 @@ class BacktestApplication:
         aggregate_id: UUID,
         result_hash: str,
         action: str,
+        runtime_claim: AttemptClaim | None = None,
     ) -> None:
         uow.receipts.succeed(
             receipt_id=receipt.receipt_id,
@@ -428,6 +443,7 @@ class BacktestApplication:
             aggregate_id=str(aggregate_id),
             aggregate_version=1,
             result_hash=result_hash,
+            runtime_claim=runtime_claim,
         )
         uow.audit.append(
             audit_event_id=self._id_factory(),
@@ -440,7 +456,31 @@ class BacktestApplication:
             reason_code=context.reason_code,
             before_version=None,
             after_version=1,
+            runtime_claim=runtime_claim,
         )
+        if runtime_claim is not None:
+            uow.runtime_finalization.succeed(
+                runtime_claim,
+                receipt_id=receipt.receipt_id,
+                result_hash=result_hash,
+            )
+
+    @staticmethod
+    def _finish_lineage_replay(
+        uow: BacktestUnitOfWork,
+        receipt: ReceiptRecord,
+        runtime_claim: AttemptClaim | None,
+    ) -> None:
+        if runtime_claim is None:
+            return
+        if receipt.result_hash is None:  # pragma: no cover - replay guard
+            raise ArtifactIntegrityError("Backtest lineage receipt has no result hash")
+        uow.runtime_finalization.succeed(
+            runtime_claim,
+            receipt_id=receipt.receipt_id,
+            result_hash=receipt.result_hash,
+        )
+        uow.commit()
 
     @staticmethod
     def _replay_lineage(
