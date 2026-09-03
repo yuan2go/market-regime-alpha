@@ -944,6 +944,204 @@ def test_retrospective_selection_uses_exact_archive_dual_clock_without_weakening
     assert bindings == (1, 1)
 
 
+def test_retrospective_selection_accepts_exact_reference_reobserved_by_archive(
+    selection_stack: _SelectionStack,
+) -> None:
+    stack = selection_stack
+    instrument_id = InstrumentId(uuid4())
+    classification_id = uuid4()
+    membership_revision_id = uuid4()
+
+    def reference_batch(capture) -> NormalizationBatch:
+        return NormalizationBatch(
+            source_capture_id=capture.capture_id,
+            source_provider_product_id=capture.provider_product_id,
+            instruments=(
+                Instrument(
+                    instrument_id=instrument_id,
+                    canonical_code="699999.XSHG",
+                    exchange="XSHG",
+                    instrument_type=InstrumentType.EQUITY,
+                    currency="CNY",
+                    source_capture_id=capture.capture_id,
+                ),
+            ),
+            classifications=(
+                ClassificationRevision(
+                    classification_id=classification_id,
+                    classification_scheme="INDEX",
+                    classification_code="REPEATED_ARCHIVE_SCOPE",
+                    display_name="Repeated archive scope",
+                    revision=1,
+                    effective_from=datetime(2020, 1, 1, tzinfo=UTC),
+                    effective_to=None,
+                    supersedes_classification_id=None,
+                    source_capture_id=capture.capture_id,
+                ),
+            ),
+            classification_memberships=(
+                ClassificationMembershipRevision(
+                    membership_revision_id=membership_revision_id,
+                    classification_id=classification_id,
+                    instrument_id=instrument_id,
+                    source_capture_id=capture.capture_id,
+                    membership_status=MembershipStatus.MEMBER,
+                    effective_from=datetime(2020, 1, 1, tzinfo=UTC),
+                    effective_to=None,
+                    revision=1,
+                    supersedes_membership_revision_id=None,
+                ),
+            ),
+        )
+
+    captures = tuple(
+        stack.market.capture(
+            CaptureRequest(
+                provider_product_id=stack.product.provider_product_id,
+                capture_key=f"reference-reobservation-{ordinal}",
+                resource="fixture://reference-reobservation",
+                request_headers_hash="6" * 64,
+            ),
+            _BytesProvider(),
+            _context(
+                f"reference-reobservation-capture-{ordinal}",
+                "CAPTURE_PROVIDER_RESPONSE",
+            ),
+        )
+        for ordinal in (1, 2)
+    )
+    for ordinal, captured in enumerate(captures, start=1):
+        stack.market.normalize(
+            captured.capture.capture_id,
+            _Normalizer(reference_batch),
+            _context(
+                f"reference-reobservation-normalize-{ordinal}",
+                "NORMALIZE_MARKET_PIT",
+            ),
+        )
+
+    code_artifact = stack.artifacts.publish(
+        b"reference reobservation archive code\n",
+        media_type="text/plain",
+        context=_context("reference-reobservation-code", "PUBLISH_ARTIFACT"),
+    )
+    config_artifact = stack.artifacts.publish(
+        b'{"scope":"reference-reobservation"}\n',
+        media_type="application/json",
+        context=_context("reference-reobservation-config", "PUBLISH_ARTIFACT"),
+    )
+    simulated = stack.decision_time.value - timedelta(days=1)
+    archive_id, slice_id = uuid4(), uuid4()
+    archives = ArchiveCommands(
+        PostgresArchiveUnitOfWorkProvider(stack.pool),
+        id_factory=uuid4,
+    )
+    archives.start(
+        StartMarketArchiveRequest(
+            market_archive_id=archive_id,
+            archive_code=f"reference-reobservation-{archive_id.hex[:12]}",
+            lane=ArchiveLane.RETROSPECTIVE_BACKFILL,
+            provider_product_id=stack.product.provider_product_id,
+            exchange_code="XSHG",
+            timeframe=BarTimeframe.DAILY,
+            price_basis=PriceBasis.RAW_UNADJUSTED,
+            instrument_scope="ENGINEERING_EXPLORATORY_PILOT_32",
+            instrument_scope_sha256="6" * 64,
+            event_window_start=simulated - timedelta(days=1),
+            event_window_end=simulated,
+            reserved_free_bytes=1,
+            maximum_archive_bytes=1_000_000,
+            maximum_slice_bytes=1_000_000,
+            code_artifact_id=code_artifact.artifact_id,
+            config_artifact_id=config_artifact.artifact_id,
+            provenance_sha256="7" * 64,
+            slices=(
+                ArchiveSlicePlan(
+                    market_archive_slice_id=slice_id,
+                    ordinal=1,
+                    scope_key="reference-reobservation",
+                    event_window_start=simulated - timedelta(days=1),
+                    event_window_end=simulated,
+                    request_sha256="8" * 64,
+                    expected_fact_kind="CLASSIFICATION_MEMBERSHIP",
+                ),
+            ),
+        ),
+        _context("reference-reobservation-archive", "START_MARKET_ARCHIVE"),
+    )
+    archives.record_capture_observation(
+        RecordArchiveCaptureObservationRequest(
+            market_archive_id=archive_id,
+            market_archive_slice_id=slice_id,
+            capture_id=captures[1].capture.capture_id,
+            schedule_slot="RETROSPECTIVE_BATCH",
+            requested_at=captures[1].capture.temporal.capture_started_at,
+        ),
+        _context(
+            "reference-reobservation-observation",
+            "RECORD_ARCHIVE_CAPTURE_OBSERVATION",
+        ),
+    )
+    seal = archives.seal_retrospective(
+        market_archive_id=archive_id,
+        disposition=ArchiveSealDisposition.COMPLETE,
+        context=_context(
+            "reference-reobservation-seal",
+            "SEAL_RETROSPECTIVE_ARCHIVE",
+        ),
+    )
+    retrospective = ExploratoryRetrospectiveSelectionScope(
+        market_archive_id=archive_id,
+        market_archive_seal_id=seal.market_archive_seal_id,
+        knowledge_cutoff=seal.knowledge_cutoff,
+        simulated_event_cutoff=simulated,
+    )
+    universe = UniverseDefinition(
+        universe_id=uuid4(),
+        universe_code="reference-reobservation-universe",
+        purpose="prove exact typed reference reobservation",
+    )
+    stack.application.register_universe(
+        universe,
+        _context("reference-reobservation-universe", "REGISTER_UNIVERSE"),
+    )
+    scope_payload = {
+        "classification_code": "REPEATED_ARCHIVE_SCOPE",
+        "classification_scheme": "INDEX",
+        "instrument_ids": [str(instrument_id)],
+        "market_provider_product_id": str(stack.product.provider_product_id),
+        "schema": "selection-universe-scope-v1",
+    }
+    scope_content = json.dumps(
+        scope_payload,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode()
+    scope_artifact = stack.artifacts.publish(
+        scope_content,
+        media_type="application/json",
+        context=_context("reference-reobservation-scope", "REGISTER_UNIVERSE_SCOPE"),
+        pin_reason_code="UNIVERSE_SCOPE",
+    )
+    frozen = stack.application.freeze_exploratory_retrospective_universe(
+        universe_id=universe.universe_id,
+        scope=UniverseScopeSpecification(
+            artifact_id=scope_artifact.artifact_id,
+            content_sha256=scope_artifact.content_sha256,
+            size_bytes=scope_artifact.size_bytes,
+            market_provider_product_id=stack.product.provider_product_id,
+            classification_scheme="INDEX",
+            classification_code="REPEATED_ARCHIVE_SCOPE",
+            instrument_ids=(instrument_id,),
+        ),
+        retrospective_scope=retrospective,
+        context=_context("reference-reobservation-freeze", "FREEZE_UNIVERSE"),
+    )
+
+    assert frozen.total_count == frozen.included_count == 1
+    assert frozen.members[0].membership_revision_id == membership_revision_id
+
+
 def test_empty_explicit_scope_is_valid_and_never_expands_to_current_instruments(
     selection_stack: _SelectionStack,
 ) -> None:

@@ -4,7 +4,7 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from threading import Barrier, Event
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import psycopg
 import pytest
@@ -18,6 +18,9 @@ from market_regime_alpha.infrastructure.postgres.pool import TargetPostgresPool
 from market_regime_alpha.infrastructure.postgres.queries.market import PostgresMarketQueries
 from market_regime_alpha.infrastructure.postgres.repositories.artifacts import (
     PostgresArtifactRepository,
+)
+from market_regime_alpha.infrastructure.postgres.repositories.market import (
+    PostgresMarketRepository,
 )
 from market_regime_alpha.infrastructure.postgres.schema import SchemaManager
 from market_regime_alpha.infrastructure.postgres.uow import PostgresUnitOfWorkProvider
@@ -396,6 +399,134 @@ def test_repeated_classification_roster_reconciles_before_insert_guards(
             "WHERE membership_revision_id = %s",
             (membership_id,),
         ).fetchone() == (1,)
+        for capture_id in (
+            first.capture.capture_id,
+            second.capture.capture_id,
+        ):
+            assert connection.execute(
+                """
+                SELECT root.reference_count,
+                       (SELECT count(*) FROM mra.market_capture_instrument_normalization
+                        WHERE capture_id = root.capture_id),
+                       (SELECT count(*) FROM mra.market_capture_classification_normalization
+                        WHERE capture_id = root.capture_id),
+                       (SELECT count(*) FROM mra.market_capture_classification_membership_normalization
+                        WHERE capture_id = root.capture_id)
+                FROM mra.market_capture_reference_normalization AS root
+                WHERE root.capture_id = %s
+                """,
+                (capture_id,),
+            ).fetchone() == (3, 1, 1, 1)
+            normalized_roster = connection.execute(
+                """
+                SELECT normalized_revision_count,
+                       normalized_revision_roster_sha256
+                FROM mra.market_capture_normalized_roster(%s)
+                """,
+                (capture_id,),
+            ).fetchone()
+            assert normalized_roster is not None
+            assert normalized_roster[0] == 3
+            assert len(normalized_roster[1]) == 64
+
+    with (
+        psycopg.connect(database_url) as connection,
+        pytest.raises(
+            psycopg.errors.ObjectNotInPrerequisiteState,
+            match="Market reference normalization roster is not open",
+        ),
+    ):
+        connection.execute(
+            """
+            INSERT INTO mra.market_capture_instrument_normalization (
+                capture_id, instrument_id
+            )
+            VALUES (%s, %s)
+            """,
+            (second.capture.capture_id, instrument_id),
+        )
+
+
+def test_reference_normalization_failure_rolls_back_root_children_and_facts(
+    market_stack,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    application, _, _, _, _, product, database_url = market_stack
+    instrument_id = uuid4()
+    captured = _capture(application, product, "reference-roster-rollback", b"rollback")
+
+    def fail_after_root(
+        repository: PostgresMarketRepository,
+        batch: NormalizationBatch,
+        *,
+        normalization_receipt_id: UUID,
+        recorded_at: datetime,
+    ) -> None:
+        repository._connection.execute(  # noqa: SLF001 -- deliberate fault seam
+            """
+            INSERT INTO mra.market_capture_reference_normalization (
+                capture_id, normalization_receipt_id, reference_count,
+                reference_roster_sha256, content_sha256, recorded_at
+            )
+            VALUES (%s, %s, 1, %s, %s, %s)
+            """,
+            (
+                batch.source_capture_id,
+                normalization_receipt_id,
+                "a" * 64,
+                "b" * 64,
+                recorded_at,
+            ),
+        )
+        raise RuntimeError("injected after reference normalization root")
+
+    monkeypatch.setattr(
+        PostgresMarketRepository,
+        "_insert_reference_normalization",
+        fail_after_root,
+    )
+    normalizer = FixedNormalizer(
+        lambda capture: NormalizationBatch(
+            source_capture_id=capture.capture_id,
+            source_provider_product_id=capture.provider_product_id,
+            instruments=(
+                Instrument(
+                    instrument_id=instrument_id,
+                    canonical_code="600001.XSHG",
+                    exchange="XSHG",
+                    instrument_type=InstrumentType.EQUITY,
+                    currency="CNY",
+                    source_capture_id=capture.capture_id,
+                ),
+            ),
+        )
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="injected after reference normalization root",
+    ):
+        application.normalize(
+            captured.capture.capture_id,
+            normalizer,
+            _context("reference-roster-rollback-normalize", "NORMALIZE_MARKET_PIT"),
+        )
+
+    with psycopg.connect(database_url) as connection:
+        assert connection.execute(
+            "SELECT count(*) FROM mra.market_capture_reference_normalization "
+            "WHERE capture_id = %s",
+            (captured.capture.capture_id,),
+        ).fetchone() == (0,)
+        assert connection.execute(
+            "SELECT count(*) FROM mra.market_capture_instrument_normalization "
+            "WHERE capture_id = %s",
+            (captured.capture.capture_id,),
+        ).fetchone() == (0,)
+        assert connection.execute(
+            "SELECT count(*) FROM mra.instrument WHERE instrument_id = %s",
+            (instrument_id,),
+        ).fetchone() == (0,)
 
 
 def test_repeated_classification_identity_with_changed_business_fields_fails_closed(

@@ -23,12 +23,114 @@ from market_regime_alpha.runtime.errors import (
     RuntimeNotFoundError,
     RuntimeStateConflictError,
 )
+from market_regime_alpha.shared.hashing import canonical_json_sha256
 
 
 from market_regime_alpha.infrastructure.postgres.repositories._market_repository_support import _MarketRepositorySupport
 
 
 class _MarketReferenceRepository(_MarketRepositorySupport):
+    def _insert_reference_normalization(
+        self,
+        batch: NormalizationBatch,
+        *,
+        normalization_receipt_id: UUID,
+        recorded_at: datetime,
+    ) -> None:
+        typed_rosters = (
+            (
+                "INSTRUMENT",
+                "market_capture_instrument_normalization",
+                "instrument_id",
+                tuple(item.instrument_id.value for item in batch.instruments),
+            ),
+            (
+                "INSTRUMENT_IDENTIFIER",
+                "market_capture_instrument_identifier_normalization",
+                "instrument_identifier_id",
+                tuple(
+                    item.instrument_identifier_id
+                    for item in batch.instrument_identifiers
+                ),
+            ),
+            (
+                "TRADING_SESSION",
+                "market_capture_trading_session_normalization",
+                "session_id",
+                tuple(item.session_id.value for item in batch.trading_sessions),
+            ),
+            (
+                "CLASSIFICATION",
+                "market_capture_classification_normalization",
+                "classification_id",
+                tuple(item.classification_id for item in batch.classifications),
+            ),
+            (
+                "CLASSIFICATION_MEMBERSHIP",
+                "market_capture_classification_membership_normalization",
+                "membership_revision_id",
+                tuple(
+                    item.membership_revision_id
+                    for item in batch.classification_memberships
+                ),
+            ),
+        )
+        roster = tuple(
+            sorted(
+                (
+                    {
+                        "reference_id": reference_id,
+                        "reference_kind": reference_kind,
+                    }
+                    for reference_kind, _, _, identities in typed_rosters
+                    for reference_id in identities
+                ),
+                key=lambda item: (
+                    str(item["reference_kind"]),
+                    str(item["reference_id"]),
+                ),
+            )
+        )
+        roster_sha256 = canonical_json_sha256(roster)
+        content_sha256 = canonical_json_sha256(
+            {
+                "capture_id": batch.source_capture_id,
+                "normalization_receipt_id": normalization_receipt_id,
+                "reference_count": len(roster),
+                "reference_roster_sha256": roster_sha256,
+            }
+        )
+        self._connection.execute(
+            """
+            INSERT INTO mra.market_capture_reference_normalization (
+                capture_id, normalization_receipt_id, reference_count,
+                reference_roster_sha256, content_sha256, recorded_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s)
+            """,
+            (
+                batch.source_capture_id,
+                normalization_receipt_id,
+                len(roster),
+                roster_sha256,
+                content_sha256,
+                recorded_at,
+            ),
+        )
+        for _, table, identity_column, identities in typed_rosters:
+            if not identities:
+                continue
+            self._connection.cursor().executemany(
+                f"""
+                INSERT INTO mra.{table} (capture_id, {identity_column})
+                VALUES (%s, %s)
+                """,  # noqa: S608 -- closed local table/column catalog above
+                tuple(
+                    (batch.source_capture_id, identity)
+                    for identity in sorted(identities, key=str)
+                ),
+            )
+
     def register_provider(self, provider: Provider) -> int:
         self._connection.execute(
             "\n            INSERT INTO mra.provider (\n                provider_id, provider_code, display_name, provider_kind\n            )\n            VALUES (%s, %s, %s, %s)\n            ",

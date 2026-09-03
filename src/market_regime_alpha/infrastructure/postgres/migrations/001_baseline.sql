@@ -1317,6 +1317,134 @@ BEGIN
 END;
 $$;
 
+CREATE FUNCTION mra.validate_market_capture_reference_normalization_insert()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    capture_status text;
+    receipt_kind text;
+    receipt_scope text;
+    receipt_status text;
+BEGIN
+    SELECT capture.status, receipt.command_kind, receipt.scope_id, receipt.status
+    INTO capture_status, receipt_kind, receipt_scope, receipt_status
+    FROM mra.data_capture AS capture
+    JOIN mra.command_receipt AS receipt
+      ON receipt.receipt_id = NEW.normalization_receipt_id
+    WHERE capture.capture_id = NEW.capture_id
+    FOR SHARE OF capture, receipt;
+    IF NOT FOUND
+       OR capture_status <> 'CAPTURED'
+       OR receipt_kind <> 'NORMALIZE_MARKET_PIT'
+       OR receipt_scope <> NEW.capture_id::text
+       OR receipt_status <> 'PENDING' THEN
+        RAISE EXCEPTION 'Market reference normalization requires its exact pending normalization receipt'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.validate_market_capture_reference_child_insert()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE receipt_status text;
+BEGIN
+    SELECT receipt.status INTO receipt_status
+    FROM mra.market_capture_reference_normalization AS root
+    JOIN mra.command_receipt AS receipt
+      ON receipt.receipt_id = root.normalization_receipt_id
+    WHERE root.capture_id = NEW.capture_id
+    FOR SHARE OF root, receipt;
+    IF NOT FOUND OR receipt_status <> 'PENDING' THEN
+        RAISE EXCEPTION 'Market reference normalization roster is not open'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.validate_market_capture_reference_normalization_closure()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    receipt_status text;
+    receipt_kind text;
+    receipt_scope text;
+    receipt_aggregate_kind text;
+    receipt_aggregate_id text;
+    receipt_aggregate_version bigint;
+    actual_count integer;
+    actual_roster_sha256 text;
+    expected_content_sha256 text;
+BEGIN
+    SELECT status, command_kind, scope_id, result_aggregate_kind,
+           result_aggregate_id, result_aggregate_version
+    INTO receipt_status, receipt_kind, receipt_scope, receipt_aggregate_kind,
+         receipt_aggregate_id, receipt_aggregate_version
+    FROM mra.command_receipt
+    WHERE receipt_id = NEW.normalization_receipt_id;
+    IF receipt_status <> 'SUCCEEDED'
+       OR receipt_kind <> 'NORMALIZE_MARKET_PIT'
+       OR receipt_scope <> NEW.capture_id::text
+       OR receipt_aggregate_kind <> 'MARKET_NORMALIZATION'
+       OR receipt_aggregate_id <> NEW.capture_id::text
+       OR receipt_aggregate_version <> 1 THEN
+        RAISE EXCEPTION 'Market reference normalization receipt did not close successfully'
+            USING ERRCODE = '55000';
+    END IF;
+    WITH reference_roster AS (
+        SELECT 'INSTRUMENT'::text AS reference_kind,
+               instrument_id AS reference_id
+        FROM mra.market_capture_instrument_normalization
+        WHERE capture_id = NEW.capture_id
+        UNION ALL
+        SELECT 'INSTRUMENT_IDENTIFIER', instrument_identifier_id
+        FROM mra.market_capture_instrument_identifier_normalization
+        WHERE capture_id = NEW.capture_id
+        UNION ALL
+        SELECT 'TRADING_SESSION', session_id
+        FROM mra.market_capture_trading_session_normalization
+        WHERE capture_id = NEW.capture_id
+        UNION ALL
+        SELECT 'CLASSIFICATION', classification_id
+        FROM mra.market_capture_classification_normalization
+        WHERE capture_id = NEW.capture_id
+        UNION ALL
+        SELECT 'CLASSIFICATION_MEMBERSHIP', membership_revision_id
+        FROM mra.market_capture_classification_membership_normalization
+        WHERE capture_id = NEW.capture_id
+    )
+    SELECT count(*)::integer,
+           mra.canonical_sha256(mra.canonical_json_text(coalesce(jsonb_agg(
+               jsonb_build_object(
+                   'reference_id', reference_id,
+                   'reference_kind', reference_kind
+               ) ORDER BY reference_kind, reference_id
+           ), '[]'::jsonb)))
+    INTO actual_count, actual_roster_sha256
+    FROM reference_roster;
+    expected_content_sha256 := mra.canonical_sha256(mra.canonical_json_text(
+        jsonb_build_object(
+            'capture_id', NEW.capture_id,
+            'normalization_receipt_id', NEW.normalization_receipt_id,
+            'reference_count', NEW.reference_count,
+            'reference_roster_sha256', NEW.reference_roster_sha256
+        )
+    ));
+    IF actual_count <> NEW.reference_count
+       OR actual_roster_sha256 <> NEW.reference_roster_sha256
+       OR expected_content_sha256 <> NEW.content_sha256 THEN
+        RAISE EXCEPTION 'Market reference normalization roster is incomplete or changed'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
 CREATE FUNCTION mra.validate_instrument_fact_session()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -5053,6 +5181,66 @@ CREATE INDEX command_receipt_runtime_step_idx ON mra.command_receipt (runtime_st
     WHERE runtime_step_id IS NOT NULL;
 CREATE INDEX command_receipt_result_artifact_idx ON mra.command_receipt (result_artifact_id)
     WHERE result_artifact_id IS NOT NULL;
+
+CREATE TABLE mra.market_capture_reference_normalization (
+    capture_id uuid PRIMARY KEY REFERENCES mra.data_capture(capture_id) ON DELETE RESTRICT,
+    normalization_receipt_id uuid NOT NULL UNIQUE REFERENCES mra.command_receipt(receipt_id) ON DELETE RESTRICT,
+    reference_count integer NOT NULL,
+    reference_roster_sha256 text NOT NULL,
+    content_sha256 text NOT NULL,
+    recorded_at timestamptz NOT NULL,
+    CONSTRAINT market_capture_reference_normalization_shape_ck CHECK (
+        reference_count >= 0
+        AND reference_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+CREATE INDEX market_capture_reference_normalization_receipt_idx
+    ON mra.market_capture_reference_normalization (normalization_receipt_id, capture_id);
+
+CREATE TABLE mra.market_capture_instrument_normalization (
+    capture_id uuid NOT NULL REFERENCES mra.market_capture_reference_normalization(capture_id) ON DELETE RESTRICT,
+    instrument_id uuid NOT NULL REFERENCES mra.instrument(instrument_id) ON DELETE RESTRICT,
+    PRIMARY KEY (capture_id, instrument_id)
+);
+CREATE INDEX market_capture_instrument_normalization_identity_idx
+    ON mra.market_capture_instrument_normalization (instrument_id, capture_id);
+
+CREATE TABLE mra.market_capture_instrument_identifier_normalization (
+    capture_id uuid NOT NULL REFERENCES mra.market_capture_reference_normalization(capture_id) ON DELETE RESTRICT,
+    instrument_identifier_id uuid NOT NULL REFERENCES mra.instrument_identifier(instrument_identifier_id) ON DELETE RESTRICT,
+    PRIMARY KEY (capture_id, instrument_identifier_id)
+);
+CREATE INDEX market_capture_instrument_identifier_normalization_identity_idx
+    ON mra.market_capture_instrument_identifier_normalization (
+        instrument_identifier_id, capture_id
+    );
+
+CREATE TABLE mra.market_capture_trading_session_normalization (
+    capture_id uuid NOT NULL REFERENCES mra.market_capture_reference_normalization(capture_id) ON DELETE RESTRICT,
+    session_id uuid NOT NULL REFERENCES mra.trading_session(session_id) ON DELETE RESTRICT,
+    PRIMARY KEY (capture_id, session_id)
+);
+CREATE INDEX market_capture_trading_session_normalization_identity_idx
+    ON mra.market_capture_trading_session_normalization (session_id, capture_id);
+
+CREATE TABLE mra.market_capture_classification_normalization (
+    capture_id uuid NOT NULL REFERENCES mra.market_capture_reference_normalization(capture_id) ON DELETE RESTRICT,
+    classification_id uuid NOT NULL REFERENCES mra.classification(classification_id) ON DELETE RESTRICT,
+    PRIMARY KEY (capture_id, classification_id)
+);
+CREATE INDEX market_capture_classification_normalization_identity_idx
+    ON mra.market_capture_classification_normalization (classification_id, capture_id);
+
+CREATE TABLE mra.market_capture_classification_membership_normalization (
+    capture_id uuid NOT NULL REFERENCES mra.market_capture_reference_normalization(capture_id) ON DELETE RESTRICT,
+    membership_revision_id uuid NOT NULL REFERENCES mra.classification_membership_revision(membership_revision_id) ON DELETE RESTRICT,
+    PRIMARY KEY (capture_id, membership_revision_id)
+);
+CREATE INDEX market_capture_classification_membership_normalization_identity_idx
+    ON mra.market_capture_classification_membership_normalization (
+        membership_revision_id, capture_id
+    );
 
 CREATE TABLE mra.runtime_attempt (
     attempt_id uuid PRIMARY KEY,
@@ -10393,6 +10581,46 @@ FOR EACH ROW EXECUTE FUNCTION mra.validate_classification_membership_insert();
 CREATE TRIGGER classification_membership_gap_exclusive
 BEFORE INSERT ON mra.classification_membership_revision
 FOR EACH ROW EXECUTE FUNCTION mra.reject_fact_gap_duality();
+CREATE TRIGGER market_refnorm_insert_guard
+BEFORE INSERT ON mra.market_capture_reference_normalization
+FOR EACH ROW EXECUTE FUNCTION mra.validate_market_capture_reference_normalization_insert();
+CREATE TRIGGER market_refnorm_append_only
+BEFORE UPDATE OR DELETE ON mra.market_capture_reference_normalization
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE CONSTRAINT TRIGGER market_refnorm_closure_guard
+AFTER INSERT ON mra.market_capture_reference_normalization
+DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW EXECUTE FUNCTION mra.validate_market_capture_reference_normalization_closure();
+CREATE TRIGGER market_instrument_norm_insert_guard
+BEFORE INSERT ON mra.market_capture_instrument_normalization
+FOR EACH ROW EXECUTE FUNCTION mra.validate_market_capture_reference_child_insert();
+CREATE TRIGGER market_instrument_norm_append_only
+BEFORE UPDATE OR DELETE ON mra.market_capture_instrument_normalization
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER market_instrument_identifier_norm_insert_guard
+BEFORE INSERT ON mra.market_capture_instrument_identifier_normalization
+FOR EACH ROW EXECUTE FUNCTION mra.validate_market_capture_reference_child_insert();
+CREATE TRIGGER market_instrument_identifier_norm_append_only
+BEFORE UPDATE OR DELETE ON mra.market_capture_instrument_identifier_normalization
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER market_trading_session_norm_insert_guard
+BEFORE INSERT ON mra.market_capture_trading_session_normalization
+FOR EACH ROW EXECUTE FUNCTION mra.validate_market_capture_reference_child_insert();
+CREATE TRIGGER market_trading_session_norm_append_only
+BEFORE UPDATE OR DELETE ON mra.market_capture_trading_session_normalization
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER market_classification_norm_insert_guard
+BEFORE INSERT ON mra.market_capture_classification_normalization
+FOR EACH ROW EXECUTE FUNCTION mra.validate_market_capture_reference_child_insert();
+CREATE TRIGGER market_classification_norm_append_only
+BEFORE UPDATE OR DELETE ON mra.market_capture_classification_normalization
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER market_classification_membership_norm_insert_guard
+BEFORE INSERT ON mra.market_capture_classification_membership_normalization
+FOR EACH ROW EXECUTE FUNCTION mra.validate_market_capture_reference_child_insert();
+CREATE TRIGGER market_classification_membership_norm_append_only
+BEFORE UPDATE OR DELETE ON mra.market_capture_classification_membership_normalization
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
 CREATE TRIGGER market_bar_revision_append_only
 BEFORE UPDATE OR DELETE ON mra.market_bar_revision
 FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
@@ -17888,19 +18116,24 @@ STABLE
 AS $$
     WITH fact_revision AS (
         SELECT 'INSTRUMENT'::text AS revision_kind, instrument_id AS revision_id
-        FROM mra.instrument WHERE source_capture_id = target_capture_id
+        FROM mra.market_capture_instrument_normalization
+        WHERE capture_id = target_capture_id
         UNION ALL
         SELECT 'INSTRUMENT_IDENTIFIER', instrument_identifier_id
-        FROM mra.instrument_identifier WHERE source_capture_id = target_capture_id
+        FROM mra.market_capture_instrument_identifier_normalization
+        WHERE capture_id = target_capture_id
         UNION ALL
         SELECT 'TRADING_SESSION', session_id
-        FROM mra.trading_session WHERE source_capture_id = target_capture_id
+        FROM mra.market_capture_trading_session_normalization
+        WHERE capture_id = target_capture_id
         UNION ALL
         SELECT 'CLASSIFICATION', classification_id
-        FROM mra.classification WHERE source_capture_id = target_capture_id
+        FROM mra.market_capture_classification_normalization
+        WHERE capture_id = target_capture_id
         UNION ALL
         SELECT 'CLASSIFICATION_MEMBERSHIP', membership_revision_id
-        FROM mra.classification_membership_revision WHERE source_capture_id = target_capture_id
+        FROM mra.market_capture_classification_membership_normalization
+        WHERE capture_id = target_capture_id
         UNION ALL
         SELECT 'MARKET_BAR', bar_revision_id
         FROM mra.market_bar_revision WHERE capture_id = target_capture_id
@@ -17913,17 +18146,6 @@ AS $$
         UNION ALL
         SELECT 'SOURCE_GAP', gap_id
         FROM mra.source_gap WHERE capture_id = target_capture_id
-    ), normalized AS (
-        SELECT revision_kind, revision_id FROM fact_revision
-        UNION ALL
-        SELECT 'REFERENCE_RECONCILIATION', receipt.receipt_id
-        FROM mra.command_receipt AS receipt
-        WHERE receipt.command_kind = 'NORMALIZE_MARKET_PIT'
-          AND receipt.scope_id = target_capture_id::text
-          AND receipt.status = 'SUCCEEDED'
-          AND receipt.result_aggregate_kind = 'MARKET_NORMALIZATION'
-          AND receipt.result_aggregate_id = target_capture_id::text
-          AND NOT EXISTS (SELECT 1 FROM fact_revision)
     )
     SELECT count(*)::integer,
            mra.canonical_sha256(mra.canonical_json_text(coalesce(jsonb_agg(
@@ -17932,7 +18154,7 @@ AS $$
                    'revision_kind', revision_kind
                ) ORDER BY revision_kind, revision_id
            ), '[]'::jsonb)))
-    FROM normalized;
+    FROM fact_revision;
 $$;
 
 CREATE FUNCTION mra.validate_market_archive_observation()
@@ -18274,38 +18496,66 @@ BEGIN
     ) OR EXISTS (
         SELECT 1
         FROM mra.universe_member AS member
-        LEFT JOIN mra.classification AS classification
-          ON classification.classification_id = member.classification_id
-        LEFT JOIN mra.instrument AS instrument
-          ON instrument.instrument_id = member.instrument_id
         WHERE member.universe_revision_id = NEW.universe_revision_id
           AND (
               member.market_decision_visible_at > NEW.knowledge_cutoff
               OR (
-                  member.market_capture_id IS NOT NULL
+                  member.source_gap_id IS NOT NULL
                   AND NOT EXISTS (
                       SELECT 1
-                      FROM mra.market_archive_capture_observation AS observation
-                      WHERE observation.market_archive_id = NEW.market_archive_id
-                        AND observation.capture_id = member.market_capture_id
+                      FROM mra.source_gap AS gap
+                      WHERE gap.gap_id = member.source_gap_id
+                        AND (
+                            EXISTS (
+                                SELECT 1
+                                FROM mra.market_archive_capture_observation AS observation
+                                WHERE observation.market_archive_id = NEW.market_archive_id
+                                  AND observation.capture_id = gap.capture_id
+                                  AND observation.known_at <= NEW.knowledge_cutoff
+                            )
+                            OR EXISTS (
+                                SELECT 1
+                                FROM mra.market_archive_slice_gap AS binding
+                                WHERE binding.market_archive_id = NEW.market_archive_id
+                                  AND binding.gap_id = gap.gap_id
+                            )
+                        )
                   )
               )
               OR (
-                  classification.source_capture_id IS NOT NULL
+                  member.classification_id IS NOT NULL
                   AND NOT EXISTS (
                       SELECT 1
-                      FROM mra.market_archive_capture_observation AS observation
-                      WHERE observation.market_archive_id = NEW.market_archive_id
-                        AND observation.capture_id = classification.source_capture_id
+                      FROM mra.market_capture_classification_normalization AS binding
+                      JOIN mra.market_archive_capture_observation AS observation
+                        ON observation.capture_id = binding.capture_id
+                       AND observation.market_archive_id = NEW.market_archive_id
+                       AND observation.known_at <= NEW.knowledge_cutoff
+                      WHERE binding.classification_id = member.classification_id
                   )
               )
               OR (
-                  instrument.source_capture_id IS NOT NULL
+                  NOT EXISTS (
+                      SELECT 1
+                      FROM mra.market_capture_instrument_normalization AS binding
+                      JOIN mra.market_archive_capture_observation AS observation
+                        ON observation.capture_id = binding.capture_id
+                       AND observation.market_archive_id = NEW.market_archive_id
+                       AND observation.known_at <= NEW.knowledge_cutoff
+                      WHERE binding.instrument_id = member.instrument_id
+                  )
+              )
+              OR (
+                  member.classification_membership_revision_id IS NOT NULL
                   AND NOT EXISTS (
                       SELECT 1
-                      FROM mra.market_archive_capture_observation AS observation
-                      WHERE observation.market_archive_id = NEW.market_archive_id
-                        AND observation.capture_id = instrument.source_capture_id
+                      FROM mra.market_capture_classification_membership_normalization AS binding
+                      JOIN mra.market_archive_capture_observation AS observation
+                        ON observation.capture_id = binding.capture_id
+                       AND observation.market_archive_id = NEW.market_archive_id
+                       AND observation.known_at <= NEW.knowledge_cutoff
+                      WHERE binding.membership_revision_id =
+                            member.classification_membership_revision_id
                   )
               )
           )

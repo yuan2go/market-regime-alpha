@@ -33,7 +33,12 @@ from market_regime_alpha.infrastructure.postgres.repositories._market_capture_re
 
 class _MarketNormalizationRepository(_MarketReferenceRepository, _MarketCaptureRepository):
     def insert_normalization(
-        self, batch: NormalizationBatch, *, expected_artifact_sha256: ContentHash, expected_artifact_size: int
+        self,
+        batch: NormalizationBatch,
+        *,
+        normalization_receipt_id: UUID,
+        expected_artifact_sha256: ContentHash,
+        expected_artifact_size: int,
     ) -> DecisionTime:
         """Bind one Capture-owned normalization aggregate in the active transaction."""
         source = self.lock_capture_source(batch.source_capture_id)
@@ -78,6 +83,11 @@ class _MarketNormalizationRepository(_MarketReferenceRepository, _MarketCaptureR
             inserted_evidence |= self._insert_classification_membership(
                 membership, recorded_at=recorded_at, known_at=known_at
             )
+        self._insert_reference_normalization(
+            batch,
+            normalization_receipt_id=normalization_receipt_id,
+            recorded_at=recorded_at,
+        )
         for bar in sorted(
             batch.bars,
             key=lambda item: (
