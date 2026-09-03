@@ -231,7 +231,8 @@ class Wp17pEvaluationOperations:
                 prepared.experiment_run_id,
                 prepared.evaluation_protocol_id,
                 requested_knowledge_cutoff,
-                f"wp17p-{prepared.purpose.value.lower()}-evaluation-1",
+                f"wp{17 if catalog.backtest.generation == 1 else 18}-"
+                f"{prepared.purpose.value.lower()}-{str(prepared.experiment_id)[:8]}-evaluation-1",
                 catalog.backtest.code_artifact,
                 catalog.backtest.config_artifact,
                 catalog.backtest.provenance_sha256,
