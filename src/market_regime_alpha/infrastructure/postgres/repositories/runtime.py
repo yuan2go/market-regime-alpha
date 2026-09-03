@@ -216,6 +216,7 @@ class PostgresRuntimeRepository:
         self,
         *,
         attempt_id: UUID,
+        run_id: UUID | None,
         worker_id: str,
         lease_duration: timedelta,
     ) -> AttemptClaim | None:
@@ -233,6 +234,7 @@ class PostgresRuntimeRepository:
             FROM mra.runtime_step AS step
             JOIN mra.runtime_run AS run ON run.run_id = step.run_id
             WHERE run.state = 'RUNNING'
+              AND (%s::uuid IS NULL OR run.run_id = %s)
               AND step.state = 'READY'
               AND step.ready_at <= clock_timestamp()
               AND (step.deadline_at IS NULL OR step.deadline_at > clock_timestamp())
@@ -260,7 +262,8 @@ class PostgresRuntimeRepository:
             ORDER BY run.created_at, step.ordinal, step.step_id
             FOR UPDATE OF run, step SKIP LOCKED
             LIMIT 1
-            """
+            """,
+            (run_id, run_id),
         ).fetchone()
         if row is None:
             return None

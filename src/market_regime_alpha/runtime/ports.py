@@ -224,6 +224,7 @@ class RuntimeRepository(Protocol):
         self,
         *,
         attempt_id: UUID,
+        run_id: UUID | None,
         worker_id: str,
         lease_duration: timedelta,
     ) -> AttemptClaim | None: ...

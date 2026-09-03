@@ -219,6 +219,7 @@ class RuntimeApplication:
     def claim_next(
         self,
         *,
+        run_id: UUID | None = None,
         worker_id: str,
         lease_duration: timedelta,
         context: CommandContext,
@@ -226,13 +227,21 @@ class RuntimeApplication:
         if not worker_id:
             raise ValueError("worker_id is required")
         request_hash = canonical_json_sha256(
-            {"worker_id": worker_id, "lease_duration": lease_duration}
+            {
+                "lease_duration": lease_duration,
+                "run_id": run_id,
+                "worker_id": worker_id,
+            }
         )
         with self._uow_provider() as uow:
             receipt = uow.receipts.start(
                 receipt_id=self._id_factory(),
                 command_kind="CLAIM_RUNTIME_STEP",
-                scope_id="runtime-ready-queue",
+                scope_id=(
+                    "runtime-ready-queue"
+                    if run_id is None
+                    else f"runtime-run:{run_id}"
+                ),
                 idempotency_key=context.idempotency_key,
                 request_hash=request_hash,
             )
@@ -242,6 +251,7 @@ class RuntimeApplication:
                 return self._load_claim(UUID(receipt.result_aggregate_id))
             claim = uow.runtime.claim_next(
                 attempt_id=self._id_factory(),
+                run_id=run_id,
                 worker_id=worker_id,
                 lease_duration=lease_duration,
             )

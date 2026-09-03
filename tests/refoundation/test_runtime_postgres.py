@@ -206,6 +206,38 @@ def test_concurrent_claim_creates_one_live_attempt_and_database_fence(
     assert row == (1, 1, 1)
 
 
+def test_worker_can_claim_only_from_one_exact_runtime_run(
+    runtime_stack: tuple[RuntimeApplication, ArtifactApplication, TargetPostgresPool, str],
+) -> None:
+    application, artifacts, _, _ = runtime_stack
+    schedule = _schedule(application)
+    first_run = _run(
+        application,
+        artifacts,
+        schedule,
+        steps=(_step("capture-first", 1),),
+        key="first-run",
+    )
+    second_run = _run(
+        application,
+        artifacts,
+        schedule,
+        steps=(_step("capture-second", 1),),
+        key="second-run",
+    )
+
+    claim = application.claim_next(
+        run_id=second_run,
+        worker_id="scoped-worker",
+        lease_duration=timedelta(seconds=5),
+        context=_context("scoped-claim", reason="WORKER_CLAIM"),
+    )
+
+    assert claim is not None
+    assert claim.run_id == second_run
+    assert application.inspect_run(first_run).steps[0].state == "READY"
+
+
 def test_one_run_never_has_two_live_steps_even_when_nodes_are_parallel_ready(
     runtime_stack: tuple[RuntimeApplication, ArtifactApplication, TargetPostgresPool, str],
 ) -> None:
