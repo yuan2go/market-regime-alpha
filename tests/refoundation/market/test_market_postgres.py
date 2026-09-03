@@ -321,6 +321,214 @@ def test_repeated_identical_reference_capture_reconciles_without_replacing_first
         assert len(disposition[1]) == 64
 
 
+def test_repeated_classification_roster_reconciles_before_insert_guards(
+    market_stack,
+) -> None:
+    application, _, _, _, _, product, database_url = market_stack
+    instrument_id = uuid4()
+    classification_id = uuid4()
+    membership_id = uuid4()
+    effective_from = datetime(2026, 1, 5, tzinfo=UTC)
+    effective_to = effective_from + timedelta(days=1)
+    first = _capture(application, product, "classification-repeat-first", b"first")
+    second = _capture(application, product, "classification-repeat-second", b"second")
+
+    def batch(capture) -> NormalizationBatch:
+        return NormalizationBatch(
+            source_capture_id=capture.capture_id,
+            source_provider_product_id=capture.provider_product_id,
+            instruments=(
+                Instrument(
+                    instrument_id=instrument_id,
+                    canonical_code="600000.XSHG",
+                    exchange="XSHG",
+                    instrument_type=InstrumentType.EQUITY,
+                    currency="CNY",
+                    source_capture_id=capture.capture_id,
+                ),
+            ),
+            classifications=(
+                ClassificationRevision(
+                    classification_id=classification_id,
+                    classification_scheme="INDEX_MEMBERSHIP",
+                    classification_code="CSI300_REPEAT",
+                    display_name="CSI300 repeat fixture",
+                    revision=1,
+                    effective_from=effective_from,
+                    effective_to=effective_to,
+                    supersedes_classification_id=None,
+                    source_capture_id=capture.capture_id,
+                ),
+            ),
+            classification_memberships=(
+                ClassificationMembershipRevision(
+                    membership_revision_id=membership_id,
+                    classification_id=classification_id,
+                    instrument_id=instrument_id,
+                    source_capture_id=capture.capture_id,
+                    membership_status=MembershipStatus.MEMBER,
+                    effective_from=effective_from,
+                    effective_to=effective_to,
+                    revision=1,
+                    supersedes_membership_revision_id=None,
+                ),
+            ),
+        )
+
+    application.normalize(
+        first.capture.capture_id,
+        FixedNormalizer(batch),
+        _context("classification-repeat-normalize-first", "NORMALIZE_MARKET_PIT"),
+    )
+    application.normalize(
+        second.capture.capture_id,
+        FixedNormalizer(batch),
+        _context("classification-repeat-normalize-second", "NORMALIZE_MARKET_PIT"),
+    )
+
+    with psycopg.connect(database_url) as connection:
+        assert connection.execute(
+            "SELECT count(*) FROM mra.classification WHERE classification_id = %s",
+            (classification_id,),
+        ).fetchone() == (1,)
+        assert connection.execute(
+            "SELECT count(*) FROM mra.classification_membership_revision "
+            "WHERE membership_revision_id = %s",
+            (membership_id,),
+        ).fetchone() == (1,)
+
+
+def test_repeated_classification_identity_with_changed_business_fields_fails_closed(
+    market_stack,
+) -> None:
+    application, _, _, _, _, product, database_url = market_stack
+    classification_id = uuid4()
+    effective_from = datetime(2026, 1, 5, tzinfo=UTC)
+    first = _capture(application, product, "classification-change-first", b"first")
+    changed = _capture(application, product, "classification-change-second", b"second")
+
+    def batch(capture, *, display_name: str) -> NormalizationBatch:
+        return NormalizationBatch(
+            source_capture_id=capture.capture_id,
+            source_provider_product_id=capture.provider_product_id,
+            classifications=(
+                ClassificationRevision(
+                    classification_id=classification_id,
+                    classification_scheme="INDEX_MEMBERSHIP",
+                    classification_code="CSI300_CHANGED",
+                    display_name=display_name,
+                    revision=1,
+                    effective_from=effective_from,
+                    effective_to=effective_from + timedelta(days=1),
+                    supersedes_classification_id=None,
+                    source_capture_id=capture.capture_id,
+                ),
+            ),
+        )
+
+    application.normalize(
+        first.capture.capture_id,
+        FixedNormalizer(lambda capture: batch(capture, display_name="canonical")),
+        _context("classification-change-normalize-first", "NORMALIZE_MARKET_PIT"),
+    )
+    with pytest.raises(RuntimeStateConflictError, match="different business fields"):
+        application.normalize(
+            changed.capture.capture_id,
+            FixedNormalizer(lambda capture: batch(capture, display_name="changed")),
+            _context("classification-change-normalize-second", "NORMALIZE_MARKET_PIT"),
+        )
+
+    with psycopg.connect(database_url) as connection:
+        assert connection.execute(
+            "SELECT count(*), max(display_name) FROM mra.classification "
+            "WHERE classification_id = %s",
+            (classification_id,),
+        ).fetchone() == (1, "canonical")
+
+
+def test_concurrent_identical_classification_rosters_converge_on_one_authority(
+    market_stack,
+) -> None:
+    application, _, _, _, _, product, database_url = market_stack
+    instrument_id = uuid4()
+    classification_id = uuid4()
+    membership_id = uuid4()
+    effective_from = datetime(2026, 1, 5, tzinfo=UTC)
+    first = _capture(application, product, "classification-race-first", b"first")
+    second = _capture(application, product, "classification-race-second", b"second")
+    barrier = Barrier(2)
+
+    def normalize(captured, suffix: str):
+        return application.normalize(
+            captured.capture.capture_id,
+            BarrierNormalizer(
+                barrier,
+                lambda capture: NormalizationBatch(
+                    source_capture_id=capture.capture_id,
+                    source_provider_product_id=capture.provider_product_id,
+                    instruments=(
+                        Instrument(
+                            instrument_id=instrument_id,
+                            canonical_code="600000.XSHG",
+                            exchange="XSHG",
+                            instrument_type=InstrumentType.EQUITY,
+                            currency="CNY",
+                            source_capture_id=capture.capture_id,
+                        ),
+                    ),
+                    classifications=(
+                        ClassificationRevision(
+                            classification_id=classification_id,
+                            classification_scheme="INDEX_MEMBERSHIP",
+                            classification_code="CSI300_RACE",
+                            display_name="CSI300 race fixture",
+                            revision=1,
+                            effective_from=effective_from,
+                            effective_to=effective_from + timedelta(days=1),
+                            supersedes_classification_id=None,
+                            source_capture_id=capture.capture_id,
+                        ),
+                    ),
+                    classification_memberships=(
+                        ClassificationMembershipRevision(
+                            membership_revision_id=membership_id,
+                            classification_id=classification_id,
+                            instrument_id=instrument_id,
+                            source_capture_id=capture.capture_id,
+                            membership_status=MembershipStatus.MEMBER,
+                            effective_from=effective_from,
+                            effective_to=effective_from + timedelta(days=1),
+                            revision=1,
+                            supersedes_membership_revision_id=None,
+                        ),
+                    ),
+                ),
+            ),
+            _context(f"classification-race-normalize-{suffix}", "NORMALIZE_MARKET_PIT"),
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = tuple(
+            future.result(timeout=20)
+            for future in (
+                executor.submit(normalize, first, "first"),
+                executor.submit(normalize, second, "second"),
+            )
+        )
+
+    assert all(result.replayed is False for result in results)
+    with psycopg.connect(database_url) as connection:
+        assert connection.execute(
+            "SELECT count(*) FROM mra.classification WHERE classification_id = %s",
+            (classification_id,),
+        ).fetchone() == (1,)
+        assert connection.execute(
+            "SELECT count(*) FROM mra.classification_membership_revision "
+            "WHERE membership_revision_id = %s",
+            (membership_id,),
+        ).fetchone() == (1,)
+
+
 def test_repeated_reference_capture_with_changed_business_fields_fails_closed(
     market_stack,
 ) -> None:

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
+from uuid import UUID
 
 
 from market_regime_alpha.market.domain import (
@@ -192,6 +194,17 @@ class _MarketReferenceRepository(_MarketRepositorySupport):
 
     def _insert_classification(self, item: ClassificationRevision, *, recorded_at: datetime, known_at: datetime) -> bool:
         self._validate_classification_predecessor(item)
+        self._connection.execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+            (
+                "mra:classification:"
+                f"{item.classification_scheme}:{item.classification_code}",
+            ),
+        )
+        existing = self._classification_business_row(item.classification_id)
+        if existing is not None:
+            self._reconcile_classification(item, existing)
+            return False
         inserted = self._connection.execute(
             "\n            INSERT INTO mra.classification (\n                classification_id, classification_scheme,\n                classification_code, display_name, revision,\n                effective_from, effective_to,\n                supersedes_classification_id, source_capture_id, recorded_at,\n                known_at, decision_visible_at\n            )\n            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)\n            ON CONFLICT DO NOTHING\n            RETURNING classification_id\n            ",
             (
@@ -211,7 +224,16 @@ class _MarketReferenceRepository(_MarketRepositorySupport):
         ).fetchone()
         if inserted is not None:
             return True
-        row = self._connection.execute(
+        self._reconcile_classification(
+            item,
+            self._classification_business_row(item.classification_id),
+        )
+        return False
+
+    def _classification_business_row(
+        self, classification_id: UUID
+    ) -> tuple[Any, ...] | None:
+        return self._connection.execute(
             """
             SELECT classification_id, classification_scheme,
                    classification_code, display_name, revision,
@@ -221,8 +243,13 @@ class _MarketReferenceRepository(_MarketRepositorySupport):
             WHERE classification_id = %s
             FOR SHARE
             """,
-            (item.classification_id,),
+            (classification_id,),
         ).fetchone()
+
+    @staticmethod
+    def _reconcile_classification(
+        item: ClassificationRevision, row: tuple[Any, ...] | None
+    ) -> None:
         if row != (
             item.classification_id,
             item.classification_scheme,
@@ -236,12 +263,35 @@ class _MarketReferenceRepository(_MarketRepositorySupport):
             raise RuntimeStateConflictError(
                 "Classification identity already exists with different business fields"
             )
-        return False
 
     def _insert_classification_membership(
         self, item: ClassificationMembershipRevision, *, recorded_at: datetime, known_at: datetime
     ) -> bool:
         self._validate_membership_predecessor(item)
+        classification = self._connection.execute(
+            """
+            SELECT classification_scheme, classification_code
+            FROM mra.classification
+            WHERE classification_id = %s
+            FOR SHARE
+            """,
+            (item.classification_id,),
+        ).fetchone()
+        if classification is None:
+            raise RuntimeNotFoundError(
+                f"Classification {item.classification_id} does not exist"
+            )
+        self._connection.execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+            (
+                "mra:classification-membership:"
+                f"{classification[0]}:{classification[1]}:{item.instrument_id}",
+            ),
+        )
+        existing = self._membership_business_row(item.membership_revision_id)
+        if existing is not None:
+            self._reconcile_membership(item, existing)
+            return False
         inserted = self._connection.execute(
             "\n            INSERT INTO mra.classification_membership_revision (\n                membership_revision_id, classification_id, instrument_id,\n                source_capture_id, membership_status, effective_from,\n                effective_to, revision, supersedes_membership_revision_id,\n                recorded_at, known_at, decision_visible_at\n            )\n            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)\n            ON CONFLICT DO NOTHING\n            RETURNING membership_revision_id\n            ",
             (
@@ -261,7 +311,16 @@ class _MarketReferenceRepository(_MarketRepositorySupport):
         ).fetchone()
         if inserted is not None:
             return True
-        row = self._connection.execute(
+        self._reconcile_membership(
+            item,
+            self._membership_business_row(item.membership_revision_id),
+        )
+        return False
+
+    def _membership_business_row(
+        self, membership_revision_id: UUID
+    ) -> tuple[Any, ...] | None:
+        return self._connection.execute(
             """
             SELECT membership_revision_id, classification_id, instrument_id,
                    membership_status, effective_from, effective_to, revision,
@@ -270,8 +329,13 @@ class _MarketReferenceRepository(_MarketRepositorySupport):
             WHERE membership_revision_id = %s
             FOR SHARE
             """,
-            (item.membership_revision_id,),
+            (membership_revision_id,),
         ).fetchone()
+
+    @staticmethod
+    def _reconcile_membership(
+        item: ClassificationMembershipRevision, row: tuple[Any, ...] | None
+    ) -> None:
         if row != (
             item.membership_revision_id,
             item.classification_id,
@@ -285,7 +349,6 @@ class _MarketReferenceRepository(_MarketRepositorySupport):
             raise RuntimeStateConflictError(
                 "ClassificationMembership identity already exists with different business fields"
             )
-        return False
 
     def _validate_product_capabilities(self, batch: NormalizationBatch) -> None:
         row = self._connection.execute(
