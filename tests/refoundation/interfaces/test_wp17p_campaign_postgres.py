@@ -217,17 +217,20 @@ def test_canonical_wp17p_fit_model_validation_chain(target_database_url, tmp_pat
                         1,
                         None,
                     ),
-                    InstrumentLifecycleFactRevision(
-                        uuid4(),
-                        product.provider_product_id,
-                        capture_id,
-                        instrument_id,
-                        InstrumentFactKind.SPECIAL_TREATMENT_STATUS,
-                        SpecialTreatmentStatus.NORMAL,
-                        datetime(2020, 1, 1, tzinfo=UTC),
-                        None,
-                        1,
-                        None,
+                    *(
+                        InstrumentLifecycleFactRevision(
+                            uuid4(),
+                            product.provider_product_id,
+                            capture_id,
+                            instrument_id,
+                            InstrumentFactKind.SPECIAL_TREATMENT_STATUS,
+                            SpecialTreatmentStatus.NORMAL,
+                            session_by_date[session_date].open_at,
+                            session_by_date[session_date].close_at,
+                            1,
+                            None,
+                        )
+                        for session_date in (date(2026, 1, 5), date(2026, 1, 14))
                     ),
                 )
             ),
@@ -357,7 +360,14 @@ def test_canonical_wp17p_fit_model_validation_chain(target_database_url, tmp_pat
               (SELECT count(*) FROM mra.model_version)
             """
         ).fetchone()
+        decision_times = connection.execute(
+            """
+            SELECT DISTINCT (decision_time AT TIME ZONE 'Asia/Shanghai')::time
+            FROM mra.decision_run
+            """
+        ).fetchall()
     assert counts == (3, 3, 96, 2, 2, 1)
+    assert decision_times == [(time(14, 55),)]
 
 
 def _session(session_date: date, capture_id):
