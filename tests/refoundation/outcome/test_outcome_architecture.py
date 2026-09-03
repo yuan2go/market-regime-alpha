@@ -135,8 +135,6 @@ def test_outcome_boundary_admits_wp11_through_wp13_but_no_later_authority_tables
         assert f"CREATE TABLE mra.{table}" in baseline
     for table in (
         "evaluation_dataset",
-        "model",
-        "model_version",
         "calibration",
     ):
         assert f"CREATE TABLE mra.{table} (" not in baseline

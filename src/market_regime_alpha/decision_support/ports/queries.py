@@ -6,7 +6,10 @@ from dataclasses import dataclass
 from typing import Protocol
 from uuid import UUID
 
-from market_regime_alpha.decision_support.domain import DecisionRunAuthority
+from market_regime_alpha.decision_support.domain import (
+    DecisionRunAuthority,
+    ExploratoryRetrospectiveDecisionScope,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -14,6 +17,9 @@ class DecisionRunSnapshot:
     authority: DecisionRunAuthority
     receipt_id: UUID
     result_hash: str
+    exploratory_retrospective_scope: (
+        ExploratoryRetrospectiveDecisionScope | None
+    ) = None
 
 
 class DecisionRunQueryProvider(Protocol):

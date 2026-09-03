@@ -27,13 +27,23 @@ from market_regime_alpha.infrastructure.postgres.schema import (
     SchemaMissingError,
 )
 from market_regime_alpha.infrastructure.postgres.queries import (
+    PostgresArchiveInspectionPort,
+    PostgresArchiveTradingSessionReadPort,
     PostgresCandidateQueryProvider,
 )
+from market_regime_alpha.infrastructure.postgres.queries.exploratory_backtests import (
+    PostgresExploratoryBacktestVerificationPort,
+)
 from market_regime_alpha.interfaces.cli import main
+from market_regime_alpha.market.application import (
+    ArchiveCommands,
+    MarketArchiveOperations,
+)
 from market_regime_alpha.runtime.application import ActorType, CommandContext
 from market_regime_alpha.research_qualification.application import (
     EvaluationCommands,
     ExperimentCommands,
+    ExploratoryBacktestCommands,
     ResearchPartitionCommands,
     ResearchEvaluationVerifier,
 )
@@ -137,7 +147,19 @@ def test_mra_db_bootstrap_verify_and_runtime_inspection_smoke(
         assert isinstance(application.decision_support_verifier, DecisionRunVerifier)
         assert isinstance(application.research_partitions, ResearchPartitionCommands)
         assert isinstance(application.research_experiments, ExperimentCommands)
+        assert isinstance(application.exploratory_backtests, ExploratoryBacktestCommands)
+        assert isinstance(
+            application.exploratory_backtest_verifier,
+            PostgresExploratoryBacktestVerificationPort,
+        )
         assert isinstance(application.research_evaluations, EvaluationCommands)
+        assert isinstance(application.market_archives, ArchiveCommands)
+        assert isinstance(application.archive_operations, MarketArchiveOperations)
+        assert isinstance(application.archive_inspection, PostgresArchiveInspectionPort)
+        assert isinstance(
+            application.archive_trading_sessions,
+            PostgresArchiveTradingSessionReadPort,
+        )
         assert isinstance(
             application.research_evaluation_verifier,
             ResearchEvaluationVerifier,

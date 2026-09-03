@@ -4,6 +4,9 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
+import shutil
+from threading import Barrier
+from typing import Any, Callable
 
 import pytest
 
@@ -121,15 +124,55 @@ def test_normalized_owner_requires_exact_registered_raw_parent(
 def test_concurrent_registration_is_idempotent(
     postgres_factory: PostgresConnectionFactory,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repository = PostgresHistoricalCorpusRepository(postgres_factory, artifact_root=tmp_path)
     raw = raw_owner()
     package = load_verified_historical_package(publish_historical_package(artifact_root=tmp_path, owner=raw))
+    barrier = Barrier(8)
+    run_transaction = postgres_factory.run_transaction
 
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        tuple(executor.map(lambda _: repository.register(package), range(2)))
+    def synchronized_transaction(
+        operation: Callable[[Any], Any],
+        **kwargs: Any,
+    ) -> Any:
+        synchronized = False
+
+        def synchronized_operation(connection: Any) -> Any:
+            nonlocal synchronized
+            if not synchronized:
+                synchronized = True
+                barrier.wait(timeout=10)
+            return operation(connection)
+
+        return run_transaction(synchronized_operation, **kwargs)
+
+    monkeypatch.setattr(postgres_factory, "run_transaction", synchronized_transaction)
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        tuple(executor.map(lambda _: repository.register(package), range(16)))
 
     assert repository.load(raw.reference).owner == raw
+
+
+def test_registered_owner_rejects_a_changed_package_locator(
+    postgres_factory: PostgresConnectionFactory,
+    tmp_path: Path,
+) -> None:
+    repository = PostgresHistoricalCorpusRepository(
+        postgres_factory,
+        artifact_root=tmp_path,
+    )
+    raw = raw_owner()
+    package = load_verified_historical_package(
+        publish_historical_package(artifact_root=tmp_path, owner=raw)
+    )
+    repository.register(package)
+    relocated_root = tmp_path / "relocated" / package.root.name
+    shutil.copytree(package.root, relocated_root)
+
+    with pytest.raises(HistoricalCorpusIntegrityError, match="identity conflict"):
+        repository.register(load_verified_historical_package(relocated_root))
 
 
 def test_registered_package_corruption_fails_closed(

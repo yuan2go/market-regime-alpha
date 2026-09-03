@@ -51,8 +51,6 @@ def test_wp12_has_no_runtime_dispatch_cli_cutover_or_later_authority() -> None:
         SRC / "infrastructure" / "postgres" / "migrations" / "001_baseline.sql"
     ).read_text()
     for table in (
-        "model",
-        "model_version",
         "calibration",
         "trade_outcome",
     ):

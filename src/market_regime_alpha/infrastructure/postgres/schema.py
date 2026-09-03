@@ -23,6 +23,11 @@ from market_regime_alpha.decision_support.domain.vocabulary import (
     DecisionRuntimeMode,
 )
 from market_regime_alpha.market.domain import (
+    ArchiveEvidenceClass,
+    ArchiveLane,
+    ArchiveObservationRelation,
+    ArchiveObservationTimeliness,
+    ArchiveSealDisposition,
     BarTimeframe,
     CaptureStatus,
     CorporateActionType,
@@ -200,6 +205,23 @@ EXPECTED_MARKET_TABLES: Final[frozenset[str]] = frozenset(
         "qualified_classification_membership_visibility",
         "qualified_trading_session_visibility",
         "qualified_source_gap_visibility",
+        "market_archive",
+        "market_archive_slice",
+        "market_archive_capture_observation",
+        "market_archive_slice_gap",
+        "market_archive_resource_stop",
+        "market_archive_seal",
+    }
+)
+
+EXPECTED_MARKET_ARCHIVE_TABLES: Final[frozenset[str]] = frozenset(
+    {
+        "market_archive",
+        "market_archive_slice",
+        "market_archive_capture_observation",
+        "market_archive_slice_gap",
+        "market_archive_resource_stop",
+        "market_archive_seal",
     }
 )
 
@@ -212,6 +234,8 @@ EXPECTED_SELECTION_CORE_TABLES: Final[frozenset[str]] = frozenset(
         "eligibility_rule",
         "eligibility_assessment",
         "eligibility_reason",
+        "exploratory_retrospective_universe_revision",
+        "exploratory_retrospective_eligibility_batch",
     }
 )
 
@@ -235,6 +259,7 @@ EXPECTED_RESEARCH_DEFINITION_TABLES: Final[frozenset[str]] = frozenset(
         "dataset_source",
         "feature_definition",
         "formal_research_dataset",
+        "exploratory_retrospective_dataset",
     }
 )
 
@@ -255,6 +280,7 @@ EXPECTED_DECISION_SUPPORT_TABLES: Final[frozenset[str]] = frozenset(
         "decision_run_target",
         "decision_target_commitment",
         "decision_reference_observation",
+        "exploratory_retrospective_decision_run",
     }
 )
 
@@ -286,6 +312,7 @@ EXPECTED_INFERENCE_TABLES: Final[frozenset[str]] = frozenset(
         "forecast_run",
         "forecast",
         "forecast_estimate",
+        "forecast_model_binding",
     }
 )
 
@@ -337,6 +364,18 @@ EXPECTED_RESEARCH_VALIDITY_TABLES: Final[frozenset[str]] = frozenset(
     }
 )
 
+EXPECTED_EXPLORATORY_EVALUATION_SOURCE_TABLES: Final[frozenset[str]] = frozenset(
+    {
+        "evaluation_backtest_arm_source",
+        "evaluation_candidate_source",
+        "evaluation_signal_source",
+        "evaluation_forecast_source",
+        "evaluation_portfolio_source",
+        "evaluation_portfolio_cost_source",
+        "evaluation_risk_source",
+    }
+)
+
 EXPECTED_RESEARCH_QUALIFICATION_TABLES: Final[frozenset[str]] = frozenset(
     {
         "evidence_item",
@@ -361,6 +400,28 @@ EXPECTED_RESEARCH_QUALIFICATION_TABLES: Final[frozenset[str]] = frozenset(
     }
 )
 
+EXPECTED_EXPLORATORY_BACKTEST_TABLES: Final[frozenset[str]] = frozenset(
+    {
+        "exploratory_backtest_run",
+        "exploratory_backtest_feature",
+        "exploratory_backtest_arm",
+        "exploratory_backtest_fold",
+        "exploratory_backtest_fold_session",
+        "exploratory_backtest_cost_assumption",
+        "exploratory_backtest_dataset",
+    }
+)
+
+EXPECTED_MODEL_TABLES: Final[frozenset[str]] = frozenset(
+    {
+        "model",
+        "model_feature_definition",
+        "model_training_run",
+        "model_training_sample",
+        "model_version",
+    }
+)
+
 EXPECTED_TARGET_TABLES: Final[frozenset[str]] = (
     EXPECTED_FOUNDATION_TABLES
     | EXPECTED_MARKET_TABLES
@@ -376,7 +437,10 @@ EXPECTED_TARGET_TABLES: Final[frozenset[str]] = (
     | EXPECTED_RISK_TABLES
     | EXPECTED_OUTCOME_TABLES
     | EXPECTED_RESEARCH_VALIDITY_TABLES
+    | EXPECTED_EXPLORATORY_EVALUATION_SOURCE_TABLES
     | EXPECTED_RESEARCH_QUALIFICATION_TABLES
+    | EXPECTED_EXPLORATORY_BACKTEST_TABLES
+    | EXPECTED_MODEL_TABLES
 )
 
 _LEGACY_TABLE_SIGNATURES: Final[frozenset[str]] = frozenset(
@@ -393,6 +457,19 @@ _LEGACY_TABLE_SIGNATURES: Final[frozenset[str]] = frozenset(
 )
 
 _REFERENCE_VOCABULARY: Final[dict[str, tuple[str, ...]]] = {
+    "market_archive_lane": tuple(item.value for item in ArchiveLane),
+    "market_archive_evidence_class": tuple(
+        item.value for item in ArchiveEvidenceClass
+    ),
+    "market_archive_observation_relation": tuple(
+        item.value for item in ArchiveObservationRelation
+    ),
+    "market_archive_observation_timeliness": tuple(
+        item.value for item in ArchiveObservationTimeliness
+    ),
+    "market_archive_seal_disposition": tuple(
+        item.value for item in ArchiveSealDisposition
+    ),
     "provider_kind": tuple(item.value for item in ProviderKind),
     "provider_qualification_purpose": tuple(
         item.value for item in ProviderQualificationPurpose
@@ -1690,9 +1767,12 @@ __all__ = [
     "CatalogDriftError",
     "DatabaseIdentity",
     "EXPECTED_DECISION_SUPPORT_TABLES",
+    "EXPECTED_EXPLORATORY_BACKTEST_TABLES",
+    "EXPECTED_EXPLORATORY_EVALUATION_SOURCE_TABLES",
     "EXPECTED_CONTEXT_TABLES",
     "EXPECTED_FOUNDATION_TABLES",
     "EXPECTED_MARKET_TABLES",
+    "EXPECTED_MODEL_TABLES",
     "EXPECTED_OUTCOME_TABLES",
     "EXPECTED_RESEARCH_DEFINITION_TABLES",
     "EXPECTED_RESEARCH_QUALIFICATION_TABLES",

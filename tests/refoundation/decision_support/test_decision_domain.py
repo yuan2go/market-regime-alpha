@@ -16,6 +16,8 @@ from market_regime_alpha.decision_support.domain import (
     DecisionReferenceSourceKind,
     DecisionReferenceValueStatus,
     DecisionRuntimeMode,
+    ExploratoryRetrospectiveDecisionScope,
+    PreparedDecisionInputs,
     PreparedDecisionReference,
     ProviderProductDecisionSnapshot,
     ResearchPurpose,
@@ -278,6 +280,99 @@ def test_reference_state_axes_are_independent_but_source_shape_is_closed() -> No
             ),
             observation_id_factory=lambda commitment_id: UUID(
                 int=commitment_id.int ^ 99
+            ),
+        )
+
+
+def test_retrospective_dual_clock_allows_late_archived_reference_only_through_typed_scope() -> None:
+    late = replace(
+        _references()[0],
+        recorded_at=datetime(2026, 9, 3, 1, 0, tzinfo=UTC),
+        known_at=datetime(2026, 9, 3, 1, 1, tzinfo=UTC),
+    )
+    references = (late, *_references()[1:])
+    scope = ExploratoryRetrospectiveDecisionScope(
+        dataset_id=_candidate_snapshot().dataset_id,
+        exploratory_backtest_run_id=_uuid(920),
+        exploratory_backtest_arm_id=_uuid(921),
+        exploratory_backtest_fold_id=_uuid(922),
+        exploratory_backtest_fold_session_id=_uuid(923),
+        market_archive_id=_uuid(924),
+        market_archive_seal_id=_uuid(925),
+        knowledge_cutoff=datetime(2026, 9, 3, 2, 0, tzinfo=UTC),
+        simulated_event_cutoff=DECISION_TIME,
+    )
+    prepared = PreparedDecisionInputs(
+        candidate_set=_candidate_snapshot(),
+        targets=(_target_snapshot(),),
+        references=references,
+        runtime=_runtime(),
+        research_qualifications=(),
+        exploratory_retrospective_scope=scope,
+    )
+
+    authority = build_decision_authority(
+        decision_run_id=_uuid(926),
+        command_receipt_id=_uuid(927),
+        candidate_set=prepared.candidate_set,
+        targets=prepared.targets,
+        references=prepared.references,
+        runtime=prepared.runtime,
+        research_purpose=ResearchPurpose.DISCOVERY,
+        research_qualifications=(),
+        request_identity="retrospective-dual-clock",
+        request_sha256="8" * 64,
+        request_received_at=datetime(2026, 9, 3, 2, 1, tzinfo=UTC),
+        commitment_recorded_at=datetime(2026, 9, 3, 2, 2, tzinfo=UTC),
+        actor_type="WORKER",
+        actor_id="backtest-worker",
+        reason_code="OPEN_DECISION_RUN",
+        qualification_roster_id=_uuid(928),
+        qualification_member_id_factory=lambda item, ordinal: _uuid(929),
+        commitment_id_factory=lambda candidate, target: UUID(
+            int=candidate.candidate_id.int ^ target.target_definition_id.int
+        ),
+        observation_id_factory=lambda commitment_id: UUID(
+            int=commitment_id.int ^ 99
+        ),
+        exploratory_retrospective_scope=scope,
+    )
+
+    assert authority.reference_count == 3
+    assert authority.commitments[0].reference.prepared.known_at > DECISION_TIME
+
+
+def test_retrospective_scope_rejects_operational_or_mismatched_simulation() -> None:
+    scope = ExploratoryRetrospectiveDecisionScope(
+        dataset_id=_candidate_snapshot().dataset_id,
+        exploratory_backtest_run_id=_uuid(930),
+        exploratory_backtest_arm_id=_uuid(931),
+        exploratory_backtest_fold_id=_uuid(932),
+        exploratory_backtest_fold_session_id=_uuid(933),
+        market_archive_id=_uuid(934),
+        market_archive_seal_id=_uuid(935),
+        knowledge_cutoff=datetime(2026, 9, 3, 2, 0, tzinfo=UTC),
+        simulated_event_cutoff=DECISION_TIME,
+    )
+    with pytest.raises(ValueError, match="HISTORICAL or REPLAY"):
+        PreparedDecisionInputs(
+            candidate_set=_candidate_snapshot(),
+            targets=(_target_snapshot(),),
+            references=_references(),
+            runtime=replace(_runtime(), runtime_mode=DecisionRuntimeMode.OPERATIONAL),
+            research_qualifications=(),
+            exploratory_retrospective_scope=scope,
+        )
+    with pytest.raises(ValueError, match="simulation cutoff"):
+        PreparedDecisionInputs(
+            candidate_set=_candidate_snapshot(),
+            targets=(_target_snapshot(),),
+            references=_references(),
+            runtime=_runtime(),
+            research_qualifications=(),
+            exploratory_retrospective_scope=replace(
+                scope,
+                simulated_event_cutoff=datetime(2026, 8, 28, 6, 54, tzinfo=UTC),
             ),
         )
 

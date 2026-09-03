@@ -92,7 +92,7 @@ def test_research_uses_an_independent_narrow_uow_and_target_composes_it() -> Non
     assert "PostgresResearchUnitOfWorkProvider(pool)" in bootstrap
 
 
-def test_research_definition_core_contains_no_future_authority_or_framework() -> None:
+def test_research_core_contains_no_generic_framework_or_cross_owner_shortcut() -> None:
     source = "\n".join(
         path.read_text(encoding="utf-8") for path in RESEARCH.rglob("*.py")
     )
@@ -102,7 +102,6 @@ def test_research_definition_core_contains_no_future_authority_or_framework() ->
         "WorkflowEngine",
         "ServiceLocator",
         "GenericRegistry",
-        "ModelVersion",
         "QualificationAssessment",
         "CandidateSet",
     )
@@ -126,9 +125,9 @@ def test_research_definition_core_contains_no_future_authority_or_framework() ->
 def test_research_stable_export_files_remain_small() -> None:
     limits = {
         RESEARCH / "__init__.py": 20,
-        RESEARCH / "application/__init__.py": 30,
-        RESEARCH / "domain/__init__.py": 95,
-        RESEARCH / "ports/__init__.py": 55,
+        RESEARCH / "application/__init__.py": 40,
+        RESEARCH / "domain/__init__.py": 120,
+        RESEARCH / "ports/__init__.py": 120,
     }
     for path, limit in limits.items():
         assert len(path.read_text(encoding="utf-8").splitlines()) <= limit
@@ -136,7 +135,7 @@ def test_research_stable_export_files_remain_small() -> None:
 
 def test_research_application_facade_does_not_become_a_god_service() -> None:
     facade = (RESEARCH / "application/service.py").read_text(encoding="utf-8")
-    assert len(facade.splitlines()) <= 115
+    assert len(facade.splitlines()) <= 140
     assert "with self._uow_provider()" not in facade
     assert "target_uow_provider: TargetUnitOfWorkProvider" in facade
     assert "TargetDefinitionCommands(\n            target_uow_provider" in facade

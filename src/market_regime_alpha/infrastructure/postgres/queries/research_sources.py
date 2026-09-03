@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -47,6 +48,7 @@ class PostgresResearchSourceQueries:
         eligibility_policy_id: UUID,
         decision_time: DecisionTime,
         lock: bool,
+        exploratory_scope=None,
     ) -> tuple[DatasetPopulationMember, ...]:
         lock_scope = " FOR SHARE OF revision, policy" if lock else ""
         scope = self._connection.execute(
@@ -69,6 +71,47 @@ class PostgresResearchSourceQueries:
             raise RuntimeNotFoundError(
                 "Dataset Selection scope does not exist at the exact DecisionTime"
             )
+        retrospective = self._connection.execute(
+            """
+            SELECT universe.market_archive_id,
+                   universe.market_archive_seal_id,
+                   universe.knowledge_cutoff,
+                   universe.simulated_event_cutoff,
+                   universe.scope_content_sha256,
+                   eligibility.market_archive_id,
+                   eligibility.market_archive_seal_id,
+                   eligibility.knowledge_cutoff,
+                   eligibility.simulated_event_cutoff,
+                   eligibility.scope_content_sha256
+            FROM mra.exploratory_retrospective_universe_revision AS universe
+            JOIN mra.exploratory_retrospective_eligibility_batch AS eligibility
+              ON eligibility.universe_revision_id = universe.universe_revision_id
+            WHERE universe.universe_revision_id = %s
+              AND eligibility.eligibility_policy_id = %s
+            """
+            + (" FOR SHARE OF universe, eligibility" if lock else ""),
+            (universe_revision_id, eligibility_policy_id),
+        ).fetchone()
+        if exploratory_scope is None:
+            if retrospective is not None:
+                raise RuntimeStateConflictError(
+                    "retrospective Selection population requires an exploratory Dataset scope"
+                )
+        else:
+            expected = (
+                exploratory_scope.market_archive_id,
+                exploratory_scope.market_archive_seal_id,
+                exploratory_scope.knowledge_cutoff,
+                exploratory_scope.simulated_event_cutoff,
+                str(exploratory_scope.content_sha256),
+            )
+            if retrospective is not None and (
+                tuple(retrospective[:5]) != expected
+                or tuple(retrospective[5:]) != expected
+            ):
+                raise RuntimeStateConflictError(
+                    "exploratory Dataset requires the exact retrospective Selection scope"
+                )
         lock_rows = " FOR SHARE OF member, assessment" if lock else ""
         rows = self._connection.execute(
             """
@@ -381,6 +424,123 @@ class PostgresResearchSourceQueries:
                 "one or more Formal Dataset sources lack qualified visibility"
             )
         return tuple(sorted(observations, key=lambda item: str(item.dataset_source_id)))
+
+    def exploratory_market_source_observations(
+        self,
+        sources: tuple[DatasetSource, ...],
+        *,
+        market_archive_id: UUID,
+        market_archive_seal_id: UUID,
+        knowledge_cutoff: datetime,
+        simulated_event_cutoff: datetime,
+        lock: bool,
+    ) -> tuple[DatasetMarketSourceObservation, ...]:
+        scope = self._connection.execute(
+            """
+            SELECT seal.knowledge_cutoff
+            FROM mra.market_archive AS archive
+            JOIN mra.market_archive_seal AS seal
+              ON seal.market_archive_id = archive.market_archive_id
+            WHERE archive.market_archive_id = %s
+              AND seal.market_archive_seal_id = %s
+              AND archive.lane = 'RETROSPECTIVE_BACKFILL'
+              AND archive.evidence_class = 'EXPLORATORY_RETROSPECTIVE'
+              AND seal.knowledge_cutoff = %s
+            """
+            + (" FOR SHARE OF archive, seal" if lock else ""),
+            (market_archive_id, market_archive_seal_id, knowledge_cutoff),
+        ).fetchone()
+        if scope is None or simulated_event_cutoff >= knowledge_cutoff:
+            raise RuntimeStateConflictError("Exploratory Dataset archive dual-clock scope is invalid")
+        observations = self.market_source_observations(sources, lock=lock)
+        source_by_role_and_identity = {
+            (item.role, item.source_identity): item for item in observations
+        }
+        enriched: list[DatasetMarketSourceObservation] = []
+        by_role: dict[DatasetSourceRole, list[UUID]] = defaultdict(list)
+        for item in observations:
+            by_role[item.role].append(item.source_identity)
+        if by_role.get(DatasetSourceRole.MARKET_CAPTURE):
+            raise RuntimeStateConflictError(
+                "Exploratory Dataset cannot use a Capture without an event-time fact identity"
+            )
+        mapping = {
+            DatasetSourceRole.MARKET_BAR_REVISION: (
+                "market_bar_revision",
+                "bar_revision_id",
+                "capture_id",
+                "source.event_end",
+            ),
+            DatasetSourceRole.MARKET_INSTRUMENT_FACT_REVISION: (
+                "instrument_fact_revision",
+                "fact_revision_id",
+                "capture_id",
+                "source.event_start",
+            ),
+            DatasetSourceRole.MARKET_TRADING_SESSION: (
+                "trading_session",
+                "session_id",
+                "source_capture_id",
+                "source.decision_reference_at",
+            ),
+            DatasetSourceRole.MARKET_SOURCE_GAP: (
+                "source_gap",
+                "gap_id",
+                "capture_id",
+                "coalesce(source.event_end, source.effective_from, source.event_start)",
+            ),
+        }
+        for role, identities in by_role.items():
+            target = mapping.get(role)
+            if target is None:
+                continue
+            table, identity_column, capture_column, event_expression = target
+            rows = self._connection.execute(
+                f"""
+                SELECT source.{identity_column}, {event_expression},
+                       EXISTS (
+                           SELECT 1
+                           FROM mra.market_archive_capture_observation AS observation
+                           WHERE observation.market_archive_id = %s
+                             AND observation.capture_id = source.{capture_column}
+                       ) OR (
+                           %s = 'MARKET_SOURCE_GAP'
+                           AND EXISTS (
+                               SELECT 1
+                               FROM mra.market_archive_slice_gap AS gap_binding
+                               WHERE gap_binding.market_archive_id = %s
+                                 AND gap_binding.gap_id = source.{identity_column}
+                           )
+                       ) AS archive_bound
+                FROM mra.{table} AS source
+                WHERE source.{identity_column} = ANY(%s::uuid[])
+                """,  # noqa: S608 -- every identifier comes from the closed mapping above
+                (market_archive_id, role.value, market_archive_id, identities),
+            ).fetchall()
+            for row in rows:
+                identity = UUID(str(row[0]))
+                prior = source_by_role_and_identity[(role, identity)]
+                event_cutoff_at = row[1]
+                if row[2] is not True or event_cutoff_at is None:
+                    raise RuntimeStateConflictError(
+                        "Exploratory Dataset source is not bound to the exact archive or has no event cutoff"
+                    )
+                enriched.append(
+                    DatasetMarketSourceObservation(
+                        dataset_source_id=prior.dataset_source_id,
+                        role=prior.role,
+                        source_identity=prior.source_identity,
+                        instrument_id=prior.instrument_id,
+                        decision_visible_at=prior.decision_visible_at,
+                        foundation_integrity=prior.foundation_integrity,
+                        event_cutoff_at=event_cutoff_at,
+                    )
+                )
+        if {item.dataset_source_id for item in enriched} != {
+            item.dataset_source_id for item in observations
+        }:
+            raise RuntimeNotFoundError("Exploratory Dataset archive source roster is incomplete")
+        return tuple(sorted(enriched, key=lambda item: str(item.dataset_source_id)))
 
 
 __all__ = ["PostgresResearchSourceQueries"]

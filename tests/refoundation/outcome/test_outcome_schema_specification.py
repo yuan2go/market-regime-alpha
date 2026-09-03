@@ -52,7 +52,6 @@ def test_wp10_adds_exactly_eight_outcome_authority_relations(
         for table in tables
         if table.startswith(
             (
-                "model",
                 "qualification",
                 "trade_outcome",
             )

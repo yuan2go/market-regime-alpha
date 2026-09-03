@@ -31,6 +31,7 @@ def test_strategy_and_inference_are_relational_authority_tables() -> None:
         "forecast_run",
         "forecast",
         "forecast_estimate",
+        "forecast_model_binding",
     }
     assert EXPECTED_STRATEGY_TABLES | EXPECTED_INFERENCE_TABLES <= (
         EXPECTED_TARGET_TABLES
@@ -38,7 +39,7 @@ def test_strategy_and_inference_are_relational_authority_tables() -> None:
     sql = BASELINE.read_text()
     for table in EXPECTED_STRATEGY_TABLES | EXPECTED_INFERENCE_TABLES:
         assert f"CREATE TABLE mra.{table}" in sql
-    assert "forecast_model_binding" not in sql
+    assert "CREATE TABLE mra.forecast_model_binding" in sql
     assert "calibrated_probability" not in sql
 
 
@@ -80,10 +81,14 @@ def test_strategy_inference_catalog_has_concrete_fk_closure(
                         "forecast_commitment_fk",
                         "forecast_estimate_forecast_fk",
                         "forecast_estimate_rule_fk",
+                        "forecast_model_forecast_fk",
+                        "forecast_model_estimate_fk",
+                        "forecast_model_decision_fk",
+                        "forecast_model_version_fk",
                     ],
                 ),
             ).fetchall()
         }
     assert not [row for row in columns if row[2] in {"json", "jsonb"}]
-    assert len(constraints) == 14
+    assert len(constraints) == 18
     SchemaManager(target_database_url).verify()

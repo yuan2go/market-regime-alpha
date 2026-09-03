@@ -14,6 +14,9 @@ from market_regime_alpha.decision_support.domain.context import (
     DecisionArtifactBinding,
     PreparedContextInputs,
 )
+from market_regime_alpha.decision_support.domain.retrospective import (
+    ExploratoryRetrospectiveDecisionScope,
+)
 from market_regime_alpha.runtime.ports import (
     ArtifactRecord,
     AttemptClaim,
@@ -68,6 +71,13 @@ class ContextInputPreparationProvider(Protocol):
         self,
         decision_run_id: UUID,
         context_policy_id: UUID,
+    ) -> PreparedContextInputs: ...
+
+    def prepare_exploratory_retrospective(
+        self,
+        decision_run_id: UUID,
+        context_policy_id: UUID,
+        scope: ExploratoryRetrospectiveDecisionScope,
     ) -> PreparedContextInputs: ...
 
 

@@ -152,17 +152,47 @@ class OutcomeApplication:
         *,
         runtime_claim: AttemptClaim,
     ) -> OutcomeSettlementResult:
+        return self._settle_market_target_outcome(
+            request,
+            context,
+            runtime_claim=runtime_claim,
+            exploratory_retrospective=False,
+        )
+
+    def settle_exploratory_retrospective_market_target_outcome(
+        self,
+        request: SettleMarketTargetOutcomeRequest,
+        context: CommandContext,
+        *,
+        runtime_claim: AttemptClaim,
+    ) -> OutcomeSettlementResult:
+        """Settle only through an exact archived retrospective Decision binding."""
+
+        return self._settle_market_target_outcome(
+            request,
+            context,
+            runtime_claim=runtime_claim,
+            exploratory_retrospective=True,
+        )
+
+    def _settle_market_target_outcome(
+        self,
+        request: SettleMarketTargetOutcomeRequest,
+        context: CommandContext,
+        *,
+        runtime_claim: AttemptClaim,
+        exploratory_retrospective: bool,
+    ) -> OutcomeSettlementResult:
         raw_request_hash = canonical_json_sha256(
             {
                 "actor_id": context.actor_id,
                 "actor_type": context.actor_type,
                 "commitment_id": request.commitment_id,
-                "expected_current_revision_id": (
-                    request.expected_current_revision_id
-                ),
+                "expected_current_revision_id": (request.expected_current_revision_id),
                 "knowledge_cutoff": request.knowledge_cutoff,
                 "observation_cutoff": request.observation_cutoff,
                 "reason_code": context.reason_code,
+                "evidence_lane": ("EXPLORATORY_RETROSPECTIVE" if exploratory_retrospective else None),
                 "runtime_attempt_id": runtime_claim.attempt_id,
                 "runtime_fence_token": runtime_claim.fence_token,
                 "runtime_run_id": runtime_claim.run_id,
@@ -183,8 +213,18 @@ class OutcomeApplication:
                 self._clock(),
                 field="Outcome request received time",
             )
-            prepared = self._preparation.prepare(request, runtime_claim)
+            prepared = (
+                self._preparation.prepare_exploratory_retrospective(
+                    request,
+                    runtime_claim,
+                )
+                if exploratory_retrospective
+                else self._preparation.prepare(request, runtime_claim)
+            )
             _validate_prepared(request, prepared, runtime_claim)
+            has_retrospective_scope = prepared.commitment.exploratory_retrospective_scope is not None
+            if has_retrospective_scope is not exploratory_retrospective:
+                raise OutcomeAuthorityIntegrityError("Outcome preparation used the wrong evidence lane")
             if not prepared.is_due:
                 return OutcomeNotDueResult(
                     commitment_id=request.commitment_id,
@@ -203,9 +243,7 @@ class OutcomeApplication:
             request_hash = prepared.semantic_request_sha256(
                 observation_cutoff=request.observation_cutoff,
                 knowledge_cutoff=request.knowledge_cutoff,
-                expected_current_revision_id=(
-                    request.expected_current_revision_id
-                ),
+                expected_current_revision_id=(request.expected_current_revision_id),
                 actor_type=context.actor_type.value,
                 actor_id=context.actor_id,
                 reason_code=context.reason_code,
@@ -346,31 +384,19 @@ class OutcomeApplication:
                 if receipt.status == "SUCCEEDED":
                     raise ConcurrentCommandSucceeded()
                 if receipt.status == "FAILED":
-                    raise CommandPreviouslyFailedError(
-                        receipt.error_code or "SETTLE_MARKET_TARGET_OUTCOME_FAILED"
-                    )
-                raise RuntimeStateConflictError(
-                    "Outcome receipt is not a replayable terminal result"
-                )
+                    raise CommandPreviouslyFailedError(receipt.error_code or "SETTLE_MARKET_TARGET_OUTCOME_FAILED")
+                raise RuntimeStateConflictError("Outcome receipt is not a replayable terminal result")
             head = uow.outcomes.lock_scope_and_head(request.commitment_id)
             if request.expected_current_revision_id is None:
                 if head is not None:
-                    raise OutcomeRevisionConflictError(
-                        "initial Outcome settlement found an existing revision"
-                    )
+                    raise OutcomeRevisionConflictError("initial Outcome settlement found an existing revision")
                 create_root = True
                 revision_ordinal = 1
                 supersedes_revision_id = None
                 planned = identities
             else:
-                if (
-                    head is None
-                    or head.market_target_outcome_revision_id
-                    != request.expected_current_revision_id
-                ):
-                    raise OutcomeRevisionConflictError(
-                        "Outcome correction does not name the current leaf"
-                    )
+                if head is None or head.market_target_outcome_revision_id != request.expected_current_revision_id:
+                    raise OutcomeRevisionConflictError("Outcome correction does not name the current leaf")
                 create_root = False
                 revision_ordinal = head.revision_ordinal + 1
                 supersedes_revision_id = head.market_target_outcome_revision_id
@@ -406,9 +432,7 @@ class OutcomeApplication:
                 matched=True,
             )
             if not actual.matched or actual != expected:
-                raise OutcomeAuthorityIntegrityError(
-                    "Outcome relational revision did not reconcile"
-                )
+                raise OutcomeAuthorityIntegrityError("Outcome relational revision did not reconcile")
             result_hash = _authority_result_hash(authority)
             uow.receipts.succeed(
                 receipt_id=receipt.receipt_id,
@@ -463,8 +487,7 @@ class OutcomeApplication:
             existing.authority.commitment.commitment_id == request.commitment_id
             and revision.draft.observation_cutoff == request.observation_cutoff
             and revision.draft.knowledge_cutoff == request.knowledge_cutoff
-            and revision.supersedes_revision_id
-            == request.expected_current_revision_id
+            and revision.supersedes_revision_id == request.expected_current_revision_id
             and revision.runtime.run_id == runtime_claim.run_id
             and revision.runtime.step_id == runtime_claim.step_id
             and revision.runtime.attempt_id == runtime_claim.attempt_id
@@ -476,9 +499,7 @@ class OutcomeApplication:
         if exact:
             return existing
         if raise_conflict:
-            raise IdempotencyKeyReusedError(
-                "SETTLE_MARKET_TARGET_OUTCOME identity has another request"
-            )
+            raise IdempotencyKeyReusedError("SETTLE_MARKET_TARGET_OUTCOME identity has another request")
         return None
 
 
@@ -489,16 +510,9 @@ def _validate_prepared(
 ) -> None:
     runtime = prepared.runtime
     if prepared.commitment.commitment_id != request.commitment_id:
-        raise OutcomeAuthorityIntegrityError(
-            "prepared commitment differs from Outcome request"
-        )
-    if (
-        prepared.observation_cutoff != request.observation_cutoff
-        or prepared.knowledge_cutoff != request.knowledge_cutoff
-    ):
-        raise OutcomeAuthorityIntegrityError(
-            "prepared Outcome cutoffs differ from request"
-        )
+        raise OutcomeAuthorityIntegrityError("prepared commitment differs from Outcome request")
+    if prepared.observation_cutoff != request.observation_cutoff or prepared.knowledge_cutoff != request.knowledge_cutoff:
+        raise OutcomeAuthorityIntegrityError("prepared Outcome cutoffs differ from request")
     if (
         runtime.run_id != claim.run_id
         or runtime.step_id != claim.step_id
@@ -506,14 +520,10 @@ def _validate_prepared(
         or runtime.fence_token != claim.fence_token
         or runtime.step_key != claim.step_key
     ):
-        raise OutcomeAuthorityIntegrityError(
-            "prepared Runtime identity differs from execution claim"
-        )
+        raise OutcomeAuthorityIntegrityError("prepared Runtime identity differs from execution claim")
     due = request.observation_cutoff >= prepared.due_at
     if prepared.is_due != due:
-        raise OutcomeAuthorityIntegrityError(
-            "prepared Outcome due assessment disagrees with cutoff"
-        )
+        raise OutcomeAuthorityIntegrityError("prepared Outcome due assessment disagrees with cutoff")
 
 
 def _authority_result_hash(authority: MarketTargetOutcomeAuthority) -> str:
@@ -524,9 +534,7 @@ def _authority_result_hash(authority: MarketTargetOutcomeAuthority) -> str:
             "definition_summary_sha256": revision.definition_summary_sha256,
             "knowledge_cutoff": revision.draft.knowledge_cutoff,
             "market_target_outcome_id": authority.root.market_target_outcome_id,
-            "market_target_outcome_revision_id": (
-                revision.market_target_outcome_revision_id
-            ),
+            "market_target_outcome_revision_id": (revision.market_target_outcome_revision_id),
             "observation_cutoff": revision.draft.observation_cutoff,
             "revision_ordinal": revision.revision_ordinal,
             "runtime_attempt_id": revision.runtime.attempt_id,
@@ -550,9 +558,7 @@ def _result(
     revision = authority.revision
     return SettleMarketTargetOutcomeResult(
         market_target_outcome_id=authority.root.market_target_outcome_id,
-        market_target_outcome_revision_id=(
-            revision.market_target_outcome_revision_id
-        ),
+        market_target_outcome_revision_id=(revision.market_target_outcome_revision_id),
         commitment_id=authority.commitment.commitment_id,
         revision_ordinal=revision.revision_ordinal,
         supersedes_revision_id=revision.supersedes_revision_id,
@@ -566,12 +572,8 @@ def _result(
         source_roster_sha256=revision.source_roster_sha256,
         observation_roster_sha256=revision.observation_roster_sha256,
         metric_roster_sha256=revision.metric_roster_sha256,
-        reference_dependency_roster_sha256=(
-            revision.reference_dependency_roster_sha256
-        ),
-        observation_dependency_roster_sha256=(
-            revision.observation_dependency_roster_sha256
-        ),
+        reference_dependency_roster_sha256=(revision.reference_dependency_roster_sha256),
+        observation_dependency_roster_sha256=(revision.observation_dependency_roster_sha256),
         reason_roster_sha256=revision.reason_roster_sha256,
         definition_summary_sha256=revision.definition_summary_sha256,
         observation_cutoff=revision.draft.observation_cutoff,
@@ -594,9 +596,7 @@ def _result_from_snapshot(
 ) -> SettleMarketTargetOutcomeResult:
     expected = _authority_result_hash(snapshot.authority)
     if expected != snapshot.result_hash:
-        raise OutcomeAuthorityIntegrityError(
-            "Outcome receipt and Authority result hash differ"
-        )
+        raise OutcomeAuthorityIntegrityError("Outcome receipt and Authority result hash differ")
     return _result(
         snapshot.authority,
         receipt_id=snapshot.receipt_id,

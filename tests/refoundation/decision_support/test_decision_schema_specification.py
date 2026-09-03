@@ -42,6 +42,7 @@ def test_decision_support_schema_includes_qualification_roster_authority(
         "decision_run_target",
         "decision_target_commitment",
         "decision_reference_observation",
+        "exploratory_retrospective_decision_run",
     }
     assert tables == EXPECTED_TARGET_TABLES
     assert EXPECTED_DECISION_SUPPORT_TABLES <= tables
@@ -58,7 +59,6 @@ def test_decision_support_schema_includes_qualification_roster_authority(
             (
                 "outcome",
                 "qualification",
-                "model",
                 "trade_outcome",
             )
         )
@@ -129,6 +129,17 @@ def test_decision_run_closure_uses_composite_fks_and_one_reference_per_commitmen
                 (list(EXPECTED_DECISION_SUPPORT_TABLES),),
             ).fetchall()
         }
+        visibility_trigger = connection.execute(
+            """
+            SELECT trigger_item.tgdeferrable, trigger_item.tginitdeferred
+            FROM pg_trigger AS trigger_item
+            JOIN pg_class AS table_item ON table_item.oid = trigger_item.tgrelid
+            JOIN pg_namespace AS namespace ON namespace.oid = table_item.relnamespace
+            WHERE namespace.nspname = 'mra'
+              AND table_item.relname = 'decision_reference_observation'
+              AND trigger_item.tgname = 'decision_reference_visibility_guard'
+            """
+        ).fetchone()
     assert set(constraints) == required_constraints
     assert "candidate_id, candidate_set_id, instrument_id" in constraints[
         "decision_commitment_candidate_fk"
@@ -141,6 +152,10 @@ def test_decision_run_closure_uses_composite_fks_and_one_reference_per_commitmen
     ]
     assert "bar_revision_id" in constraints["decision_reference_bar_fk"]
     assert "source_gap_id" in constraints["decision_reference_gap_fk"]
+    assert "known_at <= decision_time" not in constraints[
+        "decision_reference_known_at_ck"
+    ]
+    assert visibility_trigger == (True, True)
     trigger_names = {name for _, name, _ in triggers}
     assert {
         "decision_run_append_only",
@@ -156,6 +171,9 @@ def test_decision_run_closure_uses_composite_fks_and_one_reference_per_commitmen
         "decision_commitment_open_guard",
         "decision_reference_open_guard",
         "decision_run_closure_guard",
+        "decision_reference_visibility_guard",
+        "exploratory_retrospective_decision_guard",
+        "exploratory_retrospective_decision_append_only",
     } <= trigger_names
 
 

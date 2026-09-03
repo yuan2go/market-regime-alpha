@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Protocol
 
 from market_regime_alpha.decision_support.domain import (
+    ExploratoryRetrospectiveDecisionScope,
     OpenDecisionRunRequest,
     PreparedDecisionInputs,
     PreparedResearchQualification,
@@ -20,6 +21,17 @@ class DecisionInputPreparationProvider(Protocol):
         self,
         request: OpenDecisionRunRequest,
         runtime_claim: AttemptClaim,
+    ) -> PreparedDecisionInputs: ...
+
+
+class ExploratoryDecisionInputPreparationProvider(Protocol):
+    """Resolve only an exact archived dual-clock backtest member."""
+
+    def prepare_exploratory_retrospective(
+        self,
+        request: OpenDecisionRunRequest,
+        runtime_claim: AttemptClaim,
+        scope: ExploratoryRetrospectiveDecisionScope,
     ) -> PreparedDecisionInputs: ...
 
 
@@ -44,5 +56,6 @@ class DecisionResearchQualificationInputProvider(Protocol):
 __all__ = [
     "DecisionDependencyRepository",
     "DecisionInputPreparationProvider",
+    "ExploratoryDecisionInputPreparationProvider",
     "DecisionResearchQualificationInputProvider",
 ]

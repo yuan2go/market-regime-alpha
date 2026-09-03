@@ -50,8 +50,7 @@ class PreparedOutcomeInputs:
             self.commitment.target_definition_id != self.target.target_definition_id
             or self.commitment.target_version != self.target.version
             or self.commitment.target_definition_sha256 != self.target.content_sha256
-            or self.commitment.target_checkpoint_id
-            != self.target.reference_checkpoint_id
+            or self.commitment.target_checkpoint_id != self.target.reference_checkpoint_id
         ):
             raise ValueError("prepared Outcome commitment and Target differ")
         if not self.sessions:
@@ -76,12 +75,9 @@ class PreparedOutcomeInputs:
                 "actor_id": actor_id,
                 "actor_type": actor_type,
                 "commitment_id": self.commitment.commitment_id,
-                "decision_reference_observation_id": (
-                    self.commitment.decision_reference_observation_id
-                ),
-                "decision_reference_sha256": (
-                    self.commitment.decision_reference_sha256
-                ),
+                "decision_reference_observation_id": (self.commitment.decision_reference_observation_id),
+                "decision_reference_sha256": (self.commitment.decision_reference_sha256),
+                "exploratory_retrospective_scope": (self.commitment.exploratory_retrospective_scope),
                 "expected_current_revision_id": expected_current_revision_id,
                 "knowledge_cutoff": knowledge_cutoff,
                 "observation_cutoff": observation_cutoff,

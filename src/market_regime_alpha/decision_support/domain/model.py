@@ -20,6 +20,9 @@ from market_regime_alpha.decision_support.domain.vocabulary import (
     QualificationInputRole,
     ResearchPurpose,
 )
+from market_regime_alpha.decision_support.domain.retrospective import (
+    ExploratoryRetrospectiveDecisionScope,
+)
 from market_regime_alpha.shared.hashing import canonical_json_sha256
 from market_regime_alpha.shared.identity import ContentHash
 from market_regime_alpha.shared.time import require_utc
@@ -431,6 +434,9 @@ class PreparedDecisionInputs:
     references: tuple[PreparedDecisionReference, ...]
     runtime: RuntimeDecisionSnapshot
     research_qualifications: tuple[PreparedResearchQualification, ...]
+    exploratory_retrospective_scope: (
+        ExploratoryRetrospectiveDecisionScope | None
+    ) = None
 
     def __post_init__(self) -> None:
         RequestedDecisionTarget.roster(
@@ -447,6 +453,26 @@ class PreparedDecisionInputs:
         if self.candidate_set.decision_time != self.runtime.decision_time:
             raise ValueError("prepared CandidateSet and Runtime DecisionTime differ")
         PreparedResearchQualification.roster(self.research_qualifications)
+        scope = self.exploratory_retrospective_scope
+        if scope is not None:
+            if self.runtime.runtime_mode not in {
+                DecisionRuntimeMode.HISTORICAL,
+                DecisionRuntimeMode.REPLAY,
+            }:
+                raise ValueError(
+                    "retrospective simulation requires HISTORICAL or REPLAY Runtime"
+                )
+            if (
+                scope.dataset_id != self.candidate_set.dataset_id
+                or scope.simulated_event_cutoff != self.runtime.decision_time
+            ):
+                raise ValueError(
+                    "retrospective Dataset or simulation cutoff differs from Decision"
+                )
+            if any(item.event_end > scope.simulated_event_cutoff for item in self.references):
+                raise ValueError("retrospective reference crosses the simulation cutoff")
+            if any(item.known_at > scope.knowledge_cutoff for item in self.references):
+                raise ValueError("retrospective reference crosses the archive knowledge cutoff")
 
     def semantic_request_sha256(
         self,
@@ -491,8 +517,7 @@ class PreparedDecisionInputs:
             raise ValueError(
                 "prepared Research Qualification purpose differs from request"
             )
-        return canonical_json_sha256(
-            {
+        payload = {
                 "actor_id": actor_id,
                 "actor_type": actor_type,
                 "candidate_roster_sha256": (
@@ -557,7 +582,11 @@ class PreparedDecisionInputs:
                     for ordinal, target in enumerate(self.targets, start=1)
                 ),
             }
-        )
+        if self.exploratory_retrospective_scope is not None:
+            payload["exploratory_retrospective_scope"] = (
+                self.exploratory_retrospective_scope
+            )
+        return canonical_json_sha256(payload)
 
 
 @dataclass(frozen=True, slots=True)
@@ -699,6 +728,11 @@ class DecisionReferenceObservationPlan:
     decision_time: datetime
     commitment_recorded_at: datetime
     prepared: PreparedDecisionReference
+    visibility_cutoff: datetime | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
     content_sha256: str = field(init=False)
 
     def __post_init__(self) -> None:
@@ -708,8 +742,14 @@ class DecisionReferenceObservationPlan:
             "commitment_recorded_at",
             _utc(self.commitment_recorded_at, "reference commitment_recorded_at"),
         )
-        if self.prepared.known_at > self.decision_time:
-            raise ValueError("reference known_at exceeds DecisionTime")
+        visibility_cutoff = (
+            self.decision_time
+            if self.visibility_cutoff is None
+            else _utc(self.visibility_cutoff, "reference visibility_cutoff")
+        )
+        object.__setattr__(self, "visibility_cutoff", visibility_cutoff)
+        if self.prepared.known_at > visibility_cutoff:
+            raise ValueError("reference known_at exceeds its visibility cutoff")
         object.__setattr__(
             self,
             "content_sha256",
@@ -1028,6 +1068,9 @@ def build_decision_authority(
     commitment_id_factory: Callable[[CandidateDecisionFact, TargetDecisionSnapshot], UUID],
     observation_id_factory: Callable[[UUID], UUID],
     target_id_factory: Callable[[TargetDecisionSnapshot, int], UUID] | None = None,
+    exploratory_retrospective_scope: (
+        ExploratoryRetrospectiveDecisionScope | None
+    ) = None,
 ) -> DecisionRunAuthority:
     """Close a prepared immutable cross-product without resolving external facts."""
 
@@ -1042,6 +1085,15 @@ def build_decision_authority(
     )
     if runtime.decision_time != candidate_set.decision_time:
         raise ValueError("Runtime and CandidateSet DecisionTime must match")
+    if exploratory_retrospective_scope is not None:
+        PreparedDecisionInputs(
+            candidate_set=candidate_set,
+            targets=targets,
+            references=references,
+            runtime=runtime,
+            research_qualifications=research_qualifications,
+            exploratory_retrospective_scope=exploratory_retrospective_scope,
+        )
     if commitment_recorded_at < request_received_at:
         raise ValueError("commitment recording cannot precede request receipt")
     if not isinstance(research_purpose, ResearchPurpose):
@@ -1146,6 +1198,11 @@ def build_decision_authority(
                 decision_time=runtime.decision_time,
                 commitment_recorded_at=commitment_recorded_at,
                 prepared=prepared,
+                visibility_cutoff=(
+                    exploratory_retrospective_scope.knowledge_cutoff
+                    if exploratory_retrospective_scope is not None
+                    else None
+                ),
             )
             commitments.append(
                 DecisionTargetCommitmentPlan(

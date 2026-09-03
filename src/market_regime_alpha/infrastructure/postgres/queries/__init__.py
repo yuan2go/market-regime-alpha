@@ -3,6 +3,18 @@
 from market_regime_alpha.infrastructure.postgres.queries.candidate import (
     PostgresCandidateQueryProvider,
 )
+from market_regime_alpha.infrastructure.postgres.queries.archive_operations import (
+    PostgresArchiveOperationsReadPort,
+)
+from market_regime_alpha.infrastructure.postgres.queries.archive_inspection import (
+    PostgresArchiveInspectionPort,
+)
+from market_regime_alpha.infrastructure.postgres.queries.archive_verification import (
+    PostgresArchiveVerificationPort,
+)
+from market_regime_alpha.infrastructure.postgres.queries.archive_sessions import (
+    PostgresArchiveTradingSessionReadPort,
+)
 from market_regime_alpha.infrastructure.postgres.queries.candidate_research_inputs import (
     PostgresCandidateResearchDependencyQueries,
     PostgresCandidateResearchInputLoader,
@@ -17,9 +29,18 @@ from market_regime_alpha.infrastructure.postgres.queries.decision_runs import (
 from market_regime_alpha.infrastructure.postgres.queries.decision_verification import (
     PostgresDecisionRunVerificationProvider,
 )
+from market_regime_alpha.infrastructure.postgres.queries.exploratory_feature_inputs import (
+    PostgresExploratoryFeatureInputReadPort,
+)
+from market_regime_alpha.infrastructure.postgres.queries.exploratory_campaigns import (
+    PostgresExploratoryCampaignReadPort,
+)
 from market_regime_alpha.infrastructure.postgres.queries.market import (
     PostgresMarketQueries,
     PostgresMarketQueryProvider,
+)
+from market_regime_alpha.infrastructure.postgres.queries.market_revision_lineage import (
+    PostgresMarketRevisionLineageReadPort,
 )
 from market_regime_alpha.infrastructure.postgres.queries.outcome_inputs import (
     PostgresOutcomeDependencyRepository,
@@ -48,15 +69,22 @@ from market_regime_alpha.infrastructure.postgres.queries.research_qualification_
 )
 
 __all__ = [
+    "PostgresArchiveOperationsReadPort",
+    "PostgresArchiveInspectionPort",
+    "PostgresArchiveVerificationPort",
     "PostgresCandidateQueryProvider",
+    "PostgresArchiveTradingSessionReadPort",
     "PostgresCandidateResearchDependencyQueries",
     "PostgresCandidateResearchInputLoader",
     "PostgresDecisionInputPreparationProvider",
     "PostgresDecisionResearchQualificationInputProvider",
     "PostgresDecisionRunQueryProvider",
     "PostgresDecisionRunVerificationProvider",
+    "PostgresExploratoryFeatureInputReadPort",
+    "PostgresExploratoryCampaignReadPort",
     "PostgresMarketQueries",
     "PostgresMarketQueryProvider",
+    "PostgresMarketRevisionLineageReadPort",
     "PostgresOutcomeDependencyRepository",
     "PostgresOutcomeInputPreparationProvider",
     "PostgresOutcomeQueryProvider",

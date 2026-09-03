@@ -11,6 +11,14 @@ from market_regime_alpha.research_qualification.domain.model import (
     DecisionInputDatasetDefinition,
     FeatureDefinition,
 )
+from market_regime_alpha.research_qualification.domain.research_models import (
+    LinearTrainingRow,
+    ModelTrainingRunPlan,
+    ModelTrainingSamplePlan,
+    ModelTrainingSampleState,
+    ModelVersionPlan,
+    ResearchModelPlan,
+)
 from market_regime_alpha.research_qualification.domain.targets import (
     TargetAlgorithmBinding,
     TargetCheckpoint,
@@ -66,6 +74,12 @@ __all__ = [
     "FeatureMissingnessPolicy",
     "FeatureSourceRequirement",
     "FeatureValueType",
+    "LinearTrainingRow",
+    "ModelTrainingRunPlan",
+    "ModelTrainingSamplePlan",
+    "ModelTrainingSampleState",
+    "ModelVersionPlan",
+    "ResearchModelPlan",
     "CampaignClass", "CampaignCostAssumption", "CampaignCostKind",
     "CampaignEvaluationProtocolBinding", "FormalDatasetScope",
     "FormalResearchCampaignDefinition",

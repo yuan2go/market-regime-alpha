@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
@@ -11,6 +12,7 @@ from market_regime_alpha.decision_support.application import (
     DecisionSupportApplication,
 )
 from market_regime_alpha.decision_support.domain import (
+    ExploratoryRetrospectiveDecisionScope,
     OpenDecisionRunRequest,
     PreparedDecisionInputs,
     QualificationInputRole,
@@ -50,6 +52,11 @@ class _Preparation:
         self.calls += 1
         return self.prepared
 
+    def prepare_exploratory_retrospective(self, request, runtime_claim, scope):
+        assert self.prepared.exploratory_retrospective_scope == scope
+        self.calls += 1
+        return self.prepared
+
 
 class _Query:
     snapshot = None
@@ -81,6 +88,11 @@ class _DecisionRuns:
 
     def insert(self, authority):
         self.state["authority"] = authority
+
+    def bind_exploratory_retrospective(self, authority, scope):
+        assert authority == self.state["authority"]
+        self.state["retrospective_scope"] = scope
+        return str(scope.content_sha256)
 
     def reconcile(self, decision_run_id, *, lock):
         authority = self.state["authority"]
@@ -193,6 +205,9 @@ class _Uow:
                 authority=self.state["authority"],
                 receipt_id=receipt["receipt_id"],
                 result_hash=receipt["result_hash"],
+                exploratory_retrospective_scope=self.state.get(
+                    "retrospective_scope"
+                ),
             )
 
 
@@ -326,6 +341,77 @@ def test_open_decision_run_uses_one_transaction_and_exact_replay_skips_preparati
     assert state["commits"] == 1
     assert state["locks"][0][2] == "OPEN_DECISION_RUN"
     assert state["audits"][0]["action"] == "OPEN_DECISION_RUN"
+
+
+def test_typed_retrospective_open_binds_scope_in_same_transaction_and_replays() -> None:
+    scope = ExploratoryRetrospectiveDecisionScope(
+        dataset_id=_candidate_snapshot().dataset_id,
+        exploratory_backtest_run_id=_uuid(1800),
+        exploratory_backtest_arm_id=_uuid(1801),
+        exploratory_backtest_fold_id=_uuid(1802),
+        exploratory_backtest_fold_session_id=_uuid(1803),
+        market_archive_id=_uuid(1804),
+        market_archive_seal_id=_uuid(1805),
+        knowledge_cutoff=datetime(2026, 8, 28, 7, 0, tzinfo=UTC),
+        simulated_event_cutoff=_runtime().decision_time,
+    )
+    late = replace(
+        _references()[0],
+        recorded_at=datetime(2026, 8, 28, 6, 55, 30, tzinfo=UTC),
+        known_at=datetime(2026, 8, 28, 6, 56, tzinfo=UTC),
+    )
+    prepared = PreparedDecisionInputs(
+        candidate_set=_candidate_snapshot(),
+        targets=(_target_snapshot(),),
+        references=(late, *_references()[1:]),
+        runtime=_runtime(),
+        research_qualifications=(),
+        exploratory_retrospective_scope=scope,
+    )
+    preparation = _Preparation(prepared)
+    query = _Query()
+    state: dict[str, Any] = {}
+    identities = iter(range(1810, 1900))
+    application = DecisionSupportApplication(
+        preparation,
+        _UowProvider(state, query),
+        query,
+        exploratory_preparation=preparation,
+        id_factory=lambda: _uuid(next(identities)),
+        clock=lambda: datetime(2026, 8, 28, 6, 56, tzinfo=UTC),
+    )
+    request = OpenDecisionRunRequest(
+        candidate_set_id=prepared.candidate_set.candidate_set_id,
+        targets=(
+            RequestedDecisionTarget(
+                target_definition_id=prepared.targets[0].target_definition_id,
+                reference_provider_product_id=(
+                    prepared.targets[0].reference_provider_product.provider_product_id
+                ),
+            ),
+        ),
+        research_purpose=ResearchPurpose.DISCOVERY,
+        research_qualifications=(),
+    )
+
+    first = application.open_exploratory_retrospective_decision_run(
+        request,
+        scope,
+        _context(),
+        runtime_claim=_claim(),
+    )
+    replay = application.open_exploratory_retrospective_decision_run(
+        request,
+        scope,
+        _context(),
+        runtime_claim=_claim(),
+    )
+
+    assert first.replayed is False
+    assert replay == first.as_replay()
+    assert state["retrospective_scope"] == scope
+    assert state["commits"] == 1
+    assert preparation.calls == 1
 
 
 def test_open_decision_run_freezes_exact_qualification_and_replay_never_reresolves() -> None:

@@ -250,6 +250,10 @@ class PostgresArtifactRepository:
                         WHERE policy.code_artifact_id = artifact.artifact_id
                            OR policy.config_artifact_id = artifact.artifact_id
                     ) OR EXISTS (
+                        SELECT 1 FROM mra.market_archive AS archive
+                        WHERE archive.code_artifact_id = artifact.artifact_id
+                           OR archive.config_artifact_id = artifact.artifact_id
+                    ) OR EXISTS (
                         SELECT 1 FROM mra.artifact_dependency AS dependency
                         WHERE dependency.child_artifact_id = artifact.artifact_id
                            OR dependency.parent_artifact_id = artifact.artifact_id

@@ -48,6 +48,9 @@ from market_regime_alpha.selection.domain.results import (
     FrozenUniverse,
     UniverseMemberDecision,
 )
+from market_regime_alpha.selection.domain.retrospective import (
+    ExploratoryRetrospectiveSelectionScope,
+)
 from market_regime_alpha.selection.domain.vocabulary import (
     CriterionOperator,
     CriterionResult,
@@ -87,6 +90,7 @@ __all__ = [
     "EligibilityRule",
     "EligibilityRuleKind",
     "EligibilityStatus",
+    "ExploratoryRetrospectiveSelectionScope",
     "FrozenUniverse",
     "MarketEvidenceStatus",
     "MarketLineage",

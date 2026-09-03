@@ -16,6 +16,7 @@ from market_regime_alpha.decision_support.ports.context import (
 from market_regime_alpha.decision_support.ports.preparation import (
     DecisionDependencyRepository,
     DecisionInputPreparationProvider,
+    ExploratoryDecisionInputPreparationProvider,
     DecisionResearchQualificationInputProvider,
 )
 from market_regime_alpha.decision_support.ports.inference import (
@@ -28,6 +29,15 @@ from market_regime_alpha.decision_support.ports.inference import (
     InferenceRuntimeFinalization,
     InferenceUnitOfWork,
     InferenceUnitOfWorkProvider,
+)
+from market_regime_alpha.decision_support.ports.model_forecast import (
+    ModelForecastArtifactRepository,
+    ModelForecastInputPreparationProvider,
+    ModelForecastBindingSummary,
+    ModelForecastQueryProvider,
+    ModelForecastReconciliation,
+    ModelForecastRepository,
+    PreparedModelForecastInputs,
 )
 from market_regime_alpha.decision_support.ports.strategy import (
     StrategyArtifactRepository,
@@ -115,6 +125,13 @@ __all__ = [
     "InferenceRuntimeFinalization",
     "InferenceUnitOfWork",
     "InferenceUnitOfWorkProvider",
+    "ModelForecastInputPreparationProvider",
+    "ModelForecastArtifactRepository",
+    "ModelForecastBindingSummary",
+    "ModelForecastQueryProvider",
+    "ModelForecastReconciliation",
+    "ModelForecastRepository",
+    "PreparedModelForecastInputs",
     "OpportunityArtifactRepository",
     "OpportunityDependencyRepository",
     "OpportunityInputPreparationProvider",
@@ -127,6 +144,7 @@ __all__ = [
     "OpportunityUnitOfWorkProvider",
     "DecisionDependencyRepository",
     "DecisionInputPreparationProvider",
+    "ExploratoryDecisionInputPreparationProvider",
     "DecisionResearchQualificationInputProvider",
     "DecisionRunQueryProvider",
     "DecisionRunReconciliation",

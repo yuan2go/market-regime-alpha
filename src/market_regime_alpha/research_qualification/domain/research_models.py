@@ -1,0 +1,351 @@
+"""Minimal immutable Model and training lineage for exploratory research."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from decimal import Decimal
+from enum import StrEnum
+import re
+from uuid import UUID
+
+from market_regime_alpha.research_qualification.domain.model import ArtifactBinding
+from market_regime_alpha.shared.financial import bounded_decimal
+from market_regime_alpha.shared.hashing import canonical_json_sha256
+from market_regime_alpha.shared.identity import ContentHash
+
+
+_CODE = re.compile(r"^[a-z][a-z0-9_-]{0,99}$")
+_VERSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+_REASON = re.compile(r"^[A-Z][A-Z0-9_]{0,99}$")
+
+
+class ModelTrainingSampleState(StrEnum):
+    ESTIMABLE = "ESTIMABLE"
+    NOT_ESTIMABLE = "NOT_ESTIMABLE"
+
+
+@dataclass(frozen=True, slots=True)
+class LinearTrainingRow:
+    model_training_sample_id: UUID
+    features: tuple[Decimal, ...]
+    target: Decimal
+
+
+@dataclass(frozen=True, slots=True)
+class ResearchModelPlan:
+    """Stable family identity; versions remain optional children."""
+
+    model_id: UUID
+    model_code: str
+    target_definition_id: UUID
+    target_version: int
+    target_definition_sha256: ContentHash | str
+    feature_definitions: tuple[tuple[UUID, ContentHash | str], ...]
+    code_artifact: ArtifactBinding
+    config_artifact: ArtifactBinding
+    provenance_sha256: ContentHash | str
+    feature_count: int = field(init=False)
+    feature_roster_sha256: ContentHash = field(init=False)
+    content_sha256: ContentHash = field(init=False)
+
+    def __post_init__(self) -> None:
+        if not _CODE.fullmatch(self.model_code):
+            raise ValueError("model_code has an invalid format")
+        if isinstance(self.target_version, bool) or self.target_version < 1:
+            raise ValueError("target_version must be positive")
+        if not self.feature_definitions:
+            raise ValueError("Model feature roster must be non-empty")
+        normalized = tuple(
+            (identity, ContentHash(str(content_hash)))
+            for identity, content_hash in self.feature_definitions
+        )
+        if len({item[0] for item in normalized}) != len(normalized):
+            raise ValueError("Model feature roster must be unique and ordered")
+        target_hash = ContentHash(str(self.target_definition_sha256))
+        provenance_hash = ContentHash(str(self.provenance_sha256))
+        roster_hash = ContentHash(
+            canonical_json_sha256(
+                tuple(
+                    {
+                        "feature_definition_id": identity,
+                        "feature_definition_sha256": str(content_hash),
+                        "ordinal": ordinal,
+                    }
+                    for ordinal, (identity, content_hash) in enumerate(
+                        normalized, start=1
+                    )
+                )
+            )
+        )
+        object.__setattr__(self, "feature_definitions", normalized)
+        object.__setattr__(self, "target_definition_sha256", target_hash)
+        object.__setattr__(self, "provenance_sha256", provenance_hash)
+        object.__setattr__(self, "feature_count", len(normalized))
+        object.__setattr__(self, "feature_roster_sha256", roster_hash)
+        object.__setattr__(
+            self,
+            "content_sha256",
+            ContentHash(
+                canonical_json_sha256(
+                    {
+                        "code_artifact": self.code_artifact,
+                        "config_artifact": self.config_artifact,
+                        "feature_roster_sha256": roster_hash,
+                        "model_code": self.model_code,
+                        "provenance_sha256": provenance_hash,
+                        "target_definition_id": self.target_definition_id,
+                        "target_definition_sha256": target_hash,
+                        "target_version": self.target_version,
+                    }
+                )
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ModelTrainingSamplePlan:
+    """One member of the complete DB-derived FIT Evaluation roster."""
+
+    model_training_sample_id: UUID
+    ordinal: int
+    evaluation_observation_id: UUID
+    evaluation_metric_observation_id: UUID
+    research_partition_member_id: UUID
+    commitment_id: UUID
+    decision_run_id: UUID
+    candidate_id: UUID
+    instrument_id: UUID
+    dataset_id: UUID
+    dataset_manifest_artifact: ArtifactBinding
+    market_target_outcome_revision_id: UUID
+    source_outcome_metric_id: UUID
+    evaluation_input_state: str
+    state: ModelTrainingSampleState
+    reason_code: str
+    target_value: Decimal | None
+    feature_vector_sha256: ContentHash | str | None
+    content_sha256: ContentHash = field(init=False)
+
+    def __post_init__(self) -> None:
+        if isinstance(self.ordinal, bool) or self.ordinal < 1:
+            raise ValueError("ModelTrainingSample ordinal must be positive")
+        if not isinstance(self.state, ModelTrainingSampleState):
+            raise TypeError("state must be ModelTrainingSampleState")
+        if not _REASON.fullmatch(self.reason_code):
+            raise ValueError("reason_code has an invalid format")
+        if self.evaluation_input_state not in {
+            "INCLUDED",
+            "EXCLUDED",
+            "NOT_ESTIMABLE",
+        }:
+            raise ValueError("evaluation_input_state is invalid")
+        vector_hash = (
+            None
+            if self.feature_vector_sha256 is None
+            else ContentHash(str(self.feature_vector_sha256))
+        )
+        target_value = self.target_value
+        if self.state is ModelTrainingSampleState.ESTIMABLE:
+            if self.evaluation_input_state != "INCLUDED":
+                raise ValueError("ESTIMABLE sample requires INCLUDED Evaluation input")
+            if target_value is None or vector_hash is None:
+                raise ValueError("ESTIMABLE sample requires target and feature values")
+            target_value = bounded_decimal(
+                target_value,
+                field="target_value",
+                precision=48,
+                scale=18,
+            )
+        elif target_value is not None or vector_hash is not None:
+            raise ValueError(
+                "NOT_ESTIMABLE sample cannot contain target or feature values"
+            )
+        object.__setattr__(self, "target_value", target_value)
+        object.__setattr__(self, "feature_vector_sha256", vector_hash)
+        object.__setattr__(
+            self,
+            "content_sha256",
+            ContentHash(
+                canonical_json_sha256(
+                    {
+                        "candidate_id": self.candidate_id,
+                        "commitment_id": self.commitment_id,
+                        "dataset_id": self.dataset_id,
+                        "dataset_manifest_artifact": self.dataset_manifest_artifact,
+                        "decision_run_id": self.decision_run_id,
+                        "evaluation_metric_observation_id": self.evaluation_metric_observation_id,
+                        "evaluation_input_state": self.evaluation_input_state,
+                        "evaluation_observation_id": self.evaluation_observation_id,
+                        "feature_vector_sha256": vector_hash,
+                        "instrument_id": self.instrument_id,
+                        "market_target_outcome_revision_id": self.market_target_outcome_revision_id,
+                        "ordinal": self.ordinal,
+                        "reason_code": self.reason_code,
+                        "research_partition_member_id": self.research_partition_member_id,
+                        "source_outcome_metric_id": self.source_outcome_metric_id,
+                        "state": self.state,
+                        "target_value": target_value,
+                    }
+                )
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ModelTrainingRunPlan:
+    model_training_run_id: UUID
+    model_id: UUID
+    evaluation_run_id: UUID
+    evaluation_protocol_metric_id: UUID
+    exploratory_backtest_run_id: UUID
+    exploratory_backtest_arm_id: UUID
+    exploratory_backtest_fold_id: UUID
+    algorithm_code: str
+    algorithm_version: str
+    algorithm_sha256: ContentHash | str
+    ridge_alpha: Decimal
+    random_seed: int
+    training_input_artifact: ArtifactBinding
+    code_artifact: ArtifactBinding
+    config_artifact: ArtifactBinding
+    provenance_sha256: ContentHash | str
+    samples: tuple[ModelTrainingSamplePlan, ...]
+    sample_count: int = field(init=False)
+    estimable_count: int = field(init=False)
+    sample_roster_sha256: ContentHash = field(init=False)
+    content_sha256: ContentHash = field(init=False)
+
+    def __post_init__(self) -> None:
+        if not _CODE.fullmatch(self.algorithm_code):
+            raise ValueError("algorithm_code has an invalid format")
+        if not _VERSION.fullmatch(self.algorithm_version):
+            raise ValueError("algorithm_version has an invalid format")
+        if self.ridge_alpha < 0:
+            raise ValueError("ridge_alpha must be non-negative")
+        alpha = bounded_decimal(
+            self.ridge_alpha,
+            field="ridge_alpha",
+            precision=24,
+            scale=12,
+        )
+        if isinstance(self.random_seed, bool) or self.random_seed < 0:
+            raise ValueError("random_seed must be non-negative")
+        if not self.samples:
+            raise ValueError("ModelTrainingRun sample roster must be non-empty")
+        if tuple(item.ordinal for item in self.samples) != tuple(
+            range(1, len(self.samples) + 1)
+        ):
+            raise ValueError("ModelTrainingRun sample ordinals must be contiguous")
+        if len({item.evaluation_observation_id for item in self.samples}) != len(
+            self.samples
+        ):
+            raise ValueError("ModelTrainingRun samples must be unique")
+        estimable_count = sum(
+            item.state is ModelTrainingSampleState.ESTIMABLE for item in self.samples
+        )
+        if estimable_count < 2:
+            raise ValueError("ModelTrainingRun requires at least two estimable samples")
+        algorithm_hash = ContentHash(str(self.algorithm_sha256))
+        provenance_hash = ContentHash(str(self.provenance_sha256))
+        roster_hash = ContentHash(
+            canonical_json_sha256(
+                tuple(
+                    {
+                        "content_sha256": str(item.content_sha256),
+                        "model_training_sample_id": item.model_training_sample_id,
+                        "ordinal": item.ordinal,
+                    }
+                    for item in self.samples
+                )
+            )
+        )
+        object.__setattr__(self, "ridge_alpha", alpha)
+        object.__setattr__(self, "algorithm_sha256", algorithm_hash)
+        object.__setattr__(self, "provenance_sha256", provenance_hash)
+        object.__setattr__(self, "sample_count", len(self.samples))
+        object.__setattr__(self, "estimable_count", estimable_count)
+        object.__setattr__(self, "sample_roster_sha256", roster_hash)
+        object.__setattr__(
+            self,
+            "content_sha256",
+            ContentHash(
+                canonical_json_sha256(
+                    {
+                        "algorithm_code": self.algorithm_code,
+                        "algorithm_sha256": algorithm_hash,
+                        "algorithm_version": self.algorithm_version,
+                        "code_artifact": self.code_artifact,
+                        "config_artifact": self.config_artifact,
+                        "estimable_count": estimable_count,
+                        "evaluation_protocol_metric_id": self.evaluation_protocol_metric_id,
+                        "evaluation_run_id": self.evaluation_run_id,
+                        "exploratory_backtest_arm_id": self.exploratory_backtest_arm_id,
+                        "exploratory_backtest_fold_id": self.exploratory_backtest_fold_id,
+                        "exploratory_backtest_run_id": self.exploratory_backtest_run_id,
+                        "model_id": self.model_id,
+                        "provenance_sha256": provenance_hash,
+                        "random_seed": self.random_seed,
+                        "ridge_alpha": alpha,
+                        "sample_roster_sha256": roster_hash,
+                        "training_input_artifact": self.training_input_artifact,
+                    }
+                )
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ModelVersionPlan:
+    model_version_id: UUID
+    model_id: UUID
+    version: int
+    model_training_run_id: UUID
+    training_input_artifact: ArtifactBinding
+    fitted_model_artifact: ArtifactBinding
+    coefficient_count: int
+    fitted_model_sha256: ContentHash | str
+    code_artifact: ArtifactBinding
+    config_artifact: ArtifactBinding
+    provenance_sha256: ContentHash | str
+    content_sha256: ContentHash = field(init=False)
+
+    def __post_init__(self) -> None:
+        if isinstance(self.version, bool) or self.version < 1:
+            raise ValueError("ModelVersion version must be positive")
+        if isinstance(self.coefficient_count, bool) or self.coefficient_count < 1:
+            raise ValueError("coefficient_count must be positive")
+        fitted_hash = ContentHash(str(self.fitted_model_sha256))
+        if fitted_hash != self.fitted_model_artifact.content_sha256:
+            raise ValueError("fitted_model_sha256 must equal exact Artifact bytes")
+        provenance_hash = ContentHash(str(self.provenance_sha256))
+        object.__setattr__(self, "fitted_model_sha256", fitted_hash)
+        object.__setattr__(self, "provenance_sha256", provenance_hash)
+        object.__setattr__(
+            self,
+            "content_sha256",
+            ContentHash(
+                canonical_json_sha256(
+                    {
+                        "code_artifact": self.code_artifact,
+                        "coefficient_count": self.coefficient_count,
+                        "config_artifact": self.config_artifact,
+                        "fitted_model_artifact": self.fitted_model_artifact,
+                        "model_id": self.model_id,
+                        "model_training_run_id": self.model_training_run_id,
+                        "provenance_sha256": provenance_hash,
+                        "training_input_artifact": self.training_input_artifact,
+                        "version": self.version,
+                    }
+                )
+            ),
+        )
+
+
+__all__ = [
+    "LinearTrainingRow",
+    "ModelTrainingRunPlan",
+    "ModelTrainingSamplePlan",
+    "ModelTrainingSampleState",
+    "ModelVersionPlan",
+    "ResearchModelPlan",
+]

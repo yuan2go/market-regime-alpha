@@ -7,6 +7,7 @@ from uuid import UUID
 
 from market_regime_alpha.decision_support.domain import (
     DecisionRuntimeMode,
+    ExploratoryRetrospectiveDecisionScope,
     OpenDecisionRunRequest,
     PreparedDecisionInputs,
     PreparedDecisionReference,
@@ -35,6 +36,7 @@ from market_regime_alpha.infrastructure.postgres.queries.decision_inputs import 
     _load_candidate_set,
 )
 from market_regime_alpha.runtime.errors import RuntimeNotFoundError
+from market_regime_alpha.shared.hashing import canonical_json_sha256
 
 
 class PostgresDecisionRunQueryProvider:
@@ -175,7 +177,76 @@ def _load_snapshot(connection: Any, decision_run_id: UUID) -> DecisionRunSnapsho
         """,
         (decision_run_id,),
     ).fetchall()
+    retrospective_row = connection.execute(
+        """
+        SELECT dataset_id, exploratory_backtest_run_id,
+               exploratory_backtest_arm_id, exploratory_backtest_fold_id,
+               exploratory_backtest_fold_session_id, market_archive_id,
+               market_archive_seal_id, knowledge_cutoff,
+               simulated_event_cutoff, evidence_lane,
+               scope_content_sha256, content_sha256, bound_at
+        FROM mra.exploratory_retrospective_decision_run
+        WHERE decision_run_id = %s
+        """,
+        (decision_run_id,),
+    ).fetchone()
     try:
+        retrospective_scope = (
+            None
+            if retrospective_row is None
+            else ExploratoryRetrospectiveDecisionScope(
+                dataset_id=UUID(str(retrospective_row[0])),
+                exploratory_backtest_run_id=UUID(str(retrospective_row[1])),
+                exploratory_backtest_arm_id=UUID(str(retrospective_row[2])),
+                exploratory_backtest_fold_id=UUID(str(retrospective_row[3])),
+                exploratory_backtest_fold_session_id=UUID(
+                    str(retrospective_row[4])
+                ),
+                market_archive_id=UUID(str(retrospective_row[5])),
+                market_archive_seal_id=UUID(str(retrospective_row[6])),
+                knowledge_cutoff=retrospective_row[7],
+                simulated_event_cutoff=retrospective_row[8],
+            )
+        )
+        if retrospective_scope is not None:
+            expected_binding_hash = canonical_json_sha256(
+                {
+                    "bound_at": retrospective_row[12],
+                    "dataset_id": retrospective_scope.dataset_id,
+                    "decision_run_id": decision_run_id,
+                    "evidence_lane": retrospective_scope.evidence_lane,
+                    "exploratory_backtest_arm_id": (
+                        retrospective_scope.exploratory_backtest_arm_id
+                    ),
+                    "exploratory_backtest_fold_id": (
+                        retrospective_scope.exploratory_backtest_fold_id
+                    ),
+                    "exploratory_backtest_fold_session_id": (
+                        retrospective_scope.exploratory_backtest_fold_session_id
+                    ),
+                    "exploratory_backtest_run_id": (
+                        retrospective_scope.exploratory_backtest_run_id
+                    ),
+                    "knowledge_cutoff": retrospective_scope.knowledge_cutoff,
+                    "market_archive_id": retrospective_scope.market_archive_id,
+                    "market_archive_seal_id": (
+                        retrospective_scope.market_archive_seal_id
+                    ),
+                    "scope_content_sha256": str(
+                        retrospective_scope.content_sha256
+                    ),
+                    "simulated_event_cutoff": (
+                        retrospective_scope.simulated_event_cutoff
+                    ),
+                }
+            )
+            if (
+                str(retrospective_row[9]) != retrospective_scope.evidence_lane
+                or str(retrospective_row[10])
+                != str(retrospective_scope.content_sha256)
+                or str(retrospective_row[11]) != expected_binding_hash
+            ):
+                raise ValueError("retrospective Decision binding hash changed")
         candidate_set = _load_candidate_set(
             connection,
             UUID(str(root[2])),
@@ -260,6 +331,7 @@ def _load_snapshot(connection: Any, decision_run_id: UUID) -> DecisionRunSnapsho
             observation_id_factory=lambda commitment_id: observation_ids[
                 commitment_id
             ],
+            exploratory_retrospective_scope=retrospective_scope,
         )
         prepared = PreparedDecisionInputs(
             candidate_set=candidate_set,
@@ -267,6 +339,7 @@ def _load_snapshot(connection: Any, decision_run_id: UUID) -> DecisionRunSnapsho
             references=references,
             runtime=runtime,
             research_qualifications=research_qualifications,
+            exploratory_retrospective_scope=retrospective_scope,
         )
         request = OpenDecisionRunRequest(
             candidate_set_id=candidate_set.candidate_set_id,
@@ -335,6 +408,7 @@ def _load_snapshot(connection: Any, decision_run_id: UUID) -> DecisionRunSnapsho
         authority=authority,
         receipt_id=authority.command_receipt_id,
         result_hash=str(receipt[4]),
+        exploratory_retrospective_scope=retrospective_scope,
     )
 
 

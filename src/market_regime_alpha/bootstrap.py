@@ -9,10 +9,16 @@ from typing import Mapping
 from uuid import uuid4
 
 from market_regime_alpha.infrastructure.artifacts import LocalArtifactStore
+from market_regime_alpha.infrastructure.archive_resources import (
+    FilesystemArchiveResourceInspector,
+)
 from market_regime_alpha.infrastructure.postgres.pool import TargetPostgresPool
 from market_regime_alpha.infrastructure.postgres.market_uow import (
     PostgresMarketDatabaseClock,
     PostgresMarketUnitOfWorkProvider,
+)
+from market_regime_alpha.infrastructure.postgres.archive_uow import (
+    PostgresArchiveUnitOfWorkProvider,
 )
 from market_regime_alpha.infrastructure.postgres.candidate_uow import (
     PostgresCandidateUnitOfWorkProvider,
@@ -34,6 +40,12 @@ from market_regime_alpha.infrastructure.postgres.partition_uow import (
 )
 from market_regime_alpha.infrastructure.postgres.experiment_uow import (
     PostgresExperimentUnitOfWorkProvider,
+)
+from market_regime_alpha.infrastructure.postgres.exploratory_backtest_uow import (
+    PostgresExploratoryBacktestUnitOfWorkProvider,
+)
+from market_regime_alpha.infrastructure.postgres.research_model_uow import (
+    PostgresResearchModelUnitOfWorkProvider,
 )
 from market_regime_alpha.infrastructure.postgres.evaluation_uow import (
     PostgresEvaluationUnitOfWorkProvider,
@@ -64,24 +76,41 @@ from market_regime_alpha.infrastructure.postgres.target_uow import (
 )
 from market_regime_alpha.infrastructure.postgres.queries import (
     PostgresCandidateQueryProvider,
+    PostgresArchiveOperationsReadPort,
+    PostgresArchiveInspectionPort,
+    PostgresArchiveVerificationPort,
+    PostgresArchiveTradingSessionReadPort,
     PostgresCandidateResearchInputLoader,
     PostgresDecisionInputPreparationProvider,
     PostgresDecisionRunQueryProvider,
     PostgresMarketQueryProvider,
+    PostgresMarketRevisionLineageReadPort,
     PostgresOutcomeInputPreparationProvider,
     PostgresOutcomeQueryProvider,
     PostgresOutcomeVerificationProvider,
     PostgresResearchEvaluationVerificationProvider,
     PostgresResearchQualificationAdmissionReadPort,
     PostgresResearchQualificationVerificationProvider,
+    PostgresExploratoryFeatureInputReadPort,
+    PostgresExploratoryCampaignReadPort,
 )
 from market_regime_alpha.infrastructure.postgres.queries.decision_context_inputs import (
     PostgresContextInputPreparationProvider,
     PostgresContextQueryProvider,
 )
+from market_regime_alpha.market.ports import (
+    ArchiveInspectionPort,
+    ArchiveVerificationPort,
+    ArchiveTradingSessionReadPort,
+    MarketRevisionLineageReadPort,
+)
 from market_regime_alpha.infrastructure.postgres.queries.decision_inference_inputs import (
     PostgresInferenceInputPreparationProvider,
     PostgresInferenceQueryProvider,
+)
+from market_regime_alpha.infrastructure.postgres.queries.model_forecast_inputs import (
+    PostgresModelForecastInputPreparationProvider,
+    PostgresModelForecastQueryProvider,
 )
 from market_regime_alpha.infrastructure.postgres.queries.decision_opportunity_inputs import (
     PostgresOpportunityInputPreparationProvider,
@@ -106,6 +135,12 @@ from market_regime_alpha.infrastructure.postgres.queries.formal_campaigns import
 from market_regime_alpha.infrastructure.postgres.queries.provider_qualification import (
     PostgresProviderQualificationQueryPort,
 )
+from market_regime_alpha.infrastructure.postgres.queries.exploratory_backtests import (
+    PostgresExploratoryBacktestVerificationPort,
+)
+from market_regime_alpha.infrastructure.postgres.queries.model_training_inputs import (
+    PostgresModelTrainingInputProvider,
+)
 from market_regime_alpha.infrastructure.postgres.schema import (
     DatabaseIdentity,
     RecreateAuthorization,
@@ -121,11 +156,13 @@ from market_regime_alpha.decision_support.application import (
     DecisionRunVerifier,
     DecisionSupportApplication,
     InferenceCommands,
+    ModelForecastCommands,
     OpportunityCommands,
     PortfolioCommands,
     RiskCommands,
     StrategyCommands,
 )
+from market_regime_alpha.decision_support.ports import DecisionRunQueryProvider
 from market_regime_alpha.outcome.application import OutcomeApplication, OutcomeVerifier
 from market_regime_alpha.outcome.ports import OutcomeReadPort
 from market_regime_alpha.research_qualification.application import (
@@ -133,6 +170,9 @@ from market_regime_alpha.research_qualification.application import (
     EvaluationCommands,
     EvidenceCommands,
     ExperimentCommands,
+    ExploratoryBacktestCommands,
+    ModelCommands,
+    ResearchModelApplication,
     ResearchPartitionCommands,
     FormalCampaignCommands,
     ResearchEvaluationVerifier,
@@ -141,16 +181,25 @@ from market_regime_alpha.research_qualification.application import (
     QualificationCommands,
 )
 from market_regime_alpha.research_qualification.ports import (
+    ExploratoryCampaignReadPort,
+    ExploratoryFeatureInputReadPort,
     FormalPitSourceReadPort,
     FormalCampaignQueryPort,
     ResearchQualificationAdmissionReadPort,
+)
+from market_regime_alpha.research_qualification.ports.exploratory_backtest_queries import (
+    ExploratoryBacktestVerificationPort,
 )
 from market_regime_alpha.selection.application import (
     CandidateApplication,
     SelectionApplication,
 )
 from market_regime_alpha.selection.ports import CandidateQueryProvider
-from market_regime_alpha.market.application import MarketApplication
+from market_regime_alpha.market.application import (
+    ArchiveCommands,
+    MarketApplication,
+    MarketArchiveOperations,
+)
 from market_regime_alpha.market.application import ProviderQualificationCommands
 from market_regime_alpha.market.ports import (
     MarketQueryProvider,
@@ -223,13 +272,24 @@ class TargetApplication:
     runtime: RuntimeApplication
     artifacts: ArtifactApplication
     market: MarketApplication
+    market_archives: ArchiveCommands
+    archive_operations: MarketArchiveOperations
+    archive_inspection: ArchiveInspectionPort
+    archive_verification: ArchiveVerificationPort
+    archive_trading_sessions: ArchiveTradingSessionReadPort
     provider_qualifications: ProviderQualificationCommands
     provider_qualification_queries: ProviderQualificationQueryPort
     market_queries: MarketQueryProvider
+    market_revision_lineage: MarketRevisionLineageReadPort
     selection: SelectionApplication
     research_definitions: ResearchQualificationApplication
     research_partitions: ResearchPartitionCommands
     research_experiments: ExperimentCommands
+    exploratory_backtests: ExploratoryBacktestCommands
+    exploratory_backtest_verifier: ExploratoryBacktestVerificationPort
+    exploratory_campaigns: ExploratoryCampaignReadPort
+    exploratory_feature_inputs: ExploratoryFeatureInputReadPort
+    research_models: ResearchModelApplication
     research_evaluations: EvaluationCommands
     research_evaluation_verifier: ResearchEvaluationVerifier
     research_evidence: EvidenceCommands
@@ -243,9 +303,11 @@ class TargetApplication:
     candidates: CandidateApplication
     candidate_queries: CandidateQueryProvider
     decision_support: DecisionSupportApplication
+    decision_runs: DecisionRunQueryProvider
     decision_contexts: ContextCommands
     decision_strategies: StrategyCommands
     decision_inference: InferenceCommands
+    decision_model_forecasts: ModelForecastCommands
     decision_opportunities: OpportunityCommands
     decision_portfolios: PortfolioCommands
     decision_risk: RiskCommands
@@ -277,22 +339,38 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
     )
     uow_provider = PostgresUnitOfWorkProvider(pool)
     byte_store = LocalArtifactStore(settings.artifact_root)
+    artifact_application = ArtifactApplication(byte_store, uow_provider)
+    market_application = MarketApplication(
+        byte_store,
+        PostgresMarketUnitOfWorkProvider(pool),
+        PostgresMarketDatabaseClock(pool),
+    )
+    archive_commands = ArchiveCommands(
+        PostgresArchiveUnitOfWorkProvider(pool),
+        id_factory=uuid4,
+    )
     return TargetApplication(
         runtime=RuntimeApplication(uow_provider),
-        artifacts=ArtifactApplication(byte_store, uow_provider),
-        market=MarketApplication(
-            byte_store,
-            PostgresMarketUnitOfWorkProvider(pool),
+        artifacts=artifact_application,
+        market=market_application,
+        market_archives=archive_commands,
+        archive_operations=MarketArchiveOperations(
+            market_application,
+            archive_commands,
+            PostgresArchiveOperationsReadPort(pool),
+            FilesystemArchiveResourceInspector(settings.artifact_root),
             PostgresMarketDatabaseClock(pool),
         ),
+        archive_inspection=PostgresArchiveInspectionPort(pool),
+        archive_verification=PostgresArchiveVerificationPort(pool),
+        archive_trading_sessions=PostgresArchiveTradingSessionReadPort(pool),
         provider_qualifications=ProviderQualificationCommands(
-            PostgresProviderQualificationUnitOfWorkProvider(
-                pool, id_factory=uuid4
-            ),
+            PostgresProviderQualificationUnitOfWorkProvider(pool, id_factory=uuid4),
             id_factory=uuid4,
         ),
         provider_qualification_queries=PostgresProviderQualificationQueryPort(pool),
         market_queries=PostgresMarketQueryProvider(pool),
+        market_revision_lineage=PostgresMarketRevisionLineageReadPort(pool),
         selection=SelectionApplication(PostgresSelectionUnitOfWorkProvider(pool)),
         research_definitions=ResearchQualificationApplication(
             byte_store,
@@ -306,6 +384,21 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
         research_experiments=ExperimentCommands(
             PostgresExperimentUnitOfWorkProvider(pool),
             id_factory=uuid4,
+        ),
+        exploratory_backtests=ExploratoryBacktestCommands(
+            PostgresExploratoryBacktestUnitOfWorkProvider(pool),
+            id_factory=uuid4,
+        ),
+        exploratory_backtest_verifier=(PostgresExploratoryBacktestVerificationPort(pool)),
+        exploratory_campaigns=PostgresExploratoryCampaignReadPort(pool),
+        exploratory_feature_inputs=PostgresExploratoryFeatureInputReadPort(pool),
+        research_models=ResearchModelApplication(
+            ModelCommands(
+                PostgresResearchModelUnitOfWorkProvider(pool),
+                id_factory=uuid4,
+            ),
+            PostgresModelTrainingInputProvider(pool, byte_store),
+            artifact_application,
         ),
         research_evaluations=EvaluationCommands(
             PostgresEvaluationUnitOfWorkProvider(pool, id_factory=uuid4),
@@ -341,7 +434,9 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
             PostgresDecisionInputPreparationProvider(pool),
             PostgresDecisionSupportUnitOfWorkProvider(pool),
             PostgresDecisionRunQueryProvider(pool),
+            exploratory_preparation=PostgresDecisionInputPreparationProvider(pool),
         ),
+        decision_runs=PostgresDecisionRunQueryProvider(pool),
         decision_contexts=ContextCommands(
             PostgresContextInputPreparationProvider(pool),
             PostgresContextUnitOfWorkProvider(pool),
@@ -355,6 +450,16 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
             PostgresInferenceInputPreparationProvider(pool),
             PostgresInferenceUnitOfWorkProvider(pool),
             PostgresInferenceQueryProvider(pool),
+        ),
+        decision_model_forecasts=ModelForecastCommands(
+            PostgresModelForecastInputPreparationProvider(
+                pool,
+                byte_store,
+                PostgresInferenceInputPreparationProvider(pool),
+            ),
+            PostgresInferenceUnitOfWorkProvider(pool),
+            PostgresInferenceQueryProvider(pool),
+            PostgresModelForecastQueryProvider(pool),
         ),
         decision_opportunities=OpportunityCommands(
             PostgresOpportunityInputPreparationProvider(pool),

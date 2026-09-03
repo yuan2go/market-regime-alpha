@@ -11,6 +11,7 @@ import psycopg
 
 from market_regime_alpha.infrastructure.postgres.pool import TargetPostgresPool
 from market_regime_alpha.infrastructure.postgres.queries.outcome_inputs import (
+    _find_retrospective_scope,
     _load_commitment,
     _load_target,
 )
@@ -66,9 +67,13 @@ class PostgresOutcomeQueryProvider:
                 """,
                 (commitment_id, request_identity),
             ).fetchone()
-            return None if row is None else _load_snapshot(
-                connection,
-                UUID(str(row[0])),
+            return (
+                None
+                if row is None
+                else _load_snapshot(
+                    connection,
+                    UUID(str(row[0])),
+                )
             )
 
     def current_for_commitment(
@@ -93,9 +98,13 @@ class PostgresOutcomeQueryProvider:
                 """,
                 (commitment_id,),
             ).fetchone()
-            return None if row is None else _load_snapshot(
-                connection,
-                UUID(str(row[0])),
+            return (
+                None
+                if row is None
+                else _load_snapshot(
+                    connection,
+                    UUID(str(row[0])),
+                )
             )
 
 
@@ -108,9 +117,7 @@ def _load_snapshot(
     except OutcomeAuthorityIntegrityError:
         raise
     except (IndexError, KeyError, StopIteration, TypeError, ValueError) as exc:
-        raise OutcomeAuthorityIntegrityError(
-            "persisted Outcome snapshot cannot be reconstructed as typed Authority"
-        ) from exc
+        raise OutcomeAuthorityIntegrityError("persisted Outcome snapshot cannot be reconstructed as typed Authority") from exc
 
 
 def _reconstruct_snapshot(
@@ -165,10 +172,19 @@ def _reconstruct_snapshot(
         (revision_id,),
     ).fetchone()
     if row is None or row[47] is None:
-        raise OutcomeAuthorityIntegrityError(
-            f"Outcome revision {revision_id} has no successful canonical snapshot"
-        )
-    commitment = _load_commitment(connection, UUID(str(row[5])))
+        raise OutcomeAuthorityIntegrityError(f"Outcome revision {revision_id} has no successful canonical snapshot")
+    commitment_id = UUID(str(row[5]))
+    retrospective_scope = _find_retrospective_scope(
+        connection,
+        commitment_id,
+        observation_cutoff=row[9],
+        knowledge_cutoff=row[10],
+    )
+    commitment = _load_commitment(
+        connection,
+        commitment_id,
+        retrospective_scope=retrospective_scope,
+    )
     target = _load_target(
         connection,
         UUID(str(row[6])),
@@ -285,12 +301,8 @@ def _reconstruct_snapshot(
         for item in source_rows
         if str(item[2]) == "TRADING_SESSION"
     )
-    observation_by_source = {
-        UUID(str(item[3])): item for item in observation_rows
-    }
-    observation_source_rows = tuple(
-        item for item in source_rows if str(item[2]) != "TRADING_SESSION"
-    )
+    observation_by_source = {UUID(str(item[3])): item for item in observation_rows}
+    observation_source_rows = tuple(item for item in source_rows if str(item[2]) != "TRADING_SESSION")
     sources = tuple(
         _source_from_row(
             item,
@@ -368,18 +380,9 @@ def _reconstruct_snapshot(
         )
         for item in dependency_rows
     )
-    observation_checkpoint_by_id = {
-        UUID(str(item[0])): UUID(str(item[2])) for item in observation_rows
-    }
-    metric_definition_by_id = {
-        UUID(str(item[0])): UUID(str(item[2])) for item in metric_rows
-    }
-    source_checkpoint_by_id = {
-        UUID(str(item[0])): (
-            None if item[3] is None else UUID(str(item[3]))
-        )
-        for item in source_rows
-    }
+    observation_checkpoint_by_id = {UUID(str(item[0])): UUID(str(item[2])) for item in observation_rows}
+    metric_definition_by_id = {UUID(str(item[0])): UUID(str(item[2])) for item in metric_rows}
+    source_checkpoint_by_id = {UUID(str(item[0])): (None if item[3] is None else UUID(str(item[3]))) for item in source_rows}
     reasons = tuple(
         OutcomeReasonDraft(
             ordinal=int(item[1]),
@@ -392,11 +395,7 @@ def _reconstruct_snapshot(
                 if item[5] is not None
                 else None
             ),
-            target_metric_definition_id=(
-                None
-                if item[6] is None
-                else metric_definition_by_id[UUID(str(item[6]))]
-            ),
+            target_metric_definition_id=(None if item[6] is None else metric_definition_by_id[UUID(str(item[6]))]),
         )
         for item in reason_rows
     )
@@ -424,12 +423,8 @@ def _reconstruct_snapshot(
         source_ids=tuple(UUID(str(item[0])) for item in source_rows),
         observation_ids=tuple(UUID(str(item[0])) for item in observation_rows),
         metric_ids=tuple(UUID(str(item[0])) for item in metric_rows),
-        reference_dependency_ids=tuple(
-            UUID(str(item[0])) for item in reference_rows
-        ),
-        observation_dependency_ids=tuple(
-            UUID(str(item[0])) for item in dependency_rows
-        ),
+        reference_dependency_ids=tuple(UUID(str(item[0])) for item in reference_rows),
+        observation_dependency_ids=tuple(UUID(str(item[0])) for item in dependency_rows),
         reason_ids=tuple(UUID(str(item[0])) for item in reason_rows),
     )
     authority = build_market_target_outcome_authority(
@@ -513,6 +508,8 @@ def _source_from_row(row, observation, *, source_ordinal: int):
         reason_code=str(row[28]),
         **common,
     )
+
+
 def _source_fact_id(source_rows, source_id: UUID) -> UUID:
     row = next(item for item in source_rows if UUID(str(item[0])) == source_id)
     return UUID(str(row[24] if row[24] is not None else row[26]))
@@ -546,9 +543,19 @@ def _assert_persisted_snapshot_matches(
         revision.definition_summary_sha256,
     )
     persisted_root = (
-        int(row[14]), str(row[15]), int(row[16]), str(row[17]),
-        int(row[18]), str(row[19]), int(row[20]), str(row[21]),
-        int(row[22]), str(row[23]), int(row[24]), str(row[25]), str(row[26]),
+        int(row[14]),
+        str(row[15]),
+        int(row[16]),
+        str(row[17]),
+        int(row[18]),
+        str(row[19]),
+        int(row[20]),
+        str(row[21]),
+        int(row[22]),
+        str(row[23]),
+        int(row[24]),
+        str(row[25]),
+        str(row[26]),
     )
     expected_children = (
         tuple(item.content_sha256 for item in revision.sources),
@@ -566,17 +573,9 @@ def _assert_persisted_snapshot_matches(
         tuple(str(item[9]) for item in dependency_rows),
         tuple(str(item[7]) for item in reason_rows),
     )
-    chain_matches = revision.supersedes_revision_ordinal == (
-        None if row[4] is None else int(row[4])
-    )
-    if (
-        expected_root != persisted_root
-        or expected_children != persisted_children
-        or not chain_matches
-    ):
-        raise OutcomeAuthorityIntegrityError(
-            "persisted Outcome snapshot differs from canonical reconstruction"
-        )
+    chain_matches = revision.supersedes_revision_ordinal == (None if row[4] is None else int(row[4]))
+    if expected_root != persisted_root or expected_children != persisted_children or not chain_matches:
+        raise OutcomeAuthorityIntegrityError("persisted Outcome snapshot differs from canonical reconstruction")
 
 
 __all__ = ["PostgresOutcomeQueryProvider"]

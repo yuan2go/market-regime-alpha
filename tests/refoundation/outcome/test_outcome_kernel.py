@@ -8,6 +8,7 @@ from uuid import UUID
 import pytest
 
 from market_regime_alpha.outcome.domain import (
+    ExploratoryRetrospectiveOutcomeScope,
     MarketTargetOutcomeIdentityPlan,
     OutcomeCommitmentSnapshot,
     OutcomeRuntimeSnapshot,
@@ -48,6 +49,54 @@ HASH_A = "a" * 64
 HASH_B = "b" * 64
 
 
+def test_outcome_reference_visibility_requires_explicit_retrospective_scope() -> None:
+    arguments = {
+        "commitment_id": UUID("00000000-0000-4000-8000-000000009301"),
+        "decision_run_id": UUID("00000000-0000-4000-8000-000000009302"),
+        "decision_run_target_id": UUID("00000000-0000-4000-8000-000000009303"),
+        "candidate_set_id": UUID("00000000-0000-4000-8000-000000009304"),
+        "candidate_id": UUID("00000000-0000-4000-8000-000000009305"),
+        "instrument_id": INSTRUMENT_ID,
+        "target_definition_id": TARGET_ID,
+        "target_version": 1,
+        "target_definition_sha256": HASH_A,
+        "target_checkpoint_id": REFERENCE_ID,
+        "reference_provider_product_id": PRODUCT_ID,
+        "reference_capture_id": CAPTURE_ID,
+        "reference_session_id": SESSION_ID,
+        "reference_source_kind": "BAR_REVISION",
+        "reference_fact_id": UUID("00000000-0000-4000-8000-000000009306"),
+        "reference_known_at": _instant(12),
+        "decision_time": _instant(9),
+        "runtime_mode": "HISTORICAL",
+        "commitment_recorded_at": _instant(13),
+        "reference": _reference(),
+    }
+    with pytest.raises(ValueError, match="authorized cutoff"):
+        OutcomeCommitmentSnapshot(**arguments)
+
+    decision_run_id = UUID("00000000-0000-4000-8000-000000009302")
+    scope = ExploratoryRetrospectiveOutcomeScope(
+        decision_run_id=decision_run_id,
+        market_archive_id=UUID("00000000-0000-4000-8000-000000009307"),
+        market_archive_seal_id=UUID("00000000-0000-4000-8000-000000009308"),
+        knowledge_cutoff=_instant(14),
+        simulated_event_cutoff=_instant(9),
+        decision_binding_sha256=HASH_B,
+    )
+    retrospective = OutcomeCommitmentSnapshot(
+        **arguments,
+        exploratory_retrospective_scope=scope,
+    )
+    assert retrospective.exploratory_retrospective_scope == scope
+
+    with pytest.raises(ValueError, match="differs from its Decision"):
+        OutcomeCommitmentSnapshot(
+            **(arguments | {"runtime_mode": "OPERATIONAL"}),
+            exploratory_retrospective_scope=scope,
+        )
+
+
 def _instant(hour: int, minute: int = 0) -> datetime:
     return datetime(2026, 8, 31, hour, minute, tzinfo=UTC)
 
@@ -82,26 +131,14 @@ def _metric(
     barrier_direction: OutcomeBarrierDirection | None = None,
     barrier_threshold: Decimal | None = None,
 ) -> OutcomeMetricDefinition:
-    value_type = (
-        OutcomeValueType.BOOLEAN
-        if kind is OutcomeMetricKind.BARRIER_HIT
-        else OutcomeValueType.DECIMAL
-    )
+    value_type = OutcomeValueType.BOOLEAN if kind is OutcomeMetricKind.BARRIER_HIT else OutcomeValueType.DECIMAL
     return OutcomeMetricDefinition(
-        target_metric_definition_id=UUID(
-            f"00000000-0000-4000-8000-{metric_id:012d}"
-        ),
+        target_metric_definition_id=UUID(f"00000000-0000-4000-8000-{metric_id:012d}"),
         ordinal=ordinal,
         metric_code=f"metric_{ordinal}",
         metric_kind=kind,
         value_type=value_type,
-        unit=(
-            "BOOLEAN"
-            if value_type is OutcomeValueType.BOOLEAN
-            else "PRICE"
-            if kind is OutcomeMetricKind.OBSERVATION_VALUE
-            else "RATIO"
-        ),
+        unit=("BOOLEAN" if value_type is OutcomeValueType.BOOLEAN else "PRICE" if kind is OutcomeMetricKind.OBSERVATION_VALUE else "RATIO"),
         completion_rule=completion,
         algorithm_code=kind.value.lower(),
         algorithm_version="1.0.0",
@@ -127,9 +164,7 @@ def _dependency(
     role: OutcomeDependencyRole,
 ) -> OutcomeMetricDependency:
     return OutcomeMetricDependency(
-        target_metric_dependency_id=UUID(
-            f"00000000-0000-4000-8000-{dependency_id:012d}"
-        ),
+        target_metric_dependency_id=UUID(f"00000000-0000-4000-8000-{dependency_id:012d}"),
         ordinal=ordinal,
         target_metric_definition_id=metric.target_metric_definition_id,
         target_checkpoint_id=checkpoint_id,
@@ -188,9 +223,7 @@ def _bar(
     known_at: datetime | None = None,
 ) -> OutcomeBarSource:
     return OutcomeBarSource(
-        bar_revision_id=UUID(
-            f"00000000-0000-4000-8000-{2000 + ordinal:012d}"
-        ),
+        bar_revision_id=UUID(f"00000000-0000-4000-8000-{2000 + ordinal:012d}"),
         target_checkpoint_id=checkpoint.target_checkpoint_id,
         source_ordinal=ordinal,
         provider_product_id=PRODUCT_ID,
@@ -295,12 +328,8 @@ def test_kernel_reuses_frozen_reference_for_return_and_observation_value() -> No
     )
 
     by_kind = {item.metric_kind: item for item in draft.metrics}
-    assert by_kind[OutcomeMetricKind.SIMPLE_RETURN].decimal_value == Decimal(
-        "0.050000000000000000"
-    )
-    assert by_kind[OutcomeMetricKind.OBSERVATION_VALUE].decimal_value == Decimal(
-        "105"
-    )
+    assert by_kind[OutcomeMetricKind.SIMPLE_RETURN].decimal_value == Decimal("0.050000000000000000")
+    assert by_kind[OutcomeMetricKind.OBSERVATION_VALUE].decimal_value == Decimal("105")
     assert draft.status is OutcomeStatus.COMPLETE
     assert draft.availability_status is OutcomeAvailabilityStatus.AVAILABLE
     assert draft.finality_status is OutcomeFinalityStatus.UNKNOWN
@@ -369,9 +398,7 @@ def test_calculated_fact_models_reject_internally_inconsistent_state_shapes() ->
             draft,
             availability_status=OutcomeAvailabilityStatus.UNAVAILABLE,
         )
-    assert {item.dependency_role for item in draft.reference_dependencies} == {
-        OutcomeDependencyRole.REFERENCE
-    }
+    assert {item.dependency_role for item in draft.reference_dependencies} == {OutcomeDependencyRole.REFERENCE}
 
 
 def test_authority_builder_closes_id_bearing_rosters_and_runtime_identity() -> None:
@@ -451,10 +478,7 @@ def test_authority_builder_closes_id_bearing_rosters_and_runtime_identity() -> N
         config_artifact_id=UUID("00000000-0000-4000-8000-000000002314"),
         config_hash=HASH_B,
     )
-    next_id = iter(
-        UUID(f"00000000-0000-4000-8000-{value:012d}")
-        for value in range(2401, 2420)
-    ).__next__
+    next_id = iter(UUID(f"00000000-0000-4000-8000-{value:012d}") for value in range(2401, 2420)).__next__
     identities = MarketTargetOutcomeIdentityPlan.create(draft, next_id)
     authority = build_market_target_outcome_authority(
         identities=identities,
@@ -559,12 +583,8 @@ def test_kernel_calculates_clamped_excursions_and_first_passage() -> None:
         knowledge_cutoff=_instant(10, 31),
     )
     by_kind = {item.metric_kind: item for item in draft.metrics}
-    assert by_kind[OutcomeMetricKind.MAX_FAVORABLE_EXCURSION].decimal_value == Decimal(
-        "0.080000000000000000"
-    )
-    assert by_kind[OutcomeMetricKind.MAX_ADVERSE_EXCURSION].decimal_value == Decimal(
-        "-0.040000000000000000"
-    )
+    assert by_kind[OutcomeMetricKind.MAX_FAVORABLE_EXCURSION].decimal_value == Decimal("0.080000000000000000")
+    assert by_kind[OutcomeMetricKind.MAX_ADVERSE_EXCURSION].decimal_value == Decimal("-0.040000000000000000")
     barrier = by_kind[OutcomeMetricKind.BARRIER_HIT]
     assert barrier.boolean_value is True
     assert barrier.first_passage_at == _instant(10, 30)
@@ -632,9 +652,7 @@ def test_kernel_preserves_intrabar_barrier_ambiguity_without_hiding_hits() -> No
     assert {item.status for item in draft.metrics} == {OutcomeStatus.PARTIAL}
     assert draft.status is OutcomeStatus.PARTIAL
     assert draft.availability_status is OutcomeAvailabilityStatus.AVAILABLE
-    assert "INTRABAR_ORDERING_NOT_OBSERVABLE" in {
-        item.reason_code for item in draft.reasons
-    }
+    assert "INTRABAR_ORDERING_NOT_OBSERVABLE" in {item.reason_code for item in draft.reasons}
 
 
 @pytest.mark.parametrize(
@@ -692,11 +710,7 @@ def test_exact_source_gap_propagates_without_zero_fallback(
         event_start=_instant(10, 25),
         event_end=_instant(10, 30),
         gap_kind=gap_kind,
-        reason_code=(
-            "EXACT_BAR_MISSING"
-            if gap_kind is OutcomeGapKind.MISSING
-            else "PROVIDER_FAILURE"
-        ),
+        reason_code=("EXACT_BAR_MISSING" if gap_kind is OutcomeGapKind.MISSING else "PROVIDER_FAILURE"),
         recorded_at=_instant(10, 30),
         known_at=_instant(10, 30),
     )
@@ -761,12 +775,8 @@ def test_kernel_rejects_later_known_or_after_observation_cutoff_sources() -> Non
 
 
 def test_optional_metric_failure_does_not_inflate_or_block_required_completion() -> None:
-    required_checkpoint = _checkpoint(
-        CHECKPOINT_A, ordinal=1, local_time=time(10)
-    )
-    optional_checkpoint = _checkpoint(
-        CHECKPOINT_B, ordinal=2, local_time=time(10, 30)
-    )
+    required_checkpoint = _checkpoint(CHECKPOINT_A, ordinal=1, local_time=time(10))
+    optional_checkpoint = _checkpoint(CHECKPOINT_B, ordinal=2, local_time=time(10, 30))
     required = _metric(2001, ordinal=1, kind=OutcomeMetricKind.SIMPLE_RETURN)
     optional = _metric(
         2002,
@@ -839,7 +849,5 @@ def test_optional_metric_failure_does_not_inflate_or_block_required_completion()
     )
     assert draft.status is OutcomeStatus.COMPLETE
     assert draft.availability_status is OutcomeAvailabilityStatus.AVAILABLE
-    optional_result = next(
-        item for item in draft.metrics if item.completion_rule is OutcomeCompletionRule.OPTIONAL
-    )
+    optional_result = next(item for item in draft.metrics if item.completion_rule is OutcomeCompletionRule.OPTIONAL)
     assert optional_result.status is OutcomeStatus.UNAVAILABLE

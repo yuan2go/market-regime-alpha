@@ -16,6 +16,9 @@ from market_regime_alpha.infrastructure.postgres.market_uow import (
     PostgresMarketDatabaseClock,
     PostgresMarketUnitOfWorkProvider,
 )
+from market_regime_alpha.infrastructure.postgres.archive_uow import (
+    PostgresArchiveUnitOfWorkProvider,
+)
 from market_regime_alpha.infrastructure.postgres.pool import TargetPostgresPool
 from market_regime_alpha.infrastructure.postgres.repositories import (
     PostgresAuditRepository,
@@ -25,9 +28,17 @@ from market_regime_alpha.infrastructure.postgres.selection_uow import (
     PostgresSelectionUnitOfWorkProvider,
 )
 from market_regime_alpha.infrastructure.postgres.uow import PostgresUnitOfWorkProvider
-from market_regime_alpha.market.application import MarketApplication
+from market_regime_alpha.market.application import (
+    ArchiveCommands,
+    ArchiveSlicePlan,
+    MarketApplication,
+    RecordArchiveCaptureObservationRequest,
+    StartMarketArchiveRequest,
+)
 from market_regime_alpha.market.domain import (
     BarTimeframe,
+    ArchiveLane,
+    ArchiveSealDisposition,
     ClassificationMembershipRevision,
     ClassificationRevision,
     EvidenceScope,
@@ -83,6 +94,7 @@ from market_regime_alpha.selection.domain import (
     EligibilityRule,
     EligibilityRuleKind,
     EligibilityStatus,
+    ExploratoryRetrospectiveSelectionScope,
     UniverseDefinition,
     UniverseMembershipStatus,
     UniverseScopeSpecification,
@@ -769,6 +781,167 @@ def test_freeze_and_assess_cover_complete_scope_all_rules_and_exact_lineage(
             """
         ).fetchone()
     assert counts == (1, 3, 3, 15, 8, 2)
+
+
+def test_retrospective_selection_uses_exact_archive_dual_clock_without_weakening_pit(
+    selection_stack: _SelectionStack,
+) -> None:
+    stack = selection_stack
+    universe_scope = _scope(stack)
+    universe = UniverseDefinition(
+        universe_id=uuid4(),
+        universe_code="retrospective-selection",
+        purpose="typed exploratory retrospective population",
+    )
+    ordinary_universe = UniverseDefinition(
+        universe_id=uuid4(),
+        universe_code="ordinary-old-clock-selection",
+        purpose="prove ordinary PIT visibility remains closed",
+    )
+    listing_rule = EligibilityRule(
+        eligibility_rule_id=uuid4(),
+        rule_code="MIN_LISTING_AGE",
+        ordinal=1,
+        rule_kind=EligibilityRuleKind.MIN_LISTING_AGE,
+        measure_code="LISTING_AGE",
+        aggregation="ELAPSED",
+        window_value=0,
+        window_unit="NONE",
+        value_kind=CriterionValueKind.DECIMAL,
+        operator=CriterionOperator.GTE,
+        value_unit="CALENDAR_DAYS",
+        threshold_decimal=Decimal("365"),
+    )
+    policy = EligibilityPolicy(
+        eligibility_policy_id=uuid4(),
+        market_provider_product_id=stack.product.provider_product_id,
+        policy_code="retrospective-selection-v1",
+        version=1,
+        rules=(listing_rule,),
+    )
+    stack.application.register_universe(
+        universe,
+        _context("register-retrospective", "REGISTER_UNIVERSE"),
+    )
+    stack.application.register_universe(
+        ordinary_universe,
+        _context("register-ordinary-old-clock", "REGISTER_UNIVERSE"),
+    )
+    stack.application.register_eligibility_policy(
+        policy,
+        _context("register-retrospective-policy", "REGISTER_ELIGIBILITY_POLICY"),
+    )
+    with stack.pool.connection(read_only=True) as connection:
+        capture_id, capture_started_at = connection.execute(
+            """
+            SELECT capture_id, capture_started_at
+            FROM mra.data_capture
+            WHERE capture_key = 'selection-core-fixture'
+            """
+        ).fetchone()
+    code_artifact = stack.artifacts.publish(
+        b"selection retrospective archive code\n",
+        media_type="text/plain",
+        context=_context("retrospective-code", "PUBLISH_ARTIFACT"),
+    )
+    config_artifact = stack.artifacts.publish(
+        b'{"scope":"selection-retrospective"}\n',
+        media_type="application/json",
+        context=_context("retrospective-config", "PUBLISH_ARTIFACT"),
+    )
+    simulated = stack.decision_time.value - timedelta(days=1)
+    archive_id, slice_id = uuid4(), uuid4()
+    archives = ArchiveCommands(
+        PostgresArchiveUnitOfWorkProvider(stack.pool),
+        id_factory=uuid4,
+    )
+    archives.start(
+        StartMarketArchiveRequest(
+            market_archive_id=archive_id,
+            archive_code=f"selection-{archive_id.hex[:12]}",
+            lane=ArchiveLane.RETROSPECTIVE_BACKFILL,
+            provider_product_id=stack.product.provider_product_id,
+            exchange_code="XSHG",
+            timeframe=BarTimeframe.DAILY,
+            price_basis=PriceBasis.RAW_UNADJUSTED,
+            instrument_scope="ENGINEERING_EXPLORATORY_PILOT_32",
+            instrument_scope_sha256="a" * 64,
+            event_window_start=simulated - timedelta(days=1),
+            event_window_end=simulated,
+            reserved_free_bytes=1,
+            maximum_archive_bytes=1_000_000,
+            maximum_slice_bytes=1_000_000,
+            code_artifact_id=code_artifact.artifact_id,
+            config_artifact_id=config_artifact.artifact_id,
+            provenance_sha256="b" * 64,
+            slices=(
+                ArchiveSlicePlan(
+                    market_archive_slice_id=slice_id,
+                    ordinal=1,
+                    scope_key="selection-fixture",
+                    event_window_start=simulated - timedelta(days=1),
+                    event_window_end=simulated,
+                    request_sha256="c" * 64,
+                    expected_fact_kind="SELECTION_INPUTS",
+                ),
+            ),
+        ),
+        _context("retrospective-archive", "START_MARKET_ARCHIVE"),
+    )
+    archives.record_capture_observation(
+        RecordArchiveCaptureObservationRequest(
+            market_archive_id=archive_id,
+            market_archive_slice_id=slice_id,
+            capture_id=capture_id,
+            schedule_slot="RETROSPECTIVE_BATCH",
+            requested_at=capture_started_at,
+        ),
+        _context("retrospective-observation", "RECORD_ARCHIVE_CAPTURE_OBSERVATION"),
+    )
+    seal = archives.seal_retrospective(
+        market_archive_id=archive_id,
+        disposition=ArchiveSealDisposition.COMPLETE,
+        context=_context("retrospective-seal", "SEAL_RETROSPECTIVE_ARCHIVE"),
+    )
+    retrospective = ExploratoryRetrospectiveSelectionScope(
+        market_archive_id=archive_id,
+        market_archive_seal_id=seal.market_archive_seal_id,
+        knowledge_cutoff=seal.knowledge_cutoff,
+        simulated_event_cutoff=simulated,
+    )
+
+    ordinary = stack.application.freeze_universe(
+        universe_id=ordinary_universe.universe_id,
+        scope=universe_scope,
+        decision_time=DecisionTime(simulated),
+        context=_context("ordinary-old-clock", "FREEZE_UNIVERSE"),
+    )
+    assert ordinary.included_count == 0
+    assert ordinary.unknown_count == 3
+
+    frozen = stack.application.freeze_exploratory_retrospective_universe(
+        universe_id=universe.universe_id,
+        scope=universe_scope,
+        retrospective_scope=retrospective,
+        context=_context("retrospective-freeze", "FREEZE_UNIVERSE"),
+    )
+    assessed = stack.application.assess_exploratory_retrospective_eligibility(
+        universe_revision_id=frozen.universe_revision_id,
+        eligibility_policy_id=policy.eligibility_policy_id,
+        retrospective_scope=retrospective,
+        context=_context("retrospective-assess", "ASSESS_ELIGIBILITY"),
+    )
+    assert frozen.included_count == 1
+    assert assessed.eligible_count == 1
+    with psycopg.connect(stack.database_url) as connection:
+        bindings = connection.execute(
+            """
+            SELECT
+              (SELECT count(*) FROM mra.exploratory_retrospective_universe_revision),
+              (SELECT count(*) FROM mra.exploratory_retrospective_eligibility_batch)
+            """
+        ).fetchone()
+    assert bindings == (1, 1)
 
 
 def test_empty_explicit_scope_is_valid_and_never_expands_to_current_instruments(

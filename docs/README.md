@@ -170,6 +170,13 @@ Checkpoint traceability:
   — immutable exact-baseline ledger for the corrected `F/X/?/B` feasibility
   matrix, bounded external-evidence blocker, Gate A stop, and explicit re-entry
   contract without a new Provider Protocol or Qualification Decision.
+- [WP-17P Prospective Archive and Exploratory Backtest Design](references/WP-ARCHITECTURE-REFOUNDATION-17P-Prospective-Archive-Exploratory-Backtest-Design.md)
+  — frozen two-lane archive, dual-clock retrospective simulation, bounded
+  exploratory Model/backtest, operational isolation and unchanged Formal
+  evidence-ceiling contract.
+- [WP-17P Prospective Archive and Exploratory Backtest Implementation Plan](references/WP-ARCHITECTURE-REFOUNDATION-17P-Prospective-Archive-Exploratory-Backtest-Implementation-Plan.md)
+  — vertical TDD slices, exact public seams, PostgreSQL qualification, isolated
+  real execution and immutable Verification delivery order.
 
 Design documents in this section define the Target destination. Status and
 Verification records report their explicitly bounded implementation evidence;

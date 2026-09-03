@@ -40,7 +40,7 @@ def test_wp12_uses_only_unreleased_baseline_and_no_generic_subject() -> None:
     assert "subject_kind" not in sql
     assert "subject_id" not in sql
     assert "business_payload json" not in sql
-    for table in ("model", "model_version"):
+    for table in ("calibration", "trade_outcome"):
         assert f"CREATE TABLE mra.{table}" not in sql
 
 

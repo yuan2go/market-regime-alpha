@@ -287,7 +287,26 @@ class PostgresDecisionRunVerificationProvider:
                     WHERE reference.decision_run_id = %s
                       AND (
                         commitment.commitment_id IS NULL
-                        OR reference.known_at > reference.decision_time
+                        OR (
+                          reference.known_at > reference.decision_time
+                          AND NOT EXISTS (
+                            SELECT 1
+                            FROM mra.exploratory_retrospective_decision_run AS binding
+                            JOIN mra.market_archive_capture_observation AS archive_observation
+                              ON archive_observation.market_archive_id =
+                                 binding.market_archive_id
+                             AND archive_observation.capture_id = reference.capture_id
+                            WHERE binding.decision_run_id = reference.decision_run_id
+                              AND binding.evidence_lane =
+                                  'EXPLORATORY_RETROSPECTIVE'
+                              AND binding.simulated_event_cutoff =
+                                  reference.decision_time
+                              AND reference.event_end <=
+                                  binding.simulated_event_cutoff
+                              AND reference.known_at <= binding.knowledge_cutoff
+                              AND reference.runtime_mode IN ('HISTORICAL', 'REPLAY')
+                          )
+                        )
                         OR reference.finality_status <> 'UNKNOWN'
                         OR (reference.source_kind = 'BAR_REVISION' AND (
                               reference.value_status <> 'PRESENT'

@@ -1,5 +1,19 @@
 """Stable public exports for the Market/PIT domain."""
 
+from market_regime_alpha.market.domain.archive import (
+    ArchiveCaptureObservation,
+    ArchiveEvidenceClass,
+    ArchiveLane,
+    ArchiveObservationRelation,
+    ArchiveObservationTimeliness,
+    ArchiveSealDisposition,
+    ArchiveSliceStatus,
+    MarketArchive,
+    MarketArchiveSeal,
+    MarketArchiveSlice,
+    RetrospectiveSimulationClock,
+)
+
 from market_regime_alpha.market.domain.facts import (
     CorporateActionRevision,
     InstrumentFactRevision,
@@ -62,6 +76,13 @@ from market_regime_alpha.market.domain.vocabulary import (
 )
 
 __all__ = [
+    "ArchiveCaptureObservation",
+    "ArchiveEvidenceClass",
+    "ArchiveLane",
+    "ArchiveObservationRelation",
+    "ArchiveObservationTimeliness",
+    "ArchiveSealDisposition",
+    "ArchiveSliceStatus",
     "BarTimeframe",
     "CaptureStatus",
     "ClassificationEvidenceStatus",
@@ -82,6 +103,9 @@ __all__ = [
     "InstrumentType",
     "ListingStatus",
     "MarketBarRevision",
+    "MarketArchive",
+    "MarketArchiveSeal",
+    "MarketArchiveSlice",
     "MarketEvidenceGapError",
     "MarketFactKind",
     "MembershipStatus",
@@ -102,6 +126,7 @@ __all__ = [
     "ProviderCapture",
     "ProviderKind",
     "ProviderProduct",
+    "RetrospectiveSimulationClock",
     "SecurityStatus",
     "SecurityStatusFactRevision",
     "SourceAvailabilityStatus",

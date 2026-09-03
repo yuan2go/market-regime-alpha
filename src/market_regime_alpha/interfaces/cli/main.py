@@ -27,6 +27,13 @@ from market_regime_alpha.bootstrap import (
     verify_database,
 )
 from market_regime_alpha.shared.errors import MraError
+from market_regime_alpha.interfaces.archive import (
+    archive_report,
+    load_archive_manifest,
+    require_isolated_operational_target,
+    resume_archive,
+    start_archive,
+)
 
 
 def main(
@@ -93,6 +100,36 @@ def _dispatch(arguments: argparse.Namespace, settings: TargetSettings) -> object
                     reason_code="LEASE_EXPIRED",
                 )
                 return {"recovered_attempt_ids": recovered}
+    if arguments.area == "archive":
+        require_isolated_operational_target(
+            settings,
+            expected_database_name=arguments.expected_database_name,
+        )
+        with bootstrap_application(settings) as application:
+            if arguments.archive_command in {"inspect", "gap-report", "revision-report", "daily-health"}:
+                return archive_report(
+                    application,
+                    arguments.archive_id,
+                    arguments.archive_command,
+                )
+            manifest = load_archive_manifest(arguments.manifest)
+            if arguments.archive_command == "start":
+                return start_archive(
+                    application,
+                    manifest,
+                    actor_id=arguments.actor_id,
+                )
+            if arguments.archive_command in {"resume", "retry"}:
+                import baostock as sdk
+
+                return resume_archive(
+                    application,
+                    manifest,
+                    sdk=sdk,
+                    actor_id=arguments.actor_id,
+                    operation_key=arguments.operation_key,
+                    slice_ids=(tuple(arguments.slice_id) if arguments.slice_id else None),
+                )
     raise ValueError("command is not implemented")
 
 
@@ -122,6 +159,21 @@ def _parser() -> argparse.ArgumentParser:
     inspect.add_argument("--run-id", required=True, type=UUID)
     recover = runtime_commands.add_parser("recover")
     recover.add_argument("--actor-id", required=True)
+
+    archive = areas.add_parser("archive")
+    archive_commands = archive.add_subparsers(dest="archive_command", required=True)
+    for command in ("start", "resume", "retry"):
+        mutation = archive_commands.add_parser(command)
+        mutation.add_argument("--manifest", required=True, type=Path)
+        mutation.add_argument("--expected-database-name", required=True)
+        mutation.add_argument("--actor-id", required=True)
+        if command in {"resume", "retry"}:
+            mutation.add_argument("--operation-key", required=True)
+            mutation.add_argument("--slice-id", action="append", type=UUID)
+    for command in ("inspect", "gap-report", "revision-report", "daily-health"):
+        inspection = archive_commands.add_parser(command)
+        inspection.add_argument("--archive-id", required=True, type=UUID)
+        inspection.add_argument("--expected-database-name", required=True)
     return parser
 
 

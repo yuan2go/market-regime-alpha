@@ -41,7 +41,9 @@ def test_candidate_schema_adds_exactly_five_selection_authority_tables(
     } == EXPECTED_TARGET_DEFINITION_TABLES
     assert {
         name for name in tables if name.startswith("decision_")
-    } == EXPECTED_DECISION_SUPPORT_TABLES
+    } == EXPECTED_DECISION_SUPPORT_TABLES - {
+        "exploratory_retrospective_decision_run"
+    }
     assert {
         name for name in tables if name.startswith("market_target_outcome")
     } == EXPECTED_OUTCOME_TABLES
@@ -52,10 +54,9 @@ def test_candidate_schema_adds_exactly_five_selection_authority_tables(
         for name in tables
         if name.startswith(
             (
-                "model",
                 "qualification",
                 "outcome",
-                    "trade_outcome",
+                "trade_outcome",
             )
         )
     }

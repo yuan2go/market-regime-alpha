@@ -12,6 +12,10 @@ from market_regime_alpha.decision_support.application.inference import (
     InferenceCommands,
     ProduceInferenceResult,
 )
+from market_regime_alpha.decision_support.application.model_forecast import (
+    ModelForecastCommands,
+    ProduceModelForecastResult,
+)
 from market_regime_alpha.decision_support.application.strategy import (
     RegisterStrategyResult,
     StrategyCommands,
@@ -37,6 +41,7 @@ __all__ = [
     "ContextMutationResult",
     "DecisionRunVerifier",
     "InferenceCommands",
+    "ModelForecastCommands",
     "DecisionSupportApplication",
     "OpenDecisionRunResult",
     "OpportunityCommands",
@@ -44,6 +49,7 @@ __all__ = [
     "PortfolioCommands",
     "PortfolioMutationResult",
     "ProduceInferenceResult",
+    "ProduceModelForecastResult",
     "RegisterStrategyResult",
     "RiskCommands",
     "RiskMutationResult",

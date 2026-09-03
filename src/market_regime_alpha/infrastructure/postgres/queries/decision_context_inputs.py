@@ -20,6 +20,7 @@ from market_regime_alpha.decision_support.domain import (
     ContextSourceRole,
     ContextSourceValueStatus,
     DecisionArtifactBinding,
+    ExploratoryRetrospectiveDecisionScope,
     PreparedContextInputs,
     PreparedContextSource,
 )
@@ -50,6 +51,21 @@ class PostgresContextInputPreparationProvider:
                 decision_run_id,
                 context_policy_id,
                 lock=False,
+            )
+
+    def prepare_exploratory_retrospective(
+        self,
+        decision_run_id: UUID,
+        context_policy_id: UUID,
+        scope: ExploratoryRetrospectiveDecisionScope,
+    ) -> PreparedContextInputs:
+        with self._pool.connection(read_only=True) as connection:
+            return _load_context_inputs(
+                connection,
+                decision_run_id,
+                context_policy_id,
+                lock=False,
+                retrospective_scope=scope,
             )
 
 
@@ -107,6 +123,7 @@ class PostgresContextDependencyRepository:
             prepared.decision_run_id,
             prepared.policy.context_policy_id,
             lock=True,
+            retrospective_scope=prepared.exploratory_retrospective_scope,
         )
         if actual != prepared:
             raise ContextAuthorityIntegrityError(
@@ -120,6 +137,7 @@ def _load_context_inputs(
     context_policy_id: UUID,
     *,
     lock: bool,
+    retrospective_scope: ExploratoryRetrospectiveDecisionScope | None = None,
 ) -> PreparedContextInputs:
     run_suffix = " FOR SHARE OF run" if lock else ""
     run = connection.execute(
@@ -135,6 +153,13 @@ def _load_context_inputs(
     ).fetchone()
     if run is None:
         raise ContextAuthorityIntegrityError("Context DecisionRun is absent")
+    if retrospective_scope is not None:
+        _require_retrospective_scope(
+            connection,
+            decision_run_id,
+            retrospective_scope,
+            lock=lock,
+        )
     policy = _load_policy(connection, context_policy_id, lock=lock)
     source_suffix = (
         " FOR SHARE OF candidate, reference, target" if lock else ""
@@ -185,7 +210,50 @@ def _load_context_inputs(
         candidate_count=int(run[4]),
         policy=policy,
         sources=sources,
+        exploratory_retrospective_scope=retrospective_scope,
     )
+
+
+def _require_retrospective_scope(
+    connection: psycopg.Connection[Any],
+    decision_run_id: UUID,
+    scope: ExploratoryRetrospectiveDecisionScope,
+    *,
+    lock: bool,
+) -> None:
+    suffix = " FOR SHARE" if lock else ""
+    row = connection.execute(
+        """
+        SELECT dataset_id, exploratory_backtest_run_id,
+               exploratory_backtest_arm_id, exploratory_backtest_fold_id,
+               exploratory_backtest_fold_session_id, market_archive_id,
+               market_archive_seal_id, knowledge_cutoff,
+               simulated_event_cutoff, evidence_lane
+        FROM mra.exploratory_retrospective_decision_run
+        WHERE decision_run_id = %s
+        """
+        + suffix,
+        (decision_run_id,),
+    ).fetchone()
+    if row is None:
+        raise ContextAuthorityIntegrityError(
+            "retrospective Context requires an exact Decision scope"
+        )
+    actual = ExploratoryRetrospectiveDecisionScope(
+        dataset_id=UUID(str(row[0])),
+        exploratory_backtest_run_id=UUID(str(row[1])),
+        exploratory_backtest_arm_id=UUID(str(row[2])),
+        exploratory_backtest_fold_id=UUID(str(row[3])),
+        exploratory_backtest_fold_session_id=UUID(str(row[4])),
+        market_archive_id=UUID(str(row[5])),
+        market_archive_seal_id=UUID(str(row[6])),
+        knowledge_cutoff=row[7],
+        simulated_event_cutoff=row[8],
+    )
+    if actual != scope or str(row[9]) != "EXPLORATORY_RETROSPECTIVE":
+        raise ContextAuthorityIntegrityError(
+            "retrospective Context scope differs from its Decision Authority"
+        )
 
 
 def _load_policy(

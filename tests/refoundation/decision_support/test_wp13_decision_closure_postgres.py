@@ -415,7 +415,10 @@ def test_postgres_closes_opportunity_thesis_portfolio_and_risk(wp13_closure_stac
         "signal_context_binding_requirement_uk",
         "signal_context_binding_opportunity_authority_uk",
     }
-    assert "forecast_estimate_forecast_fk_idx" in plan_indexes[2]
+    assert plan_indexes[2] & {
+        "forecast_estimate_forecast_fk_idx",
+        "forecast_estimate_model_output_uk",
+    }
     assert "opportunity_context_ordinal_uk" in plan_indexes[3]
     assert "portfolio_line_ordinal_uk" in plan_indexes[4]
     assert "risk_reason_ordinal_uk" in plan_indexes[5]

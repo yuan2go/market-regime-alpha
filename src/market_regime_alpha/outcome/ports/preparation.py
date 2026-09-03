@@ -29,6 +29,12 @@ class OutcomeInputPreparationProvider(Protocol):
         runtime_claim: AttemptClaim,
     ) -> PreparedOutcomeInputs: ...
 
+    def prepare_exploratory_retrospective(
+        self,
+        request: OutcomeSettlementRequest,
+        runtime_claim: AttemptClaim,
+    ) -> PreparedOutcomeInputs: ...
+
 
 class OutcomeDependencyRepository(Protocol):
     def lock_and_revalidate(self, prepared: PreparedOutcomeInputs) -> None: ...

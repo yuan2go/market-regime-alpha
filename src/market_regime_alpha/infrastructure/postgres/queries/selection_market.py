@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
@@ -14,6 +15,7 @@ from market_regime_alpha.selection.domain import (
     CriterionEvidence,
     EligibilityRule,
     EligibilityRuleKind,
+    ExploratoryRetrospectiveSelectionScope,
     MarketEvidenceStatus,
     MarketLineage,
     MembershipEvidence,
@@ -35,6 +37,38 @@ class PostgresSelectionMarketQueries:
         scope: UniverseScopeSpecification,
         instrument_id: InstrumentId,
         decision_time: DecisionTime,
+    ) -> MembershipEvidence:
+        return self._membership_as_of(
+            scope=scope,
+            instrument_id=instrument_id,
+            decision_time=decision_time,
+            visibility_cutoff=decision_time.value,
+        )
+
+    def membership_for_exploratory_retrospective(
+        self,
+        *,
+        scope: UniverseScopeSpecification,
+        instrument_id: InstrumentId,
+        retrospective: ExploratoryRetrospectiveSelectionScope,
+    ) -> MembershipEvidence:
+        self._require_retrospective_archive(retrospective)
+        evidence = self._membership_as_of(
+            scope=scope,
+            instrument_id=instrument_id,
+            decision_time=DecisionTime(retrospective.simulated_event_cutoff),
+            visibility_cutoff=retrospective.knowledge_cutoff,
+        )
+        self._require_archive_lineage(evidence.lineage, retrospective)
+        return evidence
+
+    def _membership_as_of(
+        self,
+        *,
+        scope: UniverseScopeSpecification,
+        instrument_id: InstrumentId,
+        decision_time: DecisionTime,
+        visibility_cutoff: datetime,
     ) -> MembershipEvidence:
         classification = self._connection.execute(
             """
@@ -71,12 +105,13 @@ class PostgresSelectionMarketQueries:
                 scope.market_provider_product_id,
                 decision_time.value,
                 decision_time.value,
-                decision_time.value,
+                visibility_cutoff,
             ),
         ).fetchone()
         classification_gap = self._classification_gap(
             scope=scope,
             decision_time=decision_time,
+            visibility_cutoff=visibility_cutoff,
         )
         if classification_gap is not None and (classification is None or classification_gap[3] >= classification[2]):
             gap_id = UUID(str(classification_gap[0]))
@@ -173,13 +208,14 @@ class PostgresSelectionMarketQueries:
                 instrument_id.value,
                 decision_time.value,
                 decision_time.value,
-                decision_time.value,
+                visibility_cutoff,
             ),
         ).fetchone()
         gap = self._membership_gap(
             scope=scope,
             instrument_id=instrument_id,
             decision_time=decision_time,
+            visibility_cutoff=visibility_cutoff,
         )
         if gap is not None and (member is None or gap[3] >= member[4]):
             gap_id = UUID(str(gap[0]))
@@ -248,7 +284,7 @@ class PostgresSelectionMarketQueries:
             lineage=lineage,
         )
 
-    def _classification_gap(self, *, scope, decision_time):
+    def _classification_gap(self, *, scope, decision_time, visibility_cutoff):
         return self._connection.execute(
             """
             SELECT gap.gap_id, gap.capture_id, gap.gap_kind,
@@ -275,7 +311,7 @@ class PostgresSelectionMarketQueries:
                 scope.classification_code,
                 decision_time.value,
                 decision_time.value,
-                decision_time.value,
+                visibility_cutoff,
             ),
         ).fetchone()
 
@@ -287,12 +323,49 @@ class PostgresSelectionMarketQueries:
         instrument_id: InstrumentId,
         decision_time: DecisionTime,
     ) -> CriterionEvidence:
+        return self._criterion_evidence_as_of(
+            market_provider_product_id=market_provider_product_id,
+            rule=rule,
+            instrument_id=instrument_id,
+            decision_time=decision_time,
+            visibility_cutoff=decision_time.value,
+        )
+
+    def criterion_evidence_for_exploratory_retrospective(
+        self,
+        *,
+        market_provider_product_id: UUID,
+        rule: EligibilityRule,
+        instrument_id: InstrumentId,
+        retrospective: ExploratoryRetrospectiveSelectionScope,
+    ) -> CriterionEvidence:
+        self._require_retrospective_archive(retrospective)
+        evidence = self._criterion_evidence_as_of(
+            market_provider_product_id=market_provider_product_id,
+            rule=rule,
+            instrument_id=instrument_id,
+            decision_time=DecisionTime(retrospective.simulated_event_cutoff),
+            visibility_cutoff=retrospective.knowledge_cutoff,
+        )
+        self._require_archive_lineage(evidence.lineage, retrospective)
+        return evidence
+
+    def _criterion_evidence_as_of(
+        self,
+        *,
+        market_provider_product_id: UUID,
+        rule: EligibilityRule,
+        instrument_id: InstrumentId,
+        decision_time: DecisionTime,
+        visibility_cutoff: datetime,
+    ) -> CriterionEvidence:
         if rule.rule_kind is EligibilityRuleKind.NOT_SPECIAL_TREATMENT:
             return self._effective_status(
                 market_provider_product_id=market_provider_product_id,
                 instrument_id=instrument_id,
                 fact_kind="SPECIAL_TREATMENT_STATUS",
                 decision_time=decision_time,
+                visibility_cutoff=visibility_cutoff,
             )
         if rule.rule_kind is EligibilityRuleKind.MIN_LISTING_AGE:
             evidence = self._effective_status(
@@ -300,6 +373,7 @@ class PostgresSelectionMarketQueries:
                 instrument_id=instrument_id,
                 fact_kind="LISTING_STATUS",
                 decision_time=decision_time,
+                visibility_cutoff=visibility_cutoff,
                 include_effective_from=True,
             )
             if evidence.status is not MarketEvidenceStatus.AVAILABLE:
@@ -324,6 +398,7 @@ class PostgresSelectionMarketQueries:
             market_provider_product_id=market_provider_product_id,
             instrument_id=instrument_id,
             decision_time=decision_time,
+            visibility_cutoff=visibility_cutoff,
         )
         if isinstance(session, CriterionEvidence):
             return session
@@ -334,6 +409,7 @@ class PostgresSelectionMarketQueries:
                 session_id=UUID(str(session[0])),
                 fact_kind="SECURITY_STATUS",
                 decision_time=decision_time,
+                visibility_cutoff=visibility_cutoff,
                 session_lineage=session,
             )
         if rule.rule_kind is EligibilityRuleKind.LIMIT_METADATA_PRESENT:
@@ -342,6 +418,7 @@ class PostgresSelectionMarketQueries:
                 instrument_id=instrument_id,
                 session_id=UUID(str(session[0])),
                 decision_time=decision_time,
+                visibility_cutoff=visibility_cutoff,
                 session_lineage=session,
             )
         if rule.rule_kind is EligibilityRuleKind.MIN_LIQUIDITY:
@@ -351,10 +428,18 @@ class PostgresSelectionMarketQueries:
                 currency=rule.value_unit,
                 window=rule.window_value,
                 decision_time=decision_time,
+                visibility_cutoff=visibility_cutoff,
             )
         raise AssertionError(f"unsupported Selection rule {rule.rule_kind.value}")
 
-    def _membership_gap(self, *, scope, instrument_id, decision_time):
+    def _membership_gap(
+        self,
+        *,
+        scope,
+        instrument_id,
+        decision_time,
+        visibility_cutoff,
+    ):
         return self._connection.execute(
             """
             SELECT gap.gap_id, gap.capture_id, gap.gap_kind,
@@ -383,7 +468,7 @@ class PostgresSelectionMarketQueries:
                 instrument_id.value,
                 decision_time.value,
                 decision_time.value,
-                decision_time.value,
+                visibility_cutoff,
             ),
         ).fetchone()
 
@@ -394,6 +479,7 @@ class PostgresSelectionMarketQueries:
         instrument_id: InstrumentId,
         fact_kind: str,
         decision_time: DecisionTime,
+        visibility_cutoff: datetime,
         include_effective_from: bool = False,
     ) -> CriterionEvidence:
         row = self._current_fact(
@@ -401,6 +487,7 @@ class PostgresSelectionMarketQueries:
             instrument_id=instrument_id,
             fact_kind=fact_kind,
             decision_time=decision_time,
+            visibility_cutoff=visibility_cutoff,
             session_id=None,
             effective=True,
         )
@@ -415,6 +502,7 @@ class PostgresSelectionMarketQueries:
         market_provider_product_id,
         instrument_id,
         decision_time,
+        visibility_cutoff,
     ):
         session_date = decision_time.value.astimezone(ZoneInfo("Asia/Shanghai")).date()
         row = self._connection.execute(
@@ -451,7 +539,7 @@ class PostgresSelectionMarketQueries:
                 instrument_id.value,
                 session_date,
                 market_provider_product_id,
-                decision_time.value,
+                visibility_cutoff,
             ),
         ).fetchone()
         gap = self._session_gap(
@@ -459,6 +547,7 @@ class PostgresSelectionMarketQueries:
             instrument_id=instrument_id,
             session_date=session_date,
             decision_time=decision_time,
+            visibility_cutoff=visibility_cutoff,
         )
         if gap is not None and (row is None or gap[3] >= row[2]):
             gap_id = UUID(str(gap[0]))
@@ -497,6 +586,7 @@ class PostgresSelectionMarketQueries:
         instrument_id,
         session_date,
         decision_time,
+        visibility_cutoff,
     ):
         return self._connection.execute(
             """
@@ -521,7 +611,7 @@ class PostgresSelectionMarketQueries:
                 instrument_id.value,
                 market_provider_product_id,
                 session_date,
-                decision_time.value,
+                visibility_cutoff,
             ),
         ).fetchone()
 
@@ -533,6 +623,7 @@ class PostgresSelectionMarketQueries:
         session_id,
         fact_kind,
         decision_time,
+        visibility_cutoff,
         session_lineage,
     ):
         row = self._current_fact(
@@ -540,6 +631,7 @@ class PostgresSelectionMarketQueries:
             instrument_id=instrument_id,
             fact_kind=fact_kind,
             decision_time=decision_time,
+            visibility_cutoff=visibility_cutoff,
             session_id=session_id,
             effective=False,
         )
@@ -556,6 +648,7 @@ class PostgresSelectionMarketQueries:
         instrument_id,
         session_id,
         decision_time,
+        visibility_cutoff,
         session_lineage,
     ):
         facts = tuple(
@@ -564,6 +657,7 @@ class PostgresSelectionMarketQueries:
                 instrument_id=instrument_id,
                 fact_kind=fact_kind,
                 decision_time=decision_time,
+                visibility_cutoff=visibility_cutoff,
                 session_id=session_id,
                 effective=False,
             )
@@ -601,6 +695,7 @@ class PostgresSelectionMarketQueries:
         currency,
         window,
         decision_time,
+        visibility_cutoff,
     ):
         sessions = self._connection.execute(
             """
@@ -635,7 +730,7 @@ class PostgresSelectionMarketQueries:
                 instrument_id.value,
                 market_provider_product_id,
                 decision_time.value,
-                decision_time.value,
+                visibility_cutoff,
                 window,
             ),
         ).fetchall()
@@ -662,6 +757,7 @@ class PostgresSelectionMarketQueries:
                 event_start=session[5],
                 event_end=session[6],
                 decision_time=decision_time,
+                visibility_cutoff=visibility_cutoff,
             )
             for session in sessions
         )
@@ -694,6 +790,7 @@ class PostgresSelectionMarketQueries:
         event_start,
         event_end,
         decision_time,
+        visibility_cutoff,
     ):
         row = self._connection.execute(
             """
@@ -733,7 +830,7 @@ class PostgresSelectionMarketQueries:
                 session_id,
                 event_start,
                 event_end,
-                decision_time.value,
+                visibility_cutoff,
             ),
         ).fetchone()
         gap = self._connection.execute(
@@ -764,7 +861,7 @@ class PostgresSelectionMarketQueries:
                 session_id,
                 event_start,
                 event_end,
-                decision_time.value,
+                visibility_cutoff,
             ),
         ).fetchone()
         if gap is not None and (row is None or gap[3] >= row[3]):
@@ -814,6 +911,7 @@ class PostgresSelectionMarketQueries:
         instrument_id,
         fact_kind,
         decision_time,
+        visibility_cutoff,
         session_id,
         effective,
     ):
@@ -862,7 +960,7 @@ class PostgresSelectionMarketQueries:
                 fact_kind,
                 evidence_scope,
                 session_id,
-                decision_time.value,
+                visibility_cutoff,
                 effective,
                 decision_time.value,
                 decision_time.value,
@@ -901,7 +999,7 @@ class PostgresSelectionMarketQueries:
                 fact_kind,
                 evidence_scope,
                 session_id,
-                decision_time.value,
+                visibility_cutoff,
                 effective,
                 decision_time.value,
                 decision_time.value,
@@ -984,6 +1082,57 @@ class PostgresSelectionMarketQueries:
             status=MarketEvidenceStatus.MISSING,
             lineage=lineage,
         )
+
+    def _require_retrospective_archive(
+        self,
+        scope: ExploratoryRetrospectiveSelectionScope,
+    ) -> None:
+        row = self._connection.execute(
+            """
+            SELECT seal.knowledge_cutoff
+            FROM mra.market_archive AS archive
+            JOIN mra.market_archive_seal AS seal
+              ON seal.market_archive_id = archive.market_archive_id
+            WHERE archive.market_archive_id = %s
+              AND seal.market_archive_seal_id = %s
+              AND archive.lane = 'RETROSPECTIVE_BACKFILL'
+              AND archive.evidence_class = 'EXPLORATORY_RETROSPECTIVE'
+              AND seal.knowledge_cutoff = %s
+            FOR SHARE OF archive, seal
+            """,
+            (
+                scope.market_archive_id,
+                scope.market_archive_seal_id,
+                scope.knowledge_cutoff,
+            ),
+        ).fetchone()
+        if row is None:
+            raise ValueError(
+                "retrospective Selection requires an exact sealed archive"
+            )
+
+    def _require_archive_lineage(
+        self,
+        lineage: MarketLineage,
+        scope: ExploratoryRetrospectiveSelectionScope,
+    ) -> None:
+        capture_ids = tuple(lineage.capture_ids)
+        if not capture_ids:
+            return
+        rows = self._connection.execute(
+            """
+            SELECT capture_id
+            FROM mra.market_archive_capture_observation
+            WHERE market_archive_id = %s
+              AND capture_id = ANY(%s::uuid[])
+            FOR SHARE
+            """,
+            (scope.market_archive_id, list(capture_ids)),
+        ).fetchall()
+        if {UUID(str(row[0])) for row in rows} != set(capture_ids):
+            raise ValueError(
+                "retrospective Selection Market lineage is outside its exact archive"
+            )
 
 
 def _merge_lineage(*items: MarketLineage) -> MarketLineage:

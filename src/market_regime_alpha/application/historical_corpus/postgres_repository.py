@@ -147,7 +147,7 @@ class PostgresHistoricalCorpusRepository:
                 ) VALUES (
                     %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                     %s, %s, %s, %s, %s, %s, %s, %s, %s
-                ) ON CONFLICT (owner_id) DO NOTHING
+                ) ON CONFLICT DO NOTHING
                 """,
                 (
                     str(package.owner_id),
@@ -215,7 +215,7 @@ class PostgresHistoricalCorpusRepository:
                     ) VALUES (
                         %s, %s, %s, %s, %s, %s, %s, %s,
                         %s, %s, %s, %s, %s, %s, %s
-                    ) ON CONFLICT (owner_id, ordinal) DO NOTHING
+                    ) ON CONFLICT DO NOTHING
                     """,
                     (
                         str(package.owner_id),

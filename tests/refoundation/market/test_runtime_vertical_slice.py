@@ -732,14 +732,17 @@ def test_stale_capture_worker_leaves_safe_physical_orphan_and_no_market_fact(
     _, config = _schedule_run(runtime, artifacts, (_capture_step(),))
     stale = runtime.claim_next(
         worker_id="stale-worker",
-        lease_duration=timedelta(milliseconds=20),
+        # Leave enough time for start_attempt() under a loaded PostgreSQL suite;
+        # expiry is exercised during the deliberately slower Provider call.
+        lease_duration=timedelta(seconds=1),
         context=_context("claim-stale", "WORKER_CLAIM"),
     )
     assert stale is not None
     runtime.start_attempt(stale, _context("start-stale", "WORKER_START"))
+
     class RecoveringProvider(ResponseProvider):
         def capture(self, request: CaptureRequest) -> ProviderResponse:
-            time.sleep(0.05)
+            time.sleep(1.1)
             assert runtime.recover_expired(
                 actor_id="market-recovery",
                 reason_code="LEASE_EXPIRED",
