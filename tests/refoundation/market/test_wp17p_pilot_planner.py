@@ -112,7 +112,9 @@ def test_prospective_manifest_contains_only_post_start_scheduled_windows() -> No
         code_artifact_id=CODE_ARTIFACT_ID,
         config_artifact_id=CONFIG_ARTIFACT_ID,
         archive_not_before=planned_after,
-        next_session_date=date(2026, 9, 4),
+        decision_session_date=date(2026, 9, 4),
+        outcome_session_date=date(2026, 9, 7),
+        later_verification_session_date=date(2026, 9, 14),
         pilot_codes=select_deterministic_pilot(_codes()),
         exchange_calendar="XSHG",
         provenance_sha256="b" * 64,
@@ -130,12 +132,15 @@ def test_prospective_manifest_contains_only_post_start_scheduled_windows() -> No
     )
     assert manifest.slices[0].schedule_slot == "ARCHIVE_START_SMOKE"
     assert {item.schedule_slot for item in manifest.slices[1:]} == {
+        "PRE_DECISION",
         "DECISION_NEAR",
         "POST_CLOSE",
-        "EVENING",
-        "NEXT_PREOPEN",
-        "NEXT_POSTCLOSE",
-        "LATER_VERIFICATION",
+        "EVENING_REVISION",
+        "OUTCOME_PRE_OPEN",
+        "OUTCOME_PATH",
+        "OUTCOME_10_30",
+        "OUTCOME_POST_CLOSE",
+        "REVISION_VERIFICATION",
     }
     assert manifest == type(manifest).from_json(manifest.to_json())
 
@@ -147,7 +152,9 @@ def test_manifest_rejects_pilot_from_a_different_exchange_calendar() -> None:
             code_artifact_id=CODE_ARTIFACT_ID,
             config_artifact_id=CONFIG_ARTIFACT_ID,
             archive_not_before=datetime(2026, 9, 3, 8, 0, tzinfo=UTC),
-            next_session_date=date(2026, 9, 4),
+            decision_session_date=date(2026, 9, 4),
+            outcome_session_date=date(2026, 9, 7),
+            later_verification_session_date=date(2026, 9, 14),
             pilot_codes=select_deterministic_pilot(
                 tuple(f"sz.{item:06d}" for item in range(40))
             ),

@@ -35,6 +35,7 @@ class ContextFailureAction(StrEnum):
     WAIT = "WAIT"
     UNKNOWN = "UNKNOWN"
     NOT_ESTIMABLE = "NOT_ESTIMABLE"
+    OBSERVE_ONLY = "OBSERVE_ONLY"
 
 
 class ForecastSourceMeasure(StrEnum):

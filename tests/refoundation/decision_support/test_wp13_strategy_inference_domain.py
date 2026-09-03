@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
+from uuid import UUID
 
 import pytest
 
@@ -261,6 +262,51 @@ def test_signal_preserves_every_candidate_and_missing_context_state() -> None:
                 *candidates[1:],
             ),
         )
+
+
+def test_observational_context_is_bound_but_does_not_block_signal() -> None:
+    strategy = _strategy()
+    requirements = tuple(
+        replace(item, missing_action=ContextFailureAction.OBSERVE_ONLY)
+        for item in strategy.context_requirements
+    )
+    observational = replace(strategy, context_requirements=requirements)
+    candidate = _candidate(
+        observational,
+        1,
+        CandidateDisposition.SELECTED,
+    )
+    candidate = replace(
+        candidate,
+        contexts=tuple(
+            replace(context, assessment_state=ContextState.NEGATIVE)
+            for context in candidate.contexts
+        ),
+    )
+    authority = build_signal_authority(
+        signal_group_id=_uuid(2490),
+        prepared=PreparedSignalInputs(
+            decision_run_id=_uuid(2491),
+            candidate_set_id=_uuid(2492),
+            candidate_set_content_sha256="3" * 64,
+            candidate_roster_sha256="4" * 64,
+            decision_time=DECISION_TIME,
+            strategy_version=observational,
+            candidates=(candidate,),
+        ),
+        request_identity="observational-context",
+        request_sha256="5" * 64,
+        command_receipt_id=_uuid(2493),
+        recorded_at=RECORDED_AT,
+        signal_id_factory=lambda _candidate, _ordinal: _uuid(2494),
+        binding_id_factory=lambda _candidate, context: UUID(
+            int=2495 + context.strategy_context_requirement_id.int
+        ),
+    )
+
+    assert authority.signals[0].status is SignalStatus.PRESENT
+    assert authority.signals[0].reason_code == "CONTEXT_OBSERVED_NOT_GATED"
+    assert len(authority.signals[0].context_bindings) == 2
 
 
 def test_forecast_is_target_bound_uncalibrated_and_complete() -> None:

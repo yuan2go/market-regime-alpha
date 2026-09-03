@@ -210,6 +210,76 @@ def test_rank_ic_averages_cross_sectional_session_correlations() -> None:
     assert result.decimal_value == Decimal("0")
 
 
+def test_candidate_rank_ic_uses_score_and_target_without_posterior_selection() -> None:
+    metric = _metric(
+        metric_code="candidate-rank-ic",
+        reducer=EvaluationReducer.SPEARMAN_RANK_CORRELATION,
+        source_kind=EvaluationSourceKind.CANDIDATE_OUTCOME_PAIR,
+        source_measure=EvaluationSourceMeasure.CANDIDATE_SCORE_VS_TARGET,
+        acceptance_threshold=Decimal("0"),
+    )
+    inputs = tuple(
+        EvaluationInput(
+            uuid4(),
+            CandidateDisposition.SELECTED
+            if score >= 3
+            else CandidateDisposition.RANKED_NOT_SELECTED,
+            "COMPLETE",
+            Decimal(score),
+            None,
+            Decimal(outcome),
+            group_key="session-1",
+        )
+        for score, outcome in ((1, -2), (2, -1), (3, 1), (4, 2))
+    )
+
+    result = evaluate_metric(metric, inputs)
+
+    assert result.decimal_value == Decimal("1")
+    assert len(result.observations) == 4
+
+
+def test_candidate_top_bottom_spread_is_cross_sectional_and_deterministic() -> None:
+    metric = _metric(
+        metric_code="candidate-spread",
+        reducer=EvaluationReducer.TOP_BOTTOM_SPREAD,
+        source_kind=EvaluationSourceKind.CANDIDATE_OUTCOME_PAIR,
+        source_measure=EvaluationSourceMeasure.CANDIDATE_SCORE_VS_TARGET,
+        acceptance_threshold=Decimal("0"),
+    )
+    inputs = tuple(
+        EvaluationInput(
+            uuid4(), CandidateDisposition.SELECTED, "COMPLETE",
+            Decimal(score), None, Decimal(outcome), group_key="session-1",
+        )
+        for score, outcome in ((1, -1), (2, 0), (3, 0), (4, 0), (5, 2))
+    )
+
+    result = evaluate_metric(metric, inputs)
+
+    assert result.decimal_value == Decimal("3")
+
+
+def test_candidate_top_k_return_does_not_require_a_secondary_value() -> None:
+    metric = _metric(
+        metric_code="candidate-top-k-return",
+        source_kind=EvaluationSourceKind.CANDIDATE_OUTCOME_PAIR,
+        source_measure=EvaluationSourceMeasure.CANDIDATE_TOP_K_RETURN,
+        acceptance_threshold=Decimal("0"),
+    )
+    result = evaluate_metric(
+        metric,
+        (
+            EvaluationInput(
+                uuid4(), CandidateDisposition.SELECTED, "COMPLETE",
+                Decimal("0.02"), None,
+            ),
+        ),
+    )
+
+    assert result.decimal_value == Decimal("0.02")
+
+
 def test_arm_slice_keeps_complete_roster_as_explicit_exclusions() -> None:
     metric = _metric(
         slice_kind=EvaluationSliceKind.EXPLORATORY_BACKTEST_ARM,

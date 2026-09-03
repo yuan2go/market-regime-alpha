@@ -15,6 +15,9 @@ from market_regime_alpha.infrastructure.postgres.queries.archive_verification im
 from market_regime_alpha.infrastructure.postgres.queries.archive_sessions import (
     PostgresArchiveTradingSessionReadPort,
 )
+from market_regime_alpha.infrastructure.postgres.queries.target_archive_schedule import (
+    PostgresTargetArchiveScheduleReadPort,
+)
 from market_regime_alpha.infrastructure.postgres.queries.candidate_research_inputs import (
     PostgresCandidateResearchDependencyQueries,
     PostgresCandidateResearchInputLoader,
@@ -74,6 +77,7 @@ __all__ = [
     "PostgresArchiveVerificationPort",
     "PostgresCandidateQueryProvider",
     "PostgresArchiveTradingSessionReadPort",
+    "PostgresTargetArchiveScheduleReadPort",
     "PostgresCandidateResearchDependencyQueries",
     "PostgresCandidateResearchInputLoader",
     "PostgresDecisionInputPreparationProvider",

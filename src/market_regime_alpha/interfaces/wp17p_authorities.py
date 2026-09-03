@@ -136,6 +136,7 @@ class Wp17pAuthorityCatalog:
     fit_evaluation_protocol: EvaluationProtocolPlan
     validation_evaluation_protocol: EvaluationProtocolPlan
     backtest: ExploratoryBacktestRunPlan
+    strategy_roster: tuple[StrategyVersionPlan, ...] = ()
 
 
 def build_wp17p_authority_catalog(
@@ -218,6 +219,102 @@ def build_wp17p_authority_catalog(
         fit,
         validation,
         backtest,
+    )
+
+
+def build_wp18_authority_catalog(
+    *,
+    provider_product_id: UUID,
+    market_archive_id: UUID,
+    market_archive_seal_id: UUID,
+    sessions: tuple[ArchiveTradingSession, ...],
+    code_artifact: ArtifactBinding,
+    config_artifact: ArtifactBinding,
+    provenance_sha256: str,
+) -> Wp17pAuthorityCatalog:
+    """Freeze the five-cycle, 40-session WP-18 walk-forward catalog."""
+
+    if len(sessions) < 40 or len(sessions) % 8:
+        raise ValueError("WP-18 requires at least 40 sessions in complete eight-session cycles")
+    if tuple(item.session_date for item in sessions) != tuple(
+        sorted({item.session_date for item in sessions})
+    ):
+        raise ValueError("WP-18 sessions must be unique and chronological")
+    if any(item.exchange != "XSHG" for item in sessions):
+        raise ValueError("WP-18 v1 uses one explicit XSHG calendar")
+
+    target = _target(code_artifact, config_artifact)
+    feature = _feature(code_artifact, config_artifact)
+    universe = UniverseDefinition(
+        _wp18_id("universe"),
+        "wp18_csi300_hash32",
+        "Stable-hash 32-instrument multi-session engineering and exploratory population",
+    )
+    eligibility = _eligibility(provider_product_id)
+    candidate = _candidate(feature, code_artifact, config_artifact)
+    context = _context(code_artifact, config_artifact, provenance_sha256)
+    current_strategy = _strategy(
+        target,
+        context,
+        code_artifact,
+        config_artifact,
+        provenance_sha256,
+    )
+    observational_strategy = _wp18_observational_strategy(
+        target,
+        context,
+        code_artifact,
+        config_artifact,
+        provenance_sha256,
+    )
+    portfolio = _portfolio(code_artifact, config_artifact, provenance_sha256)
+    risk = _risk(code_artifact, config_artifact, provenance_sha256)
+    fit = _wp18_evaluation_protocol(
+        target,
+        PartitionPurpose.FIT,
+        code_artifact,
+        config_artifact,
+        provenance_sha256,
+    )
+    validation = _wp18_evaluation_protocol(
+        target,
+        PartitionPurpose.VALIDATION,
+        code_artifact,
+        config_artifact,
+        provenance_sha256,
+    )
+    backtest = _wp18_backtest(
+        market_archive_id,
+        market_archive_seal_id,
+        sessions,
+        target,
+        feature,
+        candidate,
+        context,
+        current_strategy,
+        observational_strategy,
+        portfolio,
+        risk,
+        fit,
+        validation,
+        code_artifact,
+        config_artifact,
+        provenance_sha256,
+    )
+    return Wp17pAuthorityCatalog(
+        target,
+        feature,
+        universe,
+        eligibility,
+        candidate,
+        context,
+        current_strategy,
+        portfolio,
+        risk,
+        fit,
+        validation,
+        backtest,
+        (current_strategy, observational_strategy),
     )
 
 

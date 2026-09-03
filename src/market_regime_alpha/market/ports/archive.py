@@ -13,6 +13,7 @@ from market_regime_alpha.market.domain import (
     ArchiveSealDisposition,
     MarketArchive,
     MarketArchiveSeal,
+    ProspectiveArchiveGenerationPlan,
 )
 
 
@@ -54,6 +55,11 @@ class ArchiveRepository(Protocol):
         request_sha256: str,
     ) -> None: ...
 
+    def insert_prospective_generation(
+        self,
+        plan: ProspectiveArchiveGenerationPlan,
+    ) -> None: ...
+
     def get_archive(self, market_archive_id: UUID, *, lock: bool = False) -> MarketArchive: ...
 
     def record_capture_observation(
@@ -93,6 +99,11 @@ class ArchiveRepository(Protocol):
     ) -> ArchiveResourceStopRecord: ...
 
     def get_resource_stop(self, resource_stop_id: UUID) -> ArchiveResourceStopRecord: ...
+
+    def finalize_overdue(
+        self,
+        market_archive_id: UUID,
+    ) -> tuple[UUID, ...]: ...
 
     def seal_retrospective(
         self,

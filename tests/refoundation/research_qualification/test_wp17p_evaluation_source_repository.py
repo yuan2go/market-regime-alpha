@@ -32,7 +32,7 @@ def _metric(
         EvaluationSourceKind.CANDIDATE_DISPOSITION,
         EvaluationSourceKind.SIGNAL_STATUS,
         EvaluationSourceKind.RISK_DECISION,
-    }
+    } or source_measure is EvaluationSourceMeasure.CANDIDATE_HIT
     return ProtocolMetricDefinition(
         evaluation_protocol_metric_id=uuid4(),
         metric_code="pilot-metric",
@@ -111,6 +111,10 @@ def _source(
         weight,
         identities[20],  # RiskDecision
         risk_status,
+        "DECIMAL",  # Outcome value type
+        Decimal("0.75"),  # Candidate composite score
+        1,  # Candidate competition rank
+        uuid4(),  # CandidateSet
     )
 
 
@@ -133,6 +137,40 @@ def test_forecast_source_retains_exact_prediction_and_outcome_pair() -> None:
     assert resolved[0].input.decimal_value == Decimal("0.05")
     assert resolved[0].input.secondary_decimal_value == Decimal("0.10")
     assert resolved[0].input.source_value_status == "COMPLETE"
+
+
+def test_candidate_source_retains_score_and_outcome_before_context_gate() -> None:
+    metric = _metric(
+        EvaluationSourceKind.CANDIDATE_OUTCOME_PAIR,
+        EvaluationSourceMeasure.CANDIDATE_SCORE_VS_TARGET,
+        EvaluationReducer.SPEARMAN_RANK_CORRELATION,
+    )
+
+    resolved = _repository()._resolve_metric_inputs(  # noqa: SLF001
+        metric,
+        [_source(decision_time=datetime(2026, 1, 5, 2, 30, tzinfo=UTC))],
+    )
+
+    assert resolved[0].input.decimal_value == Decimal("0.75")
+    assert resolved[0].input.secondary_decimal_value == Decimal("0.10")
+    assert resolved[0].input.source_value_status == "COMPLETE"
+
+
+def test_candidate_top_k_metric_retains_unselected_member_as_unavailable() -> None:
+    metric = _metric(
+        EvaluationSourceKind.CANDIDATE_OUTCOME_PAIR,
+        EvaluationSourceMeasure.CANDIDATE_TOP_K_RETURN,
+    )
+    row = list(_source(decision_time=datetime(2026, 1, 5, 2, 30, tzinfo=UTC)))
+    row[3] = CandidateDisposition.RANKED_NOT_SELECTED.value
+
+    resolved = _repository()._resolve_metric_inputs(  # noqa: SLF001
+        metric,
+        [tuple(row)],
+    )
+
+    assert resolved[0].input.decimal_value is None
+    assert resolved[0].input.source_value_status == "UNAVAILABLE"
 
 
 def test_portfolio_net_return_uses_risk_gate_turnover_and_assumed_cost() -> None:

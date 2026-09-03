@@ -318,6 +318,8 @@ def _missing_status(candidate: PreparedSignalCandidate, requirements) -> SignalS
     }
     result: SignalStatus | None = None
     for context, requirement in zip(candidate.contexts, requirements, strict=True):
+        if requirement.missing_action is ContextFailureAction.OBSERVE_ONLY:
+            continue
         if context.assessment_status is ContextMetricStatus.AVAILABLE:
             continue
         mapped = {
@@ -341,6 +343,10 @@ def build_signal_authority(
     signal_id_factory: Callable[[PreparedSignalCandidate, int], UUID],
     binding_id_factory: Callable[[PreparedSignalCandidate, PreparedSignalContext], UUID],
 ) -> SignalAuthority:
+    from market_regime_alpha.decision_support.domain.strategy import (
+        ContextFailureAction,
+    )
+
     if not _REQUEST.fullmatch(request_identity):
         raise ValueError("Signal request identity is invalid")
     request_sha256 = _sha(request_sha256, "Signal request hash")
@@ -380,7 +386,8 @@ def build_signal_authority(
             status = missing
             reason = f"CONTEXT_{missing.value}"
         elif all(
-            context.assessment_state is requirement.required_state
+            requirement.missing_action is ContextFailureAction.OBSERVE_ONLY
+            or context.assessment_state is requirement.required_state
             for context, requirement in zip(
                 candidate.contexts,
                 prepared.strategy_version.context_requirements,
@@ -388,7 +395,14 @@ def build_signal_authority(
             )
         ):
             status = rule.positive_status
-            reason = "CONTEXT_REQUIREMENTS_SATISFIED"
+            reason = (
+                "CONTEXT_OBSERVED_NOT_GATED"
+                if all(
+                    requirement.missing_action is ContextFailureAction.OBSERVE_ONLY
+                    for requirement in prepared.strategy_version.context_requirements
+                )
+                else "CONTEXT_REQUIREMENTS_SATISFIED"
+            )
         else:
             status = rule.negative_status
             reason = "CONTEXT_REQUIREMENTS_NOT_SATISFIED"

@@ -80,6 +80,7 @@ from market_regime_alpha.infrastructure.postgres.queries import (
     PostgresArchiveInspectionPort,
     PostgresArchiveVerificationPort,
     PostgresArchiveTradingSessionReadPort,
+    PostgresTargetArchiveScheduleReadPort,
     PostgresCandidateResearchInputLoader,
     PostgresDecisionInputPreparationProvider,
     PostgresDecisionRunQueryProvider,
@@ -204,6 +205,7 @@ from market_regime_alpha.market.application import ProviderQualificationCommands
 from market_regime_alpha.market.ports import (
     MarketQueryProvider,
     ProviderQualificationQueryPort,
+    TargetArchiveScheduleReadPort,
 )
 
 
@@ -277,6 +279,7 @@ class TargetApplication:
     archive_inspection: ArchiveInspectionPort
     archive_verification: ArchiveVerificationPort
     archive_trading_sessions: ArchiveTradingSessionReadPort
+    target_archive_schedules: TargetArchiveScheduleReadPort
     provider_qualifications: ProviderQualificationCommands
     provider_qualification_queries: ProviderQualificationQueryPort
     market_queries: MarketQueryProvider
@@ -364,6 +367,7 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
         archive_inspection=PostgresArchiveInspectionPort(pool),
         archive_verification=PostgresArchiveVerificationPort(pool),
         archive_trading_sessions=PostgresArchiveTradingSessionReadPort(pool),
+        target_archive_schedules=PostgresTargetArchiveScheduleReadPort(pool),
         provider_qualifications=ProviderQualificationCommands(
             PostgresProviderQualificationUnitOfWorkProvider(pool, id_factory=uuid4),
             id_factory=uuid4,

@@ -21,12 +21,27 @@ class ArchiveTradingSession:
 
 
 class ArchiveTradingSessionReadPort(Protocol):
+    def exact(
+        self,
+        *,
+        exchange: str,
+        session_id: TradingSessionId,
+    ) -> ArchiveTradingSession: ...
+
     def sessions(
         self,
         *,
         exchange: str,
         start_date: date,
         end_date: date,
+    ) -> tuple[ArchiveTradingSession, ...]: ...
+
+    def following(
+        self,
+        *,
+        exchange: str,
+        after_session_id: TradingSessionId,
+        count: int,
     ) -> tuple[ArchiveTradingSession, ...]: ...
 
 

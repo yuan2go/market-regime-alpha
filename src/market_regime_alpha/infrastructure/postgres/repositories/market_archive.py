@@ -20,6 +20,7 @@ from market_regime_alpha.market.domain import (
     MarketArchiveSlice,
     MarketArchiveSeal,
     PriceBasis,
+    ProspectiveArchiveGenerationPlan,
 )
 from market_regime_alpha.market.ports.archive import (
     ArchiveResourceStopRecord,
@@ -120,6 +121,97 @@ class PostgresArchiveRepository:
                 ],
             )
 
+    def insert_prospective_generation(
+        self,
+        plan: ProspectiveArchiveGenerationPlan,
+    ) -> None:
+        self._connection.execute(
+            """
+            INSERT INTO mra.prospective_archive_generation (
+                market_archive_id, series_code, generation,
+                predecessor_market_archive_id, exchange_code,
+                target_definition_id, target_version,
+                target_definition_sha256, reference_checkpoint_id,
+                outcome_checkpoint_id, decision_session_id,
+                outcome_session_id, later_verification_session_id,
+                member_count, member_roster_sha256,
+                schedule_count, schedule_roster_sha256,
+                provenance_sha256, content_sha256
+            ) VALUES (
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s, %s, %s
+            )
+            """,
+            (
+                plan.market_archive_id,
+                plan.series_code,
+                plan.generation,
+                plan.predecessor_market_archive_id,
+                plan.exchange,
+                plan.target_definition_id,
+                plan.target_version,
+                str(plan.target_definition_sha256),
+                plan.reference_checkpoint_id,
+                plan.outcome_checkpoint_id,
+                plan.decision_session_id,
+                plan.outcome_session_id,
+                plan.later_verification_session_id,
+                len(plan.members),
+                str(plan.member_roster_sha256),
+                len(plan.schedules),
+                str(plan.schedule_roster_sha256),
+                str(plan.provenance_sha256),
+                str(plan.content_sha256),
+            ),
+        )
+        member_ordinals = {
+            item.instrument_id: item.ordinal for item in plan.members
+        }
+        with self._connection.cursor() as cursor:
+            cursor.executemany(
+                """
+                INSERT INTO mra.prospective_archive_generation_member (
+                    market_archive_id, ordinal, instrument_id,
+                    instrument_identifier_id, content_sha256
+                ) VALUES (%s, %s, %s, %s, %s)
+                """,
+                (
+                    (
+                        plan.market_archive_id,
+                        item.ordinal,
+                        item.instrument_id,
+                        item.instrument_identifier_id,
+                        str(item.content_sha256),
+                    )
+                    for item in plan.members
+                ),
+            )
+            cursor.executemany(
+                """
+                INSERT INTO mra.prospective_archive_slice_schedule (
+                    market_archive_slice_id, market_archive_id, ordinal,
+                    instrument_id, member_ordinal, schedule_slot,
+                    trading_session_id, target_checkpoint_id,
+                    comparison_ordinal, content_sha256
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    (
+                        item.market_archive_slice_id,
+                        plan.market_archive_id,
+                        item.ordinal,
+                        item.instrument_id,
+                        member_ordinals[item.instrument_id],
+                        item.slot.value,
+                        item.trading_session_id,
+                        item.target_checkpoint_id,
+                        item.comparison_ordinal,
+                        str(item.content_sha256),
+                    )
+                    for item in plan.schedules
+                ),
+            )
+
     def get_archive(self, market_archive_id: UUID, *, lock: bool = False) -> MarketArchive:
         suffix = " FOR UPDATE" if lock else ""
         row = self._connection.execute(
@@ -144,6 +236,7 @@ class PostgresArchiveRepository:
                    slice.event_window_start, slice.event_window_end,
                    slice.request_sha256, slice.expected_fact_kind,
                    CASE
+                     WHEN terminal.market_archive_slice_id IS NOT NULL THEN terminal.terminal_state
                      WHEN resource_stop.market_archive_resource_stop_id IS NOT NULL THEN 'RESOURCE_LIMIT'
                      WHEN gap.market_archive_slice_gap_id IS NOT NULL THEN gap.terminal_status
                      WHEN EXISTS (
@@ -157,6 +250,8 @@ class PostgresArchiveRepository:
               ON gap.market_archive_slice_id = slice.market_archive_slice_id
             LEFT JOIN mra.market_archive_resource_stop AS resource_stop
               ON resource_stop.market_archive_slice_id = slice.market_archive_slice_id
+            LEFT JOIN mra.prospective_archive_slice_terminal AS terminal
+              ON terminal.market_archive_slice_id = slice.market_archive_slice_id
             WHERE slice.market_archive_id = %s
             ORDER BY slice.ordinal
             """,
@@ -343,7 +438,122 @@ class PostgresArchiveRepository:
                 str(observation.content_sha256),
             ),
         )
+        self._record_prospective_observation_closure(observation)
         return observation
+
+    def _record_prospective_observation_closure(
+        self,
+        observation: ArchiveCaptureObservation,
+    ) -> None:
+        schedule = self._connection.execute(
+            """
+            SELECT instrument_id, comparison_ordinal, target_checkpoint_id
+            FROM mra.prospective_archive_slice_schedule
+            WHERE market_archive_slice_id = %s
+            FOR UPDATE
+            """,
+            (observation.market_archive_slice_id,),
+        ).fetchone()
+        if schedule is None:
+            return
+        prior = self._connection.execute(
+            """
+            SELECT market_archive_capture_observation_id,
+                   comparison_ordinal, artifact_sha256,
+                   normalized_revision_roster_sha256
+            FROM mra.prospective_archive_revision_observation
+            WHERE market_archive_id = %s AND instrument_id = %s
+              AND target_checkpoint_id = %s
+            ORDER BY comparison_ordinal DESC LIMIT 1 FOR UPDATE
+            """,
+            (observation.market_archive_id, schedule[0], schedule[2]),
+        ).fetchone()
+        relation = (
+            "FIRST"
+            if prior is None
+            else "IDENTICAL"
+            if str(prior[2]) == str(observation.artifact_sha256)
+            and str(prior[3])
+            == str(observation.normalized_revision_roster_sha256)
+            else "CHANGED"
+        )
+        revision_payload = {
+            "artifact_sha256": str(observation.artifact_sha256),
+            "comparison_ordinal": int(schedule[1]),
+            "instrument_id": UUID(str(schedule[0])),
+            "market_archive_capture_observation_id": (
+                observation.market_archive_capture_observation_id
+            ),
+            "market_archive_id": observation.market_archive_id,
+            "market_archive_slice_id": observation.market_archive_slice_id,
+            "target_checkpoint_id": UUID(str(schedule[2])),
+            "normalized_revision_roster_sha256": str(
+                observation.normalized_revision_roster_sha256
+            ),
+            "predecessor_observation_id": (
+                None if prior is None else UUID(str(prior[0]))
+            ),
+            "relation": relation,
+        }
+        self._connection.execute(
+            """
+            INSERT INTO mra.prospective_archive_revision_observation (
+                market_archive_capture_observation_id, market_archive_id,
+                market_archive_slice_id, instrument_id,
+                target_checkpoint_id, comparison_ordinal,
+                predecessor_observation_id, relation,
+                artifact_sha256, normalized_revision_roster_sha256,
+                content_sha256
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                observation.market_archive_capture_observation_id,
+                observation.market_archive_id,
+                observation.market_archive_slice_id,
+                schedule[0],
+                schedule[2],
+                schedule[1],
+                revision_payload["predecessor_observation_id"],
+                relation,
+                str(observation.artifact_sha256),
+                str(observation.normalized_revision_roster_sha256),
+                canonical_json_sha256(revision_payload),
+            ),
+        )
+        state = (
+            "CAPTURED_ON_TIME"
+            if observation.timeliness is ArchiveObservationTimeliness.ON_TIME
+            else "CAPTURED_LATE"
+        )
+        self._insert_terminal(
+            observation.market_archive_id,
+            observation.market_archive_slice_id,
+            state,
+            f"ARCHIVE_{state}",
+        )
+
+    def _insert_terminal(
+        self,
+        market_archive_id: UUID,
+        market_archive_slice_id: UUID,
+        terminal_state: str,
+        reason_code: str,
+    ) -> None:
+        self._connection.execute(
+            """
+            INSERT INTO mra.prospective_archive_slice_terminal (
+                market_archive_slice_id, market_archive_id,
+                terminal_state, reason_code, content_sha256
+            ) VALUES (%s, %s, %s, %s, %s)
+            """,
+            (
+                market_archive_slice_id,
+                market_archive_id,
+                terminal_state,
+                reason_code,
+                "0" * 64,
+            ),
+        )
 
     def get_capture_observation(
         self, observation_id: UUID
@@ -425,6 +635,16 @@ class PostgresArchiveRepository:
                 content_hash,
             ),
         )
+        if self._connection.execute(
+            "SELECT 1 FROM mra.prospective_archive_slice_schedule WHERE market_archive_slice_id = %s",
+            (market_archive_slice_id,),
+        ).fetchone() is not None:
+            self._insert_terminal(
+                market_archive_id,
+                market_archive_slice_id,
+                "PROVIDER_GAP",
+                "PROVIDER_CAPTURE_GAP",
+            )
         return ArchiveSliceGapRecord(
             market_archive_slice_gap_id=binding_id,
             market_archive_id=market_archive_id,
@@ -502,6 +722,16 @@ class PostgresArchiveRepository:
                 content_hash,
             ),
         )
+        if self._connection.execute(
+            "SELECT 1 FROM mra.prospective_archive_slice_schedule WHERE market_archive_slice_id = %s",
+            (market_archive_slice_id,),
+        ).fetchone() is not None:
+            self._insert_terminal(
+                market_archive_id,
+                market_archive_slice_id,
+                "RESOURCE_STOP",
+                "DISK_RESERVED_FLOOR",
+            )
         return ArchiveResourceStopRecord(
             market_archive_resource_stop_id=resource_stop_id,
             market_archive_id=market_archive_id,
@@ -511,6 +741,51 @@ class PostgresArchiveRepository:
             reason_code=reason_code,
             content_sha256=content_hash,
         )
+
+    def finalize_overdue(
+        self,
+        market_archive_id: UUID,
+    ) -> tuple[UUID, ...]:
+        self._connection.execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+            (f"prospective-overdue:{market_archive_id}",),
+        )
+        rows = self._connection.execute(
+            """
+            SELECT schedule.market_archive_slice_id
+            FROM mra.prospective_archive_slice_schedule AS schedule
+            JOIN mra.market_archive_slice AS slice
+              ON slice.market_archive_slice_id = schedule.market_archive_slice_id
+            LEFT JOIN mra.prospective_archive_slice_terminal AS terminal
+              ON terminal.market_archive_slice_id = schedule.market_archive_slice_id
+            WHERE schedule.market_archive_id = %s
+              AND terminal.market_archive_slice_id IS NULL
+              AND slice.event_window_end < clock_timestamp()
+            ORDER BY schedule.ordinal
+            FOR UPDATE OF slice
+            """,
+            (market_archive_id,),
+        ).fetchall()
+        for row in rows:
+            self._insert_terminal(
+                market_archive_id,
+                UUID(str(row[0])),
+                "MISSED",
+                "CAPTURE_WINDOW_ELAPSED",
+            )
+        all_missed = self._connection.execute(
+            """
+            SELECT terminal.market_archive_slice_id
+            FROM mra.prospective_archive_slice_terminal AS terminal
+            JOIN mra.prospective_archive_slice_schedule AS schedule
+              ON schedule.market_archive_slice_id = terminal.market_archive_slice_id
+            WHERE terminal.market_archive_id = %s
+              AND terminal.terminal_state = 'MISSED'
+            ORDER BY schedule.ordinal
+            """,
+            (market_archive_id,),
+        ).fetchall()
+        return tuple(UUID(str(row[0])) for row in all_missed)
 
     def get_resource_stop(self, resource_stop_id: UUID) -> ArchiveResourceStopRecord:
         row = self._connection.execute(

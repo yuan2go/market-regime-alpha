@@ -393,7 +393,10 @@ def _require_training_root(
         JOIN mra.exploratory_backtest_arm AS arm
           ON arm.exploratory_backtest_arm_id = %s
          AND arm.exploratory_backtest_run_id = backtest.exploratory_backtest_run_id
-         AND arm.arm_kind = 'MODEL_CHALLENGER'
+         AND arm.arm_kind IN (
+             'MODEL_CHALLENGER', 'RIDGE_CURRENT_CONTEXT',
+             'RIDGE_CONTEXT_OBSERVATIONAL'
+         )
         JOIN mra.exploratory_backtest_fold AS fold
           ON fold.exploratory_backtest_fold_id = %s
          AND fold.exploratory_backtest_run_id = backtest.exploratory_backtest_run_id
