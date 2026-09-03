@@ -180,6 +180,8 @@ Checkpoint traceability:
 - [WP-17P Prospective Archive and Exploratory Backtest Verification](references/WP-ARCHITECTURE-REFOUNDATION-17P-Prospective-Archive-Exploratory-Backtest-Verification.md)
 - [WP-18 Prospective Operations and Walk-Forward Design](references/WP-ARCHITECTURE-REFOUNDATION-18-Prospective-Walk-Forward-Design.md)
 - [WP-18 Prospective Operations and Walk-Forward Implementation Plan](references/WP-ARCHITECTURE-REFOUNDATION-18-Prospective-Walk-Forward-Implementation-Plan.md)
+- [WP-18Q Continuous Prospective Correctness and Reusable Backtest Platform Design](references/WP-ARCHITECTURE-REFOUNDATION-18Q-Reusable-Backtest-Platform-Design.md)
+- [WP-18Q Reusable Backtest Platform Implementation Plan](references/WP-ARCHITECTURE-REFOUNDATION-18Q-Reusable-Backtest-Platform-Implementation-Plan.md)
   — immutable exact-SHA proof for two-lane archive engineering, dual-clock
   retrospective execution, bounded XSHG-32 rule/Model backtests, prospective
   archive start, replay/reconciliation, and the unchanged Formal evidence
