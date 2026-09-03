@@ -10,6 +10,7 @@ from market_regime_alpha.research_qualification.domain.backtest import (
 from market_regime_alpha.research_qualification.domain.backtest_execution import (
     BacktestActionObservation,
     BacktestExpectedAction,
+    BacktestNextOperation,
 )
 
 
@@ -21,4 +22,15 @@ class BacktestExecutionObservationPort(Protocol):
     ) -> tuple[BacktestActionObservation, ...]: ...
 
 
-__all__ = ["BacktestExecutionObservationPort"]
+class BacktestActionExecutionPort(Protocol):
+    """Invoke one dependency-ready action through its canonical owner."""
+
+    def execute(
+        self,
+        run: FrozenBacktestRun,
+        action: BacktestExpectedAction,
+        operation: BacktestNextOperation,
+    ) -> None: ...
+
+
+__all__ = ["BacktestActionExecutionPort", "BacktestExecutionObservationPort"]

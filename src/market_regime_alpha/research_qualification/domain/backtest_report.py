@@ -18,6 +18,7 @@ from market_regime_alpha.research_qualification.domain.backtest import (
     FrozenBacktestRun,
     VersionedAuthorityBinding,
 )
+from market_regime_alpha.research_qualification.domain.model import ArtifactBinding
 from market_regime_alpha.research_qualification.domain.evaluation_formula import (
     BacktestFormulaCode,
     BacktestMetricSurface,
@@ -94,7 +95,9 @@ class BacktestReportModel:
     def __post_init__(self) -> None:
         if not _REASON.fullmatch(self.reason_code):
             raise ValueError("Model report reason_code has an invalid format")
-        if (self.model_training_run_id is None) != (self.model_version_id is None):
+        if self.model_version_id is not None and self.model_training_run_id is None:
+            raise ValueError("ModelVersion report lineage requires a TrainingRun")
+        if self.state == "COMPLETED" and (self.model_training_run_id is None or self.model_version_id is None):
             raise ValueError("completed Model report lineage requires TrainingRun and Version")
 
 
@@ -155,16 +158,11 @@ class BacktestReportSource:
     def __post_init__(self) -> None:
         if self.canonical_completed_at.tzinfo is None:
             raise ValueError("canonical completion time must be timezone-aware")
-        if not self.evaluation_run_ids or len(set(self.evaluation_run_ids)) != len(
-            self.evaluation_run_ids
-        ):
+        if not self.evaluation_run_ids or len(set(self.evaluation_run_ids)) != len(self.evaluation_run_ids):
             raise ValueError("report Evaluation roster must be non-empty and unique")
         if not self.metrics:
             raise ValueError("report requires canonical Evaluation metrics")
-        if any(
-            metric.evaluation_run_id not in self.evaluation_run_ids
-            for metric in self.metrics
-        ):
+        if any(metric.evaluation_run_id not in self.evaluation_run_ids for metric in self.metrics):
             raise ValueError("report metric is outside the Evaluation roster")
         if any(not _REASON.fullmatch(reason) for reason in self.execution_failure_reasons):
             raise ValueError("report execution failure reason is invalid")
@@ -175,9 +173,7 @@ class BacktestReportSource:
                         "evaluation_run_id": identity,
                         "ordinal": ordinal,
                     }
-                    for ordinal, identity in enumerate(
-                        self.evaluation_run_ids, start=1
-                    )
+                    for ordinal, identity in enumerate(self.evaluation_run_ids, start=1)
                 )
             )
         )
@@ -197,6 +193,61 @@ class BacktestReportSource:
                         "models": self.models,
                         "recommended_next_experiment": self.recommended_next_experiment,
                         "run_projection_sha256": str(self.run.projection_sha256),
+                    }
+                )
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class BacktestReportArtifactBinding:
+    """Derived content-addressed report bundle; never research Authority."""
+
+    backtest_report_artifact_id: UUID
+    exploratory_backtest_run_id: UUID
+    specification_sha256: ContentHash | str
+    evaluation_count: int
+    evaluation_roster_sha256: ContentHash | str
+    source_projection_sha256: ContentHash | str
+    code_content_sha256: ContentHash | str
+    config_content_sha256: ContentHash | str
+    report_schema: str
+    renderer_version: str
+    json_artifact: ArtifactBinding
+    markdown_artifact: ArtifactBinding
+    content_sha256: ContentHash = field(init=False)
+
+    def __post_init__(self) -> None:
+        if self.evaluation_count < 1:
+            raise ValueError("report Artifact requires an Evaluation roster")
+        hashes = {}
+        for field_name in (
+            "specification_sha256",
+            "evaluation_roster_sha256",
+            "source_projection_sha256",
+            "code_content_sha256",
+            "config_content_sha256",
+        ):
+            normalized = ContentHash(str(getattr(self, field_name)))
+            object.__setattr__(self, field_name, normalized)
+            hashes[field_name] = str(normalized)
+        if self.report_schema != "mra-backtest-report-v1":
+            raise ValueError("report schema is unsupported")
+        if self.renderer_version != "1":
+            raise ValueError("report renderer version is unsupported")
+        object.__setattr__(
+            self,
+            "content_sha256",
+            ContentHash(
+                canonical_json_sha256(
+                    {
+                        **hashes,
+                        "evaluation_count": self.evaluation_count,
+                        "exploratory_backtest_run_id": (self.exploratory_backtest_run_id),
+                        "json_artifact": self.json_artifact,
+                        "markdown_artifact": self.markdown_artifact,
+                        "renderer_version": self.renderer_version,
+                        "report_schema": self.report_schema,
                     }
                 )
             ),
@@ -257,10 +308,7 @@ class BacktestComparison:
     winner_run_id: UUID | None = None
 
     def __post_init__(self) -> None:
-        if (
-            self.mode is BacktestComparisonMode.DESCRIPTIVE_NON_LIKE_FOR_LIKE
-            and self.winner_run_id is not None
-        ):
+        if self.mode is BacktestComparisonMode.DESCRIPTIVE_NON_LIKE_FOR_LIKE and self.winner_run_id is not None:
             raise ValueError("non-like-for-like comparison cannot emit a winner")
 
 
@@ -269,9 +317,7 @@ def comparison_fingerprint(
 ) -> BacktestComparisonFingerprint:
     configuration = source.configuration
     return BacktestComparisonFingerprint(
-        market_archive_sha256=canonical_json_sha256(
-            (configuration.market_archive, configuration.market_archive_seal)
-        ),
+        market_archive_sha256=canonical_json_sha256((configuration.market_archive, configuration.market_archive_seal)),
         universe_sample_sha256=canonical_json_sha256(
             (
                 configuration.universe_revision,
@@ -288,9 +334,7 @@ def comparison_fingerprint(
         ),
         cost_sha256=configuration.cost_roster_sha256,
         portfolio_risk_sha256=configuration.effective_policy_roster_sha256,
-        evaluation_formula_sha256=(
-            configuration.evaluation_formula_roster_sha256
-        ),
+        evaluation_formula_sha256=(configuration.evaluation_formula_roster_sha256),
         evidence_lane=source.run.evidence.value,
     )
 
@@ -301,6 +345,7 @@ __all__ = [
     "BacktestComparisonMode",
     "BacktestMetricDelta",
     "BacktestReportConfiguration",
+    "BacktestReportArtifactBinding",
     "BacktestReportMetric",
     "BacktestReportModel",
     "BacktestReportSource",

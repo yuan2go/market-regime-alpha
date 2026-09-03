@@ -3,13 +3,17 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
+import inspect
 import json
-from uuid import UUID
+from uuid import UUID, uuid5
 
 import pytest
 
 from market_regime_alpha.research_qualification.application.backtest_reports import (
     BacktestReportApplication,
+)
+from market_regime_alpha.infrastructure.postgres.queries.backtest_reports import (
+    PostgresBacktestReportSourcePort,
 )
 from market_regime_alpha.research_qualification.domain.backtest import (
     AuthorityBinding,
@@ -30,6 +34,9 @@ from market_regime_alpha.research_qualification.errors import (
     BacktestReportIntegrityError,
     IncompatibleBacktestComparisonError,
 )
+from market_regime_alpha.runtime.application import ActorType, CommandContext
+from market_regime_alpha.runtime.ports import ArtifactRecord
+from market_regime_alpha.shared.hashing import sha256_bytes
 from market_regime_alpha.research_qualification.ports.backtest_queries import (
     BacktestReplayVerification,
 )
@@ -124,6 +131,36 @@ class _Verifier:
         )
 
 
+class _Artifacts:
+    def __init__(self) -> None:
+        self.contents: dict[str, bytes] = {}
+
+    def publish(self, content, *, media_type, context):
+        del context
+        content_hash = sha256_bytes(content)
+        self.contents[media_type] = content
+        return ArtifactRecord(
+            artifact_id=uuid5(_id(9000), content_hash),
+            content_sha256=content_hash,
+            size_bytes=len(content),
+            media_type=media_type,
+            locator=f"artifact://{content_hash}",
+            integrity_state="AVAILABLE",
+            retention_until=None,
+            pin_reason_code="BACKTEST_REPORT",
+        )
+
+
+class _Bindings:
+    def __init__(self) -> None:
+        self.items = []
+
+    def bind_report(self, binding, context):
+        del context
+        self.items.append(binding)
+        return binding
+
+
 def test_json_and_markdown_are_byte_stable_and_contain_every_required_section() -> None:
     source = _source()
     app = BacktestReportApplication(
@@ -212,3 +249,46 @@ def test_comparison_fails_closed_or_is_visibly_descriptive() -> None:
     assert comparison.mode is BacktestComparisonMode.DESCRIPTIVE_NON_LIKE_FOR_LIKE
     assert comparison.mismatch_fields == ("cost_sha256",)
     assert comparison.winner_run_id is None
+
+
+def test_postgres_report_projection_has_no_raw_market_reader_or_formula_execution() -> None:
+    source = inspect.getsource(PostgresBacktestReportSourcePort).lower()
+
+    assert "market_bar" not in source
+    assert "formulaobservation" not in source
+    assert ".evaluate(" not in source
+    assert "repeatable read" in source
+
+
+def test_report_publication_binds_exact_json_and_markdown_artifacts() -> None:
+    source = _source()
+    app = BacktestReportApplication(
+        _Source({source.run.exploratory_backtest_run_id: source}),
+        _Verifier(),
+    )
+    artifacts = _Artifacts()
+    bindings = _Bindings()
+    context = CommandContext(
+        idempotency_key="publish-standard-backtest-report",
+        actor_type=ActorType.OPERATOR,
+        actor_id="test-operator",
+        reason_code="PUBLISH_BACKTEST_REPORT",
+    )
+
+    first = app.publish(
+        source.run.exploratory_backtest_run_id,
+        artifacts=artifacts,
+        bindings=bindings,
+        context=context,
+    )
+    second = app.publish(
+        source.run.exploratory_backtest_run_id,
+        artifacts=artifacts,
+        bindings=bindings,
+        context=context,
+    )
+
+    assert first == second
+    assert str(first.json_artifact.content_sha256) == sha256_bytes(artifacts.contents["application/json"])
+    assert str(first.markdown_artifact.content_sha256) == sha256_bytes(artifacts.contents["text/markdown"])
+    assert first.evaluation_roster_sha256 == source.evaluation_roster_sha256

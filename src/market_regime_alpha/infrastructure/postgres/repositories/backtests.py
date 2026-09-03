@@ -10,6 +10,13 @@ import psycopg
 from market_regime_alpha.research_qualification.domain.backtest import (
     BacktestSpecification,
 )
+from market_regime_alpha.research_qualification.domain.backtest_execution import (
+    BacktestEvaluationExecution,
+    BacktestRuntimeBinding,
+)
+from market_regime_alpha.research_qualification.domain.backtest_report import (
+    BacktestReportArtifactBinding,
+)
 from market_regime_alpha.research_qualification.ports.backtest_uow import (
     BacktestSpecificationRecord,
 )
@@ -199,9 +206,7 @@ class PostgresBacktestRepository:
                         str(feature.content_sha256),
                         specification_hash,
                     )
-                    for ordinal, feature in enumerate(
-                        specification.feature_definitions, start=1
-                    )
+                    for ordinal, feature in enumerate(specification.feature_definitions, start=1)
                 ),
             )
             cursor.executemany(
@@ -370,9 +375,7 @@ class PostgresBacktestRepository:
                         str(arm.strategy.content_sha256),
                         arm.strategy_binding_source.value,
                         None if arm.model is None else arm.model.authority_id,
-                        None
-                        if arm.model is None
-                        else str(arm.model.content_sha256),
+                        None if arm.model is None else str(arm.model.content_sha256),
                         arm.portfolio.authority_id,
                         str(arm.portfolio.content_sha256),
                         arm.portfolio_binding_source.value,
@@ -430,10 +433,7 @@ class PostgresBacktestRepository:
                     for item in specification.arm_folds
                 ),
             )
-            folds_by_id = {
-                fold.exploratory_backtest_fold_id: fold
-                for fold in specification.folds
-            }
+            folds_by_id = {fold.exploratory_backtest_fold_id: fold for fold in specification.folds}
             cursor.executemany(
                 """
                 INSERT INTO mra.backtest_model_training_requirement (
@@ -459,14 +459,8 @@ class PostgresBacktestRepository:
                         requirement.validation_fold_id,
                         requirement.model_definition.authority_id,
                         str(requirement.model_definition.content_sha256),
-                        folds_by_id[
-                            requirement.fit_fold_id
-                        ].evaluation_protocol.authority_id,
-                        str(
-                            folds_by_id[
-                                requirement.fit_fold_id
-                            ].evaluation_protocol.content_sha256
-                        ),
+                        folds_by_id[requirement.fit_fold_id].evaluation_protocol.authority_id,
+                        str(folds_by_id[requirement.fit_fold_id].evaluation_protocol.content_sha256),
                         str(requirement.content_sha256),
                     )
                     for requirement in specification.model_training_requirements
@@ -504,9 +498,7 @@ class PostgresBacktestRepository:
                     for requirement in specification.evaluation_requirements
                 ),
             )
-        self._connection.execute(
-            "SET CONSTRAINTS backtest_specification_reconcile_guard IMMEDIATE"
-        )
+        self._connection.execute("SET CONSTRAINTS backtest_specification_reconcile_guard IMMEDIATE")
         return self.record(run_id, lock=False)
 
     def _require_exact_parents(self, specification: BacktestSpecification) -> UUID:
@@ -567,9 +559,7 @@ class PostgresBacktestRepository:
             ),
         ).fetchone()
         if row is None:
-            raise RuntimeStateConflictError(
-                "Backtest parent roster is not exact or archive is not retrospective"
-            )
+            raise RuntimeStateConflictError("Backtest parent roster is not exact or archive is not retrospective")
         features = self._connection.execute(
             """
             SELECT feature_definition_id, content_sha256
@@ -580,8 +570,7 @@ class PostgresBacktestRepository:
             ([item.authority_id for item in specification.feature_definitions],),
         ).fetchall()
         if {(UUID(str(item[0])), str(item[1])) for item in features} != {
-            (item.authority_id, str(item.content_sha256))
-            for item in specification.feature_definitions
+            (item.authority_id, str(item.content_sha256)) for item in specification.feature_definitions
         }:
             raise RuntimeStateConflictError("Backtest Feature roster is not exact")
         for fold in specification.folds:
@@ -600,13 +589,9 @@ class PostgresBacktestRepository:
                 ),
             ).fetchone()
             if protocol is None:
-                raise RuntimeStateConflictError(
-                    "Backtest EvaluationProtocol roster is not exact"
-                )
+                raise RuntimeStateConflictError("Backtest EvaluationProtocol roster is not exact")
         sessions = {
-            (item.trading_session_id, item.session_date, fold.exchange_code)
-            for fold in specification.folds
-            for item in fold.sessions
+            (item.trading_session_id, item.session_date, fold.exchange_code) for fold in specification.folds for item in fold.sessions
         }
         rows = self._connection.execute(
             """
@@ -618,9 +603,7 @@ class PostgresBacktestRepository:
             ([item[0] for item in sessions],),
         ).fetchall()
         if {(UUID(str(item[0])), item[1], str(item[2])) for item in rows} != sessions:
-            raise RuntimeStateConflictError(
-                "Backtest TradingSession roster is not exact"
-            )
+            raise RuntimeStateConflictError("Backtest TradingSession roster is not exact")
         return UUID(str(row[0]))
 
     def record(
@@ -646,9 +629,7 @@ class PostgresBacktestRepository:
             (exploratory_backtest_run_id,),
         ).fetchone()
         if row is None:
-            raise RuntimeNotFoundError(
-                f"current Backtest {exploratory_backtest_run_id} does not exist"
-            )
+            raise RuntimeNotFoundError(f"current Backtest {exploratory_backtest_run_id} does not exist")
         return BacktestSpecificationRecord(
             exploratory_backtest_run_id=UUID(str(row[0])),
             generation=int(row[1]),
@@ -660,6 +641,218 @@ class PostgresBacktestRepository:
             fold_session_binding_count=int(row[7]),
             registered_at=row[8],
         )
+
+    def bind_runtime(
+        self,
+        binding: BacktestRuntimeBinding,
+    ) -> BacktestRuntimeBinding:
+        action = binding.action
+        self._connection.execute(
+            """
+            INSERT INTO mra.backtest_runtime_binding (
+                backtest_runtime_binding_id, exploratory_backtest_run_id,
+                specification_sha256, action_id, action_kind,
+                action_content_sha256, exploratory_backtest_arm_id,
+                exploratory_backtest_fold_id,
+                exploratory_backtest_fold_session_id,
+                model_training_requirement_id, evaluation_requirement_id,
+                runtime_run_id, content_sha256
+            ) VALUES (
+                %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s
+            )
+            ON CONFLICT (exploratory_backtest_run_id, action_id) DO NOTHING
+            """,
+            (
+                binding.backtest_runtime_binding_id,
+                binding.exploratory_backtest_run_id,
+                str(binding.specification_sha256),
+                action.action_id,
+                action.kind.value,
+                str(action.content_sha256),
+                action.arm_id,
+                action.fold_id,
+                action.fold_session_id,
+                action.model_training_requirement_id,
+                action.evaluation_requirement_id,
+                binding.runtime_run_id,
+                str(binding.content_sha256),
+            ),
+        )
+        row = self._connection.execute(
+            """
+            SELECT backtest_runtime_binding_id, specification_sha256,
+                   action_kind, action_content_sha256,
+                   exploratory_backtest_arm_id,
+                   exploratory_backtest_fold_id,
+                   exploratory_backtest_fold_session_id,
+                   model_training_requirement_id, evaluation_requirement_id,
+                   runtime_run_id, content_sha256
+            FROM mra.backtest_runtime_binding
+            WHERE exploratory_backtest_run_id = %s AND action_id = %s
+            FOR SHARE
+            """,
+            (binding.exploratory_backtest_run_id, action.action_id),
+        ).fetchone()
+        expected = (
+            binding.backtest_runtime_binding_id,
+            str(binding.specification_sha256),
+            action.kind.value,
+            str(action.content_sha256),
+            action.arm_id,
+            action.fold_id,
+            action.fold_session_id,
+            action.model_training_requirement_id,
+            action.evaluation_requirement_id,
+            binding.runtime_run_id,
+            str(binding.content_sha256),
+        )
+        if row is None or tuple(row) != expected:
+            raise RuntimeStateConflictError("Backtest Runtime binding identity was reused differently")
+        return binding
+
+    def bind_evaluation(
+        self,
+        binding: BacktestEvaluationExecution,
+    ) -> BacktestEvaluationExecution:
+        self._connection.execute(
+            """
+            INSERT INTO mra.backtest_evaluation_execution (
+                backtest_evaluation_execution_id,
+                exploratory_backtest_run_id, specification_sha256,
+                backtest_evaluation_requirement_id, evaluation_run_id,
+                evaluation_protocol_id, evaluation_metric_count,
+                evaluation_metric_roster_sha256, content_sha256
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (backtest_evaluation_requirement_id) DO NOTHING
+            """,
+            (
+                binding.backtest_evaluation_execution_id,
+                binding.exploratory_backtest_run_id,
+                str(binding.specification_sha256),
+                binding.backtest_evaluation_requirement_id,
+                binding.evaluation_run_id,
+                binding.evaluation_protocol_id,
+                binding.evaluation_metric_count,
+                str(binding.evaluation_metric_roster_sha256),
+                str(binding.content_sha256),
+            ),
+        )
+        row = self._connection.execute(
+            """
+            SELECT execution.backtest_evaluation_execution_id,
+                   execution.specification_sha256,
+                   execution.evaluation_run_id,
+                   execution.evaluation_protocol_id,
+                   execution.evaluation_metric_count,
+                   execution.evaluation_metric_roster_sha256,
+                   run.completed_at, execution.content_sha256
+            FROM mra.backtest_evaluation_execution AS execution
+            JOIN mra.evaluation_run AS run
+              ON run.evaluation_run_id = execution.evaluation_run_id
+            WHERE execution.backtest_evaluation_requirement_id = %s
+            FOR SHARE OF execution, run
+            """,
+            (binding.backtest_evaluation_requirement_id,),
+        ).fetchone()
+        expected = (
+            binding.backtest_evaluation_execution_id,
+            str(binding.specification_sha256),
+            binding.evaluation_run_id,
+            binding.evaluation_protocol_id,
+            binding.evaluation_metric_count,
+            str(binding.evaluation_metric_roster_sha256),
+            binding.canonical_completed_at,
+            str(binding.content_sha256),
+        )
+        if row is None or tuple(row) != expected:
+            raise RuntimeStateConflictError("Backtest Evaluation binding identity was reused differently")
+        return binding
+
+    def bind_report(
+        self,
+        binding: BacktestReportArtifactBinding,
+    ) -> BacktestReportArtifactBinding:
+        self._connection.execute(
+            """
+            INSERT INTO mra.backtest_report_artifact (
+                backtest_report_artifact_id, exploratory_backtest_run_id,
+                specification_sha256, evaluation_count,
+                evaluation_roster_sha256, source_projection_sha256,
+                code_content_sha256, config_content_sha256,
+                report_schema, renderer_version,
+                json_artifact_id, json_content_sha256, json_size_bytes,
+                markdown_artifact_id, markdown_content_sha256,
+                markdown_size_bytes, content_sha256
+            ) VALUES (
+                %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s, %s
+            )
+            ON CONFLICT (
+                exploratory_backtest_run_id, source_projection_sha256,
+                renderer_version
+            ) DO NOTHING
+            """,
+            (
+                binding.backtest_report_artifact_id,
+                binding.exploratory_backtest_run_id,
+                str(binding.specification_sha256),
+                binding.evaluation_count,
+                str(binding.evaluation_roster_sha256),
+                str(binding.source_projection_sha256),
+                str(binding.code_content_sha256),
+                str(binding.config_content_sha256),
+                binding.report_schema,
+                binding.renderer_version,
+                binding.json_artifact.artifact_id,
+                str(binding.json_artifact.content_sha256),
+                binding.json_artifact.size_bytes,
+                binding.markdown_artifact.artifact_id,
+                str(binding.markdown_artifact.content_sha256),
+                binding.markdown_artifact.size_bytes,
+                str(binding.content_sha256),
+            ),
+        )
+        row = self._connection.execute(
+            """
+            SELECT backtest_report_artifact_id, specification_sha256,
+                   evaluation_count, evaluation_roster_sha256,
+                   code_content_sha256, config_content_sha256,
+                   report_schema, json_artifact_id, json_content_sha256,
+                   json_size_bytes, markdown_artifact_id,
+                   markdown_content_sha256, markdown_size_bytes,
+                   content_sha256
+            FROM mra.backtest_report_artifact
+            WHERE exploratory_backtest_run_id = %s
+              AND source_projection_sha256 = %s
+              AND renderer_version = %s
+            FOR SHARE
+            """,
+            (
+                binding.exploratory_backtest_run_id,
+                str(binding.source_projection_sha256),
+                binding.renderer_version,
+            ),
+        ).fetchone()
+        expected = (
+            binding.backtest_report_artifact_id,
+            str(binding.specification_sha256),
+            binding.evaluation_count,
+            str(binding.evaluation_roster_sha256),
+            str(binding.code_content_sha256),
+            str(binding.config_content_sha256),
+            binding.report_schema,
+            binding.json_artifact.artifact_id,
+            str(binding.json_artifact.content_sha256),
+            binding.json_artifact.size_bytes,
+            binding.markdown_artifact.artifact_id,
+            str(binding.markdown_artifact.content_sha256),
+            binding.markdown_artifact.size_bytes,
+            str(binding.content_sha256),
+        )
+        if row is None or tuple(row) != expected:
+            raise RuntimeStateConflictError("Backtest report Artifact binding was reused differently")
+        return binding
 
 
 __all__ = ["PostgresBacktestRepository"]

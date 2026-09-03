@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
+from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import uuid4
 from threading import Lock
@@ -18,6 +19,9 @@ from market_regime_alpha.infrastructure.postgres.queries.backtests import (
 )
 from market_regime_alpha.research_qualification.application.backtests import (
     BacktestApplication,
+)
+from market_regime_alpha.research_qualification.application.backtest_execution import (
+    BacktestExecutionPlanner,
 )
 from market_regime_alpha.research_qualification.domain.backtest import (
     AuthorityBinding,
@@ -43,6 +47,9 @@ from market_regime_alpha.research_qualification.domain.backtest import (
     VersionedAuthorityBinding,
 )
 from market_regime_alpha.research_qualification.domain.model import ArtifactBinding
+from market_regime_alpha.research_qualification.domain.backtest_execution import (
+    BacktestRuntimeBinding,
+)
 from market_regime_alpha.research_qualification.domain.research_vocabulary import (
     PartitionPurpose,
 )
@@ -76,9 +83,7 @@ class _UnknownCommitBacktestProvider:
                 with provider._lock:
                     if not provider._raised:
                         provider._raised = True
-                        raise ResearchUnknownCommitResultError(
-                            "injected lost Backtest commit acknowledgement"
-                        )
+                        raise ResearchUnknownCommitResultError("injected lost Backtest commit acknowledgement")
 
         return _UnknownCommitBacktestUow(self._pool)
 
@@ -113,9 +118,7 @@ def _current_specification(stack) -> BacktestSpecification:
         ).fetchone()
     assert archive_hash is not None and seal_hash is not None and universe is not None
 
-    old_sessions = tuple(
-        session for fold in legacy.folds for session in fold.sessions
-    )
+    old_sessions = tuple(session for fold in legacy.folds for session in fold.sessions)
     fit_protocol = _authority(
         legacy.folds[0].evaluation_protocol_id,
         legacy.folds[0].evaluation_protocol_sha256,
@@ -126,11 +129,7 @@ def _current_specification(stack) -> BacktestSpecification:
     )
 
     def fold(ordinal, purpose, selected, protocol):
-        role = (
-            BacktestSessionRole.FIT_INPUT
-            if purpose is PartitionPurpose.FIT
-            else BacktestSessionRole.EVALUATION
-        )
+        role = BacktestSessionRole.FIT_INPUT if purpose is PartitionPurpose.FIT else BacktestSessionRole.EVALUATION
         return BacktestFoldSpecification(
             exploratory_backtest_fold_id=uuid4(),
             ordinal=ordinal,
@@ -194,16 +193,10 @@ def _current_specification(stack) -> BacktestSpecification:
         )
     )
     defaults = BacktestPolicyDefaults(
-        candidate=_authority(
-            legacy.candidate_policy_id, legacy.candidate_policy_sha256
-        ),
+        candidate=_authority(legacy.candidate_policy_id, legacy.candidate_policy_sha256),
         context=_authority(legacy.context_policy_id, legacy.context_policy_sha256),
-        strategy=_authority(
-            legacy.strategy_version_id, legacy.strategy_version_sha256
-        ),
-        portfolio=_authority(
-            legacy.portfolio_policy_id, legacy.portfolio_policy_sha256
-        ),
+        strategy=_authority(legacy.strategy_version_id, legacy.strategy_version_sha256),
+        portfolio=_authority(legacy.portfolio_policy_id, legacy.portfolio_policy_sha256),
         risk=_authority(legacy.risk_policy_id, legacy.risk_policy_sha256),
     )
     arms = tuple(
@@ -264,14 +257,9 @@ def _current_specification(stack) -> BacktestSpecification:
             arm.exploratory_backtest_arm_id,
             fold_item.exploratory_backtest_fold_id,
         )
-        for ordinal, (fold_item, arm) in enumerate(
-            ((fold_item, arm) for fold_item in folds for arm in arms), start=1
-        )
+        for ordinal, (fold_item, arm) in enumerate(((fold_item, arm) for fold_item in folds for arm in arms), start=1)
     )
-    fold_by_id = {
-        fold_item.exploratory_backtest_fold_id: fold_item
-        for fold_item in folds
-    }
+    fold_by_id = {fold_item.exploratory_backtest_fold_id: fold_item for fold_item in folds}
     evaluations = tuple(
         BacktestEvaluationRequirement(
             uuid4(),
@@ -313,10 +301,7 @@ def _current_specification(stack) -> BacktestSpecification:
         exchange_code="XSHG",
         first_trading_session_id=old_sessions[0].trading_session_id,
         last_trading_session_id=old_sessions[3].trading_session_id,
-        feature_definitions=tuple(
-            _authority(identity, content_hash)
-            for identity, content_hash in legacy.feature_definitions
-        ),
+        feature_definitions=tuple(_authority(identity, content_hash) for identity, content_hash in legacy.feature_definitions),
         target=VersionedAuthorityBinding(
             legacy.target_definition_id,
             legacy.target_version,
@@ -414,9 +399,7 @@ def test_current_predeclaration_is_root_owned_relational_and_replayable(
     )
     assert overlap == (3,)
 
-    reloaded = PostgresBacktestQueryPort(backtest_stack.pool).load(
-        specification.exploratory_backtest_run_id
-    )
+    reloaded = PostgresBacktestQueryPort(backtest_stack.pool).load(specification.exploratory_backtest_run_id)
     assert reloaded.specification_sha256 == specification.content_sha256
     assert reloaded.projection_sha256 == execution_plan.projection_sha256
     assert reloaded.fold_session_binding_count == 7
@@ -446,12 +429,8 @@ def test_database_recomputes_current_specification_hash(backtest_stack) -> None:
             canonical_json_sha256(
                 {
                     "current_specification_sha256": str(forged_hash),
-                    "exploratory_backtest_run_id": (
-                        specification.exploratory_backtest_run_id
-                    ),
-                    "specification_schema_version": (
-                        specification.specification_schema_version
-                    ),
+                    "exploratory_backtest_run_id": (specification.exploratory_backtest_run_id),
+                    "specification_schema_version": (specification.specification_schema_version),
                 }
             )
         ),
@@ -482,33 +461,20 @@ def test_current_predeclaration_freezes_sparse_arm_fold_participation(
     backtest_stack,
 ) -> None:
     complete = _current_specification(backtest_stack)
-    fit_ids = {
-        fold.exploratory_backtest_fold_id
-        for fold in complete.folds
-        if fold.purpose is PartitionPurpose.FIT
-    }
+    fit_ids = {fold.exploratory_backtest_fold_id for fold in complete.folds if fold.purpose is PartitionPurpose.FIT}
     first_arm_id = complete.arms[0].exploratory_backtest_arm_id
-    selected = tuple(
-        binding
-        for binding in complete.arm_folds
-        if not (binding.arm_id == first_arm_id and binding.fold_id in fit_ids)
-    )
+    selected = tuple(binding for binding in complete.arm_folds if not (binding.arm_id == first_arm_id and binding.fold_id in fit_ids))
     selected_scopes = {(item.arm_id, item.fold_id) for item in selected}
     selected_requirements = tuple(
         requirement
         for requirement in complete.evaluation_requirements
-        if requirement.scope_kind is not BacktestEvaluationScopeKind.FOLD
-        or (requirement.arm_id, requirement.fold_id) in selected_scopes
+        if requirement.scope_kind is not BacktestEvaluationScopeKind.FOLD or (requirement.arm_id, requirement.fold_id) in selected_scopes
     )
     sparse = replace(
         complete,
-        arm_folds=tuple(
-            replace(binding, ordinal=ordinal)
-            for ordinal, binding in enumerate(selected, start=1)
-        ),
+        arm_folds=tuple(replace(binding, ordinal=ordinal) for ordinal, binding in enumerate(selected, start=1)),
         evaluation_requirements=tuple(
-            replace(requirement, ordinal=ordinal)
-            for ordinal, requirement in enumerate(selected_requirements, start=1)
+            replace(requirement, ordinal=ordinal) for ordinal, requirement in enumerate(selected_requirements, start=1)
         ),
     )
     application = BacktestApplication(
@@ -548,9 +514,7 @@ def test_concurrent_current_predeclaration_converges_on_one_identity(
     with ThreadPoolExecutor(max_workers=2) as executor:
         results = tuple(executor.map(execute, range(2)))
 
-    assert {item.exploratory_backtest_run_id for item in results} == {
-        specification.exploratory_backtest_run_id
-    }
+    assert {item.exploratory_backtest_run_id for item in results} == {specification.exploratory_backtest_run_id}
     assert sorted(item.replayed for item in results) == [False, True]
     with backtest_stack.pool.connection(read_only=True) as connection:
         row = connection.execute(
@@ -591,10 +555,87 @@ def test_unknown_commit_reconciles_exact_current_backtest(backtest_stack) -> Non
         _legacy._context("unknown-commit-generic-predeclare"),
     )
 
-    assert result.exploratory_backtest_run_id == (
-        specification.exploratory_backtest_run_id
-    )
+    assert result.exploratory_backtest_run_id == (specification.exploratory_backtest_run_id)
     assert result.replayed is True
-    assert PostgresBacktestQueryPort(backtest_stack.pool).load(
-        specification.exploratory_backtest_run_id
-    ).specification_sha256 == specification.content_sha256
+    assert (
+        PostgresBacktestQueryPort(backtest_stack.pool).load(specification.exploratory_backtest_run_id).specification_sha256
+        == specification.content_sha256
+    )
+
+
+def test_runtime_action_binding_is_application_backed_append_only_lineage(
+    backtest_stack,
+) -> None:
+    specification = _current_specification(backtest_stack)
+    application = BacktestApplication(
+        PostgresBacktestUnitOfWorkProvider(backtest_stack.pool),
+        id_factory=uuid4,
+    )
+    application.predeclare(
+        specification,
+        _legacy._context("runtime-binding-predeclare"),
+    )
+    frozen = application.plan(specification)
+    action = BacktestExecutionPlanner().compile(frozen).expected_actions[0]
+    schedule_id = uuid4()
+    runtime_run_id = uuid4()
+    with psycopg.connect(backtest_stack.database_url) as connection:
+        connection.execute(
+            """
+            INSERT INTO mra.runtime_schedule (
+                schedule_id, schedule_code, revision, runtime_mode,
+                schedule_expression, timezone_name, step_catalog_hash, enabled
+            ) VALUES (%s, %s, 1, 'HISTORICAL', NULL, 'Asia/Shanghai', %s, true)
+            """,
+            (schedule_id, f"generic-backtest-{uuid4().hex[:8]}", "f" * 64),
+        )
+        connection.execute(
+            """
+            INSERT INTO mra.runtime_run (
+                run_id, schedule_id, fire_key, runtime_mode, requested_at,
+                decision_time, code_sha, config_artifact_id, config_hash,
+                schema_epoch, state
+            ) VALUES (
+                %s, %s, %s, 'HISTORICAL', %s, NULL, %s, %s, %s,
+                'MRA_REFOUNDATION_1', 'QUEUED'
+            )
+            """,
+            (
+                runtime_run_id,
+                schedule_id,
+                str(action.action_id),
+                datetime.now(UTC),
+                "1" * 40,
+                specification.config_artifact.artifact_id,
+                str(specification.config_artifact.content_sha256),
+            ),
+        )
+    binding = BacktestRuntimeBinding(
+        uuid4(),
+        specification.exploratory_backtest_run_id,
+        specification.content_sha256,
+        action,
+        runtime_run_id,
+    )
+    context = _legacy._context("bind-runtime-action")
+
+    first = application.bind_runtime(binding, context)
+    replay = application.bind_runtime(binding, context)
+
+    assert first.replayed is False
+    assert replay.replayed is True
+    assert replay.binding_id == binding.backtest_runtime_binding_id
+    with psycopg.connect(backtest_stack.database_url) as connection:
+        row = connection.execute(
+            """
+            SELECT action_id, runtime_run_id, content_sha256
+            FROM mra.backtest_runtime_binding
+            WHERE backtest_runtime_binding_id = %s
+            """,
+            (binding.backtest_runtime_binding_id,),
+        ).fetchone()
+    assert row == (
+        action.action_id,
+        runtime_run_id,
+        str(binding.content_sha256),
+    )

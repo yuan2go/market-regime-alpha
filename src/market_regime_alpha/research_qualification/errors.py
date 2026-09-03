@@ -31,6 +31,10 @@ class BacktestReportIntegrityError(ResearchValidityError):
     code = "BACKTEST_REPORT_INTEGRITY_ERROR"
 
 
+class BacktestExecutionIntegrityError(ResearchValidityError):
+    code = "BACKTEST_EXECUTION_INTEGRITY_ERROR"
+
+
 class IncompatibleBacktestComparisonError(ResearchValidityError):
     code = "BACKTEST_COMPARISON_INCOMPATIBLE"
 
@@ -52,6 +56,7 @@ class ResearchUnknownCommitResultError(RuntimeError):
 
 
 __all__ = [
+    "BacktestExecutionIntegrityError",
     "EvaluationAcquisitionError",
     "EvaluationProtocolError",
     "EvaluationReconciliationError",

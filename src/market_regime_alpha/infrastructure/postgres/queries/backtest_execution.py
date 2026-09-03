@@ -115,6 +115,38 @@ class PostgresBacktestExecutionObservationPort:
                     """,
                     (run.exploratory_backtest_run_id,),
                 ).fetchall()
+                current_evaluations = cursor.execute(
+                    """
+                    SELECT execution.backtest_evaluation_requirement_id,
+                           execution.evaluation_run_id,
+                           execution.evaluation_protocol_id,
+                           execution.evaluation_metric_count,
+                           execution.evaluation_metric_roster_sha256,
+                           evaluation.status,
+                           evaluation.metric_count AS canonical_metric_count,
+                           evaluation.metric_roster_sha256 AS canonical_metric_roster_sha256
+                    FROM mra.backtest_evaluation_execution AS execution
+                    JOIN mra.evaluation_run AS evaluation
+                      ON evaluation.evaluation_run_id = execution.evaluation_run_id
+                     AND evaluation.evaluation_protocol_id =
+                         execution.evaluation_protocol_id
+                    WHERE execution.exploratory_backtest_run_id = %s
+                    """,
+                    (run.exploratory_backtest_run_id,),
+                ).fetchall()
+                current_metric_states = cursor.execute(
+                    """
+                    SELECT execution.backtest_evaluation_requirement_id,
+                           metric.metric_state
+                    FROM mra.backtest_evaluation_execution AS execution
+                    JOIN mra.evaluation_metric AS metric
+                      ON metric.evaluation_run_id = execution.evaluation_run_id
+                    WHERE execution.exploratory_backtest_run_id = %s
+                    GROUP BY execution.backtest_evaluation_requirement_id,
+                             metric.metric_state
+                    """,
+                    (run.exploratory_backtest_run_id,),
+                ).fetchall()
                 training_rows = cursor.execute(
                     """
                     SELECT training.exploratory_backtest_arm_id,
@@ -136,17 +168,11 @@ class PostgresBacktestExecutionObservationPort:
         outcome_by_scope = _rows_by_scope(outcomes)
         evaluations_by_fold: dict[UUID, list[dict[str, Any]]] = defaultdict(list)
         for row in evaluation_sources:
-            evaluations_by_fold[UUID(str(row["exploratory_backtest_fold_id"]))].append(
-                row
-            )
+            evaluations_by_fold[UUID(str(row["exploratory_backtest_fold_id"]))].append(row)
         metrics_by_fold: dict[UUID, set[str]] = defaultdict(set)
         for row in metric_states:
-            metrics_by_fold[UUID(str(row["exploratory_backtest_fold_id"]))].add(
-                str(row["metric_state"])
-            )
-        training_by_scope: dict[tuple[UUID, UUID], list[dict[str, Any]]] = defaultdict(
-            list
-        )
+            metrics_by_fold[UUID(str(row["exploratory_backtest_fold_id"]))].add(str(row["metric_state"]))
+        training_by_scope: dict[tuple[UUID, UUID], list[dict[str, Any]]] = defaultdict(list)
         for row in training_rows:
             training_by_scope[
                 (
@@ -157,10 +183,13 @@ class PostgresBacktestExecutionObservationPort:
         expected_arms_by_fold: dict[UUID, set[UUID]] = defaultdict(set)
         for binding in run.arm_folds:
             expected_arms_by_fold[binding.fold_id].add(binding.arm_id)
-        requirement_by_id = {
-            requirement.requirement_id: requirement
-            for requirement in run.model_training_requirements
-        }
+        requirement_by_id = {requirement.requirement_id: requirement for requirement in run.model_training_requirements}
+        current_evaluation_by_requirement: dict[UUID, list[dict[str, Any]]] = defaultdict(list)
+        for row in current_evaluations:
+            current_evaluation_by_requirement[UUID(str(row["backtest_evaluation_requirement_id"]))].append(row)
+        current_metric_states_by_requirement: dict[UUID, set[str]] = defaultdict(set)
+        for row in current_metric_states:
+            current_metric_states_by_requirement[UUID(str(row["backtest_evaluation_requirement_id"]))].add(str(row["metric_state"]))
 
         observed: list[BacktestActionObservation] = []
         for action in expected_actions:
@@ -170,27 +199,31 @@ class PostgresBacktestExecutionObservationPort:
             elif action.kind is BacktestActionKind.GENERATE_DECISION_SUPPORT:
                 observed.append(self._decision(action, decision_by_scope))
             elif action.kind is BacktestActionKind.SETTLE_OUTCOME:
-                observed.append(
-                    self._outcome(action, decision_by_scope, outcome_by_scope)
-                )
-            elif action.kind is BacktestActionKind.COMPLETE_FOLD_EVALUATION:
-                observed.append(
-                    self._evaluation(
-                        action,
-                        evaluations_by_fold,
-                        metrics_by_fold,
-                        expected_arms_by_fold,
+                observed.append(self._outcome(action, decision_by_scope, outcome_by_scope))
+            elif action.kind in {
+                BacktestActionKind.COMPLETE_FOLD_EVALUATION,
+                BacktestActionKind.COMPLETE_AGGREGATE_EVALUATION,
+            }:
+                if action.evaluation_requirement_id is not None:
+                    observed.append(
+                        self._current_evaluation(
+                            action,
+                            current_evaluation_by_requirement,
+                            current_metric_states_by_requirement,
+                        )
                     )
-                )
+                else:
+                    observed.append(
+                        self._evaluation(
+                            action,
+                            evaluations_by_fold,
+                            metrics_by_fold,
+                            expected_arms_by_fold,
+                        )
+                    )
             elif action.kind is BacktestActionKind.TRAIN_MODEL:
-                observed.append(
-                    self._training(action, training_by_scope, requirement_by_id)
-                )
-        return tuple(
-            observation
-            for observation in observed
-            if observation.state is not BacktestObservedState.ABSENT
-        )
+                observed.append(self._training(action, training_by_scope, requirement_by_id))
+        return tuple(observation for observation in observed if observation.state is not BacktestObservedState.ABSENT)
 
     def _decision(
         self,
@@ -207,11 +240,7 @@ class PostgresBacktestExecutionObservationPort:
         verification = self._decisions.verify(decision_id)
         return BacktestActionObservation(
             action.action_id,
-            (
-                BacktestObservedState.MATCHED_COMPLETE
-                if verification.matched
-                else BacktestObservedState.MISMATCH
-            ),
+            (BacktestObservedState.MATCHED_COMPLETE if verification.matched else BacktestObservedState.MISMATCH),
         )
 
     def _outcome(
@@ -225,32 +254,15 @@ class PostgresBacktestExecutionObservationPort:
         if len(decision_rows) != 1:
             return BacktestActionObservation(
                 action.action_id,
-                (
-                    BacktestObservedState.ABSENT
-                    if not decision_rows
-                    else BacktestObservedState.MISMATCH
-                ),
+                (BacktestObservedState.ABSENT if not decision_rows else BacktestObservedState.MISMATCH),
             )
         rows = outcomes.get(scope, ())
-        if not rows or any(
-            row["market_target_outcome_revision_id"] is None for row in rows
-        ):
-            return BacktestActionObservation(
-                action.action_id, BacktestObservedState.MATCHED_INCOMPLETE
-            )
-        mismatched = any(
-            self._outcomes.inspect(
-                UUID(str(row["market_target_outcome_revision_id"]))
-            )
-            for row in rows
-        )
+        if not rows or any(row["market_target_outcome_revision_id"] is None for row in rows):
+            return BacktestActionObservation(action.action_id, BacktestObservedState.MATCHED_INCOMPLETE)
+        mismatched = any(self._outcomes.inspect(UUID(str(row["market_target_outcome_revision_id"]))) for row in rows)
         return BacktestActionObservation(
             action.action_id,
-            (
-                BacktestObservedState.MISMATCH
-                if mismatched
-                else BacktestObservedState.MATCHED_COMPLETE
-            ),
+            (BacktestObservedState.MISMATCH if mismatched else BacktestObservedState.MATCHED_COMPLETE),
         )
 
     def _evaluation(
@@ -263,38 +275,56 @@ class PostgresBacktestExecutionObservationPort:
         assert action.fold_id is not None
         rows = rows_by_fold.get(action.fold_id, ())
         if not rows:
-            return BacktestActionObservation(
-                action.action_id, BacktestObservedState.ABSENT
-            )
+            return BacktestActionObservation(action.action_id, BacktestObservedState.ABSENT)
         evaluation_ids = {UUID(str(row["evaluation_run_id"])) for row in rows}
-        observed_arms = {
-            UUID(str(row["exploratory_backtest_arm_id"])) for row in rows
-        }
-        if len(evaluation_ids) != 1 or observed_arms != expected_arms_by_fold[
-            action.fold_id
-        ]:
-            return BacktestActionObservation(
-                action.action_id, BacktestObservedState.MISMATCH
-            )
+        observed_arms = {UUID(str(row["exploratory_backtest_arm_id"])) for row in rows}
+        if len(evaluation_ids) != 1 or observed_arms != expected_arms_by_fold[action.fold_id]:
+            return BacktestActionObservation(action.action_id, BacktestObservedState.MISMATCH)
         evaluation_id = next(iter(evaluation_ids))
         statuses = {str(row["status"]) for row in rows}
         if statuses != {"COMPLETED"}:
-            return BacktestActionObservation(
-                action.action_id, BacktestObservedState.MATCHED_INCOMPLETE
-            )
+            return BacktestActionObservation(action.action_id, BacktestObservedState.MATCHED_INCOMPLETE)
         if self._evaluations.inspect_evaluation_run(evaluation_id):
-            return BacktestActionObservation(
-                action.action_id, BacktestObservedState.MISMATCH
-            )
+            return BacktestActionObservation(action.action_id, BacktestObservedState.MISMATCH)
         metric_states = metrics_by_fold[action.fold_id]
         research_state = (
             BacktestResearchState.ESTIMABLE
             if "ESTIMATED" in metric_states
-            else (
-                BacktestResearchState.NOT_ESTIMABLE
-                if "NOT_ESTIMABLE" in metric_states
-                else BacktestResearchState.NOT_APPLICABLE
-            )
+            else (BacktestResearchState.NOT_ESTIMABLE if "NOT_ESTIMABLE" in metric_states else BacktestResearchState.NOT_APPLICABLE)
+        )
+        return BacktestActionObservation(
+            action.action_id,
+            BacktestObservedState.MATCHED_COMPLETE,
+            research_state,
+        )
+
+    def _current_evaluation(
+        self,
+        action: BacktestExpectedAction,
+        rows_by_requirement: dict[UUID, list[dict[str, Any]]],
+        metrics_by_requirement: dict[UUID, set[str]],
+    ) -> BacktestActionObservation:
+        assert action.evaluation_requirement_id is not None
+        rows = rows_by_requirement.get(action.evaluation_requirement_id, ())
+        if not rows:
+            return BacktestActionObservation(action.action_id, BacktestObservedState.ABSENT)
+        if len(rows) != 1:
+            return BacktestActionObservation(action.action_id, BacktestObservedState.MISMATCH)
+        row = rows[0]
+        if (
+            str(row["status"]) != "COMPLETED"
+            or int(row["evaluation_metric_count"]) != int(row["canonical_metric_count"])
+            or str(row["evaluation_metric_roster_sha256"]) != str(row["canonical_metric_roster_sha256"])
+        ):
+            return BacktestActionObservation(action.action_id, BacktestObservedState.MISMATCH)
+        evaluation_id = UUID(str(row["evaluation_run_id"]))
+        if self._evaluations.inspect_evaluation_run(evaluation_id):
+            return BacktestActionObservation(action.action_id, BacktestObservedState.MISMATCH)
+        metric_states = metrics_by_requirement[action.evaluation_requirement_id]
+        research_state = (
+            BacktestResearchState.ESTIMABLE
+            if "ESTIMATED" in metric_states
+            else (BacktestResearchState.NOT_ESTIMABLE if "NOT_ESTIMABLE" in metric_states else BacktestResearchState.NOT_APPLICABLE)
         )
         return BacktestActionObservation(
             action.action_id,
@@ -312,20 +342,14 @@ class PostgresBacktestExecutionObservationPort:
         assert action.model_training_requirement_id is not None
         requirement = requirement_by_id[action.model_training_requirement_id]
         rows = rows_by_scope.get((action.arm_id, action.fold_id), ())
-        matching = tuple(
-            row
-            for row in rows
-            if UUID(str(row["model_id"])) == requirement.model_definition.authority_id
-        )
+        matching = tuple(row for row in rows if UUID(str(row["model_id"])) == requirement.model_definition.authority_id)
         if not matching:
             return BacktestActionObservation(
                 action.action_id,
                 BacktestObservedState.MISMATCH if rows else BacktestObservedState.ABSENT,
             )
         if len(matching) != 1:
-            return BacktestActionObservation(
-                action.action_id, BacktestObservedState.MISMATCH
-            )
+            return BacktestActionObservation(action.action_id, BacktestObservedState.MISMATCH)
         return BacktestActionObservation(
             action.action_id,
             (
@@ -350,11 +374,7 @@ def _rows_by_scope(rows: list[dict[str, Any]]) -> dict[_Scope, list[dict[str, An
 
 
 def _scope(action: BacktestExpectedAction) -> _Scope:
-    assert (
-        action.arm_id is not None
-        and action.fold_id is not None
-        and action.fold_session_id is not None
-    )
+    assert action.arm_id is not None and action.fold_id is not None and action.fold_session_id is not None
     return action.arm_id, action.fold_id, action.fold_session_id
 
 

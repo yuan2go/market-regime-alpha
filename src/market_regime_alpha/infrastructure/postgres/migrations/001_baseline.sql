@@ -22830,6 +22830,451 @@ CREATE TABLE mra.backtest_evaluation_requirement (
     )
 );
 
+-- Execution lineage only. Runtime and Evaluation remain the lifecycle and
+-- metric Authorities; these immutable rows bind a derived generic action to
+-- the exact canonical owner it invoked and deliberately contain no state or
+-- mutable cursor.
+CREATE TABLE mra.backtest_runtime_binding (
+    backtest_runtime_binding_id uuid PRIMARY KEY,
+    exploratory_backtest_run_id uuid NOT NULL,
+    specification_sha256 text NOT NULL,
+    action_id uuid NOT NULL,
+    action_kind text NOT NULL,
+    action_content_sha256 text NOT NULL,
+    exploratory_backtest_arm_id uuid,
+    exploratory_backtest_fold_id uuid,
+    exploratory_backtest_fold_session_id uuid,
+    model_training_requirement_id uuid,
+    evaluation_requirement_id uuid,
+    runtime_run_id uuid NOT NULL,
+    content_sha256 text NOT NULL,
+    bound_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT backtest_runtime_binding_action_uk UNIQUE (
+        exploratory_backtest_run_id, action_id
+    ),
+    CONSTRAINT backtest_runtime_binding_runtime_uk UNIQUE (runtime_run_id),
+    CONSTRAINT backtest_runtime_binding_specification_fk FOREIGN KEY (
+        exploratory_backtest_run_id, specification_sha256
+    ) REFERENCES mra.backtest_specification(
+        exploratory_backtest_run_id, specification_sha256
+    ) ON DELETE RESTRICT,
+    CONSTRAINT backtest_runtime_binding_arm_fk FOREIGN KEY (
+        exploratory_backtest_arm_id, exploratory_backtest_run_id
+    ) REFERENCES mra.exploratory_backtest_arm(
+        exploratory_backtest_arm_id, exploratory_backtest_run_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT backtest_runtime_binding_fold_fk FOREIGN KEY (
+        exploratory_backtest_fold_id, exploratory_backtest_run_id
+    ) REFERENCES mra.exploratory_backtest_fold(
+        exploratory_backtest_fold_id, exploratory_backtest_run_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT backtest_runtime_binding_session_fk FOREIGN KEY (
+        exploratory_backtest_fold_session_id
+    ) REFERENCES mra.exploratory_backtest_fold_session(
+        exploratory_backtest_fold_session_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT backtest_runtime_binding_model_requirement_fk FOREIGN KEY (
+        model_training_requirement_id
+    ) REFERENCES mra.backtest_model_training_requirement(
+        backtest_model_training_requirement_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT backtest_runtime_binding_evaluation_requirement_fk FOREIGN KEY (
+        evaluation_requirement_id
+    ) REFERENCES mra.backtest_evaluation_requirement(
+        backtest_evaluation_requirement_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT backtest_runtime_binding_runtime_fk FOREIGN KEY (runtime_run_id)
+        REFERENCES mra.runtime_run(run_id) ON DELETE RESTRICT,
+    CONSTRAINT backtest_runtime_binding_shape_ck CHECK (
+        action_kind IN (
+            'MATERIALIZE_DATASET', 'GENERATE_DECISION_SUPPORT',
+            'SETTLE_OUTCOME', 'COMPLETE_FOLD_EVALUATION',
+            'TRAIN_MODEL', 'COMPLETE_AGGREGATE_EVALUATION'
+        )
+        AND specification_sha256 ~ '^[0-9a-f]{64}$'
+        AND action_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+        AND ((action_kind IN (
+                  'MATERIALIZE_DATASET', 'GENERATE_DECISION_SUPPORT',
+                  'SETTLE_OUTCOME'
+              )
+              AND exploratory_backtest_arm_id IS NOT NULL
+              AND exploratory_backtest_fold_id IS NOT NULL
+              AND exploratory_backtest_fold_session_id IS NOT NULL
+              AND model_training_requirement_id IS NULL
+              AND evaluation_requirement_id IS NULL)
+          OR (action_kind = 'TRAIN_MODEL'
+              AND exploratory_backtest_arm_id IS NOT NULL
+              AND exploratory_backtest_fold_id IS NOT NULL
+              AND exploratory_backtest_fold_session_id IS NULL
+              AND model_training_requirement_id IS NOT NULL
+              AND evaluation_requirement_id IS NULL)
+          OR (action_kind = 'COMPLETE_FOLD_EVALUATION'
+              AND exploratory_backtest_arm_id IS NOT NULL
+              AND exploratory_backtest_fold_id IS NOT NULL
+              AND exploratory_backtest_fold_session_id IS NULL
+              AND model_training_requirement_id IS NULL
+              AND evaluation_requirement_id IS NOT NULL)
+          OR (action_kind = 'COMPLETE_AGGREGATE_EVALUATION'
+              AND exploratory_backtest_arm_id IS NOT NULL
+              AND exploratory_backtest_fold_id IS NULL
+              AND exploratory_backtest_fold_session_id IS NULL
+              AND model_training_requirement_id IS NULL
+              AND evaluation_requirement_id IS NOT NULL))
+    )
+);
+
+CREATE TABLE mra.backtest_evaluation_execution (
+    backtest_evaluation_execution_id uuid PRIMARY KEY,
+    exploratory_backtest_run_id uuid NOT NULL,
+    specification_sha256 text NOT NULL,
+    backtest_evaluation_requirement_id uuid NOT NULL,
+    evaluation_run_id uuid NOT NULL,
+    evaluation_protocol_id uuid NOT NULL,
+    evaluation_metric_count integer NOT NULL,
+    evaluation_metric_roster_sha256 text NOT NULL,
+    content_sha256 text NOT NULL,
+    bound_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT backtest_evaluation_execution_requirement_uk UNIQUE (
+        backtest_evaluation_requirement_id
+    ),
+    CONSTRAINT backtest_evaluation_execution_run_uk UNIQUE (evaluation_run_id),
+    CONSTRAINT backtest_evaluation_execution_specification_fk FOREIGN KEY (
+        exploratory_backtest_run_id, specification_sha256
+    ) REFERENCES mra.backtest_specification(
+        exploratory_backtest_run_id, specification_sha256
+    ) ON DELETE RESTRICT,
+    CONSTRAINT backtest_evaluation_execution_requirement_fk FOREIGN KEY (
+        backtest_evaluation_requirement_id
+    ) REFERENCES mra.backtest_evaluation_requirement(
+        backtest_evaluation_requirement_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT backtest_evaluation_execution_run_fk FOREIGN KEY (
+        evaluation_run_id, evaluation_protocol_id
+    ) REFERENCES mra.evaluation_run(
+        evaluation_run_id, evaluation_protocol_id
+    ) ON DELETE RESTRICT,
+    CONSTRAINT backtest_evaluation_execution_shape_ck CHECK (
+        evaluation_metric_count > 0
+        AND specification_sha256 ~ '^[0-9a-f]{64}$'
+        AND evaluation_metric_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE TABLE mra.backtest_report_artifact (
+    backtest_report_artifact_id uuid PRIMARY KEY,
+    exploratory_backtest_run_id uuid NOT NULL,
+    specification_sha256 text NOT NULL,
+    evaluation_count integer NOT NULL,
+    evaluation_roster_sha256 text NOT NULL,
+    source_projection_sha256 text NOT NULL,
+    code_content_sha256 text NOT NULL,
+    config_content_sha256 text NOT NULL,
+    report_schema text NOT NULL,
+    renderer_version text NOT NULL,
+    json_artifact_id uuid NOT NULL,
+    json_content_sha256 text NOT NULL,
+    json_size_bytes bigint NOT NULL,
+    markdown_artifact_id uuid NOT NULL,
+    markdown_content_sha256 text NOT NULL,
+    markdown_size_bytes bigint NOT NULL,
+    content_sha256 text NOT NULL,
+    published_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT backtest_report_artifact_projection_uk UNIQUE (
+        exploratory_backtest_run_id, source_projection_sha256,
+        renderer_version
+    ),
+    CONSTRAINT backtest_report_artifact_specification_fk FOREIGN KEY (
+        exploratory_backtest_run_id, specification_sha256
+    ) REFERENCES mra.backtest_specification(
+        exploratory_backtest_run_id, specification_sha256
+    ) ON DELETE RESTRICT,
+    CONSTRAINT backtest_report_artifact_json_fk FOREIGN KEY (
+        json_artifact_id, json_content_sha256, json_size_bytes
+    ) REFERENCES mra.artifact(
+        artifact_id, content_sha256, size_bytes
+    ) ON DELETE RESTRICT,
+    CONSTRAINT backtest_report_artifact_markdown_fk FOREIGN KEY (
+        markdown_artifact_id, markdown_content_sha256, markdown_size_bytes
+    ) REFERENCES mra.artifact(
+        artifact_id, content_sha256, size_bytes
+    ) ON DELETE RESTRICT,
+    CONSTRAINT backtest_report_artifact_shape_ck CHECK (
+        evaluation_count > 0
+        AND report_schema = 'mra-backtest-report-v1'
+        AND renderer_version = '1'
+        AND json_size_bytes >= 0 AND markdown_size_bytes >= 0
+        AND specification_sha256 ~ '^[0-9a-f]{64}$'
+        AND evaluation_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND source_projection_sha256 ~ '^[0-9a-f]{64}$'
+        AND code_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND config_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND json_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND markdown_content_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+CREATE FUNCTION mra.validate_backtest_runtime_binding()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE runtime_row record;
+DECLARE root_row record;
+DECLARE expected_content text;
+BEGIN
+    SELECT runtime_mode, config_artifact_id, config_hash
+      INTO runtime_row
+      FROM mra.runtime_run
+     WHERE run_id = NEW.runtime_run_id
+     FOR SHARE;
+    SELECT config_artifact_id, config_content_sha256
+      INTO root_row
+      FROM mra.exploratory_backtest_run
+     WHERE exploratory_backtest_run_id = NEW.exploratory_backtest_run_id
+       AND current_specification_sha256 = NEW.specification_sha256
+     FOR SHARE;
+    IF NOT FOUND OR runtime_row.runtime_mode NOT IN ('HISTORICAL', 'REPLAY')
+       OR runtime_row.config_artifact_id <> root_row.config_artifact_id
+       OR runtime_row.config_hash <> root_row.config_content_sha256 THEN
+        RAISE EXCEPTION 'Backtest Runtime binding is not exact'
+            USING ERRCODE = '55000';
+    END IF;
+    expected_content := mra.canonical_sha256(mra.canonical_json_text(
+        jsonb_build_object(
+            'action_content_sha256', NEW.action_content_sha256,
+            'action_id', NEW.action_id,
+            'action_kind', NEW.action_kind,
+            'evaluation_requirement_id', NEW.evaluation_requirement_id,
+            'exploratory_backtest_arm_id', NEW.exploratory_backtest_arm_id,
+            'exploratory_backtest_fold_id', NEW.exploratory_backtest_fold_id,
+            'exploratory_backtest_fold_session_id',
+                NEW.exploratory_backtest_fold_session_id,
+            'exploratory_backtest_run_id', NEW.exploratory_backtest_run_id,
+            'model_training_requirement_id',
+                NEW.model_training_requirement_id,
+            'runtime_run_id', NEW.runtime_run_id,
+            'specification_sha256', NEW.specification_sha256
+        )
+    ));
+    IF NEW.content_sha256 <> expected_content THEN
+        RAISE EXCEPTION 'Backtest Runtime binding hash is invalid'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.validate_backtest_evaluation_execution()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE requirement_row record;
+DECLARE evaluation_row record;
+DECLARE actual_count integer;
+DECLARE actual_roster text;
+DECLARE expected_content text;
+BEGIN
+    SELECT evaluation_protocol_id
+      INTO requirement_row
+      FROM mra.backtest_evaluation_requirement
+     WHERE backtest_evaluation_requirement_id =
+           NEW.backtest_evaluation_requirement_id
+       AND exploratory_backtest_run_id = NEW.exploratory_backtest_run_id
+       AND specification_sha256 = NEW.specification_sha256
+     FOR SHARE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Backtest Evaluation requirement binding is not exact'
+            USING ERRCODE = '55000';
+    END IF;
+    SELECT status, evaluation_protocol_id, metric_count,
+           metric_roster_sha256, completed_at
+      INTO evaluation_row
+      FROM mra.evaluation_run
+     WHERE evaluation_run_id = NEW.evaluation_run_id
+     FOR SHARE;
+    IF NOT FOUND OR evaluation_row.status <> 'COMPLETED'
+       OR evaluation_row.evaluation_protocol_id <>
+          requirement_row.evaluation_protocol_id
+       OR NEW.evaluation_protocol_id <>
+          requirement_row.evaluation_protocol_id
+       OR NEW.evaluation_metric_count <> evaluation_row.metric_count
+       OR NEW.evaluation_metric_roster_sha256 <>
+          evaluation_row.metric_roster_sha256 THEN
+        RAISE EXCEPTION 'Backtest Evaluation execution is not completed and exact'
+            USING ERRCODE = '55000';
+    END IF;
+    SELECT count(*)::integer,
+           mra.canonical_sha256(mra.canonical_json_text(jsonb_agg(
+               jsonb_build_array(
+                   metric.evaluation_metric_id,
+                   metric.content_sha256
+               ) ORDER BY protocol.ordinal
+           )))
+      INTO actual_count, actual_roster
+      FROM mra.evaluation_metric AS metric
+      JOIN mra.evaluation_protocol_metric AS protocol
+        ON protocol.evaluation_protocol_metric_id =
+           metric.evaluation_protocol_metric_id
+     WHERE metric.evaluation_run_id = NEW.evaluation_run_id;
+    IF actual_count <> NEW.evaluation_metric_count
+       OR actual_roster <> NEW.evaluation_metric_roster_sha256 THEN
+        RAISE EXCEPTION 'Backtest Evaluation metric roster is not exact'
+            USING ERRCODE = '55000';
+    END IF;
+    expected_content := mra.canonical_sha256(mra.canonical_json_text(
+        jsonb_build_object(
+            'backtest_evaluation_requirement_id',
+                NEW.backtest_evaluation_requirement_id,
+            'evaluation_metric_count', NEW.evaluation_metric_count,
+            'evaluation_metric_roster_sha256',
+                NEW.evaluation_metric_roster_sha256,
+            'evaluation_protocol_id', NEW.evaluation_protocol_id,
+            'evaluation_run_id', NEW.evaluation_run_id,
+            'exploratory_backtest_run_id', NEW.exploratory_backtest_run_id,
+            'specification_sha256', NEW.specification_sha256
+        )
+    ));
+    IF NEW.content_sha256 <> expected_content THEN
+        RAISE EXCEPTION 'Backtest Evaluation execution hash is invalid'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION mra.validate_backtest_report_artifact()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE root_row record;
+DECLARE actual_count integer;
+DECLARE actual_roster text;
+DECLARE expected_content text;
+BEGIN
+    SELECT code_content_sha256, config_content_sha256
+      INTO root_row
+      FROM mra.exploratory_backtest_run
+     WHERE exploratory_backtest_run_id = NEW.exploratory_backtest_run_id
+       AND current_specification_sha256 = NEW.specification_sha256
+     FOR SHARE;
+    IF NOT FOUND OR root_row.code_content_sha256 <>
+                    NEW.code_content_sha256
+       OR root_row.config_content_sha256 <> NEW.config_content_sha256 THEN
+        RAISE EXCEPTION 'Backtest report code/config binding is not exact'
+            USING ERRCODE = '55000';
+    END IF;
+    SELECT count(*)::integer,
+           mra.canonical_sha256(mra.canonical_json_text(jsonb_agg(
+               jsonb_build_object(
+                   'evaluation_run_id', execution.evaluation_run_id,
+                   'ordinal', requirement.ordinal
+               ) ORDER BY requirement.ordinal
+           )))
+      INTO actual_count, actual_roster
+      FROM mra.backtest_evaluation_requirement AS requirement
+      JOIN mra.backtest_evaluation_execution AS execution
+        ON execution.backtest_evaluation_requirement_id =
+           requirement.backtest_evaluation_requirement_id
+     WHERE requirement.exploratory_backtest_run_id =
+           NEW.exploratory_backtest_run_id;
+    IF actual_count <> NEW.evaluation_count
+       OR actual_roster <> NEW.evaluation_roster_sha256 THEN
+        RAISE EXCEPTION 'Backtest report Evaluation roster is not exact'
+            USING ERRCODE = '55000';
+    END IF;
+    expected_content := mra.canonical_sha256(mra.canonical_json_text(
+        jsonb_build_object(
+            'code_content_sha256', NEW.code_content_sha256,
+            'config_content_sha256', NEW.config_content_sha256,
+            'evaluation_count', NEW.evaluation_count,
+            'evaluation_roster_sha256', NEW.evaluation_roster_sha256,
+            'exploratory_backtest_run_id', NEW.exploratory_backtest_run_id,
+            'json_artifact', jsonb_build_object(
+                'artifact_id', NEW.json_artifact_id,
+                'content_sha256', NEW.json_content_sha256,
+                'size_bytes', NEW.json_size_bytes
+            ),
+            'markdown_artifact', jsonb_build_object(
+                'artifact_id', NEW.markdown_artifact_id,
+                'content_sha256', NEW.markdown_content_sha256,
+                'size_bytes', NEW.markdown_size_bytes
+            ),
+            'renderer_version', NEW.renderer_version,
+            'report_schema', NEW.report_schema,
+            'source_projection_sha256', NEW.source_projection_sha256,
+            'specification_sha256', NEW.specification_sha256
+        )
+    ));
+    IF expected_content <> NEW.content_sha256 THEN
+        RAISE EXCEPTION 'Backtest report Artifact binding hash is invalid'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER backtest_runtime_binding_guard
+BEFORE INSERT ON mra.backtest_runtime_binding
+FOR EACH ROW EXECUTE FUNCTION mra.validate_backtest_runtime_binding();
+CREATE TRIGGER backtest_runtime_binding_append_only
+BEFORE UPDATE OR DELETE ON mra.backtest_runtime_binding
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER backtest_evaluation_execution_guard
+BEFORE INSERT ON mra.backtest_evaluation_execution
+FOR EACH ROW EXECUTE FUNCTION mra.validate_backtest_evaluation_execution();
+CREATE TRIGGER backtest_evaluation_execution_append_only
+BEFORE UPDATE OR DELETE ON mra.backtest_evaluation_execution
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+CREATE TRIGGER backtest_report_artifact_guard
+BEFORE INSERT ON mra.backtest_report_artifact
+FOR EACH ROW EXECUTE FUNCTION mra.validate_backtest_report_artifact();
+CREATE TRIGGER backtest_report_artifact_append_only
+BEFORE UPDATE OR DELETE ON mra.backtest_report_artifact
+FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
+
+CREATE INDEX backtest_runtime_binding_run_idx
+    ON mra.backtest_runtime_binding(exploratory_backtest_run_id, action_kind);
+CREATE INDEX backtest_runtime_binding_action_idx
+    ON mra.backtest_runtime_binding(action_id, action_content_sha256);
+CREATE INDEX backtest_runtime_binding_specification_idx
+    ON mra.backtest_runtime_binding(
+        exploratory_backtest_run_id, specification_sha256
+    );
+CREATE INDEX backtest_runtime_binding_arm_idx
+    ON mra.backtest_runtime_binding(
+        exploratory_backtest_arm_id, exploratory_backtest_run_id
+    );
+CREATE INDEX backtest_runtime_binding_fold_idx
+    ON mra.backtest_runtime_binding(
+        exploratory_backtest_fold_id, exploratory_backtest_run_id
+    );
+CREATE INDEX backtest_runtime_binding_session_idx
+    ON mra.backtest_runtime_binding(exploratory_backtest_fold_session_id);
+CREATE INDEX backtest_runtime_binding_model_requirement_idx
+    ON mra.backtest_runtime_binding(model_training_requirement_id);
+CREATE INDEX backtest_runtime_binding_evaluation_requirement_idx
+    ON mra.backtest_runtime_binding(evaluation_requirement_id);
+CREATE INDEX backtest_evaluation_execution_backtest_idx
+    ON mra.backtest_evaluation_execution(exploratory_backtest_run_id);
+CREATE INDEX backtest_evaluation_execution_specification_idx
+    ON mra.backtest_evaluation_execution(
+        exploratory_backtest_run_id, specification_sha256
+    );
+CREATE INDEX backtest_evaluation_execution_protocol_idx
+    ON mra.backtest_evaluation_execution(evaluation_protocol_id);
+CREATE INDEX backtest_evaluation_execution_run_idx
+    ON mra.backtest_evaluation_execution(
+        evaluation_run_id, evaluation_protocol_id
+    );
+CREATE INDEX backtest_report_artifact_specification_idx
+    ON mra.backtest_report_artifact(
+        exploratory_backtest_run_id, specification_sha256
+    );
+CREATE INDEX backtest_report_artifact_json_idx
+    ON mra.backtest_report_artifact(
+        json_artifact_id, json_content_sha256, json_size_bytes
+    );
+CREATE INDEX backtest_report_artifact_markdown_idx
+    ON mra.backtest_report_artifact(
+        markdown_artifact_id, markdown_content_sha256, markdown_size_bytes
+    );
+
 -- Existing historical children stay null in these companion columns. Current
 -- writers must provide the exact owning specification hash; the deferred
 -- closure validator rejects a mixed historical/current shape.

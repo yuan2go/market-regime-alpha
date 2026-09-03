@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
+from datetime import datetime
 from uuid import UUID
 
 from market_regime_alpha.shared.hashing import canonical_json_sha256
@@ -139,10 +140,93 @@ class BacktestExecutionPlan:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class BacktestRuntimeBinding:
+    """Immutable lineage from one derived action to one canonical RuntimeRun."""
+
+    backtest_runtime_binding_id: UUID
+    exploratory_backtest_run_id: UUID
+    specification_sha256: ContentHash | str
+    action: BacktestExpectedAction
+    runtime_run_id: UUID
+    content_sha256: ContentHash = field(init=False)
+
+    def __post_init__(self) -> None:
+        specification_hash = ContentHash(str(self.specification_sha256))
+        if self.action.exploratory_backtest_run_id != self.exploratory_backtest_run_id:
+            raise ValueError("Runtime binding action belongs to another Backtest")
+        object.__setattr__(self, "specification_sha256", specification_hash)
+        object.__setattr__(
+            self,
+            "content_sha256",
+            ContentHash(
+                canonical_json_sha256(
+                    {
+                        "action_content_sha256": str(self.action.content_sha256),
+                        "action_id": self.action.action_id,
+                        "action_kind": self.action.kind,
+                        "evaluation_requirement_id": (self.action.evaluation_requirement_id),
+                        "exploratory_backtest_arm_id": self.action.arm_id,
+                        "exploratory_backtest_fold_id": self.action.fold_id,
+                        "exploratory_backtest_fold_session_id": (self.action.fold_session_id),
+                        "exploratory_backtest_run_id": (self.exploratory_backtest_run_id),
+                        "model_training_requirement_id": (self.action.model_training_requirement_id),
+                        "runtime_run_id": self.runtime_run_id,
+                        "specification_sha256": str(specification_hash),
+                    }
+                )
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class BacktestEvaluationExecution:
+    """Exact completed Evaluation lineage for one frozen requirement."""
+
+    backtest_evaluation_execution_id: UUID
+    exploratory_backtest_run_id: UUID
+    specification_sha256: ContentHash | str
+    backtest_evaluation_requirement_id: UUID
+    evaluation_run_id: UUID
+    evaluation_protocol_id: UUID
+    evaluation_metric_count: int
+    evaluation_metric_roster_sha256: ContentHash | str
+    canonical_completed_at: datetime
+    content_sha256: ContentHash = field(init=False)
+
+    def __post_init__(self) -> None:
+        specification_hash = ContentHash(str(self.specification_sha256))
+        metric_roster_hash = ContentHash(str(self.evaluation_metric_roster_sha256))
+        if self.evaluation_metric_count < 1:
+            raise ValueError("Evaluation execution metric roster must be non-empty")
+        if self.canonical_completed_at.tzinfo is None:
+            raise ValueError("Evaluation completion time must be timezone-aware")
+        object.__setattr__(self, "specification_sha256", specification_hash)
+        object.__setattr__(self, "evaluation_metric_roster_sha256", metric_roster_hash)
+        object.__setattr__(
+            self,
+            "content_sha256",
+            ContentHash(
+                canonical_json_sha256(
+                    {
+                        "backtest_evaluation_requirement_id": (self.backtest_evaluation_requirement_id),
+                        "evaluation_metric_count": self.evaluation_metric_count,
+                        "evaluation_metric_roster_sha256": str(metric_roster_hash),
+                        "evaluation_protocol_id": self.evaluation_protocol_id,
+                        "evaluation_run_id": self.evaluation_run_id,
+                        "exploratory_backtest_run_id": (self.exploratory_backtest_run_id),
+                        "specification_sha256": str(specification_hash),
+                    }
+                )
+            ),
+        )
+
+
 __all__ = [
     "BacktestActionKind",
     "BacktestActionObservation",
     "BacktestExecutionPlan",
+    "BacktestEvaluationExecution",
     "BacktestExecutionState",
     "BacktestExpectedAction",
     "BacktestFoldLifecycle",
@@ -150,4 +234,5 @@ __all__ = [
     "BacktestObservedState",
     "BacktestReadyAction",
     "BacktestResearchState",
+    "BacktestRuntimeBinding",
 ]

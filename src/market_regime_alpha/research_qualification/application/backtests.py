@@ -19,6 +19,13 @@ from market_regime_alpha.research_qualification.domain.backtest import (
     FrozenBacktestRun,
     freeze_backtest_specification,
 )
+from market_regime_alpha.research_qualification.domain.backtest_execution import (
+    BacktestEvaluationExecution,
+    BacktestRuntimeBinding,
+)
+from market_regime_alpha.research_qualification.domain.backtest_report import (
+    BacktestReportArtifactBinding,
+)
 from market_regime_alpha.research_qualification.ports.backtest_uow import (
     BacktestUnitOfWork,
     BacktestUnitOfWorkProvider,
@@ -46,6 +53,15 @@ class BacktestValidation:
 @dataclass(frozen=True, slots=True)
 class BacktestMutationResult:
     exploratory_backtest_run_id: UUID
+    receipt_id: UUID
+    result_hash: str
+    replayed: bool
+
+
+@dataclass(frozen=True, slots=True)
+class BacktestLineageMutationResult:
+    exploratory_backtest_run_id: UUID
+    binding_id: UUID
     receipt_id: UUID
     result_hash: str
     replayed: bool
@@ -126,9 +142,7 @@ class BacktestApplication:
             )
             if not receipt.is_new:
                 return self._replay(uow, receipt, runtime_claim)
-            uow.backtests.lock_identity(
-                specification.run_code, specification.generation
-            )
+            uow.backtests.lock_identity(specification.run_code, specification.generation)
             uow.artifacts.require_exact(specification.code_artifact, lock=True)
             uow.artifacts.require_exact(specification.config_artifact, lock=True)
             record = uow.backtests.predeclare(
@@ -203,9 +217,213 @@ class BacktestApplication:
             True,
         )
 
+    @retry_transient_transaction
+    @replay_concurrent_success
+    def bind_runtime(
+        self,
+        binding: BacktestRuntimeBinding,
+        context: CommandContext,
+    ) -> BacktestLineageMutationResult:
+        """Bind a derived action to Runtime without owning Runtime state."""
+
+        return self._bind_runtime_once(binding, context)
+
+    def _bind_runtime_once(
+        self,
+        binding: BacktestRuntimeBinding,
+        context: CommandContext,
+    ) -> BacktestLineageMutationResult:
+        request_hash = canonical_json_sha256(binding)
+        with self._uow_provider() as uow:
+            receipt = uow.receipts.start(
+                receipt_id=self._id_factory(),
+                command_kind="BIND_BACKTEST_RUNTIME",
+                scope_id=str(binding.action.action_id),
+                idempotency_key=context.idempotency_key,
+                request_hash=request_hash,
+            )
+            if not receipt.is_new:
+                return self._replay_lineage(
+                    uow,
+                    receipt,
+                    expected_kind="BACKTEST_RUNTIME_BINDING",
+                    expected_id=binding.backtest_runtime_binding_id,
+                    expected_hash=str(binding.content_sha256),
+                    exploratory_backtest_run_id=(binding.exploratory_backtest_run_id),
+                )
+            uow.backtests.bind_runtime(binding)
+            self._complete_lineage_receipt(
+                uow,
+                receipt,
+                context,
+                aggregate_kind="BACKTEST_RUNTIME_BINDING",
+                aggregate_id=binding.backtest_runtime_binding_id,
+                result_hash=str(binding.content_sha256),
+                action="BIND_BACKTEST_RUNTIME",
+            )
+            uow.commit()
+            return BacktestLineageMutationResult(
+                binding.exploratory_backtest_run_id,
+                binding.backtest_runtime_binding_id,
+                receipt.receipt_id,
+                str(binding.content_sha256),
+                False,
+            )
+
+    @retry_transient_transaction
+    @replay_concurrent_success
+    def bind_evaluation(
+        self,
+        binding: BacktestEvaluationExecution,
+        context: CommandContext,
+    ) -> BacktestLineageMutationResult:
+        """Bind one frozen requirement to an exact completed Evaluation."""
+
+        request_hash = canonical_json_sha256(binding)
+        with self._uow_provider() as uow:
+            receipt = uow.receipts.start(
+                receipt_id=self._id_factory(),
+                command_kind="BIND_BACKTEST_EVALUATION",
+                scope_id=str(binding.backtest_evaluation_requirement_id),
+                idempotency_key=context.idempotency_key,
+                request_hash=request_hash,
+            )
+            if not receipt.is_new:
+                return self._replay_lineage(
+                    uow,
+                    receipt,
+                    expected_kind="BACKTEST_EVALUATION_EXECUTION",
+                    expected_id=binding.backtest_evaluation_execution_id,
+                    expected_hash=str(binding.content_sha256),
+                    exploratory_backtest_run_id=(binding.exploratory_backtest_run_id),
+                )
+            uow.backtests.bind_evaluation(binding)
+            self._complete_lineage_receipt(
+                uow,
+                receipt,
+                context,
+                aggregate_kind="BACKTEST_EVALUATION_EXECUTION",
+                aggregate_id=binding.backtest_evaluation_execution_id,
+                result_hash=str(binding.content_sha256),
+                action="BIND_BACKTEST_EVALUATION",
+            )
+            uow.commit()
+            return BacktestLineageMutationResult(
+                binding.exploratory_backtest_run_id,
+                binding.backtest_evaluation_execution_id,
+                receipt.receipt_id,
+                str(binding.content_sha256),
+                False,
+            )
+
+    @retry_transient_transaction
+    @replay_concurrent_success
+    def bind_report(
+        self,
+        binding: BacktestReportArtifactBinding,
+        context: CommandContext,
+    ) -> BacktestLineageMutationResult:
+        """Bind verified report bytes as a derived, non-Authority projection."""
+
+        request_hash = canonical_json_sha256(binding)
+        with self._uow_provider() as uow:
+            receipt = uow.receipts.start(
+                receipt_id=self._id_factory(),
+                command_kind="BIND_BACKTEST_REPORT",
+                scope_id=str(binding.backtest_report_artifact_id),
+                idempotency_key=context.idempotency_key,
+                request_hash=request_hash,
+            )
+            if not receipt.is_new:
+                return self._replay_lineage(
+                    uow,
+                    receipt,
+                    expected_kind="BACKTEST_REPORT_ARTIFACT",
+                    expected_id=binding.backtest_report_artifact_id,
+                    expected_hash=str(binding.content_sha256),
+                    exploratory_backtest_run_id=(binding.exploratory_backtest_run_id),
+                )
+            uow.artifacts.require_exact(binding.json_artifact, lock=True)
+            uow.artifacts.require_exact(binding.markdown_artifact, lock=True)
+            uow.backtests.bind_report(binding)
+            self._complete_lineage_receipt(
+                uow,
+                receipt,
+                context,
+                aggregate_kind="BACKTEST_REPORT_ARTIFACT",
+                aggregate_id=binding.backtest_report_artifact_id,
+                result_hash=str(binding.content_sha256),
+                action="BIND_BACKTEST_REPORT",
+            )
+            uow.commit()
+            return BacktestLineageMutationResult(
+                binding.exploratory_backtest_run_id,
+                binding.backtest_report_artifact_id,
+                receipt.receipt_id,
+                str(binding.content_sha256),
+                False,
+            )
+
+    def _complete_lineage_receipt(
+        self,
+        uow: BacktestUnitOfWork,
+        receipt: ReceiptRecord,
+        context: CommandContext,
+        *,
+        aggregate_kind: str,
+        aggregate_id: UUID,
+        result_hash: str,
+        action: str,
+    ) -> None:
+        uow.receipts.succeed(
+            receipt_id=receipt.receipt_id,
+            aggregate_kind=aggregate_kind,
+            aggregate_id=str(aggregate_id),
+            aggregate_version=1,
+            result_hash=result_hash,
+        )
+        uow.audit.append(
+            audit_event_id=self._id_factory(),
+            receipt_id=receipt.receipt_id,
+            actor_type=context.actor_type.value,
+            actor_id=context.actor_id,
+            aggregate_kind=aggregate_kind,
+            aggregate_id=str(aggregate_id),
+            action=action,
+            reason_code=context.reason_code,
+            before_version=None,
+            after_version=1,
+        )
+
+    @staticmethod
+    def _replay_lineage(
+        uow: BacktestUnitOfWork,
+        receipt: ReceiptRecord,
+        *,
+        expected_kind: str,
+        expected_id: UUID,
+        expected_hash: str,
+        exploratory_backtest_run_id: UUID,
+    ) -> BacktestLineageMutationResult:
+        ensure_replay_succeeded(receipt)
+        if (
+            receipt.result_aggregate_kind != expected_kind
+            or receipt.result_aggregate_id != str(expected_id)
+            or receipt.result_hash != expected_hash
+        ):
+            raise ArtifactIntegrityError("Backtest execution lineage receipt differs from Authority")
+        return BacktestLineageMutationResult(
+            exploratory_backtest_run_id,
+            expected_id,
+            receipt.receipt_id,
+            expected_hash,
+            True,
+        )
+
 
 __all__ = [
     "BacktestApplication",
+    "BacktestLineageMutationResult",
     "BacktestMutationResult",
     "BacktestValidation",
 ]

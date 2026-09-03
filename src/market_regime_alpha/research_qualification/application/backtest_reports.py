@@ -8,7 +8,7 @@ from decimal import Decimal
 from enum import Enum
 import json
 from typing import Protocol
-from uuid import UUID
+from uuid import UUID, uuid5
 
 from market_regime_alpha.research_qualification.domain.backtest_report import (
     BacktestComparison,
@@ -16,9 +16,11 @@ from market_regime_alpha.research_qualification.domain.backtest_report import (
     BacktestComparisonMode,
     BacktestMetricDelta,
     BacktestReportMetric,
+    BacktestReportArtifactBinding,
     BacktestReportSource,
     comparison_fingerprint,
 )
+from market_regime_alpha.research_qualification.domain.model import ArtifactBinding
 from market_regime_alpha.research_qualification.domain.evaluation_formula import (
     BacktestMetricSurface,
     FormulaResultState,
@@ -31,8 +33,12 @@ from market_regime_alpha.research_qualification.ports.backtest_queries import (
     BacktestReplayVerification,
 )
 from market_regime_alpha.research_qualification.ports.backtest_reports import (
+    BacktestReportArtifactPublisher,
+    BacktestReportBindingWriter,
     BacktestReportSourcePort,
 )
+from market_regime_alpha.runtime.application import CommandContext
+from market_regime_alpha.shared.hashing import sha256_bytes
 
 
 _REPORT_SCHEMA = "mra-backtest-report-v1"
@@ -74,6 +80,65 @@ class BacktestReportApplication:
         payload = self.project(exploratory_backtest_run_id)
         return _markdown_bytes(payload)
 
+    def publish(
+        self,
+        exploratory_backtest_run_id: UUID,
+        *,
+        artifacts: BacktestReportArtifactPublisher,
+        bindings: BacktestReportBindingWriter,
+        context: CommandContext,
+    ) -> BacktestReportArtifactBinding:
+        """Publish both deterministic formats, then bind their exact bytes."""
+
+        source = self._load_reconciled(exploratory_backtest_run_id)
+        payload = _report_payload(source)
+        json_bytes = _canonical_json_bytes(payload)
+        markdown_bytes = _markdown_bytes(payload)
+        json_record = artifacts.publish(
+            json_bytes,
+            media_type="application/json",
+            context=context,
+        )
+        markdown_record = artifacts.publish(
+            markdown_bytes,
+            media_type="text/markdown",
+            context=context,
+        )
+        if (
+            json_record.content_sha256 != sha256_bytes(json_bytes)
+            or json_record.size_bytes != len(json_bytes)
+            or markdown_record.content_sha256 != sha256_bytes(markdown_bytes)
+            or markdown_record.size_bytes != len(markdown_bytes)
+        ):
+            raise BacktestReportIntegrityError("published report Artifact bytes differ from deterministic projection")
+        binding = BacktestReportArtifactBinding(
+            backtest_report_artifact_id=uuid5(
+                exploratory_backtest_run_id,
+                f"backtest-report:{source.content_sha256}:{_RENDERER_VERSION}",
+            ),
+            exploratory_backtest_run_id=exploratory_backtest_run_id,
+            specification_sha256=source.run.specification_sha256,
+            evaluation_count=len(source.evaluation_run_ids),
+            evaluation_roster_sha256=source.evaluation_roster_sha256,
+            source_projection_sha256=source.content_sha256,
+            code_content_sha256=source.configuration.code_content_sha256,
+            config_content_sha256=source.configuration.config_content_sha256,
+            report_schema=_REPORT_SCHEMA,
+            renderer_version=_RENDERER_VERSION,
+            json_artifact=ArtifactBinding(
+                json_record.artifact_id,
+                json_record.content_sha256,
+                json_record.size_bytes,
+            ),
+            markdown_artifact=ArtifactBinding(
+                markdown_record.artifact_id,
+                markdown_record.content_sha256,
+                markdown_record.size_bytes,
+            ),
+        )
+        bindings.bind_report(binding, context)
+        return binding
+
     def compare(
         self,
         left_run_id: UUID,
@@ -90,14 +155,8 @@ class BacktestReportApplication:
             right_fingerprint,
         )
         if mismatches and not descriptive:
-            raise IncompatibleBacktestComparisonError(
-                "Backtest scopes are not like-for-like: " + ", ".join(mismatches)
-            )
-        mode = (
-            BacktestComparisonMode.DESCRIPTIVE_NON_LIKE_FOR_LIKE
-            if mismatches
-            else BacktestComparisonMode.LIKE_FOR_LIKE
-        )
+            raise IncompatibleBacktestComparisonError("Backtest scopes are not like-for-like: " + ", ".join(mismatches))
+        mode = BacktestComparisonMode.DESCRIPTIVE_NON_LIKE_FOR_LIKE if mismatches else BacktestComparisonMode.LIKE_FOR_LIKE
         return BacktestComparison(
             mode=mode,
             left_run_id=left_run_id,
@@ -111,14 +170,11 @@ class BacktestReportApplication:
         verification = self._verifier.verify(run_id)
         if not verification.matched or verification.mismatch_count:
             raise BacktestReportIntegrityError(
-                "Backtest report requires zero-mismatch reconciliation: "
-                + ", ".join(verification.mismatch_codes)
+                "Backtest report requires zero-mismatch reconciliation: " + ", ".join(verification.mismatch_codes)
             )
         source = self._source.load(run_id)
         if source.run.exploratory_backtest_run_id != run_id:
-            raise BacktestReportIntegrityError(
-                "Backtest report source returned a different identity"
-            )
+            raise BacktestReportIntegrityError("Backtest report source returned a different identity")
         return source
 
 
@@ -127,11 +183,7 @@ def _report_payload(source: BacktestReportSource) -> dict[str, object]:
     configuration = source.configuration
     metric_payloads = tuple(_metric_payload(metric) for metric in source.metrics)
     metrics_by_surface = {
-        surface: tuple(
-            payload
-            for metric, payload in zip(source.metrics, metric_payloads, strict=True)
-            if metric.surface is surface
-        )
+        surface: tuple(payload for metric, payload in zip(source.metrics, metric_payloads, strict=True) if metric.surface is surface)
         for surface in BacktestMetricSurface
     }
     not_estimable = tuple(
@@ -146,9 +198,7 @@ def _report_payload(source: BacktestReportSource) -> dict[str, object]:
             "comparison_role": arm.comparison_role.value,
             "context_mode": arm.context_mode.value,
             "execution_kind": arm.execution_kind.value,
-            "model_definition_id": (
-                None if arm.model is None else str(arm.model.authority_id)
-            ),
+            "model_definition_id": (None if arm.model is None else str(arm.model.authority_id)),
             "strategy_version_id": str(arm.strategy.authority_id),
         }
         for arm in run.arms
@@ -163,10 +213,7 @@ def _report_payload(source: BacktestReportSource) -> dict[str, object]:
             "specification_sha256": str(run.specification_sha256),
             "canonical_completed_at": source.canonical_completed_at.isoformat(),
             "evaluation_count": len(source.evaluation_run_ids),
-            "estimable_metric_count": sum(
-                metric.result_state is FormulaResultState.ESTIMABLE
-                for metric in source.metrics
-            ),
+            "estimable_metric_count": sum(metric.result_state is FormulaResultState.ESTIMABLE for metric in source.metrics),
             "not_estimable_metric_count": len(not_estimable),
         },
         "evidence_classification": {
@@ -177,15 +224,11 @@ def _report_payload(source: BacktestReportSource) -> dict[str, object]:
         "configuration": _json_value(configuration),
         "universe_sample": {
             "universe_revision_id": str(configuration.universe_revision.authority_id),
-            "universe_revision_sha256": str(
-                configuration.universe_revision.content_sha256
-            ),
+            "universe_revision_sha256": str(configuration.universe_revision.content_sha256),
             "sample_scope_code": configuration.sample_scope_code,
             "sample_member_count": configuration.sample_member_count,
             "sample_roster_sha256": str(configuration.sample_roster_sha256),
-            "distinct_trading_session_count": (
-                configuration.distinct_trading_session_count
-            ),
+            "distinct_trading_session_count": (configuration.distinct_trading_session_count),
             "fold_session_binding_count": configuration.fold_session_binding_count,
         },
         "feature_target_definitions": {
@@ -198,13 +241,9 @@ def _report_payload(source: BacktestReportSource) -> dict[str, object]:
         "walk_forward_design": {
             "first_session_date": configuration.first_session_date,
             "last_session_date": configuration.last_session_date,
-            "walk_forward_policy_sha256": str(
-                configuration.walk_forward_policy_sha256
-            ),
+            "walk_forward_policy_sha256": str(configuration.walk_forward_policy_sha256),
             "fold_roster_sha256": str(configuration.fold_roster_sha256),
-            "dependency_roster_sha256": str(
-                configuration.dependency_roster_sha256
-            ),
+            "dependency_roster_sha256": str(configuration.dependency_roster_sha256),
             "folds": tuple(
                 {
                     "fold_id": str(fold.exploratory_backtest_fold_id),
@@ -249,11 +288,7 @@ def _metric_payload(metric: BacktestReportMetric) -> dict[str, object]:
     return {
         "acceptance_state": metric.acceptance_state,
         "arm_id": str(metric.arm_id),
-        "decimal_value": (
-            None
-            if metric.decimal_value is None
-            else format(metric.decimal_value, "f")
-        ),
+        "decimal_value": (None if metric.decimal_value is None else format(metric.decimal_value, "f")),
         "estimable_count": metric.estimable_count,
         "evaluation_metric_id": str(metric.evaluation_metric_id),
         "evaluation_requirement_id": str(metric.evaluation_requirement_id),
@@ -289,11 +324,7 @@ def _alpha_funnel(source: BacktestReportSource) -> dict[str, object]:
                 "reason_codes": ("NO_CANONICAL_EVALUATION_METRIC",),
                 "evidence_class": "ENGINEERING_DIAGNOSTIC_ONLY",
             }
-        unavailable = tuple(
-            metric.reason_code
-            for metric in metrics
-            if metric.result_state is FormulaResultState.NOT_ESTIMABLE
-        )
+        unavailable = tuple(metric.reason_code for metric in metrics if metric.result_state is FormulaResultState.NOT_ESTIMABLE)
         if unavailable:
             return {
                 "state": "NOT_ESTIMABLE",
@@ -316,8 +347,7 @@ def _fingerprint_mismatches(
     return tuple(
         field.name
         for field in fields(BacktestComparisonFingerprint)
-        if field.name != "content_sha256"
-        and getattr(left, field.name) != getattr(right, field.name)
+        if field.name != "content_sha256" and getattr(left, field.name) != getattr(right, field.name)
     )
 
 
@@ -326,9 +356,7 @@ def _metric_deltas(
     right: BacktestReportSource,
 ) -> tuple[BacktestMetricDelta, ...]:
     def index(source: BacktestReportSource) -> dict[tuple[str, str], BacktestReportMetric]:
-        arm_codes = {
-            arm.exploratory_backtest_arm_id: arm.arm_code for arm in source.run.arms
-        }
+        arm_codes = {arm.exploratory_backtest_arm_id: arm.arm_code for arm in source.run.arms}
         result: dict[tuple[str, str], BacktestReportMetric] = {}
         for metric in source.metrics:
             scope = ":".join(
@@ -349,15 +377,10 @@ def _metric_deltas(
     for metric_code, scope in shared:
         left_metric = left_metrics[(metric_code, scope)]
         right_metric = right_metrics[(metric_code, scope)]
-        estimable = (
-            left_metric.result_state is FormulaResultState.ESTIMABLE
-            and right_metric.result_state is FormulaResultState.ESTIMABLE
-        )
+        estimable = left_metric.result_state is FormulaResultState.ESTIMABLE and right_metric.result_state is FormulaResultState.ESTIMABLE
         delta = (
             right_metric.decimal_value - left_metric.decimal_value
-            if estimable
-            and right_metric.decimal_value is not None
-            and left_metric.decimal_value is not None
+            if estimable and right_metric.decimal_value is not None and left_metric.decimal_value is not None
             else None
         )
         deltas.append(
@@ -367,11 +390,7 @@ def _metric_deltas(
                 left_value=left_metric.decimal_value,
                 right_value=right_metric.decimal_value,
                 delta=delta,
-                reason_code=(
-                    "ESTIMABLE_DELTA"
-                    if delta is not None
-                    else "NOT_ESTIMABLE_COMPARISON"
-                ),
+                reason_code=("ESTIMABLE_DELTA" if delta is not None else "NOT_ESTIMABLE_COMPARISON"),
             )
         )
     return tuple(deltas)
@@ -392,10 +411,7 @@ def _canonical_json_bytes(value: object) -> bytes:
 
 def _json_value(value: object) -> object:
     if is_dataclass(value) and not isinstance(value, type):
-        return {
-            field.name: _json_value(getattr(value, field.name))
-            for field in fields(value)
-        }
+        return {field.name: _json_value(getattr(value, field.name)) for field in fields(value)}
     if isinstance(value, dict):
         return {str(key): _json_value(item) for key, item in value.items()}
     if isinstance(value, (tuple, list)):

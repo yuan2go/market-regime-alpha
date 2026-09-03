@@ -27,6 +27,13 @@ from market_regime_alpha.research_qualification.domain.backtest_execution import
 from market_regime_alpha.research_qualification.domain.research_vocabulary import (
     PartitionPurpose,
 )
+from market_regime_alpha.research_qualification.errors import (
+    BacktestExecutionIntegrityError,
+)
+from market_regime_alpha.research_qualification.ports.backtest_execution import (
+    BacktestActionExecutionPort,
+    BacktestExecutionObservationPort,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,9 +67,7 @@ class BacktestExecutionPlanner:
                 arm_id=draft.arm_id,
                 fold_id=draft.fold_id,
                 fold_session_id=draft.fold_session_id,
-                model_training_requirement_id=(
-                    draft.model_training_requirement_id
-                ),
+                model_training_requirement_id=(draft.model_training_requirement_id),
                 dependency_action_ids=draft.dependency_action_ids,
                 evaluation_requirement_id=draft.evaluation_requirement_id,
             )
@@ -78,9 +83,7 @@ class BacktestExecutionPlanner:
         unexpected = set(observed_by_id).difference(expected_by_id)
         mismatch_ids = set(duplicate_ids).union(unexpected)
         mismatch_ids.update(
-            action_id
-            for action_id, observation in observed_by_id.items()
-            if observation.state is BacktestObservedState.MISMATCH
+            action_id for action_id, observation in observed_by_id.items() if observation.state is BacktestObservedState.MISMATCH
         )
         integrity_error = bool(mismatch_ids)
         ready = () if integrity_error else self._ready(actions, observed_by_id)
@@ -115,26 +118,15 @@ class BacktestExecutionPlanner:
             expected_actions=actions,
             ready_actions=ready,
             fold_lifecycles=folds,
-            execution_state=(
-                BacktestExecutionState.INTEGRITY_ERROR
-                if integrity_error
-                else execution
-            ),
+            execution_state=(BacktestExecutionState.INTEGRITY_ERROR if integrity_error else execution),
             research_state=research,
             integrity_mismatch_action_ids=tuple(sorted(mismatch_ids, key=str)),
         )
 
     def _draft_actions(self, run: FrozenBacktestRun) -> tuple[_ActionDraft, ...]:
-        arm_by_id = {
-            arm.exploratory_backtest_arm_id: arm for arm in run.arms
-        }
-        fold_by_id = {
-            fold.exploratory_backtest_fold_id: fold for fold in run.folds
-        }
-        requirement_by_validation = {
-            (item.model_arm_id, item.validation_fold_id): item
-            for item in run.model_training_requirements
-        }
+        arm_by_id = {arm.exploratory_backtest_arm_id: arm for arm in run.arms}
+        fold_by_id = {fold.exploratory_backtest_fold_id: fold for fold in run.folds}
+        requirement_by_validation = {(item.model_arm_id, item.validation_fold_id): item for item in run.model_training_requirements}
         drafts: list[_ActionDraft] = []
         outcome_ids_by_fold: dict[UUID, list[UUID]] = {}
         outcome_ids_by_arm_fold: dict[tuple[UUID, UUID], list[UUID]] = {}
@@ -144,11 +136,7 @@ class BacktestExecutionPlanner:
         for arm_fold in run.arm_folds:
             arm = arm_by_id[arm_fold.arm_id]
             fold = fold_by_id[arm_fold.fold_id]
-            required_role = (
-                BacktestSessionRole.FIT_INPUT
-                if fold.purpose is PartitionPurpose.FIT
-                else BacktestSessionRole.EVALUATION
-            )
+            required_role = BacktestSessionRole.FIT_INPUT if fold.purpose is PartitionPurpose.FIT else BacktestSessionRole.EVALUATION
             for session in fold.sessions:
                 if session.role is not required_role:
                     continue
@@ -160,20 +148,15 @@ class BacktestExecutionPlanner:
                     session_id=session.exploratory_backtest_fold_session_id,
                 )
                 decision_dependencies = [dataset_id]
-                if (
-                    arm.execution_kind is BacktestExecutionKind.MODEL
-                    and fold.purpose is PartitionPurpose.VALIDATION
-                ):
-                    requirement = requirement_by_validation[
-                        (arm_fold.arm_id, arm_fold.fold_id)
-                    ]
+                if arm.execution_kind is BacktestExecutionKind.MODEL and fold.purpose is PartitionPurpose.VALIDATION:
+                    model_requirement = requirement_by_validation[(arm_fold.arm_id, arm_fold.fold_id)]
                     decision_dependencies.append(
                         _action_id(
                             run,
                             BacktestActionKind.TRAIN_MODEL,
                             arm_id=arm_fold.arm_id,
-                            fold_id=requirement.fit_fold_id,
-                            requirement_id=requirement.requirement_id,
+                            fold_id=model_requirement.fit_fold_id,
+                            requirement_id=model_requirement.requirement_id,
                         )
                     )
                 decision_id = _action_id(
@@ -218,63 +201,53 @@ class BacktestExecutionPlanner:
                     )
                 )
                 outcome_ids_by_fold.setdefault(arm_fold.fold_id, []).append(outcome_id)
-                outcome_ids_by_arm_fold.setdefault(
-                    (arm_fold.arm_id, arm_fold.fold_id), []
-                ).append(outcome_id)
+                outcome_ids_by_arm_fold.setdefault((arm_fold.arm_id, arm_fold.fold_id), []).append(outcome_id)
 
         if run.evaluation_requirements:
             fold_requirements = tuple(
-                requirement
-                for requirement in run.evaluation_requirements
-                if requirement.scope_kind is BacktestEvaluationScopeKind.FOLD
+                requirement for requirement in run.evaluation_requirements if requirement.scope_kind is BacktestEvaluationScopeKind.FOLD
             )
-            for requirement in fold_requirements:
-                assert requirement.arm_id is not None
-                assert requirement.fold_id is not None
+            for fold_requirement in fold_requirements:
+                assert fold_requirement.arm_id is not None
+                assert fold_requirement.fold_id is not None
                 evaluation_id = _action_id(
                     run,
                     BacktestActionKind.COMPLETE_FOLD_EVALUATION,
-                    arm_id=requirement.arm_id,
-                    fold_id=requirement.fold_id,
-                    requirement_id=requirement.requirement_id,
+                    arm_id=fold_requirement.arm_id,
+                    fold_id=fold_requirement.fold_id,
+                    requirement_id=fold_requirement.requirement_id,
                 )
-                evaluation_ids_by_arm_fold[
-                    (requirement.arm_id, requirement.fold_id)
-                ] = evaluation_id
+                evaluation_ids_by_arm_fold[(fold_requirement.arm_id, fold_requirement.fold_id)] = evaluation_id
                 drafts.append(
                     _ActionDraft(
                         evaluation_id,
                         BacktestActionKind.COMPLETE_FOLD_EVALUATION,
-                        arm_id=requirement.arm_id,
-                        fold_id=requirement.fold_id,
-                        evaluation_requirement_id=requirement.requirement_id,
-                        dependency_action_ids=tuple(
-                            outcome_ids_by_arm_fold[
-                                (requirement.arm_id, requirement.fold_id)
-                            ]
-                        ),
+                        arm_id=fold_requirement.arm_id,
+                        fold_id=fold_requirement.fold_id,
+                        evaluation_requirement_id=fold_requirement.requirement_id,
+                        dependency_action_ids=tuple(outcome_ids_by_arm_fold[(fold_requirement.arm_id, fold_requirement.fold_id)]),
                     )
                 )
-            for requirement in run.evaluation_requirements:
-                if requirement.scope_kind is BacktestEvaluationScopeKind.FOLD:
+            for evaluation_requirement in run.evaluation_requirements:
+                if evaluation_requirement.scope_kind is BacktestEvaluationScopeKind.FOLD:
                     continue
-                assert requirement.arm_id is not None
+                assert evaluation_requirement.arm_id is not None
                 dependency_ids = tuple(
-                    evaluation_ids_by_arm_fold[(requirement.arm_id, fold.fold_id)]
+                    evaluation_ids_by_arm_fold[(evaluation_requirement.arm_id, fold.fold_id)]
                     for fold in run.arm_folds
-                    if fold.arm_id == requirement.arm_id
+                    if fold.arm_id == evaluation_requirement.arm_id
                 )
                 drafts.append(
                     _ActionDraft(
                         _action_id(
                             run,
                             BacktestActionKind.COMPLETE_AGGREGATE_EVALUATION,
-                            arm_id=requirement.arm_id,
-                            requirement_id=requirement.requirement_id,
+                            arm_id=evaluation_requirement.arm_id,
+                            requirement_id=evaluation_requirement.requirement_id,
                         ),
                         BacktestActionKind.COMPLETE_AGGREGATE_EVALUATION,
-                        arm_id=requirement.arm_id,
-                        evaluation_requirement_id=requirement.requirement_id,
+                        arm_id=evaluation_requirement.arm_id,
+                        evaluation_requirement_id=(evaluation_requirement.requirement_id),
                         dependency_action_ids=dependency_ids,
                     )
                 )
@@ -293,32 +266,33 @@ class BacktestExecutionPlanner:
                         evaluation_id,
                         BacktestActionKind.COMPLETE_FOLD_EVALUATION,
                         fold_id=fold.exploratory_backtest_fold_id,
-                        dependency_action_ids=tuple(
-                            outcome_ids_by_fold[fold.exploratory_backtest_fold_id]
-                        ),
+                        dependency_action_ids=tuple(outcome_ids_by_fold[fold.exploratory_backtest_fold_id]),
                     )
                 )
 
-        for requirement in run.model_training_requirements:
+        for training_requirement in run.model_training_requirements:
             drafts.append(
                 _ActionDraft(
                     _action_id(
                         run,
                         BacktestActionKind.TRAIN_MODEL,
-                        arm_id=requirement.model_arm_id,
-                        fold_id=requirement.fit_fold_id,
-                        requirement_id=requirement.requirement_id,
+                        arm_id=training_requirement.model_arm_id,
+                        fold_id=training_requirement.fit_fold_id,
+                        requirement_id=training_requirement.requirement_id,
                     ),
                     BacktestActionKind.TRAIN_MODEL,
-                    requirement.model_arm_id,
-                    requirement.fit_fold_id,
-                    model_training_requirement_id=requirement.requirement_id,
+                    training_requirement.model_arm_id,
+                    training_requirement.fit_fold_id,
+                    model_training_requirement_id=(training_requirement.requirement_id),
                     dependency_action_ids=(
                         evaluation_ids_by_arm_fold[
-                            (requirement.model_arm_id, requirement.fit_fold_id)
+                            (
+                                training_requirement.model_arm_id,
+                                training_requirement.fit_fold_id,
+                            )
                         ]
                         if run.evaluation_requirements
-                        else evaluation_ids[requirement.fit_fold_id],
+                        else evaluation_ids[training_requirement.fit_fold_id],
                     ),
                 )
             )
@@ -335,16 +309,12 @@ class BacktestExecutionPlanner:
             if state is BacktestObservedState.MATCHED_COMPLETE:
                 continue
             if not all(
-                _state(dependency, observations)
-                is BacktestObservedState.MATCHED_COMPLETE
-                for dependency in action.dependency_action_ids
+                _state(dependency, observations) is BacktestObservedState.MATCHED_COMPLETE for dependency in action.dependency_action_ids
             ):
                 continue
             operation = {
                 BacktestObservedState.ABSENT: BacktestNextOperation.EXECUTE,
-                BacktestObservedState.MATCHED_INCOMPLETE: (
-                    BacktestNextOperation.RECOVER
-                ),
+                BacktestObservedState.MATCHED_INCOMPLETE: (BacktestNextOperation.RECOVER),
                 BacktestObservedState.FAILED_RETRYABLE: BacktestNextOperation.RETRY,
             }.get(state)
             if operation is not None:
@@ -374,24 +344,68 @@ class BacktestExecutionPlanner:
         )
 
 
+class BacktestExecutor:
+    """Execute only reconciled dependency-ready work; persist no cursor."""
+
+    def __init__(
+        self,
+        observations: BacktestExecutionObservationPort,
+        actions: BacktestActionExecutionPort,
+        *,
+        planner: BacktestExecutionPlanner | None = None,
+    ) -> None:
+        self._observations = observations
+        self._actions = actions
+        self._planner = planner or BacktestExecutionPlanner()
+
+    def run(self, run: FrozenBacktestRun) -> BacktestExecutionPlan:
+        expected = self._planner.compile(run).expected_actions
+        observed = self._observations.observe(run, expected)
+        if any(item.state is not BacktestObservedState.ABSENT for item in observed):
+            raise BacktestExecutionIntegrityError("backtest run requires no execution evidence; use resume")
+        return self._drive(run)
+
+    def resume(self, run: FrozenBacktestRun) -> BacktestExecutionPlan:
+        return self._drive(run)
+
+    def inspect(self, run: FrozenBacktestRun) -> BacktestExecutionPlan:
+        expected = self._planner.compile(run).expected_actions
+        observed = self._observations.observe(run, expected)
+        return self._planner.compile(run, observed)
+
+    def _drive(self, run: FrozenBacktestRun) -> BacktestExecutionPlan:
+        previous_signature: tuple[tuple[UUID, BacktestObservedState], ...] | None = None
+        max_transitions = len(self._planner.compile(run).expected_actions) * 4 + 1
+        for _ in range(max_transitions):
+            plan = self.inspect(run)
+            if plan.execution_state is BacktestExecutionState.INTEGRITY_ERROR:
+                mismatches = ",".join(map(str, plan.integrity_mismatch_action_ids))
+                raise BacktestExecutionIntegrityError(f"Backtest reconciliation produced INTEGRITY_ERROR: {mismatches}")
+            if plan.execution_state is BacktestExecutionState.COMPLETED:
+                return plan
+            if not plan.ready_actions:
+                raise BacktestExecutionIntegrityError("Backtest has incomplete work but no dependency-ready action")
+            ready = plan.ready_actions[0]
+            signature = tuple((item.action_id, item.state) for item in self._observations.observe(run, plan.expected_actions))
+            if signature == previous_signature:
+                raise BacktestExecutionIntegrityError("Backtest action made no canonical reconciliation progress")
+            previous_signature = signature
+            self._actions.execute(run, ready.action, ready.operation)
+        raise BacktestExecutionIntegrityError("Backtest exceeded its bounded canonical transition budget")
+
+
 def _state(
     action_id: UUID,
     observations: Mapping[UUID, BacktestActionObservation],
 ) -> BacktestObservedState:
     observation = observations.get(action_id)
-    return (
-        BacktestObservedState.ABSENT if observation is None else observation.state
-    )
+    return BacktestObservedState.ABSENT if observation is None else observation.state
 
 
-def _execution_state(
-    states: tuple[BacktestObservedState, ...], *, integrity_error: bool
-) -> BacktestExecutionState:
+def _execution_state(states: tuple[BacktestObservedState, ...], *, integrity_error: bool) -> BacktestExecutionState:
     if integrity_error or any(state is BacktestObservedState.MISMATCH for state in states):
         return BacktestExecutionState.INTEGRITY_ERROR
-    if states and all(
-        state is BacktestObservedState.MATCHED_COMPLETE for state in states
-    ):
+    if states and all(state is BacktestObservedState.MATCHED_COMPLETE for state in states):
         return BacktestExecutionState.COMPLETED
     if any(state is BacktestObservedState.FAILED_RETRYABLE for state in states):
         return BacktestExecutionState.FAILED
@@ -405,9 +419,7 @@ def _research_state(
 ) -> BacktestResearchState:
     if any(state is BacktestResearchState.ESTIMABLE for state in states):
         return BacktestResearchState.ESTIMABLE
-    if states and any(
-        state is BacktestResearchState.NOT_ESTIMABLE for state in states
-    ):
+    if states and any(state is BacktestResearchState.NOT_ESTIMABLE for state in states):
         return BacktestResearchState.NOT_ESTIMABLE
     return BacktestResearchState.NOT_APPLICABLE
 
@@ -441,12 +453,7 @@ def _topological_actions(drafts: tuple[_ActionDraft, ...]) -> tuple[_ActionDraft
     by_id = {draft.action_id: draft for draft in drafts}
     if len(by_id) != len(drafts):
         raise ValueError("Backtest execution graph contains duplicate action identities")
-    missing = {
-        dependency
-        for draft in drafts
-        for dependency in draft.dependency_action_ids
-        if dependency not in by_id
-    }
+    missing = {dependency for draft in drafts for dependency in draft.dependency_action_ids if dependency not in by_id}
     if missing:
         raise ValueError("Backtest execution graph has missing dependencies")
     remaining = dict(by_id)
@@ -454,11 +461,7 @@ def _topological_actions(drafts: tuple[_ActionDraft, ...]) -> tuple[_ActionDraft
     ordered: list[_ActionDraft] = []
     while remaining:
         ready = sorted(
-            (
-                draft
-                for draft in remaining.values()
-                if set(draft.dependency_action_ids).issubset(completed)
-            ),
+            (draft for draft in remaining.values() if set(draft.dependency_action_ids).issubset(completed)),
             key=lambda draft: (
                 draft.kind.value,
                 "" if draft.fold_id is None else str(draft.fold_id),
@@ -476,4 +479,4 @@ def _topological_actions(drafts: tuple[_ActionDraft, ...]) -> tuple[_ActionDraft
     return tuple(ordered)
 
 
-__all__ = ["BacktestExecutionPlanner"]
+__all__ = ["BacktestExecutionPlanner", "BacktestExecutor"]

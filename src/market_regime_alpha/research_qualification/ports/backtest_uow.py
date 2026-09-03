@@ -11,6 +11,13 @@ from uuid import UUID
 from market_regime_alpha.research_qualification.domain.backtest import (
     BacktestSpecification,
 )
+from market_regime_alpha.research_qualification.domain.backtest_execution import (
+    BacktestEvaluationExecution,
+    BacktestRuntimeBinding,
+)
+from market_regime_alpha.research_qualification.domain.backtest_report import (
+    BacktestReportArtifactBinding,
+)
 from market_regime_alpha.research_qualification.ports.target_artifacts import (
     TargetArtifactRepository,
 )
@@ -45,9 +52,13 @@ class BacktestRepository(Protocol):
         request_sha256: str,
     ) -> BacktestSpecificationRecord: ...
 
-    def record(
-        self, exploratory_backtest_run_id: UUID, *, lock: bool
-    ) -> BacktestSpecificationRecord: ...
+    def record(self, exploratory_backtest_run_id: UUID, *, lock: bool) -> BacktestSpecificationRecord: ...
+
+    def bind_runtime(self, binding: BacktestRuntimeBinding) -> BacktestRuntimeBinding: ...
+
+    def bind_evaluation(self, binding: BacktestEvaluationExecution) -> BacktestEvaluationExecution: ...
+
+    def bind_report(self, binding: BacktestReportArtifactBinding) -> BacktestReportArtifactBinding: ...
 
 
 class BacktestUnitOfWork(Protocol):
