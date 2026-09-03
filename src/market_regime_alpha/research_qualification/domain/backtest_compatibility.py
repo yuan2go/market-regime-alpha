@@ -143,6 +143,14 @@ _HISTORICAL_MANIFESTS = MappingProxyType(
 )
 
 
+def is_exact_historical_backtest_identity(
+    exploratory_backtest_run_id: UUID,
+) -> bool:
+    """Return allowlist membership without inspecting mutable database shape."""
+
+    return exploratory_backtest_run_id in _HISTORICAL_MANIFESTS
+
+
 _ARM_SEMANTICS = MappingProxyType(
     {
         HistoricalArmKind.RULE_BASELINE: (
@@ -379,4 +387,5 @@ def _projection_id(backtest_id: UUID, suffix: str) -> UUID:
 __all__ = [
     "HistoricalBacktestCompatibilityError",
     "decode_exact_historical_backtest",
+    "is_exact_historical_backtest_identity",
 ]
