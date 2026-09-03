@@ -62,6 +62,7 @@ def build_retrospective_manifest(
     membership_dates: tuple[date, ...],
     security_master_codes: tuple[str, ...],
     pilot_codes: tuple[str, ...],
+    exchange_calendar: str,
     provenance_sha256: str,
     archive_generation: int = 1,
     reserved_free_bytes: int = 2_000_000_000,
@@ -72,7 +73,11 @@ def build_retrospective_manifest(
     if execution_date < date(2026, 1, 1):
         raise ValueError("retrospective execution date precedes the WP-17P window")
     _validate_codes(security_master_codes)
-    if select_deterministic_pilot(security_master_codes) != pilot_codes:
+    exchange_prefix = _exchange_prefix(exchange_calendar)
+    selection_population = tuple(
+        code for code in security_master_codes if code.startswith(exchange_prefix)
+    )
+    if select_deterministic_pilot(selection_population) != pilot_codes:
         raise ValueError("pilot roster differs from the frozen stable-hash selection")
     if (
         not membership_dates
@@ -168,10 +173,14 @@ def build_retrospective_manifest(
         provider_product_id=provider_product_id,
         code_artifact_id=code_artifact_id,
         config_artifact_id=config_artifact_id,
-        instrument_scope="CSI300_STABLE_HASH_32_ENGINEERING_PILOT",
+        exchange_calendar=exchange_calendar,
+        instrument_scope=(
+            f"CSI300_{exchange_calendar}_STABLE_HASH_32_ENGINEERING_PILOT"
+        ),
         instrument_scope_sha256=canonical_json_sha256(
             {
                 "selection": _PILOT_SALT,
+                "exchange_calendar": exchange_calendar,
                 "codes": pilot_codes,
                 "membership_dates": membership_dates,
             }
@@ -194,6 +203,7 @@ def build_prospective_manifest(
     archive_not_before: datetime,
     next_session_date: date,
     pilot_codes: tuple[str, ...],
+    exchange_calendar: str,
     provenance_sha256: str,
     archive_generation: int = 1,
     reserved_free_bytes: int = 2_000_000_000,
@@ -205,8 +215,11 @@ def build_prospective_manifest(
         raise ValueError("archive_not_before must include an offset")
     archive_not_before = archive_not_before.astimezone(UTC)
     _validate_codes(pilot_codes)
+    exchange_prefix = _exchange_prefix(exchange_calendar)
     if len(pilot_codes) != 32:
         raise ValueError("prospective archive requires the exact 32-instrument pilot")
+    if any(not code.startswith(exchange_prefix) for code in pilot_codes):
+        raise ValueError("pilot instrument is outside the explicit exchange calendar")
     archive_code = (
         f"wp17p_prospective_{archive_not_before:%Y%m%d_%H%M%S}"
         f"_g{archive_generation:03d}"
@@ -272,9 +285,16 @@ def build_prospective_manifest(
         provider_product_id=provider_product_id,
         code_artifact_id=code_artifact_id,
         config_artifact_id=config_artifact_id,
-        instrument_scope="CSI300_STABLE_HASH_32_PROSPECTIVE_ARCHIVE",
+        exchange_calendar=exchange_calendar,
+        instrument_scope=(
+            f"CSI300_{exchange_calendar}_STABLE_HASH_32_PROSPECTIVE_ARCHIVE"
+        ),
         instrument_scope_sha256=canonical_json_sha256(
-            {"selection": _PILOT_SALT, "codes": pilot_codes}
+            {
+                "selection": _PILOT_SALT,
+                "exchange_calendar": exchange_calendar,
+                "codes": pilot_codes,
+            }
         ),
         window_start=smoke_start,
         window_end=window_end,
@@ -294,6 +314,7 @@ def _manifest(
     provider_product_id: UUID,
     code_artifact_id: UUID,
     config_artifact_id: UUID,
+    exchange_calendar: str,
     instrument_scope: str,
     instrument_scope_sha256: str,
     window_start: datetime,
@@ -329,7 +350,7 @@ def _manifest(
         archive_code=archive_code,
         lane=lane,
         provider_product_id=provider_product_id,
-        exchange_code="XSHG",
+        exchange_code=exchange_calendar,
         timeframe=BarTimeframe.MINUTE_5,
         price_basis=PriceBasis.RAW_UNADJUSTED,
         instrument_scope=instrument_scope,
@@ -365,6 +386,13 @@ def _validate_codes(codes: tuple[str, ...]) -> None:
         or any(_A_SHARE_CODE.fullmatch(item) is None for item in codes)
     ):
         raise ValueError("security roster must be sorted unique BaoStock A-share codes")
+
+
+def _exchange_prefix(exchange_calendar: str) -> str:
+    try:
+        return {"XSHG": "sh.", "XSHE": "sz."}[exchange_calendar]
+    except KeyError as exc:
+        raise ValueError("exchange_calendar must be XSHG or XSHE") from exc
 
 
 def _validate_archive_generation(archive_generation: int) -> None:
