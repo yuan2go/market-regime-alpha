@@ -10,8 +10,12 @@ from uuid import uuid4
 
 from market_regime_alpha.infrastructure.artifacts import LocalArtifactStore
 from market_regime_alpha.infrastructure.models import (
+    DeterministicRidgeBacktestModelAdapter,
     DeterministicRidgePredictor,
     DeterministicRidgeTrainer,
+)
+from market_regime_alpha.infrastructure.backtest_features import (
+    IntradayMoveBacktestFeatureAdapter,
 )
 from market_regime_alpha.infrastructure.archive_resources import (
     FilesystemArchiveResourceInspector,
@@ -47,6 +51,9 @@ from market_regime_alpha.infrastructure.postgres.experiment_uow import (
 )
 from market_regime_alpha.infrastructure.postgres.exploratory_backtest_uow import (
     PostgresExploratoryBacktestUnitOfWorkProvider,
+)
+from market_regime_alpha.infrastructure.postgres.backtest_uow import (
+    PostgresBacktestUnitOfWorkProvider,
 )
 from market_regime_alpha.infrastructure.postgres.research_model_uow import (
     PostgresResearchModelUnitOfWorkProvider,
@@ -146,6 +153,21 @@ from market_regime_alpha.infrastructure.postgres.queries.exploratory_backtests i
 from market_regime_alpha.infrastructure.postgres.queries.model_training_inputs import (
     PostgresModelTrainingInputProvider,
 )
+from market_regime_alpha.infrastructure.postgres.queries.backtest_actions import (
+    PostgresBacktestActionReadPort,
+)
+from market_regime_alpha.infrastructure.postgres.queries.backtest_execution import (
+    PostgresBacktestExecutionObservationPort,
+)
+from market_regime_alpha.infrastructure.postgres.queries.backtest_history import (
+    PostgresBacktestAuthorityQueryPort,
+)
+from market_regime_alpha.infrastructure.postgres.queries.backtest_reports import (
+    PostgresBacktestReportSourcePort,
+)
+from market_regime_alpha.infrastructure.postgres.queries.backtests import (
+    PostgresBacktestQueryPort,
+)
 from market_regime_alpha.infrastructure.postgres.schema import (
     DatabaseIdentity,
     OperationalUpgradeAuthorization,
@@ -197,6 +219,24 @@ from market_regime_alpha.research_qualification.ports import (
 )
 from market_regime_alpha.research_qualification.ports.exploratory_backtest_queries import (
     ExploratoryBacktestVerificationPort,
+)
+from market_regime_alpha.research_qualification.application.backtest_execution import (
+    BacktestExecutor,
+)
+from market_regime_alpha.research_qualification.application.backtest_replay import (
+    BacktestReplayApplication,
+)
+from market_regime_alpha.research_qualification.application.backtest_reports import (
+    BacktestReportApplication,
+)
+from market_regime_alpha.research_qualification.application.backtest_runtime import (
+    BacktestRuntimeActionExecutor,
+)
+from market_regime_alpha.research_qualification.application.backtests import (
+    BacktestApplication,
+)
+from market_regime_alpha.interfaces.backtest_actions import (
+    BacktestCanonicalActionHandler,
 )
 from market_regime_alpha.selection.application import (
     CandidateApplication,
@@ -297,6 +337,11 @@ class TargetApplication:
     research_definitions: ResearchQualificationApplication
     research_partitions: ResearchPartitionCommands
     research_experiments: ExperimentCommands
+    backtests: BacktestApplication
+    backtest_specifications: PostgresBacktestQueryPort
+    backtest_execution: BacktestExecutor
+    backtest_replay: BacktestReplayApplication
+    backtest_reports: BacktestReportApplication
     exploratory_backtests: ExploratoryBacktestCommands
     exploratory_backtest_verifier: ExploratoryBacktestVerificationPort
     exploratory_campaigns: ExploratoryCampaignReadPort
@@ -370,6 +415,136 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
         FilesystemArchiveResourceInspector(settings.artifact_root),
         market_clock,
     )
+    selection_application = SelectionApplication(PostgresSelectionUnitOfWorkProvider(pool))
+    research_definitions_application = ResearchQualificationApplication(
+        byte_store,
+        PostgresResearchUnitOfWorkProvider(pool),
+        PostgresTargetUnitOfWorkProvider(pool),
+    )
+    research_partition_commands = ResearchPartitionCommands(
+        PostgresPartitionUnitOfWorkProvider(pool, id_factory=uuid4),
+        id_factory=uuid4,
+    )
+    experiment_commands = ExperimentCommands(
+        PostgresExperimentUnitOfWorkProvider(pool),
+        id_factory=uuid4,
+    )
+    evaluation_commands = EvaluationCommands(
+        PostgresEvaluationUnitOfWorkProvider(pool, id_factory=uuid4),
+        id_factory=uuid4,
+    )
+    research_model_application = ResearchModelApplication(
+        ModelCommands(
+            PostgresResearchModelUnitOfWorkProvider(pool),
+            id_factory=uuid4,
+        ),
+        PostgresModelTrainingInputProvider(pool, byte_store),
+        artifact_application,
+        DeterministicRidgeTrainer(),
+    )
+    candidate_application = CandidateApplication(
+        PostgresCandidateResearchInputLoader(pool, byte_store),
+        PostgresCandidateUnitOfWorkProvider(pool),
+    )
+    decision_input_provider = PostgresDecisionInputPreparationProvider(pool)
+    decision_support_application = DecisionSupportApplication(
+        decision_input_provider,
+        PostgresDecisionSupportUnitOfWorkProvider(pool),
+        PostgresDecisionRunQueryProvider(pool),
+        exploratory_preparation=decision_input_provider,
+    )
+    context_commands = ContextCommands(
+        PostgresContextInputPreparationProvider(pool),
+        PostgresContextUnitOfWorkProvider(pool),
+        PostgresContextQueryProvider(pool),
+    )
+    inference_input_provider = PostgresInferenceInputPreparationProvider(pool)
+    inference_commands = InferenceCommands(
+        inference_input_provider,
+        PostgresInferenceUnitOfWorkProvider(pool),
+        PostgresInferenceQueryProvider(pool),
+    )
+    model_forecast_commands = ModelForecastCommands(
+        PostgresModelForecastInputPreparationProvider(
+            pool,
+            byte_store,
+            inference_input_provider,
+            DeterministicRidgePredictor(),
+        ),
+        PostgresInferenceUnitOfWorkProvider(pool),
+        PostgresInferenceQueryProvider(pool),
+        PostgresModelForecastQueryProvider(pool),
+    )
+    opportunity_commands = OpportunityCommands(
+        PostgresOpportunityInputPreparationProvider(pool),
+        PostgresOpportunityUnitOfWorkProvider(pool),
+        PostgresOpportunityQueryProvider(pool),
+    )
+    portfolio_commands = PortfolioCommands(
+        PostgresPortfolioInputPreparationProvider(pool),
+        PostgresPortfolioUnitOfWorkProvider(pool),
+        PostgresPortfolioQueryProvider(pool),
+    )
+    risk_commands = RiskCommands(
+        PostgresRiskInputPreparationProvider(pool),
+        PostgresRiskUnitOfWorkProvider(pool),
+        PostgresRiskQueryProvider(pool),
+    )
+    outcome_application = OutcomeApplication(
+        PostgresOutcomeInputPreparationProvider(pool),
+        PostgresOutcomeUnitOfWorkProvider(pool),
+        PostgresOutcomeQueryProvider(pool),
+    )
+    backtest_application = BacktestApplication(
+        PostgresBacktestUnitOfWorkProvider(pool),
+        id_factory=uuid4,
+    )
+    backtest_specifications = PostgresBacktestQueryPort(pool)
+    backtest_observations = PostgresBacktestExecutionObservationPort(pool)
+    backtest_action_handler = BacktestCanonicalActionHandler(
+        artifacts=artifact_application,
+        selection=selection_application,
+        research_definitions=research_definitions_application,
+        reads=PostgresBacktestActionReadPort(pool),
+        feature_materializers=(IntradayMoveBacktestFeatureAdapter(PostgresExploratoryFeatureInputReadPort(pool)),),
+        worker_id="generic-backtest-worker",
+        candidates=candidate_application,
+        decision_support=decision_support_application,
+        decision_contexts=context_commands,
+        decision_inference=inference_commands,
+        decision_model_forecasts=model_forecast_commands,
+        decision_opportunities=opportunity_commands,
+        decision_portfolios=portfolio_commands,
+        decision_risk=risk_commands,
+        outcomes=outcome_application,
+        research_partitions=research_partition_commands,
+        research_experiments=experiment_commands,
+        research_evaluations=evaluation_commands,
+        research_models=research_model_application,
+        model_adapters=(DeterministicRidgeBacktestModelAdapter(),),
+        backtests=backtest_application,
+        runtime=runtime_application,
+    )
+    backtest_action_executor = BacktestRuntimeActionExecutor(
+        runtime=runtime_application,
+        backtests=backtest_application,
+        specifications=backtest_specifications,
+        handler=backtest_action_handler,
+        worker_id="generic-backtest-worker",
+    )
+    backtest_execution = BacktestExecutor(
+        backtest_observations,
+        backtest_action_executor,
+    )
+    backtest_replay = BacktestReplayApplication(
+        PostgresBacktestAuthorityQueryPort(pool),
+        byte_store,
+        backtest_observations,
+    )
+    backtest_reports = BacktestReportApplication(
+        PostgresBacktestReportSourcePort(pool),
+        backtest_replay,
+    )
     return TargetApplication(
         runtime=runtime_application,
         artifacts=artifact_application,
@@ -396,20 +571,15 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
         provider_qualification_queries=PostgresProviderQualificationQueryPort(pool),
         market_queries=PostgresMarketQueryProvider(pool),
         market_revision_lineage=PostgresMarketRevisionLineageReadPort(pool),
-        selection=SelectionApplication(PostgresSelectionUnitOfWorkProvider(pool)),
-        research_definitions=ResearchQualificationApplication(
-            byte_store,
-            PostgresResearchUnitOfWorkProvider(pool),
-            PostgresTargetUnitOfWorkProvider(pool),
-        ),
-        research_partitions=ResearchPartitionCommands(
-            PostgresPartitionUnitOfWorkProvider(pool, id_factory=uuid4),
-            id_factory=uuid4,
-        ),
-        research_experiments=ExperimentCommands(
-            PostgresExperimentUnitOfWorkProvider(pool),
-            id_factory=uuid4,
-        ),
+        selection=selection_application,
+        research_definitions=research_definitions_application,
+        research_partitions=research_partition_commands,
+        research_experiments=experiment_commands,
+        backtests=backtest_application,
+        backtest_specifications=backtest_specifications,
+        backtest_execution=backtest_execution,
+        backtest_replay=backtest_replay,
+        backtest_reports=backtest_reports,
         exploratory_backtests=ExploratoryBacktestCommands(
             PostgresExploratoryBacktestUnitOfWorkProvider(pool),
             id_factory=uuid4,
@@ -417,19 +587,8 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
         exploratory_backtest_verifier=(PostgresExploratoryBacktestVerificationPort(pool)),
         exploratory_campaigns=PostgresExploratoryCampaignReadPort(pool),
         exploratory_feature_inputs=PostgresExploratoryFeatureInputReadPort(pool),
-        research_models=ResearchModelApplication(
-            ModelCommands(
-                PostgresResearchModelUnitOfWorkProvider(pool),
-                id_factory=uuid4,
-            ),
-            PostgresModelTrainingInputProvider(pool, byte_store),
-            artifact_application,
-            DeterministicRidgeTrainer(),
-        ),
-        research_evaluations=EvaluationCommands(
-            PostgresEvaluationUnitOfWorkProvider(pool, id_factory=uuid4),
-            id_factory=uuid4,
-        ),
+        research_models=research_model_application,
+        research_evaluations=evaluation_commands,
         research_evaluation_verifier=ResearchEvaluationVerifier(PostgresResearchEvaluationVerificationProvider(pool)),
         research_evidence=EvidenceCommands(
             PostgresEvidenceUnitOfWorkProvider(pool),
@@ -451,64 +610,22 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
         ),
         formal_pit_sources=PostgresFormalPitSourceReadPort(pool),
         formal_research_queries=PostgresFormalCampaignQueryPort(pool),
-        candidates=CandidateApplication(
-            PostgresCandidateResearchInputLoader(pool, byte_store),
-            PostgresCandidateUnitOfWorkProvider(pool),
-        ),
+        candidates=candidate_application,
         candidate_queries=PostgresCandidateQueryProvider(pool),
-        decision_support=DecisionSupportApplication(
-            PostgresDecisionInputPreparationProvider(pool),
-            PostgresDecisionSupportUnitOfWorkProvider(pool),
-            PostgresDecisionRunQueryProvider(pool),
-            exploratory_preparation=PostgresDecisionInputPreparationProvider(pool),
-        ),
+        decision_support=decision_support_application,
         decision_runs=PostgresDecisionRunQueryProvider(pool),
-        decision_contexts=ContextCommands(
-            PostgresContextInputPreparationProvider(pool),
-            PostgresContextUnitOfWorkProvider(pool),
-            PostgresContextQueryProvider(pool),
-        ),
+        decision_contexts=context_commands,
         decision_strategies=StrategyCommands(
             PostgresStrategyUnitOfWorkProvider(pool),
             PostgresStrategyQueryProvider(pool),
         ),
-        decision_inference=InferenceCommands(
-            PostgresInferenceInputPreparationProvider(pool),
-            PostgresInferenceUnitOfWorkProvider(pool),
-            PostgresInferenceQueryProvider(pool),
-        ),
-        decision_model_forecasts=ModelForecastCommands(
-            PostgresModelForecastInputPreparationProvider(
-                pool,
-                byte_store,
-                PostgresInferenceInputPreparationProvider(pool),
-                DeterministicRidgePredictor(),
-            ),
-            PostgresInferenceUnitOfWorkProvider(pool),
-            PostgresInferenceQueryProvider(pool),
-            PostgresModelForecastQueryProvider(pool),
-        ),
-        decision_opportunities=OpportunityCommands(
-            PostgresOpportunityInputPreparationProvider(pool),
-            PostgresOpportunityUnitOfWorkProvider(pool),
-            PostgresOpportunityQueryProvider(pool),
-        ),
-        decision_portfolios=PortfolioCommands(
-            PostgresPortfolioInputPreparationProvider(pool),
-            PostgresPortfolioUnitOfWorkProvider(pool),
-            PostgresPortfolioQueryProvider(pool),
-        ),
-        decision_risk=RiskCommands(
-            PostgresRiskInputPreparationProvider(pool),
-            PostgresRiskUnitOfWorkProvider(pool),
-            PostgresRiskQueryProvider(pool),
-        ),
+        decision_inference=inference_commands,
+        decision_model_forecasts=model_forecast_commands,
+        decision_opportunities=opportunity_commands,
+        decision_portfolios=portfolio_commands,
+        decision_risk=risk_commands,
         decision_support_verifier=DecisionRunVerifier(PostgresDecisionRunVerificationProvider(pool)),
-        outcomes=OutcomeApplication(
-            PostgresOutcomeInputPreparationProvider(pool),
-            PostgresOutcomeUnitOfWorkProvider(pool),
-            PostgresOutcomeQueryProvider(pool),
-        ),
+        outcomes=outcome_application,
         outcome_queries=PostgresOutcomeQueryProvider(pool),
         outcome_verifier=OutcomeVerifier(
             PostgresOutcomeQueryProvider(pool),
