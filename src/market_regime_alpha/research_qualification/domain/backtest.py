@@ -1,0 +1,976 @@
+"""Current generic Backtest specification contracts.
+
+These immutable values are command/projection types.  PostgreSQL relations
+remain Authority and :class:`FrozenBacktestRun` projections are never FK
+targets or independent business identities.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import date
+from decimal import Decimal
+from enum import StrEnum
+import re
+from uuid import UUID
+
+from market_regime_alpha.research_qualification.domain.model import ArtifactBinding
+from market_regime_alpha.research_qualification.domain.research_vocabulary import (
+    PartitionPurpose,
+)
+from market_regime_alpha.shared.hashing import canonical_json_sha256
+from market_regime_alpha.shared.identity import ContentHash
+
+
+_CODE = re.compile(r"^[a-z][a-z0-9_-]{0,99}$")
+
+
+class BacktestExecutionKind(StrEnum):
+    RULE = "RULE"
+    MODEL = "MODEL"
+
+
+class BacktestComparisonRole(StrEnum):
+    BASELINE = "BASELINE"
+    CHALLENGER = "CHALLENGER"
+    DIAGNOSTIC = "DIAGNOSTIC"
+
+
+class BacktestContextMode(StrEnum):
+    CURRENT_GATE = "CURRENT_GATE"
+    OBSERVATIONAL = "OBSERVATIONAL"
+
+
+class BacktestSessionRole(StrEnum):
+    FIT_INPUT = "FIT_INPUT"
+    PURGE = "PURGE"
+    EVALUATION = "EVALUATION"
+    EMBARGO = "EMBARGO"
+
+
+class BacktestWalkForwardMode(StrEnum):
+    FIXED = "FIXED"
+    ROLLING = "ROLLING"
+    EXPANDING = "EXPANDING"
+
+
+class BacktestCostKind(StrEnum):
+    COMMISSION_BPS = "COMMISSION_BPS"
+    SLIPPAGE_BPS = "SLIPPAGE_BPS"
+    STAMP_DUTY_BPS = "STAMP_DUTY_BPS"
+
+
+class BacktestCostChargeSide(StrEnum):
+    BUY = "BUY"
+    SELL = "SELL"
+    BOTH = "BOTH"
+
+
+class BacktestBindingSource(StrEnum):
+    SHARED_DEFAULT = "SHARED_DEFAULT"
+    ARM_OVERRIDE = "ARM_OVERRIDE"
+
+
+class FrozenBacktestSource(StrEnum):
+    CURRENT_RELATIONAL = "CURRENT_RELATIONAL"
+    HISTORICAL_EXACT = "HISTORICAL_EXACT"
+
+
+class FrozenBacktestEvidence(StrEnum):
+    CURRENT = "CURRENT"
+    COMPLETED_ZERO_WRITE = "COMPLETED_ZERO_WRITE"
+    DEFINITION_ONLY = "DEFINITION_ONLY"
+
+
+@dataclass(frozen=True, slots=True)
+class AuthorityBinding:
+    authority_id: UUID
+    content_sha256: ContentHash | str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "content_sha256",
+            ContentHash(str(self.content_sha256)),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class VersionedAuthorityBinding:
+    authority_id: UUID
+    version: int
+    content_sha256: ContentHash | str
+
+    def __post_init__(self) -> None:
+        if isinstance(self.version, bool) or self.version < 1:
+            raise ValueError("Authority version must be positive")
+        object.__setattr__(
+            self,
+            "content_sha256",
+            ContentHash(str(self.content_sha256)),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class BacktestPolicyDefaults:
+    candidate: AuthorityBinding
+    context: AuthorityBinding
+    strategy: AuthorityBinding
+    portfolio: AuthorityBinding
+    risk: AuthorityBinding
+
+
+@dataclass(frozen=True, slots=True)
+class BacktestSampleMember:
+    universe_revision_member_id: UUID
+    instrument_id: UUID
+    ordinal: int
+    content_sha256: ContentHash = field(init=False)
+
+    def __post_init__(self) -> None:
+        if isinstance(self.ordinal, bool) or self.ordinal < 1:
+            raise ValueError("sample member ordinal must be positive")
+        object.__setattr__(
+            self,
+            "content_sha256",
+            ContentHash(
+                canonical_json_sha256(
+                    {
+                        "instrument_id": self.instrument_id,
+                        "ordinal": self.ordinal,
+                        "universe_revision_member_id": self.universe_revision_member_id,
+                    }
+                )
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class BacktestFoldSession:
+    exploratory_backtest_fold_session_id: UUID
+    ordinal: int
+    trading_session_id: UUID
+    session_date: date
+    role: BacktestSessionRole
+    content_sha256: ContentHash = field(init=False)
+
+    def __post_init__(self) -> None:
+        if isinstance(self.ordinal, bool) or self.ordinal < 1:
+            raise ValueError("fold session ordinal must be positive")
+        object.__setattr__(
+            self,
+            "content_sha256",
+            ContentHash(
+                canonical_json_sha256(
+                    {
+                        "exploratory_backtest_fold_session_id": self.exploratory_backtest_fold_session_id,
+                        "ordinal": self.ordinal,
+                        "role": self.role,
+                        "session_date": self.session_date,
+                        "trading_session_id": self.trading_session_id,
+                    }
+                )
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class BacktestFoldSpecification:
+    exploratory_backtest_fold_id: UUID
+    ordinal: int
+    purpose: PartitionPurpose
+    exchange_code: str
+    purge_sessions: int
+    embargo_sessions: int
+    evaluation_protocol: AuthorityBinding
+    sessions: tuple[BacktestFoldSession, ...]
+    session_roster_sha256: ContentHash = field(init=False)
+    content_sha256: ContentHash = field(init=False)
+
+    def __post_init__(self) -> None:
+        if isinstance(self.ordinal, bool) or self.ordinal < 1:
+            raise ValueError("fold ordinal must be positive")
+        if self.purpose not in {PartitionPurpose.FIT, PartitionPurpose.VALIDATION}:
+            raise ValueError("current Backtest fold must be FIT or VALIDATION")
+        if self.exchange_code not in {"XSHG", "XSHE"}:
+            raise ValueError("fold exchange_code is invalid")
+        if self.purge_sessions < 0 or self.embargo_sessions < 0:
+            raise ValueError("purge and embargo must be non-negative")
+        if not self.sessions:
+            raise ValueError("fold session roster must be non-empty")
+        if tuple(item.ordinal for item in self.sessions) != tuple(
+            range(1, len(self.sessions) + 1)
+        ):
+            raise ValueError("fold session ordinals must be contiguous")
+        dates = tuple(item.session_date for item in self.sessions)
+        if dates != tuple(sorted(dates)) or len(
+            {item.trading_session_id for item in self.sessions}
+        ) != len(self.sessions):
+            raise ValueError("fold sessions must be chronological and unique")
+        if sum(item.role is BacktestSessionRole.PURGE for item in self.sessions) != (
+            self.purge_sessions
+        ):
+            raise ValueError("fold purge roster does not match purge_sessions")
+        if sum(item.role is BacktestSessionRole.EMBARGO for item in self.sessions) != (
+            self.embargo_sessions
+        ):
+            raise ValueError("fold embargo roster does not match embargo_sessions")
+        required = (
+            BacktestSessionRole.FIT_INPUT
+            if self.purpose is PartitionPurpose.FIT
+            else BacktestSessionRole.EVALUATION
+        )
+        if not any(item.role is required for item in self.sessions):
+            raise ValueError(f"{self.purpose.value} fold requires {required.value}")
+        roster_hash = ContentHash(
+            canonical_json_sha256(
+                tuple(
+                    {
+                        "content_sha256": str(item.content_sha256),
+                        "exploratory_backtest_fold_session_id": item.exploratory_backtest_fold_session_id,
+                        "ordinal": item.ordinal,
+                    }
+                    for item in self.sessions
+                )
+            )
+        )
+        object.__setattr__(self, "session_roster_sha256", roster_hash)
+        object.__setattr__(
+            self,
+            "content_sha256",
+            ContentHash(
+                canonical_json_sha256(
+                    {
+                        "embargo_sessions": self.embargo_sessions,
+                        "evaluation_protocol": self.evaluation_protocol,
+                        "exchange_code": self.exchange_code,
+                        "exploratory_backtest_fold_id": self.exploratory_backtest_fold_id,
+                        "ordinal": self.ordinal,
+                        "purge_sessions": self.purge_sessions,
+                        "purpose": self.purpose,
+                        "session_roster_sha256": str(roster_hash),
+                    }
+                )
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class BacktestFoldDependency:
+    dependency_id: UUID
+    ordinal: int
+    fit_fold_id: UUID
+    validation_fold_id: UUID
+    content_sha256: ContentHash = field(init=False)
+
+    def __post_init__(self) -> None:
+        if isinstance(self.ordinal, bool) or self.ordinal < 1:
+            raise ValueError("fold dependency ordinal must be positive")
+        if self.fit_fold_id == self.validation_fold_id:
+            raise ValueError("fold cannot depend on itself")
+        object.__setattr__(
+            self,
+            "content_sha256",
+            ContentHash(
+                canonical_json_sha256(
+                    {
+                        "dependency_id": self.dependency_id,
+                        "fit_fold_id": self.fit_fold_id,
+                        "ordinal": self.ordinal,
+                        "validation_fold_id": self.validation_fold_id,
+                    }
+                )
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class BacktestArmFold:
+    arm_fold_id: UUID
+    ordinal: int
+    arm_id: UUID
+    fold_id: UUID
+    content_sha256: ContentHash = field(init=False)
+
+    def __post_init__(self) -> None:
+        if isinstance(self.ordinal, bool) or self.ordinal < 1:
+            raise ValueError("arm-fold ordinal must be positive")
+        object.__setattr__(
+            self,
+            "content_sha256",
+            ContentHash(
+                canonical_json_sha256(
+                    {
+                        "arm_fold_id": self.arm_fold_id,
+                        "arm_id": self.arm_id,
+                        "fold_id": self.fold_id,
+                        "ordinal": self.ordinal,
+                    }
+                )
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class BacktestModelTrainingRequirement:
+    requirement_id: UUID
+    ordinal: int
+    model_arm_id: UUID
+    fit_fold_id: UUID
+    validation_fold_id: UUID
+    model_definition: AuthorityBinding
+    content_sha256: ContentHash = field(init=False)
+
+    def __post_init__(self) -> None:
+        if isinstance(self.ordinal, bool) or self.ordinal < 1:
+            raise ValueError("Model training requirement ordinal must be positive")
+        object.__setattr__(
+            self,
+            "content_sha256",
+            ContentHash(
+                canonical_json_sha256(
+                    {
+                        "fit_fold_id": self.fit_fold_id,
+                        "model_arm_id": self.model_arm_id,
+                        "model_definition": self.model_definition,
+                        "ordinal": self.ordinal,
+                        "requirement_id": self.requirement_id,
+                        "validation_fold_id": self.validation_fold_id,
+                    }
+                )
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class BacktestWalkForwardPolicy:
+    policy_code: str
+    policy_version: int
+    mode: BacktestWalkForwardMode
+    minimum_fit_sessions: int
+    validation_sessions: int
+    step_sessions: int
+    content_sha256: ContentHash = field(init=False)
+
+    def __post_init__(self) -> None:
+        if not _CODE.fullmatch(self.policy_code):
+            raise ValueError("walk-forward policy_code has an invalid format")
+        for name in (
+            "policy_version",
+            "minimum_fit_sessions",
+            "validation_sessions",
+            "step_sessions",
+        ):
+            value = getattr(self, name)
+            if isinstance(value, bool) or value < 1:
+                raise ValueError(f"{name} must be positive")
+        object.__setattr__(
+            self,
+            "content_sha256",
+            ContentHash(
+                canonical_json_sha256(
+                    {
+                        "minimum_fit_sessions": self.minimum_fit_sessions,
+                        "mode": self.mode,
+                        "policy_code": self.policy_code,
+                        "policy_version": self.policy_version,
+                        "step_sessions": self.step_sessions,
+                        "validation_sessions": self.validation_sessions,
+                    }
+                )
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class BacktestCostAssumption:
+    assumption_id: UUID
+    ordinal: int
+    cost_kind: BacktestCostKind
+    charge_side: BacktestCostChargeSide
+    amount_bps: Decimal
+    content_sha256: ContentHash = field(init=False)
+
+    def __post_init__(self) -> None:
+        if isinstance(self.ordinal, bool) or self.ordinal < 1:
+            raise ValueError("cost ordinal must be positive")
+        if self.amount_bps < 0:
+            raise ValueError("cost amount_bps must be non-negative")
+        object.__setattr__(
+            self,
+            "content_sha256",
+            ContentHash(
+                canonical_json_sha256(
+                    {
+                        "amount_bps": self.amount_bps,
+                        "assumption_id": self.assumption_id,
+                        "charge_side": self.charge_side,
+                        "cost_kind": self.cost_kind,
+                        "ordinal": self.ordinal,
+                    }
+                )
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class BacktestEvaluationRequirement:
+    requirement_id: UUID
+    ordinal: int
+    fold_id: UUID
+    evaluation_protocol: AuthorityBinding
+    primary: bool
+    content_sha256: ContentHash = field(init=False)
+
+    def __post_init__(self) -> None:
+        if isinstance(self.ordinal, bool) or self.ordinal < 1:
+            raise ValueError("Evaluation requirement ordinal must be positive")
+        object.__setattr__(
+            self,
+            "content_sha256",
+            ContentHash(
+                canonical_json_sha256(
+                    {
+                        "evaluation_protocol": self.evaluation_protocol,
+                        "fold_id": self.fold_id,
+                        "ordinal": self.ordinal,
+                        "primary": self.primary,
+                        "requirement_id": self.requirement_id,
+                    }
+                )
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class BacktestArmSpecification:
+    exploratory_backtest_arm_id: UUID
+    ordinal: int
+    arm_code: str
+    execution_kind: BacktestExecutionKind
+    comparison_role: BacktestComparisonRole
+    context_mode: BacktestContextMode
+    candidate: AuthorityBinding
+    context: AuthorityBinding
+    strategy: AuthorityBinding
+    model: AuthorityBinding | None
+    portfolio: AuthorityBinding
+    risk: AuthorityBinding
+    effective_cost_roster_sha256: ContentHash | str
+    candidate_binding_source: BacktestBindingSource = (
+        BacktestBindingSource.SHARED_DEFAULT
+    )
+    context_binding_source: BacktestBindingSource = BacktestBindingSource.SHARED_DEFAULT
+    strategy_binding_source: BacktestBindingSource = BacktestBindingSource.SHARED_DEFAULT
+    portfolio_binding_source: BacktestBindingSource = BacktestBindingSource.SHARED_DEFAULT
+    risk_binding_source: BacktestBindingSource = BacktestBindingSource.SHARED_DEFAULT
+    cost_binding_source: BacktestBindingSource = BacktestBindingSource.SHARED_DEFAULT
+    content_sha256: ContentHash = field(init=False)
+
+    def __post_init__(self) -> None:
+        if isinstance(self.ordinal, bool) or self.ordinal < 1:
+            raise ValueError("arm ordinal must be positive")
+        if not _CODE.fullmatch(self.arm_code):
+            raise ValueError("arm_code has an invalid format")
+        if (self.execution_kind is BacktestExecutionKind.MODEL) != (
+            self.model is not None
+        ):
+            raise ValueError("MODEL arm requires Model; RULE arm forbids Model")
+        cost_hash = ContentHash(str(self.effective_cost_roster_sha256))
+        object.__setattr__(self, "effective_cost_roster_sha256", cost_hash)
+        object.__setattr__(
+            self,
+            "content_sha256",
+            ContentHash(
+                canonical_json_sha256(
+                    {
+                        "arm_code": self.arm_code,
+                        "candidate": self.candidate,
+                        "candidate_binding_source": self.candidate_binding_source,
+                        "comparison_role": self.comparison_role,
+                        "context": self.context,
+                        "context_binding_source": self.context_binding_source,
+                        "context_mode": self.context_mode,
+                        "cost_binding_source": self.cost_binding_source,
+                        "effective_cost_roster_sha256": str(cost_hash),
+                        "execution_kind": self.execution_kind,
+                        "exploratory_backtest_arm_id": self.exploratory_backtest_arm_id,
+                        "model": self.model,
+                        "ordinal": self.ordinal,
+                        "portfolio": self.portfolio,
+                        "portfolio_binding_source": self.portfolio_binding_source,
+                        "risk": self.risk,
+                        "risk_binding_source": self.risk_binding_source,
+                        "strategy": self.strategy,
+                        "strategy_binding_source": self.strategy_binding_source,
+                    }
+                )
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class FrozenBacktestRun:
+    """Immutable executor projection over one canonical Backtest identity."""
+
+    exploratory_backtest_run_id: UUID
+    run_code: str
+    generation: int
+    definition_sha256: ContentHash | str
+    specification_sha256: ContentHash | str
+    source: FrozenBacktestSource
+    evidence: FrozenBacktestEvidence
+    arms: tuple[BacktestArmSpecification, ...]
+    folds: tuple[BacktestFoldSpecification, ...]
+    fold_dependencies: tuple[BacktestFoldDependency, ...]
+    arm_folds: tuple[BacktestArmFold, ...]
+    model_training_requirements: tuple[BacktestModelTrainingRequirement, ...]
+    distinct_trading_session_count: int
+    fold_session_binding_count: int
+    projection_sha256: ContentHash = field(init=False)
+
+    def __post_init__(self) -> None:
+        definition_hash = ContentHash(str(self.definition_sha256))
+        specification_hash = ContentHash(str(self.specification_sha256))
+        object.__setattr__(self, "definition_sha256", definition_hash)
+        object.__setattr__(self, "specification_sha256", specification_hash)
+        if not self.arms or not self.folds:
+            raise ValueError("Frozen Backtest projection requires arms and folds")
+        if self.distinct_trading_session_count < 1:
+            raise ValueError("distinct trading Session count must be positive")
+        if self.fold_session_binding_count < self.distinct_trading_session_count:
+            raise ValueError("fold Session binding count cannot be smaller than distinct count")
+        object.__setattr__(
+            self,
+            "projection_sha256",
+            ContentHash(
+                canonical_json_sha256(
+                    {
+                        "arm_content_sha256": tuple(
+                            str(item.content_sha256) for item in self.arms
+                        ),
+                        "definition_sha256": str(definition_hash),
+                        "distinct_trading_session_count": (
+                            self.distinct_trading_session_count
+                        ),
+                        "evidence": self.evidence,
+                        "exploratory_backtest_run_id": (
+                            self.exploratory_backtest_run_id
+                        ),
+                        "fold_content_sha256": tuple(
+                            str(item.content_sha256) for item in self.folds
+                        ),
+                        "fold_dependency_content_sha256": tuple(
+                            str(item.content_sha256)
+                            for item in self.fold_dependencies
+                        ),
+                        "fold_session_binding_count": (
+                            self.fold_session_binding_count
+                        ),
+                        "run_code": self.run_code,
+                        "source": self.source,
+                        "specification_sha256": str(specification_hash),
+                    }
+                )
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class BacktestSpecification:
+    """Complete application-level predeclaration for a current Backtest Run."""
+
+    exploratory_backtest_run_id: UUID
+    run_code: str
+    generation: int
+    hypothesis: str
+    market_archive: AuthorityBinding
+    market_archive_seal: AuthorityBinding
+    universe_revision: AuthorityBinding
+    sample_scope_code: str
+    sample_members: tuple[BacktestSampleMember, ...]
+    exchange_code: str
+    first_trading_session_id: UUID
+    last_trading_session_id: UUID
+    feature_definitions: tuple[AuthorityBinding, ...]
+    target: VersionedAuthorityBinding
+    defaults: BacktestPolicyDefaults
+    arms: tuple[BacktestArmSpecification, ...]
+    folds: tuple[BacktestFoldSpecification, ...]
+    fold_dependencies: tuple[BacktestFoldDependency, ...]
+    arm_folds: tuple[BacktestArmFold, ...]
+    model_training_requirements: tuple[BacktestModelTrainingRequirement, ...]
+    walk_forward_policy: BacktestWalkForwardPolicy
+    cost_assumptions: tuple[BacktestCostAssumption, ...]
+    evaluation_requirements: tuple[BacktestEvaluationRequirement, ...]
+    random_seed: int
+    code_artifact: ArtifactBinding
+    config_artifact: ArtifactBinding
+    provenance_sha256: ContentHash | str
+    specification_schema_version: int = field(default=1, init=False)
+    evidence_lane: str = field(default="EXPLORATORY_RETROSPECTIVE", init=False)
+    distinct_trading_session_count: int = field(init=False)
+    fold_session_binding_count: int = field(init=False)
+    sample_roster_sha256: ContentHash = field(init=False)
+    feature_roster_sha256: ContentHash = field(init=False)
+    arm_roster_sha256: ContentHash = field(init=False)
+    fold_roster_sha256: ContentHash = field(init=False)
+    dependency_roster_sha256: ContentHash = field(init=False)
+    arm_fold_roster_sha256: ContentHash = field(init=False)
+    model_training_requirement_roster_sha256: ContentHash = field(init=False)
+    cost_roster_sha256: ContentHash = field(init=False)
+    evaluation_roster_sha256: ContentHash = field(init=False)
+    content_sha256: ContentHash = field(init=False)
+    definition_sha256: ContentHash = field(init=False)
+
+    def __post_init__(self) -> None:
+        if not _CODE.fullmatch(self.run_code):
+            raise ValueError("run_code has an invalid format")
+        if isinstance(self.generation, bool) or self.generation < 1:
+            raise ValueError("generation must be positive")
+        if not self.hypothesis.strip():
+            raise ValueError("hypothesis is required")
+        if self.exchange_code not in {"XSHG", "XSHE"}:
+            raise ValueError("exchange_code is invalid")
+        if isinstance(self.random_seed, bool) or self.random_seed < 0:
+            raise ValueError("random_seed must be non-negative")
+        if not _CODE.fullmatch(self.sample_scope_code):
+            raise ValueError("sample_scope_code has an invalid format")
+        _require_contiguous("sample member", self.sample_members)
+        if len({item.instrument_id for item in self.sample_members}) != len(
+            self.sample_members
+        ) or len(
+            {item.universe_revision_member_id for item in self.sample_members}
+        ) != len(self.sample_members):
+            raise ValueError("sample member roster contains duplicates")
+        if not self.feature_definitions or len(
+            {item.authority_id for item in self.feature_definitions}
+        ) != len(self.feature_definitions):
+            raise ValueError("Feature roster must be non-empty and unique")
+        _require_contiguous("arm", self.arms)
+        if len({item.exploratory_backtest_arm_id for item in self.arms}) != len(
+            self.arms
+        ):
+            raise ValueError("arm identities must be unique")
+        if len({item.arm_code for item in self.arms}) != len(self.arms):
+            raise ValueError("arm codes must be unique")
+        _require_contiguous("fold", self.folds)
+        fold_by_id = {
+            item.exploratory_backtest_fold_id: item for item in self.folds
+        }
+        if len(fold_by_id) != len(self.folds):
+            raise ValueError("fold identities must be unique")
+        if any(item.exchange_code != self.exchange_code for item in self.folds):
+            raise ValueError("fold exchange does not match specification")
+        fold_cutoffs = tuple(max(row.session_date for row in fold.sessions) for fold in self.folds)
+        if fold_cutoffs != tuple(sorted(fold_cutoffs)):
+            raise ValueError("fold cutoffs must be chronological")
+        session_dates: dict[UUID, date] = {}
+        for fold in self.folds:
+            for session in fold.sessions:
+                previous = session_dates.setdefault(
+                    session.trading_session_id, session.session_date
+                )
+                if previous != session.session_date:
+                    raise ValueError("trading Session identity has conflicting dates")
+        first = min(session_dates, key=session_dates.__getitem__)
+        last = max(session_dates, key=session_dates.__getitem__)
+        if (
+            first != self.first_trading_session_id
+            or last != self.last_trading_session_id
+        ):
+            raise ValueError("specification Session range does not match folds")
+        _require_contiguous("fold dependency", self.fold_dependencies)
+        dependency_ids = {item.dependency_id for item in self.fold_dependencies}
+        if len(dependency_ids) != len(self.fold_dependencies):
+            raise ValueError("fold dependency identities must be unique")
+        validation_sources: set[UUID] = set()
+        for dependency in self.fold_dependencies:
+            fit = fold_by_id.get(dependency.fit_fold_id)
+            validation = fold_by_id.get(dependency.validation_fold_id)
+            if fit is None or validation is None:
+                raise ValueError("fold dependency references an unknown fold")
+            if fit.purpose is not PartitionPurpose.FIT or (
+                validation.purpose is not PartitionPurpose.VALIDATION
+            ):
+                raise ValueError("fold dependency must be FIT to VALIDATION")
+            if fit.ordinal >= validation.ordinal:
+                raise ValueError("FIT dependency must precede VALIDATION")
+            if validation.exploratory_backtest_fold_id in validation_sources:
+                raise ValueError("VALIDATION fold has multiple FIT dependencies")
+            validation_sources.add(validation.exploratory_backtest_fold_id)
+        expected_validations = {
+            item.exploratory_backtest_fold_id
+            for item in self.folds
+            if item.purpose is PartitionPurpose.VALIDATION
+        }
+        if validation_sources != expected_validations:
+            raise ValueError("every VALIDATION fold requires an exact FIT dependency")
+        _require_contiguous("arm-fold", self.arm_folds)
+        arm_by_id = {item.exploratory_backtest_arm_id: item for item in self.arms}
+        actual_arm_folds = {(item.arm_id, item.fold_id) for item in self.arm_folds}
+        expected_arm_folds = {
+            (arm_id, fold_id) for fold_id in fold_by_id for arm_id in arm_by_id
+        }
+        if len(actual_arm_folds) != len(self.arm_folds) or (
+            actual_arm_folds != expected_arm_folds
+        ):
+            raise ValueError("arm-fold roster must cover the exact arm by fold matrix")
+        if self.model_training_requirements:
+            _require_contiguous(
+                "Model training requirement", self.model_training_requirements
+            )
+        dependency_pairs = {
+            (item.fit_fold_id, item.validation_fold_id)
+            for item in self.fold_dependencies
+        }
+        model_arm_ids = {
+            arm_id
+            for arm_id, arm in arm_by_id.items()
+            if arm.execution_kind is BacktestExecutionKind.MODEL
+        }
+        actual_requirements: set[tuple[UUID, UUID, UUID]] = set()
+        for requirement in self.model_training_requirements:
+            arm = arm_by_id.get(requirement.model_arm_id)
+            pair = (requirement.fit_fold_id, requirement.validation_fold_id)
+            if (
+                arm is None
+                or arm.execution_kind is not BacktestExecutionKind.MODEL
+                or arm.model != requirement.model_definition
+            ):
+                raise ValueError("Model training requirement does not match a Model arm")
+            if pair not in dependency_pairs:
+                raise ValueError("Model training requirement lacks exact FoldDependency")
+            key = (requirement.model_arm_id, *pair)
+            if key in actual_requirements:
+                raise ValueError("Model training requirement is duplicated")
+            actual_requirements.add(key)
+        expected_requirements = {
+            (arm_id, fit_id, validation_id)
+            for arm_id in model_arm_ids
+            for fit_id, validation_id in dependency_pairs
+        }
+        if actual_requirements != expected_requirements:
+            raise ValueError(
+                "every Model validation requires one exact training requirement"
+            )
+        _require_contiguous("cost", self.cost_assumptions)
+        if len({item.cost_kind for item in self.cost_assumptions}) != len(
+            self.cost_assumptions
+        ):
+            raise ValueError("shared cost kinds must be unique")
+        shared_cost_hash = _roster_hash(
+            self.cost_assumptions,
+            identity_name="assumption_id",
+        )
+        for arm in self.arms:
+            shared_bindings = (
+                (
+                    "Candidate",
+                    arm.candidate_binding_source,
+                    arm.candidate,
+                    self.defaults.candidate,
+                ),
+                (
+                    "Context",
+                    arm.context_binding_source,
+                    arm.context,
+                    self.defaults.context,
+                ),
+                (
+                    "Strategy",
+                    arm.strategy_binding_source,
+                    arm.strategy,
+                    self.defaults.strategy,
+                ),
+                (
+                    "Portfolio",
+                    arm.portfolio_binding_source,
+                    arm.portfolio,
+                    self.defaults.portfolio,
+                ),
+                (
+                    "Risk",
+                    arm.risk_binding_source,
+                    arm.risk,
+                    self.defaults.risk,
+                ),
+            )
+            for name, source, effective, default in shared_bindings:
+                if (
+                    source is BacktestBindingSource.SHARED_DEFAULT
+                    and effective != default
+                ):
+                    raise ValueError(f"{name} shared binding differs from root default")
+            if (
+                arm.cost_binding_source is BacktestBindingSource.SHARED_DEFAULT
+                and arm.effective_cost_roster_sha256 != shared_cost_hash
+            ):
+                raise ValueError("Cost shared binding differs from root default")
+        _require_contiguous("Evaluation requirement", self.evaluation_requirements)
+        requirements_by_fold = {
+            item.fold_id: item for item in self.evaluation_requirements
+        }
+        if len(requirements_by_fold) != len(self.evaluation_requirements) or set(
+            requirements_by_fold
+        ) != set(fold_by_id):
+            raise ValueError("Evaluation requirements must cover every fold exactly once")
+        for fold_id, evaluation_requirement in requirements_by_fold.items():
+            if (
+                evaluation_requirement.evaluation_protocol
+                != fold_by_id[fold_id].evaluation_protocol
+            ):
+                raise ValueError("Evaluation requirement Protocol does not match fold")
+
+        distinct_count = len(session_dates)
+        binding_count = sum(len(item.sessions) for item in self.folds)
+        roster_hashes = {
+            "sample_roster_sha256": _roster_hash(
+                self.sample_members,
+                identity_name="universe_revision_member_id",
+            ),
+            "feature_roster_sha256": ContentHash(
+                canonical_json_sha256(
+                    tuple(
+                        {
+                            "content_sha256": str(binding.content_sha256),
+                            "feature_definition_id": binding.authority_id,
+                            "ordinal": ordinal,
+                        }
+                        for ordinal, binding in enumerate(
+                            self.feature_definitions, start=1
+                        )
+                    )
+                )
+            ),
+            "arm_roster_sha256": _roster_hash(
+                self.arms,
+                identity_name="exploratory_backtest_arm_id",
+            ),
+            "fold_roster_sha256": _roster_hash(
+                self.folds,
+                identity_name="exploratory_backtest_fold_id",
+            ),
+            "dependency_roster_sha256": _roster_hash(
+                self.fold_dependencies,
+                identity_name="dependency_id",
+            ),
+            "arm_fold_roster_sha256": _roster_hash(
+                self.arm_folds,
+                identity_name="arm_fold_id",
+            ),
+            "model_training_requirement_roster_sha256": _roster_hash(
+                self.model_training_requirements,
+                identity_name="requirement_id",
+            ),
+            "cost_roster_sha256": shared_cost_hash,
+            "evaluation_roster_sha256": _roster_hash(
+                self.evaluation_requirements,
+                identity_name="requirement_id",
+            ),
+        }
+        provenance_hash = ContentHash(str(self.provenance_sha256))
+        object.__setattr__(self, "provenance_sha256", provenance_hash)
+        object.__setattr__(self, "distinct_trading_session_count", distinct_count)
+        object.__setattr__(self, "fold_session_binding_count", binding_count)
+        for name, value in roster_hashes.items():
+            object.__setattr__(self, name, value)
+        specification_hash = ContentHash(
+            canonical_json_sha256(
+                {
+                        **{name: str(value) for name, value in roster_hashes.items()},
+                        "code_artifact": self.code_artifact,
+                        "config_artifact": self.config_artifact,
+                        "defaults": self.defaults,
+                        "distinct_trading_session_count": distinct_count,
+                        "evidence_lane": self.evidence_lane,
+                        "exchange_code": self.exchange_code,
+                        "exploratory_backtest_run_id": self.exploratory_backtest_run_id,
+                        "first_trading_session_id": self.first_trading_session_id,
+                        "fold_session_binding_count": binding_count,
+                        "generation": self.generation,
+                        "hypothesis": self.hypothesis,
+                        "last_trading_session_id": self.last_trading_session_id,
+                        "market_archive": self.market_archive,
+                        "market_archive_seal": self.market_archive_seal,
+                        "provenance_sha256": str(provenance_hash),
+                        "random_seed": self.random_seed,
+                        "run_code": self.run_code,
+                        "sample_scope_code": self.sample_scope_code,
+                        "specification_schema_version": self.specification_schema_version,
+                        "target": self.target,
+                        "universe_revision": self.universe_revision,
+                        "walk_forward_policy": self.walk_forward_policy,
+                }
+            )
+        )
+        object.__setattr__(self, "content_sha256", specification_hash)
+        object.__setattr__(
+            self,
+            "definition_sha256",
+            ContentHash(
+                canonical_json_sha256(
+                    {
+                        "current_specification_sha256": str(specification_hash),
+                        "exploratory_backtest_run_id": (
+                            self.exploratory_backtest_run_id
+                        ),
+                        "specification_schema_version": (
+                            self.specification_schema_version
+                        ),
+                    }
+                )
+            ),
+        )
+
+
+def _require_contiguous(name: str, rows: tuple[object, ...]) -> None:
+    if not rows:
+        raise ValueError(f"{name} roster must be non-empty")
+    ordinals = tuple(getattr(item, "ordinal") for item in rows)
+    if ordinals != tuple(range(1, len(rows) + 1)):
+        raise ValueError(f"{name} ordinals must be contiguous")
+
+
+def _roster_hash(rows: tuple[object, ...], *, identity_name: str) -> ContentHash:
+    return ContentHash(
+        canonical_json_sha256(
+            tuple(
+                {
+                    "content_sha256": str(getattr(item, "content_sha256")),
+                    identity_name: getattr(item, identity_name),
+                    "ordinal": getattr(item, "ordinal"),
+                }
+                for item in rows
+            )
+        )
+    )
+
+
+__all__ = [
+    "AuthorityBinding",
+    "BacktestArmFold",
+    "BacktestArmSpecification",
+    "BacktestBindingSource",
+    "BacktestComparisonRole",
+    "BacktestContextMode",
+    "BacktestCostAssumption",
+    "BacktestCostChargeSide",
+    "BacktestCostKind",
+    "BacktestEvaluationRequirement",
+    "BacktestExecutionKind",
+    "BacktestFoldDependency",
+    "BacktestFoldSession",
+    "BacktestFoldSpecification",
+    "BacktestModelTrainingRequirement",
+    "BacktestPolicyDefaults",
+    "BacktestSampleMember",
+    "BacktestSessionRole",
+    "BacktestSpecification",
+    "BacktestWalkForwardMode",
+    "BacktestWalkForwardPolicy",
+    "FrozenBacktestEvidence",
+    "FrozenBacktestRun",
+    "FrozenBacktestSource",
+    "VersionedAuthorityBinding",
+]
