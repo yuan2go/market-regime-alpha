@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from datetime import datetime
 from decimal import Decimal
 import re
@@ -10,6 +10,9 @@ from statistics import median
 from uuid import UUID
 
 from market_regime_alpha.research_qualification.domain.model import ArtifactBinding
+from market_regime_alpha.research_qualification.domain.evaluation_formula import (
+    EvaluationFormulaDefinition,
+)
 from market_regime_alpha.research_qualification.domain.research_vocabulary import PartitionPurpose
 from market_regime_alpha.research_qualification.domain.research_vocabulary import (
     AcceptanceOperator,
@@ -69,7 +72,12 @@ class EvaluationProtocolPlan:
             raise ValueError("Protocol metric codes must be unique")
         target_hash = ContentHash(str(self.target_definition_sha256))
         provenance_hash = ContentHash(str(self.provenance_sha256))
-        roster_hash = ContentHash(canonical_json_sha256(self.metrics))
+        # A newly optional formula must not add ``formula: null`` to the
+        # canonical bytes of historical Protocol metrics.  Build the roster
+        # projection explicitly so formula-less historical Authorities keep
+        # their exact pre-extension hashes, while current formula-backed
+        # metrics freeze the typed formula closure.
+        roster_hash = evaluation_protocol_metric_roster_sha256(self.metrics)
         object.__setattr__(self, "target_definition_sha256", target_hash)
         object.__setattr__(self, "provenance_sha256", provenance_hash)
         object.__setattr__(self, "metric_roster_sha256", roster_hash)
@@ -153,6 +161,7 @@ class ProtocolMetricDefinition:
     missingness_policy: EvaluationMissingnessPolicy = EvaluationMissingnessPolicy.RETAIN_AND_ESTIMATE
     source_kind: EvaluationSourceKind = EvaluationSourceKind.OUTCOME_METRIC
     source_measure: EvaluationSourceMeasure = EvaluationSourceMeasure.TARGET_VALUE
+    formula: EvaluationFormulaDefinition | None = None
     content_sha256: ContentHash = field(init=False)
 
     def __post_init__(self) -> None:
@@ -303,33 +312,64 @@ class ProtocolMetricDefinition:
             raise ValueError("acceptance threshold is required")
         if self.direction is MetricDirection.DESCRIPTIVE and self.acceptance_operator is not AcceptanceOperator.NONE:
             raise ValueError("descriptive direction requires NONE acceptance")
+        if (
+            self.formula is not None
+            and self.formula.evaluation_protocol_metric_id
+            != self.evaluation_protocol_metric_id
+        ):
+            raise ValueError("formula does not belong to this Protocol metric")
+        content = {
+            "acceptance_operator": self.acceptance_operator,
+            "acceptance_threshold": self.acceptance_threshold,
+            "backtest_arm_kind": self.backtest_arm_kind,
+            "candidate_disposition": self.candidate_disposition,
+            "direction": self.direction,
+            "inclusion_policy": self.inclusion_policy,
+            "metric_code": self.metric_code,
+            "minimum_estimable_count": self.minimum_estimable_count,
+            "missingness_policy": self.missingness_policy,
+            "ordinal": self.ordinal,
+            "reducer": self.reducer,
+            "slice_kind": self.slice_kind,
+            "source_metric_code": self.source_metric_code,
+            "source_kind": self.source_kind,
+            "source_measure": self.source_measure,
+            "source_target_metric_definition_id": self.source_target_metric_definition_id,
+            "source_value_type": self.source_value_type,
+        }
+        # Absence intentionally preserves every historical metric byte/hash.
+        if self.formula is not None:
+            content["formula_content_sha256"] = str(self.formula.content_sha256)
         object.__setattr__(
             self,
             "content_sha256",
-            ContentHash(
-                canonical_json_sha256(
-                    {
-                        "acceptance_operator": self.acceptance_operator,
-                        "acceptance_threshold": self.acceptance_threshold,
-                        "backtest_arm_kind": self.backtest_arm_kind,
-                        "candidate_disposition": self.candidate_disposition,
-                        "direction": self.direction,
-                        "inclusion_policy": self.inclusion_policy,
-                        "metric_code": self.metric_code,
-                        "minimum_estimable_count": self.minimum_estimable_count,
-                        "missingness_policy": self.missingness_policy,
-                        "ordinal": self.ordinal,
-                        "reducer": self.reducer,
-                        "slice_kind": self.slice_kind,
-                        "source_metric_code": self.source_metric_code,
-                        "source_kind": self.source_kind,
-                        "source_measure": self.source_measure,
-                        "source_target_metric_definition_id": self.source_target_metric_definition_id,
-                        "source_value_type": self.source_value_type,
-                    }
-                )
-            ),
+            ContentHash(canonical_json_sha256(content)),
         )
+
+
+def _protocol_metric_roster_value(
+    metric: ProtocolMetricDefinition,
+) -> dict[str, object]:
+    value = {
+        item.name: getattr(metric, item.name)
+        for item in fields(metric)
+        if item.name != "formula"
+    }
+    if metric.formula is not None:
+        value["formula"] = metric.formula
+    return value
+
+
+def evaluation_protocol_metric_roster_sha256(
+    metrics: tuple[ProtocolMetricDefinition, ...],
+) -> ContentHash:
+    """Hash a Protocol metric roster without rewriting legacy semantics."""
+
+    return ContentHash(
+        canonical_json_sha256(
+            tuple(_protocol_metric_roster_value(metric) for metric in metrics)
+        )
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -632,6 +672,7 @@ __all__ = [
     "ProtocolMetricDefinition",
     "EvaluationProtocolPlan",
     "EvaluationRunPlan",
+    "evaluation_protocol_metric_roster_sha256",
     "evaluate_metric",
     "transition_evaluation_run",
 ]

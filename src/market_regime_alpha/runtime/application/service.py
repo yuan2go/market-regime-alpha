@@ -219,6 +219,7 @@ class RuntimeApplication:
     def claim_next(
         self,
         *,
+        run_id: UUID | None = None,
         worker_id: str,
         lease_duration: timedelta,
         context: CommandContext,
@@ -226,13 +227,21 @@ class RuntimeApplication:
         if not worker_id:
             raise ValueError("worker_id is required")
         request_hash = canonical_json_sha256(
-            {"worker_id": worker_id, "lease_duration": lease_duration}
+            {
+                "lease_duration": lease_duration,
+                "run_id": run_id,
+                "worker_id": worker_id,
+            }
         )
         with self._uow_provider() as uow:
             receipt = uow.receipts.start(
                 receipt_id=self._id_factory(),
                 command_kind="CLAIM_RUNTIME_STEP",
-                scope_id="runtime-ready-queue",
+                scope_id=(
+                    "runtime-ready-queue"
+                    if run_id is None
+                    else f"runtime-run:{run_id}"
+                ),
                 idempotency_key=context.idempotency_key,
                 request_hash=request_hash,
             )
@@ -242,6 +251,7 @@ class RuntimeApplication:
                 return self._load_claim(UUID(receipt.result_aggregate_id))
             claim = uow.runtime.claim_next(
                 attempt_id=self._id_factory(),
+                run_id=run_id,
                 worker_id=worker_id,
                 lease_duration=lease_duration,
             )
@@ -390,11 +400,12 @@ class RuntimeApplication:
         *,
         actor_id: str,
         reason_code: str,
+        run_id: UUID | None = None,
     ) -> tuple[UUID, ...]:
         if not actor_id or not _CODE.fullmatch(reason_code):
             raise ValueError("recovery actor and reason are required")
         with self._uow_provider() as scan_uow:
-            attempt_ids = scan_uow.runtime.expired_attempt_ids()
+            attempt_ids = scan_uow.runtime.expired_attempt_ids(run_id)
         recovered: list[UUID] = []
         for attempt_id in attempt_ids:
             request_hash = canonical_json_sha256(
@@ -442,7 +453,7 @@ class RuntimeApplication:
                 uow.commit()
                 recovered.append(attempt_id)
         with self._uow_provider() as scan_uow:
-            step_ids = scan_uow.runtime.deadline_expired_step_ids()
+            step_ids = scan_uow.runtime.deadline_expired_step_ids(run_id)
         for step_id in step_ids:
             request_hash = canonical_json_sha256(
                 {"step_id": step_id, "reason_code": reason_code}

@@ -9,6 +9,7 @@ from typing import Protocol, Self
 from uuid import UUID
 
 from market_regime_alpha.research_qualification.domain.research_models import (
+    ReproducibleModelTrainingRunPlan,
     ModelTrainingRunPlan,
     ModelVersionPlan,
     ResearchModelPlan,
@@ -60,6 +61,12 @@ class ModelVersionRecord:
     registered_at: datetime
 
 
+@dataclass(frozen=True, slots=True)
+class ReproducibleModelTrainingRunRecord:
+    training_run: ModelTrainingRunRecord
+    reproducibility_sha256: str
+
+
 class ResearchModelRepository(Protocol):
     def lock_model_identity(self, model_code: str) -> None: ...
 
@@ -79,6 +86,14 @@ class ResearchModelRepository(Protocol):
         request_sha256: str,
     ) -> ModelTrainingRunRecord: ...
 
+    def register_reproducible_training_run(
+        self,
+        plan: ReproducibleModelTrainingRunPlan,
+        *,
+        request_identity: str,
+        request_sha256: str,
+    ) -> ReproducibleModelTrainingRunRecord: ...
+
     def register_version(
         self,
         plan: ModelVersionPlan,
@@ -89,13 +104,16 @@ class ResearchModelRepository(Protocol):
 
     def model_record(self, model_id: UUID, *, lock: bool) -> ResearchModelRecord: ...
 
-    def training_run_record(
-        self, model_training_run_id: UUID, *, lock: bool
-    ) -> ModelTrainingRunRecord: ...
+    def training_run_record(self, model_training_run_id: UUID, *, lock: bool) -> ModelTrainingRunRecord: ...
 
-    def version_record(
-        self, model_version_id: UUID, *, lock: bool
-    ) -> ModelVersionRecord: ...
+    def reproducible_training_run_record(
+        self,
+        model_training_run_id: UUID,
+        *,
+        lock: bool,
+    ) -> ReproducibleModelTrainingRunRecord | None: ...
+
+    def version_record(self, model_version_id: UUID, *, lock: bool) -> ModelVersionRecord: ...
 
 
 class ResearchModelUnitOfWork(Protocol):
@@ -134,6 +152,7 @@ __all__ = [
     "ModelTrainingRunRecord",
     "ModelVersionRecord",
     "ResearchModelRecord",
+    "ReproducibleModelTrainingRunRecord",
     "ResearchModelRepository",
     "ResearchModelUnitOfWork",
     "ResearchModelUnitOfWorkProvider",

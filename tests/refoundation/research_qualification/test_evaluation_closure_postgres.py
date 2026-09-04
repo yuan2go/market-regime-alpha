@@ -27,6 +27,13 @@ from market_regime_alpha.research_qualification.domain.evaluation import (
     EvaluationRunPlan,
     ProtocolMetricDefinition,
 )
+from market_regime_alpha.research_qualification.domain.evaluation_formula import (
+    BacktestFormulaCode,
+    BacktestMetricSurface,
+    EvaluationFormulaDefinition,
+    EvaluationFormulaParameter,
+    FormulaParameterType,
+)
 from market_regime_alpha.research_qualification.domain.experiment import (
     ExperimentDefinition,
     ExperimentPartitionBinding,
@@ -183,6 +190,7 @@ def _freeze_and_predeclare(
     *,
     purpose: PartitionPurpose = PartitionPurpose.VALIDATION,
     overlap_policy: PartitionOverlapPolicy = PartitionOverlapPolicy.DIAGNOSTIC_REUSE,
+    with_formula: bool = False,
 ):
     ids = uuid4
     partition_commands = ResearchPartitionCommands(
@@ -261,6 +269,28 @@ def _freeze_and_predeclare(
         id_factory=ids,
     )
     source_metric = target.metrics[0]
+    metric_id = uuid4()
+    formula = (
+        EvaluationFormulaDefinition(
+            evaluation_protocol_metric_id=metric_id,
+            formula_code=BacktestFormulaCode.MEAN,
+            formula_version=1,
+            decimal_precision=28,
+            rounding_mode="ROUND_HALF_EVEN",
+            parameters=(
+                EvaluationFormulaParameter(
+                    formula_parameter_id=uuid4(),
+                    ordinal=1,
+                    parameter_code="minimum_observations",
+                    value_type=FormulaParameterType.INTEGER,
+                    integer_value=1,
+                ),
+            ),
+            surface=BacktestMetricSurface.ECONOMICS,
+        )
+        if with_formula
+        else None
+    )
     protocol = EvaluationProtocolPlan(
         evaluation_protocol_id=uuid4(),
         protocol_code=f"wp11-protocol-{uuid4().hex[:8]}",
@@ -272,7 +302,7 @@ def _freeze_and_predeclare(
         decision_rule="Report the frozen mean without changing membership.",
         metrics=(
             ProtocolMetricDefinition(
-                evaluation_protocol_metric_id=uuid4(),
+                evaluation_protocol_metric_id=metric_id,
                 metric_code="mean-return", ordinal=1,
                 source_target_metric_definition_id=source_metric.target_metric_definition_id,
                 source_metric_code=source_metric.metric_code,
@@ -284,6 +314,7 @@ def _freeze_and_predeclare(
                 minimum_estimable_count=1,
                 acceptance_operator=AcceptanceOperator.NONE,
                 acceptance_threshold=None,
+                formula=formula,
             ),
         ),
         code_artifact=target.algorithm.code_artifact,
@@ -295,6 +326,42 @@ def _freeze_and_predeclare(
         _wp11_context("register-protocol", "REGISTER_EVALUATION_PROTOCOL"),
     )
     return evaluation_commands, partition, experiment_run_id, protocol
+
+
+def test_protocol_formula_companion_round_trips_and_reconciles(wp11_stack) -> None:
+    stack = wp11_stack
+    target, _, _, _ = _settle_two_visible_revisions(stack)
+    commands, _, _, protocol = _freeze_and_predeclare(
+        stack,
+        target,
+        with_formula=True,
+    )
+
+    replay = commands.register_protocol(
+        protocol,
+        _wp11_context("register-protocol", "REGISTER_EVALUATION_PROTOCOL"),
+    )
+
+    assert replay.replayed is True
+    with psycopg.connect(stack.database_url) as connection:
+        formula = connection.execute(
+            """
+            SELECT surface_code, formula_code, formula_version, parameter_count
+            FROM mra.evaluation_metric_formula
+            WHERE evaluation_protocol_metric_id = %s
+            """,
+            (protocol.metrics[0].evaluation_protocol_metric_id,),
+        ).fetchone()
+        parameter = connection.execute(
+            """
+            SELECT parameter_code, value_type, integer_value
+            FROM mra.evaluation_formula_parameter
+            WHERE evaluation_protocol_metric_id = %s
+            """,
+            (protocol.metrics[0].evaluation_protocol_metric_id,),
+        ).fetchone()
+    assert formula == ("ECONOMICS", "mean", 1, 1)
+    assert parameter == ("minimum_observations", "INTEGER", 1)
 
 
 def _run_evaluation(commands, experiment_run_id: UUID, protocol, cutoff, suffix: str):
@@ -321,6 +388,40 @@ def _run_evaluation(commands, experiment_run_id: UUID, protocol, cutoff, suffix:
         _wp11_context(f"complete-{suffix}", "COMPLETE_EVALUATION_RUN"),
     )
     return evaluation_run_id, acquired, completed
+
+
+def test_frozen_formula_executes_and_persists_typed_estimability_reason(
+    wp11_stack,
+) -> None:
+    stack = wp11_stack
+    target, _, _, settled = _settle_two_visible_revisions(stack)
+    commands, _, experiment_run_id, protocol = _freeze_and_predeclare(
+        stack,
+        target,
+        with_formula=True,
+    )
+    evaluation_run_id, _, _ = _run_evaluation(
+        commands,
+        experiment_run_id,
+        protocol,
+        settled[-1][1] + timedelta(microseconds=1),
+        "frozen-formula",
+    )
+
+    with psycopg.connect(stack.database_url) as connection:
+        metric = connection.execute(
+            """
+            SELECT metric_state, decimal_value, estimable_count, reason_code
+            FROM mra.evaluation_metric
+            WHERE evaluation_run_id = %s
+            """,
+            (evaluation_run_id,),
+        ).fetchone()
+
+    assert metric is not None
+    assert metric[0] == "ESTIMATED"
+    assert Decimal(metric[1]) == Decimal("0.059405940594059406")
+    assert metric[2:] == (1, "ESTIMATED_BY_FROZEN_FORMULA")
 
 
 def test_pit_safe_first_and_repeated_access_close_complete_evaluations(

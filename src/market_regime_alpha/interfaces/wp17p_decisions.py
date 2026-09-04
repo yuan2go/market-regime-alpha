@@ -21,7 +21,6 @@ from market_regime_alpha.decision_support.domain import (
 from market_regime_alpha.interfaces.wp17p_authorities import Wp17pAuthorityCatalog
 from market_regime_alpha.interfaces.wp17p_operations import Wp17pDatasetAuthority
 from market_regime_alpha.research_qualification.domain.exploratory_backtest import (
-    BacktestArmKind,
     BacktestSessionRole,
 )
 from market_regime_alpha.runtime.application import ActorType, CommandContext

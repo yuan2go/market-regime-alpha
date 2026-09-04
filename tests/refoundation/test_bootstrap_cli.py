@@ -34,6 +34,9 @@ from market_regime_alpha.infrastructure.postgres.queries import (
 from market_regime_alpha.infrastructure.postgres.queries.exploratory_backtests import (
     PostgresExploratoryBacktestVerificationPort,
 )
+from market_regime_alpha.infrastructure.postgres.queries.backtests import (
+    PostgresBacktestQueryPort,
+)
 from market_regime_alpha.interfaces.cli import main
 from market_regime_alpha.market.application import (
     ArchiveCommands,
@@ -46,6 +49,18 @@ from market_regime_alpha.research_qualification.application import (
     ExploratoryBacktestCommands,
     ResearchPartitionCommands,
     ResearchEvaluationVerifier,
+)
+from market_regime_alpha.research_qualification.application.backtest_execution import (
+    BacktestExecutor,
+)
+from market_regime_alpha.research_qualification.application.backtest_replay import (
+    BacktestReplayApplication,
+)
+from market_regime_alpha.research_qualification.application.backtest_reports import (
+    BacktestReportApplication,
+)
+from market_regime_alpha.research_qualification.application.backtests import (
+    BacktestApplication,
 )
 from market_regime_alpha.selection.application import (
     CandidateApplication,
@@ -148,6 +163,14 @@ def test_mra_db_bootstrap_verify_and_runtime_inspection_smoke(
         assert isinstance(application.research_partitions, ResearchPartitionCommands)
         assert isinstance(application.research_experiments, ExperimentCommands)
         assert isinstance(application.exploratory_backtests, ExploratoryBacktestCommands)
+        assert isinstance(application.backtests, BacktestApplication)
+        assert isinstance(
+            application.backtest_specifications,
+            PostgresBacktestQueryPort,
+        )
+        assert isinstance(application.backtest_execution, BacktestExecutor)
+        assert isinstance(application.backtest_replay, BacktestReplayApplication)
+        assert isinstance(application.backtest_reports, BacktestReportApplication)
         assert isinstance(
             application.exploratory_backtest_verifier,
             PostgresExploratoryBacktestVerificationPort,

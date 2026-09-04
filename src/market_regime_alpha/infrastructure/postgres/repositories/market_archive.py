@@ -21,6 +21,7 @@ from market_regime_alpha.market.domain import (
     MarketArchiveSeal,
     PriceBasis,
     ProspectiveArchiveGenerationPlan,
+    ProspectiveArchivePlanningGap,
 )
 from market_regime_alpha.market.ports.archive import (
     ArchiveResourceStopRecord,
@@ -186,6 +187,7 @@ class PostgresArchiveRepository:
                     for item in plan.members
                 ),
             )
+
             cursor.executemany(
                 """
                 INSERT INTO mra.prospective_archive_slice_schedule (
@@ -211,6 +213,75 @@ class PostgresArchiveRepository:
                     for item in plan.schedules
                 ),
             )
+
+    def insert_prospective_planning_gap(
+        self,
+        gap: ProspectiveArchivePlanningGap,
+    ) -> None:
+        self._connection.execute(
+            """
+            INSERT INTO mra.prospective_archive_planning_gap (
+                prospective_archive_planning_gap_id, series_code,
+                expected_generation, predecessor_market_archive_id,
+                target_definition_id, target_version,
+                target_definition_sha256, expected_decision_session_id,
+                detected_at, reason_code, content_sha256
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                gap.prospective_archive_planning_gap_id,
+                gap.series_code,
+                gap.expected_generation,
+                gap.predecessor_market_archive_id,
+                gap.target_definition_id,
+                gap.target_version,
+                str(gap.target_definition_sha256),
+                gap.expected_decision_session_id,
+                gap.detected_at,
+                gap.reason_code,
+                str(gap.content_sha256),
+            ),
+        )
+
+    def get_prospective_planning_gap(
+        self,
+        planning_gap_id: UUID,
+    ) -> ProspectiveArchivePlanningGap:
+        row = self._connection.execute(
+            """
+            SELECT series_code, expected_generation,
+                   predecessor_market_archive_id, target_definition_id,
+                   target_version, target_definition_sha256,
+                   expected_decision_session_id, detected_at,
+                   reason_code, content_sha256
+            FROM mra.prospective_archive_planning_gap
+            WHERE prospective_archive_planning_gap_id = %s
+            """,
+            (planning_gap_id,),
+        ).fetchone()
+        if row is None:
+            raise RuntimeNotFoundError(
+                f"Prospective planning gap {planning_gap_id} does not exist"
+            )
+        gap = ProspectiveArchivePlanningGap(
+            prospective_archive_planning_gap_id=planning_gap_id,
+            series_code=str(row[0]),
+            expected_generation=int(row[1]),
+            predecessor_market_archive_id=(
+                UUID(str(row[2])) if row[2] is not None else None
+            ),
+            target_definition_id=UUID(str(row[3])),
+            target_version=int(row[4]),
+            target_definition_sha256=str(row[5]),
+            expected_decision_session_id=UUID(str(row[6])),
+            detected_at=row[7],
+            reason_code=str(row[8]),
+        )
+        if str(gap.content_sha256) != str(row[9]):
+            raise RuntimeStateConflictError(
+                "persisted prospective planning gap does not reconcile"
+            )
+        return gap
 
     def get_archive(self, market_archive_id: UUID, *, lock: bool = False) -> MarketArchive:
         suffix = " FOR UPDATE" if lock else ""

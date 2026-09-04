@@ -6,6 +6,10 @@ from dataclasses import dataclass, field
 import re
 from uuid import UUID
 
+from market_regime_alpha.decision_support.domain.context import (
+    ContextKind,
+    ContextState,
+)
 from market_regime_alpha.research_qualification.domain.model import ArtifactBinding
 from market_regime_alpha.research_qualification.domain.research_vocabulary import (
     PartitionOverlapPolicy,
@@ -18,6 +22,44 @@ from market_regime_alpha.shared.identity import ContentHash
 
 _CODE = re.compile(r"^[a-z][a-z0-9_-]{0,99}$")
 _EXCHANGE_CODE = re.compile(r"^[A-Z][A-Z0-9]{1,15}$")
+
+
+@dataclass(frozen=True, slots=True)
+class BacktestPartitionSource:
+    """Exact canonical Decision lineage used to derive a Partition roster."""
+
+    exploratory_backtest_run_id: UUID
+    exploratory_backtest_arm_id: UUID
+    exploratory_backtest_fold_id: UUID | None
+    context_kind: ContextKind | None = None
+    context_state: ContextState | None = None
+    content_sha256: ContentHash = field(init=False)
+
+    def __post_init__(self) -> None:
+        if (self.context_kind is None) != (self.context_state is None):
+            raise ValueError("Context kind and state must be frozen together")
+        if self.context_kind is not None and not isinstance(
+            self.context_kind, ContextKind
+        ):
+            raise TypeError("Context kind must be typed")
+        if self.context_state is not None and not isinstance(
+            self.context_state, ContextState
+        ):
+            raise TypeError("Context state must be typed")
+        payload: dict[str, object] = {
+            "exploratory_backtest_arm_id": self.exploratory_backtest_arm_id,
+            "exploratory_backtest_fold_id": self.exploratory_backtest_fold_id,
+            "exploratory_backtest_run_id": self.exploratory_backtest_run_id,
+        }
+        # Absence retains the exact hashes of pre-Context-slice current rows.
+        if self.context_kind is not None:
+            payload["context_kind"] = self.context_kind
+            payload["context_state"] = self.context_state
+        object.__setattr__(
+            self,
+            "content_sha256",
+            ContentHash(canonical_json_sha256(payload)),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +85,7 @@ class ResearchPartitionPlan:
     code_artifact: ArtifactBinding
     config_artifact: ArtifactBinding
     provenance_sha256: ContentHash | str
+    backtest_source: BacktestPartitionSource | None = None
     content_sha256: ContentHash = field(init=False)
 
     def __post_init__(self) -> None:
@@ -87,34 +130,34 @@ class ResearchPartitionPlan:
         }
         if self.overlap_policy not in allowed[self.purpose]:
             raise ValueError("purpose and overlap_policy are incompatible")
+        content: dict[str, object] = {
+            "code_artifact": self.code_artifact,
+            "config_artifact": self.config_artifact,
+            "decision_end_session_id": self.decision_end_session_id,
+            "decision_start_session_id": self.decision_start_session_id,
+            "embargo_sessions": self.embargo_sessions,
+            "exchange_code": self.exchange_code,
+            "fold_ordinal": self.fold_ordinal,
+            "overlap_policy": self.overlap_policy,
+            "partition_code": self.partition_code,
+            "population_scope": self.population_scope,
+            "provenance_sha256": provenance_hash,
+            "purge_after_sessions": self.purge_after_sessions,
+            "purge_before_sessions": self.purge_before_sessions,
+            "purpose": self.purpose,
+            "series_code": self.series_code,
+            "target_definition_id": self.target_definition_id,
+            "target_definition_sha256": target_hash,
+            "target_version": self.target_version,
+        }
+        # Absence preserves every historical Partition request/hash byte.
+        if self.backtest_source is not None:
+            content["backtest_source"] = self.backtest_source
         object.__setattr__(
             self,
             "content_sha256",
-            ContentHash(
-                canonical_json_sha256(
-                    {
-                        "code_artifact": self.code_artifact,
-                        "config_artifact": self.config_artifact,
-                        "decision_end_session_id": self.decision_end_session_id,
-                        "decision_start_session_id": self.decision_start_session_id,
-                        "embargo_sessions": self.embargo_sessions,
-                        "exchange_code": self.exchange_code,
-                        "fold_ordinal": self.fold_ordinal,
-                        "overlap_policy": self.overlap_policy,
-                        "partition_code": self.partition_code,
-                        "population_scope": self.population_scope,
-                        "provenance_sha256": provenance_hash,
-                        "purge_after_sessions": self.purge_after_sessions,
-                        "purge_before_sessions": self.purge_before_sessions,
-                        "purpose": self.purpose,
-                        "series_code": self.series_code,
-                        "target_definition_id": self.target_definition_id,
-                        "target_definition_sha256": target_hash,
-                        "target_version": self.target_version,
-                    }
-                )
-            ),
+            ContentHash(canonical_json_sha256(content)),
         )
 
 
-__all__ = ["ResearchPartitionPlan"]
+__all__ = ["BacktestPartitionSource", "ResearchPartitionPlan"]

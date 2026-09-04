@@ -9,6 +9,7 @@ from market_regime_alpha.market.domain import (
     ProspectiveArchiveDueState,
     ProspectiveArchiveGenerationPlan,
     ProspectiveArchiveMemberPlan,
+    ProspectiveArchivePlanningGap,
     ProspectiveArchiveScheduleSlot,
     ProspectiveArchiveSession,
     ProspectiveArchiveSliceSchedulePlan,
@@ -78,7 +79,20 @@ def test_friday_target_resolves_next_actual_session_not_calendar_day() -> None:
         result.reference_at
     )
     assert by_slot[ProspectiveArchiveScheduleSlot.OUTCOME_PATH].window_start == (
+        result.outcome.open_at
+    )
+    assert by_slot[ProspectiveArchiveScheduleSlot.OUTCOME_PATH].window_end == (
         result.outcome_at
+    )
+    assert by_slot[ProspectiveArchiveScheduleSlot.OUTCOME_10_30].window_start == (
+        result.outcome_at
+    )
+    assert by_slot[ProspectiveArchiveScheduleSlot.OUTCOME_10_30].window_end > (
+        result.outcome_at
+    )
+    assert (
+        by_slot[ProspectiveArchiveScheduleSlot.OUTCOME_PATH]
+        != by_slot[ProspectiveArchiveScheduleSlot.OUTCOME_10_30]
     )
     assert by_slot[ProspectiveArchiveScheduleSlot.OUTCOME_PATH].session_id == (
         MONDAY.session_id
@@ -132,6 +146,40 @@ def test_wp18_closed_vocabularies_include_target_and_missed_semantics() -> None:
     assert ProspectiveArchiveTerminalState.CAPTURED_ON_TIME.value == "CAPTURED_ON_TIME"
     assert ProspectiveArchiveTerminalState.MISSED.value == "MISSED"
     assert ProspectiveArchiveTerminalState.RESOURCE_STOP.value == "RESOURCE_STOP"
+
+
+def test_planning_gap_freezes_exact_expected_session_and_detection_time() -> None:
+    gap = ProspectiveArchivePlanningGap(
+        prospective_archive_planning_gap_id=UUID(
+            "18000000-0000-0000-0000-000000000070"
+        ),
+        series_code="xshg_target_archive",
+        expected_generation=2,
+        predecessor_market_archive_id=UUID(
+            "18000000-0000-0000-0000-000000000071"
+        ),
+        target_definition_id=UUID("18000000-0000-0000-0000-000000000081"),
+        target_version=1,
+        target_definition_sha256="a" * 64,
+        expected_decision_session_id=D.session_id,
+        detected_at=datetime(2026, 9, 4, 1, tzinfo=UTC),
+        reason_code="GENERATION_NOT_PREDECLARED",
+    )
+
+    assert len(str(gap.content_sha256)) == 64
+    with pytest.raises(ValueError, match="reason"):
+        ProspectiveArchivePlanningGap(
+            prospective_archive_planning_gap_id=gap.prospective_archive_planning_gap_id,
+            series_code=gap.series_code,
+            expected_generation=gap.expected_generation,
+            predecessor_market_archive_id=gap.predecessor_market_archive_id,
+            target_definition_id=gap.target_definition_id,
+            target_version=gap.target_version,
+            target_definition_sha256=gap.target_definition_sha256,
+            expected_decision_session_id=gap.expected_decision_session_id,
+            detected_at=gap.detected_at,
+            reason_code="free form",
+        )
 
 
 def test_generation_requires_complete_target_al_aligned_schedule_per_member() -> None:

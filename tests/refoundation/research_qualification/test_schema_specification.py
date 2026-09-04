@@ -36,9 +36,17 @@ def test_research_and_qualification_schema_has_exact_owned_relations(
     assert EXPECTED_RESEARCH_VALIDITY_TABLES <= tables
     assert EXPECTED_RESEARCH_QUALIFICATION_TABLES <= tables
     assert EXPECTED_EXPLORATORY_BACKTEST_TABLES == {
+        "backtest_arm_fold",
+        "backtest_arm_specification",
+        "backtest_evaluation_requirement",
+        "backtest_fold_dependency",
+        "backtest_model_training_requirement",
+        "backtest_sample_member",
+        "backtest_specification",
         "exploratory_backtest_run",
         "exploratory_backtest_feature",
         "exploratory_backtest_arm",
+        "exploratory_backtest_arm_strategy",
         "exploratory_backtest_fold",
         "exploratory_backtest_fold_session",
         "exploratory_backtest_cost_assumption",

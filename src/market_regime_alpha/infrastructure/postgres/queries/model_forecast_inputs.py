@@ -25,9 +25,8 @@ from market_regime_alpha.infrastructure.postgres.pool import TargetPostgresPool
 from market_regime_alpha.infrastructure.postgres.queries.candidate_research_inputs import (
     load_research_dataset_definition,
 )
-from market_regime_alpha.research_qualification.application.deterministic_linear import (
-    load_deterministic_ridge_artifact,
-    predict_deterministic_ridge,
+from market_regime_alpha.infrastructure.postgres.queries.model_training_inputs import (
+    PostgresModelTrainingInputProvider,
 )
 from market_regime_alpha.research_qualification.domain.manifest import (
     parse_decision_input_dataset_manifest,
@@ -38,6 +37,14 @@ from market_regime_alpha.research_qualification.domain.vocabulary import (
 )
 from market_regime_alpha.research_qualification.ports.artifacts import (
     ResearchArtifactByteStore,
+)
+from market_regime_alpha.research_qualification.ports.model_execution import (
+    FrozenModelVersionPayload,
+    ModelPredictionBatch,
+    ModelPredictionRow,
+    ModelPredictor,
+    ModelScalarParameter,
+    ModelScalarType,
 )
 from market_regime_alpha.runtime.errors import ArtifactIntegrityError
 from market_regime_alpha.shared.hashing import canonical_json_sha256, sha256_bytes
@@ -50,10 +57,12 @@ class PostgresModelForecastInputPreparationProvider:
         pool: TargetPostgresPool,
         byte_store: ResearchArtifactByteStore,
         inference: InferenceInputPreparationProvider,
+        predictor: ModelPredictor,
     ) -> None:
         self._pool = pool
         self._byte_store = byte_store
         self._inference = inference
+        self._predictor = predictor
 
     def prepare(
         self,
@@ -86,16 +95,45 @@ class PostgresModelForecastInputPreparationProvider:
             fitted_binding,
             context="fitted ModelVersion",
         )
-        fitted = load_deterministic_ridge_artifact(fitted_bytes)
-        if (
-            fitted.feature_definition_ids != model_features
-            or len(fitted.coefficients) + 1 != int(root[19])
-            or fitted.alpha != Decimal(str(root[20]))
-            or fitted.seed != int(root[21])
-        ):
-            raise ArtifactIntegrityError(
-                "fitted ModelVersion bytes differ from registered training contract"
+        if bool(root[26]):
+            registered = PostgresModelTrainingInputProvider(
+                self._pool,
+                self._byte_store,
+            ).load_registered_reproducible(UUID(str(root[8])))
+            if registered.training.model_id != UUID(str(root[7])):
+                raise ArtifactIntegrityError(
+                    "Model Forecast reproducibility Model differs"
+                )
+            hyperparameters = tuple(
+                ModelScalarParameter(
+                    parameter_code=item.parameter_code,
+                    value_type=ModelScalarType(item.value_type.value),
+                    decimal_value=item.decimal_value,
+                    integer_value=item.integer_value,
+                    boolean_value=item.boolean_value,
+                    text_value=item.text_value,
+                )
+                for item in registered.reproducibility.hyperparameters
             )
+        else:
+            hyperparameters = (
+                ModelScalarParameter(
+                    parameter_code="ridge_alpha",
+                    value_type=ModelScalarType.DECIMAL,
+                    decimal_value=Decimal(str(root[20])),
+                ),
+            )
+        frozen_model = FrozenModelVersionPayload(
+            algorithm_code=str(root[23]),
+            algorithm_version=str(root[24]),
+            implementation_sha256=str(root[25]),
+            fitted_content=fitted_bytes,
+            fitted_content_sha256=fitted_binding.content_sha256,
+            feature_definition_ids=model_features,
+            hyperparameters=hyperparameters,
+            seed=int(root[21]),
+            coefficient_count=int(root[19]),
+        )
 
         manifest_bytes = _read_exact(
             self._byte_store,
@@ -183,7 +221,12 @@ class PostgresModelForecastInputPreparationProvider:
                         else failure
                     ),
                     point_estimate=(
-                        predict_deterministic_ridge(fitted, tuple(values))
+                        _predict_one(
+                            self._predictor,
+                            frozen_model,
+                            commitment.commitment_id,
+                            tuple(values),
+                        )
                         if failure is None
                         else None
                     ),
@@ -303,7 +346,11 @@ def _load_root(
                version.coefficient_count,
                training.ridge_alpha,
                training.random_seed,
-               model.target_definition_id
+               model.target_definition_id,
+               training.algorithm_code,
+               training.algorithm_version,
+               training.algorithm_sha256,
+               specification.exploratory_backtest_run_id IS NOT NULL
         FROM mra.decision_run AS decision
         JOIN mra.exploratory_retrospective_decision_run AS retrospective
           ON retrospective.decision_run_id = decision.decision_run_id
@@ -322,10 +369,16 @@ def _load_root(
              retrospective.exploratory_backtest_arm_id
          AND arm.exploratory_backtest_run_id =
              retrospective.exploratory_backtest_run_id
-         AND arm.arm_kind IN (
-             'MODEL_CHALLENGER', 'RIDGE_CURRENT_CONTEXT',
-             'RIDGE_CONTEXT_OBSERVATIONAL'
-         )
+        LEFT JOIN mra.backtest_specification AS specification
+          ON specification.exploratory_backtest_run_id =
+             retrospective.exploratory_backtest_run_id
+        LEFT JOIN mra.backtest_arm_specification AS arm_specification
+          ON arm_specification.exploratory_backtest_arm_id =
+             arm.exploratory_backtest_arm_id
+         AND arm_specification.exploratory_backtest_run_id =
+             arm.exploratory_backtest_run_id
+         AND arm_specification.specification_sha256 =
+             specification.specification_sha256
         JOIN mra.exploratory_backtest_fold AS inference_fold
           ON inference_fold.exploratory_backtest_fold_id =
              retrospective.exploratory_backtest_fold_id
@@ -353,7 +406,6 @@ def _load_root(
          AND training_fold.exploratory_backtest_run_id =
              training.exploratory_backtest_run_id
          AND training_fold.purpose = 'FIT'
-         AND training_fold.ordinal < inference_fold.ordinal
         JOIN mra.model AS model ON model.model_id = version.model_id
         JOIN mra.evaluation_protocol_metric AS metric
           ON metric.evaluation_protocol_metric_id =
@@ -369,6 +421,42 @@ def _load_root(
                     training.model_training_run_id
                 AND source_decision.decision_time >= decision.decision_time
           )
+          AND (
+              (specification.exploratory_backtest_run_id IS NOT NULL
+               AND arm_specification.execution_kind = 'MODEL'
+               AND arm_specification.model_id = version.model_id
+               AND EXISTS (
+                   SELECT 1
+                   FROM mra.backtest_model_lineage AS lineage
+                   JOIN mra.backtest_model_training_requirement AS requirement
+                     ON requirement.backtest_model_training_requirement_id =
+                        lineage.model_training_requirement_id
+                    AND requirement.exploratory_backtest_run_id =
+                        retrospective.exploratory_backtest_run_id
+                    AND requirement.exploratory_backtest_arm_id =
+                        retrospective.exploratory_backtest_arm_id
+                    AND requirement.fit_fold_id =
+                        training.exploratory_backtest_fold_id
+                    AND requirement.validation_fold_id =
+                        inference_fold.exploratory_backtest_fold_id
+                   JOIN mra.backtest_fold_dependency AS dependency
+                     ON dependency.exploratory_backtest_run_id =
+                        requirement.exploratory_backtest_run_id
+                    AND dependency.fit_fold_id = requirement.fit_fold_id
+                    AND dependency.validation_fold_id =
+                        requirement.validation_fold_id
+                   WHERE lineage.model_training_run_id =
+                         training.model_training_run_id
+                     AND lineage.model_version_id = version.model_version_id
+               ))
+              OR
+              (specification.exploratory_backtest_run_id IS NULL
+               AND arm.arm_kind IN (
+                   'MODEL_CHALLENGER', 'RIDGE_CURRENT_CONTEXT',
+                   'RIDGE_CONTEXT_OBSERVATIONAL'
+               )
+               AND training_fold.ordinal < inference_fold.ordinal)
+          )
         """
         + suffix,
         (model_version_id, decision_run_id),
@@ -378,6 +466,23 @@ def _load_root(
             "Model Forecast requires an exact later-fold retrospective Decision"
         )
     return tuple(row)
+
+
+def _predict_one(
+    predictor: ModelPredictor,
+    model: FrozenModelVersionPayload,
+    row_id: UUID,
+    features: tuple[Decimal, ...],
+) -> Decimal:
+    result = predictor.predict(
+        model,
+        ModelPredictionBatch((ModelPredictionRow(row_id, features),)),
+    )
+    if len(result) != 1 or result[0].row_id != row_id:
+        raise InferenceAuthorityIntegrityError(
+            "ModelPredictor output does not match the exact input roster"
+        )
+    return result[0].point_estimate
 
 
 def _binding(values: tuple[Any, ...]) -> DecisionArtifactBinding:

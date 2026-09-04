@@ -24,6 +24,52 @@ class PostgresPartitionInputQueries:
     def lock_target_and_calendar(
         self, plan: ResearchPartitionPlan
     ) -> PartitionCalendarBounds:
+        if plan.backtest_source is not None:
+            source = plan.backtest_source
+            exact_source = self._connection.execute(
+                """
+                SELECT specification.specification_sha256
+                FROM mra.backtest_specification AS specification
+                JOIN mra.exploratory_backtest_run AS root
+                  ON root.exploratory_backtest_run_id =
+                     specification.exploratory_backtest_run_id
+                 AND root.current_specification_sha256 =
+                     specification.specification_sha256
+                JOIN mra.backtest_arm_specification AS arm
+                  ON arm.exploratory_backtest_run_id =
+                     specification.exploratory_backtest_run_id
+                 AND arm.specification_sha256 =
+                     specification.specification_sha256
+                 AND arm.exploratory_backtest_arm_id = %s
+                LEFT JOIN mra.exploratory_backtest_fold AS fold
+                  ON fold.exploratory_backtest_run_id =
+                     specification.exploratory_backtest_run_id
+                 AND fold.specification_sha256 =
+                     specification.specification_sha256
+                 AND fold.exploratory_backtest_fold_id = %s
+                WHERE specification.exploratory_backtest_run_id = %s
+                  AND (%s::uuid IS NULL
+                       OR fold.exploratory_backtest_fold_id IS NOT NULL)
+                  AND (%s::text IS NULL OR EXISTS (
+                      SELECT 1
+                      FROM mra.context_policy_metric AS metric
+                      WHERE metric.context_policy_id = arm.context_policy_id
+                        AND metric.context_kind = %s
+                  ))
+                """,
+                (
+                    source.exploratory_backtest_arm_id,
+                    source.exploratory_backtest_fold_id,
+                    source.exploratory_backtest_run_id,
+                    source.exploratory_backtest_fold_id,
+                    None if source.context_kind is None else source.context_kind.value,
+                    None if source.context_kind is None else source.context_kind.value,
+                ),
+            ).fetchall()
+            if len(exact_source) != 1:
+                raise PartitionInputError(
+                    "exact current Backtest Partition source does not exist"
+                )
         target = self._connection.execute(
             """
             SELECT target_definition_id
@@ -185,6 +231,29 @@ class PostgresPartitionInputQueries:
             if plan.population_scope.value == "ALL_COMMITMENTS"
             else plan.population_scope.value
         )
+        source = plan.backtest_source
+        if source is not None and source.context_kind is not None:
+            self._connection.execute("LOCK TABLE mra.context_assessment IN SHARE MODE")
+        source_values = (
+            None if source is None else source.exploratory_backtest_run_id,
+            None if source is None else source.exploratory_backtest_run_id,
+            None if source is None else source.exploratory_backtest_arm_id,
+            None if source is None else source.exploratory_backtest_fold_id,
+            None if source is None else source.exploratory_backtest_fold_id,
+            None if source is None else source.exploratory_backtest_fold_id,
+            None if source is None else source.exploratory_backtest_run_id,
+            None
+            if source is None or source.context_kind is None
+            else source.context_kind.value,
+            None if source is None else source.exploratory_backtest_run_id,
+            None if source is None else source.exploratory_backtest_arm_id,
+            None
+            if source is None or source.context_kind is None
+            else source.context_kind.value,
+            None
+            if source is None or source.context_state is None
+            else source.context_state.value,
+        )
         base_count = self._connection.execute(
             """
             SELECT count(*)
@@ -194,6 +263,8 @@ class PostgresPartitionInputQueries:
                  commitment.decision_reference_observation_id
             JOIN mra.trading_session AS decision_session
               ON decision_session.session_id = reference.session_id
+            LEFT JOIN mra.exploratory_retrospective_decision_run AS backtest
+              ON backtest.decision_run_id = commitment.decision_run_id
             JOIN mra.trading_session AS start_session
               ON start_session.session_id = %s
             JOIN mra.trading_session AS end_session
@@ -205,6 +276,37 @@ class PostgresPartitionInputQueries:
               AND decision_session.session_date BETWEEN
                   start_session.session_date AND end_session.session_date
               AND (%s::text IS NULL OR commitment.candidate_disposition = %s)
+              AND (%s::uuid IS NULL OR (
+                    backtest.exploratory_backtest_run_id = %s
+                AND backtest.exploratory_backtest_arm_id = %s
+                AND ((%s::uuid IS NOT NULL AND
+                      backtest.exploratory_backtest_fold_id = %s)
+                  OR (%s::uuid IS NULL AND EXISTS (
+                      SELECT 1
+                      FROM mra.exploratory_backtest_fold AS source_fold
+                      WHERE source_fold.exploratory_backtest_fold_id =
+                            backtest.exploratory_backtest_fold_id
+                        AND source_fold.exploratory_backtest_run_id = %s
+                        AND source_fold.purpose = 'VALIDATION'
+                  )))))
+              AND (%s::text IS NULL OR EXISTS (
+                  SELECT 1
+                  FROM mra.context_assessment AS context
+                  JOIN mra.backtest_arm_specification AS source_arm
+                    ON source_arm.exploratory_backtest_run_id = %s
+                   AND source_arm.exploratory_backtest_arm_id = %s
+                  JOIN mra.exploratory_backtest_run AS source_root
+                    ON source_root.exploratory_backtest_run_id =
+                       source_arm.exploratory_backtest_run_id
+                   AND source_root.current_specification_sha256 =
+                       source_arm.specification_sha256
+                  WHERE context.decision_run_id = commitment.decision_run_id
+                    AND context.context_policy_id = source_arm.context_policy_id
+                    AND context.context_policy_content_sha256 =
+                        source_arm.context_policy_sha256
+                    AND context.context_kind = %s
+                    AND context.assessment_state = %s
+              ))
             """,
             (
                 plan.decision_start_session_id,
@@ -215,6 +317,7 @@ class PostgresPartitionInputQueries:
                 plan.exchange_code,
                 disposition,
                 disposition,
+                *source_values,
             ),
         ).fetchone()
         assert base_count is not None
@@ -238,6 +341,8 @@ class PostgresPartitionInputQueries:
                      commitment.decision_reference_observation_id
                 JOIN mra.trading_session AS decision_session
                   ON decision_session.session_id = reference.session_id
+                LEFT JOIN mra.exploratory_retrospective_decision_run AS backtest
+                  ON backtest.decision_run_id = commitment.decision_run_id
                 JOIN mra.trading_session AS start_session
                   ON start_session.session_id = %s
                 JOIN mra.trading_session AS end_session
@@ -249,6 +354,37 @@ class PostgresPartitionInputQueries:
                   AND decision_session.session_date BETWEEN
                       start_session.session_date AND end_session.session_date
                   AND (%s::text IS NULL OR commitment.candidate_disposition = %s)
+                  AND (%s::uuid IS NULL OR (
+                        backtest.exploratory_backtest_run_id = %s
+                    AND backtest.exploratory_backtest_arm_id = %s
+                    AND ((%s::uuid IS NOT NULL AND
+                          backtest.exploratory_backtest_fold_id = %s)
+                      OR (%s::uuid IS NULL AND EXISTS (
+                          SELECT 1
+                          FROM mra.exploratory_backtest_fold AS source_fold
+                          WHERE source_fold.exploratory_backtest_fold_id =
+                                backtest.exploratory_backtest_fold_id
+                            AND source_fold.exploratory_backtest_run_id = %s
+                            AND source_fold.purpose = 'VALIDATION'
+                      )))))
+                  AND (%s::text IS NULL OR EXISTS (
+                      SELECT 1
+                      FROM mra.context_assessment AS context
+                      JOIN mra.backtest_arm_specification AS source_arm
+                        ON source_arm.exploratory_backtest_run_id = %s
+                       AND source_arm.exploratory_backtest_arm_id = %s
+                      JOIN mra.exploratory_backtest_run AS source_root
+                        ON source_root.exploratory_backtest_run_id =
+                           source_arm.exploratory_backtest_run_id
+                       AND source_root.current_specification_sha256 =
+                           source_arm.specification_sha256
+                      WHERE context.decision_run_id = commitment.decision_run_id
+                        AND context.context_policy_id = source_arm.context_policy_id
+                        AND context.context_policy_content_sha256 =
+                            source_arm.context_policy_sha256
+                        AND context.context_kind = %s
+                        AND context.assessment_state = %s
+                  ))
             )
             SELECT base.commitment_id,
                    base.decision_reference_observation_id,
@@ -293,9 +429,10 @@ class PostgresPartitionInputQueries:
                 plan.exchange_code,
                 disposition,
                 disposition,
+                *source_values,
             ),
         ).fetchall()
-        if not rows:
+        if not rows and plan.backtest_source is None:
             raise PartitionInputError("declared Partition population is empty")
         if len(rows) != int(base_count[0]):
             raise PartitionInputError(

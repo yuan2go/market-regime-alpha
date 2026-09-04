@@ -13,6 +13,7 @@ from market_regime_alpha.market.domain import (
     ArchiveSealDisposition,
     MarketArchive,
     MarketArchiveSeal,
+    ProspectiveArchivePlanningGap,
     ProspectiveArchiveGenerationPlan,
 )
 
@@ -59,6 +60,16 @@ class ArchiveRepository(Protocol):
         self,
         plan: ProspectiveArchiveGenerationPlan,
     ) -> None: ...
+
+    def insert_prospective_planning_gap(
+        self,
+        gap: ProspectiveArchivePlanningGap,
+    ) -> None: ...
+
+    def get_prospective_planning_gap(
+        self,
+        planning_gap_id: UUID,
+    ) -> ProspectiveArchivePlanningGap: ...
 
     def get_archive(self, market_archive_id: UUID, *, lock: bool = False) -> MarketArchive: ...
 

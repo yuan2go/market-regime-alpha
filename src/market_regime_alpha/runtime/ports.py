@@ -45,6 +45,12 @@ class AttemptClaim:
 class StepTrace:
     step_id: UUID
     step_key: str
+    step_kind: str
+    implementation: str
+    implementation_version: str
+    request_hash: str
+    input_evidence_hash: str | None
+    deadline_at: datetime | None
     state: str
     current_fence: int
     current_attempt_id: UUID | None
@@ -54,6 +60,12 @@ class StepTrace:
 @dataclass(frozen=True, slots=True)
 class RunTrace:
     run_id: UUID
+    schedule_id: UUID
+    fire_key: str
+    runtime_mode: str
+    code_sha: str
+    config_artifact_id: UUID
+    config_hash: str
     run_state: str
     version: int
     steps: tuple[StepTrace, ...]
@@ -224,6 +236,7 @@ class RuntimeRepository(Protocol):
         self,
         *,
         attempt_id: UUID,
+        run_id: UUID | None,
         worker_id: str,
         lease_duration: timedelta,
     ) -> AttemptClaim | None: ...
@@ -255,9 +268,11 @@ class RuntimeRepository(Protocol):
         error_code: str,
     ) -> tuple[str, int, int]: ...
 
-    def expired_attempt_ids(self) -> tuple[UUID, ...]: ...
+    def expired_attempt_ids(self, run_id: UUID | None = None) -> tuple[UUID, ...]: ...
 
-    def deadline_expired_step_ids(self) -> tuple[UUID, ...]: ...
+    def deadline_expired_step_ids(
+        self, run_id: UUID | None = None
+    ) -> tuple[UUID, ...]: ...
 
     def recover_expired_attempt(
         self, attempt_id: UUID, *, receipt_id: UUID

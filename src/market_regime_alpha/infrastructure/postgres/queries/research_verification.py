@@ -10,6 +10,14 @@ import psycopg
 from market_regime_alpha.infrastructure.postgres.pool import TargetPostgresPool
 from market_regime_alpha.research_qualification.domain.evaluation import (
     ProtocolMetricDefinition,
+    evaluation_protocol_metric_roster_sha256,
+)
+from market_regime_alpha.research_qualification.domain.evaluation_formula import (
+    BacktestFormulaCode,
+    BacktestMetricSurface,
+    EvaluationFormulaDefinition,
+    EvaluationFormulaParameter,
+    FormulaParameterType,
 )
 from market_regime_alpha.research_qualification.domain.research_vocabulary import (
     AcceptanceOperator,
@@ -56,7 +64,9 @@ class PostgresResearchEvaluationVerificationProvider:
                        protected_start_session_id, protected_end_session_id,
                        protected_start_date, protected_end_date,
                        calendar_session_count, calendar_roster_sha256,
-                       member_count, member_roster_sha256
+                       member_count, member_roster_sha256,
+                       source_backtest_run_id, source_backtest_arm_id,
+                       source_backtest_fold_id, source_backtest_sha256
                 FROM mra.research_partition
                 WHERE research_partition_id = %s
                 """,
@@ -211,11 +221,19 @@ class PostgresResearchEvaluationVerificationProvider:
                          commitment.decision_reference_observation_id
                     JOIN mra.trading_session AS session
                       ON session.session_id = reference.session_id
+                    LEFT JOIN mra.exploratory_retrospective_decision_run
+                              AS backtest
+                      ON backtest.decision_run_id = commitment.decision_run_id
                     WHERE commitment.target_definition_id = %s
                       AND session.exchange = %s
                       AND session.session_date BETWEEN %s AND %s
                       AND (%s = 'ALL_COMMITMENTS'
                            OR commitment.candidate_disposition = %s)
+                      AND (%s::uuid IS NULL OR (
+                            backtest.exploratory_backtest_run_id = %s
+                        AND backtest.exploratory_backtest_arm_id = %s
+                        AND (%s::uuid IS NULL OR
+                             backtest.exploratory_backtest_fold_id = %s)))
                 ), actual AS (
                     SELECT commitment_id
                     FROM mra.research_partition_member
@@ -236,6 +254,11 @@ class PostgresResearchEvaluationVerificationProvider:
                     root[11],
                     root[5],
                     root[5],
+                    root[24],
+                    root[24],
+                    root[25],
+                    root[26],
+                    root[26],
                     research_partition_id,
                 ),
             ).fetchone()
@@ -711,8 +734,25 @@ class PostgresResearchEvaluationVerificationProvider:
                             str(cartesian_difference[0]),
                         )
                     )
-                canonical_source_difference = connection.execute(
+                candidate_outcome_table = connection.execute(
+                    "SELECT to_regclass('mra.evaluation_candidate_outcome_source')"
+                ).fetchone()
+                assert candidate_outcome_table is not None
+                candidate_outcome_clause = ""
+                candidate_outcome_parameters: tuple[object, ...] = ()
+                if candidate_outcome_table[0] is not None:
+                    candidate_outcome_clause = """
+                        OR (metric.source_kind = 'CANDIDATE_OUTCOME_PAIR'
+                            AND (SELECT count(*) FROM mra.evaluation_candidate_outcome_source AS source
+                                 WHERE source.evaluation_run_id = %s
+                                   AND source.evaluation_protocol_metric_id = metric.evaluation_protocol_metric_id) <> %s)
                     """
+                    candidate_outcome_parameters = (
+                        evaluation_run_id,
+                        int(run[5]),
+                    )
+                canonical_source_difference = connection.execute(
+                    f"""
                     SELECT count(*)
                     FROM mra.evaluation_protocol_metric AS metric
                     WHERE metric.evaluation_protocol_id = %s
@@ -729,10 +769,7 @@ class PostgresResearchEvaluationVerificationProvider:
                             AND (SELECT count(*) FROM mra.evaluation_candidate_source AS source
                                  WHERE source.evaluation_run_id = %s
                                    AND source.evaluation_protocol_metric_id = metric.evaluation_protocol_metric_id) <> %s)
-                        OR (metric.source_kind = 'CANDIDATE_OUTCOME_PAIR'
-                            AND (SELECT count(*) FROM mra.evaluation_candidate_outcome_source AS source
-                                 WHERE source.evaluation_run_id = %s
-                                   AND source.evaluation_protocol_metric_id = metric.evaluation_protocol_metric_id) <> %s)
+                        {candidate_outcome_clause}
                         OR (metric.source_kind = 'SIGNAL_STATUS'
                             AND (SELECT count(*) FROM mra.evaluation_signal_source AS source
                                  WHERE source.evaluation_run_id = %s
@@ -755,7 +792,7 @@ class PostgresResearchEvaluationVerificationProvider:
                         run[1],
                         evaluation_run_id, int(run[5]),
                         evaluation_run_id, int(run[5]),
-                        evaluation_run_id, int(run[5]),
+                        *candidate_outcome_parameters,
                         evaluation_run_id, int(run[5]),
                         evaluation_run_id, int(run[5]),
                         evaluation_run_id, int(run[5]),
@@ -908,7 +945,28 @@ class PostgresResearchEvaluationVerificationProvider:
             """,
             (protocol_id,),
         ).fetchall()
-        metrics = tuple(_protocol_metric(row) for row in rows)
+        formula_relation = connection.execute(
+            "SELECT to_regclass('mra.evaluation_metric_formula')"
+        ).fetchone()
+        formulas_available = (
+            formula_relation is not None and formula_relation[0] is not None
+        )
+        metrics = tuple(
+            _protocol_metric(
+                row,
+                formula=(
+                    _load_protocol_formula(
+                        connection,
+                        UUID(str(row[0])),
+                        protocol_id,
+                        mismatches,
+                    )
+                    if formulas_available
+                    else None
+                ),
+            )
+            for row in rows
+        )
         _inspect_order(
             mismatches,
             "evaluation_protocol.metric_ordinals",
@@ -930,7 +988,7 @@ class PostgresResearchEvaluationVerificationProvider:
             mismatches,
             "evaluation_protocol.metric_roster_sha256",
             str(root[3]),
-            canonical_json_sha256(metrics),
+            str(evaluation_protocol_metric_roster_sha256(metrics)),
         )
 
     @staticmethod
@@ -1013,7 +1071,11 @@ class PostgresResearchEvaluationVerificationProvider:
                 )
 
 
-def _protocol_metric(row: tuple[Any, ...]) -> ProtocolMetricDefinition:
+def _protocol_metric(
+    row: tuple[Any, ...],
+    *,
+    formula: EvaluationFormulaDefinition | None = None,
+) -> ProtocolMetricDefinition:
     return ProtocolMetricDefinition(
         evaluation_protocol_metric_id=UUID(str(row[0])),
         metric_code=str(row[1]),
@@ -1039,7 +1101,80 @@ def _protocol_metric(row: tuple[Any, ...]) -> ProtocolMetricDefinition:
         acceptance_threshold=row[15],
         inclusion_policy=EvaluationInclusionPolicy(str(row[16])),
         missingness_policy=EvaluationMissingnessPolicy(str(row[17])),
+        formula=formula,
     )
+
+
+def _load_protocol_formula(
+    connection: psycopg.Connection[Any],
+    metric_id: UUID,
+    protocol_id: UUID,
+    mismatches: list[Mismatch],
+) -> EvaluationFormulaDefinition | None:
+    row = connection.execute(
+        """
+        SELECT surface_code, formula_code, formula_version, decimal_precision,
+               rounding_mode, parameter_count,
+               parameter_roster_sha256, content_sha256
+        FROM mra.evaluation_metric_formula
+        WHERE evaluation_protocol_metric_id = %s
+          AND evaluation_protocol_id = %s
+        """,
+        (metric_id, protocol_id),
+    ).fetchone()
+    if row is None:
+        return None
+    parameter_rows = connection.execute(
+        """
+        SELECT formula_parameter_id, ordinal, parameter_code,
+               value_type, decimal_value, integer_value,
+               boolean_value, text_value, content_sha256
+        FROM mra.evaluation_formula_parameter
+        WHERE evaluation_protocol_metric_id = %s
+          AND evaluation_protocol_id = %s
+        ORDER BY ordinal
+        """,
+        (metric_id, protocol_id),
+    ).fetchall()
+    parameters = tuple(
+        EvaluationFormulaParameter(
+            formula_parameter_id=UUID(str(parameter[0])),
+            ordinal=int(parameter[1]),
+            parameter_code=str(parameter[2]),
+            value_type=FormulaParameterType(str(parameter[3])),
+            decimal_value=parameter[4],
+            integer_value=parameter[5],
+            boolean_value=parameter[6],
+            text_value=parameter[7],
+        )
+        for parameter in parameter_rows
+    )
+    formula = EvaluationFormulaDefinition(
+        evaluation_protocol_metric_id=metric_id,
+        formula_code=BacktestFormulaCode(str(row[1])),
+        formula_version=int(row[2]),
+        decimal_precision=int(row[3]),
+        rounding_mode=str(row[4]),
+        parameters=parameters,
+        surface=BacktestMetricSurface(str(row[0])),
+    )
+    if (
+        formula.parameter_count != int(row[5])
+        or str(formula.parameter_roster_sha256) != str(row[6])
+        or str(formula.content_sha256) != str(row[7])
+        or any(
+            str(parameter.content_sha256) != str(stored[8])
+            for parameter, stored in zip(parameters, parameter_rows, strict=True)
+        )
+    ):
+        mismatches.append(
+            _identity(
+                "evaluation_protocol.formula_closure",
+                "exact formula and typed parameter hashes",
+                str(metric_id),
+            )
+        )
+    return formula
 
 
 def _missing(path: str, identity: UUID) -> Mismatch:

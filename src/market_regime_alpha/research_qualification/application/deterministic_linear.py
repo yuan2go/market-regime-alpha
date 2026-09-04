@@ -1,4 +1,4 @@
-"""Deterministic, transparent ridge estimator for the WP-17P challenger."""
+"""Deterministic, transparent ridge estimator used by its concrete adapter."""
 
 from __future__ import annotations
 

@@ -16,6 +16,8 @@ class ArchiveSliceInspection:
     expected_fact_kind: str
     event_window_start: datetime
     event_window_end: datetime
+    request_sha256: str
+    content_sha256: str
     status: str
     observation_count: int
     latest_relation: str | None
@@ -31,6 +33,22 @@ class ArchiveInspection:
     archive_code: str
     lane: str
     evidence_class: str
+    request_identity: str
+    request_sha256: str
+    provider_product_id: UUID
+    exchange_code: str
+    timeframe: str
+    price_basis: str
+    instrument_scope: str
+    instrument_scope_sha256: str
+    reserved_free_bytes: int
+    maximum_archive_bytes: int
+    maximum_slice_bytes: int
+    code_artifact_id: UUID
+    config_artifact_id: UUID
+    provenance_sha256: str
+    content_sha256: str
+    command_result_hash: str
     archive_start_at: datetime
     event_window_start: datetime
     event_window_end: datetime

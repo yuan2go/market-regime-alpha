@@ -206,6 +206,66 @@ def test_concurrent_claim_creates_one_live_attempt_and_database_fence(
     assert row == (1, 1, 1)
 
 
+def test_worker_can_claim_only_from_one_exact_runtime_run(
+    runtime_stack: tuple[RuntimeApplication, ArtifactApplication, TargetPostgresPool, str],
+) -> None:
+    application, artifacts, _, _ = runtime_stack
+    schedule = _schedule(application)
+    first_run = _run(
+        application,
+        artifacts,
+        schedule,
+        steps=(_step("capture-first", 1),),
+        key="first-run",
+    )
+    second_run = _run(
+        application,
+        artifacts,
+        schedule,
+        steps=(_step("capture-second", 1),),
+        key="second-run",
+    )
+
+    claim = application.claim_next(
+        run_id=second_run,
+        worker_id="scoped-worker",
+        lease_duration=timedelta(seconds=5),
+        context=_context("scoped-claim", reason="WORKER_CLAIM"),
+    )
+
+    assert claim is not None
+    assert claim.run_id == second_run
+    assert application.inspect_run(first_run).steps[0].state == "READY"
+
+
+def test_runtime_inspection_exposes_the_frozen_run_and_step_contract(
+    runtime_stack: tuple[RuntimeApplication, ArtifactApplication, TargetPostgresPool, str],
+) -> None:
+    application, artifacts, _, _ = runtime_stack
+    schedule = _schedule(application)
+    expected_step = _step("capture-contract", 1)
+    run_id = _run(
+        application,
+        artifacts,
+        schedule,
+        steps=(expected_step,),
+        key="contract-run",
+    )
+
+    trace = application.inspect_run(run_id)
+
+    assert trace.schedule_id == schedule.schedule_id
+    assert trace.runtime_mode == "OPERATIONAL"
+    assert trace.fire_key == "contract-run"
+    assert trace.code_sha == "1" * 40
+    assert len(trace.config_hash) == 64
+    assert trace.steps[0].step_kind == expected_step.step_kind
+    assert trace.steps[0].implementation == expected_step.implementation
+    assert trace.steps[0].implementation_version == "1"
+    assert trace.steps[0].request_hash == expected_step.request_hash
+    assert trace.steps[0].deadline_at is None
+
+
 def test_one_run_never_has_two_live_steps_even_when_nodes_are_parallel_ready(
     runtime_stack: tuple[RuntimeApplication, ArtifactApplication, TargetPostgresPool, str],
 ) -> None:
@@ -314,6 +374,63 @@ def test_expired_lease_recovery_rejects_stale_worker_and_completes_new_fence(
             "SELECT attempt_no, fence_token, state FROM mra.runtime_attempt ORDER BY attempt_no"
         ).fetchall()
     assert attempts == [(1, 1, "ABANDONED"), (2, 2, "SUCCEEDED")]
+
+
+def test_expired_recovery_can_be_scoped_to_one_runtime_run(
+    runtime_stack: tuple[RuntimeApplication, ArtifactApplication, TargetPostgresPool, str],
+) -> None:
+    application, artifacts, _, _ = runtime_stack
+    schedule = _schedule(application)
+    first_run = _run(
+        application,
+        artifacts,
+        schedule,
+        steps=(_step("capture", 1),),
+        key="scoped-recovery-first",
+    )
+    second_run = _run(
+        application,
+        artifacts,
+        schedule,
+        steps=(_step("capture", 1),),
+        key="scoped-recovery-second",
+    )
+    first = application.claim_next(
+        run_id=first_run,
+        worker_id="worker-first",
+        lease_duration=timedelta(seconds=1),
+        context=_context("claim-scoped-first", reason="WORKER_CLAIM"),
+    )
+    second = application.claim_next(
+        run_id=second_run,
+        worker_id="worker-second",
+        lease_duration=timedelta(seconds=1),
+        context=_context("claim-scoped-second", reason="WORKER_CLAIM"),
+    )
+    assert first is not None and second is not None
+    application.start_attempt(
+        first, _context("start-scoped-first", reason="WORKER_START")
+    )
+    application.start_attempt(
+        second, _context("start-scoped-second", reason="WORKER_START")
+    )
+    time.sleep(1.1)
+
+    recovered = application.recover_expired(
+        run_id=first_run,
+        actor_id="scoped-recovery",
+        reason_code="LEASE_EXPIRED",
+    )
+
+    assert recovered == (first.attempt_id,)
+    assert application.inspect_run(first_run).steps[0].state == "READY"
+    assert application.inspect_run(second_run).steps[0].state == "RUNNING"
+    recovered_second = application.recover_expired(
+        run_id=second_run,
+        actor_id="scoped-recovery",
+        reason_code="LEASE_EXPIRED",
+    )
+    assert recovered_second == (second.attempt_id,)
 
 
 def test_retryable_failure_creates_a_new_attempt_without_reopening_old_attempt(

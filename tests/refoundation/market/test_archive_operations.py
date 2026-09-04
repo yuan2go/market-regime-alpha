@@ -36,13 +36,17 @@ class _Market:
         self.capture_calls = 0
         self.normalize_calls = 0
         self.capture_id = uuid4()
+        self.capture_claims = []
+        self.normalize_claims = []
 
     def capture(self, request, provider, context, *, runtime_claim=None):
         self.capture_calls += 1
+        self.capture_claims.append(runtime_claim)
         return _CaptureResult(_Capture(self.capture_id, self.status))
 
     def normalize(self, capture_id, normalizer, context, *, runtime_claim=None):
         self.normalize_calls += 1
+        self.normalize_claims.append(runtime_claim)
         return object()
 
 
@@ -51,17 +55,23 @@ class _Archives:
         self.observations = 0
         self.gaps = 0
         self.resource_stops = 0
+        self.observation_claims = []
+        self.gap_claims = []
+        self.resource_stop_claims = []
 
     def record_capture_observation(self, request, context, *, runtime_claim=None):
         self.observations += 1
+        self.observation_claims.append(runtime_claim)
         return object()
 
     def record_slice_gap(self, **kwargs):
         self.gaps += 1
+        self.gap_claims.append(kwargs.get("runtime_claim"))
         return object()
 
     def record_resource_stop(self, **kwargs):
         self.resource_stops += 1
+        self.resource_stop_claims.append(kwargs.get("runtime_claim"))
         return object()
 
 
@@ -161,6 +171,32 @@ def test_successful_slice_is_captured_normalized_then_observed() -> None:
     assert market.capture_calls == 1
     assert market.normalize_calls == 1
     assert archives.observations == 1
+
+
+def test_runtime_claim_is_consumed_only_by_the_terminal_archive_command() -> None:
+    request, contract = _request()
+    market = _Market(CaptureStatus.CAPTURED)
+    archives = _Archives()
+    operations = MarketArchiveOperations(
+        market,
+        archives,
+        _ReadPort(contract),
+        _Resources(150),
+        _Clock(),
+    )
+    claim = object()
+
+    operations.execute_slice(
+        request,
+        provider=object(),
+        normalizer=object(),
+        context=_context(),
+        runtime_claim=claim,  # type: ignore[arg-type]
+    )
+
+    assert market.capture_claims == [None]
+    assert market.normalize_claims == [None]
+    assert archives.observation_claims == [claim]
 
 
 def test_prospective_slice_before_frozen_window_is_not_due_without_provider_io() -> None:

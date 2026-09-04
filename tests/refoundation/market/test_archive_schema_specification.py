@@ -36,6 +36,12 @@ def test_archive_schema_has_concrete_two_lane_authority(
         "market_archive_slice_gap",
         "market_archive_resource_stop",
         "market_archive_seal",
+        "prospective_archive_generation",
+        "prospective_archive_generation_member",
+        "prospective_archive_planning_gap",
+        "prospective_archive_revision_observation",
+        "prospective_archive_slice_schedule",
+        "prospective_archive_slice_terminal",
     }
     assert EXPECTED_MARKET_ARCHIVE_TABLES <= tables
     assert {
@@ -123,3 +129,47 @@ def test_prospective_and_seal_guards_live_in_postgres(
     assert "SOURCE_GAP" in functions
     assert "RETROSPECTIVE_BACKFILL" in functions
     assert "PARTIAL_WITH_RESOURCE_LIMIT" in functions
+
+
+def test_planning_gap_is_exact_append_only_market_authority(
+    target_database_url: str,
+) -> None:
+    SchemaManager(target_database_url).bootstrap()
+    with psycopg.connect(target_database_url) as connection:
+        columns = {
+            str(row[0])
+            for row in connection.execute(
+                """
+                SELECT column_name FROM information_schema.columns
+                WHERE table_schema = 'mra'
+                  AND table_name = 'prospective_archive_planning_gap'
+                """
+            ).fetchall()
+        }
+        triggers = {
+            (str(row[0]), str(row[1]))
+            for row in connection.execute(
+                """
+                SELECT trigger_name, event_manipulation
+                FROM information_schema.triggers
+                WHERE trigger_schema = 'mra'
+                  AND event_object_table = 'prospective_archive_planning_gap'
+                """
+            ).fetchall()
+        }
+
+    assert {
+        "prospective_archive_planning_gap_id",
+        "series_code",
+        "expected_generation",
+        "predecessor_market_archive_id",
+        "target_definition_id",
+        "target_version",
+        "target_definition_sha256",
+        "expected_decision_session_id",
+        "detected_at",
+        "reason_code",
+        "content_sha256",
+    } <= columns
+    assert any(event == "INSERT" for _, event in triggers)
+    assert {event for _, event in triggers} >= {"UPDATE", "DELETE"}

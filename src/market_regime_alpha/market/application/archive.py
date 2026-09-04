@@ -19,6 +19,7 @@ from market_regime_alpha.market.domain import (
     MarketArchiveSlice,
     PriceBasis,
     ProspectiveArchiveGenerationPlan,
+    ProspectiveArchivePlanningGap,
 )
 from market_regime_alpha.market.ports.archive import (
     ArchiveResourceStopRecord,
@@ -106,6 +107,26 @@ class RecordArchiveCaptureObservationRequest:
     capture_id: UUID
     schedule_slot: str
     requested_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class RecordProspectivePlanningGapRequest:
+    series_code: str
+    expected_generation: int
+    predecessor_market_archive_id: UUID | None
+    target_definition_id: UUID
+    target_version: int
+    target_definition_sha256: str
+    expected_decision_session_id: UUID
+    reason_code: str
+
+
+@dataclass(frozen=True, slots=True)
+class ProspectiveArchivePlanningGapResult:
+    gap: ProspectiveArchivePlanningGap
+    receipt_id: UUID
+    result_hash: str
+    replayed: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -294,6 +315,86 @@ class ArchiveCommands:
             uow.commit()
             return _result(archive, receipt, replayed=False, result_hash=result_hash)
 
+    def record_prospective_planning_gap(
+        self,
+        request: RecordProspectivePlanningGapRequest,
+        context: CommandContext,
+        *,
+        runtime_claim: AttemptClaim | None = None,
+    ) -> ProspectiveArchivePlanningGapResult:
+        request_hash = canonical_json_sha256(request)
+        scope = (
+            f"{request.series_code}:{request.expected_generation}:"
+            f"{request.expected_decision_session_id}"
+        )
+        with self._uow_provider() as uow:
+            if runtime_claim is not None:
+                uow.runtime_finalization.lock_live(runtime_claim)
+            receipt = uow.receipts.start(
+                receipt_id=self._id_factory(),
+                command_kind="RECORD_PROSPECTIVE_ARCHIVE_PLANNING_GAP",
+                scope_id=scope,
+                idempotency_key=context.idempotency_key,
+                request_hash=request_hash,
+            )
+            if not receipt.is_new:
+                _ensure_succeeded(receipt)
+                if receipt.result_aggregate_id is None or receipt.result_hash is None:
+                    raise ArtifactIntegrityError(
+                        "Prospective planning-gap replay receipt is incomplete"
+                    )
+                gap = uow.archives.get_prospective_planning_gap(
+                    UUID(receipt.result_aggregate_id)
+                )
+                if str(gap.content_sha256) != receipt.result_hash:
+                    raise ArtifactIntegrityError(
+                        "Prospective planning-gap replay differs from Authority"
+                    )
+                if runtime_claim is not None:
+                    uow.runtime_finalization.succeed(
+                        runtime_claim,
+                        receipt_id=receipt.receipt_id,
+                        result_hash=receipt.result_hash,
+                    )
+                    uow.commit()
+                return ProspectiveArchivePlanningGapResult(
+                    gap,
+                    receipt.receipt_id,
+                    receipt.result_hash,
+                    True,
+                )
+            gap = ProspectiveArchivePlanningGap(
+                prospective_archive_planning_gap_id=self._id_factory(),
+                series_code=request.series_code,
+                expected_generation=request.expected_generation,
+                predecessor_market_archive_id=request.predecessor_market_archive_id,
+                target_definition_id=request.target_definition_id,
+                target_version=request.target_version,
+                target_definition_sha256=request.target_definition_sha256,
+                expected_decision_session_id=request.expected_decision_session_id,
+                detected_at=uow.archives.database_now(),
+                reason_code=request.reason_code,
+            )
+            uow.archives.insert_prospective_planning_gap(gap)
+            result_hash = str(gap.content_sha256)
+            self._finish(
+                uow,
+                receipt_id=receipt.receipt_id,
+                aggregate_kind="PROSPECTIVE_ARCHIVE_PLANNING_GAP",
+                aggregate_id=str(gap.prospective_archive_planning_gap_id),
+                action="RECORD_PROSPECTIVE_ARCHIVE_PLANNING_GAP",
+                result_hash=result_hash,
+                context=context,
+                runtime_claim=runtime_claim,
+            )
+            uow.commit()
+            return ProspectiveArchivePlanningGapResult(
+                gap,
+                receipt.receipt_id,
+                result_hash,
+                False,
+            )
+
     def record_capture_observation(
         self,
         request: RecordArchiveCaptureObservationRequest,
@@ -473,6 +574,13 @@ class ArchiveCommands:
                 record = uow.archives.get_slice_gap(UUID(receipt.result_aggregate_id))
                 if canonical_json_sha256(record) != receipt.result_hash:
                     raise ArtifactIntegrityError("Archive gap replay differs from Authority")
+                if runtime_claim is not None:
+                    uow.runtime_finalization.succeed(
+                        runtime_claim,
+                        receipt_id=receipt.receipt_id,
+                        result_hash=receipt.result_hash,
+                    )
+                    uow.commit()
                 return ArchiveSliceGapResult(
                     market_archive_slice_gap_id=record.market_archive_slice_gap_id,
                     market_archive_id=record.market_archive_id,
@@ -543,6 +651,13 @@ class ArchiveCommands:
                 seal = uow.archives.get_seal(UUID(receipt.result_aggregate_id))
                 if canonical_json_sha256(seal) != receipt.result_hash:
                     raise ArtifactIntegrityError("Archive seal replay differs from Authority")
+                if runtime_claim is not None:
+                    uow.runtime_finalization.succeed(
+                        runtime_claim,
+                        receipt_id=receipt.receipt_id,
+                        result_hash=receipt.result_hash,
+                    )
+                    uow.commit()
                 return _seal_result(
                     seal,
                     receipt,
@@ -605,6 +720,13 @@ class ArchiveCommands:
                 record = uow.archives.get_resource_stop(UUID(receipt.result_aggregate_id))
                 if canonical_json_sha256(record) != receipt.result_hash:
                     raise ArtifactIntegrityError("Archive resource-stop replay differs from Authority")
+                if runtime_claim is not None:
+                    uow.runtime_finalization.succeed(
+                        runtime_claim,
+                        receipt_id=receipt.receipt_id,
+                        result_hash=receipt.result_hash,
+                    )
+                    uow.commit()
                 return _resource_stop_result(record, receipt, result_hash=receipt.result_hash, replayed=True)
             record = uow.archives.record_resource_stop(
                 resource_stop_id=self._id_factory(),
@@ -780,6 +902,8 @@ __all__ = [
     "ArchiveSliceGapResult",
     "FinalizeOverdueArchiveResult",
     "MarketArchiveResult",
+    "ProspectiveArchivePlanningGapResult",
     "RecordArchiveCaptureObservationRequest",
+    "RecordProspectivePlanningGapRequest",
     "StartMarketArchiveRequest",
 ]

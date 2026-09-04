@@ -66,10 +66,22 @@ class PostgresArchiveInspectionPort:
                           ON successor.supersedes_revision_id = revision.bar_revision_id
                         WHERE item.market_archive_id = root.market_archive_id),
                        seal.market_archive_seal_id, seal.sealed_at,
-                       seal.disposition
+                       seal.disposition,
+                       root.request_identity, root.request_sha256,
+                       root.provider_product_id, root.exchange_code,
+                       root.timeframe, root.price_basis, root.instrument_scope,
+                       root.instrument_scope_sha256, root.reserved_free_bytes,
+                       root.maximum_archive_bytes, root.maximum_slice_bytes,
+                       root.code_artifact_id, root.config_artifact_id,
+                       root.provenance_sha256, root.content_sha256,
+                       receipt.result_hash
                 FROM mra.market_archive AS root
                 LEFT JOIN mra.market_archive_seal AS seal
                   ON seal.market_archive_id = root.market_archive_id
+                JOIN mra.command_receipt AS receipt
+                  ON receipt.idempotency_key = root.request_identity
+                 AND receipt.command_kind = 'START_MARKET_ARCHIVE'
+                 AND receipt.status = 'SUCCEEDED'
                 WHERE root.market_archive_id = %s
                 """,
                 (market_archive_id,),
@@ -83,6 +95,7 @@ class PostgresArchiveInspectionPort:
                 SELECT slice.market_archive_slice_id, slice.ordinal,
                        slice.scope_key, slice.expected_fact_kind,
                        slice.event_window_start, slice.event_window_end,
+                       slice.request_sha256, slice.content_sha256,
                        CASE
                          WHEN terminal.market_archive_slice_id IS NOT NULL
                            THEN terminal.terminal_state
@@ -149,13 +162,15 @@ class PostgresArchiveInspectionPort:
                 expected_fact_kind=str(row[3]),
                 event_window_start=row[4],
                 event_window_end=row[5],
-                status=str(row[6]),
-                observation_count=int(row[7]),
-                latest_relation=str(row[8]) if row[8] is not None else None,
-                latest_timeliness=str(row[9]) if row[9] is not None else None,
-                latest_known_at=row[10],
-                gap_id=UUID(str(row[11])) if row[11] is not None else None,
-                gap_reason_code=str(row[12]) if row[12] is not None else None,
+                request_sha256=str(row[6]),
+                content_sha256=str(row[7]),
+                status=str(row[8]),
+                observation_count=int(row[9]),
+                latest_relation=str(row[10]) if row[10] is not None else None,
+                latest_timeliness=str(row[11]) if row[11] is not None else None,
+                latest_known_at=row[12],
+                gap_id=UUID(str(row[13])) if row[13] is not None else None,
+                gap_reason_code=str(row[14]) if row[14] is not None else None,
             )
             for row in slice_rows
         )
@@ -177,6 +192,22 @@ class PostgresArchiveInspectionPort:
             archive_code=str(root[0]),
             lane=str(root[1]),
             evidence_class=str(root[2]),
+            request_identity=str(root[21]),
+            request_sha256=str(root[22]),
+            provider_product_id=UUID(str(root[23])),
+            exchange_code=str(root[24]),
+            timeframe=str(root[25]),
+            price_basis=str(root[26]),
+            instrument_scope=str(root[27]),
+            instrument_scope_sha256=str(root[28]),
+            reserved_free_bytes=int(root[29]),
+            maximum_archive_bytes=int(root[30]),
+            maximum_slice_bytes=int(root[31]),
+            code_artifact_id=UUID(str(root[32])),
+            config_artifact_id=UUID(str(root[33])),
+            provenance_sha256=str(root[34]),
+            content_sha256=str(root[35]),
+            command_result_hash=str(root[36]),
             archive_start_at=root[3],
             event_window_start=root[4],
             event_window_end=root[5],
