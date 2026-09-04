@@ -12058,7 +12058,6 @@ CREATE TABLE mra.evaluation_metric (
     boolean_value boolean,
     estimable_count integer NOT NULL,
     acceptance_state text NOT NULL,
-    reason_code text,
     content_sha256 text NOT NULL,
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     CONSTRAINT evaluation_metric_run_protocol_metric_uk UNIQUE (evaluation_run_id, evaluation_protocol_metric_id),
@@ -12080,12 +12079,26 @@ CREATE TABLE mra.evaluation_metric (
         metric_state IN ('ESTIMATED', 'NOT_ESTIMABLE')
         AND estimable_count >= 0
         AND acceptance_state IN ('ACCEPTED', 'REJECTED', 'NOT_APPLICABLE', 'NOT_ESTIMABLE')
-        AND (reason_code IS NULL OR reason_code ~ '^[A-Z][A-Z0-9_]{0,99}$')
         AND ((metric_state = 'NOT_ESTIMABLE' AND decimal_value IS NULL AND boolean_value IS NULL AND acceptance_state = 'NOT_ESTIMABLE')
           OR (metric_state = 'ESTIMATED' AND (decimal_value IS NOT NULL OR boolean_value IS NOT NULL)))
         AND content_sha256 ~ '^[0-9a-f]{64}$'
     )
 );
+
+-- Kept as an additive suffix so a populated prior epoch reaches the exact
+-- same column order without rewriting immutable Evaluation rows.
+ALTER TABLE mra.evaluation_metric
+    ADD COLUMN reason_code text,
+    DROP CONSTRAINT evaluation_metric_shape_ck,
+    ADD CONSTRAINT evaluation_metric_shape_ck CHECK (
+        metric_state IN ('ESTIMATED', 'NOT_ESTIMABLE')
+        AND estimable_count >= 0
+        AND acceptance_state IN ('ACCEPTED', 'REJECTED', 'NOT_APPLICABLE', 'NOT_ESTIMABLE')
+        AND (reason_code IS NULL OR reason_code ~ '^[A-Z][A-Z0-9_]{0,99}$')
+        AND ((metric_state = 'NOT_ESTIMABLE' AND decimal_value IS NULL AND boolean_value IS NULL AND acceptance_state = 'NOT_ESTIMABLE')
+          OR (metric_state = 'ESTIMATED' AND (decimal_value IS NOT NULL OR boolean_value IS NOT NULL)))
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    );
 
 CREATE TABLE mra.evaluation_metric_observation (
     evaluation_metric_observation_id uuid PRIMARY KEY,
@@ -22848,8 +22861,6 @@ CREATE TABLE mra.backtest_specification (
     universe_revision_id uuid NOT NULL,
     universe_id uuid NOT NULL,
     universe_scope_sha256 text NOT NULL,
-    eligibility_policy_id uuid NOT NULL,
-    eligibility_policy_sha256 text NOT NULL,
     sample_algorithm_code text NOT NULL,
     sample_algorithm_version integer NOT NULL,
     sample_input_key text NOT NULL,
@@ -22895,11 +22906,6 @@ CREATE TABLE mra.backtest_specification (
     ) REFERENCES mra.universe_revision(
         universe_revision_id, universe_id, scope_content_sha256
     ) ON DELETE RESTRICT,
-    CONSTRAINT backtest_specification_eligibility_fk FOREIGN KEY (
-        eligibility_policy_id, eligibility_policy_sha256
-    ) REFERENCES mra.eligibility_policy(
-        eligibility_policy_id, content_sha256
-    ) ON DELETE RESTRICT,
     CONSTRAINT backtest_specification_first_session_fk FOREIGN KEY (
         first_trading_session_id
     ) REFERENCES mra.trading_session(session_id) ON DELETE RESTRICT,
@@ -22910,7 +22916,6 @@ CREATE TABLE mra.backtest_specification (
         specification_schema_version > 0 AND definition_version > 0
         AND specification_sha256 ~ '^[0-9a-f]{64}$'
         AND universe_scope_sha256 ~ '^[0-9a-f]{64}$'
-        AND eligibility_policy_sha256 ~ '^[0-9a-f]{64}$'
         AND sample_algorithm_code ~ '^[a-z][a-z0-9_.-]{0,99}$'
         AND sample_algorithm_version > 0 AND sample_input_key <> ''
         AND sample_seed >= 0 AND sample_member_count > 0
@@ -22938,6 +22943,50 @@ CREATE TABLE mra.backtest_specification (
         AND NOT prospective_proven AND NOT alpha_proven
     )
 );
+
+-- Current eligibility ownership was introduced after the first WP-18Q
+-- operational route.  The suffix preserves exact column ordinals on both a
+-- fresh bootstrap and an additive upgrade of populated evidence.
+ALTER TABLE mra.backtest_specification
+    ADD COLUMN eligibility_policy_id uuid NOT NULL,
+    ADD COLUMN eligibility_policy_sha256 text NOT NULL,
+    ADD CONSTRAINT backtest_specification_eligibility_fk FOREIGN KEY (
+        eligibility_policy_id, eligibility_policy_sha256
+    ) REFERENCES mra.eligibility_policy(
+        eligibility_policy_id, content_sha256
+    ) ON DELETE RESTRICT,
+    DROP CONSTRAINT backtest_specification_shape_ck,
+    ADD CONSTRAINT backtest_specification_shape_ck CHECK (
+        specification_schema_version > 0 AND definition_version > 0
+        AND specification_sha256 ~ '^[0-9a-f]{64}$'
+        AND universe_scope_sha256 ~ '^[0-9a-f]{64}$'
+        AND sample_algorithm_code ~ '^[a-z][a-z0-9_.-]{0,99}$'
+        AND sample_algorithm_version > 0 AND sample_input_key <> ''
+        AND sample_seed >= 0 AND sample_member_count > 0
+        AND sample_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND exchange_code IN ('XSHG', 'XSHE')
+        AND distinct_trading_session_count > 0
+        AND fold_session_binding_count >= distinct_trading_session_count
+        AND fold_dependency_count > 0
+        AND fold_dependency_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND arm_fold_count > 0
+        AND arm_fold_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND model_training_requirement_count >= 0
+        AND model_training_requirement_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND walk_forward_policy_code ~ '^[a-z][a-z0-9_.-]{0,99}$'
+        AND walk_forward_policy_version > 0
+        AND walk_forward_mode IN ('FIXED', 'ROLLING', 'EXPANDING')
+        AND minimum_fit_sessions > 0
+        AND minimum_validation_sessions > 0 AND step_sessions > 0
+        AND evaluation_requirement_count > 0
+        AND evaluation_requirement_roster_sha256 ~ '^[0-9a-f]{64}$'
+        AND retrospective_classification = 'EXPLORATORY_RETROSPECTIVE'
+        AND formal_provider_state = 'BLOCKED'
+        AND formal_pit_state = 'BLOCKED'
+        AND formal_oos_state = 'NOT_RUN'
+        AND NOT prospective_proven AND NOT alpha_proven
+        AND eligibility_policy_sha256 ~ '^[0-9a-f]{64}$'
+    );
 
 CREATE INDEX backtest_specification_eligibility_idx
     ON mra.backtest_specification (
@@ -23199,23 +23248,6 @@ CREATE TABLE mra.backtest_model_training_requirement (
     model_sha256 text NOT NULL,
     required_fit_evaluation_protocol_id uuid NOT NULL,
     required_fit_evaluation_protocol_sha256 text NOT NULL,
-    required_fit_evaluation_protocol_metric_id uuid NOT NULL,
-    required_fit_evaluation_metric_sha256 text NOT NULL,
-    planned_model_version integer NOT NULL,
-    algorithm_code text NOT NULL,
-    algorithm_version text NOT NULL,
-    implementation_sha256 text NOT NULL,
-    python_implementation text NOT NULL,
-    python_version text NOT NULL,
-    runtime_code text NOT NULL,
-    runtime_version text NOT NULL,
-    uv_lock_sha256 text NOT NULL,
-    dependency_count integer NOT NULL,
-    dependency_roster_sha256 text NOT NULL,
-    hyperparameter_count integer NOT NULL,
-    hyperparameter_roster_sha256 text NOT NULL,
-    environment_sha256 text NOT NULL,
-    recipe_sha256 text NOT NULL,
     content_sha256 text NOT NULL,
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     CONSTRAINT backtest_model_requirement_ordinal_uk UNIQUE (
@@ -23223,13 +23255,6 @@ CREATE TABLE mra.backtest_model_training_requirement (
     ),
     CONSTRAINT backtest_model_requirement_scope_uk UNIQUE (
         exploratory_backtest_arm_id, fit_fold_id, validation_fold_id
-    ),
-    CONSTRAINT backtest_model_requirement_version_uk UNIQUE (
-        model_id, planned_model_version
-    ),
-    CONSTRAINT backtest_model_requirement_child_owner_uk UNIQUE (
-        backtest_model_training_requirement_id,
-        exploratory_backtest_run_id, specification_sha256
     ),
     CONSTRAINT backtest_model_requirement_owner_fk FOREIGN KEY (
         exploratory_backtest_run_id, specification_sha256
@@ -23262,7 +23287,43 @@ CREATE TABLE mra.backtest_model_training_requirement (
     ) REFERENCES mra.evaluation_protocol(
         evaluation_protocol_id, content_sha256
     ) ON DELETE RESTRICT,
-    CONSTRAINT backtest_model_requirement_metric_fk FOREIGN KEY (
+    CONSTRAINT backtest_model_requirement_shape_ck CHECK (
+        ordinal > 0 AND fit_fold_id <> validation_fold_id
+        AND specification_sha256 ~ '^[0-9a-f]{64}$'
+        AND model_sha256 ~ '^[0-9a-f]{64}$'
+        AND required_fit_evaluation_protocol_sha256 ~ '^[0-9a-f]{64}$'
+        AND content_sha256 ~ '^[0-9a-f]{64}$'
+    )
+);
+
+-- Model recipe fields remain an additive suffix for exact V1-to-current
+-- operational upgrades; no existing training requirement row is rewritten.
+ALTER TABLE mra.backtest_model_training_requirement
+    ADD COLUMN required_fit_evaluation_protocol_metric_id uuid NOT NULL,
+    ADD COLUMN required_fit_evaluation_metric_sha256 text NOT NULL,
+    ADD COLUMN planned_model_version integer NOT NULL,
+    ADD COLUMN algorithm_code text NOT NULL,
+    ADD COLUMN algorithm_version text NOT NULL,
+    ADD COLUMN implementation_sha256 text NOT NULL,
+    ADD COLUMN python_implementation text NOT NULL,
+    ADD COLUMN python_version text NOT NULL,
+    ADD COLUMN runtime_code text NOT NULL,
+    ADD COLUMN runtime_version text NOT NULL,
+    ADD COLUMN uv_lock_sha256 text NOT NULL,
+    ADD COLUMN dependency_count integer NOT NULL,
+    ADD COLUMN dependency_roster_sha256 text NOT NULL,
+    ADD COLUMN hyperparameter_count integer NOT NULL,
+    ADD COLUMN hyperparameter_roster_sha256 text NOT NULL,
+    ADD COLUMN environment_sha256 text NOT NULL,
+    ADD COLUMN recipe_sha256 text NOT NULL,
+    ADD CONSTRAINT backtest_model_requirement_version_uk UNIQUE (
+        model_id, planned_model_version
+    ),
+    ADD CONSTRAINT backtest_model_requirement_child_owner_uk UNIQUE (
+        backtest_model_training_requirement_id,
+        exploratory_backtest_run_id, specification_sha256
+    ),
+    ADD CONSTRAINT backtest_model_requirement_metric_fk FOREIGN KEY (
         required_fit_evaluation_protocol_metric_id,
         required_fit_evaluation_protocol_id,
         required_fit_evaluation_metric_sha256
@@ -23270,7 +23331,8 @@ CREATE TABLE mra.backtest_model_training_requirement (
         evaluation_protocol_metric_id, evaluation_protocol_id,
         content_sha256
     ) ON DELETE RESTRICT,
-    CONSTRAINT backtest_model_requirement_shape_ck CHECK (
+    DROP CONSTRAINT backtest_model_requirement_shape_ck,
+    ADD CONSTRAINT backtest_model_requirement_shape_ck CHECK (
         ordinal > 0 AND fit_fold_id <> validation_fold_id
         AND planned_model_version > 0
         AND algorithm_code ~ '^[a-z][a-z0-9_-]{0,99}$'
@@ -23292,8 +23354,7 @@ CREATE TABLE mra.backtest_model_training_requirement (
         AND required_fit_evaluation_protocol_sha256 ~ '^[0-9a-f]{64}$'
         AND required_fit_evaluation_metric_sha256 ~ '^[0-9a-f]{64}$'
         AND content_sha256 ~ '^[0-9a-f]{64}$'
-    )
-);
+    );
 
 CREATE TABLE mra.backtest_model_training_dependency (
     backtest_model_training_requirement_id uuid NOT NULL,

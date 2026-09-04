@@ -1277,7 +1277,6 @@ class SchemaManager:
     ) -> OperationalUpgradePlan:
         """Produce a read-only, short-lived plan for one exact additive route."""
 
-        definition = self._resolve_operational_upgrade_definition()
         backup = _verify_upgrade_backup(authorization)
         with self._connect(read_only=True) as connection:
             identity = _database_identity(connection)
@@ -1295,10 +1294,17 @@ class SchemaManager:
             schema_owner = _schema_owner(connection)
             _require_schema_owner(identity, schema_owner)
             epoch = _read_epoch(connection)
+            actual_catalog = _target_catalog_checksum(connection)
+            definition = self._resolve_operational_upgrade_definition(
+                prior_baseline_sha256=epoch.baseline_checksum,
+                prior_catalog_sha256=actual_catalog,
+                prior_reference_vocabulary_sha256=(
+                    epoch.reference_vocabulary_checksum
+                ),
+            )
             _validate_operational_upgrade_epoch(epoch, definition)
             if epoch.seed_checksum != self.seed_checksum:
                 raise UnsafeOperationalUpgradeError("PRIOR_SEED_MISMATCH")
-            actual_catalog = _target_catalog_checksum(connection)
             if actual_catalog != definition.prior_catalog_sha256:
                 raise UnsafeOperationalUpgradeError(
                     "PRIOR_CATALOG_MISMATCH: detected catalog is not the approved route"
@@ -1423,7 +1429,13 @@ class SchemaManager:
             challenge=challenge,
             operator_id=operator_id,
         )
-        definition = self._resolve_operational_upgrade_definition()
+        definition = self._resolve_operational_upgrade_definition(
+            prior_baseline_sha256=plan.prior_baseline_sha256,
+            prior_catalog_sha256=plan.prior_catalog_sha256,
+            prior_reference_vocabulary_sha256=(
+                plan.prior_reference_vocabulary_sha256
+            ),
+        )
         _require_plan_definition(plan, definition)
         with self._connect() as connection:
             _take_bootstrap_lock(connection)
@@ -1530,14 +1542,37 @@ class SchemaManager:
 
     def _resolve_operational_upgrade_definition(
         self,
+        *,
+        prior_baseline_sha256: str,
+        prior_catalog_sha256: str,
+        prior_reference_vocabulary_sha256: str,
     ) -> _OperationalUpgradeDefinition:
         if self._operational_upgrade_definition is not None:
             return self._operational_upgrade_definition
-        return _wp18q_operational_upgrade_definition(
+        definitions = _wp18q_operational_upgrade_definitions(
             baseline_sql=self._baseline_sql,
             next_baseline_sha256=self.baseline_checksum,
             next_reference_vocabulary_sha256=self.reference_vocabulary_checksum,
         )
+        matches = tuple(
+            definition
+            for definition in definitions
+            if (
+                definition.prior_baseline_sha256,
+                definition.prior_catalog_sha256,
+                definition.prior_reference_vocabulary_sha256,
+            )
+            == (
+                prior_baseline_sha256,
+                prior_catalog_sha256,
+                prior_reference_vocabulary_sha256,
+            )
+        )
+        if len(matches) != 1:
+            raise OperationalUpgradeIntegrityError(
+                "NO_APPROVED_OPERATIONAL_UPGRADE_ROUTE: prior epoch is not exact"
+            )
+        return matches[0]
 
     def _reconcile_operational_upgrade_receipt(
         self,
@@ -2457,14 +2492,58 @@ _WP18Q_EXISTING_TABLE_INDEXES: Final = frozenset(
     }
 )
 
+_WP18Q_V2_ADDED_TABLES: Final = frozenset(
+    {
+        "backtest_evaluation_execution",
+        "backtest_model_lineage",
+        "backtest_model_training_dependency",
+        "backtest_model_training_hyperparameter",
+        "backtest_report_artifact",
+        "backtest_runtime_binding",
+        "evaluation_formula_parameter",
+        "evaluation_metric_formula",
+        "model_training_dependency",
+        "model_training_hyperparameter",
+        "model_training_reproducibility",
+    }
+)
+_WP18Q_V2_FUNCTIONS: Final = frozenset(
+    {
+        "guard_evaluation_metric_formula_result",
+        "validate_backtest_evaluation_execution",
+        "validate_backtest_model_lineage",
+        "validate_backtest_report_artifact",
+        "validate_backtest_runtime_binding",
+        "validate_current_backtest_specification",
+        "validate_evaluation_formula_closure",
+        "validate_forecast_model_binding",
+        "validate_model_training_reproducibility",
+        "validate_model_training_run",
+        "validate_research_partition_closure",
+    }
+)
+_WP18Q_V2_EXISTING_INDEXES: Final = frozenset(
+    {
+        "backtest_model_requirement_metric_idx",
+        "backtest_specification_eligibility_idx",
+        "research_partition_backtest_arm_fk_idx",
+        "research_partition_backtest_fold_fk_idx",
+        "research_partition_backtest_run_fk_idx",
+        "research_partition_backtest_source_idx",
+    }
+)
+_WP18Q_V2_EXISTING_TRIGGERS: Final = frozenset(
+    {"evaluation_metric_formula_result_guard"}
+)
 
-def _wp18q_operational_upgrade_definition(
+
+def _wp18q_operational_upgrade_definitions(
     *,
     baseline_sql: str,
     next_baseline_sha256: str,
     next_reference_vocabulary_sha256: str,
-) -> _OperationalUpgradeDefinition:
-    expected_baseline = "9da7396d6dd46e3a896b8845df2ef8619a55d66f1d05285a0dd802d1381dfa98"
+) -> tuple[_OperationalUpgradeDefinition, ...]:
+    expected_baseline = "aae59a527154fd19da4bf07a0402d353d2b02a8da56cef6c4a505509683c412b"
     expected_vocabulary = "d08800892f5e843a756f53e46205dfbb2787386ebf8281564c31049c45659a1b"
     if next_baseline_sha256 != expected_baseline:
         raise OperationalUpgradeIntegrityError(
@@ -2474,7 +2553,7 @@ def _wp18q_operational_upgrade_definition(
         raise OperationalUpgradeIntegrityError(
             "UPGRADE_SOURCE_VOCABULARY_CHANGED: register a new exact additive route"
         )
-    return _OperationalUpgradeDefinition(
+    v1 = _OperationalUpgradeDefinition(
         upgrade_code="wp18q_track_a_c_v1",
         prior_baseline_sha256=(
             "2faf445b96aaa9f89f13c59094e35af23d5b5142270ee465a9e7d483aa330c26"
@@ -2485,13 +2564,215 @@ def _wp18q_operational_upgrade_definition(
         prior_reference_vocabulary_sha256=(
             "65168428b2edecf6434454c32a4c5f4e6b96e706ec047466153e6c9ef87e4c25"
         ),
-        next_baseline_sha256=expected_baseline,
+        next_baseline_sha256=(
+            "9da7396d6dd46e3a896b8845df2ef8619a55d66f1d05285a0dd802d1381dfa98"
+        ),
         next_catalog_sha256=(
             "c5ea34221f82e38358943215e48d4ba3f58bb46d814669dda72d6af28835326a"
         ),
         next_reference_vocabulary_sha256=expected_vocabulary,
-        additive_sql=_compile_wp18q_additive_sql(baseline_sql),
+        additive_sql=_read_package_text("migrations", "wp18q_track_a_c_v1.sql"),
     )
+    if v1.additive_bundle_sha256 != (
+        "cbd98d6502e675d0b11d0f1b542861d615bb2f007087fdd49203a0bfc2af8241"
+    ):
+        raise OperationalUpgradeIntegrityError(
+            "UPGRADE_V1_BUNDLE_CHANGED: historical upgrade bytes are immutable"
+        )
+    v2 = _OperationalUpgradeDefinition(
+        upgrade_code="wp18q_track_a_c_v2",
+        prior_baseline_sha256=v1.next_baseline_sha256,
+        prior_catalog_sha256=v1.next_catalog_sha256,
+        prior_reference_vocabulary_sha256=v1.next_reference_vocabulary_sha256,
+        next_baseline_sha256=expected_baseline,
+        next_catalog_sha256=(
+            "a61a4ed2a4ae93521942053c37ab6560386bc49c43e64ef3a03f21ab4ab14a71"
+        ),
+        next_reference_vocabulary_sha256=expected_vocabulary,
+        additive_sql=_compile_wp18q_v2_additive_sql(baseline_sql),
+    )
+    if v2.additive_bundle_sha256 != (
+        "2dfe756539fccf1d25b73d190248ad6e819b3c67192400db2f444338c3cad91e"
+    ):
+        raise OperationalUpgradeIntegrityError(
+            "UPGRADE_V2_BUNDLE_CHANGED: register a new exact additive route"
+        )
+    return (v1, v2)
+
+
+def _compile_wp18q_v2_additive_sql(baseline_sql: str) -> str:
+    """Compile the exact V1-to-current additive schema route.
+
+    Existing tables are altered in place.  New tables, functions, indexes,
+    and triggers are copied from the current baseline so fresh bootstrap and
+    operational upgrade converge on one catalog without rewriting evidence.
+    """
+
+    statements = _split_postgres_statements(baseline_sql)
+    table_statements: dict[str, str] = {}
+    function_statements: dict[str, str] = {}
+    index_statements: list[tuple[str, str, str]] = []
+    trigger_statements: list[tuple[str, str, str]] = []
+    alter_statements: list[tuple[str, str]] = []
+    for statement in statements:
+        table = re.search(r"\bCREATE TABLE mra\.([a-z0-9_]+)\s*\(", statement)
+        if table is not None:
+            table_statements[table.group(1)] = statement
+        function = re.search(
+            r"\bCREATE FUNCTION mra\.([a-z0-9_]+)\s*\(", statement
+        )
+        if function is not None:
+            function_statements[function.group(1)] = statement
+        index = re.search(
+            r"\bCREATE (?:UNIQUE )?INDEX ([a-z0-9_]+)\s+ON "
+            r"mra\.([a-z0-9_]+)",
+            statement,
+        )
+        if index is not None:
+            index_statements.append((index.group(1), index.group(2), statement))
+        trigger = re.search(
+            r"\bCREATE (?:CONSTRAINT )?TRIGGER ([a-z0-9_]+).*?\bON "
+            r"mra\.([a-z0-9_]+)",
+            statement,
+            re.DOTALL,
+        )
+        if trigger is not None:
+            trigger_statements.append(
+                (trigger.group(1), trigger.group(2), statement)
+            )
+        alter = re.search(r"\bALTER TABLE mra\.([a-z0-9_]+)", statement)
+        if alter is not None:
+            alter_statements.append((alter.group(1), statement))
+
+    missing_tables = _WP18Q_V2_ADDED_TABLES - set(table_statements)
+    missing_functions = _WP18Q_V2_FUNCTIONS - set(function_statements)
+    if missing_tables:
+        raise OperationalUpgradeIntegrityError(
+            f"UPGRADE_V2_SOURCE_TABLES_MISSING: {sorted(missing_tables)}"
+        )
+    if missing_functions:
+        raise OperationalUpgradeIntegrityError(
+            f"UPGRADE_V2_SOURCE_FUNCTIONS_MISSING: {sorted(missing_functions)}"
+        )
+
+    def constraint(table_name: str, constraint_name: str) -> str:
+        try:
+            source = table_statements[table_name]
+        except KeyError as exc:
+            raise OperationalUpgradeIntegrityError(
+                f"UPGRADE_V2_SOURCE_TABLE_MISSING: {table_name}"
+            ) from exc
+        return _extract_table_constraint(source, constraint_name)
+
+    def exact_alter(table_name: str, marker: str) -> str:
+        matches = tuple(
+            statement
+            for observed_table, statement in alter_statements
+            if observed_table == table_name and marker in statement
+        )
+        if len(matches) != 1:
+            raise OperationalUpgradeIntegrityError(
+                "UPGRADE_V2_SOURCE_ALTER_MISMATCH: "
+                f"{table_name}:{marker}"
+            )
+        return matches[0]
+
+    parts: list[str] = []
+    for table_name, constraint_name in (
+        ("eligibility_policy", "eligibility_policy_identity_hash_uk"),
+        (
+            "evaluation_protocol_metric",
+            "evaluation_protocol_metric_hash_authority_uk",
+        ),
+        (
+            "backtest_evaluation_requirement",
+            "backtest_evaluation_requirement_scope_uk",
+        ),
+    ):
+        parts.append(
+            f"ALTER TABLE mra.{table_name} ADD CONSTRAINT {constraint_name} "
+            f"{constraint(table_name, constraint_name)};"
+        )
+    for table_name, constraint_name in (
+        ("runtime_step", "runtime_step_kind_ck"),
+        ("evaluation_run", "evaluation_run_shape_ck"),
+        ("evaluation_backtest_arm_source", "evaluation_backtest_source_shape_ck"),
+        (
+            "backtest_evaluation_requirement",
+            "backtest_evaluation_requirement_shape_ck",
+        ),
+        ("model_training_run", "model_training_shape_ck"),
+    ):
+        parts.append(
+            f"ALTER TABLE mra.{table_name} DROP CONSTRAINT {constraint_name}, "
+            f"ADD CONSTRAINT {constraint_name} "
+            f"{constraint(table_name, constraint_name)};"
+        )
+    parts.append(
+        "ALTER TABLE mra.model_training_run "
+        "ALTER COLUMN ridge_alpha DROP NOT NULL;"
+    )
+
+    fold_alter = exact_alter(
+        "exploratory_backtest_fold", "exploratory_backtest_fold_current_exact_uk"
+    )
+    fold_clause = _extract_table_constraint(
+        fold_alter.rstrip().removesuffix(";") + ",",
+        "exploratory_backtest_fold_current_exact_uk",
+    )
+    parts.append(
+        "ALTER TABLE mra.exploratory_backtest_fold ADD CONSTRAINT "
+        f"exploratory_backtest_fold_current_exact_uk {fold_clause};"
+    )
+    cost_alter = exact_alter(
+        "exploratory_backtest_cost_assumption", "UNIQUE NULLS NOT DISTINCT"
+    )
+    cost_clause = _extract_table_constraint(
+        cost_alter.rstrip().removesuffix(";") + ",",
+        "exploratory_backtest_cost_kind_uk",
+    )
+    parts.append(
+        "ALTER TABLE mra.exploratory_backtest_cost_assumption "
+        "DROP CONSTRAINT exploratory_backtest_cost_kind_uk, "
+        f"ADD CONSTRAINT exploratory_backtest_cost_kind_uk {cost_clause};"
+    )
+
+    for table_name, marker in (
+        ("evaluation_metric", "ADD COLUMN reason_code"),
+        ("backtest_specification", "ADD COLUMN eligibility_policy_id"),
+        (
+            "backtest_model_training_requirement",
+            "ADD COLUMN required_fit_evaluation_protocol_metric_id",
+        ),
+        ("research_partition", "ADD COLUMN source_backtest_run_id"),
+    ):
+        parts.append(exact_alter(table_name, marker))
+
+    for statement in statements:
+        table = re.search(r"\bCREATE TABLE mra\.([a-z0-9_]+)\s*\(", statement)
+        if table is not None and table.group(1) in _WP18Q_V2_ADDED_TABLES:
+            parts.append(statement)
+
+    for function_name in sorted(_WP18Q_V2_FUNCTIONS):
+        parts.append(
+            function_statements[function_name].replace(
+                "CREATE FUNCTION", "CREATE OR REPLACE FUNCTION", 1
+            )
+        )
+
+    for index_name, table_name, statement in index_statements:
+        if (
+            table_name in _WP18Q_V2_ADDED_TABLES
+            or index_name in _WP18Q_V2_EXISTING_INDEXES
+        ):
+            parts.append(statement)
+    for trigger_name, table_name, statement in trigger_statements:
+        if (
+            table_name in _WP18Q_V2_ADDED_TABLES
+            or trigger_name in _WP18Q_V2_EXISTING_TRIGGERS
+        ):
+            parts.append(statement)
+    return "\n\n".join(part.strip() for part in parts) + "\n"
 
 
 def _compile_wp18q_additive_sql(baseline_sql: str) -> str:

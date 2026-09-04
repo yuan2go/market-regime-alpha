@@ -13,6 +13,7 @@ from market_regime_alpha.infrastructure.artifacts import LocalArtifactStore
 from market_regime_alpha.infrastructure.postgres.pool import TargetPostgresPool
 from market_regime_alpha.infrastructure.postgres.schema import (
     OperationalUpgradeAuthorization,
+    OperationalUpgradeIntegrityError,
     OperationalUpgradePlan,
     OperationalUpgradePlanStaleError,
     SchemaManager,
@@ -114,9 +115,17 @@ def _context(key: str) -> CommandContext:
 def test_wp18q_registered_upgrade_bundle_is_exact_and_additive(
     target_database_url: str,
 ) -> None:
-    definition = SchemaManager(
-        target_database_url
-    )._resolve_operational_upgrade_definition()
+    definition = SchemaManager(target_database_url)._resolve_operational_upgrade_definition(
+        prior_baseline_sha256=(
+            "2faf445b96aaa9f89f13c59094e35af23d5b5142270ee465a9e7d483aa330c26"
+        ),
+        prior_catalog_sha256=(
+            "351270cbd354a4a914d5664ccf7c551b6b807cb0696d1b04a9156a38c6c8511f"
+        ),
+        prior_reference_vocabulary_sha256=(
+            "65168428b2edecf6434454c32a4c5f4e6b96e706ec047466153e6c9ef87e4c25"
+        ),
+    )
 
     assert definition.prior_baseline_sha256 == (
         "2faf445b96aaa9f89f13c59094e35af23d5b5142270ee465a9e7d483aa330c26"
@@ -134,6 +143,53 @@ def test_wp18q_registered_upgrade_bundle_is_exact_and_additive(
     assert "DROP SCHEMA" not in definition.additive_sql
     assert "DROP TABLE" not in definition.additive_sql
     assert "TRUNCATE" not in definition.additive_sql
+
+
+def test_wp18q_v2_route_is_selected_only_from_the_exact_v1_epoch(
+    target_database_url: str,
+) -> None:
+    manager = SchemaManager(target_database_url)
+
+    definition = manager._resolve_operational_upgrade_definition(
+        prior_baseline_sha256=(
+            "9da7396d6dd46e3a896b8845df2ef8619a55d66f1d05285a0dd802d1381dfa98"
+        ),
+        prior_catalog_sha256=(
+            "c5ea34221f82e38358943215e48d4ba3f58bb46d814669dda72d6af28835326a"
+        ),
+        prior_reference_vocabulary_sha256=(
+            "d08800892f5e843a756f53e46205dfbb2787386ebf8281564c31049c45659a1b"
+        ),
+    )
+
+    assert definition.upgrade_code == "wp18q_track_a_c_v2"
+    assert definition.prior_baseline_sha256 == (
+        "9da7396d6dd46e3a896b8845df2ef8619a55d66f1d05285a0dd802d1381dfa98"
+    )
+    assert definition.next_baseline_sha256 == manager.baseline_checksum
+    assert definition.next_reference_vocabulary_sha256 == (
+        manager.reference_vocabulary_checksum
+    )
+    assert definition.next_catalog_sha256 == (
+        "a61a4ed2a4ae93521942053c37ab6560386bc49c43e64ef3a03f21ab4ab14a71"
+    )
+    assert definition.additive_bundle_sha256 == (
+        "2dfe756539fccf1d25b73d190248ad6e819b3c67192400db2f444338c3cad91e"
+    )
+    assert definition.additive_sql.count("CREATE TABLE mra.") == 11
+    assert "DROP SCHEMA" not in definition.additive_sql
+    assert "DROP TABLE" not in definition.additive_sql
+    assert "TRUNCATE" not in definition.additive_sql
+
+    with pytest.raises(
+        OperationalUpgradeIntegrityError,
+        match="NO_APPROVED_OPERATIONAL_UPGRADE_ROUTE",
+    ):
+        manager._resolve_operational_upgrade_definition(
+            prior_baseline_sha256="0" * 64,
+            prior_catalog_sha256="1" * 64,
+            prior_reference_vocabulary_sha256="2" * 64,
+        )
 
 
 def test_operational_upgrade_plan_is_read_only_exact_and_round_trips(
