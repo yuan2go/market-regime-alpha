@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
-from decimal import Decimal
+from decimal import Decimal, localcontext, ROUND_HALF_EVEN
 from enum import StrEnum
 from statistics import median
 import re
@@ -637,7 +637,10 @@ def _reduce(
 ) -> Decimal:
     if metric.reducer is ContextReducer.TRUE_RATE:
         true_count = sum(source.boolean_value is True for source in available)
-        return Decimal(true_count) / Decimal(len(available))
+        with localcontext() as context:
+            context.prec = 28
+            context.rounding = ROUND_HALF_EVEN
+            return Decimal(true_count) / Decimal(len(available))
     values = tuple(source.decimal_value for source in available)
     decimal_values = tuple(value for value in values if value is not None)
     if metric.reducer is ContextReducer.MEAN_DECIMAL:

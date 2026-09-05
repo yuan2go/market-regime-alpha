@@ -15460,6 +15460,37 @@ BEGIN
 END;
 $$;
 
+CREATE FUNCTION mra.context_true_rate(true_count bigint, available_count bigint)
+RETURNS numeric LANGUAGE plpgsql IMMUTABLE STRICT AS $$
+DECLARE
+    numerator numeric := true_count;
+    denominator numeric := available_count;
+    decimal_places integer := 27;
+    quotient numeric;
+    remainder numeric;
+BEGIN
+    IF true_count < 0 OR available_count < 0 OR true_count > available_count THEN
+        RAISE EXCEPTION 'Invalid Context TRUE_RATE counts' USING ERRCODE = '22023';
+    END IF;
+    IF available_count = 0 THEN RETURN NULL; END IF;
+    IF true_count = 0 THEN RETURN 0; END IF;
+    -- Exact integer division reproduces Decimal precision=28, ROUND_HALF_EVEN.
+    -- PostgreSQL avg(numeric) otherwise chooses a different division scale.
+    WHILE numerator < denominator LOOP
+        numerator := numerator * 10;
+        decimal_places := decimal_places + 1;
+    END LOOP;
+    numerator := numerator * 1000000000000000000000000000;
+    quotient := div(numerator, denominator);
+    remainder := mod(numerator, denominator);
+    IF remainder * 2 > denominator
+       OR (remainder * 2 = denominator AND mod(quotient, 2) <> 0) THEN
+        quotient := quotient + 1;
+    END IF;
+    RETURN quotient * ('1e-' || decimal_places::text)::numeric;
+END;
+$$;
+
 CREATE FUNCTION mra.validate_context_assessment_closure()
 RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE actual_assessment_count integer;
@@ -15615,8 +15646,10 @@ BEGIN
                percentile_disc(0.5) WITHIN GROUP (ORDER BY decimal_value)
                    FILTER (WHERE value_status = 'AVAILABLE') AS median_value,
                sum(decimal_value) FILTER (WHERE value_status = 'AVAILABLE') AS sum_value,
-               avg(CASE WHEN boolean_value THEN 1::numeric ELSE 0::numeric END)
-                   FILTER (WHERE value_status = 'AVAILABLE') AS true_rate
+               mra.context_true_rate(
+                   count(*) FILTER (WHERE value_status = 'AVAILABLE' AND boolean_value),
+                   count(*) FILTER (WHERE value_status = 'AVAILABLE')
+               ) AS true_rate
           INTO source_stats
         FROM mra.context_metric_source
         WHERE context_metric_id = metric_row.context_metric_id;
