@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import os
+from contextlib import contextmanager
 from pathlib import Path
+from threading import Barrier, Lock, get_ident
 from uuid import UUID
 
 import pytest
@@ -38,6 +40,43 @@ _RUN_ID = UUID("8f7b6def-9c63-533e-9777-a5a6c57866e0")
 _DEFINITION_SHA256 = (
     "ac2686e2ef3105e8a5ca5a2a2ece6cfd7821ea84d56ae7611eb1e9b0e7305d78"
 )
+
+
+def test_owner_observation_uses_bounded_concurrent_reads_without_changing_replay() -> None:
+    class ObservedPool(TargetPostgresPool):
+        def __init__(self, url):
+            super().__init__(url, min_size=0, max_size=2)
+            self.main_thread = get_ident()
+            self.threads = set()
+            self.lock = Lock()
+            self.barrier = Barrier(4, timeout=5)
+
+        @contextmanager
+        def connection(self, *, read_only=False):
+            thread = get_ident()
+            with self.lock:
+                first = thread not in self.threads
+                self.threads.add(thread)
+            if thread != self.main_thread and first:
+                self.barrier.wait()
+            assert read_only
+            with super().connection(read_only=True) as connection:
+                yield connection
+
+    url, _ = _historical_environment()
+    pool = ObservedPool(url)
+    try:
+        before = _authority_digest(pool)
+        run = PostgresExactHistoricalBacktestQueryPort(pool).load(_RUN_ID).run
+        planner = BacktestExecutionPlanner()
+        expected = planner.compile(run).expected_actions
+        observed = PostgresBacktestExecutionObservationPort(pool).observe(run, expected)
+        assert len(pool.threads - {pool.main_thread}) == 4
+        assert tuple(item.action_id for item in observed) == tuple(item.action_id for item in expected)
+        assert planner.compile(run, observed).execution_state is BacktestExecutionState.COMPLETED
+        assert _authority_digest(pool) == before
+    finally:
+        pool.close()
 
 
 def _historical_environment() -> tuple[str, Path]:
