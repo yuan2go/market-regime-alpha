@@ -304,7 +304,16 @@ def _evaluate_v1(
         expected = _integer_parameter(formula, "expected_roster_size")
         if expected <= 0:
             return _not_estimable("EMPTY_EXPECTED_ROSTER")
-        if len(observations) != expected:
+        roster_mode = next((item for item in formula.parameters if item.parameter_code == "roster_mode"), None)
+        subset = roster_mode is not None
+        if subset and (
+            roster_mode.value_type is not FormulaParameterType.TEXT
+            or roster_mode.text_value != "declared_context_subset"
+            or formula.surface is not BacktestMetricSurface.CONTEXT
+            or code is not BacktestFormulaCode.COVERAGE_RATE
+        ):
+            raise ValueError("formula roster_mode is unsupported")
+        if len(observations) > expected or (not subset and len(observations) != expected):
             return _not_estimable("EXPECTED_ROSTER_MISMATCH")
         wanted = {
             BacktestFormulaCode.COVERAGE_RATE: {FormulaSourceState.AVAILABLE},

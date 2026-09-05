@@ -354,3 +354,18 @@ def test_ic_summary_retains_unestimable_groups_and_rejects_unknown_series():
     assert result.decimal_value is None and result.reason_code == "NO_ESTIMABLE_RANK_GROUP"
     with pytest.raises(ValueError, match="input_series"):
         evaluate_backtest_formula(_formula(BacktestFormulaCode.ICIR, ("input_series", "unbound")), observations)
+
+
+def test_declared_context_subset_frequency_uses_the_frozen_population_denominator():
+    from dataclasses import replace
+    formula = replace(_formula(BacktestFormulaCode.COVERAGE_RATE,
+                               ("expected_roster_size", 8), ("roster_mode", "declared_context_subset")),
+                      surface=BacktestMetricSurface.CONTEXT)
+    observations = (_observation(1, Decimal(1)), _observation(2, Decimal(1)))
+    result = evaluate_backtest_formula(formula, observations)
+    assert result.state is FormulaResultState.ESTIMABLE and result.decimal_value == Decimal("0.25")
+    empty = evaluate_backtest_formula(formula, ())
+    assert empty.state is FormulaResultState.ESTIMABLE and empty.decimal_value == 0
+    # Whole-population Data coverage retains the exact-roster contract.
+    strict = evaluate_backtest_formula(_formula(BacktestFormulaCode.COVERAGE_RATE, ("expected_roster_size", 8)), observations)
+    assert strict.reason_code == "EXPECTED_ROSTER_MISMATCH"
