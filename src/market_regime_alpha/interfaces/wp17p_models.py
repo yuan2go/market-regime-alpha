@@ -153,7 +153,9 @@ class Wp17pModelOperations:
 def wp17p_model_plan(catalog: Wp17pAuthorityCatalog) -> ResearchModelPlan:
     return ResearchModelPlan(
         uuid5(catalog.backtest.exploratory_backtest_run_id, "model:ridge"),
-        f"wp{17 if catalog.backtest.generation == 1 else 18}_deterministic_ridge",
+        "wp17p_deterministic_ridge"
+        if catalog.backtest.generation == 1
+        else "wp18_deterministic_ridge",
         catalog.target.target_definition_id,
         catalog.target.version,
         catalog.target.content_sha256,
