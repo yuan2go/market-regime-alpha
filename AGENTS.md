@@ -3,7 +3,7 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Sole repository execution, safety, and evidence contract
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-09-02
+> **Last Updated:** 2026-09-05
 > **Related Documents:** `CLAUDE.md`, `docs/README.md`, `docs/architecture/Canonical-Overall-Design.md`, `docs/status/Roadmap.md`
 
 ## Mission and current program
@@ -18,44 +18,25 @@ program. The target is frozen by
 implementation truth until an explicit Runtime/CLI cutover checkpoint succeeds.
 Target prose never makes an unimplemented capability current.
 
-The dependency order is:
+The active checkpoint is WP-18Q Qualification Closure, under its approved
+Design and Implementation Plan. Freeze the existing Generic Backtest / Model /
+Evaluation / Report / Prospective architecture; correct only correctness,
+qualification and hard-cut blockers. WP-17P remains historical engineering
+proof, not the current implementation or qualification state. Current exact-SHA
+facts and catalog counts live in `docs/status/Current-State.md`; dependency
+order and re-entry conditions live only in `docs/status/Roadmap.md`.
 
-```text
-Foundation
-→ Market/PIT
-→ Selection Core: Universe/Eligibility
-→ minimal Research Definition substrate required by Candidate
-→ Candidate closure
-→ WP-08 post-Candidate dependency and Outcome Authority design closure
-→ WP-09 Target commitment and Decision Run
-→ Market Target Outcome
-→ WP-11 Research Partition/Experiment/Evaluation closure
-→ Evidence/Research Assessment/Research Qualification
-→ WP-13 remaining Decision Support
-→ WP-14 Formal Research/OOS/Prospective engineering readiness
-→ WP-15 real Provider qualification and frozen research proof campaign
-→ WP-16 external Provider evidence Gate A
-→ WP-17P retrospective/prospective archive and exploratory Model/backtest
-→ optional Calibration only when separately justified
-→ Execution/TradeOutcome/Attribution → Runtime/CLI Cutover
-```
+A real generic campaign, deterministic reports, exact resume/replay, historical
+zero-write compatibility, a real due prospective Runtime Attempt and full
+engineering regression are mandatory before WP-18Q PASS. Missing operational
+state, missing canonical archive lineage or an unavailable real window blocks
+the corresponding gate. Never backdate or wait for a future window to manufacture
+proof. Keep WP-specific executors until every hard-cut prerequisite passes.
 
-WP-08 authorizes this dependency order, not concurrent implementation. WP-09
-through WP-14 have passed their immutable local engineering gates; WP-14 proves
-engineering readiness only. WP-15 then used its exact merged main for a real
-recorded BaoStock Provider gate. The complete ten-requirement Decision is
-`REJECTED`: historical availability, revision finality, and Outcome-path floors
-failed, while calendar, membership, and Decision-reference evidence remained
-inconclusive. The Formal PIT/hypothesis/OOS/prospective campaign therefore did
-not start. The rejected Decision and exact capture remain immutable negative
-evidence; a later attempt requires new adequate external evidence and a new
-Protocol/revision rather than reinterpretation. WP-16 found no accessible
-Product with direct recorded evidence for both P0 availability and finality and
-stopped before implementation. WP-17P then added engineering-qualified,
-permanently separated retrospective/prospective archives plus an exploratory-
-only Model/backtest path without reopening that Provider gate. Calibration
-remains optional and unstarted. Execution, Runtime/CLI Cutover, Legacy deletion,
-and Production qualification remain unauthorized.
+WP-15's Provider rejection and WP-16's external-evidence blocker remain closed.
+Retrospective work is EXPLORATORY_RETROSPECTIVE only. Model Qualification,
+Calibration, broker integration, Runtime/CLI full cutover, Legacy deletion and
+Production admission remain unstarted or unauthorized.
 
 Do not resume the former Alpha Proof Roadmap as an engineering program. Existing
 protocols, results, and negative evidence remain immutable provenance. New
@@ -102,13 +83,15 @@ Authority. They may summarize canonical facts but cannot mutate or promote them.
 
 - Work on one dependency-coherent checkpoint from `docs/status/Roadmap.md`.
 - Do not implement a later context before its declared predecessor exit gate.
-- An incomplete target path is test-only and non-canonical. Do not dual-write,
+- An incomplete target path has no current business cutover authority. Do not dual-write,
   fall back between old and target owners, or choose Authority by availability.
 - The existing Runtime stays canonical until the explicit Runtime/CLI Cutover.
-- The target baseline is built for a newly provisioned empty database. Ordinary
+- The target baseline bootstraps a newly provisioned empty database. Ordinary
   startup must fail before DDL on legacy, unknown, or mismatched schema epoch.
-- Never edit released migration bytes or add compatibility migrations to carry
-  the 283-table catalog into the target epoch.
+- Never edit released migration bytes or carry the Legacy catalog into the
+  target epoch. Existing target-draft operational evidence may use only the
+  exact approved additive upgrade route after OID/checksum, readable backup,
+  disk and active-attempt preflight; never recreate operational evidence.
 - Legacy code/tests are deleted only after every mapped invariant has passing
   target coverage and the last executable consumer is absent.
 - No permanent `v1`/`v2`/`v3`, compatibility reader, registry, snapshot, journal,
