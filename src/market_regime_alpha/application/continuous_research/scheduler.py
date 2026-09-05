@@ -161,6 +161,7 @@ class ContinuousResearchScheduleRunner:
         tick_runner: ContinuousResearchTickRunner,
         policy: ContinuousDecisionWindowPolicy,
         provider_request_builder: ProviderRequestBuilder,
+        prospective_tick: Callable[[], object] | None = None,
     ) -> None:
         if not isinstance(journal, PostgresContinuousResearchJournal):
             raise TypeError("journal must be PostgresContinuousResearchJournal")
@@ -174,6 +175,7 @@ class ContinuousResearchScheduleRunner:
         self._tick_runner = tick_runner
         self._policy = policy
         self._provider_request_builder = provider_request_builder
+        self._prospective_tick = prospective_tick
 
     def run_due_once(
         self,
@@ -185,6 +187,8 @@ class ContinuousResearchScheduleRunner:
     ) -> ContinuousScheduleRunResult:
         require_utc_second("now", now)
         _validate_trading_day(run_command, trading_day)
+        if self._prospective_tick is not None:
+            self._prospective_tick()
         self._journal.create_or_get(run_command)
         schedule = self._journal.initialize_schedule(
             run_command=run_command,

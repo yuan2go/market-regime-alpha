@@ -1142,3 +1142,47 @@ def test_cli_schedules_and_reserves_a_due_tick(
     reserved = json.loads(capsys.readouterr().out)
     assert reserved["status"] == "PENDING"
     assert reserved["entry_authority_granted"] is False
+
+
+@pytest.mark.parametrize("changes", [
+    {"runtime_clock_mode": "SIMULATED"},
+    {"prospective_code_sha": "short"},
+    {"prospective_database_name": None},
+    {"prospective_lease_seconds": 0},
+])
+def test_prospective_child_requires_explicit_live_configuration(changes):
+    from market_regime_alpha.cli.continuous_research import _configured_prospective_tick
+    values = dict(runtime_clock_mode="LIVE", prospective_series_code="series", prospective_code_sha="a" * 40, prospective_database_name="operational", prospective_lease_seconds=30)
+    values.update(changes)
+    with pytest.raises(ValueError):
+        _configured_prospective_tick(SimpleNamespace(**values))
+
+
+def test_continuous_prospective_child_checks_database_and_uses_generic_application(monkeypatch, tmp_path):
+    from contextlib import contextmanager
+    import market_regime_alpha.bootstrap as bootstrap
+    import market_regime_alpha.interfaces.archive as archive
+    from market_regime_alpha.cli.continuous_research import _configured_prospective_tick
+    settings = bootstrap.TargetSettings("postgresql://localhost/operational", tmp_path)
+    monkeypatch.setattr(bootstrap.TargetSettings, "from_environ", classmethod(lambda cls: settings))
+    monkeypatch.setattr(bootstrap, "database_identity", lambda _settings: SimpleNamespace(database_name="operational"))
+    application = object()
+    calls = []
+    @contextmanager
+    def opened(actual):
+        assert actual == settings
+        yield application
+    monkeypatch.setattr(bootstrap, "bootstrap_application", opened)
+    def continued(actual, **kwargs):
+        assert actual is application
+        calls.append(kwargs)
+        return {"due_attempt_count": 0, "series_code": kwargs["series_code"]}
+    monkeypatch.setattr(archive, "continue_prospective_series", continued)
+    args = SimpleNamespace(runtime_clock_mode="LIVE", prospective_series_code="exact_series", prospective_code_sha="a" * 40, prospective_database_name="operational", prospective_lease_seconds=30)
+    tick = _configured_prospective_tick(args)
+    assert tick()["due_attempt_count"] == 0
+    assert calls[0]["series_code"] == "exact_series" and calls[0]["code_sha"] == "a" * 40
+    args.prospective_database_name = "another_database"
+    with pytest.raises(ValueError, match="database identity"):
+        _configured_prospective_tick(args)()
+    assert len(calls) == 1
