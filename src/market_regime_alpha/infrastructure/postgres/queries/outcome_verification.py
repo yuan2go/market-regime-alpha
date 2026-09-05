@@ -203,7 +203,7 @@ _OUTCOME_INSPECTION_SQL = (
     ))
     + " FROM unnest(%s::uuid[]) AS requested(revision_id)"
 )
-_OUTCOME_INSPECTION_BATCH_SIZE = 64
+_OUTCOME_INSPECTION_BATCH_SIZE = 32
 
 
 @dataclass(frozen=True, slots=True)
@@ -227,17 +227,19 @@ class PostgresOutcomeVerificationProvider:
         """Reload all checks in bounded SQL batches; retain no result cache."""
         identities = tuple(dict.fromkeys(revision_ids))
         result: dict[UUID, tuple[OutcomeMismatch, ...]] = {}
-        for start in range(0, len(identities), _OUTCOME_INSPECTION_BATCH_SIZE):
-            batch = identities[start:start + _OUTCOME_INSPECTION_BATCH_SIZE]
-            with self._pool.connection(read_only=True) as connection:
+        if not identities:
+            return result
+        with self._pool.connection(read_only=True) as connection:
+            for start in range(0, len(identities), _OUTCOME_INSPECTION_BATCH_SIZE):
+                batch = identities[start:start + _OUTCOME_INSPECTION_BATCH_SIZE]
                 rows = connection.execute(_OUTCOME_INSPECTION_SQL, (list(batch),)).fetchall()
-            for identity, root, roster, ordinals, dependencies, chain, violations in rows:
-                facts = _InspectionFacts(
-                    None if root is None else tuple(root), tuple(roster),
-                    tuple(tuple(row) for row in ordinals), tuple(dependencies),
-                    tuple(chain), tuple(violations),
-                )
-                result[identity] = _inspect_facts(identity, facts)
+                for identity, root, roster, ordinals, dependencies, chain, violations in rows:
+                    facts = _InspectionFacts(
+                        None if root is None else tuple(root), tuple(roster),
+                        tuple(tuple(row) for row in ordinals), tuple(dependencies),
+                        tuple(chain), tuple(violations),
+                    )
+                    result[identity] = _inspect_facts(identity, facts)
         return result
 
 

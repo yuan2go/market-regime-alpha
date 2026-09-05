@@ -57,7 +57,16 @@ def test_outcome_batch_reconciles_exact_history_and_missing_rows_without_cached_
             assert read_only
             self.leases += 1
             with super().connection(read_only=True) as connection:
-                yield connection
+                class BoundedConnection:
+                    def execute(self, query, params=None):
+                        if "FROM unnest(%s::uuid[])" in query:
+                            assert len(params[0]) <= 32, "cold-read timeout budget limits each Outcome batch"
+                        return connection.execute(query, params)
+
+                    def __getattr__(self, name):
+                        return getattr(connection, name)
+
+                yield BoundedConnection()
 
     url, _ = _historical_environment()
     pool = MeasuredPool(url, min_size=0, max_size=2)
