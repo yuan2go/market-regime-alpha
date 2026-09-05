@@ -18,6 +18,9 @@ def test_model_authority_is_concrete_relational_and_append_only(
         "model_feature_definition",
         "model_training_run",
         "model_training_sample",
+        "model_training_dependency",
+        "model_training_hyperparameter",
+        "model_training_reproducibility",
         "model_version",
     }
     assert EXPECTED_MODEL_TABLES <= EXPECTED_TARGET_TABLES
@@ -54,6 +57,9 @@ def test_model_authority_is_concrete_relational_and_append_only(
                         "model_training_sample_dataset_fk",
                         "model_version_training_fk",
                         "model_version_fitted_artifact_fk",
+                        "model_training_reproducibility_run_fk",
+                        "model_training_dependency_owner_fk",
+                        "model_training_hyperparameter_owner_fk",
                     ],
                 ),
             ).fetchall()
@@ -84,6 +90,9 @@ def test_model_authority_is_concrete_relational_and_append_only(
         "model_training_sample_dataset_fk",
         "model_version_training_fk",
         "model_version_fitted_artifact_fk",
+        "model_training_reproducibility_run_fk",
+        "model_training_dependency_owner_fk",
+        "model_training_hyperparameter_owner_fk",
     }
     assert {
         "model_reconcile_guard",
@@ -94,6 +103,10 @@ def test_model_authority_is_concrete_relational_and_append_only(
         "model_training_run_append_only",
         "model_training_sample_append_only",
         "model_version_append_only",
+        "model_training_reproducibility_reconcile_guard",
+        "model_training_reproducibility_append_only",
+        "model_training_dependency_append_only",
+        "model_training_hyperparameter_append_only",
     } <= triggers
 
 

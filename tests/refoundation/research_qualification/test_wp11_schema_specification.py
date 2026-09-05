@@ -17,9 +17,10 @@ MIGRATIONS = ROOT / "src/market_regime_alpha/infrastructure/postgres/migrations"
 
 def test_refoundation_extends_only_unreleased_baseline() -> None:
     migrations = sorted(item.name for item in MIGRATIONS.glob("*.sql"))
-    assert migrations == ["001_baseline.sql"]
-    assert len(EXPECTED_RESEARCH_VALIDITY_TABLES) == 12
-    assert len(EXPECTED_TARGET_TABLES) == 165
+    # The exact additive operational bundle is not a numbered epoch migration.
+    assert migrations == ["001_baseline.sql", "wp18q_track_a_c_v1.sql"]
+    assert len(EXPECTED_RESEARCH_VALIDITY_TABLES) == 14
+    assert len(EXPECTED_TARGET_TABLES) == 192
 
 
 def test_wp11_relations_have_no_generic_or_future_placeholder_shape(
