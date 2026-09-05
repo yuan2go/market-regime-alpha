@@ -57,6 +57,11 @@ class TargetPostgresPool:
         try:
             connection.read_only = read_only
             yield connection
+            if read_only:
+                # Successful read-only transactions have no business changes
+                # to discard. Commit preserves psycopg's prepared statements;
+                # rollback on every owner check invalidates that session cache.
+                connection.commit()
         finally:
             if connection.info.transaction_status != 0:
                 connection.rollback()
