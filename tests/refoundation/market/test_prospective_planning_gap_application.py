@@ -118,3 +118,40 @@ def test_planning_gap_uses_authoritative_uow_clock_and_is_audited() -> None:
     assert uow.archives.inserted == result.gap
     assert uow.receipts.succeeded is not None
     assert uow.committed is True
+
+
+def test_overdue_replay_does_not_terminalize_newly_elapsed_windows() -> None:
+    from dataclasses import replace
+    from uuid import uuid4
+
+    first_slice, later_slice, archive_id, receipt_id = (uuid4() for _ in range(4))
+    uow = _Uow(datetime(2026, 9, 4, 2, 10, tzinfo=UTC), receipt_id)
+
+    class OverdueArchives:
+        def __init__(self):
+            self.calls = 0
+
+        def finalize_overdue(self, market_archive_id):
+            self.calls += 1
+            return (first_slice,) if self.calls == 1 else (first_slice, later_slice)
+
+        def missed_at_receipt(self, market_archive_id, exact_receipt_id):
+            assert market_archive_id == archive_id and exact_receipt_id == receipt_id
+            return (first_slice,)
+
+    archives = OverdueArchives()
+    uow.archives = archives
+    commands = ArchiveCommands(lambda: uow, id_factory=uuid4)
+    context = CommandContext(
+        idempotency_key="overdue-exact-replay", actor_type=ActorType.SYSTEM,
+        actor_id="prospective-test", reason_code="FINALIZE_OVERDUE",
+    )
+    first = commands.finalize_overdue(market_archive_id=archive_id, context=context)
+    original_start = uow.receipts.start
+    uow.receipts.start = lambda **kwargs: replace(
+        original_start(**kwargs), status="SUCCEEDED", is_new=False,
+        result_hash=first.result_hash,
+    )
+    replay = commands.finalize_overdue(market_archive_id=archive_id, context=context)
+    assert replay.replayed and replay.missed_slice_ids == first.missed_slice_ids
+    assert archives.calls == 1
