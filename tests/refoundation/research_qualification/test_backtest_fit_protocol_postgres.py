@@ -53,3 +53,36 @@ def test_backtest_rejects_validation_only_metrics_in_fit_before_creating_root(ba
     assert 'FIT' in str(error.value) and 'validation-only' in str(error.value), repr(error.value.__cause__)
     with stack.pool.connection(read_only=True) as connection:
         assert connection.execute('SELECT count(*) FROM mra.exploratory_backtest_run').fetchone() == (0,)
+
+
+def test_backtest_rejects_outcome_checkpoint_as_forecast_commitment_before_execution(backtest_stack):
+    from market_regime_alpha.decision_support.application.strategy import StrategyCommands
+    from market_regime_alpha.decision_support.domain.strategy import StrategyPlan
+    from market_regime_alpha.infrastructure.postgres.strategy_uow import PostgresStrategyUnitOfWorkProvider
+    from market_regime_alpha.infrastructure.postgres.queries.decision_strategy import PostgresStrategyQueryProvider
+    from market_regime_alpha.infrastructure.postgres.queries.decision_inference_inputs import _load_strategy
+
+    stack = backtest_stack
+    specification = _current_specification(stack)
+    with stack.pool.connection(read_only=True) as connection:
+        original = _load_strategy(connection, specification.defaults.strategy.authority_id, lock=False)
+        checkpoint_id, checkpoint_hash = connection.execute(
+            "SELECT target_checkpoint_id, content_sha256 FROM mra.target_checkpoint WHERE target_definition_id=%s AND checkpoint_role='OUTCOME_OBSERVATION' ORDER BY ordinal LIMIT 1",
+            (specification.target.authority_id,),
+        ).fetchone()
+    version_id = uuid4()
+    strategy = replace(
+        original, strategy=StrategyPlan(uuid4(), 'invalid_forecast_checkpoint', 'Exact commitment binding regression'),
+        strategy_version_id=version_id, version=1, supersedes_strategy_version_id=None,
+        context_requirements=tuple(replace(r, strategy_context_requirement_id=uuid4(), strategy_version_id=version_id) for r in original.context_requirements),
+        signal_rule=replace(original.signal_rule, strategy_signal_rule_id=uuid4(), strategy_version_id=version_id),
+        forecast_rules=tuple(replace(r, strategy_forecast_rule_id=uuid4(), strategy_version_id=version_id, target_checkpoint_id=checkpoint_id, target_checkpoint_sha256=checkpoint_hash) for r in original.forecast_rules),
+    )
+    StrategyCommands(PostgresStrategyUnitOfWorkProvider(stack.pool), PostgresStrategyQueryProvider(stack.pool)).register(strategy, _context('invalid-forecast-strategy'))
+    binding = _authority(version_id, strategy.content_sha256)
+    specification = replace(specification, defaults=replace(specification.defaults, strategy=binding), arms=tuple(replace(arm, strategy=binding) for arm in specification.arms))
+    application = BacktestApplication(PostgresBacktestUnitOfWorkProvider(stack.pool), id_factory=uuid4)
+    with pytest.raises(RuntimeStateConflictError, match='Forecast.*Decision reference'):
+        application.predeclare(specification, _context('invalid-forecast-campaign'))
+    with stack.pool.connection(read_only=True) as connection:
+        assert connection.execute('SELECT count(*) FROM mra.exploratory_backtest_run').fetchone() == (0,)

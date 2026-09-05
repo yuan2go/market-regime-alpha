@@ -683,6 +683,29 @@ class PostgresBacktestRepository:
         ).fetchone()
         if row is None:
             raise RuntimeStateConflictError("Backtest parent roster is not exact or archive is not retrospective")
+        strategies = {defaults.strategy, *(arm.strategy for arm in specification.arms)}
+        for strategy in sorted(strategies, key=lambda item: str(item.authority_id)):
+            forecast_bindings = self._connection.execute(
+                """
+                SELECT rule.target_definition_id, rule.target_definition_sha256,
+                       checkpoint.checkpoint_role,
+                       rule.target_checkpoint_sha256 = checkpoint.content_sha256
+                FROM mra.strategy_forecast_rule AS rule
+                JOIN mra.target_checkpoint AS checkpoint
+                  ON checkpoint.target_checkpoint_id = rule.target_checkpoint_id
+                 AND checkpoint.target_definition_id = rule.target_definition_id
+                WHERE rule.strategy_version_id = %s
+                ORDER BY rule.ordinal
+                FOR SHARE OF rule, checkpoint
+                """, (strategy.authority_id,),
+            ).fetchall()
+            if not forecast_bindings or any(
+                (item[0], str(item[1]), item[2], item[3]) != (
+                    specification.target.authority_id,
+                    str(specification.target.content_sha256), "DECISION_REFERENCE", True,
+                ) for item in forecast_bindings
+            ):
+                raise RuntimeStateConflictError("Backtest Forecast must bind the exact Target Decision reference")
         features = self._connection.execute(
             """
             SELECT feature_definition_id, content_sha256
