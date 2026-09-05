@@ -215,7 +215,26 @@ class PostgresEvidenceBackup:
                         drills.append(result["verified_at"])
             except (OSError, ValueError, KeyError, TypeError):
                 continue
+        scans = []
+        for path in sorted(directory.glob("integrity-scan-*.json")):
+            try:
+                content = path.read_bytes()
+                scan = json.loads(content)
+                identity = scan["database"]
+                if (identity["cluster_identity"], identity["oid"]) != (database["cluster_identity"], database["oid"]):
+                    continue
+                if scan["artifact_root"] != str(self._root) or not isinstance(scan["matched"], bool):
+                    continue
+                scans.append({
+                    "path": str(path.resolve()), "report_sha256": sha256(content).hexdigest(),
+                    "observed_at": scan["observed_at"], "matched": scan["matched"],
+                    "mismatch_count": scan["mismatch_count"],
+                    "artifact_roster_sha256": scan["artifact_roster_sha256"],
+                })
+            except (OSError, ValueError, KeyError, TypeError):
+                continue
         return {
             "latest_successful_backup": max(backups, key=lambda item: item["verified_at"], default=None),
             "last_restore_drill_at": max(drills, default=None),
+            "last_artifact_integrity_scan": max(scans, key=lambda item: item["observed_at"], default=None),
         }

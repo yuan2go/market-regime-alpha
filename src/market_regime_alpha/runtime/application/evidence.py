@@ -79,6 +79,7 @@ class EvidenceApplication:
             "reconciliations": reconciliations,
             "database": snapshot["database"],
             "observed_at": snapshot["observed_at"],
+            "artifact_root": str(self._root.resolve()),
             "artifact_roster_sha256": canonical_json_sha256(snapshot["artifacts"]),
             "authority": "NON_AUTHORITATIVE_OPERATIONAL_INDEX",
         }

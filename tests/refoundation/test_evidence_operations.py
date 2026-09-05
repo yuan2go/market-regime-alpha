@@ -44,6 +44,20 @@ def test_inventory_and_verify_are_read_only_and_detect_physical_corruption(
     assert result["matched"] is True
     assert result["mismatch_count"] == 0
     assert result["verified_artifacts"] == 1
+    records = tmp_path / "operator-records"
+    records.mkdir()
+    scan_bytes = output.getvalue()
+    (records / "integrity-scan-01.json").write_text(scan_bytes)
+    wrong_scope = json.loads(scan_bytes)
+    wrong_scope["database"]["oid"] += 1
+    wrong_scope["observed_at"] = "2099-01-01T00:00:00+00:00"
+    (records / "integrity-scan-02.json").write_text(json.dumps(wrong_scope))
+    inventory_output = StringIO()
+    assert main(["evidence", "inventory", "--records-directory", str(records)], environ=environment, stdout=inventory_output) == 0
+    last_scan = json.loads(inventory_output.getvalue())["last_artifact_integrity_scan"]
+    assert last_scan["observed_at"] == result["observed_at"]
+    assert last_scan["matched"] is True
+    assert last_scan["artifact_roster_sha256"] == result["artifact_roster_sha256"]
     (root / artifact.locator).write_bytes(b"corrupt")
     output = StringIO()
     assert main(["evidence", "verify"], environ=environment, stdout=output) == 2
