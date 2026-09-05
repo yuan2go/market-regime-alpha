@@ -706,6 +706,18 @@ class PostgresBacktestRepository:
                 ) for item in forecast_bindings
             ):
                 raise RuntimeStateConflictError("Backtest Forecast must bind the exact Target Decision reference")
+        for arm in specification.arms:
+            context_actions = self._connection.execute(
+                """
+                SELECT missing_action FROM mra.strategy_context_requirement
+                WHERE strategy_version_id = %s ORDER BY ordinal FOR SHARE
+                """, (arm.strategy.authority_id,),
+            ).fetchall()
+            if not context_actions:
+                raise RuntimeStateConflictError("Backtest Strategy Context requirements are absent")
+            observational = all(item[0] == "OBSERVE_ONLY" for item in context_actions)
+            if (arm.context_mode.value == "OBSERVATIONAL") != observational:
+                raise RuntimeStateConflictError("Backtest OBSERVATIONAL mode requires an OBSERVE_ONLY Strategy; CURRENT_GATE requires a gate")
         features = self._connection.execute(
             """
             SELECT feature_definition_id, content_sha256

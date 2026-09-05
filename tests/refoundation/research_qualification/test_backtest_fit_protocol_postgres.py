@@ -86,3 +86,18 @@ def test_backtest_rejects_outcome_checkpoint_as_forecast_commitment_before_execu
         application.predeclare(specification, _context('invalid-forecast-campaign'))
     with stack.pool.connection(read_only=True) as connection:
         assert connection.execute('SELECT count(*) FROM mra.exploratory_backtest_run').fetchone() == (0,)
+
+
+def test_backtest_rejects_observational_label_with_gating_strategy(backtest_stack):
+    from market_regime_alpha.research_qualification.domain.backtest import BacktestContextMode, BacktestBindingSource
+    specification = _current_specification(backtest_stack)
+    specification = replace(specification, arms=tuple(
+        replace(arm, strategy=specification.defaults.strategy, strategy_binding_source=BacktestBindingSource.SHARED_DEFAULT)
+        if arm.context_mode is BacktestContextMode.OBSERVATIONAL else arm
+        for arm in specification.arms
+    ))
+    application = BacktestApplication(PostgresBacktestUnitOfWorkProvider(backtest_stack.pool), id_factory=uuid4)
+    with pytest.raises(RuntimeStateConflictError, match='OBSERVATIONAL.*OBSERVE_ONLY'):
+        application.predeclare(specification, _context('invalid-observational-gate'))
+    with backtest_stack.pool.connection(read_only=True) as connection:
+        assert connection.execute('SELECT count(*) FROM mra.exploratory_backtest_run').fetchone() == (0,)
