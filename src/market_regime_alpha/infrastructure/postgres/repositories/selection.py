@@ -215,6 +215,57 @@ class PostgresSelectionRepository:
             raise AssertionError("Universe revision query must return one row")
         return int(row[0])
 
+    def find_frozen_universe(
+        self, *, universe_id: UUID, scope: UniverseScopeSpecification,
+        decision_time: DecisionTime,
+        retrospective_scope: ExploratoryRetrospectiveSelectionScope | None,
+    ) -> FrozenUniverse | None:
+        row = self._connection.execute(
+            """SELECT universe_revision_id FROM mra.universe_revision
+               WHERE universe_id = %s AND decision_time = %s
+                 AND scope_content_sha256 = %s FOR SHARE""",
+            (universe_id, decision_time.value, str(scope.content_sha256)),
+        ).fetchone()
+        if row is None:
+            return None
+        revision_id = UUID(str(row[0]))
+        if retrospective_scope is not None:
+            self.require_exploratory_retrospective_universe_scope(revision_id, retrospective_scope)
+        elif self._connection.execute(
+            "SELECT 1 FROM mra.exploratory_retrospective_universe_revision WHERE universe_revision_id = %s",
+            (revision_id,),
+        ).fetchone() is not None:
+            raise RuntimeStateConflictError("ordinary Universe scope cannot reuse retrospective Authority")
+        return self.lock_frozen_universe(revision_id)
+
+    def find_eligibility_batch(
+        self, *, universe_revision_id: UUID, eligibility_policy_id: UUID,
+        decision_time: DecisionTime,
+        retrospective_scope: ExploratoryRetrospectiveSelectionScope | None,
+    ) -> EligibilityBatch | None:
+        row = self._connection.execute(
+            """SELECT receipt_id, result_hash FROM mra.command_receipt
+               WHERE status = 'SUCCEEDED' AND result_aggregate_kind = 'ELIGIBILITY_BATCH'
+                 AND result_aggregate_id = %s ORDER BY completed_at, receipt_id LIMIT 1""",
+            (f"{universe_revision_id}:{eligibility_policy_id}",),
+        ).fetchone()
+        if row is None:
+            return None
+        if retrospective_scope is not None:
+            self.require_exploratory_retrospective_eligibility_scope(
+                universe_revision_id=universe_revision_id, eligibility_policy_id=eligibility_policy_id, scope=retrospective_scope,
+            )
+        elif self._connection.execute(
+            """SELECT 1 FROM mra.exploratory_retrospective_eligibility_batch
+               WHERE universe_revision_id = %s AND eligibility_policy_id = %s""",
+            (universe_revision_id, eligibility_policy_id),
+        ).fetchone() is not None:
+            raise RuntimeStateConflictError("ordinary Eligibility scope cannot reuse retrospective Authority")
+        return self.load_eligibility_batch(
+            universe_revision_id=universe_revision_id, eligibility_policy_id=eligibility_policy_id,
+            decision_time=decision_time, result_hash=str(row[1]), receipt_id=row[0], replayed=True,
+        )
+
     def insert_frozen_universe(
         self,
         *,

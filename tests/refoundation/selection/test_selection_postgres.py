@@ -83,7 +83,7 @@ from market_regime_alpha.runtime.domain import (
     StepDependency,
     StepSpec,
 )
-from market_regime_alpha.runtime.errors import StaleFenceError
+from market_regime_alpha.runtime.errors import StaleFenceError, RuntimeStateConflictError
 from market_regime_alpha.runtime.ports import AttemptClaim
 from market_regime_alpha.selection.application import SelectionApplication
 from market_regime_alpha.selection.domain import (
@@ -933,6 +933,28 @@ def test_retrospective_selection_uses_exact_archive_dual_clock_without_weakening
     )
     assert frozen.included_count == 1
     assert assessed.eligible_count == 1
+    shared = stack.application.freeze_exploratory_retrospective_universe(
+        universe_id=universe.universe_id, scope=universe_scope,
+        retrospective_scope=retrospective,
+        context=_context("another-arm-freeze", "FREEZE_UNIVERSE"),
+    )
+    shared_assessment = stack.application.assess_exploratory_retrospective_eligibility(
+        universe_revision_id=shared.universe_revision_id,
+        eligibility_policy_id=policy.eligibility_policy_id,
+        retrospective_scope=retrospective,
+        context=_context("another-arm-assess", "ASSESS_ELIGIBILITY"),
+    )
+    assert shared.universe_revision_id == frozen.universe_revision_id
+    assert shared.members == frozen.members and shared.result_hash == frozen.result_hash
+    assert shared_assessment.assessments == assessed.assessments
+    assert shared_assessment.result_hash == assessed.result_hash
+    assert shared.replayed and shared_assessment.replayed
+    with pytest.raises(RuntimeStateConflictError, match="scope"):
+        stack.application.freeze_exploratory_retrospective_universe(
+            universe_id=universe.universe_id, scope=universe_scope,
+            retrospective_scope=replace(retrospective, knowledge_cutoff=retrospective.knowledge_cutoff + timedelta(seconds=1)),
+            context=_context("changed-seal-freeze", "FREEZE_UNIVERSE"),
+        )
     with psycopg.connect(stack.database_url) as connection:
         bindings = connection.execute(
             """
