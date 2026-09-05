@@ -4,7 +4,8 @@
 > **Authority:** Non-authoritative implementation status; exact-SHA qualification belongs to Verification
 > **Owner:** Market Regime Alpha maintainers
 > **Generated At:** 2026-09-06 WP-18Q-R2 operational recovery
-> **Repository Implementation Checkpoint:** `e00c9527917591deb3da0f0a26d91404c3904c31`
+> **Repository Implementation Checkpoint:** `16e0405763f058b89878eb7456078fa935d7e2d2`
+> **Implementation Tree:** `963210dded0f00cfaeb60052e3bb961e6de7af08`
 > **Execution-Time Main Baseline:** `780cd964fd47fffac13edd0cf52547d12fff2bfc`
 > **Containing Documentation Commit:** reported by handoff; no self-referential SHA
 > **Schema Epochs:** legacy business `LEGACY_MIGRATIONS_001_106`; target `MRA_REFOUNDATION_1 / DRAFT / NOT_CUT_OVER`
@@ -65,8 +66,8 @@ A new disposable test database does not attest to an operational upgrade.
 
 R2 fetched exact main `780cd964fd47fffac13edd0cf52547d12fff2bfc`, tree
 `0663cf127357c2cd24c49a23bbe3484e2f72e234`. Historical verification is not
-inherited. The clean `84cdcc31d485bc3d7a909fa4338898cd01b75a90` worktree passed
-3,946 repository tests and 4 subtests without skips/xfails. Later corrections
+inherited. The clean `ba5891a18324b0947860d8fa8df36bcdba8effad` worktree passed
+3,957 repository tests and 4 subtests without skips/xfails. Later corrections
 have focused evidence; a final exact-SHA full qualification remains required.
 
 | Gate | Proven / remaining boundary |
@@ -77,7 +78,8 @@ have focused evidence; a final exact-SHA full qualification remains required.
 | Backup / restore / inventory | Exported snapshot backups, physical Artifact roster verification and independent fresh-DB/root restore drills were executed. Non-authoritative inventory includes backup, integrity and restore receipts. Incomplete/failed execution remains incomplete/failed after restoration. |
 | Additive upgrade | Exact v3 upgrade was exercised on an independently restored database and the new operational scope after identity/disk/backup/idle checks. All 192 tables were compared: 189 unchanged; only schema epoch, migration and upgrade receipt tables changed. Original historical copy remains untouched. |
 | Canonical archive | New sealed archive `fc699eea-1283-5192-b3ac-c9cbddc0da5e` reconciles 534 canonical captures, 116 actual sessions and the frozen 32-instrument roster. Daily/intraday/calendar and exact daily membership evidence exist. Legitimate missing observations remain typed; reconstructed old identities or known-times were not used. |
-| Real generic campaign | Run `9c725138-3ea5-5b51-aa95-8c62f564fd78` freezes 44 executed sessions, four arms and two FIT→VALIDATION dependencies on the new archive. It is in progress, not completed evidence. Earlier failed/interrupted declarations are preserved. |
+| Real generic campaign | Run `a4b98930-a609-57c4-9e9a-4072d52397d8` freezes 44 executed sessions, four arms and two FIT→VALIDATION dependencies on the new archive. Explicit observational arms bind OBSERVE_ONLY Strategies; Forecast binds the Decision reference checkpoint. It is in progress, not completed evidence. Earlier failed/interrupted declarations are preserved. |
+| Observed performance | On the same stopped real campaign with 296 Datasets and 200 Decisions, full inspect took 8.63 seconds serially and 2.93 seconds with four bounded read workers. Complete plan hashes matched. Every owner is still reloaded and reconciled before the next action; no verification result is cached. Completed-campaign query plans remain required. |
 | Standard report / exact replay | A completed R2 campaign, trained ModelVersions, canonical standard metrics, report Artifacts and byte-stable inspect/resume/replay remain unproven. Alpha bottleneck is `NOT_DETERMINED`. |
 | Prospective continuity | The sole CONTINUOUS_RESEARCH runner can invoke the canonical series continuation before its trading-day early return. PostgreSQL clock, exact TradingSessions, overdue terminalization, planning gaps, due claim, lease/fence recovery and unknown Provider effect handling are wired and have focused tests. This is not proof of an installed continuously running service. |
 | Real prospective attempt | New series `r2_xshg32`, generation `1303080a-8a96-51dc-9021-31a9250c85d9`, began at 2026-09-05 15:56:17.897411 UTC with 288 future slices. At 2026-09-05 19:11:47 UTC, canonical continuation found due=0, no new generation and no planning gap. `REAL_DUE_ATTEMPT=BLOCKED_BY_TEMPORAL_WINDOW`; the frozen WP-18Q total exit still requires real due proof. |
