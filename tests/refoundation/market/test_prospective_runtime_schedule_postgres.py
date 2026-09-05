@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import replace
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 
@@ -8,6 +8,9 @@ import psycopg
 import pytest
 
 from market_regime_alpha.infrastructure.artifacts import LocalArtifactStore
+from market_regime_alpha.infrastructure.postgres.market_uow import (
+    PostgresMarketDatabaseClock,
+)
 from market_regime_alpha.infrastructure.postgres.pool import TargetPostgresPool
 from market_regime_alpha.infrastructure.postgres.schema import SchemaManager
 from market_regime_alpha.infrastructure.postgres.uow import PostgresUnitOfWorkProvider
@@ -27,12 +30,33 @@ from market_regime_alpha.shared.hashing import canonical_json_sha256
 from tests.refoundation.market.test_prospective_runtime_plan import _manifest
 
 
-@dataclass
-class _Clock:
-    value: datetime
-
-    def now(self):
-        return self.value
+def _runtime_fixture_at(observed_at: datetime):
+    """Stub capture windows share the real lease clock; no Provider proof."""
+    manifest = _manifest()
+    first = compile_prospective_runtime_plan(manifest, code_sha="1" * 40).capture_runs[0]
+    midpoint = first.window_start + (first.window_end - first.window_start) / 2
+    delta = observed_at - midpoint
+    slices = tuple(
+        replace(
+            item,
+            plan=replace(
+                item.plan,
+                event_window_start=item.plan.event_window_start + delta,
+                event_window_end=item.plan.event_window_end + delta,
+            ),
+        )
+        for item in manifest.slices
+    )
+    return replace(
+        manifest,
+        slices=slices,
+        start_request=replace(
+            manifest.start_request,
+            event_window_start=manifest.start_request.event_window_start + delta,
+            event_window_end=manifest.start_request.event_window_end + delta,
+            slices=tuple(item.plan for item in slices),
+        ),
+    )
 
 
 class _Archives:
@@ -120,8 +144,9 @@ def test_prospective_predeclare_and_due_capture_use_exact_runtime_fences(
     prospective_stack,
     target_database_url: str,
 ) -> None:
-    runtime, artifacts, _ = prospective_stack
-    manifest = _manifest()
+    runtime, artifacts, pool = prospective_stack
+    database_clock = PostgresMarketDatabaseClock(pool)
+    manifest = _runtime_fixture_at(database_clock.now())
     plan = compile_prospective_runtime_plan(manifest, code_sha="1" * 40)
     first_window = plan.capture_runs[0]
     archives = _Archives(runtime)
@@ -131,7 +156,7 @@ def test_prospective_predeclare_and_due_capture_use_exact_runtime_fences(
         artifacts=artifacts,
         archives=archives,
         operations=operations,
-        database_clock=_Clock(first_window.window_start),
+        database_clock=database_clock,
     )
 
     registered = application.predeclare(
@@ -152,6 +177,8 @@ def test_prospective_predeclare_and_due_capture_use_exact_runtime_fences(
 
     assert runtime.inspect_run(registered.predeclare_run_id).run_state == "SUCCEEDED"
     assert len(executed.slice_results) == 2
+    assert executed.due_run_ids == (first_window.run_id,)
+    assert first_window.window_start <= executed.observed_at <= first_window.window_end
     assert runtime.inspect_run(first_window.run_id).run_state == "SUCCEEDED"
     assert all(
         runtime.inspect_run(run.run_id).run_state == "RUNNING"
