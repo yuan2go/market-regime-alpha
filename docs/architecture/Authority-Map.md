@@ -146,6 +146,14 @@ truth. Its implemented target-draft refinements are:
 | Prospective generations / due / terminals / revisions | Market Application using existing Runtime | `prospective_archive_generation`, `prospective_archive_generation_member`, `prospective_archive_slice_schedule`, `prospective_archive_slice_terminal`, `prospective_archive_revision_observation`, `prospective_archive_planning_gap`; PostgreSQL clock and real Runtime fences, never a second scheduler |
 
 These refinements are implemented, not automatically engineering-qualified.
+The existing `mra evidence` operator surface projects database identity, archive
+and Artifact references, backup receipts and integrity/restore observations.
+This inventory has no business Authority, FK targets or evidence-maturity
+mutation. PostgreSQL and Artifact owners remain authoritative. An intact backup
+of an incomplete or failed Backtest preserves that state; it does not turn its
+completion replay into a match. Machine-local inventory paths stay outside
+shared repository configuration.
+
 WP-specific executable surfaces remain until the prescribed real-campaign,
 report, replay, historical-equivalence and regression hard-cut gates pass.
 Their presence is a qualification blocker, not a permanent compatibility policy.

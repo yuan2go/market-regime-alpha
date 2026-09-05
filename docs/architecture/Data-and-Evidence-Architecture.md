@@ -14,6 +14,29 @@ semantics and is neither a quota nor a cutover claim.
 
 ## 1. Database rules
 
+Operational recovery uses the existing `mra evidence` CLI surface. Inventory is
+a read-only index regenerated from canonical facts and verified local receipts;
+it creates no relational business owner, FK target or evidence qualification.
+Database name/OID/cluster, schema checksums, Artifact-root binding, archive and
+generation identities are explicit. Credentials are excluded, and local paths
+and hosts are separated from shared configuration.
+
+A backup exports a PostgreSQL repeatable-read snapshot and copies the exact
+Artifact roster referenced by that snapshot. Dump and Artifact bytes, sizes and
+SHA256 values are checked, with `pg_restore` readability and roster verification.
+This reconciliation contract permits later append-only source activity without
+pretending the filesystem itself supplied an atomic database snapshot. Restore
+drills use a distinct database identity and fresh Artifact root, verify schema,
+ordered row hashes, physical references and archive/Backtest integrity, and never
+modify the source scope. Preserve incomplete and negative execution statuses;
+integrity matching and completed Backtest replay are separate claims.
+
+Original operational databases permit backed-up, exact-OID/checksum guarded
+additive upgrades only. Unavailable old Authority is recorded as evidence
+discontinuity. Recovered immutable source bytes may enter new canonical captures
+and a new sealed archive with honest current known/recorded times; they cannot
+restore missing Authority IDs or reconstruct continuous prospective history.
+
 - PostgreSQL 16 is the sole relational Authority.
 - Target application schema: `mra`.
 - Primary keys are application-generated `uuid`; declared natural identities

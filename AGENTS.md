@@ -3,7 +3,7 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Sole repository execution, safety, and evidence contract
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-09-05
+> **Last Updated:** 2026-09-06
 > **Related Documents:** `CLAUDE.md`, `docs/README.md`, `docs/architecture/Canonical-Overall-Design.md`, `docs/status/Roadmap.md`
 
 ## Mission and current program
@@ -61,7 +61,7 @@ and Production qualification remain unauthorized.
 
 ### WP-18Q qualification freeze
 
-The active scope is qualification closure under the WP-18Q Design and
+The active scope is R2 operational evidence recovery and qualification under the WP-18Q Design and
 Implementation Plan, not a new architecture or model program. Generic Backtest
 uses the existing `exploratory_backtest_run` root and canonical Runtime,
 Dataset, Decision, Outcome, Model and Evaluation owners. Report is a
@@ -79,6 +79,14 @@ new WP-specific execution or a permanent compatibility facade.
 
 Operational evidence databases permit only exact-identity, backed-up additive
 upgrade. A restored backup copy is not the original operational database.
+Record an explicit evidence discontinuity when original Authority is unavailable;
+new captures, archives and prospective generations retain their actual new times
+and identities. The `mra evidence` inventory is a regenerable, non-authoritative
+operator index, never a business FK target or a maturity decision. Keep local
+paths, hosts and backup locations outside shared configuration; never store
+credentials in inventory. Verify exported database snapshots against their exact
+Artifact roster and perform independent restore/reconciliation drills. Faithful
+preservation of failed execution is integrity evidence, not completed replay.
 No current due window means `NOT_DUE`, not prospective proof; never wait for a
 future window, backdate, or relabel replay to close a qualification gate.
 
