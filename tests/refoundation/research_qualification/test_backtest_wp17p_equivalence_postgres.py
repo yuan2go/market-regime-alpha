@@ -45,6 +45,53 @@ _DEFINITION_SHA256 = (
 )
 
 
+def test_outcome_batch_reconciles_exact_history_and_missing_rows_without_cached_results() -> None:
+    from market_regime_alpha.infrastructure.postgres.queries.outcome_verification import PostgresOutcomeVerificationProvider
+    from market_regime_alpha.outcome.domain import OutcomeMismatchKind
+
+    class MeasuredPool(TargetPostgresPool):
+        leases = 0
+
+        @contextmanager
+        def connection(self, *, read_only=False):
+            assert read_only
+            self.leases += 1
+            with super().connection(read_only=True) as connection:
+                yield connection
+
+    url, _ = _historical_environment()
+    pool = MeasuredPool(url, min_size=0, max_size=2)
+    try:
+        before = _authority_digest(pool)
+        with pool.connection(read_only=True) as connection:
+            ids = tuple(row[0] for row in connection.execute(
+                """
+                SELECT outcome.market_target_outcome_revision_id
+                FROM mra.market_target_outcome_revision AS outcome
+                JOIN mra.decision_target_commitment USING (commitment_id)
+                JOIN mra.exploratory_retrospective_decision_run AS backtest USING (decision_run_id)
+                WHERE backtest.exploratory_backtest_run_id = %s
+                ORDER BY outcome.market_target_outcome_revision_id LIMIT 32
+                """,
+                (_RUN_ID,),
+            ).fetchall())
+        assert len(ids) == 32
+        absent = UUID("00000000-0000-4000-8000-000000009999")
+        provider = PostgresOutcomeVerificationProvider(pool)
+        pool.leases = 0
+        result = provider.inspect_many((*ids, absent, ids[0]))
+        assert set(result) == {*ids, absent}
+        assert all(result[identity] == () for identity in ids)
+        assert len(result[absent]) == 1
+        assert result[absent][0].kind is OutcomeMismatchKind.MISSING_ROW
+        assert pool.leases == 1
+        assert provider.inspect_many((*ids, absent)) == result
+        assert pool.leases == 2
+        assert _authority_digest(pool) == before
+    finally:
+        pool.close()
+
+
 def test_training_reloads_each_distinct_dataset_once_per_preparation(monkeypatch) -> None:
     from market_regime_alpha.infrastructure.postgres.queries import model_training_inputs as inputs
     from market_regime_alpha.research_qualification.domain.model import ArtifactBinding
@@ -98,7 +145,14 @@ def test_training_reloads_each_distinct_dataset_once_per_preparation(monkeypatch
         pool.close()
 
 
-def test_owner_observation_uses_bounded_concurrent_reads_without_changing_replay() -> None:
+def test_owner_observation_uses_bounded_concurrent_reads_without_changing_replay(monkeypatch) -> None:
+    from market_regime_alpha.infrastructure.postgres.queries.outcome_verification import PostgresOutcomeVerificationProvider
+
+    def reject_per_row_inspection(self, revision_id):
+        raise AssertionError("Backtest must reconcile the action's Outcome roster as a batch")
+
+    monkeypatch.setattr(PostgresOutcomeVerificationProvider, "inspect", reject_per_row_inspection)
+
     class ObservedPool(TargetPostgresPool):
         def __init__(self, url):
             super().__init__(url, min_size=0, max_size=2)

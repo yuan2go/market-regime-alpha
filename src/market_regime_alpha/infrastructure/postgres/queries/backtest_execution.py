@@ -364,7 +364,10 @@ class PostgresBacktestExecutionObservationPort:
             return BacktestActionObservation(action.action_id, BacktestObservedState.ABSENT)
         if not rows or any(row["market_target_outcome_revision_id"] is None for row in rows):
             return BacktestActionObservation(action.action_id, BacktestObservedState.MATCHED_INCOMPLETE)
-        mismatched = any(self._outcomes.inspect(UUID(str(row["market_target_outcome_revision_id"]))) for row in rows)
+        checks = self._outcomes.inspect_many(
+            UUID(str(row["market_target_outcome_revision_id"])) for row in rows
+        )
+        mismatched = any(checks.values())
         return BacktestActionObservation(
             action.action_id,
             (BacktestObservedState.MISMATCH if mismatched else BacktestObservedState.MATCHED_COMPLETE),

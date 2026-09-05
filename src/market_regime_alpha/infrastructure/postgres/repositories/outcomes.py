@@ -15,6 +15,77 @@ from market_regime_alpha.outcome.domain import (
 from market_regime_alpha.outcome.ports import OutcomeHead, OutcomeReconciliation
 
 
+OUTCOME_ROSTER_RECONCILIATION_SQL = """
+    SELECT
+      (SELECT count(*) FROM mra.market_target_outcome_source
+       WHERE market_target_outcome_revision_id = %(revision_id)s),
+      (SELECT count(*) FROM mra.market_target_outcome_observation
+       WHERE market_target_outcome_revision_id = %(revision_id)s),
+      (SELECT count(*) FROM mra.market_target_outcome_metric
+       WHERE market_target_outcome_revision_id = %(revision_id)s),
+      (SELECT count(*) FROM mra.market_target_outcome_metric_reference
+       WHERE market_target_outcome_revision_id = %(revision_id)s),
+      (SELECT count(*) FROM mra.market_target_outcome_metric_observation
+       WHERE market_target_outcome_revision_id = %(revision_id)s),
+      (SELECT count(*) FROM mra.market_target_outcome_reason
+       WHERE market_target_outcome_revision_id = %(revision_id)s),
+      (SELECT mra.canonical_sha256(replace(COALESCE(json_agg(
+         json_build_object(
+           'content_sha256', content_sha256,
+           'market_target_outcome_source_id',
+             market_target_outcome_source_id,
+           'ordinal', source_ordinal
+         ) ORDER BY source_ordinal)::text, '[]'), ' ', ''))
+       FROM mra.market_target_outcome_source
+       WHERE market_target_outcome_revision_id = %(revision_id)s),
+      (SELECT mra.canonical_sha256(replace(COALESCE(json_agg(
+         json_build_object(
+           'content_sha256', content_sha256,
+           'market_target_outcome_observation_id',
+             market_target_outcome_observation_id,
+           'ordinal', observation_ordinal
+         ) ORDER BY observation_ordinal)::text, '[]'), ' ', ''))
+       FROM mra.market_target_outcome_observation
+       WHERE market_target_outcome_revision_id = %(revision_id)s),
+      (SELECT mra.canonical_sha256(replace(COALESCE(json_agg(
+         json_build_object(
+           'content_sha256', content_sha256,
+           'market_target_outcome_metric_id',
+             market_target_outcome_metric_id,
+           'ordinal', metric_ordinal
+         ) ORDER BY metric_ordinal)::text, '[]'), ' ', ''))
+       FROM mra.market_target_outcome_metric
+       WHERE market_target_outcome_revision_id = %(revision_id)s),
+      (SELECT mra.canonical_sha256(replace(COALESCE(json_agg(
+         json_build_object(
+           'content_sha256', content_sha256,
+           'market_target_outcome_metric_reference_id',
+             market_target_outcome_metric_reference_id,
+           'ordinal', dependency_ordinal
+         ) ORDER BY dependency_ordinal)::text, '[]'), ' ', ''))
+       FROM mra.market_target_outcome_metric_reference
+       WHERE market_target_outcome_revision_id = %(revision_id)s),
+      (SELECT mra.canonical_sha256(replace(COALESCE(json_agg(
+         json_build_object(
+           'content_sha256', content_sha256,
+           'market_target_outcome_metric_observation_id',
+             market_target_outcome_metric_observation_id,
+           'ordinal', dependency_ordinal
+         ) ORDER BY dependency_ordinal)::text, '[]'), ' ', ''))
+       FROM mra.market_target_outcome_metric_observation
+       WHERE market_target_outcome_revision_id = %(revision_id)s),
+      (SELECT mra.canonical_sha256(replace(COALESCE(json_agg(
+         json_build_object(
+           'content_sha256', content_sha256,
+           'market_target_outcome_reason_id',
+             market_target_outcome_reason_id,
+           'ordinal', reason_ordinal
+         ) ORDER BY reason_ordinal)::text, '[]'), ' ', ''))
+       FROM mra.market_target_outcome_reason
+       WHERE market_target_outcome_revision_id = %(revision_id)s)
+"""
+
+
 class PostgresOutcomeRepository:
     def __init__(self, connection: psycopg.Connection[Any]) -> None:
         self._connection = connection
@@ -542,75 +613,7 @@ class PostgresOutcomeRepository:
         if root is None:
             return _empty_reconciliation(revision_id)
         rows = self._connection.execute(
-            """
-            SELECT
-              (SELECT count(*) FROM mra.market_target_outcome_source
-               WHERE market_target_outcome_revision_id = %(revision_id)s),
-              (SELECT count(*) FROM mra.market_target_outcome_observation
-               WHERE market_target_outcome_revision_id = %(revision_id)s),
-              (SELECT count(*) FROM mra.market_target_outcome_metric
-               WHERE market_target_outcome_revision_id = %(revision_id)s),
-              (SELECT count(*) FROM mra.market_target_outcome_metric_reference
-               WHERE market_target_outcome_revision_id = %(revision_id)s),
-              (SELECT count(*) FROM mra.market_target_outcome_metric_observation
-               WHERE market_target_outcome_revision_id = %(revision_id)s),
-              (SELECT count(*) FROM mra.market_target_outcome_reason
-               WHERE market_target_outcome_revision_id = %(revision_id)s),
-              (SELECT mra.canonical_sha256(replace(COALESCE(json_agg(
-                 json_build_object(
-                   'content_sha256', content_sha256,
-                   'market_target_outcome_source_id',
-                     market_target_outcome_source_id,
-                   'ordinal', source_ordinal
-                 ) ORDER BY source_ordinal)::text, '[]'), ' ', ''))
-               FROM mra.market_target_outcome_source
-               WHERE market_target_outcome_revision_id = %(revision_id)s),
-              (SELECT mra.canonical_sha256(replace(COALESCE(json_agg(
-                 json_build_object(
-                   'content_sha256', content_sha256,
-                   'market_target_outcome_observation_id',
-                     market_target_outcome_observation_id,
-                   'ordinal', observation_ordinal
-                 ) ORDER BY observation_ordinal)::text, '[]'), ' ', ''))
-               FROM mra.market_target_outcome_observation
-               WHERE market_target_outcome_revision_id = %(revision_id)s),
-              (SELECT mra.canonical_sha256(replace(COALESCE(json_agg(
-                 json_build_object(
-                   'content_sha256', content_sha256,
-                   'market_target_outcome_metric_id',
-                     market_target_outcome_metric_id,
-                   'ordinal', metric_ordinal
-                 ) ORDER BY metric_ordinal)::text, '[]'), ' ', ''))
-               FROM mra.market_target_outcome_metric
-               WHERE market_target_outcome_revision_id = %(revision_id)s),
-              (SELECT mra.canonical_sha256(replace(COALESCE(json_agg(
-                 json_build_object(
-                   'content_sha256', content_sha256,
-                   'market_target_outcome_metric_reference_id',
-                     market_target_outcome_metric_reference_id,
-                   'ordinal', dependency_ordinal
-                 ) ORDER BY dependency_ordinal)::text, '[]'), ' ', ''))
-               FROM mra.market_target_outcome_metric_reference
-               WHERE market_target_outcome_revision_id = %(revision_id)s),
-              (SELECT mra.canonical_sha256(replace(COALESCE(json_agg(
-                 json_build_object(
-                   'content_sha256', content_sha256,
-                   'market_target_outcome_metric_observation_id',
-                     market_target_outcome_metric_observation_id,
-                   'ordinal', dependency_ordinal
-                 ) ORDER BY dependency_ordinal)::text, '[]'), ' ', ''))
-               FROM mra.market_target_outcome_metric_observation
-               WHERE market_target_outcome_revision_id = %(revision_id)s),
-              (SELECT mra.canonical_sha256(replace(COALESCE(json_agg(
-                 json_build_object(
-                   'content_sha256', content_sha256,
-                   'market_target_outcome_reason_id',
-                     market_target_outcome_reason_id,
-                   'ordinal', reason_ordinal
-                 ) ORDER BY reason_ordinal)::text, '[]'), ' ', ''))
-               FROM mra.market_target_outcome_reason
-               WHERE market_target_outcome_revision_id = %(revision_id)s)
-            """,
+            OUTCOME_ROSTER_RECONCILIATION_SQL,
             {"revision_id": revision_id},
         ).fetchone()
         assert rows is not None
