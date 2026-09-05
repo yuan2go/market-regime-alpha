@@ -193,6 +193,14 @@ class BacktestActionReadPort(Protocol):
         trading_session_id: UUID,
     ) -> BacktestTradingSession: ...
 
+    def outcome_sessions(
+        self,
+        specification: BacktestSpecification,
+        *,
+        reference_session_id: UUID,
+        maximum_offset: int,
+    ) -> tuple[BacktestTradingSession, ...]: ...
+
     def target_checkpoints(self, specification: BacktestSpecification) -> tuple[BacktestTargetCheckpoint, ...]: ...
 
     def feature_definitions(self, specification: BacktestSpecification) -> tuple[BacktestFeatureExecutionDefinition, ...]: ...

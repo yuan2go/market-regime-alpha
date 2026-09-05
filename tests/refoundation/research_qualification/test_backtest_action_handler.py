@@ -124,6 +124,86 @@ def test_model_action_has_one_ordered_owner_runtime_dag() -> None:
     assert len({str(step.request_sha256) for step in steps}) == len(steps)
 
 
+def test_outcome_action_resolves_calendar_horizon_after_last_decision_session():
+    from datetime import UTC, datetime, time
+    from market_regime_alpha.research_qualification.ports.backtest_actions import (
+        BacktestArchiveSeal,
+        BacktestTargetCheckpoint,
+        BacktestTradingSession,
+    )
+
+    friday = BacktestTradingSession(
+        UUID(int=701),
+        "XSHG",
+        date(2026, 1, 9),
+        "Asia/Shanghai",
+        datetime(2026, 1, 9, 1, 30, tzinfo=UTC),
+        datetime(2026, 1, 9, 7, tzinfo=UTC),
+    )
+    monday = BacktestTradingSession(
+        UUID(int=702),
+        "XSHG",
+        date(2026, 1, 12),
+        "Asia/Shanghai",
+        datetime(2026, 1, 12, 1, 30, tzinfo=UTC),
+        datetime(2026, 1, 12, 7, tzinfo=UTC),
+    )
+    member = SimpleNamespace(
+        exploratory_backtest_fold_session_id=UUID(int=703),
+        trading_session_id=friday.trading_session_id,
+        session_date=friday.session_date,
+        role=BacktestSessionRole.EVALUATION,
+    )
+    fold = SimpleNamespace(exploratory_backtest_fold_id=UUID(int=704), sessions=(member,))
+    specification = SimpleNamespace(
+        exploratory_backtest_run_id=UUID(int=705), folds=(fold,), target=SimpleNamespace(authority_id=UUID(int=706))
+    )
+    commitment = UUID(int=707)
+    resolved = []
+    settled = []
+
+    def outcome_sessions(spec, *, reference_session_id, maximum_offset):
+        assert spec is specification
+        resolved.append((reference_session_id, maximum_offset))
+        return (friday, monday)
+
+    def settle(request, context, *, runtime_claim):
+        settled.append(request)
+        return SimpleNamespace()
+
+    reads = SimpleNamespace(
+        trading_session=lambda spec, identity: friday,
+        outcome_sessions=outcome_sessions,
+        decision_commitment_ids=lambda **kwargs: (commitment,),
+        archive_seal=lambda spec: BacktestArchiveSeal(datetime(2026, 2, 1, tzinfo=UTC)),
+        target_checkpoints=lambda spec: (BacktestTargetCheckpoint(UUID(int=708), "OUTCOME_OBSERVATION", 1, time(10, 30), "Asia/Shanghai"),),
+    )
+    handler = BacktestCanonicalActionHandler(
+        artifacts=cast(Any, SimpleNamespace()),
+        selection=cast(Any, SimpleNamespace()),
+        research_definitions=cast(Any, SimpleNamespace()),
+        reads=cast(Any, reads),
+        feature_materializers=(cast(Any, SimpleNamespace()),),
+        worker_id="test-worker",
+        outcomes=cast(Any, SimpleNamespace(settle_exploratory_retrospective_market_target_outcome=settle)),
+    )
+    action = BacktestExpectedAction(
+        UUID(int=709),
+        1,
+        BacktestActionKind.SETTLE_OUTCOME,
+        specification.exploratory_backtest_run_id,
+        UUID(int=710),
+        fold.exploratory_backtest_fold_id,
+        member.exploratory_backtest_fold_session_id,
+        None,
+        (),
+    )
+    handler.execute_step(cast(Any, specification), action, cast(Any, SimpleNamespace(step_key=f"settle-{commitment.hex}")))
+    assert resolved == [(friday.trading_session_id, 1)]
+    assert len(settled) == 1
+    assert settled[0].observation_cutoff == datetime(2026, 1, 12, 2, 30, tzinfo=UTC)
+
+
 def test_context_evaluation_projects_exact_context_authority_into_partition() -> None:
     arm_id = UUID(int=31)
     requirement = BacktestEvaluationRequirement(
