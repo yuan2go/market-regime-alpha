@@ -102,3 +102,27 @@ def test_integrity_mismatch_stops_before_any_action_execution() -> None:
             BacktestObservedState.MISMATCH,
         )
     }
+
+
+def test_resume_uses_one_fresh_observation_per_transition_and_final_verification() -> None:
+    class CountingState(_CanonicalState):
+        reads = 0
+        executions = 0
+
+        def observe(self, run, expected_actions):
+            self.reads += 1
+            return super().observe(run, expected_actions)
+
+        def execute(self, run, action, operation):
+            assert self.reads == self.executions + 1
+            self.executions += 1
+            super().execute(run, action, operation)
+
+    state = CountingState({})
+    executor = BacktestExecutor(state, state)
+    assert executor.resume(_run()).execution_state is BacktestExecutionState.COMPLETED
+    assert state.reads == state.executions + 1
+    completed_executions = state.executions
+    assert executor.resume(_run()).execution_state is BacktestExecutionState.COMPLETED
+    assert state.executions == completed_executions
+    assert state.reads == completed_executions + 2
