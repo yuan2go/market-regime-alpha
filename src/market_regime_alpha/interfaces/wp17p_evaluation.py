@@ -306,8 +306,9 @@ def wp17p_partition_plan(
             catalog.backtest.exploratory_backtest_run_id,
             f"partition:{fold.exploratory_backtest_fold_id}",
         ),
-        f"wp{17 if catalog.backtest.generation == 1 else 18}_"
-        f"{fold.purpose.value.lower()}_{fold.ordinal:02d}_partition",
+        f"wp17p_{fold.purpose.value.lower()}_partition"
+        if catalog.backtest.generation == 1
+        else f"wp18_{fold.purpose.value.lower()}_{fold.ordinal:02d}_partition",
         catalog.target.target_definition_id,
         catalog.target.version,
         catalog.target.content_sha256,

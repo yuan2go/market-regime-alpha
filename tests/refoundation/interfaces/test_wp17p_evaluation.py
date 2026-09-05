@@ -8,6 +8,10 @@ import pytest
 
 from market_regime_alpha.interfaces.wp17p_evaluation import wp17p_partition_plan
 from market_regime_alpha.research_qualification.domain import ArtifactBinding
+from market_regime_alpha.research_qualification.domain.exploratory_backtest import (
+    BacktestFoldSessionPlan,
+    BacktestSessionRole,
+)
 from market_regime_alpha.research_qualification.domain.research_vocabulary import (
     PartitionOverlapPolicy,
     PartitionPurpose,
@@ -30,6 +34,7 @@ def _inputs():
             content_sha256="b" * 64,
         ),
         backtest=SimpleNamespace(
+            generation=1,
             exploratory_backtest_run_id=uuid4(),
             code_artifact=artifact,
             config_artifact=artifact,
@@ -43,10 +48,12 @@ def _inputs():
                     purge_sessions=1,
                     embargo_sessions=1,
                     sessions=(
-                        SimpleNamespace(
+                        BacktestFoldSessionPlan(
                             exploratory_backtest_fold_session_id=fold_session_id,
+                            ordinal=1,
                             trading_session_id=trading_session_id,
                             session_date=date(2026, 1, 14),
+                            role=BacktestSessionRole.EVALUATION,
                         ),
                     ),
                 ),
@@ -62,11 +69,19 @@ def _inputs():
     return catalog, dataset, trading_session_id
 
 
-def test_partition_plan_freezes_fold_calendar_and_protection() -> None:
+@pytest.mark.parametrize(
+    ("generation", "expected_code"),
+    [(1, "wp17p_validation_partition"), (2, "wp18_validation_02_partition")],
+)
+def test_partition_plan_freezes_fold_calendar_and_protection(
+    generation: int, expected_code: str
+) -> None:
     catalog, dataset, trading_session_id = _inputs()
+    catalog.backtest.generation = generation
 
-    plan = wp17p_partition_plan(catalog, dataset)
+    plan = wp17p_partition_plan(catalog, (dataset,))
 
+    assert plan.partition_code == expected_code
     assert plan.purpose is PartitionPurpose.VALIDATION
     assert plan.overlap_policy is PartitionOverlapPolicy.PURGED_WALK_FORWARD
     assert plan.exchange_code == "XSHG"
@@ -84,4 +99,4 @@ def test_partition_plan_rejects_undeclared_dataset_session() -> None:
     )
 
     with pytest.raises(ValueError, match="absent or ambiguous"):
-        wp17p_partition_plan(catalog, dataset)
+        wp17p_partition_plan(catalog, (dataset,))
