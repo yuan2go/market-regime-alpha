@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 import inspect
 import json
-from uuid import UUID, uuid5
+from uuid import UUID, uuid4, uuid5
 
 import pytest
 
@@ -312,3 +312,24 @@ def test_alpha_diagnosis_does_not_infer_bottleneck_from_metric_availability(evid
         assert diagnosis["surface_evidence"][0]["reason_codes"] == ("NO_CANONICAL_EVALUATION_METRIC",)
     elif evidence_gap == "not_estimable":
         assert diagnosis["surface_evidence"][0]["reason_codes"] == ("INSUFFICIENT_OBSERVATIONS",)
+
+
+def test_report_preserves_canonical_risk_reasons_and_rejects_foreign_evaluation():
+    from market_regime_alpha.research_qualification.domain.backtest_report import BacktestReportRiskReason
+    source = _source()
+    reason = BacktestReportRiskReason(
+        evaluation_run_id=source.evaluation_run_ids[0], decision_run_id=uuid4(),
+        risk_decision_id=uuid4(), risk_decision_sha256='a' * 64,
+        risk_reason_id=uuid4(), risk_reason_sha256='b' * 64,
+        risk_status='REJECTED', result='FAIL', reason_code='MAXIMUM_SINGLE_WEIGHT',
+    )
+    with_reasons = replace(source, risk_reasons=(reason,))
+    assert with_reasons.content_sha256 != source.content_sha256
+    app = BacktestReportApplication(_Source({source.run.exploratory_backtest_run_id: with_reasons}), _Verifier())
+    payload = app.project(source.run.exploratory_backtest_run_id)
+    row, = payload['not_estimable_failure_reasons']['risk_reasons']
+    assert row['risk_reason_id'] == str(reason.risk_reason_id)
+    assert row['reason_code'] == 'MAXIMUM_SINGLE_WEIGHT'
+    assert b'MAXIMUM_SINGLE_WEIGHT' in app.render_markdown(source.run.exploratory_backtest_run_id)
+    with pytest.raises(ValueError, match='Risk.*Evaluation roster'):
+        replace(source, risk_reasons=(replace(reason, evaluation_run_id=uuid4()),))

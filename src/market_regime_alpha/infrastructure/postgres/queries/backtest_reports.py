@@ -23,6 +23,7 @@ from market_regime_alpha.research_qualification.domain.backtest_report import (
     BacktestReportConfiguration,
     BacktestReportMetric,
     BacktestReportModel,
+    BacktestReportRiskReason,
     BacktestReportSource,
 )
 from market_regime_alpha.research_qualification.domain.evaluation_formula import (
@@ -34,6 +35,23 @@ from market_regime_alpha.research_qualification.errors import (
     BacktestReportIntegrityError,
 )
 from market_regime_alpha.shared.hashing import canonical_json_sha256
+
+
+_RISK_REASONS_SQL = """
+    SELECT source.evaluation_run_id, decision.decision_run_id,
+           decision.risk_decision_id, decision.content_sha256 AS risk_decision_sha256,
+           reason.risk_reason_id, reason.content_sha256 AS risk_reason_sha256,
+           decision.status AS risk_status, reason.result, reason.reason_code
+    FROM (
+        SELECT DISTINCT evaluation_run_id, risk_decision_id
+        FROM mra.evaluation_risk_source
+        WHERE evaluation_run_id = ANY(%s::uuid[])
+    ) AS source
+    JOIN mra.risk_decision AS decision USING (risk_decision_id)
+    JOIN mra.risk_reason AS reason USING (risk_decision_id)
+    WHERE reason.result IN ('FAIL', 'UNKNOWN')
+    ORDER BY source.evaluation_run_id, decision.risk_decision_id, reason.ordinal
+"""
 
 
 class PostgresBacktestReportSourcePort:
@@ -178,6 +196,10 @@ class PostgresBacktestReportSourcePort:
                     """,
                     (exploratory_backtest_run_id,),
                 ).fetchall()
+                risk_rows = cursor.execute(
+                    _RISK_REASONS_SQL,
+                    (list(dict.fromkeys(row["evaluation_run_id"] for row in evaluation_rows)),),
+                ).fetchall()
         if root is None:
             raise BacktestReportIntegrityError("Backtest report configuration is absent")
         requirement_ids = {UUID(str(row["backtest_evaluation_requirement_id"])) for row in evaluation_rows}
@@ -258,6 +280,7 @@ class PostgresBacktestReportSourcePort:
             evaluation_run_ids=evaluation_ids,
             metrics=metrics,
             models=tuple(_model(row) for row in model_rows),
+            risk_reasons=tuple(BacktestReportRiskReason(**row) for row in risk_rows),
             limitations=(
                 "Retrospective exploratory evidence only.",
                 "Formal Provider and PIT evidence are blocked.",

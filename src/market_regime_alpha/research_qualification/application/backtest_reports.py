@@ -263,6 +263,7 @@ def _report_payload(source: BacktestReportSource) -> dict[str, object]:
         "not_estimable_failure_reasons": {
             "not_estimable_metrics": not_estimable,
             "execution_failure_reasons": source.execution_failure_reasons,
+            **({"risk_reasons": _json_value(source.risk_reasons)} if source.risk_reasons else {}),
         },
         "limitations": source.limitations,
         "evidence_ceiling": {

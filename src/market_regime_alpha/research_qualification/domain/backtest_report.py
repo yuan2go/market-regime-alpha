@@ -143,6 +143,27 @@ class BacktestReportMetric:
 
 
 @dataclass(frozen=True, slots=True)
+class BacktestReportRiskReason:
+    evaluation_run_id: UUID
+    decision_run_id: UUID
+    risk_decision_id: UUID
+    risk_decision_sha256: str
+    risk_reason_id: UUID
+    risk_reason_sha256: str
+    risk_status: str
+    result: str
+    reason_code: str
+
+    def __post_init__(self) -> None:
+        ContentHash(self.risk_decision_sha256)
+        ContentHash(self.risk_reason_sha256)
+        if self.risk_status not in {"AUTHORIZED", "REJECTED", "UNKNOWN", "NO_ACTION"}:
+            raise ValueError("report Risk status is invalid")
+        if self.result not in {"FAIL", "UNKNOWN"} or not _REASON.fullmatch(self.reason_code):
+            raise ValueError("report Risk reason is not a canonical failure or unknown")
+
+
+@dataclass(frozen=True, slots=True)
 class BacktestReportSource:
     run: FrozenBacktestRun
     configuration: BacktestReportConfiguration
@@ -153,6 +174,7 @@ class BacktestReportSource:
     execution_failure_reasons: tuple[str, ...] = ()
     limitations: tuple[str, ...] = ()
     recommended_next_experiment: str = "Collect qualified prospective evidence."
+    risk_reasons: tuple[BacktestReportRiskReason, ...] = ()
     evaluation_roster_sha256: ContentHash = field(init=False)
     content_sha256: ContentHash = field(init=False)
 
@@ -165,6 +187,8 @@ class BacktestReportSource:
             raise ValueError("report requires canonical Evaluation metrics")
         if any(metric.evaluation_run_id not in self.evaluation_run_ids for metric in self.metrics):
             raise ValueError("report metric is outside the Evaluation roster")
+        if any(reason.evaluation_run_id not in self.evaluation_run_ids for reason in self.risk_reasons):
+            raise ValueError("report Risk reason is outside the Evaluation roster")
         if any(not _REASON.fullmatch(reason) for reason in self.execution_failure_reasons):
             raise ValueError("report execution failure reason is invalid")
         evaluation_hash = ContentHash(
@@ -194,6 +218,7 @@ class BacktestReportSource:
                         "models": self.models,
                         "recommended_next_experiment": self.recommended_next_experiment,
                         "run_projection_sha256": str(self.run.projection_sha256),
+                        **({"risk_reasons": self.risk_reasons} if self.risk_reasons else {}),
                     }
                 )
             ),
