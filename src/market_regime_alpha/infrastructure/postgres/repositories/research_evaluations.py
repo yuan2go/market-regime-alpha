@@ -555,7 +555,9 @@ class PostgresEvaluationRepository:
                    candidate.composite_score,
                    candidate.competition_rank,
                    candidate.candidate_set_id,
-                   outcome_revision.knowledge_cutoff
+                   outcome_revision.knowledge_cutoff,
+                   directional_cost.buy_bps, directional_cost.sell_bps,
+                   gap_lineage.has_source_gap, gap_lineage.has_missing_gap
             FROM mra.evaluation_observation AS observation
             JOIN mra.research_partition_member AS member
               ON member.research_partition_member_id =
@@ -573,6 +575,18 @@ class PostgresEvaluationRepository:
             JOIN mra.market_target_outcome_revision AS outcome_revision
               ON outcome_revision.market_target_outcome_revision_id =
                  observation.market_target_outcome_revision_id
+            LEFT JOIN LATERAL (
+                SELECT coalesce(bool_or(source.source_gap_id IS NOT NULL), false) AS has_source_gap,
+                       coalesce(bool_or(source.source_gap_id IS NOT NULL
+                                        AND source.source_gap_kind = 'MISSING'), false) AS has_missing_gap
+                FROM mra.market_target_outcome_metric_observation AS dependency
+                JOIN mra.market_target_outcome_observation AS point
+                  ON point.market_target_outcome_observation_id = dependency.market_target_outcome_observation_id
+                JOIN mra.market_target_outcome_source AS source
+                  ON source.market_target_outcome_source_id = point.market_target_outcome_source_id
+                WHERE dependency.market_target_outcome_metric_id = outcome_metric.market_target_outcome_metric_id
+                  AND dependency.market_target_outcome_revision_id = outcome_revision.market_target_outcome_revision_id
+            ) AS gap_lineage ON true
             LEFT JOIN mra.exploratory_retrospective_decision_run AS retrospective
               ON retrospective.decision_run_id = commitment.decision_run_id
             LEFT JOIN mra.exploratory_backtest_arm AS arm
@@ -600,6 +614,20 @@ class PostgresEvaluationRepository:
                  retrospective.exploratory_backtest_arm_id
              AND arm_strategy.exploratory_backtest_run_id =
                  retrospective.exploratory_backtest_run_id
+            LEFT JOIN LATERAL (
+                SELECT
+                    CASE WHEN count(*) > 0 AND count(cost.charge_side) = count(*)
+                         THEN coalesce(sum(cost.amount_bps) FILTER (
+                             WHERE cost.charge_side IN ('BUY', 'BOTH')), 0) END AS buy_bps,
+                    CASE WHEN count(*) > 0 AND count(cost.charge_side) = count(*)
+                         THEN coalesce(sum(cost.amount_bps) FILTER (
+                             WHERE cost.charge_side IN ('SELL', 'BOTH')), 0) END AS sell_bps
+                FROM mra.exploratory_backtest_cost_assumption AS cost
+                WHERE cost.exploratory_backtest_run_id = backtest.exploratory_backtest_run_id
+                  AND cost.exploratory_backtest_arm_id IS NOT DISTINCT FROM
+                      CASE WHEN current_arm.cost_binding_source = 'ARM_OVERRIDE'
+                           THEN retrospective.exploratory_backtest_arm_id ELSE NULL::uuid END
+            ) AS directional_cost ON true
             LEFT JOIN mra.signal AS signal
               ON signal.decision_run_id = commitment.decision_run_id
              AND signal.candidate_id = commitment.candidate_id
@@ -764,7 +792,17 @@ class PostgresEvaluationRepository:
                         gross_return = effective_weight * Decimal(source[6])
                         if source[21] is None or source[23] is None:
                             raise EvaluationReconciliationError("assumed-cost roster is absent")
-                        net_return = gross_return - (turnover * Decimal(source[23]) / Decimal(10_000))
+                        if metric.formula is not None:
+                            if source[41] is None or source[42] is None:
+                                raise EvaluationReconciliationError("Formula cost sources require explicit charge sides")
+                            assumed_cost = (buy_turnover * Decimal(source[41])
+                                            + sell_turnover * Decimal(source[42])) / Decimal(10_000)
+                        else:
+                            # The original non-formula reducer's frozen contract
+                            # charged its total bps per unit turnover. Replay of
+                            # that historical contract must not be reinterpreted.
+                            assumed_cost = turnover * Decimal(source[23]) / Decimal(10_000)
+                        net_return = gross_return - assumed_cost
                         decimal_value = (
                             gross_return if metric.source_measure is EvaluationSourceMeasure.GROSS_PORTFOLIO_RETURN else net_return
                         )
@@ -855,6 +893,10 @@ class PostgresEvaluationRepository:
                 "UNAVAILABLE": FormulaSourceState.UNAVAILABLE,
                 "FAILED": FormulaSourceState.FAILED,
             }.get(source_status, FormulaSourceState.UNKNOWN)
+            if (code is BacktestFormulaCode.SOURCE_GAP_RATE and item.source[43]):
+                source_state = FormulaSourceState.SOURCE_GAP
+            elif (code is BacktestFormulaCode.MISSINGNESS_RATE and item.source[44]):
+                source_state = FormulaSourceState.MISSING
             value = item.input.decimal_value
             secondary_value = item.input.secondary_decimal_value
             if item.input.boolean_value is not None:
