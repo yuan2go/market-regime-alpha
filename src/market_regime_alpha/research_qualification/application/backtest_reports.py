@@ -309,35 +309,26 @@ def _metric_payload(metric: BacktestReportMetric) -> dict[str, object]:
 
 
 def _alpha_funnel(source: BacktestReportSource) -> dict[str, object]:
-    order = (
-        BacktestMetricSurface.DATA,
-        BacktestMetricSurface.CANDIDATE,
-        BacktestMetricSurface.CONTEXT,
-        BacktestMetricSurface.SIGNAL_FORECAST,
-        BacktestMetricSurface.PORTFOLIO_RISK,
-        BacktestMetricSurface.ECONOMICS,
-    )
-    for surface in order:
+    surfaces = []
+    for surface in BacktestMetricSurface:
         metrics = tuple(metric for metric in source.metrics if metric.surface is surface)
-        if not metrics:
-            return {
-                "state": "INCOMPLETE_STANDARD_SURFACE",
-                "bottleneck_surface": surface.value,
-                "reason_codes": ("NO_CANONICAL_EVALUATION_METRIC",),
-                "evidence_class": "ENGINEERING_DIAGNOSTIC_ONLY",
-            }
-        unavailable = tuple(metric.reason_code for metric in metrics if metric.result_state is FormulaResultState.NOT_ESTIMABLE)
-        if unavailable:
-            return {
-                "state": "NOT_ESTIMABLE",
-                "bottleneck_surface": surface.value,
-                "reason_codes": tuple(dict.fromkeys(unavailable)),
-                "evidence_class": "ENGINEERING_DIAGNOSTIC_ONLY",
-            }
+        reasons = tuple(dict.fromkeys(
+            metric.reason_code for metric in metrics
+            if metric.result_state is FormulaResultState.NOT_ESTIMABLE
+        )) if metrics else ("NO_CANONICAL_EVALUATION_METRIC",)
+        surfaces.append({
+            "surface": surface.value,
+            "metric_count": len(metrics),
+            "estimable_metric_count": sum(metric.result_state is FormulaResultState.ESTIMABLE for metric in metrics),
+            "reason_codes": reasons,
+        })
+    # Availability and positive returns do not establish causal attribution.
+    # Preserve the canonical observations without inventing a funnel bottleneck.
     return {
-        "state": "ESTIMABLE",
+        "state": "NOT_DETERMINED",
         "bottleneck_surface": None,
-        "reason_codes": (),
+        "reason_codes": ("NO_CANONICAL_BOTTLENECK_ATTRIBUTION",),
+        "surface_evidence": tuple(surfaces),
         "evidence_class": "ENGINEERING_DIAGNOSTIC_ONLY",
     }
 

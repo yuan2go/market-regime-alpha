@@ -293,3 +293,22 @@ def test_report_publication_binds_exact_json_and_markdown_artifacts() -> None:
     assert str(first.json_artifact.content_sha256) == sha256_bytes(artifacts.contents["application/json"])
     assert str(first.markdown_artifact.content_sha256) == sha256_bytes(artifacts.contents["text/markdown"])
     assert first.evaluation_roster_sha256 == source.evaluation_roster_sha256
+
+
+@pytest.mark.parametrize("evidence_gap", ["none", "missing", "not_estimable"])
+def test_alpha_diagnosis_does_not_infer_bottleneck_from_metric_availability(evidence_gap):
+    source = _source()
+    if evidence_gap == "missing":
+        source = replace(source, metrics=source.metrics[1:])
+    elif evidence_gap == "not_estimable":
+        source = replace(source, metrics=(replace(source.metrics[0], result_state=FormulaResultState.NOT_ESTIMABLE, decimal_value=None, estimable_count=0, reason_code="INSUFFICIENT_OBSERVATIONS"), *source.metrics[1:]))
+    app = BacktestReportApplication(_Source({source.run.exploratory_backtest_run_id: source}), _Verifier())
+    diagnosis = app.project(source.run.exploratory_backtest_run_id)["alpha_funnel_diagnosis"]
+    assert diagnosis["state"] == "NOT_DETERMINED"
+    assert diagnosis["bottleneck_surface"] is None
+    assert diagnosis["reason_codes"] == ("NO_CANONICAL_BOTTLENECK_ATTRIBUTION",)
+    assert tuple(item["surface"] for item in diagnosis["surface_evidence"]) == tuple(surface.value for surface in BacktestMetricSurface)
+    if evidence_gap == "missing":
+        assert diagnosis["surface_evidence"][0]["reason_codes"] == ("NO_CANONICAL_EVALUATION_METRIC",)
+    elif evidence_gap == "not_estimable":
+        assert diagnosis["surface_evidence"][0]["reason_codes"] == ("INSUFFICIENT_OBSERVATIONS",)
