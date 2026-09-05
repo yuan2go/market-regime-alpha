@@ -288,6 +288,13 @@ def _evaluate_v1(
     observations: tuple[FormulaObservation, ...],
 ) -> FormulaEvaluationResult:
     code = formula.formula_code
+    input_series = next((item for item in formula.parameters if item.parameter_code == "input_series"), None)
+    if input_series is not None:
+        if (input_series.value_type is not FormulaParameterType.TEXT or input_series.text_value != "group_rank_ic"
+                or code not in {BacktestFormulaCode.MEAN, BacktestFormulaCode.SAMPLE_STDDEV, BacktestFormulaCode.ICIR}):
+            raise ValueError("formula input_series is unsupported")
+        return _ic_summary(formula, observations)
+
     if code in {
         BacktestFormulaCode.COVERAGE_RATE,
         BacktestFormulaCode.MISSINGNESS_RATE,
@@ -412,6 +419,15 @@ def _rank_ic(
     formula: EvaluationFormulaDefinition,
     observations: tuple[FormulaObservation, ...],
 ) -> FormulaEvaluationResult:
+    correlations, pair_count = _rank_correlations(formula, observations)
+    if not correlations:
+        return _not_estimable("NO_ESTIMABLE_RANK_GROUP")
+    return _estimated(_mean(correlations), pair_count)
+
+
+def _rank_correlations(
+    formula: EvaluationFormulaDefinition, observations: tuple[FormulaObservation, ...],
+) -> tuple[tuple[Decimal, ...], int]:
     minimum = _optional_integer_parameter(formula, "minimum_pairs_per_group", 2)
     grouped = _groups(observations)
     correlations: list[Decimal] = []
@@ -428,9 +444,28 @@ def _rank_ic(
         if correlation is not None:
             correlations.append(correlation)
             pair_count += len(pairs)
-    if not correlations:
+    return tuple(correlations), pair_count
+
+
+def _ic_summary(
+    formula: EvaluationFormulaDefinition, observations: tuple[FormulaObservation, ...],
+) -> FormulaEvaluationResult:
+    available = tuple(item for item in observations if item.source_state is FormulaSourceState.AVAILABLE)
+    values, _ = _rank_correlations(formula, available)
+    if not values:
         return _not_estimable("NO_ESTIMABLE_RANK_GROUP")
-    return _estimated(_mean(tuple(correlations)), pair_count)
+    if len(values) < _optional_integer_parameter(formula, "minimum_observations", 1):
+        return _not_estimable("INSUFFICIENT_OBSERVATIONS", len(values))
+    if formula.formula_code is BacktestFormulaCode.MEAN:
+        return _estimated(_mean(values), len(values))
+    deviation = _sample_std(values)
+    if deviation is None:
+        return _not_estimable("INSUFFICIENT_OBSERVATIONS", len(values))
+    if formula.formula_code is BacktestFormulaCode.SAMPLE_STDDEV:
+        return _estimated(deviation, len(values))
+    if deviation == 0:
+        return _not_estimable("ZERO_VARIANCE", len(values))
+    return _estimated(_mean(values) / deviation, len(values))
 
 
 def _ranked_return(
