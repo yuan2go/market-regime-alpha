@@ -50,11 +50,12 @@ class EvidenceApplication:
             **snapshot,
             "authority": "NON_AUTHORITATIVE_OPERATIONAL_INDEX",
             "artifact_root": {
-                "path": str(self._root),
+                "path": str(self._root.resolve()),
                 "binding_sha256": canonical_json_sha256(
                     {
-                        "database": snapshot["database"],
-                        "path": str(self._root),
+                        "cluster_identity": snapshot["database"]["cluster_identity"],
+                        "database_oid": snapshot["database"]["oid"],
+                        "path": str(self._root.resolve()),
                     }
                 ),
             },

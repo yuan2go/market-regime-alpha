@@ -54,6 +54,7 @@ def test_inventory_and_verify_are_read_only_and_detect_physical_corruption(
     (records / "integrity-scan-02.json").write_text(json.dumps(wrong_scope))
     inventory_output = StringIO()
     assert main(["evidence", "inventory", "--records-directory", str(records)], environ=environment, stdout=inventory_output) == 0
+    assert json.loads(inventory_output.getvalue())["artifact_root"] == inventory["artifact_root"]
     last_scan = json.loads(inventory_output.getvalue())["last_artifact_integrity_scan"]
     assert last_scan["observed_at"] == result["observed_at"]
     assert last_scan["matched"] is True
