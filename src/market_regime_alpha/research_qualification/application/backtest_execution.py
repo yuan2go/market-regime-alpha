@@ -431,7 +431,7 @@ def _execution_state(states: tuple[BacktestObservedState, ...], *, integrity_err
         for state in states
     ):
         return BacktestExecutionState.FAILED
-    if any(state is BacktestObservedState.MATCHED_INCOMPLETE for state in states):
+    if any(state in {BacktestObservedState.MATCHED_INCOMPLETE, BacktestObservedState.MATCHED_COMPLETE} for state in states):
         return BacktestExecutionState.RUNNING
     return BacktestExecutionState.PLANNED
 

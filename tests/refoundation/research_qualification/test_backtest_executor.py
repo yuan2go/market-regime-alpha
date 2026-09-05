@@ -126,3 +126,12 @@ def test_resume_uses_one_fresh_observation_per_transition_and_final_verification
     assert executor.resume(_run()).execution_state is BacktestExecutionState.COMPLETED
     assert state.executions == completed_executions
     assert state.reads == completed_executions + 2
+
+
+def test_inspect_reports_running_when_completed_actions_precede_remaining_work() -> None:
+    frozen = _run()
+    first = BacktestExecutionPlanner().compile(frozen).expected_actions[0]
+    state = _CanonicalState({first.action_id: BacktestActionObservation(
+        first.action_id, BacktestObservedState.MATCHED_COMPLETE,
+    )})
+    assert BacktestExecutor(state, state).inspect(frozen).execution_state is BacktestExecutionState.RUNNING
