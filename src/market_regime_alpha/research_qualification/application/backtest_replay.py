@@ -37,6 +37,7 @@ class BacktestReplayApplication:
     def verify(self, exploratory_backtest_run_id: UUID) -> BacktestReplayVerification:
         snapshot = self._authorities.load(exploratory_backtest_run_id)
         mismatches: list[str] = []
+        execution_state = None
         for binding in snapshot.artifact_bindings:
             content = self._artifact_bytes.read_bytes(
                 str(binding.content_sha256), expected_size=binding.size_bytes
@@ -51,6 +52,7 @@ class BacktestReplayApplication:
             execution = BacktestExecutionPlanner().compile(
                 snapshot.run, observations
             )
+            execution_state = execution.execution_state
             if execution.execution_state is not BacktestExecutionState.COMPLETED:
                 mismatches.append(
                     f"EXECUTION:{execution.execution_state.value}"
@@ -66,6 +68,7 @@ class BacktestReplayApplication:
             mismatch_codes=tuple(mismatches),
             source=snapshot.run.source.value,
             definition_sha256=str(snapshot.run.definition_sha256),
+            execution_state=execution_state,
         )
 
 

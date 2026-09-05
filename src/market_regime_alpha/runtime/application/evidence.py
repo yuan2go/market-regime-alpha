@@ -105,5 +105,16 @@ class EvidenceApplication:
         ):
             for item in roster:
                 observed = verify(UUID(item[key]))
-                results.append({"kind": kind, "id": item[key], "matched": observed.matched, "mismatch_count": observed.mismatch_count})
+                if kind == "BACKTEST":
+                    integrity_codes = observed.integrity_mismatch_codes
+                    results.append({
+                        "kind": kind, "id": item[key], "matched": not integrity_codes,
+                        "mismatch_count": len(integrity_codes),
+                        "integrity_mismatch_codes": integrity_codes,
+                        "execution_state": observed.execution_state,
+                        "completion_replay_matched": observed.matched,
+                        "completion_replay_mismatch_codes": observed.mismatch_codes,
+                    })
+                else:
+                    results.append({"kind": kind, "id": item[key], "matched": observed.matched, "mismatch_count": observed.mismatch_count})
         return results
