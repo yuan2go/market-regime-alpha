@@ -223,3 +223,61 @@ def test_prospective_predeclare_and_due_capture_use_exact_runtime_fences(
         lease_duration=timedelta(seconds=30),
     )
     assert replay == registered
+
+
+@pytest.mark.parametrize("committed_capture", [False, True])
+def test_restarted_prospective_attempt_reconciles_without_repeating_provider_effect(
+    prospective_stack, target_database_url, committed_capture,
+):
+    import time
+    from market_regime_alpha.market.application.prospective_runtime import ProspectiveRuntimeIntegrityError
+    runtime, artifacts, pool = prospective_stack
+    clock = PostgresMarketDatabaseClock(pool)
+    manifest = _runtime_fixture_at(clock.now())
+    plan = compile_prospective_runtime_plan(manifest, code_sha="1" * 40)
+    first = plan.capture_runs[0]
+    item = first.slices[0]
+
+    class Provider:
+        calls = 0
+        def capture(self, request):
+            self.calls += 1
+            if not committed_capture:
+                raise RuntimeError("provider response lost after request")
+            return object()
+
+    class Operations(_Operations):
+        committed = False
+        def execute_slice(self, request, **kwargs):
+            if not self.committed:
+                kwargs["provider"].capture(request.capture_request)
+                self.committed = True
+                raise RuntimeError("capture commit response lost")
+            return super().execute_slice(request, **kwargs)
+
+    provider = Provider()
+    operations = Operations(runtime)
+    def application():
+        return ProspectiveArchiveRuntimeApplication(
+            runtime=runtime, artifacts=artifacts, archives=_Archives(runtime),
+            operations=operations, database_clock=clock,
+            due_query=lambda _archive: (item.plan.market_archive_slice_id,),
+        )
+    app = application()
+    app.predeclare(manifest, code_sha="1" * 40, actor_id="recovery-test", lease_duration=timedelta(seconds=30))
+    kwargs = dict(code_sha="1" * 40, actor_id="recovery-test", worker_id="recovery-worker", lease_duration=timedelta(seconds=30), provider=provider, normalizer_for=lambda _item: object())
+    result = app.run_due(manifest, **kwargs)
+    assert len(result.failures) == 1 and provider.calls == 1
+    assert runtime.inspect_run(first.run_id).steps[1].state == "READY"
+    assert runtime.inspect_run(first.run_id).steps[1].attempt_states == ()
+    time.sleep(2.1)  # Let the actual PostgreSQL retry backoff expire.
+    restarted = application()
+    if committed_capture:
+        result = restarted.run_due(manifest, **kwargs)
+        assert len(result.slice_results) == 1
+        assert runtime.inspect_run(first.run_id).steps[0].state == "SUCCEEDED"
+    else:
+        with pytest.raises(ProspectiveRuntimeIntegrityError, match="EXTERNAL_EFFECT_UNKNOWN"):
+            restarted.run_due(manifest, **kwargs)
+        assert runtime.inspect_run(first.run_id).steps[0].state == "FAILED"
+    assert provider.calls == 1

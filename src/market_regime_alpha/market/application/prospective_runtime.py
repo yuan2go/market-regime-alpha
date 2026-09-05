@@ -23,6 +23,8 @@ from market_regime_alpha.market.ports import (
     MarketDatabaseClock,
     MarketNormalizer,
     MarketProvider,
+    CaptureRequest,
+    ProviderResponse,
 )
 from market_regime_alpha.market.domain import (
     ArchiveSliceStatus,
@@ -129,6 +131,23 @@ class ProspectiveRuntimeExecution:
 
 class ProspectiveRuntimeIntegrityError(RuntimeError):
     """Frozen Runtime and Market intent no longer reconcile."""
+
+
+class _ReconciledCaptureProvider:
+    """Only the first Attempt may start I/O; retries must find Capture receipts."""
+
+    def __init__(self, provider: MarketProvider, *, attempt_no: int) -> None:
+        self._provider = provider
+        self._may_start = attempt_no == 1
+
+    def capture(self, request: CaptureRequest) -> ProviderResponse:
+        if not self._may_start:
+            raise ProspectiveRuntimeIntegrityError(
+                "EXTERNAL_EFFECT_UNKNOWN: prior Attempt has no reconciled Capture; "
+                "Provider I/O cannot be repeated"
+            )
+        self._may_start = False
+        return self._provider.capture(request)
 
 
 class _ArchiveCommands(Protocol):
@@ -410,6 +429,7 @@ class ProspectiveArchiveRuntimeApplication:
                     break
                 claim = self._runtime.claim_next(
                     run_id=run.run_id,
+                    step_id=ready.step_id,
                     worker_id=worker_id,
                     lease_duration=lease_duration,
                     context=_context(
@@ -444,7 +464,7 @@ class ProspectiveArchiveRuntimeApplication:
                 try:
                     result = self._operations.execute_slice(
                         request,
-                        provider=provider,
+                        provider=_ReconciledCaptureProvider(provider, attempt_no=claim.attempt_no),
                         normalizer=normalizer_for(item),
                         context=_context(
                             f"archive:{plan.market_archive_id}:runtime:"

@@ -220,6 +220,7 @@ class RuntimeApplication:
         self,
         *,
         run_id: UUID | None = None,
+        step_id: UUID | None = None,
         worker_id: str,
         lease_duration: timedelta,
         context: CommandContext,
@@ -231,6 +232,7 @@ class RuntimeApplication:
                 "lease_duration": lease_duration,
                 "run_id": run_id,
                 "worker_id": worker_id,
+                **({} if step_id is None else {"step_id": step_id}),
             }
         )
         with self._uow_provider() as uow:
@@ -254,6 +256,7 @@ class RuntimeApplication:
                 run_id=run_id,
                 worker_id=worker_id,
                 lease_duration=lease_duration,
+                step_id=step_id,
             )
             if claim is None:
                 return None
