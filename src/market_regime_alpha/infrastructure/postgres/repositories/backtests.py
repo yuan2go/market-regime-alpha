@@ -713,6 +713,18 @@ class PostgresBacktestRepository:
             ).fetchone()
             if protocol is None:
                 raise RuntimeStateConflictError("Backtest EvaluationProtocol roster is not exact")
+            if fold.purpose.value == "FIT":
+                unsupported = self._connection.execute(
+                    """
+                    SELECT source_kind FROM mra.evaluation_protocol_metric
+                    WHERE evaluation_protocol_id = %s
+                      AND source_kind IN ('SIGNAL_STATUS', 'FORECAST_OUTCOME_PAIR',
+                                          'PORTFOLIO_LINE', 'PORTFOLIO_OUTCOME', 'RISK_DECISION')
+                    ORDER BY ordinal
+                    """, (fold.evaluation_protocol.authority_id,),
+                ).fetchall()
+                if unsupported:
+                    raise RuntimeStateConflictError("FIT Evaluation requires validation-only owner stages")
         sessions = {
             (item.trading_session_id, item.session_date, fold.exchange_code) for fold in specification.folds for item in fold.sessions
         }
