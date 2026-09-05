@@ -134,7 +134,7 @@ def test_decision_support_has_narrow_uow_wiring_and_no_future_authority() -> Non
     assert "PostgresDecisionSupportUnitOfWorkProvider(pool)" in bootstrap
     assert "decision_support_application = DecisionSupportApplication(" in bootstrap
     assert bootstrap.count("DecisionSupportApplication(") == 1
-    # TargetApplication and generic Backtest actions must share the same owner.
+    # Generic Backtest actions and TargetApplication share the same owner.
     assert bootstrap.count("decision_support=decision_support_application,") == 2
     prohibited = (
         "MarketTargetOutcome",

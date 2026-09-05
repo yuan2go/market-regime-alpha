@@ -31,7 +31,7 @@ from tests.refoundation.market.test_prospective_runtime_plan import _manifest
 
 
 def _runtime_fixture_at(observed_at: datetime):
-    """Align stub work to the real lease clock; this is not Provider evidence."""
+    """Stub capture windows share the real lease clock; no Provider proof."""
     manifest = _manifest()
     first = compile_prospective_runtime_plan(manifest, code_sha="1" * 40).capture_runs[0]
     midpoint = first.window_start + (first.window_end - first.window_start) / 2

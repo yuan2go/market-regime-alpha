@@ -5,10 +5,8 @@ from market_regime_alpha.market.application.archive import (
     ArchiveResourceStopResult, ArchiveSealResult,
     ArchiveSlicePlan, ArchiveSliceGapResult,
     FinalizeOverdueArchiveResult, MarketArchiveResult,
-    ProspectiveArchivePlanningGapResult,
-    RecordArchiveCaptureObservationRequest,
-    RecordProspectivePlanningGapRequest,
-    StartMarketArchiveRequest,
+    ProspectiveArchivePlanningGapResult, RecordArchiveCaptureObservationRequest,
+    RecordProspectivePlanningGapRequest, StartMarketArchiveRequest,
 )
 from market_regime_alpha.market.application.results import (
     CaptureMutationResult, MarketMutationResult,
@@ -22,8 +20,7 @@ from market_regime_alpha.market.application.archive_manifest import (
 )
 from market_regime_alpha.market.application.service import MarketApplication
 from market_regime_alpha.market.application.prospective_archive import (
-    ProspectiveArchiveInstrument,
-    build_target_aligned_prospective_manifest,
+    ProspectiveArchiveInstrument, build_target_aligned_prospective_manifest,
 )
 from market_regime_alpha.market.application.prospective_runtime import (
     ProspectiveArchiveRuntimeApplication, ProspectiveArchiveRuntimePlan,
