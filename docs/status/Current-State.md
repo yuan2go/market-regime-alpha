@@ -20,6 +20,10 @@ WP18Q_EXIT_GATE = BLOCKED
 BACKTEST_PLATFORM = NOT_ENGINEERING_QUALIFIED
 Runtime/CLI full cutover = NO-GO
 Production = NO-GO
+automatic_order_execution = false
+broker_integration_proven = false
+entry_model_empirically_validated = false
+production_ready = false
 ```
 
 ## Current implementation truth
