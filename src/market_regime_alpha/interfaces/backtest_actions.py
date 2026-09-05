@@ -1131,7 +1131,7 @@ class BacktestCanonicalActionHandler:
         )
         materialized = materialize_backtest_dataset(
             dataset_id=dataset_id,
-            dataset_code=(f"backtest_{str(action.arm_id)[:8]}_{session.session_date:%Y%m%d}"),
+            dataset_code=f"backtest_{dataset_id.hex}",
             simulated_decision_time=decision_time,
             universe_revision_id=universe_revision_id,
             eligibility_policy_id=specification.eligibility_policy.authority_id,
