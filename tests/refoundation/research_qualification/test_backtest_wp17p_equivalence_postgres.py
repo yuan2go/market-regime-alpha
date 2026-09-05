@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import os
+from collections import Counter
 from contextlib import contextmanager
+from dataclasses import fields
 from pathlib import Path
 from threading import Barrier, Lock, get_ident
 from uuid import UUID
 
 import pytest
+from psycopg.rows import dict_row
 
 from market_regime_alpha.infrastructure.artifacts import LocalArtifactStore
 from market_regime_alpha.infrastructure.postgres.pool import TargetPostgresPool
@@ -40,6 +43,59 @@ _RUN_ID = UUID("8f7b6def-9c63-533e-9777-a5a6c57866e0")
 _DEFINITION_SHA256 = (
     "ac2686e2ef3105e8a5ca5a2a2ece6cfd7821ea84d56ae7611eb1e9b0e7305d78"
 )
+
+
+def test_training_reloads_each_distinct_dataset_once_per_preparation(monkeypatch) -> None:
+    from market_regime_alpha.infrastructure.postgres.queries import model_training_inputs as inputs
+    from market_regime_alpha.research_qualification.domain.model import ArtifactBinding
+    from market_regime_alpha.research_qualification.ports.model_inputs import OpenModelTrainingRunRequest
+
+    url, artifact_root = _historical_environment()
+    pool = TargetPostgresPool(url, min_size=0, max_size=2)
+    store = LocalArtifactStore(artifact_root)
+    loads: Counter[UUID] = Counter()
+    original = inputs.load_research_dataset_definition
+
+    def measured(connection, *, dataset_id):
+        loads[dataset_id] += 1
+        return original(connection, dataset_id=dataset_id)
+
+    monkeypatch.setattr(inputs, "load_research_dataset_definition", measured)
+    try:
+        before = _authority_digest(pool)
+        with pool.connection(read_only=True) as connection:
+            with connection.cursor(row_factory=dict_row) as cursor:
+                row = cursor.execute(
+                    "SELECT * FROM mra.model_training_run WHERE model_training_run_id = %s",
+                    (UUID("d68c200e-2426-5124-bd52-e6d38ceb3cfd"),),
+                ).fetchone()
+        assert row is not None
+        arguments = {
+            field.name: row[field.name]
+            for field in fields(OpenModelTrainingRunRequest)
+            if field.name not in {"code_artifact", "config_artifact"}
+        }
+        for prefix in ("code", "config"):
+            arguments[prefix + "_artifact"] = ArtifactBinding(
+                row[prefix + "_artifact_id"], row[prefix + "_content_sha256"],
+                row[prefix + "_size_bytes"],
+            )
+        provider = inputs.PostgresModelTrainingInputProvider(pool, store)
+        request = OpenModelTrainingRunRequest(**arguments)
+        prepared = provider.prepare(request)
+        registered_bytes = store.read_bytes(
+            row["training_input_content_sha256"],
+            expected_size=row["training_input_size_bytes"],
+        )
+        assert len(prepared.samples) == 32
+        assert prepared.training_input_content == registered_bytes
+        assert prepared.linear_rows == provider.load_registered(row["model_training_run_id"]).linear_rows
+        assert loads == Counter({UUID("a3f34d1b-f8c2-5026-93a7-f939a14dae36"): 1})
+        assert provider.prepare(request) == prepared
+        assert loads == Counter({UUID("a3f34d1b-f8c2-5026-93a7-f939a14dae36"): 2})
+        assert _authority_digest(pool) == before
+    finally:
+        pool.close()
 
 
 def test_owner_observation_uses_bounded_concurrent_reads_without_changing_replay() -> None:

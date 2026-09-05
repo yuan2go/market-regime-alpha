@@ -70,11 +70,11 @@ class PostgresModelTrainingInputProvider:
             feature_roster = _require_training_root(connection, request)
             source_rows = _training_source_rows(connection, request)
             dataset_contracts = {
-                UUID(str(row[9])): load_research_dataset_definition(
+                dataset_id: load_research_dataset_definition(
                     connection,
-                    dataset_id=UUID(str(row[9])),
+                    dataset_id=dataset_id,
                 )
-                for row in source_rows
+                for dataset_id in dict.fromkeys(UUID(str(row[9])) for row in source_rows)
             }
 
         manifests: dict[UUID, DecisionInputDatasetManifest] = {}
