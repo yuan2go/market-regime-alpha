@@ -578,6 +578,7 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
             archives=archive_commands,
             operations=archive_operations,
             database_clock=market_clock,
+            due_query=PostgresArchiveOperationsReadPort(pool).due_slice_ids,
             archive_inspection=PostgresArchiveInspectionPort(pool),
             archive_verification=PostgresArchiveVerificationPort(pool),
         ),

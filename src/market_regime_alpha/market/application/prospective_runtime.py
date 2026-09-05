@@ -277,6 +277,7 @@ class ProspectiveArchiveRuntimeApplication:
         archives: _ArchiveCommands,
         operations: _ArchiveOperations,
         database_clock: MarketDatabaseClock,
+        due_query: Callable[[UUID], tuple[UUID, ...]],
         archive_inspection: ArchiveInspectionPort | None = None,
         archive_verification: ArchiveVerificationPort | None = None,
     ) -> None:
@@ -285,6 +286,7 @@ class ProspectiveArchiveRuntimeApplication:
         self._archives = archives
         self._operations = operations
         self._database_clock = database_clock
+        self._due_query = due_query
         self._archive_inspection = archive_inspection
         self._archive_verification = archive_verification
 
@@ -346,17 +348,27 @@ class ProspectiveArchiveRuntimeApplication:
         normalizer_for: Callable[[ArchiveManifestSlice], MarketNormalizer],
     ) -> ProspectiveRuntimeExecution:
         plan = compile_prospective_runtime_plan(manifest, code_sha=code_sha)
-        recovered = self._runtime.recover_expired(
-            actor_id=actor_id,
-            reason_code="PROSPECTIVE_LEASE_RECOVERY",
+        recovered = tuple(
+            attempt_id
+            for run in plan.runs
+            for attempt_id in self._runtime.recover_expired(
+                actor_id=actor_id,
+                reason_code="PROSPECTIVE_LEASE_RECOVERY",
+                run_id=run.run_id,
+            )
         )
         observed_at = self._database_clock.now()
+        due_slice_ids = frozenset(self._due_query(plan.market_archive_id))
+        planned_ids = {item.plan.market_archive_slice_id for item in manifest.slices}
+        if not due_slice_ids <= planned_ids:
+            raise ProspectiveRuntimeIntegrityError("Due query returned a slice outside the frozen manifest")
         due = tuple(
             run
             for run in plan.capture_runs
             if run.window_start is not None
             and run.window_end is not None
             and run.window_start <= observed_at <= run.window_end
+            and any(item.plan.market_archive_slice_id in due_slice_ids for item in run.slices)
         )
         results: list[ArchiveSliceExecutionResult] = []
         failures: list[ProspectiveRuntimeFailure] = []
@@ -367,7 +379,8 @@ class ProspectiveArchiveRuntimeApplication:
                 f"capture-{item.plan.ordinal:04d}": item for item in run.slices
             }
             while trace.run_state == "RUNNING":
-                ready = next((item for item in trace.steps if item.state == "READY"), None)
+                ready = next((item for item in trace.steps if item.state == "READY"
+                              and by_key[item.step_key].plan.market_archive_slice_id in due_slice_ids), None)
                 if ready is None:
                     break
                 claim = self._runtime.claim_next(

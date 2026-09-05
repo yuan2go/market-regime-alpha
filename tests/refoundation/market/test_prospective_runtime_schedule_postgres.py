@@ -140,15 +140,25 @@ def prospective_stack(target_database_url: str, tmp_path):
         pool.close()
 
 
+@pytest.mark.parametrize("persisted_due", [True, False])
 def test_prospective_predeclare_and_due_capture_use_exact_runtime_fences(
     prospective_stack,
     target_database_url: str,
+    persisted_due: bool,
 ) -> None:
     runtime, artifacts, pool = prospective_stack
     database_clock = PostgresMarketDatabaseClock(pool)
     manifest = _runtime_fixture_at(database_clock.now())
     plan = compile_prospective_runtime_plan(manifest, code_sha="1" * 40)
     first_window = plan.capture_runs[0]
+    from tests.refoundation.market.test_runtime_vertical_slice import _capture_step, _schedule_run
+    unrelated_step = _capture_step()
+    unrelated_run, _ = _schedule_run(runtime, artifacts, (replace(
+        unrelated_step, retry_policy=replace(
+            unrelated_step.retry_policy, deadline=database_clock.now() - timedelta(seconds=1),
+        ),
+    ),))
+    unrelated_before = runtime.inspect_run(unrelated_run)
     archives = _Archives(runtime)
     operations = _Operations(runtime)
     application = ProspectiveArchiveRuntimeApplication(
@@ -157,6 +167,7 @@ def test_prospective_predeclare_and_due_capture_use_exact_runtime_fences(
         archives=archives,
         operations=operations,
         database_clock=database_clock,
+        due_query=lambda archive_id: tuple(item.plan.market_archive_slice_id for item in first_window.slices) if persisted_due else (),
     )
 
     registered = application.predeclare(
@@ -175,7 +186,13 @@ def test_prospective_predeclare_and_due_capture_use_exact_runtime_fences(
         normalizer_for=lambda _item: object(),
     )
 
+    assert runtime.inspect_run(unrelated_run) == unrelated_before
     assert runtime.inspect_run(registered.predeclare_run_id).run_state == "SUCCEEDED"
+    if not persisted_due:
+        assert executed.slice_results == () and executed.due_run_ids == ()
+        assert not operations.requests
+        assert runtime.inspect_run(first_window.run_id).steps[0].state == "READY"
+        return
     assert len(executed.slice_results) == 2
     assert executed.due_run_ids == (first_window.run_id,)
     assert first_window.window_start <= executed.observed_at <= first_window.window_end
