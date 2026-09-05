@@ -34,6 +34,18 @@ from market_regime_alpha.research_qualification.domain.backtest_execution import
 
 _Scope = tuple[UUID, UUID, UUID]
 
+_FOLD_METRIC_STATES_SQL = """
+    SELECT source.exploratory_backtest_fold_id, metric.metric_state
+    FROM (
+        SELECT DISTINCT exploratory_backtest_fold_id, evaluation_run_id
+        FROM mra.evaluation_backtest_arm_source
+        WHERE exploratory_backtest_run_id = %s
+    ) AS source
+    JOIN mra.evaluation_metric AS metric
+      ON metric.evaluation_run_id = source.evaluation_run_id
+    GROUP BY source.exploratory_backtest_fold_id, metric.metric_state
+"""
+
 
 class PostgresBacktestExecutionObservationPort:
     """Observe owner state without persisting a second workflow cursor."""
@@ -105,16 +117,7 @@ class PostgresBacktestExecutionObservationPort:
                     (run.exploratory_backtest_run_id,),
                 ).fetchall()
                 metric_states = cursor.execute(
-                    """
-                    SELECT source.exploratory_backtest_fold_id,
-                           metric.metric_state
-                    FROM mra.evaluation_backtest_arm_source AS source
-                    JOIN mra.evaluation_metric AS metric
-                      ON metric.evaluation_run_id = source.evaluation_run_id
-                    WHERE source.exploratory_backtest_run_id = %s
-                    GROUP BY source.exploratory_backtest_fold_id,
-                             metric.metric_state
-                    """,
+                    _FOLD_METRIC_STATES_SQL,
                     (run.exploratory_backtest_run_id,),
                 ).fetchall()
                 current_evaluations: list[dict[str, Any]] = []
