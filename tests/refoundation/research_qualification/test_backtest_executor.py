@@ -135,3 +135,24 @@ def test_inspect_reports_running_when_completed_actions_precede_remaining_work()
         first.action_id, BacktestObservedState.MATCHED_COMPLETE,
     )})
     assert BacktestExecutor(state, state).inspect(frozen).execution_state is BacktestExecutionState.RUNNING
+
+
+def test_resume_leaves_an_unexpired_incomplete_owner_running_without_integrity_failure() -> None:
+    frozen = _run()
+    first = BacktestExecutionPlanner().compile(frozen).expected_actions[0]
+
+    class LeasedState(_CanonicalState):
+        recoveries = 0
+
+        def execute(self, run, action, operation):
+            assert operation is BacktestNextOperation.RECOVER
+            self.recoveries += 1
+
+    state = LeasedState({first.action_id: BacktestActionObservation(
+        first.action_id, BacktestObservedState.MATCHED_INCOMPLETE,
+    )})
+    result = BacktestExecutor(state, state).resume(frozen)
+    assert result.execution_state is BacktestExecutionState.RUNNING
+    assert state.recoveries == 1
+    assert not result.integrity_mismatch_action_ids
+    assert len(state.observations) == 1

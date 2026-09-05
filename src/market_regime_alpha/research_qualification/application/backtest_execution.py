@@ -403,6 +403,11 @@ class BacktestExecutor:
             ready = plan.ready_actions[0]
             signature = tuple((item.action_id, item.state) for item in observed)
             if signature == previous_signature:
+                if ready.operation is BacktestNextOperation.RECOVER:
+                    # A reconciled incomplete owner can still hold a valid
+                    # lease. Recovery must neither steal it nor turn ordinary
+                    # in-flight work into an integrity failure.
+                    return plan
                 raise BacktestExecutionIntegrityError("Backtest action made no canonical reconciliation progress")
             previous_signature = signature
             self._actions.execute(run, ready.action, ready.operation)
