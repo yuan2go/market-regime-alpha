@@ -33,6 +33,7 @@ from market_regime_alpha.bootstrap import (
 from market_regime_alpha.shared.errors import MraError
 from market_regime_alpha.interfaces.archive import (
     archive_report,
+    continue_prospective_series,
     load_archive_manifest,
     predeclare_prospective_runtime,
     require_isolated_operational_target,
@@ -201,6 +202,14 @@ def _dispatch(arguments: argparse.Namespace, settings: TargetSettings) -> object
                         arguments.archive_id,
                         "inspect" if command == "inspect" else "daily-health",
                     )
+                if command == "continue":
+                    import baostock as sdk
+                    return continue_prospective_series(
+                        application, series_code=arguments.series_code, sdk=sdk,
+                        code_sha=arguments.code_sha, actor_id=arguments.actor_id,
+                        worker_id=arguments.worker_id,
+                        lease_duration=timedelta(seconds=arguments.lease_seconds),
+                    )
                 manifest = load_archive_manifest(arguments.manifest)
                 if command == "plan-next":
                     return compile_prospective_runtime_plan(
@@ -346,6 +355,13 @@ def _parser() -> argparse.ArgumentParser:
         dest="prospective_command",
         required=True,
     )
+    continuity = prospective_commands.add_parser("continue")
+    continuity.add_argument("--series-code", required=True)
+    continuity.add_argument("--code-sha", required=True)
+    continuity.add_argument("--expected-database-name", required=True)
+    continuity.add_argument("--actor-id", required=True)
+    continuity.add_argument("--worker-id", required=True)
+    continuity.add_argument("--lease-seconds", type=int, default=120)
     prospective_plan = prospective_commands.add_parser("plan-next")
     prospective_plan.add_argument("--manifest", required=True, type=Path)
     prospective_plan.add_argument("--code-sha", required=True)

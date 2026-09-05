@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from typing import Callable, Protocol
 from uuid import NAMESPACE_URL, UUID, uuid5
 
-from market_regime_alpha.market.application.archive import StartMarketArchiveRequest
+from market_regime_alpha.market.application.archive import StartMarketArchiveRequest, RecordProspectivePlanningGapRequest
 from market_regime_alpha.market.application.archive_manifest import (
     ArchiveManifestSlice,
     ArchiveOperatorManifest,
@@ -46,6 +46,16 @@ from market_regime_alpha.runtime.domain import (
 from market_regime_alpha.runtime.ports import AttemptClaim, RunTrace
 from market_regime_alpha.runtime.errors import RuntimeNotFoundError
 from market_regime_alpha.shared.hashing import canonical_json_sha256, sha256_bytes
+from market_regime_alpha.shared.identity import TradingSessionId
+from market_regime_alpha.market.ports.prospective_continuity import ProspectiveContinuityReadPort
+from market_regime_alpha.market.ports.session_roster import ArchiveTradingSessionReadPort
+from market_regime_alpha.market.ports.target_archive_schedule import TargetArchiveScheduleReadPort
+from market_regime_alpha.market.application.prospective_continuity import plan_continuation
+from market_regime_alpha.market.application.prospective_archive import (
+    ProspectiveArchiveInstrument, build_target_aligned_prospective_manifest,
+)
+from market_regime_alpha.market.domain import ProspectiveArchiveSession
+from market_regime_alpha.infrastructure.providers.baostock_archive import BaoStockArchiveQuery
 
 
 _IMPLEMENTATION = "market.prospective_archive"
@@ -129,6 +139,13 @@ class _ArchiveCommands(Protocol):
         *,
         runtime_claim: AttemptClaim | None = None,
     ) -> object: ...
+
+
+    def finalize_overdue(self, *, market_archive_id: UUID, context: CommandContext,
+                         runtime_claim: AttemptClaim | None = None) -> object: ...
+
+    def record_prospective_planning_gap(self, request: RecordProspectivePlanningGapRequest,
+                                      context: CommandContext, *, runtime_claim: AttemptClaim | None = None) -> object: ...
 
 
 class _ArchiveOperations(Protocol):
@@ -280,6 +297,10 @@ class ProspectiveArchiveRuntimeApplication:
         due_query: Callable[[UUID], tuple[UUID, ...]],
         archive_inspection: ArchiveInspectionPort | None = None,
         archive_verification: ArchiveVerificationPort | None = None,
+        continuity: ProspectiveContinuityReadPort | None = None,
+        trading_sessions: ArchiveTradingSessionReadPort | None = None,
+        target_schedules: TargetArchiveScheduleReadPort | None = None,
+        manifest_reader: Callable[[str, int], bytes] | None = None,
     ) -> None:
         self._runtime = runtime
         self._artifacts = artifacts
@@ -289,6 +310,10 @@ class ProspectiveArchiveRuntimeApplication:
         self._due_query = due_query
         self._archive_inspection = archive_inspection
         self._archive_verification = archive_verification
+        self._continuity = continuity
+        self._trading_sessions = trading_sessions
+        self._target_schedules = target_schedules
+        self._manifest_reader = manifest_reader
 
     def predeclare(
         self,
@@ -509,6 +534,191 @@ class ProspectiveArchiveRuntimeApplication:
             slice_results=tuple(results),
             failures=tuple(failures),
         )
+
+    def continue_series(
+        self, *, series_code: str, code_sha: str, actor_id: str, worker_id: str,
+        lease_duration: timedelta, provider: MarketProvider,
+        normalizer_for: Callable[[ArchiveManifestSlice], MarketNormalizer],
+    ) -> dict[str, object]:
+        """One bounded continuity tick; scheduling remains the existing Runtime."""
+        if len(code_sha) != 40 or any(character not in "0123456789abcdef" for character in code_sha):
+            raise ValueError("Continuity requires an exact implementation SHA")
+        if (self._continuity is None or self._trading_sessions is None
+                or self._target_schedules is None or self._manifest_reader is None
+                or self._archive_verification is None):
+            raise ProspectiveRuntimeIntegrityError("Continuity owner read ports are required")
+        references = self._continuity.generations(series_code)
+        if not references:
+            raise ProspectiveRuntimeIntegrityError("Series requires an exact initial predeclared generation")
+        executions = []
+        manifests = []
+        for reference in references:
+            content = self._manifest_reader(reference.config_sha256, reference.config_size_bytes)
+            if len(content) != reference.config_size_bytes or sha256_bytes(content) != reference.config_sha256:
+                raise ProspectiveRuntimeIntegrityError("Generation manifest Artifact bytes differ")
+            manifest = ArchiveOperatorManifest.from_json(content.decode("utf-8"))
+            generation = manifest.start_request.prospective_generation
+            if generation is None or (
+                generation.series_code, generation.market_archive_id, generation.generation,
+                generation.predecessor_market_archive_id,
+            ) != (series_code, reference.market_archive_id, reference.generation,
+                  reference.predecessor_market_archive_id):
+                raise ProspectiveRuntimeIntegrityError("Generation manifest differs from canonical chain")
+            verification = self._archive_verification.verify(reference.market_archive_id)
+            if not verification.matched:
+                raise ProspectiveRuntimeIntegrityError("Previous generation does not reconcile")
+            # Repairs an interrupted registration using its original code/config;
+            # completed commands resolve through exact receipt replay.
+            self.predeclare(manifest, code_sha=reference.code_sha, actor_id=actor_id,
+                            lease_duration=lease_duration)
+            overdue = self._continuity.overdue_slice_ids(reference.market_archive_id)
+            if overdue:
+                def finalize(claim: AttemptClaim, context: CommandContext,
+                             archive_id: UUID = reference.market_archive_id) -> object:
+                    return self._archives.finalize_overdue(market_archive_id=archive_id,
+                                                          context=context, runtime_claim=claim)
+
+                self._run_maintenance(
+                    manifest, code_sha=reference.code_sha,
+                    config_artifact_id=reference.config_artifact_id,
+                    operation="finalize_overdue", payload={"slice_ids": overdue},
+                    actor_id=actor_id, worker_id=worker_id, lease_duration=lease_duration,
+                    command=finalize,
+                )
+            executions.append(self.run_due(
+                manifest, code_sha=reference.code_sha, actor_id=actor_id, worker_id=worker_id,
+                lease_duration=lease_duration, provider=provider, normalizer_for=normalizer_for,
+            ))
+            manifests.append(manifest)
+        head = manifests[-1]
+        generation = head.start_request.prospective_generation
+        assert generation is not None
+        contract = self._target_schedules.exact_contract(generation.target_definition_id)
+        known_sessions = self._trading_sessions.available_from(
+            exchange=generation.exchange, session_id=TradingSessionId(generation.decision_session_id), limit=512,
+        )
+        sessions = tuple(ProspectiveArchiveSession(
+            item.session_id.value, item.exchange, item.session_date, item.open_at, item.close_at,
+        ) for item in known_sessions)
+        observed_at = self._database_clock.now()
+        continuation = plan_continuation(head, contract=contract, sessions=sessions, observed_at=observed_at)
+        gaps = [(session_id, "GENERATION_NOT_PREDECLARED")
+                for session_id in continuation.missed_decision_session_ids]
+        scan_limited = len(known_sessions) == 512 and continuation.blocked_reason is not None
+        if continuation.blocked_decision_session_id is not None and not scan_limited:
+            gaps.append((continuation.blocked_decision_session_id, "CALENDAR_INCOMPLETE"))
+        for session_id, reason in gaps:
+            request = RecordProspectivePlanningGapRequest(
+                series_code=series_code, expected_generation=generation.generation + 1,
+                predecessor_market_archive_id=generation.market_archive_id,
+                target_definition_id=generation.target_definition_id,
+                target_version=generation.target_version,
+                target_definition_sha256=str(generation.target_definition_sha256),
+                expected_decision_session_id=session_id, reason_code=reason,
+            )
+            def record_gap(claim: AttemptClaim, context: CommandContext,
+                           gap_request: RecordProspectivePlanningGapRequest = request) -> object:
+                return self._archives.record_prospective_planning_gap(gap_request, context, runtime_claim=claim)
+
+            self._run_maintenance(
+                head, code_sha=references[-1].code_sha,
+                config_artifact_id=references[-1].config_artifact_id,
+                operation="record_planning_gap", payload={"request": request},
+                actor_id=actor_id, worker_id=worker_id, lease_duration=lease_duration,
+                command=record_gap,
+            )
+        new_generation_id = None
+        if continuation.next_sessions is not None:
+            codes: dict[UUID, str] = {}
+            for item in head.slices:
+                schedule = next(row for row in generation.schedules
+                                if row.market_archive_slice_id == item.plan.market_archive_slice_id)
+                code = BaoStockArchiveQuery.from_resource(item.capture_request.resource).code
+                if code is None or (schedule.instrument_id in codes and codes[schedule.instrument_id] != code):
+                    raise ProspectiveRuntimeIntegrityError("Frozen instrument Provider codes are inconsistent")
+                codes[schedule.instrument_id] = code
+            instruments = tuple(ProspectiveArchiveInstrument(
+                member.instrument_id, member.instrument_identifier_id, codes[member.instrument_id],
+            ) for member in generation.members)
+            provenance = canonical_json_sha256({
+                "predecessor": generation.market_archive_id,
+                "predecessor_sha256": str(generation.content_sha256),
+                "next_decision_session": continuation.next_sessions.decision.session_id,
+                "code_sha": code_sha,
+            })
+            code_artifact = self._artifacts.publish(
+                ('{"application":"market.prospective_continuity","code_sha":"' + code_sha + '"}').encode(),
+                media_type="application/json",
+                context=_context(f"prospective-continuity:code:{code_sha}", actor_id, "REGISTER_PROSPECTIVE_CODE"),
+            )
+            next_manifest = build_target_aligned_prospective_manifest(
+                provider_product_id=head.start_request.provider_product_id,
+                code_artifact_id=code_artifact.artifact_id, config_artifact_id=head.start_request.config_artifact_id,
+                contract=contract, resolved_sessions=continuation.next_sessions, instruments=instruments,
+                series_code=series_code, generation=generation.generation + 1,
+                predecessor_market_archive_id=generation.market_archive_id,
+                planned_not_before=self._database_clock.now(), provenance_sha256=provenance,
+                reserved_free_bytes=head.start_request.reserved_free_bytes,
+                maximum_archive_bytes=head.start_request.maximum_archive_bytes,
+                maximum_slice_bytes=head.start_request.maximum_slice_bytes,
+            )
+            registration = self.predeclare(next_manifest, code_sha=code_sha, actor_id=actor_id,
+                                           lease_duration=lease_duration)
+            new_generation_id = registration.market_archive_id
+        return {"series_code": series_code, "observed_at": observed_at,
+                "generation_ids": tuple(item.market_archive_id for item in references),
+                "new_generation_id": new_generation_id, "planning_gaps": tuple(gaps),
+                "blocked_reason": "CALENDAR_SCAN_LIMIT" if scan_limited else continuation.blocked_reason,
+                "due_attempt_count": sum(len(item.slice_results) + len(item.failures) for item in executions),
+                "executions": tuple(executions)}
+
+    def _run_maintenance(
+        self, manifest: ArchiveOperatorManifest, *, code_sha: str, config_artifact_id: UUID,
+        operation: str, payload: dict[str, object], actor_id: str, worker_id: str,
+        lease_duration: timedelta, command: Callable[[AttemptClaim, CommandContext], object],
+    ) -> None:
+        plan = compile_prospective_runtime_plan(manifest, code_sha=code_sha)
+        request_hash = canonical_json_sha256({"archive_id": plan.market_archive_id,
+                                             "operation": operation, "payload": payload})
+        key = f"archive:{plan.market_archive_id}:maintenance:{operation}:{request_hash}"
+        run_id = _id(f"run:{key}")
+        run = ProspectiveRuntimeRunPlan(
+            run_id=run_id, fire_key=key, requested_at=self._database_clock.now(),
+            decision_time=None, window_start=None, window_end=None, schedule_slot=None,
+            steps=(StepSpec(
+                step_key=operation, step_kind="RECORD_EVIDENCE",
+                implementation=f"{_IMPLEMENTATION}.{operation}", implementation_version="1",
+                ordinal=1, required=True, request_hash=request_hash,
+                input_evidence_hash=plan.config_sha256,
+                retry_policy=RetryPolicy(max_attempts=3, backoff=(timedelta(0), timedelta(0)),
+                                         retryable_codes=frozenset({"LEASE_EXPIRED"})),
+                external_effect_class=ExternalEffectClass.NONE,
+            ),), slices=(),
+        )
+        try:
+            trace = self._runtime.inspect_run(run_id)
+        except RuntimeNotFoundError:
+            self._register_run(plan, run, config_artifact_id, actor_id)
+        else:
+            _verify_trace(plan, run, trace)
+            if trace.run_state == "QUEUED":
+                self._runtime.start_run(run_id, _context(f"prospective:{run_id}:start", actor_id,
+                                                        "START_PROSPECTIVE_RUN"))
+        self._runtime.recover_expired(actor_id=actor_id, reason_code="PROSPECTIVE_LEASE_RECOVERY", run_id=run_id)
+        trace = self._runtime.inspect_run(run_id)
+        if trace.run_state == "SUCCEEDED":
+            return
+        claim = self._runtime.claim_next(
+            run_id=run_id, worker_id=worker_id, lease_duration=lease_duration,
+            context=_context(f"{key}:claim:{len(trace.steps[0].attempt_states) + 1}", actor_id,
+                             "CLAIM_PROSPECTIVE_MAINTENANCE", actor_type=ActorType.WORKER),
+        )
+        if claim is None:
+            raise ProspectiveRuntimeIntegrityError("Prospective maintenance is not claimable")
+        self._runtime.start_attempt(claim, _context(f"{key}:start:{claim.attempt_id}", actor_id,
+                                                   "START_PROSPECTIVE_MAINTENANCE", actor_type=ActorType.WORKER))
+        command(claim, _context(key, actor_id, "PROSPECTIVE_MAINTENANCE", actor_type=ActorType.WORKER))
+        _require_step_succeeded(self._runtime, claim)
 
     def _register_run(
         self,

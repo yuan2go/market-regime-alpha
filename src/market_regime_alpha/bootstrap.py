@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Mapping
 from uuid import uuid4
 
+from market_regime_alpha.infrastructure.postgres.queries.prospective_continuity import PostgresProspectiveContinuityReadPort
+from market_regime_alpha.shared.identity import ContentHash
 from market_regime_alpha.infrastructure.artifacts import LocalArtifactStore
 from market_regime_alpha.infrastructure.artifacts.evidence import FilesystemEvidenceIntegrity
 from market_regime_alpha.infrastructure.postgres.evidence_backup import PostgresEvidenceBackup
@@ -579,6 +581,10 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
             operations=archive_operations,
             database_clock=market_clock,
             due_query=PostgresArchiveOperationsReadPort(pool).due_slice_ids,
+            continuity=PostgresProspectiveContinuityReadPort(pool),
+            trading_sessions=PostgresArchiveTradingSessionReadPort(pool),
+            target_schedules=PostgresTargetArchiveScheduleReadPort(pool),
+            manifest_reader=lambda digest, size: byte_store.read_bytes(ContentHash(digest), expected_size=size),
             archive_inspection=PostgresArchiveInspectionPort(pool),
             archive_verification=PostgresArchiveVerificationPort(pool),
         ),

@@ -230,7 +230,7 @@ def run_due_prospective_runtime(
 ) -> object:
     """Execute only PostgreSQL-clock-due slices under exact Runtime fences."""
 
-    with BaoStockSession(sdk) as session:
+    with BaoStockSession(sdk, defer_login=True, maximum_attempts=1) as session:
         provider = BaoStockArchiveProvider(session)
 
         def normalizer_for(item: ArchiveManifestSlice) -> BaoStockArchiveNormalizer:
@@ -250,6 +250,26 @@ def run_due_prospective_runtime(
             lease_duration=lease_duration,
             provider=provider,
             normalizer_for=normalizer_for,
+        )
+
+
+def continue_prospective_series(
+    application: TargetApplication, *, series_code: str, sdk: BaoStockSdk,
+    code_sha: str, actor_id: str, worker_id: str, lease_duration: timedelta,
+) -> object:
+    """Service the canonical series without a mutable current-manifest pointer."""
+    with BaoStockSession(sdk, defer_login=True, maximum_attempts=1) as session:
+        def normalizer_for(item: ArchiveManifestSlice) -> BaoStockArchiveNormalizer:
+            return BaoStockArchiveNormalizer(
+                expected_query=BaoStockArchiveQuery.from_resource(item.capture_request.resource),
+                revision_lineage=application.market_revision_lineage,
+                trading_sessions=application.archive_trading_sessions,
+            )
+
+        return application.prospective_archives.continue_series(
+            series_code=series_code, code_sha=code_sha, actor_id=actor_id,
+            worker_id=worker_id, lease_duration=lease_duration,
+            provider=BaoStockArchiveProvider(session), normalizer_for=normalizer_for,
         )
 
 
