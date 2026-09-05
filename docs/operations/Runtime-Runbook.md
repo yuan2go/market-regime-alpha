@@ -92,6 +92,19 @@ and claims real due work. CLI wiring alone is not evidence of an installed
 continuously running service. No due window means `NOT_DUE`; never wait or
 backdate to produce proof.
 
+Include the last available exact TradingSession in the operational inventory
+review. Continuation requires the decision, Outcome and later verification
+sessions to exist in canonical Market evidence. Extend missing calendar evidence
+through the Market capture/normalization owner; never infer weekdays or silently
+omit an unavailable session. A finite calendar horizon is an operational input
+boundary, not proof of indefinite continuity.
+
+For Backtest recovery, an unexpired Attempt remains owned by its existing lease.
+`mra backtest resume` can return `RUNNING` without additional completed actions.
+Inspect the exact Runtime Run/Attempt; ordinary lease recovery uses PostgreSQL
+time and does not steal the fence. Only completed zero-mismatch replay qualifies
+as completed resume/replay evidence.
+
 ## Phase E Historical Corpus
 
 This free-data path remains `EXPLORATORY / PIT_INCOMPLETE`. PostgreSQL is the
@@ -530,12 +543,19 @@ permission. Principal IDs on a local CLI are not proof of authentication.
 ## Validation
 
 ```bash
+uv sync --frozen --extra dev --extra postgres
 uv run python scripts/check_docs_links.py
-MARKET_REGIME_ALPHA_TEST_DATABASE_URL="$TEST_DATABASE_URL" uv run pytest -q
+MARKET_REGIME_ALPHA_TEST_DATABASE_URL="$TEST_DATABASE_URL" \
+MRA_WP17P_HISTORICAL_DATABASE_URL="$HISTORICAL_DATABASE_URL" \
+MRA_WP17P_HISTORICAL_ARTIFACT_ROOT="$HISTORICAL_ARTIFACT_ROOT" \
+uv run pytest -q
 uv run ruff check .
 uv run mypy
 uv run python -m build
 git diff --check
 ```
 
-PostgreSQL tests never skip. Use a disposable database and the isolated schemas created by test fixtures. Never point tests at a production database.
+Qualification requires both the disposable test database and the exact read-only
+historical evidence scope. Missing evidence is `BLOCKED / NOT_RUN`; a skipped
+test is not a qualification PASS. Never point bootstrap/recreate tests at an
+operational or historical evidence database.
