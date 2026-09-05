@@ -33,7 +33,8 @@ def test_wp12_authority_relations_remain_present() -> None:
 
 def test_wp12_uses_only_unreleased_baseline_and_no_generic_subject() -> None:
     migrations = sorted(item.name for item in BASELINE.parent.glob("*.sql"))
-    assert migrations == ["001_baseline.sql"]
+    # Only the exact approved additive bundle accompanies the draft baseline.
+    assert migrations == ["001_baseline.sql", "wp18q_track_a_c_v1.sql"]
     sql = BASELINE.read_text()
     for table in EXPECTED_RESEARCH_QUALIFICATION_TABLES:
         assert f"CREATE TABLE mra.{table}" in sql

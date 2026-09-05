@@ -3,7 +3,7 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Sole repository execution, safety, and evidence contract
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-09-02
+> **Last Updated:** 2026-09-05
 > **Related Documents:** `CLAUDE.md`, `docs/README.md`, `docs/architecture/Canonical-Overall-Design.md`, `docs/status/Roadmap.md`
 
 ## Mission and current program
@@ -36,6 +36,8 @@ Foundation
 → WP-15 real Provider qualification and frozen research proof campaign
 → WP-16 external Provider evidence Gate A
 → WP-17P retrospective/prospective archive and exploratory Model/backtest
+→ WP-18 definition-only walk-forward equivalence
+→ WP-18Q Generic Backtest / Prospective qualification and gated WP hard-cut
 → optional Calibration only when separately justified
 → Execution/TradeOutcome/Attribution → Runtime/CLI Cutover
 ```
@@ -56,6 +58,29 @@ permanently separated retrospective/prospective archives plus an exploratory-
 only Model/backtest path without reopening that Provider gate. Calibration
 remains optional and unstarted. Execution, Runtime/CLI Cutover, Legacy deletion,
 and Production qualification remain unauthorized.
+
+### WP-18Q qualification freeze
+
+The active scope is qualification closure under the WP-18Q Design and
+Implementation Plan, not a new architecture or model program. Generic Backtest
+uses the existing `exploratory_backtest_run` root and canonical Runtime,
+Dataset, Decision, Outcome, Model and Evaluation owners. Report is a
+deterministic projection of reconciled Authority/Evaluation, never a second
+metric owner. Prospective Application uses the existing Runtime and PostgreSQL
+clock, not a second scheduler.
+
+Keep these claims separate: code exists, canonical wiring, tests passed,
+runtime proven, and research validity. Current engineering qualification is
+blocked until every WP-18Q P0 gate has exact-SHA evidence. No historical
+WP-17P gate promotes Generic Backtest automatically. WP-specific execution
+surfaces remain until all prescribed compatibility/campaign/report/replay and
+regression prerequisites pass; retaining them while blocked does not authorize
+new WP-specific execution or a permanent compatibility facade.
+
+Operational evidence databases permit only exact-identity, backed-up additive
+upgrade. A restored backup copy is not the original operational database.
+No current due window means `NOT_DUE`, not prospective proof; never wait for a
+future window, backdate, or relabel replay to close a qualification gate.
 
 Do not resume the former Alpha Proof Roadmap as an engineering program. Existing
 protocols, results, and negative evidence remain immutable provenance. New

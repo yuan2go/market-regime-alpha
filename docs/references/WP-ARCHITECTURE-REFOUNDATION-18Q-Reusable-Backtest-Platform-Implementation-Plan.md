@@ -55,13 +55,13 @@ Tasks:
 Focused gate:
 
 ```bash
-python -m pytest -q \
+uv run python -m pytest -q \
   tests/refoundation/research_qualification/test_backtest_specification_domain.py \
   tests/refoundation/research_qualification/test_backtest_historical_decoder.py \
   tests/refoundation/research_qualification/test_exploratory_backtest_domain.py \
   tests/refoundation/research_qualification/test_wp18_walk_forward_domain.py
-python -m ruff check src/market_regime_alpha/research_qualification tests/refoundation/research_qualification
-python -m mypy
+uv run python -m ruff check src/market_regime_alpha/research_qualification tests/refoundation/research_qualification
+uv run python -m mypy
 git diff --check
 ```
 
@@ -94,12 +94,12 @@ Tasks:
 Focused gate:
 
 ```bash
-python -m pytest -q \
+uv run python -m pytest -q \
   tests/refoundation/research_qualification/test_backtest_schema_specification.py \
   tests/refoundation/research_qualification/test_backtest_postgres.py
-python -m pytest -q tests/refoundation/test_schema_epoch.py
-python -m ruff check .
-python -m mypy
+uv run python -m pytest -q tests/refoundation/test_schema_epoch.py
+uv run python -m ruff check .
+uv run python -m mypy
 git diff --check
 ```
 
@@ -289,14 +289,14 @@ Run and classify every command:
 
 ```bash
 uv sync --frozen --extra dev --extra postgres
-python scripts/check_docs_links.py
-python -m pytest -q tests/scripts/test_check_docs_links.py
-python -m pytest -q tests/platform
-python -m pytest -q tests/refoundation
-python -m pytest -q
-python -m ruff check .
-python -m mypy
-python -m build
+uv run python scripts/check_docs_links.py
+uv run python -m pytest -q tests/scripts/test_check_docs_links.py
+uv run python -m pytest -q tests/platform
+uv run python -m pytest -q tests/refoundation
+uv run python -m pytest -q
+uv run python -m ruff check .
+uv run python -m mypy
+uv run python -m build
 git diff --check
 ```
 

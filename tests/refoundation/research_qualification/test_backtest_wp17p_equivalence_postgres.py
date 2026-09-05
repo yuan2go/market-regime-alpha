@@ -13,6 +13,7 @@ from market_regime_alpha.infrastructure.postgres.queries.backtest_history import
 )
 from market_regime_alpha.infrastructure.postgres.queries.backtest_execution import (
     PostgresBacktestExecutionObservationPort,
+    _FOLD_METRIC_STATES_SQL,
 )
 from market_regime_alpha.infrastructure.postgres.queries.exploratory_backtests import (
     PostgresExploratoryBacktestVerificationPort,
@@ -149,3 +150,52 @@ def test_completed_wp17p_has_zero_write_generic_exact_equivalence() -> None:
     assert result.mismatch_count == 0
     assert old_verification.matched is True
     assert old_verification.mismatch_count == 0
+
+
+def test_historical_metric_state_plan_does_not_multiply_source_observations() -> None:
+    database_url, _ = _historical_environment()
+    pool = TargetPostgresPool(database_url, min_size=0, max_size=2)
+    try:
+        with pool.connection(read_only=True) as connection:
+            expected = connection.execute(
+                """
+                SELECT DISTINCT source.exploratory_backtest_fold_id, metric.metric_state
+                FROM mra.evaluation_backtest_arm_source AS source
+                JOIN mra.evaluation_metric AS metric
+                  ON metric.evaluation_run_id = source.evaluation_run_id
+                WHERE source.exploratory_backtest_run_id = %s
+                """,
+                (_RUN_ID,),
+            ).fetchall()
+            actual = connection.execute(_FOLD_METRIC_STATES_SQL, (_RUN_ID,)).fetchall()
+            assert sorted(actual) == sorted(expected)
+            metric_count = connection.execute(
+                """
+                SELECT count(*) FROM mra.evaluation_metric AS metric
+                WHERE EXISTS (
+                    SELECT 1 FROM mra.evaluation_backtest_arm_source AS source
+                    WHERE source.exploratory_backtest_run_id = %s
+                      AND source.evaluation_run_id = metric.evaluation_run_id
+                )
+                """,
+                (_RUN_ID,),
+            ).fetchone()[0]
+            plan = connection.execute(
+                "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) " + _FOLD_METRIC_STATES_SQL,
+                (_RUN_ID,),
+            ).fetchone()[0][0]["Plan"]
+    finally:
+        pool.close()
+
+    pending = [plan]
+    join_rows = []
+    while pending:
+        node = pending.pop()
+        pending.extend(node.get("Plans", ()))
+        if "Join Type" in node:
+            join_rows.append(node["Actual Rows"] * node["Actual Loops"])
+    assert metric_count > 0
+    assert join_rows
+    # This exact historical run binds each Evaluation to one fold. Work must
+    # scale with its metric roster, not source-observation x metric products.
+    assert max(join_rows) <= metric_count

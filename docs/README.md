@@ -3,7 +3,7 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Documentation navigation and precedence only
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-09-03
+> **Last Updated:** 2026-09-05
 > **Code Evidence:** `src/market_regime_alpha`, both legacy and target PostgreSQL migration packages, `tests`
 
 Documentation never creates implementation truth, research evidence,
@@ -21,6 +21,13 @@ scope, exact checkpoint SHAs, schema counts, and verification state live only
 in [Current State](status/Current-State.md) and the linked immutable
 Verification records. The target Runtime has not cut over a business CLI or
 canonical write path; there is no dual write or target fallback.
+
+The active checkpoint is **WP-18Q qualification closure**. Generic Backtest,
+Model, Evaluation/Report and Prospective wiring exists in the target draft;
+this does not imply engineering qualification or Runtime/CLI cutover.
+WP-17P Verification remains historical exact-run evidence, and WP-18 evidence
+is definition equivalence only. Current blockers and re-entry requirements
+belong to Current State and Roadmap, not to a second status hierarchy.
 
 ## Normative authority order
 
@@ -182,10 +189,11 @@ Checkpoint traceability:
 - [WP-18 Prospective Operations and Walk-Forward Implementation Plan](references/WP-ARCHITECTURE-REFOUNDATION-18-Prospective-Walk-Forward-Implementation-Plan.md)
 - [WP-18Q Continuous Prospective Correctness and Reusable Backtest Platform Design](references/WP-ARCHITECTURE-REFOUNDATION-18Q-Reusable-Backtest-Platform-Design.md)
 - [WP-18Q Reusable Backtest Platform Implementation Plan](references/WP-ARCHITECTURE-REFOUNDATION-18Q-Reusable-Backtest-Platform-Implementation-Plan.md)
-  — immutable exact-SHA proof for two-lane archive engineering, dual-clock
-  retrospective execution, bounded XSHG-32 rule/Model backtests, prospective
-  archive start, replay/reconciliation, and the unchanged Formal evidence
-  ceiling.
+  — approved implementation order; not an executed qualification ledger.
+- [WP-18Q Final Closure Verification](references/WP-ARCHITECTURE-REFOUNDATION-18Q-Final-Closure-Verification.md)
+  — exact-SHA engineering commands, restored-copy preservation, historical
+  zero-write reconciliation and explicit real campaign/prospective/operational
+  blockers. WP-18Q remains BLOCKED and the platform is not engineering-qualified.
 
 Design documents in this section define the Target destination. Status and
 Verification records report their explicitly bounded implementation evidence;
