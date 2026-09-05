@@ -45,9 +45,11 @@ from market_regime_alpha.market.application.results import CaptureMutationResult
 class _CaptureCommands(_MarketCommandSupport):
     @_replay_concurrent_success
     def capture(
-        self, request: CaptureRequest, provider: MarketProvider, context: CommandContext, *, runtime_claim: AttemptClaim | None = None
+        self, request: CaptureRequest, provider: MarketProvider, context: CommandContext, *,
+        runtime_claim: AttemptClaim | None = None,
+        complete_runtime_attempt: bool = True,
     ) -> CaptureMutationResult:
-        """Perform observational Provider/CAS I/O before opening the write transaction."""
+        """Capture under the live fence; an archive parent may own finalization."""
         request_hash = ContentHash(canonical_json_sha256(request))
         with self._terminal_failure_boundary(
             operation="CAPTURE_MARKET_DATA",
@@ -58,7 +60,10 @@ class _CaptureCommands(_MarketCommandSupport):
             context=context,
             runtime_claim=runtime_claim,
         ):
-            replay = self._capture_replay_before_io(request, request_hash=request_hash, context=context, runtime_claim=runtime_claim)
+            replay = self._capture_replay_before_io(
+                request, request_hash=request_hash, context=context, runtime_claim=runtime_claim,
+                complete_runtime_attempt=complete_runtime_attempt,
+            )
         if replay is not None:
             return replay
         started_at = self._database_clock.now()
@@ -105,7 +110,10 @@ class _CaptureCommands(_MarketCommandSupport):
                     limitation_code=None,
                     payload_encoding=None,
                 )
-                return self._record_capture_failure(failure, context=context, runtime_claim=runtime_claim)
+                return self._record_capture_failure(
+                    failure, context=context, runtime_claim=runtime_claim,
+                    complete_runtime_attempt=complete_runtime_attempt,
+                )
         completed_at = self._database_clock.now()
         with self._terminal_failure_boundary(
             operation="CAPTURE_MARKET_DATA",
@@ -170,7 +178,7 @@ class _CaptureCommands(_MarketCommandSupport):
                 source = uow.market.capture_source(UUID(receipt.result_aggregate_id), lock=False)
                 result_hash = _required_result_hash(receipt.result_hash)
                 self._finalize_capture_replay(
-                    uow, capture=source.capture, receipt_id=receipt.receipt_id, result_hash=result_hash, runtime_claim=runtime_claim
+                    uow, capture=source.capture, receipt_id=receipt.receipt_id, result_hash=result_hash, runtime_claim=runtime_claim, complete_runtime_attempt=complete_runtime_attempt
                 )
                 return CaptureMutationResult(
                     capture=source.capture,
@@ -219,7 +227,7 @@ class _CaptureCommands(_MarketCommandSupport):
                 context=context,
                 runtime_claim=runtime_claim,
             )
-            if runtime_claim is not None:
+            if runtime_claim is not None and complete_runtime_attempt:
                 uow.runtime_finalization.succeed(runtime_claim, receipt_id=receipt.receipt_id, result_hash=result_hash)
             uow.commit()
             return CaptureMutationResult(
@@ -227,7 +235,8 @@ class _CaptureCommands(_MarketCommandSupport):
             )
 
     def _capture_replay_before_io(
-        self, request: CaptureRequest, *, request_hash: ContentHash, context: CommandContext, runtime_claim: AttemptClaim | None
+        self, request: CaptureRequest, *, request_hash: ContentHash, context: CommandContext, runtime_claim: AttemptClaim | None,
+        complete_runtime_attempt: bool,
     ) -> CaptureMutationResult | None:
         """Return an exact committed replay without repeating Provider byte I/O."""
         with self._uow_provider() as uow:
@@ -248,7 +257,7 @@ class _CaptureCommands(_MarketCommandSupport):
             source = uow.market.capture_source(UUID(receipt.result_aggregate_id), lock=False)
             result_hash = _required_result_hash(receipt.result_hash)
             self._finalize_capture_replay(
-                uow, capture=source.capture, receipt_id=receipt.receipt_id, result_hash=result_hash, runtime_claim=runtime_claim
+                uow, capture=source.capture, receipt_id=receipt.receipt_id, result_hash=result_hash, runtime_claim=runtime_claim, complete_runtime_attempt=complete_runtime_attempt
             )
             return CaptureMutationResult(
                 capture=source.capture,
@@ -279,7 +288,8 @@ class _CaptureCommands(_MarketCommandSupport):
         )
 
     def _record_capture_failure(
-        self, capture: ProviderCapture, *, context: CommandContext, runtime_claim: AttemptClaim | None
+        self, capture: ProviderCapture, *, context: CommandContext, runtime_claim: AttemptClaim | None,
+        complete_runtime_attempt: bool,
     ) -> CaptureMutationResult:
         with self._uow_provider() as uow:
             if runtime_claim is not None:
@@ -298,7 +308,7 @@ class _CaptureCommands(_MarketCommandSupport):
                 replay = uow.market.capture_source(UUID(receipt.result_aggregate_id), lock=False)
                 result_hash = _required_result_hash(receipt.result_hash)
                 self._finalize_capture_replay(
-                    uow, capture=replay.capture, receipt_id=receipt.receipt_id, result_hash=result_hash, runtime_claim=runtime_claim
+                    uow, capture=replay.capture, receipt_id=receipt.receipt_id, result_hash=result_hash, runtime_claim=runtime_claim, complete_runtime_attempt=complete_runtime_attempt
                 )
                 return CaptureMutationResult(
                     capture=replay.capture, artifact=replay.artifact, result_hash=result_hash, receipt_id=receipt.receipt_id, replayed=True
@@ -333,7 +343,7 @@ class _CaptureCommands(_MarketCommandSupport):
                 context=context,
                 runtime_claim=runtime_claim,
             )
-            if runtime_claim is not None:
+            if runtime_claim is not None and complete_runtime_attempt:
                 uow.runtime_finalization.fail(
                     runtime_claim,
                     receipt_id=receipt.receipt_id,
@@ -346,9 +356,10 @@ class _CaptureCommands(_MarketCommandSupport):
             )
 
     def _finalize_capture_replay(
-        self, uow: MarketUnitOfWork, *, capture: ProviderCapture, receipt_id: UUID, result_hash: str, runtime_claim: AttemptClaim | None
+        self, uow: MarketUnitOfWork, *, capture: ProviderCapture, receipt_id: UUID, result_hash: str, runtime_claim: AttemptClaim | None,
+        complete_runtime_attempt: bool,
     ) -> None:
-        if runtime_claim is None:
+        if runtime_claim is None or not complete_runtime_attempt:
             return
         if capture.status is CaptureStatus.CAPTURED:
             uow.runtime_finalization.succeed(runtime_claim, receipt_id=receipt_id, result_hash=result_hash)

@@ -725,8 +725,9 @@ def test_malformed_provider_temporal_output_is_terminal_before_artifact_publish(
         )
 
 
+@pytest.mark.parametrize("complete_runtime_attempt", [True, False])
 def test_stale_capture_worker_leaves_safe_physical_orphan_and_no_market_fact(
-    runtime_market_stack,
+    runtime_market_stack, complete_runtime_attempt,
 ) -> None:
     runtime, artifacts, market, store, pool, product, database_url = runtime_market_stack
     _, config = _schedule_run(runtime, artifacts, (_capture_step(),))
@@ -761,6 +762,7 @@ def test_stale_capture_worker_leaves_safe_physical_orphan_and_no_market_fact(
             RecoveringProvider(raw),
             _context("stale-market-capture", "CAPTURE_PROVIDER_RESPONSE"),
             runtime_claim=stale,
+            complete_runtime_attempt=complete_runtime_attempt,
         )
 
     objects = {item.content_sha256 for item in store.list_objects()}
@@ -1342,3 +1344,72 @@ def test_direct_normalize_collision_keeps_artifact_failure_observation(
             (captured.artifact.artifact_id,),
         ).fetchone()
     assert state_and_failure == ("CORRUPT", "SIZE_MISMATCH")
+
+
+@pytest.mark.parametrize("provider_failure", [False, True])
+def test_archive_intermediate_commands_preserve_live_fence_and_exact_replay(
+    runtime_market_stack, provider_failure,
+) -> None:
+    runtime, artifacts, market, _, _, product, database_url = runtime_market_stack
+    run_id, _ = _schedule_run(runtime, artifacts, (_capture_step(),))
+    claim = runtime.claim_next(
+        worker_id="archive-worker", lease_duration=timedelta(seconds=30),
+        context=_context("archive-claim", "WORKER_CLAIM"),
+    )
+    assert claim is not None
+    runtime.start_attempt(claim, _context("archive-start", "WORKER_START"))
+    request = CaptureRequest(
+        provider_product_id=product.provider_product_id, capture_key="archive-fenced",
+        resource="fixture://archive-fenced", request_headers_hash="a" * 64,
+    )
+    provider = CountingResponseProvider(b'{"rows":[]}')
+    captured = market.capture(
+        request, FailureProvider() if provider_failure else provider,
+        _context("archive-capture", "CAPTURE_PROVIDER_RESPONSE"),
+        runtime_claim=claim, complete_runtime_attempt=False,
+    )
+    replay = market.capture(
+        request, provider, _context("archive-capture", "CAPTURE_PROVIDER_RESPONSE"),
+        runtime_claim=claim, complete_runtime_attempt=False,
+    )
+    assert replay.replayed and replay.capture == captured.capture
+    assert provider.calls == (0 if provider_failure else 1)
+    assert runtime.inspect_run(run_id).steps[0].state == "RUNNING"
+    if not provider_failure:
+        normalized = market.normalize(
+            captured.capture.capture_id, GapNormalizer(),
+            _context("archive-normalize", "NORMALIZE_MARKET_PIT"),
+            runtime_claim=claim, complete_runtime_attempt=False,
+        )
+        replayed = market.normalize(
+            captured.capture.capture_id, GapNormalizer(),
+            _context("archive-normalize", "NORMALIZE_MARKET_PIT"),
+            runtime_claim=claim, complete_runtime_attempt=False,
+        )
+        assert replayed.replayed and replayed.result_hash == normalized.result_hash
+        assert runtime.inspect_run(run_id).steps[0].state == "RUNNING"
+    with psycopg.connect(database_url) as connection:
+        rows = connection.execute(
+            "SELECT fence_token FROM mra.command_receipt "
+            "WHERE command_kind IN ('CAPTURE_MARKET_DATA', 'NORMALIZE_MARKET_PIT')"
+        ).fetchall()
+    assert rows and all(row == (claim.fence_token,) for row in rows)
+    # A terminal owner consumes the claim; even exact intermediate replay then
+    # rejects the stale fence before any Provider I/O.
+    market.capture(
+        request, provider, _context("archive-capture", "CAPTURE_PROVIDER_RESPONSE"),
+        runtime_claim=claim,
+    )
+    with pytest.raises(StaleFenceError):
+        market.capture(
+            request, provider, _context("archive-capture", "CAPTURE_PROVIDER_RESPONSE"),
+            runtime_claim=claim, complete_runtime_attempt=False,
+        )
+    assert provider.calls == (0 if provider_failure else 1)
+    if not provider_failure:
+        with pytest.raises(StaleFenceError):
+            market.normalize(
+                captured.capture.capture_id, GapNormalizer(),
+                _context("archive-normalize", "NORMALIZE_MARKET_PIT"),
+                runtime_claim=claim, complete_runtime_attempt=False,
+            )

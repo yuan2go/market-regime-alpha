@@ -39,14 +39,14 @@ class _Market:
         self.capture_claims = []
         self.normalize_claims = []
 
-    def capture(self, request, provider, context, *, runtime_claim=None):
+    def capture(self, request, provider, context, *, runtime_claim=None, complete_runtime_attempt=True):
         self.capture_calls += 1
-        self.capture_claims.append(runtime_claim)
+        self.capture_claims.append((runtime_claim, complete_runtime_attempt))
         return _CaptureResult(_Capture(self.capture_id, self.status))
 
-    def normalize(self, capture_id, normalizer, context, *, runtime_claim=None):
+    def normalize(self, capture_id, normalizer, context, *, runtime_claim=None, complete_runtime_attempt=True):
         self.normalize_calls += 1
-        self.normalize_claims.append(runtime_claim)
+        self.normalize_claims.append((runtime_claim, complete_runtime_attempt))
         return object()
 
 
@@ -194,8 +194,8 @@ def test_runtime_claim_is_consumed_only_by_the_terminal_archive_command() -> Non
         runtime_claim=claim,  # type: ignore[arg-type]
     )
 
-    assert market.capture_claims == [None]
-    assert market.normalize_claims == [None]
+    assert market.capture_claims == [(claim, False)]
+    assert market.normalize_claims == [(claim, False)]
     assert archives.observation_claims == [claim]
 
 
