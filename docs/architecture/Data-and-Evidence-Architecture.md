@@ -3,7 +3,7 @@
 > **Status:** CANONICAL_TARGET_ARCHITECTURE
 > **Authority:** Target logical schema, PIT, evidence, artifact, and cutover specification
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-09-01
+> **Last Updated:** 2026-09-05
 > **Code Evidence:** target `src/market_regime_alpha/infrastructure/postgres`, `src/market_regime_alpha/shared`, `src/market_regime_alpha/runtime`, `src/market_regime_alpha/market`, `src/market_regime_alpha/selection`, `src/market_regime_alpha/research_qualification`, `tests/refoundation`; legacy `src/market_regime_alpha/persistence/postgres` remains current business implementation
 
 This document is the sole Target logical table catalog. Current physical DDL,
@@ -224,17 +224,23 @@ evidence.
 | `formal_research_campaign_runtime_run` | exact controlled Runtime plan binding | concrete Decision/Due proof Runtime Run and persisted DAG identity; no second Runtime or dispatcher |
 | `formal_research_dataset` | exact campaign-bound Formal PIT Dataset envelope | concrete admitted Provider Decision and complete qualified source roster/count/hash; source-specific visibility only |
 
-#### Deferred optional Model branch
+#### Exploratory Model and Generic Backtest
 
-The following relations remain logical target design only and are not present
-in the target baseline. None may be introduced as a placeholder or nullable
-future branch.
+The optional Model branch is implemented in the target draft, not deferred.
+WP-18Q retains one Backtest root and existing canonical owners. Implementation
+does not grant Model qualification, Formal PIT/OOS or Runtime/CLI cutover;
+exact qualification state belongs to Current State and Verification.
 
 | Table | Purpose | Lifecycle and key constraints |
 |---|---|---|
-| `evaluation_forecast_binding` | optional Forecast-evaluation branch | concrete Evaluation observation/Forecast FK only when a real Forecast exists; implemented after the Forecast parent, never as a nullable branch placeholder |
-| `model` | stable optional fitted-model family | unique code; no Target/Candidate/Outcome/Evaluation existence dependency |
-| `model_version` | immutable fitted version lineage | requires completed `MODEL_TRAINING` Evaluation Run and fitted/code/config Artifacts; unique Model/version/hash; completion/known time explicit |
+| `model`, `model_feature_definition` | stable fitted-model identity and frozen Feature/Target lineage | no prerequisite for rule-based Decision/Evaluation; never qualified by registration |
+| `model_training_run`, `model_training_sample` | completed-FIT-derived training Authority | exact Evaluation/Outcome samples, training knowledge cutoff and generation ordering; no validation labels in FIT |
+| `model_training_reproducibility`, `model_training_dependency`, `model_training_hyperparameter` | immutable deterministic fit contract | explicit algorithm/dependency/seed/parameter identities and complete hashes |
+| `model_version` | immutable fitted version lineage | exact TrainingRun and verified fitted/code/config Artifacts; strictly later validation binding; not a Model qualification decision |
+| `exploratory_backtest_run`, `backtest_specification` | existing root and its current frozen specification companion | complete sample/arm/fold/FIT→VALIDATION/evaluation/cost contract; no second Backtest root |
+| `backtest_runtime_binding`, `backtest_evaluation_execution`, `backtest_model_lineage` | concrete execution reconciliation bindings | reload canonical Runtime/Model/Evaluation Authority; bindings are not substitute owners |
+| `evaluation_metric_formula`, `evaluation_formula_parameter`, typed Evaluation source relations | the one canonical metric calculation contract | preserve typed unavailable/NOT_ESTIMABLE; report consumes these results without reading bars |
+| `backtest_report_artifact` | deterministic JSON/Markdown content-addressed projection | requires reconciled canonical Authority/Evaluation; no independent metric truth |
 
 ### Decision Support
 
@@ -783,8 +789,8 @@ Evaluation composes the label-free Dataset/Candidate/Target chain with a frozen
 Partition and exact Outcome revisions; it never writes posterior values back to
 Dataset, DatasetSource, Candidate, or Feature facts. Every Evaluation Run
 requires an Experiment Run, one bound Research Partition, and one predeclared
-Evaluation Protocol. It does not require a Model. A Model Version can exist only
-after a completed `MODEL_TRAINING` Evaluation Run; model-backed Forecast is a
+Evaluation Protocol. It does not require a Model. An exploratory Model Version
+requires a TrainingRun derived from completed FIT Evaluation; model-backed Forecast is a
 concrete optional child branch, not a nullable Model placeholder.
 
 Evidence, Assessment, and Research Qualification are three separate axes with
