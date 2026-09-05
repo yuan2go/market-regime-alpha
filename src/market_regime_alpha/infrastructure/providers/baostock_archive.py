@@ -141,6 +141,7 @@ class BaoStockSession:
         *,
         timeout_seconds: float = 30.0,
         maximum_attempts: int = 2,
+        defer_login: bool = False,
     ) -> None:
         if timeout_seconds <= 0:
             raise ValueError("BaoStock timeout_seconds must be positive")
@@ -150,8 +151,16 @@ class BaoStockSession:
         self._timeout_seconds = timeout_seconds
         self._maximum_attempts = maximum_attempts
         self._active = False
+        self._defer_login = defer_login
+        self._entered = False
 
     def __enter__(self) -> Self:
+        self._entered = True
+        if not self._defer_login:
+            self._connect()
+        return self
+
+    def _connect(self) -> None:
         try:
             status = self._transport_call("login", self._sdk.login)
         except Exception as exc:
@@ -162,9 +171,9 @@ class BaoStockSession:
             finally:
                 raise MarketProviderError("BAOSTOCK_LOGIN_FAILED", f"BaoStock login failed: {status.error_msg}")
         self._active = True
-        return self
 
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+        self._entered = False
         if self._active:
             self._active = False
             try:
@@ -174,6 +183,8 @@ class BaoStockSession:
                     raise MarketProviderError("BAOSTOCK_LOGOUT_FAILED", "BaoStock logout failed") from logout_error
 
     def execute(self, query: BaoStockArchiveQuery) -> BaoStockArchiveResult:
+        if self._defer_login and self._entered and not self._active:
+            self._connect()
         if not self._active:
             raise MarketProviderError("BAOSTOCK_SESSION_NOT_ACTIVE", "BaoStock session is not active")
         result = self._transport_call("query", self._dispatch, query)
