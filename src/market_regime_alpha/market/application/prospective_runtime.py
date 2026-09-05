@@ -61,16 +61,7 @@ from market_regime_alpha.infrastructure.providers.baostock_archive import BaoSto
 
 
 _IMPLEMENTATION = "market.prospective_archive"
-_IMPLEMENTATION_VERSION = "1"
-_SCHEDULE_REVISION = 1
 _SCHEDULE_CODE = "prospective-archive"
-_CATALOG_HASH = canonical_json_sha256(
-    {
-        "implementation": _IMPLEMENTATION,
-        "implementation_version": _IMPLEMENTATION_VERSION,
-        "step_kinds": ("RECORD_EVIDENCE", "CAPTURE"),
-    }
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -183,21 +174,30 @@ def compile_prospective_runtime_plan(
     manifest: ArchiveOperatorManifest,
     *,
     code_sha: str,
+    runtime_revision: int = 2,
 ) -> ProspectiveArchiveRuntimePlan:
     """Build stable Run/Step intent; it performs no I/O or Authority writes."""
 
+    if type(runtime_revision) is not int or runtime_revision not in {1, 2}:
+        raise ValueError("Unknown prospective Runtime revision")
+    implementation_version = str(runtime_revision)
+    catalog_hash = canonical_json_sha256({
+        "implementation": _IMPLEMENTATION,
+        "implementation_version": implementation_version,
+        "step_kinds": ("RECORD_EVIDENCE", "CAPTURE"),
+    })
     config_bytes = manifest.to_bytes()
     config_hash = sha256_bytes(config_bytes)
     archive_id = manifest.start_request.market_archive_id
-    schedule_id = _id(f"schedule:{_SCHEDULE_REVISION}:{_CATALOG_HASH}")
+    schedule_id = _id(f"schedule:{runtime_revision}:{catalog_hash}")
     schedule = ScheduleSpec(
         schedule_id=schedule_id,
         schedule_code=_SCHEDULE_CODE,
-        revision=_SCHEDULE_REVISION,
+        revision=runtime_revision,
         runtime_mode=RuntimeMode.PROSPECTIVE,
         schedule_expression="POSTGRESQL_DUE_QUERY",
         timezone_name="Asia/Shanghai",
-        step_catalog_hash=_CATALOG_HASH,
+        step_catalog_hash=catalog_hash,
         enabled=True,
     )
     predeclare = ProspectiveRuntimeRunPlan(
@@ -213,15 +213,15 @@ def compile_prospective_runtime_plan(
                 step_key="predeclare-archive",
                 step_kind="RECORD_EVIDENCE",
                 implementation=f"{_IMPLEMENTATION}.predeclare",
-                implementation_version=_IMPLEMENTATION_VERSION,
+                implementation_version=implementation_version,
                 ordinal=1,
                 required=True,
                 request_hash=canonical_json_sha256(manifest.start_request),
                 input_evidence_hash=config_hash,
                 retry_policy=RetryPolicy(
-                    max_attempts=1,
-                    backoff=(),
-                    retryable_codes=frozenset(),
+                    max_attempts=1 if runtime_revision == 1 else 3,
+                    backoff=() if runtime_revision == 1 else (timedelta(0), timedelta(0)),
+                    retryable_codes=frozenset() if runtime_revision == 1 else frozenset({"LEASE_EXPIRED"}),
                 ),
                 external_effect_class=ExternalEffectClass.NONE,
             ),
@@ -258,7 +258,7 @@ def compile_prospective_runtime_plan(
                     step_key=f"capture-{item.plan.ordinal:04d}",
                     step_kind="CAPTURE",
                     implementation=f"{_IMPLEMENTATION}.capture_slice",
-                    implementation_version=_IMPLEMENTATION_VERSION,
+                    implementation_version=implementation_version,
                     ordinal=ordinal,
                     required=True,
                     request_hash=canonical_json_sha256(request),
@@ -341,8 +341,9 @@ class ProspectiveArchiveRuntimeApplication:
         code_sha: str,
         actor_id: str,
         lease_duration: timedelta,
+        runtime_revision: int = 2,
     ) -> ProspectiveRuntimeRegistration:
-        plan = compile_prospective_runtime_plan(manifest, code_sha=code_sha)
+        plan = compile_prospective_runtime_plan(manifest, code_sha=code_sha, runtime_revision=runtime_revision)
         artifact = self._artifacts.publish(
             plan.config_bytes,
             media_type="application/json",
@@ -363,6 +364,10 @@ class ProspectiveArchiveRuntimeApplication:
             ),
         )
         self._register_run(plan, plan.predeclare, artifact.artifact_id, actor_id)
+        self._runtime.recover_expired(
+            actor_id=actor_id, reason_code="PROSPECTIVE_LEASE_RECOVERY",
+            run_id=plan.predeclare.run_id,
+        )
         self._execute_predeclare(
             plan,
             manifest,
@@ -390,8 +395,9 @@ class ProspectiveArchiveRuntimeApplication:
         lease_duration: timedelta,
         provider: MarketProvider,
         normalizer_for: Callable[[ArchiveManifestSlice], MarketNormalizer],
+        runtime_revision: int = 2,
     ) -> ProspectiveRuntimeExecution:
-        plan = compile_prospective_runtime_plan(manifest, code_sha=code_sha)
+        plan = compile_prospective_runtime_plan(manifest, code_sha=code_sha, runtime_revision=runtime_revision)
         recovered = tuple(
             attempt_id
             for run in plan.runs
@@ -590,7 +596,7 @@ class ProspectiveArchiveRuntimeApplication:
             # Repairs an interrupted registration using its original code/config;
             # completed commands resolve through exact receipt replay.
             self.predeclare(manifest, code_sha=reference.code_sha, actor_id=actor_id,
-                            lease_duration=lease_duration)
+                            lease_duration=lease_duration, runtime_revision=reference.runtime_revision)
             overdue = self._continuity.overdue_slice_ids(reference.market_archive_id)
             if overdue:
                 def finalize(claim: AttemptClaim, context: CommandContext,
@@ -604,10 +610,12 @@ class ProspectiveArchiveRuntimeApplication:
                     operation="finalize_overdue", payload={"slice_ids": overdue},
                     actor_id=actor_id, worker_id=worker_id, lease_duration=lease_duration,
                     command=finalize,
+                    runtime_revision=reference.runtime_revision,
                 )
             executions.append(self.run_due(
                 manifest, code_sha=reference.code_sha, actor_id=actor_id, worker_id=worker_id,
                 lease_duration=lease_duration, provider=provider, normalizer_for=normalizer_for,
+                runtime_revision=reference.runtime_revision,
             ))
             manifests.append(manifest)
         head = manifests[-1]
@@ -646,6 +654,7 @@ class ProspectiveArchiveRuntimeApplication:
                 operation="record_planning_gap", payload={"request": request},
                 actor_id=actor_id, worker_id=worker_id, lease_duration=lease_duration,
                 command=record_gap,
+                runtime_revision=references[-1].runtime_revision,
             )
         new_generation_id = None
         if continuation.next_sessions is not None:
@@ -696,8 +705,9 @@ class ProspectiveArchiveRuntimeApplication:
         self, manifest: ArchiveOperatorManifest, *, code_sha: str, config_artifact_id: UUID,
         operation: str, payload: dict[str, object], actor_id: str, worker_id: str,
         lease_duration: timedelta, command: Callable[[AttemptClaim, CommandContext], object],
+        runtime_revision: int,
     ) -> None:
-        plan = compile_prospective_runtime_plan(manifest, code_sha=code_sha)
+        plan = compile_prospective_runtime_plan(manifest, code_sha=code_sha, runtime_revision=runtime_revision)
         request_hash = canonical_json_sha256({"archive_id": plan.market_archive_id,
                                              "operation": operation, "payload": payload})
         key = f"archive:{plan.market_archive_id}:maintenance:{operation}:{request_hash}"

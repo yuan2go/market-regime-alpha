@@ -281,3 +281,44 @@ def test_restarted_prospective_attempt_reconciles_without_repeating_provider_eff
             restarted.run_due(manifest, **kwargs)
         assert runtime.inspect_run(first.run_id).steps[0].state == "FAILED"
     assert provider.calls == 1
+
+
+def test_predeclare_recovers_expired_claim_after_process_crash(prospective_stack):
+    import time
+
+    runtime, artifacts, pool = prospective_stack
+    clock = PostgresMarketDatabaseClock(pool)
+    manifest = _runtime_fixture_at(clock.now())
+
+    class CrashingArchives(_Archives):
+        crashed = False
+
+        def start(self, request, context, *, runtime_claim=None):
+            if not self.crashed:
+                self.crashed = True
+                raise SystemExit("process died before archive command")
+            return super().start(request, context, runtime_claim=runtime_claim)
+
+    archives = CrashingArchives(runtime)
+
+    def application():
+        return ProspectiveArchiveRuntimeApplication(
+            runtime=runtime, artifacts=artifacts, archives=archives,
+            operations=_Operations(runtime), database_clock=clock,
+            due_query=lambda _archive: (),
+        )
+
+    with pytest.raises(SystemExit, match="process died"):
+        application().predeclare(
+            manifest, code_sha="1" * 40, actor_id="crash-test",
+            lease_duration=timedelta(milliseconds=100),
+        )
+    time.sleep(0.15)  # Expire the actual PostgreSQL lease, without changing its clock.
+    registered = application().predeclare(
+        manifest, code_sha="1" * 40, actor_id="crash-test",
+        lease_duration=timedelta(seconds=30),
+    )
+    trace = runtime.inspect_run(registered.predeclare_run_id)
+    assert trace.run_state == "SUCCEEDED"
+    assert len(trace.steps[0].attempt_states) == 2
+    assert len(archives.claims) == 1

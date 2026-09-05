@@ -122,3 +122,19 @@ def test_runtime_plan_is_exactly_reproducible() -> None:
     assert compile_prospective_runtime_plan(
         manifest, code_sha="1" * 40
     ) == compile_prospective_runtime_plan(manifest, code_sha="1" * 40)
+
+
+def test_runtime_revision_preserves_registered_intent_and_rejects_unknown_revision():
+    import pytest
+    from uuid import UUID
+
+    manifest = _manifest()
+    original = compile_prospective_runtime_plan(manifest, code_sha="1" * 40, runtime_revision=1)
+    current = compile_prospective_runtime_plan(manifest, code_sha="1" * 40, runtime_revision=2)
+    assert original.schedule.schedule_id == UUID("70f47502-5918-5735-8809-c18ffe96d033")
+    assert original.predeclare.steps[0].retry_policy.max_attempts == 1
+    assert current.predeclare.steps[0].retry_policy.max_attempts == 3
+    assert current.schedule.schedule_id != original.schedule.schedule_id
+    assert current.config_bytes == original.config_bytes
+    with pytest.raises(ValueError, match="Unknown prospective Runtime revision"):
+        compile_prospective_runtime_plan(manifest, code_sha="1" * 40, runtime_revision=3)

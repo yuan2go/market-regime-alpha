@@ -207,6 +207,7 @@ def predeclare_prospective_runtime(
     code_sha: str,
     actor_id: str,
     lease_duration: timedelta,
+    runtime_revision: int = 2,
 ) -> object:
     """Register exact prospective work through Runtime Schedule/Run/Attempt."""
 
@@ -215,6 +216,7 @@ def predeclare_prospective_runtime(
         code_sha=code_sha,
         actor_id=actor_id,
         lease_duration=lease_duration,
+        runtime_revision=runtime_revision,
     )
 
 
@@ -227,6 +229,7 @@ def run_due_prospective_runtime(
     actor_id: str,
     worker_id: str,
     lease_duration: timedelta,
+    runtime_revision: int = 2,
 ) -> object:
     """Execute only PostgreSQL-clock-due slices under exact Runtime fences."""
 
@@ -250,6 +253,7 @@ def run_due_prospective_runtime(
             lease_duration=lease_duration,
             provider=provider,
             normalizer_for=normalizer_for,
+            runtime_revision=runtime_revision,
         )
 
 

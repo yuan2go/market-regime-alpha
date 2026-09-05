@@ -13,6 +13,7 @@ class ProspectiveGenerationRuntimeReference:
     config_sha256: str
     config_size_bytes: int
     code_sha: str
+    runtime_revision: int
 
 
 class ProspectiveContinuityReadPort(Protocol):

@@ -215,6 +215,7 @@ def _dispatch(arguments: argparse.Namespace, settings: TargetSettings) -> object
                     return compile_prospective_runtime_plan(
                         manifest,
                         code_sha=arguments.code_sha,
+                        runtime_revision=arguments.runtime_revision,
                     )
                 if command == "predeclare":
                     return predeclare_prospective_runtime(
@@ -223,6 +224,7 @@ def _dispatch(arguments: argparse.Namespace, settings: TargetSettings) -> object
                         code_sha=arguments.code_sha,
                         actor_id=arguments.actor_id,
                         lease_duration=timedelta(seconds=arguments.lease_seconds),
+                        runtime_revision=arguments.runtime_revision,
                     )
                 if command in {"run-due", "resume"}:
                     import baostock as sdk
@@ -235,6 +237,7 @@ def _dispatch(arguments: argparse.Namespace, settings: TargetSettings) -> object
                         actor_id=arguments.actor_id,
                         worker_id=arguments.worker_id,
                         lease_duration=timedelta(seconds=arguments.lease_seconds),
+                        runtime_revision=arguments.runtime_revision,
                     )
             if arguments.archive_command in {"inspect", "gap-report", "revision-report", "daily-health"}:
                 return archive_report(
@@ -365,11 +368,13 @@ def _parser() -> argparse.ArgumentParser:
     prospective_plan = prospective_commands.add_parser("plan-next")
     prospective_plan.add_argument("--manifest", required=True, type=Path)
     prospective_plan.add_argument("--code-sha", required=True)
+    prospective_plan.add_argument("--runtime-revision", type=int, choices=(1, 2), default=2)
     prospective_plan.add_argument("--expected-database-name", required=True)
     for command in ("predeclare", "run-due", "resume"):
         mutation = prospective_commands.add_parser(command)
         mutation.add_argument("--manifest", required=True, type=Path)
         mutation.add_argument("--code-sha", required=True)
+        mutation.add_argument("--runtime-revision", type=int, choices=(1, 2), default=2)
         mutation.add_argument("--expected-database-name", required=True)
         mutation.add_argument("--actor-id", required=True)
         mutation.add_argument("--lease-seconds", type=int, default=120)
