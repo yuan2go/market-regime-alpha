@@ -9,6 +9,10 @@ from typing import Mapping
 from uuid import uuid4
 
 from market_regime_alpha.infrastructure.artifacts import LocalArtifactStore
+from market_regime_alpha.infrastructure.artifacts.evidence import FilesystemEvidenceIntegrity
+from market_regime_alpha.infrastructure.postgres.evidence_backup import PostgresEvidenceBackup
+from market_regime_alpha.infrastructure.postgres.queries.evidence import PostgresEvidenceSnapshotPort
+from market_regime_alpha.runtime.application.evidence import EvidenceApplication
 from market_regime_alpha.infrastructure.models import (
     DeterministicRidgeBacktestModelAdapter,
     DeterministicRidgePredictor,
@@ -321,6 +325,7 @@ class TargetSettings:
 
 @dataclass(slots=True)
 class TargetApplication:
+    evidence: EvidenceApplication
     runtime: RuntimeApplication
     artifacts: ArtifactApplication
     market: MarketApplication
@@ -554,6 +559,14 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
         backtest_replay,
     )
     return TargetApplication(
+        evidence=EvidenceApplication(
+            PostgresEvidenceSnapshotPort(pool),
+            FilesystemEvidenceIntegrity(settings.artifact_root),
+            settings.artifact_root,
+            PostgresEvidenceBackup(settings.database_url, settings.artifact_root),
+            PostgresArchiveVerificationPort(pool).verify,
+            backtest_replay.verify,
+        ),
         runtime=runtime_application,
         artifacts=artifact_application,
         market=market_application,

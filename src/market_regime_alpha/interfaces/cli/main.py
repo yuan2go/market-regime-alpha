@@ -59,7 +59,7 @@ def main(
         settings = TargetSettings.from_environ(os.environ if environ is None else environ)
         payload = _dispatch(arguments, settings)
         output.write(json.dumps(_json_value(payload), sort_keys=True) + "\n")
-        return 0
+        return 2 if arguments.area == "evidence" and isinstance(payload, dict) and (payload.get("matched") is False or payload.get("ready") is False) else 0
     except (MraError, ValueError, OSError, psycopg.Error) as exc:
         error_output.write(
             json.dumps(
@@ -125,6 +125,16 @@ def _dispatch(arguments: argparse.Namespace, settings: TargetSettings) -> object
                 challenge=arguments.challenge,
                 operator_id=arguments.operator_id,
             )
+    if arguments.area == "evidence":
+        with bootstrap_application(settings) as application:
+            if arguments.evidence_command == "inventory":
+                return application.evidence.inventory(logical_role=arguments.role, records_directory=arguments.records_directory)
+            if arguments.evidence_command == "restore-check":
+                return application.evidence.restore_check(arguments.bundle)
+            if arguments.evidence_command in {"backup-plan", "backup"}:
+                operation = application.evidence.backup_plan if arguments.evidence_command == "backup-plan" else application.evidence.backup
+                return operation(arguments.directory, expected_name=arguments.expected_database_name, expected_oid=arguments.expected_database_oid, minimum_free_bytes=arguments.minimum_free_bytes)
+            return application.evidence.verify()
     if arguments.area == "runtime":
         with bootstrap_application(settings) as application:
             if arguments.runtime_command == "inspect":
@@ -247,6 +257,21 @@ def _dispatch(arguments: argparse.Namespace, settings: TargetSettings) -> object
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="mra")
     areas = parser.add_subparsers(dest="area", required=True)
+
+    evidence = areas.add_parser("evidence")
+    evidence_commands = evidence.add_subparsers(dest="evidence_command", required=True)
+    inventory = evidence_commands.add_parser("inventory")
+    inventory.add_argument("--role", default="UNSPECIFIED")
+    inventory.add_argument("--records-directory", type=Path)
+    evidence_commands.add_parser("verify")
+    for command in ("backup-plan", "backup"):
+        backup = evidence_commands.add_parser(command)
+        backup.add_argument("--directory", type=Path, required=True)
+        backup.add_argument("--expected-database-name", required=True)
+        backup.add_argument("--expected-database-oid", type=int, required=True)
+        backup.add_argument("--minimum-free-bytes", type=int, default=256_000_000)
+    restore = evidence_commands.add_parser("restore-check")
+    restore.add_argument("--bundle", type=Path, required=True)
 
     database = areas.add_parser("db")
     database_commands = database.add_subparsers(dest="db_command", required=True)
