@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import asdict, is_dataclass
 from datetime import date, datetime, timedelta
+from decimal import Decimal
 from enum import Enum
 from io import TextIOBase
 import json
@@ -448,6 +449,10 @@ def _json_value(value: object) -> object:
         return {str(key): _json_value(item) for key, item in value.items()}
     if isinstance(value, (tuple, list, set, frozenset)):
         return [_json_value(item) for item in value]
+    if isinstance(value, Decimal):
+        if not value.is_finite():
+            raise ValueError("CLI Decimal output must be finite")
+        return str(value)
     if isinstance(value, (UUID, datetime, date, Path)):
         return str(value)
     if isinstance(value, Enum):
