@@ -4,6 +4,7 @@ from io import StringIO
 import json
 import os
 import signal
+import subprocess
 from threading import Event
 
 import pytest
@@ -89,6 +90,28 @@ def test_sigterm_drains_tick_restores_handlers_and_restart_reenters_owner():
         assert {number: signal.getsignal(number) for number in previous} == previous
     assert calls == ["owner-reconciliation", "commit"] * 2
     assert emitted == ["completed", "completed"]
+
+
+@pytest.mark.parametrize("signal_name", ["SIGINT", "SIGTERM"])
+def test_signal_during_event_wait_cannot_reenter_its_lock(signal_name):
+    # Deterministically deliver the signal in Event.wait's non-reentrant lock
+    # window, in a disposable child so the regression cannot hang pytest.
+    code = f'''
+import os, signal
+from threading import Event
+from market_regime_alpha.interfaces.prospective_service import serve_prospective
+class SignalDuringWait(Event):
+    def wait(self, timeout=None):
+        with self._cond:
+            os.kill(os.getpid(), signal.{signal_name})
+        return False
+result = serve_prospective(lambda: "complete", emit=lambda value: None,
+    wakeup_seconds=60, stop=SignalDuringWait())
+assert result == {{"stop_reason": "STOP_REQUESTED", "completed_wakeups": 1}}
+'''
+    result = subprocess.run(["uv", "run", "--no-sync", "python", "-c", code],
+                            capture_output=True, text=True, timeout=5)
+    assert result.returncode == 0, result.stderr
 
 
 @pytest.mark.parametrize("seconds,limit", [(0, 1), (-1, 1), (float("nan"), 1),
