@@ -382,11 +382,11 @@ class BacktestExecutor:
         return self._planner.compile(run, observed)
 
     def _drive(self, run: FrozenBacktestRun) -> BacktestExecutionPlan:
-        previous_signature: tuple[tuple[UUID, BacktestObservedState], ...] | None = None
         expected = self._planner.compile(run).expected_actions
+        observed = self._observations.observe(run, expected)
         max_transitions = len(expected) * 4 + 1
+        transitions = 0
         for _ in range(max_transitions):
-            observed = self._observations.observe(run, expected)
             plan = self._planner.compile(run, observed)
             if plan.execution_state is BacktestExecutionState.INTEGRITY_ERROR:
                 mismatches = ",".join(map(str, plan.integrity_mismatch_action_ids))
@@ -400,17 +400,42 @@ class BacktestExecutor:
                 return plan
             if not plan.ready_actions:
                 raise BacktestExecutionIntegrityError("Backtest has incomplete work but no dependency-ready action")
-            ready = plan.ready_actions[0]
-            signature = tuple((item.action_id, item.state) for item in observed)
-            if signature == previous_signature:
-                if ready.operation is BacktestNextOperation.RECOVER:
-                    # A reconciled incomplete owner can still hold a valid
-                    # lease. Recovery must neither steal it nor turn ordinary
-                    # in-flight work into an integrity failure.
-                    return plan
-                raise BacktestExecutionIntegrityError("Backtest action made no canonical reconciliation progress")
-            previous_signature = signature
-            self._actions.execute(run, ready.action, ready.operation)
+            before = {item.action_id: item for item in observed}
+            # Only this already-reconciled ready set may advance. Reload each
+            # affected owner before later writes, and the entire owner graph
+            # before admitting any newly unlocked dependency.
+            for ordinal, ready in enumerate(plan.ready_actions, start=1):
+                if transitions >= max_transitions:
+                    raise BacktestExecutionIntegrityError("Backtest exceeded its bounded canonical transition budget")
+                transitions += 1
+                self._actions.execute(run, ready.action, ready.operation)
+                full_scope = ordinal == len(plan.ready_actions)
+                scope = expected if full_scope else (ready.action,)
+                checked = self._observations.observe(run, scope)
+                checked_plan = self._planner.compile(run, checked)
+                if checked_plan.execution_state is BacktestExecutionState.INTEGRITY_ERROR:
+                    mismatches = ",".join(map(str, checked_plan.integrity_mismatch_action_ids))
+                    raise BacktestExecutionIntegrityError(f"Backtest reconciliation produced INTEGRITY_ERROR: {mismatches}")
+                after = {item.action_id: item for item in checked}
+                state = _state(ready.action.action_id, after)
+                if state == _state(ready.action.action_id, before):
+                    if ready.operation is BacktestNextOperation.RECOVER:
+                        # Keep a valid in-flight lease without admitting more
+                        # writes from a stale readiness snapshot.
+                        if not full_scope:
+                            checked = self._observations.observe(run, expected)
+                            checked_plan = self._planner.compile(run, checked)
+                        if checked_plan.execution_state is BacktestExecutionState.INTEGRITY_ERROR:
+                            raise BacktestExecutionIntegrityError("Backtest recovery reconciliation produced INTEGRITY_ERROR")
+                        return checked_plan
+                    raise BacktestExecutionIntegrityError("Backtest action made no canonical reconciliation progress")
+                if full_scope:
+                    observed = checked
+                elif state is not BacktestObservedState.MATCHED_COMPLETE:
+                    # Retry, incomplete work and terminal failure need a fresh
+                    # global decision before any independent action proceeds.
+                    observed = self._observations.observe(run, expected)
+                    break
         raise BacktestExecutionIntegrityError("Backtest exceeded its bounded canonical transition budget")
 
 

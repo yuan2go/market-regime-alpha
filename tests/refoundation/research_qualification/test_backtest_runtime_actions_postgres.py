@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import ast
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import UTC, datetime
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -194,7 +197,22 @@ def test_action_retry_reuses_runtime_and_creates_a_new_attempt(backtest_stack) -
     executor = _executor(backtest_stack, handler)
 
     executor.execute(frozen, action, BacktestNextOperation.EXECUTE)
+    from market_regime_alpha.infrastructure.postgres.queries.backtest_actions import PostgresBacktestActionReadPort
+    with backtest_stack.pool.connection(read_only=True) as connection:
+        first_attempt = connection.execute(
+            """SELECT attempt.step_id, attempt.created_at
+               FROM mra.runtime_attempt attempt
+               JOIN mra.runtime_step step ON step.step_id=attempt.step_id
+               JOIN mra.backtest_runtime_binding binding ON binding.runtime_run_id=step.run_id
+               WHERE binding.action_id=%s ORDER BY attempt.attempt_no LIMIT 1""",
+            (action.action_id,),
+        ).fetchone()
+    assert first_attempt is not None
+    reads = PostgresBacktestActionReadPort(backtest_stack.pool)
+    cutoff = reads.runtime_step_first_attempt_at(first_attempt[0])
+    assert cutoff == first_attempt[1]
     executor.execute(frozen, action, BacktestNextOperation.RETRY)
+    assert reads.runtime_step_first_attempt_at(first_attempt[0]) == cutoff
 
     with backtest_stack.pool.connection(read_only=True) as connection:
         row = connection.execute(
@@ -231,3 +249,144 @@ def test_action_executor_rejects_non_current_projection(backtest_stack) -> None:
             action,
             BacktestNextOperation.EXECUTE,
         )
+
+
+def test_runtime_observation_reads_latest_attempt_roster_once(backtest_stack) -> None:
+    specification = _backtests._current_specification(backtest_stack)
+    backtests = BacktestApplication(
+        PostgresBacktestUnitOfWorkProvider(backtest_stack.pool), id_factory=uuid4
+    )
+    backtests.predeclare(specification, _context("observation-roster"))
+    frozen = backtests.plan(specification)
+    runtime = RuntimeApplication(PostgresUnitOfWorkProvider(backtest_stack.pool))
+    handler = _CompletingHandler(runtime)
+    actions = BacktestExecutionPlanner().compile(frozen).expected_actions[:5]
+    for action in actions[:-1]:
+        _executor(backtest_stack, handler).execute(
+            frozen, action, BacktestNextOperation.EXECUTE
+        )
+    retrying = _RetryOnceHandler(runtime)
+    _executor(backtest_stack, retrying).execute(
+        frozen, actions[-1], BacktestNextOperation.EXECUTE
+    )
+    path = Path(__file__).parents[3] / "src/market_regime_alpha/infrastructure/postgres/queries/backtest_execution.py"
+    statements = [
+        node.value for node in ast.walk(ast.parse(path.read_text()))
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+        and "SELECT binding.backtest_runtime_binding_id," in node.value
+    ]
+    assert len(statements) == 1
+    # Qualify plans against this fixture's actual cardinalities, rather than
+    # PostgreSQL's initial estimates for freshly bootstrapped empty tables.
+    with backtest_stack.pool.connection() as connection:
+        connection.execute("ANALYZE mra.backtest_runtime_binding")
+        connection.execute("ANALYZE mra.runtime_run")
+        connection.execute("ANALYZE mra.runtime_step")
+        connection.execute("ANALYZE mra.runtime_attempt")
+        connection.commit()
+    with backtest_stack.pool.connection(read_only=True) as connection:
+        binding_ids = [row[0] for row in connection.execute(
+            "SELECT backtest_runtime_binding_id FROM mra.backtest_runtime_binding WHERE exploratory_backtest_run_id=%s ORDER BY backtest_runtime_binding_id",
+            (specification.exploratory_backtest_run_id,),
+        ).fetchall()]
+        parameters = (specification.exploratory_backtest_run_id, binding_ids)
+        rows = connection.execute(
+            statements[0], parameters
+        ).fetchall()
+        assert len(rows) == len(actions) == 5
+        assert {row[-1] for row in rows} == {"SUCCEEDED", "FAILED_RETRYABLE"}
+        plan = connection.execute(
+            "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) " + statements[0],
+            parameters,
+        ).fetchone()[0][0]["Plan"]
+    pending = [plan]
+    attempts = []
+    while pending:
+        node = pending.pop()
+        pending.extend(node.get("Plans", ()))
+        if node.get("Relation Name") == "runtime_attempt":
+            attempts.append(node)
+    assert attempts
+    # A campaign grows in Runs and Steps. Latest-state observation must not
+    # issue one Attempt probe per Step while reading the complete roster.
+    assert sum(node["Actual Loops"] for node in attempts) == 1
+    _executor(backtest_stack, retrying).execute(
+        frozen, actions[-1], BacktestNextOperation.RETRY
+    )
+    with backtest_stack.pool.connection(read_only=True) as connection:
+        resumed_rows = connection.execute(
+            statements[0], parameters
+        ).fetchall()
+    assert len(resumed_rows) == len(rows)
+    assert {row[-1] for row in resumed_rows} == {"SUCCEEDED"}
+
+
+def test_observer_bounds_runtime_queries_without_losing_bindings(backtest_stack) -> None:
+    from market_regime_alpha.infrastructure.postgres.queries.backtest_execution import PostgresBacktestExecutionObservationPort
+
+    specification = _backtests._current_specification(backtest_stack)
+    backtests = BacktestApplication(PostgresBacktestUnitOfWorkProvider(backtest_stack.pool), id_factory=uuid4)
+    backtests.predeclare(specification, _context("bounded-runtime-roster"))
+    frozen = backtests.plan(specification)
+    actions = BacktestExecutionPlanner().compile(frozen).expected_actions[:9]
+    assert len(actions) == 9
+    handler = _CompletingHandler(RuntimeApplication(PostgresUnitOfWorkProvider(backtest_stack.pool)))
+    for action in actions:
+        _executor(backtest_stack, handler).execute(frozen, action, BacktestNextOperation.EXECUTE)
+    batches = []
+
+    class SavedRows:
+        def __init__(self, rows):
+            self.rows = rows
+
+        def fetchall(self):
+            return self.rows
+
+    class TracedCursor:
+        def __init__(self, cursor):
+            self.cursor = cursor
+
+        def __enter__(self):
+            self.cursor.__enter__()
+            return self
+
+        def __exit__(self, *args):
+            return self.cursor.__exit__(*args)
+
+        def execute(self, statement, parameters):
+            result = self.cursor.execute(statement, parameters)
+            if "SELECT binding.backtest_runtime_binding_id," in statement:
+                rows = result.fetchall()
+                batches.append(rows)
+                return SavedRows(rows)
+            return result
+
+    class TracedConnection:
+        def __init__(self, connection):
+            self.connection = connection
+
+        def cursor(self, **kwargs):
+            return TracedCursor(self.connection.cursor(**kwargs))
+
+    class TracedPool:
+        @contextmanager
+        def connection(self, *, read_only=False):
+            with backtest_stack.pool.connection(read_only=read_only) as connection:
+                yield TracedConnection(connection)
+
+    # Exercise the observer's real PostgreSQL metadata path, without inventing
+    # completed Dataset/Decision owners for the Runtime-only fixture handler.
+    assert PostgresBacktestExecutionObservationPort(TracedPool()).observe(frozen, ()) == ()
+    assert batches
+    assert max(map(len, batches)) <= 8
+    rows = [row for batch in batches for row in batch]
+    assert len(rows) == 9
+    assert {row["action_id"] for row in rows} == {action.action_id for action in actions}
+    assert {row["latest_attempt_state"] for row in rows} == {"SUCCEEDED"}
+    batches.clear()
+    observed = PostgresBacktestExecutionObservationPort(TracedPool()).observe(frozen, (actions[0],))
+    assert len(observed) == 1
+    assert observed[0].state.value == "MISMATCH"  # Runtime-only fixture has no Dataset owner.
+    scoped_rows = [row for batch in batches for row in batch]
+    assert len(scoped_rows) == 1
+    assert scoped_rows[0]["action_id"] == actions[0].action_id

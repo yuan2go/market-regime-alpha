@@ -156,3 +156,76 @@ def test_resume_leaves_an_unexpired_incomplete_owner_running_without_integrity_f
     assert state.recoveries == 1
     assert not result.integrity_mismatch_action_ids
     assert len(state.observations) == 1
+
+
+def test_ready_actions_do_not_repeat_full_owner_reads_quadratically() -> None:
+    frozen = _run()
+    expected = BacktestExecutionPlanner().compile(frozen).expected_actions
+    all_ids = tuple(action.action_id for action in expected)
+    levels = {}
+    for action in expected:
+        levels[action.action_id] = 1 + max((levels[identity] for identity in action.dependency_action_ids), default=0)
+
+    class MeasuredState(_CanonicalState):
+        owner_reads = 0
+        scopes = []
+        fully_reconciled = set()
+
+        def observe(self, run, expected_actions):
+            result = super().observe(run, expected_actions)
+            scope = tuple(action.action_id for action in expected_actions)
+            self.scopes.append(scope)
+            self.owner_reads += len(expected_actions)
+            if scope == all_ids:
+                self.fully_reconciled = {
+                    item.action_id for item in result
+                    if item.state is BacktestObservedState.MATCHED_COMPLETE
+                }
+            return result
+
+        def execute(self, run, action, operation):
+            # A newly completed local action cannot unlock a dependent action
+            # until another complete canonical graph reconciliation occurs.
+            assert set(action.dependency_action_ids) <= self.fully_reconciled
+            super().execute(run, action, operation)
+
+    state = MeasuredState({})
+    assert BacktestExecutor(state, state).resume(frozen).execution_state is BacktestExecutionState.COMPLETED
+    assert state.scopes[0] == state.scopes[-1] == all_ids
+    assert state.owner_reads <= len(expected) * (max(levels.values()) + 2)
+    assert len(state.observations) == len(expected)
+
+
+def test_mismatch_after_an_action_prevents_independent_later_writes() -> None:
+    class BrokenState(_CanonicalState):
+        executed = []
+
+        def execute(self, run, action, operation):
+            del run, operation
+            self.executed.append(action.action_id)
+            self.observations[action.action_id] = BacktestActionObservation(
+                action.action_id, BacktestObservedState.MISMATCH,
+            )
+
+    state = BrokenState({})
+    with pytest.raises(BacktestExecutionIntegrityError, match="INTEGRITY_ERROR"):
+        BacktestExecutor(state, state).resume(_run())
+    assert len(state.executed) == 1
+
+
+def test_terminal_failure_does_not_continue_the_previous_ready_set() -> None:
+    class TerminalState(_CanonicalState):
+        executed = []
+
+        def execute(self, run, action, operation):
+            del run, operation
+            self.executed.append(action.action_id)
+            self.observations[action.action_id] = BacktestActionObservation(
+                action.action_id, BacktestObservedState.FAILED_TERMINAL,
+            )
+
+    state = TerminalState({})
+    result = BacktestExecutor(state, state).resume(_run())
+    assert result.execution_state is BacktestExecutionState.FAILED
+    assert not result.ready_actions
+    assert len(state.executed) == 1

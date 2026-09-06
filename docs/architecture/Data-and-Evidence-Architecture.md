@@ -265,6 +265,15 @@ exact qualification state belongs to Current State and Verification.
 | `evaluation_metric_formula`, `evaluation_formula_parameter`, typed Evaluation source relations | the one canonical metric calculation contract | preserve typed unavailable/NOT_ESTIMABLE; report consumes these results without reading bars |
 | `backtest_report_artifact` | deterministic JSON/Markdown content-addressed projection | requires reconciled canonical Authority/Evaluation; no independent metric truth |
 
+Model and Backtest Feature rosters use different aggregate hash encodings; their
+parent check compares the exact ordered Feature identities and version hashes,
+without rewriting either owner's stored hash. Current reproducible training
+freezes its knowledge horizon at the completed FIT Evaluation's recorded
+PostgreSQL `completed_at`. The training Run retains its later actual `opened_at`.
+This fixed parent time makes repeated input preparation byte-identical, including
+a retry after an unknown commit; every source Outcome must still be known by
+that cutoff. Existing registered training/reproducibility records remain immutable.
+
 ### Decision Support
 
 | Table | Purpose | Lifecycle and key constraints |

@@ -583,7 +583,11 @@ class BacktestCanonicalActionHandler:
                     evaluation_run_id=identities.evaluation_run_id,
                     experiment_run_id=identities.experiment_run_id,
                     evaluation_protocol_id=(requirement.evaluation_protocol.authority_id),
-                    requested_knowledge_cutoff=(self._reads.archive_seal(specification).knowledge_cutoff),
+                    # Archive cutoff bounds Market sources. Evaluation must
+                    # also observe the later, actually recorded settlements.
+                    # The first Attempt time is stable across this Step's
+                    # retries, including an unknown prior open-run commit.
+                    requested_knowledge_cutoff=(self._reads.runtime_step_first_attempt_at(claim.step_id)),
                     request_identity=f"backtest:{action.action_id}",
                     code_artifact=specification.code_artifact,
                     config_artifact=specification.config_artifact,

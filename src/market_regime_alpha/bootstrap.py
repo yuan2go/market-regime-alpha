@@ -448,17 +448,19 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
     model_predictors = ExplicitModelPredictorComposition(
         (DeterministicRidgePredictor(),)
     )
+    model_training_inputs = PostgresModelTrainingInputProvider(pool, byte_store)
     research_model_application = ResearchModelApplication(
         ModelCommands(
             PostgresResearchModelUnitOfWorkProvider(pool),
             id_factory=uuid4,
         ),
-        PostgresModelTrainingInputProvider(pool, byte_store),
+        model_training_inputs,
         artifact_application,
         model_trainers,
     )
+    candidate_research_inputs = PostgresCandidateResearchInputLoader(pool, byte_store)
     candidate_application = CandidateApplication(
-        PostgresCandidateResearchInputLoader(pool, byte_store),
+        candidate_research_inputs,
         PostgresCandidateUnitOfWorkProvider(pool),
     )
     decision_input_provider = PostgresDecisionInputPreparationProvider(pool)
@@ -515,7 +517,10 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
         id_factory=uuid4,
     )
     backtest_specifications = PostgresBacktestQueryPort(pool)
-    backtest_observations = PostgresBacktestExecutionObservationPort(pool)
+    backtest_observations = PostgresBacktestExecutionObservationPort(
+        pool, model_inputs=model_training_inputs,
+        dataset_inputs=candidate_research_inputs,
+    )
     backtest_action_handler = BacktestCanonicalActionHandler(
         artifacts=artifact_application,
         selection=selection_application,

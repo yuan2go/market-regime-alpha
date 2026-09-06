@@ -1278,7 +1278,7 @@ class SchemaManager:
         """Produce a read-only, short-lived plan for one exact additive route."""
 
         backup = _verify_upgrade_backup(authorization)
-        with self._connect(read_only=True) as connection:
+        with self._connect(read_only=True, repeatable_read=True) as connection:
             identity = _database_identity(connection)
             _validate_operational_upgrade_identity(identity, authorization)
             if backup.database_name != identity.database_name:
@@ -1437,7 +1437,7 @@ class SchemaManager:
             ),
         )
         _require_plan_definition(plan, definition)
-        with self._connect() as connection:
+        with self._connect(repeatable_read=True) as connection:
             _take_bootstrap_lock(connection)
             identity = _database_identity(connection)
             _validate_operational_upgrade_plan_identity(identity, plan)
@@ -1888,9 +1888,11 @@ class SchemaManager:
             raise UnexpectedCatalogError(f"unexpected user objects: {sorted(objects)}")
         return tuple(sorted(objects))
 
-    def _connect(self, *, read_only: bool = False) -> psycopg.Connection[Any]:
+    def _connect(self, *, read_only: bool = False, repeatable_read: bool = False) -> psycopg.Connection[Any]:
         connection = psycopg.connect(self._database_url, autocommit=False)
         connection.read_only = read_only
+        if repeatable_read:
+            connection.isolation_level = psycopg.IsolationLevel.REPEATABLE_READ
         connection.execute("SELECT set_config('search_path', 'pg_catalog', false)")
         connection.execute("SELECT set_config('timezone', 'UTC', false)")
         connection.execute(
@@ -2546,7 +2548,7 @@ def _wp18q_operational_upgrade_definitions(
     expected_baseline = "aae59a527154fd19da4bf07a0402d353d2b02a8da56cef6c4a505509683c412b"
     expected_vocabulary = "d08800892f5e843a756f53e46205dfbb2787386ebf8281564c31049c45659a1b"
     current_baseline = "fa322ee492e40b44a740e8c48d055aa0d56e857dd89a5e13792f55777628cea8"
-    if next_baseline_sha256 != current_baseline:
+    if next_baseline_sha256 != "460ee9b50813a35f42a8634e6f3cb950549b05015bfc435a526bb3a3159d79f7":
         raise OperationalUpgradeIntegrityError(
             "UPGRADE_SOURCE_BASELINE_CHANGED: register a new exact additive route"
         )
@@ -2590,7 +2592,7 @@ def _wp18q_operational_upgrade_definitions(
             "a61a4ed2a4ae93521942053c37ab6560386bc49c43e64ef3a03f21ab4ab14a71"
         ),
         next_reference_vocabulary_sha256=expected_vocabulary,
-        additive_sql=_compile_wp18q_v2_additive_sql(baseline_sql),
+        additive_sql=_read_package_text("migrations", "wp18q_track_a_c_v2.sql"),
     )
     if v2.additive_bundle_sha256 != (
         "2dfe756539fccf1d25b73d190248ad6e819b3c67192400db2f444338c3cad91e"
@@ -2616,7 +2618,25 @@ def _wp18q_operational_upgrade_definitions(
     )
     if v3.additive_bundle_sha256 != "1f33e51b6ac9e02acd38fa1f9cfef54170d3068c236870f5904d0a5201a9b742":
         raise OperationalUpgradeIntegrityError("UPGRADE_V3_BUNDLE_CHANGED: register a new exact additive route")
-    return (v1, v2, v3)
+    model_functions = []
+    for statement in _split_postgres_statements(baseline_sql):
+        if re.search(r"\bCREATE FUNCTION mra\.(model_backtest_feature_rosters_match|validate_model_training_run)\s*\(", statement):
+            model_functions.append(statement.replace("CREATE FUNCTION", "CREATE OR REPLACE FUNCTION", 1))
+    if len(model_functions) != 2:
+        raise OperationalUpgradeIntegrityError("Model Feature parent upgrade requires two exact functions")
+    v4 = _OperationalUpgradeDefinition(
+        upgrade_code="wp18q_r2_model_feature_parent_v4",
+        prior_baseline_sha256=v3.next_baseline_sha256,
+        prior_catalog_sha256=v3.next_catalog_sha256,
+        prior_reference_vocabulary_sha256=expected_vocabulary,
+        next_baseline_sha256=next_baseline_sha256,
+        next_catalog_sha256="6384a687c172ccfc897fde160a4ff0a72427b3531da71ccc0915fc64d9ce28b6",
+        next_reference_vocabulary_sha256=expected_vocabulary,
+        additive_sql="\n\n".join(model_functions),
+    )
+    if v4.additive_bundle_sha256 != "cbfb125bb8ac0df211fe7835329026afcb76bed9b24d092bf89a440cdd2c0773":
+        raise OperationalUpgradeIntegrityError("UPGRADE_V4_BUNDLE_CHANGED: register a new exact additive route")
+    return (v1, v2, v3, v4)
 
 
 def _compile_wp18q_v2_additive_sql(baseline_sql: str) -> str:
@@ -3246,6 +3266,9 @@ def _historical_projection_manifest(
     return tuple(manifest)
 
 
+_HISTORICAL_PROJECTION_BATCH_SIZE: Final = 256
+
+
 def _historical_projection(
     connection: psycopg.Connection[Any],
     *,
@@ -3262,18 +3285,41 @@ def _historical_projection(
         digest.update(b"\0")
         digest.update("\0".join(columns).encode("utf-8"))
         digest.update(b"\0")
-        statement = sql.SQL(
-            "COPY (SELECT {columns} FROM {schema}.{table} ORDER BY {primary_key}) "
-            "TO STDOUT WITH (FORMAT text)"
-        ).format(
-            columns=sql.SQL(", ").join(map(sql.Identifier, columns)),
-            schema=sql.Identifier(APPLICATION_SCHEMA),
-            table=sql.Identifier(table_name),
-            primary_key=sql.SQL(", ").join(map(sql.Identifier, primary_key)),
-        )
-        with connection.cursor().copy(statement) as copy:
-            for chunk in copy:
-                digest.update(bytes(chunk))
+        primary_columns = sql.SQL(", ").join(map(sql.Identifier, primary_key))
+        placeholders = sql.SQL(", ").join(sql.Placeholder() for _ in primary_key)
+        relation = sql.SQL("{}.{}").format(sql.Identifier(APPLICATION_SCHEMA), sql.Identifier(table_name))
+        last_key: tuple[Any, ...] | None = None
+        while True:
+            lower = (
+                sql.SQL("") if last_key is None else
+                sql.SQL(" WHERE ({}) > ({})").format(primary_columns, placeholders)
+            )
+            lower_values = () if last_key is None else last_key
+            keys = connection.execute(
+                sql.SQL("SELECT {keys} FROM {relation}{lower} ORDER BY {keys} LIMIT %s").format(
+                    keys=primary_columns, relation=relation, lower=lower,
+                ),
+                (*lower_values, _HISTORICAL_PROJECTION_BATCH_SIZE),
+            ).fetchall()
+            if not keys:
+                break
+            upper_key = tuple(keys[-1])
+            bounded = lower + sql.SQL(" WHERE " if last_key is None else " AND ")
+            bounded += sql.SQL("({}) <= ({})").format(primary_columns, placeholders)
+            statement = sql.SQL(
+                "COPY (SELECT {columns} FROM {relation}{bounded} ORDER BY {keys}) "
+                "TO STDOUT WITH (FORMAT text)"
+            ).format(
+                columns=sql.SQL(", ").join(map(sql.Identifier, columns)),
+                relation=relation, bounded=bounded, keys=primary_columns,
+            )
+            # COPY preserves the original escaping and row bytes. A stable
+            # transaction snapshot makes concatenated PK ranges the exact
+            # original stream while bounding each cold SQL statement.
+            with connection.cursor().copy(statement, (*lower_values, *upper_key)) as copy:
+                for chunk in copy:
+                    digest.update(bytes(chunk))
+            last_key = upper_key
         digest.update(b"\0")
     return _HistoricalProjection(
         table_count=len(resolved),

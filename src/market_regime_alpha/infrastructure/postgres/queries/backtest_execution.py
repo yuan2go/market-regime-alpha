@@ -31,6 +31,16 @@ from market_regime_alpha.research_qualification.domain.backtest_execution import
     BacktestResearchState,
     BacktestRuntimeBinding,
 )
+from market_regime_alpha.research_qualification.ports.model_inputs import (
+    ModelTrainingInputProvider,
+)
+from market_regime_alpha.runtime.errors import (
+    ArtifactIntegrityError,
+    RuntimeNotFoundError,
+)
+from market_regime_alpha.selection.ports.research_inputs import (
+    CandidateResearchInputLoader,
+)
 
 
 _Scope = tuple[UUID, UUID, UUID]
@@ -48,20 +58,113 @@ _FOLD_METRIC_STATES_SQL = """
 """
 
 
+_RUNTIME_BINDING_READ_BATCH_SIZE = 8
+_RUNTIME_BINDINGS_SQL = """
+                    WITH scoped_bindings AS MATERIALIZED (
+                        SELECT * FROM mra.backtest_runtime_binding
+                        WHERE exploratory_backtest_run_id = %s
+                          AND backtest_runtime_binding_id = ANY(%s::uuid[])
+                    ), scoped_steps AS MATERIALIZED (
+                        SELECT step_id, run_id FROM mra.runtime_step
+                        WHERE run_id = ANY(ARRAY(SELECT runtime_run_id FROM scoped_bindings))
+                    ), scoped_attempts AS MATERIALIZED (
+                        SELECT step_id, state, created_at, attempt_no
+                        FROM mra.runtime_attempt
+                        WHERE step_id = ANY(ARRAY(SELECT step_id FROM scoped_steps))
+                    ), latest_attempt AS (
+                        SELECT DISTINCT ON (step.run_id)
+                               step.run_id, attempt.state
+                        FROM scoped_steps AS step
+                        JOIN scoped_attempts AS attempt
+                          ON attempt.step_id = step.step_id
+                        ORDER BY step.run_id, attempt.created_at DESC,
+                                 attempt.attempt_no DESC
+                    )
+                    SELECT binding.backtest_runtime_binding_id,
+                           binding.specification_sha256,
+                           binding.action_id, binding.action_kind,
+                           binding.action_content_sha256,
+                           binding.exploratory_backtest_arm_id,
+                           binding.exploratory_backtest_fold_id,
+                           binding.exploratory_backtest_fold_session_id,
+                           binding.model_training_requirement_id,
+                           binding.evaluation_requirement_id,
+                           binding.runtime_run_id, binding.content_sha256,
+                           runtime.runtime_mode, runtime.fire_key,
+                           runtime.code_sha, runtime.config_artifact_id,
+                           runtime.config_hash, runtime.state AS runtime_state,
+                           root.code_content_sha256 AS root_code_sha,
+                           root.config_artifact_id AS root_config_artifact_id,
+                           root.config_content_sha256 AS root_config_hash,
+                           latest_attempt.state AS latest_attempt_state
+                    FROM scoped_bindings AS binding
+                    JOIN mra.runtime_run AS runtime
+                      ON runtime.run_id = binding.runtime_run_id
+                    JOIN mra.exploratory_backtest_run AS root
+                      ON root.exploratory_backtest_run_id =
+                         binding.exploratory_backtest_run_id
+                    LEFT JOIN latest_attempt
+                      ON latest_attempt.run_id = runtime.run_id
+                    """
+
+
+def _load_runtime_bindings(
+    cursor: Any, run_id: UUID, *, action_id: UUID | None = None,
+) -> list[dict[str, Any]]:
+    identities = cursor.execute(
+        """
+        SELECT backtest_runtime_binding_id FROM mra.backtest_runtime_binding
+        WHERE exploratory_backtest_run_id = %s
+        """
+        + (" AND action_id = %s" if action_id is not None else "")
+        + " ORDER BY backtest_runtime_binding_id",
+        (run_id, action_id) if action_id is not None else (run_id,),
+    ).fetchall()
+    rows: list[dict[str, Any]] = []
+    for offset in range(0, len(identities), _RUNTIME_BINDING_READ_BATCH_SIZE):
+        batch = identities[offset:offset + _RUNTIME_BINDING_READ_BATCH_SIZE]
+        rows.extend(cursor.execute(
+            _RUNTIME_BINDINGS_SQL,
+            (run_id, [row["backtest_runtime_binding_id"] for row in batch]),
+        ).fetchall())
+    return rows
+
+
 class PostgresBacktestExecutionObservationPort:
     """Observe owner state without persisting a second workflow cursor."""
 
-    def __init__(self, pool: TargetPostgresPool) -> None:
+    def __init__(
+        self,
+        pool: TargetPostgresPool,
+        *,
+        model_inputs: ModelTrainingInputProvider | None = None,
+        dataset_inputs: CandidateResearchInputLoader | None = None,
+    ) -> None:
         self._pool = pool
         self._decisions = PostgresDecisionRunVerificationProvider(pool)
         self._outcomes = PostgresOutcomeVerificationProvider(pool)
         self._evaluations = PostgresResearchEvaluationVerificationProvider(pool)
+        self._model_inputs = model_inputs
+        self._dataset_inputs = dataset_inputs
 
     def observe(
         self,
         run: FrozenBacktestRun,
         expected_actions: tuple[BacktestExpectedAction, ...],
     ) -> tuple[BacktestActionObservation, ...]:
+        single_action = expected_actions[0] if len(expected_actions) == 1 else None
+        cell_scope = (
+            _scope(single_action)
+            if single_action is not None and single_action.fold_session_id is not None
+            else None
+        )
+        cell_filter = (
+            " AND {owner}exploratory_backtest_arm_id = %s"
+            " AND {owner}exploratory_backtest_fold_id = %s"
+            " AND {owner}exploratory_backtest_fold_session_id = %s"
+            if cell_scope is not None else ""
+        )
+        cell_parameters = (run.exploratory_backtest_run_id, *(cell_scope or ()))
         with self._pool.connection(read_only=True) as connection:
             with connection.cursor(row_factory=dict_row) as cursor:
                 datasets = cursor.execute(
@@ -71,8 +174,8 @@ class PostgresBacktestExecutionObservationPort:
                            exploratory_backtest_fold_session_id
                     FROM mra.exploratory_backtest_dataset
                     WHERE exploratory_backtest_run_id = %s
-                    """,
-                    (run.exploratory_backtest_run_id,),
+                    """ + cell_filter.format(owner=""),
+                    cell_parameters,
                 ).fetchall()
                 decisions = cursor.execute(
                     """
@@ -81,8 +184,8 @@ class PostgresBacktestExecutionObservationPort:
                            exploratory_backtest_fold_session_id
                     FROM mra.exploratory_retrospective_decision_run
                     WHERE exploratory_backtest_run_id = %s
-                    """,
-                    (run.exploratory_backtest_run_id,),
+                    """ + cell_filter.format(owner=""),
+                    cell_parameters,
                 ).fetchall()
                 outcomes = cursor.execute(
                     """
@@ -102,8 +205,8 @@ class PostgresBacktestExecutionObservationPort:
                         LIMIT 1
                     ) AS revision ON true
                     WHERE backtest.exploratory_backtest_run_id = %s
-                    """,
-                    (run.exploratory_backtest_run_id,),
+                    """ + cell_filter.format(owner="backtest."),
+                    cell_parameters,
                 ).fetchall()
                 evaluation_sources = cursor.execute(
                     """
@@ -158,45 +261,10 @@ class PostgresBacktestExecutionObservationPort:
                         """,
                         (run.exploratory_backtest_run_id,),
                     ).fetchall()
-                    runtime_bindings = cursor.execute(
-                        """
-                    SELECT binding.backtest_runtime_binding_id,
-                           binding.specification_sha256,
-                           binding.action_id, binding.action_kind,
-                           binding.action_content_sha256,
-                           binding.exploratory_backtest_arm_id,
-                           binding.exploratory_backtest_fold_id,
-                           binding.exploratory_backtest_fold_session_id,
-                           binding.model_training_requirement_id,
-                           binding.evaluation_requirement_id,
-                           binding.runtime_run_id, binding.content_sha256,
-                           runtime.runtime_mode, runtime.fire_key,
-                           runtime.code_sha, runtime.config_artifact_id,
-                           runtime.config_hash, runtime.state AS runtime_state,
-                           root.code_content_sha256 AS root_code_sha,
-                           root.config_artifact_id AS root_config_artifact_id,
-                           root.config_content_sha256 AS root_config_hash,
-                           latest_attempt.state AS latest_attempt_state
-                    FROM mra.backtest_runtime_binding AS binding
-                    JOIN mra.runtime_run AS runtime
-                      ON runtime.run_id = binding.runtime_run_id
-                    JOIN mra.exploratory_backtest_run AS root
-                      ON root.exploratory_backtest_run_id =
-                         binding.exploratory_backtest_run_id
-                    LEFT JOIN LATERAL (
-                        SELECT attempt.state
-                        FROM mra.runtime_step AS step
-                        JOIN mra.runtime_attempt AS attempt
-                          ON attempt.step_id = step.step_id
-                        WHERE step.run_id = runtime.run_id
-                        ORDER BY attempt.created_at DESC,
-                                 attempt.attempt_no DESC
-                        LIMIT 1
-                    ) AS latest_attempt ON true
-                    WHERE binding.exploratory_backtest_run_id = %s
-                    """,
-                        (run.exploratory_backtest_run_id,),
-                    ).fetchall()
+                    runtime_bindings = _load_runtime_bindings(
+                        cursor, run.exploratory_backtest_run_id,
+                        action_id=None if single_action is None else single_action.action_id,
+                    )
                 training_rows = cursor.execute(
                     """
                     SELECT training.exploratory_backtest_arm_id,
@@ -275,7 +343,25 @@ class PostgresBacktestExecutionObservationPort:
 
         def observe_action(action: BacktestExpectedAction) -> BacktestActionObservation:
             if action.kind is BacktestActionKind.MATERIALIZE_DATASET:
-                state = _unique_presence(dataset_by_scope.get(_scope(action), ()))
+                rows = dataset_by_scope.get(_scope(action), [])
+                state = _unique_presence(rows)
+                if (
+                    state is BacktestObservedState.MATCHED_COMPLETE
+                    and run.source is FrozenBacktestSource.CURRENT_RELATIONAL
+                ):
+                    if self._dataset_inputs is None:
+                        raise ArtifactIntegrityError("current Dataset observation requires the canonical Dataset input owner")
+                    dataset_id = UUID(str(rows[0]["dataset_id"]))
+                    try:
+                        prepared = self._dataset_inputs.prepare(
+                            dataset_id=dataset_id,
+                            required_features=(),
+                        )
+                    except (ArtifactIntegrityError, RuntimeNotFoundError):
+                        state = BacktestObservedState.MISMATCH
+                    else:
+                        if prepared.dataset.dataset_id != dataset_id:
+                            state = BacktestObservedState.MISMATCH
                 observation = BacktestActionObservation(action.action_id, state)
             elif action.kind is BacktestActionKind.GENERATE_DECISION_SUPPORT:
                 observation = self._decision(action, decision_by_scope)
@@ -440,8 +526,8 @@ class PostgresBacktestExecutionObservationPort:
             research_state,
         )
 
-    @staticmethod
     def _training(
+        self,
         action: BacktestExpectedAction,
         rows_by_scope: dict[tuple[UUID, UUID], list[dict[str, Any]]],
         lineage_by_requirement: dict[UUID, list[dict[str, Any]]],
@@ -474,6 +560,21 @@ class PostgresBacktestExecutionObservationPort:
                 and str(lineage["model_training_reproducibility_sha256"]) == str(lineage["canonical_reproducibility_sha256"])
                 and str(lineage["model_version_sha256"]) == str(lineage["canonical_version_sha256"])
             )
+            if exact:
+                if self._model_inputs is None:
+                    raise ArtifactIntegrityError("current Model observation requires the canonical training input owner")
+                try:
+                    registered = self._model_inputs.load_registered_reproducible(
+                        UUID(str(lineage["model_training_run_id"]))
+                    )
+                except (ArtifactIntegrityError, RuntimeNotFoundError):
+                    exact = False
+                else:
+                    exact = (
+                        registered.training.model_id == requirement.model_definition.authority_id
+                        and str(registered.reproducibility.content_sha256)
+                        == str(lineage["canonical_reproducibility_sha256"])
+                    )
             return BacktestActionObservation(
                 action.action_id,
                 (BacktestObservedState.MATCHED_COMPLETE if exact else BacktestObservedState.MISMATCH),
