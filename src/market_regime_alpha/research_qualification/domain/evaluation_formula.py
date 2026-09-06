@@ -275,7 +275,7 @@ def evaluate_backtest_formula(
     formula: EvaluationFormulaDefinition,
     observations: tuple[FormulaObservation, ...],
 ) -> FormulaEvaluationResult:
-    """Execute one explicitly supported V1 formula with Decimal semantics."""
+    """Execute an explicitly versioned formula with frozen Decimal semantics."""
 
     if formula.formula_version not in {1, 2}:
         raise ValueError("formula implementation version is unsupported")

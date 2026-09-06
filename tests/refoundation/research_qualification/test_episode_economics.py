@@ -5,26 +5,35 @@ from uuid import UUID
 import pytest
 
 from market_regime_alpha.research_qualification.domain.episode_economics import (
-    EpisodeLeg, EpisodePolicy, build_episode_path,
+    EpisodeLeg,
+    EpisodePolicy,
+    build_episode_path,
 )
 
 
 def leg(day=1, *, risk="AUTHORIZED", weight="0.4", exit_price="11", **kwargs):
     decision = datetime(2026, 1, day, 0, tzinfo=UTC)
     return EpisodeLeg(
-        observation_id=UUID(int=day), instrument_id=UUID(int=100),
-        episode_key=str(day), arm_key="arm", fold_key="fold",
-        decision_time=decision, entry_time=decision + timedelta(hours=1),
-        exit_time=decision + timedelta(hours=2), knowledge_cutoff=decision + timedelta(days=10),
+        observation_id=UUID(int=day),
+        instrument_id=UUID(int=100),
+        episode_key=str(day),
+        arm_key="arm",
+        fold_key="fold",
+        decision_time=decision,
+        entry_time=decision + timedelta(hours=1),
+        exit_time=decision + timedelta(hours=2),
+        knowledge_cutoff=decision + timedelta(days=10),
         outcome_known_at=decision + timedelta(days=1),
-        proposed_weight=D(weight), risk_status=risk,
-        entry_price=D("10"), exit_price=D(exit_price), **kwargs,
+        proposed_weight=D(weight),
+        risk_status=risk,
+        entry_price=D("10"),
+        exit_price=D(exit_price),
+        **kwargs,
     )
 
 
 def policy(**kwargs):
-    return EpisodePolicy(initial_capital=D("1000"), buy_fee_bps=D("10"),
-                         sell_fee_bps=D("20"), **kwargs)
+    return EpisodePolicy(initial_capital=D("1000"), buy_fee_bps=D("10"), sell_fee_bps=D("20"), **kwargs)
 
 
 def test_rejected_buy_then_same_authorized_proposal_is_first_real_simulated_buy():
@@ -71,6 +80,7 @@ def test_unavailable_episode_keeps_its_place_and_has_no_fabricated_value(availab
 def test_cash_holdings_fees_reconcile_and_later_pool_does_not_own_exit():
     # Second episode uses a different instrument; the original leg still closes.
     from dataclasses import replace
+
     path = build_episode_path(policy(), (leg(), replace(leg(2), instrument_id=UUID(int=101))))
     for episode in path.episodes:
         assert episode.cash_after_entry + episode.entry_holdings + D(".40") == D(1000)
@@ -80,6 +90,7 @@ def test_cash_holdings_fees_reconcile_and_later_pool_does_not_own_exit():
 
 def test_fixed_trade_path_higher_fees_cannot_improve_net_and_units_are_unchanged():
     from dataclasses import replace
+
     base = policy()
     cheap = build_episode_path(base, (leg(),)).episodes[0]
     dear = build_episode_path(replace(base, buy_fee_bps=D(30), sell_fee_bps=D(50)), (leg(),)).episodes[0]
@@ -89,6 +100,7 @@ def test_fixed_trade_path_higher_fees_cannot_improve_net_and_units_are_unchanged
 
 def test_path_then_slice_preserves_values_deduplication_and_capital_roster():
     from dataclasses import replace
+
     first, second = leg(), leg(2)
     path = build_episode_path(policy(), (first, second))
     assert path == build_episode_path(policy(), (first, second))
@@ -104,13 +116,16 @@ def test_path_then_slice_preserves_values_deduplication_and_capital_roster():
 
 def test_fold_reset_does_not_hide_overlapping_funding():
     from dataclasses import replace
+
     first = leg()
     next_fold = replace(first, observation_id=UUID(int=2), episode_key="2", fold_key="fold2")
     with pytest.raises(ValueError, match="overlapping"):
         build_episode_path(policy(), (first, next_fold))
 
 
-@pytest.mark.parametrize("kwargs", [{"minimum_fee": D(5)}, {"slippage_bps": D(1)}, {"carry_forward": "PREVIOUS_TARGET_WEIGHT"}, {"final_liquidation": False}])
+@pytest.mark.parametrize(
+    "kwargs", [{"minimum_fee": D(5)}, {"slippage_bps": D(1)}, {"carry_forward": "PREVIOUS_TARGET_WEIGHT"}, {"final_liquidation": False}]
+)
 def test_unsupported_assumptions_are_not_silently_accepted(kwargs):
     with pytest.raises(ValueError):
         policy(**kwargs)
@@ -118,6 +133,7 @@ def test_unsupported_assumptions_are_not_silently_accepted(kwargs):
 
 def test_flat_price_has_round_trip_fees_and_missing_exit_has_no_zero_return():
     from dataclasses import replace
+
     closed = build_episode_path(policy(), (leg(exit_price="10"),)).episodes[0]
     assert closed.net_return == D("-.00120")
     missing = build_episode_path(policy(), (replace(leg(), exit_price=None),)).episodes[0]
@@ -129,3 +145,13 @@ def test_insufficient_cash_is_typed_incomplete_not_implicit_borrowing():
     closed = build_episode_path(policy(), (leg(weight="1"),)).episodes[0]
     assert closed.net_return is None
     assert closed.reason == "INSUFFICIENT_CASH_FOR_COSTS"
+
+
+def test_exit_fees_cannot_create_undeclared_borrowing():
+    from dataclasses import replace
+
+    # Cash 599.60 + sale 440 - exit fee 1320 = -280.40: unfunded.
+    expensive = replace(policy(), sell_fee_bps=D(30000))
+    episode = build_episode_path(expensive, (leg(),)).episodes[0]
+    assert episode.reason == "INSUFFICIENT_CASH_FOR_EXIT_COSTS"
+    assert episode.final_cash is None and episode.net_return is None

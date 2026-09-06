@@ -6,21 +6,43 @@ from uuid import UUID
 
 from market_regime_alpha.research_qualification.domain.episode_economics import EpisodePolicy
 from market_regime_alpha.research_qualification.domain.evaluation_formula import (
-    BacktestFormulaCode, EvaluationFormulaDefinition, FormulaEvaluationResult,
-    FormulaObservation, FormulaResultState, FormulaSourceState,
+    BacktestFormulaCode,
+    EvaluationFormulaDefinition,
+    FormulaEvaluationResult,
+    FormulaObservation,
+    FormulaResultState,
+    FormulaSourceState,
 )
 
 
-SUPPORTED = frozenset({BacktestFormulaCode.MEAN, BacktestFormulaCode.NET_RETURN_ASSUMED_COST,
-                       BacktestFormulaCode.TURNOVER, BacktestFormulaCode.GROSS_EXPOSURE,
-                       BacktestFormulaCode.NET_EXPOSURE, BacktestFormulaCode.WIN_RATE})
+SUPPORTED = frozenset(
+    {
+        BacktestFormulaCode.MEAN,
+        BacktestFormulaCode.NET_RETURN_ASSUMED_COST,
+        BacktestFormulaCode.TURNOVER,
+        BacktestFormulaCode.GROSS_EXPOSURE,
+        BacktestFormulaCode.NET_EXPOSURE,
+        BacktestFormulaCode.WIN_RATE,
+    }
+)
 
 
 def episode_contract(formula: EvaluationFormulaDefinition) -> tuple[EpisodePolicy, UUID, UUID]:
     values = {item.parameter_code: item.value for item in formula.parameters}
-    expected = {"economic_model", "execution_assumption", "price_basis", "initial_capital",
-                "buy_fee_bps", "sell_fee_bps", "minimum_fee", "slippage_bps",
-                "final_liquidation", "carry_forward", "entry_checkpoint_id", "exit_checkpoint_id"}
+    expected = {
+        "economic_model",
+        "execution_assumption",
+        "price_basis",
+        "initial_capital",
+        "buy_fee_bps",
+        "sell_fee_bps",
+        "minimum_fee",
+        "slippage_bps",
+        "final_liquidation",
+        "carry_forward",
+        "entry_checkpoint_id",
+        "exit_checkpoint_id",
+    }
     episode_selector(formula)
     if set(values) - {"episode_slice_kind", "episode_slice_key"} != expected or formula.formula_code not in SUPPORTED:
         raise ValueError("unsupported or incomplete V2 independent episode formula contract")
@@ -32,14 +54,23 @@ def episode_contract(formula: EvaluationFormulaDefinition) -> tuple[EpisodePolic
     entry, exit = UUID(str(values["entry_checkpoint_id"])), UUID(str(values["exit_checkpoint_id"]))
     if entry == exit:
         raise ValueError("episode entry and exit checkpoints must differ")
-    return EpisodePolicy(
-        initial_capital=Decimal(str(values["initial_capital"])),
-        buy_fee_bps=Decimal(str(values["buy_fee_bps"])), sell_fee_bps=Decimal(str(values["sell_fee_bps"])),
-        model=str(values["economic_model"]), execution=str(values["execution_assumption"]),
-        price_basis=str(values["price_basis"]), final_liquidation=True,
-        carry_forward=str(values["carry_forward"]), minimum_fee=Decimal(str(values["minimum_fee"])),
-        slippage_bps=Decimal(str(values["slippage_bps"])), decimal_precision=formula.decimal_precision,
-    ), entry, exit
+    return (
+        EpisodePolicy(
+            initial_capital=Decimal(str(values["initial_capital"])),
+            buy_fee_bps=Decimal(str(values["buy_fee_bps"])),
+            sell_fee_bps=Decimal(str(values["sell_fee_bps"])),
+            model=str(values["economic_model"]),
+            execution=str(values["execution_assumption"]),
+            price_basis=str(values["price_basis"]),
+            final_liquidation=True,
+            carry_forward=str(values["carry_forward"]),
+            minimum_fee=Decimal(str(values["minimum_fee"])),
+            slippage_bps=Decimal(str(values["slippage_bps"])),
+            decimal_precision=formula.decimal_precision,
+        ),
+        entry,
+        exit,
+    )
 
 
 def episode_selector(formula: EvaluationFormulaDefinition) -> tuple[str, str | None]:
@@ -71,7 +102,9 @@ def evaluate_episode_formula(formula: EvaluationFormulaDefinition, observations:
         assert item.value is not None
         periods[item.group_key] = periods.get(item.group_key, Decimal(0)) + item.value
     values = tuple(periods.values())
-    value = (Decimal(sum(item > 0 for item in values)) / len(values)
-             if formula.formula_code is BacktestFormulaCode.WIN_RATE
-             else sum(values, Decimal(0)) / (policy.initial_capital * len(values)))
+    value = (
+        Decimal(sum(item > 0 for item in values)) / len(values)
+        if formula.formula_code is BacktestFormulaCode.WIN_RATE
+        else sum(values, Decimal(0)) / (policy.initial_capital * len(values))
+    )
     return FormulaEvaluationResult(FormulaResultState.ESTIMABLE, value, len(values), "INDEPENDENT_EPISODES_V2")

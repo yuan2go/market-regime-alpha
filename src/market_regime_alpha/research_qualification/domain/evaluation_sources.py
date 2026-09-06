@@ -171,17 +171,14 @@ def resolve_metric_inputs(
                     if metric.formula is not None:
                         if source[41] is None or source[42] is None:
                             raise EvaluationReconciliationError("Formula cost sources require explicit charge sides")
-                        assumed_cost = (buy_turnover * Decimal(source[41])
-                                        + sell_turnover * Decimal(source[42])) / Decimal(10_000)
+                        assumed_cost = (buy_turnover * Decimal(source[41]) + sell_turnover * Decimal(source[42])) / Decimal(10_000)
                     else:
                         # The original non-formula reducer's frozen contract
                         # charged its total bps per unit turnover. Replay of
                         # that historical contract must not be reinterpreted.
                         assumed_cost = turnover * Decimal(source[23]) / Decimal(10_000)
                     net_return = gross_return - assumed_cost
-                    decimal_value = (
-                        gross_return if metric.source_measure is EvaluationSourceMeasure.GROSS_PORTFOLIO_RETURN else net_return
-                    )
+                    decimal_value = gross_return if metric.source_measure is EvaluationSourceMeasure.GROSS_PORTFOLIO_RETURN else net_return
                     value_status = str(source[5])
                 boolean_value = None
         elif metric.source_kind is EvaluationSourceKind.RISK_DECISION:
@@ -221,6 +218,7 @@ def resolve_metric_inputs(
         )
     return tuple(resolved)
 
+
 def formula_observations(
     metric: ProtocolMetricDefinition,
     resolved: tuple[_ResolvedMetricInput, ...],
@@ -228,11 +226,17 @@ def formula_observations(
     assert metric.formula is not None
     code = metric.formula.formula_code
     if metric.formula.formula_version == 2:
-        return tuple(FormulaObservation(
-            observation_id=item.input.evaluation_observation_id, ordinal=ordinal,
-            group_key=item.input.group_key or "ALL", source_state=FormulaSourceState.AVAILABLE,
-            value=item.economic_numerator,
-        ) for ordinal, item in enumerate(resolved, 1) if item.economic_selected)
+        return tuple(
+            FormulaObservation(
+                observation_id=item.input.evaluation_observation_id,
+                ordinal=ordinal,
+                group_key=item.input.group_key or "ALL",
+                source_state=FormulaSourceState.AVAILABLE,
+                value=item.economic_numerator,
+            )
+            for ordinal, item in enumerate(resolved, 1)
+            if item.economic_selected
+        )
     ranked_membership: dict[UUID, FrozenRankingMembership] = {}
     if code in {
         BacktestFormulaCode.TOP_K_RETURN,
@@ -274,9 +278,9 @@ def formula_observations(
             "UNAVAILABLE": FormulaSourceState.UNAVAILABLE,
             "FAILED": FormulaSourceState.FAILED,
         }.get(source_status, FormulaSourceState.UNKNOWN)
-        if (code is BacktestFormulaCode.SOURCE_GAP_RATE and item.source[43]):
+        if code is BacktestFormulaCode.SOURCE_GAP_RATE and item.source[43]:
             source_state = FormulaSourceState.SOURCE_GAP
-        elif (code is BacktestFormulaCode.MISSINGNESS_RATE and item.source[44]):
+        elif code is BacktestFormulaCode.MISSINGNESS_RATE and item.source[44]:
             source_state = FormulaSourceState.MISSING
         value = item.input.decimal_value
         secondary_value = item.input.secondary_decimal_value
@@ -317,7 +321,9 @@ def formula_observations(
     return tuple(observations)
 
 
-def _episode_inputs(metric: ProtocolMetricDefinition, rows: list[tuple[Any, ...]], session_dates: tuple[tuple[UUID, date], ...]) -> tuple[_ResolvedMetricInput, ...]:
+def _episode_inputs(
+    metric: ProtocolMetricDefinition, rows: list[tuple[Any, ...]], session_dates: tuple[tuple[UUID, date], ...]
+) -> tuple[_ResolvedMetricInput, ...]:
     assert metric.formula is not None
     policy, entry_id, exit_id = episode_contract(metric.formula)
     legs = []
@@ -329,19 +335,28 @@ def _episode_inputs(metric: ProtocolMetricDefinition, rows: list[tuple[Any, ...]
         if len(row) != 46 or not isinstance(row[45], OutcomeEpisodePrices):
             raise EvaluationReconciliationError("episode requires exact Outcome-owned checkpoint facts")
         prices = row[45]
-        if (prices.revision_id != row[2] or prices.entry_checkpoint_id != entry_id
-                or prices.exit_checkpoint_id != exit_id):
+        if prices.revision_id != row[2] or prices.entry_checkpoint_id != entry_id or prices.exit_checkpoint_id != exit_id:
             raise EvaluationReconciliationError("episode Outcome identity differs")
-        legs.append(EpisodeLeg(
-            observation_id=UUID(str(row[0])), instrument_id=UUID(str(row[11])),
-            episode_key=f"{row[14]}:{row[9]}", arm_key=str(row[14]), fold_key=str(row[15]),
-            decision_time=row[12], entry_time=prices.entry_time, exit_time=prices.exit_time,
-            knowledge_cutoff=prices.knowledge_cutoff, outcome_known_at=prices.known_at,
-            proposed_weight=Decimal(row[33]), risk_status=str(row[35]),
-            entry_price=prices.entry_close, exit_price=prices.exit_close,
-            price_basis=prices.price_basis,
-            availability="AVAILABLE" if row[32] in {"INCLUDED", "EXCLUDED"} else "UNKNOWN",
-        ))
+        legs.append(
+            EpisodeLeg(
+                observation_id=UUID(str(row[0])),
+                instrument_id=UUID(str(row[11])),
+                episode_key=f"{row[14]}:{row[9]}",
+                arm_key=str(row[14]),
+                fold_key=str(row[15]),
+                decision_time=row[12],
+                entry_time=prices.entry_time,
+                exit_time=prices.exit_time,
+                knowledge_cutoff=prices.knowledge_cutoff,
+                outcome_known_at=prices.known_at,
+                proposed_weight=Decimal(row[33]),
+                risk_status=str(row[35]),
+                entry_price=prices.entry_close,
+                exit_price=prices.exit_close,
+                price_basis=prices.price_basis,
+                availability="AVAILABLE" if row[32] in {"INCLUDED", "EXCLUDED"} else "UNKNOWN",
+            )
+        )
     path = build_episode_path(policy, tuple(legs))
     if any(episode.reason != "EPISODE_CLOSED" for episode in path.episodes):
         raise EvaluationReconciliationError("episode cannot close: " + ",".join(episode.reason for episode in path.episodes))
@@ -351,9 +366,15 @@ def _episode_inputs(metric: ProtocolMetricDefinition, rows: list[tuple[Any, ...]
         raise EvaluationReconciliationError("episode slice fold is not in the exact parent")
     if selector == "TIME_MONTH" and any(row[16] not in dates for row in rows):
         raise EvaluationReconciliationError("episode time slice requires canonical Decision TradingSession dates")
-    selected_ids = frozenset(leg.observation_id for row, leg in zip(rows, legs, strict=True)
-                            if selector == "ALL" or selector == "FOLD" and leg.fold_key == key
-                            or selector == "TIME_MONTH" and dates[row[16]].strftime("%Y-%m") == key)
+    selected_ids = frozenset(
+        leg.observation_id
+        for row, leg in zip(rows, legs, strict=True)
+        if selector == "ALL"
+        or selector == "FOLD"
+        and leg.fold_key == key
+        or selector == "TIME_MONTH"
+        and dates[row[16]].strftime("%Y-%m") == key
+    )
     # Selection cannot discard incomplete episodes or redefine their capital.
     path.slice(selected_ids)
     trades = {trade.observation_id: trade for episode in path.episodes for trade in episode.legs}
@@ -363,16 +384,36 @@ def _episode_inputs(metric: ProtocolMetricDefinition, rows: list[tuple[Any, ...]
         gross, net = trade.gross_profit / policy.initial_capital, trade.net_profit / policy.initial_capital
         buy, sell = trade.buy_notional / policy.initial_capital, trade.sell_notional / policy.initial_capital
         code = metric.formula.formula_code
-        numerator = (trade.buy_notional + trade.sell_notional if code is BacktestFormulaCode.TURNOVER else
-                     trade.buy_notional if code in {BacktestFormulaCode.GROSS_EXPOSURE, BacktestFormulaCode.NET_EXPOSURE} else
-                     trade.gross_profit if metric.source_measure is EvaluationSourceMeasure.GROSS_PORTFOLIO_RETURN else trade.net_profit)
-        results.append(_ResolvedMetricInput(
-            source=row,
-            input=EvaluationInput(leg.observation_id, CandidateDisposition(str(row[3])), "COMPLETE",
-                                  gross if metric.source_measure is EvaluationSourceMeasure.GROSS_PORTFOLIO_RETURN else net,
-                                  None, group_key=leg.episode_key),
-            turnover=buy + sell, previous_weight=Decimal(0), buy_turnover=buy, sell_turnover=sell,
-            effective_weight=buy, gross_return=gross, net_return=net, economic_path_sha256=path.content_sha256,
-            economic_numerator=numerator, economic_selected=leg.observation_id in selected_ids,
-        ))
+        numerator = (
+            trade.buy_notional + trade.sell_notional
+            if code is BacktestFormulaCode.TURNOVER
+            else trade.buy_notional
+            if code in {BacktestFormulaCode.GROSS_EXPOSURE, BacktestFormulaCode.NET_EXPOSURE}
+            else trade.gross_profit
+            if metric.source_measure is EvaluationSourceMeasure.GROSS_PORTFOLIO_RETURN
+            else trade.net_profit
+        )
+        results.append(
+            _ResolvedMetricInput(
+                source=row,
+                input=EvaluationInput(
+                    leg.observation_id,
+                    CandidateDisposition(str(row[3])),
+                    "COMPLETE",
+                    gross if metric.source_measure is EvaluationSourceMeasure.GROSS_PORTFOLIO_RETURN else net,
+                    None,
+                    group_key=leg.episode_key,
+                ),
+                turnover=buy + sell,
+                previous_weight=Decimal(0),
+                buy_turnover=buy,
+                sell_turnover=sell,
+                effective_weight=buy,
+                gross_return=gross,
+                net_return=net,
+                economic_path_sha256=path.content_sha256,
+                economic_numerator=numerator,
+                economic_selected=leg.observation_id in selected_ids,
+            )
+        )
     return tuple(results)

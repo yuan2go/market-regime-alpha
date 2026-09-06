@@ -40,6 +40,7 @@ from market_regime_alpha.outcome.domain import (
     build_market_target_outcome_authority,
 )
 from market_regime_alpha.outcome.errors import OutcomeAuthorityIntegrityError
+from market_regime_alpha.outcome.domain.economic_prices import OutcomeEpisodePrices
 from market_regime_alpha.outcome.ports import OutcomeSnapshot
 
 
@@ -53,7 +54,7 @@ class PostgresOutcomeQueryProvider:
         with self._pool.connection(read_only=True) as connection:
             return _load_snapshot(connection, revision_id)
 
-    def episode_prices(self, revision_ids: tuple[UUID, ...], entry_id: UUID, exit_id: UUID):
+    def episode_prices(self, revision_ids: tuple[UUID, ...], entry_id: UUID, exit_id: UUID) -> tuple[OutcomeEpisodePrices, ...]:
         from market_regime_alpha.outcome.domain.economic_prices import episode_prices
         if len(set(revision_ids)) != len(revision_ids):
             raise ValueError("duplicate Outcome revision request")

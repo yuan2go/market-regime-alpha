@@ -6,16 +6,19 @@ from uuid import UUID, uuid4
 import psycopg
 
 from market_regime_alpha.infrastructure.postgres.repositories.research_evaluations import (
-    PostgresEvaluationRepository, _metric_observation_values,
-    _portfolio_source_values, _portfolio_cost_values,
+    PostgresEvaluationRepository,
+    _metric_observation_values,
+    _portfolio_source_values,
+    _portfolio_cost_values,
 )
 from market_regime_alpha.research_qualification.domain.evaluation_computation import ComputedEvaluationMetric
 from market_regime_alpha.research_qualification.domain.research_vocabulary import EvaluationSourceMeasure
 from market_regime_alpha.shared.hashing import canonical_json_sha256
 
 
-def economic_children_match(connection: psycopg.Connection[Any], evaluation_id: UUID,
-                            computations: tuple[ComputedEvaluationMetric, ...]) -> bool:
+def economic_children_match(
+    connection: psycopg.Connection[Any], evaluation_id: UUID, computations: tuple[ComputedEvaluationMetric, ...]
+) -> bool:
     repository = PostgresEvaluationRepository(connection, id_factory=uuid4)
     costs = {}
     for computation in computations:
@@ -32,20 +35,28 @@ def economic_children_match(connection: psycopg.Connection[Any], evaluation_id: 
             (evaluation_id, metric.evaluation_protocol_metric_id),
         ).fetchall()
         by_observation = {row[4]: row for row in rows}
-        if len(rows) != len(computation.resolved) or set(by_observation) != {item.input.evaluation_observation_id for item in computation.resolved}:
+        if len(rows) != len(computation.resolved) or set(by_observation) != {
+            item.input.evaluation_observation_id for item in computation.resolved
+        }:
             return False
         classifications = {item.evaluation_observation_id: item for item in computation.result.observations}
         expected_portfolio: list[tuple[Any, ...]] = []
         expected_costs: list[tuple[Any, ...]] = []
         for item in computation.resolved:
             row = by_observation[item.input.evaluation_observation_id]
-            if tuple(row) != _metric_observation_values(row[0], row[1], evaluation_id, metric,
-                                                       item.source, classifications[row[4]]):
+            if tuple(row) != _metric_observation_values(row[0], row[1], evaluation_id, metric, item.source, classifications[row[4]]):
                 return False
             values = _portfolio_source_values(item)
-            expected_portfolio.append((row[0], evaluation_id, metric.evaluation_protocol_metric_id,
-                                       metric.source_measure.value, *values,
-                                       canonical_json_sha256({"input": row[0], "measure": metric.source_measure, "source": values})))
+            expected_portfolio.append(
+                (
+                    row[0],
+                    evaluation_id,
+                    metric.evaluation_protocol_metric_id,
+                    metric.source_measure.value,
+                    *values,
+                    canonical_json_sha256({"input": row[0], "measure": metric.source_measure, "source": values}),
+                )
+            )
             if metric.source_measure is EvaluationSourceMeasure.NET_PORTFOLIO_RETURN_ASSUMED_COST:
                 key = item.source[13], item.source[14]
                 if key not in costs:
@@ -71,7 +82,11 @@ def economic_children_match(connection: psycopg.Connection[Any], evaluation_id: 
                WHERE input.evaluation_run_id = %s AND input.evaluation_protocol_metric_id = %s""",
             (evaluation_id, metric.evaluation_protocol_metric_id),
         ).fetchall()
-        if (set(portfolio) != set(expected_portfolio) or len(portfolio) != len(expected_portfolio)
-                or set(persisted_costs) != set(expected_costs) or len(persisted_costs) != len(expected_costs)):
+        if (
+            set(portfolio) != set(expected_portfolio)
+            or len(portfolio) != len(expected_portfolio)
+            or set(persisted_costs) != set(expected_costs)
+            or len(persisted_costs) != len(expected_costs)
+        ):
             return False
     return True

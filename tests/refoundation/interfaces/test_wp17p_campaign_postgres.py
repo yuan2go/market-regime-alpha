@@ -71,261 +71,7 @@ def test_canonical_wp17p_fit_model_validation_chain(target_database_url, tmp_pat
         pool_max_size=8,
     )
     with bootstrap_application(settings) as application:
-        provider = Provider(
-            uuid4(),
-            "wp17p_fixture",
-            "WP-17P fixture",
-            ProviderKind.PUBLIC_ENDPOINT,
-        )
-        product = ProviderProduct(
-            uuid4(),
-            provider.provider_id,
-            "wp17p_complete_facts",
-            1,
-            "WP17P_COMPLETE_FACTS",
-            "application/json",
-            "UTF-8",
-            SourceAvailabilityStatus.UNKNOWN,
-            tuple(MarketFactKind),
-            tuple(InstrumentFactKind),
-            tuple(BarTimeframe),
-            tuple(PriceBasis),
-        )
-        application.market.register_provider(provider, _context("provider"))
-        application.market.register_provider_product(product, _context("product"))
-        captured = application.market.capture(
-            CaptureRequest(
-                product.provider_product_id,
-                "wp17p-complete-fixture",
-                "fixture://wp17p/complete",
-                "a" * 64,
-            ),
-            _research._BytesProvider(),
-            _context("capture"),
-        )
-        capture_id = captured.capture.capture_id
-        session_dates = (
-            date(2026, 1, 2),
-            date(2026, 1, 5),
-            date(2026, 1, 6),
-            date(2026, 1, 7),
-            date(2026, 1, 8),
-            date(2026, 1, 9),
-            date(2026, 1, 12),
-            date(2026, 1, 13),
-            date(2026, 1, 14),
-            date(2026, 1, 15),
-            date(2026, 1, 16),
-            date(2026, 1, 19),
-        )
-        sessions = tuple(
-            _session(item, capture_id, exchange)
-            for exchange in ("XSHG",)
-            for item in session_dates
-        )
-        session_by_exchange_date = {
-            (item.exchange, item.session_date): item for item in sessions
-        }
-        instrument_ids = tuple(
-            InstrumentId(uuid5(NAMESPACE_URL, f"wp17p-fixture:{index}"))
-            for index in range(32)
-        )
-        instrument_exchange = {
-            instrument_id: "XSHG"
-            for index, instrument_id in enumerate(instrument_ids)
-        }
-        classification_id = uuid4()
-        batch = NormalizationBatch(
-            capture_id,
-            product.provider_product_id,
-            instruments=tuple(
-                Instrument(
-                    instrument_id,
-                    (
-                        f"{600000 + index}.XSHG"
-                        if instrument_exchange[instrument_id] == "XSHG"
-                        else f"{index:06d}.XSHE"
-                    ),
-                    instrument_exchange[instrument_id],
-                    InstrumentType.EQUITY,
-                    "CNY",
-                    capture_id,
-                )
-                for index, instrument_id in enumerate(instrument_ids)
-            ),
-            trading_sessions=sessions,
-            classifications=(
-                ClassificationRevision(
-                    classification_id,
-                    "INDEX_MEMBERSHIP",
-                    "CSI300",
-                    "CSI 300 fixture",
-                    1,
-                    datetime(2020, 1, 1, tzinfo=UTC),
-                    None,
-                    None,
-                    capture_id,
-                ),
-            ),
-            classification_memberships=tuple(
-                ClassificationMembershipRevision(
-                    uuid4(),
-                    classification_id,
-                    instrument_id,
-                    capture_id,
-                    MembershipStatus.MEMBER,
-                    datetime(2020, 1, 1, tzinfo=UTC),
-                    None,
-                    1,
-                    None,
-                )
-                for instrument_id in instrument_ids
-            ),
-            bars=tuple(
-                _bar(
-                    product.provider_product_id,
-                    capture_id,
-                    instrument_id,
-                    session_by_exchange_date[
-                        (instrument_exchange[instrument_id], session_date)
-                    ],
-                    checkpoint,
-                    index,
-                )
-                for index, instrument_id in enumerate(instrument_ids)
-                for session_date, checkpoint in (
-                    (date(2026, 1, 5), "REFERENCE"),
-                    (date(2026, 1, 6), "OUTCOME"),
-                    (date(2026, 1, 14), "REFERENCE"),
-                    (date(2026, 1, 15), "OUTCOME"),
-                )
-            ),
-            security_status_facts=tuple(
-                SecurityStatusFactRevision(
-                    uuid4(),
-                    product.provider_product_id,
-                    capture_id,
-                    instrument_id,
-                    session_by_exchange_date[
-                        (instrument_exchange[instrument_id], session_date)
-                    ].session_id,
-                    EvidenceScope.DECISION_SESSION,
-                    SecurityStatus.ACTIVE,
-                    session_by_exchange_date[
-                        (instrument_exchange[instrument_id], session_date)
-                    ].open_at,
-                    session_by_exchange_date[
-                        (instrument_exchange[instrument_id], session_date)
-                    ].close_at,
-                    1,
-                    None,
-                )
-                for instrument_id in instrument_ids
-                for session_date in (date(2026, 1, 5), date(2026, 1, 14))
-            ),
-            lifecycle_status_facts=tuple(
-                fact
-                for instrument_id in instrument_ids
-                for fact in (
-                    InstrumentLifecycleFactRevision(
-                        uuid4(),
-                        product.provider_product_id,
-                        capture_id,
-                        instrument_id,
-                        InstrumentFactKind.LISTING_STATUS,
-                        ListingStatus.LISTED,
-                        datetime(2020, 1, 1, tzinfo=UTC),
-                        None,
-                        1,
-                        None,
-                    ),
-                    *(
-                        InstrumentLifecycleFactRevision(
-                            uuid4(),
-                            product.provider_product_id,
-                            capture_id,
-                            instrument_id,
-                            InstrumentFactKind.SPECIAL_TREATMENT_STATUS,
-                            SpecialTreatmentStatus.NORMAL,
-                            session_by_exchange_date[
-                                (instrument_exchange[instrument_id], session_date)
-                            ].open_at,
-                            session_by_exchange_date[
-                                (instrument_exchange[instrument_id], session_date)
-                            ].close_at,
-                            1,
-                            None,
-                        )
-                        for session_date in (date(2026, 1, 5), date(2026, 1, 14))
-                    ),
-                )
-            ),
-        )
-        application.market.normalize(
-            capture_id,
-            _research._Normalizer(lambda _: batch),
-            _context("normalize"),
-        )
-        code = application.artifacts.publish(
-            b"wp17p complete pipeline\n",
-            media_type="text/plain",
-            context=_context("code"),
-        )
-        config = application.artifacts.publish(
-            b'{"pilot":"WP17P_ENGINEERING_EXPLORATORY_32"}\n',
-            media_type="application/json",
-            context=_context("config"),
-        )
-        archive_id = uuid4()
-        slice_id = uuid4()
-        application.market_archives.start(
-            StartMarketArchiveRequest(
-                archive_id,
-                f"wp17p-fixture-{archive_id.hex[:10]}",
-                ArchiveLane.RETROSPECTIVE_BACKFILL,
-                product.provider_product_id,
-                "SSE",
-                BarTimeframe.MINUTE_5,
-                PriceBasis.RAW_UNADJUSTED,
-                "ENGINEERING_EXPLORATORY_PILOT_32",
-                canonical_json_sha256(tuple(str(item) for item in instrument_ids)),
-                sessions[0].open_at,
-                sessions[-1].close_at,
-                1,
-                10_000_000,
-                10_000_000,
-                code.artifact_id,
-                config.artifact_id,
-                "d" * 64,
-                (
-                    ArchiveSlicePlan(
-                        slice_id,
-                        1,
-                        "xshg:fixture",
-                        sessions[0].open_at,
-                        sessions[-1].close_at,
-                        "e" * 64,
-                        "MARKET_BAR",
-                    ),
-                ),
-            ),
-            _context("archive-start"),
-        )
-        application.market_archives.record_capture_observation(
-            RecordArchiveCaptureObservationRequest(
-                archive_id,
-                slice_id,
-                capture_id,
-                "RETROSPECTIVE_BATCH",
-                captured.capture.temporal.capture_started_at,
-            ),
-            _context("archive-observe"),
-        )
-        seal = application.market_archives.seal_retrospective(
-            market_archive_id=archive_id,
-            disposition=ArchiveSealDisposition.COMPLETE,
-            context=_context("archive-seal"),
-        )
+        product, instrument_ids, sessions, code, config, archive_id, seal = seed_complete_archive(application)
         selected_dates = {
             date(2026, 1, 5),
             date(2026, 1, 6),
@@ -394,6 +140,276 @@ def test_canonical_wp17p_fit_model_validation_chain(target_database_url, tmp_pat
         ).fetchall()
     assert counts == (3, 3, 96, 2, 2, 1)
     assert decision_times == [(time(14, 55),)]
+
+
+def seed_complete_archive(application, *, episode_entry=False):
+    provider = Provider(
+        uuid4(),
+        "wp17p_fixture",
+        "WP-17P fixture",
+        ProviderKind.PUBLIC_ENDPOINT,
+    )
+    product = ProviderProduct(
+        uuid4(),
+        provider.provider_id,
+        "wp17p_complete_facts",
+        1,
+        "WP17P_COMPLETE_FACTS",
+        "application/json",
+        "UTF-8",
+        SourceAvailabilityStatus.UNKNOWN,
+        tuple(MarketFactKind),
+        tuple(InstrumentFactKind),
+        tuple(BarTimeframe),
+        tuple(PriceBasis),
+    )
+    application.market.register_provider(provider, _context("provider"))
+    application.market.register_provider_product(product, _context("product"))
+    captured = application.market.capture(
+        CaptureRequest(
+            product.provider_product_id,
+            "wp17p-complete-fixture",
+            "fixture://wp17p/complete",
+            "a" * 64,
+        ),
+        _research._BytesProvider(),
+        _context("capture"),
+    )
+    capture_id = captured.capture.capture_id
+    session_dates = (
+        date(2026, 1, 2),
+        date(2026, 1, 5),
+        date(2026, 1, 6),
+        date(2026, 1, 7),
+        date(2026, 1, 8),
+        date(2026, 1, 9),
+        date(2026, 1, 12),
+        date(2026, 1, 13),
+        date(2026, 1, 14),
+        date(2026, 1, 15),
+        date(2026, 1, 16),
+        date(2026, 1, 19),
+    )
+    sessions = tuple(
+        _session(item, capture_id, exchange)
+        for exchange in ("XSHG",)
+        for item in session_dates
+    )
+    session_by_exchange_date = {
+        (item.exchange, item.session_date): item for item in sessions
+    }
+    instrument_ids = tuple(
+        InstrumentId(uuid5(NAMESPACE_URL, f"wp17p-fixture:{index}"))
+        for index in range(32)
+    )
+    instrument_exchange = {
+        instrument_id: "XSHG"
+        for index, instrument_id in enumerate(instrument_ids)
+    }
+    classification_id = uuid4()
+    batch = NormalizationBatch(
+        capture_id,
+        product.provider_product_id,
+        instruments=tuple(
+            Instrument(
+                instrument_id,
+                (
+                    f"{600000 + index}.XSHG"
+                    if instrument_exchange[instrument_id] == "XSHG"
+                    else f"{index:06d}.XSHE"
+                ),
+                instrument_exchange[instrument_id],
+                InstrumentType.EQUITY,
+                "CNY",
+                capture_id,
+            )
+            for index, instrument_id in enumerate(instrument_ids)
+        ),
+        trading_sessions=sessions,
+        classifications=(
+            ClassificationRevision(
+                classification_id,
+                "INDEX_MEMBERSHIP",
+                "CSI300",
+                "CSI 300 fixture",
+                1,
+                datetime(2020, 1, 1, tzinfo=UTC),
+                None,
+                None,
+                capture_id,
+            ),
+        ),
+        classification_memberships=tuple(
+            ClassificationMembershipRevision(
+                uuid4(),
+                classification_id,
+                instrument_id,
+                capture_id,
+                MembershipStatus.MEMBER,
+                datetime(2020, 1, 1, tzinfo=UTC),
+                None,
+                1,
+                None,
+            )
+            for instrument_id in instrument_ids
+        ),
+        bars=tuple(
+            _bar(
+                product.provider_product_id,
+                capture_id,
+                instrument_id,
+                session_by_exchange_date[
+                    (instrument_exchange[instrument_id], session_date)
+                ],
+                checkpoint,
+                index,
+            )
+            for index, instrument_id in enumerate(instrument_ids)
+            for session_date, checkpoint in (
+                (date(2026, 1, 5), "REFERENCE"),
+                (date(2026, 1, 6), "OUTCOME"),
+                (date(2026, 1, 14), "REFERENCE"),
+                (date(2026, 1, 15), "OUTCOME"),
+            )
+        ),
+        security_status_facts=tuple(
+            SecurityStatusFactRevision(
+                uuid4(),
+                product.provider_product_id,
+                capture_id,
+                instrument_id,
+                session_by_exchange_date[
+                    (instrument_exchange[instrument_id], session_date)
+                ].session_id,
+                EvidenceScope.DECISION_SESSION,
+                SecurityStatus.ACTIVE,
+                session_by_exchange_date[
+                    (instrument_exchange[instrument_id], session_date)
+                ].open_at,
+                session_by_exchange_date[
+                    (instrument_exchange[instrument_id], session_date)
+                ].close_at,
+                1,
+                None,
+            )
+            for instrument_id in instrument_ids
+            for session_date in (date(2026, 1, 5), date(2026, 1, 14))
+        ),
+        lifecycle_status_facts=tuple(
+            fact
+            for instrument_id in instrument_ids
+            for fact in (
+                InstrumentLifecycleFactRevision(
+                    uuid4(),
+                    product.provider_product_id,
+                    capture_id,
+                    instrument_id,
+                    InstrumentFactKind.LISTING_STATUS,
+                    ListingStatus.LISTED,
+                    datetime(2020, 1, 1, tzinfo=UTC),
+                    None,
+                    1,
+                    None,
+                ),
+                *(
+                    InstrumentLifecycleFactRevision(
+                        uuid4(),
+                        product.provider_product_id,
+                        capture_id,
+                        instrument_id,
+                        InstrumentFactKind.SPECIAL_TREATMENT_STATUS,
+                        SpecialTreatmentStatus.NORMAL,
+                        session_by_exchange_date[
+                            (instrument_exchange[instrument_id], session_date)
+                        ].open_at,
+                        session_by_exchange_date[
+                            (instrument_exchange[instrument_id], session_date)
+                        ].close_at,
+                        1,
+                        None,
+                    )
+                    for session_date in (date(2026, 1, 5), date(2026, 1, 14))
+                ),
+            )
+        ),
+    )
+    if episode_entry:
+        from dataclasses import replace
+        entry_bars = []
+        for index, instrument_id in enumerate(instrument_ids):
+            for session_date in (date(2026, 1, 6), date(2026, 1, 15)):
+                bar = _bar(product.provider_product_id, capture_id, instrument_id,
+                           session_by_exchange_date[("XSHG", session_date)], "OUTCOME", index)
+                entry_end = datetime.combine(session_date, time(9, 35), SHANGHAI).astimezone(UTC)
+                entry_bars.append(replace(bar, bar_revision_id=uuid4(), event_start=entry_end.replace(minute=30),
+                                          event_end=entry_end, close=bar.open))
+        batch = replace(batch, bars=(*batch.bars, *entry_bars))
+    application.market.normalize(
+        capture_id,
+        _research._Normalizer(lambda _: batch),
+        _context("normalize"),
+    )
+    code = application.artifacts.publish(
+        b"wp17p complete pipeline\n",
+        media_type="text/plain",
+        context=_context("code"),
+    )
+    config = application.artifacts.publish(
+        b'{"pilot":"WP17P_ENGINEERING_EXPLORATORY_32"}\n',
+        media_type="application/json",
+        context=_context("config"),
+    )
+    archive_id = uuid4()
+    slice_id = uuid4()
+    application.market_archives.start(
+        StartMarketArchiveRequest(
+            archive_id,
+            f"wp17p-fixture-{archive_id.hex[:10]}",
+            ArchiveLane.RETROSPECTIVE_BACKFILL,
+            product.provider_product_id,
+            "SSE",
+            BarTimeframe.MINUTE_5,
+            PriceBasis.RAW_UNADJUSTED,
+            "ENGINEERING_EXPLORATORY_PILOT_32",
+            canonical_json_sha256(tuple(str(item) for item in instrument_ids)),
+            sessions[0].open_at,
+            sessions[-1].close_at,
+            1,
+            10_000_000,
+            10_000_000,
+            code.artifact_id,
+            config.artifact_id,
+            "d" * 64,
+            (
+                ArchiveSlicePlan(
+                    slice_id,
+                    1,
+                    "xshg:fixture",
+                    sessions[0].open_at,
+                    sessions[-1].close_at,
+                    "e" * 64,
+                    "MARKET_BAR",
+                ),
+            ),
+        ),
+        _context("archive-start"),
+    )
+    application.market_archives.record_capture_observation(
+        RecordArchiveCaptureObservationRequest(
+            archive_id,
+            slice_id,
+            capture_id,
+            "RETROSPECTIVE_BATCH",
+            captured.capture.temporal.capture_started_at,
+        ),
+        _context("archive-observe"),
+    )
+    seal = application.market_archives.seal_retrospective(
+        market_archive_id=archive_id,
+        disposition=ArchiveSealDisposition.COMPLETE,
+        context=_context("archive-seal"),
+    )
+    return product, instrument_ids, sessions, code, config, archive_id, seal
 
 
 def _session(session_date: date, capture_id, exchange: str):

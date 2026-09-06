@@ -34,14 +34,16 @@ class EpisodePolicy:
     def __post_init__(self) -> None:
         if self.model != "INDEPENDENT_EPISODES":
             raise ValueError("only INDEPENDENT_EPISODES is supported")
-        if (self.execution != "ASSUMED_CHECKPOINT_CLOSE_FRACTIONAL"
-                or self.price_basis != "RAW_UNADJUSTED" or not self.final_liquidation
-                or self.carry_forward != "NONE"):
+        if (
+            self.execution != "ASSUMED_CHECKPOINT_CLOSE_FRACTIONAL"
+            or self.price_basis != "RAW_UNADJUSTED"
+            or not self.final_liquidation
+            or self.carry_forward != "NONE"
+        ):
             raise ValueError("unsupported episode execution/price/termination contract")
         if not 34 <= self.decimal_precision <= 100:
             raise ValueError("episode precision must be 34..100")
-        for value in (self.initial_capital, self.buy_fee_bps, self.sell_fee_bps,
-                      self.minimum_fee, self.slippage_bps):
+        for value in (self.initial_capital, self.buy_fee_bps, self.sell_fee_bps, self.minimum_fee, self.slippage_bps):
             if not value.is_finite() or value < 0:
                 raise ValueError("capital and costs must be finite and nonnegative")
         with localcontext() as context:
@@ -170,9 +172,22 @@ def build_episode_path(policy: EpisodePolicy, legs: tuple[EpisodeLeg, ...]) -> E
 
 def _close_episode(policy: EpisodePolicy, legs: tuple[EpisodeLeg, ...]) -> EpisodeResult:
     def incomplete(reason: str) -> EpisodeResult:
-        return EpisodeResult(legs[0].episode_key, tuple(leg.observation_id for leg in legs),
-                             reason, policy.initial_capital, None, None, None, None,
-                             None, None, None, None, None, ())
+        return EpisodeResult(
+            legs[0].episode_key,
+            tuple(leg.observation_id for leg in legs),
+            reason,
+            policy.initial_capital,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            (),
+        )
 
     trades = []
     for leg in legs:
@@ -190,8 +205,9 @@ def _close_episode(policy: EpisodePolicy, legs: tuple[EpisodeLeg, ...]) -> Episo
         sell = (units * leg.exit_price).quantize(CENT)
         buy_fee = (buy * policy.buy_fee_bps / 10000).quantize(CENT)
         sell_fee = (sell * policy.sell_fee_bps / 10000).quantize(CENT)
-        trades.append(EpisodeLegResult(leg.observation_id, units, buy, sell, buy_fee, sell_fee,
-                                      sell - buy, sell - buy - buy_fee - sell_fee))
+        trades.append(
+            EpisodeLegResult(leg.observation_id, units, buy, sell, buy_fee, sell_fee, sell - buy, sell - buy - buy_fee - sell_fee)
+        )
     buy = sum((trade.buy_notional for trade in trades), ZERO)
     sell = sum((trade.sell_notional for trade in trades), ZERO)
     buy_fees = sum((trade.buy_fee for trade in trades), ZERO)
@@ -200,7 +216,21 @@ def _close_episode(policy: EpisodePolicy, legs: tuple[EpisodeLeg, ...]) -> Episo
     if cash < 0:
         return incomplete("INSUFFICIENT_CASH_FOR_COSTS")
     final = policy.initial_capital + sell - buy - fees
-    return EpisodeResult(legs[0].episode_key, tuple(leg.observation_id for leg in legs),
-                         "EPISODE_CLOSED", policy.initial_capital, cash, buy, final, ZERO,
-                         buy, sell, fees, (sell - buy) / policy.initial_capital,
-                         (final - policy.initial_capital) / policy.initial_capital, tuple(trades))
+    if final < 0:
+        return incomplete("INSUFFICIENT_CASH_FOR_EXIT_COSTS")
+    return EpisodeResult(
+        legs[0].episode_key,
+        tuple(leg.observation_id for leg in legs),
+        "EPISODE_CLOSED",
+        policy.initial_capital,
+        cash,
+        buy,
+        final,
+        ZERO,
+        buy,
+        sell,
+        fees,
+        (sell - buy) / policy.initial_capital,
+        (final - policy.initial_capital) / policy.initial_capital,
+        tuple(trades),
+    )

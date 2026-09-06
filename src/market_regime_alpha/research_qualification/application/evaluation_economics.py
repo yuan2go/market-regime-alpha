@@ -10,7 +10,8 @@ from market_regime_alpha.research_qualification.errors import EvaluationReconcil
 
 
 def acquire_episode_prices(
-    inputs: tuple[EvaluationMetricInputs, ...], owner: OutcomeEpisodePriceReadPort | None,
+    inputs: tuple[EvaluationMetricInputs, ...],
+    owner: OutcomeEpisodePriceReadPort | None,
 ) -> tuple[EvaluationMetricInputs, ...]:
     cache = {}
     acquired = []
