@@ -262,9 +262,20 @@ class PostgresModelTrainingInputProvider:
     ) -> PreparedReproducibleModelTrainingInputs:
         legacy = request.training
         with self._pool.connection(read_only=True) as connection:
-            cutoff_row = connection.execute("SELECT clock_timestamp()").fetchone()
-            if cutoff_row is None:  # pragma: no cover - PostgreSQL invariant
-                raise ArtifactIntegrityError("authoritative database clock is absent")
+            # Freeze knowledge at the completed FIT owner's PostgreSQL time.
+            # The actual training registration retains its later opened_at.
+            # Repeated preparation, including after an unknown commit, must
+            # publish the same content-addressed input under the same request.
+            cutoff_row = connection.execute(
+                """
+                SELECT completed_at FROM mra.evaluation_run
+                WHERE evaluation_run_id = %s
+                  AND partition_purpose = 'FIT' AND status = 'COMPLETED'
+                """,
+                (legacy.evaluation_run_id,),
+            ).fetchone()
+            if cutoff_row is None or cutoff_row[0] is None:
+                raise RuntimeStateConflictError("training cutoff requires a completed FIT Evaluation")
             training_knowledge_cutoff = cutoff_row[0]
             _require_reproducible_training_scope(connection, request)
             source_rows = _training_source_rows(connection, legacy)
