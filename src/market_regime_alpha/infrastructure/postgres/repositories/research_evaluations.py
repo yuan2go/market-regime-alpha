@@ -2,21 +2,25 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from decimal import Decimal
 from typing import Any, Callable
 from uuid import UUID
 
 import psycopg
+from market_regime_alpha.research_qualification.domain.evaluation_computation import ComputedEvaluationMetric, EvaluationMetricInputs
+from market_regime_alpha.research_qualification.domain.episode_formula import episode_contract
+from market_regime_alpha.outcome.domain.economic_prices import episode_prices
+from market_regime_alpha.infrastructure.postgres.queries.outcomes import _load_snapshot
+from market_regime_alpha.infrastructure.postgres.queries.outcome_economic_guard import outcome_economic_guard
+
+from market_regime_alpha.research_qualification.domain.evaluation_sources import (
+    _ResolvedMetricInput, resolve_metric_inputs, formula_observations,
+)
 
 from market_regime_alpha.research_qualification.domain.evaluation import (
-    EvaluationInput,
-    EvaluationMetricResult,
     EvaluationProtocolPlan,
     EvaluationRunPlan,
     ProtocolMetricDefinition,
     evaluation_protocol_metric_roster_sha256,
-    evaluate_metric,
 )
 from market_regime_alpha.research_qualification.domain.evaluation_formula import (
     BacktestFormulaCode,
@@ -24,19 +28,12 @@ from market_regime_alpha.research_qualification.domain.evaluation_formula import
     EvaluationFormulaDefinition,
     EvaluationFormulaParameter,
     FormulaParameterType,
-    FormulaObservation,
-    FormulaResultState,
-    FormulaSourceState,
-    FrozenRankingMembership,
-    evaluate_backtest_formula,
 )
 from market_regime_alpha.research_qualification.domain.research_vocabulary import (
     AcceptanceOperator,
-    AcceptanceState,
     CandidateDisposition,
     EvaluationInclusionPolicy,
     EvaluationMissingnessPolicy,
-    EvaluationMetricState,
     EvaluationReducer,
     EvaluationSourceKind,
     EvaluationSourceMeasure,
@@ -58,17 +55,6 @@ from market_regime_alpha.runtime.errors import RuntimeNotFoundError, RuntimeStat
 from market_regime_alpha.shared.hashing import canonical_json_sha256
 
 
-@dataclass(frozen=True, slots=True)
-class _ResolvedMetricInput:
-    source: tuple[Any, ...]
-    input: EvaluationInput
-    turnover: Decimal | None = None
-    previous_weight: Decimal | None = None
-    buy_turnover: Decimal | None = None
-    sell_turnover: Decimal | None = None
-    effective_weight: Decimal | None = None
-    gross_return: Decimal | None = None
-    net_return: Decimal | None = None
 
 
 class PostgresEvaluationRepository:
@@ -312,7 +298,80 @@ class PostgresEvaluationRepository:
         )
         return self.run_record(plan.evaluation_run_id, lock=False)
 
-    def complete(self, evaluation_run_id: UUID) -> EvaluationCompletionResult:
+    def prepare(self, evaluation_run_id: UUID, *, include_completed: bool = False, reuse_inputs: tuple[EvaluationMetricInputs, ...] | None = None) -> tuple[EvaluationMetricInputs, ...] | None:
+        run = self._connection.execute(
+            "SELECT evaluation_protocol_id, status, expected_member_count, expected_protocol_metric_count, observation_count FROM mra.evaluation_run WHERE evaluation_run_id = %s",
+            (evaluation_run_id,),
+        ).fetchone()
+        if run is None:
+            raise RuntimeNotFoundError("EvaluationRun does not exist")
+        if run[1] == "COMPLETED" and not include_completed:
+            return None
+        if run[1] not in {"INPUTS_ACQUIRED", "COMPLETED"} or int(run[2]) != int(run[4]):
+            raise EvaluationReconciliationError("Evaluation input roster is not complete")
+        metric_rows = self._connection.execute(
+            """SELECT evaluation_protocol_metric_id, metric_code, ordinal,
+                   source_target_metric_definition_id, source_metric_code,
+                   source_value_type, source_kind, source_measure,
+                   reducer, slice_kind, candidate_disposition,
+                   backtest_arm_kind, direction, minimum_estimable_count,
+                   acceptance_operator, acceptance_threshold, inclusion_policy, missingness_policy
+               FROM mra.evaluation_protocol_metric WHERE evaluation_protocol_id = %s ORDER BY ordinal""",
+            (run[0],),
+        ).fetchall()
+        if len(metric_rows) != int(run[3]):
+            raise EvaluationReconciliationError("Evaluation Protocol roster is incomplete")
+        inputs = []
+        snapshots = {}
+        guards: dict[tuple[UUID, ...], str] = {}
+        reusable = {} if reuse_inputs is None else {item.metric.evaluation_protocol_metric_id: item for item in reuse_inputs}
+        for row in metric_rows:
+            metric = self._protocol_metric(row, UUID(str(run[0])))
+            sources = self._metric_source_rows(evaluation_run_id, metric)
+            if len(sources) != int(run[2]):
+                raise EvaluationReconciliationError("exact canonical metric input roster is incomplete or ambiguous")
+            guard = None
+            if metric.formula is not None and metric.formula.formula_version == 2:
+                _, entry, exit = episode_contract(metric.formula)
+                proposal_ids = list({source[30] for source in sources})
+                whole_lines = self._connection.execute(
+                    "SELECT portfolio_line_id FROM mra.portfolio_line WHERE portfolio_proposal_id = ANY(%s)",
+                    (proposal_ids,),
+                ).fetchall()
+                if {line[0] for line in whole_lines} != {source[31] for source in sources} or len(whole_lines) != len(sources):
+                    raise EvaluationReconciliationError("episode cannot split or duplicate the canonical Portfolio capital roster")
+                revisions = tuple(sorted({UUID(str(source[2])) for source in sources}, key=str))
+                if revisions not in guards:
+                    guards[revisions] = outcome_economic_guard(self._connection, revisions)
+                guard = guards[revisions]
+                prior = reusable.get(metric.evaluation_protocol_metric_id)
+                if prior is not None and guard != prior.outcome_guard_sha256:
+                    raise EvaluationReconciliationError("Outcome price Authority changed before commit")
+                prior_facts = {} if prior is None else {source[2]: source[45] for source in prior.source_rows}
+                run_ids = list({source[13] for source in sources})
+                unsupported = self._connection.execute(
+                    "SELECT count(*) FROM mra.exploratory_backtest_cost_assumption WHERE exploratory_backtest_run_id = ANY(%s) AND cost_kind = 'SLIPPAGE' AND amount_bps <> 0",
+                    (run_ids,),
+                ).fetchone()
+                if unsupported and unsupported[0]:
+                    raise EvaluationReconciliationError("V2 does not support nonzero slippage assumptions")
+                extended = []
+                for source in sources:
+                    identity = UUID(str(source[2]))
+                    if prior is not None:
+                        if identity not in prior_facts:
+                            raise EvaluationReconciliationError("prepared Outcome roster changed before commit")
+                        facts = prior_facts[identity]
+                    else:
+                        if identity not in snapshots:
+                            snapshots[identity] = _load_snapshot(self._connection, identity)
+                        facts = episode_prices(snapshots[identity].authority, entry, exit)
+                    extended.append((*source, facts))
+                sources = extended
+            inputs.append(EvaluationMetricInputs(metric, tuple(sources), guard))
+        return tuple(inputs)
+
+    def complete(self, evaluation_run_id: UUID, prepared: tuple[ComputedEvaluationMetric, ...] | None = None) -> EvaluationCompletionResult:
         run = self._connection.execute(
             """
             SELECT evaluation_protocol_id, expected_member_count,
@@ -354,40 +413,19 @@ class PostgresEvaluationRepository:
         ).fetchall()
         if len(metric_rows) != int(run[2]):
             raise EvaluationReconciliationError("Protocol metric roster is incomplete")
+        fresh = self.prepare(evaluation_run_id, reuse_inputs=None if prepared is None else tuple(item.inputs for item in prepared))
+        if prepared is None or fresh is None or canonical_json_sha256(fresh) != canonical_json_sha256(tuple(item.inputs for item in prepared)):
+            raise EvaluationReconciliationError("prepared Evaluation input identity/roster changed before commit")
         output_hashes: list[tuple[UUID, str]] = []
         total_inputs = 0
-        for row in metric_rows:
-            metric = self._protocol_metric(row, UUID(str(run[0])))
-            source_rows = self._metric_source_rows(evaluation_run_id, metric)
-            if len(source_rows) != int(run[1]):
-                raise EvaluationReconciliationError("exact canonical metric input roster is incomplete or ambiguous")
-            resolved = self._resolve_metric_inputs(metric, source_rows)
-            inputs = tuple(item.input for item in resolved)
-            legacy_result = evaluate_metric(metric, inputs)
-            result = legacy_result
-            metric_reason_code: str | None = None
-            if metric.formula is not None:
-                formula_result = evaluate_backtest_formula(
-                    metric.formula,
-                    self._formula_observations(metric, resolved),
-                )
-                result = _formula_metric_result(
-                    metric,
-                    formula_result.state,
-                    formula_result.decimal_value,
-                    formula_result.estimable_count,
-                    legacy_result,
-                )
-                metric_reason_code = formula_result.reason_code
+        for computation in prepared:
+            metric = computation.inputs.metric
+            source_rows = computation.inputs.source_rows
+            resolved = computation.resolved
+            result = computation.result
+            metric_reason_code = computation.reason_code
+            result_hash = computation.result_sha256
             evaluation_metric_id = self._id_factory()
-            result_payload: dict[str, object] = {
-                "metric": metric.content_sha256,
-                "result": result,
-            }
-            if metric.formula is not None:
-                result_payload["formula_content_sha256"] = str(metric.formula.content_sha256)
-                result_payload["reason_code"] = metric_reason_code
-            result_hash = canonical_json_sha256(result_payload)
             self._connection.execute(
                 """
                 INSERT INTO mra.evaluation_metric (
@@ -677,263 +715,8 @@ class PostgresEvaluationRepository:
             ),
         ).fetchall()
 
-    def _resolve_metric_inputs(
-        self,
-        metric: ProtocolMetricDefinition,
-        source_rows: list[tuple[Any, ...]],
-    ) -> tuple[_ResolvedMetricInput, ...]:
-        resolved: list[_ResolvedMetricInput] = []
-        previous_weights: dict[tuple[object, object], Decimal] = {}
-        for source in source_rows:
-            try:
-                arm_kind = ExploratoryBacktestArmKind(str(source[17])) if source[17] is not None else None
-            except ValueError:
-                # Current generic arm codes are exact relational lineage, not
-                # the private legacy WP arm vocabulary.
-                arm_kind = None
-            has_backtest_arm = source[14] is not None and source[17] is not None
-            if (
-                metric.slice_kind is EvaluationSliceKind.EXPLORATORY_BACKTEST_ARM
-                or metric.source_kind is not EvaluationSourceKind.OUTCOME_METRIC
-            ) and not has_backtest_arm:
-                raise EvaluationReconciliationError("exploratory metric source lacks exact Backtest arm lineage")
-            value_status = str(source[5])
-            decimal_value = source[6]
-            boolean_value = source[7]
-            secondary_decimal_value: Decimal | None = None
-            turnover: Decimal | None = None
-            previous_weight: Decimal | None = None
-            buy_turnover: Decimal | None = None
-            sell_turnover: Decimal | None = None
-            effective_weight: Decimal | None = None
-            gross_return: Decimal | None = None
-            net_return: Decimal | None = None
-            if metric.source_kind is EvaluationSourceKind.CANDIDATE_DISPOSITION:
-                decimal_value = None
-                boolean_value = str(source[3]) == CandidateDisposition.SELECTED.value
-                value_status = "COMPLETE"
-            elif metric.source_kind is EvaluationSourceKind.SIGNAL_STATUS:
-                if source[24] is None:
-                    raise EvaluationReconciliationError("Signal source is absent")
-                signal_status = str(source[25])
-                if signal_status in {"UNKNOWN", "NOT_ESTIMABLE"}:
-                    boolean_value = None
-                    value_status = "UNAVAILABLE"
-                else:
-                    boolean_value = signal_status == "PRESENT"
-                    value_status = "COMPLETE"
-                decimal_value = None
-            elif metric.source_kind is EvaluationSourceKind.FORECAST_OUTCOME_PAIR:
-                if source[26] is None or source[28] is None:
-                    raise EvaluationReconciliationError("Forecast source is absent or ambiguous")
-                decimal_value = source[29]
-                secondary_decimal_value = source[6]
-                boolean_value = None
-                if (
-                    str(source[27]) != "AVAILABLE"
-                    or decimal_value is None
-                    or secondary_decimal_value is None
-                    or str(source[5]) not in {"COMPLETE", "PARTIAL"}
-                ):
-                    value_status = "UNAVAILABLE"
-                else:
-                    value_status = str(source[5])
-            elif metric.source_kind is EvaluationSourceKind.CANDIDATE_OUTCOME_PAIR:
-                outcome_value = source[6]
-                outcome_available = outcome_value is not None and str(source[5]) in {"COMPLETE", "PARTIAL"}
-                if metric.source_measure is EvaluationSourceMeasure.CANDIDATE_SCORE_VS_TARGET:
-                    decimal_value = source[37]
-                    secondary_decimal_value = outcome_value
-                    boolean_value = None
-                    if decimal_value is None or not outcome_available:
-                        value_status = "UNAVAILABLE"
-                elif metric.source_measure is EvaluationSourceMeasure.CANDIDATE_TOP_K_RETURN:
-                    decimal_value = outcome_value if str(source[3]) == CandidateDisposition.SELECTED.value and outcome_available else None
-                    boolean_value = None
-                    if decimal_value is None:
-                        value_status = "UNAVAILABLE"
-                else:
-                    decimal_value = None
-                    boolean_value = (
-                        Decimal(outcome_value) > 0 if str(source[3]) == CandidateDisposition.SELECTED.value and outcome_available else None
-                    )
-                    if boolean_value is None:
-                        value_status = "UNAVAILABLE"
-            elif metric.source_kind in {
-                EvaluationSourceKind.PORTFOLIO_LINE,
-                EvaluationSourceKind.PORTFOLIO_OUTCOME,
-            }:
-                if source[30] is None or source[31] is None or source[34] is None:
-                    raise EvaluationReconciliationError("Portfolio source is absent or ambiguous")
-                proposed_weight = Decimal(source[33])
-                weight_key = (source[14], source[11])
-                prior = previous_weights.get(weight_key, Decimal(0))
-                previous_weight = prior
-                turnover = abs(proposed_weight - prior)
-                buy_turnover = max(proposed_weight - prior, Decimal(0))
-                sell_turnover = max(prior - proposed_weight, Decimal(0))
-                previous_weights[weight_key] = proposed_weight
-                if metric.source_kind is EvaluationSourceKind.PORTFOLIO_LINE:
-                    decimal_value = proposed_weight if metric.source_measure is EvaluationSourceMeasure.TARGET_WEIGHT else turnover
-                    boolean_value = None
-                    value_status = "COMPLETE"
-                else:
-                    if source[34] is None:
-                        raise EvaluationReconciliationError("Risk Gate source is absent")
-                    risk_status = str(source[35])
-                    if risk_status == "UNKNOWN":
-                        decimal_value = None
-                        value_status = "UNAVAILABLE"
-                    elif source[6] is None or str(source[5]) not in {"COMPLETE", "PARTIAL"}:
-                        decimal_value = None
-                        value_status = "UNAVAILABLE"
-                    else:
-                        effective_weight = proposed_weight if risk_status == "AUTHORIZED" else Decimal(0)
-                        gross_return = effective_weight * Decimal(source[6])
-                        if source[21] is None or source[23] is None:
-                            raise EvaluationReconciliationError("assumed-cost roster is absent")
-                        if metric.formula is not None:
-                            if source[41] is None or source[42] is None:
-                                raise EvaluationReconciliationError("Formula cost sources require explicit charge sides")
-                            assumed_cost = (buy_turnover * Decimal(source[41])
-                                            + sell_turnover * Decimal(source[42])) / Decimal(10_000)
-                        else:
-                            # The original non-formula reducer's frozen contract
-                            # charged its total bps per unit turnover. Replay of
-                            # that historical contract must not be reinterpreted.
-                            assumed_cost = turnover * Decimal(source[23]) / Decimal(10_000)
-                        net_return = gross_return - assumed_cost
-                        decimal_value = (
-                            gross_return if metric.source_measure is EvaluationSourceMeasure.GROSS_PORTFOLIO_RETURN else net_return
-                        )
-                        value_status = str(source[5])
-                    boolean_value = None
-            elif metric.source_kind is EvaluationSourceKind.RISK_DECISION:
-                if source[34] is None:
-                    raise EvaluationReconciliationError("Risk source is absent")
-                risk_status = str(source[35])
-                if risk_status == "UNKNOWN":
-                    boolean_value = None
-                    value_status = "UNAVAILABLE"
-                else:
-                    boolean_value = risk_status == "REJECTED"
-                    value_status = "COMPLETE"
-                decimal_value = None
-            group_key = f"{source[14] or 'UNBOUND'}:{source[12].isoformat()}"
-            item = EvaluationInput(
-                evaluation_observation_id=UUID(str(source[0])),
-                candidate_disposition=CandidateDisposition(str(source[3])),
-                source_value_status=value_status,
-                decimal_value=decimal_value,
-                boolean_value=boolean_value,
-                secondary_decimal_value=secondary_decimal_value,
-                backtest_arm_kind=arm_kind,
-                group_key=group_key,
-            )
-            resolved.append(
-                _ResolvedMetricInput(
-                    source=source,
-                    input=item,
-                    turnover=turnover,
-                    previous_weight=previous_weight,
-                    buy_turnover=buy_turnover,
-                    sell_turnover=sell_turnover,
-                    effective_weight=effective_weight,
-                    gross_return=gross_return,
-                    net_return=net_return,
-                )
-            )
-        return tuple(resolved)
-
-    @staticmethod
-    def _formula_observations(
-        metric: ProtocolMetricDefinition,
-        resolved: tuple[_ResolvedMetricInput, ...],
-    ) -> tuple[FormulaObservation, ...]:
-        assert metric.formula is not None
-        code = metric.formula.formula_code
-        ranked_membership: dict[UUID, FrozenRankingMembership] = {}
-        if code in {
-            BacktestFormulaCode.TOP_K_RETURN,
-            BacktestFormulaCode.TOP_BOTTOM_SPREAD,
-        }:
-            width = next(int(parameter.value) for parameter in metric.formula.parameters if parameter.parameter_code == "top_k")
-            group_keys = tuple(dict.fromkeys(item.input.group_key or "ALL" for item in resolved))
-            for group_key in group_keys:
-                members = tuple(item for item in resolved if (item.input.group_key or "ALL") == group_key)
-                ranking_index = 29 if metric.source_kind is EvaluationSourceKind.FORECAST_OUTCOME_PAIR else 37
-                if any(item.source[ranking_index] is None for item in members):
-                    continue
-                ranked = tuple(
-                    sorted(
-                        members,
-                        key=lambda item: (
-                            -Decimal(item.source[ranking_index]),
-                            str(item.source[11]),
-                        ),
-                    )
-                )
-                for item in ranked[:width]:
-                    ranked_membership[item.input.evaluation_observation_id] = FrozenRankingMembership.TOP
-                if code is BacktestFormulaCode.TOP_BOTTOM_SPREAD:
-                    for item in ranked[-width:]:
-                        identity = item.input.evaluation_observation_id
-                        if identity in ranked_membership:
-                            # Overlap is intentionally not coerced into a
-                            # fabricated spread; the formula sees incomplete
-                            # bottom membership and returns NOT_ESTIMABLE.
-                            continue
-                        ranked_membership[identity] = FrozenRankingMembership.BOTTOM
-        observations: list[FormulaObservation] = []
-        for ordinal, item in enumerate(resolved, start=1):
-            source_status = item.input.source_value_status
-            source_state = {
-                "COMPLETE": FormulaSourceState.AVAILABLE,
-                "PARTIAL": FormulaSourceState.AVAILABLE,
-                "UNAVAILABLE": FormulaSourceState.UNAVAILABLE,
-                "FAILED": FormulaSourceState.FAILED,
-            }.get(source_status, FormulaSourceState.UNKNOWN)
-            if (code is BacktestFormulaCode.SOURCE_GAP_RATE and item.source[43]):
-                source_state = FormulaSourceState.SOURCE_GAP
-            elif (code is BacktestFormulaCode.MISSINGNESS_RATE and item.source[44]):
-                source_state = FormulaSourceState.MISSING
-            value = item.input.decimal_value
-            secondary_value = item.input.secondary_decimal_value
-            if item.input.boolean_value is not None:
-                value = Decimal(1 if item.input.boolean_value else 0)
-            if code in {
-                BacktestFormulaCode.GROSS_EXPOSURE,
-                BacktestFormulaCode.NET_EXPOSURE,
-                BacktestFormulaCode.TURNOVER,
-            }:
-                value = None if item.source[33] is None else Decimal(item.source[33])
-                secondary_value = item.previous_weight
-            elif code is BacktestFormulaCode.NET_RETURN_ASSUMED_COST:
-                value = item.gross_return
-            membership = ranked_membership.get(
-                item.input.evaluation_observation_id,
-                (
-                    FrozenRankingMembership.SELECTED
-                    if item.input.candidate_disposition is CandidateDisposition.SELECTED
-                    else FrozenRankingMembership.ELIGIBLE
-                ),
-            )
-            observations.append(
-                FormulaObservation(
-                    observation_id=item.input.evaluation_observation_id,
-                    ordinal=ordinal,
-                    group_key=item.input.group_key or "ALL",
-                    source_state=source_state,
-                    value=value,
-                    secondary_value=secondary_value,
-                    ranking_membership=membership,
-                    decision_time=item.source[12],
-                    outcome_known_at=item.source[40],
-                    buy_turnover=item.buy_turnover,
-                    sell_turnover=item.sell_turnover,
-                )
-            )
-        return tuple(observations)
+    _resolve_metric_inputs = staticmethod(resolve_metric_inputs)
+    _formula_observations = staticmethod(formula_observations)
 
     def _insert_canonical_sources(
         self,
@@ -1409,40 +1192,6 @@ class PostgresEvaluationRepository:
             ):
                 raise EvaluationReconciliationError("Evaluation formula parameter does not reconcile")
         return _protocol_metric(row, formula=formula)
-
-
-def _formula_metric_result(
-    metric: ProtocolMetricDefinition,
-    state: FormulaResultState,
-    decimal_value: Decimal | None,
-    estimable_count: int,
-    classified: EvaluationMetricResult,
-) -> EvaluationMetricResult:
-    if state is FormulaResultState.NOT_ESTIMABLE:
-        return EvaluationMetricResult(
-            EvaluationMetricState.NOT_ESTIMABLE,
-            None,
-            None,
-            estimable_count,
-            AcceptanceState.NOT_ESTIMABLE,
-            classified.observations,
-        )
-    assert decimal_value is not None
-    if metric.acceptance_operator is AcceptanceOperator.NONE:
-        acceptance = AcceptanceState.NOT_APPLICABLE
-    else:
-        threshold = metric.acceptance_threshold
-        assert threshold is not None
-        accepted = decimal_value >= threshold if metric.acceptance_operator is AcceptanceOperator.AT_LEAST else decimal_value <= threshold
-        acceptance = AcceptanceState.ACCEPTED if accepted else AcceptanceState.REJECTED
-    return EvaluationMetricResult(
-        EvaluationMetricState.ESTIMATED,
-        decimal_value,
-        None,
-        estimable_count,
-        acceptance,
-        classified.observations,
-    )
 
 
 def _protocol_metric(

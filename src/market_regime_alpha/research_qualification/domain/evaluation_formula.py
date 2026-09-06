@@ -195,6 +195,9 @@ class EvaluationFormulaDefinition:
             self.parameters
         ):
             raise ValueError("formula parameter codes must be unique")
+        if self.formula_version == 2:
+            from market_regime_alpha.research_qualification.domain.episode_formula import episode_contract
+            episode_contract(self)
         roster_hash = ContentHash(
             canonical_json_sha256(
                 tuple(
@@ -274,12 +277,15 @@ def evaluate_backtest_formula(
 ) -> FormulaEvaluationResult:
     """Execute one explicitly supported V1 formula with Decimal semantics."""
 
-    if formula.formula_version != 1:
+    if formula.formula_version not in {1, 2}:
         raise ValueError("formula implementation version is unsupported")
     _require_unique_observations(observations)
     with localcontext() as context:
         context.prec = formula.decimal_precision
         context.rounding = _ROUNDING_MODES[formula.rounding_mode]
+        if formula.formula_version == 2:
+            from market_regime_alpha.research_qualification.domain.episode_formula import evaluate_episode_formula
+            return evaluate_episode_formula(formula, observations)
         return _evaluate_v1(formula, observations)
 
 

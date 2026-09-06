@@ -318,6 +318,12 @@ class ProtocolMetricDefinition:
             != self.evaluation_protocol_metric_id
         ):
             raise ValueError("formula does not belong to this Protocol metric")
+        if self.formula is not None and self.formula.formula_version == 2:
+            if (self.source_kind is not EvaluationSourceKind.PORTFOLIO_OUTCOME
+                    or self.source_measure not in {EvaluationSourceMeasure.GROSS_PORTFOLIO_RETURN,
+                                                   EvaluationSourceMeasure.NET_PORTFOLIO_RETURN_ASSUMED_COST}
+                    or self.slice_kind is not EvaluationSliceKind.ALL_MEMBERS):
+                raise ValueError("V2 economics requires whole-episode ALL_MEMBERS Portfolio Outcome rosters")
         content = {
             "acceptance_operator": self.acceptance_operator,
             "acceptance_threshold": self.acceptance_threshold,

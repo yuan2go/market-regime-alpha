@@ -823,7 +823,36 @@ class PostgresResearchEvaluationVerificationProvider:
                 required_commands=tuple(required_commands),
                 mismatches=mismatches,
             )
+        self._inspect_episode_results(evaluation_run_id, mismatches)
         return tuple(mismatches)
+
+    def _inspect_episode_results(self, evaluation_run_id: UUID, mismatches: list[Mismatch]) -> None:
+        from uuid import uuid4
+        from market_regime_alpha.infrastructure.postgres.repositories.research_evaluations import PostgresEvaluationRepository
+        from market_regime_alpha.research_qualification.domain.evaluation_computation import compute_evaluation
+
+        with self._pool.connection(read_only=True) as connection:
+            relation = connection.execute("SELECT to_regclass('mra.evaluation_metric_formula')").fetchone()
+            if relation is None or relation[0] is None:
+                return
+            rows = connection.execute(
+                """SELECT metric.evaluation_protocol_metric_id, metric.content_sha256,
+                          metric.decimal_value, metric.reason_code
+                   FROM mra.evaluation_metric metric
+                   JOIN mra.evaluation_metric_formula formula USING (evaluation_protocol_metric_id)
+                   WHERE metric.evaluation_run_id = %s AND formula.formula_version = 2""",
+                (evaluation_run_id,),
+            ).fetchall()
+            if not rows:
+                return
+            prepared = PostgresEvaluationRepository(connection, id_factory=uuid4).prepare(evaluation_run_id, include_completed=True)
+        assert prepared is not None
+        computed = compute_evaluation(tuple(item for item in prepared if item.metric.formula is not None and item.metric.formula.formula_version == 2))
+        by_id = {item.inputs.metric.evaluation_protocol_metric_id: item for item in computed}
+        for identity, digest, value, reason in rows:
+            item = by_id[identity]
+            if (item.result_sha256, item.result.decimal_value, item.reason_code) != (digest, value, reason):
+                mismatches.append(_identity("evaluation_run.episode_result", "exact V2 Outcome/Portfolio/Risk/cost recomputation", str(identity)))
 
     @staticmethod
     def _inspect_target_contract(

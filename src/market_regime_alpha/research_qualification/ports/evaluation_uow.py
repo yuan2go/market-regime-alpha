@@ -8,6 +8,8 @@ from types import TracebackType
 from typing import Protocol, Self
 from uuid import UUID
 
+from market_regime_alpha.research_qualification.domain.evaluation_computation import ComputedEvaluationMetric, EvaluationMetricInputs
+
 from market_regime_alpha.research_qualification.domain.evaluation import (
     EvaluationProtocolPlan,
     EvaluationRunPlan,
@@ -65,7 +67,9 @@ class EvaluationRepository(Protocol):
         self, plan: EvaluationRunPlan, *, request_sha256: str
     ) -> EvaluationRunRecord: ...
 
-    def complete(self, evaluation_run_id: UUID) -> EvaluationCompletionResult: ...
+    def prepare(self, evaluation_run_id: UUID) -> tuple[EvaluationMetricInputs, ...] | None: ...
+
+    def complete(self, evaluation_run_id: UUID, prepared: tuple[ComputedEvaluationMetric, ...] | None = None) -> EvaluationCompletionResult: ...
 
     def fail(self, evaluation_run_id: UUID, reason_code: str) -> EvaluationRunRecord: ...
 

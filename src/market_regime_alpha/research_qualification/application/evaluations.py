@@ -252,6 +252,11 @@ class EvaluationCommands:
             return self._complete_once(evaluation_run_id, context, runtime_claim=runtime_claim)
 
     def _complete_once(self, evaluation_run_id: UUID, context: CommandContext, *, runtime_claim: AttemptClaim | None) -> EvaluationMutationResult:
+        from market_regime_alpha.research_qualification.domain.evaluation_computation import compute_evaluation
+        # No receipt, business row lock, or Runtime fence is held during calculation.
+        with self._uow_provider() as read_uow:
+            inputs = read_uow.evaluations.prepare(evaluation_run_id)
+        prepared = None if inputs is None else compute_evaluation(inputs)
         request_hash = canonical_json_sha256({"evaluation_run_id": evaluation_run_id})
         with self._uow_provider() as uow:
             receipt = self._start(uow, "COMPLETE_EVALUATION_RUN", str(evaluation_run_id), request_hash, context, runtime_claim)
@@ -262,7 +267,7 @@ class EvaluationCommands:
                 _require_result_hash(receipt, canonical_json_sha256(completed))
                 self._finish_replay(uow, receipt, runtime_claim)
                 return _completion_result(completed, receipt.receipt_id, True)
-            completed = uow.evaluations.complete(evaluation_run_id)
+            completed = uow.evaluations.complete(evaluation_run_id, prepared)
             result_hash = canonical_json_sha256(completed)
             self._finish(uow, receipt, "EVALUATION_RUN", evaluation_run_id, 3, result_hash, context, runtime_claim)
             uow.commit()

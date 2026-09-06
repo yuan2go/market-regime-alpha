@@ -61,8 +61,12 @@ and Production qualification remain unauthorized.
 
 ### WP-18Q qualification freeze
 
-The active scope is R2 operational evidence recovery and qualification under the WP-18Q Design and
-Implementation Plan, not a new architecture or model program. Generic Backtest
+The active development scope is WP-RESEARCH-ECONOMICS-CORRECTNESS-01 under its
+[design contract](docs/references/WP-RESEARCH-ECONOMICS-CORRECTNESS-01-Design.md).
+Preserve R2 recovery and its frozen campaign without changing its process, source
+or operational evidence database. Its large campaign, future windows and hard-cut
+are not prerequisites for economics correctness. WP-18Q remains independently
+blocked under its existing Design and Implementation Plan. Generic Backtest
 uses the existing `exploratory_backtest_run` root and canonical Runtime,
 Dataset, Decision, Outcome, Model and Evaluation owners. Report is a
 deterministic projection of reconciled Authority/Evaluation, never a second
