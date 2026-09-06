@@ -84,3 +84,30 @@ this model rather than mislabelled as account statistics.
    architecture/docs, migration, build and wheel smoke gates. Record all actual
    outcomes in a new immutable Verification. WP18Q remains independently BLOCKED;
    neither its large campaign nor a future window is a dependency of this work.
+
+## Review correction checkpoint
+
+V2 requires an unfiltered current-specification Validation parent for one arm.
+The expected parent is derived from every participating Validation EVALUATION
+session before checking exact Decision/Target commitments and complete Portfolio
+line rosters. FIT, fold-filtered and Context-filtered partitions cannot claim V2
+path economics. Generic prerequisite fold Evaluations retain their declared
+non-V2 semantics; V2 belongs to the aggregate requirement.
+
+Optional `episode_slice_kind`/`episode_slice_key` select ALL, an exact FOLD, or
+TIME_MONTH (`YYYY-MM`, canonical Decision TradingSession date). ALL is the default
+and forbids a key. The entire parent closes before whole episodes are selected;
+an incomplete excluded episode still rejects completion. Context/regime selectors
+are unsupported. Monetary numerators are summed before division by the independent
+initial capital times the selected episode count. Sample floors count episodes,
+including explicitly funded cash-only episodes, rather than instrument rows.
+
+Outcome checkpoint facts cross an Outcome-owned typed read port after the
+Evaluation input UoW closes. Request-local reuse includes revision and checkpoint
+identities. Existing full Outcome reconstruction remains the owner verification;
+its per-revision query cost requires representative measurement. The write UoW
+rechecks the exact parent, source facts, complete line roster, Outcome price guard
+and live Runtime fence before atomically writing results. V2 reconciliation checks
+financial source values, classification and cost child rosters and their hashes
+using shared writer serialization, with no second financial algorithm. Historical
+V1 formula, result and report serialization remains conditional and unchanged.

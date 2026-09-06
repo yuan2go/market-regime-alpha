@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 from typing import Any, Callable
+from datetime import date
 from uuid import UUID
 
 import psycopg
 from market_regime_alpha.research_qualification.domain.evaluation_computation import ComputedEvaluationMetric, EvaluationMetricInputs
 from market_regime_alpha.research_qualification.domain.episode_formula import episode_contract
-from market_regime_alpha.outcome.domain.economic_prices import episode_prices
-from market_regime_alpha.infrastructure.postgres.queries.outcomes import _load_snapshot
 from market_regime_alpha.infrastructure.postgres.queries.outcome_economic_guard import outcome_economic_guard
 
 from market_regime_alpha.research_qualification.domain.evaluation_sources import (
@@ -322,7 +321,6 @@ class PostgresEvaluationRepository:
         if len(metric_rows) != int(run[3]):
             raise EvaluationReconciliationError("Evaluation Protocol roster is incomplete")
         inputs = []
-        snapshots = {}
         guards: dict[tuple[UUID, ...], str] = {}
         reusable = {} if reuse_inputs is None else {item.metric.evaluation_protocol_metric_id: item for item in reuse_inputs}
         for row in metric_rows:
@@ -331,8 +329,11 @@ class PostgresEvaluationRepository:
             if len(sources) != int(run[2]):
                 raise EvaluationReconciliationError("exact canonical metric input roster is incomplete or ambiguous")
             guard = None
+            session_dates: tuple[tuple[UUID, date], ...] = ()
             if metric.formula is not None and metric.formula.formula_version == 2:
-                _, entry, exit = episode_contract(metric.formula)
+                episode_contract(metric.formula)
+                from market_regime_alpha.infrastructure.postgres.queries.evaluation_episode_parent import require_episode_parent
+                session_dates = require_episode_parent(self._connection, evaluation_run_id, sources)
                 proposal_ids = list({source[30] for source in sources})
                 whole_lines = self._connection.execute(
                     "SELECT portfolio_line_id FROM mra.portfolio_line WHERE portfolio_proposal_id = ANY(%s)",
@@ -347,28 +348,12 @@ class PostgresEvaluationRepository:
                 prior = reusable.get(metric.evaluation_protocol_metric_id)
                 if prior is not None and guard != prior.outcome_guard_sha256:
                     raise EvaluationReconciliationError("Outcome price Authority changed before commit")
-                prior_facts = {} if prior is None else {source[2]: source[45] for source in prior.source_rows}
-                run_ids = list({source[13] for source in sources})
-                unsupported = self._connection.execute(
-                    "SELECT count(*) FROM mra.exploratory_backtest_cost_assumption WHERE exploratory_backtest_run_id = ANY(%s) AND cost_kind = 'SLIPPAGE' AND amount_bps <> 0",
-                    (run_ids,),
-                ).fetchone()
-                if unsupported and unsupported[0]:
-                    raise EvaluationReconciliationError("V2 does not support nonzero slippage assumptions")
-                extended = []
-                for source in sources:
-                    identity = UUID(str(source[2]))
-                    if prior is not None:
-                        if identity not in prior_facts:
-                            raise EvaluationReconciliationError("prepared Outcome roster changed before commit")
-                        facts = prior_facts[identity]
-                    else:
-                        if identity not in snapshots:
-                            snapshots[identity] = _load_snapshot(self._connection, identity)
-                        facts = episode_prices(snapshots[identity].authority, entry, exit)
-                    extended.append((*source, facts))
-                sources = extended
-            inputs.append(EvaluationMetricInputs(metric, tuple(sources), guard))
+                if prior is not None:
+                    prior_facts = {source[2]: source[45] for source in prior.source_rows}
+                    if set(prior_facts) != set(revisions):
+                        raise EvaluationReconciliationError("prepared Outcome roster changed before commit")
+                    sources = [(*source, prior_facts[source[2]]) for source in sources]
+            inputs.append(EvaluationMetricInputs(metric, tuple(sources), guard, session_dates))
         return tuple(inputs)
 
     def complete(self, evaluation_run_id: UUID, prepared: tuple[ComputedEvaluationMetric, ...] | None = None) -> EvaluationCompletionResult:
@@ -908,28 +893,34 @@ class PostgresEvaluationRepository:
             metric,
             resolved,
             input_ids,
-            lambda item: (
-                item.source[9],
-                item.source[10],
-                item.source[30],
-                item.source[31],
-                item.source[34],
-                item.source[32],
-                item.source[35],
-                item.source[33],
-                item.turnover,
-                item.effective_weight,
-                item.gross_return,
-                item.net_return,
-                item.input.source_value_status,
-                item.source[21],
-                item.source[22],
-            ),
+            _portfolio_source_values,
         )
         if metric.source_measure is EvaluationSourceMeasure.NET_PORTFOLIO_RETURN_ASSUMED_COST:
             with self._connection.cursor() as cursor:
+                cost_cache = {}
                 for item in resolved:
-                    cost_rows = self._connection.execute(
+                    key = item.source[13], item.source[14]
+                    if key not in cost_cache:
+                        cost_cache[key] = self._effective_cost_rows(*key)
+                    cost_rows = cost_cache[key]
+                    cursor.executemany(
+                        """
+                        INSERT INTO mra.evaluation_portfolio_cost_source (
+                            evaluation_metric_observation_id,
+                            exploratory_backtest_cost_assumption_id,
+                            exploratory_backtest_run_id, ordinal,
+                            cost_kind, amount_bps, evidence_class,
+                            assumption_content_sha256, content_sha256
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        (
+                            _portfolio_cost_values(input_ids[item.input.evaluation_observation_id], item.source[13], cost)
+                            for cost in cost_rows
+                        ),
+                    )
+
+    def _effective_cost_rows(self, run_id: UUID, arm_id: UUID):
+        return self._connection.execute(
                         """
                         SELECT cost.exploratory_backtest_cost_assumption_id,
                                cost.ordinal, cost.cost_kind, cost.amount_bps,
@@ -945,39 +936,8 @@ class PostgresEvaluationRepository:
                                    THEN %s ELSE NULL::uuid END
                         ORDER BY cost.ordinal
                         """,
-                        (item.source[14], item.source[13], item.source[14]),
+                        (arm_id, run_id, arm_id),
                     ).fetchall()
-                    cursor.executemany(
-                        """
-                        INSERT INTO mra.evaluation_portfolio_cost_source (
-                            evaluation_metric_observation_id,
-                            exploratory_backtest_cost_assumption_id,
-                            exploratory_backtest_run_id, ordinal,
-                            cost_kind, amount_bps, evidence_class,
-                            assumption_content_sha256, content_sha256
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                        """,
-                        (
-                            (
-                                input_ids[item.input.evaluation_observation_id],
-                                cost[0],
-                                item.source[13],
-                                cost[1],
-                                cost[2],
-                                cost[3],
-                                cost[4],
-                                cost[5],
-                                canonical_json_sha256(
-                                    {
-                                        "assumption": cost[0],
-                                        "assumption_content": cost[5],
-                                        "input": input_ids[item.input.evaluation_observation_id],
-                                    }
-                                ),
-                            )
-                            for cost in cost_rows
-                        ),
-                    )
 
     def _insert_risk_sources(
         self,
@@ -1220,6 +1180,18 @@ def _protocol_metric(
         missingness_policy=EvaluationMissingnessPolicy(str(row[17])),
         formula=formula,
     )
+
+
+def _portfolio_source_values(item: _ResolvedMetricInput) -> tuple[Any, ...]:
+    return (item.source[9], item.source[10], item.source[30], item.source[31],
+            item.source[34], item.source[32], item.source[35], item.source[33],
+            item.turnover, item.effective_weight, item.gross_return, item.net_return,
+            item.input.source_value_status, item.source[21], item.source[22])
+
+
+def _portfolio_cost_values(input_id: UUID, run_id: UUID, cost: tuple[Any, ...]) -> tuple[Any, ...]:
+    return (input_id, cost[0], run_id, cost[1], cost[2], cost[3], cost[4], cost[5],
+            canonical_json_sha256({"assumption": cost[0], "assumption_content": cost[5], "input": input_id}))
 
 
 def _metric_observation_values(

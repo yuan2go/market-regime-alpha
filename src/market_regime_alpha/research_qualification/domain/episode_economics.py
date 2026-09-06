@@ -44,8 +44,11 @@ class EpisodePolicy:
                       self.minimum_fee, self.slippage_bps):
             if not value.is_finite() or value < 0:
                 raise ValueError("capital and costs must be finite and nonnegative")
-        if self.initial_capital <= 0 or self.initial_capital != self.initial_capital.quantize(CENT):
-            raise ValueError("initial capital must be positive currency cents")
+        with localcontext() as context:
+            context.prec = self.decimal_precision
+            context.rounding = ROUND_HALF_EVEN
+            if self.initial_capital <= 0 or self.initial_capital != self.initial_capital.quantize(CENT):
+                raise ValueError("initial capital must be positive currency cents")
         if self.minimum_fee != 0 or self.slippage_bps != 0:
             raise ValueError("V2 supports explicitly zero minimum fee and slippage only")
 

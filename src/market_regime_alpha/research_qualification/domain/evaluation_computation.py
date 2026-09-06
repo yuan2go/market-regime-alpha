@@ -1,11 +1,13 @@
 """Deterministic Evaluation computation between input-read and result-write UoWs."""
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from datetime import date
+from uuid import UUID
 from typing import Any
-from decimal import Decimal, localcontext
+from decimal import Decimal, ROUND_HALF_EVEN, localcontext
 from market_regime_alpha.research_qualification.domain.evaluation import ProtocolMetricDefinition, EvaluationMetricResult, evaluate_metric
 from market_regime_alpha.research_qualification.domain.evaluation_formula import FormulaResultState, evaluate_backtest_formula
 from market_regime_alpha.research_qualification.domain.evaluation_sources import _ResolvedMetricInput, resolve_metric_inputs, formula_observations
-from market_regime_alpha.research_qualification.domain.research_vocabulary import EvaluationMetricState, AcceptanceState, AcceptanceOperator
+from market_regime_alpha.research_qualification.domain.research_vocabulary import EvaluationMetricState, AcceptanceState, AcceptanceOperator, EvaluationInputState
 from market_regime_alpha.shared.hashing import canonical_json_sha256
 
 @dataclass(frozen=True, slots=True)
@@ -13,6 +15,7 @@ class EvaluationMetricInputs:
     metric: ProtocolMetricDefinition
     source_rows: tuple[tuple[Any, ...], ...]
     outcome_guard_sha256: str | None = None
+    session_dates: tuple[tuple[UUID, date], ...] = ()
 
 @dataclass(frozen=True, slots=True)
 class ComputedEvaluationMetric:
@@ -33,8 +36,15 @@ def _compute(inputs: EvaluationMetricInputs) -> ComputedEvaluationMetric:
         # Preserve the historical input transform's 28-digit arithmetic; only
         # V2 moves its complete financial path to the frozen formula precision.
         context.prec = metric.formula.decimal_precision if metric.formula and metric.formula.formula_version == 2 else 28
-        resolved = resolve_metric_inputs(metric, list(inputs.source_rows))
+        if metric.formula is not None and metric.formula.formula_version == 2:
+            context.rounding = ROUND_HALF_EVEN
+        resolved = resolve_metric_inputs(metric, list(inputs.source_rows), inputs.session_dates)
         result = evaluate_metric(metric, tuple(item.input for item in resolved))
+        if metric.formula is not None and metric.formula.formula_version == 2:
+            selected_ids = {item.input.evaluation_observation_id for item in resolved if item.economic_selected}
+            result = replace(result, observations=tuple(item if item.evaluation_observation_id in selected_ids
+                             else replace(item, state=EvaluationInputState.EXCLUDED, reason_code="OUTSIDE_EPISODE_SLICE")
+                             for item in result.observations))
         reason = None
         if metric.formula is not None:
             formula_result = evaluate_backtest_formula(metric.formula, formula_observations(metric, resolved))

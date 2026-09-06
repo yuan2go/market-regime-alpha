@@ -94,3 +94,109 @@ def test_formula_cost_roster_mismatch_cannot_reinterpret_existing_result():
 def test_v2_gross_notional_turnover_uses_actual_sale_value():
     computed, = compute_evaluation((inputs(Code.TURNOVER),))
     assert computed.result.decimal_value == D(".42")
+
+
+def test_net_formula_cannot_consume_gross_profit_under_a_net_label():
+    with pytest.raises(ValueError, match="net source"):
+        replace(inputs().metric, source_measure=EvaluationSourceMeasure.GROSS_PORTFOLIO_RETURN)
+
+
+def test_v2_full_transform_freezes_rounding_independent_of_callers_context():
+    from decimal import localcontext, ROUND_DOWN, ROUND_UP, ROUND_HALF_EVEN
+    batch = inputs()
+    f = replace(batch.metric.formula, parameters=tuple(
+        replace(p, decimal_value=D(1003)) if p.parameter_code == "initial_capital" else p
+        for p in batch.metric.formula.parameters))
+    batch = replace(batch, metric=replace(batch.metric, formula=f))
+    results = []
+    for rounding in (ROUND_DOWN, ROUND_UP, ROUND_HALF_EVEN):
+        with localcontext() as context:
+            context.rounding = rounding
+            context.prec = 9
+            results.append(compute_evaluation((batch,))[0])
+    # 40.12 units: 401.20 buy, 441.32 sell, .40 + .88 fee = 38.84 PnL.
+    with localcontext() as context:
+        context.prec = 34
+        context.rounding = ROUND_HALF_EVEN
+        expected = D("19.42") / D(1003)
+    assert all(result.result.decimal_value == expected for result in results)
+    assert len({result.result_sha256 for result in results}) == 1
+
+
+def test_one_multi_instrument_episode_is_one_economic_sample():
+    batch = inputs()
+    first = batch.source_rows[1]
+    companion = list(first)
+    companion[0], companion[2], companion[11] = uuid4(), uuid4(), uuid4()
+    companion[45] = replace(first[45], revision_id=companion[2])
+    batch = replace(batch, source_rows=(first, tuple(companion)),
+                    metric=replace(batch.metric, minimum_estimable_count=2))
+    computed, = compute_evaluation((batch,))
+    assert computed.result.decimal_value is None
+    assert computed.result.estimable_count == 1
+    assert computed.reason_code == "INSUFFICIENT_EPISODE_OBSERVATIONS"
+
+
+def selected(batch, kind, key=None):
+    parameters = list(batch.metric.formula.parameters)
+    parameters.append(EvaluationFormulaParameter(uuid4(), len(parameters)+1, 'episode_slice_kind', FormulaParameterType.TEXT, text_value=kind))
+    if key is not None:
+        parameters.append(EvaluationFormulaParameter(uuid4(), len(parameters)+1, 'episode_slice_key', FormulaParameterType.TEXT, text_value=key))
+    return replace(batch, metric=replace(batch.metric, formula=replace(batch.metric.formula, parameters=tuple(parameters))))
+
+
+def test_fold_projection_uses_complete_parent_path_then_selects():
+    batch = inputs()
+    second = list(batch.source_rows[1])
+    second[15] = uuid4()
+    batch = replace(batch, source_rows=(batch.source_rows[0], tuple(second)))
+    whole, = compute_evaluation((batch,))
+    sliced, = compute_evaluation((selected(batch, 'FOLD', str(second[15])),))
+    assert sliced.result.decimal_value == D('.03872')
+    assert sliced.result.estimable_count == 1
+    assert sliced.resolved[0].economic_path_sha256 == whole.resolved[0].economic_path_sha256
+    assert [item.state.value for item in sliced.result.observations] == ['EXCLUDED', 'INCLUDED']
+    broken = list(batch.source_rows[0])
+    broken[33] = D(1)
+    broken[35] = 'AUTHORIZED'
+    with pytest.raises(EvaluationReconciliationError, match='INSUFFICIENT_CASH'):
+        compute_evaluation((selected(replace(batch, source_rows=(tuple(broken), tuple(second))), 'FOLD', str(second[15])),))
+
+
+@pytest.mark.parametrize('kind,key', [('FOLD', None), ('ALL', 'x'), ('CONTEXT', 'UP'), ('TIME_MONTH', '2026-13')])
+def test_unsupported_or_ambiguous_episode_selector_is_rejected(kind, key):
+    with pytest.raises(ValueError, match='episode slice'):
+        selected(inputs(), kind, key)
+
+
+def test_time_projection_uses_exact_session_dates_and_empty_slice_is_typed():
+    from datetime import date
+    batch = inputs()
+    second = list(batch.source_rows[1])
+    second[16] = uuid4()
+    batch = replace(batch, source_rows=(batch.source_rows[0], tuple(second)),
+                    session_dates=((batch.source_rows[0][16], date(2026, 1, 31)), (second[16], date(2026, 2, 2))))
+    projected, = compute_evaluation((selected(batch, 'TIME_MONTH', '2026-02'),))
+    assert projected.result.decimal_value == D('.03872')
+    empty, = compute_evaluation((selected(batch, 'TIME_MONTH', '2026-03'),))
+    assert empty.result.decimal_value is None
+    assert empty.reason_code == 'INSUFFICIENT_EPISODE_OBSERVATIONS'
+    with pytest.raises(EvaluationReconciliationError, match='canonical Decision TradingSession'):
+        compute_evaluation((replace(selected(batch, 'TIME_MONTH', '2026-02'), session_dates=()),))
+
+
+def test_owner_price_port_deduplicates_exact_revision_and_window():
+    from market_regime_alpha.research_qualification.application.evaluation_economics import acquire_episode_prices
+    batch = inputs()
+    raw = replace(batch, source_rows=tuple(row[:-1] for row in batch.source_rows))
+    class Owner:
+        def __init__(self):
+            self.requests = []
+        def episode_prices(self, identities, entry, exit):
+            self.requests.append((identities, entry, exit))
+            return tuple(row[-1] for row in batch.source_rows)
+    owner = Owner()
+    assert acquire_episode_prices((raw, raw, raw), owner) == (batch, batch, batch)
+    assert len(owner.requests) == 1
+    with pytest.raises(EvaluationReconciliationError, match='canonical Outcome price owner'):
+        acquire_episode_prices((raw,), None)

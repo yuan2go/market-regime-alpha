@@ -847,7 +847,13 @@ class PostgresResearchEvaluationVerificationProvider:
                 return
             prepared = PostgresEvaluationRepository(connection, id_factory=uuid4).prepare(evaluation_run_id, include_completed=True)
         assert prepared is not None
-        computed = compute_evaluation(tuple(item for item in prepared if item.metric.formula is not None and item.metric.formula.formula_version == 2))
+        from market_regime_alpha.research_qualification.application.evaluation_economics import acquire_episode_prices
+        from market_regime_alpha.infrastructure.postgres.queries.outcomes import PostgresOutcomeQueryProvider
+        computed = compute_evaluation(acquire_episode_prices(tuple(item for item in prepared if item.metric.formula is not None and item.metric.formula.formula_version == 2), PostgresOutcomeQueryProvider(self._pool)))
+        from market_regime_alpha.infrastructure.postgres.queries.evaluation_economic_children import economic_children_match
+        with self._pool.connection(read_only=True) as connection:
+            if not economic_children_match(connection, evaluation_run_id, computed):
+                mismatches.append(_identity("evaluation_run.episode_children", "exact V2 financial sources/classifications/costs and hashes", str(evaluation_run_id)))
         by_id = {item.inputs.metric.evaluation_protocol_metric_id: item for item in computed}
         for identity, digest, value, reason in rows:
             item = by_id[identity]

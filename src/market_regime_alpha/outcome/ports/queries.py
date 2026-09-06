@@ -7,6 +7,7 @@ from typing import Protocol
 from uuid import UUID
 
 from market_regime_alpha.outcome.domain import MarketTargetOutcomeAuthority
+from market_regime_alpha.outcome.domain.economic_prices import OutcomeEpisodePrices
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,6 +30,12 @@ class OutcomeReadPort(Protocol):
         self,
         commitment_id: UUID,
     ) -> OutcomeSnapshot | None: ...
+
+
+class OutcomeEpisodePriceReadPort(Protocol):
+    def episode_prices(
+        self, revision_ids: tuple[UUID, ...], entry_id: UUID, exit_id: UUID,
+    ) -> tuple[OutcomeEpisodePrices, ...]: ...
 
 
 __all__ = ["OutcomeReadPort", "OutcomeSnapshot"]

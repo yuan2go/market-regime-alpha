@@ -15,6 +15,8 @@ from market_regime_alpha.research_qualification.ports.evaluation_uow import (
     EvaluationUnitOfWork,
     EvaluationUnitOfWorkProvider,
 )
+from market_regime_alpha.outcome.ports.queries import OutcomeEpisodePriceReadPort
+from market_regime_alpha.research_qualification.application.evaluation_economics import acquire_episode_prices
 from market_regime_alpha.runtime.application import CommandContext, RuntimeCommandFailureRecorder
 from market_regime_alpha.runtime.errors import ArtifactIntegrityError
 from market_regime_alpha.runtime.ports import AttemptClaim, CommandFailureUnitOfWorkProvider, ReceiptRecord
@@ -33,7 +35,8 @@ class EvaluationMutationResult:
 
 
 class EvaluationCommands:
-    def __init__(self, uow_provider: EvaluationUnitOfWorkProvider, *, id_factory: Callable[[], UUID]) -> None:
+    def __init__(self, uow_provider: EvaluationUnitOfWorkProvider, *, id_factory: Callable[[], UUID], outcome_prices: OutcomeEpisodePriceReadPort | None = None) -> None:
+        self._outcome_prices = outcome_prices
         self._uow_provider = uow_provider
         self._id_factory = id_factory
         self._failure_recorder = RuntimeCommandFailureRecorder(
@@ -256,7 +259,7 @@ class EvaluationCommands:
         # No receipt, business row lock, or Runtime fence is held during calculation.
         with self._uow_provider() as read_uow:
             inputs = read_uow.evaluations.prepare(evaluation_run_id)
-        prepared = None if inputs is None else compute_evaluation(inputs)
+        prepared = None if inputs is None else compute_evaluation(acquire_episode_prices(inputs, self._outcome_prices))
         request_hash = canonical_json_sha256({"evaluation_run_id": evaluation_run_id})
         with self._uow_provider() as uow:
             receipt = self._start(uow, "COMPLETE_EVALUATION_RUN", str(evaluation_run_id), request_hash, context, runtime_claim)

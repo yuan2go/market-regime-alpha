@@ -11,6 +11,7 @@ from uuid import UUID
 
 from market_regime_alpha.research_qualification.domain.model import ArtifactBinding
 from market_regime_alpha.research_qualification.domain.evaluation_formula import (
+    BacktestFormulaCode,
     EvaluationFormulaDefinition,
 )
 from market_regime_alpha.research_qualification.domain.research_vocabulary import PartitionPurpose
@@ -319,6 +320,9 @@ class ProtocolMetricDefinition:
         ):
             raise ValueError("formula does not belong to this Protocol metric")
         if self.formula is not None and self.formula.formula_version == 2:
+            if (self.formula.formula_code is BacktestFormulaCode.NET_RETURN_ASSUMED_COST
+                    and self.source_measure is not EvaluationSourceMeasure.NET_PORTFOLIO_RETURN_ASSUMED_COST):
+                raise ValueError("net episode formula requires the net source")
             if (self.source_kind is not EvaluationSourceKind.PORTFOLIO_OUTCOME
                     or self.source_measure not in {EvaluationSourceMeasure.GROSS_PORTFOLIO_RETURN,
                                                    EvaluationSourceMeasure.NET_PORTFOLIO_RETURN_ASSUMED_COST}
