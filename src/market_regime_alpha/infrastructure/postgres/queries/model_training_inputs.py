@@ -525,7 +525,9 @@ def _require_training_root(
           ON backtest.exploratory_backtest_run_id = %s
          AND backtest.target_definition_id = model.target_definition_id
          AND backtest.feature_count = model.feature_count
-         AND backtest.feature_roster_sha256 = model.feature_roster_sha256
+         AND mra.model_backtest_feature_rosters_match(
+             model.model_id, backtest.exploratory_backtest_run_id
+         )
          AND backtest.evidence_lane = 'EXPLORATORY_RETROSPECTIVE'
         JOIN mra.exploratory_backtest_arm AS arm
           ON arm.exploratory_backtest_arm_id = %s

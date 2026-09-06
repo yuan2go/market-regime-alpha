@@ -21671,6 +21671,36 @@ CREATE TRIGGER model_training_hyperparameter_append_only
 BEFORE UPDATE OR DELETE ON mra.model_training_hyperparameter
 FOR EACH ROW EXECUTE FUNCTION mra.reject_append_only_mutation();
 
+CREATE FUNCTION mra.model_backtest_feature_rosters_match(
+    requested_model_id uuid, requested_backtest_run_id uuid
+)
+RETURNS boolean LANGUAGE sql STABLE AS $$
+    -- Model and Backtest use distinct aggregate-hash encodings. Compare their
+    -- exact ordered child identities without rewriting either owner's hash.
+    SELECT EXISTS (
+        SELECT 1 FROM mra.model_feature_definition
+        WHERE model_id = requested_model_id
+    ) AND NOT EXISTS (
+        SELECT 1
+        FROM (
+            SELECT ordinal, feature_definition_id, feature_definition_sha256
+            FROM mra.model_feature_definition
+            WHERE model_id = requested_model_id
+        ) AS model_feature
+        FULL JOIN (
+            SELECT feature_ordinal AS ordinal,
+                   feature_definition_id, feature_definition_sha256
+            FROM mra.exploratory_backtest_feature
+            WHERE exploratory_backtest_run_id = requested_backtest_run_id
+        ) AS backtest_feature USING (ordinal)
+        WHERE (model_feature.ordinal, model_feature.feature_definition_id,
+               model_feature.feature_definition_sha256)
+              IS DISTINCT FROM
+              (backtest_feature.ordinal, backtest_feature.feature_definition_id,
+               backtest_feature.feature_definition_sha256)
+    );
+$$;
+
 CREATE FUNCTION mra.validate_model_training_run()
 RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE actual_count integer;
@@ -21698,7 +21728,9 @@ BEGIN
          AND backtest.target_definition_id = model.target_definition_id
          AND backtest.evidence_lane = 'EXPLORATORY_RETROSPECTIVE'
          AND backtest.feature_count = model.feature_count
-         AND backtest.feature_roster_sha256 = model.feature_roster_sha256
+         AND mra.model_backtest_feature_rosters_match(
+             model.model_id, backtest.exploratory_backtest_run_id
+         )
         JOIN mra.exploratory_backtest_arm AS arm
           ON arm.exploratory_backtest_arm_id = NEW.exploratory_backtest_arm_id
          AND arm.exploratory_backtest_run_id =
