@@ -59,18 +59,23 @@ only Model/backtest path without reopening that Provider gate. Calibration
 remains optional and unstarted. Execution, Runtime/CLI Cutover, Legacy deletion,
 and Production qualification remain unauthorized.
 
-### Research economics correctness and WP-18Q freeze
+### Research economics correctness and WP-18Q-R2 continuation
 
 WP-RESEARCH-ECONOMICS-CORRECTNESS-01 has completed its bounded local gate in the
 [immutable Verification](docs/references/WP-RESEARCH-ECONOMICS-CORRECTNESS-01-Verification.md).
 Its [design contract](docs/references/WP-RESEARCH-ECONOMICS-CORRECTNESS-01-Design.md)
 retains independent funded, fully liquidated hypothetical episodes, complete
 parent/root/child reconciliation and explicit unsupported-model refusals.
-This exit authorizes neither a model expansion nor later Roadmap execution.
-Preserve R2 recovery and its frozen campaign without changing its process, source
-or operational evidence database. Its large campaign, future windows and hard-cut
-are not prerequisites for economics correctness. WP-18Q remains independently
-blocked under its existing Design and Implementation Plan. Generic Backtest
+This exit authorizes no model expansion. The subsequent explicit user request
+resumes the existing WP-18Q-R2 chain: canonical campaign recovery, generic
+report/compare/replay, prospective continuity, backup/restore and conditional
+WP-specific retirement. Before authorized research append writes, verify exact
+database identity, backup, disk, active attempts and a single writer. Preserve
+the frozen campaign's source, protocol and existing results; do not replace its
+worker, migrate its database, or reinterpret its V1 economics using V2.
+Its large campaign, future windows and hard-cut remain independent of the
+completed economics gate. WP-18Q remains blocked under its existing Design and
+Implementation Plan until its own evidence closes. Generic Backtest
 uses the existing `exploratory_backtest_run` root and canonical Runtime,
 Dataset, Decision, Outcome, Model and Evaluation owners. Report is a
 deterministic projection of reconciled Authority/Evaluation, never a second

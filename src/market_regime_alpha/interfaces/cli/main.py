@@ -159,8 +159,10 @@ def _dispatch(arguments: argparse.Namespace, settings: TargetSettings) -> object
                     specification,
                     _backtest_context(arguments, "PREDECLARE_BACKTEST"),
                 )
-            if command in {"run", "resume", "inspect"}:
+            if command in {"run", "resume", "inspect", "progress"}:
                 run = application.backtest_specifications.load(arguments.run_id)
+                if command == "progress":
+                    return application.backtest_execution.progress(run)
                 if command == "run":
                     return application.backtest_execution.run(run)
                 if command == "resume":
@@ -337,7 +339,7 @@ def _parser() -> argparse.ArgumentParser:
         operation.add_argument("--specification", required=True, type=Path)
         if command == "predeclare":
             _add_backtest_mutation_arguments(operation)
-    for command in ("run", "resume", "inspect", "replay"):
+    for command in ("run", "resume", "inspect", "replay", "progress"):
         operation = backtest_commands.add_parser(command)
         operation.add_argument("--run-id", required=True, type=UUID)
     report = backtest_commands.add_parser("report")

@@ -288,6 +288,7 @@ def test_mra_cli_recreate_plan_apply_requires_same_operator_and_exact_plan(
     identity = manager.database_identity()
     plan_path = tmp_path / "recreate-plan.json"
     plan_output = StringIO()
+    plan_error = StringIO()
 
     assert (
         main(
@@ -309,10 +310,10 @@ def test_mra_cli_recreate_plan_apply_requires_same_operator_and_exact_plan(
             ],
             environ=environment,
             stdout=plan_output,
-            stderr=StringIO(),
+            stderr=plan_error,
         )
         == 0
-    )
+    ), plan_error.getvalue()
     plan_payload = json.loads(plan_output.getvalue())
     assert plan_path.exists()
     assert plan_payload["active_connection_pids"] == []

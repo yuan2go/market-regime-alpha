@@ -390,3 +390,90 @@ def test_observer_bounds_runtime_queries_without_losing_bindings(backtest_stack)
     scoped_rows = [row for batch in batches for row in batch]
     assert len(scoped_rows) == 1
     assert scoped_rows[0]["action_id"] == actions[0].action_id
+
+
+def test_cli_progress_projects_runtime_without_claiming_owner_completion(
+    backtest_stack, target_database_url, tmp_path,
+) -> None:
+    from io import StringIO
+    import json
+
+    from market_regime_alpha.infrastructure.postgres.evidence_backup import _table_hashes
+    from market_regime_alpha.interfaces.cli import main
+
+    specification = _backtests._current_specification(backtest_stack)
+    backtests = BacktestApplication(
+        PostgresBacktestUnitOfWorkProvider(backtest_stack.pool), id_factory=uuid4,
+    )
+    backtests.predeclare(specification, _context("progress-predeclare"))
+    frozen = backtests.plan(specification)
+    expected = BacktestExecutionPlanner().compile(frozen).expected_actions
+    runtime = RuntimeApplication(PostgresUnitOfWorkProvider(backtest_stack.pool))
+    # Runtime is genuinely SUCCEEDED, but the stub creates no Dataset business
+    # result. Progress must never admit business completion on this evidence.
+    _executor(backtest_stack, _CompletingHandler(runtime)).execute(
+        frozen, expected[0], BacktestNextOperation.EXECUTE,
+    )
+    with backtest_stack.pool.connection(read_only=True) as connection:
+        before = _table_hashes(connection)
+    outputs = []
+    for _ in range(2):
+        output, error = StringIO(), StringIO()
+        assert main(
+            ["backtest", "progress", "--run-id", str(frozen.exploratory_backtest_run_id)],
+            environ={
+                "MRA_DATABASE_URL": target_database_url,
+                "MRA_ARTIFACT_ROOT": str(tmp_path / "unread-progress-artifacts"),
+            },
+            stdout=output, stderr=error,
+        ) == 0, error.getvalue()
+        payload = json.loads(output.getvalue())
+        assert payload["owner_reconciliation"] == "NOT_PERFORMED"
+        assert "execution_state" not in payload
+        assert len(payload["actions"]) == len(expected)
+        assert [item["action_id"] for item in payload["actions"]] == [
+            str(action.action_id) for action in expected
+        ]
+        registered = [item for item in payload["actions"] if item["runtime_run_id"]]
+        assert len(registered) == 1
+        assert registered[0]["runtime_state"] == "SUCCEEDED"
+        assert registered[0]["latest_attempt_state"] == "SUCCEEDED"
+        payload.pop("observed_at")
+        outputs.append(payload)
+    assert outputs[0] == outputs[1]
+    with backtest_stack.pool.connection(read_only=True) as connection:
+        assert _table_hashes(connection) == before
+
+
+@pytest.mark.parametrize("field", ["action_content_sha256", "content_sha256"])
+def test_progress_rejects_changed_binding_fields_even_with_succeeded_runtime(
+    backtest_stack, field,
+) -> None:
+    from psycopg import sql
+    from market_regime_alpha.infrastructure.postgres.queries.backtest_execution import (
+        PostgresBacktestExecutionObservationPort,
+    )
+    from market_regime_alpha.runtime.errors import ArtifactIntegrityError
+
+    specification = _backtests._current_specification(backtest_stack)
+    backtests = BacktestApplication(
+        PostgresBacktestUnitOfWorkProvider(backtest_stack.pool), id_factory=uuid4,
+    )
+    backtests.predeclare(specification, _context("progress-corruption"))
+    frozen = backtests.plan(specification)
+    expected = BacktestExecutionPlanner().compile(frozen).expected_actions
+    runtime = RuntimeApplication(PostgresUnitOfWorkProvider(backtest_stack.pool))
+    _executor(backtest_stack, _CompletingHandler(runtime)).execute(
+        frozen, expected[0], BacktestNextOperation.EXECUTE,
+    )
+    # The fixture is an explicitly disposable target_database_url. Bypass only
+    # its immutability triggers to inject legal-width content corruption.
+    with backtest_stack.pool.connection() as connection:
+        connection.execute("SET LOCAL session_replication_role = replica")
+        connection.execute(
+            sql.SQL("UPDATE mra.backtest_runtime_binding SET {} = %s WHERE action_id = %s").format(sql.Identifier(field)),
+            ("e" * 64, expected[0].action_id),
+        )
+        connection.commit()
+    with pytest.raises(ArtifactIntegrityError, match="differs from frozen intent"):
+        PostgresBacktestExecutionObservationPort(backtest_stack.pool).runtime_progress(frozen, expected)

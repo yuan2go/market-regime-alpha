@@ -19,9 +19,12 @@ binds `a107d98e`: complete root/child integrity, full-parent multi-episode
 fold/month projections, hand arithmetic, canonical faults/recovery, finite
 restored-input control, historical report/replay and 4,045-case full regression
 pass. No second economics package or model expansion is required for this exit.
-Preserve R2 recovery and the frozen campaign. The following unresolved WP-18Q
-gates remain separate; completion of this package does not authorize intervening
-in that campaign or executing later Roadmap work. Architecture remains frozen.
+The subsequent explicit user request resumes the existing R2 recovery chain.
+Preserve the frozen campaign's code and research identities while reconciling
+and resuming authorized work after identity, backup, disk and single-writer
+preflight. The following unresolved WP-18Q gates remain independent of the
+completed economics gate. Architecture remains frozen; operational migrations,
+process replacement and full Runtime/CLI cutover remain unauthorized.
 The historical WP-17P PASS below is not a Generic Platform qualification.
 
 | WP-18Q P0 gate | Current planning disposition | Minimum re-entry evidence |
