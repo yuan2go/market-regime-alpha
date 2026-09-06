@@ -21,6 +21,7 @@ from market_regime_alpha.research_qualification.domain.backtest import (
 )
 from market_regime_alpha.research_qualification.domain.backtest_report import (
     BacktestComparisonMode,
+    BacktestComparisonFingerprint,
     BacktestReportConfiguration,
     BacktestReportMetric,
     BacktestReportSource,
@@ -105,6 +106,12 @@ def _source(*, cost_hash: str = "7" * 64) -> BacktestReportSource:
         evaluation_run_ids=evaluation_run_ids,
         metrics=metrics,
         models=(),
+        comparison_scope=BacktestComparisonFingerprint(
+            market_archive_sha256="1" * 64, universe_sample_sha256="2" * 64,
+            target_sha256="3" * 64, fold_dependency_sha256="4" * 64,
+            cost_sha256=cost_hash, portfolio_risk_sha256="5" * 64,
+            evaluation_formula_sha256="6" * 64, evidence_lane=run.evidence.value,
+        ),
         limitations=("Retrospective exploratory data only.",),
         recommended_next_experiment="Collect target-aligned prospective samples.",
     )
@@ -259,6 +266,62 @@ def test_postgres_report_projection_has_no_raw_market_reader_or_formula_executio
     assert "formulaobservation" not in source
     assert ".evaluate(" not in source
     assert "repeatable read" in source
+
+
+def test_comparison_scope_is_not_part_of_immutable_report_bytes() -> None:
+    source = _source()
+    updated = replace(source, comparison_scope=replace(source.comparison_scope, cost_sha256="0" * 64))
+    original_app = BacktestReportApplication(_Source({source.run.exploratory_backtest_run_id: source}), _Verifier())
+    updated_app = BacktestReportApplication(_Source({source.run.exploratory_backtest_run_id: updated}), _Verifier())
+    assert source.content_sha256 == updated.content_sha256
+    assert original_app.render_json(source.run.exploratory_backtest_run_id) == updated_app.render_json(source.run.exploratory_backtest_run_id)
+    assert original_app.render_markdown(source.run.exploratory_backtest_run_id) == updated_app.render_markdown(source.run.exploratory_backtest_run_id)
+
+
+def test_like_for_like_projection_matches_folds_across_execution_identities() -> None:
+    left = _source()
+    left = replace(left, metrics=(
+        replace(left.metrics[0], scope_kind="FOLD", fold_id=left.run.folds[0].exploratory_backtest_fold_id),
+        *left.metrics[1:],
+    ))
+    arm_ids = {arm.exploratory_backtest_arm_id: uuid4() for arm in left.run.arms}
+    fold_ids = {fold.exploratory_backtest_fold_id: uuid4() for fold in left.run.folds}
+    evaluation_ids = {identity: uuid4() for identity in left.evaluation_run_ids}
+    right_run = replace(
+        left.run, exploratory_backtest_run_id=uuid4(), run_code="same_scope_new_execution",
+        arms=tuple(replace(arm, exploratory_backtest_arm_id=arm_ids[arm.exploratory_backtest_arm_id]) for arm in left.run.arms),
+        folds=tuple(replace(fold, exploratory_backtest_fold_id=fold_ids[fold.exploratory_backtest_fold_id]) for fold in left.run.folds),
+        fold_dependencies=tuple(replace(item, dependency_id=uuid4(), fit_fold_id=fold_ids[item.fit_fold_id], validation_fold_id=fold_ids[item.validation_fold_id]) for item in left.run.fold_dependencies),
+        arm_folds=tuple(replace(item, arm_fold_id=uuid4(), arm_id=arm_ids[item.arm_id], fold_id=fold_ids[item.fold_id]) for item in left.run.arm_folds),
+        model_training_requirements=tuple(replace(item, requirement_id=uuid4(), model_arm_id=arm_ids[item.model_arm_id], fit_fold_id=fold_ids[item.fit_fold_id], validation_fold_id=fold_ids[item.validation_fold_id]) for item in left.run.model_training_requirements),
+        evaluation_requirements=tuple(replace(item, requirement_id=uuid4(), arm_id=arm_ids[item.arm_id], fold_id=fold_ids.get(item.fold_id)) for item in left.run.evaluation_requirements),
+    )
+    # A source adapter supplies an identical comparison scope while retaining
+    # different execution lineage in the report's canonical configuration.
+    right = replace(
+        left, run=right_run,
+        configuration=replace(left.configuration, fold_roster_sha256="0" * 64,
+                              dependency_roster_sha256="1" * 64,
+                              cost_roster_sha256="2" * 64,
+                              effective_policy_roster_sha256="3" * 64,
+                              evaluation_formula_roster_sha256="4" * 64),
+        evaluation_run_ids=tuple(evaluation_ids.values()),
+        metrics=tuple(replace(metric, evaluation_metric_id=uuid4(),
+                              evaluation_requirement_id=uuid4(),
+                              evaluation_run_id=evaluation_ids[metric.evaluation_run_id],
+                              arm_id=arm_ids[metric.arm_id], fold_id=fold_ids.get(metric.fold_id))
+                      for metric in left.metrics),
+    )
+    application = BacktestReportApplication(_Source({
+        left.run.exploratory_backtest_run_id: left,
+        right.run.exploratory_backtest_run_id: right,
+    }), _Verifier())
+    comparison = application.compare(left.run.exploratory_backtest_run_id, right.run.exploratory_backtest_run_id)
+    assert comparison.mode is BacktestComparisonMode.LIKE_FOR_LIKE
+    assert comparison.mismatch_fields == ()
+    assert len(comparison.metric_deltas) == len(left.metrics)
+    assert all(item.delta == 0 for item in comparison.metric_deltas)
+    assert comparison.winner_run_id is None
 
 
 def test_report_publication_binds_exact_json_and_markdown_artifacts() -> None:

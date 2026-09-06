@@ -18,6 +18,7 @@ from market_regime_alpha.research_qualification.domain.backtest import (
     BacktestWalkForwardMode,
     BacktestWalkForwardPolicy,
     VersionedAuthorityBinding,
+    freeze_backtest_specification,
 )
 from market_regime_alpha.research_qualification.domain.backtest_report import (
     BacktestReportConfiguration,
@@ -25,6 +26,7 @@ from market_regime_alpha.research_qualification.domain.backtest_report import (
     BacktestReportModel,
     BacktestReportRiskReason,
     BacktestReportSource,
+    specification_comparison_fingerprint,
 )
 from market_regime_alpha.research_qualification.domain.evaluation_formula import (
     BacktestFormulaCode,
@@ -62,7 +64,8 @@ class PostgresBacktestReportSourcePort:
         self._backtests = PostgresBacktestQueryPort(pool)
 
     def load(self, exploratory_backtest_run_id: UUID) -> BacktestReportSource:
-        run = self._backtests.load(exploratory_backtest_run_id)
+        specification = self._backtests.load_specification(exploratory_backtest_run_id)
+        run = freeze_backtest_specification(specification)
         if not run.evaluation_requirements:
             raise BacktestReportIntegrityError("standard reports require a current relational specification")
         with self._pool.connection(read_only=True) as connection:
@@ -280,6 +283,7 @@ class PostgresBacktestReportSourcePort:
             evaluation_run_ids=evaluation_ids,
             metrics=metrics,
             models=tuple(_model(row) for row in model_rows),
+            comparison_scope=specification_comparison_fingerprint(specification, metrics),
             risk_reasons=tuple(BacktestReportRiskReason(**row) for row in risk_rows),
             limitations=(
                 "Retrospective exploratory evidence only.",
