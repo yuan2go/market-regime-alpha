@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from uuid import UUID
 
+import pytest
+
 from market_regime_alpha.infrastructure.postgres.queries.backtest_execution import (
     _reconcile_current_runtime,
 )
@@ -158,3 +160,46 @@ def test_unsettled_commitments_are_not_outcome_execution_evidence():
     assert _reconcile_current_runtime(run, action, observed, ()).state is BacktestObservedState.ABSENT
     partial = {_scope(action): [{"market_target_outcome_revision_id": UUID(int=9002)}, {"market_target_outcome_revision_id": None}]}
     assert observer._outcome(action, decisions, partial).state is BacktestObservedState.MATCHED_INCOMPLETE
+
+
+@pytest.mark.parametrize("missing", ("sample_roster", "reproducibility_roster"))
+def test_current_model_root_hashes_do_not_replace_registered_input_reload(missing):
+    from market_regime_alpha.infrastructure.postgres.queries.backtest_execution import PostgresBacktestExecutionObservationPort
+    from market_regime_alpha.research_qualification.domain.backtest_execution import BacktestActionKind
+    from market_regime_alpha.runtime.errors import ArtifactIntegrityError
+
+    run = _run()
+    action = next(a for a in BacktestExecutionPlanner().compile(run).expected_actions if a.kind is BacktestActionKind.TRAIN_MODEL)
+    requirement = next(r for r in run.model_training_requirements if r.requirement_id == action.model_training_requirement_id)
+    training_id = UUID(int=9101)
+    loaded = []
+
+    class MissingCanonicalInputs:
+        def load_registered_reproducible(self, model_training_run_id):
+            loaded.append(model_training_run_id)
+            raise ArtifactIntegrityError(f"missing canonical {missing}")
+
+    observer = PostgresBacktestExecutionObservationPort(None)
+    observer._model_inputs = MissingCanonicalInputs()
+    lineage = {
+        "model_id": requirement.model_definition.authority_id,
+        "model_training_run_id": training_id,
+        "model_training_run_sha256": "a" * 64,
+        "canonical_training_sha256": "a" * 64,
+        "model_training_reproducibility_sha256": "b" * 64,
+        "canonical_reproducibility_sha256": "b" * 64,
+        "model_version_sha256": "c" * 64,
+        "canonical_version_sha256": "c" * 64,
+    }
+    observed = observer._training(
+        action, {}, {requirement.requirement_id: [lineage]},
+        {requirement.requirement_id: requirement}, current=True,
+    )
+    assert observed.state is BacktestObservedState.MISMATCH
+    assert loaded == [training_id]
+    observer._model_inputs = None
+    with pytest.raises(ArtifactIntegrityError, match="requires the canonical training input owner"):
+        observer._training(
+            action, {}, {requirement.requirement_id: [lineage]},
+            {requirement.requirement_id: requirement}, current=True,
+        )

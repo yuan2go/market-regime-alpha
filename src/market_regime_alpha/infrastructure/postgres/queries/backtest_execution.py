@@ -31,6 +31,13 @@ from market_regime_alpha.research_qualification.domain.backtest_execution import
     BacktestResearchState,
     BacktestRuntimeBinding,
 )
+from market_regime_alpha.research_qualification.ports.model_inputs import (
+    ModelTrainingInputProvider,
+)
+from market_regime_alpha.runtime.errors import (
+    ArtifactIntegrityError,
+    RuntimeNotFoundError,
+)
 
 
 _Scope = tuple[UUID, UUID, UUID]
@@ -51,11 +58,17 @@ _FOLD_METRIC_STATES_SQL = """
 class PostgresBacktestExecutionObservationPort:
     """Observe owner state without persisting a second workflow cursor."""
 
-    def __init__(self, pool: TargetPostgresPool) -> None:
+    def __init__(
+        self,
+        pool: TargetPostgresPool,
+        *,
+        model_inputs: ModelTrainingInputProvider | None = None,
+    ) -> None:
         self._pool = pool
         self._decisions = PostgresDecisionRunVerificationProvider(pool)
         self._outcomes = PostgresOutcomeVerificationProvider(pool)
         self._evaluations = PostgresResearchEvaluationVerificationProvider(pool)
+        self._model_inputs = model_inputs
 
     def observe(
         self,
@@ -445,8 +458,8 @@ class PostgresBacktestExecutionObservationPort:
             research_state,
         )
 
-    @staticmethod
     def _training(
+        self,
         action: BacktestExpectedAction,
         rows_by_scope: dict[tuple[UUID, UUID], list[dict[str, Any]]],
         lineage_by_requirement: dict[UUID, list[dict[str, Any]]],
@@ -479,6 +492,21 @@ class PostgresBacktestExecutionObservationPort:
                 and str(lineage["model_training_reproducibility_sha256"]) == str(lineage["canonical_reproducibility_sha256"])
                 and str(lineage["model_version_sha256"]) == str(lineage["canonical_version_sha256"])
             )
+            if exact:
+                if self._model_inputs is None:
+                    raise ArtifactIntegrityError("current Model observation requires the canonical training input owner")
+                try:
+                    registered = self._model_inputs.load_registered_reproducible(
+                        UUID(str(lineage["model_training_run_id"]))
+                    )
+                except (ArtifactIntegrityError, RuntimeNotFoundError):
+                    exact = False
+                else:
+                    exact = (
+                        registered.training.model_id == requirement.model_definition.authority_id
+                        and str(registered.reproducibility.content_sha256)
+                        == str(lineage["canonical_reproducibility_sha256"])
+                    )
             return BacktestActionObservation(
                 action.action_id,
                 (BacktestObservedState.MATCHED_COMPLETE if exact else BacktestObservedState.MISMATCH),
