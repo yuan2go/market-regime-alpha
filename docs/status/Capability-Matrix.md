@@ -63,7 +63,7 @@ BACKTEST_PLATFORM = NOT_ENGINEERING_QUALIFIED
 | WP-specific hard-cut | Executable WP orchestration remains because real campaign/report/replay prerequisites are not complete | Generic surface target / `HARD_CUT_BLOCKED` |
 | Research Qualification | Concrete Evidence/Assessment/policy/floor/decision and later-generation reads; training or positive returns never qualify a model | Research / `NO_EMPIRICAL_PROMOTION` |
 | Formal Research Campaign | Freeze/protected-open/Runtime/Provider-gate mechanics exist; rejected Provider evidence prevents real Formal OOS execution | Research + Runtime / `FORMAL_OOS_NOT_RUN` |
-| Prospective | Target-aligned generation/planning/terminal/revision and Runtime mechanics exist; new scope has 288 future slices; PostgreSQL continuation found due=0 at 2026-09-06 05:25:55 UTC; original history is discontinuous | Market + existing Runtime / `NOT_DUE / LIVE_PROOF_BLOCKED` |
+| Prospective | Target-aligned generation/planning/terminal/revision and Runtime mechanics exist; new scope has 288 future slices; PostgreSQL continuation found due=0 at 2026-09-06 08:31:13 UTC; original history is discontinuous | Market + existing Runtime / `NOT_DUE / LIVE_PROOF_BLOCKED` |
 
 The original operational scope remains unavailable at inspected locations.
 R2 recovered immutable historical evidence into a distinct operational scope,
@@ -88,9 +88,12 @@ operational bundle outside the closed epoch-migration file list. At `d11405ef`,
 actual published report bytes remain identical. Full regression at that source
 was interrupted after 1,796 passing tests when real Run `e948d119` failed on an
 unindexed canonical receipt lookup. Clean `f247ca5d` adds one partial covering
-index; 39 focused tests and disposable v5 schema qualification pass. The original
-failed Run is retained, operational v5 upgrade is pending, and complete regression
-and real comparison must still close.
+index; 39 focused tests, disposable v5 schema qualification and the full repository
+gate pass: 3,997 tests and four subtests, without skips or xfails. The original
+failed Run is retained. Independent fresh restore and operational v5 upgrades
+preserve all 189 business tables, physical Artifacts and completed replay; the
+real receipt query reads one indexed row and preserves its exact result.
+Real comparison and final qualification after hard-cut must still close.
 No hard-cut has occurred. Alpha funnel bottleneck is `NOT_DETERMINED`.
 
 The `mra evidence` inventory is a regenerable non-authoritative operator index.
