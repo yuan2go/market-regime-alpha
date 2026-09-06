@@ -5190,6 +5190,10 @@ CREATE INDEX command_receipt_runtime_step_idx ON mra.command_receipt (runtime_st
     WHERE runtime_step_id IS NOT NULL;
 CREATE INDEX command_receipt_result_artifact_idx ON mra.command_receipt (result_artifact_id)
     WHERE result_artifact_id IS NOT NULL;
+CREATE INDEX command_receipt_successful_result_idx
+    ON mra.command_receipt (result_aggregate_kind, result_aggregate_id, completed_at, receipt_id)
+    INCLUDE (result_hash)
+    WHERE status = 'SUCCEEDED';
 
 CREATE TABLE mra.market_capture_reference_normalization (
     capture_id uuid PRIMARY KEY REFERENCES mra.data_capture(capture_id) ON DELETE RESTRICT,

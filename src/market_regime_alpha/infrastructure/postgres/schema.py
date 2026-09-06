@@ -2548,7 +2548,7 @@ def _wp18q_operational_upgrade_definitions(
     expected_baseline = "aae59a527154fd19da4bf07a0402d353d2b02a8da56cef6c4a505509683c412b"
     expected_vocabulary = "d08800892f5e843a756f53e46205dfbb2787386ebf8281564c31049c45659a1b"
     current_baseline = "fa322ee492e40b44a740e8c48d055aa0d56e857dd89a5e13792f55777628cea8"
-    if next_baseline_sha256 != "460ee9b50813a35f42a8634e6f3cb950549b05015bfc435a526bb3a3159d79f7":
+    if next_baseline_sha256 != "f417b63cf3dc534b1a5d329c5a30462945bfeb6b8c4389bf8ab3a9e1f4efbd27":
         raise OperationalUpgradeIntegrityError(
             "UPGRADE_SOURCE_BASELINE_CHANGED: register a new exact additive route"
         )
@@ -2629,14 +2629,32 @@ def _wp18q_operational_upgrade_definitions(
         prior_baseline_sha256=v3.next_baseline_sha256,
         prior_catalog_sha256=v3.next_catalog_sha256,
         prior_reference_vocabulary_sha256=expected_vocabulary,
-        next_baseline_sha256=next_baseline_sha256,
+        next_baseline_sha256="460ee9b50813a35f42a8634e6f3cb950549b05015bfc435a526bb3a3159d79f7",
         next_catalog_sha256="6384a687c172ccfc897fde160a4ff0a72427b3531da71ccc0915fc64d9ce28b6",
         next_reference_vocabulary_sha256=expected_vocabulary,
         additive_sql="\n\n".join(model_functions),
     )
     if v4.additive_bundle_sha256 != "cbfb125bb8ac0df211fe7835329026afcb76bed9b24d092bf89a440cdd2c0773":
         raise OperationalUpgradeIntegrityError("UPGRADE_V4_BUNDLE_CHANGED: register a new exact additive route")
-    return (v1, v2, v3, v4)
+    indexes = [
+        statement for statement in _split_postgres_statements(baseline_sql)
+        if statement.startswith("CREATE INDEX command_receipt_successful_result_idx\n")
+    ]
+    if len(indexes) != 1:
+        raise OperationalUpgradeIntegrityError("Receipt result upgrade requires one exact index")
+    v5 = _OperationalUpgradeDefinition(
+        upgrade_code="wp18q_r2_receipt_result_index_v5",
+        prior_baseline_sha256=v4.next_baseline_sha256,
+        prior_catalog_sha256=v4.next_catalog_sha256,
+        prior_reference_vocabulary_sha256=expected_vocabulary,
+        next_baseline_sha256=next_baseline_sha256,
+        next_catalog_sha256="d14348490acefb1becea504ad4cf5bcb65bd482efa02e59343fd9408c851f1f1",
+        next_reference_vocabulary_sha256=expected_vocabulary,
+        additive_sql=indexes[0],
+    )
+    if v5.additive_bundle_sha256 != "45849ef8e6571eb640876190c47b87272de4676f7c6fe2c60581d3bac1177b2a":
+        raise OperationalUpgradeIntegrityError("UPGRADE_V5_BUNDLE_CHANGED: register a new exact additive route")
+    return (v1, v2, v3, v4, v5)
 
 
 def _compile_wp18q_v2_additive_sql(baseline_sql: str) -> str:

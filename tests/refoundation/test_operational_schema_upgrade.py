@@ -126,7 +126,7 @@ def test_model_feature_parent_upgrade_preserves_prior_epochs_and_business_tables
         prior_reference_vocabulary_sha256=manager.reference_vocabulary_checksum,
     )
     assert definition.upgrade_code == "wp18q_r2_model_feature_parent_v4"
-    assert definition.next_baseline_sha256 == manager.baseline_checksum
+    assert definition.next_baseline_sha256 == "460ee9b50813a35f42a8634e6f3cb950549b05015bfc435a526bb3a3159d79f7"
     assert definition.next_catalog_sha256 == "6384a687c172ccfc897fde160a4ff0a72427b3531da71ccc0915fc64d9ce28b6"
     assert definition.additive_bundle_sha256 == "cbfb125bb8ac0df211fe7835329026afcb76bed9b24d092bf89a440cdd2c0773"
     assert definition.additive_sql.count("CREATE OR REPLACE FUNCTION") == 2
@@ -140,6 +140,22 @@ def _context(key: str) -> CommandContext:
         actor_id="wp18q-test",
         reason_code="OPERATIONAL_UPGRADE_TEST",
     )
+
+
+def test_receipt_result_index_upgrade_is_exact_and_preserves_v4(target_database_url):
+    manager = SchemaManager(target_database_url)
+    definition = manager._resolve_operational_upgrade_definition(
+        prior_baseline_sha256="460ee9b50813a35f42a8634e6f3cb950549b05015bfc435a526bb3a3159d79f7",
+        prior_catalog_sha256="6384a687c172ccfc897fde160a4ff0a72427b3531da71ccc0915fc64d9ce28b6",
+        prior_reference_vocabulary_sha256=manager.reference_vocabulary_checksum,
+    )
+    assert definition.upgrade_code == "wp18q_r2_receipt_result_index_v5"
+    assert definition.next_baseline_sha256 == manager.baseline_checksum
+    assert definition.additive_bundle_sha256 == "45849ef8e6571eb640876190c47b87272de4676f7c6fe2c60581d3bac1177b2a"
+    assert definition.next_catalog_sha256 == "d14348490acefb1becea504ad4cf5bcb65bd482efa02e59343fd9408c851f1f1"
+    assert definition.additive_sql.count("CREATE INDEX") == 1
+    assert "command_receipt_successful_result_idx" in definition.additive_sql
+    assert all(keyword not in definition.additive_sql for keyword in ("ALTER TABLE", "DROP ", "TRUNCATE", "UPDATE "))
 
 
 def test_wp18q_registered_upgrade_bundle_is_exact_and_additive(
