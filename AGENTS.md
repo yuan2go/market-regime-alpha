@@ -59,7 +59,7 @@ only Model/backtest path without reopening that Provider gate. Calibration
 remains optional and unstarted. Execution, Runtime/CLI Cutover, Legacy deletion,
 and Production qualification remain unauthorized.
 
-### WP-18Q qualification freeze
+### Research economics correctness and WP-18Q freeze
 
 The active development scope is WP-RESEARCH-ECONOMICS-CORRECTNESS-01 under its
 [design contract](docs/references/WP-RESEARCH-ECONOMICS-CORRECTNESS-01-Design.md).
@@ -74,7 +74,7 @@ metric owner. Prospective Application uses the existing Runtime and PostgreSQL
 clock, not a second scheduler.
 
 Keep these claims separate: code exists, canonical wiring, tests passed,
-runtime proven, and research validity. Current engineering qualification is
+runtime proven, and research validity. WP-18Q engineering qualification is
 blocked until every WP-18Q P0 gate has exact-SHA evidence. No historical
 WP-17P gate promotes Generic Backtest automatically. WP-specific execution
 surfaces remain until all prescribed compatibility/campaign/report/replay and

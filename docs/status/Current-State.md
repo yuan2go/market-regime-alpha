@@ -3,10 +3,10 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Non-authoritative implementation status; exact-SHA qualification belongs to Verification
 > **Owner:** Market Regime Alpha maintainers
-> **Generated At:** 2026-09-06 WP-18Q-R2 operational recovery
-> **Repository Implementation Checkpoint:** `f1c17ae5ad202c9f8a3c1a59cf6d111290a1f217`
-> **Implementation Tree:** `ea27e52db20bfafe7e1a34dada819835e0639612`
-> **Execution-Time Main Baseline:** `780cd964fd47fffac13edd0cf52547d12fff2bfc`
+> **Generated At:** 2026-09-06 research economics correctness
+> **Repository Implementation Checkpoint:** `0770078dcb93faa65ddbda82d195c226de18d505`
+> **Implementation Tree:** `419c99e4db6c18d6432e8ea50c3bd94ac6c4d354`
+> **Execution-Time Main Baseline:** `32bcb2922e6ced805c51f320e5f5657521f8cf14`
 > **Containing Documentation Commit:** reported by handoff; no self-referential SHA
 > **Schema Epochs:** legacy business `LEGACY_MIGRATIONS_001_106`; target `MRA_REFOUNDATION_1 / DRAFT / NOT_CUT_OVER`
 > **Code Evidence:** `src/market_regime_alpha/bootstrap.py`, target PostgreSQL schema/migrations, `tests/refoundation`, `tests/platform`, and immutable Verification records linked below
@@ -26,6 +26,30 @@ broker_integration_proven = false
 entry_model_empirically_validated = false
 production_ready = false
 ```
+
+## Research economics correctness checkpoint
+
+The active correction is [WP-RESEARCH-ECONOMICS-CORRECTNESS-01](../references/WP-RESEARCH-ECONOMICS-CORRECTNESS-01-Design.md).
+The source checkpoint above adds explicitly versioned V2 independent closed
+hypothetical checkpoint-mark episodes. Risk authorization determines simulated
+trades; entry and exit fees must be funded. Complete Validation parent paths
+precede whole-episode fold/month projections. Outcome supplies exact checkpoint
+facts, Evaluation persists the sole economic result, and Report/replay verify
+its metric and child rosters. No actual Fill, Position or Account is written.
+
+Focused canonical Generic execution, concurrency, stale-fence rejection,
+rollback, unknown-commit recovery, child-corruption rejection and a finite
+32-instrument restored-evidence comparison have run locally. The finite control
+reconciles 100,000 capital, 80,000 purchase notional, 80,915.55 sale proceeds and
+88.74 assumed fees to final cash 100,826.81. Its code identity is `ec404672`;
+full verification of the final source/test tree is still pending. It does not
+qualify continuous account NAV, market execution rules, Alpha or WP-18Q.
+
+Legacy/V1 Evaluation economics remains immutable and replayable under its old
+meaning. Its proposal-based transitions and incomplete funding semantics cannot
+serve as V2 financial correctness evidence. Historical positive reports do not
+inherit the new economic model. R2 recovery and its frozen campaign remain
+separate; no future window or large campaign is a prerequisite for this package.
 
 ## Current implementation truth
 
@@ -67,7 +91,7 @@ only the three controlled schema metadata tables changed.
 
 ## WP-18Q qualification disposition
 
-R2 began from fetched main `780cd964fd47fffac13edd0cf52547d12fff2bfc`, tree
+R2 began from fetched main `32bcb2922e6ced805c51f320e5f5657521f8cf14`, tree
 `0663cf127357c2cd24c49a23bbe3484e2f72e234`. At clean implementation
 `f247ca5d`, the locked full repository gate passes **3,997 tests and four
 subtests**, without skips or xfails. Its 39 focused tests, Ruff, mypy, build,

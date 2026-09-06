@@ -1,6 +1,12 @@
 # Research Economics Correctness 01
 
-Status: implementation contract; qualification is pending.
+> **Status:** CURRENT_ARCHITECTURE
+> **Authority:** Bounded research economics contract under the canonical Evaluation owner
+> **Owner:** Market Regime Alpha maintainers
+> **Last Updated:** 2026-09-06
+> **Code Evidence:** `src/market_regime_alpha/research_qualification/domain/episode_economics.py`, `src/market_regime_alpha/research_qualification/domain/episode_formula.py`, `tests/refoundation/research_qualification/test_episode_economics_postgres.py`
+
+Frozen supported-model contract; final qualification is pending.
 
 The execution-time fetched main is `32bcb2922e6ced805c51f320e5f5657521f8cf14`,
 tree `dddfe02092562989037140f8aff88250117be627`. The original worktree remains
@@ -111,3 +117,6 @@ and live Runtime fence before atomically writing results. V2 reconciliation chec
 financial source values, classification and cost child rosters and their hashes
 using shared writer serialization, with no second financial algorithm. Historical
 V1 formula, result and report serialization remains conditional and unchanged.
+
+Exit costs must also be payable from remaining cash and sale proceeds. A negative
+final cash balance is `INSUFFICIENT_CASH_FOR_EXIT_COSTS`, never implicit borrowing.
