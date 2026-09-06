@@ -7,7 +7,7 @@ import json
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
-from market_regime_alpha.interfaces import wp17p_authorities as catalog_factory
+from tests.refoundation.research_qualification import _historical_backtest_catalog as catalog_factory
 from market_regime_alpha.research_qualification.domain.backtest import (
     AuthorityBinding,
     BacktestSpecification,
@@ -47,7 +47,7 @@ from market_regime_alpha.research_qualification.domain.research_vocabulary impor
 )
 from market_regime_alpha.selection.domain import ExploratoryRetrospectiveSelectionScope, UniverseScopeSpecification
 from market_regime_alpha.shared.hashing import canonical_json_sha256
-from tests.refoundation.interfaces.test_wp17p_campaign_postgres import seed_complete_archive, _context, _binding
+from tests.refoundation.research_qualification.archive_campaign_fixture import seed_complete_archive, _context, _binding
 from tests.refoundation.research_qualification.test_episode_formula import formula
 from tests.refoundation.research_qualification.test_wp17p_evaluation_source_repository import _metric
 

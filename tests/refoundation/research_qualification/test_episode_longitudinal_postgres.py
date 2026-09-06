@@ -6,7 +6,7 @@ from market_regime_alpha.bootstrap import TargetSettings, bootstrap_application
 from market_regime_alpha.infrastructure.postgres.schema import SchemaManager
 from market_regime_alpha.research_qualification.domain.backtest import freeze_backtest_specification
 from tests.refoundation.research_qualification.episode_campaign_fixture import funded_specification
-from tests.refoundation.interfaces.test_wp17p_campaign_postgres import _context
+from tests.refoundation.research_qualification.archive_campaign_fixture import _context
 
 
 def _business_snapshot(database_url):
