@@ -476,3 +476,56 @@ def test_operational_upgrade_fails_closed_for_active_attempt_and_stale_catalog(
             challenge=plan.challenge,
             operator_id=plan.operator_id,
         )
+
+
+def test_historical_projection_batches_preserve_exact_copy_bytes(target_database_url, monkeypatch):
+    """Cold operational tables must not require one unbounded COPY statement."""
+    from contextlib import contextmanager
+    import hashlib
+    from market_regime_alpha.infrastructure.postgres import schema
+
+    # Small batches expose boundaries, composite keys and COPY escaping cheaply.
+    monkeypatch.setattr(schema, '_HISTORICAL_PROJECTION_BATCH_SIZE', 2, raising=False)
+    table = 'projection_batch_probe'
+    columns = ('identity', 'ordinal', 'payload')
+    manifest = ((table, columns, ('identity', 'ordinal')),)
+    copied_batch_sizes = []
+    with psycopg.connect(target_database_url) as connection:
+        connection.execute('CREATE SCHEMA mra')
+        connection.execute('CREATE TABLE mra.projection_batch_probe (identity uuid, ordinal integer, payload text, PRIMARY KEY(identity,ordinal))')
+        for identity in (uuid4(), uuid4(), uuid4()):
+            for ordinal, payload in enumerate(('tab\tnewline\nslash\\', None, '真实证据'), 1):
+                connection.execute('INSERT INTO mra.projection_batch_probe VALUES (%s,%s,%s)', (identity, ordinal, payload))
+        expected = hashlib.sha256()
+        expected.update(table.encode() + b'\0' + '\0'.join(columns).encode() + b'\0')
+        with connection.cursor().copy('COPY (SELECT identity,ordinal,payload FROM mra.projection_batch_probe ORDER BY identity,ordinal) TO STDOUT WITH (FORMAT text)') as copy:
+            for chunk in copy:
+                expected.update(bytes(chunk))
+        expected.update(b'\0')
+
+        class BoundedCopyConnection:
+            def execute(self, query, params=None):
+                return connection.execute(query, params)
+
+            def cursor(self):
+                return self
+
+            @contextmanager
+            def copy(self, query, params=None):
+                with connection.cursor().copy(query, params) as source:
+                    def rows():
+                        count = 0
+                        for chunk in source:
+                            count += bytes(chunk).count(b'\n')
+                            assert count <= 2, 'one historical COPY exceeded its bounded row budget'
+                            yield chunk
+                        copied_batch_sizes.append(count)
+                    yield rows()
+
+        result = schema._historical_projection(BoundedCopyConnection(), manifest=manifest)
+        assert result.sha256 == expected.hexdigest()
+        assert result.table_count == 1 and result.manifest == manifest
+        assert sorted(copied_batch_sizes) == [1, 2, 2, 2, 2]
+        connection.execute("UPDATE mra.projection_batch_probe SET payload='changed' WHERE (identity,ordinal)=(SELECT identity,ordinal FROM mra.projection_batch_probe ORDER BY identity,ordinal LIMIT 1)")
+        assert schema._historical_projection(BoundedCopyConnection(), manifest=manifest).sha256 != result.sha256
+        connection.rollback()

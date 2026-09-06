@@ -1278,7 +1278,7 @@ class SchemaManager:
         """Produce a read-only, short-lived plan for one exact additive route."""
 
         backup = _verify_upgrade_backup(authorization)
-        with self._connect(read_only=True) as connection:
+        with self._connect(read_only=True, repeatable_read=True) as connection:
             identity = _database_identity(connection)
             _validate_operational_upgrade_identity(identity, authorization)
             if backup.database_name != identity.database_name:
@@ -1437,7 +1437,7 @@ class SchemaManager:
             ),
         )
         _require_plan_definition(plan, definition)
-        with self._connect() as connection:
+        with self._connect(repeatable_read=True) as connection:
             _take_bootstrap_lock(connection)
             identity = _database_identity(connection)
             _validate_operational_upgrade_plan_identity(identity, plan)
@@ -1888,9 +1888,11 @@ class SchemaManager:
             raise UnexpectedCatalogError(f"unexpected user objects: {sorted(objects)}")
         return tuple(sorted(objects))
 
-    def _connect(self, *, read_only: bool = False) -> psycopg.Connection[Any]:
+    def _connect(self, *, read_only: bool = False, repeatable_read: bool = False) -> psycopg.Connection[Any]:
         connection = psycopg.connect(self._database_url, autocommit=False)
         connection.read_only = read_only
+        if repeatable_read:
+            connection.isolation_level = psycopg.IsolationLevel.REPEATABLE_READ
         connection.execute("SELECT set_config('search_path', 'pg_catalog', false)")
         connection.execute("SELECT set_config('timezone', 'UTC', false)")
         connection.execute(
@@ -3264,6 +3266,9 @@ def _historical_projection_manifest(
     return tuple(manifest)
 
 
+_HISTORICAL_PROJECTION_BATCH_SIZE: Final = 256
+
+
 def _historical_projection(
     connection: psycopg.Connection[Any],
     *,
@@ -3280,18 +3285,41 @@ def _historical_projection(
         digest.update(b"\0")
         digest.update("\0".join(columns).encode("utf-8"))
         digest.update(b"\0")
-        statement = sql.SQL(
-            "COPY (SELECT {columns} FROM {schema}.{table} ORDER BY {primary_key}) "
-            "TO STDOUT WITH (FORMAT text)"
-        ).format(
-            columns=sql.SQL(", ").join(map(sql.Identifier, columns)),
-            schema=sql.Identifier(APPLICATION_SCHEMA),
-            table=sql.Identifier(table_name),
-            primary_key=sql.SQL(", ").join(map(sql.Identifier, primary_key)),
-        )
-        with connection.cursor().copy(statement) as copy:
-            for chunk in copy:
-                digest.update(bytes(chunk))
+        primary_columns = sql.SQL(", ").join(map(sql.Identifier, primary_key))
+        placeholders = sql.SQL(", ").join(sql.Placeholder() for _ in primary_key)
+        relation = sql.SQL("{}.{}").format(sql.Identifier(APPLICATION_SCHEMA), sql.Identifier(table_name))
+        last_key: tuple[Any, ...] | None = None
+        while True:
+            lower = (
+                sql.SQL("") if last_key is None else
+                sql.SQL(" WHERE ({}) > ({})").format(primary_columns, placeholders)
+            )
+            lower_values = () if last_key is None else last_key
+            keys = connection.execute(
+                sql.SQL("SELECT {keys} FROM {relation}{lower} ORDER BY {keys} LIMIT %s").format(
+                    keys=primary_columns, relation=relation, lower=lower,
+                ),
+                (*lower_values, _HISTORICAL_PROJECTION_BATCH_SIZE),
+            ).fetchall()
+            if not keys:
+                break
+            upper_key = tuple(keys[-1])
+            bounded = lower + sql.SQL(" WHERE " if last_key is None else " AND ")
+            bounded += sql.SQL("({}) <= ({})").format(primary_columns, placeholders)
+            statement = sql.SQL(
+                "COPY (SELECT {columns} FROM {relation}{bounded} ORDER BY {keys}) "
+                "TO STDOUT WITH (FORMAT text)"
+            ).format(
+                columns=sql.SQL(", ").join(map(sql.Identifier, columns)),
+                relation=relation, bounded=bounded, keys=primary_columns,
+            )
+            # COPY preserves the original escaping and row bytes. A stable
+            # transaction snapshot makes concatenated PK ranges the exact
+            # original stream while bounding each cold SQL statement.
+            with connection.cursor().copy(statement, (*lower_values, *upper_key)) as copy:
+                for chunk in copy:
+                    digest.update(bytes(chunk))
+            last_key = upper_key
         digest.update(b"\0")
     return _HistoricalProjection(
         table_count=len(resolved),
