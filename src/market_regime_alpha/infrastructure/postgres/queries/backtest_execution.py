@@ -38,6 +38,9 @@ from market_regime_alpha.runtime.errors import (
     ArtifactIntegrityError,
     RuntimeNotFoundError,
 )
+from market_regime_alpha.selection.ports.research_inputs import (
+    CandidateResearchInputLoader,
+)
 
 
 _Scope = tuple[UUID, UUID, UUID]
@@ -131,12 +134,14 @@ class PostgresBacktestExecutionObservationPort:
         pool: TargetPostgresPool,
         *,
         model_inputs: ModelTrainingInputProvider | None = None,
+        dataset_inputs: CandidateResearchInputLoader | None = None,
     ) -> None:
         self._pool = pool
         self._decisions = PostgresDecisionRunVerificationProvider(pool)
         self._outcomes = PostgresOutcomeVerificationProvider(pool)
         self._evaluations = PostgresResearchEvaluationVerificationProvider(pool)
         self._model_inputs = model_inputs
+        self._dataset_inputs = dataset_inputs
 
     def observe(
         self,
@@ -318,7 +323,25 @@ class PostgresBacktestExecutionObservationPort:
 
         def observe_action(action: BacktestExpectedAction) -> BacktestActionObservation:
             if action.kind is BacktestActionKind.MATERIALIZE_DATASET:
-                state = _unique_presence(dataset_by_scope.get(_scope(action), ()))
+                rows = dataset_by_scope.get(_scope(action), [])
+                state = _unique_presence(rows)
+                if (
+                    state is BacktestObservedState.MATCHED_COMPLETE
+                    and run.source is FrozenBacktestSource.CURRENT_RELATIONAL
+                ):
+                    if self._dataset_inputs is None:
+                        raise ArtifactIntegrityError("current Dataset observation requires the canonical Dataset input owner")
+                    dataset_id = UUID(str(rows[0]["dataset_id"]))
+                    try:
+                        prepared = self._dataset_inputs.prepare(
+                            dataset_id=dataset_id,
+                            required_features=(),
+                        )
+                    except (ArtifactIntegrityError, RuntimeNotFoundError):
+                        state = BacktestObservedState.MISMATCH
+                    else:
+                        if prepared.dataset.dataset_id != dataset_id:
+                            state = BacktestObservedState.MISMATCH
                 observation = BacktestActionObservation(action.action_id, state)
             elif action.kind is BacktestActionKind.GENERATE_DECISION_SUPPORT:
                 observation = self._decision(action, decision_by_scope)

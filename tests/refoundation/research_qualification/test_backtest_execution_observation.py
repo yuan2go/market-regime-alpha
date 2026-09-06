@@ -76,6 +76,61 @@ def test_current_owner_without_runtime_lineage_is_integrity_mismatch() -> None:
     assert result.state is BacktestObservedState.MISMATCH
 
 
+def test_dataset_binding_and_succeeded_runtime_do_not_replace_owner_reload() -> None:
+    from contextlib import contextmanager
+    from market_regime_alpha.infrastructure.postgres.queries.backtest_execution import (
+        PostgresBacktestExecutionObservationPort,
+        _RUNTIME_BINDINGS_SQL,
+    )
+    from market_regime_alpha.runtime.errors import ArtifactIntegrityError
+
+    run, action, runtime = _runtime_row(state="SUCCEEDED")
+    dataset_id = UUID(int=9201)
+    loaded = []
+
+    class Cursor:
+        @contextmanager
+        def cursor(self, **kwargs):
+            yield self
+
+        def execute(self, statement, parameters):
+            self.rows = []
+            if "SELECT dataset_id, exploratory_backtest_arm_id," in statement:
+                self.rows = [{
+                    "dataset_id": dataset_id,
+                    "exploratory_backtest_arm_id": action.arm_id,
+                    "exploratory_backtest_fold_id": action.fold_id,
+                    "exploratory_backtest_fold_session_id": action.fold_session_id,
+                }]
+            elif "SELECT backtest_runtime_binding_id FROM" in statement:
+                self.rows = [{"backtest_runtime_binding_id": runtime["backtest_runtime_binding_id"]}]
+            elif statement == _RUNTIME_BINDINGS_SQL:
+                self.rows = [runtime]
+            return self
+
+        def fetchall(self):
+            return self.rows
+
+    class Pool:
+        @contextmanager
+        def connection(self, **kwargs):
+            yield Cursor()
+
+    class RejectingDatasetOwner:
+        def prepare(self, *, dataset_id, required_features):
+            loaded.append(dataset_id)
+            raise ArtifactIntegrityError("Dataset manifest/source roster does not reconcile")
+
+    observer = PostgresBacktestExecutionObservationPort(Pool())
+    observer._dataset_inputs = RejectingDatasetOwner()
+    result, = observer.observe(run, (action,))
+    assert result.state is BacktestObservedState.MISMATCH
+    assert loaded == [dataset_id]
+    observer._dataset_inputs = None
+    with pytest.raises(ArtifactIntegrityError, match="requires the canonical Dataset input owner"):
+        observer.observe(run, (action,))
+
+
 def test_runtime_retryable_and_terminal_failures_remain_distinct() -> None:
     run, action, retryable = _runtime_row(
         state="RUNNING",

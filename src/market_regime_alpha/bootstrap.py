@@ -458,8 +458,9 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
         artifact_application,
         model_trainers,
     )
+    candidate_research_inputs = PostgresCandidateResearchInputLoader(pool, byte_store)
     candidate_application = CandidateApplication(
-        PostgresCandidateResearchInputLoader(pool, byte_store),
+        candidate_research_inputs,
         PostgresCandidateUnitOfWorkProvider(pool),
     )
     decision_input_provider = PostgresDecisionInputPreparationProvider(pool)
@@ -518,6 +519,7 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
     backtest_specifications = PostgresBacktestQueryPort(pool)
     backtest_observations = PostgresBacktestExecutionObservationPort(
         pool, model_inputs=model_training_inputs,
+        dataset_inputs=candidate_research_inputs,
     )
     backtest_action_handler = BacktestCanonicalActionHandler(
         artifacts=artifact_application,
