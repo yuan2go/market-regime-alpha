@@ -4,8 +4,8 @@
 > **Authority:** Non-authoritative capability read model; never qualification Authority
 > **Owner:** Market Regime Alpha maintainers
 > **Generated At:** 2026-09-06 WP-18Q-R2 operational recovery
-> **Repository Implementation Checkpoint:** `16e0405763f058b89878eb7456078fa935d7e2d2`
-> **Implementation Tree:** `963210dded0f00cfaeb60052e3bb961e6de7af08`
+> **Repository Implementation Checkpoint:** `02751b199788f44cab89c5ecbccec6b3afcc6fab`
+> **Implementation Tree:** `9f3167c567815ea7780b2fe6d7d048b89ed44682`
 > **Execution-Time Main Baseline:** `780cd964fd47fffac13edd0cf52547d12fff2bfc`
 > **Containing Documentation Commit:** reported by handoff; no self-referential SHA
 > **Schema Epochs:** legacy `LEGACY_MIGRATIONS_001_106`; target `MRA_REFOUNDATION_1 / DRAFT / NOT_CUT_OVER`
@@ -63,7 +63,7 @@ BACKTEST_PLATFORM = NOT_ENGINEERING_QUALIFIED
 | WP-specific hard-cut | Executable WP orchestration remains because real campaign/report/replay prerequisites are not complete | Generic surface target / `HARD_CUT_BLOCKED` |
 | Research Qualification | Concrete Evidence/Assessment/policy/floor/decision and later-generation reads; training or positive returns never qualify a model | Research / `NO_EMPIRICAL_PROMOTION` |
 | Formal Research Campaign | Freeze/protected-open/Runtime/Provider-gate mechanics exist; rejected Provider evidence prevents real Formal OOS execution | Research + Runtime / `FORMAL_OOS_NOT_RUN` |
-| Prospective | Target-aligned generation/planning/terminal/revision and Runtime mechanics exist; new scope has 288 future slices; PostgreSQL continuation found due=0 at 2026-09-05 19:11 UTC; original history is discontinuous | Market + existing Runtime / `NOT_DUE / LIVE_PROOF_BLOCKED` |
+| Prospective | Target-aligned generation/planning/terminal/revision and Runtime mechanics exist; new scope has 288 future slices; PostgreSQL continuation found due=0 at 2026-09-05 23:39 UTC; original history is discontinuous | Market + existing Runtime / `NOT_DUE / LIVE_PROOF_BLOCKED` |
 
 The original operational scope remains unavailable at inspected locations.
 R2 recovered immutable historical evidence into a distinct operational scope,
