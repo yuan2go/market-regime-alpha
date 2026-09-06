@@ -108,13 +108,17 @@ _RUNTIME_BINDINGS_SQL = """
                     """
 
 
-def _load_runtime_bindings(cursor: Any, run_id: UUID) -> list[dict[str, Any]]:
+def _load_runtime_bindings(
+    cursor: Any, run_id: UUID, *, action_id: UUID | None = None,
+) -> list[dict[str, Any]]:
     identities = cursor.execute(
         """
         SELECT backtest_runtime_binding_id FROM mra.backtest_runtime_binding
-        WHERE exploratory_backtest_run_id = %s ORDER BY backtest_runtime_binding_id
-        """,
-        (run_id,),
+        WHERE exploratory_backtest_run_id = %s
+        """
+        + (" AND action_id = %s" if action_id is not None else "")
+        + " ORDER BY backtest_runtime_binding_id",
+        (run_id, action_id) if action_id is not None else (run_id,),
     ).fetchall()
     rows: list[dict[str, Any]] = []
     for offset in range(0, len(identities), _RUNTIME_BINDING_READ_BATCH_SIZE):
@@ -148,6 +152,19 @@ class PostgresBacktestExecutionObservationPort:
         run: FrozenBacktestRun,
         expected_actions: tuple[BacktestExpectedAction, ...],
     ) -> tuple[BacktestActionObservation, ...]:
+        single_action = expected_actions[0] if len(expected_actions) == 1 else None
+        cell_scope = (
+            _scope(single_action)
+            if single_action is not None and single_action.fold_session_id is not None
+            else None
+        )
+        cell_filter = (
+            " AND {owner}exploratory_backtest_arm_id = %s"
+            " AND {owner}exploratory_backtest_fold_id = %s"
+            " AND {owner}exploratory_backtest_fold_session_id = %s"
+            if cell_scope is not None else ""
+        )
+        cell_parameters = (run.exploratory_backtest_run_id, *(cell_scope or ()))
         with self._pool.connection(read_only=True) as connection:
             with connection.cursor(row_factory=dict_row) as cursor:
                 datasets = cursor.execute(
@@ -157,8 +174,8 @@ class PostgresBacktestExecutionObservationPort:
                            exploratory_backtest_fold_session_id
                     FROM mra.exploratory_backtest_dataset
                     WHERE exploratory_backtest_run_id = %s
-                    """,
-                    (run.exploratory_backtest_run_id,),
+                    """ + cell_filter.format(owner=""),
+                    cell_parameters,
                 ).fetchall()
                 decisions = cursor.execute(
                     """
@@ -167,8 +184,8 @@ class PostgresBacktestExecutionObservationPort:
                            exploratory_backtest_fold_session_id
                     FROM mra.exploratory_retrospective_decision_run
                     WHERE exploratory_backtest_run_id = %s
-                    """,
-                    (run.exploratory_backtest_run_id,),
+                    """ + cell_filter.format(owner=""),
+                    cell_parameters,
                 ).fetchall()
                 outcomes = cursor.execute(
                     """
@@ -188,8 +205,8 @@ class PostgresBacktestExecutionObservationPort:
                         LIMIT 1
                     ) AS revision ON true
                     WHERE backtest.exploratory_backtest_run_id = %s
-                    """,
-                    (run.exploratory_backtest_run_id,),
+                    """ + cell_filter.format(owner="backtest."),
+                    cell_parameters,
                 ).fetchall()
                 evaluation_sources = cursor.execute(
                     """
@@ -244,7 +261,10 @@ class PostgresBacktestExecutionObservationPort:
                         """,
                         (run.exploratory_backtest_run_id,),
                     ).fetchall()
-                    runtime_bindings = _load_runtime_bindings(cursor, run.exploratory_backtest_run_id)
+                    runtime_bindings = _load_runtime_bindings(
+                        cursor, run.exploratory_backtest_run_id,
+                        action_id=None if single_action is None else single_action.action_id,
+                    )
                 training_rows = cursor.execute(
                     """
                     SELECT training.exploratory_backtest_arm_id,

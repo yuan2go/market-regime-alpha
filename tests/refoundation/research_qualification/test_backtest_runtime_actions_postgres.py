@@ -368,3 +368,10 @@ def test_observer_bounds_runtime_queries_without_losing_bindings(backtest_stack)
     assert len(rows) == 9
     assert {row["action_id"] for row in rows} == {action.action_id for action in actions}
     assert {row["latest_attempt_state"] for row in rows} == {"SUCCEEDED"}
+    batches.clear()
+    observed = PostgresBacktestExecutionObservationPort(TracedPool()).observe(frozen, (actions[0],))
+    assert len(observed) == 1
+    assert observed[0].state.value == "MISMATCH"  # Runtime-only fixture has no Dataset owner.
+    scoped_rows = [row for batch in batches for row in batch]
+    assert len(scoped_rows) == 1
+    assert scoped_rows[0]["action_id"] == actions[0].action_id

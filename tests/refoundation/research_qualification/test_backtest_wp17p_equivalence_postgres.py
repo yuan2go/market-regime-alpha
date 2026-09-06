@@ -206,6 +206,70 @@ def _historical_environment() -> tuple[str, Path]:
     return database_url, Path(artifact_root)
 
 
+def test_single_action_metadata_reads_only_its_exact_historical_cell() -> None:
+    from market_regime_alpha.research_qualification.domain.backtest_execution import (
+        BacktestActionKind, BacktestObservedState,
+    )
+
+    sizes = {}
+
+    class SavedRows:
+        def __init__(self, rows):
+            self.rows = rows
+
+        def fetchall(self):
+            return self.rows
+
+    class Cursor:
+        def __init__(self, cursor):
+            self.cursor = cursor
+
+        def execute(self, statement, parameters=None):
+            result = self.cursor.execute(statement, parameters)
+            prefixes = {
+                "datasets": "SELECT dataset_id, exploratory_backtest_arm_id,",
+                "decisions": "SELECT decision_run_id, exploratory_backtest_arm_id,",
+                "outcomes": "SELECT backtest.exploratory_backtest_arm_id,",
+            }
+            for kind, prefix in prefixes.items():
+                if statement.strip().startswith(prefix):
+                    rows = result.fetchall()
+                    sizes[kind] = len(rows)
+                    return SavedRows(rows)
+            return result
+
+    class Connection:
+        def __init__(self, connection):
+            self.connection = connection
+
+        def __getattr__(self, name):
+            return getattr(self.connection, name)
+
+        @contextmanager
+        def cursor(self, **kwargs):
+            with self.connection.cursor(**kwargs) as cursor:
+                yield Cursor(cursor)
+
+    class TracedPool(TargetPostgresPool):
+        @contextmanager
+        def connection(self, *, read_only=False):
+            with super().connection(read_only=read_only) as connection:
+                yield Connection(connection)
+
+    url, _ = _historical_environment()
+    pool = TracedPool(url)
+    try:
+        before = _authority_digest(pool)
+        run = PostgresExactHistoricalBacktestQueryPort(pool).load(_RUN_ID).run
+        action = next(a for a in BacktestExecutionPlanner().compile(run).expected_actions if a.kind is BacktestActionKind.SETTLE_OUTCOME)
+        observed, = PostgresBacktestExecutionObservationPort(pool).observe(run, (action,))
+        assert observed.state is BacktestObservedState.MATCHED_COMPLETE
+        assert sizes == {"datasets": 1, "decisions": 1, "outcomes": 32}
+        assert _authority_digest(pool) == before
+    finally:
+        pool.close()
+
+
 def _authority_digest(pool: TargetPostgresPool) -> str:
     with pool.connection(read_only=True) as connection:
         row = connection.execute(
