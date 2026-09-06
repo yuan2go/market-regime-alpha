@@ -4,8 +4,8 @@
 > **Authority:** Non-authoritative implementation status; exact-SHA qualification belongs to Verification
 > **Owner:** Market Regime Alpha maintainers
 > **Generated At:** 2026-09-06 WP-18Q-R2 operational recovery
-> **Repository Implementation Checkpoint:** `4e418aefddecf05638f11f722db8f810aff16f73`
-> **Implementation Tree:** `11d6a7b202bac9119864f3c0953e624cb8786a28`
+> **Repository Implementation Checkpoint:** `1a9ad63d515cbc4bf7b008c44ff5467bc0cb9248`
+> **Implementation Tree:** `e8436340c6af2446f541e96b64951ee7e4b13d56`
 > **Execution-Time Main Baseline:** `780cd964fd47fffac13edd0cf52547d12fff2bfc`
 > **Containing Documentation Commit:** reported by handoff; no self-referential SHA
 > **Schema Epochs:** legacy business `LEGACY_MIGRATIONS_001_106`; target `MRA_REFOUNDATION_1 / DRAFT / NOT_CUT_OVER`
@@ -66,13 +66,13 @@ A new disposable test database does not attest to an operational upgrade.
 
 R2 fetched exact main `780cd964fd47fffac13edd0cf52547d12fff2bfc`, tree
 `0663cf127357c2cd24c49a23bbe3484e2f72e234`. Historical verification is not
-inherited. The clean `f4296252bfa174c36c77d1db70e9526ec6e0c46c` worktree passed
-3,967 repository tests and 4 subtests without skips/xfails. The current
-`4e418aef` checkpoint passed 49 affected Outcome/historical tests after
-reducing each Outcome read batch to eight. The earlier `02751b19` checkpoint
-passed 191 Backtest/Outcome/pool tests. Full regression at `4e418aef` is in
-progress on an independent disposable database; neither that result nor final
-exact-SHA qualification is yet available.
+inherited. The clean `4e418aefddecf05638f11f722db8f810aff16f73` worktree passed
+3,968 repository tests and 4 subtests without skips/xfails on an independent
+disposable database. The later Runtime observation repair passed 24 affected
+tests at clean `42e46458`. The current Model owner-reload repair passed 150
+focused Backtest/Model tests; its positive real Model proof and final exact-SHA
+full qualification remain pending. The live campaign still executes at the
+preserved `42e46458` checkpoint; final replay must use the final implementation.
 
 | Gate | Proven / remaining boundary |
 |---|---|
@@ -83,11 +83,11 @@ exact-SHA qualification is yet available.
 | Additive upgrade | Exact v3 upgrade was exercised on an independently restored database and the new operational scope after identity/disk/backup/idle checks. All 192 tables were compared: 189 unchanged; only schema epoch, migration and upgrade receipt tables changed. Original historical copy remains untouched. |
 | Canonical archive | New sealed archive `fc699eea-1283-5192-b3ac-c9cbddc0da5e` reconciles 534 canonical captures, 116 actual sessions and the frozen 32-instrument roster. Daily/intraday/calendar and exact daily membership evidence exist. Legitimate missing observations remain typed; reconstructed old identities or known-times were not used. |
 | Real generic campaign | Run `a4b98930-a609-57c4-9e9a-4072d52397d8` freezes 44 executed sessions, four arms and two FIT→VALIDATION dependencies on the new archive. Explicit observational arms bind OBSERVE_ONLY Strategies; Forecast binds the Decision reference checkpoint. It is in progress, not completed evidence. Earlier failed/interrupted declarations are preserved. |
-| Observed performance | At 4,116 Outcomes, stopped full inspect preserved plan hashes and existing rows while replacing per-row reads with bounded reads. Both 64-row and later 32-row cold queries exceeded the unchanged 30-second timeout; these failures are retained. The current eight-row limit verified all 4,820 stopped Outcomes without mismatch. A fixed 64-Outcome sample uses eight SELECTs and one lease instead of 448 SELECTs and 64 leases. Every owner is reloaded, with no cached verification result. Cache/IO conditions affect timings; completed-campaign plans remain required. |
+| Observed performance | Both 64-row and later 32-row cold Outcome queries exceeded the unchanged 30-second timeout; reads now use eight-row batches. A later Runtime observation timeout exposed 7,100 Attempt probes for 720 Runtime bindings. A set query preserved all 720 complete rows and reads the Attempt roster once. At clean `42e46458`, its two real measurements took 6.26 and 0.40 seconds. Full owner inspect at 5,364 Outcomes took 467.73 seconds under concurrent regression load and returned RUNNING without integrity mismatch. These variable resource results are retained; no cached verification or relaxed timeout is used. Completed-campaign plans remain required. |
 | Fresh two-arm engineering gate | The first small Run failed on a Calendar horizon limited to the Decision roster; canonical Calendar resolution is repaired and all 44 real horizons were verified. A subsequent concurrent Run exhausted the three SERIALIZABLE transaction attempts and retained its terminal failure/receipt. A fresh sequential two-arm execution remains required; parallel campaign success is not claimed. |
-| Standard report / exact replay | A completed R2 campaign, trained ModelVersions, canonical standard metrics, report Artifacts and byte-stable inspect/resume/replay remain unproven. Alpha bottleneck is `NOT_DETERMINED`. |
+| Standard report / exact replay | A completed R2 campaign, trained ModelVersions, canonical standard metrics, report Artifacts and byte-stable inspect/resume/replay remain unproven. Current Model observation now reloads canonical registered training inputs and reproducibility instead of accepting equal root hash references alone; negative owner-rejection tests pass, while real positive proof remains pending. Alpha bottleneck is `NOT_DETERMINED`. |
 | Prospective continuity | The sole CONTINUOUS_RESEARCH runner can invoke the canonical series continuation before its trading-day early return. PostgreSQL clock, exact TradingSessions, overdue terminalization, planning gaps, due claim, lease/fence recovery and unknown Provider effect handling are wired and have focused tests. This is not proof of an installed continuously running service. |
-| Real prospective attempt | New series `r2_xshg32`, generation `1303080a-8a96-51dc-9021-31a9250c85d9`, began at 2026-09-05 15:56:17.897411 UTC with 288 future slices. At 2026-09-06 00:27:41 UTC, canonical continuation found due=0, no new generation and no planning gap. `REAL_DUE_ATTEMPT=BLOCKED_BY_TEMPORAL_WINDOW`; the frozen WP-18Q total exit still requires real due proof. |
+| Real prospective attempt | New series `r2_xshg32`, generation `1303080a-8a96-51dc-9021-31a9250c85d9`, began at 2026-09-05 15:56:17.897411 UTC with 288 future slices. At 2026-09-06 01:16:18 UTC, canonical continuation found due=0, no new generation and no planning gap. `REAL_DUE_ATTEMPT=BLOCKED_BY_TEMPORAL_WINDOW`; the frozen WP-18Q total exit still requires real due proof. |
 | Hard-cut | Prerequisites remain incomplete; WP-specific executors are retained. |
 | Remote Actions | Repository API returned disabled: `BLOCKED_BY_REPOSITORY_CONFIGURATION / NOT_RUN`. |
 
