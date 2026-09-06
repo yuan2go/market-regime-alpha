@@ -2592,7 +2592,7 @@ def _wp18q_operational_upgrade_definitions(
             "a61a4ed2a4ae93521942053c37ab6560386bc49c43e64ef3a03f21ab4ab14a71"
         ),
         next_reference_vocabulary_sha256=expected_vocabulary,
-        additive_sql=_read_package_text("migrations", "wp18q_track_a_c_v2.sql"),
+        additive_sql=_read_package_text("operational_upgrades", "wp18q_track_a_c_v2.sql"),
     )
     if v2.additive_bundle_sha256 != (
         "2dfe756539fccf1d25b73d190248ad6e819b3c67192400db2f444338c3cad91e"
