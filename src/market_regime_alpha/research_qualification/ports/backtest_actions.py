@@ -273,6 +273,8 @@ class BacktestActionReadPort(Protocol):
 
     def evaluation_result(self, evaluation_run_id: UUID) -> BacktestEvaluationResult: ...
 
+    def runtime_step_first_attempt_at(self, step_id: UUID) -> datetime: ...
+
 
 __all__ = [
     "BacktestActionReadPort",

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from uuid import UUID
 
 from market_regime_alpha.infrastructure.postgres.pool import TargetPostgresPool
@@ -35,6 +36,21 @@ from market_regime_alpha.shared.identity import ContentHash
 class PostgresBacktestActionReadPort:
     def __init__(self, pool: TargetPostgresPool) -> None:
         self._pool = pool
+
+    def runtime_step_first_attempt_at(self, step_id: UUID) -> datetime:
+        """Stable PostgreSQL execution time, including retry/unknown-commit recovery."""
+        with self._pool.connection(read_only=True) as connection:
+            row = connection.execute(
+                """
+                SELECT created_at FROM mra.runtime_attempt
+                WHERE step_id = %s ORDER BY attempt_no LIMIT 1
+                """,
+                (step_id,),
+            ).fetchone()
+        if row is None:
+            raise RuntimeNotFoundError("Backtest Runtime Step has no recorded Attempt")
+        value: datetime = row[0]
+        return value
 
     def archive_seal(self, specification: BacktestSpecification) -> BacktestArchiveSeal:
         with self._pool.connection(read_only=True) as connection:

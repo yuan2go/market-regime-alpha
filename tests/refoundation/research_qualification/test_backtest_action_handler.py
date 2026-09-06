@@ -82,6 +82,50 @@ def test_evaluation_action_has_one_ordered_owner_runtime_dag() -> None:
     assert len({str(step.request_sha256) for step in steps}) == len(steps)
 
 
+def test_evaluation_cutoff_uses_runtime_execution_after_outcome_settlement() -> None:
+    from datetime import UTC, datetime
+
+    fold_id, requirement_id, step_id = UUID(int=410), UUID(int=411), UUID(int=412)
+    archive_cutoff = datetime(2026, 9, 5, 17, 30, tzinfo=UTC)
+    first_attempt_at = datetime(2026, 9, 6, 3, 12, tzinfo=UTC)
+    requirement = BacktestEvaluationRequirement(
+        requirement_id, 1, fold_id, AuthorityBinding(UUID(int=413), "a" * 64),
+        True, BacktestEvaluationScopeKind.FOLD, UUID(int=414),
+    )
+    artifact = ArtifactBinding(UUID(int=415), "b" * 64, 1)
+    specification = SimpleNamespace(
+        evaluation_requirements=(requirement,),
+        folds=(SimpleNamespace(exploratory_backtest_fold_id=fold_id, purpose=PartitionPurpose.FIT),),
+        target=SimpleNamespace(authority_id=UUID(int=416), version=1, content_sha256="c" * 64),
+        code_artifact=artifact, config_artifact=artifact, provenance_sha256="d" * 64,
+    )
+    calls, plans = [], []
+
+    def first_attempt(identity):
+        calls.append(identity)
+        return first_attempt_at
+
+    handler = BacktestCanonicalActionHandler(
+        artifacts=cast(Any, SimpleNamespace()), selection=cast(Any, SimpleNamespace()),
+        research_definitions=cast(Any, SimpleNamespace()),
+        reads=cast(Any, SimpleNamespace(
+            archive_seal=lambda _spec: SimpleNamespace(knowledge_cutoff=archive_cutoff),
+            runtime_step_first_attempt_at=first_attempt,
+            partition_execution=lambda _id: SimpleNamespace(purpose="FIT", content_sha256="e" * 64),
+        )),
+        feature_materializers=(cast(Any, SimpleNamespace()),), worker_id="test",
+        research_partitions=cast(Any, SimpleNamespace()), research_experiments=cast(Any, SimpleNamespace()),
+        research_evaluations=cast(Any, SimpleNamespace(open_run=lambda plan, *_args, **_kwargs: plans.append(plan))),
+        backtests=cast(Any, SimpleNamespace()),
+    )
+    action = BacktestExpectedAction(UUID(int=417), 1, BacktestActionKind.COMPLETE_FOLD_EVALUATION,
+        UUID(int=418), requirement.arm_id, fold_id, None, None, (), requirement_id)
+    handler.execute_step(cast(Any, specification), action, cast(Any, SimpleNamespace(step_key="open-evaluation", step_id=step_id)))
+    assert plans[0].requested_knowledge_cutoff == first_attempt_at
+    assert plans[0].requested_knowledge_cutoff > archive_cutoff
+    assert calls == [step_id]
+
+
 def test_model_action_has_one_ordered_owner_runtime_dag() -> None:
     action = BacktestExpectedAction(
         action_id=UUID(int=11),

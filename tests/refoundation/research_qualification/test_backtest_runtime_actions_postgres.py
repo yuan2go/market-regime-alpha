@@ -197,7 +197,22 @@ def test_action_retry_reuses_runtime_and_creates_a_new_attempt(backtest_stack) -
     executor = _executor(backtest_stack, handler)
 
     executor.execute(frozen, action, BacktestNextOperation.EXECUTE)
+    from market_regime_alpha.infrastructure.postgres.queries.backtest_actions import PostgresBacktestActionReadPort
+    with backtest_stack.pool.connection(read_only=True) as connection:
+        first_attempt = connection.execute(
+            """SELECT attempt.step_id, attempt.created_at
+               FROM mra.runtime_attempt attempt
+               JOIN mra.runtime_step step ON step.step_id=attempt.step_id
+               JOIN mra.backtest_runtime_binding binding ON binding.runtime_run_id=step.run_id
+               WHERE binding.action_id=%s ORDER BY attempt.attempt_no LIMIT 1""",
+            (action.action_id,),
+        ).fetchone()
+    assert first_attempt is not None
+    reads = PostgresBacktestActionReadPort(backtest_stack.pool)
+    cutoff = reads.runtime_step_first_attempt_at(first_attempt[0])
+    assert cutoff == first_attempt[1]
     executor.execute(frozen, action, BacktestNextOperation.RETRY)
+    assert reads.runtime_step_first_attempt_at(first_attempt[0]) == cutoff
 
     with backtest_stack.pool.connection(read_only=True) as connection:
         row = connection.execute(
