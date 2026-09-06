@@ -4,8 +4,8 @@
 > **Authority:** Non-authoritative capability read model; never qualification Authority
 > **Owner:** Market Regime Alpha maintainers
 > **Generated At:** 2026-09-06 WP-18Q-R2 operational recovery
-> **Repository Implementation Checkpoint:** `fc4205def4bceb1e9f5108d9486a3b6e4b014584`
-> **Implementation Tree:** `134f6abc48adff7b3f45a00ec37a7dc55413bb6a`
+> **Repository Implementation Checkpoint:** `0e66bc31831544b55bc096d00527c35cd4779ea3`
+> **Implementation Tree:** `75985641d00eb8e124b0c4401afeebbcf7d5edd1`
 > **Execution-Time Main Baseline:** `780cd964fd47fffac13edd0cf52547d12fff2bfc`
 > **Containing Documentation Commit:** reported by handoff; no self-referential SHA
 > **Schema Epochs:** legacy `LEGACY_MIGRATIONS_001_106`; target `MRA_REFOUNDATION_1 / DRAFT / NOT_CUT_OVER`
@@ -16,7 +16,7 @@ implemented target mechanics from actual engineering qualification and research
 evidence. Existing legacy business owners remain in service until an explicit
 cutover; target-draft writes do not acquire legacy business Authority.
 
-Current target catalog: **192 tables, 4 views, 3,927 catalog objects**.
+Current target catalog: **192 tables, 4 views, 3,928 catalog objects**.
 Exact checksums and observed PostgreSQL counts are in Current State.
 Old 165-table and 3,776-test WP-17P numbers belong only to its historical
 [Verification](../references/WP-ARCHITECTURE-REFOUNDATION-17P-Prospective-Archive-Exploratory-Backtest-Verification.md).
@@ -58,24 +58,30 @@ BACKTEST_PLATFORM = NOT_ENGINEERING_QUALIFIED
 | Model / Training / Version | Completed FIT samples, deterministic ridge, reproducibility/dependency/hyperparameter rosters, fitted Artifact and later-validation binding | Research / `MODEL_QUALIFIED_NO` |
 | Evaluation | Canonical protocols/formulas/typed observations and source rosters; insufficient samples require typed NOT_ESTIMABLE | Research / `IMPLEMENTED / REAL_WP18Q_CAMPAIGN_UNPROVEN` |
 | Generic Backtest | Existing root + frozen Specification; generic Runtime executor, inspect/resume/replay and canonical owner delegation | Research / `QUALIFICATION_BLOCKED` |
-| Standard Backtest Report | Deterministic JSON/Markdown projection from reconciled Authority/Evaluation; no raw-bar metric recomputation | Research report projection / `REAL_REPORT_UNPROVEN` |
+| Standard Backtest Report | Deterministic JSON/Markdown projection from reconciled Authority/Evaluation; no raw-bar metric recomputation | Research report projection / `SMALL_REPORT_PUBLISHED / LARGE_REPORT_UNPROVEN` |
 | Historical compatibility | WP-17P exact allowlist/private decoder/reconciliation-only proof; WP-18 definition equivalence, not historical multi-fold execution | Private compatibility read / `NO_WRITE_AUTHORITY` |
 | WP-specific hard-cut | Executable WP orchestration remains because real campaign/report/replay prerequisites are not complete | Generic surface target / `HARD_CUT_BLOCKED` |
 | Research Qualification | Concrete Evidence/Assessment/policy/floor/decision and later-generation reads; training or positive returns never qualify a model | Research / `NO_EMPIRICAL_PROMOTION` |
 | Formal Research Campaign | Freeze/protected-open/Runtime/Provider-gate mechanics exist; rejected Provider evidence prevents real Formal OOS execution | Research + Runtime / `FORMAL_OOS_NOT_RUN` |
-| Prospective | Target-aligned generation/planning/terminal/revision and Runtime mechanics exist; new scope has 288 future slices; PostgreSQL continuation found due=0 at 2026-09-06 01:16 UTC; original history is discontinuous | Market + existing Runtime / `NOT_DUE / LIVE_PROOF_BLOCKED` |
+| Prospective | Target-aligned generation/planning/terminal/revision and Runtime mechanics exist; new scope has 288 future slices; PostgreSQL continuation found due=0 at 2026-09-06 05:25:55 UTC; original history is discontinuous | Market + existing Runtime / `NOT_DUE / LIVE_PROOF_BLOCKED` |
 
 The original operational scope remains unavailable at inspected locations.
 R2 recovered immutable historical evidence into a distinct operational scope,
 verified exported-snapshot backups and independent restores, and controlled its
-additive v3 upgrade without changing historical business rows. The new canonical
+additive v3 and v4 upgrades without changing historical business rows. The new canonical
 archive contains 116 actual sessions and 534 captures for the deterministic
 32-instrument roster. The frozen 44-session/four-arm Generic campaign failed its first Evaluation
 acquisition after 8,168 Outcomes; its failed identity is retained. The corrected
 two-arm chain completed four Evaluations but failed Model opening on incomparable
 Feature roster hash encodings. Current v4 compares exact ordered Feature rows;
-its disposable schema and focused checks pass, while backed-up operational upgrade,
-a fresh completed campaign, standard report and exact replay remain unproven.
+its disposable, restored and operational catalogs match after verified backup and
+189-table business preservation. Real repeated 64-sample preparation exposed a
+moving Model cutoff; the completed FIT Evaluation time now yields identical input
+bytes across retries. Clean `8fa47cb4` passes 231 locked focused tests. A fresh
+44-session campaign, standard report and exact replay remain unproven. The fresh
+three-session/two-arm Run completes all 25 actions with one real ModelVersion
+and six Evaluations. Its report hash mismatch is repaired at `0e66bc31`;
+publication succeeds and the full zero-write resume/replay check is in progress.
 No hard-cut has occurred. Alpha funnel bottleneck is `NOT_DETERMINED`.
 
 The `mra evidence` inventory is a regenerable non-authoritative operator index.
