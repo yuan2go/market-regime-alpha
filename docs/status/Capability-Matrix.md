@@ -4,8 +4,8 @@
 > **Authority:** Non-authoritative capability read model; never qualification Authority
 > **Owner:** Market Regime Alpha maintainers
 > **Generated At:** 2026-09-06 WP-18Q-R2 operational recovery
-> **Repository Implementation Checkpoint:** `adea103f7c88b4a4301c8798bffe7872ef64f46f`
-> **Implementation Tree:** `8a29134caa6cc78a248c8508db1d09bfbd0a884c`
+> **Repository Implementation Checkpoint:** `fc4205def4bceb1e9f5108d9486a3b6e4b014584`
+> **Implementation Tree:** `134f6abc48adff7b3f45a00ec37a7dc55413bb6a`
 > **Execution-Time Main Baseline:** `780cd964fd47fffac13edd0cf52547d12fff2bfc`
 > **Containing Documentation Commit:** reported by handoff; no self-referential SHA
 > **Schema Epochs:** legacy `LEGACY_MIGRATIONS_001_106`; target `MRA_REFOUNDATION_1 / DRAFT / NOT_CUT_OVER`
@@ -70,8 +70,12 @@ R2 recovered immutable historical evidence into a distinct operational scope,
 verified exported-snapshot backups and independent restores, and controlled its
 additive v3 upgrade without changing historical business rows. The new canonical
 archive contains 116 actual sessions and 534 captures for the deterministic
-32-instrument roster. The frozen 44-session/four-arm Generic campaign is in
-progress; completion, standard report and exact campaign replay remain unproven.
+32-instrument roster. The frozen 44-session/four-arm Generic campaign failed its first Evaluation
+acquisition after 8,168 Outcomes; its failed identity is retained. The corrected
+two-arm chain completed four Evaluations but failed Model opening on incomparable
+Feature roster hash encodings. Current v4 compares exact ordered Feature rows;
+its disposable schema and focused checks pass, while backed-up operational upgrade,
+a fresh completed campaign, standard report and exact replay remain unproven.
 No hard-cut has occurred. Alpha funnel bottleneck is `NOT_DETERMINED`.
 
 The `mra evidence` inventory is a regenerable non-authoritative operator index.

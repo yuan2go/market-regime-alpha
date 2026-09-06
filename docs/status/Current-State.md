@@ -4,8 +4,8 @@
 > **Authority:** Non-authoritative implementation status; exact-SHA qualification belongs to Verification
 > **Owner:** Market Regime Alpha maintainers
 > **Generated At:** 2026-09-06 WP-18Q-R2 operational recovery
-> **Repository Implementation Checkpoint:** `adea103f7c88b4a4301c8798bffe7872ef64f46f`
-> **Implementation Tree:** `8a29134caa6cc78a248c8508db1d09bfbd0a884c`
+> **Repository Implementation Checkpoint:** `fc4205def4bceb1e9f5108d9486a3b6e4b014584`
+> **Implementation Tree:** `134f6abc48adff7b3f45a00ec37a7dc55413bb6a`
 > **Execution-Time Main Baseline:** `780cd964fd47fffac13edd0cf52547d12fff2bfc`
 > **Containing Documentation Commit:** reported by handoff; no self-referential SHA
 > **Schema Epochs:** legacy business `LEGACY_MIGRATIONS_001_106`; target `MRA_REFOUNDATION_1 / DRAFT / NOT_CUT_OVER`
@@ -71,8 +71,15 @@ inherited. The clean `4e418aefddecf05638f11f722db8f810aff16f73` worktree passed
 disposable database. Clean `adea103f` subsequently passed 218 focused tests,
 38 architecture/navigation tests, Ruff, mypy, build and documentation checks. These checks cover current Dataset
 and Model owner reload, bounded metadata reads, dependency-ready execution and
-the corrected Evaluation execution cutoff. Positive real Model proof and full
-regression at the final SHA remain pending. The 44-session campaign executed
+the corrected Evaluation execution cutoff. Clean `fc4205de` subsequently passed
+44 focused tests, 74 architecture/navigation tests, Ruff, mypy, build and docs
+checks. Its v4 disposable database passed clean bootstrap, exact-OID guarded
+recreate and matching catalog verification. The actual two-arm chain completed
+four Evaluations, then failed Model input acquisition because Model and Backtest
+encode their Feature roster hashes differently. The v4 correction compares exact
+ordered Feature identities and hashes; operational backup/restore and additive
+application remain pending. Positive Model execution and full final-SHA regression
+remain unproven. The 44-session campaign executed
 at `d3138692` and failed its first Evaluation acquisition; its failed Runtime
 and incorrectly frozen OPEN Evaluation cannot be reset. A new execution must
 retain the same research parameters while using a fresh identity. Final replay
@@ -80,7 +87,7 @@ must use the final implementation.
 
 | Gate | Proven / remaining boundary |
 |---|---|
-| PostgreSQL mechanics | Durable disposable PostgreSQL 16 bootstrap/recreate and catalog verification have been exercised. The current v3 catalog includes the exact Context TRUE_RATE precision repair; final qualification is still pending. |
+| PostgreSQL mechanics | Durable disposable PostgreSQL 16 bootstrap/recreate and catalog verification have been exercised. The operational v3 catalog includes the exact Context TRUE_RATE precision repair. Current source adds v4 ordered Model/Backtest Feature-parent comparison; its clean disposable catalog is verified, while operational v4 upgrade and final qualification remain pending. |
 | Historical compatibility | Exact completed WP-17P run `8f7b6def-9c63-533e-9777-a5a6c57866e0` and its 398 Artifacts were recovered and replayed without business writes. WP-18 remains definition equivalence only. |
 | Operational recovery | Original operational DB Authority was not found at inspected locations. `OPERATIONAL_EVIDENCE_DISCONTINUITY` separates recovered old evidence from the new operational scope, database OID `287543`. Original operational upgrade remains unproven. |
 | Backup / restore / inventory | Exported snapshot backups, physical Artifact roster verification and independent fresh-DB/root restore drills were executed. Non-authoritative inventory includes backup, integrity and restore receipts. Incomplete/failed execution remains incomplete/failed after restoration. |
@@ -88,7 +95,7 @@ must use the final implementation.
 | Canonical archive | New sealed archive `fc699eea-1283-5192-b3ac-c9cbddc0da5e` reconciles 534 canonical captures, 116 actual sessions and the frozen 32-instrument roster. Daily/intraday/calendar and exact daily membership evidence exist. Legitimate missing observations remain typed; reconstructed old identities or known-times were not used. |
 | Real generic campaign | Run `a4b98930-a609-57c4-9e9a-4072d52397d8` froze 44 executed sessions, four arms and two FIT→VALIDATION dependencies. It produced 296 Datasets, 256 Decisions and 8,168 Outcomes, then failed its first Evaluation acquisition. The handler incorrectly used the Archive source cutoff, earlier than all 1,085 actual settlements required by that Evaluation. The settled-at guard correctly failed closed. Evaluation `8dcc80a0-21da-55c8-ba10-148c561f5f83` remains OPEN with its original cutoff, and its Runtime Step remains FAILED_TERMINAL. No Model or completed Evaluation is claimed. The correction uses the PostgreSQL timestamp of the Evaluation Step's first Attempt, stable across retries; a fresh campaign is required. |
 | Observed performance | Both 64-row and later 32-row cold Outcome queries exceeded the unchanged 30-second timeout; reads now use eight-row batches. The first Runtime set query removed 7,100 repeated Attempt probes but later also timed out, after 5,652 Outcomes. Current bounded Runtime reads preserve all 729 complete binding rows exactly; warm measurements at clean `d3138692` took 0.075 and 0.057 seconds. Full owner inspect took 355.09 seconds, returned RUNNING without integrity mismatch, and preserved all existing Dataset/Decision/Outcome rows. Generic execution now reconciles each affected action before later writes and reloads the full graph before admitting new dependencies, avoiding quadratic full-owner reads across independent ready actions. Cold/warm and concurrent-load failures remain evidence; no timeout relaxation or long-lived verification cache is used. At clean `805ae443`, the same real action observation retained exact results while metadata reads fell from 106 queries/10,246 rows to 11 queries/36 rows. Different cache conditions preclude a timing speedup claim. Two schema-bootstrap catalog timeouts during concurrent writes were preserved; the idle measurement later completed without changing the timeout. Completed-campaign plans remain required. |
-| Fresh two-arm engineering gate | The first small Run failed on a Calendar horizon limited to the Decision roster; canonical Calendar resolution is repaired and all 44 real horizons were verified. A subsequent concurrent Run exhausted the three SERIALIZABLE transaction attempts and retained its terminal failure/receipt. A fresh sequential two-arm execution must first prove the corrected Evaluation/Model chain before another large campaign; all research parameters stay fixed. |
+| Fresh two-arm engineering gate | The first small Run failed on a Calendar horizon limited to the Decision roster; canonical Calendar resolution is repaired and all 44 real horizons were verified. A subsequent concurrent Run exhausted the three SERIALIZABLE transaction attempts and retained its terminal failure/receipt. Run `fe21409f-5373-5154-ae28-cdfaf6c6988d` then completed six Datasets, five Decisions, five Outcome actions and four canonical Evaluations at `adea103f`, proving the Evaluation cutoff repair. Model opening failed because identical Feature rows have different owner-specific aggregate hash encodings. Its failed Runtime is immutable and no ModelTrainingRun was created. Current v4 compares ordered Feature IDs/hashes instead of those incomparable aggregate hashes. A fresh two-arm execution remains required before another large campaign; all research parameters stay fixed. |
 | Standard report / exact replay | A completed R2 campaign, trained ModelVersions, canonical standard metrics, report Artifacts and byte-stable inspect/resume/replay remain unproven. Current Model observation reloads canonical registered training inputs and reproducibility instead of accepting root hash references alone. Dataset observation now invokes the existing canonical input loader; all 296 actual Dataset manifests, source/population rosters and Runtime bindings matched at clean `aebd4ff3`. The running ridge numerical kernel and three adapters matched the frozen wheel byte-for-byte; the changed supporting engine SHA is separately recorded and whole-package source identity is not claimed. Alpha bottleneck is `NOT_DETERMINED`. |
 | Prospective continuity | The sole CONTINUOUS_RESEARCH runner can invoke the canonical series continuation before its trading-day early return. PostgreSQL clock, exact TradingSessions, overdue terminalization, planning gaps, due claim, lease/fence recovery and unknown Provider effect handling are wired and have focused tests. This is not proof of an installed continuously running service. |
 | Real prospective attempt | New series `r2_xshg32`, generation `1303080a-8a96-51dc-9021-31a9250c85d9`, began at 2026-09-05 15:56:17.897411 UTC with 288 future slices. At 2026-09-06 03:27:45 UTC, canonical continuation found due=0, no new generation and no planning gap. `REAL_DUE_ATTEMPT=BLOCKED_BY_TEMPORAL_WINDOW`; the frozen WP-18Q total exit still requires real due proof. |
