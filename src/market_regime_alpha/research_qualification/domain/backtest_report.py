@@ -270,8 +270,18 @@ class BacktestReportArtifactBinding:
                         **hashes,
                         "evaluation_count": self.evaluation_count,
                         "exploratory_backtest_run_id": (self.exploratory_backtest_run_id),
-                        "json_artifact": self.json_artifact,
-                        "markdown_artifact": self.markdown_artifact,
+                        # The persistent report contract stores digest strings,
+                        # not the ContentHash value object's dataclass shape.
+                        "json_artifact": {
+                            "artifact_id": self.json_artifact.artifact_id,
+                            "content_sha256": str(self.json_artifact.content_sha256),
+                            "size_bytes": self.json_artifact.size_bytes,
+                        },
+                        "markdown_artifact": {
+                            "artifact_id": self.markdown_artifact.artifact_id,
+                            "content_sha256": str(self.markdown_artifact.content_sha256),
+                            "size_bytes": self.markdown_artifact.size_bytes,
+                        },
                         "renderer_version": self.renderer_version,
                         "report_schema": self.report_schema,
                     }

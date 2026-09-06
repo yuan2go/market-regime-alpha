@@ -506,6 +506,66 @@ def _current_model_specification(stack) -> BacktestSpecification:
     )
 
 
+def test_report_binding_round_trips_through_postgres_hash_guard(backtest_stack) -> None:
+    from market_regime_alpha.research_qualification.domain.backtest_report import (
+        BacktestReportArtifactBinding,
+    )
+
+    specification = _current_specification(backtest_stack)
+    application = BacktestApplication(
+        PostgresBacktestUnitOfWorkProvider(backtest_stack.pool), id_factory=uuid4,
+    )
+    application.predeclare(specification, _legacy._context("report-predeclare"))
+    requirement = specification.evaluation_requirements[0]
+    evaluation_id = uuid4()
+    # Isolate the report persistence boundary from Evaluation execution, which
+    # has separate canonical-chain coverage. Only this disposable fixture's
+    # source binding bypasses its unrelated parent graph; the report write
+    # below runs with every PostgreSQL constraint and trigger enabled.
+    with psycopg.connect(backtest_stack.database_url) as connection:
+        connection.execute("SET LOCAL session_replication_role = replica")
+        connection.execute(
+            """INSERT INTO mra.backtest_evaluation_execution (
+                backtest_evaluation_execution_id, exploratory_backtest_run_id,
+                specification_sha256, backtest_evaluation_requirement_id,
+                evaluation_run_id, evaluation_protocol_id,
+                evaluation_metric_count, evaluation_metric_roster_sha256,
+                content_sha256
+            ) VALUES (%s,%s,%s,%s,%s,%s,1,%s,%s)""",
+            (uuid4(), specification.exploratory_backtest_run_id,
+             str(specification.content_sha256), requirement.requirement_id,
+             evaluation_id, requirement.evaluation_protocol.authority_id,
+             "a" * 64, "b" * 64),
+        )
+    binding = BacktestReportArtifactBinding(
+        backtest_report_artifact_id=uuid4(),
+        exploratory_backtest_run_id=specification.exploratory_backtest_run_id,
+        specification_sha256=specification.content_sha256,
+        evaluation_count=1,
+        evaluation_roster_sha256=canonical_json_sha256(({
+            "evaluation_run_id": evaluation_id, "ordinal": requirement.ordinal,
+        },)),
+        source_projection_sha256="c" * 64,
+        code_content_sha256=specification.code_artifact.content_sha256,
+        config_content_sha256=specification.config_artifact.content_sha256,
+        report_schema="mra-backtest-report-v1", renderer_version="1",
+        json_artifact=specification.code_artifact,
+        markdown_artifact=specification.config_artifact,
+    )
+    context = _legacy._context("report-bind")
+    first = application.bind_report(binding, context)
+    replay = application.bind_report(binding, context)
+    assert not first.replayed and replay.replayed
+    assert first.binding_id == replay.binding_id == binding.backtest_report_artifact_id
+    assert first.result_hash == replay.result_hash == str(binding.content_sha256)
+
+    corrupted = replace(binding, backtest_report_artifact_id=uuid4(),
+                        source_projection_sha256="d" * 64)
+    object.__setattr__(corrupted, "content_sha256", binding.content_sha256)
+    with pytest.raises(RuntimeStateConflictError):
+        application.bind_report(corrupted, _legacy._context("report-corrupt-hash"))
+
+
 def test_current_predeclaration_is_root_owned_relational_and_replayable(
     backtest_stack,
 ) -> None:
