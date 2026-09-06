@@ -152,3 +152,19 @@ three-metric control. Before optimization its local acceptance budgets are 600 S
 calls, one second each for input preparation and final write UoW, three seconds
 total completion, and 200 MiB peak process RSS. These are engineering workload
 budgets, not strategy thresholds or unbounded campaign scaling claims.
+
+The complete-parent query also reloads the actual DecisionRun root, its Dataset
+binding and OPENED state; a surviving Backtest binding row cannot replace a
+missing Decision Authority. Known canonical-input/Outcome reconciliation failures
+become explicit integrity mismatches, never a partial result or empty success.
+
+The longitudinal fixture predeclares four Validation episodes over two folds:
+January 28/29 and January 30/February 3. A fixed line Risk cap rejects two
+positive-weight proposals; the other two episodes trade independently funded
+capital through explicit +10%/-10% marks. The shared parent contains 68 canonical
+members (2/32/32/2), while economic sample denominators are 4 overall, 2 per fold,
+3 in January and 1 in February. Every Report value, count, result identity and
+fold/month selector is checked against independent expected values. The negative
+fixture has only a February selector, so an ALL metric cannot conceal premature
+filtering of a broken January member. Temporary corruptions restore exact raw
+PostgreSQL records, preserving numeric representations and whole-schema hashes.

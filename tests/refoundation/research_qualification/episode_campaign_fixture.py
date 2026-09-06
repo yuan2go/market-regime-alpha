@@ -36,6 +36,8 @@ from market_regime_alpha.research_qualification.domain.evaluation_formula import
     BacktestFormulaCode as Code,
     EvaluationFormulaDefinition,
     BacktestMetricSurface,
+    EvaluationFormulaParameter,
+    FormulaParameterType,
 )
 from market_regime_alpha.research_qualification.domain.research_vocabulary import (
     PartitionPurpose,
@@ -50,10 +52,12 @@ from tests.refoundation.research_qualification.test_episode_formula import formu
 from tests.refoundation.research_qualification.test_wp17p_evaluation_source_repository import _metric
 
 
-def funded_specification(app, monkeypatch):
-    product, instruments, sessions, code, config, archive_id, seal = seed_complete_archive(app, episode_entry=True)
+def funded_specification(app, monkeypatch, *, multi_episode=False, february_only=False):
+    product, instruments, sessions, code, config, archive_id, seal = seed_complete_archive(app, episode_entry=True, multi_episode=multi_episode)
     target_factory = catalog_factory._target
     portfolio_factory = catalog_factory._portfolio
+    risk_factory = catalog_factory._risk
+    fit_day = date(2026, 1, 26) if multi_episode else date(2026, 1, 5)
 
     def target(code, config):
         old = target_factory(code, config)
@@ -104,9 +108,21 @@ def funded_specification(app, monkeypatch):
             minimum_cash_weight=D(".2"),
         )
 
+    def risk(code, config, provenance):
+        from market_regime_alpha.decision_support.domain.risk import RiskSubject
+        old = risk_factory(code, config, provenance)
+        if not multi_episode:
+            return old
+        identity = uuid4()
+        return replace(old, risk_policy_id=identity, policy_code="episode_fixed_line_cap",
+            rules=tuple(replace(rule, risk_rule_id=uuid4(), risk_policy_id=identity,
+                decimal_threshold=D(".20") if rule.subject is RiskSubject.SINGLE_LINE_WEIGHT else rule.decimal_threshold)
+                for rule in old.rules))
+
     with monkeypatch.context() as patch:
         patch.setattr(catalog_factory, "_target", target)
         patch.setattr(catalog_factory, "_portfolio", portfolio)
+        patch.setattr(catalog_factory, "_risk", risk)
         selected_dates = {
             date(2026, 1, 5),
             date(2026, 1, 6),
@@ -117,6 +133,8 @@ def funded_specification(app, monkeypatch):
             date(2026, 1, 14),
             date(2026, 1, 15),
         }
+        if multi_episode:
+            selected_dates = {session.session_date for session in sessions}
         catalog = catalog_factory.build_wp17p_authority_catalog(
             provider_product_id=product.provider_product_id,
             market_archive_id=archive_id,
@@ -178,7 +196,7 @@ def funded_specification(app, monkeypatch):
         command(plan, _context("economic-register-" + str(ordinal)))
     archive = app.archive_inspection.inspect(archive_id)
     selection = ExploratoryRetrospectiveSelectionScope(
-        archive_id, seal.market_archive_seal_id, archive.sealed_at, datetime(2026, 1, 5, 14, 55, tzinfo=ZoneInfo("Asia/Shanghai"))
+        archive_id, seal.market_archive_seal_id, archive.sealed_at, datetime.combine(fit_day, time(14, 55), ZoneInfo("Asia/Shanghai"))
     )
     scope_bytes = json.dumps(
         {
@@ -243,34 +261,41 @@ def funded_specification(app, monkeypatch):
     )
     by_date = {s.session_date: s for s in sessions}
     folds = []
-    for ordinal, day, purpose, protocol in (
-        (1, date(2026, 1, 5), PartitionPurpose.FIT, catalog.fit_evaluation_protocol),
-        (2, date(2026, 1, 14), PartitionPurpose.VALIDATION, catalog.validation_evaluation_protocol),
-    ):
-        folds.append(
-            BacktestFoldSpecification(
-                uuid4(),
-                ordinal,
-                purpose,
-                "XSHG",
-                0,
-                0,
-                AuthorityBinding(protocol.evaluation_protocol_id, protocol.content_sha256),
-                (
-                    BacktestFoldSession(
-                        uuid4(),
-                        1,
-                        by_date[day].session_id.value,
-                        day,
-                        BacktestSessionRole.FIT_INPUT if purpose is PartitionPurpose.FIT else BacktestSessionRole.EVALUATION,
-                    ),
-                ),
-            )
+    groups = (
+        ((fit_day,), PartitionPurpose.FIT, catalog.fit_evaluation_protocol),
+        ((date(2026, 1, 14),), PartitionPurpose.VALIDATION, catalog.validation_evaluation_protocol),
+    )
+    if multi_episode:
+        groups = (
+            ((fit_day,), PartitionPurpose.FIT, catalog.fit_evaluation_protocol),
+            ((date(2026, 1, 28), date(2026, 1, 29)), PartitionPurpose.VALIDATION, catalog.validation_evaluation_protocol),
+            ((date(2026, 1, 30), date(2026, 2, 3)), PartitionPurpose.VALIDATION, catalog.validation_evaluation_protocol),
         )
+    for ordinal, (days, purpose, protocol) in enumerate(groups, 1):
+        folds.append(BacktestFoldSpecification(
+            uuid4(), ordinal, purpose, "XSHG", 0, 0,
+            AuthorityBinding(protocol.evaluation_protocol_id, protocol.content_sha256),
+            tuple(BacktestFoldSession(uuid4(), index, by_date[day].session_id.value, day,
+                BacktestSessionRole.FIT_INPUT if purpose is PartitionPurpose.FIT else BacktestSessionRole.EVALUATION)
+                for index, day in enumerate(days, 1)),
+        ))
     entry = catalog.target.checkpoints[2].target_checkpoint_id
     exit = catalog.target.checkpoints[1].target_checkpoint_id
     metrics = []
-    for ordinal, code_kind in enumerate((Code.NET_RETURN_ASSUMED_COST, Code.TURNOVER), 1):
+    definitions = (("episode-1", Code.NET_RETURN_ASSUMED_COST, None, None), ("episode-2", Code.TURNOVER, None, None))
+    if multi_episode:
+        definitions = (
+            ("all-net", Code.NET_RETURN_ASSUMED_COST, None, None),
+            ("all-turnover", Code.TURNOVER, None, None),
+            ("fold-a-net", Code.NET_RETURN_ASSUMED_COST, "FOLD", str(folds[1].exploratory_backtest_fold_id)),
+            ("fold-b-net", Code.NET_RETURN_ASSUMED_COST, "FOLD", str(folds[2].exploratory_backtest_fold_id)),
+            ("january-net", Code.NET_RETURN_ASSUMED_COST, "TIME_MONTH", "2026-01"),
+            ("february-net", Code.NET_RETURN_ASSUMED_COST, "TIME_MONTH", "2026-02"),
+        )
+    if february_only:
+        assert multi_episode
+        definitions = tuple(item for item in definitions if item[0] == "february-net")
+    for ordinal, (name, code_kind, slice_kind, slice_key) in enumerate(definitions, 1):
         metric = _metric(EvaluationSourceKind.PORTFOLIO_OUTCOME, EvaluationSourceMeasure.NET_PORTFOLIO_RETURN_ASSUMED_COST)
         definition = formula(metric.evaluation_protocol_metric_id, code_kind, entry=entry, exit=exit)
         definition = replace(
@@ -280,11 +305,15 @@ def funded_specification(app, monkeypatch):
                 for p in definition.parameters
             ),
         )
+        if slice_kind is not None:
+            definition = replace(definition, parameters=(*definition.parameters,
+                EvaluationFormulaParameter(uuid4(), len(definition.parameters)+1, "episode_slice_kind", FormulaParameterType.TEXT, text_value=slice_kind),
+                EvaluationFormulaParameter(uuid4(), len(definition.parameters)+2, "episode_slice_key", FormulaParameterType.TEXT, text_value=slice_key)))
         metrics.append(
             replace(
                 metric,
                 ordinal=ordinal,
-                metric_code="episode-" + str(ordinal),
+                metric_code=name,
                 formula=definition,
                 slice_kind=EvaluationSliceKind.ALL_MEMBERS,
                 backtest_arm_kind=None,
@@ -315,7 +344,7 @@ def funded_specification(app, monkeypatch):
     ) + (
         BacktestEvaluationRequirement(
             uuid4(),
-            3,
+            len(folds) + 1,
             None,
             AuthorityBinding(protocol.evaluation_protocol_id, protocol.content_sha256),
             True,
@@ -339,16 +368,17 @@ def funded_specification(app, monkeypatch):
         ),
         "XSHG",
         folds[0].sessions[0].trading_session_id,
-        folds[1].sessions[0].trading_session_id,
+        folds[-1].sessions[-1].trading_session_id,
         (AuthorityBinding(catalog.feature.feature_definition_id, catalog.feature.content_sha256),),
         VersionedAuthorityBinding(catalog.target.target_definition_id, 1, catalog.target.content_sha256),
         defaults,
         (arm,),
         tuple(folds),
-        (BacktestFoldDependency(uuid4(), 1, folds[0].exploratory_backtest_fold_id, folds[1].exploratory_backtest_fold_id),),
+        tuple(BacktestFoldDependency(uuid4(), index, folds[0].exploratory_backtest_fold_id, fold.exploratory_backtest_fold_id)
+              for index, fold in enumerate(folds[1:], 1)),
         tuple(BacktestArmFold(uuid4(), f.ordinal, arm.exploratory_backtest_arm_id, f.exploratory_backtest_fold_id) for f in folds),
         (),
-        BacktestWalkForwardPolicy("fixed-episode", 1, BacktestWalkForwardMode.FIXED, 1, 1, 1),
+        BacktestWalkForwardPolicy("fixed-episode", 1, BacktestWalkForwardMode.FIXED, 1, 2 if multi_episode else 1, 1),
         costs,
         evaluations,
         1729,

@@ -32,7 +32,7 @@ def require_episode_parent(
         raise EvaluationReconciliationError("V2 requires one unfiltered complete Validation parent run/arm")
     slots = connection.execute(
         """SELECT session.exploratory_backtest_fold_session_id, session.session_date,
-                  decision.decision_run_id
+                  authority.decision_run_id
            FROM mra.backtest_arm_fold binding
            JOIN mra.exploratory_backtest_run run USING (exploratory_backtest_run_id)
            JOIN mra.exploratory_backtest_fold fold USING (exploratory_backtest_fold_id, exploratory_backtest_run_id)
@@ -41,6 +41,9 @@ def require_episode_parent(
              ON decision.exploratory_backtest_run_id = binding.exploratory_backtest_run_id
             AND decision.exploratory_backtest_arm_id = binding.exploratory_backtest_arm_id
             AND decision.exploratory_backtest_fold_session_id = session.exploratory_backtest_fold_session_id
+           LEFT JOIN mra.decision_run authority
+             ON authority.decision_run_id = decision.decision_run_id
+            AND authority.dataset_id = decision.dataset_id AND authority.status = 'OPENED'
            WHERE binding.exploratory_backtest_run_id = %s
              AND binding.exploratory_backtest_arm_id = %s AND binding.specification_sha256 = %s
              AND run.current_specification_sha256 = binding.specification_sha256

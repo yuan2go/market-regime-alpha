@@ -8,6 +8,9 @@ from uuid import UUID
 import psycopg
 
 from market_regime_alpha.infrastructure.postgres.pool import TargetPostgresPool
+from market_regime_alpha.outcome.errors import OutcomeAuthorityIntegrityError
+from market_regime_alpha.research_qualification.errors import EvaluationReconciliationError
+from market_regime_alpha.runtime.errors import RuntimeNotFoundError
 from market_regime_alpha.research_qualification.domain.evaluation import (
     ProtocolMetricDefinition,
     evaluation_protocol_metric_roster_sha256,
@@ -823,7 +826,12 @@ class PostgresResearchEvaluationVerificationProvider:
                 required_commands=tuple(required_commands),
                 mismatches=mismatches,
             )
-        self._inspect_episode_results(evaluation_run_id, mismatches)
+        try:
+            self._inspect_episode_results(evaluation_run_id, mismatches)
+        except (EvaluationReconciliationError, OutcomeAuthorityIntegrityError, RuntimeNotFoundError, ValueError) as error:
+            mismatches.append(_identity(
+                "evaluation_run.episode_inputs", "complete canonical parent and exact Outcome price facts", str(error)
+            ))
         return tuple(mismatches)
 
     def _inspect_episode_results(self, evaluation_run_id: UUID, mismatches: list[Mismatch]) -> None:
