@@ -132,6 +132,10 @@ def _load_runtime_bindings(
             _RUNTIME_BINDINGS_SQL,
             (run_id, [row["backtest_runtime_binding_id"] for row in batch]),
         ).fetchall())
+    if sorted(row["backtest_runtime_binding_id"] for row in rows) != sorted(
+        row["backtest_runtime_binding_id"] for row in identities
+    ):
+        raise ArtifactIntegrityError("Runtime binding roster does not resolve to exact parent rows")
     return rows
 
 

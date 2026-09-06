@@ -477,3 +477,76 @@ def test_progress_rejects_changed_binding_fields_even_with_succeeded_runtime(
         connection.commit()
     with pytest.raises(ArtifactIntegrityError, match="differs from frozen intent"):
         PostgresBacktestExecutionObservationPort(backtest_stack.pool).runtime_progress(frozen, expected)
+
+
+def test_progress_rejects_registered_binding_with_missing_runtime_root(backtest_stack):
+    from market_regime_alpha.infrastructure.postgres.queries.backtest_execution import (
+        PostgresBacktestExecutionObservationPort,
+    )
+    from market_regime_alpha.runtime.errors import ArtifactIntegrityError
+
+    specification = _backtests._current_specification(backtest_stack)
+    backtests = BacktestApplication(
+        PostgresBacktestUnitOfWorkProvider(backtest_stack.pool), id_factory=uuid4,
+    )
+    backtests.predeclare(specification, _context("progress-missing-runtime"))
+    frozen = backtests.plan(specification)
+    expected = BacktestExecutionPlanner().compile(frozen).expected_actions
+    runtime = RuntimeApplication(PostgresUnitOfWorkProvider(backtest_stack.pool))
+    _executor(backtest_stack, _CompletingHandler(runtime)).execute(
+        frozen, expected[0], BacktestNextOperation.EXECUTE,
+    )
+    with backtest_stack.pool.connection() as connection:
+        connection.execute("SET LOCAL session_replication_role = replica")
+        connection.execute(
+            """DELETE FROM mra.runtime_run WHERE run_id IN (
+                SELECT runtime_run_id FROM mra.backtest_runtime_binding WHERE action_id=%s
+            )""", (expected[0].action_id,),
+        )
+        connection.commit()
+    with pytest.raises(ArtifactIntegrityError, match="binding roster"):
+        PostgresBacktestExecutionObservationPort(backtest_stack.pool).runtime_progress(frozen, expected)
+
+
+def test_progress_exposes_failed_attempt_and_recovered_attempt_identity(backtest_stack):
+    from market_regime_alpha.infrastructure.postgres.queries.backtest_execution import (
+        PostgresBacktestExecutionObservationPort,
+    )
+    specification = _backtests._current_specification(backtest_stack)
+    backtests = BacktestApplication(
+        PostgresBacktestUnitOfWorkProvider(backtest_stack.pool), id_factory=uuid4,
+    )
+    backtests.predeclare(specification, _context("progress-retry"))
+    frozen = backtests.plan(specification)
+    expected = BacktestExecutionPlanner().compile(frozen).expected_actions
+    runtime = RuntimeApplication(PostgresUnitOfWorkProvider(backtest_stack.pool))
+    class CapturedClaims(_RetryOnceHandler):
+        def __init__(self, runtime):
+            super().__init__(runtime)
+            self.claims = []
+
+        def execute_step(self, specification, action, claim):
+            self.claims.append(claim)
+            return super().execute_step(specification, action, claim)
+
+    handler = CapturedClaims(runtime)
+    executor = _executor(backtest_stack, handler)
+    observer = PostgresBacktestExecutionObservationPort(backtest_stack.pool)
+    executor.execute(frozen, expected[0], BacktestNextOperation.EXECUTE)
+    failed = observer.runtime_progress(frozen, expected).actions[0]
+    assert failed.latest_attempt_state == "FAILED_RETRYABLE"
+    assert failed.error_code == "BACKTEST_ACTION_RETRYABLE"
+    trace = runtime.inspect_run(failed.runtime_run_id)
+    assert trace.steps[0].current_attempt_id is None
+    assert failed.latest_attempt_id == handler.claims[-1].attempt_id
+    assert failed.lease_until == handler.claims[-1].lease_until
+    executor.execute(frozen, expected[0], BacktestNextOperation.RETRY)
+    recovered = observer.runtime_progress(frozen, expected).actions[0]
+    assert recovered.runtime_run_id == failed.runtime_run_id
+    assert recovered.runtime_state == "SUCCEEDED"
+    assert recovered.latest_attempt_state == "SUCCEEDED"
+    assert recovered.latest_attempt_id != failed.latest_attempt_id
+    assert recovered.error_code is None
+    assert recovered.latest_attempt_id == handler.claims[-1].attempt_id
+    assert recovered.lease_until == handler.claims[-1].lease_until
+    assert runtime.inspect_run(recovered.runtime_run_id).steps[0].current_attempt_id is None
