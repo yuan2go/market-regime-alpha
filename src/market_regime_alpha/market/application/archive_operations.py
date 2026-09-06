@@ -23,6 +23,7 @@ from market_regime_alpha.market.ports.archive_operations import (
     ArchiveResourceInspector,
 )
 from market_regime_alpha.runtime.application import CommandContext
+from market_regime_alpha.runtime.errors import RuntimeStateConflictError
 from market_regime_alpha.runtime.ports import AttemptClaim
 from market_regime_alpha.shared.hashing import canonical_json_sha256
 
@@ -127,6 +128,13 @@ class MarketArchiveOperations:
                 status=ArchiveSliceExecutionStatus.NOT_DUE,
                 capture_id=None,
                 source_gap_id=None,
+            )
+        if (
+            contract.lane is ArchiveLane.PROSPECTIVE_CONTEMPORANEOUS
+            and runtime_claim is None
+        ):
+            raise RuntimeStateConflictError(
+                "prospective archive effects require a Runtime claim"
             )
         available = self._resources.available_bytes()
         if available < contract.required_free_bytes:

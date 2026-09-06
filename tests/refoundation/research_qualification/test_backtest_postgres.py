@@ -506,6 +506,122 @@ def _current_model_specification(stack) -> BacktestSpecification:
     )
 
 
+def test_comparison_scope_survives_relational_execution_identity_changes(backtest_stack) -> None:
+    from market_regime_alpha.research_qualification.domain.backtest_report import (
+        specification_comparison_fingerprint,
+    )
+
+    original = _current_specification(backtest_stack)
+    arm_ids = {item.exploratory_backtest_arm_id: uuid4() for item in original.arms}
+    fold_ids = {item.exploratory_backtest_fold_id: uuid4() for item in original.folds}
+    costs = tuple(replace(item, assumption_id=uuid4()) for item in original.cost_assumptions)
+    cost_hash = canonical_json_sha256(tuple(
+        {"content_sha256": str(item.content_sha256), "assumption_id": item.assumption_id, "ordinal": item.ordinal}
+        for item in costs
+    ))
+    duplicate = replace(
+        original, exploratory_backtest_run_id=uuid4(), run_code="comparison_repeat",
+        cost_assumptions=costs,
+        arms=tuple(replace(item, exploratory_backtest_arm_id=arm_ids[item.exploratory_backtest_arm_id],
+                           effective_cost_roster_sha256=cost_hash) for item in original.arms),
+        folds=tuple(replace(item, exploratory_backtest_fold_id=fold_ids[item.exploratory_backtest_fold_id],
+                            sessions=tuple(replace(session, exploratory_backtest_fold_session_id=uuid4())
+                                           for session in item.sessions)) for item in original.folds),
+        fold_dependencies=tuple(replace(item, dependency_id=uuid4(), fit_fold_id=fold_ids[item.fit_fold_id],
+                                        validation_fold_id=fold_ids[item.validation_fold_id])
+                                for item in original.fold_dependencies),
+        arm_folds=tuple(replace(item, arm_fold_id=uuid4(), arm_id=arm_ids[item.arm_id], fold_id=fold_ids[item.fold_id])
+                        for item in original.arm_folds),
+        evaluation_requirements=tuple(replace(item, requirement_id=uuid4(), arm_id=arm_ids[item.arm_id],
+                                              fold_id=fold_ids.get(item.fold_id))
+                                      for item in original.evaluation_requirements),
+    )
+    application = BacktestApplication(PostgresBacktestUnitOfWorkProvider(backtest_stack.pool), id_factory=uuid4)
+    for spec in (original, duplicate):
+        application.predeclare(spec, _legacy._context("comparison:" + str(spec.exploratory_backtest_run_id)))
+    query = PostgresBacktestQueryPort(backtest_stack.pool)
+    left = query.load_specification(original.exploratory_backtest_run_id)
+    right = query.load_specification(duplicate.exploratory_backtest_run_id)
+    assert left.content_sha256 != right.content_sha256
+    assert left.fold_roster_sha256 != right.fold_roster_sha256
+    assert left.cost_roster_sha256 != right.cost_roster_sha256
+    fingerprint = specification_comparison_fingerprint(left, ())
+    assert specification_comparison_fingerprint(right, ()) == fingerprint
+    # No metric execution is claimed here: these are exact persisted scope
+    # facts. Changing an input-selection rule must still fail comparison.
+    assert specification_comparison_fingerprint(
+        replace(right, sample_algorithm_version=right.sample_algorithm_version + 1), ()
+    ).universe_sample_sha256 != fingerprint.universe_sample_sha256
+    changed_costs = (replace(costs[0], amount_bps=Decimal("4")), *costs[1:])
+    changed_hash = canonical_json_sha256(tuple(
+        {"content_sha256": str(item.content_sha256), "assumption_id": item.assumption_id, "ordinal": item.ordinal}
+        for item in changed_costs
+    ))
+    changed_cost = replace(right, cost_assumptions=changed_costs,
+                           arms=tuple(replace(item, effective_cost_roster_sha256=changed_hash) for item in right.arms))
+    assert specification_comparison_fingerprint(changed_cost, ()).cost_sha256 != fingerprint.cost_sha256
+
+
+def test_report_binding_round_trips_through_postgres_hash_guard(backtest_stack) -> None:
+    from market_regime_alpha.research_qualification.domain.backtest_report import (
+        BacktestReportArtifactBinding,
+    )
+
+    specification = _current_specification(backtest_stack)
+    application = BacktestApplication(
+        PostgresBacktestUnitOfWorkProvider(backtest_stack.pool), id_factory=uuid4,
+    )
+    application.predeclare(specification, _legacy._context("report-predeclare"))
+    requirement = specification.evaluation_requirements[0]
+    evaluation_id = uuid4()
+    # Isolate the report persistence boundary from Evaluation execution, which
+    # has separate canonical-chain coverage. Only this disposable fixture's
+    # source binding bypasses its unrelated parent graph; the report write
+    # below runs with every PostgreSQL constraint and trigger enabled.
+    with psycopg.connect(backtest_stack.database_url) as connection:
+        connection.execute("SET LOCAL session_replication_role = replica")
+        connection.execute(
+            """INSERT INTO mra.backtest_evaluation_execution (
+                backtest_evaluation_execution_id, exploratory_backtest_run_id,
+                specification_sha256, backtest_evaluation_requirement_id,
+                evaluation_run_id, evaluation_protocol_id,
+                evaluation_metric_count, evaluation_metric_roster_sha256,
+                content_sha256
+            ) VALUES (%s,%s,%s,%s,%s,%s,1,%s,%s)""",
+            (uuid4(), specification.exploratory_backtest_run_id,
+             str(specification.content_sha256), requirement.requirement_id,
+             evaluation_id, requirement.evaluation_protocol.authority_id,
+             "a" * 64, "b" * 64),
+        )
+    binding = BacktestReportArtifactBinding(
+        backtest_report_artifact_id=uuid4(),
+        exploratory_backtest_run_id=specification.exploratory_backtest_run_id,
+        specification_sha256=specification.content_sha256,
+        evaluation_count=1,
+        evaluation_roster_sha256=canonical_json_sha256(({
+            "evaluation_run_id": evaluation_id, "ordinal": requirement.ordinal,
+        },)),
+        source_projection_sha256="c" * 64,
+        code_content_sha256=specification.code_artifact.content_sha256,
+        config_content_sha256=specification.config_artifact.content_sha256,
+        report_schema="mra-backtest-report-v1", renderer_version="1",
+        json_artifact=specification.code_artifact,
+        markdown_artifact=specification.config_artifact,
+    )
+    context = _legacy._context("report-bind")
+    first = application.bind_report(binding, context)
+    replay = application.bind_report(binding, context)
+    assert not first.replayed and replay.replayed
+    assert first.binding_id == replay.binding_id == binding.backtest_report_artifact_id
+    assert first.result_hash == replay.result_hash == str(binding.content_sha256)
+
+    corrupted = replace(binding, backtest_report_artifact_id=uuid4(),
+                        source_projection_sha256="d" * 64)
+    object.__setattr__(corrupted, "content_sha256", binding.content_sha256)
+    with pytest.raises(RuntimeStateConflictError):
+        application.bind_report(corrupted, _legacy._context("report-corrupt-hash"))
+
+
 def test_current_predeclaration_is_root_owned_relational_and_replayable(
     backtest_stack,
 ) -> None:

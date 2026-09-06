@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
+
+import pytest
 
 from market_regime_alpha.market.application.archive_operations import (
     ArchiveSliceExecutionRequest,
@@ -16,6 +18,7 @@ from market_regime_alpha.market.ports.archive_operations import (
     ArchiveSliceOperatingContract,
 )
 from market_regime_alpha.runtime.application import ActorType, CommandContext
+from market_regime_alpha.runtime.errors import RuntimeStateConflictError
 from market_regime_alpha.shared.hashing import canonical_json_sha256
 
 
@@ -173,8 +176,15 @@ def test_successful_slice_is_captured_normalized_then_observed() -> None:
     assert archives.observations == 1
 
 
-def test_runtime_claim_is_consumed_only_by_the_terminal_archive_command() -> None:
+@pytest.mark.parametrize("lane", tuple(ArchiveLane))
+def test_runtime_claim_is_consumed_only_by_the_terminal_archive_command(lane: ArchiveLane) -> None:
     request, contract = _request()
+    contract = replace(
+        contract,
+        lane=lane,
+        event_window_start=datetime(2026, 9, 3, 7, 59, tzinfo=UTC),
+        event_window_end=datetime(2026, 9, 3, 8, 1, tzinfo=UTC),
+    )
     market = _Market(CaptureStatus.CAPTURED)
     archives = _Archives()
     operations = MarketArchiveOperations(
@@ -197,6 +207,30 @@ def test_runtime_claim_is_consumed_only_by_the_terminal_archive_command() -> Non
     assert market.capture_claims == [(claim, False)]
     assert market.normalize_claims == [(claim, False)]
     assert archives.observation_claims == [claim]
+
+
+@pytest.mark.parametrize("free_bytes", (149, 150))
+def test_due_prospective_slice_without_runtime_claim_fails_before_any_effect(free_bytes: int) -> None:
+    request, contract = _request()
+    contract = replace(
+        contract,
+        lane=ArchiveLane.PROSPECTIVE_CONTEMPORANEOUS,
+        event_window_start=datetime(2026, 9, 3, 7, 59, tzinfo=UTC),
+        event_window_end=datetime(2026, 9, 3, 8, 1, tzinfo=UTC),
+    )
+    market = _Market(CaptureStatus.CAPTURED)
+    archives = _Archives()
+    operations = MarketArchiveOperations(
+        market, archives, _ReadPort(contract), _Resources(free_bytes), _Clock()
+    )
+
+    with pytest.raises(RuntimeStateConflictError, match="prospective.*Runtime claim"):
+        operations.execute_slice(
+            request, provider=object(), normalizer=object(), context=_context()
+        )
+
+    assert market.capture_calls == market.normalize_calls == 0
+    assert archives.observations == archives.gaps == archives.resource_stops == 0
 
 
 def test_prospective_slice_before_frozen_window_is_not_due_without_provider_io() -> None:

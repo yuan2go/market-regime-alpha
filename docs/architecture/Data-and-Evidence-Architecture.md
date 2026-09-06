@@ -3,7 +3,7 @@
 > **Status:** CANONICAL_TARGET_ARCHITECTURE
 > **Authority:** Target logical schema, PIT, evidence, artifact, and cutover specification
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-09-05
+> **Last Updated:** 2026-09-06
 > **Code Evidence:** target `src/market_regime_alpha/infrastructure/postgres`, `src/market_regime_alpha/shared`, `src/market_regime_alpha/runtime`, `src/market_regime_alpha/market`, `src/market_regime_alpha/selection`, `src/market_regime_alpha/research_qualification`, `tests/refoundation`; legacy `src/market_regime_alpha/persistence/postgres` remains current business implementation
 
 This document is the sole Target logical table catalog. Current physical DDL,
@@ -30,6 +30,16 @@ drills use a distinct database identity and fresh Artifact root, verify schema,
 ordered row hashes, physical references and archive/Backtest integrity, and never
 modify the source scope. Preserve incomplete and negative execution statuses;
 integrity matching and completed Backtest replay are separate claims.
+
+Market replay also requires owner-recorded Artifact byte verification within
+the existing 24-hour consumer window. Plan the integrity maintenance before
+the backup snapshot: invoke the existing Artifact Application with fresh
+verification idempotency keys, preserve Capture known/recorded times and
+Artifact identity/hash/size, and record the new verification facts. A physical
+scan alone does not append these owner facts. If freshness expires during a
+drill, retain the matching snapshot/bytes evidence and the failed consumer
+reconciliation; repeat from a freshly verified source and a new backup/drill
+scope. Never backdate verification or weaken the consumer policy.
 
 Original operational databases permit backed-up, exact-OID/checksum guarded
 additive upgrades only. Unavailable old Authority is recorded as evidence

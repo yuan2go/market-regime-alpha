@@ -46,6 +46,7 @@ where = ["src"]
 [tool.setuptools.package-data]
 market_regime_alpha = [
     "infrastructure/postgres/migrations/*.sql",
+    "infrastructure/postgres/operational_upgrades/wp18q_track_a_c_v2.sql",
     "infrastructure/postgres/seeds/*.sql",
     "persistence/postgres/migrations/*.sql",
     "platform/migrations/*.sql",

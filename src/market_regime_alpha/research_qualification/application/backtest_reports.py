@@ -351,13 +351,14 @@ def _metric_deltas(
 ) -> tuple[BacktestMetricDelta, ...]:
     def index(source: BacktestReportSource) -> dict[tuple[str, str], BacktestReportMetric]:
         arm_codes = {arm.exploratory_backtest_arm_id: arm.arm_code for arm in source.run.arms}
+        fold_ordinals = {fold.exploratory_backtest_fold_id: fold.ordinal for fold in source.run.folds}
         result: dict[tuple[str, str], BacktestReportMetric] = {}
         for metric in source.metrics:
             scope = ":".join(
                 (
                     arm_codes[metric.arm_id],
                     metric.scope_kind,
-                    "-" if metric.fold_id is None else str(metric.fold_id),
+                    "-" if metric.fold_id is None else str(fold_ordinals[metric.fold_id]),
                     "-" if metric.slice_key is None else metric.slice_key,
                 )
             )

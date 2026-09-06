@@ -15,6 +15,7 @@ from uuid import UUID
 
 from market_regime_alpha.research_qualification.domain.backtest import (
     AuthorityBinding,
+    BacktestSpecification,
     FrozenBacktestRun,
     VersionedAuthorityBinding,
 )
@@ -171,6 +172,7 @@ class BacktestReportSource:
     evaluation_run_ids: tuple[UUID, ...]
     metrics: tuple[BacktestReportMetric, ...]
     models: tuple[BacktestReportModel, ...]
+    comparison_scope: BacktestComparisonFingerprint
     execution_failure_reasons: tuple[str, ...] = ()
     limitations: tuple[str, ...] = ()
     recommended_next_experiment: str = "Collect qualified prospective evidence."
@@ -270,8 +272,18 @@ class BacktestReportArtifactBinding:
                         **hashes,
                         "evaluation_count": self.evaluation_count,
                         "exploratory_backtest_run_id": (self.exploratory_backtest_run_id),
-                        "json_artifact": self.json_artifact,
-                        "markdown_artifact": self.markdown_artifact,
+                        # The persistent report contract stores digest strings,
+                        # not the ContentHash value object's dataclass shape.
+                        "json_artifact": {
+                            "artifact_id": self.json_artifact.artifact_id,
+                            "content_sha256": str(self.json_artifact.content_sha256),
+                            "size_bytes": self.json_artifact.size_bytes,
+                        },
+                        "markdown_artifact": {
+                            "artifact_id": self.markdown_artifact.artifact_id,
+                            "content_sha256": str(self.markdown_artifact.content_sha256),
+                            "size_bytes": self.markdown_artifact.size_bytes,
+                        },
                         "renderer_version": self.renderer_version,
                         "report_schema": self.report_schema,
                     }
@@ -341,28 +353,75 @@ class BacktestComparison:
 def comparison_fingerprint(
     source: BacktestReportSource,
 ) -> BacktestComparisonFingerprint:
-    configuration = source.configuration
+    return source.comparison_scope
+
+
+def specification_comparison_fingerprint(
+    specification: BacktestSpecification,
+    metrics: tuple[BacktestReportMetric, ...],
+) -> BacktestComparisonFingerprint:
+    """Compare canonical scopes without conflating them with execution IDs.
+
+    This derived value is deliberately outside the persisted report payload
+    and its hash. Authority identities, effective policies and formula hashes
+    remain exact; only Run-owned roster identities are normalized.
+    """
+    spec = specification
+    arms = {arm.exploratory_backtest_arm_id: arm.ordinal for arm in spec.arms}
+    folds = {fold.exploratory_backtest_fold_id: fold.ordinal for fold in spec.folds}
     return BacktestComparisonFingerprint(
-        market_archive_sha256=canonical_json_sha256((configuration.market_archive, configuration.market_archive_seal)),
+        market_archive_sha256=canonical_json_sha256((spec.market_archive, spec.market_archive_seal)),
         universe_sample_sha256=canonical_json_sha256(
             (
-                configuration.universe_revision,
-                configuration.eligibility_policy,
-                configuration.sample_scope_code,
-                configuration.sample_roster_sha256,
+                spec.universe_revision, spec.eligibility_policy,
+                spec.sample_scope_code, spec.sample_roster_sha256,
+                spec.sample_algorithm_version, spec.sample_input_key,
+                spec.random_seed, spec.feature_roster_sha256,
             )
         ),
-        target_sha256=configuration.target.content_sha256,
+        target_sha256=canonical_json_sha256(spec.target),
         fold_dependency_sha256=canonical_json_sha256(
             (
-                configuration.fold_roster_sha256,
-                configuration.dependency_roster_sha256,
+                spec.walk_forward_policy,
+                tuple(
+                    (fold.ordinal, fold.purpose, fold.exchange_code,
+                     fold.purge_sessions, fold.embargo_sessions,
+                     tuple((session.ordinal, session.trading_session_id,
+                            session.session_date, session.role) for session in fold.sessions))
+                    for fold in spec.folds
+                ),
+                tuple((item.ordinal, folds[item.fit_fold_id], folds[item.validation_fold_id])
+                      for item in spec.fold_dependencies),
+                tuple((item.ordinal, arms[item.arm_id], folds[item.fold_id])
+                      for item in spec.arm_folds),
             )
         ),
-        cost_sha256=configuration.cost_roster_sha256,
-        portfolio_risk_sha256=configuration.effective_policy_roster_sha256,
-        evaluation_formula_sha256=(configuration.evaluation_formula_roster_sha256),
-        evidence_lane=source.run.evidence.value,
+        cost_sha256=canonical_json_sha256((
+            tuple((item.ordinal, item.cost_kind, item.charge_side, item.amount_bps,
+                   None if item.arm_id is None else arms[item.arm_id])
+                  for item in spec.cost_assumptions),
+            tuple((arm.ordinal, arm.cost_binding_source) for arm in spec.arms),
+        )),
+        portfolio_risk_sha256=canonical_json_sha256(tuple(
+            (arm.ordinal, arm.arm_code, arm.execution_kind, arm.comparison_role,
+             arm.context_mode, arm.candidate, arm.context, arm.strategy,
+             arm.portfolio, arm.risk)
+            for arm in spec.arms
+        )),
+        evaluation_formula_sha256=canonical_json_sha256((
+            tuple((item.ordinal, arms[item.arm_id], None if item.fold_id is None else folds[item.fold_id],
+                   item.scope_kind, item.slice_key, item.primary, item.evaluation_protocol)
+                  for item in spec.evaluation_requirements if item.arm_id is not None),
+            tuple(sorted(
+                (arms[item.arm_id], item.scope_kind,
+                 0 if item.fold_id is None else folds[item.fold_id],
+                 "" if item.slice_key is None else item.slice_key,
+                 item.metric_code, item.surface.value, item.formula_code.value,
+                 item.formula_version, str(item.formula_content_sha256))
+                for item in metrics
+            )),
+        )),
+        evidence_lane=spec.evidence_lane,
     )
 
 
@@ -377,4 +436,5 @@ __all__ = [
     "BacktestReportModel",
     "BacktestReportSource",
     "comparison_fingerprint",
+    "specification_comparison_fingerprint",
 ]

@@ -39,6 +39,16 @@ First inspect the exact database name/OID/cluster, schema checksums, Artifact
 root, archives/generations and active Runtime attempts. Record a fresh physical
 integrity scan; old scan timestamps do not substitute for current bytes.
 
+Check the Market consumers' 24-hour Artifact verification window before
+freezing the backup. When it has expired, use the existing
+`ArtifactApplication.verify` owner operation to observe actual hash/size/existence,
+with a fresh caller-owned idempotency key per observation. Preserve every
+Artifact identity/hash/size and every Capture known/recorded time; verification
+metadata and its append-only verification/receipt/audit facts record the new
+physical observation. Run the read-only evidence scan again, then take the
+backup. If a drill crosses that freshness boundary, retain its negative result
+and start a new verified backup/drill scope with new destinations.
+
 ```bash
 uv run mra evidence inventory --role operational --records-directory "$EVIDENCE_RECORDS"
 uv run mra evidence verify > "$EVIDENCE_RECORDS/integrity-scan-$SCAN_ID.json"

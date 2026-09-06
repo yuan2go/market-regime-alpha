@@ -4,8 +4,8 @@
 > **Authority:** Non-authoritative capability read model; never qualification Authority
 > **Owner:** Market Regime Alpha maintainers
 > **Generated At:** 2026-09-06 WP-18Q-R2 operational recovery
-> **Repository Implementation Checkpoint:** `fc4205def4bceb1e9f5108d9486a3b6e4b014584`
-> **Implementation Tree:** `134f6abc48adff7b3f45a00ec37a7dc55413bb6a`
+> **Repository Implementation Checkpoint:** `f1c17ae5ad202c9f8a3c1a59cf6d111290a1f217`
+> **Implementation Tree:** `ea27e52db20bfafe7e1a34dada819835e0639612`
 > **Execution-Time Main Baseline:** `780cd964fd47fffac13edd0cf52547d12fff2bfc`
 > **Containing Documentation Commit:** reported by handoff; no self-referential SHA
 > **Schema Epochs:** legacy `LEGACY_MIGRATIONS_001_106`; target `MRA_REFOUNDATION_1 / DRAFT / NOT_CUT_OVER`
@@ -16,7 +16,7 @@ implemented target mechanics from actual engineering qualification and research
 evidence. Existing legacy business owners remain in service until an explicit
 cutover; target-draft writes do not acquire legacy business Authority.
 
-Current target catalog: **192 tables, 4 views, 3,927 catalog objects**.
+Current target catalog: **192 tables, 4 views, 3,929 catalog objects**.
 Exact checksums and observed PostgreSQL counts are in Current State.
 Old 165-table and 3,776-test WP-17P numbers belong only to its historical
 [Verification](../references/WP-ARCHITECTURE-REFOUNDATION-17P-Prospective-Archive-Exploratory-Backtest-Verification.md).
@@ -58,25 +58,35 @@ BACKTEST_PLATFORM = NOT_ENGINEERING_QUALIFIED
 | Model / Training / Version | Completed FIT samples, deterministic ridge, reproducibility/dependency/hyperparameter rosters, fitted Artifact and later-validation binding | Research / `MODEL_QUALIFIED_NO` |
 | Evaluation | Canonical protocols/formulas/typed observations and source rosters; insufficient samples require typed NOT_ESTIMABLE | Research / `IMPLEMENTED / REAL_WP18Q_CAMPAIGN_UNPROVEN` |
 | Generic Backtest | Existing root + frozen Specification; generic Runtime executor, inspect/resume/replay and canonical owner delegation | Research / `QUALIFICATION_BLOCKED` |
-| Standard Backtest Report | Deterministic JSON/Markdown projection from reconciled Authority/Evaluation; no raw-bar metric recomputation | Research report projection / `REAL_REPORT_UNPROVEN` |
+| Standard Backtest Report | Deterministic JSON/Markdown projection from reconciled Authority/Evaluation; no raw-bar metric recomputation | Research report projection / `SMALL_REPORT_PUBLISHED / LARGE_REPORT_UNPROVEN` |
 | Historical compatibility | WP-17P exact allowlist/private decoder/reconciliation-only proof; WP-18 definition equivalence, not historical multi-fold execution | Private compatibility read / `NO_WRITE_AUTHORITY` |
 | WP-specific hard-cut | Executable WP orchestration remains because real campaign/report/replay prerequisites are not complete | Generic surface target / `HARD_CUT_BLOCKED` |
 | Research Qualification | Concrete Evidence/Assessment/policy/floor/decision and later-generation reads; training or positive returns never qualify a model | Research / `NO_EMPIRICAL_PROMOTION` |
 | Formal Research Campaign | Freeze/protected-open/Runtime/Provider-gate mechanics exist; rejected Provider evidence prevents real Formal OOS execution | Research + Runtime / `FORMAL_OOS_NOT_RUN` |
-| Prospective | Target-aligned generation/planning/terminal/revision and Runtime mechanics exist; new scope has 288 future slices; PostgreSQL continuation found due=0 at 2026-09-06 01:16 UTC; original history is discontinuous | Market + existing Runtime / `NOT_DUE / LIVE_PROOF_BLOCKED` |
+| Prospective | Target-aligned generation/planning/terminal/revision and Runtime mechanics exist; new scope has 288 future slices; PostgreSQL continuation found due=0 at 2026-09-06 08:42:56 UTC; original history is discontinuous | Market + existing Runtime / `NOT_DUE / LIVE_PROOF_BLOCKED` |
 
 The original operational scope remains unavailable at inspected locations.
-R2 recovered immutable historical evidence into a distinct operational scope,
-verified exported-snapshot backups and independent restores, and controlled its
-additive v3 upgrade without changing historical business rows. The new canonical
-archive contains 116 actual sessions and 534 captures for the deterministic
-32-instrument roster. The frozen 44-session/four-arm Generic campaign failed its first Evaluation
-acquisition after 8,168 Outcomes; its failed identity is retained. The corrected
-two-arm chain completed four Evaluations but failed Model opening on incomparable
-Feature roster hash encodings. Current v4 compares exact ordered Feature rows;
-its disposable schema and focused checks pass, while backed-up operational upgrade,
-a fresh completed campaign, standard report and exact replay remain unproven.
-No hard-cut has occurred. Alpha funnel bottleneck is `NOT_DETERMINED`.
+R2 recovered immutable history into a distinct operational scope, built a new
+116-session/32-instrument canonical archive, and verified exported-snapshot
+backup, independent restore and additive v3/v4/v5 preservation. All 189 business
+tables, physical Artifacts and completed historical/Generic replay survive the
+latest controlled upgrade. Artifact owner verification uses actual maintenance
+time; a prior restore's expired-verification failure remains negative evidence.
+
+Clean `f247ca5d` passes 3,997 repository tests and four subtests, 39 focused tests,
+static/build/docs checks and disposable schema qualification. The completed
+three-session/two-arm report and full zero-write resume/replay match. A distinct
+actual execution also matches all 178 canonical comparison metrics with separate
+ModelVersion identities. The unchanged-parameter 44-session/four-arm Run
+`6318cbb0-e1d5-54b4-96bf-a2f458d0ef71` is now executing; its completion, report,
+replay and final backup remain unproven. Failed prior Runs and original times
+are retained. No hard-cut has occurred. Final source qualification remains
+pending; Alpha funnel bottleneck is `NOT_DETERMINED`.
+
+Current `f1c17ae5` additionally rejects due prospective slice effects without a
+Runtime claim. Its clean worktree passes 25 focused tests and static/build/docs
+checks; full regression remains pending. This correction is separate from the
+running campaign's frozen `f247ca5d` source.
 
 The `mra evidence` inventory is a regenerable non-authoritative operator index.
 It records database/root identities and verified backup/integrity/restore facts;
