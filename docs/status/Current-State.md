@@ -4,8 +4,8 @@
 > **Authority:** Non-authoritative implementation status; exact-SHA qualification belongs to Verification
 > **Owner:** Market Regime Alpha maintainers
 > **Generated At:** 2026-09-06 WP-18Q-R2 operational recovery
-> **Repository Implementation Checkpoint:** `d11405efde9b48b3398151a2258fe5e839209eee`
-> **Implementation Tree:** `ae7d5880a020dc187c995a7f1139eb18e7c80113`
+> **Repository Implementation Checkpoint:** `f247ca5de6d5be91c3c89036f20e77242eb15b53`
+> **Implementation Tree:** `501d6dc185a2bc73c4538ef9c115504b2ffabd11`
 > **Execution-Time Main Baseline:** `780cd964fd47fffac13edd0cf52547d12fff2bfc`
 > **Containing Documentation Commit:** reported by handoff; no self-referential SHA
 > **Schema Epochs:** legacy business `LEGACY_MIGRATIONS_001_106`; target `MRA_REFOUNDATION_1 / DRAFT / NOT_CUT_OVER`
@@ -35,7 +35,7 @@ production_ready = false
 | Generic Backtest | `BacktestSpecification`, current relational reload, generic planner/executor, Runtime action binding, reconciliation and report wiring exist. The sole root is `exploratory_backtest_run`; `backtest_specification` is a companion, not a second root. |
 | Canonical owner chain | Generic action handling delegates Dataset/Selection/Candidate/Decision/Context/Signal/Forecast/Opportunity/Portfolio/Risk/Outcome/Evaluation to existing owners. References and bindings do not replace owner reload/hash/time/lineage verification. |
 | Model | Model, completed-FIT TrainingRun/sample roster, reproducibility/dependency/hyperparameter rosters, fitted Artifact, ModelVersion and later-validation binding exist. Deterministic ridge is exploratory and uncalibrated; Model qualification remains absent. |
-| Evaluation / Report | Canonical Evaluation formulas, typed observations and metric states exist. JSON/Markdown report rendering consumes reconciled Authority/Evaluation, not raw bars or a second metric calculation. The three-session/two-arm R2 report is published; full zero-write replay and the 44-session report remain pending. |
+| Evaluation / Report | Canonical Evaluation formulas, typed observations and metric states exist. JSON/Markdown report rendering consumes reconciled Authority/Evaluation, not raw bars or a second metric calculation. The three-session/two-arm R2 report and full zero-write replay match; the 44-session report remains pending. |
 | Prospective | Target-aligned generations, planning gaps, terminal/revision observations and ordinary Runtime composition exist. Fixture mechanics are not a real-time attempt or prospective value proof. |
 | Historical compatibility | Exact private WP-17P decoding supports completed, reconciliation-only frozen runs. WP-18 compatibility is definition/specification equivalence only. Unknown historical identities and missing/mismatching current specifications fail closed. |
 | WP-specific surfaces | Executable WP-17P/WP-18 orchestration and generation dispatch remain physically present. Hard-cut prerequisites are not complete; deletion is blocked, not silently waived. |
@@ -50,17 +50,19 @@ The legacy 001–106 / 283-table business schema remains distinct and uncut.
 | Catalog property | Observed value |
 |---|---|
 | Tables / views | 192 / 4 |
-| Indexes / constraints | 1,364 / 1,834 |
+| Indexes / constraints | 1,365 / 1,834 |
 | Functions / non-internal triggers | 147 / 386 |
-| Catalog objects | 3,928 |
-| Baseline SHA256 | `460ee9b50813a35f42a8634e6f3cb950549b05015bfc435a526bb3a3159d79f7` |
-| Catalog SHA256 | `6384a687c172ccfc897fde160a4ff0a72427b3531da71ccc0915fc64d9ce28b6` |
+| Catalog objects | 3,929 |
+| Baseline SHA256 | `f417b63cf3dc534b1a5d329c5a30462945bfeb6b8c4389bf8ab3a9e1f4efbd27` |
+| Catalog SHA256 | `d14348490acefb1becea504ad4cf5bcb65bd482efa02e59343fd9408c851f1f1` |
 | Seed SHA256 | `9c41cd715e35e1a7bed3a58c52a29f01cc1e9bf950b77344bb56eac6dfa2df11` |
 | Reference-vocabulary SHA256 | `d08800892f5e843a756f53e46205dfbb2787386ebf8281564c31049c45659a1b` |
 
 The draft baseline and exact registered additive operational bundles serve
 different operations. Operational evidence databases must not be recreated.
 A new disposable test database does not attest to an operational upgrade.
+The operational scope remains at verified v4 while its v5 backup and independent
+upgrade drill are in progress; the table above describes the new disposable v5 catalog.
 
 ## WP-18Q qualification disposition
 
@@ -100,8 +102,15 @@ package; no SQL, catalog or assertions changed. Clean `c7df943c` passes 3,992
 tests and four subtests, with direct built-wheel resource import also verified.
 Clean `d11405ef` fixes comparison fingerprints and fold metric alignment across
 execution identities; its 27 report/PostgreSQL tests and unchanged actual report
-bytes pass. Its independent full regression and real distinct-run comparison
-remain in progress. Final-SHA qualification is still required. The 44-session campaign executed
+bytes pass. Its full regression was interrupted after 1,796 passing tests when
+a real independent Run exposed another performance blocker; that incomplete
+run is not PASS. Run `e948d119-8043-5746-8a41-5078b9ebbdb4` failed its first
+Dataset action on a successful-receipt lookup timeout and is immutable. Actual
+EXPLAIN shows a sequential scan removing 60,841 rows. Clean `f247ca5d` adds one
+partial covering index through an exact v5 upgrade route, preserving the query,
+ordering and timeout. Its 39 focused tests, static/build/docs checks, built-wheel
+resource loading and disposable exact-OID recreate pass. Operational upgrade,
+real comparison and complete final-SHA qualification remain pending. The 44-session campaign executed
 at `d3138692` and failed its first Evaluation acquisition; its failed Runtime
 and incorrectly frozen OPEN Evaluation cannot be reset. A new execution must
 retain the same research parameters while using a fresh identity. Final replay
@@ -109,7 +118,7 @@ must use the final implementation.
 
 | Gate | Proven / remaining boundary |
 |---|---|
-| PostgreSQL mechanics | Durable disposable PostgreSQL 16 bootstrap/recreate and catalog verification have been exercised. The operational v4 catalog includes the Context TRUE_RATE precision repair and exact ordered Model/Backtest Feature-parent comparison. Independent restored and operational databases match the verified disposable catalog. Final qualification remains pending. |
+| PostgreSQL mechanics | Durable disposable PostgreSQL 16 bootstrap/recreate and catalog verification have been exercised. The operational v4 catalog includes the Context TRUE_RATE precision repair and exact ordered Model/Backtest Feature-parent comparison. Independent restored and operational databases match the verified disposable v4 catalog; the separately verified v5 catalog adds one receipt lookup index, with its operational upgrade still pending. Final qualification remains pending. |
 | Historical compatibility | Exact completed WP-17P run `8f7b6def-9c63-533e-9777-a5a6c57866e0` and its 398 Artifacts were recovered and replayed without business writes. WP-18 remains definition equivalence only. |
 | Operational recovery | Original operational DB Authority was not found at inspected locations. `OPERATIONAL_EVIDENCE_DISCONTINUITY` separates recovered old evidence from the new operational scope, database OID `287543`. Original operational upgrade remains unproven. |
 | Backup / restore / inventory | Exported snapshot backups, physical Artifact roster verification and independent fresh-DB/root restore drills were executed. Non-authoritative inventory includes backup, integrity and restore receipts. Incomplete/failed execution remains incomplete/failed after restoration. |

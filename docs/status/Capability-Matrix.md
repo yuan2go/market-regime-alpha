@@ -4,8 +4,8 @@
 > **Authority:** Non-authoritative capability read model; never qualification Authority
 > **Owner:** Market Regime Alpha maintainers
 > **Generated At:** 2026-09-06 WP-18Q-R2 operational recovery
-> **Repository Implementation Checkpoint:** `d11405efde9b48b3398151a2258fe5e839209eee`
-> **Implementation Tree:** `ae7d5880a020dc187c995a7f1139eb18e7c80113`
+> **Repository Implementation Checkpoint:** `f247ca5de6d5be91c3c89036f20e77242eb15b53`
+> **Implementation Tree:** `501d6dc185a2bc73c4538ef9c115504b2ffabd11`
 > **Execution-Time Main Baseline:** `780cd964fd47fffac13edd0cf52547d12fff2bfc`
 > **Containing Documentation Commit:** reported by handoff; no self-referential SHA
 > **Schema Epochs:** legacy `LEGACY_MIGRATIONS_001_106`; target `MRA_REFOUNDATION_1 / DRAFT / NOT_CUT_OVER`
@@ -16,7 +16,7 @@ implemented target mechanics from actual engineering qualification and research
 evidence. Existing legacy business owners remain in service until an explicit
 cutover; target-draft writes do not acquire legacy business Authority.
 
-Current target catalog: **192 tables, 4 views, 3,928 catalog objects**.
+Current target catalog: **192 tables, 4 views, 3,929 catalog objects**.
 Exact checksums and observed PostgreSQL counts are in Current State.
 Old 165-table and 3,776-test WP-17P numbers belong only to its historical
 [Verification](../references/WP-ARCHITECTURE-REFOUNDATION-17P-Prospective-Archive-Exploratory-Backtest-Verification.md).
@@ -86,7 +86,11 @@ publication and full 192-table/Artifact zero-write resume/replay match. Clean
 operational bundle outside the closed epoch-migration file list. At `d11405ef`,
 27 report/PostgreSQL tests verify scope-based comparison across execution IDs;
 actual published report bytes remain identical. Full regression at that source
-and a real distinct-run comparison remain in progress.
+was interrupted after 1,796 passing tests when real Run `e948d119` failed on an
+unindexed canonical receipt lookup. Clean `f247ca5d` adds one partial covering
+index; 39 focused tests and disposable v5 schema qualification pass. The original
+failed Run is retained, operational v5 upgrade is pending, and complete regression
+and real comparison must still close.
 No hard-cut has occurred. Alpha funnel bottleneck is `NOT_DETERMINED`.
 
 The `mra evidence` inventory is a regenerable non-authoritative operator index.
