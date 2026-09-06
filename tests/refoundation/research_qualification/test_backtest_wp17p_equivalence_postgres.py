@@ -60,7 +60,7 @@ def test_outcome_batch_reconciles_exact_history_and_missing_rows_without_cached_
                 class BoundedConnection:
                     def execute(self, query, params=None):
                         if "FROM unnest(%s::uuid[])" in query:
-                            assert len(params[0]) <= 32, "cold-read timeout budget limits each Outcome batch"
+                            assert len(params[0]) <= 8, "cold-read timeout budget limits each Outcome batch"
                         return connection.execute(query, params)
 
                     def __getattr__(self, name):

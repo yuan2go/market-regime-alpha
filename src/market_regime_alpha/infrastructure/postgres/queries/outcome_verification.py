@@ -203,7 +203,10 @@ _OUTCOME_INSPECTION_SQL = (
     ))
     + " FROM unnest(%s::uuid[]) AS requested(revision_id)"
 )
-_OUTCOME_INSPECTION_BATCH_SIZE = 32
+# A 32-revision read exceeded the 30-second budget on the real campaign.
+# Smaller statements retain headroom for sparse page reads. The timeout and
+# every roster/lineage check remain unchanged.
+_OUTCOME_INSPECTION_BATCH_SIZE = 8
 
 
 @dataclass(frozen=True, slots=True)
