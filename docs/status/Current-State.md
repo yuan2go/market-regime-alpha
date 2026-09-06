@@ -4,8 +4,8 @@
 > **Authority:** Non-authoritative implementation status; exact-SHA qualification belongs to Verification
 > **Owner:** Market Regime Alpha maintainers
 > **Generated At:** 2026-09-06 WP-18Q-R2 operational recovery
-> **Repository Implementation Checkpoint:** `d3138692f9d3535d8cfb7bd50c1d3ec6803d67b3`
-> **Implementation Tree:** `d14a3a68629f351188381e2b0f079f97b20cad35`
+> **Repository Implementation Checkpoint:** `adea103f7c88b4a4301c8798bffe7872ef64f46f`
+> **Implementation Tree:** `8a29134caa6cc78a248c8508db1d09bfbd0a884c`
 > **Execution-Time Main Baseline:** `780cd964fd47fffac13edd0cf52547d12fff2bfc`
 > **Containing Documentation Commit:** reported by handoff; no self-referential SHA
 > **Schema Epochs:** legacy business `LEGACY_MIGRATIONS_001_106`; target `MRA_REFOUNDATION_1 / DRAFT / NOT_CUT_OVER`
@@ -68,13 +68,15 @@ R2 fetched exact main `780cd964fd47fffac13edd0cf52547d12fff2bfc`, tree
 `0663cf127357c2cd24c49a23bbe3484e2f72e234`. Historical verification is not
 inherited. The clean `4e418aefddecf05638f11f722db8f810aff16f73` worktree passed
 3,968 repository tests and 4 subtests without skips/xfails on an independent
-disposable database. Clean `d3138692` subsequently passed 215 focused tests,
-38 architecture/navigation tests, Ruff, mypy, build and documentation checks.
-These checks cover the current Model owner reload, bounded Runtime roster
-reads and dependency-ready execution correction. Positive real Model proof
-and full regression at the final SHA remain pending. The same frozen campaign
-resumed at `d3138692`; its declared research parameters and identities did not
-change. Final replay must use the final implementation.
+disposable database. Clean `adea103f` subsequently passed 218 focused tests,
+38 architecture/navigation tests, Ruff, mypy, build and documentation checks. These checks cover current Dataset
+and Model owner reload, bounded metadata reads, dependency-ready execution and
+the corrected Evaluation execution cutoff. Positive real Model proof and full
+regression at the final SHA remain pending. The 44-session campaign executed
+at `d3138692` and failed its first Evaluation acquisition; its failed Runtime
+and incorrectly frozen OPEN Evaluation cannot be reset. A new execution must
+retain the same research parameters while using a fresh identity. Final replay
+must use the final implementation.
 
 | Gate | Proven / remaining boundary |
 |---|---|
@@ -84,12 +86,12 @@ change. Final replay must use the final implementation.
 | Backup / restore / inventory | Exported snapshot backups, physical Artifact roster verification and independent fresh-DB/root restore drills were executed. Non-authoritative inventory includes backup, integrity and restore receipts. Incomplete/failed execution remains incomplete/failed after restoration. |
 | Additive upgrade | Exact v3 upgrade was exercised on an independently restored database and the new operational scope after identity/disk/backup/idle checks. All 192 tables were compared: 189 unchanged; only schema epoch, migration and upgrade receipt tables changed. Original historical copy remains untouched. |
 | Canonical archive | New sealed archive `fc699eea-1283-5192-b3ac-c9cbddc0da5e` reconciles 534 canonical captures, 116 actual sessions and the frozen 32-instrument roster. Daily/intraday/calendar and exact daily membership evidence exist. Legitimate missing observations remain typed; reconstructed old identities or known-times were not used. |
-| Real generic campaign | Run `a4b98930-a609-57c4-9e9a-4072d52397d8` freezes 44 executed sessions, four arms and two FIT→VALIDATION dependencies on the new archive. Explicit observational arms bind OBSERVE_ONLY Strategies; Forecast binds the Decision reference checkpoint. It is in progress, not completed evidence. Earlier failed/interrupted declarations are preserved. |
-| Observed performance | Both 64-row and later 32-row cold Outcome queries exceeded the unchanged 30-second timeout; reads now use eight-row batches. The first Runtime set query removed 7,100 repeated Attempt probes but later also timed out, after 5,652 Outcomes. Current bounded Runtime reads preserve all 729 complete binding rows exactly; warm measurements at clean `d3138692` took 0.075 and 0.057 seconds. Full owner inspect took 355.09 seconds, returned RUNNING without integrity mismatch, and preserved all existing Dataset/Decision/Outcome rows. Generic execution now reconciles each affected action before later writes and reloads the full graph before admitting new dependencies, avoiding quadratic full-owner reads across independent ready actions. Cold/warm and concurrent-load failures remain evidence; no timeout relaxation or long-lived verification cache is used. Completed-campaign plans remain required. |
-| Fresh two-arm engineering gate | The first small Run failed on a Calendar horizon limited to the Decision roster; canonical Calendar resolution is repaired and all 44 real horizons were verified. A subsequent concurrent Run exhausted the three SERIALIZABLE transaction attempts and retained its terminal failure/receipt. A fresh sequential two-arm execution remains required; parallel campaign success is not claimed. |
-| Standard report / exact replay | A completed R2 campaign, trained ModelVersions, canonical standard metrics, report Artifacts and byte-stable inspect/resume/replay remain unproven. Current Model observation now reloads canonical registered training inputs and reproducibility instead of accepting equal root hash references alone; negative owner-rejection tests pass, while real positive proof remains pending. Alpha bottleneck is `NOT_DETERMINED`. |
+| Real generic campaign | Run `a4b98930-a609-57c4-9e9a-4072d52397d8` froze 44 executed sessions, four arms and two FIT→VALIDATION dependencies. It produced 296 Datasets, 256 Decisions and 8,168 Outcomes, then failed its first Evaluation acquisition. The handler incorrectly used the Archive source cutoff, earlier than all 1,085 actual settlements required by that Evaluation. The settled-at guard correctly failed closed. Evaluation `8dcc80a0-21da-55c8-ba10-148c561f5f83` remains OPEN with its original cutoff, and its Runtime Step remains FAILED_TERMINAL. No Model or completed Evaluation is claimed. The correction uses the PostgreSQL timestamp of the Evaluation Step's first Attempt, stable across retries; a fresh campaign is required. |
+| Observed performance | Both 64-row and later 32-row cold Outcome queries exceeded the unchanged 30-second timeout; reads now use eight-row batches. The first Runtime set query removed 7,100 repeated Attempt probes but later also timed out, after 5,652 Outcomes. Current bounded Runtime reads preserve all 729 complete binding rows exactly; warm measurements at clean `d3138692` took 0.075 and 0.057 seconds. Full owner inspect took 355.09 seconds, returned RUNNING without integrity mismatch, and preserved all existing Dataset/Decision/Outcome rows. Generic execution now reconciles each affected action before later writes and reloads the full graph before admitting new dependencies, avoiding quadratic full-owner reads across independent ready actions. Cold/warm and concurrent-load failures remain evidence; no timeout relaxation or long-lived verification cache is used. At clean `805ae443`, the same real action observation retained exact results while metadata reads fell from 106 queries/10,246 rows to 11 queries/36 rows. Different cache conditions preclude a timing speedup claim. Two schema-bootstrap catalog timeouts during concurrent writes were preserved; the idle measurement later completed without changing the timeout. Completed-campaign plans remain required. |
+| Fresh two-arm engineering gate | The first small Run failed on a Calendar horizon limited to the Decision roster; canonical Calendar resolution is repaired and all 44 real horizons were verified. A subsequent concurrent Run exhausted the three SERIALIZABLE transaction attempts and retained its terminal failure/receipt. A fresh sequential two-arm execution must first prove the corrected Evaluation/Model chain before another large campaign; all research parameters stay fixed. |
+| Standard report / exact replay | A completed R2 campaign, trained ModelVersions, canonical standard metrics, report Artifacts and byte-stable inspect/resume/replay remain unproven. Current Model observation reloads canonical registered training inputs and reproducibility instead of accepting root hash references alone. Dataset observation now invokes the existing canonical input loader; all 296 actual Dataset manifests, source/population rosters and Runtime bindings matched at clean `aebd4ff3`. The running ridge numerical kernel and three adapters matched the frozen wheel byte-for-byte; the changed supporting engine SHA is separately recorded and whole-package source identity is not claimed. Alpha bottleneck is `NOT_DETERMINED`. |
 | Prospective continuity | The sole CONTINUOUS_RESEARCH runner can invoke the canonical series continuation before its trading-day early return. PostgreSQL clock, exact TradingSessions, overdue terminalization, planning gaps, due claim, lease/fence recovery and unknown Provider effect handling are wired and have focused tests. This is not proof of an installed continuously running service. |
-| Real prospective attempt | New series `r2_xshg32`, generation `1303080a-8a96-51dc-9021-31a9250c85d9`, began at 2026-09-05 15:56:17.897411 UTC with 288 future slices. At 2026-09-06 02:28:22 UTC, canonical continuation found due=0, no new generation and no planning gap. `REAL_DUE_ATTEMPT=BLOCKED_BY_TEMPORAL_WINDOW`; the frozen WP-18Q total exit still requires real due proof. |
+| Real prospective attempt | New series `r2_xshg32`, generation `1303080a-8a96-51dc-9021-31a9250c85d9`, began at 2026-09-05 15:56:17.897411 UTC with 288 future slices. At 2026-09-06 03:27:45 UTC, canonical continuation found due=0, no new generation and no planning gap. `REAL_DUE_ATTEMPT=BLOCKED_BY_TEMPORAL_WINDOW`; the frozen WP-18Q total exit still requires real due proof. |
 | Hard-cut | Prerequisites remain incomplete; WP-specific executors are retained. |
 | Remote Actions | Repository API returned disabled: `BLOCKED_BY_REPOSITORY_CONFIGURATION / NOT_RUN`. |
 

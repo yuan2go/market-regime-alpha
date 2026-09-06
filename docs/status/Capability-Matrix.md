@@ -4,8 +4,8 @@
 > **Authority:** Non-authoritative capability read model; never qualification Authority
 > **Owner:** Market Regime Alpha maintainers
 > **Generated At:** 2026-09-06 WP-18Q-R2 operational recovery
-> **Repository Implementation Checkpoint:** `d3138692f9d3535d8cfb7bd50c1d3ec6803d67b3`
-> **Implementation Tree:** `d14a3a68629f351188381e2b0f079f97b20cad35`
+> **Repository Implementation Checkpoint:** `adea103f7c88b4a4301c8798bffe7872ef64f46f`
+> **Implementation Tree:** `8a29134caa6cc78a248c8508db1d09bfbd0a884c`
 > **Execution-Time Main Baseline:** `780cd964fd47fffac13edd0cf52547d12fff2bfc`
 > **Containing Documentation Commit:** reported by handoff; no self-referential SHA
 > **Schema Epochs:** legacy `LEGACY_MIGRATIONS_001_106`; target `MRA_REFOUNDATION_1 / DRAFT / NOT_CUT_OVER`
