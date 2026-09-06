@@ -4,8 +4,8 @@
 > **Authority:** Non-authoritative capability read model; never qualification Authority
 > **Owner:** Market Regime Alpha maintainers
 > **Generated At:** 2026-09-06 WP-18Q-R2 operational recovery
-> **Repository Implementation Checkpoint:** `0e66bc31831544b55bc096d00527c35cd4779ea3`
-> **Implementation Tree:** `75985641d00eb8e124b0c4401afeebbcf7d5edd1`
+> **Repository Implementation Checkpoint:** `d11405efde9b48b3398151a2258fe5e839209eee`
+> **Implementation Tree:** `ae7d5880a020dc187c995a7f1139eb18e7c80113`
 > **Execution-Time Main Baseline:** `780cd964fd47fffac13edd0cf52547d12fff2bfc`
 > **Containing Documentation Commit:** reported by handoff; no self-referential SHA
 > **Schema Epochs:** legacy `LEGACY_MIGRATIONS_001_106`; target `MRA_REFOUNDATION_1 / DRAFT / NOT_CUT_OVER`
@@ -81,7 +81,12 @@ bytes across retries. Clean `8fa47cb4` passes 231 locked focused tests. A fresh
 44-session campaign, standard report and exact replay remain unproven. The fresh
 three-session/two-arm Run completes all 25 actions with one real ModelVersion
 and six Evaluations. Its report hash mismatch is repaired at `0e66bc31`;
-publication succeeds and the full zero-write resume/replay check is in progress.
+publication and full 192-table/Artifact zero-write resume/replay match. Clean
+`c7df943c` passes all 3,992 tests and four subtests after preserving the frozen
+operational bundle outside the closed epoch-migration file list. At `d11405ef`,
+27 report/PostgreSQL tests verify scope-based comparison across execution IDs;
+actual published report bytes remain identical. Full regression at that source
+and a real distinct-run comparison remain in progress.
 No hard-cut has occurred. Alpha funnel bottleneck is `NOT_DETERMINED`.
 
 The `mra evidence` inventory is a regenerable non-authoritative operator index.
