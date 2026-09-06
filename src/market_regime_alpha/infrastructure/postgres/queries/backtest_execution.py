@@ -160,6 +160,20 @@ class PostgresBacktestExecutionObservationPort:
                     ).fetchall()
                     runtime_bindings = cursor.execute(
                         """
+                    WITH scoped_bindings AS MATERIALIZED (
+                        SELECT * FROM mra.backtest_runtime_binding
+                        WHERE exploratory_backtest_run_id = %s
+                    ), latest_attempt AS (
+                        SELECT DISTINCT ON (step.run_id)
+                               step.run_id, attempt.state
+                        FROM scoped_bindings AS scoped
+                        JOIN mra.runtime_step AS step
+                          ON step.run_id = scoped.runtime_run_id
+                        JOIN mra.runtime_attempt AS attempt
+                          ON attempt.step_id = step.step_id
+                        ORDER BY step.run_id, attempt.created_at DESC,
+                                 attempt.attempt_no DESC
+                    )
                     SELECT binding.backtest_runtime_binding_id,
                            binding.specification_sha256,
                            binding.action_id, binding.action_kind,
@@ -177,23 +191,14 @@ class PostgresBacktestExecutionObservationPort:
                            root.config_artifact_id AS root_config_artifact_id,
                            root.config_content_sha256 AS root_config_hash,
                            latest_attempt.state AS latest_attempt_state
-                    FROM mra.backtest_runtime_binding AS binding
+                    FROM scoped_bindings AS binding
                     JOIN mra.runtime_run AS runtime
                       ON runtime.run_id = binding.runtime_run_id
                     JOIN mra.exploratory_backtest_run AS root
                       ON root.exploratory_backtest_run_id =
                          binding.exploratory_backtest_run_id
-                    LEFT JOIN LATERAL (
-                        SELECT attempt.state
-                        FROM mra.runtime_step AS step
-                        JOIN mra.runtime_attempt AS attempt
-                          ON attempt.step_id = step.step_id
-                        WHERE step.run_id = runtime.run_id
-                        ORDER BY attempt.created_at DESC,
-                                 attempt.attempt_no DESC
-                        LIMIT 1
-                    ) AS latest_attempt ON true
-                    WHERE binding.exploratory_backtest_run_id = %s
+                    LEFT JOIN latest_attempt
+                      ON latest_attempt.run_id = runtime.run_id
                     """,
                         (run.exploratory_backtest_run_id,),
                     ).fetchall()

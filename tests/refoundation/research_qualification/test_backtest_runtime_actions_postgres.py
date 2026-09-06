@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import ast
 from dataclasses import replace
 from datetime import UTC, datetime
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -231,3 +233,68 @@ def test_action_executor_rejects_non_current_projection(backtest_stack) -> None:
             action,
             BacktestNextOperation.EXECUTE,
         )
+
+
+def test_runtime_observation_reads_latest_attempt_roster_once(backtest_stack) -> None:
+    specification = _backtests._current_specification(backtest_stack)
+    backtests = BacktestApplication(
+        PostgresBacktestUnitOfWorkProvider(backtest_stack.pool), id_factory=uuid4
+    )
+    backtests.predeclare(specification, _context("observation-roster"))
+    frozen = backtests.plan(specification)
+    runtime = RuntimeApplication(PostgresUnitOfWorkProvider(backtest_stack.pool))
+    handler = _CompletingHandler(runtime)
+    actions = BacktestExecutionPlanner().compile(frozen).expected_actions[:5]
+    for action in actions[:-1]:
+        _executor(backtest_stack, handler).execute(
+            frozen, action, BacktestNextOperation.EXECUTE
+        )
+    retrying = _RetryOnceHandler(runtime)
+    _executor(backtest_stack, retrying).execute(
+        frozen, actions[-1], BacktestNextOperation.EXECUTE
+    )
+    path = Path(__file__).parents[3] / "src/market_regime_alpha/infrastructure/postgres/queries/backtest_execution.py"
+    statements = [
+        node.value for node in ast.walk(ast.parse(path.read_text()))
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+        and "SELECT binding.backtest_runtime_binding_id," in node.value
+    ]
+    assert len(statements) == 1
+    # Qualify plans against this fixture's actual cardinalities, rather than
+    # PostgreSQL's initial estimates for freshly bootstrapped empty tables.
+    with backtest_stack.pool.connection() as connection:
+        connection.execute("ANALYZE mra.backtest_runtime_binding")
+        connection.execute("ANALYZE mra.runtime_run")
+        connection.execute("ANALYZE mra.runtime_step")
+        connection.execute("ANALYZE mra.runtime_attempt")
+        connection.commit()
+    with backtest_stack.pool.connection(read_only=True) as connection:
+        rows = connection.execute(
+            statements[0], (specification.exploratory_backtest_run_id,)
+        ).fetchall()
+        assert len(rows) == len(actions) == 5
+        assert {row[-1] for row in rows} == {"SUCCEEDED", "FAILED_RETRYABLE"}
+        plan = connection.execute(
+            "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) " + statements[0],
+            (specification.exploratory_backtest_run_id,),
+        ).fetchone()[0][0]["Plan"]
+    pending = [plan]
+    attempts = []
+    while pending:
+        node = pending.pop()
+        pending.extend(node.get("Plans", ()))
+        if node.get("Relation Name") == "runtime_attempt":
+            attempts.append(node)
+    assert attempts
+    # A campaign grows in Runs and Steps. Latest-state observation must not
+    # issue one Attempt probe per Step while reading the complete roster.
+    assert sum(node["Actual Loops"] for node in attempts) == 1
+    _executor(backtest_stack, retrying).execute(
+        frozen, actions[-1], BacktestNextOperation.RETRY
+    )
+    with backtest_stack.pool.connection(read_only=True) as connection:
+        resumed_rows = connection.execute(
+            statements[0], (specification.exploratory_backtest_run_id,)
+        ).fetchall()
+    assert len(resumed_rows) == len(rows)
+    assert {row[-1] for row in resumed_rows} == {"SUCCEEDED"}
