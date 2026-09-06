@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 from uuid import UUID
 
@@ -272,8 +273,7 @@ class PostgresBacktestExecutionObservationPort:
         for row in runtime_bindings:
             runtime_by_action[UUID(str(row["action_id"]))].append(row)
 
-        observed: list[BacktestActionObservation] = []
-        for action in expected_actions:
+        def observe_action(action: BacktestExpectedAction) -> BacktestActionObservation:
             if action.kind is BacktestActionKind.MATERIALIZE_DATASET:
                 state = _unique_presence(dataset_by_scope.get(_scope(action), ()))
                 observation = BacktestActionObservation(action.action_id, state)
@@ -319,9 +319,14 @@ class PostgresBacktestExecutionObservationPort:
                     observation,
                     runtime_by_action.get(action.action_id, ()),
                 )
-            if observation.state is not BacktestObservedState.ABSENT:
-                observed.append(observation)
-        return tuple(observed)
+            return observation
+
+        # Rebuild every owner observation on every call. Workers share the
+        # existing bounded PostgreSQL pool; no result is cached or admitted
+        # before all owner checks finish. map preserves the frozen action order.
+        with ThreadPoolExecutor(max_workers=4, thread_name_prefix="backtest-observe") as workers:
+            observed = tuple(workers.map(observe_action, expected_actions))
+        return tuple(item for item in observed if item.state is not BacktestObservedState.ABSENT)
 
     def _decision(
         self,
@@ -355,9 +360,14 @@ class PostgresBacktestExecutionObservationPort:
                 (BacktestObservedState.ABSENT if not decision_rows else BacktestObservedState.MISMATCH),
             )
         rows = outcomes.get(scope, ())
+        if rows and all(row["market_target_outcome_revision_id"] is None for row in rows):
+            return BacktestActionObservation(action.action_id, BacktestObservedState.ABSENT)
         if not rows or any(row["market_target_outcome_revision_id"] is None for row in rows):
             return BacktestActionObservation(action.action_id, BacktestObservedState.MATCHED_INCOMPLETE)
-        mismatched = any(self._outcomes.inspect(UUID(str(row["market_target_outcome_revision_id"]))) for row in rows)
+        checks = self._outcomes.inspect_many(
+            UUID(str(row["market_target_outcome_revision_id"])) for row in rows
+        )
+        mismatched = any(checks.values())
         return BacktestActionObservation(
             action.action_id,
             (BacktestObservedState.MISMATCH if mismatched else BacktestObservedState.MATCHED_COMPLETE),

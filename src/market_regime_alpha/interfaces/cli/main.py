@@ -33,6 +33,7 @@ from market_regime_alpha.bootstrap import (
 from market_regime_alpha.shared.errors import MraError
 from market_regime_alpha.interfaces.archive import (
     archive_report,
+    continue_prospective_series,
     load_archive_manifest,
     predeclare_prospective_runtime,
     require_isolated_operational_target,
@@ -59,7 +60,7 @@ def main(
         settings = TargetSettings.from_environ(os.environ if environ is None else environ)
         payload = _dispatch(arguments, settings)
         output.write(json.dumps(_json_value(payload), sort_keys=True) + "\n")
-        return 0
+        return 2 if arguments.area == "evidence" and isinstance(payload, dict) and (payload.get("matched") is False or payload.get("ready") is False) else 0
     except (MraError, ValueError, OSError, psycopg.Error) as exc:
         error_output.write(
             json.dumps(
@@ -125,6 +126,16 @@ def _dispatch(arguments: argparse.Namespace, settings: TargetSettings) -> object
                 challenge=arguments.challenge,
                 operator_id=arguments.operator_id,
             )
+    if arguments.area == "evidence":
+        with bootstrap_application(settings) as application:
+            if arguments.evidence_command == "inventory":
+                return application.evidence.inventory(logical_role=arguments.role, records_directory=arguments.records_directory)
+            if arguments.evidence_command == "restore-check":
+                return application.evidence.restore_check(arguments.bundle)
+            if arguments.evidence_command in {"backup-plan", "backup"}:
+                operation = application.evidence.backup_plan if arguments.evidence_command == "backup-plan" else application.evidence.backup
+                return operation(arguments.directory, expected_name=arguments.expected_database_name, expected_oid=arguments.expected_database_oid, minimum_free_bytes=arguments.minimum_free_bytes)
+            return application.evidence.verify()
     if arguments.area == "runtime":
         with bootstrap_application(settings) as application:
             if arguments.runtime_command == "inspect":
@@ -191,11 +202,20 @@ def _dispatch(arguments: argparse.Namespace, settings: TargetSettings) -> object
                         arguments.archive_id,
                         "inspect" if command == "inspect" else "daily-health",
                     )
+                if command == "continue":
+                    import baostock as sdk
+                    return continue_prospective_series(
+                        application, series_code=arguments.series_code, sdk=sdk,
+                        code_sha=arguments.code_sha, actor_id=arguments.actor_id,
+                        worker_id=arguments.worker_id,
+                        lease_duration=timedelta(seconds=arguments.lease_seconds),
+                    )
                 manifest = load_archive_manifest(arguments.manifest)
                 if command == "plan-next":
                     return compile_prospective_runtime_plan(
                         manifest,
                         code_sha=arguments.code_sha,
+                        runtime_revision=arguments.runtime_revision,
                     )
                 if command == "predeclare":
                     return predeclare_prospective_runtime(
@@ -204,6 +224,7 @@ def _dispatch(arguments: argparse.Namespace, settings: TargetSettings) -> object
                         code_sha=arguments.code_sha,
                         actor_id=arguments.actor_id,
                         lease_duration=timedelta(seconds=arguments.lease_seconds),
+                        runtime_revision=arguments.runtime_revision,
                     )
                 if command in {"run-due", "resume"}:
                     import baostock as sdk
@@ -216,6 +237,7 @@ def _dispatch(arguments: argparse.Namespace, settings: TargetSettings) -> object
                         actor_id=arguments.actor_id,
                         worker_id=arguments.worker_id,
                         lease_duration=timedelta(seconds=arguments.lease_seconds),
+                        runtime_revision=arguments.runtime_revision,
                     )
             if arguments.archive_command in {"inspect", "gap-report", "revision-report", "daily-health"}:
                 return archive_report(
@@ -247,6 +269,21 @@ def _dispatch(arguments: argparse.Namespace, settings: TargetSettings) -> object
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="mra")
     areas = parser.add_subparsers(dest="area", required=True)
+
+    evidence = areas.add_parser("evidence")
+    evidence_commands = evidence.add_subparsers(dest="evidence_command", required=True)
+    inventory = evidence_commands.add_parser("inventory")
+    inventory.add_argument("--role", default="UNSPECIFIED")
+    inventory.add_argument("--records-directory", type=Path)
+    evidence_commands.add_parser("verify")
+    for command in ("backup-plan", "backup"):
+        backup = evidence_commands.add_parser(command)
+        backup.add_argument("--directory", type=Path, required=True)
+        backup.add_argument("--expected-database-name", required=True)
+        backup.add_argument("--expected-database-oid", type=int, required=True)
+        backup.add_argument("--minimum-free-bytes", type=int, default=256_000_000)
+    restore = evidence_commands.add_parser("restore-check")
+    restore.add_argument("--bundle", type=Path, required=True)
 
     database = areas.add_parser("db")
     database_commands = database.add_subparsers(dest="db_command", required=True)
@@ -321,14 +358,23 @@ def _parser() -> argparse.ArgumentParser:
         dest="prospective_command",
         required=True,
     )
+    continuity = prospective_commands.add_parser("continue")
+    continuity.add_argument("--series-code", required=True)
+    continuity.add_argument("--code-sha", required=True)
+    continuity.add_argument("--expected-database-name", required=True)
+    continuity.add_argument("--actor-id", required=True)
+    continuity.add_argument("--worker-id", required=True)
+    continuity.add_argument("--lease-seconds", type=int, default=120)
     prospective_plan = prospective_commands.add_parser("plan-next")
     prospective_plan.add_argument("--manifest", required=True, type=Path)
     prospective_plan.add_argument("--code-sha", required=True)
+    prospective_plan.add_argument("--runtime-revision", type=int, choices=(1, 2), default=2)
     prospective_plan.add_argument("--expected-database-name", required=True)
     for command in ("predeclare", "run-due", "resume"):
         mutation = prospective_commands.add_parser(command)
         mutation.add_argument("--manifest", required=True, type=Path)
         mutation.add_argument("--code-sha", required=True)
+        mutation.add_argument("--runtime-revision", type=int, choices=(1, 2), default=2)
         mutation.add_argument("--expected-database-name", required=True)
         mutation.add_argument("--actor-id", required=True)
         mutation.add_argument("--lease-seconds", type=int, default=120)

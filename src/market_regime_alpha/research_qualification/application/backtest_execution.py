@@ -383,9 +383,11 @@ class BacktestExecutor:
 
     def _drive(self, run: FrozenBacktestRun) -> BacktestExecutionPlan:
         previous_signature: tuple[tuple[UUID, BacktestObservedState], ...] | None = None
-        max_transitions = len(self._planner.compile(run).expected_actions) * 4 + 1
+        expected = self._planner.compile(run).expected_actions
+        max_transitions = len(expected) * 4 + 1
         for _ in range(max_transitions):
-            plan = self.inspect(run)
+            observed = self._observations.observe(run, expected)
+            plan = self._planner.compile(run, observed)
             if plan.execution_state is BacktestExecutionState.INTEGRITY_ERROR:
                 mismatches = ",".join(map(str, plan.integrity_mismatch_action_ids))
                 raise BacktestExecutionIntegrityError(f"Backtest reconciliation produced INTEGRITY_ERROR: {mismatches}")
@@ -399,8 +401,13 @@ class BacktestExecutor:
             if not plan.ready_actions:
                 raise BacktestExecutionIntegrityError("Backtest has incomplete work but no dependency-ready action")
             ready = plan.ready_actions[0]
-            signature = tuple((item.action_id, item.state) for item in self._observations.observe(run, plan.expected_actions))
+            signature = tuple((item.action_id, item.state) for item in observed)
             if signature == previous_signature:
+                if ready.operation is BacktestNextOperation.RECOVER:
+                    # A reconciled incomplete owner can still hold a valid
+                    # lease. Recovery must neither steal it nor turn ordinary
+                    # in-flight work into an integrity failure.
+                    return plan
                 raise BacktestExecutionIntegrityError("Backtest action made no canonical reconciliation progress")
             previous_signature = signature
             self._actions.execute(run, ready.action, ready.operation)
@@ -429,7 +436,7 @@ def _execution_state(states: tuple[BacktestObservedState, ...], *, integrity_err
         for state in states
     ):
         return BacktestExecutionState.FAILED
-    if any(state is BacktestObservedState.MATCHED_INCOMPLETE for state in states):
+    if any(state in {BacktestObservedState.MATCHED_INCOMPLETE, BacktestObservedState.MATCHED_COMPLETE} for state in states):
         return BacktestExecutionState.RUNNING
     return BacktestExecutionState.PLANNED
 

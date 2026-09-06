@@ -130,6 +130,27 @@ def _authority(identity, content_sha256) -> AuthorityBinding:
     return AuthorityBinding(identity, str(content_sha256))
 
 
+
+def _observational_strategy(stack, binding):
+    from market_regime_alpha.decision_support.application.strategy import StrategyCommands
+    from market_regime_alpha.decision_support.domain.strategy import StrategyPlan, ContextFailureAction
+    from market_regime_alpha.infrastructure.postgres.strategy_uow import PostgresStrategyUnitOfWorkProvider
+    from market_regime_alpha.infrastructure.postgres.queries.decision_strategy import PostgresStrategyQueryProvider
+    from market_regime_alpha.infrastructure.postgres.queries.decision_inference_inputs import _load_strategy
+    with stack.pool.connection(read_only=True) as connection:
+        original = _load_strategy(connection, binding.authority_id, lock=False)
+    version_id = uuid4()
+    plan = replace(
+        original, strategy=StrategyPlan(uuid4(), 'observational_' + version_id.hex, 'Context diagnostic without gating'),
+        strategy_version_id=version_id, version=1, supersedes_strategy_version_id=None,
+        context_requirements=tuple(replace(r, strategy_context_requirement_id=uuid4(), strategy_version_id=version_id, missing_action=ContextFailureAction.OBSERVE_ONLY) for r in original.context_requirements),
+        signal_rule=replace(original.signal_rule, strategy_signal_rule_id=uuid4(), strategy_version_id=version_id),
+        forecast_rules=tuple(replace(r, strategy_forecast_rule_id=uuid4(), strategy_version_id=version_id) for r in original.forecast_rules),
+    )
+    StrategyCommands(PostgresStrategyUnitOfWorkProvider(stack.pool), PostgresStrategyQueryProvider(stack.pool)).register(plan, _legacy._context('observational-strategy:' + version_id.hex))
+    return _authority(version_id, plan.content_sha256)
+
+
 def _current_specification(stack) -> BacktestSpecification:
     legacy = _legacy._plan(stack)
     with stack.pool.connection(read_only=True) as connection:
@@ -240,6 +261,7 @@ def _current_specification(stack) -> BacktestSpecification:
         portfolio=_authority(legacy.portfolio_policy_id, legacy.portfolio_policy_sha256),
         risk=_authority(legacy.risk_policy_id, legacy.risk_policy_sha256),
     )
+    observational_strategy = _observational_strategy(stack, defaults.strategy)
     arms = tuple(
         BacktestArmSpecification(
             exploratory_backtest_arm_id=uuid4(),
@@ -250,7 +272,8 @@ def _current_specification(stack) -> BacktestSpecification:
             context_mode=context_mode,
             candidate=defaults.candidate,
             context=defaults.context,
-            strategy=defaults.strategy,
+            strategy=observational_strategy if context_mode is BacktestContextMode.OBSERVATIONAL else defaults.strategy,
+            strategy_binding_source=BacktestBindingSource.ARM_OVERRIDE if context_mode is BacktestContextMode.OBSERVATIONAL else BacktestBindingSource.SHARED_DEFAULT,
             model=None,
             portfolio=defaults.portfolio,
             risk=defaults.risk,

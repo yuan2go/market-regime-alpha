@@ -103,6 +103,21 @@ def _authorization(
     )
 
 
+def test_context_precision_upgrade_is_exact_and_preserves_business_tables(target_database_url):
+    manager = SchemaManager(target_database_url)
+    definition = manager._resolve_operational_upgrade_definition(
+        prior_baseline_sha256="aae59a527154fd19da4bf07a0402d353d2b02a8da56cef6c4a505509683c412b",
+        prior_catalog_sha256="a61a4ed2a4ae93521942053c37ab6560386bc49c43e64ef3a03f21ab4ab14a71",
+        prior_reference_vocabulary_sha256=manager.reference_vocabulary_checksum,
+    )
+    assert definition.upgrade_code == "wp18q_r2_context_precision_v3"
+    assert definition.next_baseline_sha256 == manager.baseline_checksum
+    assert definition.next_catalog_sha256 == "0a4caa3dd51462f80a6b1cd94dde606d1e4336d8df9a1d02478a0f6687efbe6c"
+    assert definition.additive_bundle_sha256 == "1f33e51b6ac9e02acd38fa1f9cfef54170d3068c236870f5904d0a5201a9b742"
+    assert definition.additive_sql.count("CREATE OR REPLACE FUNCTION") == 2
+    assert all(keyword not in definition.additive_sql for keyword in ("ALTER TABLE", "DROP ", "TRUNCATE", "UPDATE "))
+
+
 def _context(key: str) -> CommandContext:
     return CommandContext(
         idempotency_key=key,
@@ -166,7 +181,9 @@ def test_wp18q_v2_route_is_selected_only_from_the_exact_v1_epoch(
     assert definition.prior_baseline_sha256 == (
         "9da7396d6dd46e3a896b8845df2ef8619a55d66f1d05285a0dd802d1381dfa98"
     )
-    assert definition.next_baseline_sha256 == manager.baseline_checksum
+    assert definition.next_baseline_sha256 == (
+        "aae59a527154fd19da4bf07a0402d353d2b02a8da56cef6c4a505509683c412b"
+    )
     assert definition.next_reference_vocabulary_sha256 == (
         manager.reference_vocabulary_checksum
     )

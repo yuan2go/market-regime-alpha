@@ -3,7 +3,7 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Current executable operator procedures
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-13
+> **Last Updated:** 2026-09-06
 > **Code Evidence:** `pyproject.toml`, `scripts/*.py`, `src/market_regime_alpha/cli`
 
 ## Install and verify environment
@@ -27,6 +27,83 @@ uv run continuous-research qualification-status --help
 uv run model-governance --help
 uv run pit-authority --help
 ```
+
+## Target operational evidence recovery
+
+The target `mra` commands use explicit `MRA_DATABASE_URL` and
+`MRA_ARTIFACT_ROOT` settings. Keep connection credentials, machine-local hosts,
+paths and inventory snapshots outside the shared repository. This operator
+surface does not select a business Authority or alter evidence maturity.
+
+First inspect the exact database name/OID/cluster, schema checksums, Artifact
+root, archives/generations and active Runtime attempts. Record a fresh physical
+integrity scan; old scan timestamps do not substitute for current bytes.
+
+```bash
+uv run mra evidence inventory --role operational --records-directory "$EVIDENCE_RECORDS"
+uv run mra evidence verify > "$EVIDENCE_RECORDS/integrity-scan-$SCAN_ID.json"
+uv run mra evidence backup-plan --directory "$EVIDENCE_BUNDLE" \
+  --expected-database-name "$EVIDENCE_DATABASE_NAME" \
+  --expected-database-oid "$EVIDENCE_DATABASE_OID"
+uv run mra evidence backup --directory "$EVIDENCE_BUNDLE" \
+  --expected-database-name "$EVIDENCE_DATABASE_NAME" \
+  --expected-database-oid "$EVIDENCE_DATABASE_OID"
+```
+
+Use fresh scan IDs and bundle destinations. Backup fails closed on wrong
+identity, active attempts, inadequate disk or invalid referenced Artifact
+bytes. It exports a PostgreSQL snapshot, copies only that snapshot's exact
+Artifact roster and records dump/inventory/Artifact hashes and full dump
+readability. Extra source files are reported, not silently adopted as Authority.
+Do not recreate, drop or clean an operational evidence database.
+
+For an independent restore drill, provision a fresh PostgreSQL 16 database and
+fresh Artifact root, inspect their identities, restore `database.dump` and copy
+the bundle's `artifacts` directory into the new root. Point the target settings
+explicitly at that restored database/root before running:
+
+```bash
+uv run mra db verify
+uv run mra evidence restore-check --bundle "$EVIDENCE_BUNDLE" \
+  > "$EVIDENCE_BUNDLE/restore-check-$DRILL_ID.json"
+uv run mra evidence verify
+uv run mra backtest replay --run-id "$EVIDENCE_COMPLETED_BACKTEST_ID"
+```
+
+The drill must preserve all ordered table hashes, schema checksums and exact
+Artifact bytes/references, reconcile archives, and replay the exact completed
+historical/current campaign. A negative or incomplete campaign must keep its
+status: integrity matching is distinct from completed replay. Restore-check
+rejects the source database identity and source Artifact root. Keep its result
+under the original bundle and refresh inventory against the original scope to
+record the latest backup, integrity scan and successful restore drill.
+
+When original Authority is unavailable, record the last provable old scope and
+the new scope's actual start. Recovering immutable bytes into new canonical
+captures/archives does not restore old IDs, known-times or prospective continuity.
+
+Prospective continuation remains a bounded invocation of the sole existing
+Runtime. `continuous-research run-day` exposes explicit prospective series,
+implementation SHA, database-name and lease options; this composition runs
+before the parent non-trading-day early return. The canonical operator command
+`mra archive prospective continue` checks PostgreSQL time, reconciles prior
+generations, records overdue terminals/planning gaps, resolves exact TradingSessions
+and claims real due work. CLI wiring alone is not evidence of an installed
+continuously running service. No due window means `NOT_DUE`; never wait or
+backdate to produce proof.
+
+Include the last available exact TradingSession in the operational inventory
+review. Continuation requires the decision, Outcome and later verification
+sessions to exist in canonical Market evidence. Extend missing calendar evidence
+through the Market capture/normalization owner; never infer weekdays or silently
+omit an unavailable session. A finite calendar horizon is an operational input
+boundary, not proof of indefinite continuity.
+
+For Backtest recovery, an unexpired Attempt remains owned by its existing lease.
+`mra backtest resume` can return `RUNNING` without additional completed actions.
+Inspect the exact Runtime Run/Attempt; ordinary lease recovery uses PostgreSQL
+time and does not steal the fence. Only completed zero-mismatch replay qualifies
+as completed resume/replay evidence.
 
 ## Phase E Historical Corpus
 
@@ -466,12 +543,19 @@ permission. Principal IDs on a local CLI are not proof of authentication.
 ## Validation
 
 ```bash
+uv sync --frozen --extra dev --extra postgres
 uv run python scripts/check_docs_links.py
-MARKET_REGIME_ALPHA_TEST_DATABASE_URL="$TEST_DATABASE_URL" uv run pytest -q
+MARKET_REGIME_ALPHA_TEST_DATABASE_URL="$TEST_DATABASE_URL" \
+MRA_WP17P_HISTORICAL_DATABASE_URL="$HISTORICAL_DATABASE_URL" \
+MRA_WP17P_HISTORICAL_ARTIFACT_ROOT="$HISTORICAL_ARTIFACT_ROOT" \
+uv run pytest -q
 uv run ruff check .
 uv run mypy
 uv run python -m build
 git diff --check
 ```
 
-PostgreSQL tests never skip. Use a disposable database and the isolated schemas created by test fixtures. Never point tests at a production database.
+Qualification requires both the disposable test database and the exact read-only
+historical evidence scope. Missing evidence is `BLOCKED / NOT_RUN`; a skipped
+test is not a qualification PASS. Never point bootstrap/recreate tests at an
+operational or historical evidence database.

@@ -46,8 +46,10 @@ def resolve_backtest_outcome_cutoff(
     checkpoints: tuple[BacktestOutcomeCheckpoint, ...],
     session_windows: tuple[BacktestSessionWindow, ...],
 ) -> datetime:
-    """Resolve a Target horizon over distinct frozen trading-session identity.
+    """Resolve a Target horizon over supplied canonical Calendar identities.
 
+    Callers reload the needed horizon at the frozen knowledge cutoff, including
+    Target sessions after the last FIT/VALIDATION decision session.
     Rolling and expanding folds may repeat the same TradingSession.  Repeated
     membership is removed by identity only after proving its date is stable.
     """

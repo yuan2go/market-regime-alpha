@@ -30,6 +30,18 @@ class SelectionRepository(Protocol):
         scope: UniverseScopeSpecification,
     ) -> int: ...
 
+    def find_frozen_universe(
+        self, *, universe_id: UUID, scope: UniverseScopeSpecification,
+        decision_time: DecisionTime,
+        retrospective_scope: ExploratoryRetrospectiveSelectionScope | None,
+    ) -> FrozenUniverse | None: ...
+
+    def find_eligibility_batch(
+        self, *, universe_revision_id: UUID, eligibility_policy_id: UUID,
+        decision_time: DecisionTime,
+        retrospective_scope: ExploratoryRetrospectiveSelectionScope | None,
+    ) -> EligibilityBatch | None: ...
+
     def insert_frozen_universe(
         self,
         *,

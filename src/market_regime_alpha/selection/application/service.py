@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import wraps
 from typing import Callable, Iterator, ParamSpec, TypeVar
 from uuid import UUID, uuid4
@@ -311,6 +311,20 @@ class SelectionApplication:
                 universe_id=universe_id,
                 scope=scope,
             )
+            existing = uow.selection.find_frozen_universe(
+                universe_id=universe_id, scope=scope, decision_time=decision_time,
+                retrospective_scope=retrospective_scope,
+            )
+            if existing is not None:
+                self._finish(
+                    uow, receipt_id=receipt.receipt_id, aggregate_kind="UNIVERSE_REVISION",
+                    aggregate_id=str(existing.universe_revision_id), aggregate_version=existing.revision,
+                    result_hash=existing.result_hash, action=command_kind,
+                    context=context, runtime_claim=runtime_claim,
+                )
+                self._finalize_runtime(uow, runtime_claim, receipt_id=receipt.receipt_id, result_hash=existing.result_hash)
+                uow.commit()
+                return replace(existing, receipt_id=receipt.receipt_id, replayed=True)
             members = tuple(
                 self._classify_member(
                     instrument_id=instrument_id,
@@ -511,6 +525,19 @@ class SelectionApplication:
                     retrospective_scope,
                 )
             policy = uow.selection.load_eligibility_policy(eligibility_policy_id)
+            existing = uow.selection.find_eligibility_batch(
+                universe_revision_id=universe_revision_id, eligibility_policy_id=eligibility_policy_id,
+                decision_time=decision_time, retrospective_scope=retrospective_scope,
+            )
+            if existing is not None:
+                self._finish(
+                    uow, receipt_id=receipt.receipt_id, aggregate_kind="ELIGIBILITY_BATCH",
+                    aggregate_id=scope_id, aggregate_version=1, result_hash=existing.result_hash,
+                    action=command_kind, context=context, runtime_claim=runtime_claim,
+                )
+                self._finalize_runtime(uow, runtime_claim, receipt_id=receipt.receipt_id, result_hash=existing.result_hash)
+                uow.commit()
+                return replace(existing, receipt_id=receipt.receipt_id, replayed=True)
             assessments = tuple(
                 self._assess_member(
                     uow=uow,

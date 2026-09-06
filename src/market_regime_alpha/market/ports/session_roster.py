@@ -36,6 +36,10 @@ class ArchiveTradingSessionReadPort(Protocol):
         end_date: date,
     ) -> tuple[ArchiveTradingSession, ...]: ...
 
+    def available_from(
+        self, *, exchange: str, session_id: TradingSessionId, limit: int,
+    ) -> tuple[ArchiveTradingSession, ...]: ...
+
     def following(
         self,
         *,

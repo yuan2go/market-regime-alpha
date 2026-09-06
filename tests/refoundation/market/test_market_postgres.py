@@ -4179,3 +4179,30 @@ def _plan_relations(plan: dict) -> set[str]:
     for child in plan.get("Plans", ()):
         relations.update(_plan_relations(child))
     return relations
+
+
+def test_archive_calendar_resolves_typed_ids_and_bounded_available_roster(market_stack):
+    from market_regime_alpha.infrastructure.postgres.queries.archive_sessions import PostgresArchiveTradingSessionReadPort
+    from market_regime_alpha.shared.identity import TradingSessionId
+
+    application, _, _, pool, _, product, _ = market_stack
+    captured = _capture(application, product, "typed-calendar", b'{"calendar":"exact"}')
+    ids = (uuid4(), uuid4(), uuid4())
+    dates = (date(2026, 1, 9), date(2026, 1, 12), date(2026, 1, 14))
+    application.normalize(captured.capture.capture_id, FixedNormalizer(lambda capture: NormalizationBatch(
+        source_capture_id=capture.capture_id, source_provider_product_id=capture.provider_product_id,
+        trading_sessions=tuple(_session(session_id=identity, session_date=day,
+                                        capture_id=capture.capture_id) for identity, day in zip(ids, dates, strict=True)),
+    )), _context("typed-calendar-normalize", "NORMALIZE_MARKET_PIT"))
+    reader = PostgresArchiveTradingSessionReadPort(pool)
+    assert reader.exact(exchange="XSHG", session_id=TradingSessionId(ids[0])).session_date == dates[0]
+    assert tuple(item.session_date for item in reader.following(
+        exchange="XSHG", after_session_id=TradingSessionId(ids[0]), count=2,
+    )) == dates[1:]
+    assert tuple(item.session_date for item in reader.available_from(
+        exchange="XSHG", session_id=TradingSessionId(ids[0]), limit=512,
+    )) == dates
+    with pytest.raises(ValueError, match="complete following"):
+        reader.following(exchange="XSHG", after_session_id=TradingSessionId(ids[0]), count=3)
+    with pytest.raises(ValueError, match="absent"):
+        reader.available_from(exchange="XSHE", session_id=TradingSessionId(ids[0]), limit=512)

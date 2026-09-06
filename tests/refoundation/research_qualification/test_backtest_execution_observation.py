@@ -143,3 +143,18 @@ def test_runtime_action_or_code_drift_is_integrity_mismatch() -> None:
     )
 
     assert result.state is BacktestObservedState.MISMATCH
+
+
+def test_unsettled_commitments_are_not_outcome_execution_evidence():
+    from market_regime_alpha.infrastructure.postgres.queries.backtest_execution import PostgresBacktestExecutionObservationPort, _scope
+    from market_regime_alpha.research_qualification.domain.backtest_execution import BacktestActionKind
+    run = _run()
+    action = next(a for a in BacktestExecutionPlanner().compile(run).expected_actions if a.kind is BacktestActionKind.SETTLE_OUTCOME)
+    observer = PostgresBacktestExecutionObservationPort(None)
+    decisions = {_scope(action): [{"decision_run_id": UUID(int=9001)}]}
+    unsettled = {_scope(action): [{"market_target_outcome_revision_id": None}, {"market_target_outcome_revision_id": None}]}
+    observed = observer._outcome(action, decisions, unsettled)
+    assert observed.state is BacktestObservedState.ABSENT
+    assert _reconcile_current_runtime(run, action, observed, ()).state is BacktestObservedState.ABSENT
+    partial = {_scope(action): [{"market_target_outcome_revision_id": UUID(int=9002)}, {"market_target_outcome_revision_id": None}]}
+    assert observer._outcome(action, decisions, partial).state is BacktestObservedState.MATCHED_INCOMPLETE

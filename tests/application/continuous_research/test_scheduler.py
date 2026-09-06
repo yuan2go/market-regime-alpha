@@ -209,3 +209,19 @@ def test_concurrent_schedulers_reserve_only_one_tick(
 
     assert sum(item is not None for item in reservations) == 1
     assert journal.get_run(command.run_id).current_tick_sequence == 1
+
+
+def test_continuous_runtime_services_prospective_continuity_on_non_trading_day(postgres_factory):
+    policy = default_continuous_decision_window_policy()
+    journal = PostgresContinuousResearchJournal(postgres_factory, clock=lambda: NOW)
+    calls = []
+    runner = ContinuousResearchScheduleRunner(
+        journal=journal,
+        tick_runner=ContinuousResearchTickRunner(journal=journal, provider=ScriptedProvider([]), children=CountingChildren(), policy=policy, clock=lambda: NOW),
+        policy=policy, provider_request_builder=lambda _run, _tick: _request(),
+        prospective_tick=lambda: calls.append("canonical-prospective-continuity"),
+    )
+    result = runner.run_due_once(run_command=_command(), trading_day=_trading_day(False), now=NOW)
+    assert result.status == "NON_TRADING_DAY"
+    assert calls == ["canonical-prospective-continuity"]
+    assert journal.get_run(_command().run_id).ticks == ()

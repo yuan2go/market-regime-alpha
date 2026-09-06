@@ -106,6 +106,57 @@ class PostgresBacktestActionReadPort:
             raise ArtifactIntegrityError("Backtest TradingSession exchange differs")
         return BacktestTradingSession(*row)
 
+    def outcome_sessions(
+        self,
+        specification: BacktestSpecification,
+        *,
+        reference_session_id: UUID,
+        maximum_offset: int,
+    ) -> tuple[BacktestTradingSession, ...]:
+        """Reload a bounded canonical Calendar horizon at the Archive cutoff.
+
+        Decision membership does not bound Outcome time. Retain intervening
+        Calendar rows before checking knowledge time: filtering a late row out
+        would silently move the Target to a different trading session.
+        """
+        if isinstance(maximum_offset, bool) or maximum_offset < 0:
+            raise ValueError("Backtest Outcome maximum offset must be non-negative")
+        cutoff = self.archive_seal(specification).knowledge_cutoff
+        with self._pool.connection(read_only=True) as connection:
+            rows = connection.execute(
+                """
+                WITH reference AS (
+                    SELECT exchange, session_date
+                    FROM mra.trading_session WHERE session_id = %s
+                )
+                SELECT session.session_id, session.exchange, session.session_date,
+                       session.timezone_name, session.open_at, session.close_at,
+                       session.known_at, capture.status,
+                       mra.market_artifact_is_readable(
+                           artifact.integrity_state, artifact.last_verified_at
+                       ) AS readable
+                FROM reference
+                JOIN mra.trading_session AS session
+                  ON session.exchange = reference.exchange
+                 AND session.session_date >= reference.session_date
+                JOIN mra.data_capture AS capture
+                  ON capture.capture_id = session.source_capture_id
+                LEFT JOIN mra.artifact AS artifact
+                  ON artifact.artifact_id = capture.artifact_id
+                WHERE session.exchange = %s
+                ORDER BY session.session_date, session.session_id
+                LIMIT %s
+                """,
+                (reference_session_id, specification.exchange_code, maximum_offset + 1),
+            ).fetchall()
+        if len(rows) != maximum_offset + 1 or rows[0][0] != reference_session_id:
+            raise RuntimeNotFoundError("Backtest canonical Calendar does not cover the Target horizon")
+        if any(row[6] > cutoff for row in rows):
+            raise ArtifactIntegrityError("Backtest Calendar known-time exceeds the frozen Archive cutoff")
+        if any(row[7] != "CAPTURED" or row[8] is not True for row in rows):
+            raise ArtifactIntegrityError("Backtest Calendar source Capture or Artifact is not readable")
+        return tuple(BacktestTradingSession(*row[:6]) for row in rows)
+
     def target_checkpoints(self, specification: BacktestSpecification) -> tuple[BacktestTargetCheckpoint, ...]:
         with self._pool.connection(read_only=True) as connection:
             target = connection.execute(

@@ -68,6 +68,28 @@ class PostgresArchiveOperationsReadPort:
             terminal_status=str(row[7]) if row[7] is not None else None,
         )
 
+    def due_slice_ids(self, market_archive_id: UUID) -> tuple[UUID, ...]:
+        """Use PostgreSQL time and immutable terminal facts for due admission."""
+        with self._pool.connection(read_only=True) as connection:
+            rows = connection.execute(
+                """
+                SELECT slice.market_archive_slice_id
+                FROM mra.market_archive_slice AS slice
+                JOIN mra.prospective_archive_slice_schedule AS schedule
+                  ON schedule.market_archive_slice_id = slice.market_archive_slice_id
+                WHERE slice.market_archive_id = %s
+                  AND slice.event_window_start <= clock_timestamp()
+                  AND slice.event_window_end >= clock_timestamp()
+                  AND NOT EXISTS (
+                      SELECT 1 FROM mra.prospective_archive_slice_terminal AS terminal
+                      WHERE terminal.market_archive_slice_id = slice.market_archive_slice_id
+                  )
+                ORDER BY schedule.ordinal
+                """,
+                (market_archive_id,),
+            ).fetchall()
+        return tuple(UUID(str(row[0])) for row in rows)
+
     def capture_disposition(self, capture_id: UUID) -> ArchiveCaptureDisposition:
         with self._pool.connection() as connection:
             row = connection.execute(

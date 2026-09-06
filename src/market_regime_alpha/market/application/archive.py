@@ -489,7 +489,7 @@ class ArchiveCommands:
                     raise ArtifactIntegrityError(
                         "Overdue archive replay receipt is incomplete"
                     )
-                missed = uow.archives.finalize_overdue(market_archive_id)
+                missed = uow.archives.missed_at_receipt(market_archive_id, receipt.receipt_id)
                 replay_hash = canonical_json_sha256(
                     {
                         "market_archive_id": market_archive_id,

@@ -822,9 +822,6 @@ class BacktestCanonicalActionHandler:
         action: BacktestExpectedAction,
     ) -> datetime:
         reference = self._fold_session(specification, action)
-        bindings = tuple((session.trading_session_id, session.session_date) for fold in specification.folds for session in fold.sessions)
-        distinct_ids = tuple(dict.fromkeys(session_id for session_id, _ in bindings))
-        sessions = tuple(self._reads.trading_session(specification, session_id) for session_id in distinct_ids)
         checkpoints = tuple(
             BacktestOutcomeCheckpoint(
                 checkpoint.session_offset,
@@ -834,9 +831,24 @@ class BacktestCanonicalActionHandler:
             for checkpoint in self._reads.target_checkpoints(specification)
             if checkpoint.role == "OUTCOME_OBSERVATION"
         )
+        if not checkpoints:
+            raise ValueError("Backtest Target has no Outcome checkpoint")
+        sessions = self._reads.outcome_sessions(
+            specification,
+            reference_session_id=reference.trading_session_id,
+            maximum_offset=max(item.session_offset for item in checkpoints),
+        )
+        if not sessions or (
+            sessions[0].trading_session_id != reference.trading_session_id
+            or sessions[0].session_date != reference.session_date
+        ):
+            raise ValueError("Backtest Calendar reference differs from frozen Session")
         return resolve_backtest_outcome_cutoff(
             reference_session_id=reference.trading_session_id,
-            fold_session_bindings=bindings,
+            fold_session_bindings=tuple(
+                (session.trading_session_id, session.session_date)
+                for session in sessions
+            ),
             checkpoints=checkpoints,
             session_windows=tuple(
                 BacktestSessionWindow(
@@ -1131,7 +1143,7 @@ class BacktestCanonicalActionHandler:
         )
         materialized = materialize_backtest_dataset(
             dataset_id=dataset_id,
-            dataset_code=(f"backtest_{str(action.arm_id)[:8]}_{session.session_date:%Y%m%d}"),
+            dataset_code=f"backtest_{dataset_id.hex}",
             simulated_decision_time=decision_time,
             universe_revision_id=universe_revision_id,
             eligibility_policy_id=specification.eligibility_policy.authority_id,

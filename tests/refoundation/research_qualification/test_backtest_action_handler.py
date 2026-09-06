@@ -124,6 +124,86 @@ def test_model_action_has_one_ordered_owner_runtime_dag() -> None:
     assert len({str(step.request_sha256) for step in steps}) == len(steps)
 
 
+def test_outcome_action_resolves_calendar_horizon_after_last_decision_session():
+    from datetime import UTC, datetime, time
+    from market_regime_alpha.research_qualification.ports.backtest_actions import (
+        BacktestArchiveSeal,
+        BacktestTargetCheckpoint,
+        BacktestTradingSession,
+    )
+
+    friday = BacktestTradingSession(
+        UUID(int=701),
+        "XSHG",
+        date(2026, 1, 9),
+        "Asia/Shanghai",
+        datetime(2026, 1, 9, 1, 30, tzinfo=UTC),
+        datetime(2026, 1, 9, 7, tzinfo=UTC),
+    )
+    monday = BacktestTradingSession(
+        UUID(int=702),
+        "XSHG",
+        date(2026, 1, 12),
+        "Asia/Shanghai",
+        datetime(2026, 1, 12, 1, 30, tzinfo=UTC),
+        datetime(2026, 1, 12, 7, tzinfo=UTC),
+    )
+    member = SimpleNamespace(
+        exploratory_backtest_fold_session_id=UUID(int=703),
+        trading_session_id=friday.trading_session_id,
+        session_date=friday.session_date,
+        role=BacktestSessionRole.EVALUATION,
+    )
+    fold = SimpleNamespace(exploratory_backtest_fold_id=UUID(int=704), sessions=(member,))
+    specification = SimpleNamespace(
+        exploratory_backtest_run_id=UUID(int=705), folds=(fold,), target=SimpleNamespace(authority_id=UUID(int=706))
+    )
+    commitment = UUID(int=707)
+    resolved = []
+    settled = []
+
+    def outcome_sessions(spec, *, reference_session_id, maximum_offset):
+        assert spec is specification
+        resolved.append((reference_session_id, maximum_offset))
+        return (friday, monday)
+
+    def settle(request, context, *, runtime_claim):
+        settled.append(request)
+        return SimpleNamespace()
+
+    reads = SimpleNamespace(
+        trading_session=lambda spec, identity: friday,
+        outcome_sessions=outcome_sessions,
+        decision_commitment_ids=lambda **kwargs: (commitment,),
+        archive_seal=lambda spec: BacktestArchiveSeal(datetime(2026, 2, 1, tzinfo=UTC)),
+        target_checkpoints=lambda spec: (BacktestTargetCheckpoint(UUID(int=708), "OUTCOME_OBSERVATION", 1, time(10, 30), "Asia/Shanghai"),),
+    )
+    handler = BacktestCanonicalActionHandler(
+        artifacts=cast(Any, SimpleNamespace()),
+        selection=cast(Any, SimpleNamespace()),
+        research_definitions=cast(Any, SimpleNamespace()),
+        reads=cast(Any, reads),
+        feature_materializers=(cast(Any, SimpleNamespace()),),
+        worker_id="test-worker",
+        outcomes=cast(Any, SimpleNamespace(settle_exploratory_retrospective_market_target_outcome=settle)),
+    )
+    action = BacktestExpectedAction(
+        UUID(int=709),
+        1,
+        BacktestActionKind.SETTLE_OUTCOME,
+        specification.exploratory_backtest_run_id,
+        UUID(int=710),
+        fold.exploratory_backtest_fold_id,
+        member.exploratory_backtest_fold_session_id,
+        None,
+        (),
+    )
+    handler.execute_step(cast(Any, specification), action, cast(Any, SimpleNamespace(step_key=f"settle-{commitment.hex}")))
+    assert resolved == [(friday.trading_session_id, 1)]
+    assert len(settled) == 1
+    assert settled[0].observation_cutoff == datetime(2026, 1, 12, 2, 30, tzinfo=UTC)
+
+
 def test_context_evaluation_projects_exact_context_authority_into_partition() -> None:
     arm_id = UUID(int=31)
     requirement = BacktestEvaluationRequirement(
@@ -202,3 +282,38 @@ def test_context_evaluation_projects_exact_context_authority_into_partition() ->
     assert plan.backtest_source is not None
     assert plan.backtest_source.context_kind is ContextKind.MARKET_REGIME
     assert plan.backtest_source.context_state is ContextState.NEGATIVE
+
+
+def test_dataset_names_do_not_collide_across_expanding_folds_or_shared_arm_prefixes():
+    from datetime import UTC, datetime, time
+    from market_regime_alpha.shared.hashing import sha256_bytes
+    from market_regime_alpha.runtime.ports import ArtifactRecord
+    day = date(2026, 1, 5)
+    reference = SimpleNamespace(role="DECISION_REFERENCE", session_offset=0, local_time=time(14, 55), timezone_name="UTC")
+    session = SimpleNamespace(session_date=day, open_at=datetime(2026, 1, 5, 9, tzinfo=UTC), close_at=datetime(2026, 1, 5, 15, tzinfo=UTC))
+    template = SimpleNamespace(universe_id=UUID(int=101), market_provider_product_id=UUID(int=102), classification_scheme="INDEX_MEMBERSHIP", classification_code="CSI300")
+    reads = SimpleNamespace(
+        universe_template=lambda _spec: template,
+        target_checkpoints=lambda _spec: (reference,),
+        trading_session=lambda _spec, _id: session,
+        retrospective_universe_id=lambda **_kwargs: UUID(int=103),
+        eligible_population=lambda **_kwargs: (),
+        archive_seal=lambda _spec: SimpleNamespace(knowledge_cutoff=datetime(2026, 9, 5, tzinfo=UTC)),
+        feature_definitions=lambda _spec: (SimpleNamespace(feature_definition_id=UUID(int=104)),),
+    )
+    definitions = []
+    def publish(content, **_kwargs):
+        digest = sha256_bytes(content)
+        return ArtifactRecord(UUID(digest[:32]), digest, len(content), "application/json", "objects/" + digest, "AVAILABLE", None, None)
+    handler = BacktestCanonicalActionHandler(
+        artifacts=cast(Any, SimpleNamespace(publish=publish)), selection=cast(Any, SimpleNamespace()),
+        research_definitions=cast(Any, SimpleNamespace(register_exploratory_backtest_dataset=lambda definition, *_args, **_kwargs: definitions.append(definition))),
+        reads=cast(Any, reads), feature_materializers=(cast(Any, SimpleNamespace()),), worker_id="test",
+    )
+    folds = tuple(SimpleNamespace(exploratory_backtest_fold_id=UUID(int=200+i), sessions=(SimpleNamespace(exploratory_backtest_fold_session_id=UUID(int=300+i), trading_session_id=UUID(int=400), session_date=day, role=BacktestSessionRole.FIT_INPUT),)) for i in range(2))
+    spec = SimpleNamespace(exploratory_backtest_run_id=UUID(int=500), folds=folds, sample_members=(), eligibility_policy=AuthorityBinding(UUID(int=501), "a"*64), market_archive=AuthorityBinding(UUID(int=502), "b"*64), market_archive_seal=AuthorityBinding(UUID(int=503), "c"*64), code_artifact=ArtifactBinding(UUID(int=504), "d"*64, 1), config_artifact=ArtifactBinding(UUID(int=505), "e"*64, 1))
+    for index, (arm, fold) in enumerate(((UUID(int=600), folds[0]), (UUID(int=600), folds[1]), (UUID(int=601), folds[0]))):
+        action = BacktestExpectedAction(UUID(int=700+index), index+1, BacktestActionKind.MATERIALIZE_DATASET, spec.exploratory_backtest_run_id, arm, fold.exploratory_backtest_fold_id, fold.sessions[0].exploratory_backtest_fold_session_id, None, ())
+        handler.execute_step(cast(Any, spec), action, cast(Any, SimpleNamespace(step_key="register-dataset")))
+    assert len({d.dataset_id for d in definitions}) == 3
+    assert len({(d.dataset_code, d.version) for d in definitions}) == 3

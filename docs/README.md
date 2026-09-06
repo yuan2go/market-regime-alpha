@@ -22,7 +22,7 @@ in [Current State](status/Current-State.md) and the linked immutable
 Verification records. The target Runtime has not cut over a business CLI or
 canonical write path; there is no dual write or target fallback.
 
-The active checkpoint is **WP-18Q qualification closure**. Generic Backtest,
+The active checkpoint is **WP-18Q-R2 operational evidence recovery and real proof closure**. Generic Backtest,
 Model, Evaluation/Report and Prospective wiring exists in the target draft;
 this does not imply engineering qualification or Runtime/CLI cutover.
 WP-17P Verification remains historical exact-run evidence, and WP-18 evidence
@@ -190,7 +190,7 @@ Checkpoint traceability:
 - [WP-18Q Continuous Prospective Correctness and Reusable Backtest Platform Design](references/WP-ARCHITECTURE-REFOUNDATION-18Q-Reusable-Backtest-Platform-Design.md)
 - [WP-18Q Reusable Backtest Platform Implementation Plan](references/WP-ARCHITECTURE-REFOUNDATION-18Q-Reusable-Backtest-Platform-Implementation-Plan.md)
   — approved implementation order; not an executed qualification ledger.
-- [WP-18Q Final Closure Verification](references/WP-ARCHITECTURE-REFOUNDATION-18Q-Final-Closure-Verification.md)
+- [Historical WP-18Q Final Closure Verification](references/WP-ARCHITECTURE-REFOUNDATION-18Q-Final-Closure-Verification.md)
   — exact-SHA engineering commands, restored-copy preservation, historical
   zero-write reconciliation and explicit real campaign/prospective/operational
   blockers. WP-18Q remains BLOCKED and the platform is not engineering-qualified.

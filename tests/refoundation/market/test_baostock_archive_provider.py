@@ -218,3 +218,17 @@ def test_transport_failure_stops_after_exact_attempt_bound() -> None:
 
     assert error.value.code == "BAOSTOCK_TRANSPORT_FAILED"
     assert "must-not-escape" not in str(error.value)
+
+
+def test_deferred_session_does_not_contact_provider_before_runtime_capture():
+    sdk = _Sdk(_SdkResult(fields=("calendar_date", "is_trading_day"), rows=(("2026-01-05", "1"),)))
+    query = BaoStockArchiveQuery(BaoStockArchiveQueryKind.TRADE_DATES, date(2026, 1, 5), date(2026, 1, 5))
+    with BaoStockSession(sdk, defer_login=True, maximum_attempts=1) as session:
+        assert sdk.calls == []
+        BaoStockArchiveProvider(session).capture(_capture_request(query))
+        assert sdk.calls[0][0] == "login"
+    assert sdk.calls[-1][0] == "logout"
+    empty_sdk = _Sdk(_SdkResult(fields=(), rows=()))
+    with BaoStockSession(empty_sdk, defer_login=True):
+        pass
+    assert empty_sdk.calls == []

@@ -312,3 +312,50 @@ report determinism, and operational-upgrade tests.
   database/catalog checksums, real Artifact identities, and evidence ceiling.
 - [ ] Claim `WP18Q_EXIT_GATE = PASS` only after the immutable Verification and
   status documents agree.
+
+## R2 execution — operational evidence recovery
+
+The explicit WP-18Q-R2 request authorizes recovery under the frozen owners.
+One branch begins at execution-time main `780cd964fd47fffac13edd0cf52547d12fff2bfc`
+(tree `0663cf127357c2cd24c49a23bbe3484e2f72e234`). Previous Verification is
+immutable; no previous test result qualifies this source/test tree.
+
+The selected recovery route preserves verified historical copies, records old
+operational scope discontinuity when its original database cannot be located,
+and rebuilds missing retrospective capture Authority with new identities and
+current PostgreSQL known-time. Raw objects alone never restore an old identity.
+
+Implementation and validation seams, in dependency order:
+
+1. Existing `mra` CLI / Runtime-Provenance Application: read-only evidence
+   inventory and physical verification. PostgreSQL adapters read one consistent
+   snapshot; Artifact paths/bytes are checked without writing integrity or
+   maturity. Local paths, connection configuration and backup records stay
+   outside the repository. No inventory table or business FK is introduced.
+2. The same operator surface: exact-name/OID backup planning and a repeatable
+   database/Artifact bundle. An exported PostgreSQL snapshot binds pg_dump and
+   the exact Artifact reference roster. Restore checking is read-only against
+   a separately restored database/root. Corruption, escaped paths, missing
+   bytes, wrong identity and mismatched generation fail closed.
+3. Canonical Market archive commands: recover immutable source bytes through
+   new Capture/Normalization/Archive/Seal facts. Predeclare the deterministic
+   symbol/date roster before any validation Outcome access. Retain source
+   manifest/byte hashes and an explicit reconstruction limitation.
+4. Existing Prospective Runtime Application: reconcile prior generation,
+   finalize elapsed slices, record missing-generation PlanningGap, resolve exact
+   future TradingSession, predeclare and claim due work. PostgreSQL tests cover
+   restart, lease expiry, unknown effects/commit, fences and window boundaries.
+5. Existing Generic BacktestExecutor and owner commands: frozen rule/ridge
+   campaign, canonical Evaluation, deterministic report publication and exact
+   inspect/resume/replay. Performance changes require populated-query evidence.
+6. Apply the existing hard-cut gate only after its prerequisites pass; retain
+   private exact historical decoding and immutable evidence. Reconcile current
+   docs, commit implementation, qualify a clean exact-SHA worktree and create
+   one immutable R2 Verification with all failures and remaining blockers.
+
+Each behavioral correction uses one public-seam failing test before its minimal
+implementation. Gates use `uv run python -m pytest`, `uv run python -m ruff`,
+`uv run python -m mypy`, `uv run python -m build`, docs/import checks and
+`git diff --check`. Full exact-SHA evidence remains mandatory. Section 13 of
+the frozen Design still requires a real due Attempt; no future-window wait or
+backdated generation may substitute for that proof.

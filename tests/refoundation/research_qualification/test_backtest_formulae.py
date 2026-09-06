@@ -327,3 +327,45 @@ def test_zero_variance_no_downside_and_non_positive_wealth_are_not_estimable() -
         FormulaResultState.NOT_ESTIMABLE,
         "NON_POSITIVE_WEALTH",
     )
+
+
+@pytest.mark.parametrize("code, expected", [
+    (BacktestFormulaCode.MEAN, Decimal("0.75")),
+    (BacktestFormulaCode.SAMPLE_STDDEV, Decimal("0.125").sqrt()),
+    (BacktestFormulaCode.ICIR, Decimal("0.75") / Decimal("0.125").sqrt()),
+])
+def test_ic_summary_uses_session_rank_correlations_instead_of_candidate_scores(code, expected):
+    observations = tuple(_observation(i + 1, Decimal(x), group=group, secondary=Decimal(y))
+                         for i, (group, x, y) in enumerate((
+                             ("s1", 1, 1), ("s1", 2, 2), ("s1", 3, 3),
+                             ("s2", 1, 1), ("s2", 2, 3), ("s2", 3, 2),
+                         )))
+    result = evaluate_backtest_formula(_formula(code, ("input_series", "group_rank_ic")), observations)
+    assert result.state is FormulaResultState.ESTIMABLE
+    assert result.estimable_count == 2
+    assert abs(result.decimal_value - expected) < Decimal("1e-24")
+
+
+def test_ic_summary_retains_unestimable_groups_and_rejects_unknown_series():
+    observations = (_observation(1, Decimal(1), secondary=Decimal(2)),
+                    _observation(2, Decimal(1), secondary=Decimal(3)))
+    result = evaluate_backtest_formula(_formula(BacktestFormulaCode.ICIR, ("input_series", "group_rank_ic")), observations)
+    assert result.state is FormulaResultState.NOT_ESTIMABLE
+    assert result.decimal_value is None and result.reason_code == "NO_ESTIMABLE_RANK_GROUP"
+    with pytest.raises(ValueError, match="input_series"):
+        evaluate_backtest_formula(_formula(BacktestFormulaCode.ICIR, ("input_series", "unbound")), observations)
+
+
+def test_declared_context_subset_frequency_uses_the_frozen_population_denominator():
+    from dataclasses import replace
+    formula = replace(_formula(BacktestFormulaCode.COVERAGE_RATE,
+                               ("expected_roster_size", 8), ("roster_mode", "declared_context_subset")),
+                      surface=BacktestMetricSurface.CONTEXT)
+    observations = (_observation(1, Decimal(1)), _observation(2, Decimal(1)))
+    result = evaluate_backtest_formula(formula, observations)
+    assert result.state is FormulaResultState.ESTIMABLE and result.decimal_value == Decimal("0.25")
+    empty = evaluate_backtest_formula(formula, ())
+    assert empty.state is FormulaResultState.ESTIMABLE and empty.decimal_value == 0
+    # Whole-population Data coverage retains the exact-roster contract.
+    strict = evaluate_backtest_formula(_formula(BacktestFormulaCode.COVERAGE_RATE, ("expected_roster_size", 8)), observations)
+    assert strict.reason_code == "EXPECTED_ROSTER_MISMATCH"

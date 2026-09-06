@@ -227,6 +227,37 @@ def test_risk_unknown_is_retained_as_not_estimable_source() -> None:
     assert resolved[0].input.source_value_status == "UNAVAILABLE"
 
 
+def test_formula_portfolio_net_return_charges_stamp_duty_only_on_sales():
+    from dataclasses import replace
+    from market_regime_alpha.research_qualification.domain.evaluation_formula import (
+        BacktestFormulaCode, BacktestMetricSurface, EvaluationFormulaDefinition,
+    )
+    metric = _metric(EvaluationSourceKind.PORTFOLIO_OUTCOME,
+                     EvaluationSourceMeasure.NET_PORTFOLIO_RETURN_ASSUMED_COST)
+    metric = replace(metric, formula=EvaluationFormulaDefinition(
+        metric.evaluation_protocol_metric_id, BacktestFormulaCode.CUMULATIVE_RETURN,
+        1, 34, 'ROUND_HALF_EVEN', (), BacktestMetricSurface.ECONOMICS,
+    ))
+    instrument, arm = uuid4(), uuid4()
+    start = datetime(2026, 1, 5, 2, 30, tzinfo=UTC)
+    rows = [
+        (*_source(decision_time=start + timedelta(days=i), weight=weight,
+                  instrument_id=instrument, arm_id=arm), start, Decimal('3'), Decimal('8'))
+        for i, weight in enumerate((Decimal('.4'), Decimal('.1')))
+    ]
+    resolved = _repository()._resolve_metric_inputs(metric, rows)
+    assert resolved[0].buy_turnover == Decimal('.4') and resolved[0].sell_turnover == 0
+    assert resolved[1].buy_turnover == 0 and resolved[1].sell_turnover == Decimal('.3')
+    assert resolved[0].net_return == Decimal('.03988')
+    assert resolved[1].net_return == Decimal('.00976')
+    assert [item.input.decimal_value for item in resolved] == [Decimal('.03988'), Decimal('.00976')]
+    import pytest
+    from market_regime_alpha.research_qualification.errors import EvaluationReconciliationError
+    missing_sides = [(*rows[0][:41], None, None)]
+    with pytest.raises(EvaluationReconciliationError, match="explicit charge sides"):
+        _repository()._resolve_metric_inputs(metric, missing_sides)
+
+
 def test_risk_rejection_is_a_boolean_true_rate_input() -> None:
     metric = _metric(
         EvaluationSourceKind.RISK_DECISION,
@@ -246,3 +277,27 @@ def test_risk_rejection_is_a_boolean_true_rate_input() -> None:
     assert resolved[0].input.decimal_value is None
     assert resolved[0].input.boolean_value is True
     assert resolved[0].input.source_value_status == "COMPLETE"
+
+
+def test_data_gap_metrics_read_canonical_gap_lineage_instead_of_zero_filling():
+    from dataclasses import replace
+    from market_regime_alpha.research_qualification.domain.evaluation_formula import (
+        BacktestFormulaCode, BacktestMetricSurface, EvaluationFormulaDefinition,
+        EvaluationFormulaParameter, FormulaParameterType, evaluate_backtest_formula,
+    )
+    start = datetime(2026, 1, 5, 2, 30, tzinfo=UTC)
+    source = (*_source(decision_time=start, outcome=None), start, Decimal('3'), Decimal('8'), True, True)
+    for code, expected in ((BacktestFormulaCode.SOURCE_GAP_RATE, Decimal(1)),
+                           (BacktestFormulaCode.MISSINGNESS_RATE, Decimal(1)),
+                           (BacktestFormulaCode.COVERAGE_RATE, Decimal(0)),
+                           (BacktestFormulaCode.UNAVAILABLE_RATE, Decimal(1))):
+        metric = _metric(EvaluationSourceKind.OUTCOME_METRIC, EvaluationSourceMeasure.TARGET_VALUE)
+        formula = EvaluationFormulaDefinition(
+            metric.evaluation_protocol_metric_id, code, 1, 34, 'ROUND_HALF_EVEN',
+            (EvaluationFormulaParameter(uuid4(), 1, 'expected_roster_size', FormulaParameterType.INTEGER, integer_value=1),),
+            BacktestMetricSurface.DATA,
+        )
+        metric = replace(metric, formula=formula)
+        resolved = _repository()._resolve_metric_inputs(metric, [source])
+        observations = _repository()._formula_observations(metric, resolved)
+        assert evaluate_backtest_formula(formula, observations).decimal_value == expected

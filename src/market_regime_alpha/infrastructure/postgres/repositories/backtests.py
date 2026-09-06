@@ -683,6 +683,41 @@ class PostgresBacktestRepository:
         ).fetchone()
         if row is None:
             raise RuntimeStateConflictError("Backtest parent roster is not exact or archive is not retrospective")
+        strategies = {defaults.strategy, *(arm.strategy for arm in specification.arms)}
+        for strategy in sorted(strategies, key=lambda item: str(item.authority_id)):
+            forecast_bindings = self._connection.execute(
+                """
+                SELECT rule.target_definition_id, rule.target_definition_sha256,
+                       checkpoint.checkpoint_role,
+                       rule.target_checkpoint_sha256 = checkpoint.content_sha256
+                FROM mra.strategy_forecast_rule AS rule
+                JOIN mra.target_checkpoint AS checkpoint
+                  ON checkpoint.target_checkpoint_id = rule.target_checkpoint_id
+                 AND checkpoint.target_definition_id = rule.target_definition_id
+                WHERE rule.strategy_version_id = %s
+                ORDER BY rule.ordinal
+                FOR SHARE OF rule, checkpoint
+                """, (strategy.authority_id,),
+            ).fetchall()
+            if not forecast_bindings or any(
+                (item[0], str(item[1]), item[2], item[3]) != (
+                    specification.target.authority_id,
+                    str(specification.target.content_sha256), "DECISION_REFERENCE", True,
+                ) for item in forecast_bindings
+            ):
+                raise RuntimeStateConflictError("Backtest Forecast must bind the exact Target Decision reference")
+        for arm in specification.arms:
+            context_actions = self._connection.execute(
+                """
+                SELECT missing_action FROM mra.strategy_context_requirement
+                WHERE strategy_version_id = %s ORDER BY ordinal FOR SHARE
+                """, (arm.strategy.authority_id,),
+            ).fetchall()
+            if not context_actions:
+                raise RuntimeStateConflictError("Backtest Strategy Context requirements are absent")
+            observational = all(item[0] == "OBSERVE_ONLY" for item in context_actions)
+            if (arm.context_mode.value == "OBSERVATIONAL") != observational:
+                raise RuntimeStateConflictError("Backtest OBSERVATIONAL mode requires an OBSERVE_ONLY Strategy; CURRENT_GATE requires a gate")
         features = self._connection.execute(
             """
             SELECT feature_definition_id, content_sha256
@@ -713,6 +748,18 @@ class PostgresBacktestRepository:
             ).fetchone()
             if protocol is None:
                 raise RuntimeStateConflictError("Backtest EvaluationProtocol roster is not exact")
+            if fold.purpose.value == "FIT":
+                unsupported = self._connection.execute(
+                    """
+                    SELECT source_kind FROM mra.evaluation_protocol_metric
+                    WHERE evaluation_protocol_id = %s
+                      AND source_kind IN ('SIGNAL_STATUS', 'FORECAST_OUTCOME_PAIR',
+                                          'PORTFOLIO_LINE', 'PORTFOLIO_OUTCOME', 'RISK_DECISION')
+                    ORDER BY ordinal
+                    """, (fold.evaluation_protocol.authority_id,),
+                ).fetchall()
+                if unsupported:
+                    raise RuntimeStateConflictError("FIT Evaluation requires validation-only owner stages")
         sessions = {
             (item.trading_session_id, item.session_date, fold.exchange_code) for fold in specification.folds for item in fold.sessions
         }

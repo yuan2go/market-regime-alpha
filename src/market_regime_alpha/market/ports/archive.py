@@ -116,6 +116,10 @@ class ArchiveRepository(Protocol):
         market_archive_id: UUID,
     ) -> tuple[UUID, ...]: ...
 
+    def missed_at_receipt(
+        self, market_archive_id: UUID, receipt_id: UUID,
+    ) -> tuple[UUID, ...]: ...
+
     def seal_retrospective(
         self,
         *,

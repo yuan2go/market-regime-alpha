@@ -858,6 +858,36 @@ class PostgresArchiveRepository:
         ).fetchall()
         return tuple(UUID(str(row[0])) for row in all_missed)
 
+    def missed_at_receipt(
+        self, market_archive_id: UUID, receipt_id: UUID,
+    ) -> tuple[UUID, ...]:
+        """Reload the immutable MISSED roster visible to the original command."""
+        receipt = self._connection.execute(
+            """
+            SELECT completed_at FROM mra.command_receipt
+            WHERE receipt_id = %s AND scope_id = %s
+              AND command_kind = 'FINALIZE_OVERDUE_ARCHIVE_SLICES'
+              AND status = 'SUCCEEDED'
+            """,
+            (receipt_id, str(market_archive_id)),
+        ).fetchone()
+        if receipt is None or receipt[0] is None:
+            raise RuntimeNotFoundError("Exact completed overdue receipt is unavailable")
+        rows = self._connection.execute(
+            """
+            SELECT terminal.market_archive_slice_id
+            FROM mra.prospective_archive_slice_terminal AS terminal
+            JOIN mra.prospective_archive_slice_schedule AS schedule
+              ON schedule.market_archive_slice_id = terminal.market_archive_slice_id
+            WHERE terminal.market_archive_id = %s
+              AND terminal.terminal_state = 'MISSED'
+              AND terminal.terminal_at <= %s
+            ORDER BY schedule.ordinal
+            """,
+            (market_archive_id, receipt[0]),
+        ).fetchall()
+        return tuple(UUID(str(row[0])) for row in rows)
+
     def get_resource_stop(self, resource_stop_id: UUID) -> ArchiveResourceStopRecord:
         row = self._connection.execute(
             """

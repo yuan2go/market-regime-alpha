@@ -2545,7 +2545,8 @@ def _wp18q_operational_upgrade_definitions(
 ) -> tuple[_OperationalUpgradeDefinition, ...]:
     expected_baseline = "aae59a527154fd19da4bf07a0402d353d2b02a8da56cef6c4a505509683c412b"
     expected_vocabulary = "d08800892f5e843a756f53e46205dfbb2787386ebf8281564c31049c45659a1b"
-    if next_baseline_sha256 != expected_baseline:
+    current_baseline = "fa322ee492e40b44a740e8c48d055aa0d56e857dd89a5e13792f55777628cea8"
+    if next_baseline_sha256 != current_baseline:
         raise OperationalUpgradeIntegrityError(
             "UPGRADE_SOURCE_BASELINE_CHANGED: register a new exact additive route"
         )
@@ -2597,7 +2598,25 @@ def _wp18q_operational_upgrade_definitions(
         raise OperationalUpgradeIntegrityError(
             "UPGRADE_V2_BUNDLE_CHANGED: register a new exact additive route"
         )
-    return (v1, v2)
+    functions = []
+    for statement in _split_postgres_statements(baseline_sql):
+        if re.search(r"\bCREATE FUNCTION mra\.(context_true_rate|validate_context_assessment_closure)\s*\(", statement):
+            functions.append(statement.replace("CREATE FUNCTION", "CREATE OR REPLACE FUNCTION", 1))
+    if len(functions) != 2:
+        raise OperationalUpgradeIntegrityError("Context precision upgrade requires two exact functions")
+    v3 = _OperationalUpgradeDefinition(
+        upgrade_code="wp18q_r2_context_precision_v3",
+        prior_baseline_sha256=v2.next_baseline_sha256,
+        prior_catalog_sha256=v2.next_catalog_sha256,
+        prior_reference_vocabulary_sha256=expected_vocabulary,
+        next_baseline_sha256=current_baseline,
+        next_catalog_sha256="0a4caa3dd51462f80a6b1cd94dde606d1e4336d8df9a1d02478a0f6687efbe6c",
+        next_reference_vocabulary_sha256=expected_vocabulary,
+        additive_sql="\n\n".join(functions),
+    )
+    if v3.additive_bundle_sha256 != "1f33e51b6ac9e02acd38fa1f9cfef54170d3068c236870f5904d0a5201a9b742":
+        raise OperationalUpgradeIntegrityError("UPGRADE_V3_BUNDLE_CHANGED: register a new exact additive route")
+    return (v1, v2, v3)
 
 
 def _compile_wp18q_v2_additive_sql(baseline_sql: str) -> str:

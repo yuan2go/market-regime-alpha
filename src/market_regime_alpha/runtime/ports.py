@@ -239,6 +239,7 @@ class RuntimeRepository(Protocol):
         run_id: UUID | None,
         worker_id: str,
         lease_duration: timedelta,
+        step_id: UUID | None = None,
     ) -> AttemptClaim | None: ...
 
     def load_claim(self, attempt_id: UUID) -> AttemptClaim: ...

@@ -35,6 +35,7 @@ class _MarketCommands(Protocol):
         context: CommandContext,
         *,
         runtime_claim: AttemptClaim | None = None,
+        complete_runtime_attempt: bool = True,
     ) -> Any: ...
 
     def normalize(
@@ -44,6 +45,7 @@ class _MarketCommands(Protocol):
         context: CommandContext,
         *,
         runtime_claim: AttemptClaim | None = None,
+        complete_runtime_attempt: bool = True,
     ) -> Any: ...
 
 
@@ -146,7 +148,8 @@ class MarketArchiveOperations:
             request.capture_request,
             provider,
             _child_context(context, "capture"),
-            runtime_claim=None,
+            runtime_claim=runtime_claim,
+            complete_runtime_attempt=False,
         )
         capture_id = captured.capture.capture_id
         if captured.capture.status is CaptureStatus.PROVIDER_FAILURE:
@@ -173,7 +176,8 @@ class MarketArchiveOperations:
             capture_id,
             normalizer,
             _child_context(context, "normalize"),
-            runtime_claim=None,
+            runtime_claim=runtime_claim,
+            complete_runtime_attempt=False,
         )
         self._archives.record_capture_observation(
             RecordArchiveCaptureObservationRequest(

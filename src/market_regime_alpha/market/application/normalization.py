@@ -37,7 +37,9 @@ from market_regime_alpha.market.application.results import MarketMutationResult
 class _NormalizationCommands(_MarketCommandSupport):
     @_replay_concurrent_success
     def normalize(
-        self, capture_id: UUID, normalizer: MarketNormalizer, context: CommandContext, *, runtime_claim: AttemptClaim | None = None
+        self, capture_id: UUID, normalizer: MarketNormalizer, context: CommandContext, *,
+        runtime_claim: AttemptClaim | None = None,
+        complete_runtime_attempt: bool = True,
     ) -> MarketMutationResult:
         """Verify/read bytes and normalize outside; bind facts and fence atomically."""
         contract = normalizer.contract
@@ -51,7 +53,10 @@ class _NormalizationCommands(_MarketCommandSupport):
             context=context,
             runtime_claim=runtime_claim,
         ):
-            replay = self._normalize_replay_before_io(capture_id, request_hash=request_hash, context=context, runtime_claim=runtime_claim)
+            replay = self._normalize_replay_before_io(
+                capture_id, request_hash=request_hash, context=context, runtime_claim=runtime_claim,
+                complete_runtime_attempt=complete_runtime_attempt,
+            )
         if replay is not None:
             return replay
         with self._terminal_failure_boundary(
@@ -75,6 +80,7 @@ class _NormalizationCommands(_MarketCommandSupport):
             runtime_claim=runtime_claim,
             command_scope_id=str(capture_id),
             command_request_hash=request_hash,
+            complete_runtime_attempt=complete_runtime_attempt,
         )
         try:
             content = self._byte_store.read_bytes(ContentHash(source.artifact.content_sha256), expected_size=source.artifact.size_bytes)
@@ -86,6 +92,7 @@ class _NormalizationCommands(_MarketCommandSupport):
                 runtime_claim=runtime_claim,
                 command_scope_id=str(capture_id),
                 command_request_hash=request_hash,
+                complete_runtime_attempt=complete_runtime_attempt,
                 forced_failure_code="ARTIFACT_READ_FAILED",
             )
             raise AssertionError("forced Artifact read failure must raise") from exc
@@ -127,7 +134,7 @@ class _NormalizationCommands(_MarketCommandSupport):
             if not receipt.is_new:
                 _ensure_replay_succeeded(receipt)
                 replay = _replayed_mutation(receipt, decision_visible_at=uow.market.normalization_decision_visible_at(capture_id))
-                if runtime_claim is not None:
+                if runtime_claim is not None and complete_runtime_attempt:
                     uow.runtime_finalization.succeed(runtime_claim, receipt_id=receipt.receipt_id, result_hash=replay.result_hash)
                     uow.commit()
                 return replay
@@ -149,7 +156,7 @@ class _NormalizationCommands(_MarketCommandSupport):
                 context=context,
                 runtime_claim=runtime_claim,
             )
-            if runtime_claim is not None:
+            if runtime_claim is not None and complete_runtime_attempt:
                 uow.runtime_finalization.succeed(runtime_claim, receipt_id=receipt.receipt_id, result_hash=result_hash)
             uow.commit()
             return MarketMutationResult(
@@ -163,7 +170,8 @@ class _NormalizationCommands(_MarketCommandSupport):
             )
 
     def _normalize_replay_before_io(
-        self, capture_id: UUID, *, request_hash: str, context: CommandContext, runtime_claim: AttemptClaim | None
+        self, capture_id: UUID, *, request_hash: str, context: CommandContext, runtime_claim: AttemptClaim | None,
+        complete_runtime_attempt: bool,
     ) -> MarketMutationResult | None:
         """Resolve an exact committed normalization before Artifact/normalizer I/O."""
         with self._uow_provider() as uow:
@@ -180,7 +188,7 @@ class _NormalizationCommands(_MarketCommandSupport):
                 return None
             _ensure_replay_succeeded(receipt)
             replay = _replayed_mutation(receipt, decision_visible_at=uow.market.normalization_decision_visible_at(capture_id))
-            if runtime_claim is not None:
+            if runtime_claim is not None and complete_runtime_attempt:
                 uow.runtime_finalization.succeed(runtime_claim, receipt_id=receipt.receipt_id, result_hash=replay.result_hash)
                 uow.commit()
             return replay
@@ -194,6 +202,7 @@ class _NormalizationCommands(_MarketCommandSupport):
         runtime_claim: AttemptClaim | None,
         command_scope_id: str,
         command_request_hash: str,
+        complete_runtime_attempt: bool,
         forced_failure_code: str | None = None,
     ) -> None:
         """Persist verification and terminal command failure in one short UoW."""
@@ -292,14 +301,14 @@ class _NormalizationCommands(_MarketCommandSupport):
                 else:
                     if command_receipt.status == "SUCCEEDED":
                         result_hash = _required_result_hash(command_receipt.result_hash)
-                        if runtime_claim is not None:
+                        if runtime_claim is not None and complete_runtime_attempt:
                             uow.runtime_finalization.succeed(runtime_claim, receipt_id=command_receipt.receipt_id, result_hash=result_hash)
                         concurrent_success = True
             uow.commit()
         if idempotency_collision is not None:
             raise idempotency_collision
         if concurrent_success:
-            raise _ConcurrentCommandSucceeded(runtime_finalized=runtime_claim is not None)
+            raise _ConcurrentCommandSucceeded(runtime_finalized=runtime_claim is not None and complete_runtime_attempt)
         if failure_code is not None:
             message = (
                 "Capture source bytes could not be read after verification"

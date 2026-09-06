@@ -62,7 +62,7 @@ class PostgresArchiveTradingSessionReadPort:
                 FROM mra.trading_session
                 WHERE session_id = %s AND exchange = %s
                 """,
-                (session_id, exchange),
+                (session_id.value, exchange),
             ).fetchone()
         if row is None:
             raise ValueError("exact Session is absent from exchange calendar")
@@ -75,6 +75,31 @@ class PostgresArchiveTradingSessionReadPort:
             break_end_at=row[5],
             close_at=row[6],
         )
+
+    def available_from(
+        self, *, exchange: str, session_id: TradingSessionId, limit: int,
+    ) -> tuple[ArchiveTradingSession, ...]:
+        """Bounded known calendar including the exact anchor; never infer dates."""
+        if isinstance(limit, bool) or limit < 1:
+            raise ValueError("calendar limit must be positive")
+        with self._pool.connection(read_only=True) as connection:
+            rows = connection.execute(
+                """
+                SELECT session_id, exchange, session_date, open_at,
+                       break_start_at, break_end_at, close_at
+                FROM mra.trading_session
+                WHERE exchange = %s AND session_date >= (
+                    SELECT session_date FROM mra.trading_session
+                    WHERE session_id = %s AND exchange = %s
+                )
+                ORDER BY session_date, session_id LIMIT %s
+                """, (exchange, session_id.value, exchange, limit),
+            ).fetchall()
+        if not rows or rows[0][0] != session_id.value:
+            raise ValueError("exact Session is absent from exchange calendar")
+        return tuple(ArchiveTradingSession(
+            TradingSessionId(row[0]), str(row[1]), row[2], row[3], row[4], row[5], row[6],
+        ) for row in rows)
 
     def following(
         self,
@@ -92,7 +117,7 @@ class PostgresArchiveTradingSessionReadPort:
                 FROM mra.trading_session
                 WHERE session_id = %s AND exchange = %s
                 """,
-                (after_session_id, exchange),
+                (after_session_id.value, exchange),
             ).fetchone()
             if anchor is None:
                 raise ValueError("anchor Session is absent from exact exchange calendar")

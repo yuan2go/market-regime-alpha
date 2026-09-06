@@ -140,15 +140,25 @@ def prospective_stack(target_database_url: str, tmp_path):
         pool.close()
 
 
+@pytest.mark.parametrize("persisted_due", [True, False])
 def test_prospective_predeclare_and_due_capture_use_exact_runtime_fences(
     prospective_stack,
     target_database_url: str,
+    persisted_due: bool,
 ) -> None:
     runtime, artifacts, pool = prospective_stack
     database_clock = PostgresMarketDatabaseClock(pool)
     manifest = _runtime_fixture_at(database_clock.now())
     plan = compile_prospective_runtime_plan(manifest, code_sha="1" * 40)
     first_window = plan.capture_runs[0]
+    from tests.refoundation.market.test_runtime_vertical_slice import _capture_step, _schedule_run
+    unrelated_step = _capture_step()
+    unrelated_run, _ = _schedule_run(runtime, artifacts, (replace(
+        unrelated_step, retry_policy=replace(
+            unrelated_step.retry_policy, deadline=database_clock.now() - timedelta(seconds=1),
+        ),
+    ),))
+    unrelated_before = runtime.inspect_run(unrelated_run)
     archives = _Archives(runtime)
     operations = _Operations(runtime)
     application = ProspectiveArchiveRuntimeApplication(
@@ -157,6 +167,7 @@ def test_prospective_predeclare_and_due_capture_use_exact_runtime_fences(
         archives=archives,
         operations=operations,
         database_clock=database_clock,
+        due_query=lambda archive_id: tuple(item.plan.market_archive_slice_id for item in first_window.slices) if persisted_due else (),
     )
 
     registered = application.predeclare(
@@ -175,7 +186,13 @@ def test_prospective_predeclare_and_due_capture_use_exact_runtime_fences(
         normalizer_for=lambda _item: object(),
     )
 
+    assert runtime.inspect_run(unrelated_run) == unrelated_before
     assert runtime.inspect_run(registered.predeclare_run_id).run_state == "SUCCEEDED"
+    if not persisted_due:
+        assert executed.slice_results == () and executed.due_run_ids == ()
+        assert not operations.requests
+        assert runtime.inspect_run(first_window.run_id).steps[0].state == "READY"
+        return
     assert len(executed.slice_results) == 2
     assert executed.due_run_ids == (first_window.run_id,)
     assert first_window.window_start <= executed.observed_at <= first_window.window_end
@@ -206,3 +223,102 @@ def test_prospective_predeclare_and_due_capture_use_exact_runtime_fences(
         lease_duration=timedelta(seconds=30),
     )
     assert replay == registered
+
+
+@pytest.mark.parametrize("committed_capture", [False, True])
+def test_restarted_prospective_attempt_reconciles_without_repeating_provider_effect(
+    prospective_stack, target_database_url, committed_capture,
+):
+    import time
+    from market_regime_alpha.market.application.prospective_runtime import ProspectiveRuntimeIntegrityError
+    runtime, artifacts, pool = prospective_stack
+    clock = PostgresMarketDatabaseClock(pool)
+    manifest = _runtime_fixture_at(clock.now())
+    plan = compile_prospective_runtime_plan(manifest, code_sha="1" * 40)
+    first = plan.capture_runs[0]
+    item = first.slices[0]
+
+    class Provider:
+        calls = 0
+        def capture(self, request):
+            self.calls += 1
+            if not committed_capture:
+                raise RuntimeError("provider response lost after request")
+            return object()
+
+    class Operations(_Operations):
+        committed = False
+        def execute_slice(self, request, **kwargs):
+            if not self.committed:
+                kwargs["provider"].capture(request.capture_request)
+                self.committed = True
+                raise RuntimeError("capture commit response lost")
+            return super().execute_slice(request, **kwargs)
+
+    provider = Provider()
+    operations = Operations(runtime)
+    def application():
+        return ProspectiveArchiveRuntimeApplication(
+            runtime=runtime, artifacts=artifacts, archives=_Archives(runtime),
+            operations=operations, database_clock=clock,
+            due_query=lambda _archive: (item.plan.market_archive_slice_id,),
+        )
+    app = application()
+    app.predeclare(manifest, code_sha="1" * 40, actor_id="recovery-test", lease_duration=timedelta(seconds=30))
+    kwargs = dict(code_sha="1" * 40, actor_id="recovery-test", worker_id="recovery-worker", lease_duration=timedelta(seconds=30), provider=provider, normalizer_for=lambda _item: object())
+    result = app.run_due(manifest, **kwargs)
+    assert len(result.failures) == 1 and provider.calls == 1
+    assert runtime.inspect_run(first.run_id).steps[1].state == "READY"
+    assert runtime.inspect_run(first.run_id).steps[1].attempt_states == ()
+    time.sleep(2.1)  # Let the actual PostgreSQL retry backoff expire.
+    restarted = application()
+    if committed_capture:
+        result = restarted.run_due(manifest, **kwargs)
+        assert len(result.slice_results) == 1
+        assert runtime.inspect_run(first.run_id).steps[0].state == "SUCCEEDED"
+    else:
+        with pytest.raises(ProspectiveRuntimeIntegrityError, match="EXTERNAL_EFFECT_UNKNOWN"):
+            restarted.run_due(manifest, **kwargs)
+        assert runtime.inspect_run(first.run_id).steps[0].state == "FAILED"
+    assert provider.calls == 1
+
+
+def test_predeclare_recovers_expired_claim_after_process_crash(prospective_stack):
+    import time
+
+    runtime, artifacts, pool = prospective_stack
+    clock = PostgresMarketDatabaseClock(pool)
+    manifest = _runtime_fixture_at(clock.now())
+
+    class CrashingArchives(_Archives):
+        crashed = False
+
+        def start(self, request, context, *, runtime_claim=None):
+            if not self.crashed:
+                self.crashed = True
+                raise SystemExit("process died before archive command")
+            return super().start(request, context, runtime_claim=runtime_claim)
+
+    archives = CrashingArchives(runtime)
+
+    def application():
+        return ProspectiveArchiveRuntimeApplication(
+            runtime=runtime, artifacts=artifacts, archives=archives,
+            operations=_Operations(runtime), database_clock=clock,
+            due_query=lambda _archive: (),
+        )
+
+    with pytest.raises(SystemExit, match="process died"):
+        application().predeclare(
+            manifest, code_sha="1" * 40, actor_id="crash-test",
+            lease_duration=timedelta(milliseconds=100),
+        )
+    time.sleep(0.15)  # Expire the actual PostgreSQL lease, without changing its clock.
+    registered = application().predeclare(
+        manifest, code_sha="1" * 40, actor_id="crash-test",
+        lease_duration=timedelta(seconds=30),
+    )
+    trace = runtime.inspect_run(registered.predeclare_run_id)
+    assert trace.run_state == "SUCCEEDED"
+    assert len(trace.steps[0].attempt_states) == 2
+    assert len(archives.claims) == 1

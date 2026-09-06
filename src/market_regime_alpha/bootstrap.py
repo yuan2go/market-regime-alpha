@@ -8,7 +8,13 @@ from pathlib import Path
 from typing import Mapping
 from uuid import uuid4
 
+from market_regime_alpha.infrastructure.postgres.queries.prospective_continuity import PostgresProspectiveContinuityReadPort
+from market_regime_alpha.shared.identity import ContentHash
 from market_regime_alpha.infrastructure.artifacts import LocalArtifactStore
+from market_regime_alpha.infrastructure.artifacts.evidence import FilesystemEvidenceIntegrity
+from market_regime_alpha.infrastructure.postgres.evidence_backup import PostgresEvidenceBackup
+from market_regime_alpha.infrastructure.postgres.queries.evidence import PostgresEvidenceSnapshotPort
+from market_regime_alpha.runtime.application.evidence import EvidenceApplication
 from market_regime_alpha.infrastructure.models import (
     DeterministicRidgeBacktestModelAdapter,
     DeterministicRidgePredictor,
@@ -321,6 +327,7 @@ class TargetSettings:
 
 @dataclass(slots=True)
 class TargetApplication:
+    evidence: EvidenceApplication
     runtime: RuntimeApplication
     artifacts: ArtifactApplication
     market: MarketApplication
@@ -554,6 +561,14 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
         backtest_replay,
     )
     return TargetApplication(
+        evidence=EvidenceApplication(
+            PostgresEvidenceSnapshotPort(pool),
+            FilesystemEvidenceIntegrity(settings.artifact_root),
+            settings.artifact_root,
+            PostgresEvidenceBackup(settings.database_url, settings.artifact_root),
+            PostgresArchiveVerificationPort(pool).verify,
+            backtest_replay.verify,
+        ),
         runtime=runtime_application,
         artifacts=artifact_application,
         market=market_application,
@@ -565,6 +580,11 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
             archives=archive_commands,
             operations=archive_operations,
             database_clock=market_clock,
+            due_query=PostgresArchiveOperationsReadPort(pool).due_slice_ids,
+            continuity=PostgresProspectiveContinuityReadPort(pool),
+            trading_sessions=PostgresArchiveTradingSessionReadPort(pool),
+            target_schedules=PostgresTargetArchiveScheduleReadPort(pool),
+            manifest_reader=lambda digest, size: byte_store.read_bytes(ContentHash(digest), expected_size=size),
             archive_inspection=PostgresArchiveInspectionPort(pool),
             archive_verification=PostgresArchiveVerificationPort(pool),
         ),

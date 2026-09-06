@@ -102,3 +102,57 @@ def test_integrity_mismatch_stops_before_any_action_execution() -> None:
             BacktestObservedState.MISMATCH,
         )
     }
+
+
+def test_resume_uses_one_fresh_observation_per_transition_and_final_verification() -> None:
+    class CountingState(_CanonicalState):
+        reads = 0
+        executions = 0
+
+        def observe(self, run, expected_actions):
+            self.reads += 1
+            return super().observe(run, expected_actions)
+
+        def execute(self, run, action, operation):
+            assert self.reads == self.executions + 1
+            self.executions += 1
+            super().execute(run, action, operation)
+
+    state = CountingState({})
+    executor = BacktestExecutor(state, state)
+    assert executor.resume(_run()).execution_state is BacktestExecutionState.COMPLETED
+    assert state.reads == state.executions + 1
+    completed_executions = state.executions
+    assert executor.resume(_run()).execution_state is BacktestExecutionState.COMPLETED
+    assert state.executions == completed_executions
+    assert state.reads == completed_executions + 2
+
+
+def test_inspect_reports_running_when_completed_actions_precede_remaining_work() -> None:
+    frozen = _run()
+    first = BacktestExecutionPlanner().compile(frozen).expected_actions[0]
+    state = _CanonicalState({first.action_id: BacktestActionObservation(
+        first.action_id, BacktestObservedState.MATCHED_COMPLETE,
+    )})
+    assert BacktestExecutor(state, state).inspect(frozen).execution_state is BacktestExecutionState.RUNNING
+
+
+def test_resume_leaves_an_unexpired_incomplete_owner_running_without_integrity_failure() -> None:
+    frozen = _run()
+    first = BacktestExecutionPlanner().compile(frozen).expected_actions[0]
+
+    class LeasedState(_CanonicalState):
+        recoveries = 0
+
+        def execute(self, run, action, operation):
+            assert operation is BacktestNextOperation.RECOVER
+            self.recoveries += 1
+
+    state = LeasedState({first.action_id: BacktestActionObservation(
+        first.action_id, BacktestObservedState.MATCHED_INCOMPLETE,
+    )})
+    result = BacktestExecutor(state, state).resume(frozen)
+    assert result.execution_state is BacktestExecutionState.RUNNING
+    assert state.recoveries == 1
+    assert not result.integrity_mismatch_action_ids
+    assert len(state.observations) == 1
