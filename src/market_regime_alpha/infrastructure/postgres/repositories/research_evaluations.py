@@ -7,6 +7,7 @@ from datetime import date
 from uuid import UUID
 
 import psycopg
+from market_regime_alpha.infrastructure.postgres.evaluation_metric_record import EvaluationMetricRecord
 from market_regime_alpha.research_qualification.domain.evaluation_computation import ComputedEvaluationMetric, EvaluationMetricInputs
 from market_regime_alpha.research_qualification.domain.episode_formula import episode_contract
 from market_regime_alpha.infrastructure.postgres.queries.outcome_economic_guard import outcome_economic_guard
@@ -408,7 +409,6 @@ class PostgresEvaluationRepository:
             source_rows = computation.inputs.source_rows
             resolved = computation.resolved
             result = computation.result
-            metric_reason_code = computation.reason_code
             result_hash = computation.result_sha256
             evaluation_metric_id = self._id_factory()
             self._connection.execute(
@@ -421,19 +421,7 @@ class PostgresEvaluationRepository:
                     acceptance_state, reason_code, content_sha256
                 ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
-                (
-                    evaluation_metric_id,
-                    evaluation_run_id,
-                    metric.evaluation_protocol_metric_id,
-                    run[0],
-                    result.state.value,
-                    result.decimal_value,
-                    result.boolean_value,
-                    result.estimable_count,
-                    result.acceptance_state.value,
-                    metric_reason_code,
-                    result_hash,
-                ),
+                EvaluationMetricRecord.from_computation(evaluation_metric_id, evaluation_run_id, run[0], computation),
             )
             classifications = {item.evaluation_observation_id: item for item in result.observations}
             input_ids = {item.input.evaluation_observation_id: self._id_factory() for item in resolved}

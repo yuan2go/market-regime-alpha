@@ -4,9 +4,9 @@
 > **Authority:** Non-authoritative capability read model; never qualification Authority
 > **Owner:** Market Regime Alpha maintainers
 > **Generated At:** 2026-09-06 research economics correctness
-> **Repository Implementation Checkpoint:** `0770078dcb93faa65ddbda82d195c226de18d505`
-> **Implementation Tree:** `419c99e4db6c18d6432e8ea50c3bd94ac6c4d354`
-> **Execution-Time Main Baseline:** `32bcb2922e6ced805c51f320e5f5657521f8cf14`
+> **Repository Implementation Checkpoint:** `a107d98ee1f4e47db1dca5512211a02ad23029c9`
+> **Implementation Tree:** `fe5c2d80fcdfc2364df45cd822cc8a8e9cebbc60`
+> **Execution-Time Main Baseline:** `58640732b1c51ccec004dc574d3df790ccc4994d`
 > **Containing Documentation Commit:** reported by handoff; no self-referential SHA
 > **Schema Epochs:** legacy `LEGACY_MIGRATIONS_001_106`; target `MRA_REFOUNDATION_1 / DRAFT / NOT_CUT_OVER`
 > **Code Evidence:** `src/market_regime_alpha/bootstrap.py`, `src/market_regime_alpha/infrastructure/postgres/migrations`, `tests/refoundation`, `tests/platform`, [Current State](Current-State.md), and linked immutable Verifications
@@ -16,13 +16,15 @@ implemented target mechanics from actual engineering qualification and research
 evidence. Existing legacy business owners remain in service until an explicit
 cutover; target-draft writes do not acquire legacy business Authority.
 
-Research economics V2 now supports independent closed hypothetical mark episodes,
-with funded cash, authorized simulated entry/exit, complete-parent projections and
-exact child reconciliation. The finite restored-input control and portable Generic
-fixture run successfully; final exact-SHA engineering qualification is pending.
-Continuous account/carry/overlap economics is explicitly unsupported. Legacy/V1
-results retain their hashes and original meaning and are excluded from the new
-financial correctness claim. See the [model contract](../references/WP-RESEARCH-ECONOMICS-CORRECTNESS-01-Design.md).
+Research economics V2 passes its bounded [exact-revision engineering gate](../references/WP-RESEARCH-ECONOMICS-CORRECTNESS-01-Verification.md):
+4,045 full-repository cases without failures/errors/skips, complete root/child
+integrity, four Validation episodes across folds/months, independent hand values,
+concurrency/recovery, deterministic report/replay, installed-wheel/schema smoke
+and a finite restored-input comparison. Full paths close before slicing and
+samples count complete independently funded episodes. Continuous accounts,
+carry/overlap and actual market executability remain unsupported. Legacy/V1
+hashes, meaning and report bytes are preserved in the verified exact scope and
+excluded from V2 correctness claims. See the [model contract](../references/WP-RESEARCH-ECONOMICS-CORRECTNESS-01-Design.md).
 
 Current target catalog: **192 tables, 4 views, 3,929 catalog objects**.
 Exact checksums and observed PostgreSQL counts are in Current State.

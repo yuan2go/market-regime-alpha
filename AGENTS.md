@@ -61,8 +61,12 @@ and Production qualification remain unauthorized.
 
 ### Research economics correctness and WP-18Q freeze
 
-The active development scope is WP-RESEARCH-ECONOMICS-CORRECTNESS-01 under its
-[design contract](docs/references/WP-RESEARCH-ECONOMICS-CORRECTNESS-01-Design.md).
+WP-RESEARCH-ECONOMICS-CORRECTNESS-01 has completed its bounded local gate in the
+[immutable Verification](docs/references/WP-RESEARCH-ECONOMICS-CORRECTNESS-01-Verification.md).
+Its [design contract](docs/references/WP-RESEARCH-ECONOMICS-CORRECTNESS-01-Design.md)
+retains independent funded, fully liquidated hypothetical episodes, complete
+parent/root/child reconciliation and explicit unsupported-model refusals.
+This exit authorizes neither a model expansion nor later Roadmap execution.
 Preserve R2 recovery and its frozen campaign without changing its process, source
 or operational evidence database. Its large campaign, future windows and hard-cut
 are not prerequisites for economics correctness. WP-18Q remains independently

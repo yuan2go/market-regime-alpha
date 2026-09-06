@@ -13,20 +13,22 @@ second planning source.
 
 ## Sequence
 
-WP-RESEARCH-ECONOMICS-CORRECTNESS-01 is the sole active development scope.
-Its [frozen model contract](../references/WP-RESEARCH-ECONOMICS-CORRECTNESS-01-Design.md)
-requires a complete supported model, canonical integration, historical protection,
-finite independent comparison and final exact-SHA regression. Implementation and
-focused proofs exist; the final gate is pending. Preserve R2 recovery and the
-frozen campaign. The following unresolved WP-18Q gates remain separate and are
-not prerequisites for the economics package. Architecture remains frozen.
+WP-RESEARCH-ECONOMICS-CORRECTNESS-01 is complete in its [bounded supported scope](../references/WP-RESEARCH-ECONOMICS-CORRECTNESS-01-Design.md).
+Its single [immutable Verification](../references/WP-RESEARCH-ECONOMICS-CORRECTNESS-01-Verification.md)
+binds `a107d98e`: complete root/child integrity, full-parent multi-episode
+fold/month projections, hand arithmetic, canonical faults/recovery, finite
+restored-input control, historical report/replay and 4,045-case full regression
+pass. No second economics package or model expansion is required for this exit.
+Preserve R2 recovery and the frozen campaign. The following unresolved WP-18Q
+gates remain separate; completion of this package does not authorize intervening
+in that campaign or executing later Roadmap work. Architecture remains frozen.
 The historical WP-17P PASS below is not a Generic Platform qualification.
 
 | WP-18Q P0 gate | Current planning disposition | Minimum re-entry evidence |
 |---|---|---|
-| Full exact-SHA engineering regression | Clean `f247ca5d`: 3,997 tests and four subtests PASS. Current prospective-claim guard `f1c17ae5` passes 25 focused tests and static/build/docs checks; its full gate is pending | Run the current full gate before hard-cut, then qualify the final implementation; locked environment without skip/xfail or relaxed assertions |
+| Full exact-SHA engineering regression | Current `a107d98e` (retaining the prospective-claim guard) passes 4,045 JUnit cases with no failures/errors/skips and static/build/docs gates. Frozen campaign source `f247ca5d` remains a separate exact identity | Qualify the eventual completed-campaign/hard-cut implementation; never inherit PASS across changed source/test/schema/dependency trees |
 | PostgreSQL and historical compatibility | New-scope backup/restore and exact additive v3/v4/v5 upgrades preserve all 189 business tables; five Archives, WP-17P/Generic replay and report bytes match; original scope is discontinuous | Repeat backup/restore and exact replay with the completed large campaign and final implementation |
-| Generic real campaign/report/replay | New canonical archive has 116 actual sessions and 534 captures. Run `6318cbb0` is executing the unchanged frozen 44-session/four-arm research; its canonical declaration includes all 37 required metric codes and 608 bound metric entries | Complete Model/Evaluation, standard report, exact replay, actual query plans and final backup/restore; preserve prior failed identities and times |
+| Generic real campaign/report/replay | New canonical archive has 116 actual sessions and 534 captures. Run `6318cbb0` was last recorded as executing the unchanged frozen 44-session/four-arm research in retained R2 evidence; current completion is unverified by this package; its canonical declaration includes all 37 required metric codes and 608 bound metric entries | Complete Model/Evaluation, standard report, exact replay, actual query plans and final backup/restore; preserve prior failed identities and times |
 | Fresh generic two-arm gate | Run `99227101` completes all 25 actions and full zero-write report/resume/replay. Independent Run `b8c2fadc` also completes; all 178 canonical comparison metrics align with equal estimates and separate ModelVersion identities | Preserve these exact completed proofs on the final implementation; complete the large-campaign gate before hard-cut |
 | Prospective real Runtime proof | New operational generation has 288 future slices and due=0; continuity is wired, actual due proof is temporally blocked | Actual PostgreSQL-due, Runtime-claimed attempt in the explicitly identified new scope, preserving old-scope discontinuity; do not wait, backdate or use replay as proof |
 | WP-specific hard-cut | Blocked; executable surfaces retained | Historical zero-write equivalence, WP-18 definition equivalence, generic real campaign/report/resume/replay and full regression all PASS before deletion |

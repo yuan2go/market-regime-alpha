@@ -17,7 +17,10 @@ from market_regime_alpha.shared.hashing import canonical_json_sha256
 
 
 def economic_children_match(
-    connection: psycopg.Connection[Any], evaluation_id: UUID, computations: tuple[ComputedEvaluationMetric, ...]
+    connection: psycopg.Connection[Any],
+    evaluation_id: UUID,
+    computations: tuple[ComputedEvaluationMetric, ...],
+    metric_ids: dict[UUID, UUID],
 ) -> bool:
     repository = PostgresEvaluationRepository(connection, id_factory=uuid4)
     costs = {}
@@ -44,7 +47,9 @@ def economic_children_match(
         expected_costs: list[tuple[Any, ...]] = []
         for item in computation.resolved:
             row = by_observation[item.input.evaluation_observation_id]
-            if tuple(row) != _metric_observation_values(row[0], row[1], evaluation_id, metric, item.source, classifications[row[4]]):
+            if tuple(row) != _metric_observation_values(
+                row[0], metric_ids[metric.evaluation_protocol_metric_id], evaluation_id, metric, item.source, classifications[row[4]]
+            ):
                 return False
             values = _portfolio_source_values(item)
             expected_portfolio.append(

@@ -142,7 +142,7 @@ def test_canonical_wp17p_fit_model_validation_chain(target_database_url, tmp_pat
     assert decision_times == [(time(14, 55),)]
 
 
-def seed_complete_archive(application, *, episode_entry=False):
+def seed_complete_archive(application, *, episode_entry=False, multi_episode=False):
     provider = Provider(
         uuid4(),
         "wp17p_fixture",
@@ -190,6 +190,25 @@ def seed_complete_archive(application, *, episode_entry=False):
         date(2026, 1, 16),
         date(2026, 1, 19),
     )
+    decision_dates = (date(2026, 1, 5), date(2026, 1, 14))
+    outcome_dates = (date(2026, 1, 6), date(2026, 1, 15))
+    if multi_episode:
+        session_dates = tuple(date(2026, month, day) for month, day in ((1, 26), (1, 27), (1, 28), (1, 29), (1, 30), (2, 2), (2, 3), (2, 4)))
+        decision_dates = tuple(date(2026, month, day) for month, day in ((1, 26), (1, 28), (1, 29), (1, 30), (2, 3)))
+        outcome_dates = tuple(date(2026, month, day) for month, day in ((1, 27), (1, 29), (1, 30), (2, 2), (2, 4)))
+    fact_dates = session_dates if multi_episode else decision_dates
+
+    def fixture_bar(product_id, capture_id, instrument_id, session, checkpoint, index):
+        from dataclasses import replace
+        bar = _bar(product_id, capture_id, instrument_id, session, checkpoint, index)
+        if not multi_episode:
+            return bar
+        close = (Decimal(10) + Decimal(index + 1) / 100 if checkpoint == "REFERENCE"
+                 else {date(2026, 1, 30): Decimal(11), date(2026, 2, 2): Decimal(9)}.get(session.session_date, Decimal(10)))
+        return replace(bar, open=Money(Decimal(10), "CNY"), close=Money(close, "CNY"),
+            high=Money(max(Decimal(10), close) + Decimal(".01"), "CNY"),
+            low=Money(min(Decimal(10), close) - Decimal(".01"), "CNY"), turnover=Money(close * 10000, "CNY"))
+
     sessions = tuple(
         _session(item, capture_id, exchange)
         for exchange in ("XSHG",)
@@ -254,7 +273,7 @@ def seed_complete_archive(application, *, episode_entry=False):
             for instrument_id in instrument_ids
         ),
         bars=tuple(
-            _bar(
+            fixture_bar(
                 product.provider_product_id,
                 capture_id,
                 instrument_id,
@@ -265,11 +284,9 @@ def seed_complete_archive(application, *, episode_entry=False):
                 index,
             )
             for index, instrument_id in enumerate(instrument_ids)
-            for session_date, checkpoint in (
-                (date(2026, 1, 5), "REFERENCE"),
-                (date(2026, 1, 6), "OUTCOME"),
-                (date(2026, 1, 14), "REFERENCE"),
-                (date(2026, 1, 15), "OUTCOME"),
+            for session_date, checkpoint in tuple(
+                item for decision, outcome in zip(decision_dates, outcome_dates, strict=True)
+                for item in ((decision, "REFERENCE"), (outcome, "OUTCOME"))
             )
         ),
         security_status_facts=tuple(
@@ -282,7 +299,8 @@ def seed_complete_archive(application, *, episode_entry=False):
                     (instrument_exchange[instrument_id], session_date)
                 ].session_id,
                 EvidenceScope.DECISION_SESSION,
-                SecurityStatus.ACTIVE,
+                (SecurityStatus.SUSPENDED if multi_episode and instrument_id not in instrument_ids[:2]
+                 and session_date in {date(2026, 1, 28), date(2026, 2, 3)} else SecurityStatus.ACTIVE),
                 session_by_exchange_date[
                     (instrument_exchange[instrument_id], session_date)
                 ].open_at,
@@ -293,7 +311,7 @@ def seed_complete_archive(application, *, episode_entry=False):
                 None,
             )
             for instrument_id in instrument_ids
-            for session_date in (date(2026, 1, 5), date(2026, 1, 14))
+            for session_date in fact_dates
         ),
         lifecycle_status_facts=tuple(
             fact
@@ -328,7 +346,7 @@ def seed_complete_archive(application, *, episode_entry=False):
                         1,
                         None,
                     )
-                    for session_date in (date(2026, 1, 5), date(2026, 1, 14))
+                    for session_date in fact_dates
                 ),
             )
         ),
@@ -337,8 +355,8 @@ def seed_complete_archive(application, *, episode_entry=False):
         from dataclasses import replace
         entry_bars = []
         for index, instrument_id in enumerate(instrument_ids):
-            for session_date in (date(2026, 1, 6), date(2026, 1, 15)):
-                bar = _bar(product.provider_product_id, capture_id, instrument_id,
+            for session_date in outcome_dates:
+                bar = fixture_bar(product.provider_product_id, capture_id, instrument_id,
                            session_by_exchange_date[("XSHG", session_date)], "OUTCOME", index)
                 entry_end = datetime.combine(session_date, time(9, 35), SHANGHAI).astimezone(UTC)
                 entry_bars.append(replace(bar, bar_revision_id=uuid4(), event_start=entry_end.replace(minute=30),

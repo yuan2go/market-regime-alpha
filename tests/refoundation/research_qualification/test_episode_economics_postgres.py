@@ -32,9 +32,79 @@ def test_generic_episode_canonical_completion_report_and_replay(target_database_
         assert app.backtest_execution.resume(frozen).execution_state.value == "COMPLETED"
         assert app.backtest_reports.render_json(spec.exploratory_backtest_run_id) == before
         assert app.backtest_reports.render_markdown(spec.exploratory_backtest_run_id) == markdown
+        _root_corruption_qualification(app, spec, rows[0][0], target_database_url)
         _fault_qualification(app, spec, rows[0][0], target_database_url)
         _corruption_qualification(app, spec, rows[0][0], target_database_url)
         _changed_input_qualification(app, spec, rows[0][0], target_database_url)
+
+
+def _root_corruption_qualification(app, spec, source_id, database_url):
+    from uuid import uuid4
+    import psycopg
+    from psycopg import sql
+    import pytest
+    from market_regime_alpha.research_qualification.errors import BacktestReportIntegrityError
+
+    columns = ("evaluation_metric_id", "evaluation_run_id", "evaluation_protocol_metric_id", "evaluation_protocol_id",
+               "metric_state", "decimal_value", "boolean_value", "estimable_count", "acceptance_state", "reason_code", "content_sha256")
+    with psycopg.connect(database_url) as c:
+        saved = c.execute(
+            sql.SQL("SELECT {} FROM mra.evaluation_metric WHERE evaluation_run_id=%s ORDER BY evaluation_metric_id LIMIT 1").format(
+                sql.SQL(",").join(map(sql.Identifier, columns))
+            ), (source_id,),
+        ).fetchone()
+        legacy = c.execute("""SELECT metric.evaluation_protocol_metric_id,metric.evaluation_protocol_id
+            FROM mra.evaluation_protocol_metric metric JOIN mra.evaluation_metric_formula formula USING(evaluation_protocol_metric_id)
+            WHERE formula.formula_version=1 LIMIT 1""").fetchone()
+    original = dict(zip(columns, saved, strict=True))
+    variants = (
+        {"estimable_count": original["estimable_count"] + 1},
+        {"boolean_value": True},
+        {"acceptance_state": "REJECTED"},
+        {"metric_state": "NOT_ESTIMABLE", "decimal_value": None, "boolean_value": None, "acceptance_state": "NOT_ESTIMABLE"},
+        {"decimal_value": original["decimal_value"] + 1},
+        {"reason_code": "DIFFERENT_REASON"},
+        {"content_sha256": "f" * 64},
+        {"evaluation_protocol_id": legacy[1]},
+        {"evaluation_protocol_metric_id": legacy[0], "evaluation_protocol_id": legacy[1]},
+        {"evaluation_metric_id": uuid4()},
+        {"evaluation_run_id": uuid4()},
+    )
+
+    def snapshot():
+        # Include result/input/source/Runtime/receipt bytes, not only row counts.
+        names = ("evaluation_run", "evaluation_metric", "evaluation_observation", "evaluation_metric_observation",
+                 "evaluation_portfolio_source", "evaluation_portfolio_cost_source", "command_receipt", "audit_event",
+                 "runtime_run", "runtime_step", "runtime_attempt")
+        with psycopg.connect(database_url) as c:
+            c.execute("SET TRANSACTION READ ONLY")
+            return {name: c.execute(sql.SQL("SELECT to_jsonb(fact)::text FROM mra.{} fact ORDER BY to_jsonb(fact)::text").format(sql.Identifier(name))).fetchall() for name in names}
+
+    baseline = snapshot()
+    for index, changes in enumerate(variants):
+        with psycopg.connect(database_url) as c:
+            c.execute("SET LOCAL session_replication_role='replica'")
+            c.execute(sql.SQL("UPDATE mra.evaluation_metric SET {} WHERE evaluation_metric_id=%s").format(
+                sql.SQL(",").join(sql.SQL("{}=%s").format(sql.Identifier(name)) for name in changes)
+            ), (*changes.values(), original["evaluation_metric_id"]))
+        try:
+            before = snapshot()
+            verification = app.research_evaluation_verifier.verify_evaluation_run(source_id)
+            assert not verification.matched and verification.mismatch_count > 0, changes
+            assert not app.backtest_replay.verify(spec.exploratory_backtest_run_id).matched, changes
+            assert app.backtest_execution.inspect(freeze_backtest_specification(spec)).execution_state.value == "INTEGRITY_ERROR"
+            with pytest.raises(BacktestReportIntegrityError):
+                app.backtest_reports.publish(spec.exploratory_backtest_run_id, artifacts=app.artifacts,
+                    bindings=app.backtests, context=_context("corrupt-root-report-" + str(index)))
+            assert snapshot() == before
+        finally:
+            with psycopg.connect(database_url) as c:
+                c.execute("SET LOCAL session_replication_role='replica'")
+                c.execute(sql.SQL("UPDATE mra.evaluation_metric SET {} WHERE evaluation_metric_id=%s").format(
+                    sql.SQL(",").join(sql.SQL("{}=%s").format(sql.Identifier(name)) for name in columns)
+                ), (*saved, changes.get("evaluation_metric_id", original["evaluation_metric_id"])))
+        assert snapshot() == baseline
+        assert app.research_evaluation_verifier.verify_evaluation_run(source_id).matched
 
 
 def _new_acquired(app, spec, source_id, suffix):

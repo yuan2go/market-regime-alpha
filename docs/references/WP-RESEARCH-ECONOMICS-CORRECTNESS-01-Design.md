@@ -6,7 +6,8 @@
 > **Last Updated:** 2026-09-06
 > **Code Evidence:** `src/market_regime_alpha/research_qualification/domain/episode_economics.py`, `src/market_regime_alpha/research_qualification/domain/episode_formula.py`, `tests/refoundation/research_qualification/test_episode_economics_postgres.py`
 
-Frozen supported-model contract; final qualification is pending.
+Frozen supported-model contract; the bounded final gate is recorded in the
+[single immutable Verification](WP-RESEARCH-ECONOMICS-CORRECTNESS-01-Verification.md).
 
 The execution-time fetched main is `32bcb2922e6ced805c51f320e5f5657521f8cf14`,
 tree `dddfe02092562989037140f8aff88250117be627`. The original worktree remains
@@ -120,3 +121,51 @@ V1 formula, result and report serialization remains conditional and unchanged.
 
 Exit costs must also be payable from remaining cash and sale proceeds. A negative
 final cash balance is `INSUFFICIENT_CASH_FOR_EXIT_COSTS`, never implicit borrowing.
+
+## Result integrity and longitudinal acceptance continuation
+
+The resumed main is `58640732b1c51ccec004dc574d3df790ccc4994d`, with the same
+tree `a15ab010cc0df4e12ce2b808c2d0a5c8a028431e` as the retained local `6e9a0e16`
+implementation. Its completed 4,043-case local regression is prior evidence;
+new result-integrity and multi-episode acceptance requires a new exact revision.
+No new economics package, model, formula version or schema migration is introduced.
+
+Result reconciliation derives expected V2 metrics from the EvaluationRun's frozen
+Protocol rather than filtering actual results through their possibly damaged
+formula references. Writer and verifier share one typed record for all eleven
+explicitly written business fields: result/run/protocol-metric/protocol identities,
+metric state, decimal/boolean values, episode count, acceptance state, reason and
+content hash. Actual fields must match the recomputed record even when the saved
+hash has not changed. Child observations must bind the verified result identity.
+Database-default `created_at` is lifecycle metadata, not a newly invented part of
+the historical financial content hash.
+
+Acceptance adds legal-domain root-field corruption, preserved child/input failure
+cases and a small Generic PostgreSQL path spanning multiple Validation episodes,
+folds and months. Independent arithmetic must cover cash and traded episodes,
+shared capital, complete-parent then whole-episode slices, rejected incomplete
+parents, and deterministic Report/resume/replay. Negative fixtures are isolated
+from the positive result and restored exactly. Final full regression, historical
+copy replay, installed-wheel smoke and measured resource evidence remain required.
+
+The representative restored-input measurement retains the frozen 32-revision,
+three-metric control. Before optimization its local acceptance budgets are 600 SQL
+calls, one second each for input preparation and final write UoW, three seconds
+total completion, and 200 MiB peak process RSS. These are engineering workload
+budgets, not strategy thresholds or unbounded campaign scaling claims.
+
+The complete-parent query also reloads the actual DecisionRun root, its Dataset
+binding and OPENED state; a surviving Backtest binding row cannot replace a
+missing Decision Authority. Known canonical-input/Outcome reconciliation failures
+become explicit integrity mismatches, never a partial result or empty success.
+
+The longitudinal fixture predeclares four Validation episodes over two folds:
+January 28/29 and January 30/February 3. A fixed line Risk cap rejects two
+positive-weight proposals; the other two episodes trade independently funded
+capital through explicit +10%/-10% marks. The shared parent contains 68 canonical
+members (2/32/32/2), while economic sample denominators are 4 overall, 2 per fold,
+3 in January and 1 in February. Every Report value, count, result identity and
+fold/month selector is checked against independent expected values. The negative
+fixture has only a February selector, so an ALL metric cannot conceal premature
+filtering of a broken January member. Temporary corruptions restore exact raw
+PostgreSQL records, preserving numeric representations and whole-schema hashes.
