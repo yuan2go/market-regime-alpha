@@ -3,7 +3,7 @@
 > **Status:** ROADMAP
 > **Authority:** Planning and dependency order only; never business, evidence, or qualification Authority
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-09-06
+> **Last Updated:** 2026-09-07
 > **Code Evidence:** `docs/architecture/Canonical-Overall-Design.md`, `docs/status/Current-State.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-01-Domain-Invariant-Catalog.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-08-Post-Candidate-Authority-Design.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-09-Target-Commitment-Decision-Run-Verification.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-10-Market-Target-Outcome-Verification.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-11-Research-Validity-Evaluation-Verification.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-12-Research-Evidence-Assessment-Qualification-Verification.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-13-Remaining-Decision-Support-Verification.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-14-Formal-Research-Engineering-Readiness-Verification.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-15-Formal-Research-Proof-Campaign-Verification.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-16-Real-Provider-Evidence-Gate-A-Verification.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-17P-Prospective-Archive-Exploratory-Backtest-Verification.md`
 
 Architecture Re-foundation is the only active engineering program. Historical
@@ -29,16 +29,19 @@ The historical WP-17P PASS below is not a Generic Platform qualification.
 
 | WP-18Q P0 gate | Current planning disposition | Minimum re-entry evidence |
 |---|---|---|
-| Full exact-SHA engineering regression | Current `a107d98e` (retaining the prospective-claim guard) passes 4,045 JUnit cases with no failures/errors/skips and static/build/docs gates. Frozen campaign source `f247ca5d` remains a separate exact identity | Qualify the eventual completed-campaign/hard-cut implementation; never inherit PASS across changed source/test/schema/dependency trees |
-| PostgreSQL and historical compatibility | New-scope backup/restore and exact additive v3/v4/v5 upgrades preserve all 189 business tables; five Archives, WP-17P/Generic replay and report bytes match; original scope is discontinuous | Repeat backup/restore and exact replay with the completed large campaign and final implementation |
-| Generic real campaign/report/replay | New canonical archive has 116 actual sessions and 534 captures. Run `6318cbb0` was last recorded as executing the unchanged frozen 44-session/four-arm research in retained R2 evidence; current completion is unverified by this package; its canonical declaration includes all 37 required metric codes and 608 bound metric entries | Complete Model/Evaluation, standard report, exact replay, actual query plans and final backup/restore; preserve prior failed identities and times |
+| Full exact-SHA engineering regression | Economics `a107d98e` retains its 4,045-case gate. Pre-retirement `b69a1e28` separately passes 4,066 cases and installed/static/build gates; post-retirement `09561b25` passes 4,058 full cases, 78 focused and 41 architecture/docs cases plus static/type/build and independent installed smoke. Frozen campaign source `f247ca5d` remains a separate exact identity | Retain exact final source/tests/dependencies and their immutable command evidence; rerun affected gates for later changes |
+| PostgreSQL and historical compatibility | Prior exact upgrades remain immutable. New consistent backups and fresh restores preserve all 192 ordered table hashes, Artifacts, five Archives and historical replay; completed recovery copy also replays the large Run | Retain original/copy identity separation, verified backup originals and explicit old-scope discontinuity |
+| Generic real campaign/report/replay | Original OID 287543 retains a terminal Fold Evaluation timeout. Faithful recovery scope OID 117559774 completes the unchanged frozen 936-action/44-session/four-arm Run, four ModelVersions and 44 Evaluations; 608 metric entries retain 97 typed NOT_ESTIMABLE results. Report/replay and a second independent completed restore match | Completed recovery scope closes the real campaign/report/replay gate; preserve original failure separately. Any later use of the original failed operational Run requires a supported successor/recovery decision, with no transplanted rows or V1 reinterpretation |
 | Fresh generic two-arm gate | Run `99227101` completes all 25 actions and full zero-write report/resume/replay. Independent Run `b8c2fadc` also completes; all 178 canonical comparison metrics align with equal estimates and separate ModelVersion identities | Preserve these exact completed proofs on the final implementation; complete the large-campaign gate before hard-cut |
-| Prospective real Runtime proof | New operational generation has 288 future slices and due=0; continuity is wired, actual due proof is temporally blocked | Actual PostgreSQL-due, Runtime-claimed attempt in the explicitly identified new scope, preserving old-scope discontinuity; do not wait, backdate or use replay as proof |
-| WP-specific hard-cut | Blocked; executable surfaces retained | Historical zero-write equivalence, WP-18 definition equivalence, generic real campaign/report/resume/replay and full regression all PASS before deletion |
+| Prospective real Runtime proof | New operational generation has 288 NOT_DUE slices; original and restored foreground stop/restart return 0, without a due Attempt. Sustained collection remains unproven | Actual PostgreSQL-due, Runtime-claimed attempt in the explicitly identified new scope, preserving old-scope discontinuity; do not wait, backdate or use replay as proof |
+| WP-specific hard-cut | Pre-deletion gates pass in the explicit completed recovery scope. Ten modules are retired; final 09561b25 regression, installed module absence and exact historical/real replay pass | Gate closed in the recorded scope; preserve private historical decoding, frozen provenance and the independent actual-due exit requirement. Full Legacy cutover remains unauthorized |
 
-Until these gates close, `WP18Q_EXIT_GATE=BLOCKED`,
-`BACKTEST_PLATFORM=NOT_ENGINEERING_QUALIFIED`, and Runtime/CLI cutover and
-Production remain `NO-GO`. Exact results belong to Verification/Current State.
+The Backtest engineering gates close in the completed recovery scope:
+`BACKTEST_PLATFORM=ENGINEERING_QUALIFIED_IN_COMPLETED_RECOVERY_SCOPE`.
+The frozen actual-due requirement remains `WP18Q_EXIT_GATE=BLOCKED_BY_TEMPORAL_WINDOW`.
+Sustained prospective collection is unproven; original OID 287543 retains its
+failed Run. Full Runtime/CLI cutover remains unauthorized and Production is
+`NO-GO`. Exact results belong to Verification/Current State.
 
 ```text
 Foundation
