@@ -55,6 +55,74 @@ _FOLD_METRIC_STATES_SQL = """
 """
 
 
+_RUNTIME_BINDING_READ_BATCH_SIZE = 8
+_RUNTIME_BINDINGS_SQL = """
+                    WITH scoped_bindings AS MATERIALIZED (
+                        SELECT * FROM mra.backtest_runtime_binding
+                        WHERE exploratory_backtest_run_id = %s
+                          AND backtest_runtime_binding_id = ANY(%s::uuid[])
+                    ), scoped_steps AS MATERIALIZED (
+                        SELECT step_id, run_id FROM mra.runtime_step
+                        WHERE run_id = ANY(ARRAY(SELECT runtime_run_id FROM scoped_bindings))
+                    ), scoped_attempts AS MATERIALIZED (
+                        SELECT step_id, state, created_at, attempt_no
+                        FROM mra.runtime_attempt
+                        WHERE step_id = ANY(ARRAY(SELECT step_id FROM scoped_steps))
+                    ), latest_attempt AS (
+                        SELECT DISTINCT ON (step.run_id)
+                               step.run_id, attempt.state
+                        FROM scoped_steps AS step
+                        JOIN scoped_attempts AS attempt
+                          ON attempt.step_id = step.step_id
+                        ORDER BY step.run_id, attempt.created_at DESC,
+                                 attempt.attempt_no DESC
+                    )
+                    SELECT binding.backtest_runtime_binding_id,
+                           binding.specification_sha256,
+                           binding.action_id, binding.action_kind,
+                           binding.action_content_sha256,
+                           binding.exploratory_backtest_arm_id,
+                           binding.exploratory_backtest_fold_id,
+                           binding.exploratory_backtest_fold_session_id,
+                           binding.model_training_requirement_id,
+                           binding.evaluation_requirement_id,
+                           binding.runtime_run_id, binding.content_sha256,
+                           runtime.runtime_mode, runtime.fire_key,
+                           runtime.code_sha, runtime.config_artifact_id,
+                           runtime.config_hash, runtime.state AS runtime_state,
+                           root.code_content_sha256 AS root_code_sha,
+                           root.config_artifact_id AS root_config_artifact_id,
+                           root.config_content_sha256 AS root_config_hash,
+                           latest_attempt.state AS latest_attempt_state
+                    FROM scoped_bindings AS binding
+                    JOIN mra.runtime_run AS runtime
+                      ON runtime.run_id = binding.runtime_run_id
+                    JOIN mra.exploratory_backtest_run AS root
+                      ON root.exploratory_backtest_run_id =
+                         binding.exploratory_backtest_run_id
+                    LEFT JOIN latest_attempt
+                      ON latest_attempt.run_id = runtime.run_id
+                    """
+
+
+def _load_runtime_bindings(cursor: Any, run_id: UUID) -> list[dict[str, Any]]:
+    identities = cursor.execute(
+        """
+        SELECT backtest_runtime_binding_id FROM mra.backtest_runtime_binding
+        WHERE exploratory_backtest_run_id = %s ORDER BY backtest_runtime_binding_id
+        """,
+        (run_id,),
+    ).fetchall()
+    rows: list[dict[str, Any]] = []
+    for offset in range(0, len(identities), _RUNTIME_BINDING_READ_BATCH_SIZE):
+        batch = identities[offset:offset + _RUNTIME_BINDING_READ_BATCH_SIZE]
+        rows.extend(cursor.execute(
+            _RUNTIME_BINDINGS_SQL,
+            (run_id, [row["backtest_runtime_binding_id"] for row in batch]),
+        ).fetchall())
+    return rows
+
+
 class PostgresBacktestExecutionObservationPort:
     """Observe owner state without persisting a second workflow cursor."""
 
@@ -171,50 +239,7 @@ class PostgresBacktestExecutionObservationPort:
                         """,
                         (run.exploratory_backtest_run_id,),
                     ).fetchall()
-                    runtime_bindings = cursor.execute(
-                        """
-                    WITH scoped_bindings AS MATERIALIZED (
-                        SELECT * FROM mra.backtest_runtime_binding
-                        WHERE exploratory_backtest_run_id = %s
-                    ), latest_attempt AS (
-                        SELECT DISTINCT ON (step.run_id)
-                               step.run_id, attempt.state
-                        FROM scoped_bindings AS scoped
-                        JOIN mra.runtime_step AS step
-                          ON step.run_id = scoped.runtime_run_id
-                        JOIN mra.runtime_attempt AS attempt
-                          ON attempt.step_id = step.step_id
-                        ORDER BY step.run_id, attempt.created_at DESC,
-                                 attempt.attempt_no DESC
-                    )
-                    SELECT binding.backtest_runtime_binding_id,
-                           binding.specification_sha256,
-                           binding.action_id, binding.action_kind,
-                           binding.action_content_sha256,
-                           binding.exploratory_backtest_arm_id,
-                           binding.exploratory_backtest_fold_id,
-                           binding.exploratory_backtest_fold_session_id,
-                           binding.model_training_requirement_id,
-                           binding.evaluation_requirement_id,
-                           binding.runtime_run_id, binding.content_sha256,
-                           runtime.runtime_mode, runtime.fire_key,
-                           runtime.code_sha, runtime.config_artifact_id,
-                           runtime.config_hash, runtime.state AS runtime_state,
-                           root.code_content_sha256 AS root_code_sha,
-                           root.config_artifact_id AS root_config_artifact_id,
-                           root.config_content_sha256 AS root_config_hash,
-                           latest_attempt.state AS latest_attempt_state
-                    FROM scoped_bindings AS binding
-                    JOIN mra.runtime_run AS runtime
-                      ON runtime.run_id = binding.runtime_run_id
-                    JOIN mra.exploratory_backtest_run AS root
-                      ON root.exploratory_backtest_run_id =
-                         binding.exploratory_backtest_run_id
-                    LEFT JOIN latest_attempt
-                      ON latest_attempt.run_id = runtime.run_id
-                    """,
-                        (run.exploratory_backtest_run_id,),
-                    ).fetchall()
+                    runtime_bindings = _load_runtime_bindings(cursor, run.exploratory_backtest_run_id)
                 training_rows = cursor.execute(
                     """
                     SELECT training.exploratory_backtest_arm_id,
