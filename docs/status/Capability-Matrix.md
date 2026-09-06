@@ -4,8 +4,8 @@
 > **Authority:** Non-authoritative capability read model; never qualification Authority
 > **Owner:** Market Regime Alpha maintainers
 > **Generated At:** 2026-09-06 WP-18Q-R2 operational recovery
-> **Repository Implementation Checkpoint:** `f247ca5de6d5be91c3c89036f20e77242eb15b53`
-> **Implementation Tree:** `501d6dc185a2bc73c4538ef9c115504b2ffabd11`
+> **Repository Implementation Checkpoint:** `f1c17ae5ad202c9f8a3c1a59cf6d111290a1f217`
+> **Implementation Tree:** `ea27e52db20bfafe7e1a34dada819835e0639612`
 > **Execution-Time Main Baseline:** `780cd964fd47fffac13edd0cf52547d12fff2bfc`
 > **Containing Documentation Commit:** reported by handoff; no self-referential SHA
 > **Schema Epochs:** legacy `LEGACY_MIGRATIONS_001_106`; target `MRA_REFOUNDATION_1 / DRAFT / NOT_CUT_OVER`
@@ -82,6 +82,11 @@ ModelVersion identities. The unchanged-parameter 44-session/four-arm Run
 replay and final backup remain unproven. Failed prior Runs and original times
 are retained. No hard-cut has occurred. Final source qualification remains
 pending; Alpha funnel bottleneck is `NOT_DETERMINED`.
+
+Current `f1c17ae5` additionally rejects due prospective slice effects without a
+Runtime claim. Its clean worktree passes 25 focused tests and static/build/docs
+checks; full regression remains pending. This correction is separate from the
+running campaign's frozen `f247ca5d` source.
 
 The `mra evidence` inventory is a regenerable non-authoritative operator index.
 It records database/root identities and verified backup/integrity/restore facts;

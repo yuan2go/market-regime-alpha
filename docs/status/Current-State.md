@@ -4,8 +4,8 @@
 > **Authority:** Non-authoritative implementation status; exact-SHA qualification belongs to Verification
 > **Owner:** Market Regime Alpha maintainers
 > **Generated At:** 2026-09-06 WP-18Q-R2 operational recovery
-> **Repository Implementation Checkpoint:** `f247ca5de6d5be91c3c89036f20e77242eb15b53`
-> **Implementation Tree:** `501d6dc185a2bc73c4538ef9c115504b2ffabd11`
+> **Repository Implementation Checkpoint:** `f1c17ae5ad202c9f8a3c1a59cf6d111290a1f217`
+> **Implementation Tree:** `ea27e52db20bfafe7e1a34dada819835e0639612`
 > **Execution-Time Main Baseline:** `780cd964fd47fffac13edd0cf52547d12fff2bfc`
 > **Containing Documentation Commit:** reported by handoff; no self-referential SHA
 > **Schema Epochs:** legacy business `LEGACY_MIGRATIONS_001_106`; target `MRA_REFOUNDATION_1 / DRAFT / NOT_CUT_OVER`
@@ -75,6 +75,14 @@ documentation checks, built-wheel source/resource verification and disposable
 PostgreSQL bootstrap/exact-OID recreate also pass. These results qualify that
 implementation only; the final source after hard-cut still requires its own
 complete qualification.
+
+Current correction `f1c17ae5` closes an unfenced entry into
+`MarketArchiveOperations.execute_slice`: due prospective effects require a
+Runtime claim before capture, normalization or resource-stop commands. Terminal
+and future NOT_DUE observations remain side-effect free. Its clean locked
+worktree passes 25 focused unit/continuity/PostgreSQL tests, Ruff, mypy, build and
+documentation checks. Its full regression is pending; the running large campaign
+keeps its exact `f247ca5d` source and frozen bundle.
 
 The original operational Authority remains unavailable at inspected locations.
 Recovered immutable history and the newly captured retrospective archive belong
