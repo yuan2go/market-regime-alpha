@@ -13,8 +13,13 @@ second planning source.
 
 ## Sequence
 
-WP-18Q-R2 operational recovery and qualification is the active P0 work. Architecture is frozen;
-only correctness, qualification, operational recovery, proven performance and hard-cut blockers may change implementation.
+WP-RESEARCH-ECONOMICS-CORRECTNESS-01 is the sole active development scope.
+Its [frozen model contract](../references/WP-RESEARCH-ECONOMICS-CORRECTNESS-01-Design.md)
+requires a complete supported model, canonical integration, historical protection,
+finite independent comparison and final exact-SHA regression. Implementation and
+focused proofs exist; the final gate is pending. Preserve R2 recovery and the
+frozen campaign. The following unresolved WP-18Q gates remain separate and are
+not prerequisites for the economics package. Architecture remains frozen.
 The historical WP-17P PASS below is not a Generic Platform qualification.
 
 | WP-18Q P0 gate | Current planning disposition | Minimum re-entry evidence |

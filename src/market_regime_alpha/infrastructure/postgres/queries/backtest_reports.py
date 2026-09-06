@@ -141,7 +141,13 @@ class PostgresBacktestReportSourcePort:
                            protocol.metric_code,
                            formula.surface_code, formula.formula_code,
                            formula.formula_version,
-                           formula.content_sha256 AS formula_content_sha256
+                           formula.content_sha256 AS formula_content_sha256,
+                           (SELECT parameter.text_value FROM mra.evaluation_formula_parameter parameter
+                            WHERE parameter.evaluation_protocol_metric_id = formula.evaluation_protocol_metric_id
+                              AND parameter.parameter_code = 'episode_slice_kind') AS episode_slice_kind,
+                           (SELECT parameter.text_value FROM mra.evaluation_formula_parameter parameter
+                            WHERE parameter.evaluation_protocol_metric_id = formula.evaluation_protocol_metric_id
+                              AND parameter.parameter_code = 'episode_slice_key') AS episode_slice_key
                     FROM mra.backtest_evaluation_requirement AS requirement
                     JOIN mra.backtest_evaluation_execution AS execution
                       ON execution.backtest_evaluation_requirement_id =
@@ -295,6 +301,11 @@ class PostgresBacktestReportSourcePort:
 
 def _metric(row: dict[str, Any]) -> BacktestReportMetric:
     state = FormulaResultState.ESTIMABLE if str(row["metric_state"]) == "ESTIMATED" else FormulaResultState.NOT_ESTIMABLE
+    episode_kind = row.get("episode_slice_kind") if int(row["formula_version"]) == 2 else None
+    episode_key = row.get("episode_slice_key") if int(row["formula_version"]) == 2 else None
+    if episode_kind in {"FOLD", "TIME_MONTH"}:
+        row = dict(row, scope_kind=episode_kind, slice_key=episode_key,
+                   exploratory_backtest_fold_id=episode_key if episode_kind == "FOLD" else None)
     return BacktestReportMetric(
         evaluation_metric_id=UUID(str(row["evaluation_metric_id"])),
         evaluation_run_id=UUID(str(row["evaluation_run_id"])),

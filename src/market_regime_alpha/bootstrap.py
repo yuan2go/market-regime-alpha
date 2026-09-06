@@ -441,6 +441,7 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
     evaluation_commands = EvaluationCommands(
         PostgresEvaluationUnitOfWorkProvider(pool, id_factory=uuid4),
         id_factory=uuid4,
+        outcome_prices=PostgresOutcomeQueryProvider(pool),
     )
     model_trainers = ExplicitModelTrainerComposition(
         (DeterministicRidgeTrainer(),)

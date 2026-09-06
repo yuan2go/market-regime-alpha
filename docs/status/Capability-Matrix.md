@@ -3,10 +3,10 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Non-authoritative capability read model; never qualification Authority
 > **Owner:** Market Regime Alpha maintainers
-> **Generated At:** 2026-09-06 WP-18Q-R2 operational recovery
-> **Repository Implementation Checkpoint:** `f1c17ae5ad202c9f8a3c1a59cf6d111290a1f217`
-> **Implementation Tree:** `ea27e52db20bfafe7e1a34dada819835e0639612`
-> **Execution-Time Main Baseline:** `780cd964fd47fffac13edd0cf52547d12fff2bfc`
+> **Generated At:** 2026-09-06 research economics correctness
+> **Repository Implementation Checkpoint:** `0770078dcb93faa65ddbda82d195c226de18d505`
+> **Implementation Tree:** `419c99e4db6c18d6432e8ea50c3bd94ac6c4d354`
+> **Execution-Time Main Baseline:** `32bcb2922e6ced805c51f320e5f5657521f8cf14`
 > **Containing Documentation Commit:** reported by handoff; no self-referential SHA
 > **Schema Epochs:** legacy `LEGACY_MIGRATIONS_001_106`; target `MRA_REFOUNDATION_1 / DRAFT / NOT_CUT_OVER`
 > **Code Evidence:** `src/market_regime_alpha/bootstrap.py`, `src/market_regime_alpha/infrastructure/postgres/migrations`, `tests/refoundation`, `tests/platform`, [Current State](Current-State.md), and linked immutable Verifications
@@ -15,6 +15,14 @@ This matrix supersedes the WP-17P-only active-state snapshot. It distinguishes
 implemented target mechanics from actual engineering qualification and research
 evidence. Existing legacy business owners remain in service until an explicit
 cutover; target-draft writes do not acquire legacy business Authority.
+
+Research economics V2 now supports independent closed hypothetical mark episodes,
+with funded cash, authorized simulated entry/exit, complete-parent projections and
+exact child reconciliation. The finite restored-input control and portable Generic
+fixture run successfully; final exact-SHA engineering qualification is pending.
+Continuous account/carry/overlap economics is explicitly unsupported. Legacy/V1
+results retain their hashes and original meaning and are excluded from the new
+financial correctness claim. See the [model contract](../references/WP-RESEARCH-ECONOMICS-CORRECTNESS-01-Design.md).
 
 Current target catalog: **192 tables, 4 views, 3,929 catalog objects**.
 Exact checksums and observed PostgreSQL counts are in Current State.

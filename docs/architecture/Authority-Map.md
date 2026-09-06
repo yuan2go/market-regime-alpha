@@ -197,6 +197,19 @@ roster/member pair; a selected Model Version follows the same temporal rule
 through its concrete owning binding. No same-generation FK or command
 returns to Candidate, commitment, Context, Signal, Forecast, or Decision.
 
+### Hypothetical research economics
+
+V2 independent episode economics is a pure deterministic calculation under the
+existing Evaluation owner, with exact Outcome-owned entry/exit checkpoint facts.
+Evaluation reads the complete canonical Validation parent, closes each funded
+hypothetical episode, then projects whole-episode slices. Preparation and Outcome
+I/O precede the short result transaction, which revalidates inputs and Runtime
+fence. Reconciliation checks financial child values and their writer hashes;
+Report remains a projection. This creates no real Fill, Position, Account or
+Actual TradeOutcome authority. Legacy/V1 result identities keep their old meaning.
+The bounded support and refusal contract is recorded in the
+[research economics design](../references/WP-RESEARCH-ECONOMICS-CORRECTNESS-01-Design.md).
+
 ## 4. Position Authority
 
 “Fill-derived Position” means **all trade-caused quantity and cost changes come

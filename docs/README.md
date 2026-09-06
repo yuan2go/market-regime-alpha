@@ -22,7 +22,11 @@ in [Current State](status/Current-State.md) and the linked immutable
 Verification records. The target Runtime has not cut over a business CLI or
 canonical write path; there is no dual write or target fallback.
 
-The active checkpoint is **WP-18Q-R2 operational evidence recovery and real proof closure**. Generic Backtest,
+The active development checkpoint is
+[WP-RESEARCH-ECONOMICS-CORRECTNESS-01](references/WP-RESEARCH-ECONOMICS-CORRECTNESS-01-Design.md).
+It qualifies a bounded economic model independently of WP-18Q's large campaign,
+future windows and hard-cut. R2 recovery and frozen execution are preserved.
+Generic Backtest,
 Model, Evaluation/Report and Prospective wiring exists in the target draft;
 this does not imply engineering qualification or Runtime/CLI cutover.
 WP-17P Verification remains historical exact-run evidence, and WP-18 evidence
