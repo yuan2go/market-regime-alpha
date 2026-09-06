@@ -114,16 +114,15 @@ def _fault_qualification(app, spec, source_id, database_url):
     fenced = _new_acquired(app, spec, source_id, "stale-fence")
     claim = _outcome_claim(SimpleNamespace(pool=app._pool, artifacts=app.artifacts, decision_time=DecisionTime(datetime.now(UTC))))
     context = _context("episode-stale-complete")
+    counts_sql = """SELECT (SELECT count(*) FROM mra.evaluation_metric),
+                           (SELECT count(*) FROM mra.command_receipt),
+                           (SELECT count(*) FROM mra.audit_event)"""
+    with psycopg.connect(database_url) as c:
+        before = c.execute(counts_sql).fetchone()
     with pytest.raises(StaleFenceError):
         app.research_evaluations.complete(fenced, context, runtime_claim=replace(claim, fence_token=claim.fence_token + 1))
     with psycopg.connect(database_url) as c:
-        assert c.execute(
-            """SELECT
-            (SELECT count(*) FROM mra.evaluation_metric WHERE evaluation_run_id=%s),
-            (SELECT count(*) FROM mra.command_receipt WHERE idempotency_key=%s),
-            (SELECT count(*) FROM mra.audit_event WHERE aggregate_id=%s AND action='COMPLETE_EVALUATION_RUN')""",
-            (fenced, context.idempotency_key, str(fenced)),
-        ).fetchone() == (0, 0, 0)
+        assert c.execute(counts_sql).fetchone() == before
 
 
 def _corruption_qualification(app, spec, source_id, database_url):

@@ -91,7 +91,7 @@ only the three controlled schema metadata tables changed.
 
 ## WP-18Q qualification disposition
 
-R2 began from fetched main `32bcb2922e6ced805c51f320e5f5657521f8cf14`, tree
+R2 began from fetched main `780cd964fd47fffac13edd0cf52547d12fff2bfc`, tree
 `0663cf127357c2cd24c49a23bbe3484e2f72e234`. At clean implementation
 `f247ca5d`, the locked full repository gate passes **3,997 tests and four
 subtests**, without skips or xfails. Its 39 focused tests, Ruff, mypy, build,
