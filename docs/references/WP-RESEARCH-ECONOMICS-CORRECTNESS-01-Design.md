@@ -6,7 +6,8 @@
 > **Last Updated:** 2026-09-06
 > **Code Evidence:** `src/market_regime_alpha/research_qualification/domain/episode_economics.py`, `src/market_regime_alpha/research_qualification/domain/episode_formula.py`, `tests/refoundation/research_qualification/test_episode_economics_postgres.py`
 
-Frozen supported-model contract; final qualification is pending.
+Frozen supported-model contract; the bounded final gate is recorded in the
+[single immutable Verification](WP-RESEARCH-ECONOMICS-CORRECTNESS-01-Verification.md).
 
 The execution-time fetched main is `32bcb2922e6ced805c51f320e5f5657521f8cf14`,
 tree `dddfe02092562989037140f8aff88250117be627`. The original worktree remains

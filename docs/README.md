@@ -3,7 +3,7 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Documentation navigation and precedence only
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-09-05
+> **Last Updated:** 2026-09-06
 > **Code Evidence:** `src/market_regime_alpha`, both legacy and target PostgreSQL migration packages, `tests`
 
 Documentation never creates implementation truth, research evidence,
@@ -22,10 +22,12 @@ in [Current State](status/Current-State.md) and the linked immutable
 Verification records. The target Runtime has not cut over a business CLI or
 canonical write path; there is no dual write or target fallback.
 
-The active development checkpoint is
-[WP-RESEARCH-ECONOMICS-CORRECTNESS-01](references/WP-RESEARCH-ECONOMICS-CORRECTNESS-01-Design.md).
-It qualifies a bounded economic model independently of WP-18Q's large campaign,
-future windows and hard-cut. R2 recovery and frozen execution are preserved.
+[WP-RESEARCH-ECONOMICS-CORRECTNESS-01](references/WP-RESEARCH-ECONOMICS-CORRECTNESS-01-Design.md)
+has completed its bounded local gate in the single
+[immutable Verification](references/WP-RESEARCH-ECONOMICS-CORRECTNESS-01-Verification.md)
+and [exact evidence index](references/WP-RESEARCH-ECONOMICS-CORRECTNESS-01-Evidence.json).
+This is independent of WP-18Q's large campaign, future windows and hard-cut.
+R2 recovery and frozen execution are preserved.
 Generic Backtest,
 Model, Evaluation/Report and Prospective wiring exists in the target draft;
 this does not imply engineering qualification or Runtime/CLI cutover.

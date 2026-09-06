@@ -4,9 +4,9 @@
 > **Authority:** Non-authoritative implementation status; exact-SHA qualification belongs to Verification
 > **Owner:** Market Regime Alpha maintainers
 > **Generated At:** 2026-09-06 research economics correctness
-> **Repository Implementation Checkpoint:** `0770078dcb93faa65ddbda82d195c226de18d505`
-> **Implementation Tree:** `419c99e4db6c18d6432e8ea50c3bd94ac6c4d354`
-> **Execution-Time Main Baseline:** `32bcb2922e6ced805c51f320e5f5657521f8cf14`
+> **Repository Implementation Checkpoint:** `a107d98ee1f4e47db1dca5512211a02ad23029c9`
+> **Implementation Tree:** `fe5c2d80fcdfc2364df45cd822cc8a8e9cebbc60`
+> **Execution-Time Main Baseline:** `58640732b1c51ccec004dc574d3df790ccc4994d`
 > **Containing Documentation Commit:** reported by handoff; no self-referential SHA
 > **Schema Epochs:** legacy business `LEGACY_MIGRATIONS_001_106`; target `MRA_REFOUNDATION_1 / DRAFT / NOT_CUT_OVER`
 > **Code Evidence:** `src/market_regime_alpha/bootstrap.py`, target PostgreSQL schema/migrations, `tests/refoundation`, `tests/platform`, and immutable Verification records linked below
@@ -29,27 +29,38 @@ production_ready = false
 
 ## Research economics correctness checkpoint
 
-The active correction is [WP-RESEARCH-ECONOMICS-CORRECTNESS-01](../references/WP-RESEARCH-ECONOMICS-CORRECTNESS-01-Design.md).
-The source checkpoint above adds explicitly versioned V2 independent closed
-hypothetical checkpoint-mark episodes. Risk authorization determines simulated
-trades; entry and exit fees must be funded. Complete Validation parent paths
-precede whole-episode fold/month projections. Outcome supplies exact checkpoint
-facts, Evaluation persists the sole economic result, and Report/replay verify
-its metric and child rosters. No actual Fill, Position or Account is written.
+[WP-RESEARCH-ECONOMICS-CORRECTNESS-01](../references/WP-RESEARCH-ECONOMICS-CORRECTNESS-01-Verification.md)
+passes its bounded local engineering gate at the exact source/test checkpoint
+above: **4,045 full-repository JUnit cases, zero failures/errors/skips**,
+PostgreSQL, static, architecture/docs, build and installed-wheel smoke all pass.
+The V2 model remains independent funded, fully liquidated hypothetical
+checkpoint-mark episodes. It does not qualify continuous account NAV, A-share
+executability, Alpha or the WP-18Q platform.
 
-Focused canonical Generic execution, concurrency, stale-fence rejection,
-rollback, unknown-commit recovery, child-corruption rejection and a finite
-32-instrument restored-evidence comparison have run locally. The finite control
-reconciles 100,000 capital, 80,000 purchase notional, 80,915.55 sale proceeds and
-88.74 assumed fees to final cash 100,826.81. Its code identity is `ec404672`;
-full verification of the final source/test tree is still pending. It does not
-qualify continuous account NAV, market execution rules, Alpha or WP-18Q.
+Result reconciliation checks all eleven explicitly written root fields and
+parent bindings against the typed writer contract, even with an unchanged saved
+hash. Source/cost/classification children bind the verified result identity.
+Missing actual Decision roots and incomplete unselected episodes fail closed.
+Four Validation episodes span two folds and January/February: independent hand
+expectations, all six full-path projections, report bytes and repeat-operation
+snapshots of all 192 schema tables pass. Concurrency, stale fence, rollback,
+unknown commit and input-change tests preserve canonical atomicity.
 
-Legacy/V1 Evaluation economics remains immutable and replayable under its old
-meaning. Its proposal-based transitions and incomplete funding semantics cannot
-serve as V2 financial correctness evidence. Historical positive reports do not
-inherit the new economic model. R2 recovery and its frozen campaign remain
-separate; no future window or large campaign is a prerequisite for this package.
+The exact final implementation executes a finite 32-instrument Generic control
+in a separate restored database: 100,000 capital, 80,000 purchase notional,
+80,915.55 sale proceeds and 88.74 assumed fees reconcile to 100,826.81 final cash.
+Evaluation/report/replay match; historical WP17P/Generic/V2 identities and old
+published report bytes remain preserved in the recorded exact scope. Measured
+559 SQL calls, 0.581s completion and 0.208s final write UoW meet frozen budgets.
+Outcome remains the exact price owner, Evaluation the economic result owner,
+and Report a read-only projection. No actual Fill, Position or Account is written.
+
+Legacy/V1 results keep their original meaning and hashes; affected proposal-based
+economics is excluded from V2 correctness evidence. The [model contract](../references/WP-RESEARCH-ECONOMICS-CORRECTNESS-01-Design.md)
+lists supported assumptions and explicit refusals. R2 recovery and its frozen
+campaign remain separate and untouched; future windows and the large campaign
+are not prerequisites for this package. Remote Actions remains disabled and
+`BLOCKED_BY_REPOSITORY_CONFIGURATION / NOT_RUN`.
 
 ## Current implementation truth
 
@@ -100,13 +111,15 @@ PostgreSQL bootstrap/exact-OID recreate also pass. These results qualify that
 implementation only; the final source after hard-cut still requires its own
 complete qualification.
 
-Current correction `f1c17ae5` closes an unfenced entry into
+The retained R2 correction `f1c17ae5` closes an unfenced entry into
 `MarketArchiveOperations.execute_slice`: due prospective effects require a
 Runtime claim before capture, normalization or resource-stop commands. Terminal
 and future NOT_DUE observations remain side-effect free. Its clean locked
 worktree passes 25 focused unit/continuity/PostgreSQL tests, Ruff, mypy, build and
-documentation checks. Its full regression is pending; the running large campaign
-keeps its exact `f247ca5d` source and frozen bundle.
+documentation checks. The current `a107d98e` implementation, which retains that
+guard, now has the complete local regression recorded above. This does not
+requalify the frozen large campaign or satisfy hard-cut: that campaign retains
+its exact `f247ca5d` source and frozen bundle.
 
 The original operational Authority remains unavailable at inspected locations.
 Recovered immutable history and the newly captured retrospective archive belong
