@@ -89,12 +89,8 @@ def main(
             with operational_session(settings, operation_config) as guard:
                 import baostock as sdk
                 with bootstrap_application(settings) as application:
-                    preflight = guard.verify_startup(application)
-                    preflight["provider_access"] = verify_provider_access(
-                        sdk, timeout_seconds=operation_config.provider_timeout_seconds,
-                    )
                     daily_template=None
-                    if arguments.prospective_command=='serve' and arguments.daily_plan_template is not None:
+                    if arguments.daily_plan_template is not None:
                         from market_regime_alpha.interfaces.daily_research import decode_daily_plan
                         from hashlib import sha256
                         daily_content=arguments.daily_plan_template.read_bytes()
@@ -102,6 +98,12 @@ def main(
                         if daily_template.code_sha!=operation_config.code_sha:
                             raise ValueError('OPERATION_DAILY_CODE_IDENTITY_MISMATCH')
                         application.daily_prediction_reads.validate_configuration(daily_template)
+                        guard.session.allow_expired_daily_recovery(daily_template.experimental_model_use_id, daily_template.code_sha)
+                    preflight = guard.verify_startup(application)
+                    preflight["provider_access"] = verify_provider_access(
+                        sdk, timeout_seconds=operation_config.provider_timeout_seconds,
+                    )
+                    if daily_template is not None:
                         preflight['daily_template_sha256']=sha256(daily_content).hexdigest()
                     preflight["health"] = (
                         application.prospective_health.inspect(operation_config.series_code)["summary"]
@@ -511,6 +513,7 @@ def _parser() -> argparse.ArgumentParser:
         required=True,
     )
     preflight = prospective_commands.add_parser("preflight")
+    preflight.add_argument("--daily-plan-template", type=Path)
     preflight.add_argument("--operation-config", required=True, type=Path)
     preflight.add_argument("--expected-database-name", required=True)
     status = prospective_commands.add_parser("status")

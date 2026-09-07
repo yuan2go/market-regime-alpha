@@ -99,6 +99,16 @@ class PostgresProspectiveOperationSession:
         self.own_attempt_ids: set[UUID] = set()
         self.daily_scope: tuple[UUID,str,str,str | None,int] | None = None
         self.backtest_scope: tuple[UUID,str] | None = None
+        self.daily_recovery_scope: tuple[UUID, str] | None = None
+
+    def allow_expired_daily_recovery(self, use_id: UUID, code_sha: str) -> None:
+        """Called only after the operator template's canonical model/config checks.
+
+        This admits inspection/recovery of expired safe-effect steps; it grants
+        no claim capability. Each new claim still needs its exact daily handoff.
+        """
+        self.require_supervisor_lock(self.series_code)
+        self.daily_recovery_scope = (use_id, code_sha)
 
     def backtest_run_matches(self, connection: psycopg.Connection[Any], run_id: UUID | None) -> bool:
         if self.backtest_scope is None or run_id is None:
@@ -160,7 +170,23 @@ class PostgresProspectiveOperationSession:
             raise ValueError("OPERATION_SUPERVISOR_LOCK_LOST")
 
     def has_conflicting_attempts(self, series_code: str) -> bool:
-        expired_daily=[]
+        expired_daily: list[UUID] = []
+        if self.daily_recovery_scope is not None:
+            use_id, code = self.daily_recovery_scope
+            schedules = ['daily-model-'+use_id.hex, 'daily-outcome-'+use_id.hex,
+                         'daily-abstention-'+use_id.hex, 'daily-input-collection-'+use_id.hex,
+                         'daily-outcome-collection-'+use_id.hex]
+            expired_daily.extend(row[0] for row in self.connection.execute("""
+                SELECT run.run_id FROM mra.runtime_run run
+                JOIN mra.runtime_schedule schedule USING(schedule_id)
+                WHERE schedule.schedule_code=ANY(%s::text[]) AND run.code_sha=%s
+                  AND run.runtime_mode='SHADOW'
+                  AND NOT EXISTS(SELECT 1 FROM mra.runtime_step step WHERE step.run_id=run.run_id
+                    AND NOT (step.implementation LIKE 'research.daily_prediction.%%'
+                      OR step.implementation LIKE 'research.daily_outcome.%%'
+                      OR step.implementation LIKE 'research.daily_abstention.%%'
+                      OR step.implementation LIKE 'market.daily_research.%%'))
+                """, (schedules, code)).fetchall())
         if self.daily_scope is not None:
             suffixes=('prediction-runtime','outcome-evaluation-runtime','abstention-runtime') if self.daily_scope[3] is None else (self.daily_scope[3]+'-collection:'+str(self.daily_scope[4]),)
             for suffix in suffixes:

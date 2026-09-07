@@ -57,6 +57,10 @@ class DailyCollectionPlan:
         return uuid5(self.prediction.prediction_id, self.phase + "-collection:" + str(self.round))
 
     @property
+    def schedule_code(self) -> str:
+        return "daily-" + self.phase + "-collection-" + self.prediction.experimental_model_use_id.hex
+
+    @property
     def content(self) -> bytes:
         return (
             json.dumps(
@@ -158,7 +162,7 @@ def collect_daily(
     app.runtime.create_schedule(
         ScheduleSpec(
             schedule_id,
-            "daily-" + plan.phase + "-" + frozen.experimental_model_use_id.hex,
+            plan.schedule_code,
             1,
             RuntimeMode.SHADOW,
             None,

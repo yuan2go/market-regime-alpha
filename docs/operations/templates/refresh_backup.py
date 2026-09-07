@@ -191,7 +191,8 @@ def main():
     # One bounded preflight request. Failure does not restart or retry a Provider.
     command(
         "preflight",
-        MRA + ["archive", "prospective", "preflight", "--operation-config", str(PROFILE), "--expected-database-name", config.database_name],
+        MRA + ["archive", "prospective", "preflight", "--operation-config", str(PROFILE), "--expected-database-name", config.database_name]
+        + (["--daily-plan-template", DEPLOYMENT["daily_plan_template"]] if DEPLOYMENT.get("daily_plan_template") else []),
     )
     command("start", ["launchctl", "bootstrap", f"gui/{UID}", str(plist_path)])
     # Rotation follows controlled process restarts; old log originals stay intact.

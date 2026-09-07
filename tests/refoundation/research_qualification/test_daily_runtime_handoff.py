@@ -37,7 +37,7 @@ def test_sequential_daily_handoff_is_exact_and_does_not_grant_foreign_workers(re
         artifact = app.artifacts.publish(content, media_type="application/json", context=_context("daily-plan"))
         schedule_id = uuid4()
         app.runtime.create_schedule(
-            ScheduleSpec(schedule_id, "daily-model-handoff", 1, RuntimeMode.SHADOW, None, "Asia/Shanghai", "a" * 64, True),
+            ScheduleSpec(schedule_id, "daily-model-" + frozen.experimental_model_use_id.hex, 1, RuntimeMode.SHADOW, None, "Asia/Shanghai", "a" * 64, True),
             _context("daily-schedule"),
         )
         steps, deps = prediction_steps(frozen)
@@ -87,10 +87,26 @@ def test_sequential_daily_handoff_is_exact_and_does_not_grant_foreign_workers(re
             with daily_research_admission(
                 prediction_id=frozen.prediction_id, code_sha=frozen.code_sha, config_sha256=sha256(content).hexdigest()
             ):
+                interrupted = claim("owned-before-supervisor-loss")
+                assert interrupted is not None
                 guard.connection.close()
                 with pytest.raises(ValueError, match="SUPERVISOR"):
                     claim("lost-supervisor")
         trace = app.runtime.inspect_run(frozen.runtime_run_id)
         assert trace.steps[0].state == "SUCCEEDED"
         assert trace.steps[0].attempt_states == ("SUCCEEDED",)
-        assert all(not step.attempt_states for step in trace.steps[1:])
+        assert len(trace.steps[1].attempt_states) == 1
+        import time
+        time.sleep(2.05)  # Synthetic lease expiry, not a future market window.
+        with operational_session(settings, config) as recovered:
+            with pytest.raises(ValueError, match="ACTIVE_ATTEMPT_CONFLICT"):
+                recovered.before_action()
+            recovered.session.allow_expired_daily_recovery(frozen.experimental_model_use_id, frozen.code_sha)
+            recovered.before_action()
+            with pytest.raises(ValueError, match="OUTSIDE_SERIES"):
+                claim("recovery-is-not-claim-permission")
+            with daily_research_admission(prediction_id=frozen.prediction_id, code_sha=frozen.code_sha, config_sha256=sha256(content).hexdigest()):
+                app.runtime.recover_expired(actor_id="same-text", reason_code="DAILY_RESTART", run_id=frozen.runtime_run_id)
+                next_claim = claim("restarted-own-scope")
+                assert next_claim is not None and next_claim.attempt_id != interrupted.attempt_id
+                recovered.before_action()

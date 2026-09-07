@@ -111,3 +111,9 @@ def test_collection_freezes_round_and_never_blindly_retries_unknown_provider_eff
     assert collection.run_id != DailyCollectionPlan(frozen, "input", 2, frozen.decision_time).run_id
     with pytest.raises(ValueError, match="bounded"):
         DailyCollectionPlan(frozen, "input", 17, frozen.decision_time)
+def test_market_observation_schedule_does_not_collide_with_outcome_evaluation():
+    from market_regime_alpha.interfaces.daily_collection import DailyCollectionPlan
+    frozen = plan()
+    observation = DailyCollectionPlan(frozen, "outcome", 1, frozen.decision_time)
+    assert observation.schedule_code != "daily-outcome-" + frozen.experimental_model_use_id.hex
+    assert observation.schedule_code == "daily-outcome-collection-" + frozen.experimental_model_use_id.hex
