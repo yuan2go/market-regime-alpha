@@ -8,6 +8,10 @@ from uuid import UUID
 
 import psycopg
 
+from market_regime_alpha.infrastructure.postgres.prospective_operation_session import (
+    admit_runtime_attempt, remember_operational_attempt,
+)
+
 from market_regime_alpha.runtime.domain import (
     RunSpec,
     ScheduleSpec,
@@ -222,6 +226,7 @@ class PostgresRuntimeRepository:
         step_id: UUID | None = None,
     ) -> AttemptClaim | None:
         lease_ms = _lease_milliseconds(lease_duration)
+        admit_runtime_attempt(self._connection, run_id=run_id, step_id=step_id)
         row = self._connection.execute(
             """
             SELECT
@@ -315,6 +320,7 @@ class PostgresRuntimeRepository:
         ).fetchone()
         if updated is None or attempt_row is None:
             raise RuntimeStateConflictError(f"Step {step_id} claim lost a state race")
+        remember_operational_attempt(attempt_id)
         return AttemptClaim(
             attempt_id=attempt_id,
             run_id=run_id,
@@ -732,6 +738,7 @@ class PostgresRuntimeRepository:
         receipt_id: UUID,
         lease_owner: str,
     ) -> RecoveryDecision | None:
+        admit_runtime_attempt(self._connection, run_id=None, step_id=step_id)
         row = self._connection.execute(
             """
             SELECT run.run_id, run.state, step.state, step.version,
@@ -938,7 +945,9 @@ class PostgresRuntimeRepository:
                    step.request_hash, step.input_evidence_hash, step.deadline_at,
                    step.state, step.current_fence, step.current_attempt_id,
                    COALESCE(array_agg(attempt.state ORDER BY attempt.attempt_no)
-                            FILTER (WHERE attempt.attempt_id IS NOT NULL), ARRAY[]::text[])
+                            FILTER (WHERE attempt.attempt_id IS NOT NULL), ARRAY[]::text[]),
+                   (array_agg(attempt.error_code ORDER BY attempt.attempt_no DESC)
+                    FILTER (WHERE attempt.attempt_id IS NOT NULL))[1]
             FROM mra.runtime_step AS step
             LEFT JOIN mra.runtime_attempt AS attempt ON attempt.step_id = step.step_id
             WHERE step.run_id = %s
@@ -975,6 +984,7 @@ class PostgresRuntimeRepository:
                         UUID(str(row[10])) if row[10] is not None else None
                     ),
                     attempt_states=tuple(str(item) for item in row[11]),
+                    latest_attempt_error_code=row[12],
                 )
                 for row in rows
             ),

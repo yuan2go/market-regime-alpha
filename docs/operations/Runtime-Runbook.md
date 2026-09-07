@@ -28,6 +28,98 @@ uv run model-governance --help
 uv run pit-authority --help
 ```
 
+
+## Authorized current-user prospective deployment
+
+The 2026-09-07 activation authorization covers only the existing original scope
+`mra_wp18q_r2_operational_20260905`, OID 287543, cluster
+`7681924516459622681`, series `r2_xshg32`. Its registered v6 upgrade has
+completed. The original failed campaign stays failed. No recovery copy is a
+writer or fallback. Current-user job `local.mra.prospective.r2-xshg32` invokes
+the installed frozen wheel through the existing guarded CLI. `KeepAlive=false`
+prevents automatic fault restart. Every start still performs full preflight.
+A launchd process state alone does not prove a business tick or a capture.
+This LaunchAgent requires the current user session and the mounted project
+volume. Machine sleep/logout is not continuous coverage; missed windows remain
+visible through canonical recovery after wake or login.
+
+The private deployment directory contains `operation.json`, `deployment.json`,
+`operator.env`, frozen `launch.sh`, thin `mra.sh`/`refresh.sh` launch wrappers,
+versioned wheel environments, logs, profiles and receipts. It is owner-only and
+outside Git. The wrappers contain no business decisions. Their exact bytes,
+profile hashes and installed source identity belong to the incremental evidence
+manifest. The current launcher is pinned to implementation `26d4d98e`.
+
+```bash
+MRA_OPERATOR_HOME="$HOME/.local/state/market-regime-alpha/prospective/r2-xshg32"
+MRA_USER_DOMAIN="gui/$(id -u)"
+MRA_SERVICE_LABEL="local.mra.prospective.r2-xshg32"
+
+launchctl print "$MRA_USER_DOMAIN/$MRA_SERVICE_LABEL"
+"$MRA_OPERATOR_HOME/mra.sh" archive prospective status \
+  --series-code r2_xshg32 \
+  --expected-database-name mra_wp18q_r2_operational_20260905 \
+  --expected-database-oid 287543 \
+  --expected-cluster-identity 7681924516459622681
+
+# Graceful pause of this exact owned job; no PID guessing or kill escalation.
+launchctl kill SIGTERM "$MRA_USER_DOMAIN/$MRA_SERVICE_LABEL"
+
+# After inspecting the stopped job and reconciling its canonical failure:
+"$MRA_OPERATOR_HOME/refresh.sh" --recover-stopped
+
+# Refresh while running: drain, new backup, verify, advance profile, restart.
+"$MRA_OPERATOR_HOME/refresh.sh"
+
+# Disable future project wakeups, then drain the exact service if still running.
+launchctl disable "$MRA_USER_DOMAIN/$MRA_SERVICE_LABEL.backup-refresh"
+launchctl disable "$MRA_USER_DOMAIN/$MRA_SERVICE_LABEL"
+launchctl kill SIGTERM "$MRA_USER_DOMAIN/$MRA_SERVICE_LABEL"
+```
+
+If already stopped, do not repeat the SIGTERM command. Inspect the last receipt
+and health first. Re-enable with `launchctl enable` for the same two labels;
+explicit `refresh.sh --recover-stopped` performs preflight and starts the service.
+It never overrides a deliberately disabled job or resumes a failed business Run.
+Keep the project backup-refresh job loaded when enabling regular operation.
+There is no system-wide service change and no external notification.
+
+The installed [refresh procedure template](templates/refresh_backup.py) delegates
+backup and preflight to existing `mra` commands. Its
+[Artifact observation helper](templates/verify_prospective_artifacts.py) reloads
+only the exact prospective series' Artifact references and calls the existing
+Artifact owner. It does not alter Capture known-times or content identities.
+The operator reservation excludes current Runtime claims throughout backup;
+Provider I/O is absent. A fresh read-only backup can replace an expired baseline,
+but no owner append occurs until the new dump/receipt/Artifact bytes verify.
+An unresolved active Attempt stops backup and requires canonical reconciliation.
+
+The backup is an exported PostgreSQL snapshot with its exact referenced bytes.
+Fresh Artifact verification observations appended **after** that snapshot are
+explicitly recorded as such; they are not retroactively included in it. Restore
+to a separate database/root, verify the snapshot and bytes, then use the
+Artifact owner for new physical observations before current-time Market reads.
+This never changes old Capture visibility times. Both local physical disks hold
+the new bundle; this is not offsite protection.
+
+The project-only backup-refresh supervisor wakes at 03:00 and 19:00 local time.
+It owns storage/process maintenance, no TradingSession or due decisions. This
+keeps the 24-hour backup profile within budget under normal operation, with a
+16-hour maximum planned interval. Sleep, faults or exhausted space can still
+stop operation; missed maintenance is not a claim of continuous coverage.
+One invocation drains the verified owned process (180-second limit), refuses
+conflicting Attempts, creates and mirrors a new bundle, verifies hashes,
+atomically replaces only backup fields in the profile and performs one bounded
+preflight/start. Failures leave the service stopped; no unconditional restart.
+The former profile and all receipts remain available. Logs receive distinct
+UTC/PID names per launch, and completed logs can be compressed without deleting
+their originals. Disk reserve failures are visible stops, not automatic evidence
+cleanup.
+
+The actual duration, due/Capture facts and next window are recorded in the
+existing R2 Verification. A finite start/stop/restart and backup-refresh drill
+does not establish cross-day or long-running service proof.
+
 ## Target operational evidence recovery
 
 The target `mra` commands use explicit `MRA_DATABASE_URL` and
@@ -168,6 +260,35 @@ The profile and CLI arguments must agree. Each wakeup emits database scope,
 profile hash, canonical continuation, health summary and alert changes as JSON.
 The supervision lock is checked again before owner actions and claims; a lost
 connection/lock, changed source, old backup or exhausted disk stops further work.
+Current target Runtime `claim_next` and deadline-terminal Attempt creation share
+one short PostgreSQL admission transaction lock with supervisor acquisition.
+The prospective service reserves the target Runtime writer scope of the exact
+database, across series and Runs; other current Runtime claimants fail before
+committing an Attempt, Receipt or Audit. The per-series supervisor lock alone
+does not provide that exclusion. Claims in the admitted process context must
+belong to the prospective Runtime plan; matching worker-id text is insufficient.
+Owned Attempt identities are tracked only for conflict checks, never as a second
+lease or persisted Authority. Every action rechecks unexpected live Attempts;
+the Provider boundary rechecks permission after claim/start as well.
+
+Supervisor acquisition serializes with an in-flight claim transaction, so a
+claim that committed first is visible to the subsequent conflict check. Expired
+same-series Attempts remain for canonical recovery; expired foreign work still
+blocks activation. Supervision loss prevents new claims/effects while committed
+facts and the existing fence-controlled drain remain intact. No Provider I/O
+holds the admission transaction. These guarantees cover current target Runtime
+participants, not arbitrary SQL or old binaries ignoring the protocol. Activation
+must first exclude old/unknown writers; never launch a historical writer against
+this reserved database or adopt a recovery copy as fallback.
+Continuation inherits the exact head generation's registered Runtime Schedule
+revision. Creating a successor is not authorization to enable a different
+Schedule revision. Re-registering an elapsed capture window may reconcile an
+already FAILED Run only when its failed Steps have exactly one terminal Attempt
+with `DEADLINE_EXHAUSTED` and the frozen window is closed; successful Steps and
+unattempted READY/BLOCKED Steps retain their facts under the terminal Run.
+This performs no restart or retry. Earlier Attempts,
+unknown external effects and other failures still refuse registration. Such
+deadline terminals are missed-window evidence, not real due capture Attempts.
 The default template limits each wakeup to 16 actual claims and 120 seconds;
 each BaoStock execute has one 10-second deadline including login/query/row
 iteration, at most 100,000 rows and 32 MiB serialized response. SDK attempts are

@@ -76,7 +76,13 @@ real due proof when available, original-database diagnostics and read-only
 research funnel projection. Before authorized research append writes, verify exact
 database identity, backup, disk, active attempts and a single writer. Preserve
 the frozen campaign's source, protocol and existing results; do not replace its
-worker, migrate its database, or reinterpret its V1 economics using V2.
+worker or reinterpret its V1 economics using V2. The 2026-09-07 follow-up
+explicitly authorizes the registered v5→v6 additive upgrade of original
+`mra_wp18q_r2_operational_20260905`, OID 287543, cluster
+7681924516459622681 after exact identity/backup/resource/no-worker guards;
+it also authorizes this project's private configuration and current-user
+supervisor installation. This does not authorize an adopted recovery writer,
+reopening the failed Run, or any full Runtime cutover.
 Its large campaign, future windows and hard-cut remain independent of the
 completed economics gate. WP-18Q remains blocked under its existing Design and
 Implementation Plan until its own evidence closes. Generic Backtest
@@ -93,9 +99,9 @@ The machine-local prospective operation profile pins database/OID/cluster,
 schema, Artifact root, source, Target, backup receipt and resource budgets.
 Foreground service must reject identity drift, lost supervision locks, exhausted
 budgets and unverified backups before further claims. The v6 revision-gap
-correction is qualified on disposable/restored scopes only until a separate
-original-database upgrade is explicitly authorized. Do not infer that approval
-from authorization for ordinary research append writes. Read-only status and
+correction retains its immutable bytes. The exact original scope above now has
+explicit upgrade authorization; all other scopes still require their own
+authorization. Do not infer approval from ordinary research append writes. Read-only status and
 database diagnostics may inspect an explicitly named old schema without
 admitting it for current execution. No system service or replacement operational
 Authority is adopted by an isolated lifecycle drill.
@@ -256,7 +262,11 @@ Production, or reinterpret a passing Runtime as trading authority.
 
 ## Validation and reporting
 
-Repository gate:
+The current activation follow-up uses risk-directed concurrency, migration,
+Provider, lifecycle and changed-file checks. Full regression is not a prerequisite
+for each operational step and is NOT_RUN unless a demonstrated cross-domain risk
+requires it; do not relabel targeted evidence as a full qualification. The general
+repository gate, when required, remains:
 
 ```bash
 uv sync --frozen --extra dev --extra postgres

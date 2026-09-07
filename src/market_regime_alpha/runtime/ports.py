@@ -55,6 +55,7 @@ class StepTrace:
     current_fence: int
     current_attempt_id: UUID | None
     attempt_states: tuple[str, ...]
+    latest_attempt_error_code: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

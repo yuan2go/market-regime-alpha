@@ -32,6 +32,10 @@ R2 recovery and frozen execution are preserved in the single
 and [external-original index](references/WP-ARCHITECTURE-REFOUNDATION-18Q-R2-Evidence.json).
 Original operational failure, completed recovery scope, finite lifecycle proof
 and the real due-window blocker remain distinct.
+The authorized original v6 upgrade and current-user service/backup activation
+follow-up are appended to that same R2 record; current commands are in the
+[Runtime Runbook](operations/Runtime-Runbook.md). Actual due capture and sustained
+coverage remain separate from startup and targeted engineering checks.
 Generic Backtest, Model and Evaluation/Report pass the recorded engineering
 checks in the completed recovery scope. Prospective lifecycle engineering is
 verified separately from its unavailable actual due window. These exact-scope

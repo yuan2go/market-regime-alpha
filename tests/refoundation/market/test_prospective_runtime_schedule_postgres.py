@@ -29,6 +29,133 @@ from market_regime_alpha.runtime.application import (
 from market_regime_alpha.shared.hashing import canonical_json_sha256
 from tests.refoundation.market.test_prospective_runtime_plan import _manifest
 
+def test_missed_multi_member_run_reconciles_without_reopening_ready_steps(
+    prospective_stack, target_database_url,
+):
+    runtime, artifacts, pool = prospective_stack
+    clock = PostgresMarketDatabaseClock(pool)
+    manifest = _runtime_fixture_at(clock.now() - timedelta(hours=1))
+    application = ProspectiveArchiveRuntimeApplication(
+        runtime=runtime, artifacts=artifacts, archives=_Archives(runtime),
+        operations=_Operations(runtime), database_clock=clock, due_query=lambda identity: (),
+    )
+    arguments = dict(code_sha="1" * 40, actor_id="missed-test", lease_duration=timedelta(seconds=30))
+    registration = application.predeclare(manifest, **arguments)
+    plan = compile_prospective_runtime_plan(manifest, code_sha="1" * 40)
+    first = plan.capture_runs[0]
+    assert len(first.steps) == 2
+    recovered = runtime.recover_expired(
+        run_id=first.run_id, actor_id="missed-test", reason_code="PROSPECTIVE_LEASE_RECOVERY",
+    )
+    before_trace = runtime.inspect_run(first.run_id)
+    assert recovered and before_trace.run_state == "FAILED"
+    assert sorted(step.state for step in before_trace.steps) == ["FAILED", "READY"]
+    assert next(step for step in before_trace.steps if step.state == "FAILED").latest_attempt_error_code == "DEADLINE_EXHAUSTED"
+
+    def facts():
+        with psycopg.connect(target_database_url) as connection:
+            return {
+                table: connection.execute(
+                    f"SELECT to_jsonb(row) FROM mra.{table} AS row ORDER BY to_jsonb(row)::text"
+                ).fetchall()
+                for table in ("runtime_run", "runtime_step", "runtime_attempt", "command_receipt", "audit_event")
+            }
+
+    before = facts()
+    assert application.predeclare(manifest, **arguments) == registration
+    assert runtime.inspect_run(first.run_id) == before_trace
+    assert facts() == before
+
+
+@pytest.mark.parametrize("runtime_revision", [1, 2])
+def test_continuation_keeps_the_registered_schedule_revision(
+    prospective_stack, target_database_url, runtime_revision,
+):
+    """Real PG Schedule/Runtime, stub Market ports; no real-time capture proof."""
+    from datetime import UTC
+    from uuid import UUID
+    from market_regime_alpha.market.ports.prospective_continuity import ProspectiveGenerationRuntimeReference
+    from tests.refoundation.market.test_prospective_archive_planner import _contract, _manifest as target_manifest
+    from tests.refoundation.market.test_prospective_continuity import _calendar
+
+    runtime, artifacts, pool = prospective_stack
+    manifest = target_manifest(planned_not_before=datetime(2026, 9, 3, tzinfo=UTC))
+    stored_bytes = {}
+    database_clock = SimpleNamespace(now=lambda: datetime(2026, 9, 4, 8, tzinfo=UTC))
+    application = ProspectiveArchiveRuntimeApplication(
+        runtime=runtime, artifacts=artifacts, archives=_Archives(runtime),
+        operations=_Operations(runtime), database_clock=database_clock,
+        due_query=lambda archive_id: (),
+        continuity=SimpleNamespace(
+            generations=lambda series: (reference,), overdue_slice_ids=lambda archive_id: (),
+        ),
+        trading_sessions=SimpleNamespace(available_from=lambda **kwargs: tuple(
+            SimpleNamespace(session_id=SimpleNamespace(value=s.session_id), exchange=s.exchange,
+                            session_date=s.session_date, open_at=s.open_at, close_at=s.close_at)
+            for s in _calendar()
+        )),
+        target_schedules=SimpleNamespace(exact_contract=lambda identity: _contract()),
+        manifest_reader=lambda digest, size: stored_bytes[digest],
+        archive_verification=SimpleNamespace(verify=lambda identity: SimpleNamespace(matched=True)),
+    )
+    initial = application.predeclare(
+        manifest, code_sha="1" * 40, actor_id="revision-test",
+        lease_duration=timedelta(seconds=30), runtime_revision=runtime_revision,
+    )
+    plan = compile_prospective_runtime_plan(
+        manifest, code_sha="1" * 40, runtime_revision=runtime_revision,
+    )
+    stored_bytes[initial.config_sha256] = manifest.to_bytes()
+    reference = ProspectiveGenerationRuntimeReference(
+        initial.market_archive_id, 1, None, initial.config_artifact_id,
+        initial.config_sha256, len(manifest.to_bytes()), "1" * 40, runtime_revision,
+    )
+    result = application.continue_series(
+        series_code="xshg_target_archive", code_sha="2" * 40, actor_id="revision-test",
+        worker_id="revision-worker", lease_duration=timedelta(seconds=30),
+        provider=object(), normalizer_for=lambda item: object(),
+    )
+    assert result["new_generation_id"] is not None
+    with psycopg.connect(target_database_url) as connection:
+        schedules = connection.execute(
+            "SELECT schedule_id,revision,enabled FROM mra.runtime_schedule WHERE schedule_code=%s",
+            ("prospective-archive",),
+        ).fetchall()
+        successor = connection.execute(
+            "SELECT schedule_id,code_sha FROM mra.runtime_run WHERE fire_key=%s",
+            (f'archive:{result["new_generation_id"]}:predeclare',),
+        ).fetchone()
+    assert schedules == [(plan.schedule.schedule_id, runtime_revision, True)]
+    assert successor == (plan.schedule.schedule_id, "2" * 40)
+    assert runtime.inspect_run(initial.predeclare_run_id).run_state == "SUCCEEDED"
+    assert isinstance(result["new_generation_id"], UUID)
+
+    def facts():
+        with psycopg.connect(target_database_url) as connection:
+            return {
+                table: connection.execute(
+                    f"SELECT to_jsonb(row) FROM mra.{table} AS row ORDER BY to_jsonb(row)::text"
+                ).fetchall()
+                for table in ("runtime_schedule", "runtime_run", "runtime_step", "runtime_attempt",
+                              "artifact", "artifact_verification", "command_receipt", "audit_event")
+            }
+
+    before = facts()
+    repeated = application.continue_series(
+        series_code="xshg_target_archive", code_sha="2" * 40, actor_id="revision-test",
+        worker_id="revision-worker", lease_duration=timedelta(seconds=30),
+        provider=object(), normalizer_for=lambda item: object(),
+    )
+    # Recovery output lists only work performed by this invocation; persistent
+    # identities and every stored row must remain unchanged on the repeat.
+    assert any(item.recovered_attempt_ids for item in result["executions"])
+    assert repeated == {
+        **result,
+        "executions": tuple(replace(item, recovered_attempt_ids=()) for item in result["executions"]),
+    }
+    assert facts() == before
+
+
 
 def _runtime_fixture_at(observed_at: datetime):
     """Stub capture windows share the real lease clock; no Provider proof."""
@@ -286,6 +413,14 @@ def test_restarted_prospective_attempt_reconciles_without_repeating_provider_eff
                 (runtime.inspect_run(first.run_id).steps[0].step_id,),
             ).fetchone()
         assert row == ("EXTERNAL_EFFECT_UNKNOWN",)
+        failed_trace = runtime.inspect_run(first.run_id)
+        assert failed_trace.steps[0].latest_attempt_error_code == "EXTERNAL_EFFECT_UNKNOWN"
+        with pytest.raises(ProspectiveRuntimeIntegrityError, match="is FAILED"):
+            restarted.predeclare(
+                manifest, code_sha="1" * 40, actor_id="recovery-test",
+                lease_duration=timedelta(seconds=30),
+            )
+        assert runtime.inspect_run(first.run_id) == failed_trace
     assert provider.calls == 1
 
 
@@ -389,3 +524,41 @@ def test_operation_guard_stops_new_claims_after_draining_current_action(prospect
     assert trace.steps[1].state == "READY"
     assert trace.steps[1].attempt_states == ()
     assert len(operations.requests) == 1
+
+
+def test_supervision_lost_after_claim_prevents_first_provider_effect(prospective_stack):
+    runtime, artifacts, pool = prospective_stack
+    clock = PostgresMarketDatabaseClock(pool)
+    manifest = _runtime_fixture_at(clock.now())
+    due = compile_prospective_runtime_plan(manifest, code_sha="1"*40).capture_runs[0]
+
+    class Provider:
+        calls = 0
+        def capture(self, request):
+            self.calls += 1
+            return object()
+
+    class Operations(_Operations):
+        def execute_slice(self, request, **kwargs):
+            kwargs["provider"].capture(request.capture_request)
+            return super().execute_slice(request, **kwargs)
+
+    provider = Provider()
+    app = ProspectiveArchiveRuntimeApplication(
+        runtime=runtime, artifacts=artifacts, archives=_Archives(runtime),
+        operations=Operations(runtime), database_clock=clock,
+        due_query=lambda _: (due.slices[0].plan.market_archive_slice_id,),
+    )
+    app.predeclare(manifest, code_sha="1"*40, actor_id="guard", lease_duration=timedelta(seconds=30))
+    def guard():
+        if runtime.inspect_run(due.run_id).steps[0].state == "RUNNING":
+            raise ValueError("OPERATION_SUPERVISOR_CONNECTION_LOST")
+    with pytest.raises(ValueError, match="OPERATION_SUPERVISOR_CONNECTION_LOST"):
+        app.run_due(manifest, code_sha="1"*40, actor_id="guard", worker_id="worker",
+            lease_duration=timedelta(seconds=30), provider=provider,
+            normalizer_for=lambda _: object(), before_action=guard)
+    assert provider.calls == 0
+    trace = runtime.inspect_run(due.run_id)
+    assert trace.steps[0].state == "FAILED"
+    assert trace.steps[0].attempt_states == ("FAILED_TERMINAL",)
+    assert trace.steps[1].attempt_states == ()

@@ -132,9 +132,11 @@ class ProspectiveExternalEffectUnknown(ProspectiveRuntimeIntegrityError):
 class _ReconciledCaptureProvider:
     """Only the first Attempt may start I/O; retries must find Capture receipts."""
 
-    def __init__(self, provider: MarketProvider, *, attempt_no: int) -> None:
+    def __init__(self, provider: MarketProvider, *, attempt_no: int,
+                 before_effect: Callable[[], None] | None = None) -> None:
         self._provider = provider
         self._may_start = attempt_no == 1
+        self._before_effect = before_effect
 
     def capture(self, request: CaptureRequest) -> ProviderResponse:
         if not self._may_start:
@@ -143,6 +145,8 @@ class _ReconciledCaptureProvider:
                 "Provider I/O cannot be repeated"
             )
         self._may_start = False
+        if self._before_effect is not None:
+            self._before_effect()
         return self._provider.capture(request)
 
 
@@ -492,7 +496,9 @@ class ProspectiveArchiveRuntimeApplication:
                 try:
                     result = self._operations.execute_slice(
                         request,
-                        provider=_ReconciledCaptureProvider(provider, attempt_no=claim.attempt_no),
+                        provider=_ReconciledCaptureProvider(
+                            provider, attempt_no=claim.attempt_no, before_effect=before_action,
+                        ),
                         normalizer=normalizer_for(item),
                         context=_context(
                             f"archive:{plan.market_archive_id}:runtime:"
@@ -732,7 +738,9 @@ class ProspectiveArchiveRuntimeApplication:
                 maximum_slice_bytes=head.start_request.maximum_slice_bytes,
             )
             registration = self.predeclare(next_manifest, code_sha=code_sha, actor_id=actor_id,
-                                           lease_duration=lease_duration, before_action=before_action)
+                                           lease_duration=lease_duration, before_action=before_action,
+                                           # Continuation is not an implicit Schedule upgrade.
+                                           runtime_revision=references[-1].runtime_revision)
             new_generation_id = registration.market_archive_id
         return {"series_code": series_code, "observed_at": observed_at,
                 "generation_ids": tuple(item.market_archive_id for item in references),
@@ -835,6 +843,23 @@ class ProspectiveArchiveRuntimeApplication:
                     "START_PROSPECTIVE_RUN",
                 ),
             )
+        elif (trace.run_state == "FAILED" and run in plan.capture_runs
+              and any(step.state == "FAILED" for step in trace.steps)
+              and all(
+                  step.state == "SUCCEEDED"
+                  or (step.state == "BLOCKED" and not step.attempt_states)
+                  or (step.state == "READY" and not step.attempt_states
+                      and step.deadline_at is not None
+                      and step.deadline_at < self._database_clock.now())
+                  or (step.state == "FAILED"
+                      and step.attempt_states == ("FAILED_TERMINAL",)
+                      and step.latest_attempt_error_code == "DEADLINE_EXHAUSTED")
+                  for step in trace.steps
+              )):
+            # Read-only registration reconciliation after a missed window.
+            # Never reopen the failed Run, retry a Provider, or hide an earlier
+            # unknown effect behind a subsequent deadline failure.
+            return
         elif trace.run_state not in {"RUNNING", "SUCCEEDED"}:
             raise ProspectiveRuntimeIntegrityError(
                 f"prospective Runtime Run {run.run_id} is {trace.run_state}"
