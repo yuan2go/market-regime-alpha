@@ -164,6 +164,10 @@ SCHEMA_EPOCH: Final = "MRA_REFOUNDATION_1"
 BASELINE_VERSION: Final = 1
 BASELINE_NAME: Final = "001_baseline"
 BASELINE_RELEASE_STATE: Final = "DRAFT"
+_REVISION_GAP_MIGRATION_NAME: Final = "002_prospective_revision_gap"
+_REVISION_GAP_BUNDLE_SHA256: Final = "bd5978ae2ccfd56a9d117c41e13e0a8f7c76fbdd4d83d4aa1b32757dbe753063"
+_REVISION_GAP_CATALOG_SHA256: Final = "233c60c2b8b6efca4682f92fff8acbe85895a967cef0e11f7838f572e6ed69db"
+_REVISION_GAP_UPGRADE_CODE: Final = "wp18q_prospective_revision_gap_v6"
 _SCHEMA_COMMENT: Final = (
     "Market Regime Alpha MRA_REFOUNDATION_1 unreleased draft authority schema"
 )
@@ -1227,6 +1231,9 @@ class SchemaManager:
         self._recreate_plan_ttl = recreate_plan_ttl
         self._operational_upgrade_definition = operational_upgrade_definition
         self._baseline_sql = _read_package_text("migrations", "001_baseline.sql")
+        self._post_baseline_sql = _read_package_text("migrations", f"{_REVISION_GAP_MIGRATION_NAME}.sql")
+        if sha256_bytes(self._post_baseline_sql.encode("utf-8")) != _REVISION_GAP_BUNDLE_SHA256:
+            raise SchemaChecksumMismatchError("POST_BASELINE_BUNDLE_CHANGED: registered correction bytes are immutable")
         self._seed_sql = _read_package_text("seeds", "001_reference_seed.sql")
         self.baseline_checksum = sha256_bytes(self._baseline_sql.encode("utf-8"))
         self.seed_checksum = sha256_bytes(self._seed_sql.encode("utf-8"))
@@ -1250,6 +1257,7 @@ class SchemaManager:
                 return verification
             self._require_empty_allowed_catalog(connection)
             connection.execute(self._baseline_sql)
+            connection.execute(self._post_baseline_sql)
             catalog_checksum = _target_catalog_checksum(connection)
             connection.execute(
                 self._seed_sql,
@@ -1261,6 +1269,7 @@ class SchemaManager:
                     self.baseline_checksum,
                 ),
             )
+            _insert_revision_gap_migration(connection)
             verification = self._verify_connection(connection, created=True)
             connection.commit()
             return verification
@@ -1312,6 +1321,7 @@ class SchemaManager:
             _verify_exact_migration_registry(
                 connection,
                 baseline_checksum=definition.prior_baseline_sha256,
+                catalog_checksum=definition.prior_catalog_sha256,
             )
             active_connection_pids = _operational_upgrade_connection_pids(connection)
             if active_connection_pids:
@@ -1476,6 +1486,7 @@ class SchemaManager:
             _verify_exact_migration_registry(
                 connection,
                 baseline_checksum=definition.prior_baseline_sha256,
+                catalog_checksum=definition.prior_catalog_sha256,
             )
             backup = _verify_upgrade_backup(
                 OperationalUpgradeAuthorization(
@@ -1528,7 +1539,7 @@ class SchemaManager:
                 raise OperationalUpgradeIntegrityError(
                     "UPGRADE_HISTORICAL_PROJECTION_MISMATCH"
                 )
-            verification = self._verify_connection(connection, created=False)
+            verification = self._verify_connection(connection, created=False, expected_upgrade=definition)
             connection.commit()
             return OperationalUpgradeResult(
                 upgrade_code=plan.upgrade_code,
@@ -1596,7 +1607,7 @@ class SchemaManager:
             raise OperationalUpgradeIntegrityError(
                 "UPGRADE_RECEIPT_MISMATCH: existing receipt is not exact"
             )
-        verification = self._verify_connection(connection, created=False)
+        verification = self._verify_connection(connection, created=False, expected_upgrade=definition)
         return OperationalUpgradeResult(
             upgrade_code=plan.upgrade_code,
             receipt_id=receipt.receipt_id,
@@ -1773,6 +1784,7 @@ class SchemaManager:
 
             connection.execute("DROP SCHEMA mra CASCADE")
             connection.execute(self._baseline_sql)
+            connection.execute(self._post_baseline_sql)
             catalog_checksum = _target_catalog_checksum(connection)
             connection.execute(
                 self._seed_sql,
@@ -1784,6 +1796,7 @@ class SchemaManager:
                     self.baseline_checksum,
                 ),
             )
+            _insert_revision_gap_migration(connection)
             verification = self._verify_connection(connection, created=True)
             connection.commit()
             return RecreateResult(
@@ -1803,6 +1816,7 @@ class SchemaManager:
         connection: psycopg.Connection[Any],
         *,
         created: bool,
+        expected_upgrade: _OperationalUpgradeDefinition | None = None,
     ) -> SchemaVerification:
         self._require_no_external_catalog(connection)
         if not _schema_exists(connection, APPLICATION_SCHEMA):
@@ -1824,7 +1838,9 @@ class SchemaManager:
             raise SchemaEpochMismatchError(
                 f"expected baseline version {BASELINE_VERSION}, found {epoch.baseline_version}"
             )
-        if epoch.baseline_checksum != self.baseline_checksum:
+        expected_baseline = expected_upgrade.next_baseline_sha256 if expected_upgrade else self.baseline_checksum
+        expected_vocabulary = expected_upgrade.next_reference_vocabulary_sha256 if expected_upgrade else self.reference_vocabulary_checksum
+        if epoch.baseline_checksum != expected_baseline:
             raise SchemaChecksumMismatchError(
                 "BASELINE_CHECKSUM_MISMATCH: explicit recreate is required for a changed draft baseline"
             )
@@ -1832,12 +1848,12 @@ class SchemaManager:
             raise SchemaChecksumMismatchError(
                 "SEED_CHECKSUM_MISMATCH: explicit recreate is required for a changed draft seed"
             )
-        if epoch.reference_vocabulary_checksum != self.reference_vocabulary_checksum:
+        if epoch.reference_vocabulary_checksum != expected_vocabulary:
             raise SchemaChecksumMismatchError(
                 "REFERENCE_VOCABULARY_CHECKSUM_MISMATCH: explicit recreate is required"
             )
         tables = _target_tables(connection)
-        if tables != EXPECTED_TARGET_TABLES:
+        if expected_upgrade is None and tables != EXPECTED_TARGET_TABLES:
             missing = sorted(EXPECTED_TARGET_TABLES - tables)
             unexpected = sorted(tables - EXPECTED_TARGET_TABLES)
             raise CatalogDriftError(
@@ -1848,7 +1864,14 @@ class SchemaManager:
             raise CatalogDriftError(
                 "CATALOG_DRIFT: detected target objects differ from the installed catalog checksum"
             )
-        _verify_migration_registry(connection, self.baseline_checksum)
+        if expected_upgrade is not None and catalog_checksum != expected_upgrade.next_catalog_sha256:
+            raise CatalogDriftError("UPGRADE_TARGET_CATALOG_MISMATCH")
+        _verify_migration_registry(
+            connection, expected_baseline,
+            with_revision_gap=expected_upgrade is None or expected_upgrade.next_catalog_sha256 == _REVISION_GAP_CATALOG_SHA256,
+        )
+        if expected_upgrade is None and catalog_checksum != _REVISION_GAP_CATALOG_SHA256:
+            raise CatalogDriftError("POST_BASELINE_CATALOG_MISMATCH: installed catalog is not the exact registered correction")
         _verify_primary_keys(connection, tables)
         _verify_foreign_key_indexes(connection)
         return SchemaVerification(
@@ -2217,8 +2240,15 @@ def _read_epoch(connection: psycopg.Connection[Any]) -> _EpochRow:
     )
 
 
+def _insert_revision_gap_migration(connection: psycopg.Connection[Any]) -> None:
+    connection.execute(
+        "INSERT INTO mra.schema_migrations (version, name, checksum, transactional, epoch_name) VALUES (2, %s, %s, true, %s)",
+        (_REVISION_GAP_MIGRATION_NAME, _REVISION_GAP_BUNDLE_SHA256, SCHEMA_EPOCH),
+    )
+
+
 def _verify_migration_registry(
-    connection: psycopg.Connection[Any], baseline_checksum: str
+    connection: psycopg.Connection[Any], baseline_checksum: str, *, with_revision_gap: bool = True
 ) -> None:
     rows = connection.execute(
         """
@@ -2228,6 +2258,8 @@ def _verify_migration_registry(
         """
     ).fetchall()
     expected = [(BASELINE_VERSION, BASELINE_NAME, baseline_checksum, True, SCHEMA_EPOCH)]
+    if with_revision_gap:
+        expected.append((2, _REVISION_GAP_MIGRATION_NAME, _REVISION_GAP_BUNDLE_SHA256, True, SCHEMA_EPOCH))
     actual = [tuple(row) for row in rows]
     if actual != expected:
         raise CatalogDriftError(
@@ -2239,9 +2271,10 @@ def _verify_exact_migration_registry(
     connection: psycopg.Connection[Any],
     *,
     baseline_checksum: str,
+    catalog_checksum: str,
 ) -> None:
     try:
-        _verify_migration_registry(connection, baseline_checksum)
+        _verify_migration_registry(connection, baseline_checksum, with_revision_gap=catalog_checksum == _REVISION_GAP_CATALOG_SHA256)
     except CatalogDriftError as exc:
         raise UnsafeOperationalUpgradeError(
             "PRIOR_MIGRATION_REGISTRY_MISMATCH"
@@ -2654,7 +2687,19 @@ def _wp18q_operational_upgrade_definitions(
     )
     if v5.additive_bundle_sha256 != "45849ef8e6571eb640876190c47b87272de4676f7c6fe2c60581d3bac1177b2a":
         raise OperationalUpgradeIntegrityError("UPGRADE_V5_BUNDLE_CHANGED: register a new exact additive route")
-    return (v1, v2, v3, v4, v5)
+    v6 = _OperationalUpgradeDefinition(
+        upgrade_code=_REVISION_GAP_UPGRADE_CODE,
+        prior_baseline_sha256=v5.next_baseline_sha256,
+        prior_catalog_sha256=v5.next_catalog_sha256,
+        prior_reference_vocabulary_sha256=expected_vocabulary,
+        next_baseline_sha256=v5.next_baseline_sha256,
+        next_catalog_sha256=_REVISION_GAP_CATALOG_SHA256,
+        next_reference_vocabulary_sha256=expected_vocabulary,
+        additive_sql=_read_package_text("migrations", f"{_REVISION_GAP_MIGRATION_NAME}.sql"),
+    )
+    if v6.additive_bundle_sha256 != _REVISION_GAP_BUNDLE_SHA256:
+        raise OperationalUpgradeIntegrityError("UPGRADE_V6_BUNDLE_CHANGED: registered correction bytes are immutable")
+    return (v1, v2, v3, v4, v5, v6)
 
 
 def _compile_wp18q_v2_additive_sql(baseline_sql: str) -> str:
@@ -3403,6 +3448,8 @@ def _update_operational_upgrade_metadata(
     seed_sha256: str,
     catalog_sha256: str,
 ) -> None:
+    if definition.upgrade_code == _REVISION_GAP_UPGRADE_CODE:
+        _insert_revision_gap_migration(connection)
     connection.execute(
         "ALTER TABLE mra.schema_epoch DISABLE TRIGGER schema_epoch_append_only"
     )

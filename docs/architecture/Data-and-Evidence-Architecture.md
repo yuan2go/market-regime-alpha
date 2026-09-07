@@ -3,7 +3,7 @@
 > **Status:** CANONICAL_TARGET_ARCHITECTURE
 > **Authority:** Target logical schema, PIT, evidence, artifact, and cutover specification
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-09-06
+> **Last Updated:** 2026-09-07
 > **Code Evidence:** target `src/market_regime_alpha/infrastructure/postgres`, `src/market_regime_alpha/shared`, `src/market_regime_alpha/runtime`, `src/market_regime_alpha/market`, `src/market_regime_alpha/selection`, `src/market_regime_alpha/research_qualification`, `tests/refoundation`; legacy `src/market_regime_alpha/persistence/postgres` remains current business implementation
 
 This document is the sole Target logical table catalog. Current physical DDL,
@@ -13,6 +13,16 @@ they are not copied into Canonical Architecture. The catalog follows required
 semantics and is neither a quota nor a cutover claim.
 
 ## 1. Database rules
+
+Operational activation preserves the existing PostgreSQL/Artifact owners. A
+machine-local profile pins the exact scope, Artifact root, source, Target and
+backup receipt. The receipt binds exported-snapshot inventory, Artifact roster
+and dump bytes; both snapshot age and verification age constrain startup.
+Physical verification and health/funnel projections create no business truth.
+Gap-aware prospective revision validation preserves each frozen comparison
+ordinal: skipped observations require canonical negative terminals, never
+synthetic captures or revised first-observation times. The additive v6 correction
+does not rewrite earlier migration bytes or historical evidence hashes.
 
 Operational recovery uses the existing `mra evidence` CLI surface. Inventory is
 a read-only index regenerated from canonical facts and verified local receipts;

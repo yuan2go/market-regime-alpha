@@ -61,17 +61,19 @@ only Model/backtest path without reopening that Provider gate. Calibration
 remains optional and unstarted. Execution, Runtime/CLI Cutover, Legacy deletion,
 and Production qualification remain unauthorized.
 
-### Research economics correctness and WP-18Q-R2 continuation
+### Research economics correctness and research operations activation
 
 WP-RESEARCH-ECONOMICS-CORRECTNESS-01 has completed its bounded local gate in the
 [immutable Verification](docs/references/WP-RESEARCH-ECONOMICS-CORRECTNESS-01-Verification.md).
 Its [design contract](docs/references/WP-RESEARCH-ECONOMICS-CORRECTNESS-01-Design.md)
 retains independent funded, fully liquidated hypothetical episodes, complete
 parent/root/child reconciliation and explicit unsupported-model refusals.
-This exit authorizes no model expansion. The subsequent explicit user request
-resumes the existing WP-18Q-R2 chain: canonical campaign recovery, generic
-report/compare/replay, prospective continuity, backup/restore and conditional
-WP-specific retirement. Before authorized research append writes, verify exact
+This exit authorizes no model expansion. WP-18Q-R2 has completed its recorded
+campaign in an isolated recovery scope and retired WP-specific execution; the
+original Run remains FAILED. The current explicit request activates research
+operations within that same dependency chain: guarded prospective lifecycle,
+real due proof when available, original-database diagnostics and read-only
+research funnel projection. Before authorized research append writes, verify exact
 database identity, backup, disk, active attempts and a single writer. Preserve
 the frozen campaign's source, protocol and existing results; do not replace its
 worker, migrate its database, or reinterpret its V1 economics using V2.
@@ -86,6 +88,17 @@ clock, not a second scheduler. `backtest progress` reports Runtime observations
 with owner reconciliation explicitly NOT_PERFORMED. Foreground prospective
 `serve` owns process wakeup/drain only; bounded lifecycle success cannot imply
 sustained capture or an actual due Attempt.
+
+The machine-local prospective operation profile pins database/OID/cluster,
+schema, Artifact root, source, Target, backup receipt and resource budgets.
+Foreground service must reject identity drift, lost supervision locks, exhausted
+budgets and unverified backups before further claims. The v6 revision-gap
+correction is qualified on disposable/restored scopes only until a separate
+original-database upgrade is explicitly authorized. Do not infer that approval
+from authorization for ordinary research append writes. Read-only status and
+database diagnostics may inspect an explicitly named old schema without
+admitting it for current execution. No system service or replacement operational
+Authority is adopted by an isolated lifecycle drill.
 
 Keep these claims separate: code exists, canonical wiring, tests passed,
 runtime proven, and research validity. WP-18Q engineering qualification is

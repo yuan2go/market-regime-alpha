@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from collections.abc import Callable
 from pathlib import Path
 import re
 from uuid import UUID
@@ -260,9 +261,17 @@ def run_due_prospective_runtime(
 def continue_prospective_series(
     application: TargetApplication, *, series_code: str, sdk: BaoStockSdk,
     code_sha: str, actor_id: str, worker_id: str, lease_duration: timedelta,
+    provider_timeout_seconds: float = 30,
+    provider_maximum_rows: int = 100_000,
+    provider_maximum_response_bytes: int = 33_554_432,
+    maximum_attempts: int | None = None,
+    before_action: Callable[[], None] | None = None,
 ) -> object:
     """Service the canonical series without a mutable current-manifest pointer."""
-    with BaoStockSession(sdk, defer_login=True, maximum_attempts=1) as session:
+    with BaoStockSession(sdk, defer_login=True, maximum_attempts=1,
+                        timeout_seconds=provider_timeout_seconds,
+                        maximum_rows=provider_maximum_rows,
+                        maximum_response_bytes=provider_maximum_response_bytes) as session:
         def normalizer_for(item: ArchiveManifestSlice) -> BaoStockArchiveNormalizer:
             return BaoStockArchiveNormalizer(
                 expected_query=BaoStockArchiveQuery.from_resource(item.capture_request.resource),
@@ -274,6 +283,8 @@ def continue_prospective_series(
             series_code=series_code, code_sha=code_sha, actor_id=actor_id,
             worker_id=worker_id, lease_duration=lease_duration,
             provider=BaoStockArchiveProvider(session), normalizer_for=normalizer_for,
+            maximum_attempts=maximum_attempts,
+            before_action=before_action,
         )
 
 

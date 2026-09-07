@@ -3,7 +3,7 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Current executable operator procedures
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-09-06
+> **Last Updated:** 2026-09-07
 > **Code Evidence:** `pyproject.toml`, `scripts/*.py`, `src/market_regime_alpha/cli`
 
 ## Install and verify environment
@@ -93,25 +93,70 @@ the new scope's actual start. Recovering immutable bytes into new canonical
 captures/archives does not restore old IDs, known-times or prospective continuity.
 
 Prospective continuation remains a bounded invocation of the sole existing
-Runtime. `continuous-research run-day` exposes explicit prospective series,
-implementation SHA, database-name and lease options; this composition runs
-before the parent non-trading-day early return. The canonical operator command
-`mra archive prospective continue` checks PostgreSQL time, reconciles prior
+Runtime. The existing Application checks PostgreSQL time, reconciles prior
 generations, records overdue terminals/planning gaps, resolves exact TradingSessions
-and claims real due work. CLI wiring alone is not evidence of an installed
+and claims real due work. Public `continue`, `run-due`, `resume` and manual
+prospective predeclare/write shortcuts fail closed and direct operators to
+guarded `serve`. The old `continuous-research` prospective switches are also
+closed; unrelated legacy work retains its existing behavior. Initial series
+predeclaration requires an explicitly authorized canonical owner operation;
+service does not infer or create an initial scope. CLI wiring alone is not evidence of an installed
 continuously running service. No due window means `NOT_DUE`; never wait or
 backdate to produce proof.
 
 `mra archive prospective serve` provides a foreground process that wakes the
-same `continue` command serially. It makes no business-time or due decisions,
+same continuation Application serially. It makes no business-time or due decisions,
 holds no database transaction between wakeups, and creates no schedule outside
 the existing Runtime. Keep machine-local database/Artifact settings and the
 exact implementation SHA in the operator environment, outside the repository.
 Before starting, complete the exact-name/OID, consistent backup, disk, active
 attempt and single-writer preflight above.
 
+Copy the [operation profile template](templates/prospective-operation.example.json)
+to a private local file and replace every placeholder with owner-observed facts.
+The template deliberately fails validation. Pin the exact database name/OID and
+cluster system identifier, current schema/catalog, Artifact root binding,
+installed source hash, immutable Target and series, dump hash and **receipt
+hash**. The pinned receipt binds the same-read inventory bytes, snapshot time,
+Artifact roster and dump. A freshly verified old snapshot is still old. The
+source fingerprint is `implementation_source_sha256()` from the existing
+`interfaces.prospective_operations` module; it hashes package Python/SQL bytes
+and is independent of checkout versus wheel location. Keep this profile,
+credentials and paths outside Git. Its public content hash identifies intent;
+it is not business Authority or permission to adopt a different database.
+
+```bash
+uv run mra archive prospective status \
+  --series-code "$MRA_PROSPECTIVE_SERIES" \
+  --expected-database-name "$MRA_EXPECTED_DATABASE_NAME" \
+  --expected-database-oid "$MRA_EXPECTED_DATABASE_OID" \
+  --expected-cluster-identity "$MRA_EXPECTED_CLUSTER_ID"
+uv run mra archive prospective preflight \
+  --operation-config "$MRA_OPERATION_CONFIG" \
+  --expected-database-name "$MRA_EXPECTED_DATABASE_NAME"
+```
+
+Status is a read-only database-clock projection, including old-schema scopes;
+it does not admit them for execution. Preflight uses the current schema contract,
+holds a session advisory supervision lock, verifies physical Artifact and backup
+bytes, probes a private temporary file with fsync/rename/read, checks calendar
+and Target lineage, and performs bounded exploratory Provider login/logout.
+It creates no Capture or business fact. A healthy completed restore is not an
+adopted operational writer. The v6 revision-gap correction changes a constraint
+and its existing validator through an exact registered upgrade; original v5
+databases fail current writer startup until separately authorized upgrade.
+Prepare `mra db upgrade-plan` with exact name/OID, backup hash/size and code SHA;
+only an explicitly authorized scope may execute its challenge with
+`mra db upgrade-apply`. Never use bootstrap/recreate to repair an operational DB.
+
+Read-only preflight reports strict health immediately. Service startup reports
+OWNER_RECONCILIATION_PENDING until its first guarded continuation repairs any
+interrupted capture-Run registration, then applies the same strict health
+check. It never relaxes the expected Runtime roster to make recovery look complete.
+
 ```bash
 uv run mra archive prospective serve \
+  --operation-config "$MRA_OPERATION_CONFIG" \
   --series-code "$MRA_PROSPECTIVE_SERIES" \
   --code-sha "$MRA_IMPLEMENTATION_SHA" \
   --expected-database-name "$MRA_EXPECTED_DATABASE_NAME" \
@@ -119,17 +164,63 @@ uv run mra archive prospective serve \
   --lease-seconds 120 --wakeup-seconds 30
 ```
 
-Each completed wakeup emits and flushes the canonical continuation result as a
-JSON line. `--maximum-wakeups 2` bounds a startup/restart drill. SIGINT/SIGTERM
-requests shutdown after the current invocation finishes; it does not cancel an
-in-flight Provider effect. Exceptions exit with the normal CLI error and no
-blind retry. On restart, the same continuation reloads Authority, reconciles
-external effects and recovers expired leases before new work. Do not run a
-second worker during this drain interval. A hung external call may therefore
-delay shutdown; preserve its Attempt and reconcile its effect before recovery.
+The profile and CLI arguments must agree. Each wakeup emits database scope,
+profile hash, canonical continuation, health summary and alert changes as JSON.
+The supervision lock is checked again before owner actions and claims; a lost
+connection/lock, changed source, old backup or exhausted disk stops further work.
+The default template limits each wakeup to 16 actual claims and 120 seconds;
+each BaoStock execute has one 10-second deadline including login/query/row
+iteration, at most 100,000 rows and 32 MiB serialized response. SDK attempts are
+one; there is no service retry of an unknown external effect. Database pool
+capacity is at most four plus the one dedicated supervision connection. An
+elapsed tick budget drains the current effect then exits 2; it is not a hard
+cancellation of a business transaction. Tune budgets only as explicit local
+operation intent backed by measurements, never as relaxed research thresholds.
+
+`--maximum-wakeups 2` bounds a startup/restart drill. SIGINT/SIGTERM sets a
+nonblocking stop flag and drains the current action, then prevents the next
+claim. Foreground Ctrl-C or SIGTERM to the **verified owned process PID** is the
+stop procedure; never kill an unknown worker. Preserve logs and inspect health
+and Runtime after exit. On restart, the same continuation reloads Authority,
+reconciles external effects and recovers expired leases before new work.
+An EXTERNAL_EFFECT_UNKNOWN terminal is a reconciliation requirement, not
+permission to repeat the Provider call. Do not run a second worker during drain.
 No system service is installed by this command. A bounded process drill proves
 lifecycle wiring only; sustained collection and a real due capture require
 their own observed Runtime facts.
+
+The optional [supervisor template](templates/prospective-supervisor.example.plist)
+is an uninstalled lifecycle example. Its local launch script supplies the exact
+environment/profile and uses `exec` for the foreground command above. Automatic
+launch and restart are disabled deliberately: an error requires inspection and
+reconciliation before restart. Installation or adoption needs separate explicit
+authorization. No timer in the supervisor decides trading sessions or due work.
+
+At day end, capture `prospective status`, `archive verify` for each reported
+generation and `evidence verify`, then take a fresh consistent bundle using the
+commands above. Health separately reports expected/opened/due/future, captured,
+late, missed, failed, unknown effects, recovery backlog and planning gaps;
+capture success, on-time completion and terminal coverage have separate
+denominators. An empty opened roster yields typed NOT_ESTIMABLE rates.
+Normal NOT_DUE causes no incident. Alerts emit OPENED/UPDATED/RESOLVED changes
+within one process, avoiding repeat storms; restart emits a fresh observation.
+Persist these JSON lines with their scope/hash and protect/rotate them locally.
+They are auditable projections, not a second business journal. No external
+notification is sent. Terminal completeness never means successful capture.
+
+For original-database slow reads, `mra evidence diagnose --run-id ...` requires
+the same exact name/OID/cluster flags as status. It records fixed parameterized
+SQL, EXPLAIN JSON, lock/activity/I/O observations and bounded repeated timings in
+read-only transactions. It does not increase timeouts, flush caches or change
+server settings. An unreproduced historic QueryCanceled remains
+ROOT_CAUSE=UNPROVEN even when present queries meet their budget. Keep the
+original FAILED Run and completed recovery copy labelled by database identity.
+
+Use `mra backtest diagnose --run-id ... --format json` (or `markdown`) for the
+reconciled read-only funnel. The [research diagnosis](Research-Diagnostics.md)
+records the existing campaign's denominator and sample limitations. This
+projection cannot upgrade its frozen V1 economics, select a daily model or
+relabel Validation as untouched OOS.
 
 Include the last available exact TradingSession in the operational inventory
 review. Continuation requires the decision, Outcome and later verification

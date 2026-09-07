@@ -13,6 +13,31 @@ second planning source.
 
 ## Sequence
 
+WP-RESEARCH-OPERATIONS-ACTIVATION-01 continues the dependency chain from
+merged main `85d0080a`; its source/tests match qualified `09561b25`.
+The implementation boundary is the existing prospective serve/continuation,
+Runtime lease/fence, Market inspection, Evidence inventory/backup and Generic
+Backtest/Report read surfaces. No database adoption, migration, service install,
+research-parameter change or new scheduler is authorized.
+
+The execution order is: exact-scope startup/configuration and single-writer
+guards; bounded Runtime claims and health/recovery observations; reproducible
+read-only original-database diagnostics; reconciled research funnel projection;
+isolated fault/restore drills and authorized actual-time operation; final
+source/dependency qualification and the existing R2 evidence/status chain.
+The preflight must reject wrong name/OID/cluster/schema/root, unreadable or
+mismatched backup bytes, inadequate disk/calendar/Target/Provider configuration,
+active conflicting work and duplicate supervisors before a business tick.
+Backpressure leaves unclaimed work due; it never invents a terminal success.
+Health preserves expected denominators, first-observation times and distinct
+capture/on-time/terminal rates. Financial values remain canonical Evaluation.
+
+Current R2 original OID 287543 remains the existing authorized prospective
+append scope. Completed recovery OID 117559774 and independent restored OID
+118013570 are read-only research evidence here. Adoption remains a separate
+explicit decision. Actual due proof is checked against the execution-time
+PostgreSQL clock; NOT_DUE cannot close frozen WP-18Q Design section 13.
+
 WP-RESEARCH-ECONOMICS-CORRECTNESS-01 is complete in its [bounded supported scope](../references/WP-RESEARCH-ECONOMICS-CORRECTNESS-01-Design.md).
 Its single [immutable Verification](../references/WP-RESEARCH-ECONOMICS-CORRECTNESS-01-Verification.md)
 binds `a107d98e`: complete root/child integrity, full-parent multi-episode

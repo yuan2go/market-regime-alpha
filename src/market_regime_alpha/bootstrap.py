@@ -5,8 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 from pathlib import Path
-from typing import Mapping
-from uuid import uuid4
+from typing import Any, Mapping
+from uuid import UUID, uuid4
 
 from market_regime_alpha.infrastructure.postgres.queries.prospective_continuity import PostgresProspectiveContinuityReadPort
 from market_regime_alpha.shared.identity import ContentHash
@@ -173,6 +173,10 @@ from market_regime_alpha.infrastructure.postgres.queries.backtest_history import
 from market_regime_alpha.infrastructure.postgres.queries.backtest_reports import (
     PostgresBacktestReportSourcePort,
 )
+from market_regime_alpha.infrastructure.postgres.operational_diagnostics import PostgresOperationalDiagnostics
+from market_regime_alpha.infrastructure.postgres.queries.backtest_diagnostics import PostgresBacktestDiagnosticsSourcePort
+from market_regime_alpha.infrastructure.postgres.queries.prospective_health import PostgresProspectiveHealthReadPort
+from market_regime_alpha.research_qualification.application.backtest_diagnostics import BacktestDiagnosticsApplication
 from market_regime_alpha.infrastructure.postgres.queries.backtests import (
     PostgresBacktestQueryPort,
 )
@@ -328,6 +332,8 @@ class TargetSettings:
 @dataclass(slots=True)
 class TargetApplication:
     evidence: EvidenceApplication
+    operational_diagnostics: PostgresOperationalDiagnostics
+    backtest_diagnostics: BacktestDiagnosticsApplication
     runtime: RuntimeApplication
     artifacts: ArtifactApplication
     market: MarketApplication
@@ -337,6 +343,8 @@ class TargetApplication:
     archive_inspection: ArchiveInspectionPort
     archive_verification: ArchiveVerificationPort
     archive_trading_sessions: ArchiveTradingSessionReadPort
+    archive_continuity: PostgresProspectiveContinuityReadPort
+    prospective_health: PostgresProspectiveHealthReadPort
     target_archive_schedules: TargetArchiveScheduleReadPort
     provider_qualifications: ProviderQualificationCommands
     provider_qualification_queries: ProviderQualificationQueryPort
@@ -567,6 +575,10 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
         backtest_replay,
     )
     return TargetApplication(
+        operational_diagnostics=PostgresOperationalDiagnostics(pool),
+        backtest_diagnostics=BacktestDiagnosticsApplication(
+            PostgresBacktestDiagnosticsSourcePort(pool), backtest_reports,
+        ),
         evidence=EvidenceApplication(
             PostgresEvidenceSnapshotPort(pool),
             FilesystemEvidenceIntegrity(settings.artifact_root),
@@ -597,6 +609,8 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
         archive_inspection=PostgresArchiveInspectionPort(pool),
         archive_verification=PostgresArchiveVerificationPort(pool),
         archive_trading_sessions=PostgresArchiveTradingSessionReadPort(pool),
+        archive_continuity=PostgresProspectiveContinuityReadPort(pool),
+        prospective_health=PostgresProspectiveHealthReadPort(pool),
         target_archive_schedules=PostgresTargetArchiveScheduleReadPort(pool),
         provider_qualifications=ProviderQualificationCommands(
             PostgresProviderQualificationUnitOfWorkProvider(pool, id_factory=uuid4),
@@ -681,6 +695,47 @@ def verify_database(settings: TargetSettings) -> SchemaVerification:
 
 def database_identity(settings: TargetSettings) -> DatabaseIdentity:
     return SchemaManager(settings.database_url).database_identity()
+
+
+def inspect_operational_database(
+    settings: TargetSettings, *, run_id: UUID, expected_database_name: str,
+    expected_database_oid: int, expected_cluster_identity: str, repetitions: int = 2,
+) -> dict[str, Any]:
+    """Read-only observations remain available before a controlled upgrade.
+
+    No Application writer or schema admission is constructed. This is not an
+    alternate business bootstrap and never falls back to a different database.
+    """
+    pool = TargetPostgresPool(settings.database_url, min_size=0, max_size=1)
+    try:
+        result = PostgresOperationalDiagnostics(pool).inspect(
+            run_id, expected_database_name=expected_database_name,
+            expected_database_oid=expected_database_oid,
+            expected_cluster_identity=expected_cluster_identity, repetitions=repetitions,
+        )
+        result["schema_admission"] = "NOT_PERFORMED_READ_ONLY_DIAGNOSTICS"
+        return result
+    finally:
+        pool.close()
+
+
+def inspect_prospective_series(
+    settings: TargetSettings, *, series_code: str, expected_database_name: str,
+    expected_database_oid: int, expected_cluster_identity: str,
+) -> dict[str, Any]:
+    """Exact-scope read-only health, including a scope pending schema upgrade."""
+    pool = TargetPostgresPool(settings.database_url, min_size=0, max_size=1)
+    try:
+        result = PostgresProspectiveHealthReadPort(pool).inspect(series_code)
+        identity = result["database"]
+        if (identity["name"], identity["oid"], identity["cluster_identity"]) != (
+            expected_database_name, expected_database_oid, expected_cluster_identity,
+        ):
+            raise ValueError("OPERATION_DATABASE_IDENTITY_MISMATCH")
+        result["schema_admission"] = "NOT_PERFORMED_READ_ONLY_DIAGNOSTICS"
+        return result
+    finally:
+        pool.close()
 
 
 def plan_database_recreate(
@@ -783,6 +838,8 @@ __all__ = [
     "bootstrap_application",
     "bootstrap_database",
     "database_identity",
+    "inspect_operational_database",
+    "inspect_prospective_series",
     "load_recreate_plan",
     "load_operational_upgrade_plan",
     "make_operational_upgrade_authorization",
