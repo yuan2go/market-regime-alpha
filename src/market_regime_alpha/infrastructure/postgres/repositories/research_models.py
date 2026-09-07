@@ -7,6 +7,9 @@ from uuid import UUID
 
 import psycopg
 
+from market_regime_alpha.research_qualification.domain.experimental_model_use import ExperimentalModelUsePlan, ExperimentalModelUseRecord
+from market_regime_alpha.research_qualification.domain.model import ArtifactBinding
+
 from market_regime_alpha.research_qualification.domain.research_models import (
     ModelTrainingReproducibility,
     ModelTrainingRunPlan,
@@ -26,6 +29,35 @@ from market_regime_alpha.runtime.errors import RuntimeNotFoundError
 class PostgresResearchModelRepository:
     def __init__(self, connection: psycopg.Connection[Any]) -> None:
         self._connection = connection
+
+    def register_experimental_use(self, plan: ExperimentalModelUsePlan) -> ExperimentalModelUseRecord:
+        self._connection.execute("""INSERT INTO mra.experimental_model_use
+            (experimental_model_use_id, model_version_id, target_metric_definition_id, feature_roster_sha256,
+             protocol_artifact_id, protocol_content_sha256, protocol_size_bytes, valid_from, expires_at, baseline_strategy_version_id, purpose, content_sha256)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+            (plan.experimental_model_use_id, plan.model_version_id, plan.target_metric_definition_id,
+             plan.feature_roster_sha256, plan.protocol_artifact.artifact_id, str(plan.protocol_artifact.content_sha256),
+             plan.protocol_artifact.size_bytes, plan.valid_from, plan.expires_at, plan.baseline_strategy_version_id, plan.purpose, plan.content_sha256))
+        return self.experimental_use(plan.experimental_model_use_id, lock=False)
+
+    def experimental_use(self, identity: UUID, *, lock: bool) -> ExperimentalModelUseRecord:
+        row = self._connection.execute("""SELECT usage.experimental_model_use_id, usage.model_version_id,
+            usage.target_metric_definition_id, usage.feature_roster_sha256, usage.protocol_artifact_id,
+            usage.protocol_content_sha256, usage.protocol_size_bytes, usage.valid_from, usage.expires_at,
+            usage.purpose, usage.registered_at, revoked.revoked_at, usage.content_sha256, usage.baseline_strategy_version_id
+            FROM mra.experimental_model_use usage LEFT JOIN mra.experimental_model_use_revocation revoked
+              USING (experimental_model_use_id) WHERE usage.experimental_model_use_id=%s""" + (" FOR SHARE OF usage" if lock else ""), (identity,)).fetchone()
+        if row is None:
+            raise RuntimeNotFoundError("explicit experimental Model use is absent")
+        plan = ExperimentalModelUsePlan(row[0], row[1], row[2], str(row[3]), ArtifactBinding(row[4], row[5], row[6]), row[7], row[8], row[13], str(row[9]))
+        if plan.content_sha256 != row[12]:
+            raise ValueError("experimental model use content differs from persisted fields")
+        return ExperimentalModelUseRecord(plan, row[10], row[11])
+
+    def revoke_experimental_use(self, identity: UUID) -> ExperimentalModelUseRecord:
+        self._connection.execute("SELECT experimental_model_use_id FROM mra.experimental_model_use WHERE experimental_model_use_id=%s FOR UPDATE", (identity,))
+        self._connection.execute("INSERT INTO mra.experimental_model_use_revocation(experimental_model_use_id) VALUES (%s) ON CONFLICT DO NOTHING", (identity,))
+        return self.experimental_use(identity, lock=False)
 
     def lock_model_identity(self, model_code: str) -> None:
         self._connection.execute(

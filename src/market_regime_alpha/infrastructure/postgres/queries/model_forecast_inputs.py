@@ -69,10 +69,11 @@ class PostgresModelForecastInputPreparationProvider:
         decision_run_id: UUID,
         strategy_version_id: UUID,
         model_version_id: UUID,
+        *, experimental_model_use_id: UUID | None = None,
     ) -> PreparedModelForecastInputs:
         inference = self._inference.prepare(decision_run_id, strategy_version_id)
         with self._pool.connection(read_only=True) as connection:
-            root = _load_root(connection, decision_run_id, model_version_id)
+            root = _load_root(connection, decision_run_id, model_version_id, experimental_model_use_id=experimental_model_use_id)
             definition, feature_definitions = load_research_dataset_definition(
                 connection,
                 dataset_id=UUID(str(root[0])),
@@ -235,11 +236,11 @@ class PostgresModelForecastInputPreparationProvider:
         return PreparedModelForecastInputs(
             inference=inference,
             dataset_id=UUID(str(root[0])),
-            exploratory_backtest_run_id=UUID(str(root[1])),
-            exploratory_backtest_arm_id=UUID(str(root[2])),
-            exploratory_backtest_fold_id=UUID(str(root[3])),
-            exploratory_backtest_fold_session_id=UUID(str(root[4])),
-            inference_fold_ordinal=int(root[5]),
+            exploratory_backtest_run_id=UUID(str(root[1])) if root[1] is not None else None,
+            exploratory_backtest_arm_id=UUID(str(root[2])) if root[2] is not None else None,
+            exploratory_backtest_fold_id=UUID(str(root[3])) if root[3] is not None else None,
+            exploratory_backtest_fold_session_id=UUID(str(root[4])) if root[4] is not None else None,
+            inference_fold_ordinal=int(root[5]) if root[5] is not None else None,
             model_version_id=model_version_id,
             model_id=UUID(str(root[7])),
             model_training_run_id=UUID(str(root[8])),
@@ -250,6 +251,7 @@ class PostgresModelForecastInputPreparationProvider:
             model_registered_at=root[17],
             target_metric_definition_id=UUID(str(root[18])),
             predictions=tuple(predictions),
+            experimental_model_use_id=experimental_model_use_id,
         )
 
 
@@ -315,7 +317,10 @@ def _load_root(
     model_version_id: UUID,
     *,
     lock: bool = False,
+    experimental_model_use_id: UUID | None = None,
 ) -> tuple[Any, ...]:
+    if experimental_model_use_id is not None:
+        return _load_experimental_root(connection, decision_run_id, model_version_id, experimental_model_use_id, lock=lock)
     suffix = (
         " FOR SHARE OF decision, retrospective, dataset, arm, inference_fold, "
         "version, training, training_fold, model"
@@ -465,6 +470,49 @@ def _load_root(
         raise InferenceAuthorityIntegrityError(
             "Model Forecast requires an exact later-fold retrospective Decision"
         )
+    return tuple(row)
+
+
+def _load_experimental_root(connection: psycopg.Connection[Any], decision_run_id: UUID,
+                            model_version_id: UUID, usage_id: UUID, *, lock: bool) -> tuple[Any, ...]:
+    # The same row lock is taken by revocation. A read-time absence of a
+    # revocation is not the commit admission boundary.
+    if lock:
+        connection.execute("SELECT experimental_model_use_id FROM mra.experimental_model_use WHERE experimental_model_use_id=%s FOR SHARE", (usage_id,))
+    row = connection.execute("""
+        SELECT decision.dataset_id, NULL, NULL, NULL, NULL, NULL, decision.decision_time,
+               version.model_id, version.model_training_run_id, training.exploratory_backtest_fold_id,
+               fold.ordinal, version.content_sha256, training.exploratory_backtest_run_id,
+               training.exploratory_backtest_arm_id, version.fitted_model_artifact_id,
+               version.fitted_model_content_sha256, version.fitted_model_size_bytes, version.registered_at,
+               metric.source_target_metric_definition_id, version.coefficient_count, training.ridge_alpha,
+               training.random_seed, model.target_definition_id, training.algorithm_code,
+               training.algorithm_version, training.algorithm_sha256, true
+        FROM mra.decision_run decision
+        JOIN mra.experimental_model_use usage ON usage.experimental_model_use_id=%s
+        JOIN mra.model_version version ON version.model_version_id=usage.model_version_id AND version.model_version_id=%s
+        JOIN mra.model model ON model.model_id=version.model_id AND model.feature_roster_sha256=usage.feature_roster_sha256
+        JOIN mra.model_training_run training ON training.model_training_run_id=version.model_training_run_id AND training.model_id=model.model_id
+        JOIN mra.model_training_reproducibility reproducibility ON reproducibility.model_training_run_id=training.model_training_run_id
+        JOIN mra.exploratory_backtest_fold fold ON fold.exploratory_backtest_fold_id=training.exploratory_backtest_fold_id AND fold.purpose='FIT'
+        JOIN mra.evaluation_protocol_metric metric ON metric.evaluation_protocol_metric_id=training.evaluation_protocol_metric_id
+          AND metric.source_target_metric_definition_id=usage.target_metric_definition_id
+        WHERE decision.decision_run_id=%s AND decision.research_purpose='DISCOVERY'
+          AND mra.experimental_forecast_window_is_open(decision.decision_run_id, clock_timestamp())
+          AND NOT EXISTS (SELECT 1 FROM mra.exploratory_retrospective_dataset r WHERE r.dataset_id=decision.dataset_id)
+          AND NOT EXISTS (SELECT 1 FROM mra.experimental_model_use_revocation r WHERE r.experimental_model_use_id=usage.experimental_model_use_id)
+          AND usage.registered_at < decision.decision_time
+          AND usage.valid_from <= decision.decision_time AND clock_timestamp() < usage.expires_at
+          AND version.registered_at < decision.decision_time
+          AND reproducibility.training_knowledge_cutoff <= version.registered_at
+          AND NOT EXISTS (SELECT 1 FROM mra.model_training_sample sample
+              JOIN mra.decision_run source ON source.decision_run_id=sample.decision_run_id
+              JOIN mra.market_target_outcome_revision outcome ON outcome.market_target_outcome_revision_id=sample.market_target_outcome_revision_id
+              WHERE sample.model_training_run_id=training.model_training_run_id
+                AND (source.decision_time >= decision.decision_time OR outcome.knowledge_cutoff > reproducibility.training_knowledge_cutoff))
+        """, (usage_id, model_version_id, decision_run_id)).fetchone()
+    if row is None:
+        raise InferenceAuthorityIntegrityError("experimental Model use is absent, incompatible, expired, revoked or not known before DecisionTime")
     return tuple(row)
 
 

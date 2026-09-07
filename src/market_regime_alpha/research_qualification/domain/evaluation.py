@@ -12,6 +12,7 @@ from uuid import UUID
 from market_regime_alpha.research_qualification.domain.model import ArtifactBinding
 from market_regime_alpha.research_qualification.domain.evaluation_formula import (
     BacktestFormulaCode,
+    BacktestMetricSurface,
     EvaluationFormulaDefinition,
 )
 from market_regime_alpha.research_qualification.domain.research_vocabulary import PartitionPurpose
@@ -194,6 +195,7 @@ class ProtocolMetricDefinition:
             EvaluationSourceKind.OUTCOME_METRIC: {
                 EvaluationSourceMeasure.TARGET_VALUE,
             },
+            EvaluationSourceKind.EXPERIMENTAL_FORECAST_OUTCOME_PAIR: {EvaluationSourceMeasure.FORECAST_POINT_VS_TARGET},
             EvaluationSourceKind.FORECAST_OUTCOME_PAIR: {
                 EvaluationSourceMeasure.FORECAST_POINT_VS_TARGET,
             },
@@ -223,6 +225,7 @@ class ProtocolMetricDefinition:
         if self.source_measure not in source_measures[self.source_kind]:
             raise ValueError("source measure is incompatible with source kind")
         source_types = {
+            EvaluationSourceKind.EXPERIMENTAL_FORECAST_OUTCOME_PAIR: SourceMetricValueType.DECIMAL,
             EvaluationSourceKind.FORECAST_OUTCOME_PAIR: SourceMetricValueType.DECIMAL,
             EvaluationSourceKind.CANDIDATE_DISPOSITION: SourceMetricValueType.BOOLEAN,
             EvaluationSourceKind.SIGNAL_STATUS: SourceMetricValueType.BOOLEAN,
@@ -242,6 +245,7 @@ class ProtocolMetricDefinition:
         if (
             self.reducer is EvaluationReducer.SPEARMAN_RANK_CORRELATION
             and self.source_kind not in {
+                EvaluationSourceKind.EXPERIMENTAL_FORECAST_OUTCOME_PAIR,
                 EvaluationSourceKind.FORECAST_OUTCOME_PAIR,
                 EvaluationSourceKind.CANDIDATE_OUTCOME_PAIR,
             }
@@ -249,6 +253,7 @@ class ProtocolMetricDefinition:
             raise ValueError("rank correlation requires FORECAST_OUTCOME_PAIR")
         if (
             self.source_kind in {
+                EvaluationSourceKind.EXPERIMENTAL_FORECAST_OUTCOME_PAIR,
                 EvaluationSourceKind.FORECAST_OUTCOME_PAIR,
                 EvaluationSourceKind.CANDIDATE_OUTCOME_PAIR,
             }
@@ -328,6 +333,13 @@ class ProtocolMetricDefinition:
                                                    EvaluationSourceMeasure.NET_PORTFOLIO_RETURN_ASSUMED_COST}
                     or self.slice_kind is not EvaluationSliceKind.ALL_MEMBERS):
                 raise ValueError("V2 economics requires whole-episode ALL_MEMBERS Portfolio Outcome rosters")
+        if self.source_kind is EvaluationSourceKind.EXPERIMENTAL_FORECAST_OUTCOME_PAIR:
+            if (self.formula is None or self.formula.formula_version != 1
+                    or self.slice_kind is not EvaluationSliceKind.ALL_MEMBERS
+                    or self.formula.surface is not BacktestMetricSurface.SIGNAL_FORECAST):
+                raise ValueError("experimental forecast evaluation requires a complete prediction-only formula scope")
+            self.experimental_model_use_id
+            self.experimental_forecast_role
         content = {
             "acceptance_operator": self.acceptance_operator,
             "acceptance_threshold": self.acceptance_threshold,
@@ -357,6 +369,29 @@ class ProtocolMetricDefinition:
         )
 
 
+    @property
+    def experimental_forecast_role(self) -> str | None:
+        if self.source_kind is not EvaluationSourceKind.EXPERIMENTAL_FORECAST_OUTCOME_PAIR:
+            return None
+        assert self.formula is not None
+        values=[p for p in self.formula.parameters if p.parameter_code=='forecast_role']
+        role='MODEL' if not values else values[0].text_value
+        if len(values)>1 or role not in {'MODEL','RULE_BASELINE'}:
+            raise ValueError('experimental forecast role is unsupported')
+        return role
+
+    @property
+    def experimental_model_use_id(self) -> UUID | None:
+        if self.source_kind is not EvaluationSourceKind.EXPERIMENTAL_FORECAST_OUTCOME_PAIR:
+            return None
+        if self.formula is None:
+            raise ValueError("experimental forecast evaluation requires an explicit model use")
+        selected = [item for item in self.formula.parameters if item.parameter_code == "experimental_model_use_id"]
+        if len(selected) != 1 or selected[0].text_value is None:
+            raise ValueError("experimental forecast evaluation requires one explicit model use")
+        return UUID(selected[0].text_value)
+
+
 def _protocol_metric_roster_value(
     metric: ProtocolMetricDefinition,
 ) -> dict[str, object]:
@@ -380,6 +415,7 @@ def evaluation_protocol_metric_roster_sha256(
             tuple(_protocol_metric_roster_value(metric) for metric in metrics)
         )
     )
+
 
 
 @dataclass(frozen=True, slots=True)
@@ -464,7 +500,7 @@ def evaluate_metric(
             )
             continue
         requires_pair = (
-            metric.source_kind is EvaluationSourceKind.FORECAST_OUTCOME_PAIR
+            metric.source_kind in {EvaluationSourceKind.FORECAST_OUTCOME_PAIR, EvaluationSourceKind.EXPERIMENTAL_FORECAST_OUTCOME_PAIR}
             or (
                 metric.source_kind is EvaluationSourceKind.CANDIDATE_OUTCOME_PAIR
                 and metric.source_measure

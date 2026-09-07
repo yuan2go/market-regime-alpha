@@ -761,7 +761,7 @@ class PostgresResearchEvaluationVerificationProvider:
                     WHERE metric.evaluation_protocol_id = %s
                       AND (
                         ((metric.slice_kind = 'EXPLORATORY_BACKTEST_ARM'
-                          OR metric.source_kind <> 'OUTCOME_METRIC')
+                          OR metric.source_kind NOT IN ('OUTCOME_METRIC', 'EXPERIMENTAL_FORECAST_OUTCOME_PAIR'))
                          AND (SELECT count(*)
                               FROM mra.evaluation_backtest_arm_source AS source
                               WHERE source.evaluation_run_id = %s
@@ -777,7 +777,7 @@ class PostgresResearchEvaluationVerificationProvider:
                             AND (SELECT count(*) FROM mra.evaluation_signal_source AS source
                                  WHERE source.evaluation_run_id = %s
                                    AND source.evaluation_protocol_metric_id = metric.evaluation_protocol_metric_id) <> %s)
-                        OR (metric.source_kind = 'FORECAST_OUTCOME_PAIR'
+                        OR (metric.source_kind IN ('FORECAST_OUTCOME_PAIR', 'EXPERIMENTAL_FORECAST_OUTCOME_PAIR')
                             AND (SELECT count(*) FROM mra.evaluation_forecast_source AS source
                                  WHERE source.evaluation_run_id = %s
                                    AND source.evaluation_protocol_metric_id = metric.evaluation_protocol_metric_id) <> %s)
@@ -917,6 +917,10 @@ class PostgresResearchEvaluationVerificationProvider:
                OR (metric.metric_kind = 'OBSERVATION_VALUE'
                    AND NOT (dependency.reference_count = 0
                             AND dependency.observation_count = 1
+                            AND dependency.path_count = 0))
+               OR (metric.metric_kind = 'OBSERVATION_RETURN'
+                   AND NOT (dependency.reference_count = 0
+                            AND dependency.observation_count = 2
                             AND dependency.path_count = 0))
                OR (metric.metric_kind IN (
                        'MAX_FAVORABLE_EXCURSION',

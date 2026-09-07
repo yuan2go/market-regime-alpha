@@ -13,6 +13,26 @@ second planning source.
 
 ## Sequence
 
+The current authorized dependency is WP-DAILY-MODEL-RESEARCH-LOOP-01, from
+main `129d8bee`: deliver actual post-close DataReady, a new sealed-input rule/
+ridge baseline, independent experimental daily ModelForecast and automatic
+Outcome/Evaluation. Its [versioned protocol](../references/WP-DAILY-MODEL-RESEARCH-LOOP-01-Protocol.md)
+freezes time, target, preprocessing and full denominator semantics. It does not
+depend on future WP18Q evidence, change old experiments or reopen qualification.
+
+- [ ] Extend canonical Target/Outcome for two future same-session observations;
+  connect shared pure Feature computation to separate exact historical/live reads.
+- [ ] Execute the new fixed 20-FIT/10-VALIDATION two-arm Generic baseline with
+  purge/embargo and existing Model owner; compare exact vectors and full rosters.
+- [ ] Bind explicit experimental Model use, publish a full daily prediction or
+  abstention, and settle/evaluate mature targets through the existing owners.
+- [ ] Verify registered schema changes and Runtime handoff in isolation, then
+  deploy the frozen project service and preserve collection/backup refresh.
+
+Use focused time, lineage, full-roster, idempotency, recovery and installed-source
+gates. Existing operation results below remain historical; no repeated full
+regression or 936-action rerun is required absent new cross-domain risk.
+
 WP-RESEARCH-OPERATIONS-ACTIVATION-01 continues from main `2d6fbb29`
 on one isolated branch. The latest explicit authorization covers the original
 OID 287543/cluster `7681924516459622681` registered v5→v6 upgrade, private

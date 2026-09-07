@@ -63,6 +63,18 @@ and Production qualification remain unauthorized.
 
 ### Research economics correctness and research operations activation
 
+The latest explicit request authorizes WP-DAILY-MODEL-RESEARCH-LOOP-01:
+post-close DataReady, versioned exploratory baseline training, independent
+purpose-limited daily prediction and canonical Outcome/Evaluation. Reuse the
+existing owners and one Runtime; keep sampled/eligible/feature-ready/predicted/
+mature/estimable denominators distinct. Explicit experimental Model use may
+operate without formal qualification but cannot confer it. Prior operation
+scope constraints remain; necessary new registered schema upgrades require
+isolated verification, exact original identity, backup and single-writer guards.
+Future labels cannot gate prediction registration. No retrospective fold may
+stand in for an actual daily prediction. This scope supersedes stale no-new-
+protocol/model-consumption wording; original research results remain immutable.
+
 WP-RESEARCH-ECONOMICS-CORRECTNESS-01 has completed its bounded local gate in the
 [immutable Verification](docs/references/WP-RESEARCH-ECONOMICS-CORRECTNESS-01-Verification.md).
 Its [design contract](docs/references/WP-RESEARCH-ECONOMICS-CORRECTNESS-01-Design.md)

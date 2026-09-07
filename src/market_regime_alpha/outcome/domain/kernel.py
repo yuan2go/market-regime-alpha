@@ -285,6 +285,14 @@ def _metric(
     first_passage_at: datetime | None = None
     if definition.metric_kind is OutcomeMetricKind.OBSERVATION_VALUE:
         decimal_value = dependency_observations[0].selected_value
+    elif definition.metric_kind is OutcomeMetricKind.OBSERVATION_RETURN:
+        first, last = dependency_observations
+        if (first.source_fact_id, first.event_start, first.event_end) != (
+            last.source_fact_id, last.event_start, last.event_end,
+        ):
+            raise ValueError("OBSERVATION_RETURN requires the same exact bar revision")
+        assert first.selected_value is not None and last.selected_value is not None
+        decimal_value = _ratio(last.selected_value / first.selected_value - Decimal("1"))
     elif definition.metric_kind is OutcomeMetricKind.SIMPLE_RETURN:
         assert reference_value is not None
         observed = dependency_observations[0].selected_value

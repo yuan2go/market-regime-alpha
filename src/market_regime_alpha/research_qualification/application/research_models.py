@@ -14,6 +14,8 @@ from market_regime_alpha.research_qualification.application._command_support imp
 from market_regime_alpha.research_qualification.application._results import (
     ensure_replay_succeeded,
 )
+from market_regime_alpha.research_qualification.domain.experimental_model_use import ExperimentalModelUsePlan
+
 from market_regime_alpha.research_qualification.domain.research_models import (
     ModelTrainingRunPlan,
     ModelVersionPlan,
@@ -85,6 +87,34 @@ class ModelCommands:
             cast(CommandFailureUnitOfWorkProvider, uow_provider),
             id_factory=id_factory,
         )
+
+    @retry_transient_transaction
+    @replay_concurrent_success
+    def register_experimental_use(self, plan: ExperimentalModelUsePlan, context: CommandContext,
+                                 *, runtime_claim: AttemptClaim | None = None) -> ModelMutationResult:
+        with self._uow_provider() as uow:
+            receipt = self._start(uow, "REGISTER_EXPERIMENTAL_MODEL_USE", str(plan.experimental_model_use_id),
+                                  plan.content_sha256, context, runtime_claim)
+            if not receipt.is_new:
+                return self._replay(uow, receipt, runtime_claim)
+            uow.research_models.lock_model_identity(f"experimental-use:{plan.experimental_model_use_id}")
+            uow.artifacts.require_exact(plan.protocol_artifact, lock=True)
+            record = uow.research_models.register_experimental_use(plan)
+            return self._finish(uow, receipt, "EXPERIMENTAL_MODEL_USE", plan.experimental_model_use_id, 1,
+                                canonical_json_sha256(record), context, runtime_claim)
+
+    @retry_transient_transaction
+    @replay_concurrent_success
+    def revoke_experimental_use(self, identity: UUID, context: CommandContext,
+                               *, runtime_claim: AttemptClaim | None = None) -> ModelMutationResult:
+        with self._uow_provider() as uow:
+            receipt = self._start(uow, "REVOKE_EXPERIMENTAL_MODEL_USE", str(identity),
+                                  canonical_json_sha256({"experimental_model_use_id": identity}), context, runtime_claim)
+            if not receipt.is_new:
+                return self._replay(uow, receipt, runtime_claim)
+            record = uow.research_models.revoke_experimental_use(identity)
+            return self._finish(uow, receipt, "EXPERIMENTAL_MODEL_USE_REVOCATION", identity, 1,
+                                canonical_json_sha256(record), context, runtime_claim)
 
     @retry_transient_transaction
     @replay_concurrent_success
@@ -352,6 +382,8 @@ class ModelCommands:
             aggregate_kind=aggregate_kind,
             aggregate_id=str(aggregate_id),
             action={
+                "EXPERIMENTAL_MODEL_USE": "REGISTER_EXPERIMENTAL_MODEL_USE",
+                "EXPERIMENTAL_MODEL_USE_REVOCATION": "REVOKE_EXPERIMENTAL_MODEL_USE",
                 "MODEL": "REGISTER_RESEARCH_MODEL",
                 "MODEL_TRAINING_RUN": "OPEN_MODEL_TRAINING_RUN",
                 "MODEL_VERSION": "REGISTER_MODEL_VERSION",
@@ -392,7 +424,14 @@ class ModelCommands:
         ):
             raise ArtifactIntegrityError("Model command receipt is incomplete")
         aggregate_id = UUID(receipt.result_aggregate_id)
-        if receipt.result_aggregate_kind == "MODEL":
+        if receipt.result_aggregate_kind in {"EXPERIMENTAL_MODEL_USE", "EXPERIMENTAL_MODEL_USE_REVOCATION"}:
+            record = uow.research_models.experimental_use(aggregate_id, lock=False)
+            # Revocation is a later fact; it cannot invalidate registration replay.
+            if receipt.result_aggregate_kind == "EXPERIMENTAL_MODEL_USE":
+                from dataclasses import replace
+                record = replace(record, revoked_at=None)
+            observed_hash = canonical_json_sha256(record)
+        elif receipt.result_aggregate_kind == "MODEL":
             observed_hash = canonical_json_sha256(uow.research_models.model_record(aggregate_id, lock=False))
         elif receipt.result_aggregate_kind == "MODEL_TRAINING_RUN":
             reproducible = uow.research_models.reproducible_training_run_record(
@@ -444,6 +483,14 @@ class ResearchModelApplication:
         self._inputs = inputs
         self._artifacts = artifacts
         self._trainer = trainer
+
+    def register_experimental_use(self, plan: ExperimentalModelUsePlan, context: CommandContext,
+                                 *, runtime_claim: AttemptClaim | None = None) -> ModelMutationResult:
+        return self._commands.register_experimental_use(plan, context, runtime_claim=runtime_claim)
+
+    def revoke_experimental_use(self, identity: UUID, context: CommandContext,
+                               *, runtime_claim: AttemptClaim | None = None) -> ModelMutationResult:
+        return self._commands.revoke_experimental_use(identity, context, runtime_claim=runtime_claim)
 
     def register_model(
         self,

@@ -19,11 +19,11 @@ from market_regime_alpha.decision_support.domain import (
 class PreparedModelForecastInputs:
     inference: PreparedInferenceInputs
     dataset_id: UUID
-    exploratory_backtest_run_id: UUID
-    exploratory_backtest_arm_id: UUID
-    exploratory_backtest_fold_id: UUID
-    exploratory_backtest_fold_session_id: UUID
-    inference_fold_ordinal: int
+    exploratory_backtest_run_id: UUID | None
+    exploratory_backtest_arm_id: UUID | None
+    exploratory_backtest_fold_id: UUID | None
+    exploratory_backtest_fold_session_id: UUID | None
+    inference_fold_ordinal: int | None
     model_version_id: UUID
     model_id: UUID
     model_training_run_id: UUID
@@ -34,6 +34,7 @@ class PreparedModelForecastInputs:
     model_registered_at: datetime
     target_metric_definition_id: UUID
     predictions: tuple[ModelForecastPrediction, ...]
+    experimental_model_use_id: UUID | None = None
 
     def __post_init__(self) -> None:
         commitments = self.inference.commitments
@@ -47,8 +48,15 @@ class PreparedModelForecastInputs:
             raise ValueError("Model Forecast requires a complete prediction roster")
         if any(item.dataset_id != self.dataset_id for item in self.predictions):
             raise ValueError("Model Forecast prediction Dataset binding differs")
-        if self.inference_fold_ordinal <= self.training_fold_ordinal:
-            raise ValueError("Model Forecast inference fold must follow training")
+        if self.experimental_model_use_id is None:
+            if self.inference_fold_ordinal is None or self.inference_fold_ordinal <= self.training_fold_ordinal:
+                raise ValueError("Model Forecast inference fold must follow training")
+        else:
+            if any(value is not None for value in (self.exploratory_backtest_run_id, self.exploratory_backtest_arm_id,
+                    self.exploratory_backtest_fold_id, self.exploratory_backtest_fold_session_id, self.inference_fold_ordinal)):
+                raise ValueError("experimental use cannot mix retrospective inference")
+            if self.model_registered_at >= self.inference.signal_inputs.decision_time:
+                raise ValueError("ModelVersion must precede the actual DecisionTime")
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,6 +84,7 @@ class ModelForecastInputPreparationProvider(Protocol):
         decision_run_id: UUID,
         strategy_version_id: UUID,
         model_version_id: UUID,
+        *, experimental_model_use_id: UUID | None = None,
     ) -> PreparedModelForecastInputs: ...
 
 

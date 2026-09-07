@@ -148,6 +148,13 @@ class TargetCheckpoint:
         _require_enum(self.price_basis, TargetPriceBasis, "price_basis")
         _require_enum(self.value_field, TargetValueField, "value_field")
         _require_enum(self.reference_rule, TargetReferenceRule, "reference_rule")
+        if self.reference_rule is TargetReferenceRule.EXACT_COMPLETED_SESSION_DAILY_BAR and (
+            self.role is not TargetCheckpointRole.DECISION_REFERENCE
+            or self.timeframe is not TargetBarTimeframe.DAILY
+            or self.price_basis is not TargetPriceBasis.RAW_UNADJUSTED
+            or self.value_field is not TargetValueField.CLOSE
+        ):
+            raise ValueError("completed-session reference requires a raw daily Decision close")
         _require_enum(
             self.availability_rule,
             TargetAvailabilityRule,
@@ -232,6 +239,7 @@ class TargetMetricDefinition:
             raise ValueError("non-barrier metrics cannot carry barrier semantics")
         elif self.metric_kind in {
             TargetMetricKind.SIMPLE_RETURN,
+            TargetMetricKind.OBSERVATION_RETURN,
             TargetMetricKind.MAX_FAVORABLE_EXCURSION,
             TargetMetricKind.MAX_ADVERSE_EXCURSION,
         } and (
@@ -514,6 +522,23 @@ class TargetDefinition:
             if not metric_dependencies:
                 raise ValueError("every metric requires dependencies")
             _validate_metric_dependency_shape(metric, metric_dependencies)
+            if metric.metric_kind is TargetMetricKind.OBSERVATION_RETURN:
+                first, last = (
+                    checkpoints[item.target_checkpoint_id]
+                    for item in metric_dependencies
+                )
+                if (
+                    first.session_offset != last.session_offset
+                    or first.local_time != last.local_time
+                    or first.timezone_name != last.timezone_name
+                    or first.timeframe is not TargetBarTimeframe.DAILY
+                    or last.timeframe is not TargetBarTimeframe.DAILY
+                    or first.price_basis is not TargetPriceBasis.RAW_UNADJUSTED
+                    or last.price_basis is not TargetPriceBasis.RAW_UNADJUSTED
+                    or first.value_field is not TargetValueField.OPEN
+                    or last.value_field is not TargetValueField.CLOSE
+                ):
+                    raise ValueError("OBSERVATION_RETURN requires same exact daily OPEN/CLOSE scope")
             for dependency in metric_dependencies:
                 checkpoint = checkpoints[dependency.target_checkpoint_id]
                 if (
@@ -538,6 +563,10 @@ def _validate_metric_dependency_shape(
     dependencies: tuple[TargetMetricDependency, ...],
 ) -> None:
     roles = tuple(item.role for item in dependencies)
+    if metric.metric_kind is TargetMetricKind.OBSERVATION_RETURN:
+        if roles != (TargetDependencyRole.OBSERVATION, TargetDependencyRole.OBSERVATION):
+            raise ValueError("OBSERVATION_RETURN requires two ordered OBSERVATION dependencies")
+        return
     if metric.metric_kind is TargetMetricKind.SIMPLE_RETURN:
         if (
             len(roles) != 2

@@ -84,11 +84,11 @@ class ForecastModelBindingPlan:
     target_metric_definition_id: UUID
     forecast_estimate_content_sha256: ContentHash | str
     dataset_id: UUID
-    exploratory_backtest_run_id: UUID
-    exploratory_backtest_arm_id: UUID
-    exploratory_backtest_fold_id: UUID
-    exploratory_backtest_fold_session_id: UUID
-    inference_fold_ordinal: int
+    exploratory_backtest_run_id: UUID | None
+    exploratory_backtest_arm_id: UUID | None
+    exploratory_backtest_fold_id: UUID | None
+    exploratory_backtest_fold_session_id: UUID | None
+    inference_fold_ordinal: int | None
     model_version_id: UUID
     model_id: UUID
     model_training_run_id: UUID
@@ -104,18 +104,26 @@ class ForecastModelBindingPlan:
     point_estimate: Decimal | None
     model_registered_at: datetime
     forecast_recorded_at: datetime
+    experimental_model_use_id: UUID | None = None
     inference_input_sha256: ContentHash = field(init=False)
     inference_output_sha256: ContentHash = field(init=False)
     content_sha256: ContentHash = field(init=False)
 
     def __post_init__(self) -> None:
-        if any(
-            isinstance(value, bool) or value < 1
-            for value in (self.inference_fold_ordinal, self.training_fold_ordinal)
-        ):
-            raise ValueError("fold ordinals must be positive")
-        if self.inference_fold_ordinal <= self.training_fold_ordinal:
-            raise ValueError("Model Forecast requires a later fold than training")
+        inference_scope = (self.exploratory_backtest_run_id, self.exploratory_backtest_arm_id,
+            self.exploratory_backtest_fold_id, self.exploratory_backtest_fold_session_id, self.inference_fold_ordinal)
+        if self.experimental_model_use_id is None:
+            if any(value is None for value in inference_scope):
+                raise ValueError("historical model inference requires the complete fold scope")
+            assert self.inference_fold_ordinal is not None
+            if isinstance(self.inference_fold_ordinal, bool) or self.inference_fold_ordinal < 1:
+                raise ValueError("fold ordinals must be positive")
+            if self.inference_fold_ordinal <= self.training_fold_ordinal:
+                raise ValueError("Model Forecast requires a later fold than training")
+        elif any(value is not None for value in inference_scope):
+            raise ValueError("experimental use cannot mix a retrospective inference fold")
+        if isinstance(self.training_fold_ordinal, bool) or self.training_fold_ordinal < 1:
+            raise ValueError("training fold ordinal must be positive")
         if (
             isinstance(self.fitted_model_size_bytes, bool)
             or self.fitted_model_size_bytes < 0
@@ -156,6 +164,7 @@ class ForecastModelBindingPlan:
         input_hash = ContentHash(
             canonical_json_sha256(
                 {
+                    **({"experimental_model_use_id": self.experimental_model_use_id} if self.experimental_model_use_id is not None else {}),
                     "dataset_id": self.dataset_id,
                     "feature_vector_sha256": str(vector_hash),
                     "fitted_model_artifact_id": self.fitted_model_artifact_id,
@@ -191,6 +200,7 @@ class ForecastModelBindingPlan:
             ContentHash(
                 canonical_json_sha256(
                     {
+                        **({"experimental_model_use_id": self.experimental_model_use_id} if self.experimental_model_use_id is not None else {}),
                         "commitment_id": self.commitment_id,
                         "dataset_id": self.dataset_id,
                         "decision_run_id": self.decision_run_id,

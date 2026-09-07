@@ -75,6 +75,21 @@ def test_model_forecast_binding_freezes_exact_input_and_output() -> None:
     assert len(str(binding.inference_input_sha256)) == 64
     assert len(str(binding.inference_output_sha256)) == 64
     assert len(str(binding.content_sha256)) == 64
+    assert str(binding.content_sha256) == "f8b5a29d9a29e1b1af451857661bfeb456f10fd2692e0c1dc96494f91f825ae3"
+
+
+def test_explicit_research_use_replaces_inference_fold_without_fabricating_one() -> None:
+    absent = dict(exploratory_backtest_run_id=None, exploratory_backtest_arm_id=None,
+                  exploratory_backtest_fold_id=None, exploratory_backtest_fold_session_id=None,
+                  inference_fold_ordinal=None)
+    with pytest.raises(ValueError, match="historical|fold"):
+        _binding(**absent)
+    binding = _binding(**absent, experimental_model_use_id=_id(50))
+    assert binding.exploratory_backtest_fold_id is None
+    assert binding.training_fold_id == _id(23)
+    assert binding.content_sha256 != _binding(**absent, experimental_model_use_id=_id(51)).content_sha256
+    with pytest.raises(ValueError, match="mix"):
+        _binding(experimental_model_use_id=_id(50))
 
 
 def test_not_estimable_model_forecast_is_explicit() -> None:

@@ -93,6 +93,16 @@ def main(
                     preflight["provider_access"] = verify_provider_access(
                         sdk, timeout_seconds=operation_config.provider_timeout_seconds,
                     )
+                    daily_template=None
+                    if arguments.prospective_command=='serve' and arguments.daily_plan_template is not None:
+                        from market_regime_alpha.interfaces.daily_research import decode_daily_plan
+                        from hashlib import sha256
+                        daily_content=arguments.daily_plan_template.read_bytes()
+                        daily_template=decode_daily_plan(daily_content)
+                        if daily_template.code_sha!=operation_config.code_sha:
+                            raise ValueError('OPERATION_DAILY_CODE_IDENTITY_MISMATCH')
+                        application.daily_prediction_reads.validate_configuration(daily_template)
+                        preflight['daily_template_sha256']=sha256(daily_content).hexdigest()
                     preflight["health"] = (
                         application.prospective_health.inspect(operation_config.series_code)["summary"]
                         if arguments.prospective_command == "preflight"
@@ -133,6 +143,17 @@ def main(
                         except OperationStopped as exc:
                             result = {"state": "OPERATOR_STOPPED", "reason_code": exc.reason_code,
                                       "completed_action_accounting": "CANONICAL_HEALTH_ROSTER"}
+                        daily_result=None
+                        if daily_template is not None and not stop_request.requested:
+                            from market_regime_alpha.interfaces.daily_service import daily_tick
+                            from market_regime_alpha.interfaces.daily_collection import PerCaptureBaoStockProvider
+                            try:
+                                daily_result=daily_tick(application,daily_template,PerCaptureBaoStockProvider(sdk,
+                                    timeout_seconds=operation_config.provider_timeout_seconds,maximum_rows=operation_config.provider_maximum_rows,
+                                    maximum_response_bytes=operation_config.provider_maximum_response_bytes),worker_id=operation_config.worker_id,
+                                    maximum_steps=operation_config.maximum_attempts_per_tick,before_action=before_action)
+                            except OperationStopped as exc:
+                                daily_result={'state':'OPERATOR_STOPPED','reason_code':exc.reason_code}
                         health = application.prospective_health.inspect(operation_config.series_code)
                     summary = health["summary"]
                     return {
@@ -140,6 +161,7 @@ def main(
                         "series_code": operation_config.series_code, "observed_at": health["observed_at"],
                         "configuration_sha256": operation_config.content_sha256,
                         "continuation": result,
+                        "daily_research": daily_result,
                         "health": {key: value for key, value in summary.items() if key != "alerts"},
                         "alert_changes": alerts.observe(summary["alerts"]),
                         "tick_elapsed_seconds": perf_counter() - started,
@@ -180,6 +202,9 @@ def main(
 
 
 def _dispatch(arguments: argparse.Namespace, settings: TargetSettings) -> object:
+    if arguments.area == "research":
+        from market_regime_alpha.interfaces.cli.daily import dispatch_daily
+        return dispatch_daily(arguments, settings)
     if arguments.area == "db":
         if arguments.db_command == "bootstrap":
             return bootstrap_database(settings)
@@ -274,6 +299,15 @@ def _dispatch(arguments: argparse.Namespace, settings: TargetSettings) -> object
                 )
             if command in {"run", "resume", "inspect", "progress"}:
                 run = application.backtest_specifications.load(arguments.run_id)
+                if command in {"run", "resume"} and arguments.operation_config is not None:
+                    from market_regime_alpha.infrastructure.postgres.prospective_operation_session import backtest_research_admission
+                    config = load_operation_config(arguments.operation_config)
+                    with operational_session(settings, config) as guard:
+                        guard.verify_startup(application)
+                        guard.before_action()
+                        with backtest_research_admission(backtest_run_id=arguments.run_id, specification_sha256=str(run.specification_sha256)):
+                            execute_backtest = application.backtest_execution.run if command == "run" else application.backtest_execution.resume
+                            return execute_backtest(run)
                 if command == "progress":
                     return application.backtest_execution.progress(run)
                 if command == "run":
@@ -374,6 +408,8 @@ def _dispatch(arguments: argparse.Namespace, settings: TargetSettings) -> object
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="mra")
     areas = parser.add_subparsers(dest="area", required=True)
+    from market_regime_alpha.interfaces.cli.daily import add_daily_parser
+    add_daily_parser(areas)
 
     evidence = areas.add_parser("evidence")
     evidence_commands = evidence.add_subparsers(dest="evidence_command", required=True)
@@ -451,6 +487,8 @@ def _parser() -> argparse.ArgumentParser:
     for command in ("run", "resume", "inspect", "replay", "progress"):
         operation = backtest_commands.add_parser(command)
         operation.add_argument("--run-id", required=True, type=UUID)
+        if command in {"run", "resume"}:
+            operation.add_argument("--operation-config", type=Path)
     report = backtest_commands.add_parser("report")
     report.add_argument("--run-id", required=True, type=UUID)
     report.add_argument("--format", choices=("json", "markdown"), default="json")
@@ -493,6 +531,7 @@ def _parser() -> argparse.ArgumentParser:
         continuity.add_argument("--lease-seconds", type=int, default=120)
         if command == "serve":
             continuity.add_argument("--operation-config", type=Path)
+            continuity.add_argument("--daily-plan-template", type=Path)
             continuity.add_argument("--wakeup-seconds", required=True, type=float)
             continuity.add_argument("--maximum-wakeups", type=int)
     prospective_plan = prospective_commands.add_parser("plan-next")

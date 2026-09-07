@@ -271,16 +271,15 @@ class PostgresResearchPartitionRepository:
             frozen_at=row[12],
         )
 
-    def reconcile(self, research_partition_id: UUID) -> bool:
-        record = self.record(research_partition_id, lock=True)
+    def reconcile(self, research_partition_id: UUID, *, lock: bool = True) -> bool:
+        record = self.record(research_partition_id, lock=lock)
         rows = self._connection.execute(
             """
             SELECT member_ordinal, commitment_id, content_sha256
             FROM mra.research_partition_member
             WHERE research_partition_id = %s
             ORDER BY member_ordinal
-            FOR SHARE
-            """,
+            """ + (" FOR SHARE" if lock else ""),
             (research_partition_id,),
         ).fetchall()
         actual_hash = canonical_json_sha256(

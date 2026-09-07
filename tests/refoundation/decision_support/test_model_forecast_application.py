@@ -272,3 +272,32 @@ def test_model_forecast_retains_not_estimable_candidate() -> None:
     assert forecasts[0].status.value == "NOT_ESTIMABLE"
     assert forecasts[0].estimates[0].point_estimate is None
     assert state["model_bindings"][0].reason_code == "FEATURE_MISSING"
+
+
+def test_experimental_prediction_keeps_members_without_a_strategy_signal() -> None:
+    from market_regime_alpha.decision_support.domain import CandidateDisposition
+    original = _model_prepared()
+    inputs = original.inference.signal_inputs
+    prepared = replace(original, inference=replace(original.inference, signal_inputs=replace(inputs,
+        candidates=tuple(replace(item, disposition=CandidateDisposition.RANKED_NOT_SELECTED) for item in inputs.candidates))),
+        exploratory_backtest_run_id=None, exploratory_backtest_arm_id=None, exploratory_backtest_fold_id=None,
+        exploratory_backtest_fold_session_id=None, inference_fold_ordinal=None,
+        model_registered_at=inputs.decision_time-timedelta(seconds=1), experimental_model_use_id=_uuid(4901))
+
+    class Preparation:
+        def prepare(self, decision_run_id, strategy_version_id, model_version_id, *, experimental_model_use_id=None):
+            assert experimental_model_use_id == prepared.experimental_model_use_id
+            return prepared
+
+    state = {}
+    query = _InferenceQuery()
+    identities = iter(range(5000, 5300))
+    commands = ModelForecastCommands(Preparation(), _UowProvider(state, query), query, _ModelQueries(state), id_factory=lambda: _uuid(next(identities)))
+    args = (inputs.decision_run_id, inputs.strategy_version.strategy_version_id, prepared.model_version_id, _context("independent-full-model-population"))
+    first = commands.produce(*args, runtime_claim=_claim(), experimental_model_use_id=prepared.experimental_model_use_id)
+    repeated = commands.produce(*args, runtime_claim=_claim(), experimental_model_use_id=prepared.experimental_model_use_id)
+    assert first.result_hash == repeated.result_hash and repeated.replayed
+    assert {item.status.value for item in state["signal_authority"].signals} == {"NO_SIGNAL"}
+    forecasts = state["forecast_authority"].forecasts
+    assert [item.estimates[0].point_estimate for item in forecasts] == [Decimal("0.010000000000000000"), Decimal("0.020000000000000000")]
+    assert all(item.exploratory_backtest_fold_id is None for item in state["model_bindings"])

@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime
 from typing import Any, Iterator, cast
-from uuid import UUID
+from uuid import UUID, uuid5
 
 import psycopg
 from psycopg.rows import dict_row
@@ -79,7 +79,7 @@ def admit_runtime_attempt(connection: psycopg.Connection[Any], *, run_id: UUID |
                              WHERE run.fire_key LIKE 'archive:' || generation.market_archive_id::text || ':%%'
                                AND generation.series_code<>%s)""", (run_id, session.series_code),
     ).fetchone()
-    if allowed is None:
+    if allowed is None and not session.daily_run_matches(connection,run_id) and not session.backtest_run_matches(connection,run_id):
         raise ValueError("OPERATION_RUNTIME_RUN_OUTSIDE_SERIES")
     if session.has_conflicting_attempts(session.series_code):
         raise ValueError("OPERATION_ACTIVE_ATTEMPT_CONFLICT")
@@ -100,6 +100,41 @@ class PostgresProspectiveOperationSession:
         self.database_oid = 0
         self.cluster_identity = ""
         self.own_attempt_ids: set[UUID] = set()
+        self.daily_scope: tuple[UUID,str,str,str | None,int] | None = None
+        self.backtest_scope: tuple[UUID,str] | None = None
+
+    def backtest_run_matches(self, connection: psycopg.Connection[Any], run_id: UUID | None) -> bool:
+        if self.backtest_scope is None or run_id is None:
+            return False
+        identity, digest = self.backtest_scope
+        return connection.execute("""SELECT EXISTS(SELECT 1 FROM mra.backtest_runtime_binding binding
+            JOIN mra.exploratory_backtest_run backtest USING(exploratory_backtest_run_id)
+            JOIN mra.runtime_run run ON run.run_id=binding.runtime_run_id
+            WHERE run.run_id=%s AND binding.exploratory_backtest_run_id=%s
+              AND binding.specification_sha256=%s AND backtest.current_specification_sha256=%s
+              AND run.runtime_mode='HISTORICAL'
+              AND NOT EXISTS(SELECT 1 FROM mra.runtime_step step WHERE step.run_id=run.run_id
+                AND step.implementation<>%s))""", (run_id,identity,digest,digest,
+                'market_regime_alpha.research_qualification.application.backtest_runtime:BacktestRuntimeActionExecutor')).fetchone()==(True,)
+
+    def daily_run_matches(self, connection: psycopg.Connection[Any], run_id: UUID | None) -> bool:
+        if self.daily_scope is None or run_id is None:
+            return False
+        identity,code,config,phase,round_no=self.daily_scope
+        allowed={uuid5(identity,'prediction-runtime'):('daily:'+str(identity),'research.daily_prediction.'),
+                 uuid5(identity,'outcome-evaluation-runtime'):('daily-outcome:'+str(identity),'research.daily_outcome.'),
+                 uuid5(identity,'abstention-runtime'):('daily-abstention:'+str(identity),'research.daily_abstention.')}
+        if phase is not None:
+            allowed={uuid5(identity,phase+'-collection:'+str(round_no)):
+                ('daily-'+phase+':'+str(identity)+':round:'+str(round_no),'market.daily_research.'+phase+'.')}
+        if run_id not in allowed:
+            return False
+        fire,prefix=allowed[run_id]
+        return connection.execute("""SELECT EXISTS(SELECT 1 FROM mra.runtime_run run
+            WHERE run.run_id=%s AND run.runtime_mode='SHADOW' AND run.fire_key=%s AND run.code_sha=%s AND run.config_hash=%s
+              AND EXISTS(SELECT 1 FROM mra.runtime_step step WHERE step.run_id=run.run_id)
+              AND NOT EXISTS(SELECT 1 FROM mra.runtime_step step WHERE step.run_id=run.run_id
+                AND step.implementation NOT LIKE %s))""",(run_id,fire,code,config,prefix+'%')).fetchone()==(True,)
 
     def snapshot(self) -> dict[str, Any]:
         with self.connection.transaction():
@@ -126,6 +161,13 @@ class PostgresProspectiveOperationSession:
             raise ValueError("OPERATION_SUPERVISOR_LOCK_LOST")
 
     def has_conflicting_attempts(self, series_code: str) -> bool:
+        expired_daily=[]
+        if self.daily_scope is not None:
+            suffixes=('prediction-runtime','outcome-evaluation-runtime','abstention-runtime') if self.daily_scope[3] is None else (self.daily_scope[3]+'-collection:'+str(self.daily_scope[4]),)
+            for suffix in suffixes:
+                identity=uuid5(self.daily_scope[0],suffix)
+                if self.daily_run_matches(self.connection,identity):
+                    expired_daily.append(identity)
         row = self.connection.execute(
             """SELECT count(*) FROM mra.runtime_attempt AS attempt
                JOIN mra.runtime_step AS step USING (step_id)
@@ -136,7 +178,7 @@ class PostgresProspectiveOperationSession:
                    SELECT 1 FROM mra.prospective_archive_generation AS generation
                    WHERE generation.series_code=%s
                      AND run.fire_key LIKE 'archive:' || generation.market_archive_id::text || ':%%'
-                 ))""", (list(self.own_attempt_ids), series_code),
+                 ) AND NOT (run.run_id=ANY(%s::uuid[]) AND step.external_effect_class IN ('NONE','CONTENT_PUT')))""", (list(self.own_attempt_ids), series_code, expired_daily),
         ).fetchone()
         return row is None or bool(row[0])
 
@@ -188,3 +230,53 @@ def prospective_operation_session(
             if not connection.closed:
                 connection.execute("SELECT pg_advisory_unlock(hashtextextended(%s,0))", (key,))
                 connection.execute("SELECT pg_advisory_unlock(hashtextextended(%s,0))", (_DATABASE_WRITER_KEY,))
+
+
+@contextmanager
+def daily_research_admission(*, prediction_id: UUID, code_sha: str, config_sha256: str, collection_phase: str | None=None, collection_round: int=1) -> Iterator[None]:
+    """Sequential handoff inside the existing supervisor, bound to two exact Runs.
+
+    No lock is released; other Runtime workers remain excluded by atomic admission.
+    This process capability is not a business registration or execution Authority.
+    """
+    if collection_phase not in {None,'input','outcome'} or not 1<=collection_round<=16:
+        raise ValueError('DAILY_OPERATION_SCOPE_INVALID')
+    session=_operation_session.get()
+    if session is None:
+        raise ValueError('DAILY_OPERATION_REQUIRES_SUPERVISOR')
+    session.require_supervisor_lock(session.series_code)
+    if session.daily_scope is not None or session.backtest_scope is not None:
+        raise ValueError('DAILY_OPERATION_NESTED_HANDOFF')
+    with session.connection.transaction():
+        _admission_lock(session.connection)
+        if session.connection.execute("SELECT EXISTS(SELECT 1 FROM mra.runtime_attempt WHERE state IN ('CLAIMED','RUNNING') AND lease_until>clock_timestamp())").fetchone()!=(False,):
+            raise ValueError('OPERATION_ACTIVE_ATTEMPT_CONFLICT')
+        session.daily_scope=(prediction_id,code_sha,config_sha256,collection_phase,collection_round)
+    try:
+        if session.has_conflicting_attempts(session.series_code):
+            raise ValueError('OPERATION_ACTIVE_ATTEMPT_CONFLICT')
+        yield
+    finally:
+        session.daily_scope=None
+
+
+@contextmanager
+def backtest_research_admission(*, backtest_run_id: UUID, specification_sha256: str) -> Iterator[None]:
+    """Planned Generic research uses the same reservation during collection pause."""
+    session = _operation_session.get()
+    if session is None:
+        raise ValueError('BACKTEST_OPERATION_REQUIRES_SUPERVISOR')
+    session.require_supervisor_lock(session.series_code)
+    if session.daily_scope is not None or session.backtest_scope is not None:
+        raise ValueError('BACKTEST_OPERATION_NESTED_HANDOFF')
+    with session.connection.transaction():
+        _admission_lock(session.connection)
+        if session.connection.execute("SELECT EXISTS(SELECT 1 FROM mra.runtime_attempt WHERE state IN ('CLAIMED','RUNNING'))").fetchone()!=(False,):
+            raise ValueError('OPERATION_ACTIVE_ATTEMPT_CONFLICT')
+        if session.connection.execute('SELECT current_specification_sha256 FROM mra.exploratory_backtest_run WHERE exploratory_backtest_run_id=%s', (backtest_run_id,)).fetchone()!=(specification_sha256,):
+            raise ValueError('BACKTEST_OPERATION_SPECIFICATION_MISMATCH')
+        session.backtest_scope=(backtest_run_id,specification_sha256)
+    try:
+        yield
+    finally:
+        session.backtest_scope=None

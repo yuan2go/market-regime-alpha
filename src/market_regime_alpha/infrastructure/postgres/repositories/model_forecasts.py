@@ -31,14 +31,15 @@ class PostgresModelForecastRepository:
             prepared.inference.signal_inputs.decision_run_id,
             prepared.model_version_id,
             lock=True,
+            experimental_model_use_id=prepared.experimental_model_use_id,
         )
         observed = (
             UUID(str(row[0])),
-            UUID(str(row[1])),
-            UUID(str(row[2])),
-            UUID(str(row[3])),
-            UUID(str(row[4])),
-            int(row[5]),
+            UUID(str(row[1])) if row[1] is not None else None,
+            UUID(str(row[2])) if row[2] is not None else None,
+            UUID(str(row[3])) if row[3] is not None else None,
+            UUID(str(row[4])) if row[4] is not None else None,
+            int(row[5]) if row[5] is not None else None,
             UUID(str(row[7])),
             UUID(str(row[8])),
             UUID(str(row[9])),
@@ -92,12 +93,12 @@ class PostgresModelForecastRepository:
                 fitted_model_size_bytes, feature_vector_sha256,
                 point_estimate, model_registered_at, forecast_recorded_at,
                 inference_input_sha256, inference_output_sha256,
-                content_sha256
+                content_sha256, experimental_model_use_id
             ) VALUES (
                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                %s, %s, %s, %s
+                %s, %s, %s, %s, %s
             )
             """,
             (
@@ -140,6 +141,7 @@ class PostgresModelForecastRepository:
                     str(item.inference_input_sha256),
                     str(item.inference_output_sha256),
                     str(item.content_sha256),
+                    item.experimental_model_use_id,
                 )
                 for item in bindings
             ),
