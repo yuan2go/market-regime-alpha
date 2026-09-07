@@ -132,9 +132,11 @@ class ProspectiveExternalEffectUnknown(ProspectiveRuntimeIntegrityError):
 class _ReconciledCaptureProvider:
     """Only the first Attempt may start I/O; retries must find Capture receipts."""
 
-    def __init__(self, provider: MarketProvider, *, attempt_no: int) -> None:
+    def __init__(self, provider: MarketProvider, *, attempt_no: int,
+                 before_effect: Callable[[], None] | None = None) -> None:
         self._provider = provider
         self._may_start = attempt_no == 1
+        self._before_effect = before_effect
 
     def capture(self, request: CaptureRequest) -> ProviderResponse:
         if not self._may_start:
@@ -143,6 +145,8 @@ class _ReconciledCaptureProvider:
                 "Provider I/O cannot be repeated"
             )
         self._may_start = False
+        if self._before_effect is not None:
+            self._before_effect()
         return self._provider.capture(request)
 
 
@@ -492,7 +496,9 @@ class ProspectiveArchiveRuntimeApplication:
                 try:
                     result = self._operations.execute_slice(
                         request,
-                        provider=_ReconciledCaptureProvider(provider, attempt_no=claim.attempt_no),
+                        provider=_ReconciledCaptureProvider(
+                            provider, attempt_no=claim.attempt_no, before_effect=before_action,
+                        ),
                         normalizer=normalizer_for(item),
                         context=_context(
                             f"archive:{plan.market_archive_id}:runtime:"

@@ -74,6 +74,8 @@ class ProspectiveOperationGuard:
 
     def before_action(self) -> None:
         self.session.require_supervisor_lock(self.config.series_code)
+        if self.session.has_conflicting_attempts(self.config.series_code):
+            raise ValueError("OPERATION_ACTIVE_ATTEMPT_CONFLICT")
         self.check_resources()
 
     def validate_scope(self, snapshot: dict[str, Any]) -> None:

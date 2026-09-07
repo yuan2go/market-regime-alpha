@@ -287,17 +287,121 @@ def test_live_writer_blocks_but_expired_same_series_requires_owner_recovery(requ
     with operational_session(settings, config) as guard:
         with pytest.raises(ValueError, match="ACTIVE_ATTEMPT_CONFLICT"):
             guard.snapshot()
+
         time.sleep(1.1)  # Actual PG lease expiry in an explicitly synthetic fixture.
         assert guard.snapshot()["active_attempts"] == 1
         # Guard inspection leaves the expired Attempt for the canonical owner.
         assert app.runtime.inspect_run(run_id).steps[0].attempt_states == ("CLAIMED",)
         assert app.runtime.recover_expired(actor_id="operator", reason_code="GUARD_DRILL", run_id=run_id) == (claim.attempt_id,)
         assert guard.snapshot()["active_attempts"] == 0
-        foreign_run = _run(app.runtime, app.artifacts, _schedule(app.runtime),
-                           steps=(_step("foreign-step", 1),), key="foreign-research")
-        foreign = app.runtime.claim_next(run_id=foreign_run, worker_id="unknown-worker",
-            lease_duration=timedelta(seconds=1), context=_context("foreign-claim"))
-        assert foreign is not None
-        time.sleep(1.1)
+    foreign_run = _run(app.runtime, app.artifacts, _schedule(app.runtime),
+                       steps=(_step("foreign-step", 1),), key="foreign-research")
+    foreign = app.runtime.claim_next(run_id=foreign_run, worker_id="unknown-worker",
+        lease_duration=timedelta(seconds=1), context=_context("foreign-claim"))
+    assert foreign is not None
+    time.sleep(1.1)
+    with operational_session(settings, config) as guard:
         with pytest.raises(ValueError, match="ACTIVE_ATTEMPT_CONFLICT"):
-            guard.snapshot()
+            guard.before_action()
+
+def test_foreign_claim_after_last_check_cannot_enter_supervised_database(request, tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    from tests.refoundation.test_runtime_postgres import _context
+
+    fixture = request.getfixturevalue("canonical_prospective_stack")
+    app, settings = fixture.application, fixture.settings
+    snapshot = app.evidence.inventory()
+    bundle = tmp_path / "atomic-admission-backup"
+    receipt = app.evidence.backup(bundle, expected_name=snapshot["database"]["name"],
+        expected_oid=snapshot["database"]["oid"], minimum_free_bytes=1)
+    config = replace(config_for(settings, snapshot, bundle, receipt), series_code="health_fixture")
+    run_id = fixture.registration.capture_run_ids[0]
+    barrier = Barrier(2)
+
+    def enter_after_check():
+        barrier.wait(timeout=5)
+        # Matching text is not ownership: another thread has no admitted session.
+        return app.runtime.claim_next(run_id=run_id, worker_id=config.worker_id,
+            lease_duration=timedelta(seconds=60), context=_context("foreign-after-check"))
+
+    with operational_session(settings, config) as guard, ThreadPoolExecutor(max_workers=1) as executor:
+        guard.before_action()
+        with fixture.pool.connection(read_only=True) as connection:
+            before = connection.execute("SELECT (SELECT count(*) FROM mra.runtime_attempt), "
+                "(SELECT count(*) FROM mra.command_receipt), (SELECT count(*) FROM mra.audit_event)").fetchone()
+        future = executor.submit(enter_after_check)
+        barrier.wait(timeout=5)
+        with pytest.raises(ValueError, match="OPERATION_RUNTIME_ADMISSION_CONFLICT"):
+            future.result(timeout=10)
+        with fixture.pool.connection(read_only=True) as connection:
+            assert connection.execute("SELECT (SELECT count(*) FROM mra.runtime_attempt), "
+                "(SELECT count(*) FROM mra.command_receipt), (SELECT count(*) FROM mra.audit_event)").fetchone() == before
+        guard.before_action()
+        own = app.runtime.claim_next(run_id=run_id, worker_id=config.worker_id,
+            lease_duration=timedelta(seconds=60), context=_context("own-after-foreign-refusal"))
+        assert own is not None
+        app.runtime.start_attempt(own, _context("own-start"))
+        # A canonical admitted Attempt must remain usable before the Provider effect.
+        guard.before_action()
+        assert guard.snapshot()["active_attempts"] == 1
+        guard.connection.close()
+        with pytest.raises(ValueError, match="SUPERVISOR_CONNECTION_LOST"):
+            app.runtime.claim_next(run_id=fixture.registration.capture_run_ids[1],
+                worker_id=config.worker_id, lease_duration=timedelta(seconds=60),
+                context=_context("claim-after-supervision-lost"))
+        # Draining an already admitted effect retains its live Runtime fence.
+        app.runtime.succeed_attempt(own, result_hash="a"*64, context=_context("own-drain"))
+        assert app.runtime.inspect_run(run_id).steps[0].state == "SUCCEEDED"
+
+
+def test_claim_commit_and_supervisor_start_share_atomic_admission(request, tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    from time import monotonic, sleep
+    from market_regime_alpha.infrastructure.postgres.uow import PostgresUnitOfWork
+    from tests.refoundation.test_runtime_postgres import _context
+
+    fixture = request.getfixturevalue("canonical_prospective_stack")
+    app, settings = fixture.application, fixture.settings
+    snapshot = app.evidence.inventory()
+    bundle = tmp_path / "claim-start-race-backup"
+    receipt = app.evidence.backup(bundle, expected_name=snapshot["database"]["name"],
+        expected_oid=snapshot["database"]["oid"], minimum_free_bytes=1)
+    config = replace(config_for(settings, snapshot, bundle, receipt), series_code="health_fixture")
+    prepared, release = Event(), Event()
+    original_commit = PostgresUnitOfWork.commit
+
+    def held_commit(self):
+        prepared.set()
+        assert release.wait(timeout=10)
+        original_commit(self)
+
+    monkeypatch.setattr(PostgresUnitOfWork, "commit", held_commit)
+
+    def start_supervisor():
+        with operational_session(settings, config) as guard:
+            guard.before_action()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        claimed = executor.submit(app.runtime.claim_next,
+            run_id=fixture.registration.capture_run_ids[0], worker_id="earlier-claimant",
+            lease_duration=timedelta(seconds=60), context=_context("claim-before-admission"))
+        assert prepared.wait(timeout=5)
+        starting = executor.submit(start_supervisor)
+        try:
+            deadline = monotonic()+5
+            with psycopg.connect(settings.database_url, autocommit=True) as observer:
+                while True:
+                    waiting = observer.execute("SELECT count(*) FROM pg_stat_activity "
+                        "WHERE datname=current_database() AND application_name='mra-prospective-supervisor' "
+                        "AND wait_event='advisory'").fetchone()[0]
+                    if waiting == 1:
+                        break
+                    assert monotonic() < deadline, "supervisor did not wait for the uncommitted claim"
+                    sleep(0.01)
+        finally:
+            release.set()
+        assert claimed.result(timeout=10) is not None
+        with pytest.raises(ValueError, match="ACTIVE_ATTEMPT_CONFLICT"):
+            starting.result(timeout=10)

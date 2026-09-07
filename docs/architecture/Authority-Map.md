@@ -30,6 +30,13 @@ integrity, resource budgets and a session advisory lock. It can stop new owner
 actions; it cannot decide a due window, invent a terminal fact or replace the
 Runtime lease/fence. Health, database diagnostics and research funnel commands
 are read-only projections and grant no execution or maturity authority.
+All current target Runtime Attempt-creation paths and prospective supervisor
+acquisition share atomic PostgreSQL admission. During supervised operation the
+exact database has one admitted prospective writer; permission is not inferred
+from a worker-id string or from an earlier conflict-free SELECT. Per-action
+conflict checks distinguish this session's canonical Attempt IDs from foreign
+work. Session reservation is process admission only, holds no business transaction
+over Provider I/O, and does not replace canonical Runtime leases/fences.
 Old-schema diagnostics are explicitly non-admitting; current write startup
 still requires the exact current schema. A restored scope is never selected
 because the original is slow or failed. The original scope's upgrade/adoption

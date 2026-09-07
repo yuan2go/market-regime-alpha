@@ -168,6 +168,26 @@ The profile and CLI arguments must agree. Each wakeup emits database scope,
 profile hash, canonical continuation, health summary and alert changes as JSON.
 The supervision lock is checked again before owner actions and claims; a lost
 connection/lock, changed source, old backup or exhausted disk stops further work.
+Current target Runtime `claim_next` and deadline-terminal Attempt creation share
+one short PostgreSQL admission transaction lock with supervisor acquisition.
+The prospective service reserves the target Runtime writer scope of the exact
+database, across series and Runs; other current Runtime claimants fail before
+committing an Attempt, Receipt or Audit. The per-series supervisor lock alone
+does not provide that exclusion. Claims in the admitted process context must
+belong to the prospective Runtime plan; matching worker-id text is insufficient.
+Owned Attempt identities are tracked only for conflict checks, never as a second
+lease or persisted Authority. Every action rechecks unexpected live Attempts;
+the Provider boundary rechecks permission after claim/start as well.
+
+Supervisor acquisition serializes with an in-flight claim transaction, so a
+claim that committed first is visible to the subsequent conflict check. Expired
+same-series Attempts remain for canonical recovery; expired foreign work still
+blocks activation. Supervision loss prevents new claims/effects while committed
+facts and the existing fence-controlled drain remain intact. No Provider I/O
+holds the admission transaction. These guarantees cover current target Runtime
+participants, not arbitrary SQL or old binaries ignoring the protocol. Activation
+must first exclude old/unknown writers; never launch a historical writer against
+this reserved database or adopt a recovery copy as fallback.
 The default template limits each wakeup to 16 actual claims and 120 seconds;
 each BaoStock execute has one 10-second deadline including login/query/row
 iteration, at most 100,000 rows and 32 MiB serialized response. SDK attempts are

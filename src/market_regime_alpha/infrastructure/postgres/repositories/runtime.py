@@ -8,6 +8,10 @@ from uuid import UUID
 
 import psycopg
 
+from market_regime_alpha.infrastructure.postgres.prospective_operation_session import (
+    admit_runtime_attempt, remember_operational_attempt,
+)
+
 from market_regime_alpha.runtime.domain import (
     RunSpec,
     ScheduleSpec,
@@ -222,6 +226,7 @@ class PostgresRuntimeRepository:
         step_id: UUID | None = None,
     ) -> AttemptClaim | None:
         lease_ms = _lease_milliseconds(lease_duration)
+        admit_runtime_attempt(self._connection, run_id=run_id, step_id=step_id)
         row = self._connection.execute(
             """
             SELECT
@@ -315,6 +320,7 @@ class PostgresRuntimeRepository:
         ).fetchone()
         if updated is None or attempt_row is None:
             raise RuntimeStateConflictError(f"Step {step_id} claim lost a state race")
+        remember_operational_attempt(attempt_id)
         return AttemptClaim(
             attempt_id=attempt_id,
             run_id=run_id,
@@ -732,6 +738,7 @@ class PostgresRuntimeRepository:
         receipt_id: UUID,
         lease_owner: str,
     ) -> RecoveryDecision | None:
+        admit_runtime_attempt(self._connection, run_id=None, step_id=step_id)
         row = self._connection.execute(
             """
             SELECT run.run_id, run.state, step.state, step.version,

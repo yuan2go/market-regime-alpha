@@ -389,3 +389,41 @@ def test_operation_guard_stops_new_claims_after_draining_current_action(prospect
     assert trace.steps[1].state == "READY"
     assert trace.steps[1].attempt_states == ()
     assert len(operations.requests) == 1
+
+
+def test_supervision_lost_after_claim_prevents_first_provider_effect(prospective_stack):
+    runtime, artifacts, pool = prospective_stack
+    clock = PostgresMarketDatabaseClock(pool)
+    manifest = _runtime_fixture_at(clock.now())
+    due = compile_prospective_runtime_plan(manifest, code_sha="1"*40).capture_runs[0]
+
+    class Provider:
+        calls = 0
+        def capture(self, request):
+            self.calls += 1
+            return object()
+
+    class Operations(_Operations):
+        def execute_slice(self, request, **kwargs):
+            kwargs["provider"].capture(request.capture_request)
+            return super().execute_slice(request, **kwargs)
+
+    provider = Provider()
+    app = ProspectiveArchiveRuntimeApplication(
+        runtime=runtime, artifacts=artifacts, archives=_Archives(runtime),
+        operations=Operations(runtime), database_clock=clock,
+        due_query=lambda _: (due.slices[0].plan.market_archive_slice_id,),
+    )
+    app.predeclare(manifest, code_sha="1"*40, actor_id="guard", lease_duration=timedelta(seconds=30))
+    def guard():
+        if runtime.inspect_run(due.run_id).steps[0].state == "RUNNING":
+            raise ValueError("OPERATION_SUPERVISOR_CONNECTION_LOST")
+    with pytest.raises(ValueError, match="OPERATION_SUPERVISOR_CONNECTION_LOST"):
+        app.run_due(manifest, code_sha="1"*40, actor_id="guard", worker_id="worker",
+            lease_duration=timedelta(seconds=30), provider=provider,
+            normalizer_for=lambda _: object(), before_action=guard)
+    assert provider.calls == 0
+    trace = runtime.inspect_run(due.run_id)
+    assert trace.steps[0].state == "FAILED"
+    assert trace.steps[0].attempt_states == ("FAILED_TERMINAL",)
+    assert trace.steps[1].attempt_states == ()
