@@ -28,6 +28,98 @@ uv run model-governance --help
 uv run pit-authority --help
 ```
 
+
+## Authorized current-user prospective deployment
+
+The 2026-09-07 activation authorization covers only the existing original scope
+`mra_wp18q_r2_operational_20260905`, OID 287543, cluster
+`7681924516459622681`, series `r2_xshg32`. Its registered v6 upgrade has
+completed. The original failed campaign stays failed. No recovery copy is a
+writer or fallback. Current-user job `local.mra.prospective.r2-xshg32` invokes
+the installed frozen wheel through the existing guarded CLI. `KeepAlive=false`
+prevents automatic fault restart. Every start still performs full preflight.
+A launchd process state alone does not prove a business tick or a capture.
+This LaunchAgent requires the current user session and the mounted project
+volume. Machine sleep/logout is not continuous coverage; missed windows remain
+visible through canonical recovery after wake or login.
+
+The private deployment directory contains `operation.json`, `deployment.json`,
+`operator.env`, frozen `launch.sh`, thin `mra.sh`/`refresh.sh` launch wrappers,
+versioned wheel environments, logs, profiles and receipts. It is owner-only and
+outside Git. The wrappers contain no business decisions. Their exact bytes,
+profile hashes and installed source identity belong to the incremental evidence
+manifest. The current launcher is pinned to implementation `26d4d98e`.
+
+```bash
+MRA_OPERATOR_HOME="$HOME/.local/state/market-regime-alpha/prospective/r2-xshg32"
+MRA_USER_DOMAIN="gui/$(id -u)"
+MRA_SERVICE_LABEL="local.mra.prospective.r2-xshg32"
+
+launchctl print "$MRA_USER_DOMAIN/$MRA_SERVICE_LABEL"
+"$MRA_OPERATOR_HOME/mra.sh" archive prospective status \
+  --series-code r2_xshg32 \
+  --expected-database-name mra_wp18q_r2_operational_20260905 \
+  --expected-database-oid 287543 \
+  --expected-cluster-identity 7681924516459622681
+
+# Graceful pause of this exact owned job; no PID guessing or kill escalation.
+launchctl kill SIGTERM "$MRA_USER_DOMAIN/$MRA_SERVICE_LABEL"
+
+# After inspecting the stopped job and reconciling its canonical failure:
+"$MRA_OPERATOR_HOME/refresh.sh" --recover-stopped
+
+# Refresh while running: drain, new backup, verify, advance profile, restart.
+"$MRA_OPERATOR_HOME/refresh.sh"
+
+# Disable future project wakeups, then drain the exact service if still running.
+launchctl disable "$MRA_USER_DOMAIN/$MRA_SERVICE_LABEL.backup-refresh"
+launchctl disable "$MRA_USER_DOMAIN/$MRA_SERVICE_LABEL"
+launchctl kill SIGTERM "$MRA_USER_DOMAIN/$MRA_SERVICE_LABEL"
+```
+
+If already stopped, do not repeat the SIGTERM command. Inspect the last receipt
+and health first. Re-enable with `launchctl enable` for the same two labels;
+explicit `refresh.sh --recover-stopped` performs preflight and starts the service.
+It never overrides a deliberately disabled job or resumes a failed business Run.
+Keep the project backup-refresh job loaded when enabling regular operation.
+There is no system-wide service change and no external notification.
+
+The installed [refresh procedure template](templates/refresh_backup.py) delegates
+backup and preflight to existing `mra` commands. Its
+[Artifact observation helper](templates/verify_prospective_artifacts.py) reloads
+only the exact prospective series' Artifact references and calls the existing
+Artifact owner. It does not alter Capture known-times or content identities.
+The operator reservation excludes current Runtime claims throughout backup;
+Provider I/O is absent. A fresh read-only backup can replace an expired baseline,
+but no owner append occurs until the new dump/receipt/Artifact bytes verify.
+An unresolved active Attempt stops backup and requires canonical reconciliation.
+
+The backup is an exported PostgreSQL snapshot with its exact referenced bytes.
+Fresh Artifact verification observations appended **after** that snapshot are
+explicitly recorded as such; they are not retroactively included in it. Restore
+to a separate database/root, verify the snapshot and bytes, then use the
+Artifact owner for new physical observations before current-time Market reads.
+This never changes old Capture visibility times. Both local physical disks hold
+the new bundle; this is not offsite protection.
+
+The project-only backup-refresh supervisor wakes at 03:00 and 19:00 local time.
+It owns storage/process maintenance, no TradingSession or due decisions. This
+keeps the 24-hour backup profile within budget under normal operation, with a
+16-hour maximum planned interval. Sleep, faults or exhausted space can still
+stop operation; missed maintenance is not a claim of continuous coverage.
+One invocation drains the verified owned process (180-second limit), refuses
+conflicting Attempts, creates and mirrors a new bundle, verifies hashes,
+atomically replaces only backup fields in the profile and performs one bounded
+preflight/start. Failures leave the service stopped; no unconditional restart.
+The former profile and all receipts remain available. Logs receive distinct
+UTC/PID names per launch, and completed logs can be compressed without deleting
+their originals. Disk reserve failures are visible stops, not automatic evidence
+cleanup.
+
+The actual duration, due/Capture facts and next window are recorded in the
+existing R2 Verification. A finite start/stop/restart and backup-refresh drill
+does not establish cross-day or long-running service proof.
+
 ## Target operational evidence recovery
 
 The target `mra` commands use explicit `MRA_DATABASE_URL` and
