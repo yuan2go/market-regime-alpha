@@ -126,6 +126,33 @@ class PostgresDailyPredictionReads:
             ).fetchall()
         return tuple(self._byte_store.read_bytes(row[0], expected_size=row[1]) for row in rows)
 
+    def missing_elapsed_session_pairs(self, plan: DailyPredictionPlan) -> tuple[tuple[UUID, UUID], ...]:
+        """Bounded calendar roster since explicit activation, excluding every existing terminal or active Run."""
+        with self._pool.connection(read_only=True) as connection:
+            rows = connection.execute(
+                """WITH calendar AS (
+                    SELECT session_id,close_at,lead(session_id) OVER (ORDER BY session_date) AS target_id,
+                           lead(open_at) OVER (ORDER BY session_date) AS target_start
+                    FROM mra.trading_session WHERE exchange='XSHG'
+                )
+                SELECT calendar.session_id,calendar.target_id FROM calendar
+                JOIN mra.experimental_model_use usage ON usage.experimental_model_use_id=%s
+                LEFT JOIN mra.experimental_model_use_revocation stopped USING(experimental_model_use_id)
+                WHERE calendar.target_start>greatest(usage.registered_at,usage.valid_from)
+                  AND calendar.target_start<=least(clock_timestamp(),usage.expires_at,stopped.revoked_at)
+                ORDER BY calendar.close_at LIMIT 65""",
+                (plan.experimental_model_use_id,),
+            ).fetchall()
+            if not rows:
+                return ()
+            if len(rows) > 64:
+                raise RuntimeStateConflictError("DAILY_ACTIVATION_SCOPE_EXCEEDS_64_SESSIONS")
+            identities = {tuple(row): uuid5(plan.experimental_model_use_id, "daily:"+str(row[0])+":"+str(row[1])) for row in rows}
+            run_ids = [uuid5(identity,suffix) for identity in identities.values() for suffix in ("prediction-runtime","abstention-runtime")]
+            existing = {row[0] for row in connection.execute("SELECT run_id FROM mra.runtime_run WHERE run_id=ANY(%s::uuid[])",(run_ids,)).fetchall()}
+        return tuple(pair for pair,identity in identities.items()
+                     if not any(uuid5(identity,suffix) in existing for suffix in ("prediction-runtime","abstention-runtime")))
+
     def capture_roster(self, plan: DailyPredictionPlan, *, outcome: bool = False) -> tuple[tuple[UUID, str, Any], ...]:
         with self._pool.connection(read_only=True) as connection:
             rows = connection.execute(

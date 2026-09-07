@@ -94,6 +94,11 @@ by at least 30 minutes. Known empty responses may produce a new observation
 identity; failed or unknown effects require recovery. Outcome missingness is
 terminally evaluated after an eight-hour post-close observation allowance.
 Input publication never moves beyond the next session opening.
+After process downtime, the daily consumer finds uncreated windows since explicit
+ModelUse activation and records current-time MISSED_PUBLICATION abstentions;
+existing failed, successful or active Runs are retained. A model activation spans
+at most 64 elapsed trading windows in this service; a larger scope fails closed
+and needs an explicitly bounded successor, never silent truncation.
 Collection, snapshot, planned training, prediction and evaluation execute
 serially under the same exact-database admission reservation. No second writer,
 scheduler, fallback database or copied Authority rows.

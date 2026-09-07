@@ -93,6 +93,16 @@ def daily_tick(
                 plan, worker_id=worker_id, maximum_steps=maximum_steps
             )
         return {"state": "OUTCOME_PROGRESS", "result": settlement, "pending": completed}
+    elapsed = reads.missing_elapsed_session_pairs(template)
+    if elapsed:
+        input_session, target_session = elapsed[0]
+        now = reads.now()
+        missed = replace(template,
+            prediction_id=uuid5(template.experimental_model_use_id,"daily:"+str(input_session)+":"+str(target_session)),
+            input_session_id=input_session,target_session_id=target_session,
+            input_cutoff=now,decision_time=now,input_content_sha256="0"*64)
+        missed = replace(missed,input_content_sha256=reads.observe(missed).content_sha256)
+        return _abstain(app,missed,"PROCESS_DOWNTIME_MISSED_PUBLICATION",worker_id,before_action)
     plan = current_daily_plan(app, template)
     if reads.run_plan_content(uuid5(plan.prediction_id, "abstention-runtime")) is not None:
         rounds=reads.collection_rounds(plan.prediction_id,'input')
