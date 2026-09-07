@@ -16,6 +16,16 @@ from tests.refoundation.research_qualification.test_daily_prediction import plan
 from tests.refoundation.test_runtime_postgres import _context
 
 
+def test_daily_service_import_does_not_depend_on_bootstrap_import_order():
+    import subprocess
+    subprocess.run(
+        ["uv", "run", "--no-sync", "python", "-c",
+         "from market_regime_alpha.interfaces.daily_service import daily_tick; "
+         "from market_regime_alpha.interfaces.daily_collection import DailyCollectionPlan"],
+        check=True, capture_output=True, text=True, timeout=15,
+    )
+
+
 def test_sequential_daily_handoff_is_exact_and_does_not_grant_foreign_workers(request):
     from concurrent.futures import ThreadPoolExecutor
     from market_regime_alpha.infrastructure.postgres.prospective_operation_session import daily_research_admission

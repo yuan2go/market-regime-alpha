@@ -11,9 +11,6 @@ from uuid import UUID, uuid5
 import psycopg
 from psycopg.rows import dict_row
 
-from market_regime_alpha.infrastructure.postgres.queries.evidence import read_evidence_snapshot
-
-
 _ADMISSION_KEY = "runtime:prospective-operation-admission"
 _DATABASE_WRITER_KEY = "operator:prospective-database-writer"
 _operation_session: ContextVar[PostgresProspectiveOperationSession | None] = ContextVar(
@@ -137,6 +134,8 @@ class PostgresProspectiveOperationSession:
                 AND step.implementation NOT LIKE %s))""",(run_id,fire,code,config,prefix+'%')).fetchone()==(True,)
 
     def snapshot(self) -> dict[str, Any]:
+        from market_regime_alpha.infrastructure.postgres.queries.evidence import read_evidence_snapshot
+
         with self.connection.transaction():
             self.connection.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
             return read_evidence_snapshot(self.connection)
