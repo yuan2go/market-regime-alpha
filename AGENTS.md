@@ -3,7 +3,7 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Sole repository execution, safety, and evidence contract
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-09-06
+> **Last Updated:** 2026-09-07
 > **Related Documents:** `CLAUDE.md`, `docs/README.md`, `docs/architecture/Canonical-Overall-Design.md`, `docs/status/Roadmap.md`
 
 ## Mission and current program
@@ -13,10 +13,12 @@ decision-support platform. It is not unattended live trading.
 
 The approved Hard Cutover Architecture Re-foundation is the sole engineering
 program. The target is frozen by
-`docs/architecture/Canonical-Overall-Design.md` and ADR-015. The current source,
-106 migrations, 283-table PostgreSQL schema, and existing Runtime remain the
-implementation truth until an explicit Runtime/CLI cutover checkpoint succeeds.
-Target prose never makes an unimplemented capability current.
+`docs/architecture/Canonical-Overall-Design.md` and ADR-015. Current source and
+actual call chains, the retained legacy 001–106 schema, and the separate target
+draft schema are implementation evidence. Existing business Runtime remains in
+service until an explicit Runtime/CLI cutover checkpoint succeeds. Target prose
+never makes an unimplemented capability current; observed catalog counts belong
+to Current State and exact Verification.
 
 The dependency order is:
 
@@ -59,31 +61,42 @@ only Model/backtest path without reopening that Provider gate. Calibration
 remains optional and unstarted. Execution, Runtime/CLI Cutover, Legacy deletion,
 and Production qualification remain unauthorized.
 
-### Research economics correctness and WP-18Q freeze
+### Research economics correctness and WP-18Q-R2 continuation
 
 WP-RESEARCH-ECONOMICS-CORRECTNESS-01 has completed its bounded local gate in the
 [immutable Verification](docs/references/WP-RESEARCH-ECONOMICS-CORRECTNESS-01-Verification.md).
 Its [design contract](docs/references/WP-RESEARCH-ECONOMICS-CORRECTNESS-01-Design.md)
 retains independent funded, fully liquidated hypothetical episodes, complete
 parent/root/child reconciliation and explicit unsupported-model refusals.
-This exit authorizes neither a model expansion nor later Roadmap execution.
-Preserve R2 recovery and its frozen campaign without changing its process, source
-or operational evidence database. Its large campaign, future windows and hard-cut
-are not prerequisites for economics correctness. WP-18Q remains independently
-blocked under its existing Design and Implementation Plan. Generic Backtest
+This exit authorizes no model expansion. The subsequent explicit user request
+resumes the existing WP-18Q-R2 chain: canonical campaign recovery, generic
+report/compare/replay, prospective continuity, backup/restore and conditional
+WP-specific retirement. Before authorized research append writes, verify exact
+database identity, backup, disk, active attempts and a single writer. Preserve
+the frozen campaign's source, protocol and existing results; do not replace its
+worker, migrate its database, or reinterpret its V1 economics using V2.
+Its large campaign, future windows and hard-cut remain independent of the
+completed economics gate. WP-18Q remains blocked under its existing Design and
+Implementation Plan until its own evidence closes. Generic Backtest
 uses the existing `exploratory_backtest_run` root and canonical Runtime,
 Dataset, Decision, Outcome, Model and Evaluation owners. Report is a
 deterministic projection of reconciled Authority/Evaluation, never a second
 metric owner. Prospective Application uses the existing Runtime and PostgreSQL
-clock, not a second scheduler.
+clock, not a second scheduler. `backtest progress` reports Runtime observations
+with owner reconciliation explicitly NOT_PERFORMED. Foreground prospective
+`serve` owns process wakeup/drain only; bounded lifecycle success cannot imply
+sustained capture or an actual due Attempt.
 
 Keep these claims separate: code exists, canonical wiring, tests passed,
 runtime proven, and research validity. WP-18Q engineering qualification is
 blocked until every WP-18Q P0 gate has exact-SHA evidence. No historical
-WP-17P gate promotes Generic Backtest automatically. WP-specific execution
-surfaces remain until all prescribed compatibility/campaign/report/replay and
-regression prerequisites pass; retaining them while blocked does not authorize
-new WP-specific execution or a permanent compatibility facade.
+WP-17P gate promotes Generic Backtest automatically. R2 retires WP-specific
+execution after its recorded compatibility/campaign/report/replay/recovery and
+pre-deletion regression gates. Only Generic execution and the private exact
+historical read decoder remain on the current public path. Retained historical
+test fixtures and frozen provenance do not authorize WP-specific execution or a
+permanent compatibility facade. Post-retirement qualification is a separate
+exact-source/test-tree obligation from those deletion prerequisites.
 
 Operational evidence databases permit only exact-identity, backed-up additive
 upgrade. A restored backup copy is not the original operational database.

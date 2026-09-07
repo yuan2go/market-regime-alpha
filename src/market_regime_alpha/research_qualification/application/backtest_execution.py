@@ -23,6 +23,7 @@ from market_regime_alpha.research_qualification.domain.backtest_execution import
     BacktestObservedState,
     BacktestReadyAction,
     BacktestResearchState,
+    BacktestRuntimeProgress,
 )
 from market_regime_alpha.research_qualification.domain.research_vocabulary import (
     PartitionPurpose,
@@ -380,6 +381,11 @@ class BacktestExecutor:
         expected = self._planner.compile(run).expected_actions
         observed = self._observations.observe(run, expected)
         return self._planner.compile(run, observed)
+
+    def progress(self, run: FrozenBacktestRun) -> BacktestRuntimeProgress:
+        return self._observations.runtime_progress(
+            run, self._planner.compile(run).expected_actions,
+        )
 
     def _drive(self, run: FrozenBacktestRun) -> BacktestExecutionPlan:
         expected = self._planner.compile(run).expected_actions

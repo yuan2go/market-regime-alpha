@@ -1,3 +1,5 @@
+"""Immutable historical definition fixtures; no business execution authority."""
+
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
@@ -5,7 +7,7 @@ from uuid import UUID
 
 import pytest
 
-from market_regime_alpha.interfaces.wp17p_authorities import (
+from tests.refoundation.research_qualification._historical_backtest_catalog import (
     build_wp17p_authority_catalog,
     build_wp18_authority_catalog,
 )

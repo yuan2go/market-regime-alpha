@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import StrEnum
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from market_regime_alpha.shared.hashing import canonical_json_sha256
@@ -41,6 +42,29 @@ class BacktestResearchState(StrEnum):
     ESTIMABLE = "ESTIMABLE"
     NOT_ESTIMABLE = "NOT_ESTIMABLE"
     NOT_APPLICABLE = "NOT_APPLICABLE"
+
+
+@dataclass(frozen=True, slots=True)
+class BacktestRuntimeActionProgress:
+    action_id: UUID
+    kind: BacktestActionKind
+    runtime_run_id: UUID | None
+    runtime_state: str | None
+    latest_attempt_state: str | None
+    latest_attempt_id: UUID | None
+    lease_until: datetime | None
+    error_code: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class BacktestRuntimeProgress:
+    """Runtime observation only; never business completion or replay evidence."""
+
+    exploratory_backtest_run_id: UUID
+    specification_sha256: ContentHash
+    observed_at: datetime
+    actions: tuple[BacktestRuntimeActionProgress, ...]
+    owner_reconciliation: Literal["NOT_PERFORMED"] = field(default="NOT_PERFORMED", init=False)
 
 
 class BacktestNextOperation(StrEnum):
@@ -292,4 +316,6 @@ __all__ = [
     "BacktestReadyAction",
     "BacktestResearchState",
     "BacktestRuntimeBinding",
+    "BacktestRuntimeActionProgress",
+    "BacktestRuntimeProgress",
 ]

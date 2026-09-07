@@ -1,3 +1,5 @@
+"""Canonical Archive test facts retained byte-for-byte below the import section."""
+
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, time
@@ -5,17 +7,6 @@ from decimal import Decimal
 from uuid import NAMESPACE_URL, uuid4, uuid5
 from zoneinfo import ZoneInfo
 
-import psycopg
-
-from market_regime_alpha.bootstrap import (
-    TargetSettings,
-    bootstrap_application,
-)
-from market_regime_alpha.infrastructure.postgres.schema import SchemaManager
-from market_regime_alpha.interfaces.wp17p_authorities import (
-    build_wp17p_authority_catalog,
-)
-from market_regime_alpha.interfaces.wp17p_campaign import Wp17pCampaignOperations
 from market_regime_alpha.market.domain import (
     ArchiveLane,
     ArchiveSealDisposition,
@@ -60,86 +51,6 @@ from tests.refoundation.research_qualification import (
 
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
-
-
-def test_canonical_wp17p_fit_model_validation_chain(target_database_url, tmp_path) -> None:
-    SchemaManager(target_database_url).bootstrap()
-    settings = TargetSettings(
-        database_url=target_database_url,
-        artifact_root=(tmp_path / "wp17p-campaign-artifacts").resolve(),
-        pool_min_size=0,
-        pool_max_size=8,
-    )
-    with bootstrap_application(settings) as application:
-        product, instrument_ids, sessions, code, config, archive_id, seal = seed_complete_archive(application)
-        selected_dates = {
-            date(2026, 1, 5),
-            date(2026, 1, 6),
-            date(2026, 1, 7),
-            date(2026, 1, 8),
-            date(2026, 1, 12),
-            date(2026, 1, 13),
-            date(2026, 1, 14),
-            date(2026, 1, 15),
-        }
-        catalog = build_wp17p_authority_catalog(
-            provider_product_id=product.provider_product_id,
-            market_archive_id=archive_id,
-            market_archive_seal_id=seal.market_archive_seal_id,
-            sessions=tuple(
-                item
-                for item in application.archive_trading_sessions.sessions(
-                    exchange="XSHG",
-                    start_date=min(selected_dates),
-                    end_date=max(selected_dates),
-                )
-                if item.session_date in selected_dates
-            ),
-            code_artifact=_binding(code),
-            config_artifact=_binding(config),
-            provenance_sha256="f" * 64,
-        )
-
-        campaign = Wp17pCampaignOperations(
-            application,
-            code_sha="a" * 40,
-        )
-        result = campaign.run(
-            catalog=catalog,
-            pilot_instrument_ids=instrument_ids,
-        )
-
-        assert application.research_evaluation_verifier.verify_evaluation_run(
-            result.fit_evaluation_run_id
-        ).matched
-        assert application.research_evaluation_verifier.verify_evaluation_run(
-            result.validation_evaluation_run_id
-        ).matched
-        replayed = campaign.run(
-            catalog=catalog,
-            pilot_instrument_ids=instrument_ids,
-        )
-        assert replayed == result
-    with psycopg.connect(target_database_url) as connection:
-        counts = connection.execute(
-            """
-            SELECT
-              (SELECT count(*) FROM mra.dataset),
-              (SELECT count(*) FROM mra.decision_run),
-              (SELECT count(*) FROM mra.market_target_outcome_revision),
-              (SELECT count(*) FROM mra.research_partition),
-              (SELECT count(*) FROM mra.evaluation_run),
-              (SELECT count(*) FROM mra.model_version)
-            """
-        ).fetchone()
-        decision_times = connection.execute(
-            """
-            SELECT DISTINCT (decision_time AT TIME ZONE 'Asia/Shanghai')::time
-            FROM mra.decision_run
-            """
-        ).fetchall()
-    assert counts == (3, 3, 96, 2, 2, 1)
-    assert decision_times == [(time(14, 55),)]
 
 
 def seed_complete_archive(application, *, episode_entry=False, multi_episode=False):

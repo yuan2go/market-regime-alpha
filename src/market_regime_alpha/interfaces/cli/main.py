@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import asdict, is_dataclass
 from datetime import date, datetime, timedelta
+from decimal import Decimal
 from enum import Enum
 from io import TextIOBase
 import json
@@ -42,6 +43,7 @@ from market_regime_alpha.interfaces.archive import (
     start_archive,
 )
 from market_regime_alpha.interfaces.backtest import load_backtest_specification
+from market_regime_alpha.interfaces.prospective_service import serve_prospective
 from market_regime_alpha.market.application import compile_prospective_runtime_plan
 from market_regime_alpha.runtime.application import ActorType, CommandContext
 
@@ -58,7 +60,25 @@ def main(
     try:
         arguments = _parser().parse_args(argv)
         settings = TargetSettings.from_environ(os.environ if environ is None else environ)
-        payload = _dispatch(arguments, settings)
+        payload: object
+        if (arguments.area == "archive" and arguments.archive_command == "prospective"
+                and arguments.prospective_command == "serve"):
+            # Every tick enters the existing composition and identity checks;
+            # no connection or business transaction spans the wakeup interval.
+            continuation = argparse.Namespace(**vars(arguments))
+            continuation.prospective_command = "continue"
+
+            def emit(value: object) -> None:
+                output.write(json.dumps(_json_value(value), sort_keys=True) + "\n")
+                output.flush()
+
+            payload = serve_prospective(
+                lambda: _dispatch(continuation, settings), emit=emit,
+                wakeup_seconds=arguments.wakeup_seconds,
+                maximum_wakeups=arguments.maximum_wakeups,
+            )
+        else:
+            payload = _dispatch(arguments, settings)
         output.write(json.dumps(_json_value(payload), sort_keys=True) + "\n")
         return 2 if arguments.area == "evidence" and isinstance(payload, dict) and (payload.get("matched") is False or payload.get("ready") is False) else 0
     except (MraError, ValueError, OSError, psycopg.Error) as exc:
@@ -159,8 +179,10 @@ def _dispatch(arguments: argparse.Namespace, settings: TargetSettings) -> object
                     specification,
                     _backtest_context(arguments, "PREDECLARE_BACKTEST"),
                 )
-            if command in {"run", "resume", "inspect"}:
+            if command in {"run", "resume", "inspect", "progress"}:
                 run = application.backtest_specifications.load(arguments.run_id)
+                if command == "progress":
+                    return application.backtest_execution.progress(run)
                 if command == "run":
                     return application.backtest_execution.run(run)
                 if command == "resume":
@@ -337,7 +359,7 @@ def _parser() -> argparse.ArgumentParser:
         operation.add_argument("--specification", required=True, type=Path)
         if command == "predeclare":
             _add_backtest_mutation_arguments(operation)
-    for command in ("run", "resume", "inspect", "replay"):
+    for command in ("run", "resume", "inspect", "replay", "progress"):
         operation = backtest_commands.add_parser(command)
         operation.add_argument("--run-id", required=True, type=UUID)
     report = backtest_commands.add_parser("report")
@@ -358,13 +380,17 @@ def _parser() -> argparse.ArgumentParser:
         dest="prospective_command",
         required=True,
     )
-    continuity = prospective_commands.add_parser("continue")
-    continuity.add_argument("--series-code", required=True)
-    continuity.add_argument("--code-sha", required=True)
-    continuity.add_argument("--expected-database-name", required=True)
-    continuity.add_argument("--actor-id", required=True)
-    continuity.add_argument("--worker-id", required=True)
-    continuity.add_argument("--lease-seconds", type=int, default=120)
+    for command in ("continue", "serve"):
+        continuity = prospective_commands.add_parser(command)
+        continuity.add_argument("--series-code", required=True)
+        continuity.add_argument("--code-sha", required=True)
+        continuity.add_argument("--expected-database-name", required=True)
+        continuity.add_argument("--actor-id", required=True)
+        continuity.add_argument("--worker-id", required=True)
+        continuity.add_argument("--lease-seconds", type=int, default=120)
+        if command == "serve":
+            continuity.add_argument("--wakeup-seconds", required=True, type=float)
+            continuity.add_argument("--maximum-wakeups", type=int)
     prospective_plan = prospective_commands.add_parser("plan-next")
     prospective_plan.add_argument("--manifest", required=True, type=Path)
     prospective_plan.add_argument("--code-sha", required=True)
@@ -423,6 +449,10 @@ def _json_value(value: object) -> object:
         return {str(key): _json_value(item) for key, item in value.items()}
     if isinstance(value, (tuple, list, set, frozenset)):
         return [_json_value(item) for item in value]
+    if isinstance(value, Decimal):
+        if not value.is_finite():
+            raise ValueError("CLI Decimal output must be finite")
+        return str(value)
     if isinstance(value, (UUID, datetime, date, Path)):
         return str(value)
     if isinstance(value, Enum):

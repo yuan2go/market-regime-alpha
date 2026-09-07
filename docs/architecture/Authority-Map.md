@@ -154,9 +154,20 @@ of an incomplete or failed Backtest preserves that state; it does not turn its
 completion replay into a match. Machine-local inventory paths stay outside
 shared repository configuration.
 
-WP-specific executable surfaces remain until the prescribed real-campaign,
-report, replay, historical-equivalence and regression hard-cut gates pass.
-Their presence is a qualification blocker, not a permanent compatibility policy.
+`mra backtest progress` is an exact Runtime binding projection with
+`owner_reconciliation=NOT_PERFORMED`; its Attempt state never substitutes for
+completed owner reconciliation. Missing or mismatched Runtime roots/bindings
+fail closed. `mra archive prospective serve` owns only process wakeup and
+shutdown. Every wakeup re-enters the existing continuation and composition;
+PostgreSQL time, due decisions, lease/fence and effect recovery remain under
+the owners above. No service installation or second scheduler is implied.
+
+The R2 checkpoint retires WP-specific executable surfaces after the prescribed
+real-campaign, report, replay, historical-equivalence and pre-deletion regression
+gates. Post-retirement qualification verifies the sole Generic execution path;
+private exact historical decoding and immutable test fixtures preserve read-only
+compatibility. No availability-selected fallback remains. The actual prospective
+due-Attempt requirement still governs total WP-18Q exit independently.
 
 Rows through WP-14 Formal Research readiness, WP-13 Decision Support, and
 WP-17P archive/Model/backtest describe implemented, engineering-qualified

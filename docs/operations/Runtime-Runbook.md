@@ -102,6 +102,35 @@ and claims real due work. CLI wiring alone is not evidence of an installed
 continuously running service. No due window means `NOT_DUE`; never wait or
 backdate to produce proof.
 
+`mra archive prospective serve` provides a foreground process that wakes the
+same `continue` command serially. It makes no business-time or due decisions,
+holds no database transaction between wakeups, and creates no schedule outside
+the existing Runtime. Keep machine-local database/Artifact settings and the
+exact implementation SHA in the operator environment, outside the repository.
+Before starting, complete the exact-name/OID, consistent backup, disk, active
+attempt and single-writer preflight above.
+
+```bash
+uv run mra archive prospective serve \
+  --series-code "$MRA_PROSPECTIVE_SERIES" \
+  --code-sha "$MRA_IMPLEMENTATION_SHA" \
+  --expected-database-name "$MRA_EXPECTED_DATABASE_NAME" \
+  --actor-id "$MRA_OPERATOR_ID" --worker-id "$MRA_WORKER_ID" \
+  --lease-seconds 120 --wakeup-seconds 30
+```
+
+Each completed wakeup emits and flushes the canonical continuation result as a
+JSON line. `--maximum-wakeups 2` bounds a startup/restart drill. SIGINT/SIGTERM
+requests shutdown after the current invocation finishes; it does not cancel an
+in-flight Provider effect. Exceptions exit with the normal CLI error and no
+blind retry. On restart, the same continuation reloads Authority, reconciles
+external effects and recovers expired leases before new work. Do not run a
+second worker during this drain interval. A hung external call may therefore
+delay shutdown; preserve its Attempt and reconcile its effect before recovery.
+No system service is installed by this command. A bounded process drill proves
+lifecycle wiring only; sustained collection and a real due capture require
+their own observed Runtime facts.
+
 Include the last available exact TradingSession in the operational inventory
 review. Continuation requires the decision, Outcome and later verification
 sessions to exist in canonical Market evidence. Extend missing calendar evidence
@@ -114,6 +143,23 @@ For Backtest recovery, an unexpired Attempt remains owned by its existing lease.
 Inspect the exact Runtime Run/Attempt; ordinary lease recovery uses PostgreSQL
 time and does not steal the fence. Only completed zero-mismatch replay qualifies
 as completed resume/replay evidence.
+
+Use `mra backtest progress --run-id "$EVIDENCE_BACKTEST_ID"` for a bounded
+read of the complete declared action roster and its exact Runtime bindings.
+The response includes a PostgreSQL observation time, Runtime Run IDs, latest
+Attempt states, leases and error codes. An absent binding remains absent.
+`owner_reconciliation=NOT_PERFORMED` is deliberate: Runtime `SUCCEEDED` alone
+does not prove Dataset, Decision, Outcome, Model or Evaluation completion.
+Use `mra runtime inspect --run-id "$RUNTIME_RUN_ID"` for the bound step trace;
+use Backtest `inspect` and `replay` for complete owner reconciliation.
+
+For an existing frozen campaign, keep its executable checkout and environment
+unchanged during resume. A newer read-only progress client can observe its
+immutable specification without replacing the frozen worker. First verify
+the database/OID/cluster and Artifact root, current backup bytes and disk,
+absence of conflicting Attempts and workers, and the original code/bundle
+identity. Record the CLI exit code and returned execution/research states;
+an exit code or a running process alone does not establish campaign completion.
 
 ## Phase E Historical Corpus
 

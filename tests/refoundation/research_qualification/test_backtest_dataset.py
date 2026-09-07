@@ -215,3 +215,25 @@ def test_generic_materializer_preserves_empty_selection_as_valid_dataset() -> No
     assert materialized.row_count == 0
     assert materialized.available_cell_count == 0
     assert materialized.unavailable_cell_count == 0
+
+
+def test_generic_materializer_serializes_decimal_zero_without_exponent() -> None:
+    materialized = materialize_backtest_dataset(
+        dataset_id=_id(400),
+        dataset_code="generic_decimal_zero",
+        simulated_decision_time=datetime(2026, 1, 5, 7, 1, tzinfo=UTC),
+        universe_revision_id=_id(401),
+        eligibility_policy_id=_id(402),
+        feature_definition_ids=(_id(10),),
+        code_artifact=_artifact(403),
+        config_artifact=_artifact(404),
+        members=(BacktestDatasetMember(
+            _id(405), _id(406), _id(407),
+            (BacktestDatasetFeatureCell(
+                _id(10), FeatureCellStatus.AVAILABLE, "EXACT_ARCHIVED_BAR",
+                BacktestFeatureLineageKind.BAR_REVISION, _id(408), Decimal("0E-12"),
+            ),),
+        ),),
+    )
+
+    assert b'"value":"0.000000000000"' in materialized.manifest_content

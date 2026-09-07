@@ -31,6 +31,14 @@ ordered row hashes, physical references and archive/Backtest integrity, and neve
 modify the source scope. Preserve incomplete and negative execution statuses;
 integrity matching and completed Backtest replay are separate claims.
 
+A failed original Run may coexist with a completed recovery drill from an
+earlier faithful snapshot. Bind every result to its database/cluster and
+Artifact-root identity. New actions committed in the copy are evidence for
+that recovery scope only; they do not change the original terminal state or
+authorize merging copied rows into the original. Back up and independently
+restore the completed copy before claiming its recoverability. Operational
+adoption or a new execution identity must remain an explicit controlled step.
+
 Market replay also requires owner-recorded Artifact byte verification within
 the existing 24-hour consumer window. Plan the integrity maintenance before
 the backup snapshot: invoke the existing Artifact Application with fresh

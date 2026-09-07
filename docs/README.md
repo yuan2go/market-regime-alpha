@@ -3,7 +3,7 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Documentation navigation and precedence only
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-09-06
+> **Last Updated:** 2026-09-07
 > **Code Evidence:** `src/market_regime_alpha`, both legacy and target PostgreSQL migration packages, `tests`
 
 Documentation never creates implementation truth, research evidence,
@@ -27,10 +27,15 @@ has completed its bounded local gate in the single
 [immutable Verification](references/WP-RESEARCH-ECONOMICS-CORRECTNESS-01-Verification.md)
 and [exact evidence index](references/WP-RESEARCH-ECONOMICS-CORRECTNESS-01-Evidence.json).
 This is independent of WP-18Q's large campaign, future windows and hard-cut.
-R2 recovery and frozen execution are preserved.
-Generic Backtest,
-Model, Evaluation/Report and Prospective wiring exists in the target draft;
-this does not imply engineering qualification or Runtime/CLI cutover.
+R2 recovery and frozen execution are preserved in the single
+[R2 Verification](references/WP-ARCHITECTURE-REFOUNDATION-18Q-R2-Verification.md)
+and [external-original index](references/WP-ARCHITECTURE-REFOUNDATION-18Q-R2-Evidence.json).
+Original operational failure, completed recovery scope, finite lifecycle proof
+and the real due-window blocker remain distinct.
+Generic Backtest, Model and Evaluation/Report pass the recorded engineering
+checks in the completed recovery scope. Prospective lifecycle engineering is
+verified separately from its unavailable actual due window. These exact-scope
+results do not authorize Runtime/CLI cutover or research promotion.
 WP-17P Verification remains historical exact-run evidence, and WP-18 evidence
 is definition equivalence only. Current blockers and re-entry requirements
 belong to Current State and Roadmap, not to a second status hierarchy.

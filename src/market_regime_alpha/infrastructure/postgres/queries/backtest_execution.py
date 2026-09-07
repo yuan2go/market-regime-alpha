@@ -30,6 +30,8 @@ from market_regime_alpha.research_qualification.domain.backtest_execution import
     BacktestObservedState,
     BacktestResearchState,
     BacktestRuntimeBinding,
+    BacktestRuntimeActionProgress,
+    BacktestRuntimeProgress,
 )
 from market_regime_alpha.research_qualification.ports.model_inputs import (
     ModelTrainingInputProvider,
@@ -41,6 +43,7 @@ from market_regime_alpha.runtime.errors import (
 from market_regime_alpha.selection.ports.research_inputs import (
     CandidateResearchInputLoader,
 )
+from market_regime_alpha.shared.identity import ContentHash
 
 
 _Scope = tuple[UUID, UUID, UUID]
@@ -68,12 +71,12 @@ _RUNTIME_BINDINGS_SQL = """
                         SELECT step_id, run_id FROM mra.runtime_step
                         WHERE run_id = ANY(ARRAY(SELECT runtime_run_id FROM scoped_bindings))
                     ), scoped_attempts AS MATERIALIZED (
-                        SELECT step_id, state, created_at, attempt_no
+                        SELECT step_id, state, created_at, attempt_no, attempt_id, lease_until, error_code
                         FROM mra.runtime_attempt
                         WHERE step_id = ANY(ARRAY(SELECT step_id FROM scoped_steps))
                     ), latest_attempt AS (
                         SELECT DISTINCT ON (step.run_id)
-                               step.run_id, attempt.state
+                               step.run_id, attempt.state, attempt.attempt_id, attempt.lease_until, attempt.error_code
                         FROM scoped_steps AS step
                         JOIN scoped_attempts AS attempt
                           ON attempt.step_id = step.step_id
@@ -96,6 +99,8 @@ _RUNTIME_BINDINGS_SQL = """
                            root.code_content_sha256 AS root_code_sha,
                            root.config_artifact_id AS root_config_artifact_id,
                            root.config_content_sha256 AS root_config_hash,
+                           latest_attempt.attempt_id AS latest_attempt_id,
+                           latest_attempt.lease_until, latest_attempt.error_code,
                            latest_attempt.state AS latest_attempt_state
                     FROM scoped_bindings AS binding
                     JOIN mra.runtime_run AS runtime
@@ -127,6 +132,10 @@ def _load_runtime_bindings(
             _RUNTIME_BINDINGS_SQL,
             (run_id, [row["backtest_runtime_binding_id"] for row in batch]),
         ).fetchall())
+    if sorted(row["backtest_runtime_binding_id"] for row in rows) != sorted(
+        row["backtest_runtime_binding_id"] for row in identities
+    ):
+        raise ArtifactIntegrityError("Runtime binding roster does not resolve to exact parent rows")
     return rows
 
 
@@ -146,6 +155,45 @@ class PostgresBacktestExecutionObservationPort:
         self._evaluations = PostgresResearchEvaluationVerificationProvider(pool)
         self._model_inputs = model_inputs
         self._dataset_inputs = dataset_inputs
+
+    def runtime_progress(
+        self, run: FrozenBacktestRun,
+        expected_actions: tuple[BacktestExpectedAction, ...],
+    ) -> BacktestRuntimeProgress:
+        if run.source is not FrozenBacktestSource.CURRENT_RELATIONAL:
+            raise ValueError("Historical Backtests require inspect/replay, not current Runtime progress")
+        with self._pool.connection(read_only=True) as connection:
+            connection.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+            with connection.cursor(row_factory=dict_row) as cursor:
+                clock_row = cursor.execute("SELECT clock_timestamp() AS observed_at").fetchone()
+                assert clock_row is not None
+                observed_at = clock_row["observed_at"]
+                rows = _load_runtime_bindings(cursor, run.exploratory_backtest_run_id)
+        by_action: dict[UUID, dict[str, Any]] = {}
+        expected_ids = {action.action_id for action in expected_actions}
+        for binding_row in rows:
+            action_id = UUID(str(binding_row["action_id"]))
+            if action_id not in expected_ids or action_id in by_action:
+                raise ArtifactIntegrityError("Runtime progress contains unexpected or duplicate action bindings")
+            by_action[action_id] = binding_row
+        actions = []
+        for action in expected_actions:
+            row = by_action.get(action.action_id)
+            if row is not None and not _runtime_binding_exact(run, action, row):
+                raise ArtifactIntegrityError("Runtime progress binding differs from frozen intent")
+            actions.append(BacktestRuntimeActionProgress(
+                action_id=action.action_id, kind=action.kind,
+                runtime_run_id=None if row is None else UUID(str(row["runtime_run_id"])),
+                runtime_state=None if row is None else row["runtime_state"],
+                latest_attempt_state=None if row is None else row["latest_attempt_state"],
+                latest_attempt_id=None if row is None else row["latest_attempt_id"],
+                lease_until=None if row is None else row["lease_until"],
+                error_code=None if row is None else row["error_code"],
+            ))
+        return BacktestRuntimeProgress(
+            run.exploratory_backtest_run_id, ContentHash(str(run.specification_sha256)), observed_at,
+            tuple(actions),
+        )
 
     def observe(
         self,
@@ -637,39 +685,7 @@ def _reconcile_current_runtime(
             BacktestObservedState.MISMATCH,
         )
     row = rows[0]
-    try:
-        expected_binding = BacktestRuntimeBinding(
-            UUID(str(row["backtest_runtime_binding_id"])),
-            run.exploratory_backtest_run_id,
-            run.specification_sha256,
-            action,
-            UUID(str(row["runtime_run_id"])),
-        )
-    except (TypeError, ValueError):
-        return BacktestActionObservation(
-            action.action_id,
-            BacktestObservedState.MISMATCH,
-        )
-    exact = (
-        str(row["specification_sha256"]) == str(run.specification_sha256)
-        and str(row["action_kind"]) == action.kind.value
-        and str(row["action_content_sha256"]) == str(action.content_sha256)
-        and _optional_uuid(row["exploratory_backtest_arm_id"]) == action.arm_id
-        and _optional_uuid(row["exploratory_backtest_fold_id"]) == action.fold_id
-        and _optional_uuid(row["exploratory_backtest_fold_session_id"])
-        == action.fold_session_id
-        and _optional_uuid(row["model_training_requirement_id"])
-        == action.model_training_requirement_id
-        and _optional_uuid(row["evaluation_requirement_id"])
-        == action.evaluation_requirement_id
-        and str(row["content_sha256"]) == str(expected_binding.content_sha256)
-        and str(row["runtime_mode"]) in {"HISTORICAL", "REPLAY"}
-        and str(row["fire_key"]) == str(action.action_id)
-        and str(row["code_sha"]) == str(row["root_code_sha"])
-        and UUID(str(row["config_artifact_id"]))
-        == UUID(str(row["root_config_artifact_id"]))
-        and str(row["config_hash"]) == str(row["root_config_hash"])
-    )
+    exact = _runtime_binding_exact(run, action, row)
     if not exact or owner.state is BacktestObservedState.MISMATCH:
         return BacktestActionObservation(
             action.action_id,
@@ -726,6 +742,41 @@ def _unique_presence(rows: list[dict[str, Any]] | tuple[()]) -> BacktestObserved
     if len(rows) != 1:
         return BacktestObservedState.MISMATCH
     return BacktestObservedState.MATCHED_COMPLETE
+
+
+def _runtime_binding_exact(
+    run: FrozenBacktestRun, action: BacktestExpectedAction, row: dict[str, Any],
+) -> bool:
+    try:
+        expected_binding = BacktestRuntimeBinding(
+            UUID(str(row["backtest_runtime_binding_id"])),
+            run.exploratory_backtest_run_id,
+            run.specification_sha256,
+            action,
+            UUID(str(row["runtime_run_id"])),
+        )
+    except (TypeError, ValueError):
+        return False
+    return (
+        str(row["specification_sha256"]) == str(run.specification_sha256)
+        and str(row["action_kind"]) == action.kind.value
+        and str(row["action_content_sha256"]) == str(action.content_sha256)
+        and _optional_uuid(row["exploratory_backtest_arm_id"]) == action.arm_id
+        and _optional_uuid(row["exploratory_backtest_fold_id"]) == action.fold_id
+        and _optional_uuid(row["exploratory_backtest_fold_session_id"])
+        == action.fold_session_id
+        and _optional_uuid(row["model_training_requirement_id"])
+        == action.model_training_requirement_id
+        and _optional_uuid(row["evaluation_requirement_id"])
+        == action.evaluation_requirement_id
+        and str(row["content_sha256"]) == str(expected_binding.content_sha256)
+        and str(row["runtime_mode"]) in {"HISTORICAL", "REPLAY"}
+        and str(row["fire_key"]) == str(action.action_id)
+        and str(row["code_sha"]) == str(row["root_code_sha"])
+        and UUID(str(row["config_artifact_id"]))
+        == UUID(str(row["root_config_artifact_id"]))
+        and str(row["config_hash"]) == str(row["root_config_hash"])
+    )
 
 
 __all__ = ["PostgresBacktestExecutionObservationPort"]

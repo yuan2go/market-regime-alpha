@@ -11,10 +11,17 @@ from market_regime_alpha.research_qualification.domain.backtest_execution import
     BacktestActionObservation,
     BacktestExpectedAction,
     BacktestNextOperation,
+    BacktestRuntimeProgress,
 )
 
 
 class BacktestExecutionObservationPort(Protocol):
+    def runtime_progress(
+        self,
+        run: FrozenBacktestRun,
+        expected_actions: tuple[BacktestExpectedAction, ...],
+    ) -> BacktestRuntimeProgress: ...
+
     def observe(
         self,
         run: FrozenBacktestRun,
