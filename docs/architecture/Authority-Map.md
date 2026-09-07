@@ -42,6 +42,24 @@ still requires the exact current schema. A restored scope is never selected
 because the original is slow or failed. The original scope's upgrade/adoption
 requires separate explicit authorization.
 
+The post-close daily research consumer shares this reservation through an exact
+prediction/collection/Outcome Run handoff; it is not another scheduler.
+DataReady is a reproducible read projection of complete canonical input facts,
+not a new persistence Authority. Historical sealed and actually visible Feature
+readers share the same pure FeatureDefinition calculation while retaining their
+different time contracts. Market/Outcome owns the two future same-session
+OPEN/CLOSE price observations and OBSERVATION_RETURN target value.
+
+Research Model owns explicit `experimental_model_use` and its append-only
+revocation: a completed compatible ModelVersion, frozen Feature order/Target,
+protocol Artifact and activation/expiry, with no qualification implication.
+Decision Support persists independent daily forecasts and their typed model
+bindings; all legal candidates receive a prediction or explicit failure.
+Evaluation consumes those exact published bindings and canonical Outcome on a
+frozen complete partition. Report only projects reconciled owner results.
+This purpose-limited Shadow route does not fabricate a retrospective fold,
+write actual Fill/Position, or open Model/Production admission.
+
 ## 2. Canonical write path
 
 ```text

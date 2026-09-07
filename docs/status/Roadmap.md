@@ -3,7 +3,7 @@
 > **Status:** ROADMAP
 > **Authority:** Planning and dependency order only; never business, evidence, or qualification Authority
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-09-07
+> **Last Updated:** 2026-09-08
 > **Code Evidence:** `docs/architecture/Canonical-Overall-Design.md`, `docs/status/Current-State.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-01-Domain-Invariant-Catalog.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-08-Post-Candidate-Authority-Design.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-09-Target-Commitment-Decision-Run-Verification.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-10-Market-Target-Outcome-Verification.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-11-Research-Validity-Evaluation-Verification.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-12-Research-Evidence-Assessment-Qualification-Verification.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-13-Remaining-Decision-Support-Verification.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-14-Formal-Research-Engineering-Readiness-Verification.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-15-Formal-Research-Proof-Campaign-Verification.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-16-Real-Provider-Evidence-Gate-A-Verification.md`, `docs/references/WP-ARCHITECTURE-REFOUNDATION-17P-Prospective-Archive-Exploratory-Backtest-Verification.md`
 
 Architecture Re-foundation is the only active engineering program. Historical
@@ -20,18 +20,32 @@ Outcome/Evaluation. Its [versioned protocol](../references/WP-DAILY-MODEL-RESEAR
 freezes time, target, preprocessing and full denominator semantics. It does not
 depend on future WP18Q evidence, change old experiments or reopen qualification.
 
-- [ ] Extend canonical Target/Outcome for two future same-session observations;
+- [x] Extend canonical Target/Outcome for two future same-session observations;
   connect shared pure Feature computation to separate exact historical/live reads.
-- [ ] Execute the new fixed 20-FIT/10-VALIDATION two-arm Generic baseline with
+- [x] Execute the new fixed 20-FIT/10-VALIDATION two-arm Generic baseline with
   purge/embargo and existing Model owner; compare exact vectors and full rosters.
-- [ ] Bind explicit experimental Model use, publish a full daily prediction or
-  abstention, and settle/evaluate mature targets through the existing owners.
-- [ ] Verify registered schema changes and Runtime handoff in isolation, then
+- [x] Bind explicit experimental Model use and publish a complete daily population;
+  repeat/report/replay match. Historical mature baseline uses canonical Evaluation.
+- [ ] Observe the published future target mature through its registered 38-step
+  Outcome/Evaluation Run; no future price or backdated prediction substitutes.
+- [x] Verify registered schema changes and Runtime handoff in isolation, then
   deploy the frozen project service and preserve collection/backup refresh.
 
 Use focused time, lineage, full-roster, idempotency, recovery and installed-source
 gates. Existing operation results below remain historical; no repeated full
 regression or 936-action rerun is required absent new cross-domain risk.
+
+Actual baseline `7ef9337b…` completes at frozen `ec43f8aa` in original OID
+287543. A read-reconciliation timeout after 186 committed actions is retained;
+canonical resume completes action 187 without changing parameters or timeout.
+Six Evaluation roots, 30 declared estimable metrics, exact report publication
+and repeat resume/replay match. The v7 upgrade and backup pass in the exact
+original scope. Runtime `00f9da04` has separate collection/evaluation Schedule
+identities, safe expired-attempt admission and honest downtime abstentions.
+Actual corrected publication is `e208e9d4…`: 32 sampled, 31 predictions and one
+membership UNKNOWN. Its first failed consumer is retained and revoked. Future
+maturity and sustained operation remain separate observations. Current calendar
+coverage ends 2026-09-17 and must be extended through the canonical Market owner.
 
 WP-RESEARCH-OPERATIONS-ACTIVATION-01 continues from main `2d6fbb29`
 on one isolated branch. The latest explicit authorization covers the original
@@ -66,11 +80,14 @@ awaited or backdated. The current-user supervisor's backup/profile refresh
 wakes at fixed operational maintenance times and delegates every business
 decision to the existing PostgreSQL-clock Runtime.
 
-The next research dependency comes from the read-only funnel diagnosis: decide
-an explicit new denominator protocol and bind prospective Feature/Target/Model
-cutoff/Decision facts before daily Shadow. Do not reinterpret frozen V1 metrics,
-change existing experiments, infer ranking increment from lower forecast error,
-or equate Model sample rows with independent days/episodes.
+The old funnel's denominator and independent-consumption gaps are addressed by
+the new protocol above. Its [real diagnostic comparison](../operations/Research-Diagnostics.md)
+shows 319/320 predicted and 318/320 estimable Validation members per arm,
+with a FIT-learned negative coefficient reversing the rule's ranking. A future
+version may freeze a constant-mean control to distinguish amplitude shrinkage;
+do not add it post hoc to the completed experiment. Next evidence comes from
+the explicitly registered daily ModelVersion's actual target maturity. Old V1
+economics and already-observed Validation remain unchanged and exploratory.
 
 WP-RESEARCH-ECONOMICS-CORRECTNESS-01 is complete in its [bounded supported scope](../references/WP-RESEARCH-ECONOMICS-CORRECTNESS-01-Design.md).
 Its single [immutable Verification](../references/WP-RESEARCH-ECONOMICS-CORRECTNESS-01-Verification.md)

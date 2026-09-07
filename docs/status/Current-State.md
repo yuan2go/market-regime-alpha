@@ -3,10 +3,10 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Non-authoritative implementation status; exact-SHA qualification belongs to Verification
 > **Owner:** Market Regime Alpha maintainers
-> **Generated At:** 2026-09-07 research operations activation
-> **Repository Implementation Checkpoint:** `26d4d98e045d323fd4947ed7df298e0b57867581`
-> **Implementation Tree:** `a91d2228f7f3be8fa2e8c1de5c56f945ec5dac9f`
-> **Execution-Time Main Baseline:** `2d6fbb2981a4e16fd7701884cc8d040c349bae1c`
+> **Generated At:** 2026-09-08 daily model research loop
+> **Repository Implementation Checkpoint:** `00f9da049023b04b18ccc6d76297193584e6c813`
+> **Implementation Tree:** `d066f37921502146ceb47860ec7f4ff525bce5d6`
+> **Execution-Time Main Baseline:** `129d8bee09401277f0857eb2dd359ac428d2efca`
 > **Containing Documentation Commit:** reported by handoff; no self-referential SHA
 > **Schema Epochs:** legacy business `LEGACY_MIGRATIONS_001_106`; target `MRA_REFOUNDATION_1 / DRAFT / NOT_CUT_OVER`
 > **Code Evidence:** `src/market_regime_alpha/bootstrap.py`, target PostgreSQL schema/migrations, `tests/refoundation`, `tests/platform`, and immutable Verification records linked below
@@ -27,9 +27,53 @@ entry_model_empirically_validated = false
 production_ready = false
 ```
 
-## Research operations activation checkpoint
+## Daily model research loop
 
-Current frozen implementation `26d4d98e` includes P1 atomic Runtime admission:
+The [new post-close protocol](../references/WP-DAILY-MODEL-RESEARCH-LOOP-01-Protocol.md)
+uses a shared exact daily close/open Feature and next-session close/open
+Outcome, with separate historical and actual-time inputs. Canonical Runtime,
+Dataset, Decision, ModelForecast, Outcome and Evaluation remain the owners.
+Explicit experimental Model use is purpose-limited, expiring and revocable;
+it cannot promote a Model or create a trading instruction. Prediction does not
+require the future target prices. Full sampled/eligible/feature-ready/predicted/
+mature/estimable denominators remain distinct.
+
+Original database OID 287543, cluster `7681924516459622681`, passes registered
+`daily_model_research_v7` at 2026-09-07 19:32:53.774296 UTC, receipt
+`36517db7-ee70-5d66-ab90-98cbb66665e3`. v7 has 194 tables and catalog checksum
+`2730fe8535261a7174dd38b87ea57037c7503a411b79a08faa88268d61951320`.
+The exact pre-column projections of 174 historical tables are unchanged;
+new vocabulary/metadata and added nullable fields are reported separately.
+v6 and the now-registered v7 upgrade bytes are immutable. The original failed
+large campaign is retained. The post-publication backup verifies 2,888 Artifacts and all 194 table
+projections, with dump SHA256 `0c6e3d12…`. Both the failed first consumer and
+completed new publication are included. Profile refresh and owned service
+restart complete at 2026-09-07 22:14:32 UTC; multiple live days remain unobserved.
+
+The new Generic baseline freezes 20 FIT and 10 VALIDATION sessions, 32
+instruments, one purge and one embargo session, rule/Ridge arms and alpha=1.
+Run `7ef9337b-9efd-5573-8d67-f29b0a6a92e0` uses installed `ec43f8aa`;
+later daily lifecycle fixes do not replace its frozen source. Its ModelVersion
+`fe47f296-17dc-5654-a9eb-cf149f5b01c9` is registered from completed FIT.
+Execution and deployment results are recorded below only after reconciliation.
+
+New daily prediction `e208e9d4-7d12-5929-9867-bdce54a2a874` is actually published
+at 2026-09-07 21:57:39.602585 UTC, before its next-session 01:30 UTC opening.
+It retains 32 sampled members, 31 model/rule predictions and one membership
+UNKNOWN (`601808.XSHG`), with full reasons. Exact repeat/publish/replay matches;
+31 independent scalar calculations match. The first consumer's empty-population
+failure and revoked use remain immutable. Corrected consumer `00f9da04` adds
+actual-date membership capture and explicit empty-population handling.
+
+Future Outcome/Evaluation Run `7d31a1d1-410c-5246-8e04-7ed3efb11ae3` has 38
+registered steps, PENDING until 2026-09-08 07:00 UTC. Real daily mature evaluation
+and sustained multi-day operation are not yet observed. Original WP18Q due proof
+remains independent and blocked. See the [daily Verification](../references/WP-DAILY-MODEL-RESEARCH-LOOP-01-Verification.md)
+for code, reports, backup and exact observation boundaries.
+
+## Prior research operations activation checkpoint
+
+Prior frozen implementation `26d4d98e` introduced P1 atomic Runtime admission:
 supervisor acquisition and all current target Runtime Attempt creation share a
 short PostgreSQL admission boundary. Database-wide reservation, exact owned
 Attempt identities and a post-claim/pre-Provider check exclude racing workers.
@@ -75,9 +119,9 @@ canonical generation 2 registration, an exact owned graceful stop and a restart
 after a fresh backup/profile update. Current health retains 128 MISSED of 576
 expected windows, 448 future and zero due/Capture observations; terminal coverage
 is not collection success. Next window is 2026-09-08 00:55–01:05 UTC.
-The service stays running under the current-user project supervisor. Backup
-maintenance is loaded for 03:00/19:00 local time, but its timer has not fired in
-this observation. The manually executed same procedure passes; neither this
+At that checkpoint the service stayed running under the current-user project
+supervisor. Backup maintenance was loaded for 03:00/19:00 local time, but its
+timer had not fired in that observation. The manually executed same procedure passes; neither this
 bounded observation nor next-generation planning proves cross-day collection.
 
 The P1 checkpoint passes 114 targeted cases. The Schedule/Runtime refinement
@@ -95,8 +139,10 @@ V1 economics remains V1. The
 [read-only research diagnosis](../operations/Research-Diagnostics.md) still
 accounts for 9,472 declared cells: 9,436 eligible Candidates and 36 exclusions.
 Its 97 non-estimable metrics retain their original causes and denominator.
-Daily Shadow still needs prospective Feature/Target/Model cutoff/Decision
-bindings and an explicitly new denominator protocol.
+Those old results do not validate the new daily Feature/Target/Model protocol.
+The later ranking-vector check in Research Diagnostics covers 188 common
+available predictions and 428 pairwise comparisons, all preserving order under
+the old positive one-feature Ridge coefficients; it does not prove increment.
 
 Historical original-database QueryCanceled root cause remains UNPROVEN.
 Current raw SQL, plans, waits and backup I/O observations are retained. A new

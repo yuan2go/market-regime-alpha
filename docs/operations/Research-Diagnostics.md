@@ -1,14 +1,64 @@
-# 已完成 R2 活动的只读研究诊断
+# 已完成研究活动的只读诊断
 
 > **Status:** CURRENT_STATUS
 > **Authority:** Read-only projection of reconciled research Authority; no qualification or execution authority
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-09-07
+> **Last Updated:** 2026-09-08
 > **Code Evidence:** `src/market_regime_alpha/research_qualification/application/backtest_diagnostics.py`, `src/market_regime_alpha/research_qualification/domain/backtest_diagnostics.py`, `src/market_regime_alpha/infrastructure/postgres/queries/backtest_diagnostics.py`
 
 报告不可估计的原因已能分类；当前样本中的模型排序增量及 Alpha 瓶颈仍未确定。本诊断保留完整成员去向，金融指标只引用已对账的 canonical Evaluation，不读取 raw bars、不重训、不调参，也不修改冻结协议、阈值或历史结果。
 
-## 精确范围与使用限制
+## 新盘后协议的独立探索结果
+
+新 Run `7ef9337b-9efd-5573-8d67-f29b0a6a92e0` 在原库 OID 287543、
+cluster `7681924516459622681` 完成 187 个 Generic actions；它不是旧 R2
+失败 Run 的重开或结果覆盖。冻结实现为 `ec43f8aa`，参数在 Validation
+访问前登记：20 FIT、10 VALIDATION 交易日、32 证券、一个 purge 和一个
+embargo session、两个实验臂、Ridge alpha=1。目标是下一交易日原始价格
+close/open−1；结果只评价预测，不产生账户收益或交易盈利结论。
+
+完整成员核算为 1,920 个证券×实验臂×FIT/VALIDATION session 单元，1,918
+个合法 Candidate，2 个合法排除，无未解释成员丢失。每个 Validation 臂
+声明 320 个成员：`sh.600438` 在 2026-02-25 因 canonical SUSPENDED 状态
+排除一次，319 个成员有预测。其前一日预测的目标窗口遇到封存的
+`INVALID_OHLC` SourceGap，保留失败 Outcome，最终 318 个共同成员可估计。
+预测覆盖是 319/320，估计覆盖是 318/320；两臂没有可用性差异。
+报告不因失败已记录而把它计为可估计，亦不从分母删除该成员。
+
+下表直接投影两份 canonical Validation Evaluation（`302fcca4…` rule、
+`c2f9e8f0…` Ridge），不是报告侧重新计算的金融指标。单位均为 RATIO；
+IC 先按各实际交易日的横截面计算，再汇总 10 个交易日。
+
+| 指标 | 规则基线 | Ridge |
+|---|---:|---:|
+| MAE，318 个共同可估计成员 | 0.015712149687 | 0.013995517332 |
+| RMSE，318 个共同可估计成员 | 0.023151517933 | 0.021096356302 |
+| Bias | -0.002017002007 | -0.001139424020 |
+| 每日 RankIC 均值 | -0.173538973950 | 0.173538973950 |
+| 每日 IC 样本标准差 | 0.277669773697 | 0.277669773697 |
+
+ModelVersion `fe47f296-17dc-5654-a9eb-cf149f5b01c9` 使用 640 个 FIT 行、
+20 个独立交易日；两者不能混作样本量。唯一 Feature 的 FIT 均值
+0.002049193615、标准差 0.023766942487、系数 -0.000319080908、截距
+0.000894723259 均来自已核验 fitted Artifact
+`5adb43bafae4180e351706d5407b2446410a65f618e97bf84e0efd7b59e36a53`。
+319 个共同预测的 4,929 次排序/并列比较与**反向**规则排序完全一致，
+而非新增独立排序信息。该方向由固定 FIT 学得，没有按 Validation 结果
+调参。误差减少也可能来自预测幅度收缩；未预声明常数均值对照，不能
+从这次结果单独归因。下一版本可预声明该对照，并继续观察未到期的实际
+预测；不能重标已观察历史为 untouched OOS。Alpha 瓶颈仍为 NOT_DETERMINED。
+
+标准报告含 6 个 Evaluation、30 个已声明可估计指标。重复 publish/resume/
+replay 保持 19 个相关表的计数、报告绑定与字节；初次执行的读对账超时
+及 canonical 恢复日志保留。报告 JSON SHA
+`90318517a9ff82bfa36da4f9c23b5e57ae6c742e398cb1c585dbb9398de3c581`，
+Markdown SHA `8a9de10ad4cae5f42e93f9ccc627ec223a0ebb277023642d9023ce410c8fea66`。
+完整来源位于增量包 `daily-model-research-loop-20260907` 的
+`baseline-canonical-diagnosis.json`、`baseline-denominator-summary.json`、
+`baseline-ridge-rule-order-proof.json` 和 `baseline-repeat-proof.json`。
+以下旧 R2 诊断仍保留它自己的协议、数据库范围和失败/不可估计事实。
+
+## 旧 R2 精确范围与使用限制
 
 恢复基线为 `85d0080ab3bf14fade5b91e8ef98aa9a16e0c2b2`。本轮新增诊断读者的实际源码内容身份记录在证据包中；不能把新读者的验证归入基线原有代码。最终实现关系由现有 [R2 Verification](../references/WP-ARCHITECTURE-REFOUNDATION-18Q-R2-Verification.md) 和 [R2 证据索引](../references/WP-ARCHITECTURE-REFOUNDATION-18Q-R2-Evidence.json) 记录。
 
@@ -75,6 +125,28 @@
 
 共 4 个已完成训练及 4 个 ModelVersion。较长 FIT 的不可估计成员仍保留在训练分母中。跨模型、重叠 FIT 的观测行或天数不能相加为独立样本；证券观测行不是 episode 数。本活动的 V1 成员结果不能提供 V2 episode 分母或连续账户净值证据。
 
+## 2026-09-08：旧 Ridge/rule 排序的精确向量核验
+
+在上表同一 `COMPLETED_RECOVERY` 数据库 OID `117559774` 中，重新执行
+只读、重复读取一致的模型/预测向量检查；未修改原库或恢复库，未重算
+第二套 Evaluation。4 个拟合 Artifact 的实际 bytes、SHA256 和 size 均匹配
+ModelVersion 引用。较短 FIT 的单特征标准化系数为 `0.001765549501`、
+scale 为 `0.001910506736`；较长 FIT 分别为 `0.000662372967` 和
+`0.001704827678`。系数与 scale 均为正，和同一单特征的规则排序同向。
+
+40 个 Context/fold/session 比较组保留 1,268 对资格通过成员，包括
+188 对共同可用预测和 1,080 对共同不可用预测；两臂可用性差异为 0。
+对每个交易日实际保存向量的 428 次两两顺序及并列比较，差异为 0。
+因此，旧活动中相同 RankIC 有正单调变换和实际排序一致的双重支持。
+该结论限定于这些可用预测及其原 Signal/Context 筛选，不能推广为完整
+Universe 的模型排序有效性。既有合法排除及 97 个不可估计结果保留。
+
+增量原件 `existing-ridge-rule-order-proof.json` 属于 logical bundle
+`daily-model-research-loop-20260907`，SHA256
+`831af8d34f3d08cbdb0aa29b96c07b5209cef715efe4e1ba8d092d8f87dce561`。
+新盘后协议采用完整预测人口及不同输入/Target，结果须按其自己的实际
+Run/ModelVersion/Evaluation 判断，不能继承本段旧模型的结论。
+
 ## 下一步实验与 Daily Shadow 的依赖
 
 1. 明确并授权唯一研究写入范围，完成真实 prospective 输入、窗口终态及恢复证据；完成恢复副本不替代这一步。启动和备份操作沿用 [Runtime Runbook](Runtime-Runbook.md)。
@@ -99,3 +171,16 @@
 | `funnel-subtask-ledger.json` | 执行命令、退出码、失败记录、测试日志及产物哈希 |
 
 这次只读诊断重复生成的 JSON/Markdown bytes 相同，`matched=true / mismatch_count=0`，192 张表的行数和有序哈希前后不变，业务写入为 0。历史 canonical Report JSON 保持 SHA256 `c6ee9f51216693ece843a3e1578ac76e4a69e69ec6a19bf556e36c92eb406a88`，指定活动 replay 匹配。这证明本次读取及投影的完整性，不单独构成 WP-18Q 总退出、持续服务或 Alpha 资格。
+
+## Daily field consumer correction
+
+The first actual-time consumer collected and normalized all 32 daily inputs,
+but its historical CSI300 membership observations were no longer effective.
+Selection retained all 32 UNKNOWN members; none disappeared. Empty model
+consumption failed before publication. That exact Run and plan were preserved,
+its expired safe-effect Attempt was recovered through Runtime, and an explicit
+failed Attempt terminalized the known defect. The old experimental use was
+revoked. A new consumer identity adds actual-date membership Capture/Normalize
+and explicit empty-population closure while reusing the same completed model.
+This changes input readiness and consumer behavior, not the frozen baseline,
+its fitted parameters or its observed Validation status.

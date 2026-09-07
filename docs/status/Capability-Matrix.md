@@ -3,10 +3,10 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Non-authoritative capability read model; never qualification Authority
 > **Owner:** Market Regime Alpha maintainers
-> **Generated At:** 2026-09-07 research operations activation
-> **Repository Implementation Checkpoint:** `26d4d98e045d323fd4947ed7df298e0b57867581`
-> **Implementation Tree:** `a91d2228f7f3be8fa2e8c1de5c56f945ec5dac9f`
-> **Execution-Time Main Baseline:** `2d6fbb2981a4e16fd7701884cc8d040c349bae1c`
+> **Generated At:** 2026-09-08 daily model research loop
+> **Repository Implementation Checkpoint:** `00f9da049023b04b18ccc6d76297193584e6c813`
+> **Implementation Tree:** `d066f37921502146ceb47860ec7f4ff525bce5d6`
+> **Execution-Time Main Baseline:** `129d8bee09401277f0857eb2dd359ac428d2efca`
 > **Containing Documentation Commit:** reported by handoff; no self-referential SHA
 > **Schema Epochs:** legacy `LEGACY_MIGRATIONS_001_106`; target `MRA_REFOUNDATION_1 / DRAFT / NOT_CUT_OVER`
 > **Code Evidence:** `src/market_regime_alpha/bootstrap.py`, `src/market_regime_alpha/infrastructure/postgres/migrations`, `tests/refoundation`, `tests/platform`, [Current State](Current-State.md), and linked immutable Verifications
@@ -26,9 +26,10 @@ carry/overlap and actual market executability remain unsupported. Legacy/V1
 hashes, meaning and report bytes are preserved in the verified exact scope and
 excluded from V2 correctness claims. See the [model contract](../references/WP-RESEARCH-ECONOMICS-CORRECTNESS-01-Design.md).
 
-Current target catalog: **192 tables, 4 views, 3,929 catalog objects**.
-Counts remain unchanged by v6; exact checksums and separately scoped original-v5
-and restored-v6 evidence are in Current State. Original OID 287543 now passes its authorized registered v6 upgrade.
+Current v7 target catalog has **194 tables**; exact catalog identity belongs to
+Current State and schema verification. The previous 192-table/3,929-object
+count belongs to v6. Original OID 287543 passes the authorized registered v7
+upgrade; no original failed campaign or old Model/Evaluation semantics change.
 Old 165-table and 3,776-test WP-17P numbers belong only to its historical
 [Verification](../references/WP-ARCHITECTURE-REFOUNDATION-17P-Prospective-Archive-Exploratory-Backtest-Verification.md).
 
@@ -40,6 +41,7 @@ BACKTEST_PLATFORM = ENGINEERING_QUALIFIED_IN_COMPLETED_RECOVERY_SCOPE
 | Capability | Current implementation / evidence boundary | Target owner / convergence |
 |---|---|---|
 | Runtime | Existing Schedule → Run → Step → Attempt → fence, PostgreSQL due/recovery and owner command composition; sole all-day `CONTINUOUS_RESEARCH`; no business CLI cutover | Runtime / `NOT_CUT_OVER` |
+| Daily experimental model loop | Shared historical/visible Feature, complete DataReady/member accounting, explicit completed ModelVersion use, immutable future prediction/abstention, pending Outcome Runtime and canonical Evaluation. Existing service serializes collection/research under common admission; no fake retrospective fold or second scheduler | Existing owners / `EXPERIMENTAL_ONLY; REAL_MATURITY_PENDING` |
 | Market / PIT | Capture, append-only facts/revisions, exact as-of reads and typed SourceGap/unavailable states; public providers remain exploratory | Market / `IMPLEMENTED_DRAFT` |
 | Market archive | Separate retrospective/prospective lanes, immutable slices/observations/seals and read-only reconciliation; restored archives verify after new owner-recorded physical Artifact checks | Market + Runtime/Artifact / `RECOVERED_NEW_SCOPE / EXPLORATORY_ONLY` |
 | Provider qualification | Immutable purpose-specific protocols/finality/decisions/rosters; WP-15 rejected, WP-16 external-evidence gate remains blocked | Market / `FORMAL_PROVIDER_BLOCKED` |
