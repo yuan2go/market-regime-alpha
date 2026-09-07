@@ -858,3 +858,293 @@ Final document navigation/command/ceiling checks are repeated for that delta.
 The original index's 367 entries and all preceding Verification bytes remain
 preserved at baseline `85d0080a`; the index adds this activation as one named
 continuation. The before/after scope of reused evidence is explicit above.
+
+
+## Original v6 activation continuation — 2026-09-07
+
+This is the incremental continuation of the same activation, under the latest
+explicit original-upgrade and project-service authorization. All preceding
+Verification bytes and failed results remain historical evidence. This section
+supersedes their current authorization/activation disposition only. It does not
+repeat the 936-action campaign or inherit a new full-repository PASS.
+
+### Exact implementation and protected workspace
+
+Fetched and final re-fetched main is **2d6fbb2981a4e16fd7701884cc8d040c349bae1c**,
+tree **8fb4525faa921474418a31cf712e7eb46d169d20**. One isolated branch is
+agent/research-operations-live-activation-20260907. The unrelated original branch
+remains at 10689a4db772be5a546a64448fcc6f39f6988412; its unstaged IDE file retains
+SHA256 1f4d49d435a7355fdfe18d629e177c419c2464d56446a5200dbed317dba6b040.
+No reset, clean, stash, push, PR, merge or campaign replacement occurred.
+
+The last remote refresh initially exits 128 when its SSH connection closes.
+A bounded same-repository retry exits 0 and confirms both origin/main and
+FETCH_HEAD at the baseline above. The failed and successful logs accompany the
+final delivery receipt; no upstream code or dependency delta needs integration.
+
+Local implementation commits are:
+
+- **3d7b7a6265ff152f57d0dd83e9c0f31cc730d644**: atomic prospective/Runtime admission.
+- **a1d3a4a519af7925dfae38ca099e87acd5a2cff6**: retain Schedule lineage and reconcile exact missed-window failures.
+- **26d4d98e045d323fd4947ed7df298e0b57867581**: reconcile expired unattempted members under terminal capture Runs.
+- **22e08a695fbf1ea2ee679ff318daacd8d6c9d418**: project backup-refresh procedures/templates; runtime source/tests unchanged.
+
+Deployed runtime **26d4d98e** has tree
+a91d2228f7f3be8fa2e8c1de5c56f945ec5dac9f,
+source tree 274c1bc8e914af73e091783a1d90fe730e719604,
+tests tree 664bd4f36f7d12025c537de08abafb877dc07768.
+Its separate frozen worktree is clean. Python is 3.12.2; unchanged uv.lock SHA256 is
+5cfb5ced3a2587910e172a66f5a5912668d16d0c8dd54e0ae3e619384113a41d.
+The independently installed wheel is 3,764,010 bytes, SHA256
+7f4ab70378627cf23261bde18e89d17b11a811774ae5f19fc4881b161070d0aa;
+installed Python/SQL fingerprint is
+39281d0f0ff8813ae516e454d802bc3dbcb97806e8ba62bab7fa398d39a5837e.
+Containing status/index documentation is a subsequent documentation-only commit,
+not the runtime identity. All exact bindings appear in the incremental index.
+
+### Single-writer boundary and retained field failures
+
+Both current target Runtime Attempt insertion paths, claim_next and
+expire_step_deadline, share a short PostgreSQL transaction advisory admission
+boundary with supervisor acquisition. An exact-database session reservation
+blocks foreign current Runtime claimers. Owned connection/PID/database/cluster/
+series and Runtime-generated Attempt identities distinguish the supervisor's
+own legitimate Attempt from a matching worker-name impersonation.
+before_action reloads conflicts, and another check occurs after claim/start,
+immediately before Provider effects. Expired own-scope leases go to canonical
+recovery; foreign scope and unknown effects remain fail-closed.
+Provider I/O does not hold the admission transaction.
+
+This guarantees admission among the enumerated **current target Runtime**
+participants, not arbitrary SQL or an old binary ignoring the protocol.
+Activation preflight excludes unknown/old writers. Existing fenced work can
+drain; lost supervision cannot authorize a new claim/effect.
+
+The first installed service passes preflight, honestly terminalizes 128 missed
+slices and four capture Run groups, then fails on
+runtime_schedule_one_enabled_idx: successor generation implicitly selected
+Schedule revision 2 while the existing enabled Schedule is revision 1.
+No second enabled Schedule commits. The fix inherits the exact registered
+revision; it does not upgrade original revision-1 recovery policy.
+
+The next field startup exposes the actual multi-member state: one
+DEADLINE_EXHAUSTED failed Step and 31 unattempted READY members under an already
+FAILED capture Run. The first restart fix covered BLOCKED members only.
+Final code additionally recognizes READY members only after their frozen
+deadline. Failed members require exactly one terminal deadline-exhausted
+Attempt; other failures and uncertain earlier effects still refuse. Neither
+failed Run nor Step is reopened and no Provider effect is retried.
+
+Both failed code/configuration identities, SQL/error logs and committed
+maintenance facts are preserved. PostgreSQL counterexamples precede the fixes.
+Test expectation mistakes concerning UUID expiry order and transient “newly
+recovered” output on repeat are retained too; their corrections preserve all
+immutable business-fact assertions.
+
+### Original registered upgrade and preservation
+
+The original is still mra_wp18q_r2_operational_20260905, **OID 287543**, cluster
+**7681924516459622681**, PostgreSQL 16.15, with owner recorded in private
+inventory. No restored database is a writer/fallback. Exact identity, disk,
+fresh backup, no conflicting Runtime Attempt and single-writer guards pass.
+
+Fresh v5 dump is 192,587,834 bytes, SHA256
+1b2de45a03fdfd2691411216f0d6ec579ec755adc21236fbd338efe99bea541d.
+It has a verified exported snapshot, 2,770 referenced Artifacts and pg_restore
+readability. The v5 backup uses the explicitly pinned prior compatible read-only
+binary after current v6 admission correctly refuses catalog drift; this is not
+availability-selected business execution.
+
+The fresh registered plan/challenge is applied through mra db upgrade-apply at
+3d7b7a62, without editing released migration/bundle bytes.
+wp18q_prospective_revision_gap_v6 receipt
+**d785e40c-5608-55e7-a935-285ecc06898b** is applied at
+**2026-09-07 13:19:18.304411 UTC**, content SHA256
+4f58188fbfce10c1fdba50a7f6433bcd7e1954ccfc58e002fe3fb591a4533b22.
+
+Epoch stays MRA_REFOUNDATION_1 / DRAFT / NOT_CUT_OVER.
+Baseline SHA256: f417b63cf3dc534b1a5d329c5a30462945bfeb6b8c4389bf8ab3a9e1f4efbd27.
+Catalog v5: d14348490acefb1becea504ad4cf5bcb65bd482efa02e59343fd9408c851f1f1.
+Catalog v6: 233c60c2b8b6efca4682f92fff8acbe85895a967cef0e11f7838f572e6ed69db.
+Published 002_prospective_revision_gap.sql remains
+bd5978ae2ccfd56a9d117c41e13e0a8f7c76fbdd4d83d4aa1b32757dbe753063.
+
+Across 192 ordered table projections, only schema_epoch, schema_migrations and
+operational_schema_upgrade_receipt change: **189 business-table hashes match**.
+All 2,770 Artifact identities/bytes match, roster SHA256
+c0d5253a893381bd30148adede4b61d00b9e78e2a2c433cbdbb9aacc3b1b516c.
+Campaign definition 6318cbb0-e1d5-54b4-96bf-a2f458d0ef71 has no state column;
+its FAILED action 59f66bd4-0e2e-57e5-b9fd-384cb4827202, Runtime Run
+77e28784-8b37-5dc3-8f61-964891ff8a26, stays FAILED / BACKTEST_ACTION_FAILED.
+No successful copy rows are transplanted.
+
+### Provider, actual service and window evidence
+
+Bounded BaoStock 0.9.3 access at **12:47:04 UTC** returns error_code 0 for
+sh.600000 on actual 2026-09-07: one daily and 48 five-minute rows, 09:35–15:00.
+Login/logout and the requested products succeed. The 10-second, one-attempt
+product probe retains responses/errors and creates no canonical Capture.
+**Only post-close access is proved; intraday publication timeliness is not.**
+No substitution, TLS bypass, backdating or unbounded retry occurs.
+
+The authorized current-user job **local.mra.prospective.r2-xshg32** runs the exact
+installed 26d wheel through guarded mra archive prospective serve.
+KeepAlive is false; no unconditional fault restart. The process is left running.
+Private profiles, configuration, deployment plists, commands and logs are copied
+as-of into the evidence snapshot. Final profile hash is
+420bc9ecd714bae7b96977483a79b94411bfd06a499f4779b12cf8816e0daab9.
+
+The snapshot records **22 normal ticks, 14:07:44–14:43:26 UTC**, with a deliberate
+backup pause/restart. The first tick takes 89.87s; representative steady ticks
+take 28.64–32.91s under the frozen 120s budget. This is bounded lifecycle
+evidence, not an uninterrupted interval, cross-day observation or capture.
+Canonical generation 2, **d9422c35-7c68-5002-ba72-566c4081a0e4**, is registered at
+14:07:26.797962 UTC, preserving predecessor
+1303080a-8a96-51dc-9021-31a9250c85d9 and frozen Target/Schedule lineage.
+
+PostgreSQL-clock health at **14:42:11.431925 UTC** reports 576 expected slices:
+128 MISSED, 448 future, zero due backlog, overdue-unterminalized, planning gaps,
+unknown effects, expired active leases or captures. Terminal coverage is
+128/128 opened windows; successful/on-time capture are 0/128. Runtime failure
+count 128 is a **window count**, not 128 Attempts. Four synthetic deadline
+Attempts and registration maintenance are not real due capture Attempts.
+Health correctly remains ATTENTION_REQUIRED.
+
+Next legal OUTCOME_PRE_OPEN window is **2026-09-08 00:55–01:05 UTC /
+08:55–09:05 Asia/Shanghai**, 32 members, TradingSession
+9c9f9be2-540e-5891-b2b0-9dc4e8a8639e, Runtime Run
+0b864c8d-c578-5363-a568-b071d3b44ac3. No wait for that future window occurs.
+
+Read-only snapshots at **14:30:48 and 14:41:11 UTC** match all 14 exact
+prospective/Runtime table projections, the original failed action, and both
+global Receipt/Audit counts (96,420 each): **matched=true / mismatch_count=0**.
+Repeated ticks add no generation/completed action facts. This enumerated
+comparison is not a whole-database unchanged-hash claim after authorized writes.
+
+### Backup refresh, restart and current resource observations
+
+Post-upgrade baseline dump
+a528178a398347979da297e5f90fae81cf03e685b24b016baa6ea0a537dad189 is readable
+and mirrored with its roster to a second local physical disk.
+The manually executed project refresh drains the exact owned process at
+14:08:59 UTC, observes graceful exit, then creates a fresh canonical backup,
+advances only backup profile fields and restarts at 14:25:16 UTC.
+Former profiles and command/receipt events remain retained.
+
+New dump: **192,695,861 bytes**, SHA256
+499b8f515686c84a5214a73af1c5f4e90d372051b3afcce630338db8cf0dfa48.
+Receipt SHA256: 64a35bfbe3f5201984668e788b39f0e7e8864df4813e703ac136a1fad056ab28.
+**2,774 Artifacts**, roster SHA256
+4f9cfe4af6f081b1ecfc48f5ac8441d15913a2b1c76719080feb9c83a3850d3e.
+Contract: POSTGRES_EXPORTED_SNAPSHOT_AND_EXACT_ARTIFACT_ROSTER.
+Readability, physical hashes and the second-disk mirror pass.
+Seven fresh Artifact verification observations append **after** that snapshot,
+explicitly outside its comparison. They do not change Capture known-time.
+Restores must verify bytes and create new owner physical observations before
+current-time consumption; post-snapshot metadata is never merged into an old
+snapshot claim.
+
+The same project-only refresh procedure is installed for **03:00 and 19:00 local
+time**, RunAtLoad=false, KeepAlive=false. Its timer has not fired in this
+observation; manual execution of the same helper is the actual proof.
+It validates scope/source/owner/disabled state, drains only the exact job,
+excludes racing claims during backup, verifies new bytes, advances the profile
+atomically, and performs one bounded preflight/start. Failure leaves collection
+stopped. The 16-hour maximum planned interval fits the 24-hour backup lifetime.
+Sleep/logout, unmounted volumes and faults do not imply continuous coverage.
+Logs rotate by launch identity; reserve failures stop new work without deleting
+immutable evidence.
+
+These are two distinct **local physical devices, not offsite**.
+A new independent DB restore is **NOT_RUN this activation**; previous registered
+v6 and independent restore proofs retain their exact scope. Current backup
+readability, byte verification and safe restart are actual new evidence.
+The previous 1,570,966,599-byte portable original re-hashes successfully to
+f2a74158822e9400236e5e78824b026aae3f4b98988128b12c70dc7eb7870267;
+its 30,181 members are not repacked/rescanned.
+
+Actual 32-member Runtime inspect/due SQL has bounded EXPLAIN (ANALYZE, BUFFERS,
+FORMAT JSON) evidence: **0.208–0.801ms**, two inspect queries, below the 1,000ms
+query/5s transaction budgets. Sample child RSS is about 123MiB, not peak.
+The 15m54s backup holds an exported **read-only backup** snapshot, not a long
+Provider/business-write transaction.
+
+A separate whole-database Receipt/Audit count probe times out at its unchanged
+10s limit. Failure is retained; a bounded repeat takes 7.02s with DataFileRead
+waits and no observed blocker; the later identical comparison passes. No timeout,
+index or server configuration changes. This explains that current observation
+only: **historical QueryCanceled root cause remains UNPROVEN**.
+
+### Risk-directed verification and explicit non-runs
+
+All Python commands use uv and locked dependencies. Fault tests use disposable
+database OID **162586978**, cluster **7682058034626392615**, PostgreSQL 16.15.
+No operational fault injection occurs. JUnit preserves exact selected node IDs.
+
+| Executed command/group | Actual result |
+|---|---|
+| uv sync --frozen --extra dev --extra postgres | PASS, exit 0, frozen environments |
+| uv run pytest -q: single-writer PostgreSQL | 3d: 10 pass, zero failures/errors/skips |
+| Runtime/Provider/CLI/revision-gap/schema focused files | 3d: 90 pass, zero failures/errors/skips |
+| Admission, registered upgrade and architecture boundaries | 3d: 14 pass, zero failures/errors/skips |
+| Continuity, Schedule, guard and Runtime refinement | a1: 45 pass, zero failures/errors/skips |
+| Final multi-member/continuity/plan/guard | 26d: 30 pass, zero failures/errors/skips |
+| Shared Runtime Backtest actions, report and architecture | Clean 26d: 31 pass, zero failures/errors/skips |
+| Changed-file uv run ruff check / uv run mypy | PASS, exit 0 |
+| Locked uv build; frozen hash dependency install; installed import/CLI smoke | PASS, exit 0; exact wheel/source above |
+| uv run mra db upgrade-plan / upgrade-apply / db verify | Original: exit 0; 140.67s / 282.98s / 1.22s |
+| Canonical backup, guarded preflight, profile refresh/start | Original: exit 0; full command/receipt events retained |
+| Current SQL plans and repeated-facts check | PASS in enumerated scopes; earlier count timeout retained |
+| Template lint/compile, docs links and git diff --check | PASS, exit 0 for delivered delta |
+
+Groups overlap; 114 + 45 + 30 + 31 is not a unique-test total or full regression.
+Coverage includes own/foreign/expired Attempts, deterministic claim interleavings,
+supervision loss, post-claim/pre-effect refusal, unknown effects, Provider timeout,
+wrong upgrade identity, bad backup, active Attempt and transactional upgrade
+rollback. Earlier failed JUnit runs and both field startups remain in the
+manifest. Test expectation corrections are described above; no weakened
+business assertions, dropped failures, skip/xfail or changed research thresholds.
+
+Schema/bundle/dependency bytes and economics/report algorithms are unchanged.
+Existing completed-campaign, historical report/replay, hard-cut and independent
+restore evidence keep their recorded scope. **FULL_REGRESSION=NOT_RUN** under
+the latest explicit strategy. Remote Actions are not invoked; the prior disabled
+configuration evidence is not a new CI PASS.
+
+### Delivery and independent exit decisions
+
+The existing [R2 index](WP-ARCHITECTURE-REFOUNDATION-18Q-R2-Evidence.json) adds
+one named continuation containing incremental manifest/archive hashes, exact
+code/configuration/database/backup bindings and retained failed logs.
+Private paths/profiles remain outside Git. Incremental originals and code
+bundle have verified copies on both local physical devices; the large
+DB/Artifact bundles are separately identified, not duplicated inside this
+archive. [Runtime Runbook](../operations/Runtime-Runbook.md) provides exact
+start, stop, disable, health, backup-refresh and recovery commands.
+
+~~~text
+IMPLEMENTATION_SHA = 26d4d98e045d323fd4947ed7df298e0b57867581
+SINGLE_WRITER_CONCURRENCY = PASS_CURRENT_TARGET_RUNTIME
+ORIGINAL_DATABASE_SCHEMA = V6
+ORIGINAL_V6_UPGRADE = PASS
+PROVIDER_PRODUCT_ACCESS = PASS_POST_CLOSE; INTRADAY_TIMELINESS_UNPROVEN
+SERVICE_ACTIVATION = RUNNING_AT_RECORDED_HANDOFF
+REAL_DUE_ATTEMPT = NOT_DUE
+SUCCESSFUL_REAL_CAPTURE = NOT_OBSERVED
+CONTINUOUS_SERVICE_OBSERVED_SCOPE = 22_BOUNDED_TICKS_AND_GRACEFUL_BACKUP_RESTART
+BACKUP_REFRESH_AND_RECOVERY = PASS_BACKUP_BYTES_PROFILE_RESTART; NEW_DB_RESTORE_NOT_RUN
+TARGETED_VERIFICATION = PASS_SCOPED
+FULL_REGRESSION = NOT_RUN
+WP18Q_EXIT_GATE = BLOCKED
+REMAINING_BLOCKERS = REAL_DUE_CAPTURE_AND_SUSTAINED_OBSERVATION; INTRADAY_PRODUCT_TIMELINESS
+ALPHA_PROVEN = NO
+PRODUCTION_ADMISSION = NO
+~~~
+
+Missed-window terminalization, post-close access, successor planning and finite
+lifecycle do not prove timely capture or sustained service. The service is
+already activated within authorization; remaining temporal evidence needs
+observation, not another deployment approval. No future window is awaited.
+Formal Provider/PIT stay BLOCKED, formal OOS NOT_RUN, retrospective
+EXPLORATORY_RETROSPECTIVE, Model/Alpha/Production unqualified and full Runtime
+cutover NOT_AUTHORIZED.

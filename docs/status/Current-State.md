@@ -4,9 +4,9 @@
 > **Authority:** Non-authoritative implementation status; exact-SHA qualification belongs to Verification
 > **Owner:** Market Regime Alpha maintainers
 > **Generated At:** 2026-09-07 research operations activation
-> **Repository Implementation Checkpoint:** `4c764b3d01c08b1cb2de9949cb3a6aa7f534bc72`
-> **Implementation Tree:** `8b9e78a7672d12080fb35691b528a01cc541f347`
-> **Execution-Time Main Baseline:** `85d0080ab3bf14fade5b91e8ef98aa9a16e0c2b2`
+> **Repository Implementation Checkpoint:** `26d4d98e045d323fd4947ed7df298e0b57867581`
+> **Implementation Tree:** `a91d2228f7f3be8fa2e8c1de5c56f945ec5dac9f`
+> **Execution-Time Main Baseline:** `2d6fbb2981a4e16fd7701884cc8d040c349bae1c`
 > **Containing Documentation Commit:** reported by handoff; no self-referential SHA
 > **Schema Epochs:** legacy business `LEGACY_MIGRATIONS_001_106`; target `MRA_REFOUNDATION_1 / DRAFT / NOT_CUT_OVER`
 > **Code Evidence:** `src/market_regime_alpha/bootstrap.py`, target PostgreSQL schema/migrations, `tests/refoundation`, `tests/platform`, and immutable Verification records linked below
@@ -29,68 +29,86 @@ production_ready = false
 
 ## Research operations activation checkpoint
 
-Implementation `4c764b3d` adds an exact-scope, backup-bound foreground guard to
-existing prospective continuation. It checks database/OID/cluster/schema/root,
-Target/calendar, physical bytes, Provider access, source identity, single writer
-and resource budgets. Each further owner action checks supervision and stop
-permission. Whole Provider effects have one deadline plus row/byte ceilings;
-unknown effects require canonical reconciliation. No new Runtime or scheduler
-exists. Read-only health separates capture success, on-time capture and terminal
-coverage and preserves complete expected denominators.
+Current frozen implementation `26d4d98e` includes P1 atomic Runtime admission:
+supervisor acquisition and all current target Runtime Attempt creation share a
+short PostgreSQL admission boundary. Database-wide reservation, exact owned
+Attempt identities and a post-claim/pre-Provider check exclude racing workers.
+No Provider I/O holds that transaction. Old binaries/arbitrary SQL are not
+claimed to participate; activation excludes unknown writers.
 
-The original operational database OID 287543 stays on its recorded v5 schema
-and retains the FAILED large Run. It is not replaced by a successful copy.
-The new v6 correction preserves frozen revision ordinals across explicitly
-recorded negative windows. Two independently restored scopes pass controlled
-v5→v6 upgrade with all 189 business-table hashes and Artifact bytes unchanged;
-a further v6 backup restores all 192 table hashes and 2,770 Artifacts. Final
-completed-v6 backup `72edc6c6…` independently restores to OID 157024168: all
-192 table hashes, 2,780 physical Artifacts, five Archives, WP17P/large Run replay
-and original report bytes match, with zero source business writes. These
-proofs do not authorize or attest to upgrading the original database. Its
-read-only upgrade plan must be regenerated after explicit authorization.
+The explicitly authorized original OID 287543, cluster
+`7681924516459622681`, now passes registered
+`wp18q_prospective_revision_gap_v6` upgrade and Schema verification.
+Receipt `d785e40c-5608-55e7-a935-285ecc06898b` is recorded at
+2026-09-07 13:19:18.304411 UTC. Comparison of 192 ordered table projections
+shows only the three Schema metadata tables changing; all 189 business tables
+and 2,770 Artifact identities/bytes are unchanged by the upgrade. Original
+large-campaign FAILED action `59f66bd4-0e2e-57e5-b9fd-384cb4827202` stays failed.
+The operational database was not recreated, replaced or adopted from a copy.
 
-Final engineering regression for `4c764b3d` passes **4,163 cases, zero
-failures/errors/skips**, including 1,096 refoundation, 33 platform and 288
-PostgreSQL-persistence cases. Focused 152 and architecture/docs 41 cases, Ruff,
-mypy, docs, build and independent installed-wheel smoke pass. The first `f55af294`
-full run has 4,160 passing and three failing cases, with zero skips; those failures
-are retained. The two exact migration-roster assertions and SQL adapter boundary
-are repaired without weakening their contracts. Final results belong to the
-same [R2 Verification](../references/WP-ARCHITECTURE-REFOUNDATION-18Q-R2-Verification.md),
-not a new qualification hierarchy.
+Fresh v5 backup `1b2de45a…` and post-upgrade v6 backup `a528178a…`
+have verified dump, inventory, exact Artifact roster and pg_restore readability.
+The v6 bundle is mirrored onto a second local physical disk; this is not offsite
+protection. Subsequent authorized collection/Artifact-verification appends have
+their own time and receipt identities, separate from upgrade preservation.
 
-At final original-DB PostgreSQL time 2026-09-07 03:45:01.547047 UTC,
-288 slices are future and zero are due, overdue or attempted. The first window
-is 06:40–06:48 UTC. No future window is awaited. Final `4c764b3d` actual startup
-and one explicit new request both fail at Provider access preflight, exit 2,
-before a business tick. All 192 table hashes and 2,770 Artifact bytes/references
-are unchanged. Its field positive lifecycle is BLOCKED_BY_PROVIDER_ACCESS;
-the earlier f55 positive bounded stop/restart remains version-scoped. Neither
-case proves a real due Attempt, successful capture or sustained service.
+Actual product access at 2026-09-07 12:47 UTC returns one daily and 48 five-minute
+BaoStock rows for that trading day. This is post-close access, not an intraday
+timeliness guarantee or a canonical Capture. The first installed service passes
+preflight and records 128 MISSED windows, then fails on implicit Schedule
+revision replacement. The next field startup exposes unattempted READY members
+under an already deadline-failed capture Run. Both failures and their original
+code/configuration/log identities are retained.
 
-The completed recovery campaign is reverified at `f55af294` in current-v6 OID
-144400596: 936 completed actions, all 192 table hashes and 2,780 physical
-Artifacts unchanged by inspect/report/compare/resume/replay/diagnose. Report
-JSON/Markdown bytes retain their prior hashes. Frozen V1 economics remains V1.
+The fixes inherit the registered Schedule revision and reconcile only exact
+missed-window failures without restarting the failed Run. Unknown effects and
+other failures still stop work. Independent PostgreSQL counterexamples cover
+both Schedule revisions, multiple members, immutable repeated facts and
+unknown-effect refusal. The latest activation/runtime/backup observations are
+recorded in the incremental addendum of the existing
+[R2 Verification](../references/WP-ARCHITECTURE-REFOUNDATION-18Q-R2-Verification.md);
+the installed current-user supervisor and backup-refresh procedure are in the
+[Runtime Runbook](../operations/Runtime-Runbook.md).
 
-The [read-only research diagnosis](../operations/Research-Diagnostics.md)
-accounts for 9,472 declared cells: 9,436 eligible Candidates and 36 canonical
-eligibility exclusions, with no unexplained loss. Of 97 non-estimable metrics,
-88 reflect the frozen pre-eligibility denominator, eight empty Context
-partitions and one nonempty V1 economics slice without estimable inputs.
-Rule/ridge RankIC is equal at the same Context setting; lower descriptive ridge
-errors do not establish ranking increment or model selection readiness.
-A future protocol must explicitly decide denominator semantics. Daily Shadow
-also requires prospective Feature/Target/Model cutoff/Decision bindings.
+The final installed service records 22 ticks through 14:43:26 UTC, including
+canonical generation 2 registration, an exact owned graceful stop and a restart
+after a fresh backup/profile update. Current health retains 128 MISSED of 576
+expected windows, 448 future and zero due/Capture observations; terminal coverage
+is not collection success. Next window is 2026-09-08 00:55–01:05 UTC.
+The service stays running under the current-user project supervisor. Backup
+maintenance is loaded for 03:00/19:00 local time, but its timer has not fired in
+this observation. The manually executed same procedure passes; neither this
+bounded observation nor next-generation planning proves cross-day collection.
 
-Original/copy SQL, plans, locks, I/O counters and current timings are preserved.
-Both the slow original 256-row read and the copy use the same bounded PK index
-scan; current original planning and metadata reads are slower too. Historical
-failure-time SQL/I/O/locks were not retained, and cache/load were uncontrolled.
-`ORIGINAL_DATABASE_ROOT_CAUSE=UNPROVEN`; no speculative timeout/index change
-was made. Actual due proof, successful capture and sustained service remain
-separate, unproven gates; no installed supervisor or scope switch occurred.
+The P1 checkpoint passes 114 targeted cases. The Schedule/Runtime refinement
+passes 45, the final multi-member/continuity refinement passes 30, and shared
+Runtime/Backtest/report/architecture consumers pass 31, with
+overlap stated in the evidence ledger. Changed-file lint/type checks, locked
+wheel build and separate installed environments pass. These are scoped
+risk-directed gates; `FULL_REGRESSION=NOT_RUN` for this activation, per the
+current explicit request. The previous 4,163-case full result belongs to
+`4c764b3d` and is not relabelled as a new full regression.
+
+The completed recovery campaign and prior hard-cut/report/replay evidence are
+reused within their recorded scope; no 936-action campaign is rerun. Frozen
+V1 economics remains V1. The
+[read-only research diagnosis](../operations/Research-Diagnostics.md) still
+accounts for 9,472 declared cells: 9,436 eligible Candidates and 36 exclusions.
+Its 97 non-estimable metrics retain their original causes and denominator.
+Daily Shadow still needs prospective Feature/Target/Model cutoff/Decision
+bindings and an explicitly new denominator protocol.
+
+Historical original-database QueryCanceled root cause remains UNPROVEN.
+Current raw SQL, plans, waits and backup I/O observations are retained. A new
+whole-database Receipt/Audit count probe times out at 10 seconds, then passes
+within the unchanged budget with observed data-file read waits. Its failure is
+retained; this does not establish the historical timeout's cause. Repeated live
+ticks preserve all 14 scoped table hashes, original failed action and both
+Receipt/Audit counts (matched=true, mismatch_count=0);
+no speculative timeout/index change occurred. A known missed-window terminal,
+a real due Attempt, a successful Capture and continuous service duration remain
+separate facts. WP18Q total exit is BLOCKED while actual due proof is absent;
+Alpha, Model, formal Provider/PIT/OOS and Production are not promoted.
 
 ## Research economics correctness checkpoint
 
@@ -163,8 +181,9 @@ The legacy 001–106 / 283-table business schema remains distinct and uncut.
 The draft baseline and exact registered additive operational bundles serve
 different operations. Operational evidence databases must not be recreated.
 A new disposable test database does not attest to an operational upgrade.
-The original operational scope retains v5. Current disposable bootstrap and
-independently restored upgrades match v6; the new numbered migration is
+The original operational scope now matches v6 after its explicitly authorized,
+registered upgrade. Disposable bootstrap and independently restored upgrades
+also match v6; the already released numbered migration is
 `002_prospective_revision_gap.sql` (SHA256
 `bd5978ae2ccfd56a9d117c41e13e0a8f7c76fbdd4d83d4aa1b32757dbe753063`).
 Catalog counts are unchanged. All 189 business tables retain their complete
@@ -175,8 +194,9 @@ Released baseline and all prior registered upgrade bytes are unchanged.
 
 The [single R2 Verification](../references/WP-ARCHITECTURE-REFOUNDATION-18Q-R2-Verification.md)
 and [content index](../references/WP-ARCHITECTURE-REFOUNDATION-18Q-R2-Evidence.json)
-preserve the preceding continuation from main `6dc98933` and append current
-activation from `85d0080a`. Earlier R2 began at `780cd964`;
+preserve the preceding continuation from main `6dc98933`, the `85d0080a`
+activation, and the current authorized original activation from `2d6fbb29`.
+Earlier R2 began at `780cd964`;
 its frozen campaign writer remains `f247ca5d`. Its source, protocols, code bundle
 and negative results are preserved independently of current implementation.
 
@@ -207,8 +227,8 @@ restore establishes continuous old prospective history.
 | Large Generic campaign | Original OID `287543`, Run `6318cbb0-e1d5-54b4-96bf-a2f458d0ef71`, is `FAILED`: one Fold Evaluation `EVALUATE` step terminated after PostgreSQL QueryCanceled; five preceding steps remain committed. Its faithful pre-failure recovery copy OID `117559774` completes all 936 actions at unchanged frozen `f247ca5d`: 44 actual FIT/VALIDATION sessions, 32 instruments, four arms, two FIT→VALIDATION dependencies, 296 Datasets/Decisions, 9,436 Outcomes, four ModelVersions and 44 Evaluations. Copy completion does not repair the original terminal identity. |
 | Proven repairs and performance boundary | Real failures led to exact Calendar horizon resolution, stable Runtime-derived Evaluation cutoff, completed-FIT Model cutoff, ordered Feature-parent reconciliation, report binding encoding, bounded owner reads and successful-receipt indexing. The real receipt lookup now uses an Index Only Scan, reads one row and returns its original receipt/result hash. Cold/warm timings are observations, not equal-cache speedup claims. Completed-copy EXPLAIN ANALYZE/BUFFERS plans cover all eight required surfaces. A 1,085-sample Model preparation loads each of 34 Dataset definitions once; registered reload loads none. Original cold reads/timeouts and fast later plans are separately retained; the physical slowdown cause is not determined. Frozen recovery completes in 398.70 seconds but one Evaluation write takes 13.68 seconds, exceeding the predeclared 10-second budget. The already implemented current Evaluation owner, under a new isolated component identity, reproduces all 15 reference metrics for 1,085 members with a 7.54-second write; this does not repair the original failed Run. |
 | Preserved failures | Failed Runs, Runtime Attempts and original OPEN Evaluations remain immutable. In particular, `a4b98930` stopped after 8,168 Outcomes when its Archive-derived Evaluation cutoff preceded actual settlement; `e948d119` failed on the unindexed receipt lookup. Later executions use new identities and unchanged research parameters. Neither failed execution is relabeled as completed. |
-| Prospective continuity | The old CONTINUOUS_RESEARCH CLI prospective switches now refuse before execution; the sole public prospective write entry is guarded `mra archive prospective serve`, which delegates to the same canonical continuation and existing Runtime. PostgreSQL clock, exact TradingSessions, overdue terminalization, planning gaps, due claim, lease/fence and unknown Provider effect recovery are wired and tested. The foreground `mra archive prospective serve` entry uses that same continuation, closes composition between wakeups and drains SIGINT/SIGTERM without signal-handler lock reentry. No system service is installed; a bounded lifecycle drill cannot prove sustained collection. |
-| Real prospective result | New series `r2_xshg32`, generation `1303080a-8a96-51dc-9021-31a9250c85d9`, begins at 2026-09-05 15:56:17.897411 UTC. Original-DB foreground continuation at 2026-09-06 17:06:02/03 UTC drains SIGTERM and restarts with exit codes 0/0: due=0, no new generation or planning gap. The separately backed-up restored scope also passes the bounded lifecycle drill. Health shows 288 NOT_DUE slices, zero overdue/missed/captured. This is not sustained service or a due Attempt. `REAL_DUE_ATTEMPT=BLOCKED_BY_TEMPORAL_WINDOW`; frozen WP-18Q total exit still requires actual due proof. |
+| Prospective continuity | The old CONTINUOUS_RESEARCH CLI prospective switches now refuse before execution; the sole public prospective write entry is guarded `mra archive prospective serve`, which delegates to the same canonical continuation and existing Runtime. PostgreSQL clock, exact TradingSessions, overdue terminalization, planning gaps, due claim, lease/fence and unknown Provider effect recovery are wired and tested. The foreground `mra archive prospective serve` entry uses that same continuation, closes composition between wakeups and drains SIGINT/SIGTERM without signal-handler lock reentry. The explicitly authorized current-user project supervisor invokes this same foreground entry; a bounded lifecycle drill cannot prove sustained collection. |
+| Real prospective result | Original scope has 128 honest MISSED terminals from activation after the September 7 windows. Exact current due/future roster, subsequent generation and service observations are in the latest R2 addendum. MISSED/deadline maintenance does not prove a real due capture Attempt. |
 | Hard-cut and final qualification | Pre-deletion historical, real recovery campaign/report/replay, backup and b69 full-engineering gates pass. Ten WP-specific public modules are retired; exact historical catalog fixtures and canonical Generic/Economics tests remain. Implementation `09561b25` is frozen in a new clean worktree with fresh disposable DB OID 134217859. Post-retirement full 4,058-case regression, 78 focused cases, static/type/architecture/docs/build, 1,166 packaged source/resource matches, independent installed module-absence/report/replay/compare/schema smoke, and exact completed-backup restore-check all pass. Original terminal failure remains negative evidence; the frozen actual-due requirement still blocks total exit. |
 | Remote Actions | Repository API returned disabled: `BLOCKED_BY_REPOSITORY_CONFIGURATION / NOT_RUN`. |
 

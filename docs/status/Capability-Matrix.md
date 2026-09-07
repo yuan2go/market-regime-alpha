@@ -4,9 +4,9 @@
 > **Authority:** Non-authoritative capability read model; never qualification Authority
 > **Owner:** Market Regime Alpha maintainers
 > **Generated At:** 2026-09-07 research operations activation
-> **Repository Implementation Checkpoint:** `4c764b3d01c08b1cb2de9949cb3a6aa7f534bc72`
-> **Implementation Tree:** `8b9e78a7672d12080fb35691b528a01cc541f347`
-> **Execution-Time Main Baseline:** `85d0080ab3bf14fade5b91e8ef98aa9a16e0c2b2`
+> **Repository Implementation Checkpoint:** `26d4d98e045d323fd4947ed7df298e0b57867581`
+> **Implementation Tree:** `a91d2228f7f3be8fa2e8c1de5c56f945ec5dac9f`
+> **Execution-Time Main Baseline:** `2d6fbb2981a4e16fd7701884cc8d040c349bae1c`
 > **Containing Documentation Commit:** reported by handoff; no self-referential SHA
 > **Schema Epochs:** legacy `LEGACY_MIGRATIONS_001_106`; target `MRA_REFOUNDATION_1 / DRAFT / NOT_CUT_OVER`
 > **Code Evidence:** `src/market_regime_alpha/bootstrap.py`, `src/market_regime_alpha/infrastructure/postgres/migrations`, `tests/refoundation`, `tests/platform`, [Current State](Current-State.md), and linked immutable Verifications
@@ -28,7 +28,7 @@ excluded from V2 correctness claims. See the [model contract](../references/WP-R
 
 Current target catalog: **192 tables, 4 views, 3,929 catalog objects**.
 Counts remain unchanged by v6; exact checksums and separately scoped original-v5
-and restored-v6 evidence are in Current State. The original database is not upgraded.
+and restored-v6 evidence are in Current State. Original OID 287543 now passes its authorized registered v6 upgrade.
 Old 165-table and 3,776-test WP-17P numbers belong only to its historical
 [Verification](../references/WP-ARCHITECTURE-REFOUNDATION-17P-Prospective-Archive-Exploratory-Backtest-Verification.md).
 
@@ -74,7 +74,7 @@ BACKTEST_PLATFORM = ENGINEERING_QUALIFIED_IN_COMPLETED_RECOVERY_SCOPE
 | WP-specific hard-cut | WP-specific executors are removed after pre-deletion gates; private exact historical decoding and Generic composition remain | Generic surface / `HARD_CUT_PASS_AT_09561b25` |
 | Research Qualification | Concrete Evidence/Assessment/policy/floor/decision and later-generation reads; training or positive returns never qualify a model | Research / `NO_EMPIRICAL_PROMOTION` |
 | Formal Research Campaign | Freeze/protected-open/Runtime/Provider-gate mechanics exist; rejected Provider evidence prevents real Formal OOS execution | Research + Runtime / `FORMAL_OOS_NOT_RUN` |
-| Prospective | Existing continuation now has exact-scope/source/backup/resource guards, a single session supervisor lock and bounded Provider effects; gaps preserve frozen observation ordinals through the controlled v6 correction. Original v5 is unchanged; actual due capture and sustained service remain unproven | Market + existing Runtime / `GUARDED_IMPLEMENTATION / LIVE_PROOF_BLOCKED` |
+| Prospective | Atomic admission shared by current target Runtime claims/supervision; bounded Provider effects; exact Schedule lineage and multi-member missed-window restart reconciliation. Original v6 is upgraded; current-user deployment and backup-refresh procedures are installed within the authorized scope. Actual due/successful capture and sustained duration remain separate evidence gates | Market + existing Runtime / `GUARDED_IMPLEMENTATION / LIVE_PROOF_SCOPED` |
 | Operational health / recovery | Canonical full-roster window/Runtime projection, separate capture/on-time/terminal rates, actionable internal alert changes, unknown-effect reconciliation and partial-registration recovery | Read-only operational projection / `NO_BUSINESS_AUTHORITY` |
 | Research funnel diagnosis | Complete 9,472-cell denominator: 9,436 eligible and 36 canonical exclusions; 97 typed non-estimable metrics explained without rewriting the frozen report. Rule/ridge ranking increment is not demonstrated | Read-only reconciled Evaluation projection / `DAILY_SHADOW_NOT_READY` |
 | Original database diagnosis | Exact SQL/parameters and bounded PK plans retained; original planning/metadata reads remain slower, without historical failure-time causal evidence | Read-only PostgreSQL diagnostics / `ROOT_CAUSE_UNPROVEN` |
@@ -138,18 +138,19 @@ fixture, local suite or report can grant Provider, PIT, OOS, trading or
 Production authority.
 
 Frozen writer `f247ca5d` completed the 936-action large Run in its explicit
-isolated recovery scope, recorded by the prior 09561b25 continuation. Current
-`4c764b3d` only replays and diagnoses that preserved completed evidence; it does
+isolated recovery scope, recorded by the prior 09561b25 continuation. The
+`4c764b3d` activation only replays and diagnoses that preserved completed evidence; it does
 not retrain or repeat campaign execution. The completed scope contains four ModelVersions, 44
 Evaluations, 608 declared metrics and deterministic report/replay. Original
 operational OID 287543 retains its terminal Evaluation timeout. Generic
 `backtest progress` exposes exact Runtime bindings with
 `owner_reconciliation=NOT_PERFORMED`; it cannot admit business completion.
 Foreground prospective supervision delegates every wakeup to existing
-continuation and installs no system service. Final gate results and the
+continuation. An explicitly authorized current-user project LaunchAgent invokes
+that entry; it owns no business clock. Final gate results and the
 remaining temporal/operational boundaries are recorded in Current State.
 
-Current activation `4c764b3d` passes 4,163 full cases with zero failures/errors/
+Previous activation `4c764b3d` passes 4,163 full cases with zero failures/errors/
 skips; focused 152, architecture/docs 41, static/type/docs/build and independent
 installed-wheel/schema/real replay smoke also pass.
 Its preceding f55 full run retains three failures (4,160 passes, zero skips);
@@ -157,15 +158,22 @@ exact migration-roster and SQL-layer repairs have focused green evidence.
 The exact final result is appended to the existing R2 Verification.
 Restored-v6 upgrades preserve all 189 business tables and Artifact identities;
 independent v6 restore preserves all 192 table hashes and 2,770 physical Artifacts.
-The original database's v6 plan is read-only and expiring, with apply/adoption
-NOT_AUTHORIZED. Frozen V1 campaign outputs are reverified in completed restore
+The original database's fresh v6 challenge is applied under explicit authorization;
+189 business-table hashes and Artifact bytes remain unchanged by that upgrade.
+No recovery-copy adoption occurs. Frozen V1 campaign outputs are reverified in completed restore
 OID 144400596 with no business writes. No new Model, protocol or training occurs.
 
 Final completed-v6 backup `72edc6c6…` restores independently to OID 157024168:
 192 table hashes, 2,780 physical Artifacts, five Archives, WP17P/large Run replay
-and original report bytes match with zero source writes. Actual final-source
-startup is twice refused at Provider access preflight, with zero business writes;
-positive field lifecycle is BLOCKED_BY_PROVIDER_ACCESS. Original PostgreSQL time
-2026-09-07 03:45:01.547047 UTC still has 288 future slices and zero Attempts.
-The remaining frozen WP18Q due-proof gate is unproven; operational upgrade
-requires authorization, and sustained collection remains unproven independently.
+and original report bytes match with zero source writes. The prior `4c764b3d` Provider refusals remain preserved. Current post-close
+product access succeeds; current activation records 128 MISSED windows and
+preserves two corrected startup failures. Latest runtime `26d4d98e` is validated
+with targeted concurrency/continuity/recovery and installed-wheel checks;
+The actual current-user service records 22 bounded ticks, successor generation
+registration, graceful stop, a new 2,774-Artifact backup and verified profile
+refresh/restart. The same backup has copies on two local physical disks; a new
+independent database restore is NOT_RUN in this activation. Repeated scoped
+facts match without additional Receipt/Audit facts. No actual due Attempt or
+Capture is inferred from these maintenance results.
+FULL_REGRESSION=NOT_RUN for this risk-directed activation. The remaining frozen
+WP18Q due-proof gate and sustained collection remain independently unproven.

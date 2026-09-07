@@ -13,54 +13,38 @@ second planning source.
 
 ## Sequence
 
-WP-RESEARCH-OPERATIONS-ACTIVATION-01 continues the dependency chain from
-merged main `85d0080a`; its source/tests match qualified `09561b25`.
-The implementation boundary is the existing prospective serve/continuation,
-Runtime lease/fence, Market inspection, Evidence inventory/backup and Generic
-Backtest/Report read surfaces. No database adoption, migration, service install,
-research-parameter change or new scheduler is authorized.
+WP-RESEARCH-OPERATIONS-ACTIVATION-01 continues from main `2d6fbb29`
+on one isolated branch. The latest explicit authorization covers the original
+OID 287543/cluster `7681924516459622681` registered v5→v6 upgrade, private
+project configuration, read-only Provider collection/append, and a current-user
+project supervisor. No recovery-copy adoption, broker work, push/PR/merge or full
+cutover is authorized. Risk-directed validation supersedes repeated full-suite
+and 936-action reruns for this activation.
 
-The execution order is: exact-scope startup/configuration and single-writer
-guards; bounded Runtime claims and health/recovery observations; reproducible
-read-only original-database diagnostics; reconciled research funnel projection;
-isolated fault/restore drills and authorized actual-time operation; final
-source/dependency qualification and the existing R2 evidence/status chain.
-The preflight must reject wrong name/OID/cluster/schema/root, unreadable or
-mismatched backup bytes, inadequate disk/calendar/Target/Provider configuration,
-active conflicting work and duplicate supervisors before a business tick.
-Backpressure leaves unclaimed work due; it never invents a terminal success.
-Health preserves expected denominators, first-observation times and distinct
-capture/on-time/terminal rates. Financial values remain canonical Evaluation.
+The original registered upgrade is complete, preserving all 189 business-table
+ordered hashes, 2,770 Artifact identities/bytes and its failed campaign.
+The code now serializes supervisor/Runtime claim admission, inherits registered
+Schedule lineage on continuation and reconciles exact multi-member missed-window
+Run failures without reopening them. Unknown effects remain fail-closed.
+Frozen runtime `26d4d98e`, installed configuration and bounded activation/
+backup-refresh evidence are recorded in the existing R2 Verification and
+Runtime Runbook. No new scheduler, qualification hierarchy or research protocol
+was introduced.
 
-Current R2 original OID 287543 remains the existing authorized prospective
-append scope. Completed recovery OID 117559774 and independent restored OID
-118013570 are read-only research evidence here. Adoption remains a separate
-explicit decision. Actual due proof is checked against the execution-time
-PostgreSQL clock; NOT_DUE cannot close frozen WP-18Q Design section 13.
+The original scope remains the sole authorized writer. Completed recovery and
+independent restores remain read-only evidence. The previous complete-campaign,
+report/replay/hard-cut and 4,163-case results retain their exact implementation
+scope. This activation uses targeted concurrency, Runtime/recovery, registered
+upgrade, type/lint and installed-artifact checks; full regression is NOT_RUN
+under the explicit current verification strategy.
 
-The activation implementation is frozen at `4c764b3d`; final engineering
-regression passes 4,163 cases without failures/errors/skips, 152 focused cases,
-static/type/architecture/docs/build and installed-wheel smoke. Guarded lifecycle, bounded Provider effects,
-canonical health/recovery, read-only database diagnostics and complete research
-funnel projection are implemented in existing owners. Preserve the first full
-run's three failures and the exact adapter/migration-contract repairs.
-
-The minimum remaining operational decision is whether to authorize a controlled
-v6 upgrade of original OID 287543, retaining its failed Run and current series.
-Its expiring read-only plan is prepared; no upgrade, adopted copy, system service
-or stale writer takeover is authorized. Restored-v6 upgrade/backup/recovery
-proof is independent of that decision. At a genuine due window, the authorized
-scope must produce a Runtime-claimed Attempt. Successful capture and sustained
-collection require their own observations. Do not wait or manufacture timeliness.
-
-Final completed-v6 backup and independent restore (OID 157024168) preserve
-192 table hashes, 2,780 Artifact bytes/identities and exact report/replay.
-Final-source field startup is twice refused before tick by Provider access;
-positive field lifecycle is BLOCKED_BY_PROVIDER_ACCESS. Original PostgreSQL time
-2026-09-07 03:45 UTC still has no due window or Attempt. Required next actions
-are explicit upgrade authorization, restored Provider access and real-time
-operation when the canonical window is due; sustained service needs a separately
-observed duration. No future window was awaited for this work.
+Remaining real-time gates are an actual legal due Attempt, successful Capture
+and measured continuous-service coverage. Post-close BaoStock daily/five-minute
+product access is proven, but intraday product timeliness is not. Original
+missed windows are immutable gaps, not capture success. No future window is
+awaited or backdated. The current-user supervisor's backup/profile refresh
+wakes at fixed operational maintenance times and delegates every business
+decision to the existing PostgreSQL-clock Runtime.
 
 The next research dependency comes from the read-only funnel diagnosis: decide
 an explicit new denominator protocol and bind prospective Feature/Target/Model
@@ -78,8 +62,9 @@ The subsequent explicit user request resumes the existing R2 recovery chain.
 Preserve the frozen campaign's code and research identities while reconciling
 and resuming authorized work after identity, backup, disk and single-writer
 preflight. The following unresolved WP-18Q gates remain independent of the
-completed economics gate. Architecture remains frozen; operational migrations,
-process replacement and full Runtime/CLI cutover remain unauthorized.
+completed economics gate. Architecture remains frozen; operational mutations
+outside the explicitly authorized original-v6/project-service scope and full
+Runtime/CLI cutover remain unauthorized.
 The historical WP-17P PASS below is not a Generic Platform qualification.
 
 | WP-18Q P0 gate | Current planning disposition | Minimum re-entry evidence |
@@ -88,7 +73,7 @@ The historical WP-17P PASS below is not a Generic Platform qualification.
 | PostgreSQL and historical compatibility | Prior exact upgrades remain immutable. New consistent backups and fresh restores preserve all 192 ordered table hashes, Artifacts, five Archives and historical replay; completed recovery copy also replays the large Run | Retain original/copy identity separation, verified backup originals and explicit old-scope discontinuity |
 | Generic real campaign/report/replay | Original OID 287543 retains a terminal Fold Evaluation timeout. Faithful recovery scope OID 117559774 completes the unchanged frozen 936-action/44-session/four-arm Run, four ModelVersions and 44 Evaluations; 608 metric entries retain 97 typed NOT_ESTIMABLE results. Report/replay and a second independent completed restore match | Completed recovery scope closes the real campaign/report/replay gate; preserve original failure separately. Any later use of the original failed operational Run requires a supported successor/recovery decision, with no transplanted rows or V1 reinterpretation |
 | Fresh generic two-arm gate | Run `99227101` completes all 25 actions and full zero-write report/resume/replay. Independent Run `b8c2fadc` also completes; all 178 canonical comparison metrics align with equal estimates and separate ModelVersion identities | Preserve these exact completed proofs on the final implementation; complete the large-campaign gate before hard-cut |
-| Prospective real Runtime proof | New operational generation has 288 NOT_DUE slices; original and restored foreground stop/restart return 0, without a due Attempt. Sustained collection remains unproven | Actual PostgreSQL-due, Runtime-claimed attempt in the explicitly identified new scope, preserving old-scope discontinuity; do not wait, backdate or use replay as proof |
+| Prospective real Runtime proof | Original v6 activation records honest MISSED windows; latest generation/service/backup refresh observations are bound in the R2 addendum. No actual due capture is inferred from deadline maintenance or a process start | Actual PostgreSQL-due, Runtime-claimed attempt in the explicitly identified new scope, preserving old-scope discontinuity; do not wait, backdate or use replay as proof |
 | WP-specific hard-cut | Pre-deletion gates pass in the explicit completed recovery scope. Ten modules are retired; final 09561b25 regression, installed module absence and exact historical/real replay pass | Gate closed in the recorded scope; preserve private historical decoding, frozen provenance and the independent actual-due exit requirement. Full Legacy cutover remains unauthorized |
 
 The Backtest engineering gates close in the completed recovery scope:
