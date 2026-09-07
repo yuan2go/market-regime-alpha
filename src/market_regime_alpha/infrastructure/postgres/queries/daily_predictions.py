@@ -184,7 +184,7 @@ class PostgresDailyPredictionReads:
         return row[0]
 
     def collection_rounds(self, prediction_id: UUID, phase: str) -> tuple[tuple[int, str, datetime, bytes], ...]:
-        if phase not in {"input", "outcome"}:
+        if phase not in {"input", "outcome", "population"}:
             raise ValueError("unsupported daily collection phase")
         ids = {uuid5(prediction_id, phase + "-collection:" + str(n)): n for n in range(1, 17)}
         with self._pool.connection(read_only=True) as connection:
@@ -203,6 +203,25 @@ class PostgresDailyPredictionReads:
         if tuple(row[0] for row in result) != tuple(range(1, len(result) + 1)):
             raise ArtifactIntegrityError("daily collection round roster has a gap")
         return result
+
+    def population_source_ready(self, plan: DailyPredictionPlan) -> bool:
+        """Readiness only; Selection still freezes and verifies every member independently."""
+        with self._pool.connection(read_only=True) as connection:
+            row = connection.execute(
+                """SELECT EXISTS (SELECT 1 FROM mra.classification classification
+                JOIN mra.market_capture_classification_normalization binding USING(classification_id)
+                JOIN mra.data_capture capture USING(capture_id)
+                JOIN mra.artifact artifact ON artifact.artifact_id=capture.artifact_id
+                WHERE classification.classification_scheme=%s AND classification.classification_code=%s
+                  AND classification.effective_from<=%s
+                  AND (classification.effective_to IS NULL OR classification.effective_to>%s)
+                  AND capture.provider_product_id=%s AND capture.status='CAPTURED'
+                  AND capture.recorded_at<=%s
+                  AND mra.market_artifact_is_readable(artifact.integrity_state,artifact.last_verified_at))""",
+                (plan.classification_scheme,plan.classification_code,plan.decision_time,plan.decision_time,
+                 plan.provider_product_id,plan.input_cutoff),
+            ).fetchone()
+        return row == (True,)
 
     def model_use_available(self, plan: DailyPredictionPlan) -> bool:
         with self._pool.connection(read_only=True) as connection:
@@ -441,6 +460,7 @@ class PostgresDailyPredictionReads:
             "input_session_id": plan.input_session_id,
             "target_session_id": plan.target_session_id,
             "model_version_id": plan.model_version_id,
+            "model_inference_state": "NOT_RUN_EMPTY_POPULATION" if not rows else "EXECUTED",
             "experimental_model_use_id": plan.experimental_model_use_id,
             "target_definition_id": plan.target_definition_id,
             "feature_definition_id": plan.feature_definition_id,

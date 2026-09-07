@@ -21,7 +21,7 @@ from market_regime_alpha.market.domain import (
 )
 from market_regime_alpha.market.ports import CaptureRequest, ProviderResponse
 from market_regime_alpha.infrastructure.providers.baostock_archive_normalizer import a_share_instrument_id
-from market_regime_alpha.infrastructure.providers.baostock_archive import BaoStockArchiveQuery
+from market_regime_alpha.infrastructure.providers.baostock_archive import BaoStockArchiveQuery, BaoStockArchiveQueryKind
 from market_regime_alpha.infrastructure.postgres.prospective_operation_session import (
     prospective_operation_session,
     daily_research_admission,
@@ -47,6 +47,9 @@ class DailyProvider:
             "rows": [[str(query.start_date), query.code, "100", "106", "99", "105", "1000", "105000", "3", "1", "0"]],
             "query": json.loads(query.resource),
         }
+        if query.kind == BaoStockArchiveQueryKind.CSI300_MEMBERS:
+            payload["fields"] = ["updateDate", "code", "code_name"]
+            payload["rows"] = [[str(query.start_date), code, "Fixture"] for code in ("sh.600000", "sh.600001")]
         return ProviderResponse(
             json.dumps(payload).encode(), "application/json", "UTF-8", None, SourceAvailabilityStatus.UNKNOWN, None, "SYNTHETIC_FIXTURE"
         )
@@ -105,6 +108,7 @@ def test_collection_claim_capture_normalize_and_restart_keep_exact_bytes(target_
             template(),
             prediction_id=uuid4(),
             provider_product_id=product.provider_product_id,
+            classification_scheme="INDEX_MEMBERSHIP",
             instrument_ids=tuple(sorted((i.value for i in instruments), key=str)),
             input_session_id=input_session.session_id.value,
             target_session_id=target_session.session_id.value,
@@ -152,3 +156,16 @@ def test_collection_claim_capture_normalize_and_restart_keep_exact_bytes(target_
         assert ready.state == "READY"
         assert [value for _, value in ready.feature_values] == [R.Decimal(".05")] * 2
         assert app.daily_prediction_reads.collection_rounds(frozen.prediction_id, "input")[0][1] == "SUCCEEDED"
+        assert not app.daily_prediction_reads.population_source_ready(frozen)
+        population = DailyCollectionPlan(frozen, "population", 1, updated)
+        with prospective_operation_session(target_database_url, database_name=identity["name"], database_oid=identity["oid"], cluster_identity=identity["cluster_identity"], series_code="daily-fixture") as supervisor:
+            with daily_research_admission(prediction_id=frozen.prediction_id, code_sha=frozen.code_sha, config_sha256=population.content_sha256, collection_phase="population"):
+                captured = collect_daily(app, population, fake, worker_id="daily-fixture", maximum_steps=2, before_action=guard)
+                assert captured.run_state == "SUCCEEDED"
+                assert collect_daily(app, population, fake, worker_id="daily-fixture", maximum_steps=2, before_action=guard) == captured
+        assert len(fake.calls) == 3
+        assert fake.calls[-1].start_date == today
+        assert not app.daily_prediction_reads.population_source_ready(frozen)  # No retroactive visibility.
+        observed = app.daily_prediction_reads.now()
+        assert app.daily_prediction_reads.population_source_ready(replace(frozen, decision_time=observed, input_cutoff=observed))
+        assert app.daily_prediction_reads.collection_rounds(frozen.prediction_id, "population")[0][1] == "SUCCEEDED"

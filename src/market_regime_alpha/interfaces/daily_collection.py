@@ -8,6 +8,7 @@ from hashlib import sha256
 import json
 from typing import TYPE_CHECKING, Callable
 from uuid import UUID, uuid5
+from zoneinfo import ZoneInfo
 
 from market_regime_alpha.infrastructure.providers.baostock_archive import (
     BaoStockArchiveQuery,
@@ -49,8 +50,10 @@ class DailyCollectionPlan:
 
     def __post_init__(self) -> None:
         require_utc(self.requested_at, field="requested_at")
-        if self.phase not in {"input", "outcome"} or isinstance(self.round, bool) or not 1 <= self.round <= 16:
+        if self.phase not in {"input", "outcome", "population"} or isinstance(self.round, bool) or not 1 <= self.round <= 16:
             raise ValueError("daily collection requires an explicit bounded phase/round")
+        if self.phase == "population" and (self.prediction.classification_scheme, self.prediction.classification_code) != ("INDEX_MEMBERSHIP", "CSI300"):
+            raise ValueError("DAILY_MEMBERSHIP_PRODUCT_SCOPE_UNSUPPORTED")
 
     @property
     def run_id(self) -> UUID:
@@ -100,6 +103,8 @@ def collection_steps(plan: DailyCollectionPlan) -> tuple[tuple[StepSpec, ...], t
         for instrument in plan.prediction.instrument_ids
         for prefix, kind in (("capture", "CAPTURE"), ("normalize", "NORMALIZE_PIT"))
     )
+    if plan.phase == "population":
+        roster = (("capture-membership", "CAPTURE"), ("normalize-membership", "NORMALIZE_PIT"))
     # Match canonical Market Capture semantics: content-addressed external bytes.
     # A single capture attempt stops unknown effects; only committed receipts replay.
     steps = tuple(
@@ -145,7 +150,7 @@ def collect_daily(
     ready = app.daily_prediction_reads.observe(frozen)
     now = app.daily_prediction_reads.now()
     if (
-        plan.phase == "input"
+        plan.phase in {"input", "population"}
         and (now < ready.input_event_end or (now >= ready.target_window_start and existing is None))
         or plan.phase == "outcome"
         and now < ready.target_window_end
@@ -213,12 +218,18 @@ def collect_daily(
         if claim is None:
             break
         app.runtime.start_attempt(claim, context("start:" + str(claim.attempt_id)))
-        if step.step_kind == "CAPTURE" and plan.phase == "input" and app.daily_prediction_reads.now() >= ready.target_window_start:
+        if step.step_kind == "CAPTURE" and plan.phase in {"input", "population"} and app.daily_prediction_reads.now() >= ready.target_window_start:
             app.runtime.fail_attempt(claim, error_class="RESEARCH", error_code="MISSED_DATA_WINDOW", context=context("missed-window"))
             break
-        instrument, code, session_date = next(row for row in roster if step.step_key.endswith(row[0].hex))
-        query = BaoStockArchiveQuery(BaoStockArchiveQueryKind.HISTORY_DAILY_RAW, session_date, session_date, code)
-        capture_key = "daily-" + plan.phase + ":" + str(frozen.prediction_id) + ":" + str(instrument) + ":round:" + str(plan.round)
+        if plan.phase == "population":
+            # This is the real database-observed calendar date, not a guessed trading session.
+            observation_date = plan.requested_at.astimezone(ZoneInfo("Asia/Shanghai")).date()
+            query = BaoStockArchiveQuery(BaoStockArchiveQueryKind.CSI300_MEMBERS, observation_date, observation_date)
+            capture_key = "daily-population:" + str(frozen.prediction_id) + ":round:" + str(plan.round)
+        else:
+            instrument, code, session_date = next(row for row in roster if step.step_key.endswith(row[0].hex))
+            query = BaoStockArchiveQuery(BaoStockArchiveQueryKind.HISTORY_DAILY_RAW, session_date, session_date, code)
+            capture_key = "daily-" + plan.phase + ":" + str(frozen.prediction_id) + ":" + str(instrument) + ":round:" + str(plan.round)
         before_action()
         if step.step_kind == "CAPTURE":
             if claim.attempt_no != 1:

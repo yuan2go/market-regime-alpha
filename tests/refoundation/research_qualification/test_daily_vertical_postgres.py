@@ -1,6 +1,7 @@
 from market_regime_alpha.bootstrap import TargetSettings, bootstrap_database, bootstrap_application
 from tests.refoundation.research_qualification.daily_campaign_fixture import daily_baseline
 from tests.refoundation.research_qualification.archive_campaign_fixture import _context
+import pytest
 
 
 def test_generic_daily_target_fit_model_validation_and_replay(target_database_url, tmp_path):
@@ -30,7 +31,8 @@ def test_generic_daily_target_fit_model_validation_and_replay(target_database_ur
             app.daily_prediction_reads.require_partition_roster(partition, roster[:-1])
 
 
-def test_completed_model_is_consumed_without_backtest_and_publication_is_replayable(target_database_url, tmp_path):
+@pytest.mark.parametrize("missing_membership", [False, True])
+def test_completed_model_is_consumed_without_backtest_and_publication_is_replayable(target_database_url, tmp_path, missing_membership):
     from dataclasses import replace
     from datetime import timedelta
     from decimal import Decimal as D
@@ -165,6 +167,11 @@ def test_completed_model_is_consumed_without_backtest_and_publication_is_replaya
             "f" * 40,
             old.strategy_version_id,
         )
+        if missing_membership:
+            import json
+            scope_bytes = json.dumps({"classification_code":"ABSENT_CURRENT_MEMBERSHIP","classification_scheme":plan.classification_scheme,"instrument_ids":[str(i) for i in plan.instrument_ids],"market_provider_product_id":str(plan.provider_product_id),"schema":"selection-universe-scope-v1"}, sort_keys=True,separators=(",",":")).encode()
+            scope_artifact=app.artifacts.publish(scope_bytes,media_type="application/json",context=_context("missing-membership-scope"))
+            plan = replace(plan, classification_code="ABSENT_CURRENT_MEMBERSHIP",universe_scope=plan.universe_scope.__class__(scope_artifact.artifact_id,scope_artifact.content_sha256,scope_artifact.size_bytes))
         ready = app.daily_prediction_reads.observe(plan)
         assert ready.state == "READY"
         plan = replace(plan, input_content_sha256=ready.content_sha256)
@@ -175,6 +182,15 @@ def test_completed_model_is_consumed_without_backtest_and_publication_is_replaya
         trace = app.daily_research.execute(plan, worker_id="daily-fixture")
         assert trace.run_state == "SUCCEEDED", trace
         report = app.daily_prediction_reads.forecast_projection(plan)
+        if missing_membership:
+            assert report["denominators"] == dict(sampled=32, eligible=0, feature_ready=0, model_prediction=0, baseline_prediction=0, common_prediction=0)
+            assert report["model_inference_state"] == "NOT_RUN_EMPTY_POPULATION"
+            assert len(report["population"]) == 32
+            assert report["predictions"] == []
+            assert app.daily_research.replay(plan)["matched"]
+            with app._pool.connection(read_only=True) as connection:
+                assert connection.execute("SELECT count(*) FROM mra.forecast_model_binding WHERE experimental_model_use_id=%s", (use.experimental_model_use_id,)).fetchone() == (0,)
+            return
         assert report["denominators"] == dict(
             sampled=32, eligible=32, feature_ready=32, model_prediction=32, baseline_prediction=32, common_prediction=32
         )

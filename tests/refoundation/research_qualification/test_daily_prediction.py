@@ -21,7 +21,7 @@ def plan():
         UUID(int=5),
         UUID(int=6),
         artifact,
-        "INDEX",
+        "INDEX_MEMBERSHIP",
         "CSI300",
         (UUID(int=7), UUID(int=8)),
         UUID(int=9),
@@ -117,3 +117,14 @@ def test_market_observation_schedule_does_not_collide_with_outcome_evaluation():
     observation = DailyCollectionPlan(frozen, "outcome", 1, frozen.decision_time)
     assert observation.schedule_code != "daily-outcome-" + frozen.experimental_model_use_id.hex
     assert observation.schedule_code == "daily-outcome-collection-" + frozen.experimental_model_use_id.hex
+
+
+def test_membership_observation_has_its_own_bounded_capture_and_normalization():
+    from market_regime_alpha.interfaces.daily_collection import DailyCollectionPlan, collection_steps
+    frozen = plan()
+    observation = DailyCollectionPlan(frozen, "population", 1, frozen.decision_time)
+    steps, dependencies = collection_steps(observation)
+    validate_step_dag(steps, dependencies)
+    assert [(s.step_key, s.step_kind) for s in steps] == [("capture-membership", "CAPTURE"), ("normalize-membership", "NORMALIZE_PIT")]
+    assert steps[0].retry_policy.max_attempts == 1
+    assert observation.schedule_code == "daily-population-collection-" + frozen.experimental_model_use_id.hex

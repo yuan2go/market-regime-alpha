@@ -105,9 +105,10 @@ def daily_tick(
         return _abstain(app,missed,"PROCESS_DOWNTIME_MISSED_PUBLICATION",worker_id,before_action)
     plan = current_daily_plan(app, template)
     if reads.run_plan_content(uuid5(plan.prediction_id, "abstention-runtime")) is not None:
-        rounds=reads.collection_rounds(plan.prediction_id,'input')
-        if rounds and rounds[-1][1] in {'QUEUED','RUNNING'}:
-            _collection(app,plan,'input',provider,worker_id,min(maximum_steps,2),before_action)
+        for phase in ("population", "input"):
+            rounds=reads.collection_rounds(plan.prediction_id,phase)
+            if rounds and rounds[-1][1] in {'QUEUED','RUNNING'}:
+                _collection(app,plan,phase,provider,worker_id,min(maximum_steps,2),before_action)
         return {"state": "ABSTAINED", "prediction_id": plan.prediction_id, "pending": completed}
     existing = reads.run_plan_content(plan.runtime_run_id)
     ready = reads.ready(plan)
@@ -115,10 +116,16 @@ def daily_tick(
         if not reads.model_use_available(plan):
             return _abstain(app, plan, "MODEL_USE_UNAVAILABLE", worker_id, before_action)
         if ready.state == "MISSED_CUTOFF":
-            rounds = reads.collection_rounds(plan.prediction_id, "input")
-            if rounds and rounds[-1][1] in {"QUEUED", "RUNNING"}:
-                _collection(app, plan, "input", provider, worker_id, min(maximum_steps, 2), before_action)
+            for phase in ("population", "input"):
+                rounds = reads.collection_rounds(plan.prediction_id, phase)
+                if rounds and rounds[-1][1] in {"QUEUED", "RUNNING"}:
+                    _collection(app, plan, phase, provider, worker_id, min(maximum_steps, 2), before_action)
             return _abstain(app, plan, "MISSED_PUBLICATION_CUTOFF", worker_id, before_action)
+        if not reads.population_source_ready(plan):
+            result = _collection(app, plan, "population", provider, worker_id, maximum_steps, before_action)
+            if result["state"] == "BUDGET_EXHAUSTED":
+                return _abstain(app, plan, "POPULATION_EVIDENCE_UNAVAILABLE", worker_id, before_action)
+            return {"state": "POPULATION_PENDING", "collection": result, "pending": completed}
         if not all(m.state in _TERMINAL_INPUT for m in ready.members):
             result = _collection(app, plan, "input", provider, worker_id, maximum_steps, before_action)
             if result["state"] != "BUDGET_EXHAUSTED":

@@ -218,14 +218,19 @@ class DailyResearchOperations:
         elif claim.step_key == "assess-context":
             app.decision_contexts.assess_context(self._reads.decision_run(plan), plan.context_policy_id, context, runtime_claim=claim)
         elif claim.step_key == "model-forecast":
-            app.decision_model_forecasts.produce(
-                self._reads.decision_run(plan),
-                plan.strategy_version_id,
-                plan.model_version_id,
-                context,
-                runtime_claim=claim,
-                experimental_model_use_id=plan.experimental_model_use_id,
-            )
+            if not any(member.eligible for member in self._reads.population(plan)):
+                # Close the canonical empty Signal/Forecast roster. No model is
+                # invoked and no forecast estimate/binding is created.
+                app.decision_inference.produce(self._reads.decision_run(plan), plan.strategy_version_id, context, runtime_claim=claim)
+            else:
+                app.decision_model_forecasts.produce(
+                    self._reads.decision_run(plan),
+                    plan.strategy_version_id,
+                    plan.model_version_id,
+                    context,
+                    runtime_claim=claim,
+                    experimental_model_use_id=plan.experimental_model_use_id,
+                )
         elif claim.step_key == "rule-forecast":
             app.decision_inference.produce(self._reads.decision_run(plan), plan.baseline_strategy_version_id, context, runtime_claim=claim)
         elif claim.step_key == "report":
@@ -302,6 +307,7 @@ class DailyResearchOperations:
             "MISSED_PUBLICATION_CUTOFF",
             "DATA_READINESS_BUDGET_EXHAUSTED",
             "NO_FEATURE_READY_MEMBERS",
+            "POPULATION_EVIDENCE_UNAVAILABLE",
             "MODEL_USE_UNAVAILABLE",
         }:
             raise ValueError("daily abstention reason is unsupported")

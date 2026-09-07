@@ -175,7 +175,7 @@ class PostgresProspectiveOperationSession:
             use_id, code = self.daily_recovery_scope
             schedules = ['daily-model-'+use_id.hex, 'daily-outcome-'+use_id.hex,
                          'daily-abstention-'+use_id.hex, 'daily-input-collection-'+use_id.hex,
-                         'daily-outcome-collection-'+use_id.hex]
+                         'daily-outcome-collection-'+use_id.hex, 'daily-population-collection-'+use_id.hex]
             expired_daily.extend(row[0] for row in self.connection.execute("""
                 SELECT run.run_id FROM mra.runtime_run run
                 JOIN mra.runtime_schedule schedule USING(schedule_id)
@@ -264,7 +264,7 @@ def daily_research_admission(*, prediction_id: UUID, code_sha: str, config_sha25
     No lock is released; other Runtime workers remain excluded by atomic admission.
     This process capability is not a business registration or execution Authority.
     """
-    if collection_phase not in {None,'input','outcome'} or not 1<=collection_round<=16:
+    if collection_phase not in {None,'input','outcome','population'} or not 1<=collection_round<=16:
         raise ValueError('DAILY_OPERATION_SCOPE_INVALID')
     session=_operation_session.get()
     if session is None:
