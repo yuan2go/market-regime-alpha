@@ -14,12 +14,11 @@ import tempfile
 from typing import Any, Iterator
 from uuid import UUID
 
-import psycopg
-from psycopg.rows import dict_row
-
 from market_regime_alpha.bootstrap import TargetApplication, TargetSettings, verify_database
 from market_regime_alpha.infrastructure.artifacts.evidence import FilesystemEvidenceIntegrity
-from market_regime_alpha.infrastructure.postgres.queries.evidence import read_evidence_snapshot
+from market_regime_alpha.infrastructure.postgres.prospective_operation_session import (
+    PostgresProspectiveOperationSession, prospective_operation_session,
+)
 from market_regime_alpha.infrastructure.providers.baostock_archive import BaoStockSdk, BaoStockSession
 from market_regime_alpha.market.ports import MarketProviderError
 from market_regime_alpha.interfaces.prospective_operations import (
@@ -61,35 +60,20 @@ def verify_provider_access(sdk: BaoStockSdk, *, timeout_seconds: float) -> dict[
 
 class ProspectiveOperationGuard:
     def __init__(self, settings: TargetSettings, config: ProspectiveOperationConfig,
-                 connection: psycopg.Connection[Any]) -> None:
-        self.settings, self.config, self.connection = settings, config, connection
+                 session: PostgresProspectiveOperationSession) -> None:
+        self.settings, self.config, self.session = settings, config, session
+        self.connection = session.connection
         self.root = settings.artifact_root.resolve()
         self.backup_verified_at: datetime | None = None
         self.backup_snapshot_at: datetime | None = None
 
     def snapshot(self) -> dict[str, Any]:
-        with self.connection.transaction():
-            self.connection.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
-            snapshot = read_evidence_snapshot(self.connection)
+        snapshot = self.session.snapshot()
         self.validate_scope(snapshot)
         return snapshot
 
     def before_action(self) -> None:
-        if self.connection.closed:
-            raise ValueError("OPERATION_SUPERVISOR_CONNECTION_LOST")
-        try:
-            row = self.connection.execute(
-                """WITH intent AS (SELECT hashtextextended(%s,0) AS key)
-                   SELECT EXISTS (SELECT 1 FROM pg_locks, intent
-                     WHERE pid=pg_backend_pid() AND locktype='advisory' AND granted
-                       AND classid::bigint=((intent.key >> 32) & 4294967295)
-                       AND objid::bigint=(intent.key & 4294967295) AND objsubid=1)""",
-                ("operator:prospective-series:" + self.config.series_code,),
-            ).fetchone()
-        except psycopg.Error as exc:
-            raise ValueError("OPERATION_SUPERVISOR_CONNECTION_LOST") from exc
-        if row != (True,):
-            raise ValueError("OPERATION_SUPERVISOR_LOCK_LOST")
+        self.session.require_supervisor_lock(self.config.series_code)
         self.check_resources()
 
     def validate_scope(self, snapshot: dict[str, Any]) -> None:
@@ -110,18 +94,7 @@ class ProspectiveOperationGuard:
         if str(binding) != self.config.artifact_root_binding_sha256:
             raise ValueError("OPERATION_ARTIFACT_ROOT_MISMATCH")
         if snapshot["active_attempts"]:
-            conflict_row = self.connection.execute(
-                """SELECT count(*) FROM mra.runtime_attempt AS attempt
-                   JOIN mra.runtime_step AS step USING (step_id)
-                   JOIN mra.runtime_run AS run ON run.run_id=step.run_id
-                   WHERE attempt.state IN ('CLAIMED','RUNNING')
-                     AND (attempt.lease_until > clock_timestamp() OR NOT EXISTS (
-                       SELECT 1 FROM mra.prospective_archive_generation AS generation
-                       WHERE generation.series_code=%s
-                         AND run.fire_key LIKE 'archive:' || generation.market_archive_id::text || ':%%'
-                     ))""", (self.config.series_code,),
-            ).fetchone()
-            if conflict_row is None or conflict_row[0]:
+            if self.session.has_conflicting_attempts(self.config.series_code):
                 raise ValueError("OPERATION_ACTIVE_ATTEMPT_CONFLICT")
         if not any(row["series_code"] == self.config.series_code for row in snapshot["prospective_generations"]):
             raise ValueError("OPERATION_SERIES_NOT_PREDECLARED")
@@ -137,10 +110,7 @@ class ProspectiveOperationGuard:
         if implementation_source_sha256() != self.config.source_sha256:
             raise ValueError("OPERATION_IMPLEMENTATION_CHANGED")
         if self.backup_verified_at is not None:
-            clock_row = self.connection.execute("SELECT clock_timestamp()").fetchone()
-            if clock_row is None:
-                raise ValueError("OPERATION_DATABASE_CLOCK_UNAVAILABLE")
-            now = clock_row[0]
+            now = self.session.clock()
             for instant in (self.backup_verified_at, self.backup_snapshot_at):
                 if instant is None:
                     raise ValueError("OPERATION_BACKUP_TIME_UNQUALIFIED")
@@ -170,12 +140,7 @@ class ProspectiveOperationGuard:
                 raise ValueError("OPERATION_ARTIFACT_WRITE_PROBE_FAILED")
         backup = self.verify_backup(snapshot)
         references = application.archive_continuity.generations(self.config.series_code)
-        with self.connection.transaction(), self.connection.cursor(row_factory=dict_row) as cursor:
-            cursor.execute("SET TRANSACTION READ ONLY")
-            generations = cursor.execute(
-                "SELECT * FROM mra.prospective_archive_generation WHERE series_code=%s ORDER BY generation",
-                (self.config.series_code,),
-            ).fetchall()
+        generations = self.session.generations(self.config.series_code)
         for generation in generations:
             if (str(generation["target_definition_id"]), generation["target_definition_sha256"]) != (
                 self.config.target_definition_id, self.config.target_sha256,
@@ -258,20 +223,8 @@ class ProspectiveOperationGuard:
 @contextmanager
 def operational_session(settings: TargetSettings, config: ProspectiveOperationConfig) -> Iterator[ProspectiveOperationGuard]:
     """One session-level operator lock, with no idle business transaction."""
-    with psycopg.connect(settings.database_url, autocommit=True,
-                         application_name="mra-prospective-supervisor") as connection:
-        row = connection.execute(
-            "SELECT current_database(), oid::bigint, (pg_control_system()).system_identifier::text "
-            "FROM pg_database WHERE datname=current_database()",
-        ).fetchone()
-        if row != (config.database_name, config.database_oid, config.cluster_identity):
-            raise ValueError("OPERATION_DATABASE_IDENTITY_MISMATCH")
-        key = "operator:prospective-series:" + config.series_code
-        locked = connection.execute("SELECT pg_try_advisory_lock(hashtextextended(%s,0))", (key,)).fetchone()
-        if locked != (True,):
-            raise ValueError("OPERATION_DUPLICATE_SUPERVISOR")
-        try:
-            yield ProspectiveOperationGuard(settings, config, connection)
-        finally:
-            if not connection.closed:
-                connection.execute("SELECT pg_advisory_unlock(hashtextextended(%s,0))", (key,))
+    with prospective_operation_session(
+        settings.database_url, database_name=config.database_name, database_oid=config.database_oid,
+        cluster_identity=config.cluster_identity, series_code=config.series_code,
+    ) as session:
+        yield ProspectiveOperationGuard(settings, config, session)

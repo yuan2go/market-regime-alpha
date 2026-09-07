@@ -15,10 +15,13 @@ ROOT = Path(__file__).resolve().parents[3]
 MIGRATIONS = ROOT / "src/market_regime_alpha/infrastructure/postgres/migrations"
 
 
-def test_refoundation_extends_only_unreleased_baseline() -> None:
+def test_refoundation_uses_exact_registered_migrations() -> None:
     migrations = sorted(item.name for item in MIGRATIONS.glob("*.sql"))
-    # The named additive operational bundle is not a numbered epoch migration.
-    assert migrations == ["001_baseline.sql", "wp18q_track_a_c_v1.sql"]
+    # The original baseline/bundle bytes remain immutable. The registered
+    # revision-gap correction is the sole numbered post-baseline migration.
+    assert migrations == [
+        "001_baseline.sql", "002_prospective_revision_gap.sql", "wp18q_track_a_c_v1.sql",
+    ]
     assert len(EXPECTED_RESEARCH_VALIDITY_TABLES) == 14
     assert len(EXPECTED_TARGET_TABLES) == 192
 

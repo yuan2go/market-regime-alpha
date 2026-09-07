@@ -196,8 +196,9 @@ launch and restart are disabled deliberately: an error requires inspection and
 reconciliation before restart. Installation or adoption needs separate explicit
 authorization. No timer in the supervisor decides trading sessions or due work.
 
-At day end, capture `prospective status`, `archive verify` for each reported
-generation and `evidence verify`, then take a fresh consistent bundle using the
+At day end, capture `prospective status`, `archive inspect` for each reported
+generation and `evidence verify` (which performs canonical archive/backtest
+reconciliation), then take a fresh consistent bundle using the
 commands above. Health separately reports expected/opened/due/future, captured,
 late, missed, failed, unknown effects, recovery backlog and planning gaps;
 capture success, on-time completion and terminal coverage have separate
