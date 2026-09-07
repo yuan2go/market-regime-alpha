@@ -71,7 +71,7 @@ def main():
     if UID != DEPLOYMENT["uid"] or LABEL != "local.mra.prospective.r2-xshg32":
         raise ValueError("OPERATOR_SCOPE_MISMATCH")
     disabled = subprocess.run(["launchctl", "print-disabled", f"gui/{UID}"], capture_output=True, text=True, check=True).stdout
-    if re.search(r'"' + re.escape(LABEL) + r'"\s*=>\s*true', disabled):
+    if re.search(r'"' + re.escape(LABEL) + r'"\s*=>\s*(?:true|disabled)\b', disabled):
         raise ValueError("SERVICE_INTENTIONALLY_DISABLED")
     plist_path = Path(DEPLOYMENT["plist"])
     if plist_path.stat().st_uid != UID or plist_path.stat().st_mode & 0o077:
@@ -122,7 +122,7 @@ def main():
         command("unload", ["launchctl", "bootout", TARGET])
     # The same current Runtime admission reservation excludes racing claims
     # throughout the source snapshot. The backup itself has no business writes.
-    destination = HERE / "backups" / f"original-v6-{STAMP}"
+    destination = HERE / "backups" / f"original-{config.catalog_checksum[:12]}-{STAMP}"
     with operational_session(TargetSettings.from_environ(os.environ), config) as guard:
         snapshot = guard.snapshot()
         # Creating a new read-only backup does not depend on the old backup's
