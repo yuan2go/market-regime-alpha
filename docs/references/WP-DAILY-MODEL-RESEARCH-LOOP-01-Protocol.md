@@ -25,8 +25,11 @@ cross-basis reconstruction is supported.
 
 Input FeatureDefinition: session_open_close_move_v1, raw daily close/open - 1,
 12 decimal places, ROUND_HALF_EVEN, fixed local Decimal precision. Warm-up is
-one complete actual trading session. No fitted scaler, imputer or selection:
-preprocessing is explicitly IDENTITY, frozen with the model.
+one complete actual trading session. The Feature has no fitted transformation,
+imputation or selection. The existing deterministic Ridge learns its z-score
+means and population standard deviations exclusively from FIT; a zero standard
+deviation uses scale 1. These values are frozen in the fitted Artifact and reused
+at prediction, without refitting.
 Historical sealed and actual-time readers use the same pure computation.
 The historical reader keeps its dual-clock restriction; the actual-time reader
 requires every referenced fact visible at input cutoff <= DecisionTime.
@@ -68,7 +71,7 @@ No NAV, Sharpe, execution-profit or V2 economics claim is part of this protocol.
 ## Independent model use and lifecycle
 
 Training uses completed FIT Evaluation via the existing Model owner and freezes
-sample/Feature/Target order, IDENTITY preprocessing, algorithm, alpha, seed,
+sample/Feature/Target order, FIT-only z-score preprocessing, algorithm, alpha, seed,
 dependency fingerprint and fitted Artifact. Every daily use explicitly binds
 one completed ModelVersion registered before DecisionTime, with mature labels
 known by training cutoff. Experimental purpose is not Model qualification.

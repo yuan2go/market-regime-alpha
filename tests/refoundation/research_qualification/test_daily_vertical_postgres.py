@@ -207,6 +207,7 @@ def test_completed_model_is_consumed_without_backtest_and_publication_is_replaya
         assert tick["result"].run_state == "SUCCEEDED"
         assert tick["pending"][0]["state"] == "PENDING"
         app.research_models.revoke_experimental_use(use.experimental_model_use_id, _context("stop-daily-model"))
+        assert app.daily_research.replay(plan)["matched"]  # Revocation stops new use, not historical evidence.
         abstention = replace(plan, prediction_id=uuid4())
         first = app.daily_research.abstain(abstention, reason="MODEL_USE_UNAVAILABLE", worker_id="daily-fixture")
         second = app.daily_research.abstain(abstention, reason="MODEL_USE_UNAVAILABLE", worker_id="daily-fixture")
