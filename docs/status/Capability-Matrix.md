@@ -3,10 +3,10 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Non-authoritative capability read model; never qualification Authority
 > **Owner:** Market Regime Alpha maintainers
-> **Generated At:** 2026-09-07 WP-18Q-R2 continuation
-> **Repository Implementation Checkpoint:** `09561b25d7f6bf4168abcb4c75d1654587a680a8`
-> **Implementation Tree:** `b6a7f1406d9c4ea11e0f9d5397f9a66f8bb0137d`
-> **Execution-Time Main Baseline:** `6dc989331d357a802ae5840b5ae5ef76f32a29cf`
+> **Generated At:** 2026-09-07 research operations activation
+> **Repository Implementation Checkpoint:** `4c764b3d01c08b1cb2de9949cb3a6aa7f534bc72`
+> **Implementation Tree:** `8b9e78a7672d12080fb35691b528a01cc541f347`
+> **Execution-Time Main Baseline:** `85d0080ab3bf14fade5b91e8ef98aa9a16e0c2b2`
 > **Containing Documentation Commit:** reported by handoff; no self-referential SHA
 > **Schema Epochs:** legacy `LEGACY_MIGRATIONS_001_106`; target `MRA_REFOUNDATION_1 / DRAFT / NOT_CUT_OVER`
 > **Code Evidence:** `src/market_regime_alpha/bootstrap.py`, `src/market_regime_alpha/infrastructure/postgres/migrations`, `tests/refoundation`, `tests/platform`, [Current State](Current-State.md), and linked immutable Verifications
@@ -27,12 +27,13 @@ hashes, meaning and report bytes are preserved in the verified exact scope and
 excluded from V2 correctness claims. See the [model contract](../references/WP-RESEARCH-ECONOMICS-CORRECTNESS-01-Design.md).
 
 Current target catalog: **192 tables, 4 views, 3,929 catalog objects**.
-Exact checksums and observed PostgreSQL counts are in Current State.
+Counts remain unchanged by v6; exact checksums and separately scoped original-v5
+and restored-v6 evidence are in Current State. The original database is not upgraded.
 Old 165-table and 3,776-test WP-17P numbers belong only to its historical
 [Verification](../references/WP-ARCHITECTURE-REFOUNDATION-17P-Prospective-Archive-Exploratory-Backtest-Verification.md).
 
 ```text
-WP18Q_EXIT_GATE = BLOCKED_BY_TEMPORAL_WINDOW
+WP18Q_EXIT_GATE = BLOCKED
 BACKTEST_PLATFORM = ENGINEERING_QUALIFIED_IN_COMPLETED_RECOVERY_SCOPE
 ```
 
@@ -73,7 +74,10 @@ BACKTEST_PLATFORM = ENGINEERING_QUALIFIED_IN_COMPLETED_RECOVERY_SCOPE
 | WP-specific hard-cut | WP-specific executors are removed after pre-deletion gates; private exact historical decoding and Generic composition remain | Generic surface / `HARD_CUT_PASS_AT_09561b25` |
 | Research Qualification | Concrete Evidence/Assessment/policy/floor/decision and later-generation reads; training or positive returns never qualify a model | Research / `NO_EMPIRICAL_PROMOTION` |
 | Formal Research Campaign | Freeze/protected-open/Runtime/Provider-gate mechanics exist; rejected Provider evidence prevents real Formal OOS execution | Research + Runtime / `FORMAL_OOS_NOT_RUN` |
-| Prospective | Target-aligned generation/planning/terminal/revision and Runtime mechanics exist; new scope has 288 future slices; original and independent restored foreground lifecycle stop/restart pass, with due=0 at 2026-09-06 17:06 UTC; sustained collection and original historical continuity remain unproven | Market + existing Runtime / `NOT_DUE / LIVE_PROOF_BLOCKED` |
+| Prospective | Existing continuation now has exact-scope/source/backup/resource guards, a single session supervisor lock and bounded Provider effects; gaps preserve frozen observation ordinals through the controlled v6 correction. Original v5 is unchanged; actual due capture and sustained service remain unproven | Market + existing Runtime / `GUARDED_IMPLEMENTATION / LIVE_PROOF_BLOCKED` |
+| Operational health / recovery | Canonical full-roster window/Runtime projection, separate capture/on-time/terminal rates, actionable internal alert changes, unknown-effect reconciliation and partial-registration recovery | Read-only operational projection / `NO_BUSINESS_AUTHORITY` |
+| Research funnel diagnosis | Complete 9,472-cell denominator: 9,436 eligible and 36 canonical exclusions; 97 typed non-estimable metrics explained without rewriting the frozen report. Rule/ridge ranking increment is not demonstrated | Read-only reconciled Evaluation projection / `DAILY_SHADOW_NOT_READY` |
+| Original database diagnosis | Exact SQL/parameters and bounded PK plans retained; original planning/metadata reads remain slower, without historical failure-time causal evidence | Read-only PostgreSQL diagnostics / `ROOT_CAUSE_UNPROVEN` |
 
 The pre-R2 old operational scope remains unavailable at inspected locations.
 The distinct current R2 original database OID 287543 is accessible and retains
@@ -133,8 +137,10 @@ retains the complete preservation contract. Neither this view nor a passing
 fixture, local suite or report can grant Provider, PIT, OOS, trading or
 Production authority.
 
-R2 continuation at the checkpoint above completes the frozen 936-action large
-Run only in its explicit isolated recovery scope: four ModelVersions, 44
+Frozen writer `f247ca5d` completed the 936-action large Run in its explicit
+isolated recovery scope, recorded by the prior 09561b25 continuation. Current
+`4c764b3d` only replays and diagnoses that preserved completed evidence; it does
+not retrain or repeat campaign execution. The completed scope contains four ModelVersions, 44
 Evaluations, 608 declared metrics and deterministic report/replay. Original
 operational OID 287543 retains its terminal Evaluation timeout. Generic
 `backtest progress` exposes exact Runtime bindings with
@@ -142,3 +148,24 @@ operational OID 287543 retains its terminal Evaluation timeout. Generic
 Foreground prospective supervision delegates every wakeup to existing
 continuation and installs no system service. Final gate results and the
 remaining temporal/operational boundaries are recorded in Current State.
+
+Current activation `4c764b3d` passes 4,163 full cases with zero failures/errors/
+skips; focused 152, architecture/docs 41, static/type/docs/build and independent
+installed-wheel/schema/real replay smoke also pass.
+Its preceding f55 full run retains three failures (4,160 passes, zero skips);
+exact migration-roster and SQL-layer repairs have focused green evidence.
+The exact final result is appended to the existing R2 Verification.
+Restored-v6 upgrades preserve all 189 business tables and Artifact identities;
+independent v6 restore preserves all 192 table hashes and 2,770 physical Artifacts.
+The original database's v6 plan is read-only and expiring, with apply/adoption
+NOT_AUTHORIZED. Frozen V1 campaign outputs are reverified in completed restore
+OID 144400596 with no business writes. No new Model, protocol or training occurs.
+
+Final completed-v6 backup `72edc6c6…` restores independently to OID 157024168:
+192 table hashes, 2,780 physical Artifacts, five Archives, WP17P/large Run replay
+and original report bytes match with zero source writes. Actual final-source
+startup is twice refused at Provider access preflight, with zero business writes;
+positive field lifecycle is BLOCKED_BY_PROVIDER_ACCESS. Original PostgreSQL time
+2026-09-07 03:45:01.547047 UTC still has 288 future slices and zero Attempts.
+The remaining frozen WP18Q due-proof gate is unproven; operational upgrade
+requires authorization, and sustained collection remains unproven independently.

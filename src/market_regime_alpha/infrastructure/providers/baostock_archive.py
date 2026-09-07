@@ -6,9 +6,11 @@ from dataclasses import dataclass
 from datetime import date
 from enum import Enum
 import json
-from contextlib import contextmanager
+import math
+from contextlib import contextmanager, nullcontext
 import signal
 import threading
+from time import monotonic
 from typing import Any, Protocol, Self
 
 from market_regime_alpha.market.domain import SourceAvailabilityStatus
@@ -142,17 +144,33 @@ class BaoStockSession:
         timeout_seconds: float = 30.0,
         maximum_attempts: int = 2,
         defer_login: bool = False,
+        maximum_rows: int = 100_000,
+        maximum_response_bytes: int = 33_554_432,
     ) -> None:
-        if timeout_seconds <= 0:
-            raise ValueError("BaoStock timeout_seconds must be positive")
+        if type(timeout_seconds) not in (int, float):
+            raise TypeError("BaoStock timeout_seconds must be numeric, excluding bool")
+        if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
+            raise ValueError("BaoStock timeout_seconds must be finite and positive")
+        if type(maximum_attempts) is not int:
+            raise TypeError("BaoStock maximum_attempts must be an integer, excluding bool")
         if maximum_attempts < 1 or maximum_attempts > 3:
             raise ValueError("BaoStock maximum_attempts must be between 1 and 3")
+        for name, value in (("maximum_rows", maximum_rows), ("maximum_response_bytes", maximum_response_bytes)):
+            if type(value) is not int:
+                raise TypeError(f"BaoStock {name} must be an integer, excluding bool")
+            if value < 1:
+                raise ValueError(f"BaoStock {name} must be positive")
+        if type(defer_login) is not bool:
+            raise TypeError("BaoStock defer_login must be boolean")
         self._sdk = sdk
         self._timeout_seconds = timeout_seconds
         self._maximum_attempts = maximum_attempts
+        self._maximum_rows = maximum_rows
+        self._maximum_response_bytes = maximum_response_bytes
         self._active = False
         self._defer_login = defer_login
         self._entered = False
+        self._execute_deadline: float | None = None
 
     def __enter__(self) -> Self:
         self._entered = True
@@ -163,6 +181,8 @@ class BaoStockSession:
     def _connect(self) -> None:
         try:
             status = self._transport_call("login", self._sdk.login)
+        except _DeadlineExceeded:
+            raise
         except Exception as exc:
             raise MarketProviderError("BAOSTOCK_LOGIN_TRANSPORT_FAILED", "BaoStock login failed") from exc
         if str(status.error_code) != "0":
@@ -183,6 +203,21 @@ class BaoStockSession:
                     raise MarketProviderError("BAOSTOCK_LOGOUT_FAILED", "BaoStock logout failed") from logout_error
 
     def execute(self, query: BaoStockArchiveQuery) -> BaoStockArchiveResult:
+        deadline = monotonic() + self._timeout_seconds
+        try:
+            with _timeout_guard("execute", self._timeout_seconds):
+                self._execute_deadline = deadline
+                try:
+                    return self._execute(query)
+                finally:
+                    self._execute_deadline = None
+        except _DeadlineExceeded as exc:
+            raise MarketProviderError(
+                "BAOSTOCK_EXECUTE_DEADLINE_EXCEEDED",
+                "BaoStock complete execute deadline exceeded",
+            ) from exc
+
+    def _execute(self, query: BaoStockArchiveQuery) -> BaoStockArchiveResult:
         if self._defer_login and self._entered and not self._active:
             self._connect()
         if not self._active:
@@ -195,28 +230,41 @@ class BaoStockSession:
             )
         fields = tuple(str(item) for item in result.fields)
         rows: list[tuple[str, ...]] = []
-        try:
-            while self._transport_call("row-iteration", result.next, retry=False):
-                rows.append(
-                    tuple(
-                        str(item)
-                        for item in self._transport_call(
-                            "row-read",
-                            result.get_row_data,
-                            retry=False,
-                        )
-                    )
+        error_code, error_message = str(result.error_code), str(result.error_msg)
+        # Include the exact UTF-8 envelope, escaping, commas and final newline.
+        # Count each row once before retaining it; no quadratic re-serialization.
+        response_bytes = len(
+            _result_content(query, BaoStockArchiveResult(fields, (), error_code, error_message))
+        )
+        self._check_response_bytes(response_bytes)
+        while self._transport_call("row-iteration", result.next, retry=False):
+            if len(rows) >= self._maximum_rows:
+                raise MarketProviderError(
+                    "BAOSTOCK_RESPONSE_ROW_BUDGET_EXCEEDED",
+                    "BaoStock response exceeds the declared row budget",
                 )
-        except MarketProviderError:
-            raise
-        if any(len(row) != len(fields) for row in rows):
-            raise MarketProviderError("BAOSTOCK_ROW_SHAPE_INVALID", "BaoStock row width differs from its field roster")
+            row = tuple(
+                str(item)
+                for item in self._transport_call("row-read", result.get_row_data, retry=False)
+            )
+            if len(row) != len(fields):
+                raise MarketProviderError("BAOSTOCK_ROW_SHAPE_INVALID", "BaoStock row width differs from its field roster")
+            response_bytes += len(_json_bytes(row)) + (1 if rows else 0)
+            self._check_response_bytes(response_bytes)
+            rows.append(row)
         return BaoStockArchiveResult(
             fields=fields,
             rows=tuple(rows),
-            error_code=str(result.error_code),
-            error_message=str(result.error_msg),
+            error_code=error_code,
+            error_message=error_message,
         )
+
+    def _check_response_bytes(self, byte_count: int) -> None:
+        if byte_count > self._maximum_response_bytes:
+            raise MarketProviderError(
+                "BAOSTOCK_RESPONSE_BYTE_BUDGET_EXCEEDED",
+                "BaoStock response exceeds the declared UTF-8 byte budget",
+            )
 
     def _transport_call(
         self,
@@ -229,8 +277,24 @@ class BaoStockSession:
         attempts = self._maximum_attempts if retry else 1
         for _ in range(attempts):
             try:
-                with _timeout_guard(label, self._timeout_seconds):
-                    return operation(*args)
+                # Execute owns one unreset alarm: each transport consumes its
+                # remaining deadline, including retries and deferred login.
+                if self._execute_deadline is not None and monotonic() >= self._execute_deadline:
+                    raise _DeadlineExceeded("BaoStock execute deadline exceeded")
+                guard = (
+                    nullcontext()
+                    if self._execute_deadline is not None
+                    else _timeout_guard(label, self._timeout_seconds)
+                )
+                with guard:
+                    result = operation(*args)
+                if self._execute_deadline is not None and monotonic() >= self._execute_deadline:
+                    raise _DeadlineExceeded("BaoStock execute deadline exceeded")
+                return result
+            except _DeadlineExceeded:
+                if self._execute_deadline is not None:
+                    raise
+                last_error = TimeoutError(f"BaoStock {label} timed out")
             except MarketProviderError:
                 raise
             except Exception as exc:
@@ -279,22 +343,7 @@ class BaoStockArchiveProvider:
         except ValueError as exc:
             raise MarketProviderError("BAOSTOCK_QUERY_INVALID", "BaoStock archive query is invalid") from exc
         result = self._session.execute(query)
-        content = (
-            json.dumps(
-                {
-                    "error_code": result.error_code,
-                    "error_message": result.error_message,
-                    "fields": result.fields,
-                    "query": json.loads(query.resource),
-                    "rows": result.rows,
-                },
-                ensure_ascii=False,
-                allow_nan=False,
-                separators=(",", ":"),
-                sort_keys=True,
-            )
-            + "\n"
-        ).encode("utf-8")
+        content = _result_content(query, result)
         return ProviderResponse(
             content=content,
             media_type="application/json",
@@ -306,17 +355,44 @@ class BaoStockArchiveProvider:
         )
 
 
+def _json_bytes(value: object) -> bytes:
+    return json.dumps(
+        value, ensure_ascii=False, allow_nan=False, separators=(",", ":"), sort_keys=True,
+    ).encode("utf-8")
+
+
+def _result_content(query: BaoStockArchiveQuery, result: BaoStockArchiveResult) -> bytes:
+    return _json_bytes({
+        "error_code": result.error_code,
+        "error_message": result.error_message,
+        "fields": result.fields,
+        "query": json.loads(query.resource),
+        "rows": result.rows,
+    }) + b"\n"
+
+
+class _DeadlineExceeded(TimeoutError):
+    """Distinguish the owned deadline from an SDK-reported timeout."""
+
+
 @contextmanager
 def _timeout_guard(label: str, timeout_seconds: float):
     if (
         threading.current_thread() is not threading.main_thread()
-        or not hasattr(signal, "setitimer")
+        or any(not hasattr(signal, name) for name in ("setitimer", "getitimer", "SIGALRM", "ITIMER_REAL"))
     ):
-        yield
-        return
+        raise MarketProviderError(
+            "BAOSTOCK_TIMEOUT_ENVIRONMENT_UNSUPPORTED",
+            "BaoStock requires the main thread and a POSIX real-time timer",
+        )
+    if signal.getitimer(signal.ITIMER_REAL) != (0.0, 0.0):
+        raise MarketProviderError(
+            "BAOSTOCK_TIMEOUT_TIMER_ALREADY_OWNED",
+            "BaoStock cannot replace an existing real-time timer",
+        )
 
     def _raise_timeout(_signum: int, _frame: object) -> None:
-        raise TimeoutError(f"BaoStock {label} timed out")
+        raise _DeadlineExceeded(f"BaoStock {label} timed out")
 
     previous_handler = signal.getsignal(signal.SIGALRM)
     signal.signal(signal.SIGALRM, _raise_timeout)

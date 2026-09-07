@@ -13,6 +13,61 @@ second planning source.
 
 ## Sequence
 
+WP-RESEARCH-OPERATIONS-ACTIVATION-01 continues the dependency chain from
+merged main `85d0080a`; its source/tests match qualified `09561b25`.
+The implementation boundary is the existing prospective serve/continuation,
+Runtime lease/fence, Market inspection, Evidence inventory/backup and Generic
+Backtest/Report read surfaces. No database adoption, migration, service install,
+research-parameter change or new scheduler is authorized.
+
+The execution order is: exact-scope startup/configuration and single-writer
+guards; bounded Runtime claims and health/recovery observations; reproducible
+read-only original-database diagnostics; reconciled research funnel projection;
+isolated fault/restore drills and authorized actual-time operation; final
+source/dependency qualification and the existing R2 evidence/status chain.
+The preflight must reject wrong name/OID/cluster/schema/root, unreadable or
+mismatched backup bytes, inadequate disk/calendar/Target/Provider configuration,
+active conflicting work and duplicate supervisors before a business tick.
+Backpressure leaves unclaimed work due; it never invents a terminal success.
+Health preserves expected denominators, first-observation times and distinct
+capture/on-time/terminal rates. Financial values remain canonical Evaluation.
+
+Current R2 original OID 287543 remains the existing authorized prospective
+append scope. Completed recovery OID 117559774 and independent restored OID
+118013570 are read-only research evidence here. Adoption remains a separate
+explicit decision. Actual due proof is checked against the execution-time
+PostgreSQL clock; NOT_DUE cannot close frozen WP-18Q Design section 13.
+
+The activation implementation is frozen at `4c764b3d`; final engineering
+regression passes 4,163 cases without failures/errors/skips, 152 focused cases,
+static/type/architecture/docs/build and installed-wheel smoke. Guarded lifecycle, bounded Provider effects,
+canonical health/recovery, read-only database diagnostics and complete research
+funnel projection are implemented in existing owners. Preserve the first full
+run's three failures and the exact adapter/migration-contract repairs.
+
+The minimum remaining operational decision is whether to authorize a controlled
+v6 upgrade of original OID 287543, retaining its failed Run and current series.
+Its expiring read-only plan is prepared; no upgrade, adopted copy, system service
+or stale writer takeover is authorized. Restored-v6 upgrade/backup/recovery
+proof is independent of that decision. At a genuine due window, the authorized
+scope must produce a Runtime-claimed Attempt. Successful capture and sustained
+collection require their own observations. Do not wait or manufacture timeliness.
+
+Final completed-v6 backup and independent restore (OID 157024168) preserve
+192 table hashes, 2,780 Artifact bytes/identities and exact report/replay.
+Final-source field startup is twice refused before tick by Provider access;
+positive field lifecycle is BLOCKED_BY_PROVIDER_ACCESS. Original PostgreSQL time
+2026-09-07 03:45 UTC still has no due window or Attempt. Required next actions
+are explicit upgrade authorization, restored Provider access and real-time
+operation when the canonical window is due; sustained service needs a separately
+observed duration. No future window was awaited for this work.
+
+The next research dependency comes from the read-only funnel diagnosis: decide
+an explicit new denominator protocol and bind prospective Feature/Target/Model
+cutoff/Decision facts before daily Shadow. Do not reinterpret frozen V1 metrics,
+change existing experiments, infer ranking increment from lower forecast error,
+or equate Model sample rows with independent days/episodes.
+
 WP-RESEARCH-ECONOMICS-CORRECTNESS-01 is complete in its [bounded supported scope](../references/WP-RESEARCH-ECONOMICS-CORRECTNESS-01-Design.md).
 Its single [immutable Verification](../references/WP-RESEARCH-ECONOMICS-CORRECTNESS-01-Verification.md)
 binds `a107d98e`: complete root/child integrity, full-parent multi-episode
@@ -38,7 +93,7 @@ The historical WP-17P PASS below is not a Generic Platform qualification.
 
 The Backtest engineering gates close in the completed recovery scope:
 `BACKTEST_PLATFORM=ENGINEERING_QUALIFIED_IN_COMPLETED_RECOVERY_SCOPE`.
-The frozen actual-due requirement remains `WP18Q_EXIT_GATE=BLOCKED_BY_TEMPORAL_WINDOW`.
+The frozen actual-due requirement remains `WP18Q_EXIT_GATE=BLOCKED`: no real due Attempt is proven.
 Sustained prospective collection is unproven; original OID 287543 retains its
 failed Run. Full Runtime/CLI cutover remains unauthorized and Production is
 `NO-GO`. Exact results belong to Verification/Current State.

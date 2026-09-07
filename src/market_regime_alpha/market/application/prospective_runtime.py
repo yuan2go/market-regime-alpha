@@ -118,10 +118,15 @@ class ProspectiveRuntimeExecution:
     recovered_attempt_ids: tuple[UUID, ...]
     slice_results: tuple[ArchiveSliceExecutionResult, ...]
     failures: tuple[ProspectiveRuntimeFailure, ...]
+    attempt_ids: tuple[UUID, ...] = ()
 
 
 class ProspectiveRuntimeIntegrityError(RuntimeError):
     """Frozen Runtime and Market intent no longer reconcile."""
+
+
+class ProspectiveExternalEffectUnknown(ProspectiveRuntimeIntegrityError):
+    """A prior Provider effect has no canonical Capture receipt to reconcile."""
 
 
 class _ReconciledCaptureProvider:
@@ -133,7 +138,7 @@ class _ReconciledCaptureProvider:
 
     def capture(self, request: CaptureRequest) -> ProviderResponse:
         if not self._may_start:
-            raise ProspectiveRuntimeIntegrityError(
+            raise ProspectiveExternalEffectUnknown(
                 "EXTERNAL_EFFECT_UNKNOWN: prior Attempt has no reconciled Capture; "
                 "Provider I/O cannot be repeated"
             )
@@ -342,7 +347,10 @@ class ProspectiveArchiveRuntimeApplication:
         actor_id: str,
         lease_duration: timedelta,
         runtime_revision: int = 2,
+        before_action: Callable[[], None] | None = None,
     ) -> ProspectiveRuntimeRegistration:
+        if before_action is not None:
+            before_action()
         plan = compile_prospective_runtime_plan(manifest, code_sha=code_sha, runtime_revision=runtime_revision)
         artifact = self._artifacts.publish(
             plan.config_bytes,
@@ -373,8 +381,11 @@ class ProspectiveArchiveRuntimeApplication:
             manifest,
             actor_id=actor_id,
             lease_duration=lease_duration,
+            before_action=before_action,
         )
         for run in plan.capture_runs:
+            if before_action is not None:
+                before_action()
             self._register_run(plan, run, artifact.artifact_id, actor_id)
         return ProspectiveRuntimeRegistration(
             market_archive_id=plan.market_archive_id,
@@ -396,17 +407,22 @@ class ProspectiveArchiveRuntimeApplication:
         provider: MarketProvider,
         normalizer_for: Callable[[ArchiveManifestSlice], MarketNormalizer],
         runtime_revision: int = 2,
+        maximum_attempts: int | None = None,
+        before_action: Callable[[], None] | None = None,
     ) -> ProspectiveRuntimeExecution:
+        if maximum_attempts is not None and (type(maximum_attempts) is not int or maximum_attempts < 0):
+            raise ValueError("Prospective attempt budget must be a non-negative integer")
         plan = compile_prospective_runtime_plan(manifest, code_sha=code_sha, runtime_revision=runtime_revision)
-        recovered = tuple(
-            attempt_id
-            for run in plan.runs
-            for attempt_id in self._runtime.recover_expired(
+        recovered_ids: list[UUID] = []
+        for recovery_run in plan.runs:
+            if before_action is not None:
+                before_action()
+            recovered_ids.extend(self._runtime.recover_expired(
                 actor_id=actor_id,
                 reason_code="PROSPECTIVE_LEASE_RECOVERY",
-                run_id=run.run_id,
-            )
-        )
+                run_id=recovery_run.run_id,
+            ))
+        recovered = tuple(recovered_ids)
         observed_at = self._database_clock.now()
         due_slice_ids = frozenset(self._due_query(plan.market_archive_id))
         planned_ids = {item.plan.market_archive_slice_id for item in manifest.slices}
@@ -422,6 +438,7 @@ class ProspectiveArchiveRuntimeApplication:
         )
         results: list[ArchiveSliceExecutionResult] = []
         failures: list[ProspectiveRuntimeFailure] = []
+        attempt_ids: list[UUID] = []
         for run in due:
             trace = self._runtime.inspect_run(run.run_id)
             _verify_trace(plan, run, trace)
@@ -429,10 +446,14 @@ class ProspectiveArchiveRuntimeApplication:
                 f"capture-{item.plan.ordinal:04d}": item for item in run.slices
             }
             while trace.run_state == "RUNNING":
+                if maximum_attempts is not None and len(attempt_ids) >= maximum_attempts:
+                    break
                 ready = next((item for item in trace.steps if item.state == "READY"
                               and by_key[item.step_key].plan.market_archive_slice_id in due_slice_ids), None)
                 if ready is None:
                     break
+                if before_action is not None:
+                    before_action()
                 claim = self._runtime.claim_next(
                     run_id=run.run_id,
                     step_id=ready.step_id,
@@ -448,6 +469,7 @@ class ProspectiveArchiveRuntimeApplication:
                 )
                 if claim is None:
                     break
+                attempt_ids.append(claim.attempt_id)
                 self._runtime.start_attempt(
                     claim,
                     _context(
@@ -515,12 +537,14 @@ class ProspectiveArchiveRuntimeApplication:
                     else:
                         _require_step_succeeded(self._runtime, claim)
                     results.append(result)
-                except (ValueError, ProspectiveRuntimeIntegrityError):
+                except (ValueError, ProspectiveRuntimeIntegrityError) as exc:
                     if _step_is_live(self._runtime, claim):
                         self._runtime.fail_attempt(
                             claim,
                             error_class="INTEGRITY",
-                            error_code="INTEGRITY_ERROR",
+                            error_code=("EXTERNAL_EFFECT_UNKNOWN"
+                                        if isinstance(exc, ProspectiveExternalEffectUnknown)
+                                        else "INTEGRITY_ERROR"),
                             context=_context(
                                 f"prospective:{claim.attempt_id}:integrity",
                                 actor_id,
@@ -559,16 +583,21 @@ class ProspectiveArchiveRuntimeApplication:
             recovered_attempt_ids=recovered,
             slice_results=tuple(results),
             failures=tuple(failures),
+            attempt_ids=tuple(attempt_ids),
         )
 
     def continue_series(
         self, *, series_code: str, code_sha: str, actor_id: str, worker_id: str,
         lease_duration: timedelta, provider: MarketProvider,
         normalizer_for: Callable[[ArchiveManifestSlice], MarketNormalizer],
+        maximum_attempts: int | None = None,
+        before_action: Callable[[], None] | None = None,
     ) -> dict[str, object]:
         """One bounded continuity tick; scheduling remains the existing Runtime."""
         if len(code_sha) != 40 or any(character not in "0123456789abcdef" for character in code_sha):
             raise ValueError("Continuity requires an exact implementation SHA")
+        if maximum_attempts is not None and (type(maximum_attempts) is not int or maximum_attempts < 1):
+            raise ValueError("Continuity attempt budget must be a positive integer")
         if (self._continuity is None or self._trading_sessions is None
                 or self._target_schedules is None or self._manifest_reader is None
                 or self._archive_verification is None):
@@ -576,9 +605,11 @@ class ProspectiveArchiveRuntimeApplication:
         references = self._continuity.generations(series_code)
         if not references:
             raise ProspectiveRuntimeIntegrityError("Series requires an exact initial predeclared generation")
-        executions = []
-        manifests = []
+        executions: list[ProspectiveRuntimeExecution] = []
+        manifests: list[ArchiveOperatorManifest] = []
         for reference in references:
+            if before_action is not None:
+                before_action()
             content = self._manifest_reader(reference.config_sha256, reference.config_size_bytes)
             if len(content) != reference.config_size_bytes or sha256_bytes(content) != reference.config_sha256:
                 raise ProspectiveRuntimeIntegrityError("Generation manifest Artifact bytes differ")
@@ -596,7 +627,8 @@ class ProspectiveArchiveRuntimeApplication:
             # Repairs an interrupted registration using its original code/config;
             # completed commands resolve through exact receipt replay.
             self.predeclare(manifest, code_sha=reference.code_sha, actor_id=actor_id,
-                            lease_duration=lease_duration, runtime_revision=reference.runtime_revision)
+                            lease_duration=lease_duration, runtime_revision=reference.runtime_revision,
+                            before_action=before_action)
             overdue = self._continuity.overdue_slice_ids(reference.market_archive_id)
             if overdue:
                 def finalize(claim: AttemptClaim, context: CommandContext,
@@ -611,11 +643,16 @@ class ProspectiveArchiveRuntimeApplication:
                     actor_id=actor_id, worker_id=worker_id, lease_duration=lease_duration,
                     command=finalize,
                     runtime_revision=reference.runtime_revision,
+                    before_action=before_action,
                 )
             executions.append(self.run_due(
                 manifest, code_sha=reference.code_sha, actor_id=actor_id, worker_id=worker_id,
                 lease_duration=lease_duration, provider=provider, normalizer_for=normalizer_for,
                 runtime_revision=reference.runtime_revision,
+                before_action=before_action,
+                maximum_attempts=None if maximum_attempts is None else max(
+                    0, maximum_attempts - sum(len(item.attempt_ids) for item in executions),
+                ),
             ))
             manifests.append(manifest)
         head = manifests[-1]
@@ -655,9 +692,12 @@ class ProspectiveArchiveRuntimeApplication:
                 actor_id=actor_id, worker_id=worker_id, lease_duration=lease_duration,
                 command=record_gap,
                 runtime_revision=references[-1].runtime_revision,
+                before_action=before_action,
             )
         new_generation_id = None
         if continuation.next_sessions is not None:
+            if before_action is not None:
+                before_action()
             codes: dict[UUID, str] = {}
             for item in head.slices:
                 schedule = next(row for row in generation.schedules
@@ -692,13 +732,13 @@ class ProspectiveArchiveRuntimeApplication:
                 maximum_slice_bytes=head.start_request.maximum_slice_bytes,
             )
             registration = self.predeclare(next_manifest, code_sha=code_sha, actor_id=actor_id,
-                                           lease_duration=lease_duration)
+                                           lease_duration=lease_duration, before_action=before_action)
             new_generation_id = registration.market_archive_id
         return {"series_code": series_code, "observed_at": observed_at,
                 "generation_ids": tuple(item.market_archive_id for item in references),
                 "new_generation_id": new_generation_id, "planning_gaps": tuple(gaps),
                 "blocked_reason": "CALENDAR_SCAN_LIMIT" if scan_limited else continuation.blocked_reason,
-                "due_attempt_count": sum(len(item.slice_results) + len(item.failures) for item in executions),
+                "due_attempt_count": sum(len(item.attempt_ids) for item in executions),
                 "executions": tuple(executions)}
 
     def _run_maintenance(
@@ -706,7 +746,10 @@ class ProspectiveArchiveRuntimeApplication:
         operation: str, payload: dict[str, object], actor_id: str, worker_id: str,
         lease_duration: timedelta, command: Callable[[AttemptClaim, CommandContext], object],
         runtime_revision: int,
+        before_action: Callable[[], None] | None = None,
     ) -> None:
+        if before_action is not None:
+            before_action()
         plan = compile_prospective_runtime_plan(manifest, code_sha=code_sha, runtime_revision=runtime_revision)
         request_hash = canonical_json_sha256({"archive_id": plan.market_archive_id,
                                              "operation": operation, "payload": payload})
@@ -734,10 +777,14 @@ class ProspectiveArchiveRuntimeApplication:
             if trace.run_state == "QUEUED":
                 self._runtime.start_run(run_id, _context(f"prospective:{run_id}:start", actor_id,
                                                         "START_PROSPECTIVE_RUN"))
+        if before_action is not None:
+            before_action()
         self._runtime.recover_expired(actor_id=actor_id, reason_code="PROSPECTIVE_LEASE_RECOVERY", run_id=run_id)
         trace = self._runtime.inspect_run(run_id)
         if trace.run_state == "SUCCEEDED":
             return
+        if before_action is not None:
+            before_action()
         claim = self._runtime.claim_next(
             run_id=run_id, worker_id=worker_id, lease_duration=lease_duration,
             context=_context(f"{key}:claim:{len(trace.steps[0].attempt_states) + 1}", actor_id,
@@ -800,6 +847,7 @@ class ProspectiveArchiveRuntimeApplication:
         *,
         actor_id: str,
         lease_duration: timedelta,
+        before_action: Callable[[], None] | None = None,
     ) -> None:
         trace = self._runtime.inspect_run(plan.predeclare.run_id)
         _verify_trace(plan, plan.predeclare, trace)
@@ -810,6 +858,8 @@ class ProspectiveArchiveRuntimeApplication:
             raise ProspectiveRuntimeIntegrityError(
                 "prospective predeclaration has no claimable Runtime Step"
             )
+        if before_action is not None:
+            before_action()
         claim = self._runtime.claim_next(
             run_id=plan.predeclare.run_id,
             worker_id=f"prospective-predeclare:{actor_id}",

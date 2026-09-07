@@ -1158,7 +1158,7 @@ def test_prospective_child_requires_explicit_live_configuration(changes):
         _configured_prospective_tick(SimpleNamespace(**values))
 
 
-def test_continuous_prospective_child_checks_database_and_uses_generic_application(monkeypatch, tmp_path):
+def test_continuous_prospective_child_cannot_bypass_the_guarded_generic_entry(monkeypatch, tmp_path):
     from contextlib import contextmanager
     import market_regime_alpha.bootstrap as bootstrap
     import market_regime_alpha.interfaces.archive as archive
@@ -1179,10 +1179,28 @@ def test_continuous_prospective_child_checks_database_and_uses_generic_applicati
         return {"due_attempt_count": 0, "series_code": kwargs["series_code"]}
     monkeypatch.setattr(archive, "continue_prospective_series", continued)
     args = SimpleNamespace(runtime_clock_mode="LIVE", prospective_series_code="exact_series", prospective_code_sha="a" * 40, prospective_database_name="operational", prospective_lease_seconds=30)
-    tick = _configured_prospective_tick(args)
-    assert tick()["due_attempt_count"] == 0
-    assert calls[0]["series_code"] == "exact_series" and calls[0]["code_sha"] == "a" * 40
+    with pytest.raises(ValueError, match="OPERATION_GUARDED_PROSPECTIVE_ENTRY_REQUIRED"):
+        _configured_prospective_tick(args)
+    assert calls == []
     args.prospective_database_name = "another_database"
-    with pytest.raises(ValueError, match="database identity"):
-        _configured_prospective_tick(args)()
-    assert len(calls) == 1
+    with pytest.raises(ValueError, match="OPERATION_GUARDED_PROSPECTIVE_ENTRY_REQUIRED"):
+        _configured_prospective_tick(args)
+    assert calls == []
+    assert _configured_prospective_tick(SimpleNamespace()) is None
+
+
+@pytest.mark.parametrize('operation', ('run-day', 'run-due'))
+def test_legacy_prospective_switch_is_rejected_before_connection_or_governance(monkeypatch, capsys, operation):
+    import market_regime_alpha.cli.continuous_research as module
+    args = SimpleNamespace(operation=operation, prospective_series_code='series', prospective_code_sha='a'*40,
+        prospective_database_name='operational', prospective_lease_seconds=30, runtime_clock_mode='LIVE',
+        database_url='postgresql://localhost/legacy', principal_id='operator', application_schema='mra')
+    monkeypatch.setattr(module, 'build_parser', lambda: SimpleNamespace(parse_args=lambda argv: args))
+    calls = []
+    def forbidden(*_, **__):
+        calls.append('connection')
+        raise AssertionError('unguarded legacy prospective child reached database')
+    monkeypatch.setattr(module, 'PostgresConnectionFactory', forbidden)
+    assert module.main([]) == ARGUMENT_ERROR
+    assert calls == []
+    assert json.loads(capsys.readouterr().out)['reason_code'] == 'OPERATION_GUARDED_PROSPECTIVE_ENTRY_REQUIRED'

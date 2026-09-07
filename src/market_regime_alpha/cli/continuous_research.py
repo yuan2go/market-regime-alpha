@@ -9,7 +9,7 @@ from decimal import Decimal
 import json
 from pathlib import Path
 import time as wall_time
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
 from psycopg.types.json import Jsonb
 
@@ -437,7 +437,7 @@ def _add_run_arguments(command: argparse.ArgumentParser) -> None:
         default=Decimal("10000000"),
     )
     command.add_argument("--provider-timeout-seconds", type=float, default=8.0)
-    command.add_argument("--prospective-series-code")
+    command.add_argument("--prospective-series-code", help="Retired unguarded child; use mra archive prospective serve with --operation-config.")
     command.add_argument("--prospective-code-sha")
     command.add_argument("--prospective-database-name")
     command.add_argument("--prospective-lease-seconds", type=int, default=300)
@@ -871,6 +871,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     factory: PostgresConnectionFactory | None = None
     try:
         args = build_parser().parse_args(argv)
+        if args.operation in {"run-day", "run-due"}:
+            _configured_prospective_tick(args)
         if args.database_url is None:
             raise ValueError("explicit --database-url is required")
         if args.principal_id is None:
@@ -930,7 +932,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         _emit_error("OPERATOR_NOT_AUTHORIZED", exc)
         return ARGUMENT_ERROR
     except (ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
-        _emit_error("ARGUMENT_OR_IDENTITY_INVALID", exc)
+        _emit_error(
+            "OPERATION_GUARDED_PROSPECTIVE_ENTRY_REQUIRED"
+            if str(exc).startswith("OPERATION_GUARDED_PROSPECTIVE_ENTRY_REQUIRED")
+            else "ARGUMENT_OR_IDENTITY_INVALID", exc,
+        )
         return ARGUMENT_ERROR
     except Exception as exc:
         _emit_error("POSTGRESQL_OPERATION_FAILED", exc)
@@ -2143,38 +2149,16 @@ def _pre_strategy_risk_configuration(
     )
 
 
-def _configured_prospective_tick(args: argparse.Namespace) -> Callable[[], object] | None:
-    """Explicit bounded child of CONTINUOUS_RESEARCH; never a polling loop."""
-    series = getattr(args, "prospective_series_code", None)
-    code_sha = getattr(args, "prospective_code_sha", None)
-    expected_database = getattr(args, "prospective_database_name", None)
-    if series is None and code_sha is None and expected_database is None:
-        return None
-    if not series or not code_sha or not expected_database:
-        raise ValueError("Prospective continuity requires series, exact code SHA and database name together")
-    if args.runtime_clock_mode != "LIVE":
-        raise ValueError("Prospective continuity requires LIVE PostgreSQL time")
-    if len(code_sha) != 40 or any(c not in "0123456789abcdef" for c in code_sha):
-        raise ValueError("Prospective continuity requires an exact implementation SHA")
-    lease_seconds = args.prospective_lease_seconds
-    if lease_seconds < 1:
-        raise ValueError("Prospective lease must be positive")
-
-    def tick() -> object:
-        from market_regime_alpha.bootstrap import TargetSettings, bootstrap_application, database_identity
-        from market_regime_alpha.interfaces.archive import continue_prospective_series
-        import baostock
-
-        target_settings = TargetSettings.from_environ()
-        if database_identity(target_settings).database_name != expected_database:
-            raise ValueError("Prospective operational database identity differs from explicit binding")
-        with bootstrap_application(target_settings) as application:
-            return continue_prospective_series(
-                application, series_code=series, sdk=baostock, code_sha=code_sha,
-                actor_id="continuous-research", worker_id="continuous-research:prospective",
-                lease_duration=timedelta(seconds=lease_seconds),
-            )
-    return tick
+def _configured_prospective_tick(args: argparse.Namespace) -> None:
+    """Legacy execution cannot bypass the explicit prospective operation guard."""
+    if any(getattr(args, name, None) is not None for name in (
+        "prospective_series_code", "prospective_code_sha", "prospective_database_name",
+    )):
+        raise ValueError(
+            "OPERATION_GUARDED_PROSPECTIVE_ENTRY_REQUIRED: "
+            "use mra archive prospective serve with --operation-config"
+        )
+    return None
 
 
 def _run_due(
@@ -2183,6 +2167,7 @@ def _run_due(
     factory: PostgresConnectionFactory,
     journal: PostgresContinuousResearchJournal,
 ) -> dict[str, Any]:
+    _configured_prospective_tick(args)
     run_command = ContinuousResearchCommand.from_canonical_dict(_load_json_object(args.run_command))
     trading_day = TradingDayAssessment.from_canonical_dict(_load_json_object(args.trading_day_assessment))
     now = _instant(args.at).astimezone(UTC)
@@ -2447,19 +2432,11 @@ def _run_due(
             provider_revision="canonical-free-data-profile-v1",
         )
 
-    prospective_tick = _configured_prospective_tick(args)
-    prospective_results: list[object] = []
-
-    def service_prospective() -> None:
-        assert prospective_tick is not None
-        prospective_results.append(prospective_tick())
-
     result = ContinuousResearchScheduleRunner(
         journal=journal,
         tick_runner=tick_runner,
         policy=policy,
         provider_request_builder=provider_request_builder,
-        prospective_tick=None if prospective_tick is None else service_prospective,
     ).run_due_once(
         run_command=run_command,
         trading_day=trading_day,
@@ -2532,7 +2509,7 @@ def _run_due(
         "historical_sample_build": (None if historical_sample_build is None else historical_sample_build.to_canonical_dict()),
         "path_forecast_registry_wired": forecast_sample_provider is not None,
         "automatic_outcome_settlement": automatic_settlement,
-        "prospective_archive": prospective_results[0] if prospective_results else None,
+        "prospective_archive": None,
     }
 
 
@@ -3748,7 +3725,11 @@ def _emit_error(reason_code: str, exc: BaseException) -> None:
             "status": "FAILED",
             "reason_code": reason_code,
             "error_type": type(exc).__name__,
-            "message": "Continuous Research command failed; credentials are redacted",
+            "message": (
+                "Use mra archive prospective serve with --operation-config."
+                if reason_code == "OPERATION_GUARDED_PROSPECTIVE_ENTRY_REQUIRED"
+                else "Continuous Research command failed; credentials are redacted"
+            ),
             **_authority_ceiling(),
         }
     )

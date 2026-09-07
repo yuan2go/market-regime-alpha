@@ -35,6 +35,7 @@ CANONICAL_DOCS = frozenset(
         "docs/status/Capability-Matrix.md",
         "docs/status/Roadmap.md",
         "docs/operations/Runtime-Runbook.md",
+        "docs/operations/Research-Diagnostics.md",
         "docs/research/Negative-and-Inconclusive-Results.md",
         "docs/archive/README.md",
     }

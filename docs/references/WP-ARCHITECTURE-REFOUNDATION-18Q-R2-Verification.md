@@ -463,3 +463,398 @@ Runtime-claimed prospective Attempt at an available window. No such window was
 available in this execution; no future wait or proof substitution is authorized.
 Long-lived service installation and original failed-Run successor/adoption are
 separate operational decisions, not silently performed by this delivery.
+
+
+## 2026-09-07 research operations activation — exact revision addendum
+
+This append-only section continues the existing R2 evidence chain. The preceding
+record is preserved byte-for-byte and remains scoped to 09561b25; its original
+index SHA refers to that Git revision. It is not inherited by changed source.
+The new logical bundle is `wp-research-operations-activation-01-20260907`.
+Its per-file index, portable backup and verification receipt identify external
+originals; no credentials or machine-local paths are stored here.
+
+### Restored scene, scope and frozen implementation
+
+The original worktree remains on `agent/wp-portfolio-execution-authority-01`,
+HEAD `10689a4db772be5a546a64448fcc6f39f6988412`, with the unrelated
+`.idea/modules.xml` bytes and staging state preserved. Its SHA256 is
+`1f4d49d435a7355fdfe18d629e177c419c2464d56446a5200dbed317dba6b040`.
+Prior R2/economics worktrees and the frozen f247ca5d writer are preserved.
+Inspection preceded the authorized fetch. Latest fetched starting main is
+`85d0080ab3bf14fade5b91e8ef98aa9a16e0c2b2`, tree
+`533a1ed09b6bc2e1a805ce6e1864b20d670b0bac`; its source/tests equal 09561b25.
+The unrelated local portfolio commits were neither overwritten nor mixed into
+this correction.
+
+The single branch `agent/research-operations-activation-01-20260907` contains:
+`d090ae37` scoped read-only database/research diagnostics;
+`59c8b04d` whole-call Provider resource bounds; and
+`f55af294` guarded lifecycle, gap-aware schema and canonical recovery; and
+`4c764b3d` repairs the SQL adapter boundary and exact registered migration
+roster after the first complete regression exposed three failures.
+No push, PR, merge, broker action, system-service installation, original-database
+migration, writer replacement, successful-row copying or historical rewrite occurred.
+
+Final frozen implementation:
+
+- commit `4c764b3d01c08b1cb2de9949cb3a6aa7f534bc72`;
+- tree `8b9e78a7672d12080fb35691b528a01cc541f347`;
+- source `968ab39e340adf16b58aaa030dfe6e420d5760b8`;
+- tests `24fa73a27213407c8749769112cba7da694c0d49`;
+- scripts `b176ebab0ad776efad4c768b4c0b50dd72a13dc7`;
+- uv.lock SHA256 `5cfb5ced3a2587910e172a66f5a5912668d16d0c8dd54e0ae3e619384113a41d`;
+- package Python/SQL fingerprint `2a17efbe1b778659ef362a72ed8b40514f2e17fb3593fe5db832dcdc59b0e970`.
+
+A clean detached worktree and separately named durable PostgreSQL 16.15 test
+database qualify this version. Later documentation-only changes bind this tested
+source/tests/dependency identity; the Verification does not contain its own commit.
+
+### Proven defects and bounded corrections
+
+1. Frozen comparison ordinal 2 could be the first successful observation after
+   a canonical Provider gap, but old schema required ordinal 1. Success/gap/success
+   had the analogous successor conflict. Independent canonical PostgreSQL RED
+   cases proved both. The existing validator now permits skipped ordinals only
+   when every skipped same-checkpoint window has a canonical negative terminal
+   observed no later than the successor. It preserves frozen ordinals, latest
+   actual predecessors and all prior hashes; it creates no synthetic observation.
+2. Per-row Provider timer resets did not bound a whole effect or its response.
+   One deadline now covers deferred login, query and row iteration; finite row
+   and exact serialized UTF-8 byte budgets close resource use. Unsupported signal
+   environments and an already-owned alarm fail before an effect. Successful
+   Provider bytes are unchanged; SDK attempts remain one.
+3. Supervision loss, stop signals, source drift or expired backups could leave
+   later owner actions unguarded. The existing continuation checks process
+   permission/resources before each owner boundary/claim. It drains committed
+   work, then stops without blind external retries. Unknown external effects
+   retain their explicit reconciliation error.
+4. A matching dump did not alone authenticate rewritten backup metadata.
+   A pinned receipt now binds the same-read inventory bytes, source scope,
+   snapshot time and Artifact roster. Both snapshot and verification age count.
+5. Public manual prospective write shortcuts and the legacy prospective CLI
+   child could bypass preflight. They now refuse before connection/business
+   work and direct operators to guarded `serve --operation-config`.
+   Non-prospective legacy commands retain their behavior.
+6. Strict health before recovery rejected a partially registered capture-Run
+   roster and prevented continuation from repairing it. Service startup records
+   OWNER_RECONCILIATION_PENDING, invokes canonical continuation, then checks the
+   full roster strictly. A real disposable-PG interruption/backup/restart case
+   passes with all 192 tables unchanged on repetition.
+
+There is no new Runtime, scheduler, business registry, Evaluation truth, model,
+formula or research threshold. Schema baseline 001 and every registered v1–v5
+bundle retain their original bytes. New immutable
+`002_prospective_revision_gap.sql` has SHA256
+`bd5978ae2ccfd56a9d117c41e13e0a8f7c76fbdd4d83d4aa1b32757dbe753063`;
+registered upgrade `wp18q_prospective_revision_gap_v6` changes catalog
+`d14348490acefb1becea504ad4cf5bcb65bd482efa02e59343fd9408c851f1f1` to
+`233c60c2b8b6efca4682f92fff8acbe85895a967cef0e11f7838f572e6ed69db`.
+Fresh bootstrap applies exact 001+002; older registered upgrade routes retain
+their exact historical targets. Current writer startup rejects v5 until an
+explicit controlled upgrade. A successful read-only diagnostic is not schema
+execution admission.
+
+### Actual-time lifecycle and operational scope
+
+Original `mra_wp18q_r2_operational_20260905`, OID 287543, cluster
+7681924516459622681 remains the authorized original scope with the large Run
+FAILED. Completed recovery OIDs 117559774/118013570 remain distinct evidence.
+No recovery copy is adopted as the future writer. The proposed minimum path is
+a separately approved exact original v6 upgrade, fresh scope-bound backup/profile,
+and guarded startup. The read-only plan is an expiring proposal, not approval.
+
+New isolated lifecycle drill: `mra_operations_lifecycle_drill_20260907`,
+OID 142930962, cluster 7682058034626392615. Independent completed drill:
+`mra_operations_completed_drill_20260907`, OID 144400596, same cluster.
+Both controlled v5→v6 upgrades preserve every ordered row of all 189 business
+tables and exact Artifact bytes, with changes confined to three schema metadata
+tables. They do not prove original-database migration.
+
+At intermediate `f55af294`, actual Provider preflight performed login/logout successfully, verified 2,770
+Artifacts, current consistent backup, frozen Target and nine exact calendar
+sessions. Capture proof remains false. Local profile content identity is
+`9f62c632c05215f8d5704d0f79d8a68bdb3f3b440e2f703d987bed989e82dc2d`.
+Budgets: 2 GiB disk reserve, 24-hour backup age, four pooled connections plus
+one supervision connection, 10-second whole Provider call, 100,000 rows/32 MiB,
+16 actual due claims and 120 seconds per tick, 120-second lease, 30-second wakeup.
+All are explicit operation intent, not research thresholds.
+
+That f55 actual-time isolated service exits 0 after owned-PID SIGTERM; a duplicate exits
+2 with OPERATION_DUPLICATE_SUPERVISOR; bounded restart exits 0. Ticks take
+2.85245/2.85882 seconds. Child peak RSS is 154,943,488 bytes. All 192 table hashes
+and 2,770 Artifacts match before/after, with zero business writes. Health is
+NOT_DUE; no Capture/Attempt was invented. Bounded lifecycle is not long-running
+service proof. The supervisor template is uninstalled.
+
+Health uses canonical complete window/generation/Runtime rosters and PostgreSQL
+time. It separates expected/opened/future/due, capture, lateness, missed/gap/failure,
+unknown effect, lease recovery and planning gaps. Capture success, on-time
+capture and terminal coverage use distinct numerators; zero opened windows
+produces typed NOT_ESTIMABLE rates. Market event freshness unavailable to this
+projection is labelled separately from Capture known-time. Process-local alert
+changes are logged internally; no external messages are sent.
+
+### Completed research and read-only diagnosis
+
+The completed drill at f55 revalidates the existing 44-day/32-instrument/four-arm
+campaign, two FIT→VALIDATION dependencies, 936 complete actions and zero ready
+actions. Generic inspect/report/self-compare/resume/replay/diagnose pass under
+default read-only transactions. All 192 tables and 2,780 Artifacts
+(130,289,170 referenced bytes) are identical before and after.
+Report binding `66b20bc7-f8c9-51af-bb68-9cbea75d9322`, JSON SHA256
+`c6ee9f51216693ece843a3e1578ac76e4a69e69ec6a19bf556e36c92eb406a88`
+(517,803 bytes), Markdown SHA256
+`6d2fcf61b5c999a5e4161d2a2e292e1ad1ec3ac1d0e5ff074cd2c30133a664f9`
+(517,800 bytes) are unchanged. Self-comparison proves identity/comparability,
+not independent replication. No training, new Run or report publication occurs.
+
+[The research diagnosis](../operations/Research-Diagnostics.md) preserves all
+9,472 declared member×arm×fold-session cells. There are 9,436 eligible Candidates
+and 36 canonical eligibility exclusions, with no unexplained missing member.
+97 NOT_ESTIMABLE metrics split into 88 frozen pre-eligibility denominator
+mismatches with lawful exclusions, eight empty canonical partitions, and one
+nonempty V1 economics slice with no estimable metric input. Eight Outcome
+unavailable revisions remain negative evidence.
+
+Four ModelVersions do not mean four independent samples: two have 640/640
+estimable rows across 20 FIT days; two have 1,085 declared/1,084 estimable rows
+across 34 days. Overlapping days and multiple arms cannot be summed as new
+independent evidence. At the same Context setting, ridge and rule Forecast
+RankIC are equal; ridge has lower descriptive error statistics. This does not
+establish ranking increment, causal bottleneck, model selection qualification
+or Alpha. Frozen V1 economics is neither corrected nor promoted by the prior V2
+engineering gate. A future experiment needs an explicit denominator protocol;
+daily Shadow also needs prospective Feature/Target/Model cutoff/Decision
+bindings. Historical Validation is not untouched OOS.
+
+### Performance, failures and evidence boundaries
+
+Read-only original/copy diagnostics capture parameterized SQL and EXPLAIN
+(ANALYZE, BUFFERS, FORMAT JSON), activity/locks/I/O, data statistics and repeated
+timings. The recorded 22.660-second eight-Outcome batch was rechecked by exact
+SQL hash and parameters; present repeats were much faster. The old failed resume
+log did not retain its exact failing SQL/parameters or historical I/O/lock state.
+Therefore ORIGINAL_DATABASE_ROOT_CAUSE remains UNPROVEN. No timeout increase,
+cache reset, disabled integrity check, index change or original maintenance is
+used to claim a fix. Counters shared with other connections cannot establish
+historical causality.
+
+The narrow real-data funnel projection used 13 SQL calls, 0.471 seconds and
+101,416,960-byte peak RSS under its 5-second/48-call/512-MiB projection budget.
+Those numbers exclude full upstream owner reconciliation. The complete
+restore qualification at f55, including repeated owner reconciliation and two all-table/
+physical scans, takes 254.2875 seconds and peaks at 405,684,224 bytes. A 100,000-row
+SDK fixture returns 7,800,197 bytes in 0.370 seconds at 91,668,480-byte peak RSS;
+this is explicitly fixture resource evidence, not real Provider capture capacity.
+
+RED logs and all retry logs remain indexed. These include missing initial
+implementations, the gap constraint, timer/byte bounds, snapshot-age and receipt
+tampering, stale/lost supervision and public-entry bypass counterexamples.
+Harness-only failures (wrong pytest fixture exception/import path, an initial
+navigation test path, an `uv run export` command typo, and source fingerprint
+changes while development tests overlapped editing) are preserved separately.
+Successful reruns do not erase failures or change business assertions.
+
+
+### Final revision, preflight refusals and compatibility reuse
+
+The initial f55 full regression records **4,163 cases: 4,160 passes, three
+failures, zero errors/skips**, exit 1. Two older schema-contract tests omitted
+the new exact registered numbered migration; their exact roster was updated
+without broadening Authority checks. The architecture guard caught SQL in the
+interface module. All that SQL and session advisory-lock work now resides in
+the existing PostgreSQL adapter layer. No test allowlist was weakened. The
+original architecture counterexample is retained; architecture plus real-PG
+operation guard pass 18 tests, and the migration-contract files pass 14 tests.
+
+Final clean-worktree regression uses database
+`mra_operations_final_repair_tests_20260907`, OID 153545579, on PostgreSQL 16.15
+cluster `7682058034626392615`. It never points destructive fixtures at an
+operational or restored evidence database. Final focused gate passes 152 cases,
+zero failures/errors/skips. Final full gate passes 4,163 cases with zero failures/errors/skips (1,096
+refoundation, 33 platform, 288 PostgreSQL-persistence), exit 0 in 2,061.25 seconds.
+Architecture/docs 41 cases, Ruff, mypy, docs links, build and diff checks all exit 0.
+The final recorder's nine command results bind the exact clean implementation.
+
+Initial new-worktree dependency setup failed because PyPI TLS connection closed.
+The preserved failed commands changed no dependency contract. Exact frozen sync
+then succeeded using the already present cache with `UV_OFFLINE=true`.
+Runtime requirements remain the same 47 locked versions. Python is 3.12.2.
+The independent isolated build records setuptools 84.0.0; that build tool's
+observed version is recorded separately from the runtime lock.
+
+The final profile is content identity
+`c2926cf07f362237ce1d41e197fe2d1f0163de52af074945786ab72c0b363243`,
+file SHA256 `14ee2ffdb41bfe90b346f3e26fc0cb8574a81108b18bb9025d1533887d9e7625`.
+It binds final source fingerprint, same isolated OID 142930962/root and verified
+v6 backup. The first real startup and one explicit new request both return
+`OPERATION_PROVIDER_ACCESS_UNAVAILABLE`, service exit 2 before an owner tick.
+Each refusal preserves all 192 ordered table hashes and 2,770 Artifact
+references/bytes, with no Attempt or business writes. No Provider effect was
+faked and no third attempt was made. Positive final-source field lifecycle is
+`BLOCKED_BY_PROVIDER_ACCESS`; positive f55 stop/restart is preserved only at its
+own code identity. Final source PostgreSQL fixtures exercise the actual guard,
+partial registration repair, lease/fence and stop/restart paths in disposable
+scopes. These are engineering evidence, not sustained service or real capture.
+
+Final installed-wheel smoke independently bootstraps only new database OID
+146612586, verifies current v6 (192 tables, 3,929 objects), checks the ten retired
+modules are absent and matches all 1,176 packaged Python/SQL files with frozen
+source. On exact completed restore OID 144400596 with default read-only
+transactions it verifies all 936 actions, matching replay and unchanged V1
+report JSON/Markdown hashes. Pure V2 independent hand case remains: rejected
+40% advice costs zero and leaves 1,000 cash; the next authorized episode buys
+400, sells 440, pays 1.28 and finishes with 1,038.72. It is not a real Fill.
+
+Independent installed wheel SHA256
+`5f5cba8c23157e4393ac069e04857b87a9a67a8bd0a89610fc3c5c6726b0bd63`
+(3,762,314 bytes); sdist
+`4b69c75265ad43eb7a014131bc3533d05d1bb571b50f9fbcd1c2c1bbba0f3dbe`
+(3,012,484 bytes). Installed qualification ledger SHA256
+`c257dee78de410c65b242a8d98e1e52b192a1a7fc9e65da49fa872037b4141a2`.
+No original evidence database is modified by installed smoke.
+
+`final-schema-economic-dependency-compatibility.json` verifies that economics
+algorithms, Evaluation writer/verifier, old migration/bundle bytes, seeds and
+locked dependencies are unchanged from main. The f55→4c repair changes only the
+SQL placement/guard seam, exact migration tests and a runbook command. Its
+backup/restore/catalog and completed full-table proof remain reusable within
+those exact unchanged owner/file scopes; the new final full suite, installed
+real replay and real refused startup provide separate final-revision evidence.
+No f55 failing full gate is reused as a PASS.
+
+The original read-only v6 plan finishes with hash
+`d3d5bbdd127f2825fb9c0a1deab02b0bbf94f2f9ee59c18eafe8868dc87d0e71`,
+generated 2026-09-07 03:01:14.685669 UTC and expiring 03:11:14.685669 UTC.
+It observes no active Attempts/conflicting connections, exact OID 287543 and
+backup `013f366f…`; its apply status is NOT_AUTHORIZED/NOT_RUN. It must be
+regenerated with current code/backup/preflight after approval. A successful
+read-only plan is neither original upgrade nor adopted operational scope.
+The latest controlled 256-row plans both use one PK Index Scan with Actual
+Loops=1; no repeated/full scan or temporary spill was observed in this batch:
+original planning 5,395.532ms/execution
+1,858.359ms; restore planning 2.963ms/execution 31.390ms. Both estimate one and
+return 256 rows. Original identity/catalog reads are slow too. These observed
+scope differences, uncontrolled cache/load and disabled I/O timing do not
+identify the historical QueryCanceled cause.
+
+A complete-history Git bundle (10,574,274 bytes; SHA256
+`8eb125b5988782e4302498fb50c731b7ada410cc9942986690fc57fde26ba3e7`)
+verifies and independently restores the exact final implementation/source/tests
+trees. It restores code; database and Artifact recovery remain separately
+verified by their exact snapshot bundles. All 30,181 indexed originals (2,140,213,943 bytes) are now sealed in
+`operations-activation-4c764b3d.tar.gz`, 1,570,966,599 bytes, SHA256
+`f2a74158822e9400236e5e78824b026aae3f4b98988128b12c70dc7eb7870267`.
+Per-file inventory SHA256
+`1ec3061e527dea559df0bbb63d87c65348e8c25b097bfa56b5d59d7e249953ae`.
+The archive is independently extracted and every original SHA/size matches,
+with zero missing/extra members. Package/restore exits 0 in 75.59 seconds.
+It includes exact code, retained failures, logs, snapshots, four database dumps
+and referenced physical Artifact copies. Installed environment/cache and the
+redundant bare Git extraction are excluded; their reproducible lock/build/code
+inputs remain included. Storage is local SSD outside Git, not offsite or a
+second physical-media failure domain. Later documentation-only delivery logs
+and the final Git bundle are a separate receipt, not a changed implementation.
+
+Old-writer admission is independently checked using unchanged qualified
+`09561b25` against isolated v6 restore OID 146535672, with every session forced
+read-only. Bootstrap rejects with CatalogDriftError before constructing the
+writer or issuing any business command. No old worker is started, stopped or
+replaced; the original database is untouched. This supports the proposed
+upgrade boundary without claiming a performed operational cutover.
+
+### Final completed-v6 backup and independent restore
+
+At exact final `4c764b3d`, current completed-v6 source OID 144400596 is backed up
+through the canonical exported-snapshot contract with every source connection
+read-only. New bundle `completed-v6-final-backup` has dump SHA256
+`72edc6c68dffde322887ee6e708ae05caefaada6ff20d142287aa7ce1f638d9c`
+(310,004,476 bytes). Backup readability and complete pg_restore decode pass.
+An independently created database `mra_operations_completed_v6_restore_20260907`,
+OID 157024168 on cluster `7682058034626392615`, receives that exact dump and a
+new Artifact root copied from its verified roster.
+
+Schema verify, canonical restore-check/evidence verify, all five Archives,
+WP17P replay and large completed Run replay pass. Source-after, snapshot and
+restore-after hashes match across all 192 tables; source and restore physical
+checks match 2,780 Artifacts/130,289,170 bytes, with zero missing/extra bytes.
+Original JSON/Markdown report bytes and hashes are unchanged. No source business
+writes or restored business writes after pg_restore occur. This is a completed
+recovery scope; it does not change original OID 287543 or its FAILED Run.
+
+The full driver exits 0 in 472.07 seconds, peak RSS 557,449,216 bytes. This is
+whole backup/restore/reconciliation resource observation under shared I/O, not
+the narrow diagnostic projection's 5-second/512-MiB budget or a controlled
+cold/warm benchmark. Proof SHA256
+`9d4d9308ea925406da911b66d08a3065a4cfe27c88f237211a30abaa316fe507`;
+29-original manifest SHA256
+`b97fe192aa245736d065215077f7df48b8740ee517115d6b633c93fcac6ce1b4`.
+
+### Final original-clock and workspace recheck
+
+Final fetched origin/main remains `85d0080ab3bf14fade5b91e8ef98aa9a16e0c2b2`,
+with its initial tree unchanged. Original worktree HEAD/tree, unstaged-only
+`.idea/modules.xml` bytes and index remain as recovered; the final qualification
+worktree is clean. No local portfolio changes were mixed into this branch.
+Repository Actions API still returns `enabled=false`:
+`BLOCKED_BY_REPOSITORY_CONFIGURATION / NOT_RUN`, never PASS.
+
+Current final-source read-only status on original OID 287543 uses PostgreSQL
+clock **2026-09-07 03:45:01.547047 UTC**. It reads all 288 expected slices,
+288 future, zero due/overdue/planning gaps/captures and zero Attempts. The first
+window is 2026-09-07 06:40–06:48 UTC. No wait, clock change or backdating occurs.
+Registered parent Runs can say RUNNING while every capture Step is READY with
+no Attempt; that does not prove a running worker or an actual capture.
+The status explicitly says schema admission and physical/owner reconciliation
+are not performed by this narrow read; separate restore/integrity proofs retain
+their exact scope. Original writer activation still needs explicit v6 migration
+authorization, current backup/preflight and accessible Provider. That operational
+boundary is separate from the frozen WP-18Q real-due requirement.
+
+### Requirement-to-evidence disposition
+
+| Requested gate | Actual evidence | Remaining boundary |
+|---|---|---|
+| Exact revision / guarded runtime | Final 4c full 4,163 and focused 152 cases, static/type/architecture/docs/build/installed smoke; real-PG configuration, duplicate/signal/recovery/fence/unknown-effect tests | Positive 4c field lifecycle blocked by Provider access; earlier f55 bounded proof remains separately scoped |
+| Original operations / due | Read-only exact OID/cluster, PostgreSQL time, full 288-slice roster and empty Attempts; expired read-only upgrade plan retained | Original v6 migration NOT_AUTHORIZED; actual due proof NOT_DUE; no successful capture or sustained service proven |
+| Old slow read | Actual parameterized SQL, bounded plans, locks/I/O/counters and scope timings | Historical QueryCanceled root cause UNPROVEN; no speculative fix or timeout increase |
+| Completed research | 936-action completed recovery, exact canonical report/replay/compare/resume, full-table zero-write proof; final installed and fresh-v6-restore replay | Original failed scope remains failed; V1 economics and retrospective evidence are not promoted |
+| Read-only funnel | 9,472 declared cells, 36 legitimate exclusions, all 97 typed non-estimable results explained within recorded limits | No demonstrated ranking increment; new denominator protocol and prospective bindings needed before daily Shadow |
+| Backup / recovery | Consistent v6 snapshots, fresh independent DB/Artifact restore, old-writer admission refusal and exact code-bundle restore | Local SSD evidence only; no operational adoption or offsite-redundancy claim |
+| Remote Actions | Repository API enabled=false | BLOCKED_BY_REPOSITORY_CONFIGURATION / NOT_RUN |
+
+```text
+WP18Q_EXIT_GATE = BLOCKED
+OPERATIONAL_SCOPE_DECISION = ORIGINAL_RETAINED; V6_ACTIVATION_NOT_AUTHORIZED
+ORIGINAL_DATABASE_ROOT_CAUSE = UNPROVEN
+CONTINUITY_RUNTIME_IMPLEMENTATION = ENGINEERING_VERIFIED
+REAL_DUE_ATTEMPT = NOT_DUE
+SUCCESSFUL_REAL_CAPTURE = NOT_PROVEN
+CONTINUOUS_SERVICE_PROOF = NOT_PROVEN
+HEALTH_AND_RECOVERY = PASS_IN_ISOLATED_SCOPES
+RESEARCH_FUNNEL_DIAGNOSTICS = PASS_READ_ONLY
+BACKUP_AND_EVIDENCE_RECOVERABILITY = PASS_LOCAL_RESTORE
+FINAL_REVISION_ENGINEERING_VERIFICATION = PASS_AT_4c764b3d
+DAILY_MODEL_SELECTION_READINESS = NOT_READY
+FULL_RUNTIME_CUTOVER = NOT_AUTHORIZED
+ALPHA_PROVEN = NO
+PRODUCTION_ADMISSION = NO
+```
+
+WP18Q's frozen real-due requirement is not relaxed. Provider startup failure is
+not a Runtime-claimed Attempt, and a failed preflight is not successful capture.
+No continuous service duration is claimed. Retrospective evidence stays
+EXPLORATORY_RETROSPECTIVE; FORMAL_PROVIDER/PIT stay BLOCKED, FORMAL_OOS NOT_RUN,
+PROSPECTIVE_PROVEN NO, MODEL_QUALIFIED NO. The minimum operating step is a new
+explicit authorization for the original v6 upgrade, a refreshed exact backup/
+plan/preflight, accessible Provider and canonical execution at an actually due
+window. A restored copy is not selected as an Authority fallback.
+
+The documentation containing this addendum is a subsequent documentation-only
+commit. Its source/tests/dependency objects are identical to the tested 4c
+implementation; no claim relies on the Verification's own commit identity.
+Final document navigation/command/ceiling checks are repeated for that delta.
+The original index's 367 entries and all preceding Verification bytes remain
+preserved at baseline `85d0080a`; the index adds this activation as one named
+continuation. The before/after scope of reused evidence is explicit above.

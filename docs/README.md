@@ -247,6 +247,8 @@ they do not grant canonical business write or research-promotion Authority.
   consumer port; Partition/Experiment and Runtime/CLI cutover remain absent.
 - [Runtime Runbook](operations/Runtime-Runbook.md) — current 001–106 operator
   procedures only; it will be rewritten at Runtime/CLI Cutover.
+- [Research Diagnostics](operations/Research-Diagnostics.md) — read-only R2
+  member funnel, preserved V1 result limits and explicit Daily Shadow dependencies.
 
 Current State and Capability Matrix are read models. They must display their
 generation time, repository SHA, schema epoch, source tree IDs, and proof

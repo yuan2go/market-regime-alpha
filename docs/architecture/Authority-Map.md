@@ -3,7 +3,7 @@
 > **Status:** CANONICAL_TARGET_ARCHITECTURE
 > **Authority:** Target business-fact ownership and canonical-write specification
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-09-05
+> **Last Updated:** 2026-09-07
 > **Code Evidence:** target `src/market_regime_alpha/shared`, `src/market_regime_alpha/runtime`, `src/market_regime_alpha/market`, `src/market_regime_alpha/selection`, `src/market_regime_alpha/research_qualification`, `src/market_regime_alpha/decision_support`, `src/market_regime_alpha/infrastructure`, `src/market_regime_alpha/interfaces`, `src/market_regime_alpha/infrastructure/postgres/migrations/001_baseline.sql`, `tests/refoundation`; legacy source/migrations remain current business implementation
 
 This document answers one question for every retained fact: who may create or
@@ -24,6 +24,16 @@ not an Authority merely because it exists.
 7. Read models, Current State, Capability Matrix, Evidence Ledger, reports, and
    artifacts cannot promote qualification or business state.
 8. Runtime controls when a command runs, not what the business result means.
+
+Prospective process supervision checks explicit scope, physical backup/Artifact
+integrity, resource budgets and a session advisory lock. It can stop new owner
+actions; it cannot decide a due window, invent a terminal fact or replace the
+Runtime lease/fence. Health, database diagnostics and research funnel commands
+are read-only projections and grant no execution or maturity authority.
+Old-schema diagnostics are explicitly non-admitting; current write startup
+still requires the exact current schema. A restored scope is never selected
+because the original is slow or failed. The original scope's upgrade/adoption
+requires separate explicit authorization.
 
 ## 2. Canonical write path
 

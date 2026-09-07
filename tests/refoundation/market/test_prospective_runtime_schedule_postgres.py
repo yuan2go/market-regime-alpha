@@ -280,6 +280,12 @@ def test_restarted_prospective_attempt_reconciles_without_repeating_provider_eff
         with pytest.raises(ProspectiveRuntimeIntegrityError, match="EXTERNAL_EFFECT_UNKNOWN"):
             restarted.run_due(manifest, **kwargs)
         assert runtime.inspect_run(first.run_id).steps[0].state == "FAILED"
+        with pool.connection(read_only=True) as connection:
+            row = connection.execute(
+                "SELECT error_code FROM mra.runtime_attempt WHERE step_id=%s ORDER BY attempt_no DESC LIMIT 1",
+                (runtime.inspect_run(first.run_id).steps[0].step_id,),
+            ).fetchone()
+        assert row == ("EXTERNAL_EFFECT_UNKNOWN",)
     assert provider.calls == 1
 
 
@@ -322,3 +328,64 @@ def test_predeclare_recovers_expired_claim_after_process_crash(prospective_stack
     assert trace.run_state == "SUCCEEDED"
     assert len(trace.steps[0].attempt_states) == 2
     assert len(archives.claims) == 1
+
+
+def test_tick_claim_budget_preserves_unclaimed_roster_and_restart(prospective_stack):
+    runtime, artifacts, pool = prospective_stack
+    clock = PostgresMarketDatabaseClock(pool)
+    manifest = _runtime_fixture_at(clock.now())
+    plan = compile_prospective_runtime_plan(manifest, code_sha="1" * 40)
+    first = plan.capture_runs[0]
+    assert len(first.slices) == 2
+    operations = _Operations(runtime)
+    app = ProspectiveArchiveRuntimeApplication(
+        runtime=runtime, artifacts=artifacts, archives=_Archives(runtime), operations=operations,
+        database_clock=clock,
+        due_query=lambda _: tuple(item.plan.market_archive_slice_id for item in first.slices),
+    )
+    app.predeclare(manifest, code_sha="1" * 40, actor_id="budget-test",
+                   lease_duration=timedelta(seconds=30))
+    def tick():
+        return app.run_due(manifest, code_sha="1" * 40, actor_id="budget-test",
+                           worker_id="budget-worker", lease_duration=timedelta(seconds=30),
+                           provider=object(), normalizer_for=lambda _: object(), maximum_attempts=1)
+    initial = tick()
+    assert len(initial.attempt_ids) == len(initial.slice_results) == 1
+    trace = runtime.inspect_run(first.run_id)
+    assert [step.state for step in trace.steps] == ["SUCCEEDED", "READY"]
+    resumed = tick()
+    assert len(resumed.attempt_ids) == 1
+    assert set(initial.attempt_ids).isdisjoint(resumed.attempt_ids)
+    complete = runtime.inspect_run(first.run_id)
+    assert complete.run_state == "SUCCEEDED"
+    assert tick().attempt_ids == ()
+    assert runtime.inspect_run(first.run_id) == complete
+    assert len(operations.requests) == 2
+
+
+@pytest.mark.parametrize("reason", ["TICK_BUDGET_EXCEEDED", "STOP_REQUESTED", "SUPERVISOR_CONNECTION_LOST"])
+def test_operation_guard_stops_new_claims_after_draining_current_action(prospective_stack, reason):
+    runtime, artifacts, pool = prospective_stack
+    clock = PostgresMarketDatabaseClock(pool)
+    manifest = _runtime_fixture_at(clock.now())
+    plan = compile_prospective_runtime_plan(manifest, code_sha="1"*40)
+    due = plan.capture_runs[0]
+    operations = _Operations(runtime)
+    app = ProspectiveArchiveRuntimeApplication(
+        runtime=runtime, artifacts=artifacts, archives=_Archives(runtime),
+        operations=operations, database_clock=clock,
+        due_query=lambda _: tuple(item.plan.market_archive_slice_id for item in due.slices),
+    )
+    app.predeclare(manifest, code_sha="1"*40, actor_id="guard", lease_duration=timedelta(seconds=30))
+    def guard():
+        if operations.requests:
+            raise ValueError(reason)
+    with pytest.raises(ValueError, match=reason):
+        app.run_due(manifest, code_sha="1"*40, actor_id="guard", worker_id="worker",
+            lease_duration=timedelta(seconds=30), provider=object(), normalizer_for=lambda _: object(),
+            before_action=guard)
+    trace = runtime.inspect_run(due.run_id)
+    assert trace.steps[0].state == "SUCCEEDED"
+    assert trace.steps[1].state == "READY"
+    assert trace.steps[1].attempt_states == ()
+    assert len(operations.requests) == 1
