@@ -29,6 +29,44 @@ from market_regime_alpha.runtime.application import (
 from market_regime_alpha.shared.hashing import canonical_json_sha256
 from tests.refoundation.market.test_prospective_runtime_plan import _manifest
 
+def test_missed_multi_member_run_reconciles_without_reopening_ready_steps(
+    prospective_stack, target_database_url,
+):
+    runtime, artifacts, pool = prospective_stack
+    clock = PostgresMarketDatabaseClock(pool)
+    manifest = _runtime_fixture_at(clock.now() - timedelta(hours=1))
+    application = ProspectiveArchiveRuntimeApplication(
+        runtime=runtime, artifacts=artifacts, archives=_Archives(runtime),
+        operations=_Operations(runtime), database_clock=clock, due_query=lambda identity: (),
+    )
+    arguments = dict(code_sha="1" * 40, actor_id="missed-test", lease_duration=timedelta(seconds=30))
+    registration = application.predeclare(manifest, **arguments)
+    plan = compile_prospective_runtime_plan(manifest, code_sha="1" * 40)
+    first = plan.capture_runs[0]
+    assert len(first.steps) == 2
+    recovered = runtime.recover_expired(
+        run_id=first.run_id, actor_id="missed-test", reason_code="PROSPECTIVE_LEASE_RECOVERY",
+    )
+    before_trace = runtime.inspect_run(first.run_id)
+    assert recovered and before_trace.run_state == "FAILED"
+    assert sorted(step.state for step in before_trace.steps) == ["FAILED", "READY"]
+    assert next(step for step in before_trace.steps if step.state == "FAILED").latest_attempt_error_code == "DEADLINE_EXHAUSTED"
+
+    def facts():
+        with psycopg.connect(target_database_url) as connection:
+            return {
+                table: connection.execute(
+                    f"SELECT to_jsonb(row) FROM mra.{table} AS row ORDER BY to_jsonb(row)::text"
+                ).fetchall()
+                for table in ("runtime_run", "runtime_step", "runtime_attempt", "command_receipt", "audit_event")
+            }
+
+    before = facts()
+    assert application.predeclare(manifest, **arguments) == registration
+    assert runtime.inspect_run(first.run_id) == before_trace
+    assert facts() == before
+
+
 @pytest.mark.parametrize("runtime_revision", [1, 2])
 def test_continuation_keeps_the_registered_schedule_revision(
     prospective_stack, target_database_url, runtime_revision,

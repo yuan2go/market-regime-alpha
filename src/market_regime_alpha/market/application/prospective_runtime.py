@@ -848,6 +848,9 @@ class ProspectiveArchiveRuntimeApplication:
               and all(
                   step.state == "SUCCEEDED"
                   or (step.state == "BLOCKED" and not step.attempt_states)
+                  or (step.state == "READY" and not step.attempt_states
+                      and step.deadline_at is not None
+                      and step.deadline_at < self._database_clock.now())
                   or (step.state == "FAILED"
                       and step.attempt_states == ("FAILED_TERMINAL",)
                       and step.latest_attempt_error_code == "DEADLINE_EXHAUSTED")
