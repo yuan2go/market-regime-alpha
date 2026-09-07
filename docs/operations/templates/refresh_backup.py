@@ -20,6 +20,7 @@ from market_regime_alpha.bootstrap import TargetSettings
 from market_regime_alpha.interfaces.prospective_operation_guard import operational_session
 from market_regime_alpha.interfaces.prospective_operations import load_operation_config, implementation_source_sha256
 from verify_prospective_artifacts import verify_scope
+from market_regime_alpha.interfaces.daily_research import decode_daily_plan
 
 HERE = Path(__file__).resolve().parent
 DEPLOYMENT = json.loads((HERE / "deployment.json").read_text())
@@ -152,7 +153,11 @@ def main():
         )
         guard.config = updated
         guard.verify_backup(snapshot)
-        observations = verify_scope(TargetSettings.from_environ(os.environ), updated, guard, f"operation-refresh:{STAMP}")
+        daily_template = DEPLOYMENT.get("daily_plan_template")
+        observations = verify_scope(
+            TargetSettings.from_environ(os.environ), updated, guard, f"operation-refresh:{STAMP}",
+            daily_plan=decode_daily_plan(Path(daily_template).read_bytes()) if daily_template else None,
+        )
         event(
             "prospective-artifact-observations",
             observations=observations,
