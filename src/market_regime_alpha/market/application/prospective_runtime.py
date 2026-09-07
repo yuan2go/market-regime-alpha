@@ -738,7 +738,9 @@ class ProspectiveArchiveRuntimeApplication:
                 maximum_slice_bytes=head.start_request.maximum_slice_bytes,
             )
             registration = self.predeclare(next_manifest, code_sha=code_sha, actor_id=actor_id,
-                                           lease_duration=lease_duration, before_action=before_action)
+                                           lease_duration=lease_duration, before_action=before_action,
+                                           # Continuation is not an implicit Schedule upgrade.
+                                           runtime_revision=references[-1].runtime_revision)
             new_generation_id = registration.market_archive_id
         return {"series_code": series_code, "observed_at": observed_at,
                 "generation_ids": tuple(item.market_archive_id for item in references),
@@ -841,6 +843,20 @@ class ProspectiveArchiveRuntimeApplication:
                     "START_PROSPECTIVE_RUN",
                 ),
             )
+        elif (trace.run_state == "FAILED" and run in plan.capture_runs
+              and any(step.state == "FAILED" for step in trace.steps)
+              and all(
+                  step.state == "SUCCEEDED"
+                  or (step.state == "BLOCKED" and not step.attempt_states)
+                  or (step.state == "FAILED"
+                      and step.attempt_states == ("FAILED_TERMINAL",)
+                      and step.latest_attempt_error_code == "DEADLINE_EXHAUSTED")
+                  for step in trace.steps
+              )):
+            # Read-only registration reconciliation after a missed window.
+            # Never reopen the failed Run, retry a Provider, or hide an earlier
+            # unknown effect behind a subsequent deadline failure.
+            return
         elif trace.run_state not in {"RUNNING", "SUCCEEDED"}:
             raise ProspectiveRuntimeIntegrityError(
                 f"prospective Runtime Run {run.run_id} is {trace.run_state}"

@@ -945,7 +945,9 @@ class PostgresRuntimeRepository:
                    step.request_hash, step.input_evidence_hash, step.deadline_at,
                    step.state, step.current_fence, step.current_attempt_id,
                    COALESCE(array_agg(attempt.state ORDER BY attempt.attempt_no)
-                            FILTER (WHERE attempt.attempt_id IS NOT NULL), ARRAY[]::text[])
+                            FILTER (WHERE attempt.attempt_id IS NOT NULL), ARRAY[]::text[]),
+                   (array_agg(attempt.error_code ORDER BY attempt.attempt_no DESC)
+                    FILTER (WHERE attempt.attempt_id IS NOT NULL))[1]
             FROM mra.runtime_step AS step
             LEFT JOIN mra.runtime_attempt AS attempt ON attempt.step_id = step.step_id
             WHERE step.run_id = %s
@@ -982,6 +984,7 @@ class PostgresRuntimeRepository:
                         UUID(str(row[10])) if row[10] is not None else None
                     ),
                     attempt_states=tuple(str(item) for item in row[11]),
+                    latest_attempt_error_code=row[12],
                 )
                 for row in rows
             ),

@@ -188,6 +188,14 @@ holds the admission transaction. These guarantees cover current target Runtime
 participants, not arbitrary SQL or old binaries ignoring the protocol. Activation
 must first exclude old/unknown writers; never launch a historical writer against
 this reserved database or adopt a recovery copy as fallback.
+Continuation inherits the exact head generation's registered Runtime Schedule
+revision. Creating a successor is not authorization to enable a different
+Schedule revision. Re-registering an elapsed capture window may reconcile an
+already FAILED Run only when its failed Steps have exactly one terminal Attempt
+with `DEADLINE_EXHAUSTED`; successful Steps and unattempted dependent BLOCKED
+Steps retain their facts. This performs no restart or retry. Earlier Attempts,
+unknown external effects and other failures still refuse registration. Such
+deadline terminals are missed-window evidence, not real due capture Attempts.
 The default template limits each wakeup to 16 actual claims and 120 seconds;
 each BaoStock execute has one 10-second deadline including login/query/row
 iteration, at most 100,000 rows and 32 MiB serialized response. SDK attempts are
