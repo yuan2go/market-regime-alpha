@@ -80,3 +80,23 @@ its referenced Artifact roster. Backup readability alone is insufficient:
 restore schema, owner rosters, physical hashes and relevant replay/report bytes
 must reconcile in an independently identified copy. Preserve unavailable and
 failed evidence; do not fabricate replacement identities or prior known times.
+
+## Artifact producers and consumers
+
+Paths in this table are under `src/market_regime_alpha`. There is no Artifact
+kind registry granting business authority: the exact owner binding determines
+how bytes may be consumed.
+
+| Payload | Producer / binding | Actual consumer |
+|---|---|---|
+| Provider response | `market/application/capture.py` → Capture and Artifact metadata | Market normalization, archive verification and source lineage readers |
+| Dataset manifest | `interfaces/daily_research.py:DailyResearchOperations`; generic Backtest Dataset materialization → Research definition | Candidate and Decision input queries; Dataset reconciliation |
+| Training input and fitted model | `research_qualification/application/research_models.py:ResearchModelApplication` → TrainingRun/ModelVersion | `queries/model_forecast_inputs.py` under the PostgreSQL adapter, exact Model-use inference and model replay |
+| Backtest JSON/Markdown | `research_qualification/application/backtest_reports.py:BacktestReportApplication.publish` → report binding | `queries/backtest_reports.py`, inspect/replay and comparison; no raw-bar metric calculation |
+| Daily frozen plan and forecast report | `interfaces/daily_research.py:DailyResearchOperations` → Runtime/publication bindings | Pending Outcome recovery, `queries/daily_predictions.py` and `interfaces/daily_delivery.py:DailyReportDelivery` |
+| Code/configuration | Exact owning plan/run/archive commands → explicit Artifact bindings | Startup/replay/recovery input authentication; never a current/latest lookup |
+
+`runtime/application/artifacts.py:ArtifactApplication.publish` publishes and
+verifies content-addressed bytes before the short metadata UoW. Receipt replay
+prevents duplicate business metadata; it does not promise zero repeated file
+I/O. `infrastructure/artifacts/local.py:LocalArtifactStore` owns physical storage.
