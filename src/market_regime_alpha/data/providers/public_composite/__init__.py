@@ -1,4 +1,3 @@
-"""Strict public composite LIVE and offline REPLAY provider profiles."""
 
 from .contracts import (
     BAOSTOCK_PUBLIC_PROVIDER_ID,

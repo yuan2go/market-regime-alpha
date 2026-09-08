@@ -1,4 +1,4 @@
-"""Read-only WP-11 Authority verifier."""
+"""Read-only Authority verifier."""
 
 from uuid import UUID
 

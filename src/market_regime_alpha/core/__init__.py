@@ -1,4 +1,3 @@
-"""Canonical shared contracts for the Market Regime Alpha V2 kernel."""
 
 from .identity import (
     ArtifactId,

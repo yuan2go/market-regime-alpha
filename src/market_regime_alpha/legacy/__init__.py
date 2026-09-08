@@ -1,4 +1,3 @@
-"""Explicit compatibility boundaries for Legacy Research Assets."""
 
 from .dataset_contract_adapter import adapt_legacy_dataset_manifest
 from .eligibility_sidecar_adapter import (

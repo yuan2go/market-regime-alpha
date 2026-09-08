@@ -1,4 +1,4 @@
-"""Pre-registered WP-ALPHA-RESEARCH-01 Factor, Gate and Candidate evaluation.
+"""Pre-registered Factor, Gate and Candidate evaluation.
 
 The module consumes owner-projected Research Panel rows.  It never computes a
 technical Feature and never creates Strategy or Portfolio authority.

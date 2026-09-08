@@ -1,4 +1,3 @@
-"""Canonical Strategy bounded contexts."""
 
 from market_regime_alpha.strategies.contracts import (
     CanonicalStrategyAction,

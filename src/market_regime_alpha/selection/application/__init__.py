@@ -1,4 +1,3 @@
-"""Stable public Selection command exports."""
 
 from market_regime_alpha.selection.application.candidates import (
     CandidateApplication,

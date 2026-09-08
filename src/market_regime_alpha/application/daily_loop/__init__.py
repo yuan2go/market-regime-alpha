@@ -1,4 +1,3 @@
-"""Recoverable exploratory daily-loop runtime kernel."""
 
 from typing import TYPE_CHECKING, Any
 

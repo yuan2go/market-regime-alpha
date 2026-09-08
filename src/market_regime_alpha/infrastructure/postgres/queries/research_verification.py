@@ -1,4 +1,4 @@
-"""Read-only relational replay checks for WP-11 research Authorities."""
+"""Read-only relational replay checks for research Authorities."""
 
 from __future__ import annotations
 
@@ -47,7 +47,7 @@ Kind = ResearchVerificationMismatchKind
 
 
 class PostgresResearchEvaluationVerificationProvider:
-    """Recomputes frozen WP-11 facts without Provider, Market, or mutation paths."""
+    """Recomputes frozen facts without Provider, Market, or mutation paths."""
 
     def __init__(self, pool: TargetPostgresPool) -> None:
         self._pool = pool

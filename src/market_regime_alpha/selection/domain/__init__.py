@@ -1,4 +1,3 @@
-"""Stable public exports for Selection Core domain."""
 
 from market_regime_alpha.selection.domain.candidate_inputs import (
     CandidateArtifactBinding,

@@ -1,4 +1,3 @@
-"""Stable Decision Support application exports."""
 
 from market_regime_alpha.decision_support.application.context import (
     ContextCommands,

@@ -1,4 +1,3 @@
-"""Content-addressed Legacy/canonical differential verification."""
 
 from market_regime_alpha.migration.comparison.contracts import (
     ComparisonPolicy,

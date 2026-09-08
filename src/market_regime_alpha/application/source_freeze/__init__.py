@@ -1,4 +1,3 @@
-"""Canonical source-freeze ownership boundary."""
 
 from .service import (
     SourceFreezeResult,

@@ -1,4 +1,3 @@
-"""Durable multi-session Historical Research application boundary."""
 
 from market_regime_alpha.application.historical_research.contracts import (
     HistoricalResearchCommand,

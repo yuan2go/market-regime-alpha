@@ -1,4 +1,3 @@
-"""Controlled single-day DecisionTime operation boundary."""
 
 from importlib import import_module
 from typing import TYPE_CHECKING, Any

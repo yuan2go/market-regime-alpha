@@ -1,4 +1,3 @@
-"""Market Target Outcome application commands."""
 
 from market_regime_alpha.outcome.application.service import (
     OutcomeApplication,

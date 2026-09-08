@@ -1,4 +1,4 @@
-"""Shared Tencent/local/BaoStock execution seam for WP-3 and PRR research."""
+"""Shared Tencent/local/BaoStock execution seam for and PRR research."""
 
 from __future__ import annotations
 

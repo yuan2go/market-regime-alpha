@@ -1,47 +1,28 @@
 # Market Regime Alpha
 
-> **Status:** CURRENT_STATUS
-> **Authority:** Repository entry point only
-> **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-08-30
-> **Related Documents:** `docs/README.md`, `docs/architecture/Canonical-Overall-Design.md`, `docs/status/Current-State.md`, `docs/status/Roadmap.md`
+A-share research and human decision support, with PostgreSQL-backed Runtime,
+immutable market evidence, explicit forecasts and reproducible evaluation.
+Research outputs do not authorize unattended trading.
 
-Market Regime Alpha is an A-share research operating system and
-human-in-the-loop decision-support platform. It is not unattended live trading.
-
-The repository is converging on an approved Hard Cutover Architecture
-Re-foundation:
-
-- **Target:** context-first modular monolith, one PostgreSQL Authority, one
-  composition root, one Runtime, and a new `MRA_REFOUNDATION_1` schema epoch.
-- **Current implementation:** read [Current State](docs/status/Current-State.md)
-  and the linked exact-SHA Verification records. Entry-point prose does not
-  duplicate table counts, checkpoint SHAs, or stage status.
-
-The Target is not cut over. No target write is a canonical business write, and
-there is no dual write or fallback. Current code, PostgreSQL, tests, and
-reproducible artifacts decide current behavior until an explicit Runtime/CLI
-cutover.
-
-Start with [Documentation Authority](docs/README.md), then read the
-[Canonical Target Architecture](docs/architecture/Canonical-Overall-Design.md),
-[Current State](docs/status/Current-State.md), and
-[Implementation Roadmap](docs/status/Roadmap.md).
-
-## Development gate
+Start with [current documentation](docs/README.md). Architecture and owner
+contracts describe the executable system; the
+[Development guide](docs/Development.md) defines the environment and test gates.
+Historical plans and evidence are opt-in through the documentation archive.
 
 ```bash
 uv sync --frozen --extra dev --extra postgres
-uv run python scripts/check_docs_links.py
-uv run python -m pytest -q tests/scripts/test_check_docs_links.py
-uv run python -m pytest -q tests/platform
-MARKET_REGIME_ALPHA_TEST_DATABASE_URL="postgresql://HOST/TEST_DATABASE" uv run python -m pytest -q
-uv run python -m ruff check .
-uv run python -m mypy
-uv run python -m build
-git diff --check
+uv run mra --help
 ```
 
-Use a dedicated PostgreSQL 16 test database. Missing PostgreSQL fails closed;
-tests use isolated schemas. Local/fixture success does not establish Provider,
-Alpha, broker, trading, or Production qualification.
+The `mra` interface exposes schema operations, Runtime inspection/recovery,
+Generic Backtest/report/replay, archive/prospective operations, daily research and
+evidence backup/verification. Retained legacy CLIs have explicit separate
+consumers; this is not a full Runtime or account cutover.
+
+Operational writes need task authorization and exact scope, schema, backup,
+resource and single-writer preflight. Read the
+[Runtime Runbook](docs/operations/Runtime-Runbook.md) before operating an existing
+database. Keep credentials, machine paths and deployed profiles outside Git.
+
+No passing test, replay or positive research result establishes formal Provider,
+PIT/OOS, Alpha, Model or Production qualification.

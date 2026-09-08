@@ -669,21 +669,6 @@ def _target_status(
     return LifecycleRunStatus.RUNNING
 
 
-def _all_references(
-    command: CanonicalLifecycleCommand,
-    history: LifecycleHistory,
-) -> tuple[LifecycleObjectReference, ...]:
-    values: dict[tuple[str, str, str], LifecycleObjectReference] = {}
-    for reference in command.input_references:
-        values[reference.sort_key] = reference
-    for stage in history.stages:
-        for reference in (*stage.input_references, *stage.output_references):
-            existing = values.setdefault(reference.sort_key, reference)
-            if existing != reference:
-                raise LifecycleJournalIntegrityError(
-                    "source journal carries conflicting references"
-                )
-    return tuple(sorted(values.values(), key=lambda item: item.sort_key))
 
 
 def _reference_subject(reference: LifecycleObjectReference) -> str:

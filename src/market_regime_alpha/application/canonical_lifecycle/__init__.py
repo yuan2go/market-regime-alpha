@@ -1,4 +1,3 @@
-"""Recoverable, human-in-the-loop canonical lifecycle orchestration contracts."""
 
 from __future__ import annotations
 

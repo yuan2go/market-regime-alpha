@@ -1,21 +1,27 @@
-# Historical Documentation Boundary
+# Historical archive — opt-in, non-normative
 
-> **Status:** HISTORICAL  
-> **Authority:** Archive policy only  
-> **Owner:** Market Regime Alpha maintainers  
-> **Last Updated:** 2026-08-19
+> **Status:** HISTORICAL
 
-Historical audits, completed delivery reports, temporary work packages, superseded architectures, obsolete roadmaps, designed-only specifications and retired static documentation are preserved by Git history rather than kept in the active documentation tree.
+Do not load this archive as default Agent context. None of its task orders,
+status labels, proposed architectures or passing counts governs current work.
 
-The former `docs/constitution/00` through `09` set was superseded during the 2026-08-19 Canonical Design convergence. Its useful principles were consolidated into `docs/architecture/Canonical-Overall-Design.md`; the original files remain recoverable from Git history for provenance or migration archaeology.
+The [manifest](manifest.json) binds the pre-cleanup documentation/evidence
+snapshot to baseline `1581a8f24dabf140a493354ff59b933a42f89f46`. Each file is retained
+byte-for-byte at its `archived_path`, with original path, SHA256 and size.
+Historical protocols, failures and Verification content are not rewritten.
 
-The obsolete static `docs/index.html` “A 股买卖点识别模型” page and its documentation-only data payload were likewise removed because they described an older product identity and had no canonical runtime or architecture role.
+Archived Markdown relative links retain their original repository namespace.
+The link checker validates that namespace against the frozen baseline path
+manifest, not today's moved files. For correctly rendered historical navigation,
+browse the [frozen original tree](https://github.com/yuan2go/market-regime-alpha/tree/1581a8f24dabf140a493354ff59b933a42f89f46/docs).
+Use original paths from the manifest to retrieve exact Git blobs. Current docs
+use ordinary current links and cannot point directly into a superseded task.
 
-Historical material:
+Old status snapshots are retained to explain contradictions, not selected by
+recency as a competing Current State. External evidence indexes remain indexes:
+their presence does not prove the referenced database/dump/Artifact is available.
+The cleanup does not alter or delete those external originals.
 
-- may be consulted for provenance, research archaeology or migration reasoning;
-- must not be loaded as current normative architecture;
-- cannot override current executable code, PostgreSQL schema/writers, current tests/evidence or the Canonical Overall Design;
-- should not be copied back into `docs/` merely to make history easier to browse.
-
-The active documentation entry point is `docs/README.md`.
+Original research and operational gates, including the blocked overall
+qualification and failed original campaign, retain their original evidence
+scope. No historical result is promoted by documentation or test relocation.

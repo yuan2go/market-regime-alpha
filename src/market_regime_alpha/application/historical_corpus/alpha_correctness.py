@@ -1,7 +1,7 @@
 """Independent correctness checks over Historical normalized source bars.
 
 This module is a checker, not a Feature, Target, Runtime or Evidence authority.
-It deliberately recomputes the three WP-ALPHA-RESEARCH-01 intraday values and
+It deliberately recomputes the three intraday values and
 the T+1 10:30 target without reading their persisted numerical outputs.
 """
 

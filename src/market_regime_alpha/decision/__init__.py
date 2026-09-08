@@ -1,4 +1,3 @@
-"""Trade Decision contracts and durable human approval lifecycle."""
 
 from market_regime_alpha.decision.contracts import (
     TradeDecision,

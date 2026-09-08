@@ -1,4 +1,3 @@
-"""Operational bridge from verified DailyLoop evidence to Platform V2 research."""
 
 from market_regime_alpha.application.operational_research.bridge import (
     OperationalResearchRunner,

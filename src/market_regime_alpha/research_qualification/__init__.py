@@ -1,4 +1,3 @@
-"""Target Research & Qualification bounded context."""
 
 from market_regime_alpha.research_qualification.application import (
     AssessmentCommands, EvaluationCommands, EvidenceCommands, ExperimentCommands,

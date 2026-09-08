@@ -1,4 +1,3 @@
-"""Stable Research Definition Domain exports."""
 from market_regime_alpha.research_qualification.domain.manifest import (
     DatasetSource,
     DecisionInputDatasetManifest,

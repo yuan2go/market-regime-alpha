@@ -1,4 +1,3 @@
-"""Public pure-domain contract for the target Runtime."""
 
 from market_regime_alpha.runtime.domain.model import (
     AttemptState,

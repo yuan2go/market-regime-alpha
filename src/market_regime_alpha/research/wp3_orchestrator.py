@@ -1,4 +1,4 @@
-"""Source-aware composition of Xuntou and Tencent WP-3 Candidate runs."""
+"""Source-aware composition of Xuntou and Tencent Candidate runs."""
 
 from __future__ import annotations
 
@@ -85,7 +85,7 @@ class WP3BackendExecutionError(RuntimeError):
 
 @dataclass(frozen=True, slots=True)
 class WP3RunRequest:
-    """Configuration and identity of one source-aware WP-3 attempt."""
+    """Configuration and identity of one source-aware attempt."""
 
     run_id: str
     source_mode: CandidateRunSourceMode

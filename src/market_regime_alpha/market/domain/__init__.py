@@ -1,4 +1,3 @@
-"""Stable public exports for the Market/PIT domain."""
 
 from market_regime_alpha.market.domain.archive import (
     ArchiveCaptureObservation, ArchiveEvidenceClass,

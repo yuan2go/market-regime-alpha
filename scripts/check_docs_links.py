@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import re
+import hashlib
+import json
+import posixpath
 import sys
 from pathlib import Path
 
@@ -22,34 +25,23 @@ META_RE = re.compile(r"^\s*>\s*\*\*([^*]+):\*\*\s*(.*?)\s*$")
 LINK_RE = re.compile(r"(?<!!)\[[^\]]*\]\(([^)]+)\)")
 CODE_EVIDENCE_PATH_RE = re.compile(r"`([^`]+)`")
 
-CANONICAL_DOCS = frozenset(
-    {
-        "docs/README.md",
-        "docs/architecture/Canonical-Overall-Design.md",
-        "docs/architecture/System-Architecture.md",
-        "docs/architecture/Authority-Map.md",
-        "docs/architecture/Data-and-Evidence-Architecture.md",
-        "docs/architecture/Research-Strategy-Lifecycle.md",
-        "docs/architecture/Repository-Convergence-Inventory.md",
-        "docs/status/Current-State.md",
-        "docs/status/Capability-Matrix.md",
-        "docs/status/Roadmap.md",
-        "docs/operations/Runtime-Runbook.md",
-        "docs/operations/Research-Diagnostics.md",
-        "docs/research/Negative-and-Inconclusive-Results.md",
-        "docs/archive/README.md",
-    }
-)
-SUPPLEMENTARY_DOC_ROOTS = (
-    "docs/archive/",
-    "docs/architecture/decisions/",
-    "docs/references/",
-    "docs/research/protocols/",
-)
+CANONICAL_DOCS = frozenset({
+    "docs/README.md",
+    "docs/architecture/Canonical-Overall-Design.md",
+    "docs/architecture/Authority-Map.md",
+    "docs/architecture/Data-and-Evidence-Architecture.md",
+    "docs/status/Current-State.md",
+    "docs/status/Roadmap.md",
+    "docs/Development.md",
+    "docs/operations/Runtime-Runbook.md",
+    "docs/archive/README.md",
+})
+SUPPLEMENTARY_DOC_ROOTS = ("docs/archive/",)
 
 
 def markdown_files(root: Path) -> list[Path]:
-    return sorted((root / "docs").rglob("*.md"))
+    return sorted(p for p in (root / "docs").rglob("*.md")
+                  if "pre-hygiene" not in p.relative_to(root).parts)
 
 
 def lines_outside_fences(text: str) -> list[tuple[int, str]]:
@@ -205,6 +197,44 @@ def check_constitution(root: Path) -> list[str]:
     return errors
 
 
+def check_archived_snapshot(root: Path) -> list[str]:
+    """Check frozen bytes and links in their original repository namespace."""
+    manifest_path = root / "docs/archive/manifest.json"
+    if not manifest_path.exists():
+        return ["missing historical snapshot manifest"]
+    manifest = json.loads(manifest_path.read_text())
+    paths = set(manifest["baseline_paths"])
+    errors = []
+    for original, record in manifest["files"].items():
+        archived = root / record["archived_path"]
+        if not archived.is_file():
+            errors.append(f"missing archive file: {original}")
+            continue
+        content = archived.read_bytes()
+        if len(content) != record["size"] or hashlib.sha256(content).hexdigest() != record["sha256"]:
+            errors.append(f"archive bytes changed: {original}")
+        if not original.endswith(".md"):
+            continue
+        for match in LINK_RE.finditer(content.decode()):
+            raw = match.group(1).strip().split()[0].strip("<>").split("#", 1)[0]
+            if not raw or re.match(r"^(?:https?|mailto|tel):", raw):
+                continue
+            target = posixpath.normpath(
+                raw.lstrip("/") if raw.startswith("/")
+                else posixpath.join(posixpath.dirname(original), raw)
+            )
+            if target not in paths and not any(p.startswith(target + "/") for p in paths):
+                errors.append(f"broken frozen link: {original} -> {raw}")
+    expected = {record["archived_path"] for record in manifest["files"].values()}
+    actual = {
+        p.relative_to(root).as_posix()
+        for p in (root / "docs/archive/pre-hygiene").rglob("*") if p.is_file()
+    }
+    for path in sorted(actual - expected):
+        errors.append(f"unregistered archived file: {path}")
+    return errors
+
+
 def validate(root: Path = ROOT) -> list[str]:
     docs = markdown_files(root)
     return [
@@ -214,6 +244,7 @@ def validate(root: Path = ROOT) -> list[str]:
         *check_authority_split(root),
         *check_current_metadata(root),
         *check_constitution(root),
+        *check_archived_snapshot(root),
     ]
 
 

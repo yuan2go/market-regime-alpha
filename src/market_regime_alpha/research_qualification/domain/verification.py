@@ -1,4 +1,4 @@
-"""Typed read-only reconciliation results for WP-11 Authorities."""
+"""Typed read-only reconciliation results for Authorities."""
 
 from __future__ import annotations
 

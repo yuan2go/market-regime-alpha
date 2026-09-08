@@ -1,4 +1,3 @@
-"""Public API for canonical point-in-time market data."""
 
 from market_regime_alpha.market_data.adjustment import (
     AdjustmentFactorEvidence,

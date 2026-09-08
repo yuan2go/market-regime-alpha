@@ -1,4 +1,4 @@
-"""Read-only WP-12 Evidence, Assessment, and Qualification verifier."""
+"""Read-only Evidence, Assessment, and Qualification verifier."""
 
 from uuid import UUID
 
