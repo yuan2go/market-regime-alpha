@@ -144,7 +144,7 @@ def test_missing_current_specification_is_not_a_legacy_fallback() -> None:
         )
 
 
-def test_wp18_fixture_proves_definition_equivalence_only() -> None:
+def test_historical_multifold_fixture_proves_definition_equivalence_only() -> None:
     plan = _wp18_definition_plan()
     models = {
         arm.exploratory_backtest_arm_id: AuthorityBinding(UUID(int=900), "9" * 64)

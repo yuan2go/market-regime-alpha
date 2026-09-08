@@ -63,7 +63,9 @@ def test_research_and_qualification_schema_has_exact_owned_relations(
     assert {
         name for name in tables if name.startswith("candidate")
     } == EXPECTED_CANDIDATE_TABLES
-    assert {name for name in tables if name.startswith("model")} == EXPECTED_MODEL_TABLES
+    assert {
+        name for name in tables if name.startswith(("model", "experimental_model_use"))
+    } == EXPECTED_MODEL_TABLES
 
 
 def test_research_definition_identity_population_and_role_shape_are_declarative(

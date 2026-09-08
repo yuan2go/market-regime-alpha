@@ -30,7 +30,7 @@ def test_refoundation_uses_exact_registered_migrations() -> None:
     assert len(EXPECTED_TARGET_TABLES) == 194
 
 
-def test_wp11_relations_have_no_generic_or_future_placeholder_shape(
+def test_evaluation_relations_have_no_generic_placeholder_shape(
     target_database_url: str,
 ) -> None:
     SchemaManager(target_database_url).bootstrap()
@@ -108,7 +108,7 @@ def test_access_and_observation_use_concrete_non_nullable_foreign_keys(
         }
 
 
-def test_wp11_immutable_and_lifecycle_guards_are_installed(
+def test_evaluation_immutable_and_lifecycle_guards_are_installed(
     target_database_url: str,
 ) -> None:
     SchemaManager(target_database_url).bootstrap()

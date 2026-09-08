@@ -71,7 +71,7 @@ def test_market_exports_do_not_introduce_strategy_specific_reference() -> None:
     assert "classify_decision_reference" not in target_source
 
 
-def test_wp12_preserves_prior_authorities_without_later_authorities() -> None:
+def test_selection_dependencies_preserve_explicit_owners_without_legacy_truth_roots() -> None:
     baseline = (SRC / "infrastructure" / "postgres" / "migrations" / "001_baseline.sql").read_text(encoding="utf-8")
     candidate_tables = {
         "candidate_policy",

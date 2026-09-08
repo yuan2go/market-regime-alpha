@@ -34,11 +34,16 @@ documentation. A declaration or passing fixture cannot establish deployment.
 - Preserve complete populations, exclusion reasons and negative/inconclusive
   results. Missing, UNKNOWN, abstention and NOT_ESTIMABLE are meaningful states;
   never replace them with zero, a probability, invented data or implied success.
+- NO_ACTION is not HOLD. An uncalibrated score is not a probability. Public
+  capital proxies do not establish hidden institutional intent.
 - Never infer calendar sessions from weekdays, backdate knowledge/publication,
   silently substitute Providers, or claim PIT/finality without exact evidence.
   Released schemas, historical identities and evidence retain their bytes and
   meaning. Corrections use the owner's explicit revision/supersession contract.
-- Engineering evidence does not confer Provider, Alpha, Model, broker or
+- Xuntou/ThinkTrader/XtQuant remains the formal Provider direction; auxiliary
+  Providers remain exploratory until qualified by exact owner evidence.
+- Model Governance owns formal Model qualification/selection. Engineering
+  evidence does not confer Provider, Alpha, Model, broker or
   Production qualification. Do not change research semantics outside scope.
 
 ## Work and validation

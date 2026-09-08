@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[3]
 BASELINE = ROOT / "src/market_regime_alpha/infrastructure/postgres/migrations/001_baseline.sql"
 
 
-def test_wp12_authority_relations_remain_present() -> None:
+def test_evidence_authority_relations_are_present() -> None:
     assert {
         "evidence_item",
         "evidence_dependency",
@@ -31,7 +31,7 @@ def test_wp12_authority_relations_remain_present() -> None:
     assert EXPECTED_RESEARCH_QUALIFICATION_TABLES <= EXPECTED_TARGET_TABLES
 
 
-def test_wp12_uses_exact_registered_migrations_and_no_generic_subject() -> None:
+def test_evidence_uses_registered_migrations_and_no_generic_subject() -> None:
     migrations = sorted(item.name for item in BASELINE.parent.glob("*.sql"))
     # Forward-only registered corrections do not replace the baseline or
     # broaden WP-12's concrete Authority shapes below.
@@ -52,7 +52,7 @@ def test_wp12_uses_exact_registered_migrations_and_no_generic_subject() -> None:
         assert f"CREATE TABLE mra.{table}" not in sql
 
 
-def test_wp12_rosters_and_supersession_are_database_closed() -> None:
+def test_evidence_rosters_and_supersession_are_database_closed() -> None:
     sql = BASELINE.read_text()
     required = {
         "validate_evidence_item_closure",
@@ -70,7 +70,7 @@ def test_wp12_rosters_and_supersession_are_database_closed() -> None:
     assert all(item in sql for item in required)
 
 
-def test_wp12_concrete_fk_and_trigger_catalog(target_database_url: str) -> None:
+def test_evidence_concrete_fk_and_trigger_catalog(target_database_url: str) -> None:
     SchemaManager(target_database_url).bootstrap()
     with psycopg.connect(target_database_url) as connection:
         columns = connection.execute(
@@ -133,6 +133,6 @@ def test_wp12_concrete_fk_and_trigger_catalog(target_database_url: str) -> None:
         } <= triggers
 
 
-def test_wp12_all_foreign_keys_have_leading_indexes(target_database_url: str) -> None:
+def test_evidence_foreign_keys_have_leading_indexes(target_database_url: str) -> None:
     SchemaManager(target_database_url).bootstrap()
     SchemaManager(target_database_url).verify()

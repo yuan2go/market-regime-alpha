@@ -2067,7 +2067,7 @@ def _plan_index_names(node: dict) -> set[str]:
     return names
 
 
-def test_wp11_core_queries_have_bounded_fk_leading_plans(evaluation_stack) -> None:
+def test_evaluation_core_queries_have_bounded_fk_leading_plans(evaluation_stack) -> None:
     stack = evaluation_stack
     target, _, _, settled = _settle_two_visible_revisions(stack)
     commands, partition, experiment_run_id, protocol = _freeze_and_predeclare(

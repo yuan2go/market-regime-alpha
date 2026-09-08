@@ -22,7 +22,7 @@ def _arm(kind: BacktestArmKind, ordinal: int) -> BacktestArmPlan:
     )
 
 
-def test_wp18_arm_roster_freezes_rule_ridge_and_context_mode() -> None:
+def test_walk_forward_arm_roster_freezes_rule_ridge_and_context_mode() -> None:
     arms = (
         _arm(BacktestArmKind.RULE_CURRENT_CONTEXT, 1),
         _arm(BacktestArmKind.RIDGE_CURRENT_CONTEXT, 2),

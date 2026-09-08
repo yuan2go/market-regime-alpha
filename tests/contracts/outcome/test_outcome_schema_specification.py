@@ -11,7 +11,7 @@ from market_regime_alpha.infrastructure.postgres.schema import (
 )
 
 
-def test_wp10_adds_exactly_eight_outcome_authority_relations(
+def test_outcome_has_exact_relational_authority_roster(
     target_database_url: str,
 ) -> None:
     SchemaManager(target_database_url).bootstrap()

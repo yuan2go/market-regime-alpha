@@ -182,6 +182,13 @@ def test_seed_initializes_only_epoch_and_migration_reference_state(
                 (SELECT count(*) FROM mra.command_receipt)
             """
         ).fetchone()
-    # Immutable 001 plus the exact forward-only 002 correction are reference
-    # state; neither migration seeds Runtime, Artifact or research facts.
-    assert counts == (1, 2, 0, 0, 0, 0)
+        migrations = connection.execute(
+            "SELECT version, name, checksum FROM mra.schema_migrations ORDER BY version"
+        ).fetchall()
+    assert counts == (1, 4, 0, 0, 0, 0)
+    assert migrations == [
+        (1, "001_baseline", "f417b63cf3dc534b1a5d329c5a30462945bfeb6b8c4389bf8ab3a9e1f4efbd27"),
+        (2, "002_prospective_revision_gap", "bd5978ae2ccfd56a9d117c41e13e0a8f7c76fbdd4d83d4aa1b32757dbe753063"),
+        (3, "003_daily_model_research", "44d27a9f13d4045402b86a27f7c47150dfc67421a8fc071d8a691f0405480400"),
+        (4, "004_daily_operational_closure", "903653a6bdc7abee9a37a43ff0442ef05aa5ea298a59bebeff5961699ac822aa"),
+    ]

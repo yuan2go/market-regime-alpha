@@ -32,7 +32,7 @@ task, branch name, UI label, or remote configuration.
 3. Run the repository-local classifier for ancestry and content evidence:
 
    ```bash
-   python scripts/reconcile_branches.py \
+   uv run python scripts/reconcile_branches.py \
      --repository REPOSITORY \
      --comparison COMPARISON_REF \
      --branch NAMED_BRANCH \

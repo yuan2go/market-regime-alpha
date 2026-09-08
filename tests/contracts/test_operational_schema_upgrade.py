@@ -108,7 +108,7 @@ def test_context_precision_upgrade_is_exact_and_preserves_business_tables(target
     definition = manager._resolve_operational_upgrade_definition(
         prior_baseline_sha256="aae59a527154fd19da4bf07a0402d353d2b02a8da56cef6c4a505509683c412b",
         prior_catalog_sha256="a61a4ed2a4ae93521942053c37ab6560386bc49c43e64ef3a03f21ab4ab14a71",
-        prior_reference_vocabulary_sha256=manager.reference_vocabulary_checksum,
+        prior_reference_vocabulary_sha256="d08800892f5e843a756f53e46205dfbb2787386ebf8281564c31049c45659a1b",
     )
     assert definition.upgrade_code == "wp18q_r2_context_precision_v3"
     assert definition.next_baseline_sha256 == "fa322ee492e40b44a740e8c48d055aa0d56e857dd89a5e13792f55777628cea8"
@@ -123,7 +123,7 @@ def test_model_feature_parent_upgrade_preserves_prior_epochs_and_business_tables
     definition = manager._resolve_operational_upgrade_definition(
         prior_baseline_sha256="fa322ee492e40b44a740e8c48d055aa0d56e857dd89a5e13792f55777628cea8",
         prior_catalog_sha256="0a4caa3dd51462f80a6b1cd94dde606d1e4336d8df9a1d02478a0f6687efbe6c",
-        prior_reference_vocabulary_sha256=manager.reference_vocabulary_checksum,
+        prior_reference_vocabulary_sha256="d08800892f5e843a756f53e46205dfbb2787386ebf8281564c31049c45659a1b",
     )
     assert definition.upgrade_code == "wp18q_r2_model_feature_parent_v4"
     assert definition.next_baseline_sha256 == "460ee9b50813a35f42a8634e6f3cb950549b05015bfc435a526bb3a3159d79f7"
@@ -147,10 +147,10 @@ def test_receipt_result_index_upgrade_is_exact_and_preserves_v4(target_database_
     definition = manager._resolve_operational_upgrade_definition(
         prior_baseline_sha256="460ee9b50813a35f42a8634e6f3cb950549b05015bfc435a526bb3a3159d79f7",
         prior_catalog_sha256="6384a687c172ccfc897fde160a4ff0a72427b3531da71ccc0915fc64d9ce28b6",
-        prior_reference_vocabulary_sha256=manager.reference_vocabulary_checksum,
+        prior_reference_vocabulary_sha256="d08800892f5e843a756f53e46205dfbb2787386ebf8281564c31049c45659a1b",
     )
     assert definition.upgrade_code == "wp18q_r2_receipt_result_index_v5"
-    assert definition.next_baseline_sha256 == manager.baseline_checksum
+    assert definition.next_baseline_sha256 == "f417b63cf3dc534b1a5d329c5a30462945bfeb6b8c4389bf8ab3a9e1f4efbd27"
     assert definition.additive_bundle_sha256 == "45849ef8e6571eb640876190c47b87272de4676f7c6fe2c60581d3bac1177b2a"
     assert definition.next_catalog_sha256 == "d14348490acefb1becea504ad4cf5bcb65bd482efa02e59343fd9408c851f1f1"
     assert definition.additive_sql.count("CREATE INDEX") == 1
@@ -158,7 +158,7 @@ def test_receipt_result_index_upgrade_is_exact_and_preserves_v4(target_database_
     assert all(keyword not in definition.additive_sql for keyword in ("ALTER TABLE", "DROP ", "TRUNCATE", "UPDATE "))
 
 
-def test_wp18q_registered_upgrade_bundle_is_exact_and_additive(
+def test_registered_initial_upgrade_bundle_is_exact_and_additive(
     target_database_url: str,
 ) -> None:
     definition = SchemaManager(target_database_url)._resolve_operational_upgrade_definition(
@@ -191,7 +191,7 @@ def test_wp18q_registered_upgrade_bundle_is_exact_and_additive(
     assert "TRUNCATE" not in definition.additive_sql
 
 
-def test_wp18q_v2_route_is_selected_only_from_the_exact_v1_epoch(
+def test_successor_upgrade_requires_the_exact_prior_epoch(
     target_database_url: str,
 ) -> None:
     manager = SchemaManager(target_database_url)
@@ -216,7 +216,7 @@ def test_wp18q_v2_route_is_selected_only_from_the_exact_v1_epoch(
         "aae59a527154fd19da4bf07a0402d353d2b02a8da56cef6c4a505509683c412b"
     )
     assert definition.next_reference_vocabulary_sha256 == (
-        manager.reference_vocabulary_checksum
+        "d08800892f5e843a756f53e46205dfbb2787386ebf8281564c31049c45659a1b"
     )
     assert definition.next_catalog_sha256 == (
         "a61a4ed2a4ae93521942053c37ab6560386bc49c43e64ef3a03f21ab4ab14a71"
@@ -237,6 +237,15 @@ def test_wp18q_v2_route_is_selected_only_from_the_exact_v1_epoch(
             prior_baseline_sha256="0" * 64,
             prior_catalog_sha256="1" * 64,
             prior_reference_vocabulary_sha256="2" * 64,
+        )
+    with pytest.raises(
+        OperationalUpgradeIntegrityError,
+        match="NO_APPROVED_OPERATIONAL_UPGRADE_ROUTE",
+    ):
+        manager._resolve_operational_upgrade_definition(
+            prior_baseline_sha256="9da7396d6dd46e3a896b8845df2ef8619a55d66f1d05285a0dd802d1381dfa98",
+            prior_catalog_sha256="c5ea34221f82e38358943215e48d4ba3f58bb46d814669dda72d6af28835326a",
+            prior_reference_vocabulary_sha256="f228b25251f72ee19a705ce86ae8e64a8919bfa6e45889c406edb4b91d8146da",
         )
 
 

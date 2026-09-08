@@ -7,7 +7,7 @@ ROOT = Path(__file__).resolve().parents[3]
 SRC = ROOT / "src" / "market_regime_alpha"
 
 
-def test_wp12_is_composed_in_sole_target_root_with_three_narrow_uows() -> None:
+def test_evidence_owners_compose_in_target_root_with_three_narrow_uows() -> None:
     bootstrap = (SRC / "bootstrap.py").read_text()
     assert "research_evidence: EvidenceCommands" in bootstrap
     assert "research_assessments: AssessmentCommands" in bootstrap

@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[3]
 PACKAGE = ROOT / "src/market_regime_alpha/research_qualification"
 
 
-def test_wp11_remains_inside_existing_research_qualification_authority() -> None:
+def test_evaluation_uses_existing_research_qualification_authority() -> None:
     package_names = {item.name for item in PACKAGE.iterdir() if item.is_dir()}
     assert "research_validity" not in package_names
     assert {"domain", "application", "ports"} <= package_names

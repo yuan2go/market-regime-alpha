@@ -22,6 +22,8 @@ def test_model_authority_is_concrete_relational_and_append_only(
         "model_training_hyperparameter",
         "model_training_reproducibility",
         "model_version",
+        "experimental_model_use",
+        "experimental_model_use_revocation",
     }
     assert EXPECTED_MODEL_TABLES <= EXPECTED_TARGET_TABLES
     with psycopg.connect(target_database_url) as connection:
@@ -60,6 +62,9 @@ def test_model_authority_is_concrete_relational_and_append_only(
                         "model_training_reproducibility_run_fk",
                         "model_training_dependency_owner_fk",
                         "model_training_hyperparameter_owner_fk",
+                        "experimental_use_protocol_fk",
+                        "experimental_use_shape_ck",
+                        "experimental_use_hash_ck",
                     ],
                 ),
             ).fetchall()
@@ -93,6 +98,9 @@ def test_model_authority_is_concrete_relational_and_append_only(
         "model_training_reproducibility_run_fk",
         "model_training_dependency_owner_fk",
         "model_training_hyperparameter_owner_fk",
+        "experimental_use_protocol_fk",
+        "experimental_use_shape_ck",
+        "experimental_use_hash_ck",
     }
     assert {
         "model_reconcile_guard",
@@ -107,6 +115,9 @@ def test_model_authority_is_concrete_relational_and_append_only(
         "model_training_reproducibility_append_only",
         "model_training_dependency_append_only",
         "model_training_hyperparameter_append_only",
+        "experimental_use_append_only",
+        "experimental_use_revocation_append_only",
+        "experimental_use_guard",
     } <= triggers
 
 

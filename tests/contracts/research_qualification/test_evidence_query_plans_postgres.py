@@ -24,7 +24,7 @@ def wp12_plan_stack(target_database_url, tmp_path, request):
     return _wp11.evaluation_stack.__wrapped__(target_database_url, tmp_path, request)
 
 
-def test_wp12_representative_queries_use_bounded_index_led_plans(
+def test_evidence_queries_use_bounded_index_led_plans(
     wp12_plan_stack,
 ) -> None:
     stack = wp12_plan_stack

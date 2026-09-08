@@ -140,7 +140,7 @@ def test_due_state_is_closed_by_database_time(now: datetime, expected: Prospecti
     ) is expected
 
 
-def test_wp18_closed_vocabularies_include_target_and_missed_semantics() -> None:
+def test_prospective_vocabularies_include_target_and_missed_semantics() -> None:
     assert ProspectiveArchiveScheduleSlot.OUTCOME_10_30.value == "OUTCOME_10_30"
     assert ProspectiveArchiveScheduleSlot.REVISION_VERIFICATION.value == "REVISION_VERIFICATION"
     assert ProspectiveArchiveTerminalState.CAPTURED_ON_TIME.value == "CAPTURED_ON_TIME"
