@@ -3,9 +3,9 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Non-authoritative implementation status; exact-SHA qualification belongs to Verification
 > **Owner:** Market Regime Alpha maintainers
-> **Generated At:** 2026-09-08 operational-closure design checkpoint
-> **Repository Implementation Checkpoint:** in progress from `1562855928b2b7e839883838f367876cc49d7391`
-> **Implementation Tree:** reported by final Verification after implementation
+> **Generated At:** 2026-09-08 operational-closure bounded verification checkpoint
+> **Repository Implementation Checkpoint:** `c9f7cd140bd4708c065e8ef7f1b0f140b6ee14bd`
+> **Implementation Tree:** `3b002e73ff592c6c9b52305dd81c8dc430b43c5a`
 > **Execution-Time Main Baseline:** `1562855928b2b7e839883838f367876cc49d7391`
 > **Containing Documentation Commit:** reported by handoff; no self-referential SHA
 > **Schema Epochs:** legacy business `LEGACY_MIGRATIONS_001_106`; target `MRA_REFOUNDATION_1 / DRAFT / NOT_CUT_OVER`
@@ -29,20 +29,25 @@ production_ready = false
 
 ## Daily model research loop
 
-`WP-DAILY-RESEARCH-OPERATIONAL-CLOSURE-02` is the active correction package.
-The execution-time audit confirms that the merged v1 consumer rejects its own
-downtime reason, discovers settlement work only for the current Model use,
-compares historical frozen work with the current template, and applies its
-64-session guard before excluding represented windows. Prospective first-
-generation admission also relies on absence of a conflicting generation instead
-of positive frozen-series proof. These are current defects until the package's
-implementation and Verification complete; the older successful slices below do
-not overrule them.
+`WP-DAILY-RESEARCH-OPERATIONAL-CLOSURE-02` is implemented at `c9f7cd14` with
+bounded verification. The real consumer now accepts and replays its frozen
+`PROCESS_DOWNTIME_MISSED_PUBLICATION` abstention; historical Outcome discovery
+uses each Run's own immutable plan rather than the current Model use/template;
+the 64-session bound applies after represented windows are removed; and
+first-generation Prospective admission requires positive frozen manifest/Run/
+Archive/series identity before a claim or recovery. Ordinary failures close
+their Attempts while process death retains lease/fence recovery. Failed and
+waiting work remains visible and is not automatically reopened.
 
-The approved correction reuses Runtime/Artifact persistence, separates new-use
-prediction admission from all-use historical settlement, and introduces exact
-transient prospective manifest/Run admission. No original database upgrade,
-service restart or real notification is authorized by this package.
+The implementation reuses Runtime/Artifact persistence, separates prediction,
+report and delivery identities, adds bounded operational health and freezes the
+exact canonical DecisionRun used by each new daily Evaluation Partition. Its
+narrow additive target schema is registered as
+`daily_operational_closure_v8`. Focused affected gates, Ruff, mypy, build and
+installed-wheel smoke pass. The repository-wide pytest run was stopped on the
+user's explicit instruction at 47%, so complete-regression status is
+`INTERRUPTED / NOT_RUN_TO_COMPLETION`, not PASS. No original database upgrade,
+service restart or real notification was authorized or performed.
 
 The [new post-close protocol](../references/WP-DAILY-MODEL-RESEARCH-LOOP-01-Protocol.md)
 uses a shared exact daily close/open Feature and next-session close/open
@@ -53,17 +58,20 @@ it cannot promote a Model or create a trading instruction. Prediction does not
 require the future target prices. Full sampled/eligible/feature-ready/predicted/
 mature/estimable denominators remain distinct.
 
-Original database OID 287543, cluster `7681924516459622681`, passes registered
+The last verified original-database evidence remains OID 287543, cluster
+`7681924516459622681`, registered
 `daily_model_research_v7` at 2026-09-07 19:32:53.774296 UTC, receipt
 `36517db7-ee70-5d66-ab90-98cbb66665e3`. v7 has 194 tables and catalog checksum
 `2730fe8535261a7174dd38b87ea57037c7503a411b79a08faa88268d61951320`.
 The exact pre-column projections of 174 historical tables are unchanged;
 new vocabulary/metadata and added nullable fields are reported separately.
-v6 and the now-registered v7 upgrade bytes are immutable. The original failed
-large campaign is retained. The post-publication backup verifies 2,888 Artifacts and all 194 table
-projections, with dump SHA256 `0c6e3d12…`. Both the failed first consumer and
-completed new publication are included. Profile refresh and owned service
-restart complete at 2026-09-07 22:14:32 UTC; multiple live days remain unobserved.
+v6 and the registered v7 upgrade bytes are immutable. Source `c9f7cd14` requires
+v8 and has not been installed against or deployed to that original scope. The
+original failed large campaign is retained. The post-publication backup verifies
+2,888 Artifacts and all 194 table projections, with dump SHA256 `0c6e3d12…`.
+Both the failed first consumer and completed new publication are included.
+Profile refresh and owned service restart complete at 2026-09-07 22:14:32 UTC;
+multiple live days remain unobserved.
 
 The new Generic baseline freezes 20 FIT and 10 VALIDATION sessions, 32
 instruments, one purge and one embargo session, rule/Ridge arms and alpha=1.
@@ -80,10 +88,13 @@ UNKNOWN (`601808.XSHG`), with full reasons. Exact repeat/publish/replay matches;
 failure and revoked use remain immutable. Corrected consumer `00f9da04` adds
 actual-date membership capture and explicit empty-population handling.
 
-Future Outcome/Evaluation Run `7d31a1d1-410c-5246-8e04-7ed3efb11ae3` has 38
-registered steps, PENDING until 2026-09-08 07:00 UTC. Real daily mature evaluation
-and sustained multi-day operation are not yet observed. Original WP18Q due proof
-remains independent and blocked. See the [daily Verification](../references/WP-DAILY-MODEL-RESEARCH-LOOP-01-Verification.md)
+Prior immutable evidence recorded future Outcome/Evaluation Run
+`7d31a1d1-410c-5246-8e04-7ed3efb11ae3` with 38 registered steps and `PENDING`
+until 2026-09-08 07:00 UTC. This package did not inspect the original operational
+database after that time, so its current maturity/settlement/evaluation state is
+`NOT_VERIFIED`; PENDING is not carried forward as a current claim. Real daily
+mature evaluation and sustained multi-day operation remain unproven. Original
+WP18Q due proof remains independent and blocked. See the [daily Verification](../references/WP-DAILY-MODEL-RESEARCH-LOOP-01-Verification.md)
 for code, reports, backup and exact observation boundaries.
 
 ## Prior research operations activation checkpoint

@@ -49,9 +49,13 @@ Three implementation shapes were considered:
 
 The third shape is selected. It preserves the existing owners, lock order,
 transaction boundaries and replay model. It also makes prediction, report and
-delivery different identities without introducing a parallel Authority. No DDL
-is required: Run/Step/Attempt, command receipt and Artifact already carry the
-needed durable state.
+delivery different identities without introducing a parallel Authority. No new
+work-journal or delivery table is required: Run/Step/Attempt, command receipt and
+Artifact already carry that durable state. One narrow additive v8 migration is
+required so a daily Evaluation Partition can positively bind the exact canonical
+DecisionRun whose commitments formed the published prediction. The column is
+nullable for every historical Partition; migrations 001 through 003 and their
+registered bytes remain unchanged.
 
 ## 3. Exact prospective-series admission
 
@@ -89,11 +93,14 @@ New prediction admission and old result settlement are separate decisions:
   deterministic Run identity, original ModelVersion, Target, strategies, code SHA
   and input snapshot. Current template bytes never replace it.
 
-Discovery is bounded and ordered by due/request time and Run identity. It returns
-active, waiting and failed work. One item is allowed to fail validation or require
-reconciliation without preventing later items in the same bounded scan from being
-examined. Terminal failure is reported, never reopened or filtered away. Mature
-claimable work is advanced with a bounded step budget; future work remains
+Discovery is bounded and deterministically ordered by Runtime state, request time
+and Run identity; each frozen plan's maturity is evaluated after its Artifact is
+decoded. It returns active, waiting and failed work. One item is allowed to fail
+validation or require reconciliation without preventing later items in the same
+bounded scan from being examined. Global health counts expose failed/waiting
+daily Runs even when the detailed roster is truncated. Terminal failure is
+reported, never reopened or filtered away. Mature claimable work is advanced
+with a bounded step budget; future work remains
 `PENDING_MATURITY`; missing target observations receive the existing bounded
 canonical collection allowance and then typed Outcome missingness.
 
@@ -128,7 +135,8 @@ The daily health projection reports at least:
 - last successful prediction publication and report identity;
 - pending-maturity, claimable-settlement, waiting and failed backlogs;
 - calendar remaining-session count and last captured session;
-- current Model-use active/revoked/expired/expiring state;
+- current Model-use active/revoked/expired state, exact expiry and remaining
+  seconds;
 - latest relevant captured/normalized market observation and a factual freshness
   status, without turning freshness into Provider qualification.
 
@@ -142,13 +150,17 @@ Each report has a separate Artifact binding. Delivery, when explicitly configure
 uses a deterministic Runtime Run keyed by report Artifact and channel. Its Step
 freezes the report hash, channel, expiry and delivery request hash.
 
-The delivery adapter returns one of four facts: delivered with an opaque receipt;
-proven not sent and retryable; terminal rejection; or unknown effect. Runtime
-Attempt/receipt state provides persistent deduplication and attempt history.
+The delivery adapter returns one of three effect facts: delivered with an opaque
+receipt, proven not sent and retryable, or unknown effect. Typed Runtime failure
+and expiry states describe local terminal disposition; they are not invented as
+remote facts. Runtime Attempt/receipt state provides persistent deduplication and
+attempt history.
 `EXTERNAL_EFFECT_PROVEN_ABSENT` may resume a bounded retry; an unknown effect
 enters `WAITING` and is never blindly resent. The Step deadline provides expiry.
 No channel or credential yields `NOT_CONFIGURED` and no network call; this cannot
-block prediction publication or historical Outcome/Evaluation recovery.
+block prediction publication or historical Outcome/Evaluation recovery. A legal
+configured channel with no newly published report is `NOT_DUE`, not
+`NOT_CONFIGURED`.
 
 An Evaluation report exposes its frozen sampled, eligible, feature-ready,
 predicted, mature and estimable denominators, model and rule-baseline comparison,

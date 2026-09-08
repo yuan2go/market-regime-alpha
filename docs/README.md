@@ -55,6 +55,9 @@ Its operational continuation is governed by
 [WP-DAILY-RESEARCH-OPERATIONAL-CLOSURE-02 Design](references/WP-DAILY-RESEARCH-OPERATIONAL-CLOSURE-02-Design.md)
 and the ordered
 [Implementation Plan](references/WP-DAILY-RESEARCH-OPERATIONAL-CLOSURE-02-Implementation-Plan.md).
+[Bounded Verification](references/WP-DAILY-RESEARCH-OPERATIONAL-CLOSURE-02-Verification.md)
+records the exact implementation SHA, isolated PostgreSQL evidence, interrupted
+full-regression boundary and non-deployment ceiling.
 They supersede only the v1 service assumptions that one current template must
 settle all history and that 64 elapsed sessions bound an entire Model-use life;
 the frozen research protocol and its immutable Verification remain unchanged.

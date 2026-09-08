@@ -19,7 +19,7 @@ qualification is implied.
 
 Set `MRA_SCOPE` to the approved private project deployment directory. Its
 `deployment.json`, `operation.json`, `operator.env` and daily template bind the
-installed source, original DB name/OID/cluster, v7 catalog, Artifact root and
+installed source, original DB name/OID/cluster, catalog version, Artifact root and
 verified backup. Do not copy another database's profile or change a frozen Run.
 All Python process invocation uses `uv run`; the private `mra.sh` wrapper does
 so with the pinned installed environment. Research mutations require the same
@@ -77,8 +77,18 @@ credential, delivery is `NOT_CONFIGURED`: no network request occurs and predicti
 or Outcome recovery continues. A configured delivery uses an independent Runtime
 Attempt/receipt. Unknown remote effect is `WAITING` for reconciliation, never
 permission to resend; retry is allowed only after the adapter proves the effect
-absent. Inspect daily health for last publication, pending maturity/settlement,
-waiting/failed tasks, calendar margin, Model-use expiry and factual data freshness.
+absent. A configured channel is `NOT_DUE` until a newly published report is ready;
+that state is not a missing-credential claim. Inspect daily health for last
+publication, pending maturity/settlement, waiting/failed tasks, calendar margin,
+Model-use expiry and factual data freshness.
+
+Source commit `c9f7cd14` targets registered
+`daily_operational_closure_v8`. The additive `004_daily_operational_closure`
+migration adds only the nullable exact DecisionRun source for a ResearchPartition
+and preserves all historical rows and migrations 001 through 003. A deployment
+still registered at v7 must fail closed until an explicitly authorized backup,
+v7-to-v8 upgrade, installed-source replacement and service restart are completed.
+This work package did not authorize or perform those original-database operations.
 
 The project supervisor handles lifecycle only. For the configured current-user
 label, disable first, send SIGTERM, and inspect until the owned process exits;
@@ -94,7 +104,7 @@ stopped project; an intentionally disabled label remains disabled. The template
 and refresh-script hashes are executable deployment evidence even though their
 source lives under `docs/operations/templates`.
 
-The observed deployment runs `00f9da04`, with a 24-hour backup limit, refresh
+The last recorded observed deployment runs `00f9da04`, with a 24-hour backup limit, refresh
 wakeups at 03:00/19:00 China time, and current calendar coverage through
 2026-09-17. Extend calendar facts through canonical Market capture/normalization
 before exhaustion; do not infer weekdays. The explicit use expires 30 days
@@ -105,6 +115,10 @@ A prediction, its actual future settlement and sustained service coverage are
 separate results. Inspect canonical Run/Step/Attempt and published receipt/Artifact
 identities, not only the process or final log line. A backup before publication
 is a recovery baseline, not proof that the new prediction is already backed up.
+The v1 Verification's future Outcome status is historical observation only; after
+its recorded maturity time, inspect the current original database before claiming
+`PENDING`, settled, evaluated or delivered. The closure package made no such
+read and therefore carries no newer real-run claim.
 
 
 ## Install and verify environment
