@@ -5,11 +5,16 @@ from __future__ import annotations
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime
-from typing import Any, Iterator, cast
+from typing import TYPE_CHECKING, Any, Iterator, cast
 from uuid import UUID, uuid5
 
 import psycopg
 from psycopg.rows import dict_row
+
+if TYPE_CHECKING:
+    from market_regime_alpha.market.application.prospective_runtime import (
+        ProspectiveRuntimeAdmission,
+    )
 
 _ADMISSION_KEY = "runtime:prospective-operation-admission"
 _DATABASE_WRITER_KEY = "operator:prospective-database-writer"
@@ -65,18 +70,11 @@ def admit_runtime_attempt(connection: psycopg.Connection[Any], *, run_id: UUID |
     if run_id is None and step_id is not None:
         row = connection.execute("SELECT run_id FROM mra.runtime_step WHERE step_id=%s", (step_id,)).fetchone()
         run_id = None if row is None else row[0]
-    allowed = connection.execute(
-        """SELECT 1 FROM mra.runtime_run AS run
-           JOIN mra.runtime_schedule AS schedule USING (schedule_id)
-           WHERE run.run_id=%s AND schedule.schedule_code='prospective-archive'
-             AND run.fire_key LIKE 'archive:%%'
-             AND NOT EXISTS (SELECT 1 FROM mra.runtime_step AS step WHERE step.run_id=run.run_id
-                             AND step.implementation NOT LIKE 'market.prospective_archive.%%')
-             AND NOT EXISTS (SELECT 1 FROM mra.prospective_archive_generation AS generation
-                             WHERE run.fire_key LIKE 'archive:' || generation.market_archive_id::text || ':%%'
-                               AND generation.series_code<>%s)""", (run_id, session.series_code),
-    ).fetchone()
-    if allowed is None and not session.daily_run_matches(connection,run_id) and not session.backtest_run_matches(connection,run_id):
+    if (
+        not session.prospective_run_matches(connection, run_id)
+        and not session.daily_run_matches(connection, run_id)
+        and not session.backtest_run_matches(connection, run_id)
+    ):
         raise ValueError("OPERATION_RUNTIME_RUN_OUTSIDE_SERIES")
     if session.has_conflicting_attempts(session.series_code):
         raise ValueError("OPERATION_ACTIVE_ATTEMPT_CONFLICT")
@@ -100,6 +98,142 @@ class PostgresProspectiveOperationSession:
         self.daily_scope: tuple[UUID,str,str,str | None,int] | None = None
         self.backtest_scope: tuple[UUID,str] | None = None
         self.daily_recovery_scope: tuple[UUID, str] | None = None
+        self.prospective_scope: ProspectiveRuntimeAdmission | None = None
+        self.prospective_recovery_scopes: tuple[ProspectiveRuntimeAdmission, ...] = ()
+
+    def allow_prospective_recovery(
+        self, scopes: tuple[ProspectiveRuntimeAdmission, ...]
+    ) -> None:
+        """Freeze the exact manifest-derived Run roster allowed at startup."""
+
+        self.require_supervisor_lock(self.series_code)
+        if any(scope.series_code != self.series_code for scope in scopes):
+            raise ValueError("OPERATION_RUNTIME_RUN_OUTSIDE_SERIES")
+        self.prospective_recovery_scopes = scopes
+
+    def prospective_run_matches(
+        self, connection: psycopg.Connection[Any], run_id: UUID | None
+    ) -> bool:
+        """Verify an exact persisted Runtime against positive frozen series intent."""
+
+        scope = self.prospective_scope
+        if scope is None or run_id is None:
+            return False
+        run_scope = next((item for item in scope.runs if item.run_id == run_id), None)
+        if run_scope is None:
+            return False
+        row = connection.execute(
+            """
+            SELECT run.schedule_id, schedule.schedule_code, schedule.revision,
+                   schedule.runtime_mode, schedule.step_catalog_hash,
+                   run.fire_key, run.runtime_mode, run.code_sha, run.config_hash,
+                   artifact.content_sha256, artifact.size_bytes
+            FROM mra.runtime_run AS run
+            JOIN mra.runtime_schedule AS schedule USING (schedule_id)
+            JOIN mra.artifact AS artifact
+              ON artifact.artifact_id = run.config_artifact_id
+             AND artifact.content_sha256 = run.config_hash
+            WHERE run.run_id = %s AND schedule.enabled
+            """,
+            (run_id,),
+        ).fetchone()
+        if row != (
+            scope.schedule_id,
+            "prospective-archive",
+            scope.schedule_revision,
+            "PROSPECTIVE",
+            scope.step_catalog_hash,
+            run_scope.fire_key,
+            "PROSPECTIVE",
+            scope.code_sha,
+            scope.config_sha256,
+            scope.config_sha256,
+            scope.config_size_bytes,
+        ):
+            return False
+        step_rows = connection.execute(
+            """
+            SELECT step_key, step_kind, implementation, implementation_version,
+                   ordinal, required, request_hash, input_evidence_hash,
+                   max_attempts, retry_backoff_ms, retryable_error_codes,
+                   deadline_at, external_effect_class
+            FROM mra.runtime_step
+            WHERE run_id = %s
+            ORDER BY ordinal
+            """,
+            (run_id,),
+        ).fetchall()
+        actual_steps = tuple(
+            (
+                str(item[0]), str(item[1]), str(item[2]), str(item[3]),
+                int(item[4]), bool(item[5]), str(item[6]),
+                None if item[7] is None else str(item[7]), int(item[8]),
+                tuple(int(value) for value in item[9]),
+                tuple(sorted(str(value) for value in item[10])), item[11],
+                str(item[12]),
+            )
+            for item in step_rows
+        )
+        if actual_steps != run_scope.step_roster:
+            return False
+        generation = connection.execute(
+            """
+            SELECT generation.series_code, generation.generation,
+                   generation.predecessor_market_archive_id,
+                   generation.target_definition_id, generation.target_version,
+                   generation.target_definition_sha256,
+                   generation.content_sha256, archive.request_sha256,
+                   archive.lane
+            FROM mra.prospective_archive_generation AS generation
+            JOIN mra.market_archive AS archive USING (market_archive_id)
+            WHERE generation.market_archive_id = %s
+            """,
+            (scope.market_archive_id,),
+        ).fetchone()
+        if generation is not None:
+            return generation == (
+                scope.series_code,
+                scope.generation,
+                scope.predecessor_market_archive_id,
+                scope.target_definition_id,
+                scope.target_version,
+                scope.target_definition_sha256,
+                scope.generation_sha256,
+                scope.archive_request_sha256,
+                "PROSPECTIVE_CONTEMPORANEOUS",
+            )
+        # Before the first command commits there is no Archive row to query.
+        # Positive identity is the exact frozen config + persisted Run above and
+        # the supervisor-bound series capability. Only that predeclare Run may
+        # create the initial canonical Archive/generation atomically.
+        if run_id != scope.predeclare_run_id:
+            return False
+        if connection.execute(
+            "SELECT EXISTS(SELECT 1 FROM mra.market_archive WHERE market_archive_id=%s)",
+            (scope.market_archive_id,),
+        ).fetchone() != (False,):
+            return False
+        same_slot = connection.execute(
+            """
+            SELECT market_archive_id
+            FROM mra.prospective_archive_generation
+            WHERE series_code = %s AND generation = %s
+            """,
+            (scope.series_code, scope.generation),
+        ).fetchone()
+        if same_slot is not None:
+            return False
+        if scope.generation == 1:
+            return scope.predecessor_market_archive_id is None
+        predecessor = connection.execute(
+            """
+            SELECT series_code, generation
+            FROM mra.prospective_archive_generation
+            WHERE market_archive_id = %s
+            """,
+            (scope.predecessor_market_archive_id,),
+        ).fetchone()
+        return predecessor == (scope.series_code, scope.generation - 1)
 
     def allow_expired_daily_recovery(self, use_id: UUID, code_sha: str) -> None:
         """Called only after the operator template's canonical model/config checks.
@@ -109,6 +243,56 @@ class PostgresProspectiveOperationSession:
         """
         self.require_supervisor_lock(self.series_code)
         self.daily_recovery_scope = (use_id, code_sha)
+
+    def daily_recovery_run_matches(
+        self, connection: psycopg.Connection[Any], run_id: UUID
+    ) -> bool:
+        if self.daily_recovery_scope is None:
+            return False
+        use_id, code_sha = self.daily_recovery_scope
+        schedules = (
+            "daily-model-" + use_id.hex,
+            "daily-outcome-" + use_id.hex,
+            "daily-abstention-" + use_id.hex,
+            "daily-input-collection-" + use_id.hex,
+            "daily-outcome-collection-" + use_id.hex,
+            "daily-population-collection-" + use_id.hex,
+        )
+        return connection.execute(
+            """
+            SELECT EXISTS(
+              SELECT 1
+              FROM mra.runtime_run AS run
+              JOIN mra.runtime_schedule AS schedule USING (schedule_id)
+              WHERE run.run_id = %s
+                AND run.runtime_mode = 'SHADOW'
+                AND run.code_sha = %s
+                AND schedule.schedule_code = ANY(%s::text[])
+                AND EXISTS(
+                  SELECT 1 FROM mra.runtime_step AS step
+                  WHERE step.run_id = run.run_id
+                )
+                AND NOT EXISTS(
+                  SELECT 1 FROM mra.runtime_step AS step
+                  WHERE step.run_id = run.run_id
+                    AND step.external_effect_class NOT IN ('NONE', 'CONTENT_PUT')
+                )
+                AND NOT EXISTS(
+                  SELECT 1 FROM mra.runtime_step AS step
+                  WHERE step.run_id = run.run_id
+                    AND NOT (
+                      step.implementation LIKE 'research.daily_prediction.%%'
+                      OR step.implementation LIKE 'research.daily_outcome.%%'
+                      OR step.implementation = 'research.daily_abstention.record'
+                      OR step.implementation LIKE 'market.daily_research.input.%%'
+                      OR step.implementation LIKE 'market.daily_research.outcome.%%'
+                      OR step.implementation LIKE 'market.daily_research.population.%%'
+                    )
+                )
+            )
+            """,
+            (run_id, code_sha, list(schedules)),
+        ).fetchone() == (True,)
 
     def backtest_run_matches(self, connection: psycopg.Connection[Any], run_id: UUID | None) -> bool:
         if self.backtest_scope is None or run_id is None:
@@ -170,42 +354,32 @@ class PostgresProspectiveOperationSession:
             raise ValueError("OPERATION_SUPERVISOR_LOCK_LOST")
 
     def has_conflicting_attempts(self, series_code: str) -> bool:
-        expired_daily: list[UUID] = []
-        if self.daily_recovery_scope is not None:
-            use_id, code = self.daily_recovery_scope
-            schedules = ['daily-model-'+use_id.hex, 'daily-outcome-'+use_id.hex,
-                         'daily-abstention-'+use_id.hex, 'daily-input-collection-'+use_id.hex,
-                         'daily-outcome-collection-'+use_id.hex, 'daily-population-collection-'+use_id.hex]
-            expired_daily.extend(row[0] for row in self.connection.execute("""
-                SELECT run.run_id FROM mra.runtime_run run
-                JOIN mra.runtime_schedule schedule USING(schedule_id)
-                WHERE schedule.schedule_code=ANY(%s::text[]) AND run.code_sha=%s
-                  AND run.runtime_mode='SHADOW'
-                  AND NOT EXISTS(SELECT 1 FROM mra.runtime_step step WHERE step.run_id=run.run_id
-                    AND NOT (step.implementation LIKE 'research.daily_prediction.%%'
-                      OR step.implementation LIKE 'research.daily_outcome.%%'
-                      OR step.implementation LIKE 'research.daily_abstention.%%'
-                      OR step.implementation LIKE 'market.daily_research.%%'))
-                """, (schedules, code)).fetchall())
-        if self.daily_scope is not None:
-            suffixes=('prediction-runtime','outcome-evaluation-runtime','abstention-runtime') if self.daily_scope[3] is None else (self.daily_scope[3]+'-collection:'+str(self.daily_scope[4]),)
-            for suffix in suffixes:
-                identity=uuid5(self.daily_scope[0],suffix)
-                if self.daily_run_matches(self.connection,identity):
-                    expired_daily.append(identity)
-        row = self.connection.execute(
-            """SELECT count(*) FROM mra.runtime_attempt AS attempt
+        self.require_supervisor_lock(series_code)
+        rows = self.connection.execute(
+            """SELECT attempt.attempt_id, step.run_id,
+                      attempt.lease_until > clock_timestamp() AS lease_live
+               FROM mra.runtime_attempt AS attempt
                JOIN mra.runtime_step AS step USING (step_id)
-               JOIN mra.runtime_run AS run ON run.run_id=step.run_id
                WHERE attempt.state IN ('CLAIMED','RUNNING')
                  AND NOT (attempt.attempt_id = ANY(%s::uuid[]))
-                 AND (attempt.lease_until > clock_timestamp() OR NOT EXISTS (
-                   SELECT 1 FROM mra.prospective_archive_generation AS generation
-                   WHERE generation.series_code=%s
-                     AND run.fire_key LIKE 'archive:' || generation.market_archive_id::text || ':%%'
-                 ) AND NOT (run.run_id=ANY(%s::uuid[]) AND step.external_effect_class IN ('NONE','CONTENT_PUT')))""", (list(self.own_attempt_ids), series_code, expired_daily),
-        ).fetchone()
-        return row is None or bool(row[0])
+               ORDER BY attempt.attempt_id
+            """,
+            (list(self.own_attempt_ids),),
+        ).fetchall()
+        admitted_prospective_run_ids = {
+            run.run_id
+            for scope in self.prospective_recovery_scopes
+            for run in scope.runs
+        }
+        for _attempt_id, run_id, lease_live in rows:
+            if lease_live:
+                return True
+            if run_id in admitted_prospective_run_ids:
+                continue
+            if self.daily_recovery_run_matches(self.connection, run_id):
+                continue
+            return True
+        return False
 
     def clock(self) -> datetime:
         row = self.connection.execute("SELECT clock_timestamp()").fetchone()
@@ -258,6 +432,36 @@ def prospective_operation_session(
 
 
 @contextmanager
+def prospective_series_admission(
+    scope: ProspectiveRuntimeAdmission,
+) -> Iterator[None]:
+    """Bind exact frozen prospective intent to the current supervisor briefly."""
+
+    session = _operation_session.get()
+    if session is None:
+        yield
+        return
+    session.require_supervisor_lock(session.series_code)
+    if scope.series_code != session.series_code:
+        raise ValueError("OPERATION_RUNTIME_RUN_OUTSIDE_SERIES")
+    if (
+        session.prospective_scope is not None
+        or session.daily_scope is not None
+        or session.backtest_scope is not None
+    ):
+        raise ValueError("OPERATION_NESTED_RUNTIME_ADMISSION")
+    with session.connection.transaction():
+        _admission_lock(session.connection)
+        session.prospective_scope = scope
+    try:
+        if session.has_conflicting_attempts(session.series_code):
+            raise ValueError("OPERATION_ACTIVE_ATTEMPT_CONFLICT")
+        yield
+    finally:
+        session.prospective_scope = None
+
+
+@contextmanager
 def daily_research_admission(*, prediction_id: UUID, code_sha: str, config_sha256: str, collection_phase: str | None=None, collection_round: int=1) -> Iterator[None]:
     """Sequential handoff inside the existing supervisor, bound to two exact Runs.
 
@@ -270,7 +474,7 @@ def daily_research_admission(*, prediction_id: UUID, code_sha: str, config_sha25
     if session is None:
         raise ValueError('DAILY_OPERATION_REQUIRES_SUPERVISOR')
     session.require_supervisor_lock(session.series_code)
-    if session.daily_scope is not None or session.backtest_scope is not None:
+    if session.prospective_scope is not None or session.daily_scope is not None or session.backtest_scope is not None:
         raise ValueError('DAILY_OPERATION_NESTED_HANDOFF')
     with session.connection.transaction():
         _admission_lock(session.connection)
@@ -292,7 +496,7 @@ def backtest_research_admission(*, backtest_run_id: UUID, specification_sha256: 
     if session is None:
         raise ValueError('BACKTEST_OPERATION_REQUIRES_SUPERVISOR')
     session.require_supervisor_lock(session.series_code)
-    if session.daily_scope is not None or session.backtest_scope is not None:
+    if session.prospective_scope is not None or session.daily_scope is not None or session.backtest_scope is not None:
         raise ValueError('BACKTEST_OPERATION_NESTED_HANDOFF')
     with session.connection.transaction():
         _admission_lock(session.connection)

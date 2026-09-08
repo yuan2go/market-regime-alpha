@@ -604,6 +604,20 @@ class PostgresRuntimeRepository:
         return tuple(UUID(str(row[0])) for row in rows)
 
     def recover_expired_attempt(self, attempt_id: UUID, *, receipt_id: UUID) -> RecoveryDecision | None:
+        identity = self._connection.execute(
+            """
+            SELECT step.run_id
+            FROM mra.runtime_attempt AS attempt
+            JOIN mra.runtime_step AS step USING (step_id)
+            WHERE attempt.attempt_id = %s
+            """,
+            (attempt_id,),
+        ).fetchone()
+        if identity is None:
+            return None
+        # Recovery mutates the same canonical Run and must pass the same atomic
+        # positive admission as a new claim. Acquire admission before row locks.
+        admit_runtime_attempt(self._connection, run_id=identity[0])
         row = self._connection.execute(
             """
             SELECT

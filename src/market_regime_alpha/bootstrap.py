@@ -5,6 +5,9 @@ from __future__ import annotations
 from market_regime_alpha.infrastructure.postgres.queries.daily_feature_inputs import PostgresDailyFeatureInputReadPort
 from market_regime_alpha.infrastructure.postgres.queries.daily_predictions import PostgresDailyPredictionReads
 from market_regime_alpha.interfaces.daily_research import DailyResearchOperations
+from market_regime_alpha.infrastructure.postgres.prospective_operation_session import (
+    prospective_series_admission,
+)
 
 from dataclasses import dataclass
 import os
@@ -619,6 +622,7 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
             manifest_reader=lambda digest, size: byte_store.read_bytes(ContentHash(digest), expected_size=size),
             archive_inspection=PostgresArchiveInspectionPort(pool),
             archive_verification=PostgresArchiveVerificationPort(pool),
+            admission_scope=prospective_series_admission,
         ),
         archive_inspection=PostgresArchiveInspectionPort(pool),
         archive_verification=PostgresArchiveVerificationPort(pool),

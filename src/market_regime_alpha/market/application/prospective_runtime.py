@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Callable, Protocol
@@ -90,6 +91,123 @@ class ProspectiveArchiveRuntimePlan:
     @property
     def runs(self) -> tuple[ProspectiveRuntimeRunPlan, ...]:
         return (self.predeclare, *self.capture_runs)
+
+
+@dataclass(frozen=True, slots=True)
+class ProspectiveRuntimeRunAdmission:
+    """Exact frozen Runtime row shape; never a persisted business Authority."""
+
+    run_id: UUID
+    fire_key: str
+    step_roster: tuple[tuple[object, ...], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ProspectiveRuntimeAdmission:
+    """Positive process capability derived only from one frozen manifest."""
+
+    series_code: str
+    generation: int
+    predecessor_market_archive_id: UUID | None
+    market_archive_id: UUID
+    archive_request_sha256: str
+    generation_sha256: str
+    target_definition_id: UUID
+    target_version: int
+    target_definition_sha256: str
+    code_sha: str
+    config_sha256: str
+    config_size_bytes: int
+    schedule_id: UUID
+    schedule_revision: int
+    step_catalog_hash: str
+    predeclare_run_id: UUID
+    runs: tuple[ProspectiveRuntimeRunAdmission, ...]
+
+
+def compile_prospective_runtime_admission(
+    manifest: ArchiveOperatorManifest,
+    plan: ProspectiveArchiveRuntimePlan,
+    runs: tuple[ProspectiveRuntimeRunPlan, ...],
+) -> ProspectiveRuntimeAdmission:
+    """Compile exact claim admission from already validated frozen intent."""
+
+    generation = manifest.start_request.prospective_generation
+    if generation is None:
+        raise ProspectiveRuntimeIntegrityError(
+            "prospective Runtime admission requires an exact generation manifest"
+        )
+    def is_exact_maintenance(run: ProspectiveRuntimeRunPlan) -> bool:
+        if run in plan.runs:
+            return True
+        if len(run.steps) != 1 or run.slices:
+            return False
+        step = run.steps[0]
+        if step.step_key not in {"finalize_overdue", "record_planning_gap"}:
+            return False
+        fire_key = (
+            f"archive:{plan.market_archive_id}:maintenance:"
+            f"{step.step_key}:{step.request_hash}"
+        )
+        return (
+            run.fire_key == fire_key
+            and run.run_id == _id(f"run:{fire_key}")
+            and step.implementation == f"{_IMPLEMENTATION}.{step.step_key}"
+            and step.input_evidence_hash == plan.config_sha256
+        )
+
+    if (
+        generation.market_archive_id != plan.market_archive_id
+        or sha256_bytes(manifest.to_bytes()) != plan.config_sha256
+        or any(not is_exact_maintenance(run) for run in runs)
+    ):
+        raise ProspectiveRuntimeIntegrityError(
+            "prospective Runtime admission differs from the frozen plan"
+        )
+
+    def step_identity(step: StepSpec) -> tuple[object, ...]:
+        return (
+            step.step_key,
+            step.step_kind,
+            step.implementation,
+            step.implementation_version,
+            step.ordinal,
+            step.required,
+            step.request_hash,
+            step.input_evidence_hash,
+            step.retry_policy.max_attempts,
+            tuple(int(delay.total_seconds() * 1000) for delay in step.retry_policy.backoff),
+            tuple(sorted(step.retry_policy.retryable_codes)),
+            step.retry_policy.deadline,
+            step.external_effect_class.value,
+        )
+
+    return ProspectiveRuntimeAdmission(
+        series_code=generation.series_code,
+        generation=generation.generation,
+        predecessor_market_archive_id=generation.predecessor_market_archive_id,
+        market_archive_id=generation.market_archive_id,
+        archive_request_sha256=str(canonical_json_sha256(manifest.start_request)),
+        generation_sha256=str(generation.content_sha256),
+        target_definition_id=generation.target_definition_id,
+        target_version=generation.target_version,
+        target_definition_sha256=str(generation.target_definition_sha256),
+        code_sha=plan.code_sha,
+        config_sha256=plan.config_sha256,
+        config_size_bytes=len(plan.config_bytes),
+        schedule_id=plan.schedule.schedule_id,
+        schedule_revision=plan.schedule.revision,
+        step_catalog_hash=plan.schedule.step_catalog_hash,
+        predeclare_run_id=plan.predeclare.run_id,
+        runs=tuple(
+            ProspectiveRuntimeRunAdmission(
+                run_id=run.run_id,
+                fire_key=run.fire_key,
+                step_roster=tuple(step_identity(step) for step in run.steps),
+            )
+            for run in runs
+        ),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -329,6 +447,9 @@ class ProspectiveArchiveRuntimeApplication:
         trading_sessions: ArchiveTradingSessionReadPort | None = None,
         target_schedules: TargetArchiveScheduleReadPort | None = None,
         manifest_reader: Callable[[str, int], bytes] | None = None,
+        admission_scope: Callable[
+            [ProspectiveRuntimeAdmission], AbstractContextManager[None]
+        ] | None = None,
     ) -> None:
         self._runtime = runtime
         self._artifacts = artifacts
@@ -342,6 +463,11 @@ class ProspectiveArchiveRuntimeApplication:
         self._trading_sessions = trading_sessions
         self._target_schedules = target_schedules
         self._manifest_reader = manifest_reader
+        self._admission_scope = (
+            (lambda _scope: nullcontext())
+            if admission_scope is None
+            else admission_scope
+        )
 
     def predeclare(
         self,
@@ -353,9 +479,15 @@ class ProspectiveArchiveRuntimeApplication:
         runtime_revision: int = 2,
         before_action: Callable[[], None] | None = None,
     ) -> ProspectiveRuntimeRegistration:
-        if before_action is not None:
-            before_action()
         plan = compile_prospective_runtime_plan(manifest, code_sha=code_sha, runtime_revision=runtime_revision)
+        admission = compile_prospective_runtime_admission(
+            manifest, plan, (plan.predeclare,)
+        )
+        # Validate the supervisor/manifest identity before Artifact, Runtime or
+        # Market writes. The short admission lock never spans byte or Provider I/O.
+        with self._admission_scope(admission):
+            if before_action is not None:
+                before_action()
         artifact = self._artifacts.publish(
             plan.config_bytes,
             media_type="application/json",
@@ -376,17 +508,18 @@ class ProspectiveArchiveRuntimeApplication:
             ),
         )
         self._register_run(plan, plan.predeclare, artifact.artifact_id, actor_id)
-        self._runtime.recover_expired(
-            actor_id=actor_id, reason_code="PROSPECTIVE_LEASE_RECOVERY",
-            run_id=plan.predeclare.run_id,
-        )
-        self._execute_predeclare(
-            plan,
-            manifest,
-            actor_id=actor_id,
-            lease_duration=lease_duration,
-            before_action=before_action,
-        )
+        with self._admission_scope(admission):
+            self._runtime.recover_expired(
+                actor_id=actor_id, reason_code="PROSPECTIVE_LEASE_RECOVERY",
+                run_id=plan.predeclare.run_id,
+            )
+            self._execute_predeclare(
+                plan,
+                manifest,
+                actor_id=actor_id,
+                lease_duration=lease_duration,
+                before_action=before_action,
+            )
         for run in plan.capture_runs:
             if before_action is not None:
                 before_action()
@@ -399,6 +532,53 @@ class ProspectiveArchiveRuntimeApplication:
             predeclare_run_id=plan.predeclare.run_id,
             capture_run_ids=tuple(run.run_id for run in plan.capture_runs),
         )
+
+    def recovery_admissions(
+        self, series_code: str
+    ) -> tuple[ProspectiveRuntimeAdmission, ...]:
+        """Reload the exact immutable generation manifests used for recovery."""
+
+        if self._continuity is None or self._manifest_reader is None:
+            raise ProspectiveRuntimeIntegrityError(
+                "Prospective recovery requires continuity and Artifact readers"
+            )
+        admissions: list[ProspectiveRuntimeAdmission] = []
+        for reference in self._continuity.generations(series_code):
+            content = self._manifest_reader(
+                reference.config_sha256, reference.config_size_bytes
+            )
+            if (
+                len(content) != reference.config_size_bytes
+                or sha256_bytes(content) != reference.config_sha256
+            ):
+                raise ProspectiveRuntimeIntegrityError(
+                    "Generation manifest Artifact bytes differ"
+                )
+            manifest = ArchiveOperatorManifest.from_json(content.decode("utf-8"))
+            generation = manifest.start_request.prospective_generation
+            if generation is None or (
+                generation.series_code,
+                generation.market_archive_id,
+                generation.generation,
+                generation.predecessor_market_archive_id,
+            ) != (
+                series_code,
+                reference.market_archive_id,
+                reference.generation,
+                reference.predecessor_market_archive_id,
+            ):
+                raise ProspectiveRuntimeIntegrityError(
+                    "Generation manifest differs from canonical chain"
+                )
+            plan = compile_prospective_runtime_plan(
+                manifest,
+                code_sha=reference.code_sha,
+                runtime_revision=reference.runtime_revision,
+            )
+            admissions.append(
+                compile_prospective_runtime_admission(manifest, plan, plan.runs)
+            )
+        return tuple(admissions)
 
     def run_due(
         self,
@@ -417,15 +597,17 @@ class ProspectiveArchiveRuntimeApplication:
         if maximum_attempts is not None and (type(maximum_attempts) is not int or maximum_attempts < 0):
             raise ValueError("Prospective attempt budget must be a non-negative integer")
         plan = compile_prospective_runtime_plan(manifest, code_sha=code_sha, runtime_revision=runtime_revision)
+        admission = compile_prospective_runtime_admission(manifest, plan, plan.runs)
         recovered_ids: list[UUID] = []
-        for recovery_run in plan.runs:
-            if before_action is not None:
-                before_action()
-            recovered_ids.extend(self._runtime.recover_expired(
-                actor_id=actor_id,
-                reason_code="PROSPECTIVE_LEASE_RECOVERY",
-                run_id=recovery_run.run_id,
-            ))
+        with self._admission_scope(admission):
+            for recovery_run in plan.runs:
+                if before_action is not None:
+                    before_action()
+                recovered_ids.extend(self._runtime.recover_expired(
+                    actor_id=actor_id,
+                    reason_code="PROSPECTIVE_LEASE_RECOVERY",
+                    run_id=recovery_run.run_id,
+                ))
         recovered = tuple(recovered_ids)
         observed_at = self._database_clock.now()
         due_slice_ids = frozenset(self._due_query(plan.market_archive_id))
@@ -456,21 +638,22 @@ class ProspectiveArchiveRuntimeApplication:
                               and by_key[item.step_key].plan.market_archive_slice_id in due_slice_ids), None)
                 if ready is None:
                     break
-                if before_action is not None:
-                    before_action()
-                claim = self._runtime.claim_next(
-                    run_id=run.run_id,
-                    step_id=ready.step_id,
-                    worker_id=worker_id,
-                    lease_duration=lease_duration,
-                    context=_context(
-                        f"prospective:{run.run_id}:{ready.step_id}:claim:"
-                        f"{len(ready.attempt_states) + 1}",
-                        actor_id,
-                        "CLAIM_PROSPECTIVE_SLICE",
-                        actor_type=ActorType.WORKER,
-                    ),
-                )
+                with self._admission_scope(admission):
+                    if before_action is not None:
+                        before_action()
+                    claim = self._runtime.claim_next(
+                        run_id=run.run_id,
+                        step_id=ready.step_id,
+                        worker_id=worker_id,
+                        lease_duration=lease_duration,
+                        context=_context(
+                            f"prospective:{run.run_id}:{ready.step_id}:claim:"
+                            f"{len(ready.attempt_states) + 1}",
+                            actor_id,
+                            "CLAIM_PROSPECTIVE_SLICE",
+                            actor_type=ActorType.WORKER,
+                        ),
+                    )
                 if claim is None:
                     break
                 attempt_ids.append(claim.attempt_id)
@@ -756,8 +939,6 @@ class ProspectiveArchiveRuntimeApplication:
         runtime_revision: int,
         before_action: Callable[[], None] | None = None,
     ) -> None:
-        if before_action is not None:
-            before_action()
         plan = compile_prospective_runtime_plan(manifest, code_sha=code_sha, runtime_revision=runtime_revision)
         request_hash = canonical_json_sha256({"archive_id": plan.market_archive_id,
                                              "operation": operation, "payload": payload})
@@ -776,6 +957,10 @@ class ProspectiveArchiveRuntimeApplication:
                 external_effect_class=ExternalEffectClass.NONE,
             ),), slices=(),
         )
+        admission = compile_prospective_runtime_admission(manifest, plan, (run,))
+        with self._admission_scope(admission):
+            if before_action is not None:
+                before_action()
         try:
             trace = self._runtime.inspect_run(run_id)
         except RuntimeNotFoundError:
@@ -785,24 +970,28 @@ class ProspectiveArchiveRuntimeApplication:
             if trace.run_state == "QUEUED":
                 self._runtime.start_run(run_id, _context(f"prospective:{run_id}:start", actor_id,
                                                         "START_PROSPECTIVE_RUN"))
-        if before_action is not None:
-            before_action()
-        self._runtime.recover_expired(actor_id=actor_id, reason_code="PROSPECTIVE_LEASE_RECOVERY", run_id=run_id)
+        with self._admission_scope(admission):
+            if before_action is not None:
+                before_action()
+            self._runtime.recover_expired(actor_id=actor_id, reason_code="PROSPECTIVE_LEASE_RECOVERY", run_id=run_id)
         trace = self._runtime.inspect_run(run_id)
         if trace.run_state == "SUCCEEDED":
             return
-        if before_action is not None:
-            before_action()
-        claim = self._runtime.claim_next(
-            run_id=run_id, worker_id=worker_id, lease_duration=lease_duration,
-            context=_context(f"{key}:claim:{len(trace.steps[0].attempt_states) + 1}", actor_id,
-                             "CLAIM_PROSPECTIVE_MAINTENANCE", actor_type=ActorType.WORKER),
-        )
-        if claim is None:
-            raise ProspectiveRuntimeIntegrityError("Prospective maintenance is not claimable")
-        self._runtime.start_attempt(claim, _context(f"{key}:start:{claim.attempt_id}", actor_id,
-                                                   "START_PROSPECTIVE_MAINTENANCE", actor_type=ActorType.WORKER))
-        command(claim, _context(key, actor_id, "PROSPECTIVE_MAINTENANCE", actor_type=ActorType.WORKER))
+        with self._admission_scope(admission):
+            if before_action is not None:
+                before_action()
+            claim = self._runtime.claim_next(
+                run_id=run_id, worker_id=worker_id, lease_duration=lease_duration,
+                context=_context(f"{key}:claim:{len(trace.steps[0].attempt_states) + 1}", actor_id,
+                                 "CLAIM_PROSPECTIVE_MAINTENANCE", actor_type=ActorType.WORKER),
+            )
+            if claim is None:
+                raise ProspectiveRuntimeIntegrityError("Prospective maintenance is not claimable")
+            self._runtime.start_attempt(claim, _context(f"{key}:start:{claim.attempt_id}", actor_id,
+                                                       "START_PROSPECTIVE_MAINTENANCE", actor_type=ActorType.WORKER))
+            if before_action is not None:
+                before_action()
+            command(claim, _context(key, actor_id, "PROSPECTIVE_MAINTENANCE", actor_type=ActorType.WORKER))
         _require_step_succeeded(self._runtime, claim)
 
     def _register_run(
@@ -910,6 +1099,8 @@ class ProspectiveArchiveRuntimeApplication:
                 actor_type=ActorType.WORKER,
             ),
         )
+        if before_action is not None:
+            before_action()
         existing_result_hash = self._reconcile_existing_archive(manifest)
         if existing_result_hash is None:
             self._archives.start(
