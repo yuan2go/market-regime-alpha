@@ -2587,7 +2587,6 @@ _WP18Q_ADDED_COLUMNS: Final = frozenset(
 )
 
 
-
 def _wp18q_operational_upgrade_definitions(
     *,
     baseline_sql: str,
@@ -2746,10 +2745,6 @@ def _wp18q_operational_upgrade_definitions(
     return (v1, v2, v3, v4, v5, v6, v7, v8)
 
 
-
-
-
-
 def _split_postgres_statements(payload: str) -> tuple[str, ...]:
     statements: list[str] = []
     start = 0
@@ -2833,45 +2828,6 @@ def _split_postgres_statements(payload: str) -> tuple[str, ...]:
             "UPGRADE_SOURCE_SQL_HAS_UNTERMINATED_STATEMENT"
         )
     return tuple(statements)
-
-
-def _extract_table_constraint(table_statement: str, constraint_name: str) -> str:
-    match = re.search(
-        rf"\bCONSTRAINT\s+{re.escape(constraint_name)}\s+",
-        table_statement,
-    )
-    if match is None:
-        raise OperationalUpgradeIntegrityError(
-            f"UPGRADE_SOURCE_CONSTRAINT_MISSING: {constraint_name}"
-        )
-    start = match.end()
-    depth = 0
-    index = start
-    single_quote = False
-    while index < len(table_statement):
-        character = table_statement[index]
-        if single_quote:
-            if table_statement.startswith("''", index):
-                index += 2
-                continue
-            if character == "'":
-                single_quote = False
-            index += 1
-            continue
-        if character == "'":
-            single_quote = True
-        elif character == "(":
-            depth += 1
-        elif character == ")":
-            if depth == 0:
-                return table_statement[start:index].strip()
-            depth -= 1
-        elif character == "," and depth == 0:
-            return table_statement[start:index].strip()
-        index += 1
-    raise OperationalUpgradeIntegrityError(
-        f"UPGRADE_SOURCE_CONSTRAINT_UNTERMINATED: {constraint_name}"
-    )
 
 
 def _validate_operational_upgrade_identity(
