@@ -25,16 +25,23 @@ invariant evidence; they are not permission for a broad refactor.
 
 ## Consumer convergence delivery
 
-The active dependency chain is executable consumer discovery → canonical entry
-convergence → dead wiring/package-data removal → exact historical/account
-boundary checks → risk-directed verification → clean local checkpoint.
+Consumer discovery, canonical entry convergence, dead wiring/package-data
+removal, historical/account boundary checks and risk-directed verification are
+complete at the implementation in [Current State](Current-State.md).
 The consumer graph/dispositions are in the existing code inventory. New research
 enters only `mra` and `infrastructure/postgres`; historical protocol tools are
 non-current, and account/Fill/formal-governance exceptions remain explicit.
 
 Scope excludes finance changes, live deployment, account claim conversion and
-schema deletion. Complete targeted consumer, persistence, replay, architecture,
-static, docs and installed-artifact checks before declaring this delivery done.
+schema deletion. Targeted consumer, persistence, replay, architecture, static, docs and installed
+artifact checks have passed with explicit revision/scope matching. The full
+repository execution and live cutover were not run.
+
+The next Runtime/CLI cutover can now start as a separately authorized task.
+Its first dependency is a canonical account claim/fence and observed-Fill owner
+contract; formal Model/PIT governance must retain its distinct admission floors.
+Readiness to start that work is not permission to remove those remaining owners
+or to switch an operational writer.
 
 ## Remaining architectural debt
 

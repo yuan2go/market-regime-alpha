@@ -48,7 +48,36 @@ No released SQL bytes, schema membership, research formula, Model/Outcome
 identity or operational database is changed. Source retirement does not prove
 live deployment or authorize account Runtime cutover.
 
-## Repository maintenance verification
+## Consumer verification at the frozen implementation
+
+Baseline: `50c81f107dae0520f47896dfed8c03d2d9a2a554`.
+Implementation: `56dce2f312e2b97c5cd1618d300a25178466908b`.
+Source tree: `c4f7d1e9c4886962a2d93146850d5ee660316f06`.
+Tests tree: `10cb64cb092ece93df5082924103c9db426a0755`.
+Later status-only commits do not change those implementation identities.
+
+| Check / scope | Executed evidence |
+|---|---|
+| Installed commands / executable file-API roots | 7 → 4 / 68 → 55; every surviving root has a disposition |
+| Roots reaching retained persistence / direct source importers | 37 → 24 / 113 → 105; current `mra` research closure has zero such dependencies |
+| Retained PostgreSQL, account, CLI and formal governance | 677 passed at the first frozen consumer revision; unchanged owner/schema/test scopes are reused explicitly |
+| Canonical composition, schema, replay and tooling | 192 passed and 2 architecture failures at the intermediate revision; both failures corrected without relaxing the forbidden dependency contract |
+| Final affected architecture/history/recovery scope | 58 passed in 119 seconds at the implementation above, including populated Shadow report/replay |
+| Repository test collection | 4,154 collected; full execution NOT_RUN under risk-directed scope |
+| Static, environment and documentation | Frozen sync, Ruff, mypy (636 configured files plus 4 explicit files), docs, hygiene and diff checks PASS |
+| Build and isolated installed wheel | PASS: four commands import/help, removed modules absent, all 113 SQL resources match source bytes |
+| Historical resources | 19 moved tools retain bytes; all released SQL, dependency lock and archived evidence unchanged |
+| Operational / external history | NOT_RUN: no service, operational database or external completed campaign modified/requalified |
+
+Source-bound verification is recorded in the external incremental evidence
+bundle `canonical-consumer-convergence-20260908.tar.gz`, including raw failures,
+command/exit-code logs, temporary database identities, consumer matrices,
+file-level reuse assessment and built artifacts. Its `verification.json` has
+SHA256 `1af0b50072d40bb3ed4be0851b39f09cb25f4a2ca73f3bbde91337f9af25ed8f`.
+This is engineering consumer-convergence evidence, not research validity or
+operational admission. The implementation's convergence gate is PASS.
+
+## Prior repository hygiene evidence
 
 The source-bound cleanup completed default and explicit historical PostgreSQL
 regression, static checks, archive integrity and independent installed-schema/CLI
