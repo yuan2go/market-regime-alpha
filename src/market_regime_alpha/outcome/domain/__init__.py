@@ -1,4 +1,3 @@
-"""Public Market Target Outcome domain API."""
 
 from market_regime_alpha.outcome.domain.authority import (
     ExploratoryRetrospectiveOutcomeScope,

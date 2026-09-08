@@ -1,4 +1,3 @@
-"""PostgreSQL-oriented facade contracts for free-data operation composition."""
 
 from .builders import prepare_free_data_inputs
 from .blocked import (

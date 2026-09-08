@@ -1,4 +1,4 @@
-"""Read-only verifier port for WP-12 Research Authorities."""
+"""Read-only verifier port for Research Authorities."""
 
 from typing import Protocol
 from uuid import UUID

@@ -1,4 +1,4 @@
-"""Frozen Phase C research protocol and OutcomeTarget-bound Forecast contracts.
+"""Frozen research protocol and OutcomeTarget-bound Forecast contracts.
 
 This module does not grant PIT, OOS, calibration, Entry, or Production
 authority.  It freezes every result-affecting selection before evidence is
@@ -277,7 +277,7 @@ class ResearchExperimentDefinition:
 
 @dataclass(frozen=True, slots=True)
 class FormalResearchProtocol:
-    """Content-addressed freeze of all Phase C result-affecting choices."""
+    """Content-addressed freeze of all result-affecting choices."""
 
     protocol_id: ArtifactId
     protocol_hash: str

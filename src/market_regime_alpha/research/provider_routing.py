@@ -26,7 +26,7 @@ _ELIGIBILITY_RANK = {
 
 
 class CandidateDataSource(str, Enum):
-    """Whole-run data sources supported by the first WP-3 routing policy."""
+    """Whole-run data sources supported by the first routing policy."""
 
     XUNTOU = "XUNTOU"
     TENCENT_COMPOSITE = "TENCENT_COMPOSITE"

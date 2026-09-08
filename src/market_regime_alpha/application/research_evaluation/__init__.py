@@ -1,4 +1,3 @@
-"""Frozen, content-addressed research evaluation datasets."""
 
 from .dataset import (
     EvaluationDecisionSlice,

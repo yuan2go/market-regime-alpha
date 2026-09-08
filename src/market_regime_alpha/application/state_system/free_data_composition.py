@@ -48,11 +48,9 @@ from market_regime_alpha.platform.runtime_governance import (
     SelectionStatus,
 )
 from market_regime_alpha.research.candidate_discovery.contracts import (
-    CandidateRecord,
     CandidateSelectionStatus,
     CandidateSet,
 )
-from market_regime_alpha.research.cross_sectional_ranking import competition_ranks
 from market_regime_alpha.research.state_system.capital import (
     CapitalObservation,
     CapitalState,
@@ -164,7 +162,7 @@ class _FixedStageService(StateResearchStageService):
 
 
 class CanonicalFreeDataStateCoordinator:
-    """Run/persist WP-STATE-01 before candidate-scoped minute acquisition."""
+    """Run/persist before candidate-scoped minute acquisition."""
 
     def __init__(
         self,
@@ -892,92 +890,6 @@ def _candidate_stage(work: _StateWork, context: StateResearchStageContext) -> St
     return artifact
 
 
-def _constrain_candidates(
-    candidates: CandidateSet,
-    pool: DynamicStockPoolVersion,
-) -> CandidateSet:
-    pool_by_symbol = {item.symbol: item for item in pool.members}
-    prepared: list[CandidateRecord] = []
-    for item in candidates.records:
-        member = pool_by_symbol[item.symbol]
-        if member.included:
-            prepared.append(item)
-        else:
-            prepared.append(
-                replace(
-                    item,
-                    rank=None,
-                    selection_status=CandidateSelectionStatus.REJECTED,
-                    reason_codes=tuple(
-                        sorted(
-                            {
-                                *item.reason_codes,
-                                *member.exclusion_reasons,
-                                "DYNAMIC_POOL_EXCLUDED",
-                            }
-                        )
-                    ),
-                )
-            )
-    scores = {
-        item.symbol: item.candidate_discovery_score
-        for item in prepared
-        if item.rank is not None and item.candidate_discovery_score is not None
-    }
-    ranks = competition_ranks(scores, higher_is_better=True)
-    records = tuple(
-        sorted(
-            (replace(item, rank=ranks[item.symbol]) if item.symbol in ranks else item for item in prepared),
-            key=lambda item: item.symbol,
-        )
-    )
-    reasons = tuple(sorted({*candidates.reason_codes, "DYNAMIC_POOL_CANDIDATE_GATE_APPLIED"}))
-    payload = {
-        "records": [item.to_canonical_dict() for item in records],
-        "minimum_candidate_population": candidates.minimum_candidate_population,
-        "reason_codes": list(reasons),
-    }
-    envelope = candidates.envelope
-    lineage = {
-        item_id: item_hash
-        for item_id, item_hash in zip(
-            envelope.input_artifact_ids,
-            envelope.input_content_hashes,
-            strict=True,
-        )
-    }
-    lineage[pool.pool_id] = pool.pool_hash
-    result_envelope = ArtifactEnvelope.create(
-        # Preserve the Controlled Candidate contract consumed by the canonical
-        # intraday overlay while adding the Dynamic Pool to immutable inputs.
-        artifact_type="CONTROLLED_CANDIDATE_SET",
-        artifact_payload=payload,
-        decision_date=envelope.decision_date,
-        decision_time=envelope.decision_time,
-        created_at=envelope.created_at,
-        code_revision=envelope.code_revision,
-        configuration_id=envelope.configuration_id,
-        configuration_hash=envelope.configuration_hash,
-        source_manifest_id=envelope.source_manifest_id,
-        source_manifest_hash=envelope.source_manifest_hash,
-        input_artifact_ids=tuple(lineage),
-        input_content_hashes=tuple(lineage.values()),
-        model_id=envelope.model_id,
-        model_version=envelope.model_version,
-        data_eligibility=DataEligibility.EXPLORATORY,
-        evidence_authority=EvidenceAuthority.IMMUTABLE_CONTENT_ADDRESSED_ARTIFACT,
-        status=(
-            "RESEARCH_READY" if any(item.selection_status is CandidateSelectionStatus.SELECTED for item in records) else "RESEARCH_BLOCKED"
-        ),
-        reason_codes=reasons,
-        limitations=envelope.limitations,
-    )
-    return CandidateSet(
-        envelope=result_envelope,
-        records=records,
-        minimum_candidate_population=candidates.minimum_candidate_population,
-        reason_codes=reasons,
-    )
 
 
 def _model_blocked_candidate_set(

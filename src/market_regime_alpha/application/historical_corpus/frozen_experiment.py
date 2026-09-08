@@ -1,4 +1,4 @@
-"""Typed owners for the frozen Phase E3 longitudinal methodology.
+"""Typed owners for the frozen longitudinal methodology.
 
 Changing a feature, threshold, Target, cost, capacity, or evaluation choice
 produces a different content-addressed owner and Experiment Definition.  The
@@ -192,7 +192,7 @@ def create_phase_e3_historical_experiment(
     *,
     locked_at: datetime,
 ) -> ResearchExperimentDefinition:
-    """Create the sole unchanged Phase E2 methodology admitted by Phase E3."""
+    """Create the sole unchanged methodology admitted by ."""
 
     feature_owner = create_phase_e3_feature_configuration()
     economics_owner = create_phase_e3_strategy_economics_policy_set(
@@ -253,7 +253,7 @@ def create_golden_loop_v2_historical_experiment(
     *,
     locked_at: datetime,
 ) -> ResearchExperimentDefinition:
-    """Freeze the V2 correctness change without tuning Phase E3 inputs."""
+    """Freeze the V2 correctness change without tuning inputs."""
 
     v1 = create_phase_e3_historical_experiment(
         target_protocol,

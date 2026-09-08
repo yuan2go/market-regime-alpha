@@ -1,4 +1,3 @@
-"""Research identity, evidence, and rehearsal input-bundle contracts."""
 
 from typing import TYPE_CHECKING, Any
 
@@ -140,7 +139,6 @@ __all__ = [
 
 
 def __getattr__(name: str) -> Any:
-    """Resolve Candidate-runner exports lazily to avoid a candidates/research cycle."""
 
     if name in {
         "ProviderCandidateRun",

@@ -1,4 +1,4 @@
-"""Content-addressed Decision Price Snapshot for Phase D plumbing."""
+"""Content-addressed Decision Price Snapshot for plumbing."""
 
 from __future__ import annotations
 

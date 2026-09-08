@@ -1,4 +1,4 @@
-"""Canonical field-level SourceManifest for the Phase D daily loop."""
+"""Canonical field-level SourceManifest for the daily loop."""
 
 from __future__ import annotations
 

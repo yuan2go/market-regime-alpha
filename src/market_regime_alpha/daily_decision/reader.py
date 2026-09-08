@@ -1,4 +1,4 @@
-"""Semantic Reader for Phase D Daily Decision Artifacts."""
+"""Semantic Reader for Daily Decision Artifacts."""
 
 from __future__ import annotations
 

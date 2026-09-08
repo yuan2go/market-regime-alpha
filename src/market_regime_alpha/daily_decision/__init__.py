@@ -1,4 +1,4 @@
-"""Canonical Phase D daily decision contracts, isolated from frozen V1."""
+"""Canonical daily decision contracts, isolated from frozen V1."""
 
 from .entry import (
     ENTRY_PLUMBING_GATE_V0,

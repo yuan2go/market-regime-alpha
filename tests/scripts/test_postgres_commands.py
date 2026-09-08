@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-import re
 import subprocess
 
 from scripts.apply_postgres_migrations import main as apply_migrations_main
@@ -17,22 +16,6 @@ from tests.persistence.postgres.conftest import (
 
 
 ROOT = Path(__file__).resolve().parents[2]
-RUNBOOK = ROOT / "docs/operations/Runtime-Runbook.md"
-
-
-def test_postgres_runbook_references_existing_repository_commands() -> None:
-    text = RUNBOOK.read_text(encoding="utf-8")
-    scripts = set(re.findall(r"(?<!tests/)scripts/[a-z0-9_]+\.py", text))
-
-    assert {
-        "scripts/bootstrap_postgres.py",
-        "scripts/apply_postgres_migrations.py",
-        "scripts/check_docs_links.py",
-    } <= scripts
-    assert all((ROOT / relative).is_file() for relative in scripts)
-    assert "scripts/migrate_sqlite_to_postgres.py" not in text
-    assert "--sqlite-database" not in text
-    assert "PostgreSQL Authority Only" in text
 
 
 def test_ci_provides_postgres_only_to_test_step() -> None:
@@ -68,22 +51,6 @@ def test_tracked_files_exclude_operator_credentials() -> None:
         if any(value in text for value in forbidden):
             violations.append(str(path.relative_to(ROOT)))
     assert violations == []
-
-
-def test_status_and_runbook_keep_authority_ceiling_explicit() -> None:
-    status = (ROOT / "docs/status/Current-State.md").read_text(encoding="utf-8")
-    runbook = RUNBOOK.read_text(encoding="utf-8")
-
-    for declaration in (
-        "automatic_order_execution = false",
-        "broker_integration_proven = false",
-        "entry_model_empirically_validated = false",
-        "production_ready = false",
-    ):
-        assert declaration in status
-    assert "Expected head: migration 106" in runbook
-    assert "Production qualification is currently forced closed" in runbook
-    assert "no alternate persistent backend" in runbook
 
 
 def test_apply_migrations_honors_explicit_application_schema(

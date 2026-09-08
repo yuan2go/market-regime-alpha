@@ -1,4 +1,4 @@
-"""PostgreSQL owner repository for immutable Phase E session components."""
+"""PostgreSQL owner repository for immutable session components."""
 
 from __future__ import annotations
 

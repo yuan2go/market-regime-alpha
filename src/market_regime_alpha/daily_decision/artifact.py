@@ -1,4 +1,4 @@
-"""Atomic immutable Phase D Daily Decision Artifact Publisher."""
+"""Atomic immutable Daily Decision Artifact Publisher."""
 
 from __future__ import annotations
 

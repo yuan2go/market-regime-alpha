@@ -1,4 +1,3 @@
-"""Ports owned by Market Target Outcome."""
 
 from market_regime_alpha.outcome.ports.preparation import (
     OutcomeDependencyRepository,

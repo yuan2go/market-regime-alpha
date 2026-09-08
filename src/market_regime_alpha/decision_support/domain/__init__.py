@@ -1,4 +1,3 @@
-"""Stable Decision Support domain exports."""
 
 from market_regime_alpha.decision_support.domain.context import (
     ContextAssessmentAuthority,

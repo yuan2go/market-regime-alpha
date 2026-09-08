@@ -1,4 +1,4 @@
-"""Immutable contracts for Phase E raw, normalized and research packages.
+"""Immutable contracts for raw, normalized and research packages.
 
 These contracts deliberately keep retrospective event time separate from true
 provider retrieval time.  They cannot be consumed as Live or Formal PIT market

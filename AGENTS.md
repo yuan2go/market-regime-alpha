@@ -1,322 +1,70 @@
-# AGENTS.md — Market Regime Alpha Execution Contract
+# Agent execution contract
 
-> **Status:** CURRENT_STATUS
-> **Authority:** Sole repository execution, safety, and evidence contract
-> **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-09-07
-> **Related Documents:** `CLAUDE.md`, `docs/README.md`, `docs/architecture/Canonical-Overall-Design.md`, `docs/status/Roadmap.md`
+Market Regime Alpha is an A-share research and human decision-support system.
+Research predictions and Portfolio proposals are not orders, Fills or Positions.
 
-## Mission and current program
+## Authority
 
-Market Regime Alpha is an A-share research operating system and human-in-the-loop
-decision-support platform. It is not unattended live trading.
+Read [documentation navigation](docs/README.md), Architecture, Authority Map,
+Current State and Roadmap, then trace the affected code, schema and consumers.
 
-The approved Hard Cutover Architecture Re-foundation is the sole engineering
-program. The target is frozen by
-`docs/architecture/Canonical-Overall-Design.md` and ADR-015. Current source and
-actual call chains, the retained legacy 001–106 schema, and the separate target
-draft schema are implementation evidence. Existing business Runtime remains in
-service until an explicit Runtime/CLI cutover checkpoint succeeds. Target prose
-never makes an unimplemented capability current; observed catalog counts belong
-to Current State and exact Verification.
+Normative authority order: latest explicit user decision; enduring business and
+safety invariants below; current documents listed in `docs/README.md`.
+Archived plans and evidence are provenance, never active instructions.
 
-The dependency order is:
+Implementation fact authority order: executable call chains; PostgreSQL schema
+and owner queries; tests actually executed; reproducible runtime evidence;
+documentation. A declaration or passing fixture cannot establish deployment.
 
-```text
-Foundation
-→ Market/PIT
-→ Selection Core: Universe/Eligibility
-→ minimal Research Definition substrate required by Candidate
-→ Candidate closure
-→ WP-08 post-Candidate dependency and Outcome Authority design closure
-→ WP-09 Target commitment and Decision Run
-→ Market Target Outcome
-→ WP-11 Research Partition/Experiment/Evaluation closure
-→ Evidence/Research Assessment/Research Qualification
-→ WP-13 remaining Decision Support
-→ WP-14 Formal Research/OOS/Prospective engineering readiness
-→ WP-15 real Provider qualification and frozen research proof campaign
-→ WP-16 external Provider evidence Gate A
-→ WP-17P retrospective/prospective archive and exploratory Model/backtest
-→ WP-18 definition-only walk-forward equivalence
-→ WP-18Q Generic Backtest / Prospective qualification and gated WP hard-cut
-→ optional Calibration only when separately justified
-→ Execution/TradeOutcome/Attribution → Runtime/CLI Cutover
-```
+## Invariants
 
-WP-08 authorizes this dependency order, not concurrent implementation. WP-09
-through WP-14 have passed their immutable local engineering gates; WP-14 proves
-engineering readiness only. WP-15 then used its exact merged main for a real
-recorded BaoStock Provider gate. The complete ten-requirement Decision is
-`REJECTED`: historical availability, revision finality, and Outcome-path floors
-failed, while calendar, membership, and Decision-reference evidence remained
-inconclusive. The Formal PIT/hypothesis/OOS/prospective campaign therefore did
-not start. The rejected Decision and exact capture remain immutable negative
-evidence; a later attempt requires new adequate external evidence and a new
-Protocol/revision rather than reinterpretation. WP-16 found no accessible
-Product with direct recorded evidence for both P0 availability and finality and
-stopped before implementation. WP-17P then added engineering-qualified,
-permanently separated retrospective/prospective archives plus an exploratory-
-only Model/backtest path without reopening that Provider gate. Calibration
-remains optional and unstarted. Execution, Runtime/CLI Cutover, Legacy deletion,
-and Production qualification remain unauthorized.
+- Reuse the existing Runtime and composition root. PostgreSQL owns durable
+  state; its clock, atomic admission, lease and fence govern execution. Process
+  supervision only wakes and drains work. No availability-selected Authority.
+- Each business fact has one owner. Cross-owner reads use exact identities and
+  read ports; writes use owner commands. DTOs, policies, reports and inventories
+  cannot promote authority. Artifact bytes must match PostgreSQL hash/bindings.
+- Universe → Eligibility → Dataset → Candidate precedes Decision commitments,
+  Context and Forecast. Same-generation outcomes cannot change frozen inputs.
+  Outcome alone owns market labels; Evaluation owns metrics; Report projects
+  reconciled results. Feedback and model training respect knowledge cutoffs.
+- Account changes require observed Fills or explicitly authorized typed basis
+  events. Risk rejection cannot be bypassed. Target horizon is not holding time;
+  hypothetical episode economics is not continuous-account NAV or actual P&L.
+- Preserve complete populations, exclusion reasons and negative/inconclusive
+  results. Missing, UNKNOWN, abstention and NOT_ESTIMABLE are meaningful states;
+  never replace them with zero, a probability, invented data or implied success.
+- NO_ACTION is not HOLD. An uncalibrated score is not a probability. Public
+  capital proxies do not establish hidden institutional intent.
+- Never infer calendar sessions from weekdays, backdate knowledge/publication,
+  silently substitute Providers, or claim PIT/finality without exact evidence.
+  Released schemas, historical identities and evidence retain their bytes and
+  meaning. Corrections use the owner's explicit revision/supersession contract.
+- Xuntou/ThinkTrader/XtQuant remains the formal Provider direction; auxiliary
+  Providers remain exploratory until qualified by exact owner evidence.
+- Model Governance owns formal Model qualification/selection. Engineering
+  evidence does not confer Provider, Alpha, Model, broker or
+  Production qualification. Do not change research semantics outside scope.
 
-### Research economics correctness and research operations activation
+## Work and validation
 
-The latest explicit request authorizes WP-DAILY-MODEL-RESEARCH-LOOP-01:
-post-close DataReady, versioned exploratory baseline training, independent
-purpose-limited daily prediction and canonical Outcome/Evaluation. Reuse the
-existing owners and one Runtime; keep sampled/eligible/feature-ready/predicted/
-mature/estimable denominators distinct. Explicit experimental Model use may
-operate without formal qualification but cannot confer it. Prior operation
-scope constraints remain; necessary new registered schema upgrades require
-isolated verification, exact original identity, backup and single-writer guards.
-Future labels cannot gate prediction registration. No retrospective fold may
-stand in for an actual daily prediction. This scope supersedes stale no-new-
-protocol/model-consumption wording; original research results remain immutable.
-
-WP-RESEARCH-ECONOMICS-CORRECTNESS-01 has completed its bounded local gate in the
-[immutable Verification](docs/references/WP-RESEARCH-ECONOMICS-CORRECTNESS-01-Verification.md).
-Its [design contract](docs/references/WP-RESEARCH-ECONOMICS-CORRECTNESS-01-Design.md)
-retains independent funded, fully liquidated hypothetical episodes, complete
-parent/root/child reconciliation and explicit unsupported-model refusals.
-This exit authorizes no model expansion. WP-18Q-R2 has completed its recorded
-campaign in an isolated recovery scope and retired WP-specific execution; the
-original Run remains FAILED. The current explicit request activates research
-operations within that same dependency chain: guarded prospective lifecycle,
-real due proof when available, original-database diagnostics and read-only
-research funnel projection. Before authorized research append writes, verify exact
-database identity, backup, disk, active attempts and a single writer. Preserve
-the frozen campaign's source, protocol and existing results; do not replace its
-worker or reinterpret its V1 economics using V2. The 2026-09-07 follow-up
-explicitly authorizes the registered v5→v6 additive upgrade of original
-`mra_wp18q_r2_operational_20260905`, OID 287543, cluster
-7681924516459622681 after exact identity/backup/resource/no-worker guards;
-it also authorizes this project's private configuration and current-user
-supervisor installation. This does not authorize an adopted recovery writer,
-reopening the failed Run, or any full Runtime cutover.
-Its large campaign, future windows and hard-cut remain independent of the
-completed economics gate. WP-18Q remains blocked under its existing Design and
-Implementation Plan until its own evidence closes. Generic Backtest
-uses the existing `exploratory_backtest_run` root and canonical Runtime,
-Dataset, Decision, Outcome, Model and Evaluation owners. Report is a
-deterministic projection of reconciled Authority/Evaluation, never a second
-metric owner. Prospective Application uses the existing Runtime and PostgreSQL
-clock, not a second scheduler. `backtest progress` reports Runtime observations
-with owner reconciliation explicitly NOT_PERFORMED. Foreground prospective
-`serve` owns process wakeup/drain only; bounded lifecycle success cannot imply
-sustained capture or an actual due Attempt.
-
-The machine-local prospective operation profile pins database/OID/cluster,
-schema, Artifact root, source, Target, backup receipt and resource budgets.
-Foreground service must reject identity drift, lost supervision locks, exhausted
-budgets and unverified backups before further claims. The v6 revision-gap
-correction retains its immutable bytes. The exact original scope above now has
-explicit upgrade authorization; all other scopes still require their own
-authorization. Do not infer approval from ordinary research append writes. Read-only status and
-database diagnostics may inspect an explicitly named old schema without
-admitting it for current execution. No system service or replacement operational
-Authority is adopted by an isolated lifecycle drill.
-
-Keep these claims separate: code exists, canonical wiring, tests passed,
-runtime proven, and research validity. WP-18Q engineering qualification is
-blocked until every WP-18Q P0 gate has exact-SHA evidence. No historical
-WP-17P gate promotes Generic Backtest automatically. R2 retires WP-specific
-execution after its recorded compatibility/campaign/report/replay/recovery and
-pre-deletion regression gates. Only Generic execution and the private exact
-historical read decoder remain on the current public path. Retained historical
-test fixtures and frozen provenance do not authorize WP-specific execution or a
-permanent compatibility facade. Post-retirement qualification is a separate
-exact-source/test-tree obligation from those deletion prerequisites.
-
-Operational evidence databases permit only exact-identity, backed-up additive
-upgrade. A restored backup copy is not the original operational database.
-Record an explicit evidence discontinuity when original Authority is unavailable;
-new captures, archives and prospective generations retain their actual new times
-and identities. The `mra evidence` inventory is a regenerable, non-authoritative
-operator index, never a business FK target or a maturity decision. Keep local
-paths, hosts and backup locations outside shared configuration; never store
-credentials in inventory. Verify exported database snapshots against their exact
-Artifact roster and perform independent restore/reconciliation drills. Faithful
-preservation of failed execution is integrity evidence, not completed replay.
-No current due window means `NOT_DUE`, not prospective proof; never wait for a
-future window, backdate, or relabel replay to close a qualification gate.
-
-Do not resume the former Alpha Proof Roadmap as an engineering program. Existing
-protocols, results, and negative evidence remain immutable provenance. New
-research execution requires a separately approved request and must not interrupt
-the active re-foundation dependency chain.
-
-## Agent entry points
-
-Read in this order:
-
-1. `AGENTS.md`;
-2. `docs/README.md`;
-3. the Canonical Overall Design and supporting target architecture documents;
-4. `docs/status/Current-State.md`, `docs/status/Capability-Matrix.md`, and
-   `docs/status/Roadmap.md`;
-5. current code, migrations, tests, and reproducible evidence for the affected
-   context.
-
-`CLAUDE.md` may add only Claude-specific startup behavior. Do not create a
-parallel instruction, prompt, status, roadmap, or architecture hierarchy.
-
-## Normative authority order
-
-1. latest explicit user decision not superseded;
-2. `docs/architecture/Canonical-Overall-Design.md` and accepted ADR-015;
-3. supporting target architecture documents linked from `docs/README.md`;
-4. the dependency plan in `docs/status/Roadmap.md`;
-5. historical ADRs, frozen protocols, and evidence reports as provenance only;
-6. Git history for historical context only.
-
-## Implementation fact authority order
-
-1. current checked-out code and actual call chains;
-2. current PostgreSQL schema, migrations, writers, and readers;
-3. tests and static checks actually executed at an exact SHA;
-4. reproducible Runtime, replay, and research evidence;
-5. generated or exact-SHA status read models.
-
-Current State, Capability views, Roadmap, reports, Evidence Ledgers, artifacts,
-DTOs, policies, receipts, and documentation are not business or qualification
-Authority. They may summarize canonical facts but cannot mutate or promote them.
-
-## Re-foundation execution rules
-
-- Work on one dependency-coherent checkpoint from `docs/status/Roadmap.md`.
-- Do not implement a later context before its declared predecessor exit gate.
-- An incomplete target path is test-only and non-canonical. Do not dual-write,
-  fall back between old and target owners, or choose Authority by availability.
-- The existing Runtime stays canonical until the explicit Runtime/CLI Cutover.
-- The target baseline is built for a newly provisioned empty database. Ordinary
-  startup must fail before DDL on legacy, unknown, or mismatched schema epoch.
-- Never edit released migration bytes or add compatibility migrations to carry
-  the 283-table catalog into the target epoch.
-- Legacy code/tests are deleted only after every mapped invariant has passing
-  target coverage and the last executable consumer is absent.
-- No permanent `v1`/`v2`/`v3`, compatibility reader, registry, snapshot, journal,
-  or parallel composition root may survive cutover.
-- Do not introduce microservices, a message broker, event sourcing, generic
-  workflow/registry frameworks, dashboards, or infrastructure expansion unless
-  a later explicit scope changes the approved architecture.
-
-## Domain and evidence invariants
-
-- Market fact, inferred Context, Universe membership, Eligibility, Candidate,
-  Signal, Forecast, Opportunity, Thesis, Portfolio, Risk, Fill, Position,
-  Outcome, Attribution, Assessment, and Qualification remain distinct.
-- Universe → Eligibility → Dataset → Candidate → `OPEN_DECISION_RUN`
-  completes before same-run Context. Context cannot feed back into that same
-  Candidate Set or Target commitment. Candidate consumes the immutable
-  Decision-input Dataset and Feature Definition identities through a
-  Selection-owned port; Candidate Set existence never depends on a Decision Run,
-  Model Version, Target, Outcome, Evidence, Assessment, or Qualification.
-- `OPEN_DECISION_RUN` must freeze the explicit requested Target roster, the
-  complete Candidate × Target commitment roster, and independent Decision
-  references before Outcome visibility. It creates no Outcome placeholder.
-- Market Target Outcome is the only market-label Authority. Research, Model,
-  Evaluation, Calibration, Forecast evaluation, Shadow economics, and
-  Qualification may consume realized facts only through its narrow read-only
-  port; they do not reread bars or construct a second label truth.
-- Market Target Outcome and effective-Fill/closed-Position-derived TradeOutcome
-  are different concrete subjects. No generic Outcome or Qualification subject
-  registry is permitted.
-- Feedback crosses generations only:
-  `Outcome(n) → Evaluation(n) → Qualification(n) → DecisionRun(n+1)`.
-  The later Run uses a concrete
-  `decision_run_research_qualification_roster` plus member FK binding whose
-  source is known by the new DecisionTime and whose Outcome generations are
-  strictly earlier; prose or a current/latest lookup is not a binding.
-  Model is an optional post-training branch, never a prerequisite for Candidate,
-  Target, Outcome, ordinary Evaluation, Evidence, or Research Qualification.
-- Opportunity contains decision input evidence, not a Risk authorization. The
-  sole Risk Decision follows a complete Portfolio Proposal.
-- Target horizon is not a holding or exit time; Exit is not inverse Entry.
-- Empty, `UNKNOWN`, `WAIT`, `DATA_INSUFFICIENT`, `NO_ACTION`,
-  `NOT_ESTIMABLE`, rejection, and inconclusive evidence are valid results.
-- Scores are not probabilities without exact calibration evidence.
-- No silent Provider substitution or invented PIT/finality/availability/
-  adjustment semantics is permitted.
-- Trade-caused Position changes derive only from observed effective Fills.
-  Opening balances, corporate actions, and reconciliation adjustments use the
-  separately authorized typed basis-event rules in the Authority Map.
-- Risk rejection cannot be bypassed by Strategy code or ordinary operator retry.
-- Evidence classes, Assessment status, and purpose-scoped Qualification floors
-  cannot be collapsed into one maturity flag.
-- Fixture/local/CI evidence never proves Provider quality, Formal PIT/OOS Alpha,
-  Prospective value, broker authority, trading authority, or Production.
-
-## Provider and trading boundary
-
-Provider adapters remain unqualified until exact source/archive/version,
-availability, finality, adjustment, identity, and lineage evidence satisfies the
-declared purpose. Public-source availability gaps remain `UNKNOWN` or
-Exploratory rather than guessed.
-
-Agents may diagnose and implement an approved checkpoint. They do not place
-orders, invoke a broker mutation, promote a model, change approved Risk, unlock
-Production, or reinterpret a passing Runtime as trading authority.
-
-## Workspace, branch, and commit discipline
-
-- Inspect the workspace, exact HEAD, ancestry, worktrees, and diffs before Git
-  mutation. Preserve unrelated user changes and local configuration.
-- Never implement directly on `main`; use an isolated branch/worktree.
-- Do not fetch, pull, switch, reset, clean, stash, force-push, rewrite history,
-  delete branches, merge, or open a PR unless explicitly authorized.
-- Use dependency-coherent checkpoint commits. Before every commit, inspect all
-  staged/unstaged/untracked scope and run `git diff --check`.
-- Exclude credentials, generated secrets, personal paths, build output, and
-  unrelated files.
-- Never modify, stage, overwrite, stash, or commit `.idea/modules.xml`.
-
-## Validation and reporting
-
-The current activation follow-up uses risk-directed concurrency, migration,
-Provider, lifecycle and changed-file checks. Full regression is not a prerequisite
-for each operational step and is NOT_RUN unless a demonstrated cross-domain risk
-requires it; do not relabel targeted evidence as a full qualification. The general
-repository gate, when required, remains:
-
-```bash
-uv sync --frozen --extra dev --extra postgres
-uv run python scripts/check_docs_links.py
-uv run python -m pytest -q tests/scripts/test_check_docs_links.py
-uv run python -m pytest -q tests/platform
-uv run python -m pytest -q
-uv run python -m ruff check .
-uv run python -m mypy
-uv run python -m build
-git diff --check
-```
-
-`uv sync` does not activate the project environment in the current shell. Keep
-every Python-based gate behind `uv run` so its interpreter and tools resolve
-from the locked project environment.
-
-Use a dedicated PostgreSQL test database and run the focused migration,
-bootstrap, constraint, repository, concurrency, idempotency, replay, recovery,
-and architecture tests required by the checkpoint. Never weaken an assertion,
-skip/xfail a failure, or add a compatibility path merely to make a gate green.
-
-Report every command as `PASS`, `FAIL`, `BLOCKED`, or `NOT_RUN`, including the
-exact SHA, prerequisites, and failure cause. Keep these evidence levels separate:
-
-```text
-CODE_IMPLEMENTED
-CANONICAL_WIRED
-TEST_EXECUTED
-RUNTIME_PROVEN
-RESEARCH_QUALIFIED
-PRODUCTION_QUALIFIED
-```
-
-## Repository-local Skill boundary
-
-The only retained project Skill is `.claude/skills/reconcile-branches/SKILL.md`.
-It is invoked only for an explicit branch-reconciliation request and is
-read-only unless the user separately authorizes side effects. Ordinary coding,
-verification, architecture review, and research-evidence rules live here, in
-code/tests, or in the target architecture—not in persistent prompt forks.
+- Inspect worktrees, status and ancestry first. Work on an isolated branch;
+  preserve unrelated changes. Never touch or stage `.idea/modules.xml`.
+- Fetch, switch, destructive Git actions, push, PR, merge, operational upgrades,
+  service changes and external communications require task authorization.
+  Never reset, clean, stash or rewrite history to clear someone else's work.
+- Operational databases are not test fixtures. Use an explicitly disposable
+  database for destructive tests. Operational writes require exact identity,
+  backup, disk and single-writer preflight; upgrades use registered bundles.
+- Keep Provider/Artifact I/O and expensive computation outside business write
+  transactions. Recheck input identities and active fences before atomic
+  result/Receipt/Audit/Runtime completion. Reconcile unknown effects before retry.
+- Use locked dependencies: `uv sync --frozen --extra dev --extra postgres`.
+  Every Python command uses `uv run`. Follow [Development](docs/Development.md)
+  for focused and full gates; never skip failures, weaken assertions or add a
+  fallback to get PASS. Delete tests only with an explicit contract disposition.
+- Before each coherent local commit inspect staged/unstaged scope and run
+  `git diff --check`. Exclude credentials, personal configuration and artifacts.
+- Report commands as PASS / FAIL / BLOCKED / NOT_RUN at their verified revision.
+  Distinguish implemented, wired, tested, runtime observed, research qualified
+  and production admitted. State unresolved gaps without upgrading old evidence.

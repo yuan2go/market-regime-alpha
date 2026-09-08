@@ -1,4 +1,4 @@
-"""Exact read-only completion probe for WP-17P exploratory campaigns."""
+"""Exact read-only completion probe for exploratory campaigns."""
 
 from __future__ import annotations
 

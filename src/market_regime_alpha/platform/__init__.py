@@ -1,4 +1,3 @@
-"""Research Platform Kernel V1."""
 
 from market_regime_alpha.platform.contracts import (
     DefinitionStatus,

@@ -1,4 +1,3 @@
-"""A-share buy/sell point identification model modules."""
 
 from market_regime_alpha.dividend_t.models import (
     FundamentalInputs,

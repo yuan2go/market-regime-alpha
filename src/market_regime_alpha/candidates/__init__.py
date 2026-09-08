@@ -1,4 +1,3 @@
-"""Canonical Candidate Discovery contracts and R5 rehearsal research APIs."""
 
 from .baselines import CandidateRankingRejection, CandidateRankingRun, rank_candidates_by_feature
 from .composite_baseline import (

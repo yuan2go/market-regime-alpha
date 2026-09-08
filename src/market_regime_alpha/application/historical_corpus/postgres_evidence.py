@@ -1,4 +1,4 @@
-"""PostgreSQL Authority repository for Phase E research findings."""
+"""PostgreSQL Authority repository for research findings."""
 
 from __future__ import annotations
 

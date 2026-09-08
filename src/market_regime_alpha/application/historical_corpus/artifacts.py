@@ -1,4 +1,4 @@
-"""Crash-atomic columnar packages for Phase E historical data owners."""
+"""Crash-atomic columnar packages for historical data owners."""
 
 from __future__ import annotations
 

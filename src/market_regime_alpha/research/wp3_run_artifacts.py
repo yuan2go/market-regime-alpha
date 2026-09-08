@@ -1,4 +1,4 @@
-"""Atomic, content-hashed, non-overwriting evidence artifacts for WP-3 runs."""
+"""Atomic, content-hashed, non-overwriting evidence artifacts for runs."""
 
 from __future__ import annotations
 
@@ -54,7 +54,7 @@ class WP3RunArtifactIncompleteError(RuntimeError):
 
 @dataclass(frozen=True, slots=True)
 class WP3RunArtifactPayload:
-    """JSON-ready successful WP-3 evidence plus a Markdown audit report."""
+    """JSON-ready successful evidence plus a Markdown audit report."""
 
     manifest: Mapping[str, Any]
     provider_selection: Any
@@ -75,7 +75,7 @@ class WP3RunArtifactPayload:
 
 @dataclass(frozen=True, slots=True)
 class WP3FailureArtifactPayload:
-    """JSON-ready failed WP-3 attempt without Candidate evaluation output."""
+    """JSON-ready failed attempt without Candidate evaluation output."""
 
     manifest: Mapping[str, Any]
     failure: Any

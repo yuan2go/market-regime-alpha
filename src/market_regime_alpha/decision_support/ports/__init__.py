@@ -1,4 +1,3 @@
-"""Stable Decision Support ports."""
 
 from market_regime_alpha.decision_support.ports.context import (
     ContextAssessmentRecord,

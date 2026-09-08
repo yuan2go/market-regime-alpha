@@ -1,4 +1,3 @@
-"""Stable public Selection ports."""
 
 from market_regime_alpha.selection.ports.candidate_artifacts import (
     CandidateArtifactBinding,

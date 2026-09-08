@@ -1,4 +1,3 @@
-"""Canonical feature contracts and explicitly scoped R5 rehearsal baselines."""
 
 from .contracts import FeatureDefinition, FeatureMaterialization, FeatureObservation, FeatureRegistry
 from .model_contracts import FeatureArtifact, FeatureComputationRequest, FeatureComputer

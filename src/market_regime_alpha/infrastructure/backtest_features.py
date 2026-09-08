@@ -72,7 +72,7 @@ class IntradayMoveBacktestFeatureAdapter:
 
 
 class DailyMoveBacktestFeatureAdapter:
-    """Versioned complete-session Feature; the old five-minute adapter is unchanged."""
+    """Complete-session Feature; five-minute semantics use a separate adapter."""
 
     def __init__(self, inputs: DailyFeatureInputReadPort) -> None:
         self._inputs = inputs

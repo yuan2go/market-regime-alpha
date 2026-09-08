@@ -1,4 +1,3 @@
-"""Public Application boundary for the target Runtime."""
 
 from market_regime_alpha.runtime.application.service import (
     ActorType,

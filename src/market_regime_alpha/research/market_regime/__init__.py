@@ -1,4 +1,3 @@
-"""Market Regime research gate contracts and V0 model."""
 
 from market_regime_alpha.research.market_regime.contracts import (
     MarketRegimeSnapshot,

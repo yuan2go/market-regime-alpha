@@ -1,4 +1,4 @@
-"""Deterministic JSON and SHA-256 helpers shared by new Platform V2 contracts."""
+"""Deterministic JSON and SHA-256 helpers shared by Platform contracts."""
 
 from __future__ import annotations
 

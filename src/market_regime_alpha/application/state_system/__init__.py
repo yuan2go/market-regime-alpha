@@ -1,4 +1,3 @@
-"""Persistence and Runtime services for WP-STATE-01."""
 
 from market_regime_alpha.application.state_system.bundles import (
     scoped_state_stage_bundle_identity,

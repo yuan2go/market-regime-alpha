@@ -1,4 +1,3 @@
-"""Public Entry research Target contracts."""
 
 from .contracts import (
     DAILY_OHLC_OPEN_THEN_UNORDERED_EXTREMES_V1,

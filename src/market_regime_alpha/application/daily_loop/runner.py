@@ -1,4 +1,4 @@
-"""Run-first orchestration for the exploratory Phase D daily loop."""
+"""Run-first orchestration for the exploratory daily loop."""
 
 from __future__ import annotations
 

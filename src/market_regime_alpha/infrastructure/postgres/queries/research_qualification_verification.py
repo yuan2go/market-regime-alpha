@@ -1,4 +1,4 @@
-"""Read-only relational replay checks for WP-12 Research Authorities."""
+"""Read-only relational replay checks for Research Authorities."""
 
 from __future__ import annotations
 

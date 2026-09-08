@@ -55,11 +55,11 @@ def test_unexpected_document_is_rejected(tmp_path: Path) -> None:
     assert any("unexpected document" in error for error in errors)
 
 
-def test_classified_supplementary_document_is_allowed(tmp_path: Path) -> None:
-    doc = tmp_path / "docs" / "architecture" / "decisions" / "ADR-001.md"
+def test_historical_records_are_allowed_only_in_the_archive(tmp_path: Path) -> None:
+    doc = tmp_path / "docs" / "archive" / "record.md"
     doc.parent.mkdir(parents=True)
     doc.write_text(
-        "# Decision\n\n> **Status:** CURRENT_ARCHITECTURE\n",
+        "# Record\n\n> **Status:** HISTORICAL\n",
         encoding="utf-8",
     )
 

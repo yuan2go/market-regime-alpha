@@ -1,4 +1,3 @@
-"""Theme Rotation contracts and deterministic V0 model."""
 
 from market_regime_alpha.research.theme_rotation.contracts import (
     RotationState,

@@ -1,4 +1,3 @@
-"""Capital Evolution inferred-state contracts and V0 model."""
 
 from market_regime_alpha.research.capital_evolution.contracts import (
     CapitalEvolutionSnapshot,

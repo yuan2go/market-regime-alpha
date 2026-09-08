@@ -177,7 +177,7 @@ def build_mr1_next_session_1030_return_observation(
     reference_price: float,
     endpoint_bar: CompositeBar | None,
 ) -> dict[str, Any]:
-    """Expose the existing exact-endpoint MR1 10:30 Target for Phase D adapters."""
+    """Expose the existing exact-endpoint MR1 10:30 Target for adapters."""
 
     return _observation_for_endpoint(
         symbol=symbol,

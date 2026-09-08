@@ -1024,11 +1024,6 @@ def _verify_reference(*, verified: Any, reference: Any) -> None:
         raise ValueError("Feature Bundle reference projection mismatch")
 
 
-def _verified_artifact_hash(path: Path, *, expected_hash: str) -> bool:
-    verified = load_verified_feature_artifact_v2(path)
-    if verified.artifact.content_hash != expected_hash:
-        raise ValueError("Feature materialization task Artifact hash mismatch")
-    return True
 
 
 def _verify_materialization_receipt_package(
@@ -1046,48 +1041,10 @@ def _verify_materialization_receipt_package(
         raise ValueError("Feature materialization Receipt Bundle mismatch")
 
 
-def _command_path(output_root: Path, idempotency_key: str) -> Path:
-    key_hash = canonical_hash({"idempotency_key": idempotency_key}).split(":", 1)[1]
-    return output_root / "materialization-commands" / f"{key_hash}.json"
 
 
-def _write_command(*, path: Path, payload: Mapping[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if path.exists():
-        raise FileExistsError("Feature materialization command already exists")
-    prefix = f".{path.name}.tmp-"
-    descriptor, raw_temporary = tempfile.mkstemp(prefix=prefix, dir=path.parent)
-    temporary = Path(raw_temporary)
-    try:
-        encoded = (canonical_json(payload) + "\n").encode("utf-8")
-        with os.fdopen(descriptor, "wb") as handle:
-            handle.write(encoded)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.link(temporary, path)
-        _fsync_directory(path.parent)
-    finally:
-        temporary.unlink(missing_ok=True)
 
 
-def _load_materialization_receipt(
-    *, command_path: Path, command_hash: str, output_root: Path
-) -> FeatureMaterializationReceipt:
-    payload = _read_object(command_path, "Feature materialization command")
-    if payload.get("command_hash") != command_hash:
-        raise ValueError("idempotency key semantic conflict")
-    raw_receipt = payload.get("receipt")
-    if not isinstance(raw_receipt, dict):
-        raise ValueError("Feature materialization command receipt is invalid")
-    receipt = FeatureMaterializationReceipt.from_canonical_dict(raw_receipt)
-    bundle_path = output_root / receipt.bundle_locator
-    verified = load_verified_feature_bundle_v2(
-        bundle_path,
-        artifact_root=output_root / "feature-artifacts",
-    )
-    if verified.artifact.content_hash != receipt.bundle_hash:
-        raise ValueError("Feature materialization command Bundle mismatch")
-    return receipt
 
 
 def _require_exact_files(root: Path, expected: set[str], label: str) -> None:

@@ -1,4 +1,3 @@
-"""PostgreSQL adapters for the target schema epoch."""
 
 from market_regime_alpha.infrastructure.postgres.schema import (
     EXPECTED_CANDIDATE_TABLES,

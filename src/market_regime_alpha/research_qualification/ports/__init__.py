@@ -1,4 +1,3 @@
-"""Stable Research Definition ports."""
 
 from market_regime_alpha.research_qualification.ports.artifacts import (
     ResearchArtifactByteStore,

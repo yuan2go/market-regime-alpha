@@ -1,0 +1,3 @@
+
+# Preserve original Markdown hard-break bytes in this immutable snapshot.
+docs/archive/pre-hygiene/docs/archive/README.md whitespace=-blank-at-eol

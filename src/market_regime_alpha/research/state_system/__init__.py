@@ -1,4 +1,3 @@
-"""Deterministic stateful research contracts for WP-STATE-01."""
 
 from market_regime_alpha.research.state_system.capital import (
     CapitalObservation,

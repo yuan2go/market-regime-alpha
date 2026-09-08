@@ -1,4 +1,4 @@
-"""Single resumable operator surface for Historical Alpha Research Phase II.
+"""Single resumable operator surface for Historical Alpha Research .
 
 This adapter owns no Runtime, scheduler, research kernel, or Evidence store. It
 parses one immutable command, reloads typed PostgreSQL owners, and delegates to
@@ -98,7 +98,7 @@ class PhaseIIOperation(str, Enum):
 
 @dataclass(frozen=True, slots=True)
 class HistoricalPhaseIIResearchOperator:
-    """Typed adapter over the existing Phase II application service."""
+    """Typed adapter over the existing application service."""
 
     service: HistoricalPhaseIIResearchService
     calendars: PostgresPITTradingCalendarSnapshotRepository

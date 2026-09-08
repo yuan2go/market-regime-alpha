@@ -1,4 +1,3 @@
-"""Canonical PIT universe membership, versioned eligibility policy, artifacts, and contracts."""
 
 from .artifacts import (
     HistoricalPITUniverseArtifact,

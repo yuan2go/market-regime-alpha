@@ -1,4 +1,4 @@
-"""Closed WP-09 Decision Run and reference vocabulary."""
+"""Closed Decision Run and reference vocabulary."""
 
 from enum import StrEnum
 

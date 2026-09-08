@@ -1,4 +1,3 @@
-"""Stable public exports for Market/PIT commands."""
 
 from market_regime_alpha.market.application.archive import (
     ArchiveCaptureObservationResult, ArchiveCommands,

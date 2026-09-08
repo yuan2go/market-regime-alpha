@@ -1,4 +1,3 @@
-"""Aggregate-oriented PostgreSQL repositories for target contexts."""
 
 from market_regime_alpha.infrastructure.postgres.repositories.runtime import (
     PostgresAuditRepository,

@@ -1,4 +1,3 @@
-"""Explicitly composed infrastructure Model adapters."""
 
 from market_regime_alpha.infrastructure.models.backtest_deterministic_ridge import (
     DeterministicRidgeBacktestModelAdapter,

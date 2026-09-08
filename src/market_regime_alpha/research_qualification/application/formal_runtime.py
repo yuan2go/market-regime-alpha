@@ -1,4 +1,4 @@
-"""Pure plans for the two controlled WP-14 Runtime profiles."""
+"""Pure plans for the two controlled Runtime profiles."""
 
 from __future__ import annotations
 

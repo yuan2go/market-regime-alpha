@@ -1,4 +1,3 @@
-"""Candidate Discovery V2 contracts, legacy factors and model."""
 
 from market_regime_alpha.research.candidate_discovery.contracts import (
     CandidateSet,

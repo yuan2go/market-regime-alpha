@@ -7,16 +7,15 @@ BARE_PYTHON_COMMAND = re.compile(
     r"^(?:[A-Z][A-Z0-9_]*=\S+\s+)?python(?:\s|$)"
 )
 PROJECT_ENVIRONMENT_GATE_COMMANDS = (
+    "uv sync --frozen --extra dev --extra postgres",
     "uv run python scripts/check_docs_links.py",
-    "uv run python -m pytest -q tests/scripts/test_check_docs_links.py",
-    "uv run python -m pytest -q tests/platform",
+    "uv run python scripts/check_repository_hygiene.py",
     "uv run python -m pytest -q",
     "uv run python -m ruff check .",
     "uv run python -m mypy",
     "uv run python -m build",
 )
-REPOSITORY_GATE_CATALOGS = ("AGENTS.md", "README.md")
-REPOSITORY_ENTRYPOINTS = (*REPOSITORY_GATE_CATALOGS, "CLAUDE.md")
+REPOSITORY_ENTRYPOINTS = ("AGENTS.md", "README.md", "CLAUDE.md")
 
 
 def test_uv_lock_and_ci_define_the_frozen_python_312_gate() -> None:
@@ -37,30 +36,17 @@ def test_uv_lock_and_ci_define_the_frozen_python_312_gate() -> None:
         assert command in workflow
 
 
-def test_repository_entrypoint_gates_use_the_project_environment() -> None:
-    for relative_path in REPOSITORY_GATE_CATALOGS:
-        lines = (ROOT / relative_path).read_text(encoding="utf-8").splitlines()
-
-        assert "uv sync --frozen --extra dev --extra postgres" in lines
-        for command in PROJECT_ENVIRONMENT_GATE_COMMANDS:
-            assert any(
-                line == command or line.endswith(f" {command}") for line in lines
-            ), f"{relative_path}: missing project-environment command: {command}"
-
+def test_one_development_gate_and_entrypoint_links_use_the_project_environment() -> None:
+    development = (ROOT / "docs/Development.md").read_text()
+    for command in PROJECT_ENVIRONMENT_GATE_COMMANDS:
+        assert command in development.splitlines()
+    for relative_path in (*REPOSITORY_ENTRYPOINTS, "docs/Development.md"):
+        text = (ROOT / relative_path).read_text()
+        assert not [line for line in text.splitlines() if BARE_PYTHON_COMMAND.match(line)]
     for relative_path in REPOSITORY_ENTRYPOINTS:
-        lines = (ROOT / relative_path).read_text(encoding="utf-8").splitlines()
-        bare_commands = [line for line in lines if BARE_PYTHON_COMMAND.match(line)]
-        assert bare_commands == [], (
-            f"{relative_path}: bare Python commands bypass the uv project environment: "
-            f"{bare_commands}"
-        )
-
-    claude_entrypoint = " ".join(
-        (ROOT / "CLAUDE.md").read_text(encoding="utf-8").split()
-    )
-    assert "Use the repository gate defined in `AGENTS.md`" in claude_entrypoint
-    assert "`uv sync` does not activate the project environment" in claude_entrypoint
-    assert "every Python-based gate through `uv run`" in claude_entrypoint
+        text = (ROOT / relative_path).read_text()
+        assert "docs/README.md" in text
+    assert "docs/Development.md" in (ROOT / "AGENTS.md").read_text()
 
 
 def test_setuptools_remains_the_build_backend() -> None:

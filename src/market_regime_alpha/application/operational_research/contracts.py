@@ -329,7 +329,7 @@ class ETFThemeMappingEvidence:
 
 @dataclass(frozen=True, slots=True)
 class StatefulETFObservationEvidence:
-    """Explicit multi-horizon ETF inputs required by WP-STATE-01."""
+    """Explicit multi-horizon ETF inputs required by ."""
 
     etf_id: str
     benchmark_id: str
