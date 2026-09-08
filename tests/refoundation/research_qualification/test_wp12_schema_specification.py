@@ -33,10 +33,14 @@ def test_wp12_authority_relations_remain_present() -> None:
 
 def test_wp12_uses_exact_registered_migrations_and_no_generic_subject() -> None:
     migrations = sorted(item.name for item in BASELINE.parent.glob("*.sql"))
-    # The forward revision-gap correction does not replace the baseline or
+    # Forward-only registered corrections do not replace the baseline or
     # broaden WP-12's concrete Authority shapes below.
     assert migrations == [
-        "001_baseline.sql", "002_prospective_revision_gap.sql", "wp18q_track_a_c_v1.sql",
+        "001_baseline.sql",
+        "002_prospective_revision_gap.sql",
+        "003_daily_model_research.sql",
+        "004_daily_operational_closure.sql",
+        "wp18q_track_a_c_v1.sql",
     ]
     sql = BASELINE.read_text()
     for table in EXPECTED_RESEARCH_QUALIFICATION_TABLES:

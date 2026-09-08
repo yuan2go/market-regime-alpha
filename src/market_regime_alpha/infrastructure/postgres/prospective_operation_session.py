@@ -5,6 +5,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime
+import re
 from typing import TYPE_CHECKING, Any, Iterator, cast
 from uuid import UUID, uuid5
 
@@ -18,6 +19,7 @@ if TYPE_CHECKING:
 
 _ADMISSION_KEY = "runtime:prospective-operation-admission"
 _DATABASE_WRITER_KEY = "operator:prospective-database-writer"
+_DELIVERY_CHANNEL = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 _operation_session: ContextVar[PostgresProspectiveOperationSession | None] = ContextVar(
     "prospective_operation_session", default=None,
 )
@@ -73,6 +75,7 @@ def admit_runtime_attempt(connection: psycopg.Connection[Any], *, run_id: UUID |
     if (
         not session.prospective_run_matches(connection, run_id)
         and not session.daily_run_matches(connection, run_id)
+        and not session.daily_delivery_run_matches(connection, run_id)
         and not session.backtest_run_matches(connection, run_id)
     ):
         raise ValueError("OPERATION_RUNTIME_RUN_OUTSIDE_SERIES")
@@ -98,6 +101,7 @@ class PostgresProspectiveOperationSession:
         self.daily_scope: tuple[UUID,str,str,str | None,int] | None = None
         self.backtest_scope: tuple[UUID,str] | None = None
         self.daily_recovery_scope: tuple[UUID, str] | None = None
+        self.daily_delivery_scope: tuple[UUID, UUID, str, str, str] | None = None
         self.prospective_scope: ProspectiveRuntimeAdmission | None = None
         self.prospective_recovery_scopes: tuple[ProspectiveRuntimeAdmission, ...] = ()
 
@@ -327,6 +331,55 @@ class PostgresProspectiveOperationSession:
               AND NOT EXISTS(SELECT 1 FROM mra.runtime_step step WHERE step.run_id=run.run_id
                 AND step.implementation NOT LIKE %s))""",(run_id,fire,code,config,prefix+'%')).fetchone()==(True,)
 
+    def daily_delivery_run_matches(
+        self, connection: psycopg.Connection[Any], run_id: UUID | None
+    ) -> bool:
+        if self.daily_delivery_scope is None or run_id is None:
+            return False
+        prediction_id, use_id, code_sha, config_sha256, channel = (
+            self.daily_delivery_scope
+        )
+        expected_run_id = uuid5(prediction_id, "report-delivery:" + channel)
+        expected_schedule_id = uuid5(
+            use_id, "daily-delivery-schedule:" + channel
+        )
+        if run_id != expected_run_id:
+            return False
+        return connection.execute(
+            """
+            SELECT EXISTS(
+              SELECT 1
+              FROM mra.runtime_run AS run
+              JOIN mra.runtime_schedule AS schedule USING (schedule_id)
+              WHERE run.run_id = %s
+                AND run.schedule_id = %s
+                AND schedule.schedule_code = %s
+                AND schedule.runtime_mode = 'SHADOW'
+                AND run.runtime_mode = 'SHADOW'
+                AND run.fire_key = %s
+                AND run.code_sha = %s
+                AND run.config_hash = %s
+                AND (SELECT count(*) FROM mra.runtime_step AS step
+                     WHERE step.run_id = run.run_id) = 1
+                AND EXISTS(
+                  SELECT 1 FROM mra.runtime_step AS step
+                  WHERE step.run_id = run.run_id
+                    AND step.step_key = 'deliver-report'
+                    AND step.implementation = 'research.daily_delivery.deliver-report'
+                    AND step.external_effect_class = 'IDEMPOTENT_REMOTE_COMMAND'
+                )
+            )
+            """,
+            (
+                run_id,
+                expected_schedule_id,
+                "daily-delivery-" + use_id.hex + "-" + channel,
+                "daily-delivery:" + str(prediction_id) + ":" + channel,
+                code_sha,
+                config_sha256,
+            ),
+        ).fetchone() == (True,)
+
     def snapshot(self) -> dict[str, Any]:
         from market_regime_alpha.infrastructure.postgres.queries.evidence import read_evidence_snapshot
 
@@ -375,6 +428,10 @@ class PostgresProspectiveOperationSession:
             if lease_live:
                 return True
             if run_id in admitted_prospective_run_ids:
+                continue
+            if self.daily_run_matches(self.connection, run_id):
+                continue
+            if self.daily_delivery_run_matches(self.connection, run_id):
                 continue
             if self.daily_recovery_run_matches(self.connection, run_id):
                 continue
@@ -447,6 +504,7 @@ def prospective_series_admission(
     if (
         session.prospective_scope is not None
         or session.daily_scope is not None
+        or session.daily_delivery_scope is not None
         or session.backtest_scope is not None
     ):
         raise ValueError("OPERATION_NESTED_RUNTIME_ADMISSION")
@@ -474,7 +532,7 @@ def daily_research_admission(*, prediction_id: UUID, code_sha: str, config_sha25
     if session is None:
         raise ValueError('DAILY_OPERATION_REQUIRES_SUPERVISOR')
     session.require_supervisor_lock(session.series_code)
-    if session.prospective_scope is not None or session.daily_scope is not None or session.backtest_scope is not None:
+    if session.prospective_scope is not None or session.daily_scope is not None or session.daily_delivery_scope is not None or session.backtest_scope is not None:
         raise ValueError('DAILY_OPERATION_NESTED_HANDOFF')
     with session.connection.transaction():
         _admission_lock(session.connection)
@@ -490,13 +548,64 @@ def daily_research_admission(*, prediction_id: UUID, code_sha: str, config_sha25
 
 
 @contextmanager
+def daily_delivery_admission(
+    *,
+    prediction_id: UUID,
+    experimental_model_use_id: UUID,
+    code_sha: str,
+    config_sha256: str,
+    channel: str,
+) -> Iterator[None]:
+    """Bind one exact report/channel delivery Run to the existing supervisor."""
+
+    if not _DELIVERY_CHANNEL.fullmatch(channel):
+        raise ValueError("DAILY_DELIVERY_CHANNEL_INVALID")
+    session = _operation_session.get()
+    if session is None:
+        raise ValueError("DAILY_DELIVERY_REQUIRES_SUPERVISOR")
+    session.require_supervisor_lock(session.series_code)
+    if (
+        session.prospective_scope is not None
+        or session.daily_scope is not None
+        or session.daily_delivery_scope is not None
+        or session.backtest_scope is not None
+    ):
+        raise ValueError("DAILY_OPERATION_NESTED_HANDOFF")
+    with session.connection.transaction():
+        _admission_lock(session.connection)
+        if session.connection.execute(
+            """
+            SELECT EXISTS(
+              SELECT 1 FROM mra.runtime_attempt
+              WHERE state IN ('CLAIMED', 'RUNNING')
+                AND lease_until > clock_timestamp()
+            )
+            """
+        ).fetchone() != (False,):
+            raise ValueError("OPERATION_ACTIVE_ATTEMPT_CONFLICT")
+        session.daily_delivery_scope = (
+            prediction_id,
+            experimental_model_use_id,
+            code_sha,
+            config_sha256,
+            channel,
+        )
+    try:
+        if session.has_conflicting_attempts(session.series_code):
+            raise ValueError("OPERATION_ACTIVE_ATTEMPT_CONFLICT")
+        yield
+    finally:
+        session.daily_delivery_scope = None
+
+
+@contextmanager
 def backtest_research_admission(*, backtest_run_id: UUID, specification_sha256: str) -> Iterator[None]:
     """Planned Generic research uses the same reservation during collection pause."""
     session = _operation_session.get()
     if session is None:
         raise ValueError('BACKTEST_OPERATION_REQUIRES_SUPERVISOR')
     session.require_supervisor_lock(session.series_code)
-    if session.prospective_scope is not None or session.daily_scope is not None or session.backtest_scope is not None:
+    if session.prospective_scope is not None or session.daily_scope is not None or session.daily_delivery_scope is not None or session.backtest_scope is not None:
         raise ValueError('BACKTEST_OPERATION_NESTED_HANDOFF')
     with session.connection.transaction():
         _admission_lock(session.connection)

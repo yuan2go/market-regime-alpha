@@ -6,6 +6,7 @@ from dataclasses import asdict, is_dataclass, fields
 from datetime import datetime, timedelta
 from decimal import Decimal
 import json
+import re
 from typing import Any, TYPE_CHECKING, Callable
 from uuid import UUID, uuid5
 
@@ -21,7 +22,10 @@ from market_regime_alpha.research_qualification.domain.daily_prediction import D
 from market_regime_alpha.research_qualification.domain.daily_protocol import daily_evaluation_protocol
 from market_regime_alpha.research_qualification.domain.evaluation import EvaluationRunPlan
 from market_regime_alpha.research_qualification.domain.experiment import ExperimentDefinition, ExperimentPartitionBinding, ExperimentRunPlan
-from market_regime_alpha.research_qualification.domain.partition import ResearchPartitionPlan
+from market_regime_alpha.research_qualification.domain.partition import (
+    DecisionPartitionSource,
+    ResearchPartitionPlan,
+)
 from market_regime_alpha.research_qualification.domain.research_vocabulary import (
     PartitionPurpose,
     PartitionPopulationScope,
@@ -50,6 +54,20 @@ from market_regime_alpha.shared.time import DecisionTime
 
 if TYPE_CHECKING:
     from market_regime_alpha.bootstrap import TargetApplication
+
+
+_MODEL_USE_UNAVAILABLE = "MODEL_USE_UNAVAILABLE_FOR_NEW_PREDICTION"
+_ABSTENTION_LEASE_DURATION = timedelta(minutes=2)
+_ABSTENTION_REASONS = frozenset(
+    {
+        "MISSED_PUBLICATION_CUTOFF",
+        "DATA_READINESS_BUDGET_EXHAUSTED",
+        "NO_FEATURE_READY_MEMBERS",
+        "POPULATION_EVIDENCE_UNAVAILABLE",
+        "MODEL_USE_UNAVAILABLE",
+        "PROCESS_DOWNTIME_MISSED_PUBLICATION",
+    }
+)
 
 
 def prediction_steps(plan: DailyPredictionPlan) -> tuple[tuple[StepSpec, ...], tuple[StepDependency, ...]]:
@@ -96,6 +114,12 @@ class DailyResearchOperations:
         if not worker_id or not 1 <= maximum_steps <= 9:
             raise ValueError("daily execution requires a worker and a bounded step budget")
         self._before_action()
+        frozen_content = self._reads.run_plan_content(plan.runtime_run_id)
+        if frozen_content is None:
+            if not self._reads.model_use_available(plan):
+                raise RuntimeStateConflictError(_MODEL_USE_UNAVAILABLE)
+        elif frozen_content != encode_daily_plan(plan):
+            raise ArtifactIntegrityError("daily Runtime contains another frozen plan")
         ready = self._reads.ready(plan)
         if ready.state not in {"READY", "PARTIAL"}:
             raise RuntimeStateConflictError("daily DataReady refuses prediction: " + ready.state)
@@ -146,6 +170,18 @@ class DailyResearchOperations:
         for _ in range(maximum_steps):
             self._before_action()
             trace = self._app.runtime.inspect_run(plan.runtime_run_id)
+            model_step = next(
+                item for item in trace.steps if item.step_key == "model-forecast"
+            )
+            if (
+                model_step.state != "SUCCEEDED"
+                and not self._reads.model_use_available(plan)
+            ):
+                return self._stop_unavailable_model_run(
+                    plan,
+                    trace,
+                    worker_id=worker_id,
+                )
             pending = next((item for item in trace.steps if item.state == "READY"), None)
             if pending is None:
                 break
@@ -167,8 +203,100 @@ class DailyResearchOperations:
                     context=_context(plan, "missed:" + pending.step_key),
                 )
                 break
-            self.execute_step(plan, claim)
+            try:
+                self.execute_step(plan, claim)
+            except RuntimeStateConflictError as exc:
+                unavailable = _MODEL_USE_UNAVAILABLE in str(exc)
+                self._fail_live_claim(
+                    plan,
+                    claim,
+                    error_code=(
+                        _MODEL_USE_UNAVAILABLE
+                        if unavailable
+                        else "DAILY_PREDICTION_STEP_FAILED"
+                    ),
+                )
+                if unavailable:
+                    break
+                raise
+            except Exception:
+                self._fail_live_claim(
+                    plan,
+                    claim,
+                    error_code="DAILY_PREDICTION_STEP_FAILED",
+                )
+                raise
         return self._app.runtime.inspect_run(plan.runtime_run_id)
+
+    def _stop_unavailable_model_run(
+        self,
+        plan: DailyPredictionPlan,
+        trace: RunTrace,
+        *,
+        worker_id: str,
+    ) -> RunTrace:
+        """Make a revoked/expired pre-publication Run terminal and visible."""
+
+        pending = next((item for item in trace.steps if item.state == "READY"), None)
+        if pending is None:
+            # A live owner keeps its lease; an already terminal state remains
+            # immutable. Expired attempts were recovered before this check.
+            return trace
+        claim = self._app.runtime.claim_next(
+            run_id=plan.runtime_run_id,
+            step_id=pending.step_id,
+            worker_id=worker_id,
+            lease_duration=timedelta(minutes=5),
+            context=_context(
+                plan,
+                "claim-model-unavailable:"
+                + pending.step_key
+                + ":"
+                + str(pending.current_fence + 1),
+            ),
+        )
+        if claim is None:
+            return self._app.runtime.inspect_run(plan.runtime_run_id)
+        self._app.runtime.start_attempt(
+            claim,
+            _context(plan, "start-model-unavailable:" + str(claim.attempt_id)),
+        )
+        self._before_action()
+        self._app.runtime.fail_attempt(
+            claim,
+            error_class="RESEARCH",
+            error_code=_MODEL_USE_UNAVAILABLE,
+            context=_context(plan, "model-unavailable:" + str(claim.attempt_id)),
+        )
+        return self._app.runtime.inspect_run(plan.runtime_run_id)
+
+    def _fail_live_claim(
+        self,
+        plan: DailyPredictionPlan,
+        claim: AttemptClaim,
+        *,
+        error_code: str,
+    ) -> None:
+        """Terminalize ordinary failures; process termination remains lease recovery."""
+
+        try:
+            self._before_action()
+            trace = self._app.runtime.inspect_run(claim.run_id)
+            step = next(item for item in trace.steps if item.step_id == claim.step_id)
+            if (
+                step.current_attempt_id == claim.attempt_id
+                and step.state in {"CLAIMED", "RUNNING"}
+            ):
+                self._app.runtime.fail_attempt(
+                    claim,
+                    error_class="RESEARCH",
+                    error_code=error_code,
+                    context=_context(plan, "fail:" + str(claim.attempt_id)),
+                )
+        except (RuntimeError, ValueError, StopIteration):
+            # A lost supervisor/fence deliberately leaves recovery to the lease
+            # owner. Never replace the original business exception.
+            return
 
     def execute_step(self, plan: DailyPredictionPlan, claim: AttemptClaim) -> None:
         self._before_action()
@@ -218,6 +346,11 @@ class DailyResearchOperations:
         elif claim.step_key == "assess-context":
             app.decision_contexts.assess_context(self._reads.decision_run(plan), plan.context_policy_id, context, runtime_claim=claim)
         elif claim.step_key == "model-forecast":
+            # This read is an early rejection; the Model Forecast repository
+            # repeats it while holding the ExperimentalModelUse row lock in the
+            # forecast commit transaction, fencing a concurrent revocation.
+            if not self._reads.model_use_available(plan):
+                raise RuntimeStateConflictError(_MODEL_USE_UNAVAILABLE)
             if not any(member.eligible for member in self._reads.population(plan)):
                 # Close the canonical empty Signal/Forecast roster. No model is
                 # invoked and no forecast estimate/binding is created.
@@ -297,36 +430,19 @@ class DailyResearchOperations:
             raise ArtifactIntegrityError("daily report refuses unreconciled Decision Authority")
         projection = self._reads.forecast_projection(plan)
         self._before_action()
-        content, markdown = _render_report(plan, projection)
+        content, markdown = render_daily_report(plan, projection)
         json_artifact = self._app.artifacts.publish(content, media_type="application/json", context=_context(plan, "report-json"))
         markdown_artifact = self._app.artifacts.publish(markdown, media_type="text/markdown", context=_context(plan, "report-markdown"))
         return _binding(json_artifact), _binding(markdown_artifact)
 
     def abstain(self, plan: DailyPredictionPlan, *, reason: str, worker_id: str) -> dict[str, Any]:
-        if reason not in {
-            "MISSED_PUBLICATION_CUTOFF",
-            "DATA_READINESS_BUDGET_EXHAUSTED",
-            "NO_FEATURE_READY_MEMBERS",
-            "POPULATION_EVIDENCE_UNAVAILABLE",
-            "MODEL_USE_UNAVAILABLE",
-        }:
+        if reason not in _ABSTENTION_REASONS:
             raise ValueError("daily abstention reason is unsupported")
         self._before_action()
         ready = self._reads.ready(plan)
         run_id = uuid5(plan.prediction_id, "abstention-runtime")
         schedule_id = uuid5(plan.experimental_model_use_id, "daily-abstention-schedule")
-        payload = {
-            "schema": "daily-abstention-v1",
-            "prediction_id": plan.prediction_id,
-            "state": "ABSTAINED",
-            "reason_code": reason,
-            "plan_sha256": plan.content_sha256,
-            "data_ready": ready,
-            "model_version_id": plan.model_version_id,
-            "forecast_published": False,
-            "evidence_class": "EXPERIMENTAL_SHADOW",
-            "trading_instruction": False,
-        }
+        payload = _abstention_payload(plan, ready, reason)
         config = self._app.artifacts.publish(
             encode_daily_plan(plan), media_type="application/json", context=_context(plan, "abstention-plan")
         )
@@ -383,29 +499,71 @@ class DailyResearchOperations:
             claim = self._app.runtime.claim_next(
                 run_id=run_id,
                 worker_id=worker_id,
-                lease_duration=timedelta(minutes=2),
+                lease_duration=_ABSTENTION_LEASE_DURATION,
                 context=_context(plan, "abstention-claim:" + str(pending.current_fence + 1)),
             )
             if claim is not None:
                 self._app.runtime.start_attempt(claim, _context(plan, "abstention-start:" + str(claim.attempt_id)))
-                self._before_action()
-                artifact = self._app.artifacts.publish(
-                    _json(payload), media_type="application/json", context=_context(plan, "abstention-json")
-                )
-                self._app.runtime.succeed_attempt(claim, result_hash=artifact.content_sha256, context=_context(plan, "abstention-complete"))
+                try:
+                    self._before_action()
+                    artifact = self._app.artifacts.publish(
+                        _json(payload),
+                        media_type="application/json",
+                        context=_context(plan, "abstention-json"),
+                    )
+                    self._app.runtime.succeed_attempt(
+                        claim,
+                        result_hash=artifact.content_sha256,
+                        context=_context(plan, "abstention-complete"),
+                    )
+                except Exception:
+                    self._fail_live_claim(
+                        plan,
+                        claim,
+                        error_code="DAILY_ABSTENTION_STEP_FAILED",
+                    )
+                    raise
+        runtime = self._app.runtime.inspect_run(run_id)
+        state = (
+            "ABSTAINED"
+            if runtime.run_state == "SUCCEEDED"
+            else "ABSTENTION_RECOVERY_REQUIRED"
+            if runtime.run_state in {"FAILED", "WAITING", "CANCELLED"}
+            else "ABSTENTION_PROGRESS"
+        )
         return {
-            "state": "ABSTAINED",
+            "state": state,
             "reason_code": reason,
             "prediction_id": plan.prediction_id,
-            "runtime": self._app.runtime.inspect_run(run_id),
+            "runtime": runtime,
         }
+
+    def frozen_abstention_reason(self, plan: DailyPredictionPlan) -> str:
+        """Recover the exact reason from the immutable Step request identity."""
+
+        run_id = uuid5(plan.prediction_id, "abstention-runtime")
+        trace = self._app.runtime.inspect_run(run_id)
+        if len(trace.steps) != 1 or trace.steps[0].step_key != "abstain":
+            raise ArtifactIntegrityError("daily abstention Runtime shape changed")
+        ready = self._reads.ready(plan)
+        matches = tuple(
+            reason
+            for reason in sorted(_ABSTENTION_REASONS)
+            if canonical_json_sha256(_abstention_payload(plan, ready, reason))
+            == trace.steps[0].request_hash
+        )
+        if len(matches) != 1:
+            raise ArtifactIntegrityError(
+                "daily abstention reason cannot be recovered from frozen identity"
+            )
+        return matches[0]
 
     def replay(self, plan: DailyPredictionPlan) -> dict[str, Any]:
         decision = self._app.decision_support_verifier.verify(self._reads.decision_run(plan))
         if not decision.matched:
             raise ArtifactIntegrityError("daily replay refuses unreconciled Decision")
         projection = self._reads.forecast_projection(plan)
-        content, markdown = _render_report(plan, projection)
+        content, markdown = render_daily_report(plan, projection)
         bindings = tuple(
             self._reads.published_report(plan, key, payload) for key, payload in (("report-json", content), ("report-markdown", markdown))
         )
@@ -418,6 +576,149 @@ class DailyResearchOperations:
             "dataset_id": plan.dataset_id,
             "business_writes": 0,
         }
+
+    def replay_completed_cycle(self, plan: DailyPredictionPlan) -> dict[str, Any]:
+        """Verify published prediction and completed Evaluation without writes."""
+
+        prediction = self.replay(plan)
+        evaluation_id = uuid5(plan.prediction_id, "evaluation")
+        verification = self._app.research_evaluation_verifier.verify_evaluation_run(
+            evaluation_id
+        )
+        if not verification.matched:
+            raise ArtifactIntegrityError(
+                "daily cycle replay refuses unreconciled Evaluation"
+            )
+        projection = self._reads.forecast_projection(plan)
+        evaluation = self._reads.evaluation_projection(evaluation_id)
+        report = self._reads.published_report(
+            plan,
+            "evaluation-report-json",
+            _evaluation_report_content(plan, projection, evaluation),
+        )
+        return {
+            "prediction_id": plan.prediction_id,
+            "matched": True,
+            "mismatch_count": 0,
+            "prediction_reports": prediction["reports"],
+            "evaluation_id": evaluation_id,
+            "evaluation_report": report,
+            "research_dispositions": self._reads.research_dispositions(
+                plan.prediction_id
+            ),
+            "model_version_id": plan.model_version_id,
+            "experimental_model_use_id": plan.experimental_model_use_id,
+            "business_writes": 0,
+        }
+
+    def record_research_disposition(
+        self,
+        plan: DailyPredictionPlan,
+        *,
+        review_id: UUID,
+        reviewer_id: str,
+        disposition: str,
+        reason_code: str,
+    ) -> ArtifactBinding:
+        """Append one human research action without changing Model Governance."""
+
+        if disposition not in {
+            "CONTINUE_OBSERVATION",
+            "INVESTIGATE",
+            "STOP_FUTURE_USE",
+            "NO_DECISION",
+        }:
+            raise ValueError("daily research disposition is unsupported")
+        if not reviewer_id or len(reviewer_id) > 100:
+            raise ValueError("daily research reviewer identity is invalid")
+        if not re.fullmatch(r"[A-Z][A-Z0-9_]{0,99}", reason_code):
+            raise ValueError("daily research disposition reason is invalid")
+        evaluation_id = uuid5(plan.prediction_id, "evaluation")
+        verification = self._app.research_evaluation_verifier.verify_evaluation_run(
+            evaluation_id
+        )
+        if not verification.matched:
+            raise ArtifactIntegrityError(
+                "daily research disposition refuses unreconciled Evaluation"
+            )
+        projection = self._reads.forecast_projection(plan)
+        evaluation = self._reads.evaluation_projection(evaluation_id)
+        report_content = _evaluation_report_content(plan, projection, evaluation)
+        report = self._reads.published_report(
+            plan, "evaluation-report-json", report_content
+        )
+        idempotency_key = (
+            "daily:"
+            + str(plan.prediction_id)
+            + ":research-disposition:"
+            + str(review_id)
+        )
+        expected_identity = {
+            "schema": "daily-research-disposition-v1",
+            "review_id": str(review_id),
+            "prediction_id": str(plan.prediction_id),
+            "experimental_model_use_id": str(plan.experimental_model_use_id),
+            "model_version_id": str(plan.model_version_id),
+            "target_definition_id": str(plan.target_definition_id),
+            "evaluation_id": str(evaluation_id),
+            "evaluation_report": {
+                "artifact_id": str(report.artifact_id),
+                "content_sha256": {"value": str(report.content_sha256)},
+                "size_bytes": report.size_bytes,
+            },
+            "reviewer_id": reviewer_id,
+            "disposition": disposition,
+            "reason_code": reason_code,
+            "automatic_model_change": False,
+            "automatic_qualification_change": False,
+        }
+        existing = self._reads.published_artifact(idempotency_key)
+        if existing is not None:
+            binding, content = existing
+            value = json.loads(content)
+            if not isinstance(value, dict):
+                raise ArtifactIntegrityError(
+                    "daily research disposition content is not an object"
+                )
+            actual_identity = {
+                key: value.get(key) for key in expected_identity
+            }
+            if actual_identity != expected_identity or not isinstance(
+                value.get("reviewed_at"), str
+            ):
+                raise ArtifactIntegrityError(
+                    "daily research disposition idempotency key was reused"
+                )
+            return binding
+        reviewed_at = self._reads.now()
+        payload = {
+            "schema": "daily-research-disposition-v1",
+            "review_id": review_id,
+            "prediction_id": plan.prediction_id,
+            "experimental_model_use_id": plan.experimental_model_use_id,
+            "model_version_id": plan.model_version_id,
+            "target_definition_id": plan.target_definition_id,
+            "evaluation_id": evaluation_id,
+            "evaluation_report": report,
+            "reviewer_id": reviewer_id,
+            "reviewed_at": reviewed_at,
+            "disposition": disposition,
+            "reason_code": reason_code,
+            "automatic_model_change": False,
+            "automatic_qualification_change": False,
+        }
+        self._before_action()
+        record = self._app.artifacts.publish(
+            _json(payload),
+            media_type="application/json",
+            context=CommandContext(
+                idempotency_key,
+                ActorType.OPERATOR,
+                reviewer_id,
+                "DAILY_RESEARCH_DISPOSITION",
+            ),
+        )
+        return _binding(record)
 
     def schedule_outcomes(self, plan: DailyPredictionPlan) -> UUID | None:
         """Register a durable dependent Runtime Run at publication, not at maturity."""
@@ -559,114 +860,200 @@ class DailyResearchOperations:
             if claim is None:
                 break
             self._app.runtime.start_attempt(claim, _context(plan, "outcome-start:" + str(claim.attempt_id)))
-            context = _context(plan, "outcome:" + key)
-            if key.startswith("settle-"):
-                commitment = next(item for item in commitments if "settle-" + item.hex == key)
-                result = self._app.outcomes.settle_market_target_outcome(
-                    SettleMarketTargetOutcomeRequest(
-                        commitment, ready.target_window_end, self._reads.first_attempt_at(claim.step_id), None
-                    ),
-                    context,
-                    runtime_claim=claim,
+            try:
+                self._execute_outcome_step(
+                    plan=plan,
+                    claim=claim,
+                    key=key,
+                    ready=ready,
+                    projection=projection,
+                    commitments=commitments,
+                    target=target,
+                    protocol=protocol,
+                    partition_id=partition_id,
+                    experiment_id=experiment_id,
+                    partition_binding_id=partition_binding_id,
+                    experiment_run_id=experiment_run_id,
+                    evaluation_id=evaluation_id,
                 )
-                if isinstance(result, OutcomeNotDueResult):
-                    raise RuntimeStateConflictError("daily Outcome owner returned an inconsistent maturity window")
-            elif key == "freeze-partition":
-                self._app.research_partitions.freeze(
-                    ResearchPartitionPlan(
-                        partition_id,
-                        "daily-" + plan.prediction_id.hex,
-                        target.target_definition_id,
-                        target.version,
-                        target.content_sha256,
-                        PartitionPurpose.DISCOVERY,
-                        PartitionPopulationScope.ALL_COMMITMENTS,
-                        PartitionOverlapPolicy.DIAGNOSTIC_REUSE,
-                        "XSHG",
-                        plan.input_session_id,
-                        plan.input_session_id,
-                        0,
-                        0,
-                        0,
-                        "daily-" + plan.prediction_id.hex,
-                        1,
-                        plan.code_artifact,
-                        plan.config_artifact,
-                        plan.content_sha256,
-                    ),
-                    context,
-                    runtime_claim=claim,
+            except Exception:
+                self._fail_live_claim(
+                    plan,
+                    claim,
+                    error_code="DAILY_OUTCOME_STEP_FAILED",
                 )
-            elif key == "register-experiment":
-                binding = ExperimentPartitionBinding(
-                    partition_binding_id,
-                    experiment_id,
-                    1,
+                raise
+        return self._app.runtime.inspect_run(run_id)
+
+    def _execute_outcome_step(
+        self,
+        *,
+        plan: DailyPredictionPlan,
+        claim: AttemptClaim,
+        key: str,
+        ready: Any,
+        projection: dict[str, Any],
+        commitments: tuple[UUID, ...],
+        target: Any,
+        protocol: Any,
+        partition_id: UUID,
+        experiment_id: UUID,
+        partition_binding_id: UUID,
+        experiment_run_id: UUID,
+        evaluation_id: UUID,
+    ) -> None:
+        context = _context(plan, "outcome:" + key)
+        if key.startswith("settle-"):
+            commitment = next(
+                item for item in commitments if "settle-" + item.hex == key
+            )
+            result = self._app.outcomes.settle_market_target_outcome(
+                SettleMarketTargetOutcomeRequest(
+                    commitment,
+                    ready.target_window_end,
+                    self._reads.first_attempt_at(claim.step_id),
+                    None,
+                ),
+                context,
+                runtime_claim=claim,
+            )
+            if isinstance(result, OutcomeNotDueResult):
+                raise RuntimeStateConflictError(
+                    "daily Outcome owner returned an inconsistent maturity window"
+                )
+        elif key == "freeze-partition":
+            self._app.research_partitions.freeze(
+                ResearchPartitionPlan(
                     partition_id,
+                    "daily-" + plan.prediction_id.hex,
                     target.target_definition_id,
                     target.version,
                     target.content_sha256,
                     PartitionPurpose.DISCOVERY,
-                    self._reads.partition_hash(partition_id),
-                )
-                self._app.research_experiments.register(
-                    ExperimentDefinition(
-                        experiment_id,
-                        "daily-" + plan.prediction_id.hex,
-                        "Describe the frozen next-session prediction population.",
-                        "No fit, tuning or qualification change.",
-                        "A frozen ModelVersion may or may not add predictive value.",
-                        target.target_definition_id,
-                        target.version,
-                        target.content_sha256,
-                        "evaluation-protocol:" + str(protocol.evaluation_protocol_id),
-                        "Descriptive complete-population prediction evidence only.",
-                        plan.code_artifact,
-                        plan.config_artifact,
-                        plan.content_sha256,
+                    PartitionPopulationScope.ALL_COMMITMENTS,
+                    PartitionOverlapPolicy.DIAGNOSTIC_REUSE,
+                    "XSHG",
+                    plan.input_session_id,
+                    plan.input_session_id,
+                    0,
+                    0,
+                    0,
+                    "daily-" + plan.prediction_id.hex,
+                    1,
+                    plan.code_artifact,
+                    plan.config_artifact,
+                    plan.content_sha256,
+                    decision_source=DecisionPartitionSource(
+                        projection["decision_run_id"]
                     ),
-                    (binding,),
-                    context,
-                    runtime_claim=claim,
+                ),
+                context,
+                runtime_claim=claim,
+            )
+        elif key == "register-experiment":
+            binding = ExperimentPartitionBinding(
+                partition_binding_id,
+                experiment_id,
+                1,
+                partition_id,
+                target.target_definition_id,
+                target.version,
+                target.content_sha256,
+                PartitionPurpose.DISCOVERY,
+                self._reads.partition_hash(partition_id),
+            )
+            self._app.research_experiments.register(
+                ExperimentDefinition(
+                    experiment_id,
+                    "daily-" + plan.prediction_id.hex,
+                    "Describe the frozen next-session prediction population.",
+                    "No fit, tuning or qualification change.",
+                    "A frozen ModelVersion may or may not add predictive value.",
+                    target.target_definition_id,
+                    target.version,
+                    target.content_sha256,
+                    "evaluation-protocol:" + str(protocol.evaluation_protocol_id),
+                    "Descriptive complete-population prediction evidence only.",
+                    plan.code_artifact,
+                    plan.config_artifact,
+                    plan.content_sha256,
+                ),
+                (binding,),
+                context,
+                runtime_claim=claim,
+            )
+        elif key == "open-experiment-run":
+            self._app.research_experiments.open_run(
+                ExperimentRunPlan(
+                    experiment_run_id,
+                    experiment_id,
+                    partition_binding_id,
+                    "daily:" + str(plan.prediction_id),
+                ),
+                context,
+                runtime_claim=claim,
+            )
+        elif key == "open-evaluation":
+            self._app.research_evaluations.open_run(
+                EvaluationRunPlan(
+                    evaluation_id,
+                    experiment_run_id,
+                    protocol.evaluation_protocol_id,
+                    self._reads.first_attempt_at(claim.step_id),
+                    "daily:" + str(plan.prediction_id),
+                    plan.code_artifact,
+                    plan.config_artifact,
+                    plan.content_sha256,
+                ),
+                context,
+                runtime_claim=claim,
+            )
+        elif key == "acquire-outcome-inputs":
+            self._app.research_evaluations.acquire_outcome_inputs(
+                evaluation_id, context, runtime_claim=claim
+            )
+        elif key == "evaluate":
+            self._app.research_evaluations.complete(
+                evaluation_id, context, runtime_claim=claim
+            )
+        elif key == "evaluation-report":
+            verification = (
+                self._app.research_evaluation_verifier.verify_evaluation_run(
+                    evaluation_id
                 )
-            elif key == "open-experiment-run":
-                self._app.research_experiments.open_run(
-                    ExperimentRunPlan(experiment_run_id, experiment_id, partition_binding_id, "daily:" + str(plan.prediction_id)),
-                    context,
-                    runtime_claim=claim,
+            )
+            if not verification.matched:
+                raise ArtifactIntegrityError(
+                    "daily Evaluation report refuses unreconciled results"
                 )
-            elif key == "open-evaluation":
-                self._app.research_evaluations.open_run(
-                    EvaluationRunPlan(
-                        evaluation_id,
-                        experiment_run_id,
-                        protocol.evaluation_protocol_id,
-                        self._reads.first_attempt_at(claim.step_id),
-                        "daily:" + str(plan.prediction_id),
-                        plan.code_artifact,
-                        plan.config_artifact,
-                        plan.content_sha256,
-                    ),
-                    context,
-                    runtime_claim=claim,
-                )
-            elif key == "acquire-outcome-inputs":
-                self._app.research_evaluations.acquire_outcome_inputs(evaluation_id, context, runtime_claim=claim)
-            elif key == "evaluate":
-                self._app.research_evaluations.complete(evaluation_id, context, runtime_claim=claim)
-            elif key == "evaluation-report":
-                verification = self._app.research_evaluation_verifier.verify_evaluation_run(evaluation_id)
-                if not verification.matched:
-                    raise ArtifactIntegrityError("daily Evaluation report refuses unreconciled results")
-                report = self._app.artifacts.publish(
-                    _json({"prediction": projection, "evaluation": self._reads.evaluation_projection(evaluation_id)}),
-                    media_type="application/json",
-                    context=_context(plan, "evaluation-report-json"),
-                )
-                self._app.runtime.succeed_attempt(claim, result_hash=report.content_sha256, context=context)
-            else:
-                raise ValueError("unknown daily Outcome step")
-        return self._app.runtime.inspect_run(run_id)
+            evaluation = self._reads.evaluation_projection(evaluation_id)
+            report = self._app.artifacts.publish(
+                _evaluation_report_content(plan, projection, evaluation),
+                media_type="application/json",
+                context=_context(plan, "evaluation-report-json"),
+            )
+            self._app.runtime.succeed_attempt(
+                claim, result_hash=report.content_sha256, context=context
+            )
+        else:
+            raise ValueError("unknown daily Outcome step")
+
+
+def _abstention_payload(
+    plan: DailyPredictionPlan, ready: Any, reason: str
+) -> dict[str, Any]:
+    return {
+        "schema": "daily-abstention-v1",
+        "prediction_id": plan.prediction_id,
+        "state": "ABSTAINED",
+        "reason_code": reason,
+        "plan_sha256": plan.content_sha256,
+        "data_ready": ready,
+        "model_version_id": plan.model_version_id,
+        "forecast_published": False,
+        "evidence_class": "EXPERIMENTAL_SHADOW",
+        "trading_instruction": False,
+    }
 
 
 def _context(plan: DailyPredictionPlan, key: str) -> CommandContext:
@@ -690,6 +1077,60 @@ def _json(value: object) -> bytes:
         raise TypeError("unsupported daily report value")
 
     return (json.dumps(value, default=default, sort_keys=True, separators=(",", ":"), allow_nan=False) + "\n").encode()
+
+
+def _evaluation_denominators(
+    projection: dict[str, Any], evaluation: dict[str, Any]
+) -> dict[str, int]:
+    prediction = projection["denominators"]
+    metrics = evaluation["metrics"]
+
+    def estimable(prefix: str) -> int:
+        values = [
+            int(metric["estimable_count"])
+            for metric in metrics
+            if str(metric["metric_code"]).startswith(prefix)
+        ]
+        return min(values) if values else 0
+
+    model_estimable = estimable("model_")
+    baseline_estimable = estimable("rule_baseline_")
+    return {
+        "sampled": int(prediction["sampled"]),
+        "eligible": int(prediction["eligible"]),
+        "feature_ready": int(prediction["feature_ready"]),
+        "predicted": int(prediction["predicted"]),
+        "mature": int(evaluation["evaluation"]["observation_count"]),
+        "estimable": min(model_estimable, baseline_estimable),
+        "model_estimable": model_estimable,
+        "rule_baseline_estimable": baseline_estimable,
+    }
+
+
+def _evaluation_report_content(
+    plan: DailyPredictionPlan,
+    projection: dict[str, Any],
+    evaluation: dict[str, Any],
+) -> bytes:
+    return _json(
+        {
+            "prediction": projection,
+            "evaluation": evaluation,
+            "denominators": _evaluation_denominators(projection, evaluation),
+            "comparison": {
+                "model_metric_prefix": "model_",
+                "rule_baseline_metric_prefix": "rule_baseline_",
+            },
+            "research_disposition": "PENDING_HUMAN_REVIEW",
+            "research_disposition_artifact_key_prefix": (
+                "daily:"
+                + str(plan.prediction_id)
+                + ":research-disposition:"
+            ),
+            "automatic_model_change": False,
+            "automatic_qualification_change": False,
+        }
+    )
 
 
 def encode_daily_plan(plan: DailyPredictionPlan) -> bytes:
@@ -725,7 +1166,9 @@ def decode_daily_plan(content: bytes) -> DailyPredictionPlan:
     return DailyPredictionPlan(**value)
 
 
-def _render_report(plan: DailyPredictionPlan, projection: dict[str, Any]) -> tuple[bytes, bytes]:
+def render_daily_report(
+    plan: DailyPredictionPlan, projection: dict[str, Any]
+) -> tuple[bytes, bytes]:
     content = _json(projection)
     rows = projection["predictions"]
     markdown = "\n".join(

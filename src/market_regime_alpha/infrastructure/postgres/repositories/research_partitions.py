@@ -140,13 +140,14 @@ class PostgresResearchPartitionRepository:
                 request_identity, request_sha256,
                 source_backtest_run_id, source_backtest_arm_id,
                 source_backtest_fold_id, source_backtest_sha256,
-                source_context_kind, source_context_state
+                source_context_kind, source_context_state,
+                source_decision_run_id
             ) VALUES (
                 %s, %s, 'FROZEN', %s, %s, %s, %s, %s, %s,
                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                %s, %s, %s, %s, %s, %s
+                %s, %s, %s, %s, %s, %s, %s
             )
             """,
             (
@@ -189,6 +190,9 @@ class PostgresResearchPartitionRepository:
                 request_identity,
                 request_sha256,
                 *source_values,
+                None
+                if plan.decision_source is None
+                else plan.decision_source.decision_run_id,
             ),
         )
         with self._connection.cursor() as cursor:

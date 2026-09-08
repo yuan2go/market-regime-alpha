@@ -6,9 +6,13 @@ from uuid import uuid4
 import pytest
 
 from market_regime_alpha.research_qualification.domain import ArtifactBinding
-from market_regime_alpha.research_qualification.domain.partition import ResearchPartitionPlan
+from market_regime_alpha.research_qualification.application.partitions import (
+    partition_request_sha256,
+)
 from market_regime_alpha.research_qualification.domain.partition import (
     BacktestPartitionSource,
+    DecisionPartitionSource,
+    ResearchPartitionPlan,
 )
 from market_regime_alpha.research_qualification.domain.research_vocabulary import (
     PartitionOverlapPolicy,
@@ -19,6 +23,7 @@ from market_regime_alpha.decision_support.domain.context import (
     ContextKind,
     ContextState,
 )
+from market_regime_alpha.shared.hashing import canonical_json_sha256
 
 
 _HASH = "a" * 64
@@ -130,6 +135,45 @@ def test_partition_can_freeze_a_database_derived_exact_backtest_scope() -> None:
         "commitment_ids",
         "roster",
     }
+
+
+def test_partition_can_freeze_one_exact_decision_source() -> None:
+    source = DecisionPartitionSource(uuid4())
+    scoped = _plan(
+        purpose=PartitionPurpose.DISCOVERY,
+        overlap_policy=PartitionOverlapPolicy.DIAGNOSTIC_REUSE,
+        decision_source=source,
+    )
+
+    assert scoped.decision_source == source
+    assert scoped.content_sha256 != replace(
+        scoped, decision_source=None
+    ).content_sha256
+    with pytest.raises(ValueError, match="one exact Decision source"):
+        replace(
+            scoped,
+            backtest_source=BacktestPartitionSource(
+                exploratory_backtest_run_id=uuid4(),
+                exploratory_backtest_arm_id=uuid4(),
+                exploratory_backtest_fold_id=uuid4(),
+            ),
+        )
+
+
+def test_exact_decision_source_is_diagnostic_discovery_only() -> None:
+    with pytest.raises(ValueError, match="diagnostic discovery"):
+        _plan(decision_source=DecisionPartitionSource(uuid4()))
+
+
+def test_absent_decision_source_preserves_legacy_request_identity() -> None:
+    legacy = _plan()
+    old_shape = {
+        field.name: getattr(legacy, field.name)
+        for field in fields(legacy)
+        if field.name != "decision_source"
+    }
+
+    assert partition_request_sha256(legacy) == canonical_json_sha256(old_shape)
 
 
 def test_backtest_partition_context_slice_is_typed_paired_and_hashed() -> None:

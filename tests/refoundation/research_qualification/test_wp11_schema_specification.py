@@ -17,13 +17,17 @@ MIGRATIONS = ROOT / "src/market_regime_alpha/infrastructure/postgres/migrations"
 
 def test_refoundation_uses_exact_registered_migrations() -> None:
     migrations = sorted(item.name for item in MIGRATIONS.glob("*.sql"))
-    # The original baseline/bundle bytes remain immutable. The registered
-    # revision-gap correction is the sole numbered post-baseline migration.
+    # Every published bundle remains immutable and each correction is added as
+    # a separately registered, packaged migration.
     assert migrations == [
-        "001_baseline.sql", "002_prospective_revision_gap.sql", "wp18q_track_a_c_v1.sql",
+        "001_baseline.sql",
+        "002_prospective_revision_gap.sql",
+        "003_daily_model_research.sql",
+        "004_daily_operational_closure.sql",
+        "wp18q_track_a_c_v1.sql",
     ]
     assert len(EXPECTED_RESEARCH_VALIDITY_TABLES) == 14
-    assert len(EXPECTED_TARGET_TABLES) == 192
+    assert len(EXPECTED_TARGET_TABLES) == 194
 
 
 def test_wp11_relations_have_no_generic_or_future_placeholder_shape(

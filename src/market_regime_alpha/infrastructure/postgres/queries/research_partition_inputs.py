@@ -24,6 +24,35 @@ class PostgresPartitionInputQueries:
     def lock_target_and_calendar(
         self, plan: ResearchPartitionPlan
     ) -> PartitionCalendarBounds:
+        if plan.decision_source is not None:
+            source = self._connection.execute(
+                """
+                SELECT decision.decision_run_id
+                FROM mra.decision_run AS decision
+                WHERE decision.decision_run_id = %s
+                  AND decision.research_purpose = 'DISCOVERY'
+                  AND NOT EXISTS (
+                    SELECT 1
+                    FROM mra.exploratory_retrospective_decision_run AS historical
+                    WHERE historical.decision_run_id = decision.decision_run_id
+                  )
+                  AND EXISTS (
+                    SELECT 1
+                    FROM mra.decision_target_commitment AS commitment
+                    WHERE commitment.decision_run_id = decision.decision_run_id
+                      AND commitment.target_definition_id = %s
+                  )
+                FOR SHARE OF decision
+                """,
+                (
+                    plan.decision_source.decision_run_id,
+                    plan.target_definition_id,
+                ),
+            ).fetchone()
+            if source != (plan.decision_source.decision_run_id,):
+                raise PartitionInputError(
+                    "exact current Decision Partition source does not exist"
+                )
         if plan.backtest_source is not None:
             source = plan.backtest_source
             exact_source = self._connection.execute(
@@ -254,6 +283,11 @@ class PostgresPartitionInputQueries:
             if source is None or source.context_state is None
             else source.context_state.value,
         )
+        decision_source_id = (
+            None
+            if plan.decision_source is None
+            else plan.decision_source.decision_run_id
+        )
         base_count = self._connection.execute(
             """
             SELECT count(*)
@@ -276,6 +310,7 @@ class PostgresPartitionInputQueries:
               AND decision_session.session_date BETWEEN
                   start_session.session_date AND end_session.session_date
               AND (%s::text IS NULL OR commitment.candidate_disposition = %s)
+              AND (%s::uuid IS NULL OR commitment.decision_run_id = %s)
               AND (%s::uuid IS NULL OR (
                     backtest.exploratory_backtest_run_id = %s
                 AND backtest.exploratory_backtest_arm_id = %s
@@ -317,6 +352,8 @@ class PostgresPartitionInputQueries:
                 plan.exchange_code,
                 disposition,
                 disposition,
+                decision_source_id,
+                decision_source_id,
                 *source_values,
             ),
         ).fetchone()
@@ -354,6 +391,7 @@ class PostgresPartitionInputQueries:
                   AND decision_session.session_date BETWEEN
                       start_session.session_date AND end_session.session_date
                   AND (%s::text IS NULL OR commitment.candidate_disposition = %s)
+                  AND (%s::uuid IS NULL OR commitment.decision_run_id = %s)
                   AND (%s::uuid IS NULL OR (
                         backtest.exploratory_backtest_run_id = %s
                     AND backtest.exploratory_backtest_arm_id = %s
@@ -429,6 +467,8 @@ class PostgresPartitionInputQueries:
                 plan.exchange_code,
                 disposition,
                 disposition,
+                decision_source_id,
+                decision_source_id,
                 *source_values,
             ),
         ).fetchall()

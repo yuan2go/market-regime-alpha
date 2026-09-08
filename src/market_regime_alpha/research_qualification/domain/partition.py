@@ -63,6 +63,25 @@ class BacktestPartitionSource:
 
 
 @dataclass(frozen=True, slots=True)
+class DecisionPartitionSource:
+    """One exact canonical DecisionRun from which to derive the roster."""
+
+    decision_run_id: UUID
+    content_sha256: ContentHash = field(init=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "content_sha256",
+            ContentHash(
+                canonical_json_sha256(
+                    {"decision_run_id": self.decision_run_id}
+                )
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class ResearchPartitionPlan:
     """Caller declaration; the PostgreSQL adapter derives the member roster."""
 
@@ -86,6 +105,7 @@ class ResearchPartitionPlan:
     config_artifact: ArtifactBinding
     provenance_sha256: ContentHash | str
     backtest_source: BacktestPartitionSource | None = None
+    decision_source: DecisionPartitionSource | None = None
     content_sha256: ContentHash = field(init=False)
 
     def __post_init__(self) -> None:
@@ -107,6 +127,17 @@ class ResearchPartitionPlan:
                 raise ValueError(f"{name} must be non-negative")
         if isinstance(self.fold_ordinal, bool) or self.fold_ordinal < 1:
             raise ValueError("fold_ordinal must be positive")
+        if self.backtest_source is not None and self.decision_source is not None:
+            raise ValueError(
+                "Partition can freeze only one exact Decision source kind"
+            )
+        if (
+            self.decision_source is not None
+            and self.purpose is not PartitionPurpose.DISCOVERY
+        ):
+            raise ValueError(
+                "exact Decision Partition source is diagnostic discovery only"
+            )
         target_hash = ContentHash(str(self.target_definition_sha256))
         provenance_hash = ContentHash(str(self.provenance_sha256))
         object.__setattr__(self, "target_definition_sha256", target_hash)
@@ -153,6 +184,8 @@ class ResearchPartitionPlan:
         # Absence preserves every historical Partition request/hash byte.
         if self.backtest_source is not None:
             content["backtest_source"] = self.backtest_source
+        if self.decision_source is not None:
+            content["decision_source"] = self.decision_source
         object.__setattr__(
             self,
             "content_sha256",
@@ -160,4 +193,8 @@ class ResearchPartitionPlan:
         )
 
 
-__all__ = ["BacktestPartitionSource", "ResearchPartitionPlan"]
+__all__ = [
+    "BacktestPartitionSource",
+    "DecisionPartitionSource",
+    "ResearchPartitionPlan",
+]

@@ -71,7 +71,8 @@ def main(
             raise ValueError("OPERATION_GUARDED_PROSPECTIVE_ENTRY_REQUIRED: use mra archive prospective serve with --operation-config")
         operation_mode = (arguments.area == "archive" and arguments.archive_command == "prospective"
                           and arguments.prospective_command in {"serve", "preflight"})
-        settings = TargetSettings.from_environ(os.environ if environ is None else environ)
+        runtime_environ = os.environ if environ is None else environ
+        settings = TargetSettings.from_environ(runtime_environ)
         payload: object
         if operation_mode:
             if arguments.operation_config is None:
@@ -90,8 +91,17 @@ def main(
                 import baostock as sdk
                 with bootstrap_application(settings) as application:
                     daily_template=None
+                    daily_delivery_adapter = None
+                    daily_delivery_configuration: dict[str, object] = {
+                        "state": "NOT_CONFIGURED",
+                        "channels": (),
+                    }
                     if arguments.daily_plan_template is not None:
+                        from market_regime_alpha.interfaces.daily_delivery import (
+                            LegacyNotifierDeliveryAdapter,
+                        )
                         from market_regime_alpha.interfaces.daily_research import decode_daily_plan
+                        from market_regime_alpha.notifications import build_notifiers
                         from hashlib import sha256
                         daily_content=arguments.daily_plan_template.read_bytes()
                         daily_template=decode_daily_plan(daily_content)
@@ -99,12 +109,40 @@ def main(
                             raise ValueError('OPERATION_DAILY_CODE_IDENTITY_MISMATCH')
                         application.daily_prediction_reads.validate_configuration(daily_template)
                         guard.session.allow_expired_daily_recovery(daily_template.experimental_model_use_id, daily_template.code_sha)
+                        notifiers, unavailable_channels = build_notifiers(
+                            env=dict(runtime_environ)
+                        )
+                        if len(notifiers) > 1:
+                            raise ValueError(
+                                "OPERATION_DAILY_MULTIPLE_DELIVERY_CHANNELS_UNSUPPORTED"
+                            )
+                        if notifiers:
+                            daily_delivery_adapter = LegacyNotifierDeliveryAdapter(
+                                notifiers[0]
+                            )
+                            daily_delivery_configuration = {
+                                "state": "CONFIGURED",
+                                "channels": (notifiers[0].channel,),
+                            }
+                        elif unavailable_channels:
+                            daily_delivery_configuration = {
+                                "state": "NOT_CONFIGURED",
+                                "channels": tuple(
+                                    result.channel
+                                    for result in unavailable_channels
+                                ),
+                                "reason_codes": tuple(
+                                    "CHANNEL_UNAVAILABLE"
+                                    for _result in unavailable_channels
+                                ),
+                            }
                     preflight = guard.verify_startup(application)
                     preflight["provider_access"] = verify_provider_access(
                         sdk, timeout_seconds=operation_config.provider_timeout_seconds,
                     )
                     if daily_template is not None:
                         preflight['daily_template_sha256']=sha256(daily_content).hexdigest()
+                        preflight["daily_delivery"] = daily_delivery_configuration
                     preflight["health"] = (
                         application.prospective_health.inspect(operation_config.series_code)["summary"]
                         if arguments.prospective_command == "preflight"
@@ -153,7 +191,8 @@ def main(
                                 daily_result=daily_tick(application,daily_template,PerCaptureBaoStockProvider(sdk,
                                     timeout_seconds=operation_config.provider_timeout_seconds,maximum_rows=operation_config.provider_maximum_rows,
                                     maximum_response_bytes=operation_config.provider_maximum_response_bytes),worker_id=operation_config.worker_id,
-                                    maximum_steps=operation_config.maximum_attempts_per_tick,before_action=before_action)
+                                    maximum_steps=operation_config.maximum_attempts_per_tick,before_action=before_action,
+                                    delivery_adapter=daily_delivery_adapter)
                             except OperationStopped as exc:
                                 daily_result={'state':'OPERATOR_STOPPED','reason_code':exc.reason_code}
                         health = application.prospective_health.inspect(operation_config.series_code)

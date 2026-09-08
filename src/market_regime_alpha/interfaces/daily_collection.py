@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from hashlib import sha256
 import json
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Any, Callable
 from uuid import UUID, uuid5
 from zoneinfo import ZoneInfo
 
@@ -32,7 +32,7 @@ from market_regime_alpha.runtime.domain import (
     ExternalEffectClass,
 )
 from market_regime_alpha.runtime.errors import RuntimeStateConflictError, RuntimeNotFoundError
-from market_regime_alpha.runtime.ports import RunTrace
+from market_regime_alpha.runtime.ports import AttemptClaim, RunTrace, StepTrace
 from market_regime_alpha.shared.hashing import canonical_json_sha256
 from market_regime_alpha.shared.identity import ContentHash
 from market_regime_alpha.shared.time import require_utc
@@ -221,36 +221,128 @@ def collect_daily(
         if step.step_kind == "CAPTURE" and plan.phase in {"input", "population"} and app.daily_prediction_reads.now() >= ready.target_window_start:
             app.runtime.fail_attempt(claim, error_class="RESEARCH", error_code="MISSED_DATA_WINDOW", context=context("missed-window"))
             break
-        if plan.phase == "population":
-            # This is the real database-observed calendar date, not a guessed trading session.
-            observation_date = plan.requested_at.astimezone(ZoneInfo("Asia/Shanghai")).date()
-            query = BaoStockArchiveQuery(BaoStockArchiveQueryKind.CSI300_MEMBERS, observation_date, observation_date)
-            capture_key = "daily-population:" + str(frozen.prediction_id) + ":round:" + str(plan.round)
-        else:
-            instrument, code, session_date = next(row for row in roster if step.step_key.endswith(row[0].hex))
-            query = BaoStockArchiveQuery(BaoStockArchiveQueryKind.HISTORY_DAILY_RAW, session_date, session_date, code)
-            capture_key = "daily-" + plan.phase + ":" + str(frozen.prediction_id) + ":" + str(instrument) + ":round:" + str(plan.round)
-        before_action()
-        if step.step_kind == "CAPTURE":
-            if claim.attempt_no != 1:
-                raise RuntimeStateConflictError("DAILY_PROVIDER_EFFECT_REQUIRES_RECONCILIATION")
-            app.market.capture(
-                CaptureRequest(
-                    frozen.provider_product_id, capture_key, query.resource, ContentHash(canonical_json_sha256({"headers": {}}))
-                ),
-                provider,
-                context(step.step_key),
-                runtime_claim=claim,
+        try:
+            _execute_collection_step(
+                app=app,
+                plan=plan,
+                frozen=frozen,
+                roster=roster,
+                step=step,
+                claim=claim,
+                provider=provider,
+                context=context,
+                before_action=before_action,
             )
-        else:
-            capture_id = app.daily_prediction_reads.capture_by_key(frozen.provider_product_id, capture_key)
-            app.market.normalize(
-                capture_id,
-                BaoStockArchiveNormalizer(query, app.market_revision_lineage, app.archive_trading_sessions),
-                context(step.step_key),
-                runtime_claim=claim,
+        except Exception:
+            _fail_live_collection_claim(
+                app, plan, claim, context, before_action
             )
+            raise
     return app.runtime.inspect_run(plan.run_id)
+
+
+def _execute_collection_step(
+    *,
+    app: TargetApplication,
+    plan: DailyCollectionPlan,
+    frozen: DailyPredictionPlan,
+    roster: tuple[tuple[UUID, str, Any], ...],
+    step: StepTrace,
+    claim: AttemptClaim,
+    provider: MarketProvider,
+    context: Callable[[str], CommandContext],
+    before_action: Callable[[], None],
+) -> None:
+    if plan.phase == "population":
+        # This is the database-observed request date, never a guessed session.
+        observation_date = plan.requested_at.astimezone(
+            ZoneInfo("Asia/Shanghai")
+        ).date()
+        query = BaoStockArchiveQuery(
+            BaoStockArchiveQueryKind.CSI300_MEMBERS,
+            observation_date,
+            observation_date,
+        )
+        capture_key = (
+            "daily-population:"
+            + str(frozen.prediction_id)
+            + ":round:"
+            + str(plan.round)
+        )
+    else:
+        instrument, code, session_date = next(
+            row for row in roster if step.step_key.endswith(row[0].hex)
+        )
+        query = BaoStockArchiveQuery(
+            BaoStockArchiveQueryKind.HISTORY_DAILY_RAW,
+            session_date,
+            session_date,
+            code,
+        )
+        capture_key = (
+            "daily-"
+            + plan.phase
+            + ":"
+            + str(frozen.prediction_id)
+            + ":"
+            + str(instrument)
+            + ":round:"
+            + str(plan.round)
+        )
+    before_action()
+    if step.step_kind == "CAPTURE":
+        if claim.attempt_no != 1:
+            raise RuntimeStateConflictError(
+                "DAILY_PROVIDER_EFFECT_REQUIRES_RECONCILIATION"
+            )
+        app.market.capture(
+            CaptureRequest(
+                frozen.provider_product_id,
+                capture_key,
+                query.resource,
+                ContentHash(canonical_json_sha256({"headers": {}})),
+            ),
+            provider,
+            context(step.step_key),
+            runtime_claim=claim,
+        )
+    else:
+        capture_id = app.daily_prediction_reads.capture_by_key(
+            frozen.provider_product_id, capture_key
+        )
+        app.market.normalize(
+            capture_id,
+            BaoStockArchiveNormalizer(
+                query, app.market_revision_lineage, app.archive_trading_sessions
+            ),
+            context(step.step_key),
+            runtime_claim=claim,
+        )
+
+
+def _fail_live_collection_claim(
+    app: TargetApplication,
+    plan: DailyCollectionPlan,
+    claim: AttemptClaim,
+    context: Callable[[str], CommandContext],
+    before_action: Callable[[], None],
+) -> None:
+    try:
+        before_action()
+        trace = app.runtime.inspect_run(plan.run_id)
+        step = next(item for item in trace.steps if item.step_id == claim.step_id)
+        if (
+            step.current_attempt_id == claim.attempt_id
+            and step.state in {"CLAIMED", "RUNNING"}
+        ):
+            app.runtime.fail_attempt(
+                claim,
+                error_class="RESEARCH",
+                error_code="DAILY_COLLECTION_STEP_FAILED",
+                context=context("fail:" + str(claim.attempt_id)),
+            )
+    except (RuntimeError, ValueError, StopIteration):
+        return
 
 
 class PerCaptureBaoStockProvider:

@@ -1,5 +1,6 @@
 """Exact reads used by the existing Runtime's daily prediction steps."""
 
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Protocol
 from uuid import UUID
@@ -8,6 +9,23 @@ from market_regime_alpha.research_qualification.domain.daily_inputs import Daily
 from market_regime_alpha.research_qualification.domain.daily_prediction import DailyPopulationMember, DailyPredictionPlan
 from market_regime_alpha.research_qualification.domain.model import ArtifactBinding
 from market_regime_alpha.research_qualification.domain.targets import TargetDefinition
+
+
+@dataclass(frozen=True, slots=True)
+class DailyOutcomeWorkItem:
+    """Bounded Runtime discovery result; frozen bytes remain the request Authority."""
+
+    run_id: UUID
+    schedule_id: UUID
+    schedule_code: str
+    fire_key: str
+    parent_run_id: UUID | None
+    run_state: str
+    requested_at: datetime
+    code_sha: str
+    config_sha256: str
+    plan_content: bytes | None
+    error_code: str | None
 
 
 class DailyPredictionReads(Protocol):
@@ -24,3 +42,13 @@ class DailyPredictionReads(Protocol):
     def partition_hash(self, partition_id: UUID) -> str: ...
     def require_partition_roster(self, partition_id: UUID, commitments: tuple[UUID, ...]) -> None: ...
     def evaluation_projection(self, evaluation_id: UUID) -> dict[str, Any]: ...
+    def outcome_work_items(self, *, limit: int = 64) -> tuple[DailyOutcomeWorkItem, ...]: ...
+    def run_plan_content(self, run_id: UUID) -> bytes | None: ...
+    def model_use_available(self, plan: DailyPredictionPlan) -> bool: ...
+    def operational_health(self, plan: DailyPredictionPlan) -> dict[str, Any]: ...
+    def published_artifact(
+        self, idempotency_key: str
+    ) -> tuple[ArtifactBinding, bytes] | None: ...
+    def research_dispositions(
+        self, prediction_id: UUID
+    ) -> tuple[dict[str, Any], ...]: ...

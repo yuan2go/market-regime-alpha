@@ -176,7 +176,9 @@ def test_actual_daily_input_rejects_future_revision_and_never_uses_five_minute_b
         assert connection.execute("SELECT count(*) FROM mra.market_bar_revision WHERE bar_revision_id=%s", (bar_id,)).fetchone() == (1,)
 
 
-def test_actual_daily_runtime_freezes_complete_population_and_shared_feature(stack):
+def test_actual_daily_runtime_freezes_complete_population_and_shared_feature(
+    stack, monkeypatch
+):
     from datetime import datetime, time
     from zoneinfo import ZoneInfo
     from market_regime_alpha.bootstrap import TargetSettings, bootstrap_application
@@ -278,6 +280,15 @@ def test_actual_daily_runtime_freezes_complete_population_and_shared_feature(sta
     import time as elapsed_time
 
     with bootstrap_application(TargetSettings(stack.database_url, stack.store.root)) as app:
+        # This input/lease test intentionally uses the compact example plan instead
+        # of building a trained ModelVersion.  Keep the independent admission gate
+        # out of scope here; the PostgreSQL vertical tests exercise it with a real
+        # ExperimentalModelUse, including revocation during a partial Run.
+        monkeypatch.setattr(
+            app.daily_prediction_reads,
+            "model_use_available",
+            lambda _plan: True,
+        )
         candidate = C._candidate(feature, binding, binding)
         app.candidates.register_candidate_policy(candidate, research._context("daily-runtime-candidate", "REGISTER_CANDIDATE_POLICY"))
         now = app.daily_prediction_reads.now()
