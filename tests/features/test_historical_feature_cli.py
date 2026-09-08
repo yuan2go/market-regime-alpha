@@ -55,5 +55,3 @@ def test_replay_cli_classifies_semantic_divergence_as_canonical_regression(tmp_p
     assert status == 6
     assert payload["status"] == "CANONICAL_REGRESSION"
     assert payload["reason_codes"] == ["FEATURE_REPLAY_DIVERGED"]
-
-
