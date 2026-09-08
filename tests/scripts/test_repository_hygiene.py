@@ -65,3 +65,10 @@ def test_inventory_rejects_a_removed_internal_module_instead_of_resolving_its_pa
     assert unresolved_imports(tree, "tests.consumer", False, {"tests", "tests.contracts"}) == [
         "tests.contracts.removed_fixture"
     ]
+
+
+def test_inventory_rejects_a_removed_script_imported_through_its_namespace() -> None:
+    tree = ast.parse("from scripts import removed_runner as cli")
+    assert unresolved_imports(tree, "tests.consumer", False, {"scripts"}) == [
+        "scripts.removed_runner"
+    ]

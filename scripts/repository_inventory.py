@@ -111,6 +111,8 @@ def unresolved_imports(tree: ast.AST, module: str, is_package: bool, known: set[
         elif isinstance(node, ast.ImportFrom):
             name = node.module or ""
             declared.add(resolve_name("." * node.level + name, package) if node.level else name)
+            if not node.level and name in {"scripts", "historical_tools"}:
+                declared.update(name + "." + alias.name for alias in node.names)
     return sorted(name for name in declared
                   if name.startswith(("market_regime_alpha.", "tests.", "tests_historical.", "scripts.", "historical_tools."))
                   and name not in known)

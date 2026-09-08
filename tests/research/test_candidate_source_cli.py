@@ -10,7 +10,7 @@ from market_regime_alpha.research.provider_routing import CandidateRunSourceMode
 
 
 def _cli_module():
-    from scripts import run_wp3_candidate_research
+    from historical_tools import run_wp3_candidate_research
 
     return run_wp3_candidate_research
 

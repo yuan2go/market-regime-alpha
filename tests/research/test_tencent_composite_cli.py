@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 from market_regime_alpha.core.identity import DatasetId
 from market_regime_alpha.core.time import RetrievedAt
 from market_regime_alpha.data.contracts import DataEligibility
-from scripts import run_tencent_composite_exploratory as cli
+from historical_tools import run_tencent_composite_exploratory as cli
 
 
 TZ = ZoneInfo("Asia/Shanghai")

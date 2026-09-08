@@ -108,9 +108,6 @@ from market_regime_alpha.application.runtime_operations.query import (
     CanonicalDagNodeType,
     PostgresCanonicalRuntimeQuery,
 )
-from market_regime_alpha.application.runtime_operations.recovery_audit import (
-    PostgresRecoveryAudit,
-)
 from market_regime_alpha.application.research_evaluation import (
     EvaluationSampleDisposition,
     FrozenResearchEvaluationDataset,
@@ -1147,9 +1144,6 @@ def test_real_stateful_positive_path_reaches_research_candidate(
         )
         assert approval_decision.production_authorized is False
         assert len(access.audit_events(reader=approver.principal_id)) == 5
-        recovery_audit = PostgresRecoveryAudit(postgres_factory).inspect(checked_at=strategy_observed_at + timedelta(days=2, seconds=5))
-        assert recovery_audit.issues == ()
-        assert recovery_audit.portfolio_replay_verified_count == 1
         report = shadow_operations.report(shadow_command.session_id)
         assert report["authority"]["research_shadow_engineering_ready"] is True
         assert report["authority"]["prospective_proven"] is False

@@ -41,6 +41,7 @@ execution. Their original bytes remain intact. One tool retains its original
 the inventory marks it `HISTORICAL_PINNED_PATH`. Historical tools can reproduce
 their declared protocols; they do not authorize current service or new research.
 The two old live-loop scripts and unconsumed writer CLI wrappers are deleted.
+The orphaned recovery-command projection is also removed; owner replay remains.
 No old subsystem is wrapped under `mra`.
 
 ## Research composition and call chains
