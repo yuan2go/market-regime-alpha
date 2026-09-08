@@ -98,5 +98,3 @@ def test_evaluation_never_imports_market_provider_or_outcome_current_port() -> N
     assert "market_regime_alpha.market" not in source
     assert "market_regime_alpha.provider" not in source
     assert "market_bar_revision" not in source
-
-

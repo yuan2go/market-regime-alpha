@@ -120,7 +120,3 @@ def test_research_core_contains_no_generic_framework_or_cross_owner_shortcut() -
         if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)
     }
     assert "dependencies" not in field_names
-
-
-
-
