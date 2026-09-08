@@ -23,6 +23,14 @@ uv run python -m build
 git diff --check
 ```
 
+Consumer changes use focused CLI/application/replay tests first. Changes to the
+shared persistence factory require the affected PostgreSQL/account regression;
+released migration bytes stay fixed. Installed-command and import-closure guards
+cover the current research boundary. Historical tool import relocations retain
+behavior/serialization tests; retired CLI-only tests are removed with their entry,
+not replaced by weakened domain assertions. Run the full repository suite only
+when the affected boundary or acceptance scope requires it.
+
 For packaged-artifact smoke, install the built wheel into a fresh environment
 and run `mra --help` outside the checkout, then verify installed schema resources.
 Build success alone does not prove that the installed artifact imports.

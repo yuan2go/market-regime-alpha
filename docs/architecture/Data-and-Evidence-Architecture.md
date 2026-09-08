@@ -12,7 +12,9 @@ DDL. Fresh bootstrap and explicit registered additive upgrades are different
 operations. An operational scope cannot be destructively recreated.
 
 The separate retained `persistence/postgres/migrator.py:PostgresMigrator` loads
-its own numbered SQL resources for legacy applications. Those resources and
+its own numbered SQL resources for retained account, governance and historical
+applications. Current research changes belong only to `infrastructure/postgres`;
+empty per-package migration globs are not schema owners and have been removed. Those resources and
 tables are not the research schema and must not be summed into one catalog.
 The [inventory](code-inventory.json) lists every packaged SQL file with its
 checksum and declarations. Current table membership comes from

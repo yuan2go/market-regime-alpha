@@ -24,12 +24,9 @@ dependencies = [
 
 [project.scripts]
 mra = "market_regime_alpha.interfaces.cli:main"
-continuous-research = "market_regime_alpha.cli.continuous_research:main"
-state-system = "market_regime_alpha.cli.state_system:main"
 decision-system = "market_regime_alpha.cli.decision_system:main"
 model-governance = "market_regime_alpha.cli.model_governance:main"
 pit-authority = "market_regime_alpha.cli.pit_authority:main"
-research-shadow = "market_regime_alpha.cli.research_shadow:main"
 
 [project.optional-dependencies]
 postgres = []
@@ -49,15 +46,6 @@ market_regime_alpha = [
     "infrastructure/postgres/operational_upgrades/wp18q_track_a_c_v2.sql",
     "infrastructure/postgres/seeds/*.sql",
     "persistence/postgres/migrations/*.sql",
-    "platform/migrations/*.sql",
-    "decision/migrations/*.sql",
-    "portfolio/migrations/*.sql",
-    "position/migrations/*.sql",
-    "execution/migrations/*.sql",
-    "application/operational_research/migrations/*.sql",
-    "application/canonical_lifecycle/migrations/*.sql",
-    "application/controlled_operation/migrations/*.sql",
-    "features/migrations/*.sql",
 ]
 
 [tool.pytest.ini_options]
@@ -126,8 +114,6 @@ files = [
     "src/market_regime_alpha/migration/comparison/technical_observables.py",
     "src/market_regime_alpha/migration/legacy/adapters/technical_observables.py",
     "src/market_regime_alpha/cli/_feature_output.py",
-    "src/market_regime_alpha/cli/materialize_features.py",
-    "src/market_regime_alpha/cli/compare_legacy_features.py",
     "src/market_regime_alpha/cli/replay_feature_bundle.py",
     "src/market_regime_alpha/candidates/contracts.py",
     "src/market_regime_alpha/candidates/dataset.py",
@@ -189,8 +175,6 @@ files = [
     "src/market_regime_alpha/application/shadow_research/free_data_settlement.py",
     "src/market_regime_alpha/application/strategy_shadow/operator.py",
     "src/market_regime_alpha/research/state_system",
-    "src/market_regime_alpha/cli/continuous_research.py",
-    "src/market_regime_alpha/cli/state_system.py",
     "src/market_regime_alpha/application/trading_lifecycle/risk_reduction_lineage.py",
     "src/market_regime_alpha/application/trading_lifecycle/postgres_risk_reduction.py",
     "src/market_regime_alpha/application/daily_loop/__init__.py",
@@ -301,21 +285,22 @@ files = [
     "src/market_regime_alpha/research/xuntou_pit_v4_runtime.py",
     "src/market_regime_alpha/research/prr_artifact_reader.py",
     "src/market_regime_alpha/research/prr_artifact_schemas.py",
-    "scripts/run_mr1_overnight_morning_pop_validation.py",
-    "scripts/run_mr2_morning_pop_failure_decomposition.py",
-    "scripts/run_operational_research.py",
-    "scripts/run_mr2a_leak_free_regime.py",
+    "historical_tools/run_mr1_overnight_morning_pop_validation.py",
+    "historical_tools/run_mr2_morning_pop_failure_decomposition.py",
+    "historical_tools/run_operational_research.py",
+    "historical_tools/run_mr2a_leak_free_regime.py",
     "scripts/run_mr2b_f2a_conditionality_inputs.py",
-    "scripts/run_mr2b_f2b_statistical_closure.py",
-    "scripts/run_mr2b_f2b_v2_statistical_closure.py",
-    "scripts/run_mr2b_f2b_v3_statistical_closure.py",
-    "scripts/run_pit_candidate_replication.py",
-    "scripts/run_pit_candidate_replication_v2.py",
-    "scripts/run_research_layer.py",
-    "scripts/benchmark_feature_materialization.py",
+    "historical_tools/run_mr2b_f2b_statistical_closure.py",
+    "historical_tools/run_mr2b_f2b_v2_statistical_closure.py",
+    "historical_tools/run_mr2b_f2b_v3_statistical_closure.py",
+    "historical_tools/run_pit_candidate_replication.py",
+    "historical_tools/run_pit_candidate_replication_v2.py",
+    "historical_tools/run_research_layer.py",
+    "historical_tools/benchmark_feature_materialization.py",
     "tools/xuntou/probe_xtquant_pit_capabilities.py",
     "tools/xuntou/export_pit_validation_bundle_v4.py",
     "src/market_regime_alpha/legacy/dataset_contract_adapter.py",
+    "src/market_regime_alpha/legacy/inspect_runtime.py",
     "src/market_regime_alpha/legacy/eligibility_sidecar_adapter.py",
     "src/market_regime_alpha/legacy/macd_experiment_adapter.py",
     "src/market_regime_alpha/legacy/trading_calendar_adapter.py",

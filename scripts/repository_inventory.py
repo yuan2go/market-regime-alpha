@@ -18,6 +18,65 @@ OUTPUT = Path("docs/architecture/code-inventory.json")
 _SQL = re.compile(r"\b(FROM|JOIN|INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+(?:mra\.)?([a-z][a-z0-9_]+)", re.I)
 _TABLE = re.compile(r"\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:mra\.)?([a-z][a-z0-9_]+)", re.I)
 
+# Maintenance dispositions are reviewed metadata, never business routing or an admission registry.
+CONSUMER_DISPOSITIONS = {
+    'docs/operations/templates/refresh_backup.py': ('RETAIN', 'Canonical evidence / prospective CLI', 'DEPLOYMENT', 'Calls canonical mra inspection/backup/serve; supervisor lifecycle is not business scheduling authority.'),
+    'docs/operations/templates/verify_prospective_artifacts.py': ('RETAIN', 'Canonical evidence / prospective CLI', 'DEPLOYMENT', 'Calls canonical mra inspection/backup/serve; supervisor lifecycle is not business scheduling authority.'),
+    'historical_tools/analyze_capture_bias_stability.py': ('ARCHIVE', 'Capture bias historical analysis', 'HISTORICAL_TOOL', 'Moved from scripts without byte changes; uninstalled and undeployed; fixed protocol/Artifact identities are not current research authority.'),
+    'historical_tools/benchmark_feature_materialization.py': ('ARCHIVE', 'Historical Feature benchmark', 'HISTORICAL_TOOL', 'Moved from scripts without byte changes; uninstalled and undeployed; fixed protocol/Artifact identities are not current research authority.'),
+    'historical_tools/build_composite_operational_manifest.py': ('ARCHIVE', 'Historical composite manifest', 'HISTORICAL_TOOL', 'Moved from scripts without byte changes; uninstalled and undeployed; fixed protocol/Artifact identities are not current research authority.'),
+    'historical_tools/cosco_timing_report.py': ('ARCHIVE', 'Historical timing Artifact', 'HISTORICAL_TOOL', 'Moved from scripts without byte changes; uninstalled and undeployed; fixed protocol/Artifact identities are not current research authority.'),
+    'historical_tools/prepare_golden_loop_v2_campaign.py': ('ARCHIVE', 'Historical protocol preparation', 'HISTORICAL_TOOL', 'Moved from scripts without byte changes; uninstalled and undeployed; fixed protocol/Artifact identities are not current research authority.'),
+    'historical_tools/run_mr1_overnight_morning_pop_validation.py': ('ARCHIVE', 'Historical overnight-morning protocol', 'HISTORICAL_TOOL', 'Moved from scripts without byte changes; uninstalled and undeployed; fixed protocol/Artifact identities are not current research authority.'),
+    'historical_tools/run_mr2_morning_pop_failure_decomposition.py': ('ARCHIVE', 'Historical failure decomposition', 'HISTORICAL_TOOL', 'Moved from scripts without byte changes; uninstalled and undeployed; fixed protocol/Artifact identities are not current research authority.'),
+    'historical_tools/run_mr2a_leak_free_regime.py': ('ARCHIVE', 'Historical regime protocol', 'HISTORICAL_TOOL', 'Moved from scripts without byte changes; uninstalled and undeployed; fixed protocol/Artifact identities are not current research authority.'),
+    'historical_tools/run_mr2b_f2b_statistical_closure.py': ('ARCHIVE', 'Historical statistical closure', 'HISTORICAL_TOOL', 'Moved from scripts without byte changes; uninstalled and undeployed; fixed protocol/Artifact identities are not current research authority.'),
+    'historical_tools/run_mr2b_f2b_v2_statistical_closure.py': ('ARCHIVE', 'Historical statistical closure', 'HISTORICAL_TOOL', 'Moved from scripts without byte changes; uninstalled and undeployed; fixed protocol/Artifact identities are not current research authority.'),
+    'historical_tools/run_mr2b_f2b_v3_statistical_closure.py': ('ARCHIVE', 'Historical statistical closure', 'HISTORICAL_TOOL', 'Moved from scripts without byte changes; uninstalled and undeployed; fixed protocol/Artifact identities are not current research authority.'),
+    'historical_tools/run_operational_research.py': ('ARCHIVE', 'Historical operational bridge', 'HISTORICAL_TOOL', 'Moved from scripts without byte changes; uninstalled and undeployed; fixed protocol/Artifact identities are not current research authority.'),
+    'historical_tools/run_pit_candidate_replication.py': ('ARCHIVE', 'Historical candidate replication', 'HISTORICAL_TOOL', 'Moved from scripts without byte changes; uninstalled and undeployed; fixed protocol/Artifact identities are not current research authority.'),
+    'historical_tools/run_pit_candidate_replication_v2.py': ('ARCHIVE', 'Historical candidate replication', 'HISTORICAL_TOOL', 'Moved from scripts without byte changes; uninstalled and undeployed; fixed protocol/Artifact identities are not current research authority.'),
+    'historical_tools/run_prr_mvp_1_candidate_backtest.py': ('ARCHIVE', 'Historical candidate protocol', 'HISTORICAL_TOOL', 'Moved from scripts without byte changes; uninstalled and undeployed; fixed protocol/Artifact identities are not current research authority.'),
+    'historical_tools/run_research_layer.py': ('ARCHIVE', 'Historical research protocol', 'HISTORICAL_TOOL', 'Moved from scripts without byte changes; uninstalled and undeployed; fixed protocol/Artifact identities are not current research authority.'),
+    'historical_tools/run_signal_path_research.py': ('ARCHIVE', 'Historical signal protocol', 'HISTORICAL_TOOL', 'Moved from scripts without byte changes; uninstalled and undeployed; fixed protocol/Artifact identities are not current research authority.'),
+    'historical_tools/run_tencent_composite_exploratory.py': ('ARCHIVE', 'Historical auxiliary composite protocol', 'HISTORICAL_TOOL', 'Moved from scripts without byte changes; uninstalled and undeployed; fixed protocol/Artifact identities are not current research authority.'),
+    'historical_tools/run_wp3_candidate_research.py': ('ARCHIVE', 'Historical candidate protocol', 'HISTORICAL_TOOL', 'Moved from scripts without byte changes; uninstalled and undeployed; fixed protocol/Artifact identities are not current research authority.'),
+    'scripts/apply_postgres_migrations.py': ('RETAIN', 'PostgresMigrator', 'ACCOUNT_DATABASE_ADMIN', 'Explicit retained schema family; canonical research uses SchemaManager/evidence commands, never selects this by availability.'),
+    'scripts/assess_risk_reduction.py': ('RETAIN', 'Risk reduction / RepositoryFactory', 'ACCOUNT_ADMIN', 'Exact approval/account/Fill contracts lack a canonical replacement; hypothetical research results cannot substitute.'),
+    'scripts/bootstrap_postgres.py': ('RETAIN', 'Postgres bootstrap role/database preflight', 'ACCOUNT_DATABASE_ADMIN', 'Explicit retained schema family; canonical research uses SchemaManager/evidence commands, never selects this by availability.'),
+    'scripts/build_thesis_health.py': ('RETAIN', 'Thesis health / RepositoryFactory', 'ACCOUNT_ADMIN', 'Exact approval/account/Fill contracts lack a canonical replacement; hypothetical research results cannot substitute.'),
+    'scripts/check_docs_links.py': ('RETAIN', 'Repository maintenance', 'DEVELOPMENT', 'Source/docs/Git inspection only; no research or account authority.'),
+    'scripts/check_repository_hygiene.py': ('RETAIN', 'Repository maintenance', 'DEVELOPMENT', 'Source/docs/Git inspection only; no research or account authority.'),
+    'scripts/confirm_risk_reduction.py': ('RETAIN', 'RiskReductionManualIntent / RepositoryFactory', 'ACCOUNT_ADMIN', 'Exact approval/account/Fill contracts lack a canonical replacement; hypothetical research results cannot substitute.'),
+    'scripts/fetch_baostock_5min_batch.py': ('RETAIN', 'Auxiliary Provider raw export', 'RAW_SOURCE_TOOL', 'Raw bytes and failures remain auxiliary input; not Capture/Archive or formal/PIT authority.'),
+    'scripts/fetch_dividend_5min_csv.py': ('RETAIN', 'Auxiliary Provider raw export', 'RAW_SOURCE_TOOL', 'Raw bytes and failures remain auxiliary input; not Capture/Archive or formal/PIT authority.'),
+    'scripts/fetch_tushare_bars.py': ('RETAIN', 'Auxiliary Provider raw export', 'RAW_SOURCE_TOOL', 'Raw bytes and failures remain auxiliary input; not Capture/Archive or formal/PIT authority.'),
+    'scripts/fetch_yfinance_5min.py': ('RETAIN', 'Auxiliary Provider raw export', 'RAW_SOURCE_TOOL', 'Raw bytes and failures remain auxiliary input; not Capture/Archive or formal/PIT authority.'),
+    'scripts/qualify_generic_backtest_archive.py': ('RETAIN', 'bootstrap_application / MarketArchiveOperations', 'CANONICAL_ARCHIVE_OPERATOR', 'Freezes and seals archive inputs via canonical owner; no independent Backtest algorithm.'),
+    'scripts/reconcile_branches.py': ('RETAIN', 'Repository maintenance', 'DEVELOPMENT', 'Source/docs/Git inspection only; no research or account authority.'),
+    'scripts/record_manual_fill.py': ('RETAIN', 'Observed manual Fill / RepositoryFactory', 'ACCOUNT_ADMIN', 'Exact approval/account/Fill contracts lack a canonical replacement; hypothetical research results cannot substitute.'),
+    'scripts/record_manual_trade.py': ('RETAIN', 'Manual trade intent / RepositoryFactory', 'ACCOUNT_ADMIN', 'Exact approval/account/Fill contracts lack a canonical replacement; hypothetical research results cannot substitute.'),
+    'scripts/replay_lifecycle_review.py': ('RETAIN', 'TradingLifecycle review Artifact', 'ACCOUNT_REVIEW', 'Explicit manual lifecycle input/Artifact; no live execution or alternate research Runtime.'),
+    'scripts/repository_inventory.py': ('RETAIN', 'Repository maintenance', 'DEVELOPMENT', 'Source/docs/Git inspection only; no research or account authority.'),
+    'scripts/run_decision_lifecycle.py': ('RETAIN', 'Decision lifecycle / RepositoryFactory', 'ACCOUNT_ADMIN', 'Exact approval/account/Fill contracts lack a canonical replacement; hypothetical research results cannot substitute.'),
+    'scripts/run_engineering_verification.py': ('RETAIN', 'EngineeringVerificationRecord / legacy schema head', 'ACCOUNT_DATABASE_ADMIN', 'Explicit retained schema family; canonical research uses SchemaManager/evidence commands, never selects this by availability.'),
+    'scripts/run_lifecycle_review.py': ('RETAIN', 'TradingLifecycle review Artifact', 'ACCOUNT_REVIEW', 'Explicit manual lifecycle input/Artifact; no live execution or alternate research Runtime.'),
+    'scripts/run_mr2b_f2a_conditionality_inputs.py': ('ARCHIVE', 'Exact historical conditionality input reader', 'HISTORICAL_PINNED_PATH', 'Reader validates this exact relative path and source hash; preserve bytes/path, not a current research entry.'),
+    'scripts/run_portfolio_risk.py': ('RETAIN', 'Account portfolio risk / RepositoryFactory', 'ACCOUNT_ADMIN', 'Exact approval/account/Fill contracts lack a canonical replacement; hypothetical research results cannot substitute.'),
+    'scripts/verify_disaster_recovery.py': ('RETAIN', 'Postgres disaster recovery', 'ACCOUNT_DATABASE_ADMIN', 'Explicit retained schema family; canonical research uses SchemaManager/evidence commands, never selects this by availability.'),
+    'src/market_regime_alpha/cli/create_manual_trade_from_risk_decision.py': ('RETAIN', 'RiskReductionManualIntent', 'ACCOUNT_ADMIN', 'Called by confirm_risk_reduction; approved risk decision is not an observed Fill.'),
+    'src/market_regime_alpha/cli/decision_system.py': ('RETAIN', 'DecisionSystemApplication / DecisionRuntime / observed account owners', 'ACCOUNT_ADMIN', 'Typed old Runtime claim/fence and ModelLineage are required; no canonical observed-Fill/account replacement.'),
+    'src/market_regime_alpha/cli/model_governance.py': ('RETAIN', 'ModelGovernanceOperations / PostgreSQL formal governance', 'FORMAL_GOVERNANCE_ADMIN', 'Formal model evidence floors, revocation and selection are distinct from experimental Model use.'),
+    'src/market_regime_alpha/cli/pit_authority.py': ('RETAIN', 'PitAuthorityOperations / PostgreSQL PIT authority', 'FORMAL_GOVERNANCE_ADMIN', 'Exact provider evidence, qualifications and ACL/revocation have no canonical replacement.'),
+    'src/market_regime_alpha/cli/replay_canonical_lifecycle.py': ('RETAIN', 'Lifecycle durable replay', 'HISTORICAL_API', 'Creates a source-bound verification journal and report; source business results remain immutable; not zero-write replay.'),
+    'src/market_regime_alpha/cli/replay_controlled_operation.py': ('RETAIN', 'Controlled operation exact-package replay', 'HISTORICAL_API', 'Requires exact package and PostgreSQL runtime binding; no availability-selected report or execution runner.'),
+    'src/market_regime_alpha/cli/replay_feature_bundle.py': ('RETAIN', 'Feature exact-bundle replay', 'HISTORICAL_API', 'Recomputes the historical serialization from its exact Dataset; cannot publish new research authority.'),
+    'src/market_regime_alpha/interfaces/cli/__init__.py': ('RETAIN', 'bootstrap_application / canonical context Applications', 'CURRENT_RESEARCH', 'Only installed current research composition; explicit schema and Artifact scope.'),
+    'src/market_regime_alpha/legacy/inspect_runtime.py': ('MERGE', 'ContinuousResearch journal / Shadow report-replay / State pool decoder', 'HISTORICAL_READ_ONLY', 'Exact IDs and read-only connections; absorbs retained reads from retired entry points; never schedules or writes.'),
+    'tools/xuntou/export_pit_validation_bundle_v4.py': ('RETAIN', 'Xuntou capability/evidence export', 'RAW_SOURCE_TOOL', 'Provider observation for explicit qualification review; cannot grant provider or trading authority.'),
+    'tools/xuntou/probe_xtquant_pit_capabilities.py': ('RETAIN', 'Xuntou capability/evidence export', 'RAW_SOURCE_TOOL', 'Provider observation for explicit qualification review; cannot grant provider or trading authority.'),
+}
+
 
 def module_name(path: Path) -> str:
     parts = path.with_suffix("").parts
@@ -29,7 +88,7 @@ def module_name(path: Path) -> str:
 
 
 def imports(tree: ast.AST, module: str, is_package: bool) -> list[str]:
-    result = set()
+    result: set[str] = set()
     package = module if is_package else module.rpartition(".")[0]
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -45,7 +104,7 @@ def imports(tree: ast.AST, module: str, is_package: bool) -> list[str]:
 
 def unresolved_imports(tree: ast.AST, module: str, is_package: bool, known: set[str]) -> list[str]:
     package = module if is_package else module.rpartition(".")[0]
-    declared = set()
+    declared: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             declared.update(alias.name for alias in node.names)
@@ -53,7 +112,7 @@ def unresolved_imports(tree: ast.AST, module: str, is_package: bool, known: set[
             name = node.module or ""
             declared.add(resolve_name("." * node.level + name, package) if node.level else name)
     return sorted(name for name in declared
-                  if name.startswith(("market_regime_alpha.", "tests.", "tests_historical.", "scripts."))
+                  if name.startswith(("market_regime_alpha.", "tests.", "tests_historical.", "scripts.", "historical_tools."))
                   and name not in known)
 
 
@@ -79,9 +138,50 @@ def _contract_kind(path: str, node: ast.FunctionDef | ast.AsyncFunctionDef) -> s
     return "domain-and-serialization"
 
 
+def consumer_graph(source: dict[str, Any], entry_points: dict[str, str]) -> dict[str, Any]:
+    """Index actual executable roots and their static adapter closure, including uninstalled APIs."""
+    installed: dict[str, list[str]] = {}
+    for name, entry in entry_points.items():
+        module = "src/" + entry.split(":")[0].replace(".", "/")
+        path = module + ".py" if module + ".py" in source else module + "/__init__.py"
+        installed.setdefault(path, []).append(name)
+    roots = {
+        path for path, record in source.items()
+        if path in installed or record["module_entry"]
+        or (path.startswith(("scripts/", "historical_tools/", "tools/", "docs/operations/"))
+            and not Path(path).name.startswith("_"))
+        or (path.startswith("src/market_regime_alpha/cli/")
+            and any(name == "main" or name.endswith("_main") for name in record["symbols"]))
+    }
+    result = {}
+    for path in sorted(roots):
+        seen: set[str] = set()
+        pending = [path]
+        while pending:
+            dependency = pending.pop()
+            if dependency in seen:
+                continue
+            seen.add(dependency)
+            pending.extend(source.get(dependency, {}).get("imports", []))
+        decision = CONSUMER_DISPOSITIONS.get(path)
+        result[path] = {
+            "disposition": decision[0] if decision else None,
+            "owner": decision[1] if decision else None,
+            "scope": decision[2] if decision else None,
+            "reason": decision[3] if decision else None,
+            "installed_as": sorted(installed.get(path, [])),
+            "direct_imports": source[path]["imports"],
+            "reachable_modules": sorted(seen),
+            "sql_adapters": sorted(p for p in seen if source.get(p, {}).get("sql_references")),
+            "legacy_persistence_dependencies": sorted(p for p in seen if "/persistence/" in p),
+            "canonical_postgres_dependencies": sorted(p for p in seen if "/infrastructure/postgres/" in p),
+        }
+    return result
+
+
 def inventory(root: Path = ROOT) -> dict[str, Any]:
     paths = sorted({
-        *root.glob("src/**/*.py"), *root.glob("scripts/**/*.py"),
+        *root.glob("src/**/*.py"), *root.glob("scripts/**/*.py"), *root.glob("historical_tools/**/*.py"),
         *root.glob("tools/**/*.py"), *root.glob("docs/operations/**/*.py"),
         *root.glob("tests/**/*.py"), *root.glob("tests_historical/**/*.py"),
     })
@@ -158,6 +258,7 @@ def inventory(root: Path = ROOT) -> dict[str, Any]:
             "A module with no static consumers may be a public API, module CLI or historical decoder; do not auto-delete.",
         ],
         "entry_points": project["project"]["scripts"],
+        "consumer_graph": consumer_graph(source, project["project"]["scripts"]),
         "unresolved_internal_modules": unresolved,
         "source": source,
         "schema": schema,

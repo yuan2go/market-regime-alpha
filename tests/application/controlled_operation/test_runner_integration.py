@@ -69,8 +69,6 @@ from market_regime_alpha.application.operational_research.supplemental_artifact 
     publish_supplemental_research_evidence,
 )
 from market_regime_alpha.cli.replay_controlled_operation import main as replay_cli
-from market_regime_alpha.cli.report_controlled_operation import main as report_cli
-from market_regime_alpha.cli.settle_controlled_operation import main as settle_cli
 from market_regime_alpha.core.identity import ArtifactId, DatasetId, ModelId, ProviderId
 from market_regime_alpha.core.time import DecisionTime, RetrievedAt
 from market_regime_alpha.data.contracts import DataEligibility
@@ -797,38 +795,6 @@ def test_controlled_runner_uses_real_canonical_chain_and_is_idempotent(
         == 0
     )
     assert json.loads(capsys.readouterr().out)["replay_status"] == "STABLE"
-    assert (
-        report_cli(
-            [
-                "--output-root",
-                str(tmp_path / "operations"),
-                *postgres_cli_arguments(database),
-                "--run-id",
-                str(command.run_id),
-            ]
-        )
-        == 0
-    )
-    assert json.loads(capsys.readouterr().out)["outcome_status"] == "SETTLED"
-    assert (
-        settle_cli(
-            [
-                "--output-root",
-                str(tmp_path / "operations"),
-                *postgres_cli_arguments(database),
-                "--run-id",
-                str(command.run_id),
-                "--outcome-source-manifest",
-                str(settlement_inputs.outcome_source_manifest),
-                "--outcome-source-archive",
-                str(settlement_inputs.outcome_source_archive),
-                "--outcome-dataset",
-                str(settlement_inputs.outcome_dataset),
-            ]
-        )
-        == 0
-    )
-    assert json.loads(capsys.readouterr().out)["outcome_status"] == "SETTLED"
     assert all(
         marker not in str(path).lower()
         for marker in ("opportunity", "manual-trade", "fill", "broker", "order")

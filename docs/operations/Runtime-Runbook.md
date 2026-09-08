@@ -6,7 +6,7 @@
 This runbook describes available commands and safety boundaries, not a deployed
 service's current state. Use only the explicitly authorized project/database/
 user-job scope. Never stop an unknown process, substitute a restored writer, or
-reopen a terminal failed Run. Repository hygiene does not authorize deployment.
+reopen a terminal failed Run. Repository maintenance does not authorize deployment.
 
 ## Preflight and inspection
 
@@ -138,3 +138,27 @@ on-time capture rate, terminal coverage, backlog/planning gaps, restart
 recovery, and sustained days/windows. Failed terminal coverage is not capture
 success. Logs and diagnostic query timings cannot by themselves establish a
 historical timeout's root cause.
+
+## Retired entry points and historical inspection
+
+New research uses only the `mra` commands above. The former standalone research,
+state and shadow CLIs are no longer installed; there is no argument translator
+or fallback to their repositories. A frozen deployment keeps its own code and
+configuration until an explicitly authorized handoff; this source change does
+not restart services or resume old Runs with new semantics.
+
+For an explicitly identified historical database, use the uninstalled read-only
+inspection surface:
+
+```bash
+uv run python -m market_regime_alpha.legacy.inspect_runtime --help
+uv run python -m market_regime_alpha.legacy.inspect_runtime --database-url "$HISTORICAL_DATABASE_URL" --application-schema "$HISTORICAL_SCHEMA" runtime-replay --run-id "$HISTORICAL_RUN_ID"
+```
+
+Runtime/shadow inspection verifies the existing schema, never bootstraps it.
+Missing schema/identity is a rejection, not a reason to select another database.
+The inventory distinguishes this zero-write surface from durable lifecycle
+verification APIs that create their own replay journal. `historical_tools/`
+contains fixed-protocol reproduction tools, not current service launchers.
+Account/manual Fill and formal governance administration remain separately
+scoped; this is not authorization for full Runtime/CLI cutover.

@@ -65,7 +65,7 @@ from market_regime_alpha.research.platform_v2.inputs import (
     SymbolResearchObservation,
 )
 from tests.daily_decision.conftest import DailyDecisionFixture
-from scripts.run_operational_research import main as operational_research_main
+from historical_tools.run_operational_research import main as operational_research_main
 
 
 def _daily_bundle(fixture: DailyDecisionFixture) -> PhaseDDailyDecisionBundle:

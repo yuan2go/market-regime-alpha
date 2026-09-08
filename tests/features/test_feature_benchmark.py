@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from scripts.benchmark_feature_materialization import main
+from historical_tools.benchmark_feature_materialization import main
 from tests.postgres_path_repositories import postgres_cli_arguments
 
 

@@ -196,9 +196,6 @@ class RepositoryFactory:
     def composite(self):
         return PostgresCompositeOperationalRepository(self._postgres)
 
-    def model_registry(self):
-        return PostgresModelGovernanceRepository(self._postgres)
-
     def model_governance(self):
         return PostgresModelGovernanceRepository(self._postgres)
 

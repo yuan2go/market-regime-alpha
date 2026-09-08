@@ -4,8 +4,8 @@
 > **Code Evidence:** `pyproject.toml`, `src/market_regime_alpha/bootstrap.py`, `src/market_regime_alpha/infrastructure/postgres/schema.py`, `tests/contracts`
 
 This page describes checked-out implementation, not an operational database or
-research qualification. Exact local verification results belong to the hygiene
-execution record reached through the archive index.
+research qualification. Verification results must match the affected implementation and consumer
+scope; earlier hygiene evidence remains in the archive index.
 
 ## Reproducible schema facts
 
@@ -28,12 +28,25 @@ mixed-version operational checksum table here.
 | Daily research | Post-close DataReady; exact experimental Model use; independent forecasts; frozen publication; pending Outcome/evaluation and delivery recovery | Availability, actual publication time and real maturation are separately observed facts |
 | Economics | Typed deterministic fully funded independent episodes; root/child field reconciliation and full-path slicing | No continuous-account/tradability/Alpha claim; historical formula meanings remain unchanged |
 | Evidence operations | Exact database/Artifact identity, backup, integrity and restore/replay operations | A successful copy is a separate scope; missing original evidence remains missing |
-| Retained execution/account | Legacy CLIs and PostgreSQL owners remain installed and tested | No full Runtime/CLI cutover or broker admission |
+| Retained execution/account | Decision/account and formal governance commands remain installed; separate research CLI dispatch is retired | No full Runtime/CLI cutover or broker admission |
 
 No live service, operational evidence database, Provider capture or research
-result is changed or requalified by repository hygiene. Current operational
+result is changed or requalified by repository maintenance. Current operational
 facts must be obtained through the runbook's exact-scope status/health/replay
 commands under the relevant authorization.
+
+## Consumer convergence
+
+Four commands are installed: `mra`, `decision-system`, `model-governance` and
+`pit-authority`. The canonical research import closure does not depend on
+`research`, `platform`, `application/historical_corpus` or `persistence`.
+The generated inventory includes the complete executable consumer matrix and
+SQL-adapter closures. Historical tools are outside current execution; exact
+readers and the observed-account/governance exceptions remain explicit.
+
+No released SQL bytes, schema membership, research formula, Model/Outcome
+identity or operational database is changed. Source retirement does not prove
+live deployment or authorize account Runtime cutover.
 
 ## Repository maintenance verification
 

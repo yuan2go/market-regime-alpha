@@ -23,12 +23,25 @@ inventory, run affected behavior and hygiene checks, and preserve historical
 identities. The items below are investigations requiring concrete consumer and
 invariant evidence; they are not permission for a broad refactor.
 
+## Consumer convergence delivery
+
+The active dependency chain is executable consumer discovery → canonical entry
+convergence → dead wiring/package-data removal → exact historical/account
+boundary checks → risk-directed verification → clean local checkpoint.
+The consumer graph/dispositions are in the existing code inventory. New research
+enters only `mra` and `infrastructure/postgres`; historical protocol tools are
+non-current, and account/Fill/formal-governance exceptions remain explicit.
+
+Scope excludes finance changes, live deployment, account claim conversion and
+schema deletion. Complete targeted consumer, persistence, replay, architecture,
+static, docs and installed-artifact checks before declaring this delivery done.
+
 ## Remaining architectural debt
 
 | Boundary | Executable evidence | Smallest next investigation |
 |---|---|---|
-| Two persistence families | `infrastructure/postgres/schema.py` and `persistence/postgres/migrator.py`; installed legacy CLIs remain | Per-consumer invariant migration before any authorized cutover or deletion |
-| Research package overlap | `research`, `research_qualification`, `application/historical_corpus`, `platform`; imported by scripts and CLIs | Trace one concrete consumer before moving or deleting its owner |
+| Two persistence families | `infrastructure/postgres/schema.py` and `persistence/postgres/migrator.py`; account/Model/PIT consumers retain old claim and schema contracts | Map canonical Runtime claim admission and observed-account UoW ownership before deleting that family |
+| Research package overlap | `research`, `research_qualification`, `application/historical_corpus`, `platform`; historical tools plus account/formal-governance value contracts | Keep exact serializers; migrate one account/governance contract at a time when its replacement is authorized |
 | Large orchestration modules | `bootstrap.py`, `interfaces/daily_research.py`, `interfaces/cli/main.py` | Extract only when an independently demonstrated correctness/change boundary requires it |
 | SQL source-text architecture tests | Several retained tests inspect strings rather than AST/behavior | Replace only against an equivalent mutation-sensitive contract; names alone do not establish duplicates |
 | Historical external evidence | Explicit history tests require an exact database and Artifact root | Keep opt-in and fail closed when prerequisites are absent; never copy successful rows into failed history |
