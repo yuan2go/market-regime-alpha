@@ -3,7 +3,7 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Documentation navigation and precedence only
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-09-07
+> **Last Updated:** 2026-09-08
 > **Code Evidence:** `src/market_regime_alpha`, both legacy and target PostgreSQL migration packages, `tests`
 
 Documentation never creates implementation truth, research evidence,
@@ -51,6 +51,13 @@ Registered original-scope v7 and daily service handoff are separate from the
 historical v6 activation evidence above. Current actual execution results and
 pending future labels belong to Current State and the
 [daily exact-revision Verification](references/WP-DAILY-MODEL-RESEARCH-LOOP-01-Verification.md).
+Its operational continuation is governed by
+[WP-DAILY-RESEARCH-OPERATIONAL-CLOSURE-02 Design](references/WP-DAILY-RESEARCH-OPERATIONAL-CLOSURE-02-Design.md)
+and the ordered
+[Implementation Plan](references/WP-DAILY-RESEARCH-OPERATIONAL-CLOSURE-02-Implementation-Plan.md).
+They supersede only the v1 service assumptions that one current template must
+settle all history and that 64 elapsed sessions bound an entire Model-use life;
+the frozen research protocol and its immutable Verification remain unchanged.
 
 ## Normative authority order
 

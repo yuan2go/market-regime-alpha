@@ -3,10 +3,10 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Non-authoritative implementation status; exact-SHA qualification belongs to Verification
 > **Owner:** Market Regime Alpha maintainers
-> **Generated At:** 2026-09-08 daily model research loop
-> **Repository Implementation Checkpoint:** `00f9da049023b04b18ccc6d76297193584e6c813`
-> **Implementation Tree:** `d066f37921502146ceb47860ec7f4ff525bce5d6`
-> **Execution-Time Main Baseline:** `129d8bee09401277f0857eb2dd359ac428d2efca`
+> **Generated At:** 2026-09-08 operational-closure design checkpoint
+> **Repository Implementation Checkpoint:** in progress from `1562855928b2b7e839883838f367876cc49d7391`
+> **Implementation Tree:** reported by final Verification after implementation
+> **Execution-Time Main Baseline:** `1562855928b2b7e839883838f367876cc49d7391`
 > **Containing Documentation Commit:** reported by handoff; no self-referential SHA
 > **Schema Epochs:** legacy business `LEGACY_MIGRATIONS_001_106`; target `MRA_REFOUNDATION_1 / DRAFT / NOT_CUT_OVER`
 > **Code Evidence:** `src/market_regime_alpha/bootstrap.py`, target PostgreSQL schema/migrations, `tests/refoundation`, `tests/platform`, and immutable Verification records linked below
@@ -28,6 +28,21 @@ production_ready = false
 ```
 
 ## Daily model research loop
+
+`WP-DAILY-RESEARCH-OPERATIONAL-CLOSURE-02` is the active correction package.
+The execution-time audit confirms that the merged v1 consumer rejects its own
+downtime reason, discovers settlement work only for the current Model use,
+compares historical frozen work with the current template, and applies its
+64-session guard before excluding represented windows. Prospective first-
+generation admission also relies on absence of a conflicting generation instead
+of positive frozen-series proof. These are current defects until the package's
+implementation and Verification complete; the older successful slices below do
+not overrule them.
+
+The approved correction reuses Runtime/Artifact persistence, separates new-use
+prediction admission from all-use historical settlement, and introduces exact
+transient prospective manifest/Run admission. No original database upgrade,
+service restart or real notification is authorized by this package.
 
 The [new post-close protocol](../references/WP-DAILY-MODEL-RESEARCH-LOOP-01-Protocol.md)
 uses a shared exact daily close/open Feature and next-session close/open

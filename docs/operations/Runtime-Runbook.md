@@ -59,14 +59,26 @@ Known empty observations have bounded later rounds;
 unknown effects or failed Runs require exact owner reconciliation. No Provider
 retry is inferred from a process restart. After whole-process downtime, elapsed
 uncreated windows receive current-time abstentions, not backdated predictions.
-The service processes one missed window per tick and rejects an activation
-scope larger than 64 elapsed sessions.
+The service processes a bounded outstanding missed-window roster and records one
+current-time abstention per tick. The bound applies after existing prediction and
+abstention Runs are excluded; it does not cap the lifetime of a Model use.
 
-Before changing a template, revoke its use to stop new predictions and keep the
-old explicit template running until its published pending Outcomes are settled.
-Only then install a newly declared compatible use/template. Revocation does not
-invalidate historical reports or cancel the obligation to evaluate predictions.
-Do not redirect old pending work to a different ModelVersion or code profile.
+Before changing a template, revoke its use to stop new predictions, then install
+only an independently declared compatible use/template. The service discovers
+published pending Outcomes from every frozen daily Outcome Run, so the old
+template need not remain the active prediction template. Revocation, expiry or
+replacement does not invalidate reports or cancel evaluation. Every historical
+task reloads its own ModelVersion, Target, input/config Artifact and code SHA; do
+not redirect it to the current template.
+
+Prediction generation, report Artifact publication and notification delivery are
+separate states and identities. With no explicitly configured channel or
+credential, delivery is `NOT_CONFIGURED`: no network request occurs and prediction
+or Outcome recovery continues. A configured delivery uses an independent Runtime
+Attempt/receipt. Unknown remote effect is `WAITING` for reconciliation, never
+permission to resend; retry is allowed only after the adapter proves the effect
+absent. Inspect daily health for last publication, pending maturity/settlement,
+waiting/failed tasks, calendar margin, Model-use expiry and factual data freshness.
 
 The project supervisor handles lifecycle only. For the configured current-user
 label, disable first, send SIGTERM, and inspect until the owned process exits;
