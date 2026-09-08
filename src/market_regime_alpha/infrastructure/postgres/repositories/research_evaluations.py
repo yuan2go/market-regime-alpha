@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from market_regime_alpha.infrastructure.postgres.queries.experimental_evaluation_inputs import experimental_metric_sources
+
 from typing import Any, Callable
 from datetime import date
 from uuid import UUID
@@ -497,6 +499,8 @@ class PostgresEvaluationRepository:
         evaluation_run_id: UUID,
         metric: ProtocolMetricDefinition,
     ) -> list[tuple[Any, ...]]:
+        if metric.source_kind is EvaluationSourceKind.EXPERIMENTAL_FORECAST_OUTCOME_PAIR:
+            return experimental_metric_sources(self._connection, evaluation_run_id, metric)
         return self._connection.execute(
             """
             SELECT observation.evaluation_observation_id,
@@ -700,13 +704,14 @@ class PostgresEvaluationRepository:
     ) -> None:
         if (
             metric.slice_kind is EvaluationSliceKind.EXPLORATORY_BACKTEST_ARM
-            or metric.source_kind is not EvaluationSourceKind.OUTCOME_METRIC
+            or metric.source_kind not in {EvaluationSourceKind.OUTCOME_METRIC, EvaluationSourceKind.EXPERIMENTAL_FORECAST_OUTCOME_PAIR}
         ):
             self._insert_backtest_arm_sources(evaluation_run_id, metric, resolved, input_ids)
         table = {
             EvaluationSourceKind.CANDIDATE_DISPOSITION: "candidate",
             EvaluationSourceKind.SIGNAL_STATUS: "signal",
             EvaluationSourceKind.FORECAST_OUTCOME_PAIR: "forecast",
+            EvaluationSourceKind.EXPERIMENTAL_FORECAST_OUTCOME_PAIR: "forecast",
             EvaluationSourceKind.CANDIDATE_OUTCOME_PAIR: "candidate_outcome",
             EvaluationSourceKind.PORTFOLIO_LINE: "portfolio",
             EvaluationSourceKind.PORTFOLIO_OUTCOME: "portfolio",

@@ -53,7 +53,7 @@ from tests.refoundation.research_qualification import (
 SHANGHAI = ZoneInfo("Asia/Shanghai")
 
 
-def seed_complete_archive(application, *, episode_entry=False, multi_episode=False):
+def seed_complete_archive(application, *, episode_entry=False, multi_episode=False, daily_bars=False):
     provider = Provider(
         uuid4(),
         "wp17p_fixture",
@@ -262,6 +262,17 @@ def seed_complete_archive(application, *, episode_entry=False, multi_episode=Fal
             )
         ),
     )
+    if daily_bars:
+        from dataclasses import replace
+        daily=[]
+        for index,instrument in enumerate(instrument_ids):
+            for offset,session in enumerate(sessions):
+                value=Decimal(10)+(Decimal(index+1)*Decimal(".001")*(1 if offset%2 else -1))
+                bar=_bar(product.provider_product_id,capture_id,instrument,session,"REFERENCE",index)
+                daily.append(replace(bar,bar_revision_id=uuid4(),timeframe=BarTimeframe.DAILY,
+                    event_start=session.open_at,event_end=session.close_at,open=Money(Decimal(10),"CNY"),
+                    close=Money(value,"CNY"),high=Money(Decimal(11),"CNY"),low=Money(Decimal(9),"CNY")))
+        batch=replace(batch,bars=(*batch.bars,*daily))
     if episode_entry:
         from dataclasses import replace
         entry_bars = []

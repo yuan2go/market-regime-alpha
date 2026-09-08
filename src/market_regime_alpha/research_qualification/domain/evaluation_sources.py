@@ -71,8 +71,11 @@ def resolve_metric_inputs(
         if (
             metric.slice_kind is EvaluationSliceKind.EXPLORATORY_BACKTEST_ARM
             or metric.source_kind is not EvaluationSourceKind.OUTCOME_METRIC
-        ) and not has_backtest_arm:
+        ) and metric.source_kind is not EvaluationSourceKind.EXPERIMENTAL_FORECAST_OUTCOME_PAIR and not has_backtest_arm:
             raise EvaluationReconciliationError("exploratory metric source lacks exact Backtest arm lineage")
+        if metric.source_kind is EvaluationSourceKind.EXPERIMENTAL_FORECAST_OUTCOME_PAIR:
+            if len(source) != 46 or source[45] != metric.experimental_model_use_id or has_backtest_arm:
+                raise EvaluationReconciliationError("experimental forecast source lacks its exact independent model use")
         value_status = str(source[5])
         decimal_value = source[6]
         boolean_value = source[7]
@@ -99,7 +102,7 @@ def resolve_metric_inputs(
                 boolean_value = signal_status == "PRESENT"
                 value_status = "COMPLETE"
             decimal_value = None
-        elif metric.source_kind is EvaluationSourceKind.FORECAST_OUTCOME_PAIR:
+        elif metric.source_kind in {EvaluationSourceKind.FORECAST_OUTCOME_PAIR, EvaluationSourceKind.EXPERIMENTAL_FORECAST_OUTCOME_PAIR}:
             if source[26] is None or source[28] is None:
                 raise EvaluationReconciliationError("Forecast source is absent or ambiguous")
             decimal_value = source[29]
@@ -246,7 +249,7 @@ def formula_observations(
         group_keys = tuple(dict.fromkeys(item.input.group_key or "ALL" for item in resolved))
         for group_key in group_keys:
             members = tuple(item for item in resolved if (item.input.group_key or "ALL") == group_key)
-            ranking_index = 29 if metric.source_kind is EvaluationSourceKind.FORECAST_OUTCOME_PAIR else 37
+            ranking_index = 29 if metric.source_kind in {EvaluationSourceKind.FORECAST_OUTCOME_PAIR, EvaluationSourceKind.EXPERIMENTAL_FORECAST_OUTCOME_PAIR} else 37
             if any(item.source[ranking_index] is None for item in members):
                 continue
             ranked = tuple(

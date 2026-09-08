@@ -26,6 +26,7 @@ class TargetTimingRule(StrEnum):
 
 class TargetReferenceRule(StrEnum):
     EXACT_SESSION_BAR = "EXACT_SESSION_BAR"
+    EXACT_COMPLETED_SESSION_DAILY_BAR = "EXACT_COMPLETED_SESSION_DAILY_BAR"
 
 
 class TargetBarTimeframe(StrEnum):
@@ -60,6 +61,7 @@ class TargetFinalityRule(StrEnum):
 
 class TargetMetricKind(StrEnum):
     SIMPLE_RETURN = "SIMPLE_RETURN"
+    OBSERVATION_RETURN = "OBSERVATION_RETURN"
     MAX_FAVORABLE_EXCURSION = "MAX_FAVORABLE_EXCURSION"
     MAX_ADVERSE_EXCURSION = "MAX_ADVERSE_EXCURSION"
     BARRIER_HIT = "BARRIER_HIT"

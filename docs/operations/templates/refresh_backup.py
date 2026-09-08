@@ -20,6 +20,7 @@ from market_regime_alpha.bootstrap import TargetSettings
 from market_regime_alpha.interfaces.prospective_operation_guard import operational_session
 from market_regime_alpha.interfaces.prospective_operations import load_operation_config, implementation_source_sha256
 from verify_prospective_artifacts import verify_scope
+from market_regime_alpha.interfaces.daily_research import decode_daily_plan
 
 HERE = Path(__file__).resolve().parent
 DEPLOYMENT = json.loads((HERE / "deployment.json").read_text())
@@ -71,7 +72,7 @@ def main():
     if UID != DEPLOYMENT["uid"] or LABEL != "local.mra.prospective.r2-xshg32":
         raise ValueError("OPERATOR_SCOPE_MISMATCH")
     disabled = subprocess.run(["launchctl", "print-disabled", f"gui/{UID}"], capture_output=True, text=True, check=True).stdout
-    if re.search(r'"' + re.escape(LABEL) + r'"\s*=>\s*true', disabled):
+    if re.search(r'"' + re.escape(LABEL) + r'"\s*=>\s*(?:true|disabled)\b', disabled):
         raise ValueError("SERVICE_INTENTIONALLY_DISABLED")
     plist_path = Path(DEPLOYMENT["plist"])
     if plist_path.stat().st_uid != UID or plist_path.stat().st_mode & 0o077:
@@ -122,7 +123,7 @@ def main():
         command("unload", ["launchctl", "bootout", TARGET])
     # The same current Runtime admission reservation excludes racing claims
     # throughout the source snapshot. The backup itself has no business writes.
-    destination = HERE / "backups" / f"original-v6-{STAMP}"
+    destination = HERE / "backups" / f"original-{config.catalog_checksum[:12]}-{STAMP}"
     with operational_session(TargetSettings.from_environ(os.environ), config) as guard:
         snapshot = guard.snapshot()
         # Creating a new read-only backup does not depend on the old backup's
@@ -152,7 +153,11 @@ def main():
         )
         guard.config = updated
         guard.verify_backup(snapshot)
-        observations = verify_scope(TargetSettings.from_environ(os.environ), updated, guard, f"operation-refresh:{STAMP}")
+        daily_template = DEPLOYMENT.get("daily_plan_template")
+        observations = verify_scope(
+            TargetSettings.from_environ(os.environ), updated, guard, f"operation-refresh:{STAMP}",
+            daily_plan=decode_daily_plan(Path(daily_template).read_bytes()) if daily_template else None,
+        )
         event(
             "prospective-artifact-observations",
             observations=observations,
@@ -191,7 +196,8 @@ def main():
     # One bounded preflight request. Failure does not restart or retry a Provider.
     command(
         "preflight",
-        MRA + ["archive", "prospective", "preflight", "--operation-config", str(PROFILE), "--expected-database-name", config.database_name],
+        MRA + ["archive", "prospective", "preflight", "--operation-config", str(PROFILE), "--expected-database-name", config.database_name]
+        + (["--daily-plan-template", DEPLOYMENT["daily_plan_template"]] if DEPLOYMENT.get("daily_plan_template") else []),
     )
     command("start", ["launchctl", "bootstrap", f"gui/{UID}", str(plist_path)])
     # Rotation follows controlled process restarts; old log originals stay intact.

@@ -390,8 +390,10 @@ class TargetDecisionSnapshot:
             raise ValueError("Target reference price basis is unsupported")
         if self.value_field not in _TARGET_VALUE_FIELDS:
             raise ValueError("Target reference value field is unsupported")
-        if self.reference_rule != "EXACT_SESSION_BAR":
+        if self.reference_rule not in {"EXACT_SESSION_BAR", "EXACT_COMPLETED_SESSION_DAILY_BAR"}:
             raise ValueError("Target reference rule must require the exact session bar")
+        if self.reference_rule == "EXACT_COMPLETED_SESSION_DAILY_BAR" and (self.timeframe != "DAILY" or self.price_basis != "RAW_UNADJUSTED" or self.value_field != "CLOSE"):
+            raise ValueError("completed-session reference requires raw daily close")
         if self.availability_rule != "EXACT_REVISION_OR_SOURCE_GAP":
             raise ValueError("Target availability rule is unsupported")
         if self.finality_rule != "RECORD_UNKNOWN":

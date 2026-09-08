@@ -8,6 +8,8 @@ from types import TracebackType
 from typing import Protocol, Self
 from uuid import UUID
 
+from market_regime_alpha.research_qualification.domain.experimental_model_use import ExperimentalModelUsePlan, ExperimentalModelUseRecord
+
 from market_regime_alpha.research_qualification.domain.research_models import (
     ReproducibleModelTrainingRunPlan,
     ModelTrainingRunPlan,
@@ -68,6 +70,12 @@ class ReproducibleModelTrainingRunRecord:
 
 
 class ResearchModelRepository(Protocol):
+    def register_experimental_use(self, plan: ExperimentalModelUsePlan) -> ExperimentalModelUseRecord: ...
+
+    def experimental_use(self, identity: UUID, *, lock: bool) -> ExperimentalModelUseRecord: ...
+
+    def revoke_experimental_use(self, identity: UUID) -> ExperimentalModelUseRecord: ...
+
     def lock_model_identity(self, model_code: str) -> None: ...
 
     def register_model(

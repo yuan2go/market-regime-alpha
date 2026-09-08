@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from datetime import timedelta
 
+from market_regime_alpha.research_qualification.domain.daily_inputs import DailyInputState, session_open_close_move
+from market_regime_alpha.research_qualification.ports.daily_inputs import DailyFeatureInputReadPort
+
 from market_regime_alpha.research_qualification.domain.backtest_dataset import (
     BacktestDatasetFeatureCell,
     BacktestFeatureLineageKind,
@@ -68,4 +71,31 @@ class IntradayMoveBacktestFeatureAdapter:
         )
 
 
-__all__ = ["IntradayMoveBacktestFeatureAdapter"]
+class DailyMoveBacktestFeatureAdapter:
+    """Versioned complete-session Feature; the old five-minute adapter is unchanged."""
+
+    def __init__(self, inputs: DailyFeatureInputReadPort) -> None:
+        self._inputs = inputs
+
+    def supports(self, definition: BacktestFeatureExecutionDefinition) -> bool:
+        return definition.algorithm_code == "session_open_close_move_v1" and definition.algorithm_version == "1"
+
+    def materialize(self, request: BacktestFeatureRequest) -> BacktestDatasetFeatureCell:
+        if not self.supports(request.definition):
+            raise ValueError("unsupported daily Feature definition")
+        member = self._inputs.archived(scope=request.scope, instrument_id=request.instrument_id, session_date=request.session_date)
+        if member.state is DailyInputState.AVAILABLE:
+            if member.event_end != request.session_close_at:
+                raise ValueError("daily Feature does not cover the complete session")
+            assert member.bar_revision_id is not None and member.open_value is not None and member.close_value is not None
+            return BacktestDatasetFeatureCell(request.definition.feature_definition_id, FeatureCellStatus.AVAILABLE,
+                "EXACT_ARCHIVED_DAILY_BAR", BacktestFeatureLineageKind.BAR_REVISION,
+                member.bar_revision_id, session_open_close_move(member.open_value, member.close_value))
+        if member.source_gap_id is None:
+            raise ValueError("unavailable historical Feature requires canonical SourceGap")
+        state = FeatureCellStatus.CONFLICT if member.state is DailyInputState.CONFLICT else FeatureCellStatus.MISSING
+        return BacktestDatasetFeatureCell(request.definition.feature_definition_id, state, member.reason_code,
+            BacktestFeatureLineageKind.SOURCE_GAP, member.source_gap_id, None)
+
+
+__all__ = ["DailyMoveBacktestFeatureAdapter", "IntradayMoveBacktestFeatureAdapter"]

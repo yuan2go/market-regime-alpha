@@ -160,6 +160,7 @@ class OutcomeMetricDefinition:
             raise ValueError("metric artifact sizes must be non-negative")
         expected_shape = {
             OutcomeMetricKind.SIMPLE_RETURN: (OutcomeValueType.DECIMAL, "RATIO"),
+            OutcomeMetricKind.OBSERVATION_RETURN: (OutcomeValueType.DECIMAL, "RATIO"),
             OutcomeMetricKind.MAX_FAVORABLE_EXCURSION: (
                 OutcomeValueType.DECIMAL,
                 "RATIO",
@@ -270,6 +271,22 @@ class OutcomeTargetDefinition:
             by_metric[dependency.target_metric_definition_id].append(dependency)
         for metric_id, metric in metrics.items():
             _validate_metric_dependencies(metric, tuple(by_metric[metric_id]))
+            if metric.metric_kind is OutcomeMetricKind.OBSERVATION_RETURN:
+                first, last = (
+                    checkpoints[item.target_checkpoint_id]
+                    for item in by_metric[metric_id]
+                )
+                if (
+                    first.session_offset != last.session_offset
+                    or first.local_time != last.local_time
+                    or first.timezone_name != last.timezone_name
+                    or first.timeframe != "DAILY" or last.timeframe != "DAILY"
+                    or first.price_basis != "RAW_UNADJUSTED"
+                    or last.price_basis != "RAW_UNADJUSTED"
+                    or first.value_field is not OutcomeValueField.OPEN
+                    or last.value_field is not OutcomeValueField.CLOSE
+                ):
+                    raise ValueError("OBSERVATION_RETURN requires same exact daily OPEN/CLOSE scope")
 
 
 def _contiguous(values: tuple[int, ...], label: str) -> None:
@@ -287,6 +304,10 @@ def _validate_metric_dependencies(
     dependencies: tuple[OutcomeMetricDependency, ...],
 ) -> None:
     roles = tuple(item.role for item in dependencies)
+    if metric.metric_kind is OutcomeMetricKind.OBSERVATION_RETURN and roles != (
+        OutcomeDependencyRole.OBSERVATION, OutcomeDependencyRole.OBSERVATION,
+    ):
+        raise ValueError("OBSERVATION_RETURN requires two ordered OBSERVATION dependencies")
     if metric.metric_kind is OutcomeMetricKind.SIMPLE_RETURN and sorted(roles) != sorted(
         (OutcomeDependencyRole.REFERENCE, OutcomeDependencyRole.OBSERVATION)
     ):

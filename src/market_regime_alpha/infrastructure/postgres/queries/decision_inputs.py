@@ -739,8 +739,15 @@ def _load_target_references(
     zone = ZoneInfo(timezone_name)
     session_date = candidate_set.decision_time.astimezone(zone).date()
     cutoff = visibility_cutoff or candidate_set.decision_time
+    session_selector = "session.session_date = %(session_date)s"
+    if target.reference_rule == "EXACT_COMPLETED_SESSION_DAILY_BAR":
+        session_selector = """session.session_id = (
+            SELECT prior.session_id FROM mra.trading_session prior
+            WHERE prior.exchange=instrument.exchange AND prior.close_at <= %(decision_time)s
+              AND prior.decision_visible_at <= %(cutoff)s
+            ORDER BY prior.close_at DESC LIMIT 1)"""
     session_rows = connection.execute(
-        """
+        f"""
         SELECT candidate.candidate_id, candidate.instrument_id,
                instrument.exchange, instrument.instrument_type,
                session.session_id, session.session_date, session.open_at,
@@ -751,16 +758,13 @@ def _load_target_references(
           ON instrument.instrument_id = candidate.instrument_id
         JOIN mra.trading_session AS session
          ON session.exchange = instrument.exchange
-         AND session.session_date = %s
-         AND session.decision_visible_at <= %s
-        WHERE candidate.candidate_set_id = %s
+         AND {session_selector}
+         AND session.decision_visible_at <= %(cutoff)s
+        WHERE candidate.candidate_set_id = %(candidate_set_id)s
         ORDER BY candidate.candidate_id
         """,
-        (
-            session_date,
-            cutoff,
-            candidate_set.candidate_set_id,
-        ),
+        {"session_date": session_date, "cutoff": cutoff,
+         "decision_time": candidate_set.decision_time, "candidate_set_id": candidate_set.candidate_set_id},
     ).fetchall()
     if len(session_rows) != len(candidate_set.candidates):
         raise DecisionReferenceResolutionError(
@@ -836,6 +840,8 @@ def _reference_window(
     event_end = datetime.combine(local_date, local_time, tzinfo=ZoneInfo(timezone_name)).astimezone(UTC)
     if target.timeframe == "DAILY":
         event_start = row[6]
+        if target.reference_rule == "EXACT_COMPLETED_SESSION_DAILY_BAR" and event_end != row[9]:
+            raise DecisionReferenceResolutionError("completed-session reference must end at the exact Session close")
     else:
         event_start = event_end - _MINUTE_WIDTHS[target.timeframe]
     if (
@@ -843,7 +849,8 @@ def _reference_window(
         or event_start < row[6]
         or event_end > row[9]
         or (
-            row[7] is not None
+            target.timeframe != "DAILY"
+            and row[7] is not None
             and row[8] is not None
             and event_start < row[8]
             and event_end > row[7]

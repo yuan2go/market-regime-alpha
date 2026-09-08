@@ -85,9 +85,11 @@ class ModelForecastCommands:
         context: CommandContext,
         *,
         runtime_claim: AttemptClaim,
+        experimental_model_use_id: UUID | None = None,
     ) -> ProduceModelForecastResult:
         request_hash = canonical_json_sha256(
             {
+                **({"experimental_model_use_id": experimental_model_use_id} if experimental_model_use_id is not None else {}),
                 "actor_id": context.actor_id,
                 "actor_type": context.actor_type,
                 "decision_run_id": decision_run_id,
@@ -109,12 +111,14 @@ class ModelForecastCommands:
             decision_run_id,
             strategy_version_id,
             model_version_id,
+            **({"experimental_model_use_id": experimental_model_use_id} if experimental_model_use_id is not None else {}),
         )
         if (
             prepared.inference.signal_inputs.decision_run_id != decision_run_id
             or prepared.inference.signal_inputs.strategy_version.strategy_version_id
             != strategy_version_id
             or prepared.model_version_id != model_version_id
+            or prepared.experimental_model_use_id != experimental_model_use_id
         ):
             raise InferenceAuthorityIntegrityError(
                 "Model Forecast preparation returned another Authority identity"
@@ -223,7 +227,7 @@ class ModelForecastCommands:
 
             def prediction(signal_item, commitment):
                 item = predictions[commitment.commitment_id]
-                if signal_item.status is not SignalStatus.PRESENT:
+                if prepared.experimental_model_use_id is None and signal_item.status is not SignalStatus.PRESENT:
                     return (
                         ForecastStatus.NOT_ESTIMABLE,
                         "SIGNAL_NOT_PRESENT",
@@ -491,6 +495,7 @@ def _binding_plan(prepared, authority, forecast, binding_id) -> ForecastModelBin
         point_estimate=estimate.point_estimate,
         model_registered_at=prepared.model_registered_at,
         forecast_recorded_at=authority.recorded_at,
+        experimental_model_use_id=prepared.experimental_model_use_id,
     )
 
 

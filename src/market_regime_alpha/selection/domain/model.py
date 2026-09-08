@@ -204,6 +204,7 @@ class EligibilityRule:
                 3,
             ),
         }
+        expected[EligibilityRuleKind.LAST_COMPLETED_SESSION_ACTIVE] = expected[EligibilityRuleKind.NOT_SUSPENDED]
         actual = (
             self.measure_code,
             self.aggregation,

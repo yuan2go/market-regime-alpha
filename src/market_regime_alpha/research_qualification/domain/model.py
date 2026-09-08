@@ -112,6 +112,15 @@ class FeatureDefinition:
             raise ValueError("algorithm_code has an invalid format")
         if not _ALGORITHM_VERSION.fullmatch(self.algorithm_version):
             raise ValueError("algorithm_version has an invalid format")
+        if self.algorithm_code == 'session_open_close_move_v1' and (
+            self.algorithm_version != '1' or self.value_type is not FeatureValueType.DECIMAL or self.value_unit != 'RATIO'
+            or (self.frequency_value,self.window_value,self.lookback_value)!=(1,1,0)
+            or any(unit is not FeatureIntervalUnit.TRADING_SESSION for unit in (self.frequency_unit,self.window_unit,self.lookback_unit))
+            or self.source_requirements!=(FeatureSourceRequirement.MARKET_BAR_REVISION,)
+            or self.availability_rule is not FeatureAvailabilityRule.DECISION_VISIBLE_AT_OR_BEFORE
+            or self.missingness_policy is not FeatureMissingnessPolicy.EXPLICIT_STATUS
+        ):
+            raise ValueError('daily Feature requires its exact one-session ratio and explicit missingness contract')
         algorithm_hash = (
             self.algorithm_sha256
             if isinstance(self.algorithm_sha256, ContentHash)

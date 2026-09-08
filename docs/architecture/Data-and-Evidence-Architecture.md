@@ -219,6 +219,20 @@ MFE/MAE, barrier, future observation, realized label, or other posterior values
 are rejected. Artifact and `dataset_source` lineage are validated bidirectionally
 and cannot disagree.
 
+The registered `003_daily_model_research.sql` increment adds the explicit
+`OBSERVATION_RETURN` price-fact contract, the shared daily Feature shape and
+experimental model-use/reference constraints. It preserves released 001/002
+bytes and all old formula identities. `experimental_model_use` and
+`experimental_model_use_revocation` belong to the existing Model owner;
+`forecast_model_binding.experimental_model_use_id` discriminates independent
+Shadow use from the unchanged historical Backtest binding. The new typed
+`EXPERIMENTAL_FORECAST_OUTCOME_PAIR` source belongs to existing Evaluation.
+No daily-account, Fill, separate prediction registry, scheduler or metric truth
+is introduced. Snapshot/forecast/report identities use existing Artifact and
+Runtime owners. Static instrument/membership Artifact integrity observations
+may be refreshed by the existing operational procedure without changing any
+source Capture's historical known/recorded time.
+
 ### Target, Research Evaluation, Evidence, and Qualification
 
 The relations through Research Qualification are implemented in the unreleased
@@ -230,7 +244,7 @@ Research Qualification but never a bars-to-label writer.
 |---|---|---|
 | `target_definition` | immutable Decision reference/horizon/path/metric protocol | unique code/version/hash; instrument scope, price basis, reference/session/calendar/horizon, availability/finality, algorithm and code/config Artifacts typed |
 | `target_checkpoint` | ordered observation checkpoint/path grid | unique Target/ordinal/code; role, session offset, local time and required observation shape relational |
-| `target_metric_definition` | typed required/optional Outcome metric semantics | unique Target/metric code; Target root requires at least one `REQUIRED` metric; each of the five kinds has exactly its Outcome-consumable reference/observation/path dependency shape; no JSON metric contract |
+| `target_metric_definition` | typed required/optional Outcome metric semantics | unique Target/metric code; Target root requires at least one `REQUIRED` metric; each supported kind has exactly its Outcome-consumable reference/observation/path dependency shape; no JSON metric contract |
 | `target_metric_dependency` | ordered metric-to-checkpoint dependency edge | unique Target/metric/dependency ordinal and checkpoint role; same-Target composite FKs, canonical hash and typed dependency semantics; no JSON dependency list |
 | `research_partition` | frozen Target-specific Discovery/Fit/Validation/Locked-OOS/Prospective root | unique identity/hash; exact Target, Decision window, population scope, exact calendar, session-expanded Target horizon/purge/embargo protected range, purpose-specific overlap policy, positive roster count/hash, code/config and provenance |
 | `research_partition_member` | complete non-empty pre-Outcome roster | PostgreSQL derives it from Target + Decision window + population scope; unique partition/commitment; composite FK matches the root Target chain; no caller roster and no Outcome value |

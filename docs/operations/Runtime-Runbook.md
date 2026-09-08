@@ -3,8 +3,97 @@
 > **Status:** CURRENT_STATUS
 > **Authority:** Current executable operator procedures
 > **Owner:** Market Regime Alpha maintainers
-> **Last Updated:** 2026-09-07
+> **Last Updated:** 2026-09-08
 > **Code Evidence:** `pyproject.toml`, `scripts/*.py`, `src/market_regime_alpha/cli`
+
+
+## Post-close daily model research
+
+The daily consumer runs sequentially inside the guarded prospective service,
+using the same exact-database Runtime admission reservation. A daily template
+names one completed ModelVersion and explicit experimental use, never “latest”.
+The [daily protocol](../references/WP-DAILY-MODEL-RESEARCH-LOOP-01-Protocol.md)
+freezes the next-session OPEN/CLOSE prediction target and full population.
+It produces research predictions only; no account, trade instruction or model
+qualification is implied.
+
+Set `MRA_SCOPE` to the approved private project deployment directory. Its
+`deployment.json`, `operation.json`, `operator.env` and daily template bind the
+installed source, original DB name/OID/cluster, v7 catalog, Artifact root and
+verified backup. Do not copy another database's profile or change a frozen Run.
+All Python process invocation uses `uv run`; the private `mra.sh` wrapper does
+so with the pinned installed environment. Research mutations require the same
+operator profile; a running collector denies a second writer.
+
+```bash
+# Read-only operations may run while the collector owns the reservation.
+"$MRA_SCOPE/mra.sh" backtest progress --run-id BACKTEST_RUN_ID
+"$MRA_SCOPE/mra.sh" backtest inspect --run-id BACKTEST_RUN_ID
+"$MRA_SCOPE/mra.sh" backtest report --run-id BACKTEST_RUN_ID --format json
+"$MRA_SCOPE/mra.sh" backtest replay --run-id BACKTEST_RUN_ID
+"$MRA_SCOPE/mra.sh" research daily status --plan FROZEN_PUBLISHED_PLAN
+"$MRA_SCOPE/mra.sh" research daily report --plan FROZEN_PUBLISHED_PLAN
+"$MRA_SCOPE/mra.sh" research daily replay --plan FROZEN_PUBLISHED_PLAN
+
+# After an owned graceful stop, use the exact same frozen request to recover.
+"$MRA_SCOPE/mra.sh" backtest resume --run-id BACKTEST_RUN_ID \
+  --operation-config "$MRA_SCOPE/operation.json"
+"$MRA_SCOPE/mra.sh" research daily predict --plan FROZEN_PUBLISHED_PLAN \
+  --operation-config "$MRA_SCOPE/operation.json" --maximum-steps 9
+"$MRA_SCOPE/mra.sh" research daily settle --plan FROZEN_PUBLISHED_PLAN \
+  --operation-config "$MRA_SCOPE/operation.json" --maximum-steps 64
+"$MRA_SCOPE/mra.sh" research daily revoke-model \
+  --experimental-model-use-id EXPLICIT_USE_ID \
+  --operation-config "$MRA_SCOPE/operation.json"
+```
+
+`serve --daily-plan-template PRIVATE_TEMPLATE` resolves actual closed/next
+TradingSessions with the PostgreSQL clock, captures complete instrument rosters,
+then freezes the current input and publishes before target opening. Future
+Outcome remains PENDING. CSI300 membership has its own bounded canonical
+Capture/Normalize phase, using the real database-observed calendar date. Selection
+then freezes every member at the new cutoff; price readiness alone cannot prove
+current Universe membership. Empty eligible populations close with an explicit
+`NOT_RUN_EMPTY_POPULATION`, no model invocation and no prediction estimates.
+Known empty observations have bounded later rounds;
+unknown effects or failed Runs require exact owner reconciliation. No Provider
+retry is inferred from a process restart. After whole-process downtime, elapsed
+uncreated windows receive current-time abstentions, not backdated predictions.
+The service processes one missed window per tick and rejects an activation
+scope larger than 64 elapsed sessions.
+
+Before changing a template, revoke its use to stop new predictions and keep the
+old explicit template running until its published pending Outcomes are settled.
+Only then install a newly declared compatible use/template. Revocation does not
+invalidate historical reports or cancel the obligation to evaluate predictions.
+Do not redirect old pending work to a different ModelVersion or code profile.
+
+The project supervisor handles lifecycle only. For the configured current-user
+label, disable first, send SIGTERM, and inspect until the owned process exits;
+never escalate to killing an unknown PID. After profile/installed-source
+preflight, enable and bootstrap the exact plist. KeepAlive remains false, so
+Provider, integrity or identity failures do not cause an infinite restart loop.
+The configured refresh task drains the collector, takes a canonical backup,
+checks the referenced bytes, refreshes static daily instrument/membership
+Artifact integrity without changing Capture times, mirrors the snapshot,
+atomically updates the expiring profile and restarts only after preflight.
+Run the existing `refresh.sh --recover-stopped` procedure for an explicitly
+stopped project; an intentionally disabled label remains disabled. The template
+and refresh-script hashes are executable deployment evidence even though their
+source lives under `docs/operations/templates`.
+
+The observed deployment runs `00f9da04`, with a 24-hour backup limit, refresh
+wakeups at 03:00/19:00 China time, and current calendar coverage through
+2026-09-17. Extend calendar facts through canonical Market capture/normalization
+before exhaustion; do not infer weekdays. The explicit use expires 30 days
+after registration and is not automatically replaced. The prediction remains
+replayable after expiry/revocation; unfinished Outcomes still require settlement.
+
+A prediction, its actual future settlement and sustained service coverage are
+separate results. Inspect canonical Run/Step/Attempt and published receipt/Artifact
+identities, not only the process or final log line. A backup before publication
+is a recovery baseline, not proof that the new prediction is already backed up.
+
 
 ## Install and verify environment
 

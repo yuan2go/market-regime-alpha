@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from market_regime_alpha.infrastructure.postgres.queries.daily_feature_inputs import PostgresDailyFeatureInputReadPort
+from market_regime_alpha.infrastructure.postgres.queries.daily_predictions import PostgresDailyPredictionReads
+from market_regime_alpha.interfaces.daily_research import DailyResearchOperations
+
 from dataclasses import dataclass
 import os
 from pathlib import Path
@@ -23,6 +27,7 @@ from market_regime_alpha.infrastructure.models import (
     ExplicitModelTrainerComposition,
 )
 from market_regime_alpha.infrastructure.backtest_features import (
+    DailyMoveBacktestFeatureAdapter,
     IntradayMoveBacktestFeatureAdapter,
 )
 from market_regime_alpha.infrastructure.archive_resources import (
@@ -331,6 +336,7 @@ class TargetSettings:
 
 @dataclass(slots=True)
 class TargetApplication:
+    daily_prediction_reads: PostgresDailyPredictionReads
     evidence: EvidenceApplication
     operational_diagnostics: PostgresOperationalDiagnostics
     backtest_diagnostics: BacktestDiagnosticsApplication
@@ -390,6 +396,10 @@ class TargetApplication:
     outcome_queries: OutcomeReadPort
     outcome_verifier: OutcomeVerifier
     _pool: TargetPostgresPool
+
+    @property
+    def daily_research(self) -> DailyResearchOperations:
+        return DailyResearchOperations(self, self.daily_prediction_reads)
 
     def close(self) -> None:
         self._pool.close()
@@ -535,7 +545,10 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
         selection=selection_application,
         research_definitions=research_definitions_application,
         reads=PostgresBacktestActionReadPort(pool),
-        feature_materializers=(IntradayMoveBacktestFeatureAdapter(PostgresExploratoryFeatureInputReadPort(pool)),),
+        feature_materializers=(
+            IntradayMoveBacktestFeatureAdapter(PostgresExploratoryFeatureInputReadPort(pool)),
+            DailyMoveBacktestFeatureAdapter(PostgresDailyFeatureInputReadPort(pool, byte_store)),
+        ),
         worker_id="generic-backtest-worker",
         candidates=candidate_application,
         decision_support=decision_support_application,
@@ -575,6 +588,7 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
         backtest_replay,
     )
     return TargetApplication(
+        daily_prediction_reads=PostgresDailyPredictionReads(pool, byte_store),
         operational_diagnostics=PostgresOperationalDiagnostics(pool),
         backtest_diagnostics=BacktestDiagnosticsApplication(
             PostgresBacktestDiagnosticsSourcePort(pool), backtest_reports,

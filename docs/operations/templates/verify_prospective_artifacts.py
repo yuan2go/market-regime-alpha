@@ -6,7 +6,7 @@ from market_regime_alpha.bootstrap import bootstrap_application
 from market_regime_alpha.runtime.application.service import ActorType, CommandContext
 
 
-def verify_scope(settings, config, guard, observation_key):
+def verify_scope(settings, config, guard, observation_key, *, daily_plan=None):
     # This read-only operational roster has no business Authority or FK consumers.
     # Capture lineage and Artifact metadata are reloaded by their existing owner.
     with guard.connection.transaction():
@@ -37,6 +37,27 @@ def verify_scope(settings, config, guard, observation_key):
             """,
             (config.series_code,),
         ).fetchall()
+        if daily_plan is not None:
+            # Static instrument/classification evidence does not get a new Capture
+            # every day. Refresh physical integrity, never its historical time.
+            daily_rows = guard.connection.execute(
+                """WITH selected AS (
+                    SELECT source_capture_id FROM mra.instrument WHERE instrument_id=ANY(%s::uuid[])
+                    UNION SELECT source_capture_id FROM mra.classification
+                        WHERE classification_scheme=%s AND classification_code=%s
+                    UNION SELECT source_capture_id FROM mra.classification_membership_revision
+                        WHERE instrument_id=ANY(%s::uuid[])
+                    UNION SELECT capture_id FROM mra.instrument_fact_revision
+                        WHERE instrument_id=ANY(%s::uuid[])
+                )
+                SELECT DISTINCT capture.artifact_id FROM selected
+                JOIN mra.data_capture capture ON capture.capture_id=selected.source_capture_id
+                WHERE capture.artifact_id IS NOT NULL AND capture.status='CAPTURED'
+                ORDER BY capture.artifact_id""",
+                (list(daily_plan.instrument_ids), daily_plan.classification_scheme,
+                 daily_plan.classification_code, list(daily_plan.instrument_ids), list(daily_plan.instrument_ids)),
+            ).fetchall()
+            rows = sorted(set(rows) | set(daily_rows), key=lambda row: str(row[0]))
     if not rows:
         raise ValueError("PROSPECTIVE_ARTIFACT_ROSTER_EMPTY")
     observations = []

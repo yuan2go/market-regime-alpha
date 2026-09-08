@@ -44,6 +44,14 @@ WP-17P Verification remains historical exact-run evidence, and WP-18 evidence
 is definition equivalence only. Current blockers and re-entry requirements
 belong to Current State and Roadmap, not to a second status hierarchy.
 
+The current daily research dependency uses the new
+[post-close protocol](references/WP-DAILY-MODEL-RESEARCH-LOOP-01-Protocol.md)
+and existing Generic Backtest/Model/Decision/Outcome/Evaluation owners.
+Registered original-scope v7 and daily service handoff are separate from the
+historical v6 activation evidence above. Current actual execution results and
+pending future labels belong to Current State and the
+[daily exact-revision Verification](references/WP-DAILY-MODEL-RESEARCH-LOOP-01-Verification.md).
+
 ## Normative authority order
 
 1. latest explicit user decision not superseded;

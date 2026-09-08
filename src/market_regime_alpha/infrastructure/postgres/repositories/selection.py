@@ -890,6 +890,7 @@ class PostgresSelectionRepository:
         required_instrument_facts = {
             {
                 EligibilityRuleKind.NOT_SUSPENDED: "SECURITY_STATUS",
+                EligibilityRuleKind.LAST_COMPLETED_SESSION_ACTIVE: "SECURITY_STATUS",
                 EligibilityRuleKind.NOT_SPECIAL_TREATMENT: "SPECIAL_TREATMENT_STATUS",
                 EligibilityRuleKind.MIN_LISTING_AGE: "LISTING_STATUS",
                 EligibilityRuleKind.MIN_LIQUIDITY: None,
@@ -904,6 +905,7 @@ class PostgresSelectionRepository:
             rule.rule_kind
             in {
                 EligibilityRuleKind.NOT_SUSPENDED,
+                EligibilityRuleKind.LAST_COMPLETED_SESSION_ACTIVE,
                 EligibilityRuleKind.LIMIT_METADATA_PRESENT,
                 EligibilityRuleKind.MIN_LIQUIDITY,
             }

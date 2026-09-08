@@ -403,10 +403,11 @@ class PostgresSelectionMarketQueries:
             instrument_id=instrument_id,
             decision_time=decision_time,
             visibility_cutoff=visibility_cutoff,
+            completed=rule.rule_kind is EligibilityRuleKind.LAST_COMPLETED_SESSION_ACTIVE,
         )
         if isinstance(session, CriterionEvidence):
             return session
-        if rule.rule_kind is EligibilityRuleKind.NOT_SUSPENDED:
+        if rule.rule_kind in {EligibilityRuleKind.NOT_SUSPENDED, EligibilityRuleKind.LAST_COMPLETED_SESSION_ACTIVE}:
             return self._session_fact(
                 market_provider_product_id=market_provider_product_id,
                 instrument_id=instrument_id,
@@ -507,8 +508,19 @@ class PostgresSelectionMarketQueries:
         instrument_id,
         decision_time,
         visibility_cutoff,
+        completed=False,
     ):
         session_date = decision_time.value.astimezone(ZoneInfo("Asia/Shanghai")).date()
+        if completed:
+            closed = self._connection.execute("""
+                SELECT session.session_date FROM mra.trading_session session
+                JOIN mra.instrument instrument ON instrument.exchange=session.exchange
+                WHERE instrument.instrument_id=%s AND session.close_at<=%s AND session.decision_visible_at<=%s
+                ORDER BY session.session_date DESC LIMIT 1
+                """, (instrument_id.value,decision_time.value,visibility_cutoff)).fetchone()
+            if closed is None:
+                return CriterionEvidence(status=MarketEvidenceStatus.MISSING,lineage=MarketLineage())
+            session_date = closed[0]
         row = self._connection.execute(
             """
             SELECT session.session_id, session.source_capture_id,

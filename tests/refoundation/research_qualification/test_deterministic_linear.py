@@ -73,3 +73,22 @@ def test_deterministic_ridge_parser_fails_closed() -> None:
             alpha=Decimal("0.1"),
             seed=1,
         )
+
+
+def test_prediction_reuses_fit_scaling_without_learning_from_unseen_rows() -> None:
+    # Hand calculation: x=(1,3), z=(-1,1), mean(x)=2, population std=1.
+    # y=(2,6), intercept=4. With alpha=2, beta=4/(2+2)=1.
+    # Unseen x=5 must therefore predict 4+(5-2)=7, not a refitted intercept.
+    fitted = fit_deterministic_ridge(
+        (LinearTrainingRow(UUID(int=1), (Decimal(1),), Decimal(2)),
+         LinearTrainingRow(UUID(int=2), (Decimal(3),), Decimal(6))),
+        feature_definition_ids=(UUID(int=10),), alpha=Decimal(2), seed=18,
+    )
+    original = fitted.content
+    assert fitted.feature_means == (Decimal(2),)
+    assert fitted.feature_scales == (Decimal(1),)
+    assert fitted.intercept == Decimal(4)
+    assert fitted.coefficients == (Decimal(1),)
+    assert predict_deterministic_ridge(fitted, (Decimal(5),)) == Decimal(7)
+    assert predict_deterministic_ridge(fitted, (Decimal(-1),)) == Decimal(1)
+    assert fitted.content == original

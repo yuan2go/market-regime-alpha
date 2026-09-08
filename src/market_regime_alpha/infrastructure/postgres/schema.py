@@ -168,6 +168,11 @@ _REVISION_GAP_MIGRATION_NAME: Final = "002_prospective_revision_gap"
 _REVISION_GAP_BUNDLE_SHA256: Final = "bd5978ae2ccfd56a9d117c41e13e0a8f7c76fbdd4d83d4aa1b32757dbe753063"
 _REVISION_GAP_CATALOG_SHA256: Final = "233c60c2b8b6efca4682f92fff8acbe85895a967cef0e11f7838f572e6ed69db"
 _REVISION_GAP_UPGRADE_CODE: Final = "wp18q_prospective_revision_gap_v6"
+_DAILY_MIGRATION_NAME: Final = "003_daily_model_research"
+_DAILY_UPGRADE_CODE: Final = "daily_model_research_v7"
+_DAILY_BUNDLE_SHA256: Final = "44d27a9f13d4045402b86a27f7c47150dfc67421a8fc071d8a691f0405480400"
+_DAILY_CATALOG_SHA256: Final = "2730fe8535261a7174dd38b87ea57037c7503a411b79a08faa88268d61951320"
+_DAILY_VOCABULARY_SHA256: Final = "f228b25251f72ee19a705ce86ae8e64a8919bfa6e45889c406edb4b91d8146da"
 _SCHEMA_COMMENT: Final = (
     "Market Regime Alpha MRA_REFOUNDATION_1 unreleased draft authority schema"
 )
@@ -461,6 +466,8 @@ EXPECTED_EXPLORATORY_BACKTEST_TABLES: Final[frozenset[str]] = frozenset(
 
 EXPECTED_MODEL_TABLES: Final[frozenset[str]] = frozenset(
     {
+        "experimental_model_use",
+        "experimental_model_use_revocation",
         "model",
         "model_feature_definition",
         "model_training_run",
@@ -1234,6 +1241,9 @@ class SchemaManager:
         self._post_baseline_sql = _read_package_text("migrations", f"{_REVISION_GAP_MIGRATION_NAME}.sql")
         if sha256_bytes(self._post_baseline_sql.encode("utf-8")) != _REVISION_GAP_BUNDLE_SHA256:
             raise SchemaChecksumMismatchError("POST_BASELINE_BUNDLE_CHANGED: registered correction bytes are immutable")
+        self._daily_sql = _read_package_text("migrations", f"{_DAILY_MIGRATION_NAME}.sql")
+        if sha256_bytes(self._daily_sql.encode("utf-8")) != _DAILY_BUNDLE_SHA256:
+            raise SchemaChecksumMismatchError("DAILY_BUNDLE_CHANGED: register an exact incremental route")
         self._seed_sql = _read_package_text("seeds", "001_reference_seed.sql")
         self.baseline_checksum = sha256_bytes(self._baseline_sql.encode("utf-8"))
         self.seed_checksum = sha256_bytes(self._seed_sql.encode("utf-8"))
@@ -1258,6 +1268,7 @@ class SchemaManager:
             self._require_empty_allowed_catalog(connection)
             connection.execute(self._baseline_sql)
             connection.execute(self._post_baseline_sql)
+            connection.execute(self._daily_sql)
             catalog_checksum = _target_catalog_checksum(connection)
             connection.execute(
                 self._seed_sql,
@@ -1270,6 +1281,7 @@ class SchemaManager:
                 ),
             )
             _insert_revision_gap_migration(connection)
+            _insert_daily_migration(connection)
             verification = self._verify_connection(connection, created=True)
             connection.commit()
             return verification
@@ -1785,6 +1797,7 @@ class SchemaManager:
             connection.execute("DROP SCHEMA mra CASCADE")
             connection.execute(self._baseline_sql)
             connection.execute(self._post_baseline_sql)
+            connection.execute(self._daily_sql)
             catalog_checksum = _target_catalog_checksum(connection)
             connection.execute(
                 self._seed_sql,
@@ -1797,6 +1810,7 @@ class SchemaManager:
                 ),
             )
             _insert_revision_gap_migration(connection)
+            _insert_daily_migration(connection)
             verification = self._verify_connection(connection, created=True)
             connection.commit()
             return RecreateResult(
@@ -1868,9 +1882,10 @@ class SchemaManager:
             raise CatalogDriftError("UPGRADE_TARGET_CATALOG_MISMATCH")
         _verify_migration_registry(
             connection, expected_baseline,
-            with_revision_gap=expected_upgrade is None or expected_upgrade.next_catalog_sha256 == _REVISION_GAP_CATALOG_SHA256,
+            with_revision_gap=expected_upgrade is None or expected_upgrade.next_catalog_sha256 in {_REVISION_GAP_CATALOG_SHA256, _DAILY_CATALOG_SHA256},
+            with_daily=expected_upgrade is None or expected_upgrade.next_catalog_sha256 == _DAILY_CATALOG_SHA256,
         )
-        if expected_upgrade is None and catalog_checksum != _REVISION_GAP_CATALOG_SHA256:
+        if expected_upgrade is None and catalog_checksum != _DAILY_CATALOG_SHA256:
             raise CatalogDriftError("POST_BASELINE_CATALOG_MISMATCH: installed catalog is not the exact registered correction")
         _verify_primary_keys(connection, tables)
         _verify_foreign_key_indexes(connection)
@@ -2247,8 +2262,15 @@ def _insert_revision_gap_migration(connection: psycopg.Connection[Any]) -> None:
     )
 
 
+def _insert_daily_migration(connection: psycopg.Connection[Any]) -> None:
+    connection.execute(
+        "INSERT INTO mra.schema_migrations (version, name, checksum, transactional, epoch_name) VALUES (3, %s, %s, true, %s)",
+        (_DAILY_MIGRATION_NAME, _DAILY_BUNDLE_SHA256, SCHEMA_EPOCH),
+    )
+
+
 def _verify_migration_registry(
-    connection: psycopg.Connection[Any], baseline_checksum: str, *, with_revision_gap: bool = True
+    connection: psycopg.Connection[Any], baseline_checksum: str, *, with_revision_gap: bool = True, with_daily: bool = False
 ) -> None:
     rows = connection.execute(
         """
@@ -2260,6 +2282,8 @@ def _verify_migration_registry(
     expected = [(BASELINE_VERSION, BASELINE_NAME, baseline_checksum, True, SCHEMA_EPOCH)]
     if with_revision_gap:
         expected.append((2, _REVISION_GAP_MIGRATION_NAME, _REVISION_GAP_BUNDLE_SHA256, True, SCHEMA_EPOCH))
+    if with_daily:
+        expected.append((3, _DAILY_MIGRATION_NAME, _DAILY_BUNDLE_SHA256, True, SCHEMA_EPOCH))
     actual = [tuple(row) for row in rows]
     if actual != expected:
         raise CatalogDriftError(
@@ -2274,7 +2298,7 @@ def _verify_exact_migration_registry(
     catalog_checksum: str,
 ) -> None:
     try:
-        _verify_migration_registry(connection, baseline_checksum, with_revision_gap=catalog_checksum == _REVISION_GAP_CATALOG_SHA256)
+        _verify_migration_registry(connection, baseline_checksum, with_revision_gap=catalog_checksum in {_REVISION_GAP_CATALOG_SHA256, _DAILY_CATALOG_SHA256}, with_daily=catalog_checksum == _DAILY_CATALOG_SHA256)
     except CatalogDriftError as exc:
         raise UnsafeOperationalUpgradeError(
             "PRIOR_MIGRATION_REGISTRY_MISMATCH"
@@ -2585,7 +2609,7 @@ def _wp18q_operational_upgrade_definitions(
         raise OperationalUpgradeIntegrityError(
             "UPGRADE_SOURCE_BASELINE_CHANGED: register a new exact additive route"
         )
-    if next_reference_vocabulary_sha256 != expected_vocabulary:
+    if next_reference_vocabulary_sha256 not in {expected_vocabulary, _DAILY_VOCABULARY_SHA256}:
         raise OperationalUpgradeIntegrityError(
             "UPGRADE_SOURCE_VOCABULARY_CHANGED: register a new exact additive route"
         )
@@ -2699,7 +2723,19 @@ def _wp18q_operational_upgrade_definitions(
     )
     if v6.additive_bundle_sha256 != _REVISION_GAP_BUNDLE_SHA256:
         raise OperationalUpgradeIntegrityError("UPGRADE_V6_BUNDLE_CHANGED: registered correction bytes are immutable")
-    return (v1, v2, v3, v4, v5, v6)
+    v7 = _OperationalUpgradeDefinition(
+        upgrade_code=_DAILY_UPGRADE_CODE,
+        prior_baseline_sha256=v6.next_baseline_sha256,
+        prior_catalog_sha256=v6.next_catalog_sha256,
+        prior_reference_vocabulary_sha256=expected_vocabulary,
+        next_baseline_sha256=v6.next_baseline_sha256,
+        next_catalog_sha256=_DAILY_CATALOG_SHA256,
+        next_reference_vocabulary_sha256=_DAILY_VOCABULARY_SHA256,
+        additive_sql=_read_package_text("migrations", f"{_DAILY_MIGRATION_NAME}.sql"),
+    )
+    if v7.additive_bundle_sha256 != _DAILY_BUNDLE_SHA256:
+        raise OperationalUpgradeIntegrityError("DAILY_BUNDLE_CHANGED: register an exact incremental route")
+    return (v1, v2, v3, v4, v5, v6, v7)
 
 
 def _compile_wp18q_v2_additive_sql(baseline_sql: str) -> str:
@@ -3450,6 +3486,8 @@ def _update_operational_upgrade_metadata(
 ) -> None:
     if definition.upgrade_code == _REVISION_GAP_UPGRADE_CODE:
         _insert_revision_gap_migration(connection)
+    if definition.upgrade_code == _DAILY_UPGRADE_CODE:
+        _insert_daily_migration(connection)
     connection.execute(
         "ALTER TABLE mra.schema_epoch DISABLE TRIGGER schema_epoch_append_only"
     )

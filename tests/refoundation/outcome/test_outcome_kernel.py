@@ -37,6 +37,56 @@ from market_regime_alpha.outcome.domain import (
 )
 
 
+@pytest.mark.parametrize("reference_value", [Decimal("999"), None])
+def test_daily_return_uses_two_future_prices_not_the_decision_reference(reference_value):
+    opened = replace(
+        _checkpoint(CHECKPOINT_A, ordinal=1, local_time=time(15),
+                    value_field=OutcomeValueField.OPEN), timeframe="DAILY",
+    )
+    closed = replace(
+        _checkpoint(CHECKPOINT_B, ordinal=2, local_time=time(15)),
+        timeframe="DAILY",
+    )
+    metric = _metric(1190, ordinal=1, kind=OutcomeMetricKind("OBSERVATION_RETURN"))
+    target = _target(
+        checkpoints=(opened, closed), metrics=(metric,),
+        dependencies=(
+            _dependency(1191, ordinal=1, metric=metric, checkpoint_id=CHECKPOINT_A,
+                        role=OutcomeDependencyRole.OBSERVATION),
+            _dependency(1192, ordinal=2, metric=metric, checkpoint_id=CHECKPOINT_B,
+                        role=OutcomeDependencyRole.OBSERVATION),
+        ),
+    )
+    first = replace(
+        _bar(opened, ordinal=1, event_end=_instant(15), open_value="100",
+             high_value="106", low_value="99", close_value="105"),
+        event_start=_instant(9, 30),
+    )
+    last = replace(first, target_checkpoint_id=CHECKPOINT_B, source_ordinal=2)
+    arguments = dict(
+        target=target,
+        reference=_reference(
+            value=reference_value,
+            status=OutcomeReferenceValueStatus.PRESENT if reference_value is not None
+            else OutcomeReferenceValueStatus.UNAVAILABLE,
+        ),
+        sessions=(_session(),), sources=(first, last),
+        observation_cutoff=_instant(15), knowledge_cutoff=_instant(16),
+    )
+    result = calculate_market_target_outcome(**arguments)
+    # Independent hand calculation: (105 - 100) / 100 = 5%; 999 is irrelevant.
+    assert result.metrics[0].decimal_value == Decimal("0.050000000000000000")
+    assert result.status is OutcomeStatus.COMPLETE
+    assert result.reference_dependencies == ()
+    with pytest.raises(ValueError, match="same exact"):
+        calculate_market_target_outcome(
+            **(arguments | {"sources": (
+                first, replace(last, bar_revision_id=UUID(int=991)),
+            )})
+        )
+
+
+
 TARGET_ID = UUID("00000000-0000-4000-8000-000000001001")
 REFERENCE_ID = UUID("00000000-0000-4000-8000-000000001002")
 CHECKPOINT_A = UUID("00000000-0000-4000-8000-000000001003")
