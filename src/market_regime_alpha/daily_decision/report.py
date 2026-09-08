@@ -1,4 +1,4 @@
-"""Deterministic reconstruction of the Phase D daily report."""
+"""Deterministic reconstruction of the daily report."""
 
 from __future__ import annotations
 

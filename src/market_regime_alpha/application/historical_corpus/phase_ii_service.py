@@ -1,4 +1,4 @@
-"""Owner-resolved Phase II research composition over existing Historical Evidence.
+"""Owner-resolved research composition over existing Historical Evidence.
 
 This is an application capability of Historical Research, not a new Runtime or
 Evidence authority.  Every admission reloads immutable PostgreSQL Evidence and

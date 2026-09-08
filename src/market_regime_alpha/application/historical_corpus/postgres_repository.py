@@ -1,4 +1,4 @@
-"""PostgreSQL Authority for exact Phase E historical package owners."""
+"""PostgreSQL Authority for exact historical package owners."""
 
 from __future__ import annotations
 

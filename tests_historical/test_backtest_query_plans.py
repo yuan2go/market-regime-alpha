@@ -5,7 +5,7 @@ import ast
 from pathlib import Path
 
 from market_regime_alpha.infrastructure.postgres.pool import TargetPostgresPool
-from tests.contracts.research_qualification.test_backtest_wp17p_equivalence_postgres import (
+from tests_historical.test_completed_backtest_reconciliation import (
     _RUN_ID,
     _historical_environment,
 )
@@ -14,7 +14,7 @@ from tests.contracts.research_qualification.test_backtest_wp17p_equivalence_post
 def test_fold_metric_state_query_preserves_results_without_observation_product() -> None:
     # Inspect the exact executable query, rather than benchmarking a rewritten
     # test-only approximation or imposing a machine-dependent latency limit.
-    path = Path(__file__).parents[3] / "src/market_regime_alpha/infrastructure/postgres/queries/backtest_execution.py"
+    path = Path(__file__).parents[1] / "src/market_regime_alpha/infrastructure/postgres/queries/backtest_execution.py"
     statements = [
         node.value for node in ast.walk(ast.parse(path.read_text()))
         if isinstance(node, ast.Constant) and isinstance(node.value, str)

@@ -1,4 +1,4 @@
-"""Internal canonicalization helpers for Phase D daily decision contracts."""
+"""Internal canonicalization helpers for daily decision contracts."""
 
 from __future__ import annotations
 

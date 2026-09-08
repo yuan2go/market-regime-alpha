@@ -1,4 +1,4 @@
-"""Phase E owner-resolved historical Alpha evidence production."""
+"""owner-resolved historical Alpha evidence production."""
 
 from market_regime_alpha.application.historical_corpus.contracts import (
     HistoricalArtifactKind,

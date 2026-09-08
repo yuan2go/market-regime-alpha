@@ -43,6 +43,20 @@ def imports(tree: ast.AST, module: str, is_package: bool) -> list[str]:
     return sorted(result)
 
 
+def unresolved_imports(tree: ast.AST, module: str, is_package: bool, known: set[str]) -> list[str]:
+    package = module if is_package else module.rpartition(".")[0]
+    declared = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            declared.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            name = node.module or ""
+            declared.add(resolve_name("." * node.level + name, package) if node.level else name)
+    return sorted(name for name in declared
+                  if name.startswith(("market_regime_alpha.", "tests.", "tests_historical.", "scripts."))
+                  and name not in known)
+
+
 def _contract_kind(path: str, node: ast.FunctionDef | ast.AsyncFunctionDef) -> str:
     tokens = path.lower() + " " + node.name.lower()
     if path.startswith("tests_historical/"):
@@ -73,10 +87,15 @@ def inventory(root: Path = ROOT) -> dict[str, Any]:
     })
     trees = {p: ast.parse(p.read_text(), filename=str(p)) for p in paths}
     modules = {module_name(p.relative_to(root)): p.relative_to(root).as_posix() for p in paths}
+    known = {".".join(name.split(".")[:i]) for name in modules for i in range(1, len(name.split(".")) + 1)}
+    unresolved = {}
     users: dict[str, set[str]] = defaultdict(set)
     dependencies: dict[str, list[str]] = {}
     for path, tree in trees.items():
         relative = path.relative_to(root).as_posix()
+        missing = unresolved_imports(tree, module_name(path.relative_to(root)), path.name == "__init__.py", known)
+        if missing:
+            unresolved[relative] = missing
         resolved = set()
         for imported in imports(tree, module_name(path.relative_to(root)), path.name == "__init__.py"):
             name = imported
@@ -139,6 +158,7 @@ def inventory(root: Path = ROOT) -> dict[str, Any]:
             "A module with no static consumers may be a public API, module CLI or historical decoder; do not auto-delete.",
         ],
         "entry_points": project["project"]["scripts"],
+        "unresolved_internal_modules": unresolved,
         "source": source,
         "schema": schema,
         "tests": tests,

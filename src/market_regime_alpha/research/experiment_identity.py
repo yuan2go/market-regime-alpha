@@ -120,6 +120,6 @@ class ExperimentIdentity:
 
     @property
     def experiment_id(self) -> ExperimentId:
-        """Content-derived experiment ID for the initial V2 kernel."""
+        """Content-derived experiment ID for the experiment contract."""
 
         return ExperimentId(f"exp-{self.identity_hash[:24]}")

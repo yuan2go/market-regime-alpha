@@ -1,4 +1,4 @@
-"""Phase D CandidateRecommendation projection without Entry semantics."""
+"""CandidateRecommendation projection without Entry semantics."""
 
 from __future__ import annotations
 

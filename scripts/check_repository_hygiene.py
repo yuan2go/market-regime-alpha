@@ -72,8 +72,11 @@ def main() -> int:
     errors = [
         *check_active_context(ROOT), *check_commentary(ROOT), *check_schema_facts(ROOT),
     ]
+    snapshot = inventory(ROOT)
+    if snapshot["unresolved_internal_modules"]:
+        errors.append("unresolved internal modules: " + str(snapshot["unresolved_internal_modules"]))
     path = ROOT / OUTPUT
-    if not path.exists() or path.read_text() != encoded(inventory(ROOT)):
+    if not path.exists() or path.read_text() != encoded(snapshot):
         errors.append("source/test/schema inventory drift; regenerate scripts/repository_inventory.py --write")
     if errors:
         print("\n".join(errors))

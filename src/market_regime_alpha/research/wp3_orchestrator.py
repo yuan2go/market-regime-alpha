@@ -187,7 +187,7 @@ class XuntouWP3Backend(Protocol):
 
 
 class TencentWP3Backend(Protocol):
-    """Temporary EXPLORATORY Tencent composite route."""
+    """Exploratory Tencent composite route."""
 
     def capability_report(self) -> ProviderCapabilityReport: ...
 

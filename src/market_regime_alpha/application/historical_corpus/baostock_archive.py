@@ -1,4 +1,4 @@
-"""Raw-preserving BaoStock acquisition for bounded Phase E archives."""
+"""Raw-preserving BaoStock acquisition for bounded archives."""
 
 from __future__ import annotations
 

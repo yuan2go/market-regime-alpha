@@ -105,7 +105,7 @@ from market_regime_alpha.persistence.postgres.native_repository import (
 
 
 class PhaseCGateConflict(ValueError):
-    """A Phase C owner or immutable evidence invariant failed."""
+    """A owner or immutable evidence invariant failed."""
 
 
 class PostgresPhaseCGateAuthority:

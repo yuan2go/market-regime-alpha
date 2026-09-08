@@ -81,7 +81,7 @@ ObservationScalar = str | int | bool | None
 
 @dataclass(frozen=True, slots=True)
 class ShadowOwnerLineageRequest:
-    """Exact references used to reload the existing Phase D owner chain."""
+    """Exact references used to reload the existing owner chain."""
 
     decision_reference: ValidationArtifactReference
     panel_reference: ValidationArtifactReference

@@ -2,7 +2,7 @@ from pathlib import Path
 
 from scripts import check_repository_hygiene as hygiene
 from scripts.check_docs_links import check_archived_snapshot
-from scripts.repository_inventory import imports
+from scripts.repository_inventory import imports, unresolved_imports
 
 import ast
 import json
@@ -58,3 +58,10 @@ def test_inventory_resolves_relative_import_aliases_without_losing_the_member() 
     names = imports(tree, "sample.application.commands", False)
     assert "sample.application.owner" in names
     assert "sample.domain.Fact" in names
+
+
+def test_inventory_rejects_a_removed_internal_module_instead_of_resolving_its_parent() -> None:
+    tree = ast.parse("from tests.contracts.removed_fixture import existing_helper")
+    assert unresolved_imports(tree, "tests.consumer", False, {"tests", "tests.contracts"}) == [
+        "tests.contracts.removed_fixture"
+    ]

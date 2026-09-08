@@ -1,4 +1,4 @@
-"""Content-addressed Phase E session components owned by PostgreSQL."""
+"""Content-addressed session components owned by PostgreSQL."""
 
 from __future__ import annotations
 

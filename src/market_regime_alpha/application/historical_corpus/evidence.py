@@ -1,4 +1,4 @@
-"""Immutable PostgreSQL-owned Phase E research evidence contracts."""
+"""Immutable PostgreSQL-owned research evidence contracts."""
 
 from __future__ import annotations
 
