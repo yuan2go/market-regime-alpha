@@ -24,11 +24,11 @@ and persistence dependencies. Static closure is not proof of deployment.
 | `model-governance` | RETAIN | `cli/model_governance.py` → formal Model governance; not experimental Model-use qualification |
 | `pit-authority` | RETAIN | `cli/pit_authority.py` → Provider/PIT qualification, ACL and revocation owner |
 | `continuous-research` | MIGRATE | Entry and old dispatch deleted. New work uses existing `mra backtest`, `mra research daily` and guarded prospective service; historical Runs are not translated or resumed by another owner |
-| `state-system` | MERGE | Entry removed; exact historical pool verification retained in `legacy.inspect_runtime`; descriptive stage-list CLI removed, domain contracts retained |
-| `research-shadow` | ARCHIVE | Entry/writer wiring removed; exact completed report/replay retained in `legacy.inspect_runtime`; no claim of new formal shadow qualification |
+| `state-system` | MERGE | Entry removed; exact historical pool verification retained in `cli.inspect_historical_runtime`; descriptive stage-list CLI removed, domain contracts retained |
+| `research-shadow` | ARCHIVE | Entry/writer wiring removed; exact completed report/replay retained in `cli.inspect_historical_runtime`; no claim of new formal shadow qualification |
 
 Uninstalled historical inspection is explicit:
-`uv run python -m market_regime_alpha.legacy.inspect_runtime --help`.
+`uv run python -m market_regime_alpha.cli.inspect_historical_runtime --help`.
 It cannot schedule, create or resume Runs. Its database report/replay paths use
 connection-level read-only transactions and exact supplied IDs. Other retained
 historical lifecycle replay APIs are individually classified in the inventory:

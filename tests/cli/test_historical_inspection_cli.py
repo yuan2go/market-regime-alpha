@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from market_regime_alpha.legacy.inspect_runtime import main
+from market_regime_alpha.cli.inspect_historical_runtime import main
 from tests.research.state_system.test_pool import (
     config,
     context,

@@ -31,7 +31,7 @@ def test_read_only_scope_cannot_be_downgraded_by_a_repository(postgres_factory) 
 def test_historical_runtime_report_and_replay_preserve_exact_rows(postgres_factory, capsys) -> None:
     from market_regime_alpha.application.continuous_research.postgres_journal import PostgresContinuousResearchJournal
     from market_regime_alpha.application.continuous_research.replay import replay_continuous_research
-    from market_regime_alpha.legacy.inspect_runtime import main
+    from market_regime_alpha.cli.inspect_historical_runtime import main
     from tests.persistence.postgres.test_continuous_research_journal import NOW, _command
 
     journal = PostgresContinuousResearchJournal(postgres_factory, clock=lambda: NOW)

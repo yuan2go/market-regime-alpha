@@ -151,8 +151,8 @@ For an explicitly identified historical database, use the uninstalled read-only
 inspection surface:
 
 ```bash
-uv run python -m market_regime_alpha.legacy.inspect_runtime --help
-uv run python -m market_regime_alpha.legacy.inspect_runtime --database-url "$HISTORICAL_DATABASE_URL" --application-schema "$HISTORICAL_SCHEMA" runtime-replay --run-id "$HISTORICAL_RUN_ID"
+uv run python -m market_regime_alpha.cli.inspect_historical_runtime --help
+uv run python -m market_regime_alpha.cli.inspect_historical_runtime --database-url "$HISTORICAL_DATABASE_URL" --application-schema "$HISTORICAL_SCHEMA" runtime-replay --run-id "$HISTORICAL_RUN_ID"
 ```
 
 Runtime/shadow inspection verifies the existing schema, never bootstraps it.

@@ -72,7 +72,7 @@ CONSUMER_DISPOSITIONS = {
     'src/market_regime_alpha/cli/replay_controlled_operation.py': ('RETAIN', 'Controlled operation exact-package replay', 'HISTORICAL_API', 'Requires exact package and PostgreSQL runtime binding; no availability-selected report or execution runner.'),
     'src/market_regime_alpha/cli/replay_feature_bundle.py': ('RETAIN', 'Feature exact-bundle replay', 'HISTORICAL_API', 'Recomputes the historical serialization from its exact Dataset; cannot publish new research authority.'),
     'src/market_regime_alpha/interfaces/cli/__init__.py': ('RETAIN', 'bootstrap_application / canonical context Applications', 'CURRENT_RESEARCH', 'Only installed current research composition; explicit schema and Artifact scope.'),
-    'src/market_regime_alpha/legacy/inspect_runtime.py': ('MERGE', 'ContinuousResearch journal / Shadow report-replay / State pool decoder', 'HISTORICAL_READ_ONLY', 'Exact IDs and read-only connections; absorbs retained reads from retired entry points; never schedules or writes.'),
+    'src/market_regime_alpha/cli/inspect_historical_runtime.py': ('MERGE', 'ContinuousResearch journal / Shadow report-replay / State pool decoder', 'HISTORICAL_READ_ONLY', 'Exact IDs and read-only connections; absorbs retained reads from retired entry points; never schedules or writes.'),
     'tools/xuntou/export_pit_validation_bundle_v4.py': ('RETAIN', 'Xuntou capability/evidence export', 'RAW_SOURCE_TOOL', 'Provider observation for explicit qualification review; cannot grant provider or trading authority.'),
     'tools/xuntou/probe_xtquant_pit_capabilities.py': ('RETAIN', 'Xuntou capability/evidence export', 'RAW_SOURCE_TOOL', 'Provider observation for explicit qualification review; cannot grant provider or trading authority.'),
 }

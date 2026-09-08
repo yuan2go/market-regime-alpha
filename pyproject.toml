@@ -300,7 +300,7 @@ files = [
     "tools/xuntou/probe_xtquant_pit_capabilities.py",
     "tools/xuntou/export_pit_validation_bundle_v4.py",
     "src/market_regime_alpha/legacy/dataset_contract_adapter.py",
-    "src/market_regime_alpha/legacy/inspect_runtime.py",
+    "src/market_regime_alpha/cli/inspect_historical_runtime.py",
     "src/market_regime_alpha/legacy/eligibility_sidecar_adapter.py",
     "src/market_regime_alpha/legacy/macd_experiment_adapter.py",
     "src/market_regime_alpha/legacy/trading_calendar_adapter.py",
