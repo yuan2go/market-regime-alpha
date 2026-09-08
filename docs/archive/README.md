@@ -25,3 +25,8 @@ The cleanup does not alter or delete those external originals.
 Original research and operational gates, including the blocked overall
 qualification and failed original campaign, retain their original evidence
 scope. No historical result is promoted by documentation or test relocation.
+
+The [repository hygiene verification](Repository-Hygiene-Verification-2026-09-08.md)
+records the source-bound cleanup, full regression, individual dispositions and
+[external raw evidence identity](Repository-Hygiene-Evidence-2026-09-08.json).
+It does not replace the original research or operational evidence.

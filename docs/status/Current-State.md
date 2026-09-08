@@ -35,6 +35,14 @@ result is changed or requalified by repository hygiene. Current operational
 facts must be obtained through the runbook's exact-scope status/health/replay
 commands under the relevant authorization.
 
+## Repository maintenance verification
+
+The source-bound cleanup completed default and explicit historical PostgreSQL
+regression, static checks, archive integrity and independent installed-schema/CLI
+verification. Exact revisions, counts, failures and build identities are retained
+in the [archive index](../archive/README.md). Future changes must run their own
+affected checks; this record does not establish current operational health.
+
 ## Evidence limits
 
 Code presence, canonical wiring, executed tests, runtime observation, research

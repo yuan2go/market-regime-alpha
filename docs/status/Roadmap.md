@@ -4,23 +4,24 @@
 > **Code Evidence:** `src/market_regime_alpha`, `tests`, `scripts/check_docs_links.py`
 
 This is the sole active plan. Evidence and historical results do not authorize
-the next experiment or deployment. The current task is repository hygiene;
-business feature development and live configuration changes are outside it.
+the next experiment or deployment. Repository hygiene is complete at the
+implementation recorded in the archive index. Business feature development and
+live configuration changes require their own explicit scope.
 
-## Current dependency chain
+## Completed repository maintenance
 
-1. Reconstruct installed/module/script entry points, composition, owner SQL and
-   test contracts; preserve the original workspace and running evidence scopes.
-2. Archive historical instructions/evidence without changing their bytes;
-   replace active docs with this small source-linked set.
-3. Remove proved fixture self-tests and dead helpers, rename valid contracts,
-   separate external-history qualification from default regression, and remove
-   misleading comments without changing research semantics.
-4. Add lightweight document/comment/schema/inventory guards; run all retained
-   Python tests, including PostgreSQL and explicitly provisioned history tests,
-   plus lint, types, links, build and installed-artifact smoke.
-5. Freeze local implementation and record exact outcomes, counts, deletion
-   reasons, remaining gaps and evidence limits. No push or automatic merge.
+Current entry points, owner call chains, schema facts and test contracts are
+indexed and source-linked. Historical documents are isolated without byte
+changes; dead private helpers and obsolete tests have explicit dispositions.
+Default and external-history regressions, PostgreSQL, static/document guards,
+build and installed-artifact checks have executed. The
+[archive index](../archive/README.md) records exact revisions, failures and
+results. These facts do not authorize deployment or a new experiment.
+
+Keep the current documentation set small. For future changes regenerate the
+inventory, run affected behavior and hygiene checks, and preserve historical
+identities. The items below are investigations requiring concrete consumer and
+invariant evidence; they are not permission for a broad refactor.
 
 ## Remaining architectural debt
 
