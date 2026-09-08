@@ -19,7 +19,7 @@ qualification is implied.
 
 Set `MRA_SCOPE` to the approved private project deployment directory. Its
 `deployment.json`, `operation.json`, `operator.env` and daily template bind the
-installed source, original DB name/OID/cluster, v7 catalog, Artifact root and
+installed source, original DB name/OID/cluster, catalog version, Artifact root and
 verified backup. Do not copy another database's profile or change a frozen Run.
 All Python process invocation uses `uv run`; the private `mra.sh` wrapper does
 so with the pinned installed environment. Research mutations require the same
@@ -59,14 +59,36 @@ Known empty observations have bounded later rounds;
 unknown effects or failed Runs require exact owner reconciliation. No Provider
 retry is inferred from a process restart. After whole-process downtime, elapsed
 uncreated windows receive current-time abstentions, not backdated predictions.
-The service processes one missed window per tick and rejects an activation
-scope larger than 64 elapsed sessions.
+The service processes a bounded outstanding missed-window roster and records one
+current-time abstention per tick. The bound applies after existing prediction and
+abstention Runs are excluded; it does not cap the lifetime of a Model use.
 
-Before changing a template, revoke its use to stop new predictions and keep the
-old explicit template running until its published pending Outcomes are settled.
-Only then install a newly declared compatible use/template. Revocation does not
-invalidate historical reports or cancel the obligation to evaluate predictions.
-Do not redirect old pending work to a different ModelVersion or code profile.
+Before changing a template, revoke its use to stop new predictions, then install
+only an independently declared compatible use/template. The service discovers
+published pending Outcomes from every frozen daily Outcome Run, so the old
+template need not remain the active prediction template. Revocation, expiry or
+replacement does not invalidate reports or cancel evaluation. Every historical
+task reloads its own ModelVersion, Target, input/config Artifact and code SHA; do
+not redirect it to the current template.
+
+Prediction generation, report Artifact publication and notification delivery are
+separate states and identities. With no explicitly configured channel or
+credential, delivery is `NOT_CONFIGURED`: no network request occurs and prediction
+or Outcome recovery continues. A configured delivery uses an independent Runtime
+Attempt/receipt. Unknown remote effect is `WAITING` for reconciliation, never
+permission to resend; retry is allowed only after the adapter proves the effect
+absent. A configured channel is `NOT_DUE` until a newly published report is ready;
+that state is not a missing-credential claim. Inspect daily health for last
+publication, pending maturity/settlement, waiting/failed tasks, calendar margin,
+Model-use expiry and factual data freshness.
+
+Source commit `c9f7cd14` targets registered
+`daily_operational_closure_v8`. The additive `004_daily_operational_closure`
+migration adds only the nullable exact DecisionRun source for a ResearchPartition
+and preserves all historical rows and migrations 001 through 003. A deployment
+still registered at v7 must fail closed until an explicitly authorized backup,
+v7-to-v8 upgrade, installed-source replacement and service restart are completed.
+This work package did not authorize or perform those original-database operations.
 
 The project supervisor handles lifecycle only. For the configured current-user
 label, disable first, send SIGTERM, and inspect until the owned process exits;
@@ -82,7 +104,7 @@ stopped project; an intentionally disabled label remains disabled. The template
 and refresh-script hashes are executable deployment evidence even though their
 source lives under `docs/operations/templates`.
 
-The observed deployment runs `00f9da04`, with a 24-hour backup limit, refresh
+The last recorded observed deployment runs `00f9da04`, with a 24-hour backup limit, refresh
 wakeups at 03:00/19:00 China time, and current calendar coverage through
 2026-09-17. Extend calendar facts through canonical Market capture/normalization
 before exhaustion; do not infer weekdays. The explicit use expires 30 days
@@ -93,6 +115,10 @@ A prediction, its actual future settlement and sustained service coverage are
 separate results. Inspect canonical Run/Step/Attempt and published receipt/Artifact
 identities, not only the process or final log line. A backup before publication
 is a recovery baseline, not proof that the new prediction is already backed up.
+The v1 Verification's future Outcome status is historical observation only; after
+its recorded maturity time, inspect the current original database before claiming
+`PENDING`, settled, evaluated or delivered. The closure package made no such
+read and therefore carries no newer real-run claim.
 
 
 ## Install and verify environment

@@ -3,6 +3,7 @@
 from dataclasses import fields
 from hashlib import sha256
 from datetime import datetime
+import json
 from typing import Any
 from uuid import UUID, uuid4, uuid5
 
@@ -19,8 +20,15 @@ from market_regime_alpha.research_qualification.domain.model import ArtifactBind
 from market_regime_alpha.research_qualification.domain.targets import TargetDefinition
 from market_regime_alpha.research_qualification.domain.daily_inputs import DailyDataReady, freeze_data_ready
 from market_regime_alpha.research_qualification.domain.daily_prediction import DailyPopulationMember, DailyPredictionPlan
+from market_regime_alpha.research_qualification.ports.daily_prediction import (
+    DailyOutcomeWorkItem,
+)
 from market_regime_alpha.research_qualification.ports.artifacts import ResearchArtifactByteStore
-from market_regime_alpha.runtime.errors import ArtifactIntegrityError, RuntimeStateConflictError
+from market_regime_alpha.runtime.errors import (
+    ArtifactByteStoreError,
+    ArtifactIntegrityError,
+    RuntimeStateConflictError,
+)
 
 
 class PostgresDailyPredictionReads:
@@ -43,11 +51,339 @@ class PostgresDailyPredictionReads:
             raise ArtifactIntegrityError("daily report bytes differ")
         return ArtifactBinding(*row)
 
+    def published_artifact(
+        self, idempotency_key: str
+    ) -> tuple[ArtifactBinding, bytes] | None:
+        with self._pool.connection(read_only=True) as connection:
+            rows = connection.execute(
+                """
+                SELECT artifact.artifact_id, artifact.content_sha256,
+                       artifact.size_bytes
+                FROM mra.command_receipt AS receipt
+                JOIN mra.artifact AS artifact
+                  ON artifact.artifact_id::text = receipt.result_aggregate_id
+                WHERE receipt.command_kind = 'REGISTER_ARTIFACT'
+                  AND receipt.status = 'SUCCEEDED'
+                  AND receipt.idempotency_key = %s
+                """,
+                (idempotency_key,),
+            ).fetchall()
+        if not rows:
+            return None
+        if len(rows) != 1:
+            raise ArtifactIntegrityError(
+                "artifact idempotency key resolves to multiple published identities"
+            )
+        row = rows[0]
+        binding = ArtifactBinding(*row)
+        content = self._byte_store.read_bytes(row[1], expected_size=row[2])
+        if sha256(content).hexdigest() != row[1]:
+            raise ArtifactIntegrityError("published Artifact bytes differ")
+        return binding, content
+
+    def research_dispositions(
+        self, prediction_id: UUID
+    ) -> tuple[dict[str, Any], ...]:
+        prefix = "daily:" + str(prediction_id) + ":research-disposition:"
+        with self._pool.connection(read_only=True) as connection:
+            rows = connection.execute(
+                """
+                SELECT receipt.idempotency_key, artifact.artifact_id,
+                       artifact.content_sha256, artifact.size_bytes
+                FROM mra.command_receipt AS receipt
+                JOIN mra.artifact AS artifact
+                  ON artifact.artifact_id::text = receipt.result_aggregate_id
+                WHERE receipt.command_kind = 'REGISTER_ARTIFACT'
+                  AND receipt.status = 'SUCCEEDED'
+                  AND receipt.idempotency_key LIKE %s
+                ORDER BY receipt.created_at, receipt.receipt_id
+                """,
+                (prefix + "%",),
+            ).fetchall()
+        result: list[dict[str, Any]] = []
+        for key, artifact_id, content_sha256, size_bytes in rows:
+            content = self._byte_store.read_bytes(
+                content_sha256, expected_size=size_bytes
+            )
+            value = json.loads(content)
+            if (
+                not isinstance(value, dict)
+                or value.get("schema") != "daily-research-disposition-v1"
+                or value.get("prediction_id") != str(prediction_id)
+                or key
+                != prefix + str(value.get("review_id"))
+                or sha256(content).hexdigest() != content_sha256
+            ):
+                raise ArtifactIntegrityError(
+                    "daily research disposition identity differs"
+                )
+            value["artifact"] = ArtifactBinding(
+                artifact_id, content_sha256, size_bytes
+            )
+            result.append(value)
+        return tuple(result)
+
     def now(self) -> datetime:
         with self._pool.connection(read_only=True) as connection:
             row = connection.execute("SELECT clock_timestamp()").fetchone()
         assert row is not None
         return row[0]
+
+    def operational_health(self, plan: DailyPredictionPlan) -> dict[str, Any]:
+        """Bounded facts for publication, backlog, calendar, model, and freshness."""
+
+        work = self.outcome_work_items(limit=256)
+        target_ids: dict[UUID, UUID] = {}
+        plan_decode_failures = 0
+        for item in work:
+            if item.plan_content is None:
+                plan_decode_failures += 1
+                continue
+            try:
+                root = json.loads(item.plan_content)
+                target_ids[item.run_id] = UUID(root["plan"]["target_session_id"])
+            except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+                plan_decode_failures += 1
+        with self._pool.connection(read_only=True) as connection:
+            observed = connection.execute("SELECT clock_timestamp()").fetchone()
+            assert observed is not None
+            observed_at = observed[0]
+            use = PostgresResearchModelRepository(connection).experimental_use(
+                plan.experimental_model_use_id, lock=False
+            )
+            publication = connection.execute(
+                """
+                SELECT max(forecast.recorded_at)
+                FROM mra.forecast_model_binding AS binding
+                JOIN mra.forecast_run AS forecast
+                  ON forecast.forecast_group_id = binding.forecast_group_id
+                JOIN mra.decision_run AS decision
+                  ON decision.decision_run_id = forecast.decision_run_id
+                JOIN mra.runtime_run AS run
+                  ON run.run_id = decision.runtime_run_id
+                JOIN mra.runtime_schedule AS schedule USING (schedule_id)
+                WHERE schedule.schedule_code ~ '^daily-model-[0-9a-f]{32}$'
+                  AND schedule.runtime_mode = 'SHADOW'
+                  AND run.runtime_mode = 'SHADOW'
+                """
+            ).fetchone()
+            report = connection.execute(
+                """
+                SELECT max(attempt.finished_at)
+                FROM mra.runtime_run AS run
+                JOIN mra.runtime_schedule AS schedule USING (schedule_id)
+                JOIN mra.runtime_step AS step USING (run_id)
+                JOIN mra.runtime_attempt AS attempt USING (step_id)
+                WHERE schedule.schedule_code ~ '^daily-model-[0-9a-f]{32}$'
+                  AND schedule.runtime_mode = 'SHADOW'
+                  AND run.runtime_mode = 'SHADOW'
+                  AND step.step_key = 'report'
+                  AND attempt.state = 'SUCCEEDED'
+                """
+            ).fetchone()
+            calendar = connection.execute(
+                """
+                SELECT count(*) FILTER (WHERE session.open_at > %s),
+                       max(session.session_date) FILTER (WHERE session.open_at > %s)
+                FROM mra.trading_session AS session
+                WHERE session.exchange = 'XSHG'
+                  AND EXISTS (
+                    SELECT 1
+                    FROM mra.market_capture_trading_session_normalization AS binding
+                    JOIN mra.data_capture AS capture USING (capture_id)
+                    WHERE binding.session_id = session.session_id
+                      AND capture.status = 'CAPTURED'
+                  )
+                """,
+                (observed_at, observed_at),
+            ).fetchone()
+            freshness = connection.execute(
+                """
+                SELECT
+                  (SELECT max(recorded_at) FROM mra.data_capture
+                   WHERE provider_product_id = %s),
+                  (SELECT max(recorded_at) FROM mra.market_bar_revision
+                   WHERE provider_product_id = %s),
+                  (SELECT max(recorded_at) FROM mra.source_gap
+                   WHERE provider_product_id = %s)
+                """,
+                (
+                    plan.provider_product_id,
+                    plan.provider_product_id,
+                    plan.provider_product_id,
+                ),
+            ).fetchone()
+            delivery = connection.execute(
+                """
+                SELECT
+                  max(attempt.finished_at) FILTER (
+                    WHERE attempt.state = 'SUCCEEDED'
+                  ),
+                  count(DISTINCT run.run_id) FILTER (
+                    WHERE run.state IN ('QUEUED', 'RUNNING')
+                  ),
+                  count(DISTINCT run.run_id) FILTER (
+                    WHERE run.state = 'WAITING'
+                  ),
+                  count(DISTINCT run.run_id) FILTER (
+                    WHERE run.state = 'FAILED'
+                  ),
+                  count(DISTINCT run.run_id) FILTER (
+                    WHERE run.state = 'SUCCEEDED'
+                  )
+                FROM mra.runtime_run AS run
+                JOIN mra.runtime_schedule AS schedule USING (schedule_id)
+                LEFT JOIN mra.runtime_step AS step USING (run_id)
+                LEFT JOIN mra.runtime_attempt AS attempt USING (step_id)
+                WHERE schedule.schedule_code
+                      ~ '^daily-delivery-[0-9a-f]{32}-[a-z][a-z0-9_-]{0,31}$'
+                  AND schedule.runtime_mode = 'SHADOW'
+                  AND run.runtime_mode = 'SHADOW'
+                """
+            ).fetchone()
+            runtime = connection.execute(
+                """
+                SELECT
+                  count(*) FILTER (
+                    WHERE run.state IN ('QUEUED', 'RUNNING')
+                  ),
+                  count(*) FILTER (WHERE run.state = 'WAITING'),
+                  count(*) FILTER (WHERE run.state = 'FAILED'),
+                  count(*) FILTER (WHERE run.state = 'BLOCKED'),
+                  count(*) FILTER (WHERE run.state = 'CANCELLED')
+                FROM mra.runtime_run AS run
+                JOIN mra.runtime_schedule AS schedule USING (schedule_id)
+                WHERE schedule.schedule_code ~
+                    '^daily-(model|outcome|abstention|input-collection|outcome-collection|population-collection|delivery)-'
+                  AND schedule.runtime_mode = 'SHADOW'
+                  AND run.runtime_mode = 'SHADOW'
+                """
+            ).fetchone()
+            review = connection.execute(
+                """
+                SELECT
+                  count(*) FILTER (WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM mra.command_receipt AS receipt
+                    WHERE receipt.command_kind = 'REGISTER_ARTIFACT'
+                      AND receipt.status = 'SUCCEEDED'
+                      AND receipt.idempotency_key LIKE
+                          'daily:' || split_part(run.fire_key, ':', 2)
+                          || ':research-disposition:%'
+                  )),
+                  count(*) FILTER (WHERE EXISTS (
+                    SELECT 1
+                    FROM mra.command_receipt AS receipt
+                    WHERE receipt.command_kind = 'REGISTER_ARTIFACT'
+                      AND receipt.status = 'SUCCEEDED'
+                      AND receipt.idempotency_key LIKE
+                          'daily:' || split_part(run.fire_key, ':', 2)
+                          || ':research-disposition:%'
+                  ))
+                FROM mra.runtime_run AS run
+                JOIN mra.runtime_schedule AS schedule USING (schedule_id)
+                WHERE schedule.schedule_code ~ '^daily-outcome-[0-9a-f]{32}$'
+                  AND run.fire_key ~ '^daily-outcome:[0-9a-f-]{36}$'
+                  AND run.state = 'SUCCEEDED'
+                """
+            ).fetchone()
+            session_rows = connection.execute(
+                "SELECT session_id, close_at FROM mra.trading_session WHERE session_id=ANY(%s::uuid[])",
+                (list(target_ids.values()),),
+            ).fetchall() if target_ids else ()
+        assert publication is not None
+        assert report is not None
+        assert calendar is not None
+        assert freshness is not None
+        assert delivery is not None
+        assert runtime is not None
+        assert review is not None
+        close_by_id = {row[0]: row[1] for row in session_rows}
+        active = [item for item in work if item.run_state in {"QUEUED", "RUNNING"}]
+        known_active = [
+            (item, close_by_id[target_ids[item.run_id]])
+            for item in active
+            if item.run_id in target_ids and target_ids[item.run_id] in close_by_id
+        ]
+        pending_maturity = sum(
+            target_close > observed_at for _item, target_close in known_active
+        )
+        pending_settlement = sum(
+            target_close <= observed_at for _item, target_close in known_active
+        )
+        plan_decode_failures += len(active) - len(known_active)
+        future_calendar_count = int(calendar[0])
+        return {
+            "schema": "daily-research-operational-health-v1",
+            "observed_at": observed_at,
+            "last_successful_publication_at": publication[0],
+            "last_successful_report_at": report[0],
+            "outcome_backlog": {
+                "observed_count": len(work),
+                "pending_maturity_count": pending_maturity,
+                "pending_settlement_count": pending_settlement,
+                "waiting_count": sum(item.run_state == "WAITING" for item in work),
+                "failed_count": sum(item.run_state == "FAILED" for item in work),
+                "integrity_blocked_count": plan_decode_failures,
+                "scan_limit": 256,
+                "scan_truncated": len(work) == 256,
+            },
+            "calendar": {
+                "future_captured_session_count": future_calendar_count,
+                "last_future_captured_session_date": calendar[1],
+                "state": (
+                    "CALENDAR_COVERAGE_LOW"
+                    if future_calendar_count < 3
+                    else "CALENDAR_COVERAGE_AVAILABLE"
+                ),
+            },
+            "model_use": {
+                "experimental_model_use_id": use.plan.experimental_model_use_id,
+                "model_version_id": use.plan.model_version_id,
+                "expires_at": use.plan.expires_at,
+                "revoked_at": use.revoked_at,
+                "expires_in_seconds": int(
+                    (use.plan.expires_at - observed_at).total_seconds()
+                ),
+                "state": (
+                    "REVOKED"
+                    if use.revoked_at is not None
+                    else "EXPIRED"
+                    if observed_at >= use.plan.expires_at
+                    else "AVAILABLE"
+                ),
+            },
+            "data_freshness": {
+                "last_capture_recorded_at": freshness[0],
+                "last_bar_recorded_at": freshness[1],
+                "last_source_gap_recorded_at": freshness[2],
+                "capture_age_seconds": (
+                    None
+                    if freshness[0] is None
+                    else int((observed_at - freshness[0]).total_seconds())
+                ),
+            },
+            "delivery": {
+                "last_acknowledged_at": delivery[0],
+                "active_count": int(delivery[1]),
+                "reconciliation_required_count": int(delivery[2]),
+                "failed_count": int(delivery[3]),
+                "delivered_count": int(delivery[4]),
+            },
+            "runtime": {
+                "active_count": int(runtime[0]),
+                "waiting_count": int(runtime[1]),
+                "failed_count": int(runtime[2]),
+                "blocked_count": int(runtime[3]),
+                "cancelled_count": int(runtime[4]),
+            },
+            "human_research_disposition": {
+                "pending_review_count": int(review[0]),
+                "reviewed_count": int(review[1]),
+                "automatic_model_change": False,
+                "automatic_qualification_change": False,
+            },
+        }
 
     def first_attempt_at(self, step_id: UUID) -> datetime:
         with self._pool.connection(read_only=True) as connection:
@@ -76,7 +412,15 @@ class PostgresDailyPredictionReads:
             if root is None or root["status"] != "COMPLETED":
                 raise ArtifactIntegrityError("daily Evaluation is not completed")
             metrics = cursor.execute(
-                "SELECT * FROM mra.evaluation_metric WHERE evaluation_run_id=%s ORDER BY evaluation_protocol_metric_id", (evaluation_id,)
+                """
+                SELECT metric.*, protocol.metric_code
+                FROM mra.evaluation_metric AS metric
+                JOIN mra.evaluation_protocol_metric AS protocol
+                  USING (evaluation_protocol_metric_id)
+                WHERE metric.evaluation_run_id = %s
+                ORDER BY protocol.ordinal
+                """,
+                (evaluation_id,),
             ).fetchall()
         return {"evaluation": root, "metrics": metrics}
 
@@ -114,22 +458,107 @@ class PostgresDailyPredictionReads:
             ).fetchone()
         return None if row is None else self._byte_store.read_bytes(row[0], expected_size=row[1])
 
-    def pending_outcome_plans(self, use_id: UUID) -> tuple[bytes, ...]:
+    def outcome_work_items(
+        self, *, limit: int = 64
+    ) -> tuple[DailyOutcomeWorkItem, ...]:
+        """Discover historical settlement work independently of the current use."""
+
+        if type(limit) is not int or not 1 <= limit <= 256:
+            raise ValueError("daily Outcome scan limit must be between 1 and 256")
         with self._pool.connection(read_only=True) as connection:
             rows = connection.execute(
-                """SELECT artifact.content_sha256,artifact.size_bytes FROM mra.runtime_run run
-                JOIN mra.runtime_schedule schedule USING(schedule_id)
-                JOIN mra.artifact artifact ON artifact.artifact_id=run.config_artifact_id AND artifact.content_sha256=run.config_hash
-                WHERE schedule.schedule_code=%s AND run.state IN ('QUEUED','RUNNING')
-                ORDER BY run.requested_at,run.run_id LIMIT 64""",
-                ("daily-outcome-" + use_id.hex,),
+                """
+                SELECT run.run_id, run.schedule_id, schedule.schedule_code,
+                       run.fire_key, run.parent_run_id, run.state,
+                       run.requested_at, run.code_sha, run.config_hash,
+                       artifact.content_sha256, artifact.size_bytes,
+                       coalesce(
+                         latest.error_code,
+                         run.terminal_reason_code
+                       ) AS error_code
+                FROM mra.runtime_run AS run
+                JOIN mra.runtime_schedule AS schedule USING (schedule_id)
+                LEFT JOIN mra.artifact AS artifact
+                  ON artifact.artifact_id = run.config_artifact_id
+                 AND artifact.content_sha256 = run.config_hash
+                 AND artifact.integrity_state = 'AVAILABLE'
+                LEFT JOIN LATERAL (
+                  SELECT attempt.error_code
+                  FROM mra.runtime_attempt AS attempt
+                  JOIN mra.runtime_step AS step USING (step_id)
+                  WHERE step.run_id = run.run_id
+                    AND attempt.error_code IS NOT NULL
+                  ORDER BY attempt.created_at DESC, attempt.attempt_id DESC
+                  LIMIT 1
+                ) AS latest ON true
+                WHERE schedule.schedule_code ~ '^daily-outcome-[0-9a-f]{32}$'
+                  AND schedule.runtime_mode = 'SHADOW'
+                  AND run.runtime_mode = 'SHADOW'
+                  AND run.state IN ('QUEUED', 'RUNNING', 'WAITING', 'FAILED')
+                  AND EXISTS (
+                    SELECT 1 FROM mra.runtime_step AS step
+                    WHERE step.run_id = run.run_id
+                  )
+                  AND NOT EXISTS (
+                    SELECT 1 FROM mra.runtime_step AS step
+                    WHERE step.run_id = run.run_id
+                      AND step.implementation NOT LIKE 'research.daily_outcome.%%'
+                  )
+                ORDER BY
+                  CASE run.state
+                    WHEN 'RUNNING' THEN 0
+                    WHEN 'QUEUED' THEN 1
+                    WHEN 'WAITING' THEN 2
+                    ELSE 3
+                  END,
+                  run.requested_at,
+                  run.run_id
+                LIMIT %s
+                """,
+                (limit,),
             ).fetchall()
-        return tuple(self._byte_store.read_bytes(row[0], expected_size=row[1]) for row in rows)
+        result: list[DailyOutcomeWorkItem] = []
+        for row in rows:
+            content = None
+            error_code = row[11]
+            if row[9] is None or row[10] is None:
+                error_code = error_code or "FROZEN_PLAN_ARTIFACT_UNAVAILABLE"
+            else:
+                try:
+                    content = self._byte_store.read_bytes(
+                        row[9], expected_size=row[10]
+                    )
+                except (
+                    OSError,
+                    ValueError,
+                    ArtifactByteStoreError,
+                    ArtifactIntegrityError,
+                ):
+                    error_code = error_code or "FROZEN_PLAN_BYTES_UNREADABLE"
+            result.append(
+                DailyOutcomeWorkItem(
+                    run_id=row[0],
+                    schedule_id=row[1],
+                    schedule_code=row[2],
+                    fire_key=row[3],
+                    parent_run_id=row[4],
+                    run_state=row[5],
+                    requested_at=row[6],
+                    code_sha=row[7],
+                    config_sha256=row[8],
+                    plan_content=content,
+                    error_code=error_code,
+                )
+            )
+        return tuple(result)
 
     def missing_elapsed_session_pairs(self, plan: DailyPredictionPlan) -> tuple[tuple[UUID, UUID], ...]:
-        """Bounded calendar roster since explicit activation, excluding every existing terminal or active Run."""
+        """Return at most 64 actual gaps without capping the ModelUse lifetime."""
+
+        missing: list[tuple[UUID, UUID]] = []
         with self._pool.connection(read_only=True) as connection:
-            rows = connection.execute(
+            cursor = connection.cursor()
+            cursor.execute(
                 """WITH calendar AS (
                     SELECT session_id,close_at,lead(session_id) OVER (ORDER BY session_date) AS target_id,
                            lead(open_at) OVER (ORDER BY session_date) AS target_start
@@ -139,19 +568,45 @@ class PostgresDailyPredictionReads:
                 JOIN mra.experimental_model_use usage ON usage.experimental_model_use_id=%s
                 LEFT JOIN mra.experimental_model_use_revocation stopped USING(experimental_model_use_id)
                 WHERE calendar.target_start>greatest(usage.registered_at,usage.valid_from)
-                  AND calendar.target_start<=least(clock_timestamp(),usage.expires_at,stopped.revoked_at)
-                ORDER BY calendar.close_at LIMIT 65""",
+                  AND calendar.target_start<=least(
+                    clock_timestamp(), usage.expires_at,
+                    coalesce(stopped.revoked_at, usage.expires_at)
+                  )
+                ORDER BY calendar.close_at""",
                 (plan.experimental_model_use_id,),
-            ).fetchall()
-            if not rows:
-                return ()
-            if len(rows) > 64:
-                raise RuntimeStateConflictError("DAILY_ACTIVATION_SCOPE_EXCEEDS_64_SESSIONS")
-            identities = {tuple(row): uuid5(plan.experimental_model_use_id, "daily:"+str(row[0])+":"+str(row[1])) for row in rows}
-            run_ids = [uuid5(identity,suffix) for identity in identities.values() for suffix in ("prediction-runtime","abstention-runtime")]
-            existing = {row[0] for row in connection.execute("SELECT run_id FROM mra.runtime_run WHERE run_id=ANY(%s::uuid[])",(run_ids,)).fetchall()}
-        return tuple(pair for pair,identity in identities.items()
-                     if not any(uuid5(identity,suffix) in existing for suffix in ("prediction-runtime","abstention-runtime")))
+            )
+            while len(missing) < 64:
+                rows = cursor.fetchmany(128)
+                if not rows:
+                    break
+                identities = {
+                    (row[0], row[1]): uuid5(
+                        plan.experimental_model_use_id,
+                        "daily:" + str(row[0]) + ":" + str(row[1]),
+                    )
+                    for row in rows
+                }
+                run_ids = [
+                    uuid5(identity, suffix)
+                    for identity in identities.values()
+                    for suffix in ("prediction-runtime", "abstention-runtime")
+                ]
+                existing = {
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT run_id FROM mra.runtime_run WHERE run_id=ANY(%s::uuid[])",
+                        (run_ids,),
+                    ).fetchall()
+                }
+                for pair, identity in identities.items():
+                    if not any(
+                        uuid5(identity, suffix) in existing
+                        for suffix in ("prediction-runtime", "abstention-runtime")
+                    ):
+                        missing.append(pair)
+                        if len(missing) == 64:
+                            break
+        return tuple(missing)
 
     def capture_roster(self, plan: DailyPredictionPlan, *, outcome: bool = False) -> tuple[tuple[UUID, str, Any], ...]:
         with self._pool.connection(read_only=True) as connection:
@@ -440,6 +895,7 @@ class PostgresDailyPredictionReads:
             "sampled": len(population),
             "eligible": sum(m.eligible for m in population),
             "feature_ready": sum(row["composite_score"] is not None for row in rows),
+            "predicted": sum(row["point_estimate"] is not None for row in rows),
             "model_prediction": sum(row["point_estimate"] is not None for row in rows),
             "baseline_prediction": sum(row["baseline_point_estimate"] is not None for row in rows),
             "common_prediction": sum(row["point_estimate"] is not None and row["baseline_point_estimate"] is not None for row in rows),

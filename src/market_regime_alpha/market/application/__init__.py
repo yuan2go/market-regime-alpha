@@ -26,7 +26,9 @@ from market_regime_alpha.market.application.prospective_runtime import (
     ProspectiveArchiveRuntimeApplication, ProspectiveArchiveRuntimePlan,
     ProspectiveRuntimeExecution, ProspectiveRuntimeFailure,
     ProspectiveRuntimeIntegrityError, ProspectiveRuntimeRegistration,
-    ProspectiveRuntimeRunPlan, compile_prospective_runtime_plan,
+    ProspectiveRuntimeAdmission, ProspectiveRuntimeRunAdmission,
+    ProspectiveRuntimeRunPlan, compile_prospective_runtime_admission,
+    compile_prospective_runtime_plan,
 )
 from market_regime_alpha.market.application.provider_qualification import (
     ProviderFinalityObservationResult, ProviderProtocolRegistrationResult,
@@ -49,8 +51,10 @@ __all__ = [
     "ProspectiveArchivePlanningGapResult", "ProspectiveArchiveRuntimeApplication",
     "ProspectiveArchiveRuntimePlan", "ProspectiveRuntimeExecution",
     "ProspectiveRuntimeFailure", "ProspectiveRuntimeIntegrityError",
-    "ProspectiveRuntimeRegistration", "ProspectiveRuntimeRunPlan",
+    "ProspectiveRuntimeRegistration", "ProspectiveRuntimeAdmission",
+    "ProspectiveRuntimeRunAdmission", "ProspectiveRuntimeRunPlan",
     "QualifiedHistoricalVisibilityResult", "RecordArchiveCaptureObservationRequest",
     "RecordProspectivePlanningGapRequest", "StartMarketArchiveRequest",
-    "build_target_aligned_prospective_manifest", "compile_prospective_runtime_plan",
+    "build_target_aligned_prospective_manifest",
+    "compile_prospective_runtime_admission", "compile_prospective_runtime_plan",
 ]

@@ -35,21 +35,41 @@ def _bootstrap_v5(database_url):
     return manager
 
 
+def _bootstrap_v7(database_url):
+    manager = SchemaManager(database_url)
+    with psycopg.connect(database_url) as connection:
+        assert connection.execute("SELECT to_regnamespace('mra')").fetchone() == (None,)
+        connection.execute(manager._baseline_sql)
+        connection.execute(manager._post_baseline_sql)
+        connection.execute(manager._daily_sql)
+        checksum = schema._target_catalog_checksum(connection)
+        assert checksum == schema._DAILY_CATALOG_SHA256
+        connection.execute(manager._seed_sql, (
+            manager.baseline_checksum, manager.seed_checksum, checksum,
+            manager.reference_vocabulary_checksum, manager.baseline_checksum,
+        ))
+        schema._insert_revision_gap_migration(connection)
+        schema._insert_daily_migration(connection)
+        connection.commit()
+    return manager
+
+
 def test_fresh_schema_records_exact_immutable_baseline_and_correction(target_database_url):
     manager = SchemaManager(target_database_url)
     result = manager.bootstrap()
     assert result.baseline_checksum == _BASELINE
-    assert result.catalog_checksum == schema._DAILY_CATALOG_SHA256
+    assert result.catalog_checksum == schema._DAILY_CLOSURE_CATALOG_SHA256
     with psycopg.connect(target_database_url) as connection:
         assert connection.execute('SELECT version,name,checksum FROM mra.schema_migrations ORDER BY version').fetchall() == [
             (1, '001_baseline', _BASELINE), (2, '002_prospective_revision_gap', _PATCH),
             (3, '003_daily_model_research', schema._DAILY_BUNDLE_SHA256),
+            (4, '004_daily_operational_closure', schema._DAILY_CLOSURE_BUNDLE_SHA256),
         ]
     assert manager.bootstrap().created is False
     assert manager.verify().catalog_checksum == result.catalog_checksum
 
 
-def test_prior_baseline_and_all_five_published_upgrade_bundles_remain_exact(target_database_url):
+def test_prior_baseline_and_all_published_upgrade_bundles_remain_exact(target_database_url):
     manager = SchemaManager(target_database_url)
     assert sha256_bytes(manager._baseline_sql.encode()) == _BASELINE
     definitions = schema._wp18q_operational_upgrade_definitions(
@@ -65,6 +85,7 @@ def test_prior_baseline_and_all_five_published_upgrade_bundles_remain_exact(targ
         '45849ef8e6571eb640876190c47b87272de4676f7c6fe2c60581d3bac1177b2a',
         _PATCH,
         schema._DAILY_BUNDLE_SHA256,
+        schema._DAILY_CLOSURE_BUNDLE_SHA256,
     ]
     for definition in definitions:
         assert manager._resolve_operational_upgrade_definition(
@@ -137,5 +158,58 @@ def test_v6_to_daily_v7_exact_additive_upgrade_preserves_immutable_evidence(targ
     with psycopg.connect(target_database_url) as connection:
         assert schema._historical_projection(connection,manifest=before.manifest).sha256==before.sha256
         assert connection.execute('SELECT version,name,checksum FROM mra.schema_migrations WHERE version<=2 ORDER BY version').fetchall()==prior
-    assert manager.verify().catalog_checksum==schema._DAILY_CATALOG_SHA256
+    assert result.verification.catalog_checksum==schema._DAILY_CATALOG_SHA256
     assert store.verify(artifact.content_sha256,expected_size=artifact.size_bytes).result=='VERIFIED'
+
+
+def test_v7_to_daily_closure_v8_is_forward_only_and_reconciles_unknown_commit(
+    target_database_url, tmp_path: Path
+):
+    manager = _bootstrap_v7(target_database_url)
+    store = LocalArtifactStore(tmp_path/'v7-artifacts')
+    pool = TargetPostgresPool(target_database_url)
+    artifact = ArtifactApplication(store,PostgresUnitOfWorkProvider(pool)).publish(
+        b'v7 immutable evidence',media_type='text/plain',context=_context('v7-baseline'))
+    pool.close()
+    with psycopg.connect(target_database_url) as connection:
+        before=schema._historical_projection(connection)
+        prior=connection.execute(
+            'SELECT version,name,checksum FROM mra.schema_migrations ORDER BY version'
+        ).fetchall()
+    backup=tmp_path/'v7.dump'
+    backup_sha,backup_size=_dump(target_database_url,backup)
+    plan=manager.plan_operational_upgrade(
+        _authorization(manager,backup,backup_sha,backup_size)
+    )
+    assert plan.upgrade_code=='daily_operational_closure_v8'
+    assert plan.prior_catalog_sha256==schema._DAILY_CATALOG_SHA256
+    assert plan.next_catalog_sha256==schema._DAILY_CLOSURE_CATALOG_SHA256
+    result=manager.apply_operational_upgrade(
+        plan,challenge=plan.challenge,operator_id=plan.operator_id
+    )
+    repeated=manager.apply_operational_upgrade(
+        plan,challenge=plan.challenge,operator_id=plan.operator_id
+    )
+    assert result.receipt_id==repeated.receipt_id
+    assert not result.replayed and repeated.replayed
+    with psycopg.connect(target_database_url) as connection:
+        assert schema._historical_projection(
+            connection,manifest=before.manifest
+        ).sha256==before.sha256
+        assert connection.execute(
+            'SELECT version,name,checksum FROM mra.schema_migrations WHERE version<=3 ORDER BY version'
+        ).fetchall()==prior
+        assert connection.execute(
+            'SELECT version,name,checksum FROM mra.schema_migrations WHERE version=4'
+        ).fetchone()==(
+            4,
+            '004_daily_operational_closure',
+            schema._DAILY_CLOSURE_BUNDLE_SHA256,
+        )
+        assert connection.execute(
+            "SELECT source_decision_run_id FROM mra.research_partition LIMIT 0"
+        ).description is not None
+    assert manager.verify().catalog_checksum==schema._DAILY_CLOSURE_CATALOG_SHA256
+    assert store.verify(
+        artifact.content_sha256,expected_size=artifact.size_bytes
+    ).result=='VERIFIED'

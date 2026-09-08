@@ -17,6 +17,70 @@ from market_regime_alpha.runtime.application import ActorType, CommandContext
 from market_regime_alpha.shared.hashing import canonical_json_sha256
 from tests.refoundation.market.prospective_health_fixture import canonical_prospective_stack  # noqa: F401
 
+
+def test_first_predeclare_requires_positive_frozen_series_before_any_write(
+    request,
+):
+    from uuid import uuid4
+
+    from market_regime_alpha.infrastructure.postgres.prospective_operation_session import (
+        prospective_operation_session,
+    )
+    from market_regime_alpha.market.application import ArchiveOperatorManifest
+
+    fixture = request.getfixturevalue("canonical_prospective_stack")
+    app, settings = fixture.application, fixture.settings
+    original = fixture.manifest
+    generation = original.start_request.prospective_generation
+    assert generation is not None
+    archive_id = uuid4()
+    foreign = ArchiveOperatorManifest(
+        replace(
+            original.start_request,
+            market_archive_id=archive_id,
+            archive_code="positive-series-counterexample",
+            prospective_generation=replace(
+                generation,
+                market_archive_id=archive_id,
+                series_code="intended_series",
+                generation=1,
+                predecessor_market_archive_id=None,
+            ),
+        ),
+        original.slices,
+    )
+    identity = app.evidence.inventory()["database"]
+    with fixture.pool.connection(read_only=True) as connection:
+        before = connection.execute(
+            "SELECT (SELECT count(*) FROM mra.artifact), "
+            "(SELECT count(*) FROM mra.runtime_run), "
+            "(SELECT count(*) FROM mra.market_archive), "
+            "(SELECT count(*) FROM mra.prospective_archive_generation)"
+        ).fetchone()
+    with prospective_operation_session(
+        settings.database_url,
+        database_name=identity["name"],
+        database_oid=identity["oid"],
+        cluster_identity=identity["cluster_identity"],
+        series_code="wrong_series",
+    ):
+        with pytest.raises(ValueError, match="OUTSIDE_SERIES"):
+            app.prospective_archives.predeclare(
+                foreign,
+                code_sha="1" * 40,
+                actor_id="positive-series-test",
+                lease_duration=timedelta(seconds=30),
+            )
+    with fixture.pool.connection(read_only=True) as connection:
+        after = connection.execute(
+            "SELECT (SELECT count(*) FROM mra.artifact), "
+            "(SELECT count(*) FROM mra.runtime_run), "
+            "(SELECT count(*) FROM mra.market_archive), "
+            "(SELECT count(*) FROM mra.prospective_archive_generation)"
+        ).fetchone()
+    assert after == before
+
+
 @pytest.mark.usefixtures("canonical_prospective_stack")
 @pytest.mark.parametrize("canonical_prospective_stack", ["interrupt_capture_registration"], indirect=True)
 def test_service_recovers_partial_capture_registration_before_strict_health(request, tmp_path, monkeypatch):
@@ -281,10 +345,20 @@ def test_live_writer_blocks_but_expired_same_series_requires_owner_recovery(requ
         expected_oid=snapshot["database"]["oid"], minimum_free_bytes=1)
     config = replace(config_for(settings, snapshot, bundle, receipt), series_code="health_fixture")
     run_id = fixture.registration.capture_run_ids[0]
+    from market_regime_alpha.market.application import (
+        compile_prospective_runtime_admission,
+        compile_prospective_runtime_plan,
+    )
+    from market_regime_alpha.infrastructure.postgres.prospective_operation_session import (
+        prospective_series_admission,
+    )
+    plan = compile_prospective_runtime_plan(fixture.manifest, code_sha="1" * 40)
+    scope = compile_prospective_runtime_admission(fixture.manifest, plan, plan.runs)
     claim = app.runtime.claim_next(run_id=run_id, worker_id="crashed-same-series",
         lease_duration=timedelta(seconds=1), context=_context("guard-claim"))
     assert claim is not None
     with operational_session(settings, config) as guard:
+        guard.session.allow_prospective_recovery((scope,))
         with pytest.raises(ValueError, match="ACTIVE_ATTEMPT_CONFLICT"):
             guard.snapshot()
 
@@ -292,7 +366,8 @@ def test_live_writer_blocks_but_expired_same_series_requires_owner_recovery(requ
         assert guard.snapshot()["active_attempts"] == 1
         # Guard inspection leaves the expired Attempt for the canonical owner.
         assert app.runtime.inspect_run(run_id).steps[0].attempt_states == ("CLAIMED",)
-        assert app.runtime.recover_expired(actor_id="operator", reason_code="GUARD_DRILL", run_id=run_id) == (claim.attempt_id,)
+        with prospective_series_admission(scope):
+            assert app.runtime.recover_expired(actor_id="operator", reason_code="GUARD_DRILL", run_id=run_id) == (claim.attempt_id,)
         assert guard.snapshot()["active_attempts"] == 0
     foreign_run = _run(app.runtime, app.artifacts, _schedule(app.runtime),
                        steps=(_step("foreign-step", 1),), key="foreign-research")
@@ -317,6 +392,15 @@ def test_foreign_claim_after_last_check_cannot_enter_supervised_database(request
         expected_oid=snapshot["database"]["oid"], minimum_free_bytes=1)
     config = replace(config_for(settings, snapshot, bundle, receipt), series_code="health_fixture")
     run_id = fixture.registration.capture_run_ids[0]
+    from market_regime_alpha.market.application import (
+        compile_prospective_runtime_admission,
+        compile_prospective_runtime_plan,
+    )
+    from market_regime_alpha.infrastructure.postgres.prospective_operation_session import (
+        prospective_series_admission,
+    )
+    plan = compile_prospective_runtime_plan(fixture.manifest, code_sha="1" * 40)
+    scope = compile_prospective_runtime_admission(fixture.manifest, plan, plan.runs)
     barrier = Barrier(2)
 
     def enter_after_check():
@@ -338,8 +422,9 @@ def test_foreign_claim_after_last_check_cannot_enter_supervised_database(request
             assert connection.execute("SELECT (SELECT count(*) FROM mra.runtime_attempt), "
                 "(SELECT count(*) FROM mra.command_receipt), (SELECT count(*) FROM mra.audit_event)").fetchone() == before
         guard.before_action()
-        own = app.runtime.claim_next(run_id=run_id, worker_id=config.worker_id,
-            lease_duration=timedelta(seconds=60), context=_context("own-after-foreign-refusal"))
+        with prospective_series_admission(scope):
+            own = app.runtime.claim_next(run_id=run_id, worker_id=config.worker_id,
+                lease_duration=timedelta(seconds=60), context=_context("own-after-foreign-refusal"))
         assert own is not None
         app.runtime.start_attempt(own, _context("own-start"))
         # A canonical admitted Attempt must remain usable before the Provider effect.

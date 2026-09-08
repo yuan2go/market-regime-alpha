@@ -13,12 +13,35 @@ second planning source.
 
 ## Sequence
 
-The current authorized dependency is WP-DAILY-MODEL-RESEARCH-LOOP-01, from
-main `129d8bee`: deliver actual post-close DataReady, a new sealed-input rule/
-ridge baseline, independent experimental daily ModelForecast and automatic
-Outcome/Evaluation. Its [versioned protocol](../references/WP-DAILY-MODEL-RESEARCH-LOOP-01-Protocol.md)
-freezes time, target, preprocessing and full denominator semantics. It does not
-depend on future WP18Q evidence, change old experiments or reopen qualification.
+The latest implemented dependency is
+[WP-DAILY-RESEARCH-OPERATIONAL-CLOSURE-02](../references/WP-DAILY-RESEARCH-OPERATIONAL-CLOSURE-02-Design.md),
+from main `1562855928b2b7e839883838f367876cc49d7391`. It operationally closes the
+already-frozen post-close protocol without adding models or redesigning the
+platform. Its [implementation plan](../references/WP-DAILY-RESEARCH-OPERATIONAL-CLOSURE-02-Implementation-Plan.md)
+owns execution order and its [bounded Verification](../references/WP-DAILY-RESEARCH-OPERATIONAL-CLOSURE-02-Verification.md)
+owns exact command results.
+
+- [x] Replace first-generation prospective negative inference with exact positive
+  frozen manifest/Run/Archive/series admission and recovery.
+- [x] Separate new prediction eligibility from all-use historical settlement;
+  retain failed/waiting work visibly and scan a bounded fair roster.
+- [x] Correct real downtime abstention, outstanding-window bounds, ordinary
+  failure terminalization, calendar/freshness health and restart continuation.
+- [x] Persist report delivery as an independent Runtime identity with explicit
+  NOT_CONFIGURED, deduplication, attempts, receipts, expiry and reconciliation.
+- [x] Complete focused PostgreSQL vertical, affected regressions, static/build/
+  installed-wheel gates and publish the bounded Verification. Repository-wide
+  pytest was user-stopped at 47% and is not a completed PASS.
+
+Engineering implementation is fixed at `c9f7cd14`; its additive target schema is
+v8. Original operational deployment remains v7 and was neither inspected after
+the prior prediction's maturity boundary nor upgraded/restarted here. Therefore
+real Outcome/Evaluation maturity, actual notification delivery and sustained
+service remain separate operational evidence, not inherited completion.
+
+WP-DAILY-MODEL-RESEARCH-LOOP-01 remains the frozen protocol and prior evidence
+baseline. It does not depend on future WP18Q evidence, change old experiments or
+reopen qualification.
 
 - [x] Extend canonical Target/Outcome for two future same-session observations;
   connect shared pure Feature computation to separate exact historical/live reads.

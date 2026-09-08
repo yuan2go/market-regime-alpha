@@ -47,6 +47,12 @@ class PostgresTransactionalOutcomeAcquisition:
         self._connection = connection
         self._id_factory = id_factory
 
+    def authoritative_accessed_at(self) -> datetime:
+        row = self._connection.execute("SELECT clock_timestamp()").fetchone()
+        if row is None:
+            raise RuntimeError("PostgreSQL did not return its authoritative clock")
+        return row[0]
+
     def acquire(self, evaluation_run_id: UUID) -> OutcomeAcquisitionResult:
         preliminary = self._connection.execute(
             """
@@ -141,6 +147,7 @@ class PostgresTransactionalOutcomeAcquisition:
                 (f"research-outcome-access:{member_id}",),
             )
 
+        accessed_at = self.authoritative_accessed_at()
         roster_items: list[tuple[UUID, UUID, UUID, int]] = []
         for member, revision in zip(members, revisions, strict=True):
             ordinal_row = self._connection.execute(
@@ -172,10 +179,11 @@ class PostgresTransactionalOutcomeAcquisition:
                     market_target_outcome_revision_id,
                     market_target_outcome_id, revision_ordinal,
                     observation_cutoff, knowledge_cutoff, settled_at,
-                    outcome_status, access_ordinal, content_sha256
+                    outcome_status, access_ordinal, content_sha256,
+                    accessed_at
                 ) VALUES (
                     %s, %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s, %s, %s, %s, %s
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s
                 )
                 """,
                 (
@@ -185,7 +193,7 @@ class PostgresTransactionalOutcomeAcquisition:
                     revision.outcome_id, revision.revision_ordinal,
                     revision.observation_cutoff, revision.knowledge_cutoff,
                     revision.settled_at, revision.outcome_status,
-                    access_ordinal, access_hash,
+                    access_ordinal, access_hash, accessed_at,
                 ),
             )
             observation_id = self._id_factory()
@@ -232,12 +240,18 @@ class PostgresTransactionalOutcomeAcquisition:
             """
             UPDATE mra.evaluation_run
             SET status = 'INPUTS_ACQUIRED',
-                inputs_acquired_at = clock_timestamp(),
+                inputs_acquired_at = %s,
                 access_count = %s, observation_count = %s,
                 input_roster_sha256 = %s, version = version + 1
             WHERE evaluation_run_id = %s AND status = 'OPEN'
             """,
-            (len(members), len(members), roster_hash, evaluation_run_id),
+            (
+                accessed_at,
+                len(members),
+                len(members),
+                roster_hash,
+                evaluation_run_id,
+            ),
         ).rowcount
         if changed != 1:
             raise EvaluationAcquisitionError("EvaluationRun transition lost a concurrent race")

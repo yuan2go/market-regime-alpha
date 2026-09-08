@@ -65,7 +65,7 @@ def canonical_prospective_stack(target_database_url, tmp_path, request):
         def before_action():
             nonlocal boundary_count
             boundary_count += 1
-            if stop_after_archive and boundary_count == 3:
+            if stop_after_archive and boundary_count == 4:
                 raise InterruptedError("fixture process interruption after Archive commit")
         try:
             registration = app.prospective_archives.predeclare(

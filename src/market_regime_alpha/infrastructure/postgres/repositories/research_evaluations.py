@@ -5,7 +5,7 @@ from __future__ import annotations
 from market_regime_alpha.infrastructure.postgres.queries.experimental_evaluation_inputs import experimental_metric_sources
 
 from typing import Any, Callable
-from datetime import date
+from datetime import date, datetime
 from uuid import UUID
 
 import psycopg
@@ -69,6 +69,21 @@ class PostgresEvaluationRepository:
             "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
             (f"evaluation-protocol:{protocol_code}",),
         )
+
+    def authoritative_opened_at(self) -> datetime:
+        return self._authoritative_time()
+
+    def authoritative_completed_at(self) -> datetime:
+        return self._authoritative_time()
+
+    def authoritative_failed_at(self) -> datetime:
+        return self._authoritative_time()
+
+    def _authoritative_time(self) -> datetime:
+        row = self._connection.execute("SELECT clock_timestamp()").fetchone()
+        if row is None:
+            raise RuntimeError("PostgreSQL did not return its authoritative clock")
+        return row[0]
 
     def register_protocol(
         self,
@@ -256,6 +271,7 @@ class PostgresEvaluationRepository:
         assert member_count is not None
         if int(member_count[0]) != int(binding[5]):
             raise EvaluationReconciliationError("Partition member roster is incomplete")
+        opened_at = self.authoritative_opened_at()
         self._connection.execute(
             """
             INSERT INTO mra.evaluation_run (
@@ -267,11 +283,11 @@ class PostgresEvaluationRepository:
                 code_artifact_id, code_content_sha256, code_size_bytes,
                 config_artifact_id, config_content_sha256, config_size_bytes,
                 provenance_sha256, content_sha256,
-                status, request_identity, request_sha256
+                status, request_identity, request_sha256, opened_at
             ) VALUES (
                 %s, %s, %s, %s, %s, %s, %s, %s, %s,
                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                'OPEN', %s, %s
+                'OPEN', %s, %s, %s
             )
             """,
             (
@@ -296,6 +312,7 @@ class PostgresEvaluationRepository:
                 str(plan.content_sha256),
                 plan.request_identity,
                 request_sha256,
+                opened_at,
             ),
         )
         return self.run_record(plan.evaluation_run_id, lock=False)
@@ -485,12 +502,18 @@ class PostgresEvaluationRepository:
         self._connection.execute(
             """
             UPDATE mra.evaluation_run
-            SET status = 'COMPLETED', completed_at = clock_timestamp(),
+            SET status = 'COMPLETED', completed_at = %s,
                 metric_count = %s, metric_observation_count = %s,
                 metric_roster_sha256 = %s, version = version + 1
             WHERE evaluation_run_id = %s AND status = 'INPUTS_ACQUIRED'
             """,
-            (len(metric_rows), expected_inputs, roster_hash, evaluation_run_id),
+            (
+                self.authoritative_completed_at(),
+                len(metric_rows),
+                expected_inputs,
+                roster_hash,
+                evaluation_run_id,
+            ),
         )
         return EvaluationCompletionResult(evaluation_run_id, len(metric_rows), expected_inputs, roster_hash)
 
@@ -1004,12 +1027,12 @@ class PostgresEvaluationRepository:
         changed = self._connection.execute(
             """
             UPDATE mra.evaluation_run
-            SET status = 'FAILED', failed_at = clock_timestamp(),
+            SET status = 'FAILED', failed_at = %s,
                 failure_reason_code = %s, version = version + 1
             WHERE evaluation_run_id = %s
               AND status IN ('OPEN', 'INPUTS_ACQUIRED')
             """,
-            (reason_code, evaluation_run_id),
+            (self.authoritative_failed_at(), reason_code, evaluation_run_id),
         ).rowcount
         if changed != 1:
             raise RuntimeStateConflictError("EvaluationRun cannot transition to FAILED")

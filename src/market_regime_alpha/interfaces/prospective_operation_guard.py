@@ -121,6 +121,11 @@ class ProspectiveOperationGuard:
                     raise ValueError("OPERATION_BACKUP_BASELINE_EXPIRED")
 
     def verify_startup(self, application: TargetApplication) -> dict[str, Any]:
+        self.session.allow_prospective_recovery(
+            application.prospective_archives.recovery_admissions(
+                self.config.series_code
+            )
+        )
         snapshot = self.snapshot()
         schema = verify_database(self.settings)
         if str(schema.catalog_checksum) != self.config.catalog_checksum:

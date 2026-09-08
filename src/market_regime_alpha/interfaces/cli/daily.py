@@ -89,7 +89,12 @@ def dispatch_daily(arguments: argparse.Namespace, settings: TargetSettings) -> o
                 trace = app.runtime.inspect_run(plan.runtime_run_id)
             except RuntimeNotFoundError:
                 trace = None
-            return {"data_ready": reads.observe(plan), "runtime": trace, "state": "NOT_SCHEDULED" if trace is None else trace.run_state}
+            return {
+                "data_ready": reads.observe(plan),
+                "runtime": trace,
+                "health": reads.operational_health(plan),
+                "state": "NOT_SCHEDULED" if trace is None else trace.run_state,
+            }
         if command == "report":
             return reads.forecast_projection(plan)
         if command == "replay":

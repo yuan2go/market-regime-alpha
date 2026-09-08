@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from typing import Callable, cast
 from uuid import UUID
 
@@ -51,7 +51,7 @@ class ResearchPartitionCommands:
         *,
         runtime_claim: AttemptClaim | None = None,
     ) -> PartitionFreezeResult:
-        request_hash = canonical_json_sha256(plan)
+        request_hash = partition_request_sha256(plan)
         with (
             terminal_failure_boundary(
                 self._failure_recorder,
@@ -136,4 +136,21 @@ def _result(record: ResearchPartitionRecord, receipt_id: UUID, result_hash: str,
     )
 
 
-__all__ = ["PartitionFreezeResult", "ResearchPartitionCommands"]
+def partition_request_sha256(plan: ResearchPartitionPlan) -> str:
+    """Preserve pre-decision-source request bytes for every legacy plan."""
+
+    payload = {
+        field.name: getattr(plan, field.name)
+        for field in fields(plan)
+        if field.name != "decision_source"
+    }
+    if plan.decision_source is not None:
+        payload["decision_source"] = plan.decision_source
+    return canonical_json_sha256(payload)
+
+
+__all__ = [
+    "PartitionFreezeResult",
+    "ResearchPartitionCommands",
+    "partition_request_sha256",
+]
