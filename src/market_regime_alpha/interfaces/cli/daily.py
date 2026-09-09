@@ -24,12 +24,12 @@ def add_daily_parser(areas: Any) -> None:
     commands = research.add_subparsers(dest="research_command", required=True)
     daily = commands.add_parser("daily")
     operations = daily.add_subparsers(dest="daily_command", required=True)
-    for command in ("data-ready", "freeze-plan", "predict", "settle", "status", "report", "replay"):
+    for command in ("data-ready", "freeze-plan", "predict", "collect-outcome", "settle", "status", "report", "replay"):
         operation = operations.add_parser(command)
         operation.add_argument("--plan", required=True, type=Path)
         if command == "freeze-plan":
             operation.add_argument("--output", required=True, type=Path)
-        if command in {"predict", "settle"}:
+        if command in {"predict", "collect-outcome", "settle"}:
             operation.add_argument("--operation-config", required=True, type=Path)
             operation.add_argument("--maximum-steps", type=int, default=9 if command == "predict" else 64)
     revoke = operations.add_parser("revoke-model")
@@ -55,7 +55,7 @@ def dispatch_daily(arguments: argparse.Namespace, settings: TargetSettings) -> o
                 ),
             )
     plan = decode_daily_plan(arguments.plan.read_bytes())
-    if command in {"predict", "settle"}:
+    if command in {"predict", "collect-outcome", "settle"}:
         config = load_operation_config(arguments.operation_config)
         require_installation(config)
         with operational_session(settings, config) as guard:
@@ -68,6 +68,8 @@ def dispatch_daily(arguments: argparse.Namespace, settings: TargetSettings) -> o
                             raise ValueError("OPERATION_DAILY_CODE_IDENTITY_MISMATCH")
                     guard.verify_startup(app)
                     app.daily_prediction_reads.validate_configuration(plan)
+                    if command == "collect-outcome":
+                        return _collect_pending_outcome(app, plan, config, guard, arguments.maximum_steps)
                     operations = DailyResearchOperations(app, app.daily_prediction_reads, before_action=guard.before_action)
                     if command == "predict":
                         return operations.execute(plan, worker_id=config.worker_id, maximum_steps=arguments.maximum_steps)
@@ -115,3 +117,37 @@ def dispatch_daily(arguments: argparse.Namespace, settings: TargetSettings) -> o
                                         if completed else None)
             return result
     raise ValueError("unsupported daily research command")
+
+
+def _collect_pending_outcome(app: Any, plan: Any, config: Any, guard: Any, maximum_steps: int) -> object:
+    """Explicit late observation preserves publication and never reopens settlement."""
+    from market_regime_alpha.interfaces.daily_collection import PerCaptureBaoStockProvider
+    import importlib
+    from market_regime_alpha.interfaces.daily_service import _collection
+    from market_regime_alpha.interfaces.prospective_operation_guard import quiet_provider_output
+
+    reads = app.daily_prediction_reads
+    if reads.run_plan_content(plan.runtime_run_id) != encode_daily_plan(plan):
+        raise ValueError("DAILY_OUTCOME_RECOVERY_FROZEN_PLAN_MISMATCH")
+    if app.runtime.inspect_run(plan.runtime_run_id).run_state != "SUCCEEDED":
+        raise ValueError("DAILY_OUTCOME_RECOVERY_REQUIRES_PUBLICATION")
+    outcome_id = uuid5(plan.prediction_id, "outcome-evaluation-runtime")
+    outcome = app.runtime.inspect_run(outcome_id)
+    if (reads.run_plan_content(outcome_id) != encode_daily_plan(plan)
+            or outcome.run_state not in {"QUEUED", "RUNNING"}
+            or any(step.step_key.startswith("settle-") and step.current_fence > 0 for step in outcome.steps)):
+        raise ValueError("DAILY_OUTCOME_RECOVERY_SETTLEMENT_ALREADY_STARTED_OR_TERMINAL")
+    ready = reads.ready(plan)
+    now = reads.now()
+    if now < ready.target_window_end:
+        raise ValueError("DAILY_OUTCOME_RECOVERY_NOT_MATURE")
+    if not app.daily_research.replay(plan)["matched"]:
+        raise ValueError("DAILY_OUTCOME_RECOVERY_PUBLICATION_NOT_RECONCILED")
+    provider = PerCaptureBaoStockProvider(importlib.import_module("baostock"), timeout_seconds=config.provider_timeout_seconds,
+        maximum_rows=config.provider_maximum_rows, maximum_response_bytes=config.provider_maximum_response_bytes)
+    with quiet_provider_output():
+        result = _collection(app, plan, "outcome", provider, config.worker_id,
+            min(maximum_steps, config.maximum_attempts_per_tick, 128), guard.before_action)
+    return {"prediction_id": plan.prediction_id, "observed_at": now,
+            "target_window_end": ready.target_window_end, "observation_disposition": "LATE_OUTCOME_OBSERVATION",
+            "prediction_replaced": False, "collection": result}

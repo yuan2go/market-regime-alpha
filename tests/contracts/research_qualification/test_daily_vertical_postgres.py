@@ -194,7 +194,7 @@ def test_completed_model_is_consumed_without_backtest_and_publication_is_replaya
         assert trace.run_state == "SUCCEEDED", trace
         report = app.daily_prediction_reads.forecast_projection(plan)
         if missing_membership:
-            assert report["denominators"] == dict(sampled=32, eligible=0, feature_ready=0, predicted=0, model_prediction=0, baseline_prediction=0, common_prediction=0)
+            assert report["denominators"] == dict(sampled=32, eligible=0, feature_ready=0, model_prediction=0, baseline_prediction=0, common_prediction=0)
             assert report["model_inference_state"] == "NOT_RUN_EMPTY_POPULATION"
             assert len(report["population"]) == 32
             assert report["predictions"] == []
@@ -203,7 +203,7 @@ def test_completed_model_is_consumed_without_backtest_and_publication_is_replaya
                 assert connection.execute("SELECT count(*) FROM mra.forecast_model_binding WHERE experimental_model_use_id=%s", (use.experimental_model_use_id,)).fetchone() == (0,)
             return
         assert report["denominators"] == dict(
-            sampled=32, eligible=32, feature_ready=32, predicted=32, model_prediction=32, baseline_prediction=32, common_prediction=32
+            sampled=32, eligible=32, feature_ready=32, model_prediction=32, baseline_prediction=32, common_prediction=32
         )
         assert len(report["predictions"]) == 32
         assert app.daily_research.settle_and_evaluate(plan, worker_id="daily-fixture")["state"] == "PENDING"
@@ -511,14 +511,6 @@ def test_completed_model_is_consumed_without_backtest_and_publication_is_replaya
                 lambda _step_id: simulated_now,
             )
             clock.setattr(
-                app.daily_prediction_reads,
-                "target_price_members",
-                lambda _plan: tuple(
-                    SimpleNamespace(state=DailyInputState.MISSING)
-                    for _ in plan.instrument_ids
-                ),
-            )
-            clock.setattr(
                 app.market,
                 "_database_clock",
                 SimpleNamespace(now=lambda: simulated_now),
@@ -592,6 +584,16 @@ def test_completed_model_is_consumed_without_backtest_and_publication_is_replaya
                 ),
                 _context("daily-outcome-time-advance-normalize"),
             )
+            with app._pool.connection(read_only=True) as connection:
+                gap_ids = dict(connection.execute(
+                    "SELECT instrument_id,gap_id FROM mra.source_gap WHERE capture_id=%s",
+                    (outcome_capture_id,),
+                ).fetchall())
+            assert len(gap_ids) == (0 if mature_prices else len(plan.instrument_ids))
+            clock.setattr(app.daily_prediction_reads, "target_price_members", lambda _plan: tuple(
+                SimpleNamespace(state=DailyInputState.AVAILABLE if mature_prices else DailyInputState.MISSING,
+                                source_gap_id=gap_ids.get(instrument))
+                for instrument in plan.instrument_ids))
             if mature_prices:
                 complete = app.research_evaluations.complete
                 def committed_reply_lost(*args, **kwargs):

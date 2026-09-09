@@ -261,6 +261,16 @@ def daily_tick(
                 else:
                     completed.append({**status, "state": "OUTCOME_DATA_PENDING"})
                 continue
+            if now >= ready.target_window_end + _OUTCOME_GRACE and any(
+                member.state not in _TERMINAL_INPUT and member.source_gap_id is None
+                for member in members
+            ):
+                completed.append({
+                    **status, "state": "OUTCOME_DATA_UNOBSERVED",
+                    "reason_code": "OUTCOME_COLLECTION_GRACE_EXPIRED",
+                    "automatic_retry": False,
+                })
+                continue
         if outcome_action is not None:
             completed.append({**status, "state": "READY_FOR_SETTLEMENT"})
             continue

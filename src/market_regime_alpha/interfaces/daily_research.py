@@ -1099,7 +1099,7 @@ def _evaluation_denominators(
         "sampled": int(prediction["sampled"]),
         "eligible": int(prediction["eligible"]),
         "feature_ready": int(prediction["feature_ready"]),
-        "predicted": int(prediction["predicted"]),
+        "predicted": int(prediction["model_prediction"]),
         "mature": int(evaluation["evaluation"]["observation_count"]),
         "estimable": min(model_estimable, baseline_estimable),
         "model_estimable": model_estimable,

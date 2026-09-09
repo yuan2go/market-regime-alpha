@@ -205,6 +205,28 @@ through Artifact commands; it never changes Capture known/recorded time, chooses
 new labels, or rewrites a frozen plan. Expired verification observations and
 missing/corrupt bytes are distinct failures. Any unverified member blocks restart.
 
+When a mature pending prediction has neither an exact target bar nor SourceGap,
+the service does not fabricate a missing-price label. After its automatic
+collection grace expires it reports `OUTCOME_DATA_UNOBSERVED` and continues
+other eligible work. An explicitly authorized operator can request bounded late
+collection through the same Market/Runtime owners:
+
+```bash
+uv run mra research daily collect-outcome --plan "$ORIGINAL_PUBLISHED_PLAN" --operation-config "$MRA_OPERATION_CONFIG" --maximum-steps 16
+uv run mra research daily settle --plan "$ORIGINAL_PUBLISHED_PLAN" --operation-config "$MRA_OPERATION_CONFIG"
+uv run mra research daily replay --plan "$ORIGINAL_PUBLISHED_PLAN"
+```
+
+Collection requires a reconciled original publication, a naturally mature Target,
+and an unstarted nonterminal settlement. Repeated commands resume the original
+bounded capture round; unknown or failed effects require reconciliation. Late
+observations keep their actual Capture times and never establish on-time capture
+or replace the publication. Once settlement has begun, the command refuses to
+reacquire Market inputs. Completed reports and evaluations stay immutable.
+The v1 prediction report keeps its original denominator fields, including
+`model_prediction`; Evaluation's `predicted` label is a projection of that count,
+not an additional field inserted into previously published v1 report bytes.
+
 Keep operational observations separate: due Attempt, successful Capture,
 on-time capture rate, terminal coverage, backlog/planning gaps, restart
 recovery, and sustained days/windows. Failed terminal coverage is not capture
