@@ -202,6 +202,27 @@ update the bound profile and restart the exact frozen service safely; an expired
 receipt cannot be kept valid by editing its date. Missing independent physical
 backup storage must be stated, not disguised as a second directory.
 
+For the exact existing private deployment, the refresh command drains the owned
+service, holds its reservation through the exported snapshot, verifies the dump
+and byte roster, refreshes integrity, renews only backup bindings and restarts:
+
+```bash
+uv run --no-project --python "$INSTALLED_PYTHON" python "$PROJECT_OPERATION_DIRECTORY/refresh_backup.py"
+# Explicit recovery after a stopped service; never bypass intentional disable.
+uv run --no-project --python "$INSTALLED_PYTHON" python "$PROJECT_OPERATION_DIRECTORY/refresh_backup.py" --recover-stopped
+launchctl disable "$MRA_USER_DOMAIN/$MRA_SERVICE_LABEL"
+launchctl kill SIGTERM "$MRA_USER_DOMAIN/$MRA_SERVICE_LABEL"
+```
+
+An intentionally disabled service is not restarted by scheduled backup refresh.
+Keep the existing backup job bounded with `KeepAlive=false`; a failed refresh
+leaves the writer stopped for inspection. Preserve original logs and profiles.
+Record the exported snapshot's table/Artifact roster separately from later
+integrity metadata updates. Restore verification compares that snapshot, not an
+unqualified claim that a subsequently running database is unchanged. Database
+roles, host authentication and private credentials are separate deployment
+controls; a no-privilege restore does not clone them.
+
 Integrity refresh includes daily bars and TradingSession source Artifacts
 referenced by the current and original pending plans as well as prospective
 archive inputs. It also includes the original Runtime configuration, plan

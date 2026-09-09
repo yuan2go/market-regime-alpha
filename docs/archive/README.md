@@ -30,3 +30,10 @@ The [repository hygiene verification](Repository-Hygiene-Verification-2026-09-08
 records the source-bound cleanup, full regression, individual dispositions and
 [external raw evidence identity](Repository-Hygiene-Evidence-2026-09-08.json).
 It does not replace the original research or operational evidence.
+
+The [operational data-loop verification](Operational-Data-Loop-Verification-2026-09-10.md)
+and [source/observation index](Operational-Data-Loop-Evidence-2026-09-10.json)
+record the authorized original-scope installed handoff, actual prediction,
+preserved failures and independent restore/replay. Natural maturity and sustained
+multi-day evidence remain separate blocked gates; this record grants no Alpha,
+formal Provider/PIT or Production qualification.

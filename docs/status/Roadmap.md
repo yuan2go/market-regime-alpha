@@ -57,6 +57,30 @@ Operational data-loop proof requires separate authorization, exact installed
 handoff, current backup and real observations. Future windows are not simulated
 into prospective qualification.
 
+## Operational data-loop proof
+
+The one-time merged-main activation regression has completed, including the
+PostgreSQL and locally available historical suites. Operational work now uses
+the exact original database, a restricted project runtime login, verified
+installed wheel/profile and the existing owned user service. Read-only
+diagnostics and backup use separate credentials; restored databases remain
+verification scopes. See [Current State](Current-State.md) and the
+[Runtime Runbook](../operations/Runtime-Runbook.md) for observed scope and controls.
+
+| Dependency | Acceptance boundary |
+|---|---|
+| Installed handoff | Exact identity, verified backup, old service drain, exclusive admission, bounded startup and graceful restart |
+| Real input and prediction | Actual Capture/normalization, complete frozen population, publication before the exact Target window; preserve failed requests |
+| Natural maturity | Original publication plan → canonical Outcome/Evaluation → immutable report/replay, without advancing time |
+| Continued accumulation | Refresh backups and physical integrity, inspect pending/failed work and planning gaps; duration and success are separate metrics |
+| Research validity | Begin only after the operational lineage is accumulating stable real observations; no new model, factor or tuning in activation |
+
+A repaired permission or integrity prerequisite cannot reopen a terminal failed
+Run. Explicit new requests retain their current times and distinct identities.
+A passing restore or disposable-clock test cannot satisfy natural maturity or
+sustained multi-day proof. Existing failed campaign and qualification limits stay
+unchanged.
+
 ## Remaining architectural debt
 
 | Boundary | Executable evidence | Smallest next investigation |
