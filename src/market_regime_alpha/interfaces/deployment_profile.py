@@ -79,6 +79,36 @@ def _git(checkout: Path, *args: str) -> str:
         raise ValueError("DEPLOYMENT_SOURCE_UNVERIFIABLE") from exc
 
 
+# PostgreSQL FOR SHARE requires UPDATE on at least one column, even for an empty
+# retrospective-marker result. These are the current daily owner reference locks.
+_DAILY_REFERENCE_LOCKS = (
+    "mra.candidate_policy",
+    "mra.candidate_policy_component",
+    "mra.context_policy",
+    "mra.context_policy_metric",
+    "mra.eligibility_policy",
+    "mra.experimental_model_use",
+    "mra.exploratory_retrospective_eligibility_batch",
+    "mra.exploratory_retrospective_universe_revision",
+    "mra.feature_definition",
+    "mra.model",
+    "mra.model_training_reproducibility",
+    "mra.model_training_run",
+    "mra.model_version",
+    "mra.provider_product",
+    "mra.strategy",
+    "mra.strategy_context_requirement",
+    "mra.strategy_forecast_rule",
+    "mra.strategy_signal_rule",
+    "mra.strategy_version",
+    "mra.target_checkpoint",
+    "mra.target_definition",
+    "mra.target_metric_definition",
+    "mra.target_metric_dependency",
+    "mra.universe",
+)
+
+
 def inspect_runtime_principal(connection: Any) -> dict[str, Any]:
     """Authentication and grants are separate from cooperative advisory admission."""
     row = connection.execute("""
@@ -94,13 +124,22 @@ def inspect_runtime_principal(connection: Any) -> dict[str, Any]:
                  AND has_table_privilege('mra.command_receipt', 'INSERT')
                  AND has_table_privilege('mra.artifact', 'INSERT')
                  AND has_table_privilege('mra.artifact', 'UPDATE')
-                 AND has_any_column_privilege('mra.provider_product', 'UPDATE'),
+                 AND has_table_privilege('mra.decision_run_research_qualification_roster', 'INSERT')
+                 AND has_any_column_privilege('mra.decision_run_research_qualification_roster', 'UPDATE')
+                 AND has_table_privilege('mra.decision_run_research_qualification_member', 'INSERT')
+                 AND has_any_column_privilege('mra.decision_run_research_qualification_member', 'UPDATE')
+                 AND has_table_privilege('mra.research_partition_outcome_access', 'INSERT')
+                 AND has_any_column_privilege('mra.research_partition_outcome_access', 'UPDATE')
+                 AND has_table_privilege('mra.evaluation_observation', 'INSERT')
+                 AND has_any_column_privilege('mra.evaluation_observation', 'UPDATE')
+                 AND (SELECT bool_and(has_any_column_privilege(name, 'UPDATE'))
+                      FROM unnest(%s::text[]) AS required_tables(name)),
                has_table_privilege('mra.schema_migrations', 'INSERT')
                  OR has_table_privilege('mra.model_version', 'INSERT')
                  OR has_table_privilege('mra.provider_qualification_decision', 'INSERT')
                  OR has_table_privilege('mra.research_qualification_decision', 'INSERT')
         FROM pg_roles role WHERE role.rolname = session_user
-    """).fetchone()
+    """, (list(_DAILY_REFERENCE_LOCKS),)).fetchone()
     if row is None or row[0] != row[1]:
         raise ValueError("DEPLOYMENT_RUNTIME_PRINCIPAL_IMPERSONATION")
     if row[3] or row[4] or not row[5] or row[6]:

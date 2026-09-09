@@ -365,6 +365,17 @@ def daily_tick(
         ).frozen_abstention_reason(plan)
         return finish_abstention(plan, reason)
     existing = reads.run_plan_content(plan.runtime_run_id)
+    if existing is not None:
+        trace = app.runtime.inspect_run(plan.runtime_run_id)
+        if trace.run_state not in {"QUEUED", "RUNNING", "SUCCEEDED"}:
+            return finish({
+                "state": "PREDICTION_RECOVERY_REQUIRED",
+                "failed_run_id": trace.run_id,
+                "run_state": trace.run_state,
+                "reason_codes": [step.latest_attempt_error_code for step in trace.steps if step.latest_attempt_error_code],
+                "automatic_retry": False,
+                "pending": completed,
+            })
     ready = reads.ready(plan)
     if existing is None:
         if not reads.model_use_available(plan):

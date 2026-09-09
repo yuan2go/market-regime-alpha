@@ -284,3 +284,25 @@ verification APIs that create their own replay journal. `historical_tools/`
 contains fixed-protocol reproduction tools, not current service launchers.
 Account/manual Fill and formal governance administration remain separately
 scoped; this is not authorization for full Runtime/CLI cutover.
+
+
+### Runtime database privileges and terminal publications
+
+The authenticated runtime login needs the current owner's reference row locks,
+including empty retrospective-marker checks on a non-retrospective Dataset.
+`inspect_runtime_principal` checks the reference tables in
+`interfaces/deployment_profile.py` and the daily result writers. Grant UPDATE on
+an identity column for `FOR SHARE`; immutable reference triggers remain enabled.
+Decision qualification rosters record consumed references; granting their owner
+writes must never grant writes to qualification decisions, ModelVersion
+registration or schema migrations. The restricted-login PostgreSQL vertical
+contract covers prediction, mature Outcome using disposable test time, Evaluation,
+unknown-commit recovery and replay. Fixtures do not establish prospective proof.
+
+A terminal prediction is exposed as `PREDICTION_RECOVERY_REQUIRED`, without new
+input reads or reexecution. Pending Outcomes from other original frozen plans
+continue independently. After repairing an operational cause, an operator may
+freeze a distinct current-time prediction request through the existing daily
+CLI before its Target cutoff. Record the failed and new identities explicitly;
+this does not reopen, replace or reclassify the failed publication, and is never
+an automatic selection of a replacement model.

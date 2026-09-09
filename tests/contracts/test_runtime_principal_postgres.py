@@ -21,7 +21,11 @@ def runtime_login(database_url):
         admin.execute(sql.SQL('GRANT SELECT ON ALL TABLES IN SCHEMA mra TO {}').format(sql.Identifier(role)))
         for table in ('runtime_attempt', 'runtime_run', 'runtime_step', 'command_receipt', 'artifact'):
             admin.execute(sql.SQL('GRANT INSERT, UPDATE ON mra.{} TO {}').format(sql.Identifier(table), sql.Identifier(role)))
-        admin.execute(sql.SQL('GRANT UPDATE(provider_product_id) ON mra.provider_product TO {}').format(sql.Identifier(role)))
+        from tests.contracts.test_daily_runtime_permissions_postgres import REFERENCE_LOCKS
+        for table, column in REFERENCE_LOCKS.items():
+            admin.execute(sql.SQL('GRANT UPDATE({}) ON mra.{} TO {}').format(sql.Identifier(column), sql.Identifier(table), sql.Identifier(role)))
+        for table in ('decision_run_research_qualification_roster', 'decision_run_research_qualification_member', 'research_partition_outcome_access', 'evaluation_observation'):
+            admin.execute(sql.SQL('GRANT INSERT, UPDATE ON mra.{} TO {}').format(sql.Identifier(table), sql.Identifier(role)))
     try:
         with psycopg.connect(database_url, user=role, password=password, autocommit=True) as connection:
             yield role, connection
@@ -31,7 +35,7 @@ def runtime_login(database_url):
             admin.execute(sql.SQL('DROP ROLE {}').format(sql.Identifier(role)))
 
 
-@pytest.mark.parametrize('privilege', ['UPDATE ON mra.runtime_attempt', 'UPDATE(provider_product_id) ON mra.provider_product'])
+@pytest.mark.parametrize('privilege', ['UPDATE ON mra.runtime_attempt', 'UPDATE(provider_product_id) ON mra.provider_product', 'UPDATE(universe_revision_id) ON mra.exploratory_retrospective_universe_revision', 'INSERT ON mra.decision_run_research_qualification_roster'])
 def test_principal_is_authenticated_and_lost_write_privilege_refuses_without_facts(target_database_url, privilege):  # noqa: F811
     from market_regime_alpha.interfaces.deployment_profile import inspect_runtime_principal
 
