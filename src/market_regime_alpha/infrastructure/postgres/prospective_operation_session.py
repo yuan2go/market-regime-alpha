@@ -45,6 +45,46 @@ def _writer_pid(connection: psycopg.Connection[Any]) -> int | None:
 
 
 @contextmanager
+def canonical_writer_admission(connection: psycopg.Connection[Any]) -> Iterator[None]:
+    """Cover owner commands that do not create a Runtime Attempt.
+
+    Unsupervised narrow connections hold shared reservation until returned, so
+    supervisor startup cannot race an already admitted transaction. Supervised
+    connections require the authentic database-bound reservation instead. The
+    short probe commits before owner SQL; nested UoWs and explicit isolation
+    remain legal. Runtime claim/fence checks still own business admission.
+    """
+    session = _operation_session.get()
+    locked = False
+    try:
+        if session is None:
+            locked = connection.execute(
+                "SELECT pg_try_advisory_lock_shared(hashtextextended(%s,0))",
+                (_DATABASE_WRITER_KEY,),
+            ).fetchone() == (True,)
+            if not locked:
+                raise ValueError("OPERATION_CANONICAL_WRITER_ADMISSION_CONFLICT")
+        else:
+            session.require_supervisor_lock(session.series_code)
+            identity = connection.execute(
+                "SELECT oid::bigint, (pg_control_system()).system_identifier::text "
+                "FROM pg_database WHERE datname=current_database()",
+            ).fetchone()
+            if identity != (session.database_oid, session.cluster_identity):
+                raise ValueError("OPERATION_CANONICAL_WRITER_SCOPE_MISMATCH")
+        connection.commit()
+        yield
+    finally:
+        if locked and not connection.closed:
+            connection.rollback()
+            connection.execute(
+                "SELECT pg_advisory_unlock_shared(hashtextextended(%s,0))",
+                (_DATABASE_WRITER_KEY,),
+            )
+            connection.commit()
+
+
+@contextmanager
 def retained_writer_admission(connection: psycopg.Connection[Any]) -> Iterator[None]:
     """Keep retained connections outside canonical claims without owning facts.
 

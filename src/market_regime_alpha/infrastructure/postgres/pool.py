@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from functools import partial
 import re
 from typing import Any, Iterator
 
 import psycopg
 from psycopg_pool import ConnectionPool
+
+from market_regime_alpha.infrastructure.postgres.prospective_operation_session import canonical_writer_admission
 
 
 _APPLICATION_NAME = "market-regime-alpha-refoundation"
@@ -56,12 +58,12 @@ class TargetPostgresPool:
         connection = self._pool.getconn()
         try:
             connection.read_only = read_only
-            yield connection
-            if read_only:
-                # Successful read-only transactions have no business changes
-                # to discard. Commit preserves psycopg's prepared statements;
-                # rollback on every owner check invalidates that session cache.
-                connection.commit()
+            with nullcontext() if read_only else canonical_writer_admission(connection):
+                yield connection
+                if read_only:
+                    # Commit preserves prepared statements on successful reads;
+                    # rollback on every owner check invalidates that cache.
+                    connection.commit()
         finally:
             if connection.info.transaction_status != 0:
                 connection.rollback()

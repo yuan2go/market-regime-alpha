@@ -218,46 +218,49 @@ def daily_tick(
                 }
             )
             continue
-        try:
-            members = reads.target_price_members(plan)
-        except (RuntimeError, ValueError) as exc:
-            completed.append(
-                {
-                    **status,
-                    "state": "OUTCOME_DATA_FAILED",
-                    "reason_code": str(exc),
-                }
-            )
-            continue
-        if not all(m.state in _TERMINAL_INPUT for m in members) and now < ready.target_window_end + _OUTCOME_GRACE:
-            if outcome_action is None:
-                try:
-                    result = _collection(
-                        app,
-                        plan,
-                        "outcome",
-                        provider,
-                        worker_id,
-                        maximum_steps,
-                        before_action,
-                    )
-                except (RuntimeError, ValueError) as exc:
-                    completed.append(
-                        {
-                            **status,
-                            "state": "OUTCOME_DATA_FAILED",
-                            "reason_code": str(exc),
-                        }
-                    )
-                    continue
+        # Runtime progress avoids fresh Market I/O after settlement; the owner
+        # still revalidates the original full plan, step roster and Outcome inputs.
+        if not item.settlement_steps_completed:
+            try:
+                members = reads.target_price_members(plan)
+            except (RuntimeError, ValueError) as exc:
                 completed.append(
-                    {**status, "state": "OUTCOME_DATA_PENDING", "collection": result}
+                    {
+                        **status,
+                        "state": "OUTCOME_DATA_FAILED",
+                        "reason_code": str(exc),
+                    }
                 )
-                if result["state"] == "COLLECTION_PROGRESS":
-                    outcome_action = completed[-1]
-            else:
-                completed.append({**status, "state": "OUTCOME_DATA_PENDING"})
-            continue
+                continue
+            if not all(m.state in _TERMINAL_INPUT for m in members) and now < ready.target_window_end + _OUTCOME_GRACE:
+                if outcome_action is None:
+                    try:
+                        result = _collection(
+                            app,
+                            plan,
+                            "outcome",
+                            provider,
+                            worker_id,
+                            maximum_steps,
+                            before_action,
+                        )
+                    except (RuntimeError, ValueError) as exc:
+                        completed.append(
+                            {
+                                **status,
+                                "state": "OUTCOME_DATA_FAILED",
+                                "reason_code": str(exc),
+                            }
+                        )
+                        continue
+                    completed.append(
+                        {**status, "state": "OUTCOME_DATA_PENDING", "collection": result}
+                    )
+                    if result["state"] == "COLLECTION_PROGRESS":
+                        outcome_action = completed[-1]
+                else:
+                    completed.append({**status, "state": "OUTCOME_DATA_PENDING"})
+                continue
         if outcome_action is not None:
             completed.append({**status, "state": "READY_FOR_SETTLEMENT"})
             continue

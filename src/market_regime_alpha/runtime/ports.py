@@ -426,7 +426,7 @@ class RuntimeUnitOfWork(Protocol):
 
 
 class RuntimeUnitOfWorkProvider(Protocol):
-    def __call__(self) -> RuntimeUnitOfWork: ...
+    def __call__(self, *, read_only: bool = False) -> RuntimeUnitOfWork: ...
 
 
 __all__ = [

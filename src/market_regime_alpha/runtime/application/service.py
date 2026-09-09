@@ -567,7 +567,7 @@ class RuntimeApplication:
             return _result(receipt, "RUNTIME_STEP", str(step_id), step_version, result_hash)
 
     def inspect_run(self, run_id: UUID) -> RunTrace:
-        with self._uow_provider() as uow:
+        with self._uow_provider(read_only=True) as uow:
             return uow.runtime.inspect_run(run_id)
 
     def _mutate_claim(
@@ -648,7 +648,7 @@ class RuntimeApplication:
         )
 
     def _load_claim(self, attempt_id: UUID) -> AttemptClaim:
-        with self._uow_provider() as uow:
+        with self._uow_provider(read_only=True) as uow:
             return uow.runtime.load_claim(attempt_id)
 
 

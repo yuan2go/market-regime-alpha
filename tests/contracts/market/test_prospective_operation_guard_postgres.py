@@ -419,7 +419,7 @@ def test_foreign_claim_after_last_check_cannot_enter_supervised_database(request
                 "(SELECT count(*) FROM mra.command_receipt), (SELECT count(*) FROM mra.audit_event)").fetchone()
         future = executor.submit(enter_after_check)
         barrier.wait(timeout=5)
-        with pytest.raises(ValueError, match="OPERATION_RUNTIME_ADMISSION_CONFLICT"):
+        with pytest.raises(ValueError, match="OPERATION_CANONICAL_WRITER_ADMISSION_CONFLICT"):
             future.result(timeout=10)
         with fixture.pool.connection(read_only=True) as connection:
             assert connection.execute("SELECT (SELECT count(*) FROM mra.runtime_attempt), "
@@ -438,9 +438,13 @@ def test_foreign_claim_after_last_check_cannot_enter_supervised_database(request
             app.runtime.claim_next(run_id=fixture.registration.capture_run_ids[1],
                 worker_id=config.worker_id, lease_duration=timedelta(seconds=60),
                 context=_context("claim-after-supervision-lost"))
-        # Draining an already admitted effect retains its live Runtime fence.
-        app.runtime.succeed_attempt(own, result_hash="a"*64, context=_context("own-drain"))
-        assert app.runtime.inspect_run(run_id).steps[0].state == "SUCCEEDED"
+        # Reservation loss stops all further commands in the abandoned service.
+        # The already admitted Attempt stays recoverable with its original fence.
+        with pytest.raises(ValueError, match="SUPERVISOR_CONNECTION_LOST"):
+            app.runtime.succeed_attempt(own, result_hash="a"*64, context=_context("own-drain"))
+        assert app.runtime.inspect_run(run_id).steps[0].state == "RUNNING"
+    app.runtime.succeed_attempt(own, result_hash="a"*64, context=_context("own-drain"))
+    assert app.runtime.inspect_run(run_id).steps[0].state == "SUCCEEDED"
 
 
 def test_claim_commit_and_supervisor_start_share_atomic_admission(request, tmp_path, monkeypatch):

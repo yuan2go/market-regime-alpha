@@ -26,6 +26,7 @@ class DailyOutcomeWorkItem:
     config_sha256: str
     plan_content: bytes | None
     error_code: str | None
+    settlement_steps_completed: bool = False
 
 
 class DailyPredictionReads(Protocol):

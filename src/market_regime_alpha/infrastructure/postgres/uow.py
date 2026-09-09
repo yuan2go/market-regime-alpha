@@ -21,8 +21,9 @@ from market_regime_alpha.runtime.ports import RuntimeUnitOfWork
 class PostgresUnitOfWork:
     """Own exactly one transaction and repositories bound to its connection."""
 
-    def __init__(self, pool: TargetPostgresPool) -> None:
+    def __init__(self, pool: TargetPostgresPool, *, read_only: bool = False) -> None:
         self._pool = pool
+        self._read_only = read_only
         self._connection_scope: AbstractContextManager[psycopg.Connection[Any]] | None = None
         self._connection: psycopg.Connection[Any] | None = None
         self._used = False
@@ -36,7 +37,7 @@ class PostgresUnitOfWork:
         if self._connection is not None or self._used:
             raise RuntimeError("PostgresUnitOfWork cannot be nested or reused")
         self._used = True
-        self._connection_scope = self._pool.connection()
+        self._connection_scope = self._pool.connection(read_only=self._read_only)
         self._connection = self._connection_scope.__enter__()
         self._runtime = PostgresRuntimeRepository(self._connection)
         self._receipts = PostgresCommandReceiptRepository(self._connection)
@@ -100,8 +101,8 @@ class PostgresUnitOfWorkProvider:
     def __init__(self, pool: TargetPostgresPool) -> None:
         self._pool = pool
 
-    def __call__(self) -> RuntimeUnitOfWork:
-        return PostgresUnitOfWork(self._pool)
+    def __call__(self, *, read_only: bool = False) -> RuntimeUnitOfWork:
+        return PostgresUnitOfWork(self._pool, read_only=read_only)
 
 
 __all__ = ["PostgresUnitOfWork", "PostgresUnitOfWorkProvider"]

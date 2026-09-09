@@ -475,7 +475,12 @@ class PostgresDailyPredictionReads:
                        coalesce(
                          latest.error_code,
                          run.terminal_reason_code
-                       ) AS error_code
+                       ) AS error_code,
+                       EXISTS(SELECT 1 FROM mra.runtime_step settled
+                              WHERE settled.run_id=run.run_id AND settled.step_key LIKE 'settle-%%')
+                       AND NOT EXISTS(SELECT 1 FROM mra.runtime_step unsettled
+                                      WHERE unsettled.run_id=run.run_id AND unsettled.step_key LIKE 'settle-%%'
+                                        AND unsettled.state <> 'SUCCEEDED') AS settlement_steps_completed
                 FROM mra.runtime_run AS run
                 JOIN mra.runtime_schedule AS schedule USING (schedule_id)
                 LEFT JOIN mra.artifact AS artifact
@@ -548,6 +553,7 @@ class PostgresDailyPredictionReads:
                     config_sha256=row[8],
                     plan_content=content,
                     error_code=error_code,
+                    settlement_steps_completed=row[12],
                 )
             )
         return tuple(result)
