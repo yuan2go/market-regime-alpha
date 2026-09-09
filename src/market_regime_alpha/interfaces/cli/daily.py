@@ -36,10 +36,31 @@ def add_daily_parser(areas: Any) -> None:
     revoke = operations.add_parser("revoke-model")
     revoke.add_argument("--experimental-model-use-id", type=UUID, required=True)
     revoke.add_argument("--operation-config", type=Path, required=True)
+    retry = operations.add_parser("retry-population")
+    retry.add_argument("--collection-plan", type=Path, required=True)
+    retry.add_argument("--operation-config", type=Path, required=True)
+    retry.add_argument("--maximum-steps", type=int, default=2)
 
 
 def dispatch_daily(arguments: argparse.Namespace, settings: TargetSettings) -> object:
     command = arguments.daily_command
+    if command == "retry-population":
+        import importlib
+        from market_regime_alpha.interfaces.daily_collection import DailyCollectionPlan, PerCaptureBaoStockProvider, retry_failed_population_collection
+        from market_regime_alpha.interfaces.prospective_operation_guard import quiet_provider_output
+
+        failed = DailyCollectionPlan.decode(arguments.collection_plan.read_bytes())
+        config = load_operation_config(arguments.operation_config)
+        require_installation(config)
+        with operational_session(settings, config) as guard, bootstrap_application(settings) as app:
+            guard.verify_startup(app)
+            app.daily_prediction_reads.validate_configuration(failed.prediction)
+            provider = PerCaptureBaoStockProvider(importlib.import_module("baostock"), timeout_seconds=config.provider_timeout_seconds,
+                maximum_rows=config.provider_maximum_rows, maximum_response_bytes=config.provider_maximum_response_bytes)
+            with quiet_provider_output():
+                successor = retry_failed_population_collection(app, failed, provider, worker_id=config.worker_id,
+                    maximum_steps=min(arguments.maximum_steps, config.maximum_attempts_per_tick), before_action=guard.before_action)
+            return {"failed_run_id": failed.run_id, "failed_run_preserved": True, "successor": successor}
     if command == "revoke-model":
         config = load_operation_config(arguments.operation_config)
         require_installation(config)

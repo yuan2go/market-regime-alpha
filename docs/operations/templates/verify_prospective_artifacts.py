@@ -50,6 +50,31 @@ def _daily_execution_artifacts(connection, plan):
     ).fetchall()
 
 
+def _daily_static_artifacts(connection, plan):
+    return connection.execute(
+        """WITH selected AS (
+            SELECT source_capture_id FROM mra.instrument WHERE instrument_id=ANY(%s::uuid[])
+            UNION SELECT instrument.source_capture_id FROM mra.instrument instrument
+                JOIN mra.classification_membership_revision member USING (instrument_id)
+                JOIN mra.classification classification USING (classification_id)
+                WHERE classification.classification_scheme=%s AND classification.classification_code=%s
+            UNION SELECT source_capture_id FROM mra.classification
+                WHERE classification_scheme=%s AND classification_code=%s
+            UNION SELECT source_capture_id FROM mra.classification_membership_revision
+                WHERE instrument_id=ANY(%s::uuid[])
+            UNION SELECT capture_id FROM mra.instrument_fact_revision
+                WHERE instrument_id=ANY(%s::uuid[])
+        )
+        SELECT DISTINCT capture.artifact_id FROM selected
+        JOIN mra.data_capture capture ON capture.capture_id=selected.source_capture_id
+        WHERE capture.artifact_id IS NOT NULL AND capture.status='CAPTURED'
+        ORDER BY capture.artifact_id""",
+        (list(plan.instrument_ids), plan.classification_scheme,
+         plan.classification_code, plan.classification_scheme,
+         plan.classification_code, list(plan.instrument_ids), list(plan.instrument_ids)),
+    ).fetchall()
+
+
 def verify_scope(settings, config, guard, observation_key, *, daily_plan=None):
     # This read-only operational roster has no business Authority or FK consumers.
     # Capture lineage and Artifact metadata are reloaded by their existing owner.
@@ -84,33 +109,24 @@ def verify_scope(settings, config, guard, observation_key, *, daily_plan=None):
         if daily_plan is not None:
             # Static instrument/classification evidence does not get a new Capture
             # every day. Refresh physical integrity, never its historical time.
-            daily_rows = guard.connection.execute(
-                """WITH selected AS (
-                    SELECT source_capture_id FROM mra.instrument WHERE instrument_id=ANY(%s::uuid[])
-                    UNION SELECT source_capture_id FROM mra.classification
-                        WHERE classification_scheme=%s AND classification_code=%s
-                    UNION SELECT source_capture_id FROM mra.classification_membership_revision
-                        WHERE instrument_id=ANY(%s::uuid[])
-                    UNION SELECT capture_id FROM mra.instrument_fact_revision
-                        WHERE instrument_id=ANY(%s::uuid[])
-                )
-                SELECT DISTINCT capture.artifact_id FROM selected
-                JOIN mra.data_capture capture ON capture.capture_id=selected.source_capture_id
-                WHERE capture.artifact_id IS NOT NULL AND capture.status='CAPTURED'
-                ORDER BY capture.artifact_id""",
-                (list(daily_plan.instrument_ids), daily_plan.classification_scheme,
-                 daily_plan.classification_code, list(daily_plan.instrument_ids), list(daily_plan.instrument_ids)),
-            ).fetchall()
+            daily_rows = _daily_static_artifacts(guard.connection, daily_plan)
             rows = sorted(set(rows) | set(daily_rows), key=lambda row: str(row[0]))
     observations = []
     with bootstrap_application(settings) as application:
         if daily_plan is not None:
             from market_regime_alpha.interfaces.daily_service import _historical_outcome_plan
+            from market_regime_alpha.interfaces.daily_collection import DailyCollectionPlan
 
             reads = application.daily_prediction_reads
             input_session, target_session, now = reads.current_sessions()
+            identity = uuid5(daily_plan.experimental_model_use_id, "daily:" + str(input_session) + ":" + str(target_session))
             plans = [daily_plan, replace(daily_plan, input_session_id=input_session,
                 target_session_id=target_session, input_cutoff=now, decision_time=now)]
+            # Discover frozen Artifact references before asking DataReady to read
+            # them; stale physical verification is precisely what this repairs.
+            plans.extend(DailyCollectionPlan.decode(content).prediction
+                for phase in ("population", "input")
+                for _, _, _, content in reads.collection_rounds(identity, phase))
             plans.extend(_historical_outcome_plan(item) for item in reads.outcome_work_items(limit=64)
                          if item.run_state not in {'FAILED', 'WAITING'})
             with guard.connection.transaction():

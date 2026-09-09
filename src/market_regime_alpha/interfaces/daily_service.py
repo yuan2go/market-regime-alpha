@@ -56,12 +56,26 @@ def current_daily_plan(app: TargetApplication, template: DailyPredictionPlan) ->
         frozen = app.daily_prediction_reads.run_plan_content(uuid5(identity, "abstention-runtime"))
     if frozen is not None:
         plan = decode_daily_plan(frozen)
-        _same_template(plan, template)
+        _same_template(plan, template, installed_handoff=True)
         if (plan.prediction_id, plan.input_session_id, plan.target_session_id) != (identity, input_session, target_session):
             raise ArtifactIntegrityError("daily frozen Run and input/target identities differ")
         return plan
+    original = None
+    for phase in ("population", "input"):
+        for ordinal, _, _, content in app.daily_prediction_reads.collection_rounds(identity, phase):
+            collection = DailyCollectionPlan.decode(content)
+            if (collection.phase, collection.round, collection.prediction.prediction_id,
+                    collection.prediction.input_session_id, collection.prediction.target_session_id) != (
+                    phase, ordinal, identity, input_session, target_session):
+                raise ArtifactIntegrityError("daily collection Run/config identity differs")
+            _same_template(collection.prediction, template, installed_handoff=True)
+            if original is not None:
+                _same_template(collection.prediction, original)
+            original = collection.prediction
+    # Collection freezes its own request, not the later publication's cutoff.
+    # Installation handoff must retain that request's Model/Target/code bindings.
     plan = replace(
-        template,
+        original or template,
         prediction_id=identity,
         input_session_id=input_session,
         target_session_id=target_session,
@@ -73,9 +87,12 @@ def current_daily_plan(app: TargetApplication, template: DailyPredictionPlan) ->
     return replace(plan, input_content_sha256=ready.content_sha256)
 
 
-def _same_template(plan: DailyPredictionPlan, template: DailyPredictionPlan) -> None:
+def _same_template(plan: DailyPredictionPlan, template: DailyPredictionPlan, *, installed_handoff: bool = False) -> None:
     changed = {name for name in plan.__dataclass_fields__ if getattr(plan, name) != getattr(template, name)}
-    if changed - {"prediction_id", "input_session_id", "target_session_id", "input_cutoff", "decision_time", "input_content_sha256"}:
+    allowed = {"prediction_id", "input_session_id", "target_session_id", "input_cutoff", "decision_time", "input_content_sha256"}
+    if installed_handoff:
+        allowed |= {"code_sha", "code_artifact"}
+    if changed - allowed:
         raise ArtifactIntegrityError("DAILY_FROZEN_CONFIGURATION_CHANGED")
 
 

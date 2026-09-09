@@ -345,6 +345,70 @@ def _fail_live_collection_claim(
         return
 
 
+def retry_failed_population_collection(
+    app: TargetApplication,
+    failed: DailyCollectionPlan,
+    provider: MarketProvider,
+    *,
+    worker_id: str,
+    maximum_steps: int,
+    before_action: Callable[[], None],
+) -> RunTrace:
+    """Explicit next observation after a committed Capture and known normalization failure."""
+    from market_regime_alpha.infrastructure.postgres.prospective_operation_session import daily_research_admission
+
+    before_action()
+    reads = app.daily_prediction_reads
+    prior = app.runtime.inspect_run(failed.run_id)
+    steps, _ = collection_steps(failed)
+    if (failed.phase != "population" or failed.round >= 16
+            or reads.run_plan_content(failed.run_id) != failed.content
+            or prior.config_hash != failed.content_sha256 or prior.code_sha != failed.prediction.code_sha
+            or prior.schedule_id != uuid5(failed.prediction.experimental_model_use_id, "daily-population-collection")
+            or prior.fire_key != f"daily-population:{failed.prediction.prediction_id}:round:{failed.round}"
+            or prior.run_state != "FAILED" or len(prior.steps) != 2
+            or any((actual.step_key, actual.step_kind, actual.implementation, actual.implementation_version, actual.request_hash)
+                   != (expected.step_key, expected.step_kind, expected.implementation, expected.implementation_version, expected.request_hash)
+                   for actual, expected in zip(prior.steps, steps))
+            or prior.steps[0].state != "SUCCEEDED" or prior.steps[0].attempt_states != ("SUCCEEDED",)
+            or prior.steps[1].state != "FAILED" or prior.steps[1].attempt_states != ("FAILED_TERMINAL",)
+            or prior.steps[1].latest_attempt_error_code != "NORMALIZATION_BINDING_REJECTED"):
+        raise RuntimeStateConflictError("DAILY_RECOVERY_REQUIRES_EXACT_FAILED_POPULATION")
+    if any(reads.run_plan_content(identity) is not None for identity in (
+            failed.prediction.runtime_run_id, uuid5(failed.prediction.prediction_id, "abstention-runtime"))):
+        raise RuntimeStateConflictError("DAILY_POPULATION_RECOVERY_AFTER_PUBLICATION_REFUSED")
+
+    class NoExternalEffect:
+        def capture(self, request: CaptureRequest) -> ProviderResponse:
+            raise RuntimeStateConflictError("DAILY_COMMITTED_CAPTURE_RECONCILIATION_REQUIRED")
+
+    observation_date = failed.requested_at.astimezone(ZoneInfo("Asia/Shanghai")).date()
+    query = BaoStockArchiveQuery(BaoStockArchiveQueryKind.CSI300_MEMBERS, observation_date, observation_date)
+    # The Market owner authenticates the exact committed receipt before I/O.
+    replay = app.market.capture(
+        CaptureRequest(failed.prediction.provider_product_id,
+                       f"daily-population:{failed.prediction.prediction_id}:round:{failed.round}",
+                       query.resource, ContentHash(canonical_json_sha256({"headers": {}}))),
+        NoExternalEffect(),
+        CommandContext(f"daily-collection:{failed.run_id}:capture-membership", ActorType.WORKER, worker_id, "DAILY_MARKET_OBSERVATION"),
+    )
+    if not replay.replayed or replay.artifact is None:
+        raise RuntimeStateConflictError("DAILY_COMMITTED_CAPTURE_RECONCILIATION_REQUIRED")
+    successor = DailyCollectionPlan(failed.prediction, "population", failed.round + 1, reads.now())
+    content = reads.run_plan_content(successor.run_id)
+    if content is not None:
+        successor = DailyCollectionPlan.decode(content)
+        if (successor.prediction != failed.prediction or successor.phase != "population"
+                or successor.round != failed.round + 1
+                or app.runtime.inspect_run(successor.run_id).run_state not in {"QUEUED", "RUNNING", "SUCCEEDED"}):
+            raise RuntimeStateConflictError("DAILY_POPULATION_SUCCESSOR_REQUIRES_RECONCILIATION")
+    with daily_research_admission(
+        prediction_id=successor.prediction.prediction_id, code_sha=successor.prediction.code_sha,
+        config_sha256=successor.content_sha256, collection_phase="population", collection_round=successor.round,
+    ):
+        return collect_daily(app, successor, provider, worker_id=worker_id, maximum_steps=maximum_steps, before_action=before_action)
+
+
 class PerCaptureBaoStockProvider:
     """Open a bounded SDK session only when Market actually asks for an effect."""
 

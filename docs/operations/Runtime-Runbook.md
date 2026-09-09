@@ -223,6 +223,23 @@ uv run mra research daily settle --plan "$ORIGINAL_PUBLISHED_PLAN" --operation-c
 uv run mra research daily replay --plan "$ORIGINAL_PUBLISHED_PLAN"
 ```
 
+A terminal population normalization failure has one explicit recovery path:
+`uv run mra research daily retry-population --collection-plan "$FAILED_COLLECTION_PLAN" --operation-config "$MRA_OPERATION_CONFIG"`.
+This requires the exact original Runtime plan, a committed Capture and the known
+`NORMALIZATION_BINDING_REJECTED` terminal result. Refresh the physical integrity
+of the whole classification's existing Instrument sources first; the Provider's
+membership population can exceed the prediction sample. The command reconciles
+the original Capture through Market and creates only the next bounded observation
+round. Repeated recovery uses that same successor; the failed Run stays failed.
+UNKNOWN effects, unrelated failures and already published predictions refuse.
+
+Installed handoff reloads unfinished collection contracts and published plans from
+their original Runtime Artifact. Model, Target, feature and configuration bindings
+stay frozen, including their original code Artifact. Only an unpublished input
+cutoff advances to the database clock; a new installation cannot rewrite a
+publication or silently adopt another model.
+
+
 Collection requires a reconciled original publication, a naturally mature Target,
 and an unstarted nonterminal settlement. Repeated commands resume the original
 bounded capture round; unknown or failed effects require reconciliation. Late
