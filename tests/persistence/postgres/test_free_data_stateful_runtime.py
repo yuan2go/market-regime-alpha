@@ -108,9 +108,6 @@ from market_regime_alpha.application.runtime_operations.query import (
     CanonicalDagNodeType,
     PostgresCanonicalRuntimeQuery,
 )
-from market_regime_alpha.application.runtime_operations.recovery_audit import (
-    PostgresRecoveryAudit,
-)
 from market_regime_alpha.application.research_evaluation import (
     EvaluationSampleDisposition,
     FrozenResearchEvaluationDataset,
@@ -304,6 +301,7 @@ def test_real_stateful_positive_path_reaches_research_candidate(
     tmp_path: Path,
     postgres_factory: PostgresConnectionFactory,
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
     authority_mode: RuntimeAuthorityMode,
     liquidity_eligible: bool,
     watch_only: bool,
@@ -1147,13 +1145,26 @@ def test_real_stateful_positive_path_reaches_research_candidate(
         )
         assert approval_decision.production_authorized is False
         assert len(access.audit_events(reader=approver.principal_id)) == 5
-        recovery_audit = PostgresRecoveryAudit(postgres_factory).inspect(checked_at=strategy_observed_at + timedelta(days=2, seconds=5))
-        assert recovery_audit.issues == ()
-        assert recovery_audit.portfolio_replay_verified_count == 1
         report = shadow_operations.report(shadow_command.session_id)
         assert report["authority"]["research_shadow_engineering_ready"] is True
         assert report["authority"]["prospective_proven"] is False
         assert report["evaluation_panels_v2"][0]["panel_id"] == str(panel.panel_id)
+        from market_regime_alpha.cli.inspect_historical_runtime import main as inspect_history
+
+        capsys.readouterr()
+        scope = ["--database-url", os.environ[TEST_DATABASE_URL_ENV],
+                 "--application-schema", postgres_factory.application_schema]
+        expected_replay = frozen.to_canonical_dict()
+        for operation, flag, identity, expected in (
+            ("shadow-report", "--session-id", shadow_command.session_id, report),
+            ("shadow-replay", "--decision-id", frozen.decision_id, expected_replay),
+            ("shadow-report", "--session-id", shadow_command.session_id, report),
+        ):
+            assert inspect_history([*scope, operation, flag, str(identity)]) == 0
+            inspected = json.loads(capsys.readouterr().out)
+            assert inspected["scope"] == "HISTORICAL_READ_ONLY"
+            assert inspected["result"] == json.loads(json.dumps(expected, default=str))
+        assert shadow_operations.report(shadow_command.session_id) == report
         full_inspection = PostgresCanonicalRuntimeQuery(postgres_factory, clock=lambda: source_archive.created_at).inspect_run(
             command.run_id
         )

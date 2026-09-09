@@ -84,8 +84,12 @@ class PostgresConnectionFactory:
         max_idle_seconds: float = 60.0,
         max_lifetime_seconds: float = 1800.0,
         application_schema: str = APPLICATION_SCHEMA,
+        read_only: bool = False,
     ) -> None:
         database_url = settings.require_database_url()
+        if not isinstance(read_only, bool):
+            raise TypeError("read_only must be a bool")
+        self._read_only = read_only
         if isinstance(min_size, bool) or min_size < 0:
             raise ValueError("min_size must be non-negative")
         if isinstance(max_size, bool) or max_size < max(1, min_size):
@@ -142,7 +146,7 @@ class PostgresConnectionFactory:
                 f"{locator} ({type(exc).__name__})"
             ) from exc
         try:
-            connection.read_only = read_only
+            connection.read_only = self._read_only or read_only
             yield connection
             if connection.info.transaction_status is not TransactionStatus.IDLE:
                 connection.commit()

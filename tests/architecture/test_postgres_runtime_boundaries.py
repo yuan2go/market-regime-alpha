@@ -45,7 +45,8 @@ def test_free_data_composition_cannot_import_trading_mutation_domains() -> None:
     )
     prohibited = (".execution", ".portfolio", ".position", ".broker")
     violations: list[str] = []
-    paths = tuple(roots[0].rglob("*.py")) + (roots[1],)
+    assert not roots[1].exists(), "retired free-data writer CLI must not return"
+    paths = tuple(roots[0].rglob("*.py"))
     for path in paths:
         for module in sorted(_imports(path)):
             if any(value in module for value in prohibited):

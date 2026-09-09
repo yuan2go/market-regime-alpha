@@ -44,3 +44,43 @@ hypothetical research economics kernel.
 Source tables alone do not prove every intended command exists. Planned
 Execution/Attribution surfaces from former designs are not advertised as
 implemented `mra` commands. Discover the actual surface with `uv run mra --help`.
+
+## Consumer dispositions and retained boundaries
+
+The `consumer_graph` in [code-inventory.json](code-inventory.json) is the complete
+per-file matrix; `scripts/repository_inventory.py:CONSUMER_DISPOSITIONS` records
+reviewed maintenance decisions. It does not route commands or grant business
+admission. Hygiene rejects any executable root without a closed disposition.
+
+| Consumer class | Disposition and owner | Persistence / invariant |
+|---|---|---|
+| Current research, archive qualification, prospective/daily deployment | RETAIN canonical composition | `infrastructure/postgres`; exact Runtime admission, narrow owner UoWs, owner reconciliation |
+| Decision and manual risk/Fill/portfolio/thesis scripts | RETAIN account/Execution owners | `RepositoryFactory`, `execution`, `position`, `portfolio`, `application/decision_system`; observed Fill and approval lineage cannot be replaced by Portfolio proposal or episode economics |
+| Formal Model and PIT administration | RETAIN governance owners | `platform` governance + `application/pit_authority`; evidence floors, revocation and ACL remain distinct from experimental research Model use |
+| Legacy database bootstrap/migration/DR/engineering tools | RETAIN explicit account schema administration | `persistence/postgres`; their schema-head checks do not qualify the canonical research schema |
+| Raw Provider exports and Xuntou probes | RETAIN auxiliary source tooling | Raw files/products are not canonical Capture/Archive or qualified Provider facts |
+| Fixed historical research tools | ARCHIVE, uninstalled | Existing protocol/serializer/Artifact identities; no default current research dispatch |
+| Exact historical inspection | MERGE read-only runtime/shadow/pool operations | Retained PostgreSQL journal and serializer owners; explicit database and IDs, no scheduling |
+| Exact lifecycle/Feature replay APIs | RETAIN historical API | Exact package/Dataset; lifecycle durable replay writes only its separate verification journal |
+| Repository and deployment utilities | RETAIN respective tooling/evidence owners | No second scheduler or business Authority |
+
+### Package and migration ownership
+
+| Package/family | Disposition | Concrete remaining consumer or removal |
+|---|---|---|
+| `research_qualification` | RETAIN | Canonical Dataset/Target/Model/Evaluation/Backtest Applications, narrow UoWs and queries |
+| `research` | ARCHIVE research protocols; RETAIN bound value contracts | Historical tool/Artifact readers; `position/thesis_health.py` consumes CandidateSet, capital, regime and theme contracts. Replacing them would alter account review inputs |
+| `application/historical_corpus` | ARCHIVE | Historical corpus/Artifact materialization and reader tests; absent from canonical research import closure |
+| `platform` | RETAIN formal governance; ARCHIVE protocol readers | Installed Model/PIT and Decision Runtime lineage consume governance contracts; historical tools consume fixed protocol serializers. This is not a second current research Model owner |
+| `persistence/postgres` | RETAIN account/governance/history storage | Actual account, approval, Fill, Model/PIT and historical replay consumers remain. Shared `RepositoryFactory.model_registry` duplicate alias removed; callers use `model_governance` |
+| `infrastructure/postgres` | RETAIN sole current research/schema owner | `bootstrap_application`; new research SQL and registered upgrades belong here |
+| Empty per-package migration globs | DELETE | Removed package-data entries for platform, decision, portfolio, position, execution, features and three application families; none contained released SQL |
+| Released numbered legacy migrations | RETAIN immutable | Account/Decision Runtime journals and formal governance constraints still consume the numbered schema; no research additions to that family |
+
+`application/decision_system/runtime.py:_claim` requires the retained
+`ClaimedRuntimeTick`; PostgreSQL account writes reload its claim/fence/lease.
+Retiring the old scheduler entry does not migrate that lineage, grant a new
+claim or enable canonical account execution. A future cutover must first map
+that invariant into the canonical Runtime owner with account-specific tests.
+The old journal/domain readers remain for those exact references and replay.
+No availability fallback, dual write or implicit restored writer is introduced.

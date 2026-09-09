@@ -2,10 +2,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, time, timedelta
 from decimal import Decimal
-import json
 import os
 from pathlib import Path
-from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -47,9 +45,6 @@ from market_regime_alpha.application.continuous_research.postgres_daily_alpha im
     PostgresDailyAlphaOwnerResolver,
     PostgresDailyAlphaPredictionAuthority,
 )
-from market_regime_alpha.application.continuous_research.scheduler import (
-    TradingDayAssessment,
-)
 from market_regime_alpha.application.controlled_operation.input_artifacts import (
     publish_controlled_runtime_configuration,
 )
@@ -69,12 +64,6 @@ from market_regime_alpha.application.free_data_operation import (
     FreeDataOperationScale,
     FreeDataOperationService,
     FreeDataPreparationRequest,
-)
-from market_regime_alpha.application.governance.access_control import (
-    PostgresAccessGovernance,
-)
-from market_regime_alpha.application.research_validation.postgres_repository import (
-    PostgresResearchValidationRepository,
 )
 from market_regime_alpha.application.state_system.runtime import StateResearchStage
 from market_regime_alpha.core.identity import (
@@ -100,9 +89,6 @@ from market_regime_alpha.features.technical.catalog import (
     static_technical_feature_set,
 )
 from market_regime_alpha.market_data import AssetType
-from market_regime_alpha.forecasting.sample_provider import (
-    HistoricalRegistryPathForecastSampleProvider,
-)
 from market_regime_alpha.persistence.postgres.connection import (
     PostgresConnectionFactory,
 )
@@ -132,7 +118,6 @@ from market_regime_alpha.signals import (
     canonical_signal_input_mapping_v2,
     canonical_signal_model_configuration_v2,
 )
-from market_regime_alpha.cli import continuous_research as continuous_cli
 from tests.application.daily_loop.public_fixture import DECISION
 from tests.application.daily_loop.test_runner import _qualified_stage_clients
 from tests.persistence.postgres.test_free_data_operation import _path_config
@@ -540,136 +525,6 @@ def test_actual_selector_uses_mode_specific_slots_and_persists_rejections(
             )
 
 
-def test_formal_run_due_entry_executes_staged_research_summary(
-    tmp_path: Path,
-    postgres_factory: PostgresConnectionFactory,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    policy, history, status, quote = _qualified_stage_clients()
-    calendar = _calendar()
-    record_calendar_owner(
-        postgres_factory,
-        calendar=calendar,
-        clock=DECISION.value.astimezone(UTC),
-        idempotency_key="free-runtime-cli-calendar-owner",
-    )
-    configuration = _configuration(calendar)
-    configuration_path = publish_controlled_runtime_configuration(
-        root=tmp_path / "runtime-configurations",
-        artifact=configuration,
-    )
-    command = _continuous_command(
-        policy.symbols,
-        calendar,
-        configuration,
-        RuntimeAuthorityMode.RESEARCH,
-    )
-    trading_day = TradingDayAssessment(
-        trading_calendar_id=calendar.artifact_id,
-        trading_calendar_hash=calendar.content_hash,
-        trading_date=DECISION.value.date(),
-        is_trading_day=True,
-        reason_codes=("TRADING_DAY",),
-    )
-    command_path = tmp_path / "run-command.json"
-    trading_day_path = tmp_path / "trading-day.json"
-    command_path.write_text(json.dumps(command.to_canonical_dict()), encoding="utf-8")
-    trading_day_path.write_text(json.dumps(trading_day.to_canonical_dict()), encoding="utf-8")
-    monkeypatch.setattr(continuous_cli, "BaoStockHistoryClient", lambda **_: history)
-    monkeypatch.setattr(
-        continuous_cli,
-        "BaoStockSecurityStatusClient",
-        lambda **_: status,
-    )
-    monkeypatch.setattr(
-        continuous_cli,
-        "TencentCurrentQuoteClient",
-        lambda **_: quote,
-    )
-    historical_minutes = _HistoricalMinuteProvider()
-    monkeypatch.setattr(continuous_cli, "BaoStockADataProvider", lambda: historical_minutes)
-    authority = [
-        "--database-url",
-        os.environ[TEST_DATABASE_URL_ENV],
-        "--application-schema",
-        postgres_factory.application_schema,
-    ]
-    admin = PostgresAccessGovernance(postgres_factory).bootstrap_admin(
-        external_subject="test:free-runtime-cli-admin",
-        display_name="Free Runtime CLI Admin",
-        reason="CLI authorization fixture",
-        occurred_at=datetime(2025, 2, 3, 5, 0, tzinfo=UTC),
-        idempotency_key="free-runtime-cli-admin",
-    )
-    authority.extend(("--principal-id", str(admin.principal_id)))
-    common = [
-        *authority,
-        "run-due",
-        "--run-command",
-        str(command_path),
-        "--trading-day-assessment",
-        str(trading_day_path),
-        "--runtime-configuration",
-        str(configuration_path),
-        "--output-root",
-        str(tmp_path / "formal-runtime"),
-        "--minimum-median-daily-amount",
-        "1",
-        "--runtime-clock-mode",
-        "SIMULATED",
-    ]
-
-    assert continuous_cli.main([*common, "--at", "2025-02-03T14:30:00+08:00"]) == 0
-    preparing = json.loads(capsys.readouterr().out)
-    assert preparing["status"] == "PREPARING"
-    assert (history.calls, status.calls, quote.calls) == (1, 1, 0)
-
-    assert continuous_cli.main([*common, "--at", "2025-02-03T14:54:00+08:00"]) == 0
-    completed = json.loads(capsys.readouterr().out)
-    assert completed["status"] == "COMPLETED", json.dumps(completed, sort_keys=True)
-    assert completed["daily_decision_window_summary_delivered"] is True
-    assert completed["summary_outcome"] == "MODEL_NOT_QUALIFIED_FOR_MODE"
-    assert completed["path_forecast_registry_wired"] is True
-    assert completed["historical_sample_build"]["qualification"] == "UNQUALIFIED"
-    assert completed["historical_sample_build"]["evidence_class"] == "FREE_DATA_EXPLORATORY"
-    assert completed["historical_sample_build"]["sample_count"] >= 20 * len(policy.symbols)
-    assert completed["entry_authority_granted"] is False
-    assert completed["broker_authority_granted"] is False
-    assert (history.calls, status.calls, quote.calls) == (1, 1, 1)
-    assert historical_minutes.calls == list(policy.symbols)
-    with postgres_factory.connection(read_only=True) as connection:
-        historical_kinds = dict(
-            connection.execute(
-                """
-                SELECT artifact_kind, count(*)
-                FROM research_validation_artifact
-                WHERE artifact_kind IN (
-                    'FREE_HISTORICAL_DECISION',
-                    'FREE_HISTORICAL_MULTI_HORIZON_OUTCOME',
-                    'HISTORICAL_SAMPLE_DATASET'
-                )
-                GROUP BY artifact_kind
-                """
-            ).fetchall()
-        )
-    assert historical_kinds == {
-        "FREE_HISTORICAL_DECISION": completed["historical_sample_build"]["decision_count"],
-        "FREE_HISTORICAL_MULTI_HORIZON_OUTCOME": completed["historical_sample_build"]["outcome_count"],
-        "HISTORICAL_SAMPLE_DATASET": 1,
-    }
-
-    registry_provider = HistoricalRegistryPathForecastSampleProvider(
-        PostgresResearchValidationRepository(postgres_factory, apply_migrations=False)
-    )
-    sample_batch = registry_provider.load_samples(
-        signal_snapshot=SimpleNamespace(symbol=policy.symbols[0]),
-        configuration=configuration.path_forecast,
-        decision_time=DECISION,
-    )
-    assert len(sample_batch.samples) >= 20
-    assert "HISTORICAL_SAMPLE_DATASET_LOADED" in sample_batch.reason_codes
-    assert "HISTORICAL_SAMPLE_QUALIFICATION_UNQUALIFIED" in sample_batch.limitations
 
 
 def _calendar():

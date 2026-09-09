@@ -10,7 +10,7 @@ from market_regime_alpha.application.operational_research.supplemental_artifact 
 from market_regime_alpha.daily_decision.artifact import (
     publish_phase_d_daily_decision_artifact,
 )
-from scripts.build_composite_operational_manifest import main
+from historical_tools.build_composite_operational_manifest import main
 from tests.application.operational_research.test_bridge import (
     _daily_bundle,
     _supplemental,

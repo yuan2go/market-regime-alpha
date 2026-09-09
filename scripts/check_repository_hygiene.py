@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from scripts.check_docs_links import CANONICAL_DOCS
-from scripts.repository_inventory import OUTPUT, encoded, inventory
+from scripts.repository_inventory import CONSUMER_DISPOSITIONS, OUTPUT, encoded, inventory
 from market_regime_alpha.infrastructure.postgres.schema import EXPECTED_TARGET_TABLES, SCHEMA_EPOCH
 
 _HISTORY = re.compile(r"\bWP(?:[-_][A-Z0-9]+)+|\bWP\d+[A-Z]*", re.I)
@@ -73,6 +73,13 @@ def main() -> int:
         *check_active_context(ROOT), *check_commentary(ROOT), *check_schema_facts(ROOT),
     ]
     snapshot = inventory(ROOT)
+    graph = snapshot["consumer_graph"]
+    if set(graph) != set(CONSUMER_DISPOSITIONS) or any(
+        row["disposition"] not in {"RETAIN", "MIGRATE", "MERGE", "ARCHIVE", "DELETE"}
+        or not all(row[field] for field in ("owner", "scope", "reason"))
+        for row in graph.values()
+    ):
+        errors.append("executable consumer lacks an exact reviewed owner/disposition")
     if snapshot["unresolved_internal_modules"]:
         errors.append("unresolved internal modules: " + str(snapshot["unresolved_internal_modules"]))
     path = ROOT / OUTPUT

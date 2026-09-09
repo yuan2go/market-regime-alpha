@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from scripts.prepare_golden_loop_v2_campaign import (
+from historical_tools.prepare_golden_loop_v2_campaign import (
     _reference_from_text,
     _references,
 )

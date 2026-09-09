@@ -17,7 +17,7 @@ ACTIVE_CONSUMERS = (
     ROOT / "src/market_regime_alpha/application/controlled_operation/research_runner.py",
     ROOT / "src/market_regime_alpha/research/state_system/pool.py",
     ROOT / "src/market_regime_alpha/application/research_validation/formal_evaluation.py",
-    ROOT / "scripts/benchmark_feature_materialization.py",
+    ROOT / "historical_tools/benchmark_feature_materialization.py",
 )
 FORBIDDEN_PRIVATE_IMPLEMENTATIONS = {
     "_directional_rank_percentiles",

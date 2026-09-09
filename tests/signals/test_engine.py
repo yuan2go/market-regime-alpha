@@ -192,7 +192,7 @@ def test_signal_artifact_reader_and_replay_are_deterministic(tmp_path) -> None:
     completed = subprocess.run(
         [
             sys.executable,
-            "scripts/run_signal_path_research.py",
+            "historical_tools/run_signal_path_research.py",
             "replay-signal",
             "--artifact",
             str(path),

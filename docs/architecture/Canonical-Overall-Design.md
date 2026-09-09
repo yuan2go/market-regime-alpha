@@ -3,25 +3,46 @@
 > **Status:** CURRENT_ARCHITECTURE
 > **Code Evidence:** `pyproject.toml`, `src/market_regime_alpha/bootstrap.py`, `src/market_regime_alpha/interfaces`, `src/market_regime_alpha/application`, `tests/contracts`
 
-The repository is a Python modular monolith with two explicit persistence and
-entry-point families. The installed `mra` research path is implemented and wired;
-legacy CLI/account paths remain executable. There has been no full Runtime/CLI
-cutover. A module being retained or packaged does not establish production use.
+The repository is a Python modular monolith. Current research execution has one
+installed entry, `mra`, and one composition root, `bootstrap_application`.
+Account and formal governance administration retain explicit separate commands
+because their observed-Fill, claim-lineage and qualification contracts have no
+canonical replacement. This is not full Runtime/CLI cutover.
 
 ## Executable entry points
 
-`pyproject.toml [project.scripts]` is the installed entry-point inventory.
+`pyproject.toml [project.scripts]` installs four commands. The generated
+[consumer graph](code-inventory.json) enumerates every installed entry, module
+entry, callable CLI, script, historical tool and Python deployment template,
+with its exact disposition, owner, scope, direct imports, transitive SQL adapters
+and persistence dependencies. Static closure is not proof of deployment.
 
-| Entry | Actual route |
-|---|---|
-| `mra` | `interfaces/cli/__init__.py:main` → `interfaces/cli/main.py:_dispatch` and `interfaces/cli/daily.py` → `bootstrap.py:bootstrap_application` |
-| `continuous-research` | `cli/continuous_research.py:main` → `application/continuous_research` and explicit PostgreSQL repository composition |
-| `state-system`, `decision-system` | `cli/state_system.py`, `cli/decision_system.py` → respective `application` owners |
-| `model-governance`, `pit-authority`, `research-shadow` | corresponding `cli` modules → retained governance/PIT/shadow owners |
+| Entry | Disposition | Actual route and scope |
+|---|---|---|
+| `mra` | RETAIN | `interfaces/cli:main` → canonical dispatch → `bootstrap_application` → context Applications |
+| `decision-system` | RETAIN | `cli/decision_system.py` → DecisionSystem/DecisionRuntime; account administration requires the retained typed Runtime claim/fence |
+| `model-governance` | RETAIN | `cli/model_governance.py` → formal Model governance; not experimental Model-use qualification |
+| `pit-authority` | RETAIN | `cli/pit_authority.py` → Provider/PIT qualification, ACL and revocation owner |
+| `continuous-research` | MIGRATE | Entry and old dispatch deleted. New work uses existing `mra backtest`, `mra research daily` and guarded prospective service; historical Runs are not translated or resumed by another owner |
+| `state-system` | MERGE | Entry removed; exact historical pool verification retained in `cli.inspect_historical_runtime`; descriptive stage-list CLI removed, domain contracts retained |
+| `research-shadow` | ARCHIVE | Entry/writer wiring removed; exact completed report/replay retained in `cli.inspect_historical_runtime`; no claim of new formal shadow qualification |
 
-Additional `scripts/` and module CLIs still consume research, feature, strategy
-and compatibility code. Do not declare these dead from the installed-script
-list alone. See the inventory's consumer edges and the Roadmap's overlap debt.
+Uninstalled historical inspection is explicit:
+`uv run python -m market_regime_alpha.cli.inspect_historical_runtime --help`.
+It cannot schedule, create or resume Runs. Its database report/replay paths use
+connection-level read-only transactions and exact supplied IDs. Other retained
+historical lifecycle replay APIs are individually classified in the inventory:
+the durable lifecycle replay creates its own verification journal, so it is
+not advertised as zero-write inspection.
+
+Fixed-protocol tools live under `historical_tools/`, outside installed/current
+execution. Their original bytes remain intact. One tool retains its original
+`scripts/` path because its historical reader verifies that source path/hash;
+the inventory marks it `HISTORICAL_PINNED_PATH`. Historical tools can reproduce
+their declared protocols; they do not authorize current service or new research.
+The two old live-loop scripts and unconsumed writer CLI wrappers are deleted.
+The orphaned recovery-command projection is also removed; owner replay remains.
+No old subsystem is wrapped under `mra`.
 
 ## Research composition and call chains
 

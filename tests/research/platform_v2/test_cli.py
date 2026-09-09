@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 from market_regime_alpha.research.platform_v2.inputs import ResearchInputBundle
-from scripts.run_research_layer import main
+from historical_tools.run_research_layer import main
 
 from .test_candidate_discovery import _qualified
 

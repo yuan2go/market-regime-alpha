@@ -58,7 +58,7 @@ def test_repository_factory_builds_postgres_authorities_on_one_pool(
     ) as repositories:
         decision = repositories.decision()
         lifecycle = repositories.lifecycle()
-        model_registry = repositories.model_registry()
+        model_registry = repositories.model_governance()
         experiment_governance = repositories.experiment_governance()
         continuous = repositories.continuous_research(
             clock=lambda: datetime(2026, 8, 6, tzinfo=timezone.utc)
