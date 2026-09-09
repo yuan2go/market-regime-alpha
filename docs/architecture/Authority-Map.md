@@ -35,6 +35,22 @@ and shared atomic Runtime admission. Session supervision is not the business
 lease/fence. Daily work receives explicit admission for its own Run; it does
 not select a different database if blocked.
 
+`interfaces/deployment_profile.py` verifies source/wheel/installation and exact
+operation scope before emitting a new local profile. It writes no business facts
+and grants no model or data qualification. Retained PostgreSQL write connections
+share Runtime admission for database exclusion, while keeping their existing
+Account/Fill/governance transactions and Authority. Historical read-only scopes
+do not request writer admission.
+
+Canonical owner connections also participate when their command has no Runtime
+Attempt. An unsupervised narrow write connection holds a shared database
+reservation until returned; a supervisor needs the exclusive reservation.
+Supervised connections verify the authentic reservation and database scope.
+Thus startup cannot overtake an existing owner transaction, and foreign owner
+commands cannot bypass the service by avoiding claim. Read-only queries remain
+available. Arbitrary SQL credentials are outside this cooperative boundary and
+must be excluded by the operational handoff.
+
 The retained account family uses `execution/postgres_manual_repository.py`,
 `position/postgres_*`, `portfolio/postgres_*` and
 `persistence/repository_factory.py`. Its actual observed-Fill, allocation,

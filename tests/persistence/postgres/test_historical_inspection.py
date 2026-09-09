@@ -32,12 +32,19 @@ def test_historical_runtime_report_and_replay_preserve_exact_rows(postgres_facto
     from market_regime_alpha.application.continuous_research.postgres_journal import PostgresContinuousResearchJournal
     from market_regime_alpha.application.continuous_research.replay import replay_continuous_research
     from market_regime_alpha.cli.inspect_historical_runtime import main
-    from tests.persistence.postgres.test_continuous_research_journal import NOW, _command
+    from tests.persistence.postgres.test_continuous_research_journal import NOW, _command, _tick, _receipt
+    from market_regime_alpha.application.continuous_research.policy import ContinuousSessionPhase
+    from market_regime_alpha.application.continuous_research.journal import ContinuousRunState
 
     journal = PostgresContinuousResearchJournal(postgres_factory, clock=lambda: NOW)
     command = _command()
-    before = journal.create_or_get(command)
+    journal.create_or_get(command)
+    tick = journal.admit_tick(_tick(command), session_phase=ContinuousSessionPhase.DECISION_WINDOW)
+    claim = journal.claim_tick(run_id=command.run_id, tick_id=tick.command.tick_id)
+    journal.complete_tick(claim=claim, receipt=_receipt(claim), run_state=ContinuousRunState.WAITING_FOR_NEW_DATA)
+    before = journal.get_run(command.run_id)
     expected = replay_continuous_research(journal, command.run_id).to_canonical_dict()
+    assert expected["tick_count"] == expected["receipt_count"] == 1
     scope = ["--database-url", os.environ["MARKET_REGIME_ALPHA_TEST_DATABASE_URL"],
              "--application-schema", postgres_factory.application_schema]
     for operation in ("runtime-report", "runtime-replay", "runtime-replay"):

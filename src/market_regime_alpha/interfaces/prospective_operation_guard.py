@@ -195,6 +195,9 @@ class ProspectiveOperationGuard:
                 raise ValueError("OPERATION_BACKUP_SCOPE_MISMATCH")
             if any(inventory["database"][key] != identity[key] for key in ("name", "oid", "cluster_identity")):
                 raise ValueError("OPERATION_BACKUP_SCOPE_MISMATCH")
+            if any(inventory["schema"][key] != snapshot["schema"][key]
+                   for key in ("epoch", "baseline_checksum", "catalog_checksum")):
+                raise ValueError("OPERATION_BACKUP_SCHEMA_MISMATCH")
             if Path(receipt["source_artifact_root"]).resolve() != self.root:
                 raise ValueError("OPERATION_BACKUP_ARTIFACT_ROOT_MISMATCH")
             if receipt["snapshot_contract"] != "POSTGRES_EXPORTED_SNAPSHOT_AND_EXACT_ARTIFACT_ROSTER":

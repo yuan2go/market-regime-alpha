@@ -1,9 +1,4 @@
-"""PostgreSQL-authoritative continuous research orchestration contracts.
-
-This package owns all-day orchestration only. Provider, Dataset, Feature,
-Candidate, Signal, Forecast, Canonical, and execution behavior remain in their
-existing bounded contexts.
-"""
+"""Retained historical journal and account claim-lineage value contracts."""
 
 from market_regime_alpha.application.continuous_research.evidence import (
     CurrentEvidenceSnapshot,
@@ -27,13 +22,7 @@ from market_regime_alpha.application.continuous_research.scope import (
     ContinuousResearchScopeRecord,
     prepare_continuous_research_scope,
 )
-from market_regime_alpha.application.continuous_research.runner import (
-    ContinuousResearchTickRunner,
-    ContinuousTickExecutionResult,
-)
 from market_regime_alpha.application.continuous_research.scheduler import (
-    ContinuousResearchScheduleRunner,
-    ContinuousScheduleRunResult,
     ContinuousScheduleSnapshot,
     ContinuousScheduleStatus,
     TradingDayAssessment,
@@ -44,10 +33,6 @@ __all__ = [
     "ContinuousChildReference",
     "ContinuousResearchScope",
     "ContinuousResearchScopeRecord",
-    "ContinuousResearchScheduleRunner",
-    "ContinuousResearchTickRunner",
-    "ContinuousTickExecutionResult",
-    "ContinuousScheduleRunResult",
     "ContinuousScheduleSnapshot",
     "ContinuousScheduleStatus",
     "CurrentEvidenceSnapshot",

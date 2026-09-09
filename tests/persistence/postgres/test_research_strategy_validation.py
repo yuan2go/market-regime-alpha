@@ -45,7 +45,7 @@ from market_regime_alpha.persistence.postgres.connection import PostgresConnecti
 from market_regime_alpha.forecasting.path import PATH_FORECAST_SAMPLE_SCHEMA, PathForecastSample
 from market_regime_alpha.platform.runtime_governance import RuntimeAuthorityMode
 from market_regime_alpha.strategies.entry.contracts import EntryPathObservationStatus, EntryPathReasonCode
-from tests.persistence.postgres.test_free_data_continuous_runtime import _calendar, _configuration, _continuous_command
+from tests.persistence.postgres.retained_runtime_fixture import _calendar, _configuration, _continuous_command
 
 
 def _ref(kind: str, name: str) -> ValidationArtifactReference:

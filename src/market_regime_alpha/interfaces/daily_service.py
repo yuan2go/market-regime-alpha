@@ -34,6 +34,20 @@ _POLL_INTERVAL = timedelta(minutes=30)
 _OUTCOME_GRACE = timedelta(hours=8)
 
 
+def prepare_pending_daily_recovery(app: TargetApplication, session: Any) -> None:
+    """Startup revalidates pending plans across Model uses before checking leases."""
+    for item in app.daily_prediction_reads.outcome_work_items(limit=64):
+        if item.run_state in {"FAILED", "WAITING"}:
+            continue
+        plan = _historical_outcome_plan(item)
+        app.daily_prediction_reads.validate_configuration(plan)
+        app.daily_prediction_reads.ready(plan)
+        session.allow_frozen_daily_recovery(
+            prediction_id=plan.prediction_id, code_sha=plan.code_sha,
+            config_sha256=sha256(encode_daily_plan(plan)).hexdigest(),
+        )
+
+
 def current_daily_plan(app: TargetApplication, template: DailyPredictionPlan) -> DailyPredictionPlan:
     input_session, target_session, now = app.daily_prediction_reads.current_sessions()
     identity = uuid5(template.experimental_model_use_id, "daily:" + str(input_session) + ":" + str(target_session))
@@ -204,46 +218,49 @@ def daily_tick(
                 }
             )
             continue
-        try:
-            members = reads.target_price_members(plan)
-        except (RuntimeError, ValueError) as exc:
-            completed.append(
-                {
-                    **status,
-                    "state": "OUTCOME_DATA_FAILED",
-                    "reason_code": str(exc),
-                }
-            )
-            continue
-        if not all(m.state in _TERMINAL_INPUT for m in members) and now < ready.target_window_end + _OUTCOME_GRACE:
-            if outcome_action is None:
-                try:
-                    result = _collection(
-                        app,
-                        plan,
-                        "outcome",
-                        provider,
-                        worker_id,
-                        maximum_steps,
-                        before_action,
-                    )
-                except (RuntimeError, ValueError) as exc:
-                    completed.append(
-                        {
-                            **status,
-                            "state": "OUTCOME_DATA_FAILED",
-                            "reason_code": str(exc),
-                        }
-                    )
-                    continue
+        # Runtime progress avoids fresh Market I/O after settlement; the owner
+        # still revalidates the original full plan, step roster and Outcome inputs.
+        if not item.settlement_steps_completed:
+            try:
+                members = reads.target_price_members(plan)
+            except (RuntimeError, ValueError) as exc:
                 completed.append(
-                    {**status, "state": "OUTCOME_DATA_PENDING", "collection": result}
+                    {
+                        **status,
+                        "state": "OUTCOME_DATA_FAILED",
+                        "reason_code": str(exc),
+                    }
                 )
-                if result["state"] == "COLLECTION_PROGRESS":
-                    outcome_action = completed[-1]
-            else:
-                completed.append({**status, "state": "OUTCOME_DATA_PENDING"})
-            continue
+                continue
+            if not all(m.state in _TERMINAL_INPUT for m in members) and now < ready.target_window_end + _OUTCOME_GRACE:
+                if outcome_action is None:
+                    try:
+                        result = _collection(
+                            app,
+                            plan,
+                            "outcome",
+                            provider,
+                            worker_id,
+                            maximum_steps,
+                            before_action,
+                        )
+                    except (RuntimeError, ValueError) as exc:
+                        completed.append(
+                            {
+                                **status,
+                                "state": "OUTCOME_DATA_FAILED",
+                                "reason_code": str(exc),
+                            }
+                        )
+                        continue
+                    completed.append(
+                        {**status, "state": "OUTCOME_DATA_PENDING", "collection": result}
+                    )
+                    if result["state"] == "COLLECTION_PROGRESS":
+                        outcome_action = completed[-1]
+                else:
+                    completed.append({**status, "state": "OUTCOME_DATA_PENDING"})
+                continue
         if outcome_action is not None:
             completed.append({**status, "state": "READY_FOR_SETTLEMENT"})
             continue

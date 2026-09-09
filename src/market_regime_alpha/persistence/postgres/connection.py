@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from functools import partial
 import re
@@ -14,6 +14,8 @@ from typing import Any
 import psycopg
 from psycopg.pq import TransactionStatus
 from psycopg_pool import ConnectionPool, PoolTimeout
+
+from market_regime_alpha.infrastructure.postgres.prospective_operation_session import retained_writer_admission
 
 from market_regime_alpha.persistence.settings import (
     DatabaseSettings,
@@ -147,9 +149,11 @@ class PostgresConnectionFactory:
             ) from exc
         try:
             connection.read_only = self._read_only or read_only
-            yield connection
-            if connection.info.transaction_status is not TransactionStatus.IDLE:
-                connection.commit()
+            admission = nullcontext() if connection.read_only else retained_writer_admission(connection)
+            with admission:
+                yield connection
+                if connection.info.transaction_status is not TransactionStatus.IDLE:
+                    connection.commit()
         except BaseException:
             if connection.info.transaction_status is not TransactionStatus.IDLE:
                 connection.rollback()

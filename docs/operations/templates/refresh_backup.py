@@ -19,6 +19,7 @@ from time import monotonic, sleep
 from market_regime_alpha.bootstrap import TargetSettings
 from market_regime_alpha.interfaces.prospective_operation_guard import operational_session
 from market_regime_alpha.interfaces.prospective_operations import load_operation_config, implementation_source_sha256
+from market_regime_alpha.interfaces.deployment_profile import require_installation
 from verify_prospective_artifacts import verify_scope
 from market_regime_alpha.interfaces.daily_research import decode_daily_plan
 
@@ -84,6 +85,7 @@ def main():
     for key in ("PATH", "MRA_DATABASE_URL", "MRA_ARTIFACT_ROOT", "MRA_POOL_MIN_SIZE", "MRA_POOL_MAX_SIZE"):
         os.environ[key] = plist["EnvironmentVariables"][key]
     config = load_operation_config(PROFILE)
+    require_installation(config)
     if (config.database_name, config.database_oid, config.cluster_identity, config.source_sha256) != (
         DEPLOYMENT["database_name"],
         DEPLOYMENT["database_oid"],

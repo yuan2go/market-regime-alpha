@@ -44,6 +44,77 @@ def _writer_pid(connection: psycopg.Connection[Any]) -> int | None:
     return None if row is None else int(row[0])
 
 
+@contextmanager
+def canonical_writer_admission(connection: psycopg.Connection[Any]) -> Iterator[None]:
+    """Cover owner commands that do not create a Runtime Attempt.
+
+    Unsupervised narrow connections hold shared reservation until returned, so
+    supervisor startup cannot race an already admitted transaction. Supervised
+    connections require the authentic database-bound reservation instead. The
+    short probe commits before owner SQL; nested UoWs and explicit isolation
+    remain legal. Runtime claim/fence checks still own business admission.
+    """
+    session = _operation_session.get()
+    locked = False
+    try:
+        if session is None:
+            locked = connection.execute(
+                "SELECT pg_try_advisory_lock_shared(hashtextextended(%s,0))",
+                (_DATABASE_WRITER_KEY,),
+            ).fetchone() == (True,)
+            if not locked:
+                raise ValueError("OPERATION_CANONICAL_WRITER_ADMISSION_CONFLICT")
+        else:
+            session.require_supervisor_lock(session.series_code)
+            identity = connection.execute(
+                "SELECT oid::bigint, (pg_control_system()).system_identifier::text "
+                "FROM pg_database WHERE datname=current_database()",
+            ).fetchone()
+            if identity != (session.database_oid, session.cluster_identity):
+                raise ValueError("OPERATION_CANONICAL_WRITER_SCOPE_MISMATCH")
+        connection.commit()
+        yield
+    finally:
+        if locked and not connection.closed:
+            connection.rollback()
+            connection.execute(
+                "SELECT pg_advisory_unlock_shared(hashtextextended(%s,0))",
+                (_DATABASE_WRITER_KEY,),
+            )
+            connection.commit()
+
+
+@contextmanager
+def retained_writer_admission(connection: psycopg.Connection[Any]) -> Iterator[None]:
+    """Keep retained connections outside canonical claims without owning facts.
+
+    Shared session admission permits existing nested connections and explicit
+    transaction isolation. The admission probe commits before the owner begins
+    its transaction; the lock survives owner commits until the connection is
+    returned. No business I/O is placed inside the probe transaction.
+    """
+    locked = False
+    try:
+        connection.execute("SELECT pg_advisory_lock_shared(hashtextextended(%s,0))", (_ADMISSION_KEY,))
+        locked = True
+        if _writer_pid(connection) is not None:
+            raise ValueError("OPERATION_RETAINED_WRITER_ADMISSION_CONFLICT")
+        if connection.execute("SELECT to_regclass('mra.runtime_attempt')").fetchone() != (None,):
+            if connection.execute(
+                "SELECT EXISTS(SELECT 1 FROM mra.runtime_attempt WHERE state IN ('CLAIMED','RUNNING'))"
+            ).fetchone() != (False,):
+                raise ValueError("OPERATION_RETAINED_WRITER_ADMISSION_CONFLICT")
+        connection.commit()
+        yield
+    finally:
+        if locked and not connection.closed:
+            # Caller commits/rolls back its business transaction before this
+            # scope exits. Refusal in the probe must also leave a clean session.
+            connection.rollback()
+            connection.execute("SELECT pg_advisory_unlock_shared(hashtextextended(%s,0))", (_ADMISSION_KEY,))
+            connection.commit()
+
+
 def admit_runtime_attempt(connection: psycopg.Connection[Any], *, run_id: UUID | None,
                           step_id: UUID | None = None) -> None:
     """Atomic operational exclusion shared by every current target Runtime claim.
@@ -101,6 +172,7 @@ class PostgresProspectiveOperationSession:
         self.daily_scope: tuple[UUID,str,str,str | None,int] | None = None
         self.backtest_scope: tuple[UUID,str] | None = None
         self.daily_recovery_scope: tuple[UUID, str] | None = None
+        self.frozen_daily_recovery: set[tuple[UUID, str, str]] = set()
         self.daily_delivery_scope: tuple[UUID, UUID, str, str, str] | None = None
         self.prospective_scope: ProspectiveRuntimeAdmission | None = None
         self.prospective_recovery_scopes: tuple[ProspectiveRuntimeAdmission, ...] = ()
@@ -248,9 +320,35 @@ class PostgresProspectiveOperationSession:
         self.require_supervisor_lock(self.series_code)
         self.daily_recovery_scope = (use_id, code_sha)
 
+    def allow_frozen_daily_recovery(self, *, prediction_id: UUID, code_sha: str, config_sha256: str) -> None:
+        """Only owner-reloaded immutable plans may extend startup recovery scope.
+
+        This permits expired safe-effect reconciliation, never a new claim.
+        Claiming still requires the sequential exact-plan handoff.
+        """
+        self.require_supervisor_lock(self.series_code)
+        self.frozen_daily_recovery.add((prediction_id, code_sha, config_sha256))
+
     def daily_recovery_run_matches(
         self, connection: psycopg.Connection[Any], run_id: UUID
     ) -> bool:
+        for prediction_id, code_sha, config_sha256 in self.frozen_daily_recovery:
+            if run_id != uuid5(prediction_id, "outcome-evaluation-runtime"):
+                continue
+            if connection.execute(
+                """SELECT EXISTS(SELECT 1 FROM mra.runtime_run run
+                   JOIN mra.artifact artifact ON artifact.artifact_id=run.config_artifact_id
+                   WHERE run.run_id=%s AND run.code_sha=%s AND run.config_hash=%s
+                     AND artifact.content_sha256=run.config_hash
+                     AND run.parent_run_id=%s AND run.fire_key=%s AND run.runtime_mode='SHADOW'
+                     AND EXISTS(SELECT 1 FROM mra.runtime_step step WHERE step.run_id=run.run_id)
+                     AND NOT EXISTS(SELECT 1 FROM mra.runtime_step step WHERE step.run_id=run.run_id
+                       AND (step.implementation NOT LIKE 'research.daily_outcome.%%'
+                            OR step.external_effect_class NOT IN ('NONE','CONTENT_PUT'))))""",
+                (run_id, code_sha, config_sha256, uuid5(prediction_id, "prediction-runtime"),
+                 "daily-outcome:" + str(prediction_id)),
+            ).fetchone() == (True,):
+                return True
         if self.daily_recovery_scope is None:
             return False
         use_id, code_sha = self.daily_recovery_scope

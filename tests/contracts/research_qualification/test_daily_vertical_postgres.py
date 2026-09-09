@@ -31,9 +31,9 @@ def test_generic_daily_target_fit_model_validation_and_replay(target_database_ur
             app.daily_prediction_reads.require_partition_roster(partition, roster[:-1])
 
 
-@pytest.mark.parametrize("missing_membership", [False, True])
+@pytest.mark.parametrize("missing_membership,mature_prices", [(False, False), (False, True), (True, False)])
 def test_completed_model_is_consumed_without_backtest_and_publication_is_replayable(
-    target_database_url, tmp_path, missing_membership, monkeypatch
+    target_database_url, tmp_path, missing_membership, mature_prices, monkeypatch, record_property
 ):
     from dataclasses import replace
     from datetime import timedelta
@@ -560,7 +560,16 @@ def test_completed_model_is_consumed_without_backtest_and_publication_is_replaya
                     lambda _: NormalizationBatch(
                         outcome_capture_id,
                         plan.provider_product_id,
-                        gaps=tuple(
+                        bars=tuple(
+                            replace(
+                                _bar(plan.provider_product_id, outcome_capture_id, instrument, target_session, "REFERENCE", i),
+                                bar_revision_id=uuid4(), timeframe=BarTimeframe.DAILY,
+                                event_start=target_session.open_at, event_end=target_session.close_at,
+                                open=Money(D(10), "CNY"), close=Money(D(10) + D(i + 1) / 100, "CNY"),
+                                high=Money(D(11), "CNY"), low=Money(D(9), "CNY"),
+                            ) for i, instrument in enumerate(c["instruments"])
+                        ) if mature_prices else (),
+                        gaps=() if mature_prices else tuple(
                             SourceGap(
                                 uuid4(),
                                 plan.provider_product_id,
@@ -583,6 +592,12 @@ def test_completed_model_is_consumed_without_backtest_and_publication_is_replaya
                 ),
                 _context("daily-outcome-time-advance-normalize"),
             )
+            if mature_prices:
+                complete = app.research_evaluations.complete
+                def committed_reply_lost(*args, **kwargs):
+                    complete(*args, **kwargs)
+                    raise SystemExit("simulated lost Evaluation completion reply")
+                monkeypatch.setattr(app.research_evaluations, "complete", committed_reply_lost)
             with prospective_operation_session(
                 target_database_url,
                 database_name=identity["name"],
@@ -597,14 +612,27 @@ def test_completed_model_is_consumed_without_backtest_and_publication_is_replaya
                         "daily-fixture"
                     )
 
-                settlement_tick = daily_tick(
-                    app,
-                    plan,
-                    NoProviderEffect(),
-                    worker_id="daily-fixture",
-                    maximum_steps=128,
-                    before_action=settlement_guard,
-                )
+                def tick(application):
+                    return daily_tick(application, plan, NoProviderEffect(), worker_id="daily-fixture",
+                                      maximum_steps=128, before_action=settlement_guard)
+                if mature_prices:
+                    with pytest.raises(SystemExit, match="lost Evaluation completion reply"):
+                        tick(app)
+                else:
+                    settlement_tick = tick(app)
+            if mature_prices:
+                with bootstrap_application(settings) as restarted:
+                    clock.setattr(restarted.daily_prediction_reads, "now", lambda: simulated_now)
+                    clock.setattr(restarted.daily_prediction_reads, "first_attempt_at", lambda _: simulated_now)
+                    with prospective_operation_session(target_database_url,
+                            database_name=identity["name"], database_oid=identity["oid"],
+                            cluster_identity=identity["cluster_identity"], series_code="daily-fixture") as supervisor:
+                        from market_regime_alpha.interfaces.daily_service import prepare_pending_daily_recovery
+                        prepare_pending_daily_recovery(restarted, supervisor)
+                        settlement_tick = tick(restarted)
+                        trace = restarted.runtime.inspect_run(uuid5(plan.prediction_id, "outcome-evaluation-runtime"))
+                        evaluation_step = next(step for step in trace.steps if step.step_key == "evaluate")
+                        assert evaluation_step.attempt_states == ("SUCCEEDED",)
         assert settlement_tick["state"] == "OUTCOME_PROGRESS", [
             (item["state"], item.get("reason_code"))
             for item in settlement_tick["pending"]
@@ -631,6 +659,21 @@ def test_completed_model_is_consumed_without_backtest_and_publication_is_replaya
                 "WHERE evaluation_run_id=%s",
                 (evaluation_id,),
             ).fetchone() == ("COMPLETED",)
+            if mature_prices:
+                labels = connection.execute(
+                    "SELECT metric.decimal_value FROM mra.market_target_outcome_metric metric "
+                    "JOIN mra.market_target_outcome_revision revision USING(market_target_outcome_revision_id) "
+                    "WHERE revision.runtime_run_id=%s ORDER BY metric.decimal_value",
+                    (outcome_run_id,),
+                ).fetchall()
+                # Each open is 10 CNY; close is 10 + i/100 CNY. The target is
+                # an observed price ratio, not an account/tradability return.
+                assert labels == [(D(i) / 1000,) for i in range(1, 33)]
+                metrics = connection.execute(
+                    "SELECT metric_state, estimable_count FROM mra.evaluation_metric WHERE evaluation_run_id=%s",
+                    (evaluation_id,),
+                ).fetchall()
+                assert metrics and all(row == ("ESTIMATED", 32) for row in metrics)
             before_replay = connection.execute(
                 "SELECT (SELECT count(*) FROM mra.command_receipt), "
                 "(SELECT count(*) FROM mra.artifact), "
@@ -641,6 +684,23 @@ def test_completed_model_is_consumed_without_backtest_and_publication_is_replaya
         assert cycle["model_version_id"] == plan.model_version_id
         assert cycle["experimental_model_use_id"] == plan.experimental_model_use_id
         assert cycle["research_dispositions"] == ()
+        record_property("cycle", json.dumps(cycle, default=str, sort_keys=True))
+        record_property("database", json.dumps(identity, default=str, sort_keys=True))
+        record_property("scope", "DISPOSABLE_SYNTHETIC_CLOCK_NOT_PROSPECTIVE_PROOF")
+        from io import StringIO
+        from market_regime_alpha.interfaces.cli import main
+        plan_path = tmp_path / "replay-plan.json"
+        from market_regime_alpha.interfaces.daily_research import encode_daily_plan
+        plan_path.write_bytes(encode_daily_plan(plan))
+        for command in ("report", "replay", "replay"):
+            output, errors = StringIO(), StringIO()
+            assert main(["research", "daily", command, "--plan", str(plan_path)],
+                        environ={"MRA_DATABASE_URL": settings.database_url, "MRA_ARTIFACT_ROOT": str(settings.artifact_root)},
+                        stdout=output, stderr=errors) == 0, errors.getvalue()
+            result = json.loads(output.getvalue())
+            assert result["state"] == "COMPLETED"
+            assert result["reconciliation"]["evaluation_id"] == str(evaluation_id)
+            assert result["reconciliation"]["matched"] and result["reconciliation"]["mismatch_count"] == 0
         completed_health = app.daily_prediction_reads.operational_health(plan)
         assert completed_health["outcome_backlog"]["observed_count"] == 0
         assert completed_health["human_research_disposition"][

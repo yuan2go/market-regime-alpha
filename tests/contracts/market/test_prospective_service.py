@@ -19,6 +19,7 @@ def test_service_uses_the_existing_continuation_for_each_wakeup(monkeypatch):
     from importlib import import_module
 
     module = import_module(main.__module__)
+    monkeypatch.setattr(module, "require_installation", lambda _: None)
     calls = []
 
     def continuation(application, **kwargs):
