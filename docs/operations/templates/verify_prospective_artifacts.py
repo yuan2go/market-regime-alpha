@@ -7,7 +7,7 @@ from market_regime_alpha.bootstrap import bootstrap_application
 from market_regime_alpha.runtime.application.service import ActorType, CommandContext
 
 
-def _daily_bar_artifacts(connection, plan):
+def _daily_input_artifacts(connection, plan):
     # Integrity observation can refresh bytes of the frozen input or its later
     # Outcome. It cannot change a Capture's original visibility or select labels.
     return connection.execute(
@@ -19,10 +19,16 @@ def _daily_bar_artifacts(connection, plan):
           AND bar.session_id=ANY(%s::uuid[]) AND capture.status='CAPTURED'
           AND (bar.session_id=%s OR capture.recorded_at<=%s)
           AND capture.artifact_id IS NOT NULL
-        ORDER BY capture.artifact_id""",
+        UNION
+        SELECT capture.artifact_id FROM mra.trading_session session
+        JOIN mra.data_capture capture ON capture.capture_id=session.source_capture_id
+        WHERE session.session_id=ANY(%s::uuid[]) AND capture.status='CAPTURED'
+          AND capture.artifact_id IS NOT NULL
+        ORDER BY artifact_id""",
         (list(plan.instrument_ids), plan.provider_product_id,
          [plan.input_session_id, plan.target_session_id],
-         plan.target_session_id, plan.input_cutoff),
+         plan.target_session_id, plan.input_cutoff,
+         [plan.input_session_id, plan.target_session_id]),
     ).fetchall()
 
 
@@ -91,7 +97,7 @@ def verify_scope(settings, config, guard, observation_key, *, daily_plan=None):
                          if item.run_state not in {'FAILED', 'WAITING'})
             with guard.connection.transaction():
                 rows = sorted(set(rows) | {row for plan in plans
-                    for row in _daily_bar_artifacts(guard.connection, plan)}, key=lambda row: str(row[0]))
+                    for row in _daily_input_artifacts(guard.connection, plan)}, key=lambda row: str(row[0]))
         if not rows:
             raise ValueError("PROSPECTIVE_ARTIFACT_ROSTER_EMPTY")
         for row in rows:

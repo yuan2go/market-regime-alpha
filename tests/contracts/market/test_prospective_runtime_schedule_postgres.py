@@ -67,6 +67,39 @@ def test_missed_multi_member_run_reconciles_without_reopening_ready_steps(
     assert facts() == before
 
 
+@pytest.mark.parametrize("reason", ["NORMALIZATION_BINDING_REJECTED", "EXTERNAL_EFFECT_UNKNOWN"])
+def test_known_terminal_capture_failure_preserves_history_but_unknown_effect_refuses(prospective_stack, target_database_url, reason):
+    from market_regime_alpha.market.application.prospective_runtime import ProspectiveRuntimeIntegrityError
+    runtime, artifacts, pool = prospective_stack
+    clock = PostgresMarketDatabaseClock(pool)
+    manifest = _runtime_fixture_at(clock.now())
+    application = ProspectiveArchiveRuntimeApplication(runtime=runtime, artifacts=artifacts,
+        archives=_Archives(runtime), operations=_Operations(runtime), database_clock=clock, due_query=lambda _: ())
+    arguments = dict(code_sha="1"*40, actor_id="terminal-test", lease_duration=timedelta(seconds=30))
+    registered = application.predeclare(manifest, **arguments)
+    plan = compile_prospective_runtime_plan(manifest, code_sha="1"*40)
+    run = plan.capture_runs[0]
+    def context(key):
+        return CommandContext(key, ActorType.WORKER, "terminal-test", "TERMINAL_CAPTURE_CONTRACT")
+    claim = runtime.claim_next(run_id=run.run_id, worker_id="terminal-test", lease_duration=timedelta(seconds=30), context=context("claim"))
+    runtime.start_attempt(claim, context("start"))
+    runtime.fail_attempt(claim, error_class="INTEGRITY", error_code=reason, context=context("failed"))
+    # Advance only the fixture's eligibility clock; persisted Runtime times stay real.
+    application._database_clock = SimpleNamespace(now=lambda: run.window_end+timedelta(seconds=1))
+    def facts():
+        with psycopg.connect(target_database_url) as connection:
+            return {table: connection.execute(f"SELECT to_jsonb(r) FROM mra.{table} r ORDER BY to_jsonb(r)::text").fetchall()
+                for table in ("runtime_run", "runtime_step", "runtime_attempt", "command_receipt", "audit_event")}
+    before = facts()
+    if reason == "EXTERNAL_EFFECT_UNKNOWN":
+        with pytest.raises(ProspectiveRuntimeIntegrityError, match="FAILED"):
+            application.predeclare(manifest, **arguments)
+    else:
+        assert application.predeclare(manifest, **arguments) == registered
+    assert runtime.inspect_run(run.run_id).run_state == "FAILED"
+    assert facts() == before
+
+
 @pytest.mark.parametrize("runtime_revision", [1, 2])
 def test_continuation_keeps_the_registered_schedule_revision(
     prospective_stack, target_database_url, runtime_revision,

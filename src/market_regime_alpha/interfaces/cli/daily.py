@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import nullcontext
 from dataclasses import replace
 from hashlib import sha256
 from pathlib import Path
@@ -59,9 +60,9 @@ def dispatch_daily(arguments: argparse.Namespace, settings: TargetSettings) -> o
         config = load_operation_config(arguments.operation_config)
         require_installation(config)
         with operational_session(settings, config) as guard:
-            with daily_research_admission(
+            with (nullcontext() if command == "collect-outcome" else daily_research_admission(
                 prediction_id=plan.prediction_id, code_sha=plan.code_sha, config_sha256=sha256(encode_daily_plan(plan)).hexdigest()
-            ):
+            )):
                 with bootstrap_application(settings) as app:
                     if command == "predict" and config.code_sha != plan.code_sha:
                         if app.daily_prediction_reads.run_plan_content(plan.runtime_run_id) != encode_daily_plan(plan):

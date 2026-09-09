@@ -45,3 +45,28 @@ def test_late_collection_uses_original_plan_and_actual_clock(monkeypatch):
     assert result['observation_disposition']=='LATE_OUTCOME_OBSERVATION'
     assert result['prediction_id']==frozen.prediction_id
     assert observed==[(frozen,'outcome',2)]
+
+
+def test_cli_collection_enters_one_atomic_daily_scope(request, tmp_path, monkeypatch):
+    from market_regime_alpha.interfaces.cli import daily
+    from market_regime_alpha.interfaces.prospective_operation_guard import ProspectiveOperationGuard
+    from market_regime_alpha.infrastructure.postgres.prospective_operation_session import daily_research_admission
+    from contextlib import nullcontext
+    settings, _, config = request.getfixturevalue("guarded_scope")
+    frozen = plan()
+    path = tmp_path / 'frozen.json'
+    path.write_bytes(encode_daily_plan(frozen))
+    monkeypatch.setattr(daily,'load_operation_config',lambda _:config)
+    monkeypatch.setattr(daily,'require_installation',lambda _:None)
+    monkeypatch.setattr(ProspectiveOperationGuard,'verify_startup',lambda *_:None)
+    monkeypatch.setattr(daily,'bootstrap_application',lambda _:nullcontext(SimpleNamespace(daily_prediction_reads=SimpleNamespace(validate_configuration=lambda _:None))))
+    def collect(app,p,config,guard,maximum):
+        with daily_research_admission(prediction_id=p.prediction_id,code_sha=p.code_sha,config_sha256='c'*64,collection_phase='outcome'):
+            guard.before_action()
+            return {'state':'ADMITTED'}
+    monkeypatch.setattr(daily,'_collect_pending_outcome',collect)
+    result=daily.dispatch_daily(SimpleNamespace(daily_command='collect-outcome',plan=path,operation_config=path,maximum_steps=1),settings)
+    assert result=={'state':'ADMITTED'}
+
+
+from tests.contracts.market.test_prospective_operation_guard_postgres import guarded_scope  # noqa: E402, F401

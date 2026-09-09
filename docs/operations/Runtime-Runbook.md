@@ -61,10 +61,13 @@ requires the verified version 2 handoff. A restored database fails exact identit
 The handoff receipt also binds the authenticated PostgreSQL login name/OID.
 Preparation and every action reject superuser, database/schema creation,
 formal qualification or Model registration privileges, missing Runtime/Artifact
-write permissions, and `SET ROLE` impersonation. Use a dedicated project login;
+write permissions, the ProviderProduct reference-lock permission, and `SET ROLE` impersonation. Use a dedicated project login;
 do not change a cluster-wide operator account used by other databases. Grant
 only the owner tables required by the deployed research operations, without
-DELETE, TRUNCATE or DDL. Read-only diagnostics and backup credentials remain
+DELETE, TRUNCATE or DDL. PostgreSQL row-lock reads need UPDATE privilege on
+at least one column: grant only the identity column for immutable reference
+tables and retain their append-only triggers. Verify the complete capture and
+normalization path under that role in a disposable scope. Read-only diagnostics and backup credentials remain
 separate. Restrict authentication for the exact operational database so old
 login identities cannot bypass cooperative advisory admission. Record and test
 the database-specific authentication rules, role grants and rollback procedure
@@ -199,8 +202,8 @@ update the bound profile and restart the exact frozen service safely; an expired
 receipt cannot be kept valid by editing its date. Missing independent physical
 backup storage must be stated, not disguised as a second directory.
 
-Integrity refresh includes daily bars referenced by the current and original
-pending plans as well as prospective archive inputs. It verifies physical bytes
+Integrity refresh includes daily bars and TradingSession source Artifacts
+referenced by the current and original pending plans as well as prospective archive inputs. It verifies physical bytes
 through Artifact commands; it never changes Capture known/recorded time, chooses
 new labels, or rewrites a frozen plan. Expired verification observations and
 missing/corrupt bytes are distinct failures. Any unverified member blocks restart.
@@ -223,6 +226,11 @@ bounded capture round; unknown or failed effects require reconciliation. Late
 observations keep their actual Capture times and never establish on-time capture
 or replace the publication. Once settlement has begun, the command refuses to
 reacquire Market inputs. Completed reports and evaluations stay immutable.
+An elapsed capture Run with a single known terminal normalization failure may
+be reconciled read-only so subsequent generations can proceed. Its FAILED state
+and error remain in health; it is never reopened. Earlier unknown effects still
+refuse continuity until reconciled.
+
 The v1 prediction report keeps its original denominator fields, including
 `model_prediction`; Evaluation's `predicted` label is a projection of that count,
 not an additional field inserted into previously published v1 report bytes.

@@ -93,7 +93,8 @@ def inspect_runtime_principal(connection: Any) -> dict[str, Any]:
                  AND has_table_privilege('mra.runtime_step', 'UPDATE')
                  AND has_table_privilege('mra.command_receipt', 'INSERT')
                  AND has_table_privilege('mra.artifact', 'INSERT')
-                 AND has_table_privilege('mra.artifact', 'UPDATE'),
+                 AND has_table_privilege('mra.artifact', 'UPDATE')
+                 AND has_any_column_privilege('mra.provider_product', 'UPDATE'),
                has_table_privilege('mra.schema_migrations', 'INSERT')
                  OR has_table_privilege('mra.model_version', 'INSERT')
                  OR has_table_privilege('mra.provider_qualification_decision', 'INSERT')

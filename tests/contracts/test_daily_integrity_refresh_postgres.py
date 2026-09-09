@@ -46,6 +46,8 @@ def test_daily_capture_reference_survives_integrity_expiry_without_new_capture(s
         before = c.execute('SELECT to_jsonb(c) FROM mra.data_capture c WHERE capture_id=%s', (captured.capture.capture_id,)).fetchone()
         cutoff, = c.execute('SELECT clock_timestamp()').fetchone()
         c.execute("UPDATE mra.artifact SET last_verified_at=clock_timestamp()-interval '25 hours' WHERE artifact_id=%s", (artifact_id,))
+        calendar_artifact, = c.execute('SELECT c.artifact_id FROM mra.trading_session s JOIN mra.data_capture c ON c.capture_id=s.source_capture_id WHERE s.session_id=%s', (stack.market_session_id,)).fetchone()
+        c.execute("UPDATE mra.artifact SET last_verified_at=clock_timestamp()-interval '25 hours' WHERE artifact_id=%s", (calendar_artifact,))
         c.commit()
     reader = PostgresDailyFeatureInputReadPort(stack.pool, stack.store)
     args = dict(provider_product_id=stack.product.provider_product_id, session_id=stack.market_session_id, instrument_ids=(stack.instrument_id.value,), input_cutoff=cutoff)
@@ -53,10 +55,11 @@ def test_daily_capture_reference_survives_integrity_expiry_without_new_capture(s
         reader.visible(**args)
     plan = SimpleNamespace(provider_product_id=stack.product.provider_product_id, instrument_ids=(stack.instrument_id.value,), input_session_id=stack.market_session_id, target_session_id=uuid4(), input_cutoff=cutoff)
     with stack.pool.connection(read_only=True) as c:
-        references = module._daily_bar_artifacts(c, plan)
-    assert references == [(artifact_id,)]
-    result = stack.artifacts.verify(artifact_id, verifier_id='operator', context=research._context('daily-integrity-observation', 'VERIFY_ARTIFACT'))
-    assert result.result == 'VERIFIED'
+        references = module._daily_input_artifacts(c, plan)
+    assert set(references) == {(artifact_id,), (calendar_artifact,)}
+    for identity, in references:
+        result = stack.artifacts.verify(identity, verifier_id='operator', context=research._context(f'daily-integrity-observation:{identity}', 'VERIFY_ARTIFACT'))
+        assert result.result == 'VERIFIED'
     assert reader.visible(**args)[0].capture_id == captured.capture.capture_id
     with stack.pool.connection(read_only=True) as c:
         assert c.execute('SELECT to_jsonb(c) FROM mra.data_capture c WHERE capture_id=%s', (captured.capture.capture_id,)).fetchone() == before

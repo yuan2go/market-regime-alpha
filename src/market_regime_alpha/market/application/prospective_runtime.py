@@ -1042,10 +1042,13 @@ class ProspectiveArchiveRuntimeApplication:
                       and step.deadline_at < self._database_clock.now())
                   or (step.state == "FAILED"
                       and step.attempt_states == ("FAILED_TERMINAL",)
-                      and step.latest_attempt_error_code == "DEADLINE_EXHAUSTED")
+                      and (step.latest_attempt_error_code == "DEADLINE_EXHAUSTED"
+                           or (step.latest_attempt_error_code == "NORMALIZATION_BINDING_REJECTED"
+                               and run.window_end is not None
+                               and run.window_end < self._database_clock.now())))
                   for step in trace.steps
               )):
-            # Read-only registration reconciliation after a missed window.
+            # Read-only registration after an elapsed, known failed capture.
             # Never reopen the failed Run, retry a Provider, or hide an earlier
             # unknown effect behind a subsequent deadline failure.
             return
