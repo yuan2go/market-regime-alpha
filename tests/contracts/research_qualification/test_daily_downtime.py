@@ -186,7 +186,12 @@ def test_zero_prediction_success_is_not_reported_as_publication(monkeypatch):
         lambda *_args, **_kwargs: SimpleNamespace(run_state="SUCCEEDED"),
     )
     result = daily_service.daily_tick(
-        SimpleNamespace(daily_prediction_reads=reads),
+        SimpleNamespace(
+            daily_prediction_reads=reads,
+            runtime=SimpleNamespace(
+                inspect_run=lambda _: SimpleNamespace(run_state="SUCCEEDED")
+            ),
+        ),
         frozen,
         None,
         worker_id="daily",
