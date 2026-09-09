@@ -28,7 +28,7 @@ mixed-version operational checksum table here.
 | Daily research | Post-close DataReady; exact experimental Model use; independent forecasts; frozen publication; pending Outcome/evaluation and delivery recovery | Availability, actual publication time and real maturation are separately observed facts |
 | Economics | Typed deterministic fully funded independent episodes; root/child field reconciliation and full-path slicing | No continuous-account/tradability/Alpha claim; historical formula meanings remain unchanged |
 | Evidence operations | Exact database/Artifact identity, backup, integrity and restore/replay operations | A successful copy is a separate scope; missing original evidence remains missing |
-| Retained execution/account | Decision/account and formal governance commands remain installed; separate research CLI dispatch is retired | No full Runtime/CLI cutover or broker admission |
+| Retained execution/account | Decision/account and formal governance commands remain installed; separate research CLI dispatch is retired | No account Runtime migration or broker admission |
 
 No live service, operational evidence database, Provider capture or research
 result is changed or requalified by repository maintenance. Current operational
@@ -48,34 +48,50 @@ No released SQL bytes, schema membership, research formula, Model/Outcome
 identity or operational database is changed. Source retirement does not prove
 live deployment or authorize account Runtime cutover.
 
-## Consumer verification at the frozen implementation
+## Research Runtime cutover verification
 
-Baseline: `50c81f107dae0520f47896dfed8c03d2d9a2a554`.
-Implementation: `56dce2f312e2b97c5cd1618d300a25178466908b`.
-Source tree: `c4f7d1e9c4886962a2d93146850d5ee660316f06`.
-Tests tree: `10cb64cb092ece93df5082924103c9db426a0755`.
-Later status-only commits do not change those implementation identities.
+Baseline: `a8cf743dc504f9574f490a64e2dc96e68025371c`.
+Implementation: `4b65c14cc445034b340c83e34aa9277c7e67151f`.
+Source tree: `9a45fb76c44b104a89929fa3a4adb813a053b89e`.
+Tests tree: `a7ca20db9e4b4fd5f0acee4ff80a5264106b2377`.
+The final delivery commit changes only current status/runbook prose; the source,
+tests, SQL, dependencies and executable templates match this implementation.
 
-| Check / scope | Executed evidence |
+New current research enters `mra` through `bootstrap_application`. The remaining
+all-day runner and FreeData service wiring are removed. Account journal values,
+observed-Fill commands, formal Model/PIT governance and explicit historical
+inspection/verification retain their distinct owners.
+
+Installed execution requires a verified source/wheel/package/dependency receipt
+and exact operation profile. Canonical non-Attempt owner commands and retained
+write connections participate in reservation admission. Runtime inspection uses
+a database-enforced read-only UoW. Original daily plans remain recoverable after
+installation or Model-use changes; completed settlement/report recovery does not
+reacquire Market inputs or repeat completed Evaluation.
+
+| Check / scope | Executed evidence at this implementation |
 |---|---|
-| Installed commands / executable file-API roots | 7 → 4 / 68 → 55; every surviving root has a disposition |
-| Roots reaching retained persistence / direct source importers | 37 → 24 / 113 → 105; current `mra` research closure has zero such dependencies |
-| Retained PostgreSQL, account, CLI and formal governance | 677 passed at the first frozen consumer revision; unchanged owner/schema/test scopes are reused explicitly |
-| Canonical composition, schema, replay and tooling | 192 passed and 2 architecture failures at the intermediate revision; both failures corrected without relaxing the forbidden dependency contract |
-| Final affected architecture/history/recovery scope | 58 passed in 119 seconds at the implementation above, including populated Shadow report/replay |
-| Repository test collection | 4,154 collected; full execution NOT_RUN under risk-directed scope |
-| Static, environment and documentation | Frozen sync, Ruff, mypy (636 configured files plus 4 explicit files), docs, hygiene and diff checks PASS |
-| Build and isolated installed wheel | PASS: four commands import/help, removed modules absent, all 113 SQL resources match source bytes |
-| Historical resources | 19 moved tools retain bytes; all released SQL, dependency lock and archived evidence unchanged |
-| Operational / external history | NOT_RUN: no service, operational database or external completed campaign modified/requalified |
+| Canonical contracts, architecture, repository scripts | 1,229 passed in 1,075 seconds; includes Runtime/fence, daily normal/missing/crash, Outcome/Evaluation, schema/upgrade and historical decoder contracts |
+| Retained persistence, CLI, account, execution and formal governance | 664 passed in 579 seconds; rerun after the shared connection change |
+| Independent installed wheel | 23 checks passed; four installed commands, verified profile generation, old profile/new implementation refusal, wrong scope/extra installed file refusal |
+| Preserved vertical slice and independent restore | 32-member prediction → mature Outcome → Evaluation → report/replay; new restore DB/root, complete table/Artifact reconciliation and repeated installed CLI replay match with zero business writes |
+| Query scope | 11 actual EXPLAIN ANALYZE/BUFFERS JSON plans; replay/health/worklist 0.10 seconds on the 32-member fixture; not a production-load benchmark |
+| Static/build/docs | Frozen sync, Ruff, mypy (635 configured files), inventory/hygiene, links and diff checks pass; isolated build/install pass using cached offline dependencies after an online TLS failure |
+| Schema/dependencies | All 113 SQL resources and dependency lock unchanged; 194 canonical tables, no new migration |
+| Repository collection / full execution | 4,138 collected; full repository execution NOT_RUN under the explicitly bounded regression scope |
+| Operational mutation / real prospective proof | NOT_AUTHORIZED / NOT_RUN; no actual service, LaunchAgent, writer or operational database changed |
 
-Source-bound verification is recorded in the external incremental evidence
-bundle `canonical-consumer-convergence-20260908.tar.gz`, including raw failures,
-command/exit-code logs, temporary database identities, consumer matrices,
-file-level reuse assessment and built artifacts. Its `verification.json` has
-SHA256 `1af0b50072d40bb3ed4be0851b39f09cb25f4a2ca73f3bbde91337f9af25ed8f`.
-This is engineering consumer-convergence evidence, not research validity or
-operational admission. The implementation's convergence gate is PASS.
+The source-bound incremental bundle `canonical-runtime-cutover-20260909.tar.gz`
+contains `verification.json`, raw failures and repairs, exact commands/exit codes,
+CLI/owner inventory, wheel and installed identities, disposable DB/Artifact
+identities, backup bytes, restore/replay receipts and query plans. The engineering
+research Runtime cutover gate passes. This does not establish live activation,
+sustained collection, formal qualification or research validity.
+
+Previous consumer-convergence evidence remains in
+`canonical-consumer-convergence-20260908.tar.gz`; its source-bound verification
+SHA256 is `1af0b50072d40bb3ed4be0851b39f09cb25f4a2ca73f3bbde91337f9af25ed8f`.
+Prior failures and released SQL retain their original bytes and meaning.
 
 ## Prior repository hygiene evidence
 

@@ -41,6 +41,11 @@ An editable install or a hand-edited source hash cannot activate the service.
 Preserve the old wheel, profile, receipt and logs. From the new installed `mra`,
 prepare a new profile without changing operational facts:
 
+The previous service must first drain and release its reservation under explicit
+operational authorization. Preparation does not stop it and refuses a competing
+supervisor or active Attempt. Keep the former installation disabled after the
+handoff; a failed preparation is not permission for a fallback writer.
+
 ```bash
 mra runtime prepare-deployment --operation-config "$PREVIOUS_OPERATION_PROFILE" --wheel "$FROZEN_WHEEL" --source-checkout "$CLEAN_SOURCE_CHECKOUT" --expected-source-sha "$IMPLEMENTATION_SHA" --backup-directory "$VERIFIED_BACKUP_BUNDLE" --output "$NEW_OPERATION_PROFILE"
 ```
@@ -131,12 +136,22 @@ historical inspection remains available. Arbitrary SQL from external clients is
 outside this cooperative contract and must be excluded by deployment permissions
 and single-writer preflight.
 
+Canonical commands without an Attempt also reserve their narrow write connection.
+After supervisor connection loss, the abandoned service cannot issue further
+commands, including completion. Runtime inspection remains database read-only;
+already committed facts remain intact. Exit that session and reconcile the
+original Attempt/fence or its expired-lease recovery before continuing. Never
+infer that an external effect did not happen from the missing completion reply.
+
 Pending Outcome work reloads its original plan across later Model-use changes.
 An upgraded installation may settle that work or resume an already frozen
 prediction; it cannot create new prediction work with a different code identity.
 Revocation stops new inference without relabeling old publications. `daily report`
 and `daily replay` reconcile Evaluation/report when the Outcome Runtime completes;
 otherwise they expose the pending or blocked stage.
+When settlement steps already completed, report recovery reuses their canonical
+Outcome facts and verifies the complete owner roster; it does not reacquire
+Market data or repeat completed Evaluation.
 
 ```bash
 uv run mra backtest inspect --help

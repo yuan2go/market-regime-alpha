@@ -39,17 +39,18 @@ repository execution and live cutover were not run.
 
 ## Research Runtime cutover
 
-The active scope is the canonical research Runtime, installed artifact handoff,
-single-writer admission and frozen daily recovery. Account claim conversion is
+The canonical research Runtime, installed artifact handoff, single-writer
+admission and frozen daily recovery are delivered at the implementation in
+[Current State](Current-State.md). Account claim conversion is
 outside this scope; formal Model/PIT governance retains its admission floors.
 
 | Work | Implementation / verification boundary |
 |---|---|
 | Retire remaining all-day research writer APIs | Remove tick/schedule runners and FreeData service wiring; retain account journal values and exact historical reads |
 | Controlled installed profile | Compare frozen source, wheel, installed package/metadata/dependencies, exact DB/schema/Artifact/Target and backup; emit a new immutable profile/receipt |
-| Writer exclusion | Share atomic admission with retained account/governance connections without replacing their owner or transaction isolation |
+| Writer exclusion | Cover non-Attempt canonical connections and retained account/governance writes without replacing their owner or transaction isolation |
 | Pending continuity | Recover original Model-use/plan/code identities; new predictions require current deployment identity; report/replay verify completed Evaluation |
-| Qualification | Disposable PostgreSQL normal/missing/crash/restart slices, targeted shared-persistence regression, static/build/install/docs evidence |
+| Qualification | PASS: 1,893 scoped tests, preserved normal/missing/crash/restart contracts, independent restore/replay, static/build/install/docs evidence |
 
 No operational database/service/profile is changed by this engineering delivery.
 Operational data-loop proof requires separate authorization, exact installed
