@@ -203,7 +203,10 @@ receipt cannot be kept valid by editing its date. Missing independent physical
 backup storage must be stated, not disguised as a second directory.
 
 Integrity refresh includes daily bars and TradingSession source Artifacts
-referenced by the current and original pending plans as well as prospective archive inputs. It verifies physical bytes
+referenced by the current and original pending plans as well as prospective
+archive inputs. It also includes the original Runtime configuration, plan
+Artifacts and all Target/metric algorithm bindings: readable market prices alone
+do not establish settlement readiness. It verifies physical bytes
 through Artifact commands; it never changes Capture known/recorded time, chooses
 new labels, or rewrites a frozen plan. Expired verification observations and
 missing/corrupt bytes are distinct failures. Any unverified member blocks restart.

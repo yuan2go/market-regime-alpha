@@ -1,7 +1,7 @@
 """Observe current bytes through Artifact owner; never change Capture known-time."""
 
 from dataclasses import replace
-from uuid import UUID
+from uuid import UUID, uuid5
 
 from market_regime_alpha.bootstrap import bootstrap_application
 from market_regime_alpha.runtime.application.service import ActorType, CommandContext
@@ -29,6 +29,24 @@ def _daily_input_artifacts(connection, plan):
          [plan.input_session_id, plan.target_session_id],
          plan.target_session_id, plan.input_cutoff,
          [plan.input_session_id, plan.target_session_id]),
+    ).fetchall()
+
+
+def _daily_execution_artifacts(connection, plan):
+    # Outcome closure locks both the original Runtime config and every exact
+    # Target algorithm/config binding. Integrity observation keeps their identity.
+    return connection.execute(
+        """WITH identities AS (
+          SELECT code_artifact_id AS artifact_id FROM mra.target_definition WHERE target_definition_id=%(target)s
+          UNION SELECT config_artifact_id FROM mra.target_definition WHERE target_definition_id=%(target)s
+          UNION SELECT code_artifact_id FROM mra.target_metric_definition WHERE target_definition_id=%(target)s
+          UNION SELECT config_artifact_id FROM mra.target_metric_definition WHERE target_definition_id=%(target)s
+          UNION SELECT config_artifact_id FROM mra.runtime_run WHERE run_id=ANY(%(runs)s::uuid[])
+          UNION SELECT unnest(%(plan_artifacts)s::uuid[])
+        ) SELECT artifact_id FROM identities WHERE artifact_id IS NOT NULL ORDER BY artifact_id""",
+        {"target": plan.target_definition_id,
+         "runs": [plan.runtime_run_id, uuid5(plan.prediction_id, "outcome-evaluation-runtime")],
+         "plan_artifacts": [plan.code_artifact.artifact_id, plan.config_artifact.artifact_id, plan.universe_scope.artifact_id]},
     ).fetchall()
 
 
@@ -97,7 +115,8 @@ def verify_scope(settings, config, guard, observation_key, *, daily_plan=None):
                          if item.run_state not in {'FAILED', 'WAITING'})
             with guard.connection.transaction():
                 rows = sorted(set(rows) | {row for plan in plans
-                    for row in _daily_input_artifacts(guard.connection, plan)}, key=lambda row: str(row[0]))
+                    for row in (*_daily_input_artifacts(guard.connection, plan),
+                                *_daily_execution_artifacts(guard.connection, plan))}, key=lambda row: str(row[0]))
         if not rows:
             raise ValueError("PROSPECTIVE_ARTIFACT_ROSTER_EMPTY")
         for row in rows:
