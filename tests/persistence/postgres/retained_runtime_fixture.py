@@ -211,5 +211,3 @@ def _continuous_command(symbols, calendar, configuration, authority_mode):
             "NO_BROKER_AUTHORITY",
         ),
     )
-
-

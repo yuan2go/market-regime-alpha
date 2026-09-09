@@ -85,5 +85,3 @@ def _with_upstream_result(
             )
         ),
     )
-
-
