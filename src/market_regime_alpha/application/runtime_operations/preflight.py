@@ -10,15 +10,23 @@ from pathlib import Path
 import shutil
 from typing import Any, Mapping
 
-from market_regime_alpha.application.continuous_research.free_data_runtime import (
-    FREE_DATA_MODEL_SLOTS,
-    FREE_DATA_RUNTIME_SCOPE,
-)
 from market_regime_alpha.application.controlled_operation.input_artifacts import (
     load_controlled_runtime_configuration,
     load_controlled_trading_calendar,
 )
 from market_regime_alpha.core.identity import ArtifactId
+from market_regime_alpha.application.state_system.runtime import StateResearchStage
+
+FREE_DATA_RUNTIME_SCOPE = "CONTROLLED_OPERATION"
+FREE_DATA_MODEL_SLOTS = {
+    StateResearchStage.MARKET_REGIME: "MARKET_REGIME",
+    StateResearchStage.THEME_ROTATION: "THEME_ROTATION",
+    StateResearchStage.CAPITAL_STATE: "CAPITAL_STATE",
+    StateResearchStage.CANDIDATE: "CANDIDATE",
+    StateResearchStage.SIGNAL: "STATE_SIGNAL",
+    StateResearchStage.FORECAST: "STATE_FORECAST",
+}
+
 from market_regime_alpha.data.providers.public_composite import (
     TENCENT_FREE_OPERATIONAL_PROFILE_ID,
 )

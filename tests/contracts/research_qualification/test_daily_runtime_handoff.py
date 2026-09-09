@@ -110,3 +110,54 @@ def test_sequential_daily_handoff_is_exact_and_does_not_grant_foreign_workers(re
                 next_claim = claim("restarted-own-scope")
                 assert next_claim is not None and next_claim.attempt_id != interrupted.attempt_id
                 recovered.before_action()
+
+
+def test_expired_old_outcome_recovery_requires_its_original_plan_after_model_handoff(request):
+    import time
+    from uuid import uuid5
+    from market_regime_alpha.infrastructure.postgres.prospective_operation_session import daily_research_admission
+    from market_regime_alpha.runtime.domain import StepSpec, RetryPolicy, ExternalEffectClass
+
+    settings, _, config = request.getfixturevalue("guarded_scope")
+    frozen = plan()
+    content = encode_daily_plan(frozen)
+    digest = sha256(content).hexdigest()
+    with bootstrap_application(settings) as app:
+        artifact = app.artifacts.publish(content, media_type="application/json", context=_context("old-plan"))
+        schedule_id = uuid4()
+        app.runtime.create_schedule(
+            ScheduleSpec(schedule_id, "daily-outcome-" + frozen.experimental_model_use_id.hex, 1,
+                         RuntimeMode.SHADOW, None, "Asia/Shanghai", "a" * 64, True), _context("old-schedule"))
+        step = StepSpec("settle", "SETTLE_OUTCOME", "research.daily_outcome.settle", "1", 1, True,
+                        "b" * 64, None, RetryPolicy(3, (), frozenset()), ExternalEffectClass.NONE)
+        parent = RunSpec(frozen.runtime_run_id, schedule_id, "parent", RuntimeMode.SHADOW,
+                         frozen.decision_time, frozen.decision_time, frozen.code_sha, artifact.artifact_id, artifact.content_sha256)
+        app.runtime.schedule_run(parent, (step,), (), _context("old-parent"))
+        run_id = uuid5(frozen.prediction_id, "outcome-evaluation-runtime")
+        app.runtime.schedule_run(
+            RunSpec(run_id, schedule_id, "daily-outcome:" + str(frozen.prediction_id), RuntimeMode.SHADOW,
+                    frozen.decision_time, frozen.decision_time, frozen.code_sha, artifact.artifact_id,
+                    artifact.content_sha256, parent_run_id=frozen.runtime_run_id),
+            (step,), (), _context("old-outcome"))
+        app.runtime.start_run(run_id, _context("old-start"))
+        with operational_session(settings, config):
+            with daily_research_admission(prediction_id=frozen.prediction_id, code_sha=frozen.code_sha, config_sha256=digest):
+                abandoned = app.runtime.claim_next(run_id=run_id, worker_id="old-worker",
+                    lease_duration=timedelta(seconds=1), context=_context("old-claim"))
+        assert abandoned is not None
+        time.sleep(1.05)
+        with operational_session(settings, config) as guard:
+            guard.session.allow_expired_daily_recovery(uuid4(), "e" * 40)
+            with pytest.raises(ValueError, match="ACTIVE_ATTEMPT_CONFLICT"):
+                guard.before_action()
+            guard.session.allow_frozen_daily_recovery(prediction_id=frozen.prediction_id, code_sha=frozen.code_sha, config_sha256="0" * 64)
+            with pytest.raises(ValueError, match="ACTIVE_ATTEMPT_CONFLICT"):
+                guard.before_action()
+            guard.session.allow_frozen_daily_recovery(prediction_id=frozen.prediction_id, code_sha=frozen.code_sha, config_sha256=digest)
+            guard.before_action()
+            with pytest.raises(ValueError, match="OUTSIDE_SERIES"):
+                app.runtime.recover_expired(actor_id="new-worker", reason_code="RESTART", run_id=run_id)
+            with daily_research_admission(prediction_id=frozen.prediction_id, code_sha=frozen.code_sha, config_sha256=digest):
+                assert app.runtime.recover_expired(actor_id="new-worker", reason_code="RESTART", run_id=run_id) == (abandoned.attempt_id,)
+                assert app.runtime.recover_expired(actor_id="new-worker", reason_code="RESTART", run_id=run_id) == ()
+        assert app.runtime.inspect_run(run_id).code_sha == frozen.code_sha

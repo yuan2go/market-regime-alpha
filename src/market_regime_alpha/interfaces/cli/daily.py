@@ -7,13 +7,14 @@ from dataclasses import replace
 from hashlib import sha256
 from pathlib import Path
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid5
 from market_regime_alpha.runtime.application import ActorType, CommandContext
 
 from market_regime_alpha.bootstrap import TargetSettings, bootstrap_application
 from market_regime_alpha.interfaces.daily_research import DailyResearchOperations, decode_daily_plan, encode_daily_plan
 from market_regime_alpha.interfaces.prospective_operation_guard import operational_session
 from market_regime_alpha.interfaces.prospective_operations import load_operation_config
+from market_regime_alpha.interfaces.deployment_profile import require_installation
 from market_regime_alpha.infrastructure.postgres.prospective_operation_session import daily_research_admission
 from market_regime_alpha.runtime.errors import RuntimeNotFoundError
 
@@ -40,6 +41,7 @@ def dispatch_daily(arguments: argparse.Namespace, settings: TargetSettings) -> o
     command = arguments.daily_command
     if command == "revoke-model":
         config = load_operation_config(arguments.operation_config)
+        require_installation(config)
         with operational_session(settings, config) as guard, bootstrap_application(settings) as app:
             guard.verify_startup(app)
             guard.before_action()
@@ -55,13 +57,15 @@ def dispatch_daily(arguments: argparse.Namespace, settings: TargetSettings) -> o
     plan = decode_daily_plan(arguments.plan.read_bytes())
     if command in {"predict", "settle"}:
         config = load_operation_config(arguments.operation_config)
-        if config.code_sha != plan.code_sha:
-            raise ValueError("OPERATION_DAILY_CODE_IDENTITY_MISMATCH")
+        require_installation(config)
         with operational_session(settings, config) as guard:
             with daily_research_admission(
                 prediction_id=plan.prediction_id, code_sha=plan.code_sha, config_sha256=sha256(encode_daily_plan(plan)).hexdigest()
             ):
                 with bootstrap_application(settings) as app:
+                    if command == "predict" and config.code_sha != plan.code_sha:
+                        if app.daily_prediction_reads.run_plan_content(plan.runtime_run_id) != encode_daily_plan(plan):
+                            raise ValueError("OPERATION_DAILY_CODE_IDENTITY_MISMATCH")
                     guard.verify_startup(app)
                     app.daily_prediction_reads.validate_configuration(plan)
                     operations = DailyResearchOperations(app, app.daily_prediction_reads, before_action=guard.before_action)
@@ -95,8 +99,19 @@ def dispatch_daily(arguments: argparse.Namespace, settings: TargetSettings) -> o
                 "health": reads.operational_health(plan),
                 "state": "NOT_SCHEDULED" if trace is None else trace.run_state,
             }
-        if command == "report":
-            return reads.forecast_projection(plan)
-        if command == "replay":
-            return app.daily_research.replay(plan)
+        if command in {"report", "replay"}:
+            try:
+                outcomes = app.runtime.inspect_run(uuid5(plan.prediction_id, "outcome-evaluation-runtime"))
+            except RuntimeNotFoundError:
+                outcomes = None
+            completed = outcomes is not None and outcomes.run_state == "SUCCEEDED"
+            reconciled = (app.daily_research.replay_completed_cycle(plan) if completed
+                          else app.daily_research.replay(plan))
+            result = {"state": "COMPLETED" if completed else "PENDING_OR_BLOCKED_OUTCOME",
+                      "outcome_runtime": outcomes, "reconciliation": reconciled}
+            if command == "report":
+                result["prediction"] = reads.forecast_projection(plan)
+                result["evaluation"] = (reads.evaluation_projection(uuid5(plan.prediction_id, "evaluation"))
+                                        if completed else None)
+            return result
     raise ValueError("unsupported daily research command")

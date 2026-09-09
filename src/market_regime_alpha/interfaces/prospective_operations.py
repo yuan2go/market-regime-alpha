@@ -1,7 +1,7 @@
 """Machine-local research operation intent; never business or admission Authority."""
 from __future__ import annotations
 
-from dataclasses import dataclass, fields
+from dataclasses import asdict, dataclass, fields
 import hashlib
 import json
 import math
@@ -45,10 +45,12 @@ class ProspectiveOperationConfig:
     worker_id: str
     lease_seconds: int
     wakeup_seconds: int
+    deployment_receipt: str = ""
+    deployment_receipt_sha256: str = ""
 
     def __post_init__(self) -> None:
         integers = {
-            "version": (1, 1), "database_oid": (1, 2**32 - 1),
+            "version": (1, 2), "database_oid": (1, 2**32 - 1),
             "maximum_backup_age_hours": (1, 168),
             "minimum_free_bytes": (1, 2**63 - 1),
             "minimum_calendar_sessions": (3, 512),
@@ -65,6 +67,8 @@ class ProspectiveOperationConfig:
             if type(value) is not int or not minimum <= value <= maximum:
                 raise ValueError("operation configuration has an invalid numeric budget")
         for item in fields(self):
+            if item.name in {"deployment_receipt", "deployment_receipt_sha256"}:
+                continue
             if item.name not in integers:
                 value = getattr(self, item.name)
                 if not isinstance(value, str) or not value or any(ord(c) < 32 for c in value):
@@ -85,10 +89,19 @@ class ProspectiveOperationConfig:
             raise ValueError("operation configuration requires an exact Target") from exc
         if self.lease_seconds <= self.provider_timeout_seconds:
             raise ValueError("operation configuration lease must exceed one Provider call")
+        if self.version == 2 and (
+            not Path(self.deployment_receipt).is_absolute()
+            or re.fullmatch("[0-9a-f]{64}", self.deployment_receipt_sha256) is None
+        ):
+            raise ValueError("operation configuration requires verified installation receipt")
 
     @property
     def content_sha256(self) -> str:
-        return str(canonical_json_sha256(self))
+        payload = asdict(self)
+        if self.version == 1:
+            payload.pop("deployment_receipt")
+            payload.pop("deployment_receipt_sha256")
+        return str(canonical_json_sha256(payload))
 
 
 def load_operation_config(path: Path) -> ProspectiveOperationConfig:
@@ -97,6 +110,9 @@ def load_operation_config(path: Path) -> ProspectiveOperationConfig:
     except (OSError, ValueError) as exc:
         raise ValueError("operation configuration cannot be read") from exc
     expected = {item.name for item in fields(ProspectiveOperationConfig)}
+    if isinstance(data, dict) and data.get("version") == 1:
+        data.setdefault("deployment_receipt", "")
+        data.setdefault("deployment_receipt_sha256", "")
     if not isinstance(data, dict) or set(data) != expected:
         raise ValueError("operation configuration has missing or unknown fields")
     return ProspectiveOperationConfig(**data)

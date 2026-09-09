@@ -44,6 +44,7 @@ from market_regime_alpha.interfaces.archive import (
     start_archive,
 )
 from market_regime_alpha.interfaces.backtest import load_backtest_specification
+from market_regime_alpha.interfaces.deployment_profile import prepare_deployment_profile, require_installation
 from market_regime_alpha.interfaces.prospective_service import OperationAlertChanges, OperationStopped, OperationStopRequest, serve_prospective
 from market_regime_alpha.interfaces.prospective_operations import load_operation_config, validate_operation_arguments
 from market_regime_alpha.interfaces.prospective_operation_guard import operational_session, quiet_provider_output, verify_provider_access
@@ -64,8 +65,10 @@ def main(
     output = sys.stdout if stdout is None else stdout
     error_output = sys.stderr if stderr is None else stderr
     operation_mode = False
+    deployment_mode = False
     try:
         arguments = _parser().parse_args(argv)
+        deployment_mode = arguments.area == "runtime" and arguments.runtime_command == "prepare-deployment"
         if (arguments.area == "archive" and arguments.archive_command == "prospective"
                 and arguments.prospective_command in {"continue", "predeclare", "run-due", "resume"}):
             raise ValueError("OPERATION_GUARDED_PROSPECTIVE_ENTRY_REQUIRED: use mra archive prospective serve with --operation-config")
@@ -78,6 +81,7 @@ def main(
             if arguments.operation_config is None:
                 raise ValueError("operation-config is required before prospective service startup")
             operation_config = load_operation_config(arguments.operation_config)
+            require_installation(operation_config)
             if arguments.prospective_command == "serve":
                 validate_operation_arguments(operation_config, arguments)
             elif arguments.expected_database_name != operation_config.database_name:
@@ -97,6 +101,7 @@ def main(
                         "channels": (),
                     }
                     if arguments.daily_plan_template is not None:
+                        from market_regime_alpha.interfaces.daily_service import prepare_pending_daily_recovery
                         from market_regime_alpha.interfaces.daily_delivery import (
                             LegacyNotifierDeliveryAdapter,
                         )
@@ -109,6 +114,7 @@ def main(
                             raise ValueError('OPERATION_DAILY_CODE_IDENTITY_MISMATCH')
                         application.daily_prediction_reads.validate_configuration(daily_template)
                         guard.session.allow_expired_daily_recovery(daily_template.experimental_model_use_id, daily_template.code_sha)
+                        prepare_pending_daily_recovery(application, guard.session)
                         notifiers, unavailable_channels = build_notifiers(
                             env=dict(runtime_environ)
                         )
@@ -227,9 +233,9 @@ def main(
         ) else 0
     except (MraError, ValueError, OSError, psycopg.Error, ProspectiveRuntimeIntegrityError, MarketProviderError) as exc:
         message = str(exc)
-        if operation_mode and not (
+        if (operation_mode or deployment_mode) and not (
             message.startswith("operation configuration") or message.startswith("operation-config")
-            or (message.startswith("OPERATION_") and all(c.isupper() or c == "_" for c in message))
+            or (message.startswith(("OPERATION_", "DEPLOYMENT_")) and all(c.isupper() or c == "_" for c in message))
         ):
             message = "OPERATION_FAILED_CLOSED_RECONCILE_BEFORE_RESTART"
         error_output.write(
@@ -316,6 +322,13 @@ def _dispatch(arguments: argparse.Namespace, settings: TargetSettings) -> object
                 return operation(arguments.directory, expected_name=arguments.expected_database_name, expected_oid=arguments.expected_database_oid, minimum_free_bytes=arguments.minimum_free_bytes)
             return application.evidence.verify()
     if arguments.area == "runtime":
+        if arguments.runtime_command == "prepare-deployment":
+            return prepare_deployment_profile(
+                settings, load_operation_config(arguments.operation_config),
+                wheel=arguments.wheel, source_checkout=arguments.source_checkout,
+                expected_source_sha=arguments.expected_source_sha,
+                backup_directory=arguments.backup_directory, output=arguments.output,
+            )
         with bootstrap_application(settings) as application:
             if arguments.runtime_command == "inspect":
                 return application.runtime.inspect_run(arguments.run_id)
@@ -323,6 +336,7 @@ def _dispatch(arguments: argparse.Namespace, settings: TargetSettings) -> object
                 recovered = application.runtime.recover_expired(
                     actor_id=arguments.actor_id,
                     reason_code="LEASE_EXPIRED",
+                    run_id=arguments.run_id,
                 )
                 return {"recovered_attempt_ids": recovered}
     if arguments.area == "backtest":
@@ -343,6 +357,7 @@ def _dispatch(arguments: argparse.Namespace, settings: TargetSettings) -> object
                 if command in {"run", "resume"} and arguments.operation_config is not None:
                     from market_regime_alpha.infrastructure.postgres.prospective_operation_session import backtest_research_admission
                     config = load_operation_config(arguments.operation_config)
+                    require_installation(config)
                     with operational_session(settings, config) as guard:
                         guard.verify_startup(application)
                         guard.before_action()
@@ -510,10 +525,15 @@ def _parser() -> argparse.ArgumentParser:
 
     runtime = areas.add_parser("runtime")
     runtime_commands = runtime.add_subparsers(dest="runtime_command", required=True)
+    deployment = runtime_commands.add_parser("prepare-deployment")
+    for name in ("operation-config", "wheel", "source-checkout", "backup-directory", "output"):
+        deployment.add_argument("--" + name, type=Path, required=True)
+    deployment.add_argument("--expected-source-sha", required=True)
     inspect = runtime_commands.add_parser("inspect")
     inspect.add_argument("--run-id", required=True, type=UUID)
     recover = runtime_commands.add_parser("recover")
     recover.add_argument("--actor-id", required=True)
+    recover.add_argument("--run-id", required=True, type=UUID)
 
     backtest = areas.add_parser("backtest")
     backtest_commands = backtest.add_subparsers(

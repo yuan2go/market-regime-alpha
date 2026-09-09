@@ -37,11 +37,24 @@ schema deletion. Targeted consumer, persistence, replay, architecture, static, d
 artifact checks have passed with explicit revision/scope matching. The full
 repository execution and live cutover were not run.
 
-The next Runtime/CLI cutover can now start as a separately authorized task.
-Its first dependency is a canonical account claim/fence and observed-Fill owner
-contract; formal Model/PIT governance must retain its distinct admission floors.
-Readiness to start that work is not permission to remove those remaining owners
-or to switch an operational writer.
+## Research Runtime cutover
+
+The active scope is the canonical research Runtime, installed artifact handoff,
+single-writer admission and frozen daily recovery. Account claim conversion is
+outside this scope; formal Model/PIT governance retains its admission floors.
+
+| Work | Implementation / verification boundary |
+|---|---|
+| Retire remaining all-day research writer APIs | Remove tick/schedule runners and FreeData service wiring; retain account journal values and exact historical reads |
+| Controlled installed profile | Compare frozen source, wheel, installed package/metadata/dependencies, exact DB/schema/Artifact/Target and backup; emit a new immutable profile/receipt |
+| Writer exclusion | Share atomic admission with retained account/governance connections without replacing their owner or transaction isolation |
+| Pending continuity | Recover original Model-use/plan/code identities; new predictions require current deployment identity; report/replay verify completed Evaluation |
+| Qualification | Disposable PostgreSQL normal/missing/crash/restart slices, targeted shared-persistence regression, static/build/install/docs evidence |
+
+No operational database/service/profile is changed by this engineering delivery.
+Operational data-loop proof requires separate authorization, exact installed
+handoff, current backup and real observations. Future windows are not simulated
+into prospective qualification.
 
 ## Remaining architectural debt
 

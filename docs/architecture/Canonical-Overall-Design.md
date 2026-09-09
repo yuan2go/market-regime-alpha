@@ -7,7 +7,7 @@ The repository is a Python modular monolith. Current research execution has one
 installed entry, `mra`, and one composition root, `bootstrap_application`.
 Account and formal governance administration retain explicit separate commands
 because their observed-Fill, claim-lineage and qualification contracts have no
-canonical replacement. This is not full Runtime/CLI cutover.
+canonical replacement. Research cutover does not migrate those Authorities.
 
 ## Executable entry points
 
@@ -43,6 +43,12 @@ their declared protocols; they do not authorize current service or new research.
 The two old live-loop scripts and unconsumed writer CLI wrappers are deleted.
 The orphaned recovery-command projection is also removed; owner replay remains.
 No old subsystem is wrapped under `mra`.
+
+The former `ContinuousResearchTickRunner`, schedule executor and FreeData
+research composition are removed from the installed package. Retained
+`application/continuous_research` contains account claim/journal and historical
+serialization contracts, not an all-day service. Bounded historical lifecycle
+replay remains explicitly separate from current research execution.
 
 ## Research composition and call chains
 

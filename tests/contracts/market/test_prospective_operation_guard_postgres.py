@@ -109,6 +109,9 @@ def test_service_recovers_partial_capture_registration_before_strict_health(requ
     profile = tmp_path/"operation.json"
     profile.write_text(json.dumps(asdict(config)))
     module = import_module(main.__module__)
+    # This is an editable-composition recovery drill. Installed-wheel/profile
+    # admission is exercised separately against the frozen built artifact.
+    monkeypatch.setattr(module, "require_installation", lambda _: None)
     monkeypatch.setattr(module, "verify_provider_access", lambda *_, **__: {"access": "SYNTHETIC_NO_DUE_FIXTURE"})
     arguments = ["archive", "prospective", "serve", "--operation-config", str(profile),
         "--series-code", config.series_code, "--code-sha", config.code_sha,

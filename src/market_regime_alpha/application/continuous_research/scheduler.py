@@ -1,35 +1,23 @@
-"""Durable, bounded scheduling control for the sole Continuous Runtime."""
+"""Historical schedule values and immutable identities consumed by the journal."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from enum import Enum
-from typing import Any, Callable, Mapping
+from typing import Any, Mapping
 
 from market_regime_alpha.application.continuous_research.contracts import (
     ContinuousResearchCommand,
-    RuntimeTickCommand,
 )
 from market_regime_alpha.application.continuous_research.policy import (
     ContinuousDecisionWindowPolicy,
-)
-from market_regime_alpha.application.continuous_research.ports import (
-    ProviderAcquisitionRequest,
-)
-from market_regime_alpha.application.continuous_research.postgres_journal import (
-    PostgresContinuousResearchJournal,
-)
-from market_regime_alpha.application.continuous_research.runner import (
-    ContinuousResearchTickRunner,
-    ContinuousTickExecutionResult,
 )
 from market_regime_alpha.core.identity import ArtifactId
 from market_regime_alpha.evidence.canonical import (
     canonical_hash,
     require_sha256,
 )
-from market_regime_alpha.market_data.contracts import require_utc_second
 
 
 class ContinuousScheduleStatus(str, Enum):
@@ -134,104 +122,6 @@ class ContinuousScheduleSnapshot:
         }
 
 
-@dataclass(frozen=True, slots=True)
-class ContinuousScheduleRunResult:
-    status: str
-    schedule: ContinuousScheduleSnapshot
-    tick_result: ContinuousTickExecutionResult | None
-    reason_codes: tuple[str, ...]
-
-    @property
-    def entry_authority_granted(self) -> bool:
-        return False
-
-
-ProviderRequestBuilder = Callable[
-    [ContinuousResearchCommand, RuntimeTickCommand], ProviderAcquisitionRequest
-]
-
-
-class ContinuousResearchScheduleRunner:
-    """Runs at most one due/recoverable Tick; PostgreSQL owns the schedule."""
-
-    def __init__(
-        self,
-        *,
-        journal: PostgresContinuousResearchJournal,
-        tick_runner: ContinuousResearchTickRunner,
-        policy: ContinuousDecisionWindowPolicy,
-        provider_request_builder: ProviderRequestBuilder,
-        prospective_tick: Callable[[], object] | None = None,
-    ) -> None:
-        if not isinstance(journal, PostgresContinuousResearchJournal):
-            raise TypeError("journal must be PostgresContinuousResearchJournal")
-        if not isinstance(tick_runner, ContinuousResearchTickRunner):
-            raise TypeError("tick_runner must be ContinuousResearchTickRunner")
-        if not isinstance(policy, ContinuousDecisionWindowPolicy):
-            raise TypeError("policy must be ContinuousDecisionWindowPolicy")
-        if not callable(provider_request_builder):
-            raise TypeError("provider_request_builder must be callable")
-        self._journal = journal
-        self._tick_runner = tick_runner
-        self._policy = policy
-        self._provider_request_builder = provider_request_builder
-        self._prospective_tick = prospective_tick
-
-    def run_due_once(
-        self,
-        *,
-        run_command: ContinuousResearchCommand,
-        trading_day: TradingDayAssessment,
-        now: datetime,
-        predecision_lead: timedelta = timedelta(0),
-    ) -> ContinuousScheduleRunResult:
-        require_utc_second("now", now)
-        _validate_trading_day(run_command, trading_day)
-        if self._prospective_tick is not None:
-            self._prospective_tick()
-        self._journal.create_or_get(run_command)
-        schedule = self._journal.initialize_schedule(
-            run_command=run_command,
-            policy=self._policy,
-            trading_day=trading_day,
-            initial_tick_at=now,
-        )
-        if schedule.status is ContinuousScheduleStatus.NON_TRADING_DAY:
-            return ContinuousScheduleRunResult(
-                status="NON_TRADING_DAY",
-                schedule=schedule,
-                tick_result=None,
-                reason_codes=("ENTRY_BLOCKED", "NON_TRADING_DAY"),
-            )
-        tick = self._journal.get_recoverable_tick(run_command.run_id, now=now)
-        if tick is None:
-            reserved = self._journal.reserve_due_tick(
-                run_command=run_command,
-                policy=self._policy,
-                now=now,
-                predecision_lead=predecision_lead,
-            )
-            if reserved is None:
-                return ContinuousScheduleRunResult(
-                    status="NOT_DUE",
-                    schedule=self._journal.get_schedule(run_command.run_id),
-                    tick_result=None,
-                    reason_codes=("ENTRY_BLOCKED", "NEXT_TICK_NOT_DUE"),
-                )
-            tick = reserved
-        request = self._provider_request_builder(run_command, tick.command)
-        result = self._tick_runner.execute(
-            run_command=run_command,
-            tick_command=tick.command,
-            provider_request=request,
-        )
-        schedule = self._journal.get_schedule(run_command.run_id)
-        return ContinuousScheduleRunResult(
-            status=result.tick.status.value,
-            schedule=schedule,
-            tick_result=result,
-            reason_codes=result.reason_codes,
-        )
 
 
 def schedule_identity(
@@ -259,21 +149,9 @@ def schedule_identity(
     )
 
 
-def _validate_trading_day(
-    run_command: ContinuousResearchCommand,
-    trading_day: TradingDayAssessment,
-) -> None:
-    if (
-        trading_day.trading_date != run_command.trading_date
-        or trading_day.trading_calendar_id != run_command.trading_calendar_id
-        or trading_day.trading_calendar_hash != run_command.trading_calendar_hash
-    ):
-        raise ValueError("Trading Day assessment does not match the run command")
 
 
 __all__ = [
-    "ContinuousResearchScheduleRunner",
-    "ContinuousScheduleRunResult",
     "ContinuousScheduleSnapshot",
     "ContinuousScheduleStatus",
     "TradingDayAssessment",

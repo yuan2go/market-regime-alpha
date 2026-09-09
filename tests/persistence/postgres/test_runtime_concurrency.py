@@ -40,8 +40,12 @@ def test_scoped_advisory_lock_is_transaction_bound(
             ("runtime-concurrency:test-scope",),
         )
         held = connection.execute(
-            "SELECT COUNT(*) FROM pg_locks WHERE pid = pg_backend_pid() "
-            "AND locktype = 'advisory' AND granted"
+            "WITH scope AS (SELECT hashtextextended(%s,0) AS key) "
+            "SELECT COUNT(*) FROM pg_locks, scope WHERE pid = pg_backend_pid() "
+            "AND locktype = 'advisory' AND granted "
+            "AND classid::bigint=((scope.key >> 32) & 4294967295) "
+            "AND objid::bigint=(scope.key & 4294967295) AND objsubid=1",
+            ("runtime-concurrency:test-scope",),
         ).fetchone()
         assert held is not None
         assert int(held[0]) == 1

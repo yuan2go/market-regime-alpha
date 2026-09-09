@@ -36,7 +36,7 @@ from market_regime_alpha.persistence.postgres.connection import (
     PostgresConnectionFactory,
 )
 from market_regime_alpha.platform.runtime_governance import RuntimeAuthorityMode
-from tests.persistence.postgres.test_free_data_continuous_runtime import (
+from tests.persistence.postgres.retained_runtime_fixture import (
     _calendar,
     _configuration,
     _continuous_command,

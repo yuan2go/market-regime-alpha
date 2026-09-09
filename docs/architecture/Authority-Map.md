@@ -35,6 +35,13 @@ and shared atomic Runtime admission. Session supervision is not the business
 lease/fence. Daily work receives explicit admission for its own Run; it does
 not select a different database if blocked.
 
+`interfaces/deployment_profile.py` verifies source/wheel/installation and exact
+operation scope before emitting a new local profile. It writes no business facts
+and grants no model or data qualification. Retained PostgreSQL write connections
+share Runtime admission for database exclusion, while keeping their existing
+Account/Fill/governance transactions and Authority. Historical read-only scopes
+do not request writer admission.
+
 The retained account family uses `execution/postgres_manual_repository.py`,
 `position/postgres_*`, `portfolio/postgres_*` and
 `persistence/repository_factory.py`. Its actual observed-Fill, allocation,

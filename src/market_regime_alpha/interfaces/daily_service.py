@@ -34,6 +34,20 @@ _POLL_INTERVAL = timedelta(minutes=30)
 _OUTCOME_GRACE = timedelta(hours=8)
 
 
+def prepare_pending_daily_recovery(app: TargetApplication, session: Any) -> None:
+    """Startup revalidates pending plans across Model uses before checking leases."""
+    for item in app.daily_prediction_reads.outcome_work_items(limit=64):
+        if item.run_state in {"FAILED", "WAITING"}:
+            continue
+        plan = _historical_outcome_plan(item)
+        app.daily_prediction_reads.validate_configuration(plan)
+        app.daily_prediction_reads.ready(plan)
+        session.allow_frozen_daily_recovery(
+            prediction_id=plan.prediction_id, code_sha=plan.code_sha,
+            config_sha256=sha256(encode_daily_plan(plan)).hexdigest(),
+        )
+
+
 def current_daily_plan(app: TargetApplication, template: DailyPredictionPlan) -> DailyPredictionPlan:
     input_session, target_session, now = app.daily_prediction_reads.current_sessions()
     identity = uuid5(template.experimental_model_use_id, "daily:" + str(input_session) + ":" + str(target_session))
