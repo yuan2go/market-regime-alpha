@@ -58,6 +58,19 @@ intent and a verification receipt, not business Authority or writer activation.
 Version 1 profiles remain readable as migration intent; current service execution
 requires the verified version 2 handoff. A restored database fails exact identity.
 
+The handoff receipt also binds the authenticated PostgreSQL login name/OID.
+Preparation and every action reject superuser, database/schema creation,
+formal qualification or Model registration privileges, missing Runtime/Artifact
+write permissions, and `SET ROLE` impersonation. Use a dedicated project login;
+do not change a cluster-wide operator account used by other databases. Grant
+only the owner tables required by the deployed research operations, without
+DELETE, TRUNCATE or DDL. Read-only diagnostics and backup credentials remain
+separate. Restrict authentication for the exact operational database so old
+login identities cannot bypass cooperative advisory admission. Record and test
+the database-specific authentication rules, role grants and rollback procedure
+before activation; OS/cluster administrators retain explicit maintenance power.
+An old receipt without an authenticated principal requires a new preparation.
+
 After separately authorized drain and handoff, configure only the owned supervisor
 with the installed `mra` and generated profile. Preflight rechecks the receipt,
 wheel and actual installation. Backup refresh may renew only the three backup
@@ -185,6 +198,12 @@ deployment contract before use. Backup refresh must produce a verified receipt,
 update the bound profile and restart the exact frozen service safely; an expired
 receipt cannot be kept valid by editing its date. Missing independent physical
 backup storage must be stated, not disguised as a second directory.
+
+Integrity refresh includes daily bars referenced by the current and original
+pending plans as well as prospective archive inputs. It verifies physical bytes
+through Artifact commands; it never changes Capture known/recorded time, chooses
+new labels, or rewrites a frozen plan. Expired verification observations and
+missing/corrupt bytes are distinct failures. Any unverified member blocks restart.
 
 Keep operational observations separate: due Attempt, successful Capture,
 on-time capture rate, terminal coverage, backlog/planning gaps, restart

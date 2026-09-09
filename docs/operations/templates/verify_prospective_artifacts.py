@@ -1,9 +1,29 @@
 """Observe current bytes through Artifact owner; never change Capture known-time."""
 
+from dataclasses import replace
 from uuid import UUID
 
 from market_regime_alpha.bootstrap import bootstrap_application
 from market_regime_alpha.runtime.application.service import ActorType, CommandContext
+
+
+def _daily_bar_artifacts(connection, plan):
+    # Integrity observation can refresh bytes of the frozen input or its later
+    # Outcome. It cannot change a Capture's original visibility or select labels.
+    return connection.execute(
+        """SELECT DISTINCT capture.artifact_id
+        FROM mra.market_bar_revision bar
+        JOIN mra.data_capture capture USING (capture_id, provider_product_id)
+        WHERE bar.instrument_id=ANY(%s::uuid[])
+          AND bar.provider_product_id=%s AND bar.timeframe='DAILY'
+          AND bar.session_id=ANY(%s::uuid[]) AND capture.status='CAPTURED'
+          AND (bar.session_id=%s OR capture.recorded_at<=%s)
+          AND capture.artifact_id IS NOT NULL
+        ORDER BY capture.artifact_id""",
+        (list(plan.instrument_ids), plan.provider_product_id,
+         [plan.input_session_id, plan.target_session_id],
+         plan.target_session_id, plan.input_cutoff),
+    ).fetchall()
 
 
 def verify_scope(settings, config, guard, observation_key, *, daily_plan=None):
@@ -58,10 +78,22 @@ def verify_scope(settings, config, guard, observation_key, *, daily_plan=None):
                  daily_plan.classification_code, list(daily_plan.instrument_ids), list(daily_plan.instrument_ids)),
             ).fetchall()
             rows = sorted(set(rows) | set(daily_rows), key=lambda row: str(row[0]))
-    if not rows:
-        raise ValueError("PROSPECTIVE_ARTIFACT_ROSTER_EMPTY")
     observations = []
     with bootstrap_application(settings) as application:
+        if daily_plan is not None:
+            from market_regime_alpha.interfaces.daily_service import _historical_outcome_plan
+
+            reads = application.daily_prediction_reads
+            input_session, target_session, now = reads.current_sessions()
+            plans = [daily_plan, replace(daily_plan, input_session_id=input_session,
+                target_session_id=target_session, input_cutoff=now, decision_time=now)]
+            plans.extend(_historical_outcome_plan(item) for item in reads.outcome_work_items(limit=64)
+                         if item.run_state not in {'FAILED', 'WAITING'})
+            with guard.connection.transaction():
+                rows = sorted(set(rows) | {row for plan in plans
+                    for row in _daily_bar_artifacts(guard.connection, plan)}, key=lambda row: str(row[0]))
+        if not rows:
+            raise ValueError("PROSPECTIVE_ARTIFACT_ROSTER_EMPTY")
         for row in rows:
             guard.before_action()
             artifact_id = UUID(str(row[0]))
@@ -82,4 +114,6 @@ def verify_scope(settings, config, guard, observation_key, *, daily_plan=None):
                     "verification_id": str(record.verification_id),
                 }
             )
+            if record.result != 'VERIFIED':
+                raise ValueError('OPERATIONAL_ARTIFACT_VERIFICATION_FAILED')
     return observations

@@ -1,4 +1,4 @@
-"""One sequential daily consumer called by CONTINUOUS_RESEARCH's existing tick."""
+"""Sequential daily work under the canonical prospective service reservation."""
 
 from __future__ import annotations
 

@@ -66,6 +66,7 @@ class ProspectiveOperationGuard:
         self.root = settings.artifact_root.resolve()
         self.backup_verified_at: datetime | None = None
         self.backup_snapshot_at: datetime | None = None
+        self._runtime_principal: dict[str, Any] | None = None
 
     def snapshot(self) -> dict[str, Any]:
         snapshot = self.session.snapshot()
@@ -74,9 +75,22 @@ class ProspectiveOperationGuard:
 
     def before_action(self) -> None:
         self.session.require_supervisor_lock(self.config.series_code)
+        self.verify_runtime_principal()
         if self.session.has_conflicting_attempts(self.config.series_code):
             raise ValueError("OPERATION_ACTIVE_ATTEMPT_CONFLICT")
         self.check_resources()
+
+    def verify_runtime_principal(self) -> None:
+        if self.config.version != 2:
+            return
+        from market_regime_alpha.interfaces.deployment_profile import (
+            inspect_runtime_principal, require_installation,
+        )
+
+        if self._runtime_principal is None:
+            self._runtime_principal = require_installation(self.config)["runtime_principal"]
+        if inspect_runtime_principal(self.connection) != self._runtime_principal:
+            raise ValueError("OPERATION_RUNTIME_PRINCIPAL_CHANGED")
 
     def validate_scope(self, snapshot: dict[str, Any]) -> None:
         database = snapshot["database"]
@@ -121,6 +135,7 @@ class ProspectiveOperationGuard:
                     raise ValueError("OPERATION_BACKUP_BASELINE_EXPIRED")
 
     def verify_startup(self, application: TargetApplication) -> dict[str, Any]:
+        self.verify_runtime_principal()
         self.session.allow_prospective_recovery(
             application.prospective_archives.recovery_admissions(
                 self.config.series_code

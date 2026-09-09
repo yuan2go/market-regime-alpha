@@ -79,6 +79,34 @@ def _git(checkout: Path, *args: str) -> str:
         raise ValueError("DEPLOYMENT_SOURCE_UNVERIFIABLE") from exc
 
 
+def inspect_runtime_principal(connection: Any) -> dict[str, Any]:
+    """Authentication and grants are separate from cooperative advisory admission."""
+    row = connection.execute("""
+        SELECT session_user::text, current_user::text, role.oid::bigint,
+               role.rolsuper OR role.rolcreaterole OR role.rolcreatedb
+                 OR role.rolreplication OR role.rolbypassrls,
+               has_schema_privilege('mra', 'CREATE')
+                 OR has_database_privilege(current_database(), 'CREATE'),
+               has_table_privilege('mra.runtime_attempt', 'INSERT')
+                 AND has_table_privilege('mra.runtime_attempt', 'UPDATE')
+                 AND has_table_privilege('mra.runtime_run', 'UPDATE')
+                 AND has_table_privilege('mra.runtime_step', 'UPDATE')
+                 AND has_table_privilege('mra.command_receipt', 'INSERT')
+                 AND has_table_privilege('mra.artifact', 'INSERT')
+                 AND has_table_privilege('mra.artifact', 'UPDATE'),
+               has_table_privilege('mra.schema_migrations', 'INSERT')
+                 OR has_table_privilege('mra.model_version', 'INSERT')
+                 OR has_table_privilege('mra.provider_qualification_decision', 'INSERT')
+                 OR has_table_privilege('mra.research_qualification_decision', 'INSERT')
+        FROM pg_roles role WHERE role.rolname = session_user
+    """).fetchone()
+    if row is None or row[0] != row[1]:
+        raise ValueError("DEPLOYMENT_RUNTIME_PRINCIPAL_IMPERSONATION")
+    if row[3] or row[4] or not row[5] or row[6]:
+        raise ValueError("DEPLOYMENT_RUNTIME_PRINCIPAL_PRIVILEGES")
+    return {"name": row[0], "oid": row[2]}
+
+
 def inspect_installation(*, wheel: Path, source_checkout: Path, expected_source_sha: str) -> dict[str, Any]:
     installed = _installed(wheel)
     if _git(source_checkout, "rev-parse", "HEAD") != expected_source_sha:
@@ -107,6 +135,11 @@ def require_installation(config: ProspectiveOperationConfig) -> dict[str, Any]:
         if _hash(path) != config.deployment_receipt_sha256:
             raise ValueError("DEPLOYMENT_RECEIPT_MISMATCH")
         receipt = json.loads(path.read_bytes())
+        principal = receipt.get("runtime_principal")
+        if (not isinstance(principal, dict) or set(principal) != {"name", "oid"}
+                or not isinstance(principal["name"], str) or not principal["name"]
+                or type(principal["oid"]) is not int or principal["oid"] <= 0):
+            raise ValueError("DEPLOYMENT_RUNTIME_PRINCIPAL_HANDOFF_REQUIRED")
         installation = receipt["installation"]
         wheel = Path(installation["wheel_path"])
         if _hash(wheel) != installation["wheel_sha256"]:
@@ -149,7 +182,8 @@ def prepare_deployment_profile(settings: TargetSettings, previous: ProspectiveOp
     installation = inspect_installation(wheel=wheel, source_checkout=source_checkout, expected_source_sha=expected_source_sha)
     # Identity is inherited from explicit intent, never selected from an
     # available database. A restored copy necessarily fails this exact check.
-    with operational_session(settings, previous) as guard, bootstrap_application(settings) as app:
+    with operational_session(settings, replace(previous, version=1)) as guard, bootstrap_application(settings) as app:
+        principal = inspect_runtime_principal(guard.connection)
         snapshot = guard.session.snapshot()
         receipt_bytes = (backup_directory / "receipt.json").read_bytes()
         backup = json.loads(receipt_bytes)
@@ -162,7 +196,10 @@ def prepare_deployment_profile(settings: TargetSettings, previous: ProspectiveOp
         guard.before_action()
         if snapshot["active_attempts"]:
             raise ValueError("DEPLOYMENT_ACTIVE_ATTEMPT_REQUIRES_DRAIN")
+        if inspect_runtime_principal(guard.connection) != principal:
+            raise ValueError("DEPLOYMENT_RUNTIME_PRINCIPAL_CHANGED")
         receipt = {"kind": "VERIFIED_INSTALLED_RESEARCH_HANDOFF", "authority": False,
+                   "runtime_principal": principal,
                    "previous_profile_sha256": previous.content_sha256, "installation": installation,
                    "scope": _scope(candidate), "verified_at": snapshot["observed_at"],
                    "backup_receipt_sha256": candidate.backup_receipt_sha256,
