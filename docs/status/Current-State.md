@@ -7,6 +7,33 @@ This page describes checked-out implementation, not an operational database or
 research qualification. Verification results must match the affected implementation and consumer
 scope; earlier hygiene evidence remains in the archive index.
 
+## Latest operational cutoff
+
+At **2026-09-10 23:46:12.905706+08:00**, installed implementation
+`f30d45ab2680798c67ead58d5453e00ed2f2d74e` is running in the original database,
+Artifact root and restricted principal. The original Prediction's real mature
+Evaluation, complete-cycle zero-write replay, current scoped health and operational
+data-loop exit gates pass. The final health snapshot has no active/expired/unknown
+Attempt or unprocessed mature daily work. Historical terminal failures and all
+704 MISSED windows (including the original 544) remain visible. This is a bounded
+observation, not a service-uptime or Alpha guarantee.
+
+The 19:00 backup job actually fired and failed because service was stopped. A
+separate authorized manual recovery now proves graceful drain, backup, Artifact
+verification, mirror, profile advance, restart and a subsequent current-profile
+tick. New profile SHA-256: `d4dfb191f5b681469b412a1f071de8b5f6c76bf2e0f5aa7e2bf469a8dcfcc088`.
+Both physical devices are on the same host; there is no offsite disaster-recovery
+claim. The first new-deployment tick took 67.75 seconds while publishing the next
+real session's Prediction; after backup restart the first tick took 47.83 seconds,
+within the unchanged 120-second budget. Complete latency and downtime observations
+are in the [immutable report](../archive/Real-Maturity-Operational-Closure-2026-09-10.md).
+
+The next Target session, 2026-09-11, has a timely frozen Prediction and remains
+PENDING_MATURITY. One actual completed session permits the narrow Research Validity
+entry; it does not satisfy sustained evidence. **SUSTAINED_MULTI_DAY_PROOF remains
+BLOCKED_BY_ELAPSED_REAL_TIME** until at least three consecutive real sessions.
+All model comparisons remain **DESCRIPTIVE / NOT_ALPHA_EVIDENCE**.
+
 ## Reproducible schema facts
 
 <!-- schema-facts:start -->
@@ -25,7 +52,7 @@ mixed-version operational checksum table here.
 |---|---|---|
 | Generic Backtest | Specification, Runtime action execution, owner reconciliation, Model lineage, report and comparison are composed by `bootstrap_application` | A declared/finished Runtime is not sufficient without complete owner replay |
 | Prospective collection | Guarded serve, DB due query, atomic writer admission, lease/fence, overdue and planning-gap recovery | Current service/due/success cannot be inferred from source, old status or a running process |
-| Daily research | Post-close DataReady; exact experimental Model use; independent forecasts; frozen publication; pending Outcome/evaluation and delivery recovery | Availability, actual publication time and real maturation are separately observed facts |
+| Daily research | Post-close DataReady; exact experimental Model use; independent forecasts; frozen publication; real mature Outcome/Evaluation, report/replay and delivery recovery | Availability, actual publication time and real maturation are separately observed facts |
 | Economics | Typed deterministic fully funded independent episodes; root/child field reconciliation and full-path slicing | No continuous-account/tradability/Alpha claim; historical formula meanings remain unchanged |
 | Evidence operations | Exact database/Artifact identity, backup, integrity and restore/replay operations | A successful copy is a separate scope; missing original evidence remains missing |
 | Retained execution/account | Decision/account and formal governance commands remain installed; separate research CLI dispatch is retired | No account Runtime migration or broker admission |
@@ -152,7 +179,7 @@ terminal coverage as collection success. New daily captures do not retroactively
 qualify the separate intraday prospective series. No Alpha, formal Provider/PIT,
 Model or Production qualification is granted.
 
-## Current operational closure observation
+## Prior operational closure observation
 
 The first closure installation was
 `db69cd34f6ef569663fac4f7029d79783b52948e`, based on merged main

@@ -83,23 +83,23 @@ unchanged.
 
 ## Operational data-loop closure
 
-### Active execution: real maturity and operational loop closure
+### Completed: real maturity and operational loop closure
 
 The current real maturity and operational closure work is explicitly authorized
 against main `97f5d331042a72fb322bc156e5dcbb31f6c19731` in an isolated worktree.
-The execution order is:
+The recorded execution completed:
 
-- [ ] Freeze current DB, installed profile, principal, service, Attempts, backup,
+- [x] Freeze current DB, installed profile, principal, service, Attempts, backup,
   original publication and three health scopes into immutable observations.
-- [ ] Continue only the original verified frozen prediction through actual late
+- [x] Continue only the original verified frozen prediction through actual late
   Provider observation, exact Outcome commitments and canonical Evaluation.
-- [ ] Reconcile full populations, canonical diagnostics, immutable reports and
+- [x] Reconcile full populations, canonical diagnostics, immutable reports and
   repeated zero-write completed-cycle replay.
-- [ ] Diagnose observed service/backup failures, apply only necessary correctness
+- [x] Diagnose observed service/backup failures, apply only necessary correctness
   repairs with focused tests, and restore the authorized owned service safely.
-- [ ] Close continuous day-ledger and read-only research observation gaps with
+- [x] Close continuous day-ledger and read-only research observation gaps with
   canonical consumers, if the first real Evaluation succeeds.
-- [ ] Record source-bound validation, operational cutoff and independent exit
+- [x] Record source-bound validation, operational cutoff and independent exit
   gates. Preserve scheduled failures, missing data and all historical terminals.
 
 No model/Target change, terminal reopening, synthetic time, fallback Provider or
@@ -112,16 +112,21 @@ ledger are implemented, verified and installed in the original owned scope.
 The actual scheduled backup, exact service recovery and independent restore
 retain their receipts. Models, targets and prior results are unchanged.
 
-The remaining dependency is the original timely prediction's natural Target
-maturity, followed by actual collection, owner settlement, Evaluation and
-zero-write report/replay. The service retains its original plan and keeps old
-terminal failures closed. Three consecutive real trading days remain a separate
-sustained-evidence gate, not a reason to wait or synthesize observations.
-The later health QueryCanceled exposed a Provider-wide bar-freshness scan;
-the corrected observer uses the exact plan roster and existing index. Continue
-observing tick latency: the intermittent underlying I/O cause remains unproven
-and budgets were not increased. See Current State for the frozen observation
-cutoff. Do not begin Alpha iteration before real Evaluation.
+The original timely Prediction completed actual late Outcome capture, all 31
+commitments, exact Partition/Evaluation, report and zero-write completed replay.
+The new installation restored the original owned service; the separately recorded
+manual backup/Artifact/mirror/profile/restart/subsequent-tick chain passed. The
+actual 19:00 scheduled failure remains FAIL, and all historical failures remain
+visible. See [Current State](Current-State.md) and the
+[immutable closure record](../archive/Real-Maturity-Operational-Closure-2026-09-10.md).
+
+Research Validity may now consume the canonical read-only `daily observations`
+projection. It has no training, tuning, selection, Provider/PIT or Alpha authority.
+A single real session is descriptive only. The next natural session's Prediction
+is published and pending maturity; at least three consecutive real sessions,
+preferably five, remain required for sustained proof. Do not synthesize days or
+wait for them during an implementation session. Tick latency and future scheduled
+fires need continuing observation; the 120-second budget is unchanged.
 
 ## Remaining architectural debt
 
