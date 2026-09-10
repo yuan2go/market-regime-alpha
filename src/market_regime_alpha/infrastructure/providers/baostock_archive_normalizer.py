@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
 import json
@@ -766,8 +766,33 @@ class BaoStockArchiveNormalizer:
         return f"{digits}.{exchange}"
 
 
+class BaoStockProspectiveNormalizer(BaoStockArchiveNormalizer):
+    """V3 observations cannot establish missing intervals still in the future.
+
+    V2 remains the historical/daily contract. SourceGap absence is bounded by
+    the actual request start, even when a slow response crosses another bar end.
+    Provider bars are preserved unchanged for the Market owner's time checks.
+    """
+
+    contract = NormalizerContract(
+        implementation="market.baostock_archive",
+        version="3",
+        implementation_sha256="7237fe9296f1e247d81d4cac0b3bfbc6788f38dbfd36d99028640df11b4d5e24",
+    )
+
+    def normalize(self, capture: ProviderCapture, content: bytes) -> NormalizationBatch:
+        batch = super().normalize(capture, content)
+        return replace(batch, gaps=tuple(
+            gap for gap in batch.gaps
+            if gap.fact_kind is not GapFactKind.MARKET_BAR
+            or gap.event_end is None
+            or gap.event_end <= capture.temporal.capture_started_at
+        ))
+
+
 __all__ = [
     "BaoStockArchiveNormalizer",
+    "BaoStockProspectiveNormalizer",
     "a_share_instrument_id",
     "a_share_session_id",
 ]
