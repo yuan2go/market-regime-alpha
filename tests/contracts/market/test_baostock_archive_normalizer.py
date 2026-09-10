@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import UTC, date, datetime, time
 from uuid import uuid4
 from zoneinfo import ZoneInfo
@@ -13,6 +14,7 @@ from market_regime_alpha.infrastructure.providers.baostock_archive import (
 )
 from market_regime_alpha.infrastructure.providers.baostock_archive_normalizer import (
     BaoStockArchiveNormalizer,
+    BaoStockProspectiveNormalizer,
     a_share_instrument_id,
     a_share_session_id,
 )
@@ -509,3 +511,51 @@ def test_duplicate_bar_in_one_payload_fails_closed() -> None:
             capture,
             _payload(query, fields, [row, row]),
         )
+
+
+@pytest.mark.parametrize(("request_clock", "response_clock", "expected_count"), [
+    (time(6, 40, 8), time(6, 40, 10), 44),
+    (time(6, 39, 59), time(6, 45, 2), 43),
+    (time(7), time(7, 0, 2), 48),
+])
+def test_prospective_empty_response_only_marks_intervals_mature_before_request(request_clock, response_clock, expected_count) -> None:
+    # Reproduces the actual 14:40 empty response: 15:00 is still in the future.
+    request_at = datetime.combine(date(2026, 1, 5), request_clock, tzinfo=UTC)
+    response_at = datetime.combine(date(2026, 1, 5), response_clock, tzinfo=UTC)
+    capture = replace(_capture(), temporal=TemporalEnvelope(
+        provider_time=None, source_availability_status=SourceAvailabilityStatus.UNKNOWN,
+        source_available_at=None, capture_started_at=request_at,
+        capture_completed_at=response_at, known_at=KnownTime(response_at),
+        decision_visible_at=DecisionTime(response_at),
+    ))
+    query = BaoStockArchiveQuery(
+        kind=BaoStockArchiveQueryKind.HISTORY_5M_RAW, code="sh.600000",
+        start_date=date(2026, 1, 5), end_date=date(2026, 1, 6),
+    )
+    fields = ["date", "time", "code", "open", "high", "low", "close", "volume", "amount", "adjustflag"]
+    normalizer = BaoStockProspectiveNormalizer(trading_sessions=_Sessions())
+    batch = normalizer.normalize(capture, _payload(query, fields, []))
+    assert len(batch.gaps) == expected_count
+    assert all(gap.event_end <= request_at for gap in batch.gaps)
+    # The old result/contract is retained; a new version carries the correction.
+    historical = BaoStockArchiveNormalizer(trading_sessions=_Sessions()).normalize(capture, _payload(query, fields, []))
+    assert len(historical.gaps) == 96
+    assert normalizer.contract.version == "3"
+    assert BaoStockArchiveNormalizer.contract.version == "2"
+
+
+def test_prospective_normalizer_preserves_provider_bars_for_owner_time_validation() -> None:
+    observed = datetime(2026, 1, 5, 6, 40, tzinfo=UTC)
+    capture = replace(_capture(), temporal=TemporalEnvelope(
+        provider_time=None, source_availability_status=SourceAvailabilityStatus.UNKNOWN,
+        source_available_at=None, capture_started_at=observed, capture_completed_at=observed,
+        known_at=KnownTime(observed), decision_visible_at=DecisionTime(observed),
+    ))
+    query = BaoStockArchiveQuery(BaoStockArchiveQueryKind.HISTORY_5M_RAW, date(2026, 1, 5), date(2026, 1, 6), "sh.600000")
+    fields = ["date", "time", "code", "open", "high", "low", "close", "volume", "amount", "adjustflag"]
+    content = _payload(query, fields, [["2026-01-05", "20260105150000000", "sh.600000", "10", "11", "9", "10", "1", "10", "3"]])
+    old = BaoStockArchiveNormalizer(trading_sessions=_Sessions()).normalize(capture, content)
+    new = BaoStockProspectiveNormalizer(trading_sessions=_Sessions()).normalize(capture, content)
+    assert new.bars == old.bars
+    assert new.bars[0].event_end > observed  # Market must still reject this future bar.
+    assert all(gap.event_end <= observed for gap in new.gaps)

@@ -23,6 +23,7 @@ not an independently authorized writer.
 | Evaluation | `research_qualification/application/evaluations.py:EvaluationCommands`; `evaluation_uow.py`, `repositories/research_evaluations.py` | `evaluation_run/metric`, complete observations/sources/costs/formula rosters; `queries/research_verification.py` | Prepare outside write UoW; commit revalidation; actual root and child fields agree with typed recomputation, not just saved hashes |
 | Evidence / Assessment / Qualification | Respective commands in `research_qualification/application`; separate UoWs | Concrete evidence/assessment/qualification roots and complete floor/source bindings; qualification verification/admission queries | Purpose-scoped floors, no self-promotion; feedback only into later generations |
 | Backtest / report | `research_qualification/application/backtests.py`, `backtest_execution.py`, `backtest_reports.py`; `backtest_uow.py` | Existing `exploratory_backtest_run` + specification/action/model/evaluation/report bindings | Generic owner dispatch; exact replay; report is reconciled projection; comparison checks semantics before values |
+| Daily research observations | `interfaces/daily_observations.py`; `queries/daily_predictions.py` | Existing Prediction, acquired Outcome revisions and Evaluation; read-only CLI consumer | Reconciled reports; exact commitment/Partition/acquisition roster; complete population; no new labels, metrics or truth table |
 
 The SQL adapter paths in this table are under `infrastructure/postgres`.
 Schema bootstrap, verify and controlled upgrade are owned by

@@ -21,6 +21,7 @@ from market_regime_alpha.infrastructure.providers.baostock_archive import (
 )
 from market_regime_alpha.infrastructure.providers.baostock_archive_normalizer import (
     BaoStockArchiveNormalizer,
+    BaoStockProspectiveNormalizer,
 )
 from market_regime_alpha.market.application import (
     ArchiveManifestSlice,
@@ -238,7 +239,7 @@ def run_due_prospective_runtime(
         provider = BaoStockArchiveProvider(session)
 
         def normalizer_for(item: ArchiveManifestSlice) -> BaoStockArchiveNormalizer:
-            return BaoStockArchiveNormalizer(
+            return BaoStockProspectiveNormalizer(
                 expected_query=BaoStockArchiveQuery.from_resource(
                     item.capture_request.resource
                 ),
@@ -273,7 +274,7 @@ def continue_prospective_series(
                         maximum_rows=provider_maximum_rows,
                         maximum_response_bytes=provider_maximum_response_bytes) as session:
         def normalizer_for(item: ArchiveManifestSlice) -> BaoStockArchiveNormalizer:
-            return BaoStockArchiveNormalizer(
+            return BaoStockProspectiveNormalizer(
                 expected_query=BaoStockArchiveQuery.from_resource(item.capture_request.resource),
                 revision_lineage=application.market_revision_lineage,
                 trading_sessions=application.archive_trading_sessions,

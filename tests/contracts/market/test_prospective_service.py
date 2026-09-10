@@ -31,17 +31,20 @@ def test_service_uses_the_existing_continuation_for_each_wakeup(monkeypatch):
         worker_id="worker", lease_seconds=120, wakeup_seconds=0.001, database_name="mra_operational",
         provider_timeout_seconds=1, maximum_attempts_per_tick=2, maximum_tick_seconds=60,
         provider_maximum_rows=100_000, provider_maximum_response_bytes=33_554_432,
-        content_sha256="2"*64)
+        content_sha256="2"*64, backup_receipt_sha256="3"*64)
     guard_calls = []
     guard = SimpleNamespace(
         verify_startup=lambda app: {"ready": True},
         snapshot=lambda: guard_calls.append("supervisor"),
         validate_scope=lambda scope: guard_calls.append("composition"),
         before_action=lambda: guard_calls.append("claim"),
+        backup_snapshot_at=None, backup_verified_at=None,
     )
     health = {"database": {"name": "mra_operational", "oid": 1}, "observed_at": "database-clock",
-              "summary": {"alerts": (), "operational_state": "NOT_DUE"}}
-    def inspect_after_owner_recovery(_):
+              "summary": {"alerts": (), "operational_state": "NOT_DUE"},
+              "scopes": {"ALL_HISTORY": {"state": "AVAILABLE"}}}
+    def inspect_after_owner_recovery(_, *, cutover_at):
+        assert cutover_at is None
         # A prior process may stop after Archive predeclaration but before
         # every capture Runtime registration. Strict health cannot yet pass;
         # the existing continuation must repair that roster first.

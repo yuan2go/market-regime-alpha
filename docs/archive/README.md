@@ -51,3 +51,11 @@ continue that chain after a subsequent real health-query timeout. They retain
 the earlier cutoff, prove the bounded query correction and bind the corrected
 installation's separate handoff, backup, restore and observation. This is not
 a new qualification or an upgrade of pending maturity into research evidence.
+
+The [first real natural-maturity closure](Real-Maturity-Operational-Closure-2026-09-10.md)
+and its [immutable source/observation index](Real-Maturity-Operational-Closure-2026-09-10.json)
+continue the original timely Prediction through actual late Outcome capture,
+canonical Evaluation and zero-write replay. They separately record the true
+19:00 backup failure, bounded service repair, manual backup continuity and next
+session's publication. This supersedes no historical bytes and grants no Alpha,
+Provider/PIT or Production qualification. Three-day proof remains time-blocked.

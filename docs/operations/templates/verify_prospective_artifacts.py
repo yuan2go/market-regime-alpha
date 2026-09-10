@@ -116,6 +116,7 @@ def verify_scope(settings, config, guard, observation_key, *, daily_plan=None):
         if daily_plan is not None:
             from market_regime_alpha.interfaces.daily_service import _historical_outcome_plan
             from market_regime_alpha.interfaces.daily_collection import DailyCollectionPlan
+            from market_regime_alpha.interfaces.daily_research import decode_daily_plan
 
             reads = application.daily_prediction_reads
             input_session, target_session, now = reads.current_sessions()
@@ -129,9 +130,21 @@ def verify_scope(settings, config, guard, observation_key, *, daily_plan=None):
                 for _, _, _, content in reads.collection_rounds(identity, phase))
             plans.extend(_historical_outcome_plan(item) for item in reads.outcome_work_items(limit=64)
                          if item.run_state not in {'FAILED', 'WAITING'})
+            # Completed publications still need readable original inputs for
+            # health/replay after later days move the current template forward.
+            for row in reads.operational_ledger_rows()["runs"]:
+                if row["state"] != "SUCCEEDED" or not row["schedule_code"].startswith("daily-model-"):
+                    continue
+                if row["plan_content"] is None:
+                    raise ValueError("PUBLISHED_PLAN_ARTIFACT_UNAVAILABLE_FOR_INTEGRITY_REFRESH")
+                published = decode_daily_plan(row["plan_content"])
+                if row["run_id"] != published.runtime_run_id or row["code_sha"] != published.code_sha:
+                    raise ValueError("PUBLISHED_PLAN_IDENTITY_MISMATCH_FOR_INTEGRITY_REFRESH")
+                plans.append(published)
             with guard.connection.transaction():
                 rows = sorted(set(rows) | {row for plan in plans
-                    for row in (*_daily_input_artifacts(guard.connection, plan),
+                    for row in (*_daily_static_artifacts(guard.connection, plan),
+                                *_daily_input_artifacts(guard.connection, plan),
                                 *_daily_execution_artifacts(guard.connection, plan))}, key=lambda row: str(row[0]))
         if not rows:
             raise ValueError("PROSPECTIVE_ARTIFACT_ROSTER_EMPTY")

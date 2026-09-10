@@ -7,6 +7,33 @@ This page describes checked-out implementation, not an operational database or
 research qualification. Verification results must match the affected implementation and consumer
 scope; earlier hygiene evidence remains in the archive index.
 
+## Latest operational cutoff
+
+At **2026-09-10 23:46:12.905706+08:00**, installed implementation
+`f30d45ab2680798c67ead58d5453e00ed2f2d74e` is running in the original database,
+Artifact root and restricted principal. The original Prediction's real mature
+Evaluation, complete-cycle zero-write replay, current scoped health and operational
+data-loop exit gates pass. The final health snapshot has no active/expired/unknown
+Attempt or unprocessed mature daily work. Historical terminal failures and all
+704 MISSED windows (including the original 544) remain visible. This is a bounded
+observation, not a service-uptime or Alpha guarantee.
+
+The 19:00 backup job actually fired and failed because service was stopped. A
+separate authorized manual recovery now proves graceful drain, backup, Artifact
+verification, mirror, profile advance, restart and a subsequent current-profile
+tick. New profile SHA-256: `d4dfb191f5b681469b412a1f071de8b5f6c76bf2e0f5aa7e2bf469a8dcfcc088`.
+Both physical devices are on the same host; there is no offsite disaster-recovery
+claim. The first new-deployment tick took 67.75 seconds while publishing the next
+real session's Prediction; after backup restart the first tick took 47.83 seconds,
+within the unchanged 120-second budget. Complete latency and downtime observations
+are in the [immutable report](../archive/Real-Maturity-Operational-Closure-2026-09-10.md).
+
+The next Target session, 2026-09-11, has a timely frozen Prediction and remains
+PENDING_MATURITY. One actual completed session permits the narrow Research Validity
+entry; it does not satisfy sustained evidence. **SUSTAINED_MULTI_DAY_PROOF remains
+BLOCKED_BY_ELAPSED_REAL_TIME** until at least three consecutive real sessions.
+All model comparisons remain **DESCRIPTIVE / NOT_ALPHA_EVIDENCE**.
+
 ## Reproducible schema facts
 
 <!-- schema-facts:start -->
@@ -25,7 +52,7 @@ mixed-version operational checksum table here.
 |---|---|---|
 | Generic Backtest | Specification, Runtime action execution, owner reconciliation, Model lineage, report and comparison are composed by `bootstrap_application` | A declared/finished Runtime is not sufficient without complete owner replay |
 | Prospective collection | Guarded serve, DB due query, atomic writer admission, lease/fence, overdue and planning-gap recovery | Current service/due/success cannot be inferred from source, old status or a running process |
-| Daily research | Post-close DataReady; exact experimental Model use; independent forecasts; frozen publication; pending Outcome/evaluation and delivery recovery | Availability, actual publication time and real maturation are separately observed facts |
+| Daily research | Post-close DataReady; exact experimental Model use; independent forecasts; frozen publication; real mature Outcome/Evaluation, report/replay and delivery recovery | Availability, actual publication time and real maturation are separately observed facts |
 | Economics | Typed deterministic fully funded independent episodes; root/child field reconciliation and full-path slicing | No continuous-account/tradability/Alpha claim; historical formula meanings remain unchanged |
 | Evidence operations | Exact database/Artifact identity, backup, integrity and restore/replay operations | A successful copy is a separate scope; missing original evidence remains missing |
 | Retained execution/account | Decision/account and formal governance commands remain installed; separate research CLI dispatch is retired | No account Runtime migration or broker admission |
@@ -152,7 +179,7 @@ terminal coverage as collection success. New daily captures do not retroactively
 qualify the separate intraday prospective series. No Alpha, formal Provider/PIT,
 Model or Production qualification is granted.
 
-## Current operational closure observation
+## Prior operational closure observation
 
 The first closure installation was
 `db69cd34f6ef569663fac4f7029d79783b52948e`, based on merged main
@@ -248,6 +275,45 @@ hashes and original report bytes. The owned service and existing scheduled
 backup task use the corrected wheel/profile. Current health passes at this
 bounded cutoff with explained terminal failures retained; naturally matured
 Evaluation and three-day sustained service remain independently time-blocked.
+
+## First naturally matured daily Evaluation
+
+On **2026-09-10 at 22:51:58 +08:00**, the original timely Prediction
+`3c3e181e-692d-535b-aea0-f855c9e9e418` completed canonical Outcome/Evaluation in
+the original operational database using installed implementation `55d4aba9…`.
+Its original plan hash `eae5144cbdca838cc32e2b673f0a620dcb89455a3b8760cbe9fb37410f3e0442`
+and code, ModelVersion, Dataset, Decision and Target identities remain unchanged.
+
+Actual late Provider requests from **22:46:31 through 22:49:15** produced
+32 daily Captures and Bars. The original population retains 32 sampled members,
+31 eligible/model/baseline/common predictions and one membership UNKNOWN.
+All 31 commitments settled; Partition and Evaluation acquisition rosters are
+exactly those 31. Evaluation `2849c414-da2a-5a8d-bb9f-483aed6df465` contains
+10 frozen-protocol metrics and 310 metric observations. All 31 labels are complete
+and estimable; Provider availability/finality qualification is not promoted.
+
+Original Prediction report bytes, Evaluation report and completed-cycle replay
+reconcile with `matched=true`, `mismatch_count=0`, `business_writes=0`.
+Model/baseline MAE are **0.0097543 / 0.0106481** and rank IC are
+**0.192742 / -0.192742**. Actual labels include 10 positive, 20 negative and one
+flat value; all 31 model forecasts are positive. Directional accuracy is absent
+from the frozen Evaluation protocol and is not invented by a reporting script.
+This single-session result is **DESCRIPTIVE / NOT_ALPHA_EVIDENCE**.
+
+The 19:00 scheduled backup actually fired but failed because the owned service
+had stopped. Its failure is preserved. A prior 14:40 empty intraday response
+caused v2 normalization to generate future SourceGaps, which Market correctly
+rejected; a later pre-task recovery exceeded the unchanged 120-second tick budget.
+The new prospective v3 normalizer bounds gaps by request time, retaining v2 and
+all failed Runs. Operational recovery and the final installation/cutoff are
+recorded separately; this first Evaluation does not itself prove current uptime.
+
+The checked-out read-only `daily observations` command consumes canonical
+Prediction/Outcome/Evaluation and enforces full roster equality. Scheduled backup
+templates retain immutable complete day-ledger snapshots, verify completed
+publication inputs across later dates, and require a subsequent current-profile
+tick for restart proof. Three-day sustained evidence remains independent and
+time-blocked. No Model, Factor, Target, risk, schema or qualification is changed.
 
 ## Prior repository hygiene evidence
 
