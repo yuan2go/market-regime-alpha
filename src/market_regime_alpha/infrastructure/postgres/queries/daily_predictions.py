@@ -12,6 +12,7 @@ from psycopg.rows import dict_row
 from market_regime_alpha.decision_support.domain import ForecastModelBindingPlan, ModelPredictionState
 from market_regime_alpha.infrastructure.postgres.pool import TargetPostgresPool
 from market_regime_alpha.infrastructure.postgres.queries.daily_feature_inputs import PostgresDailyFeatureInputReadPort
+from market_regime_alpha.infrastructure.postgres.queries.daily_validity import PostgresDailyValidityReads
 from market_regime_alpha.infrastructure.postgres.repositories.decision_inference import PostgresInferenceRepository
 from market_regime_alpha.infrastructure.postgres.repositories.target_definitions import PostgresTargetDefinitionRepository
 from market_regime_alpha.infrastructure.postgres.repositories.research_models import PostgresResearchModelRepository
@@ -129,8 +130,10 @@ class PostgresDailyPredictionReads:
         assert row is not None
         return row[0]
 
-    def operational_ledger_rows(self) -> dict[str, Any]:
-        """Bounded raw operational identities; no Market fetch or business mutation."""
+    def operational_ledger_rows(self, *, complete_history: bool = False) -> dict[str, Any]:
+        """Bounded operational read by default; explicit research export keeps history."""
+        if type(complete_history) is not bool:
+            raise TypeError("complete_history must be boolean")
         with self._pool.connection(read_only=True) as connection:
             connection.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
             with connection.cursor(row_factory=dict_row) as cursor:
@@ -142,15 +145,16 @@ class PostgresDailyPredictionReads:
                     LEFT JOIN mra.artifact a ON a.artifact_id=r.config_artifact_id
                     WHERE s.schedule_code ~ '^daily-(model|outcome|abstention)-[0-9a-f]{32}$'
                       AND r.runtime_mode='SHADOW' AND s.runtime_mode='SHADOW'
-                    ORDER BY r.requested_at,r.run_id LIMIT 513
-                """).fetchall()
-                if len(runs)>512:
+                    ORDER BY r.requested_at,r.run_id
+                """ + ("" if complete_history else " LIMIT 513")).fetchall()
+                if not complete_history and len(runs)>512:
                     raise ValueError("daily health ledger exceeds explicit row budget")
                 steps = cursor.execute("SELECT * FROM mra.runtime_step WHERE run_id=ANY(%s::uuid[]) ORDER BY run_id,ordinal", ([r['run_id'] for r in runs],)).fetchall()
                 attempts = cursor.execute("SELECT * FROM mra.runtime_attempt WHERE step_id=ANY(%s::uuid[]) ORDER BY step_id,attempt_no", ([s['step_id'] for s in steps],)).fetchall()
                 sessions = cursor.execute("""SELECT session_id,session_date,open_at,close_at FROM mra.trading_session
-                    WHERE exchange='XSHG' ORDER BY open_at DESC LIMIT 10000""").fetchall()
-                if len(sessions)==10000:
+                    WHERE exchange='XSHG' ORDER BY open_at DESC"""
+                    + ("" if complete_history else " LIMIT 10000")).fetchall()
+                if not complete_history and len(sessions)==10000:
                     raise ValueError("daily health calendar exceeds explicit row budget")
                 freshness = cursor.execute("""
                     SELECT max(recorded_at) FILTER(WHERE capture_key LIKE 'daily-input:%%') AS input_capture,
@@ -512,6 +516,14 @@ class PostgresDailyPredictionReads:
                 WHERE observation.evaluation_run_id=%s ORDER BY source.market_target_outcome_source_id
             """, (evaluation_id,)).fetchall()
         return {"observations": observations, "labels": labels, "outcomes": outcomes, "sources": sources}
+
+    def validity_observation_facts(self, plan: DailyPredictionPlan, evaluation_id: UUID) -> dict[str, Any]:
+        return PostgresDailyValidityReads(self._pool, self._byte_store).project(
+            plan, evaluation_id, self.decision_run(plan)
+        )
+
+    def validity_calendar(self) -> list[dict[str, Any]]:
+        return PostgresDailyValidityReads(self._pool, self._byte_store).calendar()
 
     def current_sessions(self) -> tuple[UUID, UUID, datetime]:
         with self._pool.connection(read_only=True) as connection:

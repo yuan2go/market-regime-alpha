@@ -24,6 +24,13 @@ from market_regime_alpha.runtime.errors import RuntimeNotFoundError
 def add_daily_parser(areas: Any) -> None:
     research = areas.add_parser("research")
     commands = research.add_subparsers(dest="research_command", required=True)
+    validity = commands.add_parser("validity")
+    validity_commands = validity.add_subparsers(dest="validity_command", required=True)
+    validity_daily = validity_commands.add_parser("daily")
+    from market_regime_alpha.research_qualification.domain.validity_protocol import CURRENT_PROTOCOL_VERSION
+    validity_daily.add_argument("--protocol-version", type=int, default=CURRENT_PROTOCOL_VERSION)
+    validity_daily.add_argument("--target-session-from", type=date.fromisoformat)
+    validity_daily.add_argument("--target-session-to", type=date.fromisoformat)
     daily = commands.add_parser("daily")
     operations = daily.add_subparsers(dest="daily_command", required=True)
     for command in ("data-ready", "freeze-plan", "predict", "collect-outcome", "settle", "status", "report", "replay"):
@@ -50,16 +57,42 @@ def add_daily_parser(areas: Any) -> None:
     observation.add_argument("--target-session-date", type=date.fromisoformat)
     observation.add_argument("--model-version-id", type=UUID)
     observation.add_argument("--target-definition-id", type=UUID)
+    observation.add_argument("--target-session-from", type=date.fromisoformat)
+    observation.add_argument("--target-session-to", type=date.fromisoformat)
+    observation.add_argument("--experimental-model-use-id", type=UUID)
+    observation.add_argument("--dataset-id", type=UUID)
+    observation.add_argument("--decision-run-id", type=UUID)
+    availability = observation.add_mutually_exclusive_group()
+    availability.add_argument("--completed-only", dest="completed_only", action="store_true")
+    availability.add_argument("--include-unavailable", dest="completed_only", action="store_false")
+    observation.set_defaults(completed_only=False)
 
 
 def dispatch_daily(arguments: argparse.Namespace, settings: TargetSettings) -> object:
+    if arguments.research_command == "validity":
+        from market_regime_alpha.interfaces.daily_observations import daily_observations
+        from market_regime_alpha.research_qualification.application.validity import validity_report
+        from market_regime_alpha.research_qualification.domain.validity_protocol import load_validity_protocol
+        protocol = load_validity_protocol(arguments.protocol_version)
+        identities = protocol["identities"]
+        with bootstrap_application(settings) as app:
+            observations = daily_observations(app, model_version_id=UUID(identities["model_version"]["id"]),
+                experimental_model_use_id=UUID(identities["experimental_model_use"]["id"]),
+                target_definition_id=UUID(identities["target_definition"]["id"]))
+            return validity_report(observations, protocol, app.daily_prediction_reads.validity_calendar(),
+                target_session_from=arguments.target_session_from, target_session_to=arguments.target_session_to)
     command = arguments.daily_command
     if command == "observations":
         from market_regime_alpha.interfaces.daily_observations import daily_observations
         with bootstrap_application(settings) as app:
             return daily_observations(app, target_session_date=arguments.target_session_date,
                                       model_version_id=arguments.model_version_id,
-                                      target_definition_id=arguments.target_definition_id)
+                                      target_definition_id=arguments.target_definition_id,
+                                      target_session_from=arguments.target_session_from,
+                                      target_session_to=arguments.target_session_to,
+                                      experimental_model_use_id=arguments.experimental_model_use_id,
+                                      dataset_id=arguments.dataset_id, decision_run_id=arguments.decision_run_id,
+                                      completed_only=arguments.completed_only)
     if command == 'health':
         from market_regime_alpha.interfaces.daily_health import daily_health
         with bootstrap_application(settings) as app:

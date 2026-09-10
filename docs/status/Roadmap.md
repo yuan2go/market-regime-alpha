@@ -135,15 +135,15 @@ The isolated execution preserves the running service and all frozen research
 identities. Sep-10 remains descriptive; new diagnostics on that session are
 post-hoc and cannot enter the predeclared future cohort.
 
-- [ ] Record current service, canonical completed/pending work and backup.
-- [ ] Freeze an append-only, source-pinned protocol before the future cohort's
+- [x] Record current service, canonical completed/pending work and backup.
+- [x] Freeze an append-only, source-pinned protocol before the future cohort's
   Outcomes, including full population, formula versions, sample floors and
   unavailable slice/economic assumptions. Do not write to the old Evaluation.
-- [ ] Extend exact canonical observations, acquired revision/source lineage and
+- [x] Extend exact canonical observations, acquired revision/source lineage and
   temporal validation; fail closed on roster or replay mismatch.
-- [ ] Implement Evaluation-owned Decimal statistics, exact common populations,
+- [x] Implement Evaluation-owned Decimal statistics, exact common populations,
   multi-session/rolling aggregation and a read-only validity CLI.
-- [ ] Validate walk-forward calendar/data boundaries and audit existing slice,
+- [x] Validate walk-forward calendar/data boundaries and audit existing slice,
   economic and formal PIT readiness without training or promotion.
 - [ ] Run focused contracts, static/build/installed checks and documentation
   guards; retain source-bound evidence and a fresh final operational observation.

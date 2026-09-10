@@ -7,6 +7,53 @@ This page describes checked-out implementation, not an operational database or
 research qualification. Verification results must match the affected implementation and consumer
 scope; earlier hygiene evidence remains in the archive index.
 
+## Research Validity baseline
+
+The read-only baseline is implemented on main
+`c61a133995c015530a992a87421e750e64f4d5ef`. `mra research validity daily`
+consumes exact frozen Prediction, acquired OutcomeRevision and Evaluation truth;
+it does not acquire prices, train, tune or update historical metrics.
+
+Protocol v2 was declared from the original database clock at
+2026-09-11 00:37:36.769896+08:00, before its first eligible Target session Sep-14.
+Its exact SHA-256 is
+`efb4b9683ccf6201b9c1e3cbe0eb32338559fc430756155b06374794ffdb52de`.
+It requires 20 real estimable sessions and 500 common observations, a 20-session
+rolling window, K=5 and five-quantile tails. Model/use/Feature/Target, Candidate,
+Eligibility, Context, Provider, classification and the complete fixed 32-member
+instrument scope are bound. v1 bytes remain unchanged; a pre-Outcome review found
+its missing exact population binding, so it cannot establish a validity baseline.
+Sep-11 remains descriptive under that predecessor; no session is deleted.
+
+The new read projection includes exact source/normalization clocks, all acquired
+Outcome revisions, complete population/exclusions and original report/replay.
+Evaluation-owned Decimal formulas provide common-population errors, direction,
+calibration, ranking and per-session/aggregate/rolling IC statistics. Calendar
+and lineage reads preserve the entire cohort; date filters only select a
+descriptive view. The default operational health budget remains unchanged.
+
+The first new CLI observation still has only Sep-10 complete: 32 sampled,
+31 common estimable, 31 complete labels with finality UNKNOWN, and temporal PASS.
+Its original 10 metrics/report bytes remain unchanged. New historical statistics
+are `POST_HOC_DESCRIPTIVE`, including any direction/calibration result. The future
+v2 cohort has zero observations: `MODEL_VALUE=NOT_ESTIMABLE`, `ALPHA_PROVEN=NO`.
+Real sample minima and repeatable information gain are required before any
+Alpha-iteration proposal.
+
+Walk-forward dry-run, source/time/model boundary checks and an advancing actual
+calendar cutoff are implemented; currently 168 completed captured sessions and
+one completed canonical session are insufficient for the 337-session window.
+`WALK_FORWARD_READY=NO`. Additional regime slices, economic/tradability and Formal
+PIT readiness remain NOT_READY. BaoStock evidence remains EXPLORATORY. Independent
+episode economics does not establish continuous-account returns or T+1 execution.
+
+The initial fresh observation at Sep-11 00:18 confirms the original service is
+running with no unresolved Attempts and Sep-11 Prediction pending maturity.
+Its observed tick maximum is 82.08 seconds, below the unchanged 120-second budget.
+This analysis package does not stop or redeploy that service. Final validation
+and operational cutoff are recorded with source-bound evidence after installation
+smoke; sustained proof still requires three consecutive naturally completed days.
+
 ## Latest operational cutoff
 
 At **2026-09-10 23:46:12.905706+08:00**, installed implementation

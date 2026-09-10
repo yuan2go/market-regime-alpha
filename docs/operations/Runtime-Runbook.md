@@ -430,3 +430,49 @@ inconsistent frozen plans fail closed before physical verification commands.
 Sustained proof requires at least three consecutive naturally observed successful
 trading sessions, preferably five. Until those days actually occur and close,
 report `BLOCKED_BY_ELAPSED_REAL_TIME`; never create synthetic day ledgers.
+
+### Research Validity baseline
+
+Use the same original database and Artifact root with read-only diagnostic
+credentials. The isolated analysis wheel can run alongside the installed
+operational service; it does not activate a new service profile.
+
+```bash
+uv run mra research daily observations --target-session-from 2026-09-10 --target-session-to 2026-09-14 --experimental-model-use-id "$ORIGINAL_MODEL_USE" --include-unavailable
+uv run mra research validity daily
+uv run mra research validity daily --target-session-from 2026-09-10 --target-session-to 2026-09-10
+```
+
+Observation filters also accept exact Dataset/Decision IDs and `--completed-only`.
+The validity entry always reconciles the full bound Model/use/Target cohort.
+Date arguments select a descriptive view; they cannot cherry-pick the cohort
+used for sample adequacy. Unavailable/failed requests and planning gaps remain
+visible. Complete history reads are explicit; the service's default health budget
+is unchanged.
+
+The current protocol is v2, first eligible Target Sep-14, with 20 real estimable
+sessions and 500 common observations required. Rolling N is 20, K is 5, and
+quantile tails each contain `floor(n/5)` observations ranked solely by frozen
+forecasts with deterministic commitment-ID ties. Only ALL_POPULATION is declared.
+v1 remains immutable and explicitly incomplete because its exact Candidate,
+Eligibility and instrument roster binding was missing. Sep-11 belongs to that
+descriptive predecessor; Sep-10 new statistics are post-hoc. No previous
+Evaluation receives new metric rows. A new protocol requires a new version,
+predecessor SHA, actual declaration time, reason and later future cohort.
+
+The report separates canonical stored metrics from versioned derived statistics,
+temporal validity from Formal PIT, and sample adequacy from information gain.
+IC dispersion uses session counts; a 31-stock cross-section is one session.
+SE is descriptive, with no claimed confidence interval or independence proof.
+Rank baskets have no trading, T+1, cost or account-P&L authority.
+
+Walk-forward is a dry-run over actual captured sessions and exact canonical data:
+252 training, 63 validation, 1 embargo and 21 OOS sessions, step 21. It checks
+source knowledge and immutable Model binding before OOS; it never trains.
+History advances with the observation cutoff. Missing history returns NO with
+blockers. Existing daily DISCOVERY Partitions remain DISCOVERY. Formal Provider
+PIT, additional regime slices and economic validity remain NOT_READY.
+
+Do not enter Alpha iteration on a single session or merely because the baseline
+infrastructure passes. Actual predeclared multi-day minima and repeatable
+information gain are prerequisites; model changes still require explicit scope.
