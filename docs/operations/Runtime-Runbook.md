@@ -361,6 +361,20 @@ runtime envelope. Approved schema publishers and the trusted cluster
 administrator remain outside the untrusted-client threat model; this guard does
 not replace database permissions or grant authority to change them.
 
+A resource-budget exit is a stopped service, even if its parent research Run
+remains RUNNING. Inspect the exact owned job and canonical Attempts before
+recovery. Preserve the exit/log prefix, verify no unknown effect, then use the
+qualified profile handoff or unchanged-installation restart procedure above.
+Do not increase timeout from one slow tick or let a supervisor restart forever.
+New permission probes and health projections have separate measured costs;
+their successful timings cannot explain an earlier uninstrumented failure.
+
+Check actual backup-refresh event receipts for scheduled fire, drain, dump,
+Artifact verification, mirror, profile refresh and restart. A configured calendar
+alone proves none of these. Keep the original cutover cohort boundary across
+refreshes. The service's fresh backup observation and last Artifact verification
+are separate from Provider availability and publication/Outcome timeliness.
+
 A changed grant envelope requires a qualified restricted-login vertical slice,
 exact owned-service drain, current verified backup, and an administrator's scoped
 role adjustment. Freeze/install the implementation and prepare a new deployment

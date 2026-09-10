@@ -101,7 +101,7 @@ including PostgreSQL, and **7 explicit historical tests** with locally recovered
 prerequisites. Ruff, mypy, build, installed-wheel smoke, docs, inventory and
 hygiene passed. This does not automatically qualify later changes.
 
-The deployed implementation is `1b5377d6adf46b61b06f34356bd37f2e599c74e5`;
+Initial activation used `1b5377d6adf46b61b06f34356bd37f2e599c74e5`;
 source tree `1e8f6682340c8591f25d7575f2960ae13197c3fc`. Its final directed
 43-test regression passed at test-only commit
 `0d09cda03f24146dbef4a224b91076bd17305e3e`, which preserves that source tree.
@@ -151,6 +151,64 @@ health retains missed prospective windows and planning gaps rather than treating
 terminal coverage as collection success. New daily captures do not retroactively
 qualify the separate intraday prospective series. No Alpha, formal Provider/PIT,
 Model or Production qualification is granted.
+
+## Current operational closure observation
+
+The authorized installed update is
+`db69cd34f6ef569663fac4f7029d79783b52948e`, based on merged main
+`90c5af03c905b1c91a4c284cd838ea39166a5c42`. Source tree
+`0b76762931fafeee4f86b07bc3dcc89d9d6db0c3` and tests tree
+`433d9dc81485f3bf0d8ebd88a7be9410d59a140c` bind the implementation.
+No SQL resource, schema membership, model, Target or dependency changed.
+
+The authenticated runtime login now has an explicit positive and negative
+privilege envelope in `infrastructure/postgres/runtime_privileges.py`.
+Preflight and before-action checks reject impersonation, changed role identity,
+dangerous role flags, additional table/column/sequence writes, role memberships,
+grant options and unapproved routines. Reference-owner identity-column grants
+support row locks; they do not authorize schema, Account, formal Model/PIT or
+research qualification. The original role's excess GC-candidate INSERT and
+whole-table UPDATE were revoked after a verified backup. The trusted cluster
+administrator remains outside this untrusted-client threat boundary.
+
+`mra research daily health` reconciles original frozen plans and reports a
+complete day ledger. The daily and prospective projections expose ALL_HISTORY,
+POST_CURRENT_CUTOVER and exact recent TradingSession cohorts. Rates retain
+explicit numerators, denominators, denominator kinds and unavailable reasons.
+No history is deleted and an unchecked replay is not a passing replay.
+
+At **2026-09-10 10:07:13 +08:00**, the original owned service was running the
+new isolated wheel/profile after activation at 09:58:55. Six completed ticks
+took **36–66 seconds** against the unchanged 120-second budget. Active, expired
+and unknown Attempts were zero. The earlier service's 09:11 resource stop
+(123-second tick) remains recorded; its historical latency cause is unproven.
+It was recovered through the exact owned-service handoff, without reopening
+terminal Runs or increasing a timeout.
+
+The priority prediction remains the original timely publication above, with
+31 predicted/common members and one UNKNOWN in the 32-member population. Its
+31 Outcome commitments are pending natural maturity at 15:00. Publication
+report/replay still matches with zero business writes. There is no real mature
+Evaluation yet, and no financial metric or Alpha inference is substituted.
+
+| Independent observation | Result at this cutoff |
+|---|---|
+| Current health | Privilege envelope, identity, fresh backup and complete ledger pass; known terminal failures and one planning gap remain explained and visible |
+| Historical / post-cutover prospective windows | Historical 544 MISSED retained; post-cutover 320 future, zero opened, no estimated success rate |
+| Daily requests | All-history 5 requests / 2 publications; post-cutover 3 / 1; request denominator includes terminal failures and abstention |
+| Scheduled backup continuity | Actual 03:00 fire, graceful drain, backup, integrity verification, mirror and restart completed in about 885 seconds; the 03:00/19:00 job now uses the new installation |
+| Updated backup and restore | 2,974 referenced Artifacts; all 194 restored table hashes match; original prediction replay matches with zero writes; same-host second physical device is not offsite |
+| Directed verification | 125 scoped cases passed; 26 affected cases rerun at the final implementation; Ruff, mypy, build and seven isolated installed CLI checks passed |
+| Full repository regression | NOT_RUN: no shared pool/UoW/schema change in this scope; earlier full activation results are not relabeled as this revision's full PASS |
+| Real mature Evaluation / complete data loop | BLOCKED_BY_REAL_TIME |
+| Three-day sustained proof | BLOCKED_BY_ELAPSED_REAL_TIME |
+
+Exact receipts, complete scope ledgers, failures, query plans and raw-log hashes
+are retained in the [archive index](../archive/README.md). These are observations
+at a frozen cutoff, not a guarantee that the service remains alive later.
+Continue original pending work through the Runtime and inspect actual health;
+research validity/Alpha iteration remains premature until a real Evaluation
+closes the lineage.
 
 ## Prior repository hygiene evidence
 

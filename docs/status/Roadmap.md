@@ -83,14 +83,19 @@ unchanged.
 
 ## Operational data-loop closure
 
-Current work closes the existing frozen prediction only after its real Target
-matures. It hardens the runtime privilege envelope and adds scoped read-only
-health/day-ledger projections, without changing models, targets or old results.
-The restricted-login vertical contract covers the permission changes; current
-live lineage, backup refresh and pending work require separate observation.
-Three consecutive real trading days remain a sustained-evidence gate, not a
-reason to wait or synthesize observations. See Current State for the current
-observation cutoff and independent gates.
+The runtime privilege envelope, scoped read-only health and frozen-work day
+ledger are implemented, verified and installed in the original owned scope.
+The actual scheduled backup, exact service recovery and independent restore
+retain their receipts. Models, targets and prior results are unchanged.
+
+The remaining dependency is the original timely prediction's natural Target
+maturity, followed by actual collection, owner settlement, Evaluation and
+zero-write report/replay. The service retains its original plan and keeps old
+terminal failures closed. Three consecutive real trading days remain a separate
+sustained-evidence gate, not a reason to wait or synthesize observations.
+Observe future tick latency after the recorded resource stop; its historical
+cause is unproven and budgets were not increased. See Current State for the
+frozen observation cutoff. Do not begin Alpha iteration before real Evaluation.
 
 ## Remaining architectural debt
 

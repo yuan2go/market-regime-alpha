@@ -37,3 +37,10 @@ record the authorized original-scope installed handoff, actual prediction,
 preserved failures and independent restore/replay. Natural maturity and sustained
 multi-day evidence remain separate blocked gates; this record grants no Alpha,
 formal Provider/PIT or Production qualification.
+
+The later [operational closure observation](Operational-Data-Loop-Closure-Verification-2026-09-10.md)
+and [source-bound evidence index](Operational-Data-Loop-Closure-Evidence-2026-09-10.json)
+record privilege drift hardening, scoped health, recovery from a real resource
+stop, the installed handoff and the original pending prediction. The earlier
+activation record remains immutable. Real Target maturity and sustained
+multi-day observation are still blocked at this later cutoff.
