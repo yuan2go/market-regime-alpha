@@ -19,6 +19,7 @@ def runtime_login(database_url):
         admin.execute(sql.SQL("REVOKE TEMP ON DATABASE {} FROM PUBLIC").format(sql.Identifier(admin.info.dbname)))
         admin.execute(sql.SQL("CREATE ROLE {} LOGIN PASSWORD {}").format(sql.Identifier(role), sql.Literal(password)))
         admin.execute(sql.SQL("GRANT USAGE ON SCHEMA mra TO {}").format(sql.Identifier(role)))
+        admin.execute(sql.SQL("GRANT EXECUTE ON FUNCTION pg_catalog.pg_control_system() TO {}").format(sql.Identifier(role)))
         admin.execute(sql.SQL("GRANT SELECT ON ALL TABLES IN SCHEMA mra TO {}").format(sql.Identifier(role)))
         for table in ("runtime_attempt", "runtime_run", "runtime_step", "command_receipt", "artifact"):
             admin.execute(sql.SQL("GRANT INSERT, UPDATE ON mra.{} TO {}").format(sql.Identifier(table), sql.Identifier(role)))

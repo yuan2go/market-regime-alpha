@@ -37,6 +37,7 @@ def test_restricted_runtime_login_completes_prediction_maturity_recovery_and_rep
                 with psycopg.connect(target_database_url) as admin:
                     admin.execute(sql.SQL("GRANT USAGE ON SCHEMA mra TO {}").format(sql.Identifier(role)))
                     admin.execute(sql.SQL("GRANT SELECT ON ALL TABLES IN SCHEMA mra TO {}").format(sql.Identifier(role)))
+                    admin.execute(sql.SQL("GRANT EXECUTE ON FUNCTION pg_catalog.pg_control_system() TO {}").format(sql.Identifier(role)))
                     for table in WRITE_TABLES:
                         admin.execute(sql.SQL("GRANT INSERT, UPDATE ON mra.{} TO {}").format(sql.Identifier(table), sql.Identifier(role)))
                     for table, column in REFERENCE_LOCKS.items():

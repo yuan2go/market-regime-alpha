@@ -58,7 +58,7 @@ def _reject_privilege_drift(connection: Any) -> None:
     routines = connection.execute("""
         SELECT n.nspname,p.proname,pg_get_function_identity_arguments(p.oid),
                p.prorettype='trigger'::regtype,p.prosecdef,p.prokind,l.lanname,
-               has_function_privilege(p.oid,'EXECUTE WITH GRANT OPTION')
+               has_function_privilege(p.oid,'EXECUTE WITH GRANT OPTION'),p.pronargs
         FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
         JOIN pg_language l ON l.oid=p.prolang
         WHERE has_function_privilege(p.oid,'EXECUTE') AND (
@@ -67,12 +67,12 @@ def _reject_privilege_drift(connection: Any) -> None:
                   WHERE acl.grantee=(SELECT oid FROM pg_roles WHERE rolname=session_user)) OR
           has_function_privilege(p.oid,'EXECUTE WITH GRANT OPTION'))
     """).fetchall()
-    for schema, name, args, trigger, definer, kind, language, grantable in routines:
+    for schema, name, args, trigger, definer, kind, language, grantable, input_count in routines:
         # Trigger functions cannot be invoked as ordinary functions. All allowed
         # routines execute with invoker permissions; schema/catalog verification
         # binds their released definitions independently of this grant envelope.
         allowed = schema == "mra" and kind == "f" and language in ("sql", "plpgsql") and (trigger or (name, args) in READ_FUNCTIONS)
-        allowed |= schema == "pg_catalog" and name == "pg_control_system" and args == ""
+        allowed |= schema == "pg_catalog" and name == "pg_control_system" and input_count == 0 and kind == "f"
         if not allowed or definer or grantable:
             raise ValueError(f"DEPLOYMENT_RUNTIME_PRINCIPAL_PRIVILEGES: routine {schema}.{name}")
 
