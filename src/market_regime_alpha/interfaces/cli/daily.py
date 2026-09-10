@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 from contextlib import nullcontext
 from dataclasses import replace
-from datetime import datetime
+from datetime import date, datetime
 from hashlib import sha256
 from pathlib import Path
 from typing import Any
@@ -46,10 +46,20 @@ def add_daily_parser(areas: Any) -> None:
     health.add_argument('--cutover-at', type=datetime.fromisoformat)
     health.add_argument('--recent-sessions', type=int, default=5)
     health.add_argument('--replay', action='store_true')
+    observation = operations.add_parser("observations")
+    observation.add_argument("--target-session-date", type=date.fromisoformat)
+    observation.add_argument("--model-version-id", type=UUID)
+    observation.add_argument("--target-definition-id", type=UUID)
 
 
 def dispatch_daily(arguments: argparse.Namespace, settings: TargetSettings) -> object:
     command = arguments.daily_command
+    if command == "observations":
+        from market_regime_alpha.interfaces.daily_observations import daily_observations
+        with bootstrap_application(settings) as app:
+            return daily_observations(app, target_session_date=arguments.target_session_date,
+                                      model_version_id=arguments.model_version_id,
+                                      target_definition_id=arguments.target_definition_id)
     if command == 'health':
         from market_regime_alpha.interfaces.daily_health import daily_health
         with bootstrap_application(settings) as app:

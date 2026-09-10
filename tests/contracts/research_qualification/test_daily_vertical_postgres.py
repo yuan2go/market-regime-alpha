@@ -767,6 +767,28 @@ def test_completed_model_is_consumed_without_backtest_and_publication_is_replaya
         assert entry["denominators"]["sampled"] == len(plan.instrument_ids)
         assert entry["replay"]["matched"] and entry["replay"]["mismatch_count"] == 0
         assert ledger["business_writes"] == 0
+        from market_regime_alpha.interfaces.daily_observations import daily_observations
+        from market_regime_alpha.runtime.errors import ArtifactIntegrityError
+        observation = daily_observations(app, target_session_date=target_session.session_date,
+                                         model_version_id=plan.model_version_id,
+                                         target_definition_id=plan.target_definition_id)
+        observed = next(row for row in observation["cycles"] if row["prediction_id"] == plan.prediction_id)
+        expected_commitments = {row["commitment_id"] for row in app.daily_prediction_reads.forecast_projection(plan)["predictions"] if row["commitment_id"] is not None}
+        assert {row["commitment_id"] for row in observed["observations"]} == expected_commitments
+        assert {row["commitment_id"] for row in observed["labels"]} == expected_commitments
+        assert observed["publication"]["denominators"]["sampled"] == len(plan.instrument_ids)
+        assert observed["evaluation"] == app.daily_prediction_reads.evaluation_projection(evaluation_id)
+        assert observation["business_writes"] == 0
+        assert not daily_observations(app, model_version_id=uuid4())["cycles"]
+        with monkeypatch.context() as patch:
+            original_observations = app.daily_prediction_reads.evaluation_observations
+            def missing_acquisition(identity):
+                result = original_observations(identity)
+                result["observations"] = result["observations"][1:]
+                return result
+            patch.setattr(app.daily_prediction_reads, "evaluation_observations", missing_acquisition)
+            with pytest.raises(ArtifactIntegrityError, match="acquisition roster differs"):
+                daily_observations(app, model_version_id=plan.model_version_id)
         completed_health = app.daily_prediction_reads.operational_health(plan)
         assert completed_health["outcome_backlog"]["observed_count"] == 0
         assert completed_health["human_research_disposition"][

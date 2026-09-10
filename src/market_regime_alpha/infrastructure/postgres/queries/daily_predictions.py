@@ -480,6 +480,39 @@ class PostgresDailyPredictionReads:
         if tuple(row[0] for row in rows) != tuple(sorted(commitments, key=str)):
             raise ArtifactIntegrityError("daily Evaluation partition differs from the exact published commitment roster")
 
+    def evaluation_observations(self, evaluation_id: UUID) -> dict[str, Any]:
+        """Project the acquired immutable Outcome revisions, never current bars."""
+        with self._pool.connection(read_only=True) as connection, connection.cursor(row_factory=dict_row) as cursor:
+            observations = cursor.execute("""
+                SELECT observation.*, member.commitment_id, commitment.instrument_id
+                FROM mra.evaluation_observation observation
+                JOIN mra.research_partition_member member USING(research_partition_member_id)
+                JOIN mra.decision_target_commitment commitment USING(commitment_id)
+                WHERE observation.evaluation_run_id=%s ORDER BY member.commitment_id
+            """, (evaluation_id,)).fetchall()
+            labels = cursor.execute("""
+                SELECT metric.*, member.commitment_id, definition.metric_code
+                FROM mra.evaluation_observation observation
+                JOIN mra.research_partition_member member USING(research_partition_member_id)
+                JOIN mra.market_target_outcome_metric metric USING(market_target_outcome_revision_id)
+                JOIN mra.target_metric_definition definition USING(target_metric_definition_id)
+                WHERE observation.evaluation_run_id=%s
+                ORDER BY member.commitment_id, definition.metric_code
+            """, (evaluation_id,)).fetchall()
+            outcomes = cursor.execute("""
+                SELECT revision.*, outcome.commitment_id
+                FROM mra.evaluation_observation observation
+                JOIN mra.market_target_outcome_revision revision USING(market_target_outcome_revision_id)
+                JOIN mra.market_target_outcome outcome USING(market_target_outcome_id)
+                WHERE observation.evaluation_run_id=%s ORDER BY outcome.commitment_id
+            """, (evaluation_id,)).fetchall()
+            sources = cursor.execute("""
+                SELECT source.* FROM mra.evaluation_observation observation
+                JOIN mra.market_target_outcome_source source USING(market_target_outcome_revision_id)
+                WHERE observation.evaluation_run_id=%s ORDER BY source.market_target_outcome_source_id
+            """, (evaluation_id,)).fetchall()
+        return {"observations": observations, "labels": labels, "outcomes": outcomes, "sources": sources}
+
     def current_sessions(self) -> tuple[UUID, UUID, datetime]:
         with self._pool.connection(read_only=True) as connection:
             row = connection.execute("""WITH observed AS (SELECT clock_timestamp() AS at),
