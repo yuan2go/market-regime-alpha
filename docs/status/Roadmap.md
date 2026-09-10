@@ -128,6 +128,33 @@ preferably five, remain required for sustained proof. Do not synthesize days or
 wait for them during an implementation session. Tick latency and future scheduled
 fires need continuing observation; the 120-second budget is unchanged.
 
+## Research Validity baseline execution
+
+The authorized baseline is main `c61a133995c015530a992a87421e750e64f4d5ef`.
+The isolated execution preserves the running service and all frozen research
+identities. Sep-10 remains descriptive; new diagnostics on that session are
+post-hoc and cannot enter the predeclared future cohort.
+
+- [ ] Record current service, canonical completed/pending work and backup.
+- [ ] Freeze an append-only, source-pinned protocol before the future cohort's
+  Outcomes, including full population, formula versions, sample floors and
+  unavailable slice/economic assumptions. Do not write to the old Evaluation.
+- [ ] Extend exact canonical observations, acquired revision/source lineage and
+  temporal validation; fail closed on roster or replay mismatch.
+- [ ] Implement Evaluation-owned Decimal statistics, exact common populations,
+  multi-session/rolling aggregation and a read-only validity CLI.
+- [ ] Validate walk-forward calendar/data boundaries and audit existing slice,
+  economic and formal PIT readiness without training or promotion.
+- [ ] Run focused contracts, static/build/installed checks and documentation
+  guards; retain source-bound evidence and a fresh final operational observation.
+
+Protocol declaration uses a packaged immutable source resource and exact SHA,
+with the original database clock/cohort observation retained as declaration
+evidence. It does not impersonate a registered PostgreSQL Artifact: registering
+new Artifact metadata through the existing owner would require the running
+service's exclusive writer admission. This read-only package does not stop that
+service, add a writer bypass or create a second research persistence family.
+
 ## Remaining architectural debt
 
 | Boundary | Executable evidence | Smallest next investigation |

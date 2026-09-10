@@ -1,0 +1,114 @@
+{
+  "acceptance": "Interpretation and sample adequacy only; never automatic model promotion, tuning, Provider qualification, trading or Alpha claim",
+  "baseline_strategy_version_id": "e40e1deb-dec2-5b08-bc93-06ca6a79ed31",
+  "cohort": "Every canonical target session from first eligibility onward, original published roster; identical session duplicates fail closed; date filters are descriptive views only",
+  "declared_at": "2026-09-11T00:23:57.912926+08:00",
+  "economic_assumptions": null,
+  "economic_policy": "NOT_ESTIMABLE without frozen executable holdings/turnover/cost/slippage/tradability/capacity/T+1 assumptions; independent episode diagnostics are not account P&L",
+  "evidence_class": "EXPLORATORY",
+  "first_eligible_future_session": "2026-09-11",
+  "first_eligible_target_session_id": "e4b5765d-0223-5d91-b56a-4230bdc04df8",
+  "first_eligible_target_start": "2026-09-11T09:30:00+08:00",
+  "formula_contract": {
+    "aggregation": "equal-weight session IC summaries; pooled errors separately stock-observation weighted; sample std n-1; ICIR mean/std unannualized; SE std/sqrt(session count) descriptive only, independence unproven, no inferential CI",
+    "bias": "forecast - canonical label",
+    "calibration": "OLS canonical label on forecast with intercept on exact common population; zero forecast variance unavailable",
+    "direction": "sign(forecast)==sign(label); exact zero is flat, never probability",
+    "owner": "research_qualification.domain.validity_statistics",
+    "precision": 38,
+    "rank_ic": "Spearman with average ties; at least 3 finite common pairs; zero variance unavailable",
+    "rank_stability": "adjacent canonical session common instrument Spearman, no bridging unavailable session; exact overlap/union counts",
+    "ranking": "descending frozen forecast, deterministic commitment-id ties; equal-weight top/bottom K; disjoint tails; quantile tails floor(n/5); membership never uses label",
+    "reused_owner": "research_qualification.domain.evaluation_formula",
+    "reused_version": 1,
+    "rounding_mode": "ROUND_HALF_EVEN",
+    "version": 1
+  },
+  "historic_session_policy": "Before first eligibility only POST_HOC_DESCRIPTIVE; original Evaluation metric bytes untouched",
+  "identities": {
+    "experimental_model_use": {
+      "content_sha256": "37a79e1b642205739373a76bf9e25939c7d12d0b2968c65a496dc2abf0357760",
+      "id": "60902ae3-5776-5460-91b1-90ed3bc03525"
+    },
+    "feature_definition": {
+      "content_sha256": "2ea63ee095520fb8d9c6a97413958904f87ff83a97e7bd1518f4a60255dbccf7",
+      "id": "68aab3d4-bffc-56b3-a5d1-bf5b4616ccfc"
+    },
+    "model_version": {
+      "content_sha256": "5bf6ba74ead953f4fbab35513b572cae2d7152b6db80e51a2166458fd5c511eb",
+      "id": "fe47f296-17dc-5654-a9eb-cf149f5b01c9"
+    },
+    "target_definition": {
+      "content_sha256": "b78b91d93a50d74c6e62e26c7882475a9942e17ac6e3b63595e526eac7586100",
+      "id": "8cdc2e02-bf29-5f96-995c-4b576b9ab130"
+    }
+  },
+  "metric_roster": [
+    "prediction_coverage",
+    "pair_coverage",
+    "missingness",
+    "unknown",
+    "source_gap",
+    "publication_timeliness",
+    "population_stability",
+    "bias",
+    "mae",
+    "rmse",
+    "daily_rank_ic",
+    "ic_mean",
+    "ic_median",
+    "ic_sample_std",
+    "icir",
+    "positive_ic_session_ratio",
+    "ic_min_max",
+    "rank_stability",
+    "directional_hit_rate",
+    "predicted_positive_proportion",
+    "actual_positive_proportion",
+    "calibration_slope",
+    "calibration_intercept",
+    "forecast_dispersion",
+    "actual_dispersion",
+    "top_k_return",
+    "bottom_k_return",
+    "top_bottom_spread",
+    "quantile_spread"
+  ],
+  "minimum_observations": 500,
+  "minimum_rank_pairs": 3,
+  "minimum_sessions": 20,
+  "missingness_policy": "Retain complete sampled/commitment roster; pair requires complete canonical finite label and both finite forecasts and temporal validity; UNKNOWN availability excluded; finality UNKNOWN retained with explicit exploratory qualifier; no imputation",
+  "persistence": "PACKAGED_IMMUTABLE_SOURCE_RESOURCE; original canonical observations remain PostgreSQL/Artifact owned; no second research truth table",
+  "population": "ALL_PUBLISHED_COMMITMENTS_OF_ALL_DAILY_REQUESTS_FOR_EXACT_MODEL_USE_TARGET; preserve sampled ineligible unavailable failed sessions; no performance selection",
+  "predecessor": null,
+  "protocol_id": "r2_xshg32_validity_v1",
+  "protocol_version": 1,
+  "ranking_k": 5,
+  "ranking_quantiles": 5,
+  "reason": "Freeze prospective research interpretation before additional Outcomes; no change selected from Sep-10 results",
+  "revision_policy": "Append new immutable version and predecessor SHA, new actual declaration time and later first eligible future session; no old cohort relabeling",
+  "rolling_sessions": 20,
+  "schema": "research-validity-protocol-v1",
+  "slices": [
+    "ALL_POPULATION"
+  ],
+  "target_metric_code": "next_session_intraday_return",
+  "unavailable_slices": [
+    "broad_market_up_down",
+    "volatility_bucket",
+    "liquidity_bucket",
+    "breadth_bucket",
+    "existing_regime_identity_slice"
+  ],
+  "walk_forward": {
+    "embargo_sessions": 1,
+    "minimum_history_sessions": 337,
+    "model_binding": "IMMUTABLE_VERSION_PER_FOLD; no training in this protocol",
+    "oos_sessions": 21,
+    "pit_cutoff": "every fit/validation source known at or before fold cutoff; OOS labels cannot feed same-generation features; existing daily DISCOVERY partitions remain DISCOVERY",
+    "step_sessions": 21,
+    "training_sessions": 252,
+    "validation_sessions": 63,
+    "window_mode": "ROLLING"
+  }
+}
