@@ -81,6 +81,24 @@ A passing restore or disposable-clock test cannot satisfy natural maturity or
 sustained multi-day proof. Existing failed campaign and qualification limits stay
 unchanged.
 
+## Operational data-loop closure
+
+The runtime privilege envelope, scoped read-only health and frozen-work day
+ledger are implemented, verified and installed in the original owned scope.
+The actual scheduled backup, exact service recovery and independent restore
+retain their receipts. Models, targets and prior results are unchanged.
+
+The remaining dependency is the original timely prediction's natural Target
+maturity, followed by actual collection, owner settlement, Evaluation and
+zero-write report/replay. The service retains its original plan and keeps old
+terminal failures closed. Three consecutive real trading days remain a separate
+sustained-evidence gate, not a reason to wait or synthesize observations.
+The later health QueryCanceled exposed a Provider-wide bar-freshness scan;
+the corrected observer uses the exact plan roster and existing index. Continue
+observing tick latency: the intermittent underlying I/O cause remains unproven
+and budgets were not increased. See Current State for the frozen observation
+cutoff. Do not begin Alpha iteration before real Evaluation.
+
 ## Remaining architectural debt
 
 | Boundary | Executable evidence | Smallest next investigation |

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from contextlib import nullcontext
 from dataclasses import replace
+from datetime import datetime
 from hashlib import sha256
 from pathlib import Path
 from typing import Any
@@ -40,10 +41,22 @@ def add_daily_parser(areas: Any) -> None:
     retry.add_argument("--collection-plan", type=Path, required=True)
     retry.add_argument("--operation-config", type=Path, required=True)
     retry.add_argument("--maximum-steps", type=int, default=2)
+    health = operations.add_parser('health')
+    health.add_argument('--series-code', required=True)
+    health.add_argument('--cutover-at', type=datetime.fromisoformat)
+    health.add_argument('--recent-sessions', type=int, default=5)
+    health.add_argument('--replay', action='store_true')
 
 
 def dispatch_daily(arguments: argparse.Namespace, settings: TargetSettings) -> object:
     command = arguments.daily_command
+    if command == 'health':
+        from market_regime_alpha.interfaces.daily_health import daily_health
+        with bootstrap_application(settings) as app:
+            return {
+                'daily': daily_health(app,cutover_at=arguments.cutover_at,recent_sessions=arguments.recent_sessions,replay=arguments.replay),
+                'prospective': app.prospective_health.inspect(arguments.series_code,cutover_at=arguments.cutover_at,recent_sessions=arguments.recent_sessions),
+            }
     if command == "retry-population":
         import importlib
         from market_regime_alpha.interfaces.daily_collection import DailyCollectionPlan, PerCaptureBaoStockProvider, retry_failed_population_collection

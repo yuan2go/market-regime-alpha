@@ -129,6 +129,47 @@ class PostgresDailyPredictionReads:
         assert row is not None
         return row[0]
 
+    def operational_ledger_rows(self) -> dict[str, Any]:
+        """Bounded raw operational identities; no Market fetch or business mutation."""
+        with self._pool.connection(read_only=True) as connection:
+            connection.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+            with connection.cursor(row_factory=dict_row) as cursor:
+                now = cursor.execute("SELECT clock_timestamp() AS observed_at").fetchone()
+                assert now is not None
+                runs = cursor.execute("""
+                    SELECT r.*,s.schedule_code,a.content_sha256,a.size_bytes
+                    FROM mra.runtime_run r JOIN mra.runtime_schedule s USING(schedule_id)
+                    LEFT JOIN mra.artifact a ON a.artifact_id=r.config_artifact_id
+                    WHERE s.schedule_code ~ '^daily-(model|outcome|abstention)-[0-9a-f]{32}$'
+                      AND r.runtime_mode='SHADOW' AND s.runtime_mode='SHADOW'
+                    ORDER BY r.requested_at,r.run_id LIMIT 513
+                """).fetchall()
+                if len(runs)>512:
+                    raise ValueError("daily health ledger exceeds explicit row budget")
+                steps = cursor.execute("SELECT * FROM mra.runtime_step WHERE run_id=ANY(%s::uuid[]) ORDER BY run_id,ordinal", ([r['run_id'] for r in runs],)).fetchall()
+                attempts = cursor.execute("SELECT * FROM mra.runtime_attempt WHERE step_id=ANY(%s::uuid[]) ORDER BY step_id,attempt_no", ([s['step_id'] for s in steps],)).fetchall()
+                sessions = cursor.execute("""SELECT session_id,session_date,open_at,close_at FROM mra.trading_session
+                    WHERE exchange='XSHG' ORDER BY open_at DESC LIMIT 10000""").fetchall()
+                if len(sessions)==10000:
+                    raise ValueError("daily health calendar exceeds explicit row budget")
+                freshness = cursor.execute("""
+                    SELECT max(recorded_at) FILTER(WHERE capture_key LIKE 'daily-input:%%') AS input_capture,
+                           max(recorded_at) FILTER(WHERE capture_key LIKE 'daily-population:%%') AS population_capture
+                    FROM mra.data_capture WHERE status='CAPTURED'
+                """).fetchone()
+                artifact = cursor.execute("SELECT max(last_verified_at) AS last_verified_at FROM mra.artifact").fetchone()
+        for run in runs:
+            run['plan_content'] = None
+            if run['config_hash'] != run['content_sha256'] or run['size_bytes'] is None:
+                run['plan_error'] = 'FROZEN_PLAN_IDENTITY_MISMATCH'
+                continue
+            try:
+                run['plan_content'] = self._byte_store.read_bytes(run['content_sha256'],expected_size=run['size_bytes'])
+            except (OSError, ValueError, ArtifactByteStoreError, ArtifactIntegrityError):
+                run['plan_error'] = 'FROZEN_PLAN_BYTES_UNREADABLE'
+        return {**now, 'runs': runs,'steps': steps,'attempts': attempts,'sessions': sessions,
+                'freshness': freshness,'artifact_verification': artifact}
+
     def operational_health(self, plan: DailyPredictionPlan) -> dict[str, Any]:
         """Bounded facts for publication, backlog, calendar, model, and freshness."""
 
@@ -203,13 +244,17 @@ class PostgresDailyPredictionReads:
                   (SELECT max(recorded_at) FROM mra.data_capture
                    WHERE provider_product_id = %s),
                   (SELECT max(recorded_at) FROM mra.market_bar_revision
-                   WHERE provider_product_id = %s),
+                   WHERE provider_product_id = %s
+                     AND instrument_id = ANY(%s::uuid[])
+                     AND session_id = ANY(%s::uuid[])),
                   (SELECT max(recorded_at) FROM mra.source_gap
                    WHERE provider_product_id = %s)
                 """,
                 (
                     plan.provider_product_id,
                     plan.provider_product_id,
+                    list(plan.instrument_ids),
+                    [plan.input_session_id, plan.target_session_id],
                     plan.provider_product_id,
                 ),
             ).fetchone()
@@ -356,6 +401,7 @@ class PostgresDailyPredictionReads:
             "data_freshness": {
                 "last_capture_recorded_at": freshness[0],
                 "last_bar_recorded_at": freshness[1],
+                "bar_scope": "FROZEN_PLAN_INSTRUMENTS_INPUT_AND_TARGET_SESSIONS",
                 "last_source_gap_recorded_at": freshness[2],
                 "capture_age_seconds": (
                     None

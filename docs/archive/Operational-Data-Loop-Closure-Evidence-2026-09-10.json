@@ -1,0 +1,1908 @@
+{
+  "activation": {
+    "activated_at": "2026-09-10T01:58:55.369599+00:00",
+    "backup_schedule": [
+      {
+        "Hour": 3,
+        "Minute": 0
+      },
+      {
+        "Hour": 19,
+        "Minute": 0
+      }
+    ],
+    "health_cutover_at": "2026-09-09T15:45:50.016124+00:00",
+    "implementation_sha": "db69cd34f6ef569663fac4f7029d79783b52948e",
+    "label": "local.mra.prospective.r2-xshg32",
+    "plists": [
+      {
+        "label": "local.mra.prospective.r2-xshg32",
+        "sha256": "aad78741b2a5c0832e21083b0e1a8a80ac794deae59ba4e307f6e6fe33d8fe8d"
+      },
+      {
+        "label": "local.mra.prospective.r2-xshg32.backup-refresh",
+        "sha256": "ec4ecb24d09949a36e533780a74bb8fe550cd14e25bf18f28c4c8797007adfb9"
+      }
+    ],
+    "principal": {
+      "name": "mra_r2_runtime_20260909",
+      "oid": 6775405
+    },
+    "profile_sha256": "7fa382783660e27915aa208d353001a576476247725d12c1c420178a3250605e",
+    "receipt_sha256": "cab230ebedd51acb8cd3fb02d85c00e474ddd649df8bb2ba94dc55c0e638fcc6",
+    "service_limits": "FROZEN_PROFILE_BUDGETS; NO_UNCONDITIONAL_RESTART"
+  },
+  "active_expired_unknown_attempts": [
+    0,
+    0,
+    0
+  ],
+  "authority": "NON_AUTHORITATIVE_SOURCE_AND_OBSERVATION_INDEX",
+  "backup": {
+    "artifact_count": 2974,
+    "artifact_roster_sha256": "ee84c92994eef8c061d89629cc7896e1a4d98be10648eabf29fb1ea328bbd872",
+    "backup_sha256": "ee2c2e8026c337ef5fdd805e21715ad9c7a409c687ebac22b2d74a2abe704da6",
+    "backup_size_bytes": 209567374,
+    "database": {
+      "cluster_identity": "7681924516459622681",
+      "name": "mra_wp18q_r2_operational_20260905",
+      "oid": 287543,
+      "owner": "yuan",
+      "server_version": "16.15 (Homebrew)"
+    },
+    "inventory_sha256": "bb63e43e27b8da74da0c827c46f150ba91a5ee20b170f708821b1cfae798d912",
+    "snapshot_contract": "POSTGRES_EXPORTED_SNAPSHOT_AND_EXACT_ARTIFACT_ROSTER",
+    "verified_at": "2026-09-10 01:46:47.493298+00"
+  },
+  "backup_mirror": {
+    "different_physical_device": true,
+    "matched": true,
+    "offsite": false,
+    "same_host": true
+  },
+  "baseline_sha": "90c5af03c905b1c91a4c284cd838ea39166a5c42",
+  "baseline_tree": "db76d1854a46ec3013f64ec2309f3d8ef64d3aed",
+  "canonical_tables": 194,
+  "catalog_checksum": "44a27e01109567395ad803e0c0c3b2859e8890fb23cf27b0b2c26b98db559e51",
+  "commands": [
+    {
+      "clean_before": true,
+      "command": [
+        "uv",
+        "run",
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/contracts/test_runtime_principal_postgres.py",
+        "tests/contracts/test_daily_runtime_permissions_postgres.py",
+        "tests/contracts/market/test_prospective_health.py",
+        "tests/contracts/market/test_prospective_health_postgres.py",
+        "tests/contracts/test_deployment_installation.py",
+        "tests/contracts/test_daily_collection_handoff.py",
+        "tests/contracts/market/test_prospective_operation_guard_postgres.py",
+        "tests/contracts/market/test_prospective_cli.py",
+        "tests/contracts/test_bootstrap_cli.py",
+        "tests/contracts/test_target_architecture.py",
+        "tests/architecture",
+        "tests/scripts/test_repository_hygiene.py",
+        "--maxfail=1",
+        "-o",
+        "junit_family=xunit1",
+        "--junitxml=$EVIDENCE_DIR/final-targeted.xml"
+      ],
+      "exit_code": 0,
+      "identity": {
+        "commit": "2fafc3ecc261cf2a11c01db4bd44b2b973d394f1",
+        "source_tree": "cbc460559c47bcbb408921702bd2b4c7856eb25f",
+        "tests_tree": "bf659a44aacc9ac21fb03b79be2fdf71590f55b3"
+      },
+      "label": "final-targeted",
+      "log": {
+        "name": "final-targeted.log",
+        "sha256": "89662e7e7570a73ab2fa4e042a2d9095f8f5444d60f885a348532fc02af13318"
+      },
+      "seconds": 121.68364596366882
+    },
+    {
+      "clean_before": true,
+      "command": [
+        "uv",
+        "run",
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/contracts/test_runtime_principal_postgres.py",
+        "tests/contracts/test_daily_runtime_permissions_postgres.py",
+        "tests/contracts/test_deployment_installation.py",
+        "--maxfail=1",
+        "-o",
+        "junit_family=xunit1",
+        "--junitxml=$EVIDENCE_DIR/qualified-principal.xml"
+      ],
+      "exit_code": 0,
+      "identity": {
+        "commit": "db69cd34f6ef569663fac4f7029d79783b52948e",
+        "source_tree": "0b76762931fafeee4f86b07bc3dcc89d9d6db0c3",
+        "tests_tree": "433d9dc81485f3bf0d8ebd88a7be9410d59a140c"
+      },
+      "label": "qualified-principal",
+      "log": {
+        "name": "qualified-principal.log",
+        "sha256": "f722c1510983f31c73924b46901f710438f4fb63c6bde4b51a5c6bd5676e93d6"
+      },
+      "seconds": 41.78019714355469
+    },
+    {
+      "clean_before": true,
+      "command": [
+        "uv",
+        "run",
+        "python",
+        "-m",
+        "ruff",
+        "check",
+        "."
+      ],
+      "exit_code": 0,
+      "identity": {
+        "commit": "db69cd34f6ef569663fac4f7029d79783b52948e",
+        "source_tree": "0b76762931fafeee4f86b07bc3dcc89d9d6db0c3",
+        "tests_tree": "433d9dc81485f3bf0d8ebd88a7be9410d59a140c"
+      },
+      "label": "qualified-ruff",
+      "log": {
+        "name": "qualified-ruff.log",
+        "sha256": "208d75f1e5c9f11d5941fdebbb58423d40820099999bb0d53e41fee7996e09df"
+      },
+      "seconds": 0.11533904075622559
+    },
+    {
+      "clean_before": true,
+      "command": [
+        "uv",
+        "run",
+        "python",
+        "-m",
+        "mypy"
+      ],
+      "exit_code": 0,
+      "identity": {
+        "commit": "db69cd34f6ef569663fac4f7029d79783b52948e",
+        "source_tree": "0b76762931fafeee4f86b07bc3dcc89d9d6db0c3",
+        "tests_tree": "433d9dc81485f3bf0d8ebd88a7be9410d59a140c"
+      },
+      "label": "qualified-mypy",
+      "log": {
+        "name": "qualified-mypy.log",
+        "sha256": "ebf24a0c7c3eac5a8599b1b69b96362f9656ca0144fc19a0464dc8c41a234ad3"
+      },
+      "seconds": 0.3846151828765869
+    },
+    {
+      "clean_before": true,
+      "command": [
+        "uv",
+        "run",
+        "python",
+        "-m",
+        "build",
+        "--installer",
+        "uv",
+        "--outdir",
+        "$EVIDENCE_DIR/qualified-dist"
+      ],
+      "exit_code": 0,
+      "identity": {
+        "commit": "db69cd34f6ef569663fac4f7029d79783b52948e",
+        "source_tree": "0b76762931fafeee4f86b07bc3dcc89d9d6db0c3",
+        "tests_tree": "433d9dc81485f3bf0d8ebd88a7be9410d59a140c"
+      },
+      "label": "qualified-build",
+      "log": {
+        "name": "qualified-build.log",
+        "sha256": "0b8c6992fd4d34fec5d24719b6072af8b77f4d807aa40f97961ea06a96efb0b7"
+      },
+      "seconds": 5.352570056915283
+    },
+    {
+      "command": [
+        "/opt/homebrew/bin/uv",
+        "run",
+        "--no-project",
+        "--no-sync",
+        "--python",
+        "$PRIVATE_OPERATION/runtime-db69cd34/bin/python",
+        "$PRIVATE_OPERATION/runtime-db69cd34/bin/mra",
+        "research",
+        "daily",
+        "health",
+        "--series-code",
+        "r2_xshg32",
+        "--cutover-at",
+        "2026-09-09T15:45:50.016124+00:00",
+        "--recent-sessions",
+        "5",
+        "--replay"
+      ],
+      "database_name": "mra_wp18q_r2_operational_20260905",
+      "database_oid": 287543,
+      "database_role": "diagnostics",
+      "exit_code": 0,
+      "log": {
+        "name": "deployed-daily-health.log",
+        "sha256": "82a691ff4f6414a01dc39c221776aa88303587db36d6e3b5ea581d09541b8eb7"
+      },
+      "per_connection_work_mem": "SERVER_DEFAULT",
+      "seconds": 3.2558376249508
+    },
+    {
+      "command": [
+        "/opt/homebrew/bin/uv",
+        "run",
+        "--no-project",
+        "--no-sync",
+        "--python",
+        "$PRIVATE_OPERATION/runtime-db69cd34/bin/python",
+        "$PRIVATE_OPERATION/runtime-db69cd34/bin/mra",
+        "runtime",
+        "prepare-deployment",
+        "--operation-config",
+        "$PRIVATE_OPERATION/deployments/db69cd34f6ef569663fac4f7029d79783b52948e/operation-intent.json",
+        "--wheel",
+        "$PRIVATE_OPERATION/deployments/db69cd34f6ef569663fac4f7029d79783b52948e/market_regime_alpha-0.1.0-py3-none-any.whl",
+        "--source-checkout",
+        "$ISOLATED_WORKTREE",
+        "--backup-directory",
+        "$EVIDENCE_DIR/deployment-backup",
+        "--output",
+        "$PRIVATE_OPERATION/deployments/db69cd34f6ef569663fac4f7029d79783b52948e/operation.json",
+        "--expected-source-sha",
+        "db69cd34f6ef569663fac4f7029d79783b52948e"
+      ],
+      "database_name": "mra_wp18q_r2_operational_20260905",
+      "database_oid": 287543,
+      "database_role": "runtime",
+      "exit_code": 0,
+      "log": {
+        "name": "deployment-profile.log",
+        "sha256": "31eeeaa8252d2ce877d2b0f46f16db79ce865d191296a68a5369c187015cf49c"
+      },
+      "per_connection_work_mem": "SERVER_DEFAULT",
+      "seconds": 7.552579540992156
+    },
+    {
+      "command": [
+        "/opt/homebrew/bin/uv",
+        "run",
+        "--no-project",
+        "--no-sync",
+        "--python",
+        "$PRIVATE_OPERATION/runtime-db69cd34/bin/python",
+        "$PRIVATE_OPERATION/runtime-db69cd34/bin/mra",
+        "archive",
+        "prospective",
+        "preflight",
+        "--operation-config",
+        "$PRIVATE_OPERATION/deployments/db69cd34f6ef569663fac4f7029d79783b52948e/operation.json",
+        "--expected-database-name",
+        "mra_wp18q_r2_operational_20260905",
+        "--daily-plan-template",
+        "$PRIVATE_OPERATION/deployments/db69cd34f6ef569663fac4f7029d79783b52948e/daily-plan-template.json"
+      ],
+      "database_name": "mra_wp18q_r2_operational_20260905",
+      "database_oid": 287543,
+      "database_role": "runtime",
+      "exit_code": 0,
+      "log": {
+        "name": "qualified-live-preflight.log",
+        "sha256": "37e1dcbd29345e91065eca9bb21a31c0c4fb599e7c1966c45d31f71c95bde773"
+      },
+      "per_connection_work_mem": "SERVER_DEFAULT",
+      "seconds": 13.339395249960944
+    },
+    {
+      "command": [
+        "/opt/homebrew/bin/uv",
+        "run",
+        "--no-project",
+        "--no-sync",
+        "--python",
+        "$PRIVATE_OPERATION/runtime-db69cd34/bin/python",
+        "$PRIVATE_OPERATION/runtime-db69cd34/bin/mra",
+        "evidence",
+        "backup",
+        "--directory",
+        "$EVIDENCE_DIR/deployment-backup",
+        "--expected-database-name",
+        "mra_wp18q_r2_operational_20260905",
+        "--expected-database-oid",
+        "287543",
+        "--minimum-free-bytes",
+        "2147483648"
+      ],
+      "database_name": "mra_wp18q_r2_operational_20260905",
+      "database_oid": 287543,
+      "database_role": "backup",
+      "exit_code": 0,
+      "log": {
+        "name": "deployment-backup.log",
+        "sha256": "58618b6ecffedb31e124cd6a60b85fd808d7ed24bfd8da5bb2ecd82b8d882065"
+      },
+      "per_connection_work_mem": "256MB",
+      "seconds": 313.9296282499563
+    }
+  ],
+  "daily_scopes": {
+    "ALL_HISTORY": {
+      "attempts": {
+        "active": 0,
+        "expired": 0,
+        "failed": 3,
+        "unknown": 0
+      },
+      "evaluations_completed": 0,
+      "latest_evaluation_at": null,
+      "latest_outcome_at": null,
+      "latest_publication_at": "2026-09-09 18:17:35.943618+00:00",
+      "outcomes_completed": 0,
+      "prediction_requests": 5,
+      "publication_rate": {
+        "denominator": 5,
+        "denominator_kind": "DECLARED_PREDICTION_OR_ABSTENTION_REQUESTS",
+        "numerator": 2,
+        "reason_code": null,
+        "state": "ESTIMABLE"
+      },
+      "published": 2,
+      "replay_checked": 2,
+      "replay_mismatches": 0,
+      "reports_completed": 0,
+      "state": "AVAILABLE",
+      "states": {
+        "FAILED_TERMINAL": 3,
+        "MISSED_PUBLICATION": 1,
+        "PENDING_MATURITY": 1
+      },
+      "timely_publications": 2
+    },
+    "LAST_N_TRADING_SESSIONS": {
+      "attempts": {
+        "active": 0,
+        "expired": 0,
+        "failed": 3,
+        "unknown": 0
+      },
+      "evaluations_completed": 0,
+      "latest_evaluation_at": null,
+      "latest_outcome_at": null,
+      "latest_publication_at": "2026-09-09 18:17:35.943618+00:00",
+      "outcomes_completed": 0,
+      "prediction_requests": 5,
+      "publication_rate": {
+        "denominator": 5,
+        "denominator_kind": "DECLARED_PREDICTION_OR_ABSTENTION_REQUESTS",
+        "numerator": 2,
+        "reason_code": null,
+        "state": "ESTIMABLE"
+      },
+      "published": 2,
+      "replay_checked": 2,
+      "replay_mismatches": 0,
+      "reports_completed": 0,
+      "state": "AVAILABLE",
+      "states": {
+        "FAILED_TERMINAL": 3,
+        "MISSED_PUBLICATION": 1,
+        "PENDING_MATURITY": 1
+      },
+      "timely_publications": 2
+    },
+    "POST_CURRENT_CUTOVER": {
+      "attempts": {
+        "active": 0,
+        "expired": 0,
+        "failed": 1,
+        "unknown": 0
+      },
+      "evaluations_completed": 0,
+      "latest_evaluation_at": null,
+      "latest_outcome_at": null,
+      "latest_publication_at": "2026-09-09 18:17:35.943618+00:00",
+      "outcomes_completed": 0,
+      "prediction_requests": 3,
+      "publication_rate": {
+        "denominator": 3,
+        "denominator_kind": "DECLARED_PREDICTION_OR_ABSTENTION_REQUESTS",
+        "numerator": 1,
+        "reason_code": null,
+        "state": "ESTIMABLE"
+      },
+      "published": 1,
+      "replay_checked": 1,
+      "replay_mismatches": 0,
+      "reports_completed": 0,
+      "state": "AVAILABLE",
+      "states": {
+        "FAILED_TERMINAL": 1,
+        "MISSED_PUBLICATION": 1,
+        "PENDING_MATURITY": 1
+      },
+      "timely_publications": 1
+    }
+  },
+  "day_ledger": [
+    {
+      "denominators": null,
+      "evaluation_completed": null,
+      "input_session": "2026-09-07",
+      "outcome_completed_count": null,
+      "outcome_expected_count": null,
+      "outcome_run_id": null,
+      "plan_sha256": "68c8bf17ac841a723295de1cff8284ec45b3c53dcd5c7153da0875ccddcad257",
+      "prediction_id": "acfa974b-9ee8-5f52-ba83-43408b2a9eac",
+      "published_at": null,
+      "reason_code": "EMPTY_POPULATION_INFERENCE_UNSUPPORTED",
+      "replay": {
+        "state": "NOT_RUN"
+      },
+      "report_completed": null,
+      "run_id": "5d745e1e-088d-5099-add4-49fec094cc93",
+      "sampled": 32,
+      "state": "FAILED_TERMINAL",
+      "target_session": "2026-09-08"
+    },
+    {
+      "denominators": {
+        "baseline_prediction": 31,
+        "common_prediction": 31,
+        "eligible": 31,
+        "feature_ready": 31,
+        "model_prediction": 31,
+        "sampled": 32
+      },
+      "evaluation_completed": false,
+      "input_session": "2026-09-07",
+      "outcome_completed_count": 0,
+      "outcome_expected_count": 31,
+      "outcome_run_id": "7d31a1d1-410c-5246-8e04-7ed3efb11ae3",
+      "plan_sha256": "b89619847edd56541f9f6602c0573d3078f82a8073be34fa3296c14e81597614",
+      "prediction_id": "e208e9d4-7d12-5929-9867-bdce54a2a874",
+      "published_at": "2026-09-07 21:57:39.602585+00:00",
+      "reason_code": "OUTCOME_AUTHORITY_INTEGRITY_FAILED",
+      "replay": {
+        "business_writes": 0,
+        "dataset_id": "dc88144f-227a-5253-bc98-7e676f229851",
+        "matched": true,
+        "mismatch_count": 0,
+        "model_version_id": "fe47f296-17dc-5654-a9eb-cf149f5b01c9",
+        "prediction_id": "e208e9d4-7d12-5929-9867-bdce54a2a874",
+        "reports": [
+          "ArtifactBinding(artifact_id=UUID('82a05313-f033-449c-abbc-d8c7b6b2092d'), content_sha256=ContentHash(value='17cf11ca5d4a580b1fd0089195e204b8a9c6f93a3a6c95abd09d97e425eff9ac'), size_bytes=39865)",
+          "ArtifactBinding(artifact_id=UUID('9317f978-117b-461e-94cb-9f6143cff747'), content_sha256=ContentHash(value='3b22f1d5129a55870be3b22ebed8f5e840a827333272492e191dcdda0ff96b55'), size_bytes=4080)"
+        ]
+      },
+      "report_completed": false,
+      "run_id": "be904f26-9099-5774-aed1-36c5e4005d65",
+      "sampled": 32,
+      "state": "FAILED_TERMINAL",
+      "target_session": "2026-09-08"
+    },
+    {
+      "denominators": null,
+      "evaluation_completed": null,
+      "input_session": "2026-09-08",
+      "outcome_completed_count": null,
+      "outcome_expected_count": null,
+      "outcome_run_id": null,
+      "plan_sha256": "32f6d10070c2fe40d15911f774f27805215558551cb1c7adf3d10a0ba24b0ade",
+      "prediction_id": "42258e50-bad2-540e-8227-89703966d7a0",
+      "published_at": null,
+      "reason_code": "PROCESS_DOWNTIME_MISSED_PUBLICATION",
+      "replay": {
+        "state": "NOT_RUN"
+      },
+      "report_completed": null,
+      "run_id": "c954f608-c612-59ef-a078-58db89e5ea4d",
+      "sampled": 32,
+      "state": "MISSED_PUBLICATION",
+      "target_session": "2026-09-09"
+    },
+    {
+      "denominators": null,
+      "evaluation_completed": null,
+      "input_session": "2026-09-09",
+      "outcome_completed_count": null,
+      "outcome_expected_count": null,
+      "outcome_run_id": null,
+      "plan_sha256": "d17e47493ae527a965a12793c6395fb5a627666cdd18581cf531bab32847d8f0",
+      "prediction_id": "d89afb7c-6deb-5ec1-89af-a8866d5e2b6d",
+      "published_at": null,
+      "reason_code": "DAILY_PREDICTION_STEP_FAILED",
+      "replay": {
+        "state": "NOT_RUN"
+      },
+      "report_completed": null,
+      "run_id": "2a357d21-ca98-59b7-b039-cfe8c769df0c",
+      "sampled": 32,
+      "state": "FAILED_TERMINAL",
+      "target_session": "2026-09-10"
+    },
+    {
+      "denominators": {
+        "baseline_prediction": 31,
+        "common_prediction": 31,
+        "eligible": 31,
+        "feature_ready": 31,
+        "model_prediction": 31,
+        "sampled": 32
+      },
+      "evaluation_completed": false,
+      "input_session": "2026-09-09",
+      "outcome_completed_count": 0,
+      "outcome_expected_count": 31,
+      "outcome_run_id": "b51cef3b-9ff8-5b41-a015-2b6deffd14d7",
+      "plan_sha256": "eae5144cbdca838cc32e2b673f0a620dcb89455a3b8760cbe9fb37410f3e0442",
+      "prediction_id": "3c3e181e-692d-535b-aea0-f855c9e9e418",
+      "published_at": "2026-09-09 18:17:35.943618+00:00",
+      "reason_code": null,
+      "replay": {
+        "business_writes": 0,
+        "dataset_id": "351469dd-f65b-540f-845b-37bbfcceab1f",
+        "matched": true,
+        "mismatch_count": 0,
+        "model_version_id": "fe47f296-17dc-5654-a9eb-cf149f5b01c9",
+        "prediction_id": "3c3e181e-692d-535b-aea0-f855c9e9e418",
+        "reports": [
+          "ArtifactBinding(artifact_id=UUID('90716533-afe5-41f9-bf00-3ebbdafa5a58'), content_sha256=ContentHash(value='0a8053a95168f807ed02cc4c08a792337d321872288939f049da02025bf3ed77'), size_bytes=39865)",
+          "ArtifactBinding(artifact_id=UUID('66d9bb81-cb8c-4f8c-8925-dc37846a9068'), content_sha256=ContentHash(value='2c288fd5aec84471e15ff050da6bd5bef8fa3fab421b41376ca086a6a744c230'), size_bytes=4080)"
+        ]
+      },
+      "report_completed": false,
+      "run_id": "000409b6-eb1e-5e77-898f-eb3a201aadf9",
+      "sampled": 32,
+      "state": "PENDING_MATURITY",
+      "target_session": "2026-09-10"
+    }
+  ],
+  "deployment": {
+    "implementation_sha": "db69cd34f6ef569663fac4f7029d79783b52948e",
+    "profile_sha256": "7fa382783660e27915aa208d353001a576476247725d12c1c420178a3250605e",
+    "receipt_sha256": "cab230ebedd51acb8cd3fb02d85c00e474ddd649df8bb2ba94dc55c0e638fcc6",
+    "source_sha256": "d0738936dddc887bbc866d18f6675455323f6864358cf9ba9e21409e4d4bd078"
+  },
+  "documentation_validation": {
+    "commands": [
+      {
+        "clean_before": false,
+        "command": [
+          "uv",
+          "sync",
+          "--frozen",
+          "--extra",
+          "dev",
+          "--extra",
+          "postgres"
+        ],
+        "exit_code": 0,
+        "identity": {
+          "commit": "db69cd34f6ef569663fac4f7029d79783b52948e",
+          "source_tree": "0b76762931fafeee4f86b07bc3dcc89d9d6db0c3",
+          "tests_tree": "433d9dc81485f3bf0d8ebd88a7be9410d59a140c"
+        },
+        "label": "delivery-locked-sync",
+        "log": {
+          "name": "delivery-locked-sync.log",
+          "sha256": "76ea12c6be94f1f437c8a7afc8a76c31ae71c4d440e5379de225c778a12e2fc2"
+        },
+        "seconds": 0.02617502212524414
+      },
+      {
+        "clean_before": false,
+        "command": [
+          "uv",
+          "run",
+          "python",
+          "scripts/check_docs_links.py"
+        ],
+        "exit_code": 1,
+        "identity": {
+          "commit": "db69cd34f6ef569663fac4f7029d79783b52948e",
+          "source_tree": "0b76762931fafeee4f86b07bc3dcc89d9d6db0c3",
+          "tests_tree": "433d9dc81485f3bf0d8ebd88a7be9410d59a140c"
+        },
+        "label": "delivery-docs",
+        "log": {
+          "name": "delivery-docs.log",
+          "sha256": "73d3a3506f1e204ad79ecef089dd57681cc526d120caa9750190d82ef610e15c"
+        },
+        "seconds": 0.12002182006835938
+      },
+      {
+        "clean_before": false,
+        "command": [
+          "uv",
+          "run",
+          "python",
+          "scripts/check_docs_links.py"
+        ],
+        "exit_code": 0,
+        "identity": {
+          "commit": "db69cd34f6ef569663fac4f7029d79783b52948e",
+          "source_tree": "0b76762931fafeee4f86b07bc3dcc89d9d6db0c3",
+          "tests_tree": "433d9dc81485f3bf0d8ebd88a7be9410d59a140c"
+        },
+        "label": "delivery-docs-corrected",
+        "log": {
+          "name": "delivery-docs-corrected.log",
+          "sha256": "53ada9c21a827b3e3d782315ad8c1501bbdebffacba66fab8805243ac6bee4d5"
+        },
+        "seconds": 0.10015583038330078
+      },
+      {
+        "clean_before": false,
+        "command": [
+          "uv",
+          "run",
+          "python",
+          "-m",
+          "pytest",
+          "-q",
+          "tests/scripts/test_check_docs_links.py",
+          "tests/scripts/test_repository_hygiene.py"
+        ],
+        "exit_code": 0,
+        "identity": {
+          "commit": "db69cd34f6ef569663fac4f7029d79783b52948e",
+          "source_tree": "0b76762931fafeee4f86b07bc3dcc89d9d6db0c3",
+          "tests_tree": "433d9dc81485f3bf0d8ebd88a7be9410d59a140c"
+        },
+        "label": "delivery-doc-contract",
+        "log": {
+          "name": "delivery-doc-contract.log",
+          "sha256": "b05d0e3792c000e6d62515e15eff0dbad3779126aa08cbfef1f0219af98407f7"
+        },
+        "seconds": 1.8831181526184082
+      },
+      {
+        "clean_before": false,
+        "command": [
+          "uv",
+          "run",
+          "python",
+          "scripts/check_repository_hygiene.py"
+        ],
+        "exit_code": 0,
+        "identity": {
+          "commit": "db69cd34f6ef569663fac4f7029d79783b52948e",
+          "source_tree": "0b76762931fafeee4f86b07bc3dcc89d9d6db0c3",
+          "tests_tree": "433d9dc81485f3bf0d8ebd88a7be9410d59a140c"
+        },
+        "label": "delivery-hygiene",
+        "log": {
+          "name": "delivery-hygiene.log",
+          "sha256": "36aab0012498d15cb510aab3a22fa991abc43c3f7f862c490d1be0890f9715ea"
+        },
+        "seconds": 13.353518724441528
+      },
+      {
+        "clean_before": false,
+        "command": [
+          "git",
+          "diff",
+          "--check"
+        ],
+        "exit_code": 0,
+        "identity": {
+          "commit": "db69cd34f6ef569663fac4f7029d79783b52948e",
+          "source_tree": "0b76762931fafeee4f86b07bc3dcc89d9d6db0c3",
+          "tests_tree": "433d9dc81485f3bf0d8ebd88a7be9410d59a140c"
+        },
+        "label": "delivery-diff",
+        "log": {
+          "name": "delivery-diff.log",
+          "sha256": "50e3c01bf013478f52dae59d36464728719ee9548f52cf6fadc82393656e1edd"
+        },
+        "seconds": 0.014210939407348633
+      }
+    ],
+    "contract_tests": 14,
+    "failures_preserved": "Initial new-document status heading contained explanatory text outside the accepted HISTORICAL token; corrected the heading, not the checker.",
+    "final_result": "PASS"
+  },
+  "evidence_lane": "EXPERIMENTAL_SHADOW / BAOSTOCK_EXPLORATORY",
+  "external_bundle": "operational-data-loop-closure-20260910.tar.gz",
+  "final_sha_binding": "External delivery-attestation.json binds the later documentation-only commit; no self-reference required.",
+  "full_repository_regression": "NOT_RUN_BY_RISK_DIRECTED_SCOPE",
+  "gates": {
+    "ALPHA_PROVEN": "NO",
+    "CURRENT_OPERATIONAL_HEALTH_PASS": "PASS_AT_OBSERVATION_CUTOFF_WITH_DECLARED_TERMINAL_FAILURES",
+    "OPERATIONAL_DATA_LOOP_PROOF_EXIT_GATE_PASS": "BLOCKED_BY_REAL_TIME",
+    "OPERATIONAL_HANDOFF_PASS": "PASS",
+    "PRODUCTION_ADMISSION": "NO",
+    "REAL_MATURE_EVALUATION_PASS": "BLOCKED_BY_REAL_TIME",
+    "SUSTAINED_MULTI_DAY_PROOF": "BLOCKED_BY_ELAPSED_REAL_TIME"
+  },
+  "implementation_sha": "db69cd34f6ef569663fac4f7029d79783b52948e",
+  "installed": {
+    "dependencies": {
+      "akshare": "1.18.81",
+      "baostock": "0.9.3",
+      "beautifulsoup4": "4.15.0",
+      "bs4": "0.0.2",
+      "certifi": "2026.7.22",
+      "cffi": "2.1.1",
+      "charset-normalizer": "3.4.9",
+      "curl-cffi": "0.16.0",
+      "decorator": "5.3.1",
+      "duckdb": "1.5.5",
+      "et-xmlfile": "2.0.0",
+      "html5lib": "1.1",
+      "idna": "3.18",
+      "jsonpath": "0.82.2",
+      "lxml": "6.1.1",
+      "mini-racer": "0.14.1",
+      "multitasking": "0.0.13",
+      "numpy": "2.5.1",
+      "openpyxl": "3.1.5",
+      "pandas": "3.0.5",
+      "peewee": "4.3.0",
+      "platformdirs": "4.11.0",
+      "polars": "1.43.2",
+      "polars-runtime-32": "1.43.2",
+      "protobuf": "7.35.1",
+      "psycopg": "3.3.4",
+      "psycopg-binary": "3.3.4",
+      "psycopg-pool": "3.3.1",
+      "pyarrow": "25.0.0",
+      "pycparser": "3.0",
+      "python-dateutil": "2.9.0.post0",
+      "python-dotenv": "1.2.2",
+      "pytz": "2026.3.post1",
+      "requests": "2.34.2",
+      "simplejson": "4.1.1",
+      "six": "1.17.0",
+      "soupsieve": "2.9.1",
+      "tabulate": "0.10.0",
+      "tqdm": "4.70.0",
+      "tushare": "1.4.29",
+      "typing-extensions": "4.16.0",
+      "urllib3": "2.7.0",
+      "webencodings": "0.5.1",
+      "websocket-client": "1.9.0",
+      "websockets": "17.0.1",
+      "xlrd": "2.0.2",
+      "yfinance": "1.5.2"
+    },
+    "lock_sha256": "5cfb5ced3a2587910e172a66f5a5912668d16d0c8dd54e0ae3e619384113a41d",
+    "metadata_sha256": "1983a0b909e8e463ae0e21ec452f15301b819ef73e73d7d523399abd7a320a23",
+    "package_roster_sha256": "023f05410b8d0c8d8123003f929ea142e7821eeb879f0d814d1077660f8f8854",
+    "source_sha": "db69cd34f6ef569663fac4f7029d79783b52948e",
+    "source_sha256": "d0738936dddc887bbc866d18f6675455323f6864358cf9ba9e21409e4d4bd078",
+    "source_tree": "0b76762931fafeee4f86b07bc3dcc89d9d6db0c3",
+    "tests_tree": "433d9dc81485f3bf0d8ebd88a7be9410d59a140c",
+    "wheel_sha256": "a3ef51fcf8f02d09028a5275fa01b560cf21da20ad192ba6d227c22a0ce9231d"
+  },
+  "installed_cli_smoke": {
+    "checks": 7,
+    "result": "PASS"
+  },
+  "observation_cutoff": "2026-09-10 02:07:13.773684+00:00",
+  "old_campaign_runtime_states": [
+    [
+      "FAILED",
+      1
+    ],
+    [
+      "SUCCEEDED",
+      808
+    ]
+  ],
+  "original_database": {
+    "cluster_identity": "7681924516459622681",
+    "name": "mra_wp18q_r2_operational_20260905",
+    "oid": 287543
+  },
+  "previous_evidence": {
+    "bundle": "operational-data-loop-proof-20260910.tar.gz",
+    "sha256": "0bc9c0b0f19572af1bab1765d0e535baa07792e884ad8046ee10806f17f204dc"
+  },
+  "priority_prediction": {
+    "dataset_id": "351469dd-f65b-540f-845b-37bbfcceab1f",
+    "decision_time": "2026-09-09 18:16:08.984967+00:00",
+    "denominators": {
+      "baseline_prediction": 31,
+      "common_prediction": 31,
+      "eligible": 31,
+      "feature_ready": 31,
+      "model_prediction": 31,
+      "sampled": 32
+    },
+    "evaluation_completed": false,
+    "evaluation_completed_at": null,
+    "experimental_model_use_id": "60902ae3-5776-5460-91b1-90ed3bc03525",
+    "input_cutoff": "2026-09-09 18:16:08.984967+00:00",
+    "input_session": "2026-09-09",
+    "input_session_id": "05b784e2-7bdb-5598-a06d-8c6cdd629fe9",
+    "model_version_id": "fe47f296-17dc-5654-a9eb-cf149f5b01c9",
+    "outcome_completed_at": null,
+    "outcome_completed_count": 0,
+    "outcome_expected_count": 31,
+    "outcome_run_id": "b51cef3b-9ff8-5b41-a015-2b6deffd14d7",
+    "plan_sha256": "eae5144cbdca838cc32e2b673f0a620dcb89455a3b8760cbe9fb37410f3e0442",
+    "prediction_id": "3c3e181e-692d-535b-aea0-f855c9e9e418",
+    "published_at": "2026-09-09 18:17:35.943618+00:00",
+    "reason_code": null,
+    "replay": {
+      "business_writes": 0,
+      "dataset_id": "351469dd-f65b-540f-845b-37bbfcceab1f",
+      "matched": true,
+      "mismatch_count": 0,
+      "model_version_id": "fe47f296-17dc-5654-a9eb-cf149f5b01c9",
+      "prediction_id": "3c3e181e-692d-535b-aea0-f855c9e9e418",
+      "reports": [
+        "ArtifactBinding(artifact_id=UUID('90716533-afe5-41f9-bf00-3ebbdafa5a58'), content_sha256=ContentHash(value='0a8053a95168f807ed02cc4c08a792337d321872288939f049da02025bf3ed77'), size_bytes=39865)",
+        "ArtifactBinding(artifact_id=UUID('66d9bb81-cb8c-4f8c-8925-dc37846a9068'), content_sha256=ContentHash(value='2c288fd5aec84471e15ff050da6bd5bef8fa3fab421b41376ca086a6a744c230'), size_bytes=4080)"
+      ]
+    },
+    "report_completed": false,
+    "report_completed_at": null,
+    "requested_at": "2026-09-09 18:16:08.984967+00:00",
+    "run_id": "000409b6-eb1e-5e77-898f-eb3a201aadf9",
+    "runtime_state": "SUCCEEDED",
+    "sampled": 32,
+    "state": "PENDING_MATURITY",
+    "target_definition_id": "8cdc2e02-bf29-5f96-995c-4b576b9ab130",
+    "target_session": "2026-09-10",
+    "target_session_id": "d61cd9a8-2dd6-5cfc-9ddb-a77a11e95215",
+    "target_window_end": "2026-09-10 07:00:00+00:00",
+    "target_window_start": "2026-09-10 01:30:00+00:00",
+    "timely_publication": true
+  },
+  "privilege_allowlist": {
+    "check": "PASS; PREFLIGHT_AND_BEFORE_ACTION",
+    "dangerous_role_flags": [
+      false,
+      false,
+      false,
+      false,
+      false
+    ],
+    "forbidden_effective_table_privileges": {
+      "DELETE": 0,
+      "REFERENCES": 0,
+      "TRIGGER": 0,
+      "TRUNCATE": 0
+    },
+    "reference_column_locks": {
+      "artifact_gc_candidate": "content_sha256",
+      "candidate_policy": "candidate_policy_id",
+      "candidate_policy_component": "candidate_policy_id",
+      "context_policy": "context_policy_id",
+      "context_policy_metric": "context_policy_id",
+      "eligibility_policy": "eligibility_policy_id",
+      "experimental_model_use": "experimental_model_use_id",
+      "exploratory_retrospective_eligibility_batch": "universe_revision_id",
+      "exploratory_retrospective_universe_revision": "universe_revision_id",
+      "feature_definition": "feature_definition_id",
+      "model": "model_id",
+      "model_training_reproducibility": "model_training_run_id",
+      "model_training_run": "model_training_run_id",
+      "model_version": "model_version_id",
+      "provider_product": "provider_product_id",
+      "strategy": "strategy_id",
+      "strategy_context_requirement": "strategy_version_id",
+      "strategy_forecast_rule": "strategy_version_id",
+      "strategy_signal_rule": "strategy_version_id",
+      "strategy_version": "strategy_version_id",
+      "target_checkpoint": "target_definition_id",
+      "target_definition": "target_definition_id",
+      "target_metric_definition": "target_definition_id",
+      "target_metric_dependency": "target_definition_id",
+      "universe": "universe_id"
+    },
+    "trusted_cluster_administrator": "OUTSIDE_THREAT_MODEL",
+    "write_tables": [
+      "evaluation_observation",
+      "research_partition_outcome_access",
+      "decision_run_research_qualification_roster",
+      "decision_run_research_qualification_member",
+      "artifact",
+      "artifact_verification",
+      "audit_event",
+      "candidate",
+      "candidate_score_component",
+      "candidate_set",
+      "classification",
+      "classification_membership_revision",
+      "command_receipt",
+      "context_assessment",
+      "context_metric",
+      "context_metric_source",
+      "corporate_action_revision",
+      "data_capture",
+      "dataset",
+      "dataset_source",
+      "decision_reference_observation",
+      "decision_run",
+      "decision_run_target",
+      "decision_target_commitment",
+      "eligibility_assessment",
+      "eligibility_reason",
+      "evaluation_candidate_outcome_source",
+      "evaluation_candidate_source",
+      "evaluation_forecast_source",
+      "evaluation_formula_parameter",
+      "evaluation_metric",
+      "evaluation_metric_formula",
+      "evaluation_metric_observation",
+      "evaluation_protocol",
+      "evaluation_protocol_metric",
+      "evaluation_run",
+      "evaluation_signal_source",
+      "experiment",
+      "experiment_partition",
+      "experiment_run",
+      "forecast",
+      "forecast_estimate",
+      "forecast_model_binding",
+      "forecast_run",
+      "instrument",
+      "instrument_fact_revision",
+      "instrument_identifier",
+      "market_archive",
+      "market_archive_capture_observation",
+      "market_archive_resource_stop",
+      "market_archive_seal",
+      "market_archive_slice",
+      "market_archive_slice_gap",
+      "market_bar_revision",
+      "market_capture_classification_membership_normalization",
+      "market_capture_classification_normalization",
+      "market_capture_instrument_identifier_normalization",
+      "market_capture_instrument_normalization",
+      "market_capture_reference_normalization",
+      "market_capture_trading_session_normalization",
+      "market_target_outcome",
+      "market_target_outcome_metric",
+      "market_target_outcome_metric_observation",
+      "market_target_outcome_metric_reference",
+      "market_target_outcome_observation",
+      "market_target_outcome_reason",
+      "market_target_outcome_revision",
+      "market_target_outcome_source",
+      "prospective_archive_generation",
+      "prospective_archive_generation_member",
+      "prospective_archive_planning_gap",
+      "prospective_archive_revision_observation",
+      "prospective_archive_slice_schedule",
+      "prospective_archive_slice_terminal",
+      "research_partition",
+      "research_partition_member",
+      "runtime_attempt",
+      "runtime_run",
+      "runtime_schedule",
+      "runtime_step",
+      "runtime_step_dependency",
+      "signal",
+      "signal_context_binding",
+      "signal_run",
+      "source_gap",
+      "trading_session",
+      "universe_member",
+      "universe_revision"
+    ]
+  },
+  "prospective_scopes": {
+    "ALL_HISTORY": {
+      "reason_code": null,
+      "state": "AVAILABLE",
+      "summary": {
+        "alerts": [
+          {
+            "count": 544,
+            "reason_code": "RUNTIME_FAILURE",
+            "severity": "ERROR"
+          },
+          {
+            "count": 544,
+            "reason_code": "MISSED_WINDOWS",
+            "severity": "WARNING"
+          },
+          {
+            "count": 1,
+            "reason_code": "PLANNING_GAPS",
+            "severity": "WARNING"
+          }
+        ],
+        "counts": {
+          "CAPTURED_LATE": 0,
+          "CAPTURED_ON_TIME": 0,
+          "FAILED": 0,
+          "MISSED": 544,
+          "PROVIDER_GAP": 0,
+          "RESOURCE_STOP": 0,
+          "due_backlog": 0,
+          "expected": 864,
+          "expired_active_lease": 0,
+          "future": 320,
+          "observations": 0,
+          "opened_expected": 544,
+          "overdue_unterminalized": 0,
+          "planning_gaps": 1,
+          "runtime_failure": 544,
+          "successful_capture": 0,
+          "terminal": 544,
+          "unknown_external_effect": 0
+        },
+        "freshness": {
+          "age_seconds": null,
+          "basis": "LATEST_CAPTURE_KNOWN_TIME",
+          "latest_known_at": null,
+          "market_event_freshness": "NOT_ESTIMABLE",
+          "market_event_reason_code": "ACTUAL_EVENT_TIME_NOT_IN_HEALTH_INPUT",
+          "reason_code": "NO_CAPTURE_OBSERVATION",
+          "state": "NOT_ESTIMABLE"
+        },
+        "operational_state": "ATTENTION_REQUIRED",
+        "rates": {
+          "capture_success": {
+            "denominator": 544,
+            "denominator_kind": "OPENED_EXPECTED_WINDOWS",
+            "numerator": 0,
+            "reason_code": null,
+            "state": "ESTIMABLE",
+            "unit": "FRACTION",
+            "value": "0E-12"
+          },
+          "on_time_capture": {
+            "denominator": 544,
+            "denominator_kind": "OPENED_EXPECTED_WINDOWS",
+            "numerator": 0,
+            "reason_code": null,
+            "state": "ESTIMABLE",
+            "unit": "FRACTION",
+            "value": "0E-12"
+          },
+          "terminal_coverage": {
+            "denominator": 544,
+            "denominator_kind": "OPENED_EXPECTED_WINDOWS",
+            "numerator": 544,
+            "reason_code": null,
+            "state": "ESTIMABLE",
+            "unit": "FRACTION",
+            "value": "1.000000000000"
+          }
+        }
+      }
+    },
+    "LAST_N_TRADING_SESSIONS": {
+      "membership_basis": "EXACT_SCHEDULE_TRADING_SESSION; NO_WEEKDAY_INFERENCE",
+      "reason_code": null,
+      "requested_sessions": 5,
+      "sessions": [
+        {
+          "session_date": "2026-09-10",
+          "session_id": "d61cd9a8-2dd6-5cfc-9ddb-a77a11e95215"
+        },
+        {
+          "session_date": "2026-09-09",
+          "session_id": "05b784e2-7bdb-5598-a06d-8c6cdd629fe9"
+        },
+        {
+          "session_date": "2026-09-08",
+          "session_id": "9c9f9be2-540e-5891-b2b0-9dc4e8a8639e"
+        },
+        {
+          "session_date": "2026-09-07",
+          "session_id": "eded53fe-4087-5e47-9442-7abc623658cb"
+        },
+        {
+          "session_date": "2026-09-04",
+          "session_id": "3cbb8782-71ee-5545-888d-e0efff394bfc"
+        }
+      ],
+      "state": "AVAILABLE",
+      "summary": {
+        "alerts": [
+          {
+            "count": 544,
+            "reason_code": "RUNTIME_FAILURE",
+            "severity": "ERROR"
+          },
+          {
+            "count": 544,
+            "reason_code": "MISSED_WINDOWS",
+            "severity": "WARNING"
+          },
+          {
+            "count": 1,
+            "reason_code": "PLANNING_GAPS",
+            "severity": "WARNING"
+          }
+        ],
+        "counts": {
+          "CAPTURED_LATE": 0,
+          "CAPTURED_ON_TIME": 0,
+          "FAILED": 0,
+          "MISSED": 544,
+          "PROVIDER_GAP": 0,
+          "RESOURCE_STOP": 0,
+          "due_backlog": 0,
+          "expected": 704,
+          "expired_active_lease": 0,
+          "future": 160,
+          "observations": 0,
+          "opened_expected": 544,
+          "overdue_unterminalized": 0,
+          "planning_gaps": 1,
+          "runtime_failure": 544,
+          "successful_capture": 0,
+          "terminal": 544,
+          "unknown_external_effect": 0
+        },
+        "freshness": {
+          "age_seconds": null,
+          "basis": "LATEST_CAPTURE_KNOWN_TIME",
+          "latest_known_at": null,
+          "market_event_freshness": "NOT_ESTIMABLE",
+          "market_event_reason_code": "ACTUAL_EVENT_TIME_NOT_IN_HEALTH_INPUT",
+          "reason_code": "NO_CAPTURE_OBSERVATION",
+          "state": "NOT_ESTIMABLE"
+        },
+        "operational_state": "ATTENTION_REQUIRED",
+        "rates": {
+          "capture_success": {
+            "denominator": 544,
+            "denominator_kind": "OPENED_EXPECTED_WINDOWS",
+            "numerator": 0,
+            "reason_code": null,
+            "state": "ESTIMABLE",
+            "unit": "FRACTION",
+            "value": "0E-12"
+          },
+          "on_time_capture": {
+            "denominator": 544,
+            "denominator_kind": "OPENED_EXPECTED_WINDOWS",
+            "numerator": 0,
+            "reason_code": null,
+            "state": "ESTIMABLE",
+            "unit": "FRACTION",
+            "value": "0E-12"
+          },
+          "terminal_coverage": {
+            "denominator": 544,
+            "denominator_kind": "OPENED_EXPECTED_WINDOWS",
+            "numerator": 544,
+            "reason_code": null,
+            "state": "ESTIMABLE",
+            "unit": "FRACTION",
+            "value": "1.000000000000"
+          }
+        }
+      }
+    },
+    "POST_CURRENT_CUTOVER": {
+      "cutover_at": "2026-09-09 15:45:50.016124+00:00",
+      "membership_basis": "EXPECTED_WINDOW_START; PLANNING_GAP_DETECTED_AT",
+      "reason_code": null,
+      "state": "AVAILABLE",
+      "summary": {
+        "alerts": [
+          {
+            "count": 1,
+            "reason_code": "PLANNING_GAPS",
+            "severity": "WARNING"
+          }
+        ],
+        "counts": {
+          "CAPTURED_LATE": 0,
+          "CAPTURED_ON_TIME": 0,
+          "FAILED": 0,
+          "MISSED": 0,
+          "PROVIDER_GAP": 0,
+          "RESOURCE_STOP": 0,
+          "due_backlog": 0,
+          "expected": 320,
+          "expired_active_lease": 0,
+          "future": 320,
+          "observations": 0,
+          "opened_expected": 0,
+          "overdue_unterminalized": 0,
+          "planning_gaps": 1,
+          "runtime_failure": 0,
+          "successful_capture": 0,
+          "terminal": 0,
+          "unknown_external_effect": 0
+        },
+        "freshness": {
+          "age_seconds": null,
+          "basis": "LATEST_CAPTURE_KNOWN_TIME",
+          "latest_known_at": null,
+          "market_event_freshness": "NOT_ESTIMABLE",
+          "market_event_reason_code": "ACTUAL_EVENT_TIME_NOT_IN_HEALTH_INPUT",
+          "reason_code": "NO_CAPTURE_OBSERVATION",
+          "state": "NOT_ESTIMABLE"
+        },
+        "operational_state": "ATTENTION_REQUIRED",
+        "rates": {
+          "capture_success": {
+            "denominator": 0,
+            "denominator_kind": "OPENED_EXPECTED_WINDOWS",
+            "numerator": 0,
+            "reason_code": "NO_OPENED_EXPECTED_WINDOWS",
+            "state": "NOT_ESTIMABLE",
+            "unit": "FRACTION",
+            "value": null
+          },
+          "on_time_capture": {
+            "denominator": 0,
+            "denominator_kind": "OPENED_EXPECTED_WINDOWS",
+            "numerator": 0,
+            "reason_code": "NO_OPENED_EXPECTED_WINDOWS",
+            "state": "NOT_ESTIMABLE",
+            "unit": "FRACTION",
+            "value": null
+          },
+          "terminal_coverage": {
+            "denominator": 0,
+            "denominator_kind": "OPENED_EXPECTED_WINDOWS",
+            "numerator": 0,
+            "reason_code": "NO_OPENED_EXPECTED_WINDOWS",
+            "state": "NOT_ESTIMABLE",
+            "unit": "FRACTION",
+            "value": null
+          }
+        }
+      }
+    }
+  },
+  "query_measurements": {
+    "business_writes": 0,
+    "historical_resource_stop_root_cause": "UNPROVEN",
+    "maximum_rss_bytes": 70189056,
+    "path_seconds": {
+      "daily_ledger": 0.10367012501228601,
+      "principal_privilege_envelope": 0.3305055000237189,
+      "prospective_scoped_health": 0.28747966600349173
+    },
+    "plans": 29,
+    "provider_calls": 0,
+    "query_count": 31,
+    "read_transactions": [
+      {
+        "path": "daily_ledger",
+        "read_only": true,
+        "seconds": 0.09626608295366168
+      },
+      {
+        "path": "prospective_scoped_health",
+        "read_only": true,
+        "seconds": 0.21076987497508526
+      }
+    ]
+  },
+  "registered_version": 8,
+  "released_sql_unchanged": [
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/019_free_data_blocked_projection.sql",
+      "sha256": "55e7b866954212da8494fcd2f0dbd9621262e21ab8b9b421c80a160feb1319fd"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/057_formal_research_runtime_closure.sql",
+      "sha256": "3a5c7c7d0e9dbc4800b30c42c70df10180a4909145c6be8d83eefafd79325d81"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/004_manual_execution.sql",
+      "sha256": "e22509b63503044260c9edb3f24c8dbb83862eb608dd7e2bc7aee5f00cf634a0"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/075_phase_e3_lineage_and_fact_gap_closure.sql",
+      "sha256": "0bcc0a4dc1e1ec821ea42b73afdb526b85e459937bcb59df70146eef5cfa605a"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/098_wp_alpha_proof_locked_scope.sql",
+      "sha256": "6ab04e88bde3449e279f6e6a2d158cd9a92ee8600061d713e9739813232cbaed"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/037_etf_theme_reference_authority.sql",
+      "sha256": "4d875e6f464b68ceb45839222ce0bc80be5292f30c83b1bde74dd083eec7b6d1"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/074_historical_outcome_label_projection.sql",
+      "sha256": "910c2d26f370fea66f306d0d4471b813174f7773dfc479df035233803de37a69"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/020_continuous_research_runtime.sql",
+      "sha256": "a1c1bcc3abce82ad4e0e4bd8f874368858f4b24ca9006124f2e15852a4686bf9"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/085_multi_strategy_business_closure.sql",
+      "sha256": "68ccd49ea84142744df412bba6545ee2f8d4621c58e2f36ab84f689217bddc1e"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/048_free_data_research_universe.sql",
+      "sha256": "da380b8638e5e1bbe211437681fcf947b4259c9ec40e2a8bc0b3f3987f357960"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/011_canonical_lifecycle_runtime.sql",
+      "sha256": "e5e32778c6043329e54d10e8b95922fa3c622c45e0f864dbca2e50c9995134a5"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/072_historical_component_keyset_streaming.sql",
+      "sha256": "fd558bf3cd17dfb11cfa7bef538b735b06838c34ad8f544e8deea3a72361428c"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/080_historical_experiment_definition.sql",
+      "sha256": "9497874d94719b7e4ac4eaf2222bab515db85010185a761e328d1969e8757f80"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/051_path_calibration_hypothesis.sql",
+      "sha256": "0888be4df0a3fa03fcf28616ca26bd5cda1e125961b1aed9b31e96cda58ca485"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/067_phase_d_correctness_lineage.sql",
+      "sha256": "6000093a7076538a9d1a73828493b9978f96536ea66f1834198cb9b45d706962"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/010_risk_reduction_manual_intent.sql",
+      "sha256": "7f18dc34e73afd93042c44f9e017fd8b64aa903d42385d6d6383a01a8671abb7"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/078_historical_outcome_temporal_projection.sql",
+      "sha256": "86a16c08b7e47e40a3d67f83bda35b171a9612e7dfdff7017c24512fa70d0c41"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/055_phase_c_gate_authority.sql",
+      "sha256": "6975a48f49d6d8d1ece8b2f6f62d90b3801b73e537d17982c27e462feca200de"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/076_historical_fact_acquisition_scope.sql",
+      "sha256": "a4d27d379e39936dd55bbd63a033e430b7a59493dca1836a9e0fbfc5b3a239d5"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/049_strategy_shadow_portfolio.sql",
+      "sha256": "ebbe210223b219885e47bb7e24c22afa5c7987d4daee94aa8f3831df396e4b5f"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/096_daily_alpha_outcome_lineage.sql",
+      "sha256": "ec40b58573f702a874f0524772453e1e4550f4c37e74cad19325b8891257a276"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/046_close_reference_only_qualification.sql",
+      "sha256": "57225e5a1e73515c774502e23092443ab3475553bc0e1a1a9bbb557624f3382c"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/088_portfolio_execution_authority.sql",
+      "sha256": "ff3b48a4aa68feb3b7bbf0eee4127aef190b3f5c2f5decb642c717d7b12f8549"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/061_research_model_execution.sql",
+      "sha256": "3554fa0b8adc0af88a5562704b47fc1f674a74182f6bf7795500dca8bd6f187a"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/060_research_validity_semantics.sql",
+      "sha256": "3c5bcf8e642c268656abfdffc294aee3a12d15e1c3b6832a9860a3d053339f47"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/026_decision_authority_hardening.sql",
+      "sha256": "5418dbef13a4637e6e2fbbd87d61061716fa13f248c8b2ae85a96977259e1f24"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/015_longitudinal_operational_index.sql",
+      "sha256": "13023372d166676061f2bceaa7810624cbb10af665ac4d8cec25ae5233630baf"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/073_historical_constituent_timeline.sql",
+      "sha256": "4fb875b425a97d286d1a6977c1826e658f7c846593baa4287196144728a1cc55"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/056_phase_c_correctness_closure.sql",
+      "sha256": "0061a0a37b8a4a65af7601463297c172cf142598cfb47e3ed58beb5ce75cea22"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/039_outcome_target_protocol.sql",
+      "sha256": "95ac7c52b6427b7665218de1e65812fc887c9da9e06ab3e08134b8d74d70972c"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/086_stateful_strategy_lifecycle.sql",
+      "sha256": "c72753f8faa1f0d700eb6e561a18be6e4983008bc7e061eb269232201df793c7"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/091_alpha_research_phase_ii.sql",
+      "sha256": "3e2953c6c1c4b11b97278bf0631070ca99beac3c8552db0dc5d8f91b10d456d0"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/062_runtime_scope_historical.sql",
+      "sha256": "1537c5094b9a955399f4986fac8c793fb21c893c9a0772c5be436c9bd70fa724"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/034_shadow_research_authority.sql",
+      "sha256": "b7eae049a04db0444d8bfe64da38677953a846ab0648e852ad9679598d7a1055"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/003_portfolio_risk.sql",
+      "sha256": "b1f79566683d1963b2837a4235ecf0eac821505dcb0e92f299c72e5f861a81f6"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/007_risk_routes.sql",
+      "sha256": "072d965e6d72f33f08d981815366529f39b2c903f2033f9ba798ebd54d44ac08"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/041_research_evaluation_panel_v2.sql",
+      "sha256": "a4b811b26efdddb0db2a414ed193bdf973b6652e94f21e1b67bccf8b2f8d66fa"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/006_execution_traceability.sql",
+      "sha256": "044786923b6b84c889d780b28793a9354638454ecd0656f18be7aafe84b73f5e"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/002_decision_lifecycle.sql",
+      "sha256": "50d7c43d7f1ac48991cead559d0ccab574f9694a7db2db775d07a16b795a2076"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/065_authoritative_artifact_locator.sql",
+      "sha256": "5afce1dc3b756c7a6334f9017bd244e06183a6905745a5e9c317b0962ddead39"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/069_phase_e2_selective_historical_reads.sql",
+      "sha256": "29a624ed7688d0cae17c01386592f64e5398203d1d5a269e3543328ce8704f4c"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/027_model_runtime_governance.sql",
+      "sha256": "a3f634a53f94743df2cf2ba42e58017c8c686df0aade84704f04ba987084484d"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/081_historical_runtime_contract.sql",
+      "sha256": "06ba267e571edfa2b9f02728550b93bb5f32d25298ae9a8a73a9b36580c6d3bc"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/024_postgres_only_authority.sql",
+      "sha256": "1ad9ba0a4cf9c910f14262539d252640ebcef76c56f6b81fb616d7927c1e2341"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/042_shadow_decision_state_policy.sql",
+      "sha256": "3d683dcf80a70db08cca31e0eada1c1541f19623b70c8446db9348868450d16a"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/028_formal_pit_authority.sql",
+      "sha256": "d027194bb8a01af15bdac8b3a8e81da5f26155367e5f26672871fa351c20ad72"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/092_strategy_forecast_contract_semantics.sql",
+      "sha256": "d028bf58783ad21f142dd9e8b92310692b2d5a14d5ad03a7e0135524db320f88"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/082_historical_fact_projection_membership.sql",
+      "sha256": "6e01b6828a64f0080b4108bc87a04b9880b9c350fb73d6714a96c5256c155b8c"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/102_historical_component_physical_payload.sql",
+      "sha256": "e8d3a7aab919237ebf8921aab5b81ed28c09cd089a7fd7b16cc5ffdf2f878f6a"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/023_state_system_runtime_child.sql",
+      "sha256": "1d03d8b868790c000b9267467c3639f88a89af4434866a773d3907712b678ae9"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/084_historical_feature_configuration_owner.sql",
+      "sha256": "f423e9de722e1236c1146fe7bde2a1ceaaa76c76c0ec4d5566e2413e63787ed3"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/036_research_evaluation_dataset.sql",
+      "sha256": "aa792c81000e8e237c5fab366f3a6dc9a682524888e14b41679d8f184d7766f6"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/095_daily_alpha_continuous_projection.sql",
+      "sha256": "d0e2daec4a93b740012151b0fc02c3a7bcb2d14d60511a390d5ad104292ff399"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/077_historical_context_instrument_set.sql",
+      "sha256": "2d96ec9e3f870dd9430115d146244fc3a506532440e7a86374e1fb3f25684a0f"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/083_longitudinal_owner_identity_closure.sql",
+      "sha256": "0871a39070097aafbe1390873b19713d68a82c68aa703df27e603ff99d242fc7"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/044_strategy_shadow_validation.sql",
+      "sha256": "fa99ca0c0e12ef8673b2e274beda5e04ea0cb4b12d2ef832ab9f8567016389af"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/005_complete_account_portfolio_risk.sql",
+      "sha256": "8b618577f410229fd8eb563f06412a330be562adb1c6549d8e1fabca33edf84b"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/045_runtime_authority_evidence.sql",
+      "sha256": "a08627c2fa6e4a3815655b360c433997f95ae3920ba2802a148fb916bb61989e"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/022_state_system_dynamic_pool.sql",
+      "sha256": "c4e49d2315462008c28e27a4cf69dd2b0e41ef341145a8aaea959467b87b5231"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/094_pre_strategy_risk_opportunity.sql",
+      "sha256": "cb441ebf05e12c2691b19ea645ae84600ef08f84b6cade57d65d3d21d4df4708"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/103_historical_outcome_forecast_index.sql",
+      "sha256": "43712d4e3fd1768d68fbc73c530438ec88e3757300895e74b710d0b0463f87c6"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/101_locked_oos_typed_calendar_owner.sql",
+      "sha256": "fda61c10e756d6b897d00756c19abd1ba4dfcb9e5f0d5c1f3c64f53ab726cef7"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/032_research_summary_owner_lineage.sql",
+      "sha256": "16e40f78e891955830e4316eee0f91b0cfb195af26a8a74ca0dad9ff82c5039b"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/071_longitudinal_historical_security_facts.sql",
+      "sha256": "c20d3f2f48d805f405bb8b9977d08aa72f992ec8e04c17eee1e04a16d6a37cb8"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/063_shadow_observation_authority.sql",
+      "sha256": "f4c2cb0947d5cf2cbd79cdf3abb5b58375393687f61d8216a62f98163d786dee"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/068_phase_e_historical_corpus.sql",
+      "sha256": "bd1c389b01d5f14dfe24ebe379ffb90282885e4ba8e3e61d3e6d0f7f56e357c7"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/066_formal_execution_assessment.sql",
+      "sha256": "920c6990be2972965de8bddc2759235f223ed47ede4e0f0931ba13aa7fe71e8b"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/021_continuous_runtime_schedule.sql",
+      "sha256": "66cc6d0a5a4abca9b64b6039dece0aad9b880098e0914777e2a8da5b581ffb90"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/035_prospective_outcome_authority.sql",
+      "sha256": "0d2e1692d17a910da2b7bf2be0959ac2b26edf3b4bd89edd9df8685515b703ab"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/030_research_summary_v2.sql",
+      "sha256": "ebfdb93f5513bfa9ce6fdde2ce020b45d542244ef7ca1d01346997433ea063fc"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/097_daily_alpha_target_session.sql",
+      "sha256": "2ea719d975bbbee620b6ad49ef1e953f5fbf4ee9cf2e0d5c78e434647a48ddb5"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/054_calibration_qualification_authority.sql",
+      "sha256": "7cdff4351790e4bb51c3b9b2efa0e1732fb645ee5b3533a4fe57ac621e3f31b8"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/012_feature_materialization_run.sql",
+      "sha256": "2cb6daac8fb11f4d632d62885cd8e9c5233ac33cc73f88f6569dc04951903c10"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/013_feature_materialization_hardening.sql",
+      "sha256": "5ce3db77c94c6416ff6ed3f7e3dd61cbb08b0b2dc2bd7b2a2ea4720316342d92"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/100_historical_fact_guard_fk_indexes.sql",
+      "sha256": "cd0400c1a203b96b1cdcc56c809afaa32957acdbc598dd39043a781dc2a79d78"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/064_shadow_performance_authority.sql",
+      "sha256": "d7ba7df51fde88b3e6a491f6c531cab1754387b02e8d51e645842315f0c83d43"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/025_decision_system.sql",
+      "sha256": "687dd38bbaca82dc1c6fd711bf6c837e3186a5d62a65c0e68f32e503b07d3464"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/053_research_qualification_authority.sql",
+      "sha256": "45bf282b63c75377d5effda1f001e1074974828b3ed2fa121aac9a7207fc03fd"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/093_frozen_temporal_validation_window.sql",
+      "sha256": "2a80584e35168c90094f83f1dcbd3c900398b0c89e481e9ddd934087bc26007f"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/014_controlled_operation.sql",
+      "sha256": "a165424ff0579ddf91b6c100249be9cc36f8ecfccadf1f70e16ede0689da2331"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/031_state_system_owned_stages.sql",
+      "sha256": "3a611c6e2faaa382aa77f53925999210f0a7f4b2c9c4c6ce8f5e66f89d86752a"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/038_cross_session_state_authority.sql",
+      "sha256": "32d3145d3547164bc159a05c8151b45ca0441b66d59780a59193b4c4131cf64f"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/043_research_validation_engineering.sql",
+      "sha256": "423fd43bf3a1bf349eb2eed038b0ac06ec22799c430fcf499815d4c02fcb6611"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/059_pit_universe_oos_scope_authority.sql",
+      "sha256": "dd1cec7a99787197e86d114b9ef6f9a25234f4121795fa8eff50541f3928ebe1"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/009_composite_operational_evidence.sql",
+      "sha256": "5d822d6ce08fe296c56538e63ff299937ab98df23d0a37f51cac9ec6e9b6ccff"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/058_locked_oos_roster_authority.sql",
+      "sha256": "d5c1f1c09c488b624f59eb6e2394633e19cc10a5000489f3f049181e08581ea8"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/105_alpha_correctness_target_semantics.sql",
+      "sha256": "571ac8f2821b2ff922503b1a587260dbf43399c971d7465bfadda6ad479984ca"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/104_historical_outcome_forecast_fk_index.sql",
+      "sha256": "4c9cadc7028a8a9cd939a6b48b67b792d064fad7b2c5423c96da01e34276a8a3"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/087_strategy_execution_integrity.sql",
+      "sha256": "38236a76de183a9bdcb6380b10e1a032bb5c0d25b7eb9763a04082bc765e3a1a"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/017_runtime_database_bindings.sql",
+      "sha256": "8f61ed1da84ece04c43fc36962edde926e2c263c688a471108c2f4e98abc7d55"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/070_historical_constituent_universe.sql",
+      "sha256": "d6c8eba5423acf6270f7cd3ff29dcec23ceac7ee673f62e49bd934161fc2fbf8"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/050_security_governance.sql",
+      "sha256": "a035ed61359833941e1c455f57134e7f3fd55fcc3dee1eac89f606ac3bd58b42"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/099_historical_fact_membership_index.sql",
+      "sha256": "4182231d39803ccc33c3ecb788f07e3f24c39a6c633bdb9276c306682b9fb983"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/008_thesis_health.sql",
+      "sha256": "1d75d5077b7214729624de23f105fbd7ca76eea5443fad9d3abfcf55c8e2be99"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/040_prospective_evidence_attestation.sql",
+      "sha256": "f49f9e39a0661aee4a3460af1faadf0a7faaee3334facf1e3f847f60916ca582"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/047_free_historical_evidence_registry.sql",
+      "sha256": "78ddeb778ce9a43cc88d7aa2c81914dc0276aa006b7ba1c869f1d1dbbbf3def7"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/033_free_runtime_v2_authority_hardening.sql",
+      "sha256": "cad77c49d4da6b3ebe94a1fc9e13be32c73fdfee49c8f2009eb1adb9c9afd8a8"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/090_tie_aware_pool_ranks.sql",
+      "sha256": "ff47d7973b9b0148ac2b3df58146e6a9e3d9a38ff9ffaea67ce9c3d3a41834a2"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/018_free_data_runtime_bindings.sql",
+      "sha256": "824909f95afae68429cd2b60b9f731b7bf95782b5e600446fc7dfa490b523d71"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/016_daily_runtime_journal.sql",
+      "sha256": "609fa0654344712895671ad5bb3d62d37238449165c8242b806fd3f99fd06cf5"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/029_research_runtime_summary.sql",
+      "sha256": "da987e737e729e73c906ccfe86cfac11eaf6103d0f91413c6672c0f14642b864"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/106_alpha_correctness_failure_revision.sql",
+      "sha256": "0af9029e9818c8c1d02492e3bc597ebde9653db99ee1ba5af7c494409d261366"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/052_phase_c_protocol_provider_qualification.sql",
+      "sha256": "db8ba0ae27ef4151f2376d9575b787a62ac5c4edb2154107a14663d18fa5564f"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/089_golden_loop_v2_evidence.sql",
+      "sha256": "9dc666cfb16389ef62bd131d682b689bf1bed4d9e4fbe37dca679a58d6f83fa9"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/079_historical_fact_identity_projection.sql",
+      "sha256": "96b9cda3a715a911b870feb77bf66331542e361bda3adc69a7d7ef14ca965400"
+    },
+    {
+      "path": "src/market_regime_alpha/persistence/postgres/migrations/001_governance.sql",
+      "sha256": "2600ab4aadc637a39d41ede2a615c692adfab73d727e20433be4ac5c52bf1c63"
+    },
+    {
+      "path": "src/market_regime_alpha/infrastructure/postgres/migrations/004_daily_operational_closure.sql",
+      "sha256": "903653a6bdc7abee9a37a43ff0442ef05aa5ea298a59bebeff5961699ac822aa"
+    },
+    {
+      "path": "src/market_regime_alpha/infrastructure/postgres/migrations/003_daily_model_research.sql",
+      "sha256": "44d27a9f13d4045402b86a27f7c47150dfc67421a8fc071d8a691f0405480400"
+    },
+    {
+      "path": "src/market_regime_alpha/infrastructure/postgres/migrations/002_prospective_revision_gap.sql",
+      "sha256": "bd5978ae2ccfd56a9d117c41e13e0a8f7c76fbdd4d83d4aa1b32757dbe753063"
+    },
+    {
+      "path": "src/market_regime_alpha/infrastructure/postgres/migrations/wp18q_track_a_c_v1.sql",
+      "sha256": "cbd98d6502e675d0b11d0f1b542861d615bb2f007087fdd49203a0bfc2af8241"
+    },
+    {
+      "path": "src/market_regime_alpha/infrastructure/postgres/migrations/001_baseline.sql",
+      "sha256": "f417b63cf3dc534b1a5d329c5a30462945bfeb6b8c4389bf8ab3a9e1f4efbd27"
+    },
+    {
+      "path": "src/market_regime_alpha/infrastructure/postgres/seeds/001_reference_seed.sql",
+      "sha256": "9c41cd715e35e1a7bed3a58c52a29f01cc1e9bf950b77344bb56eac6dfa2df11"
+    },
+    {
+      "path": "src/market_regime_alpha/infrastructure/postgres/operational_upgrades/wp18q_track_a_c_v2.sql",
+      "sha256": "2dfe756539fccf1d25b73d190248ad6e819b3c67192400db2f444338c3cad91e"
+    }
+  ],
+  "research_diagnostics": {
+    "denominators": {
+      "baseline_prediction": 31,
+      "common_prediction": 31,
+      "eligible": 31,
+      "feature_ready": 31,
+      "model_prediction": 31,
+      "sampled": 32
+    },
+    "metrics": {
+      "actual_return_target_distribution": {
+        "reason_code": "TARGET_NOT_NATURALLY_MATURE",
+        "state": "NOT_ESTIMABLE",
+        "value": null
+      },
+      "baseline_directional_accuracy": {
+        "reason_code": "TARGET_NOT_NATURALLY_MATURE",
+        "state": "NOT_ESTIMABLE",
+        "value": null
+      },
+      "mae": {
+        "reason_code": "TARGET_NOT_NATURALLY_MATURE",
+        "state": "NOT_ESTIMABLE",
+        "value": null
+      },
+      "model_baseline_delta": {
+        "reason_code": "TARGET_NOT_NATURALLY_MATURE",
+        "state": "NOT_ESTIMABLE",
+        "value": null
+      },
+      "model_directional_accuracy": {
+        "reason_code": "TARGET_NOT_NATURALLY_MATURE",
+        "state": "NOT_ESTIMABLE",
+        "value": null
+      },
+      "rank_ic": {
+        "reason_code": "TARGET_NOT_NATURALLY_MATURE",
+        "state": "NOT_ESTIMABLE",
+        "value": null
+      },
+      "rmse": {
+        "reason_code": "TARGET_NOT_NATURALLY_MATURE",
+        "state": "NOT_ESTIMABLE",
+        "value": null
+      }
+    },
+    "outcome_evaluation_state": "BLOCKED_BY_REAL_TIME",
+    "prediction_id": "3c3e181e-692d-535b-aea0-f855c9e9e418",
+    "scope": "DESCRIPTIVE / NOT_ALPHA_EVIDENCE",
+    "unknown_count": 1
+  },
+  "restore": {
+    "authorization_or_credentials_not_cloned": true,
+    "business_replay_writes": 0,
+    "catalog_checksum": "44a27e01109567395ad803e0c0c3b2859e8890fb23cf27b0b2c26b98db559e51",
+    "cluster_identity": "7683543274548948162",
+    "database_name": "mra_closure_restore_20260910",
+    "database_oid": 3577497,
+    "matched": true,
+    "mismatch_count": 0,
+    "scope": "INDEPENDENT_RESTORE_ONLY_NEVER_LIVE_WRITER",
+    "seconds": 98.96264245797647,
+    "source_backup_sha256": "ee2c2e8026c337ef5fdd805e21715ad9c7a409c687ebac22b2d74a2abe704da6",
+    "source_receipt_sha256": "69215c2c07b840770de69fd9c23e3b01f324eec4123c42368d7b4b65adbfc3a4"
+  },
+  "runtime_principal": {
+    "name": "mra_r2_runtime_20260909",
+    "oid": 6775405
+  },
+  "scheduled_backup": {
+    "artifact_verification_observations": 776,
+    "complete": "PASS",
+    "future_19_00_fire": "NOT_OBSERVED",
+    "observed_scheduled_fire": "2026-09-10T03:00:08.572087+08:00",
+    "receipt": "refresh-20260909T190008572087Z",
+    "same_host_second_device_not_offsite": true,
+    "seconds": 885.23
+  },
+  "schema": "operational-data-loop-closure-index-v1",
+  "schema_epoch": "MRA_REFOUNDATION_1",
+  "service": {
+    "activated_at": "2026-09-10T01:58:55.369599+00:00",
+    "error_log_sha256": "4e7813e38489e3abdb270b549e509ebdbab312173ec281df785c1aa6b68d9684",
+    "label": "local.mra.prospective.r2-xshg32",
+    "last_tick_at": "2026-09-10 02:06:26.168046+00:00",
+    "pid_observed": 91906,
+    "prefix_bytes": 94298,
+    "prefix_sha256": "c43ce3316481069a94a6ce0157d46034465c13bfca126c9412279f96fff178f6",
+    "state": "RUNNING_AT_CUTOFF",
+    "tick_count": 6,
+    "tick_seconds": [
+      40.32335091702407,
+      56.71808137500193,
+      65.8023195839487,
+      42.842554791946895,
+      36.23432624997804,
+      39.69990395801142
+    ]
+  },
+  "source_tree": "0b76762931fafeee4f86b07bc3dcc89d9d6db0c3",
+  "table_delta": {
+    "changed": [
+      {
+        "after": {
+          "ordered_sha256": "2186e317c93cddbc5b9cc5ba7b2c215c2957c19a52e417512d0ffe59c98bc792",
+          "row_count": 2974,
+          "table": "artifact"
+        },
+        "before": {
+          "ordered_sha256": "6da50819f79f08de3303157a26e952cfccd3ef317ef521c6af57bbbe015f4721",
+          "row_count": 2973,
+          "table": "artifact"
+        },
+        "table": "artifact"
+      },
+      {
+        "after": {
+          "ordered_sha256": "7ecc8c1c17ad436027ff06ab433bcb3d5d5a75f71fd8145bec09d738b177b727",
+          "row_count": 15497,
+          "table": "artifact_verification"
+        },
+        "before": {
+          "ordered_sha256": "0c7033da0406e442bfb2699795b6b1e196e78e7eca3a87475a5da44fad74f4cd",
+          "row_count": 15496,
+          "table": "artifact_verification"
+        },
+        "table": "artifact_verification"
+      },
+      {
+        "after": {
+          "ordered_sha256": "8f40b7d717e8eeb2e1949155a464078b05db1df1574095d6dcadb21608069ab0",
+          "row_count": 111011,
+          "table": "audit_event"
+        },
+        "before": {
+          "ordered_sha256": "b1369576ac386845528d481db4e126587c35b6aabe8639320ae003a9f95af214",
+          "row_count": 111010,
+          "table": "audit_event"
+        },
+        "table": "audit_event"
+      },
+      {
+        "after": {
+          "ordered_sha256": "4a777cce28e516e1556025368f47a675e83454db6c49fdd1a53b278fe094ae4c",
+          "row_count": 111011,
+          "table": "command_receipt"
+        },
+        "before": {
+          "ordered_sha256": "89b66f80cc372267bcabc9034173ef1922b18ada23bc570275ba7694ebf8f95e",
+          "row_count": 111010,
+          "table": "command_receipt"
+        },
+        "table": "command_receipt"
+      }
+    ],
+    "expected_reason": "One new frozen installed wheel Artifact, verification, Receipt/Audit; no rewriting of historical facts.",
+    "unchanged_count": 190
+  },
+  "tests_tree": "433d9dc81485f3bf0d8ebd88a7be9410d59a140c",
+  "verification_reuse": "125 scoped tests at 2fafc3ec; final input-arity fix plus exact function grants rerun 26 affected tests at db69cd34. No public pool/UoW/schema or finance change.",
+  "warnings": [
+    "No naturally matured Outcome/Evaluation yet.",
+    "Same-host mirror is not offsite.",
+    "Historical failed Runs are immutable and are not automatic retries.",
+    "Read-helper UTC/table-name failures are retained; production state was not mutated.",
+    "One actual post-cutover trading day is not sustained multi-day proof."
+  ]
+}

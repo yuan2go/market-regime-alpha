@@ -312,7 +312,7 @@ scoped; this is not authorization for full Runtime/CLI cutover.
 The authenticated runtime login needs the current owner's reference row locks,
 including empty retrospective-marker checks on a non-retrospective Dataset.
 `inspect_runtime_principal` checks the reference tables in
-`interfaces/deployment_profile.py` and the daily result writers. Grant UPDATE on
+`infrastructure/postgres/runtime_privileges.py` and the daily result writers. Grant UPDATE on
 an identity column for `FOR SHARE`; immutable reference triggers remain enabled.
 Decision qualification rosters record consumed references; granting their owner
 writes must never grant writes to qualification decisions, ModelVersion
@@ -327,3 +327,64 @@ freeze a distinct current-time prediction request through the existing daily
 CLI before its Target cutoff. Record the failed and new identities explicitly;
 this does not reopen, replace or reclassify the failed publication, and is never
 an automatic selection of a replacement model.
+
+
+### Scoped health and privilege drift
+
+`mra research daily health --series-code SERIES --cutover-at UTC_INSTANT
+--recent-sessions 5 --replay` emits a read-only ledger and three simultaneous
+scopes. Supply the actual activation boundary from its immutable deployment
+record; changing installations does not reset the lineage's observation start.
+`ALL_HISTORY` remains visible. `POST_CURRENT_CUTOVER` selects expected windows by
+window start and prediction requests by original request time; inherited pending
+work remains in the complete ledger. Planning gaps use detection time. Recent
+windows use exact scheduled TradingSession identities whose sessions have opened,
+never weekday inference. No boundary supplied means NOT_ESTIMABLE for cutover.
+
+Serve accepts `--health-cutover-at` for the same read-only cohort projection and
+scoped alert deduplication. It still reconciles the entire series and all pending
+work. Logs separately expose all-history health, scoped health, daily ledger,
+tick duration, and backup/resource preflight; process uptime cannot establish
+capture or Evaluation success. An unchecked replay is NOT_RUN, even when its
+observed mismatch count is zero. `--replay` verifies the original owner reports
+without completing or reexecuting any work. Finance statistics remain canonical
+Evaluation projections, with single-day evidence descriptive only.
+
+The authenticated login is checked at preflight and before owner actions against
+an explicit INSERT/UPDATE table and identity-column lock envelope. Other table
+or column writes, grant options, role memberships, CREATE/TEMP, sequence writes,
+and unapproved callable routines fail closed. Reference identity-column UPDATE
+is only needed for PostgreSQL row locks; released invariant triggers remain
+active. GC candidates require only a content-hash column lock, not insertion or
+whole-table update. Schema/Model/qualification/account mutation is outside the
+runtime envelope. Approved schema publishers and the trusted cluster
+administrator remain outside the untrusted-client threat model; this guard does
+not replace database permissions or grant authority to change them.
+
+A resource-budget exit is a stopped service, even if its parent research Run
+remains RUNNING. Inspect the exact owned job and canonical Attempts before
+recovery. Preserve the exit/log prefix, verify no unknown effect, then use the
+qualified profile handoff or unchanged-installation restart procedure above.
+Do not increase timeout from one slow tick or let a supervisor restart forever.
+New permission probes and health projections have separate measured costs;
+their successful timings cannot explain an earlier uninstrumented failure.
+
+The daily `data_freshness.last_bar_recorded_at` projection is restricted to the
+frozen plan's instruments and input/target sessions, as stated by `bar_scope`.
+It cannot be refreshed by unrelated securities or historical campaigns.
+Capture/SourceGap freshness remains Provider-product scoped. Neither timestamp
+is a DataReady, complete-population or Provider-PIT qualification assertion.
+
+Check actual backup-refresh event receipts for scheduled fire, drain, dump,
+Artifact verification, mirror, profile refresh and restart. A configured calendar
+alone proves none of these. Keep the original cutover cohort boundary across
+refreshes. The service's fresh backup observation and last Artifact verification
+are separate from Provider availability and publication/Outcome timeliness.
+
+A changed grant envelope requires a qualified restricted-login vertical slice,
+exact owned-service drain, current verified backup, and an administrator's scoped
+role adjustment. Freeze/install the implementation and prepare a new deployment
+receipt before activation. Preserve prior profiles, wheels and failed Runs. Keep
+backup refresh bound to the new installed interpreter; its scheduled event log
+must show drain, verified dump/Artifact roster, physical mirror, profile refresh,
+preflight and restart. A second physical device on this host is not offsite.

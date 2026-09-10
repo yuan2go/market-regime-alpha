@@ -1,0 +1,1154 @@
+{
+  "active_expired_unknown_attempts": [
+    0,
+    0,
+    0
+  ],
+  "authority": "NON_AUTHORITATIVE_SOURCE_AND_OBSERVATION_INDEX",
+  "backup": {
+    "artifact_count": 2975,
+    "artifact_roster_sha256": "0df282ad0f70407f6b9d36063b0e08049b644bb73908a3e921cfe2f2a1c3812d",
+    "backup_sha256": "3791f8e90fa980ba00ae7f8a6f739abb84729dc64c03f308e2733f8b97e95c26",
+    "backup_size_bytes": 209567901,
+    "database": {
+      "cluster_identity": "7681924516459622681",
+      "name": "mra_wp18q_r2_operational_20260905",
+      "oid": 287543,
+      "owner": "yuan",
+      "server_version": "16.15 (Homebrew)"
+    },
+    "inventory_sha256": "238fbb9ffd9d368a4dfaf68751dad9d1fb1b702b455e9ec169335c2933226f05",
+    "snapshot_contract": "POSTGRES_EXPORTED_SNAPSHOT_AND_EXACT_ARTIFACT_ROSTER",
+    "verified_at": "2026-09-10 02:38:04.705632+00"
+  },
+  "backup_mirror": {
+    "different_physical_device": true,
+    "matched": true,
+    "offsite": false,
+    "same_host": true
+  },
+  "baseline_sha": "90c5af03c905b1c91a4c284cd838ea39166a5c42",
+  "catalog_checksum": "44a27e01109567395ad803e0c0c3b2859e8890fb23cf27b0b2c26b98db559e51",
+  "commands": [
+    {
+      "clean_before": false,
+      "command": [
+        "uv",
+        "run",
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/contracts/research_qualification/test_daily_vertical_postgres.py",
+        "-k",
+        "completed_model and False-False",
+        "--maxfail=1"
+      ],
+      "exit_code": 1,
+      "identity": {
+        "commit": "1ffd8aad229be1e9690f79e385306ec6f65ec6fe",
+        "source_tree": "0b76762931fafeee4f86b07bc3dcc89d9d6db0c3",
+        "tests_tree": "433d9dc81485f3bf0d8ebd88a7be9410d59a140c"
+      },
+      "label": "freshness-scope-red",
+      "log_sha256": "002f8f1271520da3361fde0701320c3f34b625fefd7e166d2c10e3e4bacf2b0a",
+      "seconds": 10.364114999771118
+    },
+    {
+      "clean_before": false,
+      "command": [
+        "uv",
+        "run",
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/contracts/research_qualification/test_daily_vertical_postgres.py",
+        "tests/contracts/test_daily_runtime_permissions_postgres.py",
+        "--maxfail=1"
+      ],
+      "exit_code": 0,
+      "identity": {
+        "commit": "1ffd8aad229be1e9690f79e385306ec6f65ec6fe",
+        "source_tree": "0b76762931fafeee4f86b07bc3dcc89d9d6db0c3",
+        "tests_tree": "433d9dc81485f3bf0d8ebd88a7be9410d59a140c"
+      },
+      "label": "freshness-scope-green",
+      "log_sha256": "5931b3a2eec22af0293b330f4769a27d85a09ecb4f3985f9dd907d14b7f240d5",
+      "seconds": 53.88273787498474
+    },
+    {
+      "clean_before": true,
+      "command": [
+        "uv",
+        "run",
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/contracts/research_qualification/test_daily_vertical_postgres.py",
+        "tests/contracts/test_daily_runtime_permissions_postgres.py",
+        "tests/contracts/test_daily_collection_handoff.py",
+        "tests/contracts/test_runtime_principal_postgres.py",
+        "tests/contracts/test_deployment_installation.py",
+        "tests/contracts/market/test_prospective_cli.py",
+        "--maxfail=1",
+        "--junitxml=$EVIDENCE_DIR/repair-targeted.xml"
+      ],
+      "exit_code": 0,
+      "identity": {
+        "commit": "55d4aba91f7eb9781b45204f8765edc3fcba05b1",
+        "source_tree": "75d6c367b8e1320e5ebd17d6b1da63019522bb42",
+        "tests_tree": "080d5b7a0d2185c96365c8ee51b3cc404d12042c"
+      },
+      "label": "repair-targeted",
+      "log_sha256": "2ab30948312edfebcfe0654af0ee67f5690b633ecacc0af2c7c85fec313ab390",
+      "seconds": 73.32309365272522
+    },
+    {
+      "clean_before": true,
+      "command": [
+        "uv",
+        "run",
+        "python",
+        "-m",
+        "ruff",
+        "check",
+        "."
+      ],
+      "exit_code": 0,
+      "identity": {
+        "commit": "55d4aba91f7eb9781b45204f8765edc3fcba05b1",
+        "source_tree": "75d6c367b8e1320e5ebd17d6b1da63019522bb42",
+        "tests_tree": "080d5b7a0d2185c96365c8ee51b3cc404d12042c"
+      },
+      "label": "repair-ruff",
+      "log_sha256": "2784eee1b0b96820e027d485cea8a495fbbfcaf21a87f0fda3d4cbf7da775d88",
+      "seconds": 0.12314510345458984
+    },
+    {
+      "clean_before": true,
+      "command": [
+        "uv",
+        "run",
+        "python",
+        "-m",
+        "mypy"
+      ],
+      "exit_code": 0,
+      "identity": {
+        "commit": "55d4aba91f7eb9781b45204f8765edc3fcba05b1",
+        "source_tree": "75d6c367b8e1320e5ebd17d6b1da63019522bb42",
+        "tests_tree": "080d5b7a0d2185c96365c8ee51b3cc404d12042c"
+      },
+      "label": "repair-mypy",
+      "log_sha256": "4ae75e0f3b50ba294de3efa37473e27d374ede0e5a7819c0be88e7a1a88e52a2",
+      "seconds": 0.5768649578094482
+    },
+    {
+      "clean_before": true,
+      "command": [
+        "uv",
+        "run",
+        "python",
+        "-m",
+        "build",
+        "--installer",
+        "uv",
+        "--outdir",
+        "$EVIDENCE_DIR/repair-dist"
+      ],
+      "exit_code": 0,
+      "identity": {
+        "commit": "55d4aba91f7eb9781b45204f8765edc3fcba05b1",
+        "source_tree": "75d6c367b8e1320e5ebd17d6b1da63019522bb42",
+        "tests_tree": "080d5b7a0d2185c96365c8ee51b3cc404d12042c"
+      },
+      "label": "repair-build",
+      "log_sha256": "ced2881589302a8cf9554f69003cc8e2b841f163a3a45640c0932a5f3e38e052",
+      "seconds": 5.251212120056152
+    },
+    {
+      "command": [
+        "/opt/homebrew/bin/uv",
+        "run",
+        "--no-project",
+        "--no-sync",
+        "--python",
+        "$PRIVATE_OPERATION/runtime-55d4aba9/bin/python",
+        "$PRIVATE_OPERATION/runtime-55d4aba9/bin/mra",
+        "evidence",
+        "backup",
+        "--directory",
+        "$EVIDENCE_DIR/repair-backup",
+        "--expected-database-name",
+        "mra_wp18q_r2_operational_20260905",
+        "--expected-database-oid",
+        "287543",
+        "--minimum-free-bytes",
+        "2147483648"
+      ],
+      "database_name": "mra_wp18q_r2_operational_20260905",
+      "database_oid": 287543,
+      "database_role": "backup",
+      "exit_code": 0,
+      "log_sha256": "f23b10a70079150290dddb4e69e9e5f476d84c3784e5d2a930746ea38a0711d9",
+      "per_connection_work_mem": "256MB",
+      "seconds": 187.8797319160076
+    },
+    {
+      "command": [
+        "/opt/homebrew/bin/uv",
+        "run",
+        "--no-project",
+        "--no-sync",
+        "--python",
+        "$PRIVATE_OPERATION/runtime-55d4aba9/bin/python",
+        "$PRIVATE_OPERATION/runtime-55d4aba9/bin/mra",
+        "runtime",
+        "prepare-deployment",
+        "--operation-config",
+        "$PRIVATE_OPERATION/deployments/55d4aba91f7eb9781b45204f8765edc3fcba05b1/operation-intent.json",
+        "--wheel",
+        "$PRIVATE_OPERATION/deployments/55d4aba91f7eb9781b45204f8765edc3fcba05b1/market_regime_alpha-0.1.0-py3-none-any.whl",
+        "--source-checkout",
+        "$ISOLATED_WORKTREE",
+        "--backup-directory",
+        "$EVIDENCE_DIR/repair-backup",
+        "--output",
+        "$PRIVATE_OPERATION/deployments/55d4aba91f7eb9781b45204f8765edc3fcba05b1/operation.json",
+        "--expected-source-sha",
+        "55d4aba91f7eb9781b45204f8765edc3fcba05b1"
+      ],
+      "database_name": "mra_wp18q_r2_operational_20260905",
+      "database_oid": 287543,
+      "database_role": "runtime",
+      "exit_code": 0,
+      "log_sha256": "6d90276308bb6e096f30ebaf398c249293f5732ba666136aad0565ce0f4b53de",
+      "per_connection_work_mem": "SERVER_DEFAULT",
+      "seconds": 8.313305749965366
+    },
+    {
+      "command": [
+        "/opt/homebrew/bin/uv",
+        "run",
+        "--no-project",
+        "--no-sync",
+        "--python",
+        "$PRIVATE_OPERATION/runtime-55d4aba9/bin/python",
+        "$PRIVATE_OPERATION/runtime-55d4aba9/bin/mra",
+        "archive",
+        "prospective",
+        "preflight",
+        "--operation-config",
+        "$PRIVATE_OPERATION/deployments/55d4aba91f7eb9781b45204f8765edc3fcba05b1/operation.json",
+        "--expected-database-name",
+        "mra_wp18q_r2_operational_20260905",
+        "--daily-plan-template",
+        "$PRIVATE_OPERATION/deployments/55d4aba91f7eb9781b45204f8765edc3fcba05b1/daily-plan-template.json"
+      ],
+      "database_name": "mra_wp18q_r2_operational_20260905",
+      "database_oid": 287543,
+      "database_role": "runtime",
+      "exit_code": 0,
+      "log_sha256": "ad302b4f8828d103330d8eb313f238b88bb4a7616b6d7751973feb46d00713dc",
+      "per_connection_work_mem": "SERVER_DEFAULT",
+      "seconds": 17.588132042030338
+    }
+  ],
+  "daily_scopes": {
+    "ALL_HISTORY": {
+      "attempts": {
+        "active": 0,
+        "expired": 0,
+        "failed": 3,
+        "unknown": 0
+      },
+      "evaluations_completed": 0,
+      "latest_evaluation_at": null,
+      "latest_outcome_at": null,
+      "latest_publication_at": "2026-09-09 18:17:35.943618+00:00",
+      "outcomes_completed": 0,
+      "prediction_requests": 5,
+      "publication_rate": {
+        "denominator": 5,
+        "denominator_kind": "DECLARED_PREDICTION_OR_ABSTENTION_REQUESTS",
+        "numerator": 2,
+        "reason_code": null,
+        "state": "ESTIMABLE"
+      },
+      "published": 2,
+      "replay_checked": 2,
+      "replay_mismatches": 0,
+      "reports_completed": 0,
+      "state": "AVAILABLE",
+      "states": {
+        "FAILED_TERMINAL": 3,
+        "MISSED_PUBLICATION": 1,
+        "PENDING_MATURITY": 1
+      },
+      "timely_publications": 2
+    },
+    "LAST_N_TRADING_SESSIONS": {
+      "attempts": {
+        "active": 0,
+        "expired": 0,
+        "failed": 3,
+        "unknown": 0
+      },
+      "evaluations_completed": 0,
+      "latest_evaluation_at": null,
+      "latest_outcome_at": null,
+      "latest_publication_at": "2026-09-09 18:17:35.943618+00:00",
+      "outcomes_completed": 0,
+      "prediction_requests": 5,
+      "publication_rate": {
+        "denominator": 5,
+        "denominator_kind": "DECLARED_PREDICTION_OR_ABSTENTION_REQUESTS",
+        "numerator": 2,
+        "reason_code": null,
+        "state": "ESTIMABLE"
+      },
+      "published": 2,
+      "replay_checked": 2,
+      "replay_mismatches": 0,
+      "reports_completed": 0,
+      "state": "AVAILABLE",
+      "states": {
+        "FAILED_TERMINAL": 3,
+        "MISSED_PUBLICATION": 1,
+        "PENDING_MATURITY": 1
+      },
+      "timely_publications": 2
+    },
+    "POST_CURRENT_CUTOVER": {
+      "attempts": {
+        "active": 0,
+        "expired": 0,
+        "failed": 1,
+        "unknown": 0
+      },
+      "evaluations_completed": 0,
+      "latest_evaluation_at": null,
+      "latest_outcome_at": null,
+      "latest_publication_at": "2026-09-09 18:17:35.943618+00:00",
+      "outcomes_completed": 0,
+      "prediction_requests": 3,
+      "publication_rate": {
+        "denominator": 3,
+        "denominator_kind": "DECLARED_PREDICTION_OR_ABSTENTION_REQUESTS",
+        "numerator": 1,
+        "reason_code": null,
+        "state": "ESTIMABLE"
+      },
+      "published": 1,
+      "replay_checked": 1,
+      "replay_mismatches": 0,
+      "reports_completed": 0,
+      "state": "AVAILABLE",
+      "states": {
+        "FAILED_TERMINAL": 1,
+        "MISSED_PUBLICATION": 1,
+        "PENDING_MATURITY": 1
+      },
+      "timely_publications": 1
+    }
+  },
+  "dangerous_role_flags": [
+    false,
+    false,
+    false,
+    false,
+    false
+  ],
+  "database": {
+    "cluster_identity": "7681924516459622681",
+    "name": "mra_wp18q_r2_operational_20260905",
+    "oid": 287543
+  },
+  "day_ledger": [
+    {
+      "denominators": null,
+      "evaluation_completed": null,
+      "input_session": "2026-09-07",
+      "outcome_completed_count": null,
+      "outcome_expected_count": null,
+      "outcome_run_id": null,
+      "plan_sha256": "68c8bf17ac841a723295de1cff8284ec45b3c53dcd5c7153da0875ccddcad257",
+      "prediction_id": "acfa974b-9ee8-5f52-ba83-43408b2a9eac",
+      "published_at": null,
+      "reason_code": "EMPTY_POPULATION_INFERENCE_UNSUPPORTED",
+      "replay": {
+        "state": "NOT_RUN"
+      },
+      "report_completed": null,
+      "run_id": "5d745e1e-088d-5099-add4-49fec094cc93",
+      "sampled": 32,
+      "state": "FAILED_TERMINAL",
+      "target_session": "2026-09-08"
+    },
+    {
+      "denominators": {
+        "baseline_prediction": 31,
+        "common_prediction": 31,
+        "eligible": 31,
+        "feature_ready": 31,
+        "model_prediction": 31,
+        "sampled": 32
+      },
+      "evaluation_completed": false,
+      "input_session": "2026-09-07",
+      "outcome_completed_count": 0,
+      "outcome_expected_count": 31,
+      "outcome_run_id": "7d31a1d1-410c-5246-8e04-7ed3efb11ae3",
+      "plan_sha256": "b89619847edd56541f9f6602c0573d3078f82a8073be34fa3296c14e81597614",
+      "prediction_id": "e208e9d4-7d12-5929-9867-bdce54a2a874",
+      "published_at": "2026-09-07 21:57:39.602585+00:00",
+      "reason_code": "OUTCOME_AUTHORITY_INTEGRITY_FAILED",
+      "replay": {
+        "business_writes": 0,
+        "dataset_id": "dc88144f-227a-5253-bc98-7e676f229851",
+        "matched": true,
+        "mismatch_count": 0,
+        "model_version_id": "fe47f296-17dc-5654-a9eb-cf149f5b01c9",
+        "prediction_id": "e208e9d4-7d12-5929-9867-bdce54a2a874",
+        "reports": [
+          "ArtifactBinding(artifact_id=UUID('82a05313-f033-449c-abbc-d8c7b6b2092d'), content_sha256=ContentHash(value='17cf11ca5d4a580b1fd0089195e204b8a9c6f93a3a6c95abd09d97e425eff9ac'), size_bytes=39865)",
+          "ArtifactBinding(artifact_id=UUID('9317f978-117b-461e-94cb-9f6143cff747'), content_sha256=ContentHash(value='3b22f1d5129a55870be3b22ebed8f5e840a827333272492e191dcdda0ff96b55'), size_bytes=4080)"
+        ]
+      },
+      "report_completed": false,
+      "run_id": "be904f26-9099-5774-aed1-36c5e4005d65",
+      "sampled": 32,
+      "state": "FAILED_TERMINAL",
+      "target_session": "2026-09-08"
+    },
+    {
+      "denominators": null,
+      "evaluation_completed": null,
+      "input_session": "2026-09-08",
+      "outcome_completed_count": null,
+      "outcome_expected_count": null,
+      "outcome_run_id": null,
+      "plan_sha256": "32f6d10070c2fe40d15911f774f27805215558551cb1c7adf3d10a0ba24b0ade",
+      "prediction_id": "42258e50-bad2-540e-8227-89703966d7a0",
+      "published_at": null,
+      "reason_code": "PROCESS_DOWNTIME_MISSED_PUBLICATION",
+      "replay": {
+        "state": "NOT_RUN"
+      },
+      "report_completed": null,
+      "run_id": "c954f608-c612-59ef-a078-58db89e5ea4d",
+      "sampled": 32,
+      "state": "MISSED_PUBLICATION",
+      "target_session": "2026-09-09"
+    },
+    {
+      "denominators": null,
+      "evaluation_completed": null,
+      "input_session": "2026-09-09",
+      "outcome_completed_count": null,
+      "outcome_expected_count": null,
+      "outcome_run_id": null,
+      "plan_sha256": "d17e47493ae527a965a12793c6395fb5a627666cdd18581cf531bab32847d8f0",
+      "prediction_id": "d89afb7c-6deb-5ec1-89af-a8866d5e2b6d",
+      "published_at": null,
+      "reason_code": "DAILY_PREDICTION_STEP_FAILED",
+      "replay": {
+        "state": "NOT_RUN"
+      },
+      "report_completed": null,
+      "run_id": "2a357d21-ca98-59b7-b039-cfe8c769df0c",
+      "sampled": 32,
+      "state": "FAILED_TERMINAL",
+      "target_session": "2026-09-10"
+    },
+    {
+      "denominators": {
+        "baseline_prediction": 31,
+        "common_prediction": 31,
+        "eligible": 31,
+        "feature_ready": 31,
+        "model_prediction": 31,
+        "sampled": 32
+      },
+      "evaluation_completed": false,
+      "input_session": "2026-09-09",
+      "outcome_completed_count": 0,
+      "outcome_expected_count": 31,
+      "outcome_run_id": "b51cef3b-9ff8-5b41-a015-2b6deffd14d7",
+      "plan_sha256": "eae5144cbdca838cc32e2b673f0a620dcb89455a3b8760cbe9fb37410f3e0442",
+      "prediction_id": "3c3e181e-692d-535b-aea0-f855c9e9e418",
+      "published_at": "2026-09-09 18:17:35.943618+00:00",
+      "reason_code": null,
+      "replay": {
+        "business_writes": 0,
+        "dataset_id": "351469dd-f65b-540f-845b-37bbfcceab1f",
+        "matched": true,
+        "mismatch_count": 0,
+        "model_version_id": "fe47f296-17dc-5654-a9eb-cf149f5b01c9",
+        "prediction_id": "3c3e181e-692d-535b-aea0-f855c9e9e418",
+        "reports": [
+          "ArtifactBinding(artifact_id=UUID('90716533-afe5-41f9-bf00-3ebbdafa5a58'), content_sha256=ContentHash(value='0a8053a95168f807ed02cc4c08a792337d321872288939f049da02025bf3ed77'), size_bytes=39865)",
+          "ArtifactBinding(artifact_id=UUID('66d9bb81-cb8c-4f8c-8925-dc37846a9068'), content_sha256=ContentHash(value='2c288fd5aec84471e15ff050da6bd5bef8fa3fab421b41376ca086a6a744c230'), size_bytes=4080)"
+        ]
+      },
+      "report_completed": false,
+      "run_id": "000409b6-eb1e-5e77-898f-eb3a201aadf9",
+      "sampled": 32,
+      "state": "PENDING_MATURITY",
+      "target_session": "2026-09-10"
+    }
+  ],
+  "deployment": {
+    "implementation_sha": "55d4aba91f7eb9781b45204f8765edc3fcba05b1",
+    "profile_sha256": "2c4d40bff5a62a62240342776620c0dab54cc18796e50b960c11b2dd6d7a550a",
+    "receipt_sha256": "ea8338d971ed55b71118c3f682dc2e117e895cbdd7211d39bd5dd0bad0c1c0ba",
+    "source_sha256": "3c21c9351cb064c32203c1817771a9ae61437f6ff750de503633cb97a398b41c"
+  },
+  "extends": {
+    "path": "Operational-Data-Loop-Closure-Evidence-2026-09-10.json",
+    "prior_observation_ended_before_later_QueryCanceled": true,
+    "sha256": "bcde85a36de23cceee710ce457a61d3e038ede0c61dd7842eb0576347ddda01a"
+  },
+  "external_bundle": "operational-data-loop-closure-20260910.tar.gz",
+  "failure": {
+    "at": "2026-09-10T02:08:02.541+00:00",
+    "owner": "PostgresDailyPredictionReads.operational_health",
+    "raw_log": "postgres-query-canceled-exact.log",
+    "raw_log_sha256": "e17f5ebddb097abee797fdad43f9676797d387097f1a39cb5e31a36929478eb6",
+    "root_trigger": "Provider-wide bar MAX scan and incorrect daily freshness scope",
+    "sql_error": "QueryCanceled",
+    "statement_timeout_seconds": 30,
+    "underlying_intermittent_io_cause": "UNPROVEN"
+  },
+  "final_document_checks": [
+    {
+      "clean_before": false,
+      "command": [
+        "uv",
+        "run",
+        "python",
+        "scripts/check_docs_links.py"
+      ],
+      "exit_code": 0,
+      "identity": {
+        "commit": "55d4aba91f7eb9781b45204f8765edc3fcba05b1",
+        "source_tree": "75d6c367b8e1320e5ebd17d6b1da63019522bb42",
+        "tests_tree": "080d5b7a0d2185c96365c8ee51b3cc404d12042c"
+      },
+      "label": "closure-final-docs",
+      "log_sha256": "a0b364458342be2743a15523ca9b490a54d495ddb3cc0fa82717a2719e7bceda",
+      "seconds": 0.11703824996948242
+    },
+    {
+      "clean_before": false,
+      "command": [
+        "uv",
+        "run",
+        "python",
+        "scripts/check_repository_hygiene.py"
+      ],
+      "exit_code": 0,
+      "identity": {
+        "commit": "55d4aba91f7eb9781b45204f8765edc3fcba05b1",
+        "source_tree": "75d6c367b8e1320e5ebd17d6b1da63019522bb42",
+        "tests_tree": "080d5b7a0d2185c96365c8ee51b3cc404d12042c"
+      },
+      "label": "closure-final-hygiene",
+      "log_sha256": "54bad991177ffbd70c074828fca36983fd5c87abf7465da5767531b0f00d0018",
+      "seconds": 12.842375993728638
+    },
+    {
+      "clean_before": false,
+      "command": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "exit_code": 0,
+      "identity": {
+        "commit": "55d4aba91f7eb9781b45204f8765edc3fcba05b1",
+        "source_tree": "75d6c367b8e1320e5ebd17d6b1da63019522bb42",
+        "tests_tree": "080d5b7a0d2185c96365c8ee51b3cc404d12042c"
+      },
+      "label": "closure-final-diff",
+      "log_sha256": "801508b7e078ed3464317b7224839112258b83b32996dee3657a3b862da914dd",
+      "seconds": 0.015962839126586914
+    }
+  ],
+  "final_sha_binding": "External delivery-attestation.json binds the later documentation-only final commit.",
+  "forbidden_effective_privileges": {
+    "DELETE": 0,
+    "REFERENCES": 0,
+    "TRIGGER": 0,
+    "TRUNCATE": 0
+  },
+  "full_repository_regression": "NOT_RUN_BY_RISK_DIRECTED_SCOPE",
+  "gates": {
+    "ALPHA_PROVEN": "NO",
+    "CURRENT_OPERATIONAL_HEALTH_PASS": "PASS_AT_OBSERVATION_CUTOFF_WITH_DECLARED_TERMINAL_FAILURES",
+    "OPERATIONAL_DATA_LOOP_PROOF_EXIT_GATE_PASS": "BLOCKED_BY_REAL_TIME",
+    "OPERATIONAL_HANDOFF_PASS": "PASS",
+    "PRODUCTION_ADMISSION": "NO",
+    "REAL_MATURE_EVALUATION_PASS": "BLOCKED_BY_REAL_TIME",
+    "SUSTAINED_MULTI_DAY_PROOF": "BLOCKED_BY_ELAPSED_REAL_TIME"
+  },
+  "implementation_sha": "55d4aba91f7eb9781b45204f8765edc3fcba05b1",
+  "installed": {
+    "dependencies": {
+      "akshare": "1.18.81",
+      "baostock": "0.9.3",
+      "beautifulsoup4": "4.15.0",
+      "bs4": "0.0.2",
+      "certifi": "2026.7.22",
+      "cffi": "2.1.1",
+      "charset-normalizer": "3.4.9",
+      "curl-cffi": "0.16.0",
+      "decorator": "5.3.1",
+      "duckdb": "1.5.5",
+      "et-xmlfile": "2.0.0",
+      "html5lib": "1.1",
+      "idna": "3.18",
+      "jsonpath": "0.82.2",
+      "lxml": "6.1.1",
+      "mini-racer": "0.14.1",
+      "multitasking": "0.0.13",
+      "numpy": "2.5.1",
+      "openpyxl": "3.1.5",
+      "pandas": "3.0.5",
+      "peewee": "4.3.0",
+      "platformdirs": "4.11.0",
+      "polars": "1.43.2",
+      "polars-runtime-32": "1.43.2",
+      "protobuf": "7.35.1",
+      "psycopg": "3.3.4",
+      "psycopg-binary": "3.3.4",
+      "psycopg-pool": "3.3.1",
+      "pyarrow": "25.0.0",
+      "pycparser": "3.0",
+      "python-dateutil": "2.9.0.post0",
+      "python-dotenv": "1.2.2",
+      "pytz": "2026.3.post1",
+      "requests": "2.34.2",
+      "simplejson": "4.1.1",
+      "six": "1.17.0",
+      "soupsieve": "2.9.1",
+      "tabulate": "0.10.0",
+      "tqdm": "4.70.0",
+      "tushare": "1.4.29",
+      "typing-extensions": "4.16.0",
+      "urllib3": "2.7.0",
+      "webencodings": "0.5.1",
+      "websocket-client": "1.9.0",
+      "websockets": "17.0.1",
+      "xlrd": "2.0.2",
+      "yfinance": "1.5.2"
+    },
+    "lock_sha256": "5cfb5ced3a2587910e172a66f5a5912668d16d0c8dd54e0ae3e619384113a41d",
+    "metadata_sha256": "1983a0b909e8e463ae0e21ec452f15301b819ef73e73d7d523399abd7a320a23",
+    "package_roster_sha256": "bb9e15f7a4ef494da681b85497dc5e4022d91826df634e2c04843bcc2c1fcc1c",
+    "source_sha": "55d4aba91f7eb9781b45204f8765edc3fcba05b1",
+    "source_sha256": "3c21c9351cb064c32203c1817771a9ae61437f6ff750de503633cb97a398b41c",
+    "source_tree": "75d6c367b8e1320e5ebd17d6b1da63019522bb42",
+    "tests_tree": "080d5b7a0d2185c96365c8ee51b3cc404d12042c",
+    "wheel_sha256": "f28ae7a508877fc77a942fab8ff487072010eb54b38bccf8fa83d4d1df5fef5f"
+  },
+  "installed_smoke": {
+    "checks": 7,
+    "premature_attempt_preserved": "repair-installed-smoke-premature.log",
+    "result": "PASS"
+  },
+  "observed_at": "2026-09-10 02:47:42.966112+00:00",
+  "principal": {
+    "name": "mra_r2_runtime_20260909",
+    "oid": 6775405
+  },
+  "priority_prediction": {
+    "dataset_id": "351469dd-f65b-540f-845b-37bbfcceab1f",
+    "decision_time": "2026-09-09 18:16:08.984967+00:00",
+    "denominators": {
+      "baseline_prediction": 31,
+      "common_prediction": 31,
+      "eligible": 31,
+      "feature_ready": 31,
+      "model_prediction": 31,
+      "sampled": 32
+    },
+    "evaluation_completed": false,
+    "evaluation_completed_at": null,
+    "experimental_model_use_id": "60902ae3-5776-5460-91b1-90ed3bc03525",
+    "input_cutoff": "2026-09-09 18:16:08.984967+00:00",
+    "input_session": "2026-09-09",
+    "input_session_id": "05b784e2-7bdb-5598-a06d-8c6cdd629fe9",
+    "model_version_id": "fe47f296-17dc-5654-a9eb-cf149f5b01c9",
+    "outcome_completed_at": null,
+    "outcome_completed_count": 0,
+    "outcome_expected_count": 31,
+    "outcome_run_id": "b51cef3b-9ff8-5b41-a015-2b6deffd14d7",
+    "plan_sha256": "eae5144cbdca838cc32e2b673f0a620dcb89455a3b8760cbe9fb37410f3e0442",
+    "prediction_id": "3c3e181e-692d-535b-aea0-f855c9e9e418",
+    "published_at": "2026-09-09 18:17:35.943618+00:00",
+    "reason_code": null,
+    "replay": {
+      "business_writes": 0,
+      "dataset_id": "351469dd-f65b-540f-845b-37bbfcceab1f",
+      "matched": true,
+      "mismatch_count": 0,
+      "model_version_id": "fe47f296-17dc-5654-a9eb-cf149f5b01c9",
+      "prediction_id": "3c3e181e-692d-535b-aea0-f855c9e9e418",
+      "reports": [
+        "ArtifactBinding(artifact_id=UUID('90716533-afe5-41f9-bf00-3ebbdafa5a58'), content_sha256=ContentHash(value='0a8053a95168f807ed02cc4c08a792337d321872288939f049da02025bf3ed77'), size_bytes=39865)",
+        "ArtifactBinding(artifact_id=UUID('66d9bb81-cb8c-4f8c-8925-dc37846a9068'), content_sha256=ContentHash(value='2c288fd5aec84471e15ff050da6bd5bef8fa3fab421b41376ca086a6a744c230'), size_bytes=4080)"
+      ]
+    },
+    "report_completed": false,
+    "report_completed_at": null,
+    "requested_at": "2026-09-09 18:16:08.984967+00:00",
+    "run_id": "000409b6-eb1e-5e77-898f-eb3a201aadf9",
+    "runtime_state": "SUCCEEDED",
+    "sampled": 32,
+    "state": "PENDING_MATURITY",
+    "target_definition_id": "8cdc2e02-bf29-5f96-995c-4b576b9ab130",
+    "target_session": "2026-09-10",
+    "target_session_id": "d61cd9a8-2dd6-5cfc-9ddb-a77a11e95215",
+    "target_window_end": "2026-09-10 07:00:00+00:00",
+    "target_window_start": "2026-09-10 01:30:00+00:00",
+    "timely_publication": true
+  },
+  "prospective_scopes": {
+    "ALL_HISTORY": {
+      "reason_code": null,
+      "state": "AVAILABLE",
+      "summary": {
+        "alerts": [
+          {
+            "count": 544,
+            "reason_code": "RUNTIME_FAILURE",
+            "severity": "ERROR"
+          },
+          {
+            "count": 544,
+            "reason_code": "MISSED_WINDOWS",
+            "severity": "WARNING"
+          },
+          {
+            "count": 1,
+            "reason_code": "PLANNING_GAPS",
+            "severity": "WARNING"
+          }
+        ],
+        "counts": {
+          "CAPTURED_LATE": 0,
+          "CAPTURED_ON_TIME": 0,
+          "FAILED": 0,
+          "MISSED": 544,
+          "PROVIDER_GAP": 0,
+          "RESOURCE_STOP": 0,
+          "due_backlog": 0,
+          "expected": 864,
+          "expired_active_lease": 0,
+          "future": 320,
+          "observations": 0,
+          "opened_expected": 544,
+          "overdue_unterminalized": 0,
+          "planning_gaps": 1,
+          "runtime_failure": 544,
+          "successful_capture": 0,
+          "terminal": 544,
+          "unknown_external_effect": 0
+        },
+        "freshness": {
+          "age_seconds": null,
+          "basis": "LATEST_CAPTURE_KNOWN_TIME",
+          "latest_known_at": null,
+          "market_event_freshness": "NOT_ESTIMABLE",
+          "market_event_reason_code": "ACTUAL_EVENT_TIME_NOT_IN_HEALTH_INPUT",
+          "reason_code": "NO_CAPTURE_OBSERVATION",
+          "state": "NOT_ESTIMABLE"
+        },
+        "operational_state": "ATTENTION_REQUIRED",
+        "rates": {
+          "capture_success": {
+            "denominator": 544,
+            "denominator_kind": "OPENED_EXPECTED_WINDOWS",
+            "numerator": 0,
+            "reason_code": null,
+            "state": "ESTIMABLE",
+            "unit": "FRACTION",
+            "value": "0E-12"
+          },
+          "on_time_capture": {
+            "denominator": 544,
+            "denominator_kind": "OPENED_EXPECTED_WINDOWS",
+            "numerator": 0,
+            "reason_code": null,
+            "state": "ESTIMABLE",
+            "unit": "FRACTION",
+            "value": "0E-12"
+          },
+          "terminal_coverage": {
+            "denominator": 544,
+            "denominator_kind": "OPENED_EXPECTED_WINDOWS",
+            "numerator": 544,
+            "reason_code": null,
+            "state": "ESTIMABLE",
+            "unit": "FRACTION",
+            "value": "1.000000000000"
+          }
+        }
+      }
+    },
+    "LAST_N_TRADING_SESSIONS": {
+      "membership_basis": "EXACT_SCHEDULE_TRADING_SESSION; NO_WEEKDAY_INFERENCE",
+      "reason_code": null,
+      "requested_sessions": 5,
+      "sessions": [
+        {
+          "session_date": "2026-09-10",
+          "session_id": "d61cd9a8-2dd6-5cfc-9ddb-a77a11e95215"
+        },
+        {
+          "session_date": "2026-09-09",
+          "session_id": "05b784e2-7bdb-5598-a06d-8c6cdd629fe9"
+        },
+        {
+          "session_date": "2026-09-08",
+          "session_id": "9c9f9be2-540e-5891-b2b0-9dc4e8a8639e"
+        },
+        {
+          "session_date": "2026-09-07",
+          "session_id": "eded53fe-4087-5e47-9442-7abc623658cb"
+        },
+        {
+          "session_date": "2026-09-04",
+          "session_id": "3cbb8782-71ee-5545-888d-e0efff394bfc"
+        }
+      ],
+      "state": "AVAILABLE",
+      "summary": {
+        "alerts": [
+          {
+            "count": 544,
+            "reason_code": "RUNTIME_FAILURE",
+            "severity": "ERROR"
+          },
+          {
+            "count": 544,
+            "reason_code": "MISSED_WINDOWS",
+            "severity": "WARNING"
+          },
+          {
+            "count": 1,
+            "reason_code": "PLANNING_GAPS",
+            "severity": "WARNING"
+          }
+        ],
+        "counts": {
+          "CAPTURED_LATE": 0,
+          "CAPTURED_ON_TIME": 0,
+          "FAILED": 0,
+          "MISSED": 544,
+          "PROVIDER_GAP": 0,
+          "RESOURCE_STOP": 0,
+          "due_backlog": 0,
+          "expected": 704,
+          "expired_active_lease": 0,
+          "future": 160,
+          "observations": 0,
+          "opened_expected": 544,
+          "overdue_unterminalized": 0,
+          "planning_gaps": 1,
+          "runtime_failure": 544,
+          "successful_capture": 0,
+          "terminal": 544,
+          "unknown_external_effect": 0
+        },
+        "freshness": {
+          "age_seconds": null,
+          "basis": "LATEST_CAPTURE_KNOWN_TIME",
+          "latest_known_at": null,
+          "market_event_freshness": "NOT_ESTIMABLE",
+          "market_event_reason_code": "ACTUAL_EVENT_TIME_NOT_IN_HEALTH_INPUT",
+          "reason_code": "NO_CAPTURE_OBSERVATION",
+          "state": "NOT_ESTIMABLE"
+        },
+        "operational_state": "ATTENTION_REQUIRED",
+        "rates": {
+          "capture_success": {
+            "denominator": 544,
+            "denominator_kind": "OPENED_EXPECTED_WINDOWS",
+            "numerator": 0,
+            "reason_code": null,
+            "state": "ESTIMABLE",
+            "unit": "FRACTION",
+            "value": "0E-12"
+          },
+          "on_time_capture": {
+            "denominator": 544,
+            "denominator_kind": "OPENED_EXPECTED_WINDOWS",
+            "numerator": 0,
+            "reason_code": null,
+            "state": "ESTIMABLE",
+            "unit": "FRACTION",
+            "value": "0E-12"
+          },
+          "terminal_coverage": {
+            "denominator": 544,
+            "denominator_kind": "OPENED_EXPECTED_WINDOWS",
+            "numerator": 544,
+            "reason_code": null,
+            "state": "ESTIMABLE",
+            "unit": "FRACTION",
+            "value": "1.000000000000"
+          }
+        }
+      }
+    },
+    "POST_CURRENT_CUTOVER": {
+      "cutover_at": "2026-09-09 15:45:50.016124+00:00",
+      "membership_basis": "EXPECTED_WINDOW_START; PLANNING_GAP_DETECTED_AT",
+      "reason_code": null,
+      "state": "AVAILABLE",
+      "summary": {
+        "alerts": [
+          {
+            "count": 1,
+            "reason_code": "PLANNING_GAPS",
+            "severity": "WARNING"
+          }
+        ],
+        "counts": {
+          "CAPTURED_LATE": 0,
+          "CAPTURED_ON_TIME": 0,
+          "FAILED": 0,
+          "MISSED": 0,
+          "PROVIDER_GAP": 0,
+          "RESOURCE_STOP": 0,
+          "due_backlog": 0,
+          "expected": 320,
+          "expired_active_lease": 0,
+          "future": 320,
+          "observations": 0,
+          "opened_expected": 0,
+          "overdue_unterminalized": 0,
+          "planning_gaps": 1,
+          "runtime_failure": 0,
+          "successful_capture": 0,
+          "terminal": 0,
+          "unknown_external_effect": 0
+        },
+        "freshness": {
+          "age_seconds": null,
+          "basis": "LATEST_CAPTURE_KNOWN_TIME",
+          "latest_known_at": null,
+          "market_event_freshness": "NOT_ESTIMABLE",
+          "market_event_reason_code": "ACTUAL_EVENT_TIME_NOT_IN_HEALTH_INPUT",
+          "reason_code": "NO_CAPTURE_OBSERVATION",
+          "state": "NOT_ESTIMABLE"
+        },
+        "operational_state": "ATTENTION_REQUIRED",
+        "rates": {
+          "capture_success": {
+            "denominator": 0,
+            "denominator_kind": "OPENED_EXPECTED_WINDOWS",
+            "numerator": 0,
+            "reason_code": "NO_OPENED_EXPECTED_WINDOWS",
+            "state": "NOT_ESTIMABLE",
+            "unit": "FRACTION",
+            "value": null
+          },
+          "on_time_capture": {
+            "denominator": 0,
+            "denominator_kind": "OPENED_EXPECTED_WINDOWS",
+            "numerator": 0,
+            "reason_code": "NO_OPENED_EXPECTED_WINDOWS",
+            "state": "NOT_ESTIMABLE",
+            "unit": "FRACTION",
+            "value": null
+          },
+          "terminal_coverage": {
+            "denominator": 0,
+            "denominator_kind": "OPENED_EXPECTED_WINDOWS",
+            "numerator": 0,
+            "reason_code": "NO_OPENED_EXPECTED_WINDOWS",
+            "state": "NOT_ESTIMABLE",
+            "unit": "FRACTION",
+            "value": null
+          }
+        }
+      }
+    }
+  },
+  "query_repair": {
+    "actual_bars_read": 32,
+    "explain_execution_ms": 3.143,
+    "finance_semantics_changed": false,
+    "full_health_seconds": 1.23582612501923,
+    "index": "market_bar_exact_asof_idx",
+    "new_index": false,
+    "plan_log_sha256": "3db104ecf1ab85916105d45bfeed153afe180d1f4d828f509980247ac884e1a3",
+    "scope": "FROZEN_PLAN_INSTRUMENTS_INPUT_AND_TARGET_SESSIONS",
+    "timeout_increased": false
+  },
+  "released_sql_resources_unchanged": 113,
+  "research_diagnostics": {
+    "denominators": {
+      "baseline_prediction": 31,
+      "common_prediction": 31,
+      "eligible": 31,
+      "feature_ready": 31,
+      "model_prediction": 31,
+      "sampled": 32
+    },
+    "metrics": {
+      "actual_return_target_distribution": {
+        "reason_code": "TARGET_NOT_NATURALLY_MATURE",
+        "state": "NOT_ESTIMABLE",
+        "value": null
+      },
+      "baseline_directional_accuracy": {
+        "reason_code": "TARGET_NOT_NATURALLY_MATURE",
+        "state": "NOT_ESTIMABLE",
+        "value": null
+      },
+      "mae": {
+        "reason_code": "TARGET_NOT_NATURALLY_MATURE",
+        "state": "NOT_ESTIMABLE",
+        "value": null
+      },
+      "model_baseline_delta": {
+        "reason_code": "TARGET_NOT_NATURALLY_MATURE",
+        "state": "NOT_ESTIMABLE",
+        "value": null
+      },
+      "model_directional_accuracy": {
+        "reason_code": "TARGET_NOT_NATURALLY_MATURE",
+        "state": "NOT_ESTIMABLE",
+        "value": null
+      },
+      "rank_ic": {
+        "reason_code": "TARGET_NOT_NATURALLY_MATURE",
+        "state": "NOT_ESTIMABLE",
+        "value": null
+      },
+      "rmse": {
+        "reason_code": "TARGET_NOT_NATURALLY_MATURE",
+        "state": "NOT_ESTIMABLE",
+        "value": null
+      }
+    },
+    "outcome_evaluation_state": "BLOCKED_BY_REAL_TIME",
+    "prediction_id": "3c3e181e-692d-535b-aea0-f855c9e9e418",
+    "scope": "DESCRIPTIVE / NOT_ALPHA_EVIDENCE",
+    "unknown_count": 1
+  },
+  "restore": {
+    "authorization_or_credentials_not_cloned": true,
+    "business_replay_writes": 0,
+    "catalog_checksum": "44a27e01109567395ad803e0c0c3b2859e8890fb23cf27b0b2c26b98db559e51",
+    "cluster_identity": "7683543274548948162",
+    "database_name": "mra_closure_repair_restore_20260910",
+    "database_oid": 3812198,
+    "scope": "INDEPENDENT_RESTORE_ONLY_NEVER_LIVE_WRITER",
+    "seconds": 97.0159457079717,
+    "source_backup_sha256": "3791f8e90fa980ba00ae7f8a6f739abb84729dc64c03f308e2733f8b97e95c26",
+    "source_receipt_sha256": "d8706441f57c3e0310019b80a50ba37dee2a6295643a04e3c71b0eac5c203f0e"
+  },
+  "restore_reconciliation": {
+    "matched": true,
+    "mismatch_count": 0,
+    "replay_business_writes": 0
+  },
+  "schema": "operational-data-loop-closure-final-index-v1",
+  "schema_or_migrations_changed": false,
+  "scope_notes": [
+    "Prior 10:07 service snapshot is immutable; a later observed stop required this correction and handoff.",
+    "Original 03:00 scheduled backup proof and permission envelope are unchanged and reused.",
+    "Original frozen prediction/Model/Target/report identity unchanged; no naturally matured labels yet.",
+    "Finite live observations do not prove 3 sustained trading days or eliminate future operational failures."
+  ],
+  "service": {
+    "activated_at": "2026-09-10T02:43:04.520160+00:00",
+    "error_log_sha256": "4e7813e38489e3abdb270b549e509ebdbab312173ec281df785c1aa6b68d9684",
+    "label": "local.mra.prospective.r2-xshg32",
+    "last_tick_at": "2026-09-10 02:47:05.398935+00:00",
+    "pid_observed": 4005,
+    "prefix_bytes": 48226,
+    "prefix_sha256": "99f8aea4ba628426672739f38a59bb4d17612d6633e29ba97f5a1a9048eb2746",
+    "state": "RUNNING_AT_CUTOFF",
+    "tick_count": 3,
+    "tick_seconds": [
+      51.59980541601544,
+      45.62022362498101,
+      45.29433574998984
+    ]
+  },
+  "source_tree": "75d6c367b8e1320e5ebd17d6b1da63019522bb42",
+  "table_delta": {
+    "changed": [
+      {
+        "after": {
+          "ordered_sha256": "04b4ff9c2a604d4a24f4799d63bbfdf7acd14d1b1c02c7992908f90207f2d3a8",
+          "row_count": 2975,
+          "table": "artifact"
+        },
+        "before": {
+          "ordered_sha256": "2186e317c93cddbc5b9cc5ba7b2c215c2957c19a52e417512d0ffe59c98bc792",
+          "row_count": 2974,
+          "table": "artifact"
+        },
+        "table": "artifact"
+      },
+      {
+        "after": {
+          "ordered_sha256": "6b24ed5b292dbeaca73c8ca558de65f69dfdbc4dc224a9e53ad7c0d9e0df3183",
+          "row_count": 15498,
+          "table": "artifact_verification"
+        },
+        "before": {
+          "ordered_sha256": "7ecc8c1c17ad436027ff06ab433bcb3d5d5a75f71fd8145bec09d738b177b727",
+          "row_count": 15497,
+          "table": "artifact_verification"
+        },
+        "table": "artifact_verification"
+      },
+      {
+        "after": {
+          "ordered_sha256": "cbf8353e359ca498a493746ab92eb9965ab5e0afc2e94287bf87dc482f06b7c5",
+          "row_count": 111012,
+          "table": "audit_event"
+        },
+        "before": {
+          "ordered_sha256": "8f40b7d717e8eeb2e1949155a464078b05db1df1574095d6dcadb21608069ab0",
+          "row_count": 111011,
+          "table": "audit_event"
+        },
+        "table": "audit_event"
+      },
+      {
+        "after": {
+          "ordered_sha256": "0e5d04dd483bb036165220945d05acf889a159e31e649ee306e7c0ce7b99f222",
+          "row_count": 111012,
+          "table": "command_receipt"
+        },
+        "before": {
+          "ordered_sha256": "4a777cce28e516e1556025368f47a675e83454db6c49fdd1a53b278fe094ae4c",
+          "row_count": 111011,
+          "table": "command_receipt"
+        },
+        "table": "command_receipt"
+      }
+    ],
+    "expected_reason": "One additional frozen correction wheel Artifact/verification/Receipt/Audit; original research and Runtime state unchanged.",
+    "unchanged_count": 190
+  },
+  "targeted_tests": {
+    "failures": 0,
+    "pytest_seconds": 71.543,
+    "skips": 0,
+    "tests": 42,
+    "wall_seconds": 73.32309365272522
+  },
+  "tests_tree": "080d5b7a0d2185c96365c8ee51b3cc404d12042c"
+}
