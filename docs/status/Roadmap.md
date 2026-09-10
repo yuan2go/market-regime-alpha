@@ -83,6 +83,30 @@ unchanged.
 
 ## Operational data-loop closure
 
+### Active execution: real maturity and operational loop closure
+
+The current real maturity and operational closure work is explicitly authorized
+against main `97f5d331042a72fb322bc156e5dcbb31f6c19731` in an isolated worktree.
+The execution order is:
+
+- [ ] Freeze current DB, installed profile, principal, service, Attempts, backup,
+  original publication and three health scopes into immutable observations.
+- [ ] Continue only the original verified frozen prediction through actual late
+  Provider observation, exact Outcome commitments and canonical Evaluation.
+- [ ] Reconcile full populations, canonical diagnostics, immutable reports and
+  repeated zero-write completed-cycle replay.
+- [ ] Diagnose observed service/backup failures, apply only necessary correctness
+  repairs with focused tests, and restore the authorized owned service safely.
+- [ ] Close continuous day-ledger and read-only research observation gaps with
+  canonical consumers, if the first real Evaluation succeeds.
+- [ ] Record source-bound validation, operational cutoff and independent exit
+  gates. Preserve scheduled failures, missing data and all historical terminals.
+
+No model/Target change, terminal reopening, synthetic time, fallback Provider or
+research qualification is authorized by this plan. Live code changes require
+the installed handoff in the Runtime Runbook. Evidence-only work uses directed
+checks rather than a full repository regression.
+
 The runtime privilege envelope, scoped read-only health and frozen-work day
 ledger are implemented, verified and installed in the original owned scope.
 The actual scheduled backup, exact service recovery and independent restore

@@ -388,3 +388,45 @@ receipt before activation. Preserve prior profiles, wheels and failed Runs. Keep
 backup refresh bound to the new installed interpreter; its scheduled event log
 must show drain, verified dump/Artifact roster, physical mirror, profile refresh,
 preflight and restart. A second physical device on this host is not offsite.
+
+### Mature observation closure and sustained evidence
+
+The prospective BaoStock normalizer uses a separate v3 contract: missing bar
+intervals must have ended before the actual Provider request started. A 14:40
+empty response cannot establish a SourceGap for 15:00. Returned Provider bars
+still pass the Market owner's temporal checks. The v2 historical/daily contract
+and existing normalization receipts remain unchanged; failed Runs stay terminal.
+
+After canonical Outcome/Evaluation completion, inspect the narrow research
+projection without collecting prices or calculating new labels:
+
+```bash
+uv run mra research daily observations --target-session-date 2026-09-10 --model-version-id "$ORIGINAL_MODEL_VERSION" --target-definition-id "$ORIGINAL_DAILY_TARGET"
+```
+
+Filters use canonical Target session dates and exact ModelVersion/Target IDs.
+The projection reconciles the original publication and completed Evaluation,
+checks commitment/Partition/acquisition roster equality, and returns the complete
+population, forecasts, acquired Outcome revisions/labels/sources, canonical
+metrics and explicit unavailable work. It writes no research truth. Metrics
+absent from the frozen protocol, including directional accuracy for the first
+daily protocol, are not calculated in a report. Single-session comparisons remain
+`DESCRIPTIVE / NOT_ALPHA_EVIDENCE` regardless of their direction.
+
+Backup refresh records immutable `day-ledger.log` snapshots through existing
+`daily health --replay`, with the original cutover boundary, exact calendar
+sessions, full populations, failures and source log hashes. These are observations
+at a cutoff, not new day facts. A stopped-service scheduled failure also preserves
+its ledger and remains failed. Successful restart requires a subsequent tick from
+the exact refreshed profile within the existing tick budget. An unverified restart
+receives a graceful drain request; there is no unbounded restart loop.
+
+Integrity refresh reloads all completed publication plans as well as current and
+pending work. It verifies original static/input/Target/Runtime bytes so old daily
+health and replay remain available after current sessions move forward. It never
+changes Capture known times, labels or the original publication. Missing or
+inconsistent frozen plans fail closed before physical verification commands.
+
+Sustained proof requires at least three consecutive naturally observed successful
+trading sessions, preferably five. Until those days actually occur and close,
+report `BLOCKED_BY_ELAPSED_REAL_TIME`; never create synthetic day ledgers.

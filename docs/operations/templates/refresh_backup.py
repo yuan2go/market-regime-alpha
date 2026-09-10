@@ -32,7 +32,7 @@ PROFILE = HERE / "operation.json"
 STAMP = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
 RECORDS = HERE / "receipts" / f"refresh-{STAMP}"
 RECORDS.mkdir(mode=0o700)
-MRA = [DEPLOYMENT["uv"], "run", "--no-project", "--no-sync", "--python", DEPLOYMENT["runtime_python"], DEPLOYMENT["mra_executable"]]
+MRA = [DEPLOYMENT["uv"], "run", "--no-project", "--python", DEPLOYMENT["runtime_python"], DEPLOYMENT["mra_executable"]]
 events = []
 
 
@@ -65,6 +65,60 @@ def job():
 def sha(path):
     with path.open("rb") as source:
         return hashlib.file_digest(source, "sha256").hexdigest()
+
+
+def observe_day_ledger(config, *, backup_directory):
+    """Immutable scheduled observation; no new day or research fact is created."""
+    if not DEPLOYMENT.get("daily_plan_template"):
+        return
+    command("day-ledger", MRA + ["research", "daily", "health", "--series-code", config.series_code,
+        "--cutover-at", DEPLOYMENT["health_cutover_at"], "--recent-sessions", "5", "--replay"])
+    ledger = json.loads((RECORDS / "day-ledger.log").read_text())
+    if ledger["daily"]["business_writes"] != 0:
+        raise ValueError("DAY_LEDGER_MUST_BE_READ_ONLY")
+    logs = [{"file": path.name, "sha256": sha(path), "size_bytes": path.stat().st_size}
+            for path in sorted((HERE / "logs").glob("service-*")) if path.suffix in {".jsonl", ".log"}]
+    event("day-ledger-observed", ledger_sha256=sha(RECORDS / "day-ledger.log"),
+          observed_at_database=ledger["daily"]["observed_at"], source_sha256=config.source_sha256,
+          backup_directory=str(backup_directory), service_logs=logs,
+          day_membership="CANONICAL_TRADING_SESSION_IDENTITIES_ONLY", business_writes=0)
+
+
+def observe_restarted_tick(config, *, started_at):
+    """Bound restart observation by the existing tick/wakeup budgets."""
+    deadline = monotonic() + config.maximum_tick_seconds + config.wakeup_seconds + 30
+    while monotonic() < deadline:
+        if not job():
+            raise ValueError("BACKUP_RESTARTED_SERVICE_STOPPED")
+        for path in sorted((HERE / "logs").glob("service-*.jsonl"), reverse=True):
+            if path.stat().st_mtime < started_at.timestamp():
+                continue
+            rows = []
+            for line in path.read_text().splitlines():
+                try:
+                    rows.append(json.loads(line))
+                except json.JSONDecodeError:
+                    # The writer can be between bytes of its next appended line.
+                    continue
+            preflight = next((row for row in rows if row.get("event") == "PROSPECTIVE_PREFLIGHT"), None)
+            if preflight is None or preflight.get("configuration_sha256") != config.content_sha256:
+                continue
+            if datetime.fromisoformat(preflight["observed_at"]) < started_at:
+                continue
+            tick = next((row for row in rows if row.get("event") == "PROSPECTIVE_TICK"), None)
+            if tick is not None:
+                if tick["tick_elapsed_seconds"] > config.maximum_tick_seconds:
+                    raise ValueError("BACKUP_RESTART_TICK_EXCEEDED_BUDGET")
+                with (RECORDS / "subsequent-tick.json").open("x") as output:
+                    json.dump(tick, output, indent=2, sort_keys=True)
+                    output.write("\n")
+                event("subsequent-tick", log_file=path.name,
+                      tick_sha256=sha(RECORDS / "subsequent-tick.json"),
+                      tick_elapsed_seconds=tick["tick_elapsed_seconds"],
+                      tick_observed_at=tick["observed_at"])
+                return
+        sleep(0.2)
+    raise ValueError("BACKUP_RESTART_TICK_NOT_OBSERVED_WITHIN_BUDGET")
 
 
 def main():
@@ -112,6 +166,7 @@ def main():
     )
     running = job()
     if not running and "--recover-stopped" not in sys.argv:
+        observe_day_ledger(config, backup_directory=config.backup_directory)
         raise ValueError("SERVICE_NOT_RUNNING_MANUAL_RECOVERY_REQUIRED")
     if running:
         event("owned-service-drain", pid=running)
@@ -195,13 +250,21 @@ def main():
             backup_file=str(destination),
             mirrored_backup_file=str(mirror),
         )
+        observe_day_ledger(updated, backup_directory=destination)
     # One bounded preflight request. Failure does not restart or retry a Provider.
     command(
         "preflight",
         MRA + ["archive", "prospective", "preflight", "--operation-config", str(PROFILE), "--expected-database-name", config.database_name]
         + (["--daily-plan-template", DEPLOYMENT["daily_plan_template"]] if DEPLOYMENT.get("daily_plan_template") else []),
     )
+    started_at = datetime.now(timezone.utc)
     command("start", ["launchctl", "bootstrap", f"gui/{UID}", str(plist_path)])
+    try:
+        observe_restarted_tick(updated, started_at=started_at)
+    except Exception:
+        if job():
+            command("unverified-restart-drain", ["launchctl", "kill", "SIGTERM", TARGET], required=False)
+        raise
     # Rotation follows controlled process restarts; old log originals stay intact.
     for source in (HERE / "logs").glob("service-*.jsonl"):
         compressed = source.with_suffix(source.suffix + ".gz")

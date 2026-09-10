@@ -249,6 +249,45 @@ backup task use the corrected wheel/profile. Current health passes at this
 bounded cutoff with explained terminal failures retained; naturally matured
 Evaluation and three-day sustained service remain independently time-blocked.
 
+## First naturally matured daily Evaluation
+
+On **2026-09-10 at 22:51:58 +08:00**, the original timely Prediction
+`3c3e181e-692d-535b-aea0-f855c9e9e418` completed canonical Outcome/Evaluation in
+the original operational database using installed implementation `55d4aba9…`.
+Its original plan hash `eae5144cbdca838cc32e2b673f0a620dcb89455a3b8760cbe9fb37410f3e0442`
+and code, ModelVersion, Dataset, Decision and Target identities remain unchanged.
+
+Actual late Provider requests from **22:46:31 through 22:49:15** produced
+32 daily Captures and Bars. The original population retains 32 sampled members,
+31 eligible/model/baseline/common predictions and one membership UNKNOWN.
+All 31 commitments settled; Partition and Evaluation acquisition rosters are
+exactly those 31. Evaluation `2849c414-da2a-5a8d-bb9f-483aed6df465` contains
+10 frozen-protocol metrics and 310 metric observations. All 31 labels are complete
+and estimable; Provider availability/finality qualification is not promoted.
+
+Original Prediction report bytes, Evaluation report and completed-cycle replay
+reconcile with `matched=true`, `mismatch_count=0`, `business_writes=0`.
+Model/baseline MAE are **0.0097543 / 0.0106481** and rank IC are
+**0.192742 / -0.192742**. Actual labels include 10 positive, 20 negative and one
+flat value; all 31 model forecasts are positive. Directional accuracy is absent
+from the frozen Evaluation protocol and is not invented by a reporting script.
+This single-session result is **DESCRIPTIVE / NOT_ALPHA_EVIDENCE**.
+
+The 19:00 scheduled backup actually fired but failed because the owned service
+had stopped. Its failure is preserved. A prior 14:40 empty intraday response
+caused v2 normalization to generate future SourceGaps, which Market correctly
+rejected; a later pre-task recovery exceeded the unchanged 120-second tick budget.
+The new prospective v3 normalizer bounds gaps by request time, retaining v2 and
+all failed Runs. Operational recovery and the final installation/cutoff are
+recorded separately; this first Evaluation does not itself prove current uptime.
+
+The checked-out read-only `daily observations` command consumes canonical
+Prediction/Outcome/Evaluation and enforces full roster equality. Scheduled backup
+templates retain immutable complete day-ledger snapshots, verify completed
+publication inputs across later dates, and require a subsequent current-profile
+tick for restart proof. Three-day sustained evidence remains independent and
+time-blocked. No Model, Factor, Target, risk, schema or qualification is changed.
+
 ## Prior repository hygiene evidence
 
 The source-bound cleanup completed default and explicit historical PostgreSQL
