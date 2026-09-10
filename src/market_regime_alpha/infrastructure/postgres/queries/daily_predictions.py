@@ -244,13 +244,17 @@ class PostgresDailyPredictionReads:
                   (SELECT max(recorded_at) FROM mra.data_capture
                    WHERE provider_product_id = %s),
                   (SELECT max(recorded_at) FROM mra.market_bar_revision
-                   WHERE provider_product_id = %s),
+                   WHERE provider_product_id = %s
+                     AND instrument_id = ANY(%s::uuid[])
+                     AND session_id = ANY(%s::uuid[])),
                   (SELECT max(recorded_at) FROM mra.source_gap
                    WHERE provider_product_id = %s)
                 """,
                 (
                     plan.provider_product_id,
                     plan.provider_product_id,
+                    list(plan.instrument_ids),
+                    [plan.input_session_id, plan.target_session_id],
                     plan.provider_product_id,
                 ),
             ).fetchone()
@@ -397,6 +401,7 @@ class PostgresDailyPredictionReads:
             "data_freshness": {
                 "last_capture_recorded_at": freshness[0],
                 "last_bar_recorded_at": freshness[1],
+                "bar_scope": "FROZEN_PLAN_INSTRUMENTS_INPUT_AND_TARGET_SESSIONS",
                 "last_source_gap_recorded_at": freshness[2],
                 "capture_age_seconds": (
                     None

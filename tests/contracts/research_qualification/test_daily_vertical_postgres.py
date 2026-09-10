@@ -179,6 +179,37 @@ def test_completed_model_is_consumed_without_backtest_and_publication_is_replaya
             "f" * 40,
             old.strategy_version_id,
         )
+        # Fresh data for another session or security cannot hide this plan's
+        # stale input. Exercise both exclusions through canonical normalization.
+        from market_regime_alpha.market.domain import Instrument, InstrumentType
+        from market_regime_alpha.shared.identity import InstrumentId
+        with app._pool.connection(read_only=True) as connection:
+            expected_freshness = connection.execute(
+                'SELECT max(recorded_at) FROM mra.market_bar_revision WHERE bar_revision_id=ANY(%s::uuid[])',
+                ([b.bar_revision_id for b in bars],),
+            ).fetchone()[0]
+        for outside in ('session', 'instrument'):
+            extra_capture = app.market.capture(
+                CaptureRequest(c['product'].provider_product_id, 'unrelated-freshness-' + outside, 'fixture://unrelated', 'e' * 64),
+                R._BytesProvider(), _context('freshness-capture-' + outside),
+            ).capture.capture_id
+            extra_session = _session(today - timedelta(days=20), extra_capture, 'XSHG') if outside == 'session' else input_session
+            extra_instrument = InstrumentId(uuid4()) if outside == 'instrument' else c['instruments'][0]
+            extra_bar = replace(
+                bars[0], bar_revision_id=uuid4(), capture_id=extra_capture,
+                instrument_id=extra_instrument, session_id=extra_session.session_id,
+                event_start=extra_session.open_at, event_end=extra_session.close_at,
+            )
+            extra_batch = NormalizationBatch(
+                extra_capture, c['product'].provider_product_id,
+                instruments=(Instrument(extra_instrument, 'FRESHNESS.XSHG', 'XSHG', InstrumentType.EQUITY, 'CNY', extra_capture),) if outside == 'instrument' else (),
+                trading_sessions=(extra_session,) if outside == 'session' else (), bars=(extra_bar,),
+            )
+            app.market.normalize(extra_capture, R._Normalizer(lambda _, batch=extra_batch: batch), _context('freshness-normalize-' + outside))
+            with app._pool.connection(read_only=True) as connection:
+                assert connection.execute('SELECT recorded_at>%s FROM mra.market_bar_revision WHERE bar_revision_id=%s', (expected_freshness, extra_bar.bar_revision_id)).fetchone() == (True,)
+            freshness = app.daily_prediction_reads.operational_health(plan)['data_freshness']
+            assert freshness['last_bar_recorded_at'] == expected_freshness
         if missing_membership:
             scope_bytes = json.dumps({"classification_code":"ABSENT_CURRENT_MEMBERSHIP","classification_scheme":plan.classification_scheme,"instrument_ids":[str(i) for i in plan.instrument_ids],"market_provider_product_id":str(plan.provider_product_id),"schema":"selection-universe-scope-v1"}, sort_keys=True,separators=(",",":")).encode()
             scope_artifact=app.artifacts.publish(scope_bytes,media_type="application/json",context=_context("missing-membership-scope"))
