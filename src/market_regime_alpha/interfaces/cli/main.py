@@ -207,6 +207,10 @@ def main(
                         if daily_template is not None:
                             from market_regime_alpha.interfaces.daily_health import daily_health
                             daily_scoped_health = daily_health(application,cutover_at=arguments.health_cutover_at)
+                            daily_scoped_health['pending_work'] = [
+                                {key: row.get(key) for key in ('run_id','prediction_id','target_session','state','reason_code')}
+                                for row in daily_scoped_health.pop('ledger')
+                            ]
                     summary = health["summary"]
                     alert_summary = (health['scopes']['POST_CURRENT_CUTOVER']['summary']
                                      if arguments.health_cutover_at is not None else summary)
@@ -219,6 +223,14 @@ def main(
                         "health": {key: value for key, value in summary.items() if key != "alerts"},
                         "health_scopes": health['scopes'],
                         "daily_health": daily_scoped_health,
+                        "backup_observation": {
+                            "snapshot_at": guard.backup_snapshot_at,
+                            "verified_at": guard.backup_verified_at,
+                            "age_seconds": (None if guard.backup_snapshot_at is None else
+                                (health['observed_at'] - guard.backup_snapshot_at).total_seconds()),
+                            "receipt_sha256": operation_config.backup_receipt_sha256,
+                            "state": 'VERIFIED_AT_PREFLIGHT_AND_ENFORCED_BEFORE_ACTION',
+                        },
                         "alert_scope": 'POST_CURRENT_CUTOVER' if arguments.health_cutover_at is not None else 'ALL_HISTORY',
                         "alert_changes": alerts.observe(alert_summary["alerts"]),
                         "tick_elapsed_seconds": perf_counter() - started,

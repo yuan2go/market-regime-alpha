@@ -104,6 +104,10 @@ def daily_health(app: Any, *, cutover_at: datetime | None = None, recent_session
                 denominators=publication["denominators"],
                 timely_publication=publication["published_at"] < target["open_at"],
             )
+            row['population'] = publication['population']
+            row['forecast_dispositions'] = [{k: member[k] for k in (
+                'instrument_id','disposition','candidate_reason','forecast_status','forecast_reason',
+                'baseline_status','baseline_reason')} for member in publication['predictions']]
             outcome = runs.get(uuid5(plan.prediction_id, "outcome-evaluation-runtime"))
             if outcome is None:
                 if publication["denominators"]["model_prediction"] == 0:

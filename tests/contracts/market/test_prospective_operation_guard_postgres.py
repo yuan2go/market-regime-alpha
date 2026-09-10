@@ -447,7 +447,10 @@ def test_foreign_claim_after_last_check_cannot_enter_supervised_database(request
     assert app.runtime.inspect_run(run_id).steps[0].state == "SUCCEEDED"
 
 
-def test_claim_commit_and_supervisor_start_share_atomic_admission(request, tmp_path, monkeypatch):
+@pytest.mark.parametrize("connection_returned,expected_error", [
+    (False, "DUPLICATE_SUPERVISOR"), (True, "ACTIVE_ATTEMPT_CONFLICT"),
+])
+def test_claim_commit_and_supervisor_start_share_atomic_admission(request, tmp_path, monkeypatch, connection_returned, expected_error):
     from concurrent.futures import ThreadPoolExecutor
     from threading import Event
     from time import monotonic, sleep
@@ -461,13 +464,24 @@ def test_claim_commit_and_supervisor_start_share_atomic_admission(request, tmp_p
     receipt = app.evidence.backup(bundle, expected_name=snapshot["database"]["name"],
         expected_oid=snapshot["database"]["oid"], minimum_free_bytes=1)
     config = replace(config_for(settings, snapshot, bundle, receipt), series_code="health_fixture")
-    prepared, release = Event(), Event()
+    prepared, release, returned, release_reservation = Event(), Event(), Event(), Event()
+    from market_regime_alpha.infrastructure.postgres import prospective_operation_session as admission
+    original_admission = admission._admission_lock
+
+    def held_admission(connection):
+        original_admission(connection)
+        if connection_returned and connection.info.parameter_status("application_name") == "mra-prospective-supervisor":
+            assert returned.wait(timeout=10)
+
+    monkeypatch.setattr(admission, "_admission_lock", held_admission)
     original_commit = PostgresUnitOfWork.commit
 
     def held_commit(self):
         prepared.set()
         assert release.wait(timeout=10)
         original_commit(self)
+        if not connection_returned:
+            assert release_reservation.wait(timeout=10)
 
     monkeypatch.setattr(PostgresUnitOfWork, "commit", held_commit)
 
@@ -476,9 +490,13 @@ def test_claim_commit_and_supervisor_start_share_atomic_admission(request, tmp_p
             guard.before_action()
 
     with ThreadPoolExecutor(max_workers=2) as executor:
-        claimed = executor.submit(app.runtime.claim_next,
-            run_id=fixture.registration.capture_run_ids[0], worker_id="earlier-claimant",
-            lease_duration=timedelta(seconds=60), context=_context("claim-before-admission"))
+        def claim():
+            result = app.runtime.claim_next(
+                run_id=fixture.registration.capture_run_ids[0], worker_id="earlier-claimant",
+                lease_duration=timedelta(seconds=60), context=_context("claim-before-admission"))
+            returned.set()
+            return result
+        claimed = executor.submit(claim)
         assert prepared.wait(timeout=5)
         starting = executor.submit(start_supervisor)
         try:
@@ -494,6 +512,13 @@ def test_claim_commit_and_supervisor_start_share_atomic_admission(request, tmp_p
                     sleep(0.01)
         finally:
             release.set()
+        # Commit releases the transaction admission lock before connection return
+        # releases the shared writer reservation. Both rejection stages are real;
+        # pin the stage instead of allowing scheduling to choose the assertion.
+        try:
+            with pytest.raises(ValueError, match=expected_error):
+                starting.result(timeout=10)
+        finally:
+            release_reservation.set()
         assert claimed.result(timeout=10) is not None
-        with pytest.raises(ValueError, match="ACTIVE_ATTEMPT_CONFLICT"):
-            starting.result(timeout=10)
+        assert app.runtime.inspect_run(fixture.registration.capture_run_ids[0]).steps[0].state == "CLAIMED"
