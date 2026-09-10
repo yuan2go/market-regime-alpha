@@ -727,6 +727,15 @@ def test_completed_model_is_consumed_without_backtest_and_publication_is_replaya
             assert result["state"] == "COMPLETED"
             assert result["reconciliation"]["evaluation_id"] == str(evaluation_id)
             assert result["reconciliation"]["matched"] and result["reconciliation"]["mismatch_count"] == 0
+        from market_regime_alpha.interfaces.daily_health import daily_health
+        ledger = daily_health(app, cutover_at=plan.decision_time, replay=True)
+        entry = next(row for row in ledger["ledger"] if row.get("prediction_id") == plan.prediction_id)
+        assert entry["state"] == "COMPLETED", entry
+        assert entry["model_version_id"] == plan.model_version_id
+        assert entry["evaluation_id"] == evaluation_id
+        assert entry["denominators"]["sampled"] == len(plan.instrument_ids)
+        assert entry["replay"]["matched"] and entry["replay"]["mismatch_count"] == 0
+        assert ledger["business_writes"] == 0
         completed_health = app.daily_prediction_reads.operational_health(plan)
         assert completed_health["outcome_backlog"]["observed_count"] == 0
         assert completed_health["human_research_disposition"][

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import fields
+from datetime import datetime
 from typing import Any
 
 from psycopg.rows import dict_row
@@ -21,6 +22,7 @@ from market_regime_alpha.market.domain.prospective_archive import (
 from market_regime_alpha.market.domain.prospective_health import ProspectiveHealthSlice, project_prospective_health
 from market_regime_alpha.runtime.errors import ArtifactIntegrityError
 from market_regime_alpha.shared.hashing import canonical_json_sha256
+from market_regime_alpha.shared.time import require_utc
 
 
 def _arguments(model: Any, row: dict[str, Any]) -> dict[str, Any]:
@@ -46,11 +48,16 @@ class PostgresProspectiveHealthReadPort:
     def __init__(self, pool: TargetPostgresPool) -> None:
         self._pool = pool
 
-    def inspect(self, series_code: str, *, maximum_slices: int = 100_000) -> dict[str, Any]:
+    def inspect(self, series_code: str, *, maximum_slices: int = 100_000,
+                cutover_at: datetime | None = None, recent_sessions: int = 5) -> dict[str, Any]:
         if not series_code or len(series_code) > 100:
             raise ValueError("health series_code is invalid")
         if type(maximum_slices) is not int or not 1 <= maximum_slices <= 100_000:
             raise ValueError("health slice budget must be an integer from 1 to 100000")
+        if type(recent_sessions) is not int or not 1 <= recent_sessions <= 120:
+            raise ValueError("health recent sessions must be between 1 and 120")
+        if cutover_at is not None:
+            cutover_at = require_utc(cutover_at, field="health cutover_at")
         with self._pool.connection(read_only=True) as connection:
             connection.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
             with connection.cursor(row_factory=dict_row) as cursor:
@@ -62,6 +69,8 @@ class PostgresProspectiveHealthReadPort:
                 """).fetchone()
                 assert identity is not None
                 clock = identity.pop("observed_at")
+                if cutover_at is not None and cutover_at > clock:
+                    raise ValueError("health cutover cannot be in the future")
                 generations = _bounded_rows(cursor, "SELECT * FROM mra.prospective_archive_generation WHERE series_code=%s ORDER BY generation", (series_code,), maximum_slices)
                 if not generations:
                     raise ValueError("health series has no canonical prospective generation")
@@ -91,6 +100,11 @@ class PostgresProspectiveHealthReadPort:
                 """, (ids,), maximum_slices)
                 resources = _bounded_rows(cursor, "SELECT * FROM mra.market_archive_resource_stop WHERE market_archive_id=ANY(%s::uuid[])", (ids,), maximum_slices)
                 planning_gaps = _bounded_rows(cursor, "SELECT * FROM mra.prospective_archive_planning_gap WHERE series_code=%s ORDER BY expected_generation,detected_at", (series_code,), maximum_slices)
+                recent = cursor.execute("""
+                    SELECT session_id, session_date FROM mra.trading_session
+                    WHERE exchange=%s AND open_at<=%s
+                    ORDER BY open_at DESC,session_id DESC LIMIT %s
+                """, (generations[0]["exchange_code"], clock, recent_sessions)).fetchall()
                 runs = _bounded_rows(cursor, """
                     SELECT run.*, artifact.content_sha256 AS config_artifact_sha256
                     FROM mra.runtime_run run LEFT JOIN mra.artifact artifact ON artifact.artifact_id=run.config_artifact_id
@@ -101,7 +115,8 @@ class PostgresProspectiveHealthReadPort:
                 attempts = _bounded_rows(cursor, "SELECT * FROM mra.runtime_attempt WHERE step_id=ANY(%s::uuid[]) ORDER BY step_id,attempt_no", ([s["step_id"] for s in steps],), maximum_slices * 6)
         try:
             return self._project(identity, clock, series_code, generations, roots, members, schedules, slices,
-                                 observations, terminals, revisions, gaps, resources, planning_gaps, runs, steps, attempts)
+                                 observations, terminals, revisions, gaps, resources, planning_gaps, runs, steps, attempts,
+                                 cutover_at=cutover_at, recent=recent, recent_sessions=recent_sessions)
         except (KeyError, TypeError, ValueError) as exc:
             raise ArtifactIntegrityError("prospective health canonical root/roster does not reconcile") from exc
 
@@ -111,7 +126,8 @@ class PostgresProspectiveHealthReadPort:
                  slices: list[dict[str, Any]], observations: list[dict[str, Any]], terminals: list[dict[str, Any]],
                  revisions: list[dict[str, Any]], gaps: list[dict[str, Any]], resources: list[dict[str, Any]],
                  planning_gaps: list[dict[str, Any]], runs: list[dict[str, Any]], steps: list[dict[str, Any]],
-                 attempts: list[dict[str, Any]]) -> dict[str, Any]:
+                 attempts: list[dict[str, Any]], *, cutover_at: datetime | None = None,
+                 recent: list[dict[str, Any]] | None = None, recent_sessions: int = 5) -> dict[str, Any]:
         root_by_id = {r["market_archive_id"]: r for r in roots}
         members_by_archive = _group(members, "market_archive_id")
         schedules_by_archive = _group(schedules, "market_archive_id")
@@ -250,12 +266,41 @@ class PostgresProspectiveHealthReadPort:
                 "runtime_state": run["state"], "runtime_step_id": step["step_id"], "step_state": step["state"],
                 "attempts": scoped_attempts,
             })
+        recent = [] if recent is None else recent
+        recent_ids = {item["session_id"] for item in recent}
+        cohorts = {
+            "ALL_HISTORY": (facts, planning_gaps),
+            "POST_CURRENT_CUTOVER": (
+                [f for f in facts if cutover_at is not None and f.window_start >= cutover_at],
+                [g for g in planning_gaps if cutover_at is not None and g["detected_at"] >= cutover_at],
+            ),
+            "LAST_N_TRADING_SESSIONS": (
+                [f for f in facts if schedule_by_slice[f.market_archive_slice_id]["trading_session_id"] in recent_ids],
+                [g for g in planning_gaps if g["expected_decision_session_id"] in recent_ids],
+            ),
+        }
+        scoped: dict[str, dict[str, Any]] = {
+            name: {"summary": project_prospective_health(observed_at=clock, slices=tuple(items), planning_gap_count=len(scoped_gaps)),
+                   "state": "AVAILABLE", "reason_code": None}
+            for name, (items, scoped_gaps) in cohorts.items()
+        }
+        scoped["POST_CURRENT_CUTOVER"].update({
+            "cutover_at": cutover_at,
+            "membership_basis": "EXPECTED_WINDOW_START; PLANNING_GAP_DETECTED_AT",
+            "state": "AVAILABLE" if cutover_at is not None else "NOT_ESTIMABLE",
+            "reason_code": None if cutover_at is not None else "CUTOVER_BOUNDARY_NOT_SUPPLIED",
+        })
+        if cutover_at is None:
+            scoped["POST_CURRENT_CUTOVER"]["summary"] = None
+        scoped["LAST_N_TRADING_SESSIONS"].update({"requested_sessions": recent_sessions, "sessions": recent,
+            "membership_basis": "EXACT_SCHEDULE_TRADING_SESSION; NO_WEEKDAY_INFERENCE"})
         return {
             "database": database, "observed_at": clock, "series_code": series_code,
             "authority": "NON_AUTHORITATIVE_OPERATIONAL_HEALTH_PROJECTION",
             "owner_reconciliation": "NOT_PERFORMED", "artifact_physical_verification": "NOT_PERFORMED",
             "root_and_roster_integrity": "MATCHED", "generations": generations,
             "slices": projected_slices, "planning_gaps": planning_gaps,
+            "scopes": scoped,
             "summary": project_prospective_health(observed_at=clock, slices=tuple(facts), planning_gap_count=len(planning_gaps)),
             "rate_scope": "ALL_OPENED_EXPECTED_WINDOWS_IN_THE_EXPLICIT_SERIES",
             "research_maturity": "NOT_ASSESSED",

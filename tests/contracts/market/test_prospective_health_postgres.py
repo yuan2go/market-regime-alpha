@@ -1,5 +1,6 @@
 from uuid import uuid4
 from datetime import timedelta
+from datetime import datetime, UTC
 
 import pytest
 from psycopg.conninfo import conninfo_to_dict
@@ -32,6 +33,12 @@ def test_health_has_exact_expected_roster_and_zero_business_writes(canonical_pro
     assert result["summary"]["alerts"] == ()
     assert result["summary"]["rates"]["capture_success"]["state"] == "NOT_ESTIMABLE"
     assert all(s["runtime_step_id"] is not None for s in result["slices"])
+    scoped = PostgresProspectiveHealthReadPort(fixture.pool).inspect(
+        "health_fixture", cutover_at=result["observed_at"], recent_sessions=3
+    )
+    assert scoped["scopes"]["ALL_HISTORY"]["summary"] == result["summary"]
+    assert scoped["scopes"]["POST_CURRENT_CUTOVER"]["summary"]["counts"]["expected"] == 9
+    assert scoped["scopes"]["LAST_N_TRADING_SESSIONS"]["requested_sessions"] == 3
     with fixture.pool.connection(read_only=True) as connection:
         assert _table_hashes(connection) == before
 
@@ -42,6 +49,29 @@ def test_health_rejects_unknown_series_and_roster_budget(canonical_prospective_s
         port.inspect(str(uuid4()))
     with pytest.raises(ValueError, match="budget"):
         port.inspect("health_fixture", maximum_slices=8)
+
+
+def test_scopes_use_scheduled_session_and_window_not_generation_creation(canonical_prospective_stack, monkeypatch):
+    port = PostgresProspectiveHealthReadPort(canonical_prospective_stack.pool)
+    project = port._project
+    # Only the read projection clock is frozen. No operational clock or fact is
+    # changed; the real canonical fixture has four windows on each of two days.
+    def projected(*args, **kwargs):
+        schedules = args[6]
+        second = next(s['trading_session_id'] for s in schedules if s['schedule_slot']=='OUTCOME_POST_CLOSE')
+        kwargs.update(cutover_at=datetime(2099,1,6,tzinfo=UTC),
+                      recent=[{'session_id':second,'session_date':'2099-01-06'}],recent_sessions=1)
+        return project(args[0], datetime(2099,1,6,16,tzinfo=UTC), *args[2:], **kwargs)
+    monkeypatch.setattr(port,'_project',projected)
+    result=port.inspect('health_fixture')
+    scopes=result['scopes']
+    assert scopes['ALL_HISTORY']['summary']['counts']['expected']==9
+    assert scopes['ALL_HISTORY']['summary']['counts']['opened_expected']==8
+    assert scopes['POST_CURRENT_CUTOVER']['summary']['counts']['expected']==5
+    assert scopes['POST_CURRENT_CUTOVER']['summary']['counts']['opened_expected']==4
+    assert scopes['LAST_N_TRADING_SESSIONS']['summary']['counts']['expected']==4
+    assert scopes['LAST_N_TRADING_SESSIONS']['summary']['counts']['opened_expected']==4
+    assert scopes['POST_CURRENT_CUTOVER']['summary']['rates']['capture_success']['denominator']==4
 
 
 @pytest.mark.parametrize("damage", ("schedule", "root", "member", "runtime"))
