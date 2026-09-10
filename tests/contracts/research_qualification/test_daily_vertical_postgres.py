@@ -194,7 +194,7 @@ def test_completed_model_is_consumed_without_backtest_and_publication_is_replaya
         assert trace.run_state == "SUCCEEDED", trace
         report = app.daily_prediction_reads.forecast_projection(plan)
         if missing_membership:
-            assert report["denominators"] == dict(sampled=32, eligible=0, feature_ready=0, predicted=0, model_prediction=0, baseline_prediction=0, common_prediction=0)
+            assert report["denominators"] == dict(sampled=32, eligible=0, feature_ready=0, model_prediction=0, baseline_prediction=0, common_prediction=0)
             assert report["model_inference_state"] == "NOT_RUN_EMPTY_POPULATION"
             assert len(report["population"]) == 32
             assert report["predictions"] == []
@@ -203,9 +203,33 @@ def test_completed_model_is_consumed_without_backtest_and_publication_is_replaya
                 assert connection.execute("SELECT count(*) FROM mra.forecast_model_binding WHERE experimental_model_use_id=%s", (use.experimental_model_use_id,)).fetchone() == (0,)
             return
         assert report["denominators"] == dict(
-            sampled=32, eligible=32, feature_ready=32, predicted=32, model_prediction=32, baseline_prediction=32, common_prediction=32
+            sampled=32, eligible=32, feature_ready=32, model_prediction=32, baseline_prediction=32, common_prediction=32
         )
         assert len(report["predictions"]) == 32
+        if mature_prices:
+            # A restart must re-observe exact algorithm/config bytes before a
+            # first settlement claim; publication identities remain immutable.
+            import importlib.util
+            from pathlib import Path
+            template_path = Path(__file__).resolve().parents[3] / 'docs/operations/templates/verify_prospective_artifacts.py'
+            module_spec = importlib.util.spec_from_file_location('daily_execution_integrity', template_path)
+            module = importlib.util.module_from_spec(module_spec)
+            module_spec.loader.exec_module(module)
+            outcome_run = uuid5(plan.prediction_id, 'outcome-evaluation-runtime')
+            with app._pool.connection() as connection:
+                runtime_config, = connection.execute('SELECT config_artifact_id FROM mra.runtime_run WHERE run_id=%s', (outcome_run,)).fetchone()
+                expected = {runtime_config, plan.code_artifact.artifact_id, plan.config_artifact.artifact_id,
+                            c['target'].algorithm.code_artifact.artifact_id, c['target'].algorithm.config_artifact.artifact_id}
+                connection.execute("UPDATE mra.artifact SET last_verified_at=clock_timestamp()-interval '25 hours' WHERE artifact_id=ANY(%s::uuid[])", (list(expected),))
+                connection.commit()
+                before = connection.execute('SELECT to_jsonb(r) FROM mra.runtime_run r WHERE run_id=ANY(%s::uuid[]) ORDER BY run_id', ([plan.runtime_run_id, outcome_run],)).fetchall()
+                references = module._daily_execution_artifacts(connection, plan)
+                assert expected <= {row[0] for row in references}
+            for artifact_id, in references:
+                verified = app.artifacts.verify(artifact_id, verifier_id='fixture-operator', context=_context('restart-integrity:' + str(artifact_id)))
+                assert verified.result == 'VERIFIED'
+            with app._pool.connection(read_only=True) as connection:
+                assert connection.execute('SELECT to_jsonb(r) FROM mra.runtime_run r WHERE run_id=ANY(%s::uuid[]) ORDER BY run_id', ([plan.runtime_run_id, outcome_run],)).fetchall() == before
         assert app.daily_research.settle_and_evaluate(plan, worker_id="daily-fixture")["state"] == "PENDING"
         assert app.daily_research.execute(plan, worker_id="daily-fixture").run_state == "SUCCEEDED"
         assert app.daily_research.replay(plan)["matched"]
@@ -511,14 +535,6 @@ def test_completed_model_is_consumed_without_backtest_and_publication_is_replaya
                 lambda _step_id: simulated_now,
             )
             clock.setattr(
-                app.daily_prediction_reads,
-                "target_price_members",
-                lambda _plan: tuple(
-                    SimpleNamespace(state=DailyInputState.MISSING)
-                    for _ in plan.instrument_ids
-                ),
-            )
-            clock.setattr(
                 app.market,
                 "_database_clock",
                 SimpleNamespace(now=lambda: simulated_now),
@@ -592,6 +608,16 @@ def test_completed_model_is_consumed_without_backtest_and_publication_is_replaya
                 ),
                 _context("daily-outcome-time-advance-normalize"),
             )
+            with app._pool.connection(read_only=True) as connection:
+                gap_ids = dict(connection.execute(
+                    "SELECT instrument_id,gap_id FROM mra.source_gap WHERE capture_id=%s",
+                    (outcome_capture_id,),
+                ).fetchall())
+            assert len(gap_ids) == (0 if mature_prices else len(plan.instrument_ids))
+            clock.setattr(app.daily_prediction_reads, "target_price_members", lambda _plan: tuple(
+                SimpleNamespace(state=DailyInputState.AVAILABLE if mature_prices else DailyInputState.MISSING,
+                                source_gap_id=gap_ids.get(instrument))
+                for instrument in plan.instrument_ids))
             if mature_prices:
                 complete = app.research_evaluations.complete
                 def committed_reply_lost(*args, **kwargs):

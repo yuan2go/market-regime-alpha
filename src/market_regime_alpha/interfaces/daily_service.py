@@ -1,4 +1,4 @@
-"""One sequential daily consumer called by CONTINUOUS_RESEARCH's existing tick."""
+"""Sequential daily work under the canonical prospective service reservation."""
 
 from __future__ import annotations
 
@@ -56,12 +56,26 @@ def current_daily_plan(app: TargetApplication, template: DailyPredictionPlan) ->
         frozen = app.daily_prediction_reads.run_plan_content(uuid5(identity, "abstention-runtime"))
     if frozen is not None:
         plan = decode_daily_plan(frozen)
-        _same_template(plan, template)
+        _same_template(plan, template, installed_handoff=True)
         if (plan.prediction_id, plan.input_session_id, plan.target_session_id) != (identity, input_session, target_session):
             raise ArtifactIntegrityError("daily frozen Run and input/target identities differ")
         return plan
+    original = None
+    for phase in ("population", "input"):
+        for ordinal, _, _, content in app.daily_prediction_reads.collection_rounds(identity, phase):
+            collection = DailyCollectionPlan.decode(content)
+            if (collection.phase, collection.round, collection.prediction.prediction_id,
+                    collection.prediction.input_session_id, collection.prediction.target_session_id) != (
+                    phase, ordinal, identity, input_session, target_session):
+                raise ArtifactIntegrityError("daily collection Run/config identity differs")
+            _same_template(collection.prediction, template, installed_handoff=True)
+            if original is not None:
+                _same_template(collection.prediction, original)
+            original = collection.prediction
+    # Collection freezes its own request, not the later publication's cutoff.
+    # Installation handoff must retain that request's Model/Target/code bindings.
     plan = replace(
-        template,
+        original or template,
         prediction_id=identity,
         input_session_id=input_session,
         target_session_id=target_session,
@@ -73,9 +87,12 @@ def current_daily_plan(app: TargetApplication, template: DailyPredictionPlan) ->
     return replace(plan, input_content_sha256=ready.content_sha256)
 
 
-def _same_template(plan: DailyPredictionPlan, template: DailyPredictionPlan) -> None:
+def _same_template(plan: DailyPredictionPlan, template: DailyPredictionPlan, *, installed_handoff: bool = False) -> None:
     changed = {name for name in plan.__dataclass_fields__ if getattr(plan, name) != getattr(template, name)}
-    if changed - {"prediction_id", "input_session_id", "target_session_id", "input_cutoff", "decision_time", "input_content_sha256"}:
+    allowed = {"prediction_id", "input_session_id", "target_session_id", "input_cutoff", "decision_time", "input_content_sha256"}
+    if installed_handoff:
+        allowed |= {"code_sha", "code_artifact"}
+    if changed - allowed:
         raise ArtifactIntegrityError("DAILY_FROZEN_CONFIGURATION_CHANGED")
 
 
@@ -261,6 +278,16 @@ def daily_tick(
                 else:
                     completed.append({**status, "state": "OUTCOME_DATA_PENDING"})
                 continue
+            if now >= ready.target_window_end + _OUTCOME_GRACE and any(
+                member.state not in _TERMINAL_INPUT and member.source_gap_id is None
+                for member in members
+            ):
+                completed.append({
+                    **status, "state": "OUTCOME_DATA_UNOBSERVED",
+                    "reason_code": "OUTCOME_COLLECTION_GRACE_EXPIRED",
+                    "automatic_retry": False,
+                })
+                continue
         if outcome_action is not None:
             completed.append({**status, "state": "READY_FOR_SETTLEMENT"})
             continue
@@ -338,6 +365,17 @@ def daily_tick(
         ).frozen_abstention_reason(plan)
         return finish_abstention(plan, reason)
     existing = reads.run_plan_content(plan.runtime_run_id)
+    if existing is not None:
+        trace = app.runtime.inspect_run(plan.runtime_run_id)
+        if trace.run_state not in {"QUEUED", "RUNNING", "SUCCEEDED"}:
+            return finish({
+                "state": "PREDICTION_RECOVERY_REQUIRED",
+                "failed_run_id": trace.run_id,
+                "run_state": trace.run_state,
+                "reason_codes": [step.latest_attempt_error_code for step in trace.steps if step.latest_attempt_error_code],
+                "automatic_retry": False,
+                "pending": completed,
+            })
     ready = reads.ready(plan)
     if existing is None:
         if not reads.model_use_available(plan):

@@ -4,6 +4,9 @@ import json
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
+import pytest
+import psycopg
+
 from market_regime_alpha.bootstrap import TargetSettings, bootstrap_database, bootstrap_application
 from market_regime_alpha.market.domain import (
     Provider,
@@ -55,7 +58,8 @@ class DailyProvider:
         )
 
 
-def test_collection_claim_capture_normalize_and_restart_keep_exact_bytes(target_database_url, tmp_path, monkeypatch):
+@pytest.mark.parametrize("repair_failed_population", [False, True])
+def test_collection_claim_capture_normalize_and_restart_keep_exact_bytes(target_database_url, tmp_path, monkeypatch, repair_failed_population):
     settings = TargetSettings(target_database_url, tmp_path / "artifacts")
     bootstrap_database(settings)
     with bootstrap_application(settings) as app:
@@ -160,12 +164,34 @@ def test_collection_claim_capture_normalize_and_restart_keep_exact_bytes(target_
         population = DailyCollectionPlan(frozen, "population", 1, updated)
         with prospective_operation_session(target_database_url, database_name=identity["name"], database_oid=identity["oid"], cluster_identity=identity["cluster_identity"], series_code="daily-fixture") as supervisor:
             with daily_research_admission(prediction_id=frozen.prediction_id, code_sha=frozen.code_sha, config_sha256=population.content_sha256, collection_phase="population"):
-                captured = collect_daily(app, population, fake, worker_id="daily-fixture", maximum_steps=2, before_action=guard)
-                assert captured.run_state == "SUCCEEDED"
-                assert collect_daily(app, population, fake, worker_id="daily-fixture", maximum_steps=2, before_action=guard) == captured
-        assert len(fake.calls) == 3
+                if repair_failed_population:
+                    collect_daily(app, population, fake, worker_id="daily-fixture", maximum_steps=1, before_action=guard)
+                    with psycopg.connect(target_database_url) as connection:
+                        connection.execute("UPDATE mra.artifact SET last_verified_at=clock_timestamp()-interval '25 hours' WHERE artifact_id=%s", (capture.artifact.artifact_id,))
+                        connection.commit()
+                    with pytest.raises(RuntimeError, match="canonical invariants"):
+                        collect_daily(app, population, fake, worker_id="daily-fixture", maximum_steps=1, before_action=guard)
+                    failed = app.runtime.inspect_run(population.run_id)
+                    assert failed.run_state == "FAILED"
+                    assert failed.steps[1].latest_attempt_error_code == "NORMALIZATION_BINDING_REJECTED"
+                    app.artifacts.verify(capture.artifact.artifact_id, verifier_id="fixture", context=_context("refresh-population-reference"))
+                else:
+                    captured = collect_daily(app, population, fake, worker_id="daily-fixture", maximum_steps=2, before_action=guard)
+                    assert captured.run_state == "SUCCEEDED"
+                    assert collect_daily(app, population, fake, worker_id="daily-fixture", maximum_steps=2, before_action=guard) == captured
+            if repair_failed_population:
+                from market_regime_alpha.interfaces.daily_collection import retry_failed_population_collection
+
+                kwargs = dict(worker_id="daily-fixture", maximum_steps=2, before_action=guard)
+                recovered = retry_failed_population_collection(app, population, fake, **kwargs)
+                assert recovered.run_state == "SUCCEEDED" and recovered.run_id != failed.run_id
+                assert retry_failed_population_collection(app, population, fake, **kwargs) == recovered
+                assert app.runtime.inspect_run(population.run_id) == failed
+                with pytest.raises(RuntimeError, match="EXACT_FAILED_POPULATION"):
+                    retry_failed_population_collection(app, replace(population, prediction=replace(frozen, model_version_id=uuid4())), fake, **kwargs)
+        assert len(fake.calls) == (4 if repair_failed_population else 3)
         assert fake.calls[-1].start_date == today
         assert not app.daily_prediction_reads.population_source_ready(frozen)  # No retroactive visibility.
         observed = app.daily_prediction_reads.now()
         assert app.daily_prediction_reads.population_source_ready(replace(frozen, decision_time=observed, input_cutoff=observed))
-        assert app.daily_prediction_reads.collection_rounds(frozen.prediction_id, "population")[0][1] == "SUCCEEDED"
+        assert app.daily_prediction_reads.collection_rounds(frozen.prediction_id, "population")[-1][1] == "SUCCEEDED"

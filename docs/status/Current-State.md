@@ -30,9 +30,9 @@ mixed-version operational checksum table here.
 | Evidence operations | Exact database/Artifact identity, backup, integrity and restore/replay operations | A successful copy is a separate scope; missing original evidence remains missing |
 | Retained execution/account | Decision/account and formal governance commands remain installed; separate research CLI dispatch is retired | No account Runtime migration or broker admission |
 
-No live service, operational evidence database, Provider capture or research
-result is changed or requalified by repository maintenance. Current operational
-facts must be obtained through the runbook's exact-scope status/health/replay
+Repository maintenance by itself does not change or requalify a live service,
+Provider capture or research result. Separately authorized activation evidence
+is recorded below. Current operational facts must be obtained through the runbook's exact-scope status/health/replay
 commands under the relevant authorization.
 
 ## Consumer convergence
@@ -44,8 +44,8 @@ The generated inventory includes the complete executable consumer matrix and
 SQL-adapter closures. Historical tools are outside current execution; exact
 readers and the observed-account/governance exceptions remain explicit.
 
-No released SQL bytes, schema membership, research formula, Model/Outcome
-identity or operational database is changed. Source retirement does not prove
+Consumer convergence changed no released SQL bytes, schema membership, research
+formula, Model/Outcome identity or operational database. Source retirement does not prove
 live deployment or authorize account Runtime cutover.
 
 ## Research Runtime cutover verification
@@ -92,6 +92,65 @@ Previous consumer-convergence evidence remains in
 `canonical-consumer-convergence-20260908.tar.gz`; its source-bound verification
 SHA256 is `1af0b50072d40bb3ed4be0851b39f09cb25f4a2ca73f3bbde91337f9af25ed8f`.
 Prior failures and released SQL retain their original bytes and meaning.
+
+## Original-scope operational activation
+
+The one-time activation prerequisite at merged main
+`876b995268673b6556c1f148c9c9af485cd8f135` passed **4,142 repository tests**,
+including PostgreSQL, and **7 explicit historical tests** with locally recovered
+prerequisites. Ruff, mypy, build, installed-wheel smoke, docs, inventory and
+hygiene passed. This does not automatically qualify later changes.
+
+The deployed implementation is `1b5377d6adf46b61b06f34356bd37f2e599c74e5`;
+source tree `1e8f6682340c8591f25d7575f2960ae13197c3fc`. Its final directed
+43-test regression passed at test-only commit
+`0d09cda03f24146dbef4a224b91076bd17305e3e`, which preserves that source tree.
+The previous one-test fixture failure remains in the evidence chain. Later
+status prose does not change installed code. Exact scope receipts, raw commands,
+failures and hashes are indexed through the historical archive, not used as
+configuration defaults.
+
+Activation uses the original research database and Artifact root discovered from
+the private deployment record. The existing registered v8 additive upgrade was
+applied after backup and isolated verification; no released SQL/lock bytes were
+edited. A dedicated runtime login, read-only diagnostics/backup logins and exact
+project-database authentication rules exclude stale generic-login clients. This
+is an operational boundary, not protection from a trusted OS/cluster admin.
+
+Actual input collection completed 32 daily bars and normalized the Provider's
+300-member classification. One earlier normalization failure and its explicitly
+requested successor retain separate identities. An expired Artifact prerequisite
+caused the old mature prediction's settlement to fail; a missing reference-lock
+grant caused the initial current prediction to fail. Both terminal Runs remain
+failed. The repairs refresh owner-verified bytes, validate the restricted login's
+complete daily call chain and expose terminal prediction failure without
+blocking other pending plans. No model, Target, formula or failed result was
+rewritten.
+
+The distinct current-time prediction
+`3c3e181e-692d-535b-aea0-f855c9e9e418` completed all nine owner/Runtime actions.
+Publication at **2026-09-10 02:17:35 +08:00** precedes its exact **09:30–15:00**
+Target. Its frozen population contains 32 members: 31 included/eligible,
+feature-ready and predicted by both the original Ridge and baseline; one
+membership UNKNOWN remains visible with its reason. The publication report and
+repeated request reconcile with unchanged identities and report bytes. The
+original ModelVersion and experimental use remain unchanged.
+
+The owned service completed a graceful drain and restart on the same installed
+artifact. The post-publication backup binds 2,973 Artifacts to an exported
+PostgreSQL snapshot; a separate DB/root restored it and reproduced the complete
+installed CLI report/replay with zero business writes. Existing backup refresh
+is enabled at 03:00 and 19:00 with bounded fault behavior. At the frozen
+observation cutoff, six final-installation ticks took 41–51 seconds each against
+a 120-second budget; active, expired and unknown Attempts were all zero.
+Historical failures keep health at attention-required; startup does not erase them.
+
+Natural Outcome maturity and multi-day service are separate, still unobserved
+requirements. The old mature terminal failure cannot satisfy them. Current
+health retains missed prospective windows and planning gaps rather than treating
+terminal coverage as collection success. New daily captures do not retroactively
+qualify the separate intraday prospective series. No Alpha, formal Provider/PIT,
+Model or Production qualification is granted.
 
 ## Prior repository hygiene evidence
 

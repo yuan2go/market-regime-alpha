@@ -901,7 +901,6 @@ class PostgresDailyPredictionReads:
             "sampled": len(population),
             "eligible": sum(m.eligible for m in population),
             "feature_ready": sum(row["composite_score"] is not None for row in rows),
-            "predicted": sum(row["point_estimate"] is not None for row in rows),
             "model_prediction": sum(row["point_estimate"] is not None for row in rows),
             "baseline_prediction": sum(row["baseline_point_estimate"] is not None for row in rows),
             "common_prediction": sum(row["point_estimate"] is not None and row["baseline_point_estimate"] is not None for row in rows),

@@ -166,8 +166,8 @@ def main():
             capture_known_times_changed=False,
             observations_after_backup_snapshot=True,
         )
-        # Copy exact new snapshot to the other local physical device. Neither
-        # copy is a writer or an automatically adopted database scope.
+        # The destination is explicit local intent. Operators must verify the
+        # physical failure domain; another path alone does not prove redundancy.
         mirror = Path(DEPLOYMENT["external_backup_directory"]) / destination.name
         required = sum(p.stat().st_size for p in destination.rglob("*") if p.is_file())
         if shutil.disk_usage(mirror.parent).free < required + config.minimum_free_bytes:
