@@ -13,123 +13,7 @@ from tests.contracts.research_qualification.test_daily_vertical_postgres import 
     test_completed_model_is_consumed_without_backtest_and_publication_is_replayable as vertical,
 )
 
-WRITE_TABLES = (
-    "evaluation_observation",
-    "research_partition_outcome_access",
-    "decision_run_research_qualification_roster",
-    "decision_run_research_qualification_member",
-    "artifact",
-    "artifact_gc_candidate",
-    "artifact_verification",
-    "audit_event",
-    "candidate",
-    "candidate_score_component",
-    "candidate_set",
-    "classification",
-    "classification_membership_revision",
-    "command_receipt",
-    "context_assessment",
-    "context_metric",
-    "context_metric_source",
-    "corporate_action_revision",
-    "data_capture",
-    "dataset",
-    "dataset_source",
-    "decision_reference_observation",
-    "decision_run",
-    "decision_run_target",
-    "decision_target_commitment",
-    "eligibility_assessment",
-    "eligibility_reason",
-    "evaluation_candidate_outcome_source",
-    "evaluation_candidate_source",
-    "evaluation_forecast_source",
-    "evaluation_formula_parameter",
-    "evaluation_metric",
-    "evaluation_metric_formula",
-    "evaluation_metric_observation",
-    "evaluation_protocol",
-    "evaluation_protocol_metric",
-    "evaluation_run",
-    "evaluation_signal_source",
-    "experiment",
-    "experiment_partition",
-    "experiment_run",
-    "forecast",
-    "forecast_estimate",
-    "forecast_model_binding",
-    "forecast_run",
-    "instrument",
-    "instrument_fact_revision",
-    "instrument_identifier",
-    "market_archive",
-    "market_archive_capture_observation",
-    "market_archive_resource_stop",
-    "market_archive_seal",
-    "market_archive_slice",
-    "market_archive_slice_gap",
-    "market_bar_revision",
-    "market_capture_classification_membership_normalization",
-    "market_capture_classification_normalization",
-    "market_capture_instrument_identifier_normalization",
-    "market_capture_instrument_normalization",
-    "market_capture_reference_normalization",
-    "market_capture_trading_session_normalization",
-    "market_target_outcome",
-    "market_target_outcome_metric",
-    "market_target_outcome_metric_observation",
-    "market_target_outcome_metric_reference",
-    "market_target_outcome_observation",
-    "market_target_outcome_reason",
-    "market_target_outcome_revision",
-    "market_target_outcome_source",
-    "prospective_archive_generation",
-    "prospective_archive_generation_member",
-    "prospective_archive_planning_gap",
-    "prospective_archive_revision_observation",
-    "prospective_archive_slice_schedule",
-    "prospective_archive_slice_terminal",
-    "research_partition",
-    "research_partition_member",
-    "runtime_attempt",
-    "runtime_run",
-    "runtime_schedule",
-    "runtime_step",
-    "runtime_step_dependency",
-    "signal",
-    "signal_context_binding",
-    "signal_run",
-    "source_gap",
-    "trading_session",
-    "universe_member",
-    "universe_revision",
-)
-REFERENCE_LOCKS = {
-    "experimental_model_use": "experimental_model_use_id",
-    "model": "model_id",
-    "model_version": "model_version_id",
-    "model_training_run": "model_training_run_id",
-    "model_training_reproducibility": "model_training_run_id",
-    "target_definition": "target_definition_id",
-    "target_checkpoint": "target_definition_id",
-    "target_metric_definition": "target_definition_id",
-    "target_metric_dependency": "target_definition_id",
-    "feature_definition": "feature_definition_id",
-    "candidate_policy": "candidate_policy_id",
-    "context_policy": "context_policy_id",
-    "eligibility_policy": "eligibility_policy_id",
-    "strategy_version": "strategy_version_id",
-    "universe": "universe_id",
-    "provider_product": "provider_product_id",
-    "strategy_context_requirement": "strategy_version_id",
-    "strategy_signal_rule": "strategy_version_id",
-    "strategy_forecast_rule": "strategy_version_id",
-    "strategy": "strategy_id",
-    "context_policy_metric": "context_policy_id",
-    "candidate_policy_component": "candidate_policy_id",
-    "exploratory_retrospective_universe_revision": "universe_revision_id",
-    "exploratory_retrospective_eligibility_batch": "universe_revision_id",
-}
+from market_regime_alpha.infrastructure.postgres.runtime_privileges import WRITE_TABLES, REFERENCE_LOCKS, inspect_runtime_principal
 
 
 def test_restricted_runtime_login_completes_prediction_maturity_recovery_and_replay(
@@ -139,6 +23,7 @@ def test_restricted_runtime_login_completes_prediction_maturity_recovery_and_rep
     password = uuid4().hex
     active = ContextVar("restricted_daily_command", default=False)
     with psycopg.connect(target_database_url) as admin:
+        admin.execute(sql.SQL("REVOKE TEMP ON DATABASE {} FROM PUBLIC").format(sql.Identifier(admin.info.dbname)))
         admin.execute(sql.SQL("CREATE ROLE {} LOGIN PASSWORD {}").format(sql.Identifier(role), sql.Literal(password)))
     runtime_pool = TargetPostgresPool(make_conninfo(target_database_url, user=role, password=password))
     original_connection = TargetPostgresPool.connection
@@ -160,6 +45,8 @@ def test_restricted_runtime_login_completes_prediction_maturity_recovery_and_rep
                                 sql.Identifier(column), sql.Identifier(table), sql.Identifier(role)
                             )
                         )
+                with original_connection(runtime_pool, read_only=True) as checked:
+                    assert inspect_runtime_principal(checked)["name"] == role
                 initialized = True
             with original_connection(runtime_pool, read_only=read_only) as connection:
                 assert connection.info.user == role
