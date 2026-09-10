@@ -9,7 +9,7 @@ scope; earlier hygiene evidence remains in the archive index.
 
 ## Research Validity baseline
 
-The read-only baseline is implemented on main
+The read-only baseline is implemented from main
 `c61a133995c015530a992a87421e750e64f4d5ef`. `mra research validity daily`
 consumes exact frozen Prediction, acquired OutcomeRevision and Evaluation truth;
 it does not acquire prices, train, tune or update historical metrics.
@@ -47,14 +47,23 @@ one completed canonical session are insufficient for the 337-session window.
 PIT readiness remain NOT_READY. BaoStock evidence remains EXPLORATORY. Independent
 episode economics does not establish continuous-account returns or T+1 execution.
 
-The initial fresh observation at Sep-11 00:18 confirms the original service is
-running with no unresolved Attempts and Sep-11 Prediction pending maturity.
-Its observed tick maximum is 82.08 seconds, below the unchanged 120-second budget.
-This analysis package does not stop or redeploy that service. Final validation
-and operational cutoff are recorded with source-bound evidence after installation
-smoke; sustained proof still requires three consecutive naturally completed days.
+Implementation `072ff011f3b1d870c32e5228d29cb566d13a177d` passed 118 affected
+checks after directed reruns, Ruff, mypy, build and isolated CLI smoke. The
+analysis wheel was installed separately; the operational f30d45ab wheel/profile
+remain unchanged. Source-bound results and exact commands are in the
+[immutable baseline record](../archive/Research-Validity-Baseline-2026-09-11.md).
 
-## Latest operational cutoff
+At **2026-09-11T01:21:55.565532+08:00**, the original service is running after two
+reconciled recovery requests; three current-process ticks completed, no unresolved Attempts,
+and Sep-11 remains pending maturity. A real 123.92-second resource stop and a
+subsequent QueryCanceled are retained. Stage profiling locates repeated installed
+source hashing and the human-research-disposition health query; the historical
+slowdown is not fully reproduced. **RECOVERED_WITH_OPEN_PERFORMANCE_BLOCKER**
+is a bounded current observation, not proof the 120-second problem is fixed.
+The 19:00 backup failure remains separate from the successful later manual
+backup. Research infrastructure passes; Alpha iteration remains blocked.
+
+## Previous operational closure cutoff
 
 At **2026-09-10 23:46:12.905706+08:00**, installed implementation
 `f30d45ab2680798c67ead58d5453e00ed2f2d74e` is running in the original database,

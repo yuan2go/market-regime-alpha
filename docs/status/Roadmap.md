@@ -131,8 +131,8 @@ fires need continuing observation; the 120-second budget is unchanged.
 ## Research Validity baseline execution
 
 The authorized baseline is main `c61a133995c015530a992a87421e750e64f4d5ef`.
-The isolated execution preserves the running service and all frozen research
-identities. Sep-10 remains descriptive; new diagnostics on that session are
+The isolated execution preserves the operational package/profile and all frozen
+research identities. Sep-10 remains descriptive; new diagnostics on that session are
 post-hoc and cannot enter the predeclared future cohort.
 
 - [x] Record current service, canonical completed/pending work and backup.
@@ -145,7 +145,7 @@ post-hoc and cannot enter the predeclared future cohort.
   multi-session/rolling aggregation and a read-only validity CLI.
 - [x] Validate walk-forward calendar/data boundaries and audit existing slice,
   economic and formal PIT readiness without training or promotion.
-- [ ] Run focused contracts, static/build/installed checks and documentation
+- [x] Run focused contracts, static/build/installed checks and documentation
   guards; retain source-bound evidence and a fresh final operational observation.
 
 Protocol declaration uses a packaged immutable source resource and exact SHA,
@@ -154,6 +154,14 @@ evidence. It does not impersonate a registered PostgreSQL Artifact: registering
 new Artifact metadata through the existing owner would require the running
 service's exclusive writer admission. This read-only package does not stop that
 service, add a writer bypass or create a second research persistence family.
+
+The [immutable baseline evidence](../archive/Research-Validity-Baseline-2026-09-11.md)
+records the completed infrastructure and remaining real-data gates. A new actual
+resource stop and QueryCanceled were reconciled; the original service recovered
+without a code/profile change. A subsequent performance package has a concrete
+boundary: repeated installation hashing and human-research-disposition health
+receipt scans under the long-lived LaunchAgent. Do not infer a fix from the
+faster interactive profile or introduce Provider batching without new evidence.
 
 ## Remaining architectural debt
 

@@ -476,3 +476,11 @@ PIT, additional regime slices and economic validity remain NOT_READY.
 Do not enter Alpha iteration on a single session or merely because the baseline
 infrastructure passes. Actual predeclared multi-day minima and repeatable
 information gain are prerequisites; model changes still require explicit scope.
+
+The Sep-11 Research Validity observation retained a 123.92-second resource stop
+and a later QueryCanceled in the human-research-disposition health query. The
+original service recovered after owner reconciliation with unchanged wheel,
+profile and timeout. Two successful recovery ticks do not establish continuity.
+The immutable baseline record binds stage profiles and the exact query plan;
+any performance follow-up must preserve source-integrity and privilege drift
+checks and use actual service measurements, not a Provider batching assumption.
