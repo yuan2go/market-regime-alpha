@@ -154,7 +154,7 @@ Model or Production qualification is granted.
 
 ## Current operational closure observation
 
-The authorized installed update is
+The first closure installation was
 `db69cd34f6ef569663fac4f7029d79783b52948e`, based on merged main
 `90c5af03c905b1c91a4c284cd838ea39166a5c42`. Source tree
 `0b76762931fafeee4f86b07bc3dcc89d9d6db0c3` and tests tree
@@ -209,6 +209,45 @@ at a frozen cutoff, not a guarantee that the service remains alive later.
 Continue original pending work through the Runtime and inspect actual health;
 research validity/Alpha iteration remains premature until a real Evaluation
 closes the lineage.
+
+## Subsequent health-query correction
+
+After that immutable cutoff, the service stopped at **10:08:02** with
+`QueryCanceled`. PostgreSQL's original error log identifies the actual statement:
+`PostgresDailyPredictionReads.operational_health` scanned all Provider bars to
+report the latest bar timestamp. The plan scanned about 196,635 rows. Besides
+unbounded observation cost, a different security/session could incorrectly make
+the current daily plan look fresh.
+
+The correction is frozen at `55d4aba91f7eb9781b45204f8765edc3fcba05b1`, source
+tree `75d6c367b8e1320e5ebd17d6b1da63019522bb42`, tests tree
+`080d5b7a0d2185c96365c8ee51b3cc404d12042c`. Bar freshness now explicitly means
+the frozen plan's instruments and input/target sessions. Capture and SourceGap
+timestamps remain product-scoped; the new `bar_scope` field makes this distinction
+visible. No financial result, label, model, deadline or owner validation changes.
+
+The canonical-normalization counterexample failed before the fix for an unrelated
+session; both session/security exclusions passed afterward. **42 affected tests passed** at
+the corrected revision, including restricted-login daily prediction, maturity,
+recovery/report and deployment. Ruff, mypy, build and seven isolated installed
+CLI checks passed. The original read-only query now uses the existing
+`market_bar_exact_asof_idx`, visits 32 bars and takes about 3.1 ms; no SQL resource,
+index, migration, pool, UoW or timeout was changed. The exact failed-query trigger
+is identified; warm reruns of the old query also succeeded, so the underlying
+intermittent I/O/latency cause is not claimed solved.
+
+Final installed handoff and post-recovery observation are recorded separately
+in the archive index. The 10:07 snapshot cannot establish health after the 10:08
+stop. Natural Target maturity remains a separate real-time requirement.
+
+The corrected installation activated at **10:43:04 +08:00**. At the final
+**10:47:42** cutoff, three ticks took 45–52 seconds, with no active/expired/unknown
+Attempt. Original publication replay still matched with zero writes. The new
+2,975-Artifact backup and another independent restore matched all 194 table
+hashes and original report bytes. The owned service and existing scheduled
+backup task use the corrected wheel/profile. Current health passes at this
+bounded cutoff with explained terminal failures retained; naturally matured
+Evaluation and three-day sustained service remain independently time-blocked.
 
 ## Prior repository hygiene evidence
 

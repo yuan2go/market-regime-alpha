@@ -93,9 +93,11 @@ maturity, followed by actual collection, owner settlement, Evaluation and
 zero-write report/replay. The service retains its original plan and keeps old
 terminal failures closed. Three consecutive real trading days remain a separate
 sustained-evidence gate, not a reason to wait or synthesize observations.
-Observe future tick latency after the recorded resource stop; its historical
-cause is unproven and budgets were not increased. See Current State for the
-frozen observation cutoff. Do not begin Alpha iteration before real Evaluation.
+The later health QueryCanceled exposed a Provider-wide bar-freshness scan;
+the corrected observer uses the exact plan roster and existing index. Continue
+observing tick latency: the intermittent underlying I/O cause remains unproven
+and budgets were not increased. See Current State for the frozen observation
+cutoff. Do not begin Alpha iteration before real Evaluation.
 
 ## Remaining architectural debt
 

@@ -44,3 +44,10 @@ record privilege drift hardening, scoped health, recovery from a real resource
 stop, the installed handoff and the original pending prediction. The earlier
 activation record remains immutable. Real Target maturity and sustained
 multi-day observation are still blocked at this later cutoff.
+
+The same branch's [final correction and recovery](Operational-Data-Loop-Closure-Final-2026-09-10.md)
+and [final source/observation index](Operational-Data-Loop-Closure-Final-2026-09-10.json)
+continue that chain after a subsequent real health-query timeout. They retain
+the earlier cutoff, prove the bounded query correction and bind the corrected
+installation's separate handoff, backup, restore and observation. This is not
+a new qualification or an upgrade of pending maturity into research evidence.

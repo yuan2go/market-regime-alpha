@@ -369,6 +369,12 @@ Do not increase timeout from one slow tick or let a supervisor restart forever.
 New permission probes and health projections have separate measured costs;
 their successful timings cannot explain an earlier uninstrumented failure.
 
+The daily `data_freshness.last_bar_recorded_at` projection is restricted to the
+frozen plan's instruments and input/target sessions, as stated by `bar_scope`.
+It cannot be refreshed by unrelated securities or historical campaigns.
+Capture/SourceGap freshness remains Provider-product scoped. Neither timestamp
+is a DataReady, complete-population or Provider-PIT qualification assertion.
+
 Check actual backup-refresh event receipts for scheduled fire, drain, dump,
 Artifact verification, mirror, profile refresh and restart. A configured calendar
 alone proves none of these. Keep the original cutover cohort boundary across
