@@ -137,28 +137,40 @@ or financial formula change is in scope.
 
 - [x] Fetch/fix main, isolate the worktree and record fresh service, Attempts,
   deployment, backup, ModelUse and captured-calendar facts. Preserve actual stops.
-- [ ] Measure the current installed guard, source hashing and actual health query
+- [x] Measure the current installed guard, source hashing and actual health query
   plans. Verify source/wheel/package fully at startup; reject file identity,
   profile/receipt or ACL changes before actions without repeated full-byte reads.
-- [ ] Bound the research-disposition receipt query with existing indexes while
+- [x] Bound the research-disposition receipt query with existing indexes while
   retaining complete daily populations, failed history and explicit denominators.
-- [ ] Extend the existing calendar Capture/normalization path and collection
+- [x] Extend the existing calendar Capture/normalization path and collection
   admission with an exact bounded calendar request, duplicates and SourceGap
   handling. Never infer open days from weekdays. Preserve old pending plans.
-- [ ] Prove v2 capacity failure. Register an explicitly authorized successor
+- [x] Prove v2 capacity failure from actual Provider calendar and exact Use
+  lifetime: 12 eligible sessions / at most 384 observations against 20/500.
+- [ ] Register an explicitly authorized successor
   experimental use through its owner, with the same Model/Feature/Target/baseline,
   a future valid_from and a bounded lifetime. Only after actual calendar capacity
   is known, freeze v3 with unchanged 20-session/500-observation floors and explicit
   ten-session downtime and 20-percent missing-observation planning buffers.
-- [ ] Implement generic lifecycle/calendar/observation feasibility and strict
+- [x] Implement generic lifecycle/calendar/observation feasibility and strict
   old/new cohort reporting; frozen v1/v2 bytes and old Evaluation metrics stay
   unchanged. Future calendar refresh is bounded within the existing service.
-- [ ] Complete controlled backup/restart receipts and subsequent-tick proof;
+- [x] Complete controlled backup/restart receipts and subsequent-tick proof;
   classify scheduled versus manual recovery without rewriting failed fires.
-- [ ] Run affected contracts (including admission regression if extended), static,
+- [x] Run affected contracts (including admission regression if extended), static,
   build, isolated install and source-bound evidence checks. Fresh backup, prepare,
   drain, preflight and activate only the frozen tested wheel; observe multiple
   actual ticks with the unchanged 120-second stop and preserve old installations.
+
+The [immutable installed observation](../archive/Operational-Reliability-Cohort-Closure-2026-09-11.md)
+records the reliability correction, 37 completed bounded ticks, one graceful
+partial tick and a complete actual manual backup/restart. A later observed
+16-attempt cap starvation was corrected through a same-wheel 32-step profile
+handoff; the old terminal failure remains and a complete future one-minute window
+is not yet observed. Original HBA deliberately denies Model owner login;
+a narrowly prepared owner maintenance request remains pending approval. No
+successor is registered, v3 is not declared, and the overall cohort-closure gate
+is NO. The service remains running with old frozen work and the original Use.
 
 Stage evidence distinguishes cold preflight, warm idle, Prediction, Outcome,
 Evaluation and backup/restart. Warm idle targets are p95 below 60 seconds and

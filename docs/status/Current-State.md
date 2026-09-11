@@ -32,8 +32,41 @@ The observed pre-open empty-response failure has a narrow positive-evidence
 reconciliation. The original terminal Run remains failed. Future successful
 empty Captures before any interval matures use a separate readiness contract;
 they do not fabricate normalization, SourceGap or labels. Mature empty responses
-retain the original normalizer's SourceGap semantics. Deployment and sustained
-operation require separate current installed observations.
+retain the original normalizer's SourceGap semantics.
+
+At **2026-09-11 11:04:48.216573+08:00**, frozen implementation
+`d2c794f152e2f2670a78d9f295f42a1baad8a42b` is installed and running in the
+original scope. Thirty-seven completed new-install ticks took 23.394–48.006 seconds
+(median 29.090, nearest-rank p95 40.909), with no QueryCanceled or resource stop.
+One additional partial tick ended during the controlled profile drain.
+The previous installation's 64-tick scope retains two resource stops and one
+QueryCanceled. This is no claim of long-term stability or a paired benchmark.
+
+The installed manual backup/restart completed all phases and verified actual
+subsequent tick bytes against the renewed profile, backup receipt and owned
+process. Prior 19:00/03:00 scheduled failures remain failed; no new scheduled fire
+occurred during this observation. The original completed Evaluation/report/replay
+projection is unchanged, and Sep-11's original Prediction is pending maturity.
+No unresolved Attempt, unknown effect or overdue unterminalized work remains at
+the cutoff. All 752 MISSED windows, including the original 544, and one historical
+planning gap remain visible as ATTENTION_REQUIRED.
+
+The real 10:30 window exposed a second issue: its 16-attempt profile cap stopped
+half the 32-member roster despite 27 seconds remaining, then the next wakeup
+arrived after the frozen deadline. The original Run remains FAILED. A controlled
+same-wheel profile/receipt handoff now allows 32 prospective attempts/daily steps,
+with cadence, financial semantics and the 120-second guard unchanged. Its new
+backup, mirror, preflight and two actual ticks passed. Complete future one-minute
+window capacity remains unobserved; no terminal work was reopened.
+
+Performance and backup recovery contracts pass their bounded observations. The
+overall reliability/cohort exit gate is **NO** until owner maintenance is
+authorized, a real successor ModelUse is registered and immutable future v3 is
+declared. The reviewed maintenance remains unexecuted; HBA and runtime grants
+remain unchanged. One completed real session still leaves sustained proof
+BLOCKED_BY_ELAPSED_REAL_TIME and MODEL_VALUE NOT_ESTIMABLE / ALPHA_PROVEN NO.
+See the [immutable closure observation](../archive/Operational-Reliability-Cohort-Closure-2026-09-11.md)
+for exact source, deployment, performance, failures and validation receipts.
 
 ## Previous Research Validity baseline cutoff
 
